@@ -1,0 +1,7 @@
+node_modules/
+.dry-run/
+.wrangler/
+.dev.vars
+.env*
+*.pem
+app-manifest.json

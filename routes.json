@@ -1,0 +1,80 @@
+{
+  "owner": "kjanat",
+  "ownerId": 6353477,
+  "enabled": false,
+  "routes": [
+    {
+      "id": "actionlint-scoop",
+      "source": {
+        "id": 1326162482,
+        "name": "kjanat/actionlint"
+      },
+      "destination": {
+        "id": 1357905513,
+        "name": "kjanat/scoop-bucket"
+      },
+      "workflow": "release.yml",
+      "ref": "master",
+      "minimumVersion": "2.0.0",
+      "readiness": [
+        {
+          "workflow": "release.yml",
+          "jobs": ["Verify published candidate"]
+        }
+      ],
+      "assets": ["release-candidate.json", "actionlint-scoop.json"],
+      "pypi": null,
+      "dryRun": false
+    },
+    {
+      "id": "actionlint-homebrew",
+      "source": {
+        "id": 1326162482,
+        "name": "kjanat/actionlint"
+      },
+      "destination": {
+        "id": 1358284523,
+        "name": "kjanat/homebrew-tap"
+      },
+      "workflow": "release.yml",
+      "ref": "master",
+      "minimumVersion": "2.0.0",
+      "readiness": [
+        {
+          "workflow": "release.yml",
+          "jobs": ["Verify published candidate"]
+        }
+      ],
+      "assets": ["release-candidate.json", "actionlint-homebrew.rb"],
+      "pypi": null,
+      "dryRun": false
+    },
+    {
+      "id": "actionlint-pre-commit",
+      "source": {
+        "id": 1326162482,
+        "name": "kjanat/actionlint"
+      },
+      "destination": {
+        "id": 1427230928,
+        "name": "kjanat/actionlint-pre-commit"
+      },
+      "workflow": "release.yml",
+      "ref": "master",
+      "minimumVersion": "2.0.0",
+      "readiness": [
+        {
+          "workflow": "release.yml",
+          "jobs": [
+            "Verify published candidate",
+            "Publish tested container bytes",
+            "Publish PyPI wheels / Publish to PyPI"
+          ]
+        }
+      ],
+      "assets": ["release-candidate.json"],
+      "pypi": "actionlint-kjanat",
+      "dryRun": false
+    }
+  ]
+}
