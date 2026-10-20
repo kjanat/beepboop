@@ -71,6 +71,11 @@ v2.0.0 onward. Before publishing the first eligible release, authorize the
 and run its `signing-probe.yml` workflow. Activation alone does not prove that
 downstream signing or publication succeeds.
 
+The pre-commit signing identity was authorized on 2026-10-20, and its
+[live OIDC signing probe passed](https://github.com/kjanat/actionlint-pre-commit/actions/runs/39469327500/attempts/2).
+Both commit and annotated-tag signatures were verified. The first actual v2
+release delivery still requires the upstream release, wheels and image.
+
 1. Run `bun install --frozen-lockfile`.
 2. Generate the GitHub App manifest: `bun run app:manifest`. Register the private
    App on the account and install it on selected source/destination repositories.
