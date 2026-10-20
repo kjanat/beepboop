@@ -1,7 +1,7 @@
 {
   "owner": "kjanat",
   "ownerId": 6353477,
-  "enabled": false,
+  "enabled": true,
   "routes": [
     {
       "id": "actionlint-scoop",

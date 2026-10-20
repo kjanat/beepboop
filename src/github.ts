@@ -68,7 +68,7 @@ export class GitHub implements GitHubPort {
   constructor(
     private readonly credentials: Credentials,
     private readonly ownerId: number,
-    private readonly transport: Transport = fetch,
+    private readonly transport: Transport = (request) => fetch(request),
   ) {}
   private async request(
     path: string,
@@ -88,7 +88,7 @@ export class GitHub implements GitHubPort {
         },
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: AbortSignal.timeout(20_000),
-        redirect: "error",
+        redirect: "manual",
       }),
     );
     if (!response.ok) throw new Error(`GitHub HTTP ${response.status}`);
@@ -278,7 +278,7 @@ export class GitHub implements GitHubPort {
       const response = await this.transport(
         new Request(
           `https://pypi.org/pypi/${encodeURIComponent(route.pypi)}/${encodeURIComponent(release.tag.replace(/^v/, ""))}/json`,
-          { redirect: "error", signal: AbortSignal.timeout(20_000) },
+          { redirect: "manual", signal: AbortSignal.timeout(20_000) },
         ),
       );
       if (response.status === 404) return false;

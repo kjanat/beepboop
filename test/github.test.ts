@@ -36,6 +36,7 @@ function api(
     tagType?: string;
     oversized?: boolean;
     oldFirstPage?: boolean;
+    redirect?: boolean;
   } = {},
 ) {
   const requests: { url: URL; method: string; body: unknown; authorization: string }[] = [];
@@ -44,6 +45,12 @@ function api(
     33,
     async (request) => {
       const url = new URL(request.url);
+      expect(request.redirect).toBe("manual");
+      if (options.redirect)
+        return new Response(null, {
+          status: 302,
+          headers: { Location: "https://example.invalid/credentials" },
+        });
       const body: unknown = request.method === "POST" ? await request.json() : null;
       requests.push({
         url,
@@ -125,6 +132,9 @@ function api(
   return { github, requests };
 }
 describe("GitHub boundary", () => {
+  test("rejects redirects without forwarding credentials", async () => {
+    await expect(api({ redirect: true }).github.latest(route)).rejects.toThrow("GitHub HTTP 302");
+  });
   test("scopes destination token to exact repository and permissions; dispatch returns tracked ID", async () => {
     const t = api();
     const id = await t.github.dispatch(route, {

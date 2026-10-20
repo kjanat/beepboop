@@ -1,5 +1,7 @@
 # Beepboop
 
+<img src="assets/beepboop.png" alt="Beepboop robot" width="180">
+
 One GitHub App routes verified releases to repository-owned publishing workflows.
 The App key lives in one Cloudflare Worker. Source CI needs no cross-repository credentials.
 
@@ -63,6 +65,12 @@ This deployment uses [Beepboop by kjanat](https://github.com/apps/beepboop-by-kj
 (App ID `5399528`), installed on `actionlint`, `actionlint-pre-commit`,
 `scoop-bucket` and `homebrew-tap`. Reuse that App for this deployment.
 
+The checked-in routes enable reconciliation for stable actionlint releases from
+v2.0.0 onward. Before publishing the first eligible release, authorize the
+[pre-commit signing identity](https://github.com/kjanat/actionlint-pre-commit#publication)
+and run its `signing-probe.yml` workflow. Activation alone does not prove that
+downstream signing or publication succeeds.
+
 1. Run `bun install --frozen-lockfile`.
 2. Generate the GitHub App manifest: `bun run app:manifest`. Register the private
    App on the account and install it on selected source/destination repositories.
@@ -98,6 +106,11 @@ asset/tag mutation, durable restart semantics, ambiguous dispatch recovery,
 downstream failures and anti-downgrade behavior. Tests use injected HTTP and
 journal boundaries. A real workerd smoke test verifies SQLite persistence across
 runtime restarts and alarm scheduling; dry-run bundling validates the Worker entry point.
+The full runtime flow then exercises a signed webhook, readiness waits, all three
+dispatches, restart recovery, downstream completion and duplicate delivery against
+the shipped bundle. GitHub and PyPI responses are fixtures; no release is created.
+This test also exercises the real Worker fetch path, whose invocation and redirect
+semantics differ from Bun and Node.
 
 API references: [workflow dispatch](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event),
 [installation token scoping](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app),
