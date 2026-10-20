@@ -59,6 +59,10 @@ remains separate; this service cannot admit registry submissions.
 
 ## Setup
 
+This deployment uses [Beepboop by kjanat](https://github.com/apps/beepboop-by-kjanat)
+(App ID `5399528`), installed on `actionlint`, `actionlint-pre-commit`,
+`scoop-bucket` and `homebrew-tap`. Reuse that App for this deployment.
+
 1. Run `bun install --frozen-lockfile`.
 2. Generate the GitHub App manifest: `bun run app:manifest`. Register the private
    App on the account and install it on selected source/destination repositories.
@@ -67,8 +71,8 @@ remains separate; this service cannot admit registry submissions.
    `GITHUB_WEBHOOK_SECRET` into Worker secrets. Never commit them or copy them into
    repository CI. Convert GitHub's PKCS1 key locally to PKCS8 if necessary.
 4. Set the verified account ID and checked-in routes; leave `enabled: false`
-   until consumers and App installation are ready. Update custom domain/account
-   in `wrangler.jsonc` for a different account.
+   until consumers, signing authorization and App installation are ready.
+   Update custom domain/account in `wrangler.jsonc` for a different account.
 5. Run verification, then deploy with `bunx wrangler deploy`. Configure webhook URL
    `https://beepboop.kjanat.dev/webhooks/github`.
 

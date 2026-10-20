@@ -4,7 +4,7 @@ if (origin.protocol !== "https:" || origin.username || origin.password || origin
 console.log(
   JSON.stringify(
     {
-      name: "Beepboop",
+      name: "Beepboop by kjanat",
       url: "https://github.com/kjanat/beepboop",
       public: false,
       description: "Release routing across repositories. Beep. Boop.",
