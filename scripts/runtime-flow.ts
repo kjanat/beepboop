@@ -1,11 +1,11 @@
-import { exportPKCS8, generateKeyPair, jwtVerify } from 'jose';
-import { Miniflare } from 'miniflare';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { array, integer, record, text } from '../src/model.ts';
+import { exportPKCS8, generateKeyPair, jwtVerify } from 'jose';
+import { Miniflare } from 'miniflare';
+import { array, integer, record, text } from '#model';
 
 // Exercise the shipped Worker, real SQLite journal and HTTP adapter together.
 // Only GitHub/PyPI responses are fixtures; no credentials or remote writes.

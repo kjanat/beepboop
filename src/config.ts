@@ -1,17 +1,6 @@
-import {
-	array,
-	boolean,
-	type Configuration,
-	integer,
-	isPrerelease,
-	matches,
-	record,
-	type Repository,
-	type Route,
-	semver,
-	text,
-} from '@/model.ts';
-import raw from '../routes.json';
+import raw from '#$/routes.json' with { type: 'json' };
+import type { Configuration, Repository, Route } from '#model';
+import { array, boolean, integer, isPrerelease, matches, record, semver, text } from '#model';
 
 function repository(value: unknown, owner: string): Repository {
 	const data = record(value);

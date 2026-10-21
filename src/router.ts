@@ -1,12 +1,5 @@
-import {
-	compareVersions,
-	type GitHubPort,
-	type Journal,
-	type Operation,
-	operationId,
-	type Route,
-	sameRelease,
-} from '@/model.ts';
+import type { GitHubPort, Journal, Operation, Route } from '#model';
+import { compareVersions, operationId, sameRelease } from '#model';
 
 const RETRY_MS = 60_000;
 const AMBIGUOUS_GRACE_MS = 10 * 60_000;

@@ -1,4 +1,4 @@
-import type { Configuration, Operation } from '@/model.ts';
+import type { Configuration, Operation } from '#model';
 
 const escapeHtml = (value: string) =>
 	value.replace(
@@ -17,7 +17,9 @@ export function dashboard(
 				.filter((operation) => operation.routeId === route.id)
 				.sort((a, b) => b.updatedAt - a.updatedAt);
 			return `<section><h2>${escapeHtml(route.id)}</h2><p>${escapeHtml(route.source.name)} · ${
-				escapeHtml(route.channel ?? 'stable')
+				escapeHtml(
+					route.channel ?? 'stable',
+				)
 			} · ${route.mode === 'observe' ? 'Publication tracking' : escapeHtml(route.destination.name)}</p><p>${
 				route.enabled === false
 					? 'Disabled — awaiting activation'
@@ -28,27 +30,40 @@ export function dashboard(
 					: 'Discovery unavailable'
 			}</p>${
 				entries.length
-					? entries.map((operation) =>
-						`<article><h3>${escapeHtml(operation.release.tag)} <span>${
-							escapeHtml(operation.state)
-						}</span></h3><p>Checked ${escapeHtml(new Date(operation.updatedAt).toISOString())}</p>${
-							'reason' in operation ? `<p>${escapeHtml(operation.reason)}</p>` : ''
-						}<ul>${
-							(operation.checks ?? []).map((check) =>
-								`<li>${escapeHtml(check.name)}: <strong>${escapeHtml(check.state)}</strong>${
-									check.url && /^https:\/\/(github\.com|registry\.npmjs\.org|crates\.io|pypi\.org)\//.test(check.url)
-										? ` <a href="${escapeHtml(check.url)}">Evidence</a>`
+					? entries
+						.map(
+							(operation) =>
+								`<article><h3>${escapeHtml(operation.release.tag)} <span>${
+									escapeHtml(
+										operation.state,
+									)
+								}</span></h3><p>Checked ${escapeHtml(new Date(operation.updatedAt).toISOString())}</p>${
+									'reason' in operation ? `<p>${escapeHtml(operation.reason)}</p>` : ''
+								}<ul>${
+									(operation.checks ?? [])
+										.map(
+											(check) =>
+												`<li>${escapeHtml(check.name)}: <strong>${escapeHtml(check.state)}</strong>${
+													check.url
+														&& /^https:\/\/(github\.com|registry\.npmjs\.org|crates\.io|pypi\.org)\//.test(
+															check.url,
+														)
+														? ` <a href="${escapeHtml(check.url)}">Evidence</a>`
+														: ''
+												}</li>`,
+										)
+										.join('')
+								}</ul>${
+									'runId' in operation && operation.runId
+										? `<a href="https://github.com/${
+											escapeHtml(
+												route.destination.name,
+											)
+										}/actions/runs/${operation.runId}">Delivery run</a>`
 										: ''
-								}</li>`
-							).join('')
-						}</ul>${
-							'runId' in operation && operation.runId
-								? `<a href="https://github.com/${
-									escapeHtml(route.destination.name)
-								}/actions/runs/${operation.runId}">Delivery run</a>`
-								: ''
-						}</article>`
-					).join('')
+								}</article>`,
+						)
+						.join('')
 					: '<p>No eligible release observed.</p>'
 			}</section>`;
 		})

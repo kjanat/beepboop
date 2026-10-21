@@ -1,7 +1,7 @@
-import { GitHub } from '@/github.ts';
-import { record } from '@/model.ts';
 import { beforeAll, describe, expect, test } from 'bun:test';
 import { exportPKCS8, generateKeyPair, jwtVerify } from 'jose';
+import { GitHub } from '#github';
+import { record } from '#model';
 import { release, route } from './fixtures.ts';
 
 let pem = '';

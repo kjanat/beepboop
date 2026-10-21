@@ -1,14 +1,19 @@
-import { configuration } from '@/config.ts';
-import { dashboard } from '@/dashboard.ts';
-import { type Credentials, GitHub } from '@/github.ts';
-import { compareVersions, type Journal, type Operation } from '@/model.ts';
-import { Router } from '@/router.ts';
-import { acceptsEvent, readBody, verifySignature } from '@/webhook.ts';
 import { DurableObject } from 'cloudflare:workers';
+import { configuration } from '#config';
+import { dashboard } from '#dashboard';
+import { type Credentials, GitHub } from '#github';
+import { compareVersions, type Journal, type Operation } from '#model';
+import { Router } from '#router';
+import { acceptsEvent, readBody, verifySignature } from '#webhook';
+import { type AutomationBindings, AutomationService } from './automation/service.ts';
+
+export { AutomationCoordinator } from './automation/coordinator.ts';
+export { VermonEvents } from './automation/vermon.ts';
 
 export interface Bindings extends Credentials {
 	GITHUB_WEBHOOK_SECRET: string;
 	COORDINATOR: DurableObjectNamespace<ReleaseCoordinator>;
+	AUTOMATION_ENABLED?: string;
 }
 export class ReleaseCoordinator extends DurableObject<Bindings> implements Journal {
 	private pending: Promise<void> = Promise.resolve();
@@ -82,6 +87,29 @@ export class ReleaseCoordinator extends DurableObject<Bindings> implements Journ
 }
 export default {
 	async fetch(request: Request, env: Bindings): Promise<Response> {
+		if (env.AUTOMATION_ENABLED === 'true') {
+			try {
+				const response = await new AutomationService(env as unknown as AutomationBindings).fetch(
+					request,
+				);
+				const headers = new Headers(response.headers);
+				headers.set('Cache-Control', 'no-store');
+				headers.set('X-Content-Type-Options', 'nosniff');
+				return new Response(response.body, { status: response.status, headers });
+			} catch (error) {
+				// Avoid returning arbitrary upstream error bodies or credential-bearing diagnostics.
+				return Response.json(
+					{
+						error: error instanceof SyntaxError
+							? 'Invalid JSON in request or configuration'
+							: error instanceof Error && !/token|secret|credential/i.test(error.message)
+							? error.message
+							: 'Request denied or unavailable',
+					},
+					{ status: 400, headers: { 'Cache-Control': 'no-store' } },
+				);
+			}
+		}
 		const url = new URL(request.url);
 		if (url.pathname === '/' && request.method === 'GET') {
 			const status = await env.COORDINATOR.getByName('account').status();
@@ -118,6 +146,10 @@ export default {
 		}
 	},
 	async scheduled(_event: ScheduledController, env: Bindings): Promise<void> {
+		if (env.AUTOMATION_ENABLED === 'true') {
+			await new AutomationService(env as unknown as AutomationBindings).scheduled();
+			return;
+		}
 		if (configuration.enabled) await env.COORDINATOR.getByName('account').wake();
 	},
 } satisfies ExportedHandler<Bindings>;

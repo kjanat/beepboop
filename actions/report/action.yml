@@ -1,0 +1,30 @@
+name: Release automation report
+description: Report a repository release operation using GitHub OIDC
+inputs:
+  service:
+    description: Release automation service origin
+    default: https://beepboop.kjanat.dev
+  execution-id:
+    description: Execution ID from dispatch or the begin action
+    required: false
+  publications:
+    description: JSON array of publications
+    default: "[]"
+  artifacts:
+    description: JSON array of artifacts
+    default: "[]"
+outputs:
+  result:
+    description: Recorded execution
+    value: ${{ steps.client.outputs.result }}
+runs:
+  using: composite
+  steps:
+    - id: client
+      shell: bash
+      env:
+        SERVICE_ORIGIN: ${{ inputs.service }}
+        EXECUTION_ID: ${{ inputs.execution-id }}
+        PUBLICATIONS: ${{ inputs.publications }}
+        ARTIFACTS: ${{ inputs.artifacts }}
+      run: node "${{ github.action_path }}/../runtime/client.mjs" report

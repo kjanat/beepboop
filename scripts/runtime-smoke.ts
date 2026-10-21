@@ -1,8 +1,8 @@
-import { Miniflare } from 'miniflare';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { Miniflare } from 'miniflare';
 
 const directory = await mkdtemp(join(tmpdir(), 'beepboop-runtime-'));
 const bundle = await readFile(resolve('.dry-run/index.js'), 'utf8');

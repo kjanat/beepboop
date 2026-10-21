@@ -1,5 +1,5 @@
-import { Router } from '@/router.ts';
 import { describe, expect, test } from 'bun:test';
+import { Router } from '#router';
 import { FakeGitHub, MemoryJournal, release, route, run } from './fixtures.ts';
 
 function setup() {

@@ -1,0 +1,12 @@
+{
+	"managers": [
+		"cargo",
+		"github-release",
+		"workflow"
+	],
+	"streams": {
+		"main": {
+			"versioning": "workspace"
+		}
+	}
+}

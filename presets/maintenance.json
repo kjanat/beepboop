@@ -1,0 +1,11 @@
+{
+	"managers": [
+		"workflow"
+	],
+	"streams": {
+		"maintenance": {
+			"versioning": "none",
+			"concurrency": "supersede-pending"
+		}
+	}
+}

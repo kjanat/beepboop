@@ -1,9 +1,9 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+	"$schema": "https://biomejs.dev/schemas/2.6.2/schema.json",
 	"files": {
 		"includes": ["src/**", "test/**", "scripts/**", "*.json", "!worker-configuration.d.ts"]
 	},
-	"formatter": { "indentStyle": "space", "lineWidth": 100 },
+	"formatter": { "enabled": false },
 	"linter": { "enabled": true, "rules": { "preset": "recommended" } },
 	"assist": { "actions": { "source": { "organizeImports": "on" } } }
 }

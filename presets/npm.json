@@ -1,0 +1,15 @@
+{
+	"managers": [
+		"npm",
+		"github-release",
+		"workflow"
+	],
+	"streams": {
+		"main": {
+			"channels": {
+				"stable": "latest",
+				"prerelease": "next"
+			}
+		}
+	}
+}

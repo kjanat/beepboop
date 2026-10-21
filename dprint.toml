@@ -1,0 +1,9 @@
+extends = "https://raw.githubusercontent.com/kjanat/kjanat/refs/heads/master/configs/dprint.remote.json"
+
+[typescript]
+"module.sortImportDeclarations" = "maintain"
+"module.sortExportDeclarations" = "maintain"
+"exportDeclaration.sortNamedExports" = "maintain"
+"exportDeclaration.sortTypeOnlyExports" = "none"
+"importDeclaration.sortNamedImports" = "maintain"
+"importDeclaration.sortTypeOnlyImports" = "none"

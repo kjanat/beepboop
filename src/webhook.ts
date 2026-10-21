@@ -1,4 +1,4 @@
-import { type Configuration, integer, record, text } from '@/model.ts';
+import { type Configuration, integer, record, text } from '#model';
 
 const MAX_BODY = 1_048_576;
 export async function readBody(request: Request): Promise<Uint8Array> {

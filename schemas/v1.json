@@ -1,0 +1,219 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://beepboop.kjanat.dev/schema/v1.json",
+	"title": "Repository release automation",
+	"type": "object",
+	"additionalProperties": false,
+	"properties": {
+		"$schema": {
+			"type": "string"
+		},
+		"extends": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"managers": {
+			"type": "array",
+			"items": {
+				"enum": [
+					"cargo",
+					"npm",
+					"github-release",
+					"oci",
+					"goreleaser",
+					"manifest",
+					"workflow"
+				]
+			}
+		},
+		"streams": {
+			"type": "object",
+			"propertyNames": {
+				"pattern": "^[a-z][a-z0-9-]{0,63}$"
+			},
+			"additionalProperties": {
+				"$ref": "#/$defs/stream"
+			}
+		},
+		"subscriptions": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"properties": {
+					"id": {
+						"type": "string"
+					},
+					"source": {
+						"type": "string"
+					},
+					"event": {
+						"enum": [
+							"release",
+							"workflow_run",
+							"package.version.changed"
+						]
+					},
+					"stream": {
+						"type": "string"
+					},
+					"operation": {
+						"type": "string"
+					},
+					"workflow": {
+						"type": "string"
+					}
+				},
+				"required": [
+					"id",
+					"source",
+					"event",
+					"stream",
+					"operation"
+				]
+			}
+		}
+	},
+	"$defs": {
+		"workflow": {
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"file": {
+					"type": "string",
+					"pattern": "^[A-Za-z0-9_-]+\\.ya?ml$"
+				},
+				"ref": {
+					"type": "string"
+				},
+				"inputs": {
+					"type": "object",
+					"additionalProperties": {
+						"type": [
+							"string",
+							"boolean",
+							"number"
+						]
+					}
+				},
+				"required": {
+					"type": "boolean"
+				},
+				"needs": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"publications": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"schedule": {
+					"type": "string"
+				},
+				"mode": {
+					"enum": [
+						"observe",
+						"dispatch"
+					]
+				}
+			},
+			"required": [
+				"file"
+			]
+		},
+		"stream": {
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"versioning": {
+					"enum": [
+						"workspace",
+						"independent",
+						"none"
+					]
+				},
+				"prepare": {
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"version": {
+							"const": "manual"
+						},
+						"workflow": {
+							"$ref": "#/$defs/workflow"
+						},
+						"strategy": {
+							"enum": [
+								"managed",
+								"workflow"
+							]
+						}
+					}
+				},
+				"promote": {
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"approval": {
+							"const": "required"
+						},
+						"workflow": {
+							"$ref": "#/$defs/workflow"
+						}
+					}
+				},
+				"workflows": {
+					"type": "object",
+					"propertyNames": {
+						"pattern": "^[a-z][a-z0-9-]{0,63}$"
+					},
+					"additionalProperties": {
+						"$ref": "#/$defs/workflow"
+					}
+				},
+				"required": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"credentials": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"channels": {
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"stable": {
+							"type": "string"
+						},
+						"prerelease": {
+							"type": "string"
+						}
+					}
+				},
+				"concurrency": {
+					"enum": [
+						"queue",
+						"supersede-pending"
+					]
+				},
+				"packages": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				}
+			}
+		}
+	}
+}

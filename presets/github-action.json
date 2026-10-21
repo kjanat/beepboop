@@ -1,0 +1,13 @@
+{
+	"managers": [
+		"github-release",
+		"workflow"
+	],
+	"streams": {
+		"main": {
+			"promote": {
+				"approval": "required"
+			}
+		}
+	}
+}

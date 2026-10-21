@@ -1,9 +1,9 @@
-import { parseConfiguration } from '@/config.ts';
-import { dashboard } from '@/dashboard.ts';
-import { compareVersions, semver } from '@/model.ts';
-import { Router } from '@/router.ts';
 import { expect, test } from 'bun:test';
-import { configuration, FakeGitHub, MemoryJournal, route } from './fixtures.ts';
+import { parseConfiguration } from '#config';
+import { dashboard } from '#dashboard';
+import { compareVersions, semver } from '#model';
+import { Router } from '#router';
+import { configuration, FakeGitHub, MemoryJournal, route } from './fixtures';
 
 test('SemVer precedence includes numeric prereleases and ignores build metadata', () => {
 	const values = [

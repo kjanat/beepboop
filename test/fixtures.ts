@@ -1,4 +1,4 @@
-import type { Configuration, GitHubPort, Journal, Operation, Release, Route, Run } from '@/model.ts';
+import type { Configuration, GitHubPort, Journal, Operation, Release, Route, Run } from '#model';
 export const route: Route = {
 	id: 'scoop',
 	source: { id: 11, name: 'kjanat/source' },

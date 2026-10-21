@@ -6,14 +6,14 @@ import unittest
 from unittest.mock import patch
 
 from publish import (
-    GitHub,
     SOURCE,
     SOURCE_ID,
     TARGETS,
+    GitHub,
+    json_loads,
     manifest_version,
     publish,
     validate_package,
-    json_loads,
 )
 
 COMMIT = "a" * 40

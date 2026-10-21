@@ -11,10 +11,9 @@ import tempfile
 from pathlib import Path
 
 from publish import (
-    GitHub,
     SHA,
+    GitHub,
     integer,
-    json_loads,
     manifest_version,
     record,
     require,

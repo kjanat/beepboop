@@ -1,6 +1,6 @@
-import { parseConfiguration } from '@/config.ts';
-import { acceptsEvent, verifySignature } from '@/webhook.ts';
 import { expect, test } from 'bun:test';
+import { parseConfiguration } from '#config';
+import { acceptsEvent, verifySignature } from '#webhook';
 import { configuration } from './fixtures.ts';
 
 const body = new TextEncoder().encode('{"action":"published"}');

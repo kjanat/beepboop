@@ -1,22 +1,6 @@
-import {
-	array,
-	boolean,
-	compareVersions,
-	type GitHubPort,
-	integer,
-	isPrerelease,
-	type Operation,
-	type PublicationCheck,
-	record,
-	type Release,
-	type Repository,
-	type Route,
-	type Run,
-	semver,
-	sha,
-	text,
-} from '@/model.ts';
 import { importPKCS8, SignJWT } from 'jose';
+import type { GitHubPort, Operation, PublicationCheck, Release, Repository, Route, Run } from '#model';
+import { array, boolean, compareVersions, integer, isPrerelease, record, semver, sha, text } from '#model';
 
 export interface Credentials {
 	GITHUB_APP_ID: string;
@@ -230,7 +214,9 @@ export class GitHub implements GitHubPort {
 			const data = record(
 				await this.request(
 					`/repos/${repository.name}/actions/workflows/${
-						encodeURIComponent(workflow)
+						encodeURIComponent(
+							workflow,
+						)
 					}/runs?per_page=100&page=${page}&${filters}`,
 					token,
 				),
