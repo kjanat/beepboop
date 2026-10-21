@@ -16,10 +16,11 @@ A SQLite-backed Durable Object journals each source repository/release/route
 operation before dispatch. Alarms retry pending work; a ten-minute cron recovers
 missed webhooks. The service re-fetches the release, verifies its signed annotated tag, and records
 asset IDs, sizes and SHA-256 digests. Changed tags or assets fail the operation.
-Only stable semantic releases meeting a route's minimum version are eligible.
+By default only stable semantic releases meeting a route's minimum version are eligible;
+prerelease observation uses a separate explicit channel.
 
 Readiness requires selected successful jobs from the configured source workflow,
-release event, tag and commit. Overall workflow completion is deliberately not a
+configured event (release by default), tag and commit. Overall workflow completion is deliberately not a
 prerequisite: unrelated distribution jobs must not introduce circular waits.
 Optional PyPI readiness checks the exact published version. Required Docker
 publication must be included in the route's successful-job requirements.
@@ -121,7 +122,6 @@ API references: [workflow dispatch](https://docs.github.com/en/rest/actions/work
 [installation token scoping](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app),
 [Durable Object alarms](https://developers.cloudflare.com/durable-objects/api/alarms/).
 
-
 ## Downstream publication proof
 
 `actions/publish-manifest` verifies actionlint's signed annotated release tag,
@@ -141,3 +141,66 @@ CLI uses the receiver token to retrieve and verify public attestations.
 
 Release, workflow and job listing stop after 1,000 entries and fail closed if the
 bound is exceeded. API JSON bodies are limited to 2 MiB; webhook bodies to 1 MiB.
+
+## Actup release tracking and delivery
+
+The root page (`GET /`) shows each configured route, discovery health, the latest
+recorded publication checks, and links to source and destination runs. `/operations`
+continues to expose the journal as JSON, now including per-job and per-registry
+checks. A failed job is displayed as failed; an unavailable registry is unknown,
+not successful. Refresh the page to retrieve the latest recorded state.
+
+Routes may opt into these fields:
+
+- `enabled: false` suspends discovery and processing for that route.
+- `mode: "observe"` tracks publication without dispatching a destination workflow.
+- `channel: "prerelease"` selects prereleases exclusively. The default is stable
+  only; stable and prerelease routes have independent watermarks. SemVer comparison
+  includes prerelease precedence and ignores build metadata.
+- `readiness[].event: "push"` verifies tag-push runs. The default remains `release`.
+  Repository, workflow, commit, tag, event and required successful jobs must match.
+- `npm` names one package; `crates` lists required crates. Registry checks require
+  the exact release version, and crates must not be yanked. No GitHub token is sent
+  to a package registry. PyPI remains supported by the existing `pypi` field.
+
+Optional defaults are omitted when parsing legacy routes, preserving their stored
+route identities. Changing an existing route still requires a new route ID for
+pending work. An observation is complete once all its checks succeed; this is a
+publication snapshot, not continuous monitoring for later package withdrawal.
+
+Actup has four initially disabled routes: stable publication, prerelease
+publication, stable Scoop delivery, and stable Homebrew delivery. They require all
+nine crate publishing jobs, npm, and the container job, plus exact npm/crates.io
+versions. Alpha releases never enter the stable delivery routes.
+
+`actions/publish-actup` independently verifies the fixed Actup repository ID,
+signed annotated tag, exact source commit and successful tag-push publication
+jobs. It verifies `SHA256SUMS.txt` using GitHub attestations from Actup's release
+workflow on GitHub-hosted runners, then checks release archive digests against
+those attested checksums. Fixed local templates generate `bucket/actup.json` or
+`Formula/actup.rb`; no downloaded Ruby or package script is executed. Publication
+supports a missing initial manifest, rejects downgrades and changed bytes for an
+existing version, rechecks release/tag identity, and uses compare-and-swap updates.
+
+### Activation order
+
+1. Commit and publish the reviewed Beepboop implementation. Pin the new
+   `actup-release.yml` receiver workflows in `kjanat/scoop-bucket` and
+   `kjanat/homebrew-tap` to that exact implementation commit. Their local preparation
+   uses `@master` only until that commit exists. Publish the receiver workflows.
+2. Publish Actup's checksum attestation and `environment: npm` workflow changes.
+   Existing release prerequisites, including its tracked lockfile and version
+   agreement, must also be satisfied before creating a release.
+3. Install the existing app on `kjanat/actup`, retaining the selected destination
+   installations. The service continues to hold the private key centrally.
+4. Enable the observation routes and deploy the Worker. Publish an authorized,
+   signed Actup release through its normal release workflow.
+5. While production delivery routes remain disabled, run explicitly authorized
+   receiver dry runs (`dry_run: true`) with the production operation identity
+   `<Actup repository ID>:<release ID>:actup-scoop` or `:actup-homebrew`. After both
+   succeed, enable those routes, which have `dryRun: false`, and deploy. This avoids
+   consuming the production journal operation with a dry run.
+
+No app permissions, secrets, workflows, or deployments are changed by editing this
+repository. These are separate activation operations. Existing Actionlint routes
+continue to use their original contracts.

@@ -1,1 +1,14 @@
-{"$schema":"node_modules/wrangler/config-schema.json","name":"beepboop","account_id":"83a61abe8741defe835d035b1f4e49af","main":"src/index.ts","compatibility_date":"2026-10-20","workers_dev":false,"preview_urls":false,"routes":[{"pattern":"beepboop.kjanat.dev","custom_domain":true}],"observability":{"enabled":true,"logs":{"invocation_logs":false}},"triggers":{"crons":["*/10 * * * *"]},"durable_objects":{"bindings":[{"name":"COORDINATOR","class_name":"ReleaseCoordinator"}]},"migrations":[{"tag":"v1","new_sqlite_classes":["ReleaseCoordinator"]}]}
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "beepboop",
+	"account_id": "83a61abe8741defe835d035b1f4e49af",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-10-20",
+	"workers_dev": false,
+	"preview_urls": false,
+	"routes": [{ "pattern": "beepboop.kjanat.dev", "custom_domain": true }],
+	"observability": { "enabled": true, "logs": { "invocation_logs": false } },
+	"triggers": { "crons": ["*/10 * * * *"] },
+	"durable_objects": { "bindings": [{ "name": "COORDINATOR", "class_name": "ReleaseCoordinator" }] },
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["ReleaseCoordinator"] }]
+}

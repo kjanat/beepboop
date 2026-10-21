@@ -1,25 +1,25 @@
 {
-  "name": "beepboop",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "test": "bun test",
-    "typecheck": "tsc --noEmit",
-    "lint": "biome check . --error-on-warnings",
-    "format": "biome format --write .",
-    "types": "bun scripts/types.ts",
-    "check:bundle": "wrangler deploy --dry-run --outdir .dry-run",
-    "app:manifest": "bun scripts/app-manifest.ts",
-    "test:runtime": "node scripts/runtime-smoke.ts && node scripts/runtime-flow.ts"
-  },
-  "dependencies": {
-    "jose": "6.2.13"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "2.5.15",
-    "@types/bun": "1.4.3",
-    "miniflare": "5.20261019.0-beta",
-    "typescript": "7.0.2",
-    "wrangler": "4.151.2"
-  }
+	"name": "beepboop",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"app:manifest": "bun scripts/app-manifest.ts",
+		"check:bundle": "wrangler deploy --dry-run --outdir .dry-run",
+		"format": "biome format --write .",
+		"lint": "biome check . --error-on-warnings",
+		"test": "bun test",
+		"test:runtime": "node scripts/runtime-smoke.ts && node scripts/runtime-flow.ts",
+		"typecheck": "tsc --noEmit",
+		"types": "bun scripts/types.ts"
+	},
+	"dependencies": {
+		"jose": "6.2.13"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.5.15",
+		"@types/bun": "1.4.3",
+		"miniflare": "5.20261019.0-beta",
+		"typescript": "7.0.2",
+		"wrangler": "4.151.2"
+	}
 }

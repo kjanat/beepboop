@@ -5,7 +5,16 @@ import json
 import unittest
 from unittest.mock import patch
 
-from publish import GitHub, SOURCE, SOURCE_ID, TARGETS, manifest_version, publish, validate_package, json_loads
+from publish import (
+    GitHub,
+    SOURCE,
+    SOURCE_ID,
+    TARGETS,
+    manifest_version,
+    publish,
+    validate_package,
+    json_loads,
+)
 
 COMMIT = "a" * 40
 TAG_OBJECT = "b" * 40
@@ -18,38 +27,71 @@ DEST = f"/repos/{TARGET.repository}"
 
 class Fixture:
     def __init__(self):
-        self.package = json.dumps({"version": "2.0.0", "architecture": {"64bit": {
-            "url": "https://github.com/kjanat/actionlint/releases/download/v2.0.0/actionlint_2.0.0_windows_amd64.zip",
-            "bin": ["actionlint.exe"], "hash": "f" * 64,
-        }}}).encode()
+        self.package = json.dumps({
+            "version": "2.0.0",
+            "architecture": {
+                "64bit": {
+                    "url": "https://github.com/kjanat/actionlint/releases/download/v2.0.0/actionlint_2.0.0_windows_amd64.zip",
+                    "bin": ["actionlint.exe"],
+                    "hash": "f" * 64,
+                }
+            },
+        }).encode()
         self.current = b'{"version":"1.17.0"}\n'
         self.manifest = {
-            "schema_version": 1, "repository": SOURCE, "tag": "v2.0.0",
-            "version": "2.0.0", "candidate": COMMIT,
+            "schema_version": 1,
+            "repository": SOURCE,
+            "tag": "v2.0.0",
+            "version": "2.0.0",
+            "candidate": COMMIT,
             "workflow": ".github/workflows/release-prepare.yml",
-            "run_id": 10, "run_attempt": 1, "source": PREPARE,
-            "assets": [{
-                "name": TARGET.asset, "size": len(self.package),
-                "sha256": hashlib.sha256(self.package).hexdigest(),
-            }, {"name": "actionlint_2.0.0_windows_amd64.zip", "sha256": "f" * 64}],
+            "run_id": 10,
+            "run_attempt": 1,
+            "source": PREPARE,
+            "assets": [
+                {
+                    "name": TARGET.asset,
+                    "size": len(self.package),
+                    "sha256": hashlib.sha256(self.package).hexdigest(),
+                },
+                {"name": "actionlint_2.0.0_windows_amd64.zip", "sha256": "f" * 64},
+            ],
         }
         self.data = {
             ROOT: {"id": SOURCE_ID, "full_name": SOURCE},
-            DEST: {"id": TARGET.repository_id, "full_name": TARGET.repository, "default_branch": "master"},
-            f"{ROOT}/releases/20": {
-                "id": 20, "draft": False, "prerelease": False,
-                "published_at": "2026-10-20T00:00:00Z", "tag_name": "v2.0.0",
-                "assets": [{"id": 30, "name": "release-candidate.json"}, {"id": 31, "name": TARGET.asset}],
+            DEST: {
+                "id": TARGET.repository_id,
+                "full_name": TARGET.repository,
+                "default_branch": "master",
             },
-            f"{ROOT}/git/ref/tags/v2.0.0": {"object": {"type": "tag", "sha": TAG_OBJECT}},
+            f"{ROOT}/releases/20": {
+                "id": 20,
+                "draft": False,
+                "prerelease": False,
+                "published_at": "2026-10-20T00:00:00Z",
+                "tag_name": "v2.0.0",
+                "assets": [
+                    {"id": 30, "name": "release-candidate.json"},
+                    {"id": 31, "name": TARGET.asset},
+                ],
+            },
+            f"{ROOT}/git/ref/tags/v2.0.0": {
+                "object": {"type": "tag", "sha": TAG_OBJECT}
+            },
             f"{ROOT}/git/tags/{TAG_OBJECT}": {
-                "tag": "v2.0.0", "verification": {"verified": True},
+                "tag": "v2.0.0",
+                "verification": {"verified": True},
                 "object": {"type": "commit", "sha": COMMIT},
             },
             f"{ROOT}/actions/runs/10/attempts/1": {
-                "id": 10, "run_attempt": 1, "event": "workflow_dispatch",
-                "path": ".github/workflows/release-prepare.yml", "head_branch": "master",
-                "head_sha": PREPARE, "status": "completed", "conclusion": "success",
+                "id": 10,
+                "run_attempt": 1,
+                "event": "workflow_dispatch",
+                "path": ".github/workflows/release-prepare.yml",
+                "head_branch": "master",
+                "head_sha": PREPARE,
+                "status": "completed",
+                "conclusion": "success",
                 "repository": {"id": SOURCE_ID},
             },
         }
@@ -73,9 +115,13 @@ class Fixture:
             self.current = base64.b64decode(body["content"])
             return {"commit": {"sha": PUBLISHED}}
         if path.startswith(f"{DEST}/contents/"):
-            content = b"corrupt" if self.corrupt_confirmation and self.puts else self.current
+            content = (
+                b"corrupt" if self.corrupt_confirmation and self.puts else self.current
+            )
             return {
-                "type": "file", "encoding": "base64", "sha": "e" * 40,
+                "type": "file",
+                "encoding": "base64",
+                "sha": "e" * 40,
                 "content": base64.b64encode(content).decode(),
             }
         return copy.deepcopy(self.data[path])
@@ -126,9 +172,17 @@ class PublicationTests(unittest.TestCase):
 
     def test_rejects_unsigned_retargeted_or_lightweight_tags(self):
         mutations = [
-            (f"{ROOT}/git/ref/tags/v2.0.0", "object", {"type": "commit", "sha": COMMIT}),
+            (
+                f"{ROOT}/git/ref/tags/v2.0.0",
+                "object",
+                {"type": "commit", "sha": COMMIT},
+            ),
             (f"{ROOT}/git/tags/{TAG_OBJECT}", "verification", {"verified": False}),
-            (f"{ROOT}/git/tags/{TAG_OBJECT}", "object", {"type": "commit", "sha": PREPARE}),
+            (
+                f"{ROOT}/git/tags/{TAG_OBJECT}",
+                "object",
+                {"type": "commit", "sha": PREPARE},
+            ),
         ]
         for path, key, value in mutations:
             with self.subTest(key=key, value=value):
@@ -173,7 +227,10 @@ class PublicationTests(unittest.TestCase):
 
     def test_rejects_duplicate_release_assets(self):
         fixture = Fixture()
-        fixture.data[f"{ROOT}/releases/20"]["assets"].append({"id": 32, "name": TARGET.asset})
+        fixture.data[f"{ROOT}/releases/20"]["assets"].append({
+            "id": 32,
+            "name": TARGET.asset,
+        })
         with self.assertRaisesRegex(ValueError, "exactly one"):
             fixture.publish()
         self.assertFalse(fixture.puts)
@@ -192,14 +249,19 @@ class PublicationTests(unittest.TestCase):
             fixture.publish()
 
     def test_brew_parser_rejects_ambiguous_versions(self):
-        self.assertEqual(manifest_version(b'cask "actionlint" do\n version "2.0.0"\nend\n', "brew"), "2.0.0")
+        self.assertEqual(
+            manifest_version(b'cask "actionlint" do\n version "2.0.0"\nend\n', "brew"),
+            "2.0.0",
+        )
         with self.assertRaises(ValueError):
             manifest_version(b'version "2.0.0"\nversion "2.1.0"\n', "brew")
 
     def test_attestation_cli_enforces_signer_digest_ref_and_runner(self):
         with patch("publish.subprocess.run") as run:
             run.return_value.returncode = 0
-            GitHub("test", TARGET.repository).verify_candidate(b"manifest", COMMIT, "v2.0.0")
+            GitHub("test", TARGET.repository).verify_candidate(
+                b"manifest", COMMIT, "v2.0.0"
+            )
             args = run.call_args.args[0]
             self.assertEqual(args[args.index("--source-digest") + 1], COMMIT)
             self.assertEqual(args[args.index("--source-ref") + 1], "refs/tags/v2.0.0")
@@ -220,13 +282,21 @@ class PackageValidationTests(unittest.TestCase):
 
     def test_scoop_url_hash_and_executable_match_prepared_archives(self):
         fixture = Fixture()
-        for key, value in (("url", "https://attacker.invalid/package.zip"),
-                           ("hash", "0" * 64), ("bin", ["other.exe"])):
+        for key, value in (
+            ("url", "https://attacker.invalid/package.zip"),
+            ("hash", "0" * 64),
+            ("bin", ["other.exe"]),
+        ):
             with self.subTest(key=key):
                 package = json.loads(fixture.package)
                 package["architecture"]["64bit"][key] = value
                 with self.assertRaises(ValueError):
-                    validate_package(json.dumps(package).encode(), TARGET, "2.0.0", fixture.manifest["assets"])
+                    validate_package(
+                        json.dumps(package).encode(),
+                        TARGET,
+                        "2.0.0",
+                        fixture.manifest["assets"],
+                    )
 
     def test_ruby_parser_checks_without_executing_manifest(self):
         target = TARGETS["kjanat/homebrew-tap"]
@@ -238,12 +308,16 @@ class PackageValidationTests(unittest.TestCase):
         for kind in ("tag", "asset"):
             with self.subTest(kind=kind):
                 fixture = Fixture()
+
                 def mutate(_content, _sha, _tag):
                     fixture.proof_calls.append(True)
                     if kind == "tag":
-                        fixture.data[f"{ROOT}/git/ref/tags/v2.0.0"]["object"]["sha"] = "9" * 40
+                        fixture.data[f"{ROOT}/git/ref/tags/v2.0.0"]["object"]["sha"] = (
+                            "9" * 40
+                        )
                     else:
                         fixture.data[f"{ROOT}/releases/20"]["assets"][1]["id"] = 99
+
                 fixture.verify_candidate = mutate
                 with self.assertRaisesRegex(ValueError, "changed during verification"):
                     fixture.publish()
