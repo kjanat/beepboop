@@ -7,14 +7,14 @@ repository includes the configuration for `beepboop.kjanat.dev` and the
 ## Configure Cloudflare and login
 
 1. Install dependencies with `bun install --frozen-lockfile`.
-2. Create a D1 database and enter its ID in `wrangler.automation.jsonc`.
+2. Create a D1 database and enter its ID in `wrangler.jsonc`.
 3. Set the account, domain, owner ID, OpenAuth issuer/client, and exact
    `ADMIN_SUBJECT` for your deployment.
 4. Register the OpenAuth callback URL: `<APPLICATION_ORIGIN>/auth/callback`.
 5. Apply the database migration:
 
    ```sh
-   bunx wrangler d1 migrations apply beepboop --remote --config wrangler.automation.jsonc
+   bunx wrangler d1 migrations apply beepboop --remote --config wrangler.jsonc
    ```
 
 ## Configure the GitHub App
@@ -28,7 +28,7 @@ Environments write permissions, according to the grant's delivery type.
 
 ## Add Worker secrets
 
-Set these with `wrangler secret put NAME --config wrangler.automation.jsonc`:
+Set these with `wrangler secret put NAME --config wrangler.jsonc`:
 
 | Secret                          | Value                                                         |
 | ------------------------------- | ------------------------------------------------------------- |
@@ -46,9 +46,9 @@ ciphertexts require their corresponding keys until migrated or deleted.
 ```sh
 bun run typecheck
 bun test
-bun run check:automation-bundle
-bun run test:automation-runtime
-bunx wrangler deploy --config wrangler.automation.jsonc
+bun run check:bundle
+bun run test:runtime
+bunx wrangler deploy --config wrangler.jsonc
 ```
 
 Sign in to the dashboard. Enroll the first physical security key with the
@@ -71,5 +71,3 @@ for this destination. Send its `package.version.changed` payload with an
 
 Repository [subscriptions](automation.md#subscriptions) select which package
 events start operations.
-
-For an existing route-based deployment, follow the [migration guide](migration.md).

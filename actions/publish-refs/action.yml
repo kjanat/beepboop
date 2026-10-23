@@ -1,0 +1,26 @@
+name: Publish release refs
+description: Publish the execution's authorized version tag or major/minor aliases
+inputs:
+  token:
+    description: Destination repository token with contents write permission
+    required: true
+  service:
+    description: Beepboop service origin
+    default: https://beepboop.kjanat.dev
+runs:
+  using: composite
+  steps:
+    - id: plan
+      shell: bash
+      env:
+        SERVICE_ORIGIN: ${{ inputs.service }}
+      run: node "${{ github.action_path }}/../runtime/client.mjs" refs-plan
+    - shell: bash
+      env:
+        REF_PLAN: ${{ steps.plan.outputs.result }}
+        REF_TOKEN: ${{ inputs.token }}
+      run: node "${{ github.action_path }}/../runtime/refs.mjs"
+    - shell: bash
+      env:
+        SERVICE_ORIGIN: ${{ inputs.service }}
+      run: node "${{ github.action_path }}/../runtime/client.mjs" refs-complete

@@ -1,7 +1,9 @@
 import { parse as parseToml } from 'smol-toml';
 import { parseDocument } from 'yaml';
-import { record, semver } from '#model';
+import { record } from '#model';
+import { discoverHooks } from './precommit.ts';
 import type { Inventory, ManagerName, Package, Publication, ReleasePlan, Snapshot } from './types.ts';
+import { nextVersion, parseVersionRequest } from './version.ts';
 
 function object(value: unknown): Record<string, unknown> {
 	return value !== null && typeof value === 'object' && !Array.isArray(value) ? record(value) : {};
@@ -54,6 +56,7 @@ export function publicationOrder(packages: Package[]): string[] {
 export function discover(
 	snapshot: Snapshot,
 	enabled: ManagerName[] = [
+		'pre-commit',
 		'cargo',
 		'npm',
 		'github-release',
@@ -262,6 +265,14 @@ export function discover(
 		inventory.diagnostics.push(String(error));
 	}
 	inventory.managers = [...detected].filter((m) => enabled.includes(m)).sort();
+	if (enabled.includes('pre-commit')) {
+		try {
+			inventory.references = discoverHooks(snapshot);
+			if (inventory.references.length) inventory.managers.push('pre-commit');
+		} catch (error) {
+			inventory.diagnostics.push(error instanceof Error ? error.message : 'Invalid hook configuration');
+		}
+	}
 	return inventory;
 }
 
@@ -269,14 +280,20 @@ export function discover(
 export function planRelease(
 	snapshot: Snapshot,
 	inventory: Inventory,
-	target: string,
+	target: unknown,
 	selected?: string[],
 ): ReleasePlan {
-	const version = semver(target).replace(/^v/, '');
+	const request = parseVersionRequest(target);
 	const packages = inventory.packages.filter(
 		(p) => p.publish && (!selected || selected.includes(`${p.manager}:${p.name}`)),
 	);
 	if (!packages.length) throw new Error('No selected publishable packages');
+	const current = [...new Set(packages.map(p => p.version))];
+	if (!('version' in request) && current.length !== 1) {
+		throw new Error('Select a synchronized version group or supply an explicit version');
+	}
+	const version = nextVersion(current[0] as string, request);
+	for (const previous of current) nextVersion(previous, { version });
 	const diagnostics: string[] = [],
 		changed = new Map<string, string>();
 	const sources = new Set(packages.map((p) => p.versionSource));

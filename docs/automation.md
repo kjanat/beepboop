@@ -247,3 +247,42 @@ For scheduled work, add a five-field UTC cron expression to a workflow binding:
 
 Scheduling starts at enrollment. Reconciliation processes up to 100 missed ticks
 per pass and saves its position for the next pass.
+
+## Version selection and release refs
+
+The preparation API accepts `version` as a string or a request object:
+`{"bump":"patch"}`, `{"bump":"minor"}`, `{"bump":"major"}`,
+`{"bump":"prerelease","base":"minor","identifier":"alpha"}`,
+`{"bump":"next"}`, or `{"bump":"stable"}`. The dashboard exposes the same
+choices. Increment requests require a synchronized selection. Select independent
+version groups separately. A stream can derive its current version from tags
+with `"versionSource":{"kind":"tags","prefix":"v"}`; the first release needs
+an explicit version.
+
+A workflow binding can declare `refs` with `phase: "version"` or `"aliases"`,
+`prefix` (default `v`), `aliases: ["major", "minor"]`, and `signed` (default false).
+Ref operations require promotion approval, either as the promotion operation or
+through its dependencies. Use `actions/publish-refs` after `begin`, passing the
+repository token as `token`. Signed version tags require a configured Git signer.
+Alias operations should depend on the publication operations they distribute.
+
+The Action publishes an authorized plan with atomic Git pushes and explicit
+expected old object IDs. Version tags target one commit; stable aliases exclude
+prereleases and reject downgrades. The service checks the resulting refs before
+completing the operation. `refs:` report IDs are reserved for this verification.
+
+## Downstream release context
+
+Release subscriptions provide `context.upstreamRelease`, including repository
+ID/name, source commit, version, optional tag/GitHub release ID, publications,
+and artifacts. `context.sourceSha` identifies the destination checkout.
+Release events and subscription deliveries are persisted independently of the
+dashboard's execution-history limit.
+
+Enable the `pre-commit` manager to discover remote hook references. The
+`POST /api/releases/update-references` endpoint accepts `repositoryId`,
+`releaseEventId`, and `preview` (default true). Preview returns edits; false opens
+a PR. Updates use a verified release event, preserve SHA pins and YAML comments,
+and skip `local` and `meta` hooks.
+
+For Windows package files, use the [WinGet generation Action](winget.md).

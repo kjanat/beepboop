@@ -6,7 +6,33 @@
 	"streams": {
 		"main": {
 			"promote": {
-				"approval": "required"
+				"approval": "required",
+				"workflow": {
+					"file": "release.yml",
+					"refs": {
+						"phase": "version",
+						"signed": true
+					}
+				}
+			},
+			"versionSource": {
+				"kind": "tags",
+				"prefix": "v"
+			},
+			"workflows": {
+				"aliases": {
+					"file": "aliases.yml",
+					"needs": [
+						"promote"
+					],
+					"refs": {
+						"phase": "aliases",
+						"aliases": [
+							"major",
+							"minor"
+						]
+					}
+				}
 			}
 		}
 	}

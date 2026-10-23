@@ -1,0 +1,43 @@
+{
+	"defaultLocale": "en-US",
+	"installer": {
+		"InstallerType": "zip",
+		"NestedInstallerType": "portable",
+		"NestedInstallerFiles": [{ "RelativeFilePath": "tool.exe", "PortableCommandAlias": "tool" }],
+		"Platform": ["Windows.Desktop"],
+		"MinimumOSVersion": "10.0.0.0",
+		"Scope": "user",
+		"Commands": ["tool"],
+		"InstallationMetadata": {
+			"Files": [
+				{
+					"RelativeFilePath": "tool.exe",
+					"FileType": "launch",
+					"InvocationParameter": "--version",
+					"DisplayName": "Example Tool"
+				}
+			]
+		}
+	},
+	"installers": [
+		{
+			"architecture": "x64",
+			"asset": "tool_{version}_windows_amd64.zip",
+			"url": "https://github.com/example/tool/releases/download/{tag}/{asset}"
+		},
+		{
+			"architecture": "arm64",
+			"asset": "tool_{version}_windows_arm64.zip",
+			"url": "https://github.com/example/tool/releases/download/{tag}/{asset}"
+		}
+	],
+	"metadata": {
+		"Publisher": "Example",
+		"PackageName": "Example Tool",
+		"License": "MIT",
+		"ShortDescription": "An example command-line tool",
+		"PackageUrl": "https://github.com/example/tool"
+	},
+	"packageIdentifier": "Example.Tool",
+	"releaseNotesUrl": "https://github.com/example/tool/releases/tag/{tag}"
+}

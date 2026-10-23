@@ -1,6 +1,6 @@
 import { importPKCS8, SignJWT } from 'jose';
-import type { Credentials } from '#github';
 import { array, integer, record, sha, text } from '#model';
+import type { RefState } from './refs.ts';
 import type { Edit, Snapshot } from './types.ts';
 
 type Permission = Record<string, 'read' | 'write'>;
@@ -64,6 +64,20 @@ export class RepositoryGateway {
 		}
 		return token;
 	}
+	async tagRefs(name: string, id: number): Promise<RefState[]> {
+		const token = await this.token(name, id, { contents: 'read' });
+		const result: RefState[] = [];
+		for (let page = 1; page <= 100; page++) {
+			const rows = array(await this.call(`/repos/${name}/tags?per_page=100&page=${page}`, token)).map(record);
+			for (const row of rows) {
+				const tag = text(row.name);
+				const reference = record(await this.call(`/repos/${name}/git/ref/tags/${encodeURIComponent(tag)}`, token));
+				result.push({ name: tag, oid: sha(record(reference.object).sha), commit: sha(record(row.commit).sha) });
+			}
+			if (rows.length < 100) return result;
+		}
+		throw new Error('Tag discovery limit exceeded');
+	}
 	async identify(name: string): Promise<number> {
 		const token = await this.token(name, undefined);
 		return integer(record(await this.call(`/repos/${name}`, token)).id);
@@ -110,7 +124,7 @@ export class RepositoryGateway {
 			.filter(
 				(path) =>
 					!/(?:^|\/)(?:node_modules|vendor|target|testdata|fixtures|\.git)\//.test(path)
-					&& /(?:^|\/)(?:targets.json|Cargo.toml|Cargo.lock|package.json|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock|\.?goreleaser[^/]*\.ya?ml)$|^\.github\/(?:beepboop.json|workflows\/[^/]+\.ya?ml)$/
+					&& /(?:^|\/)(?:\.pre-commit-config\.ya?ml|targets.json|Cargo.toml|Cargo.lock|package.json|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock|\.?goreleaser[^/]*\.ya?ml)$|^\.github\/(?:beepboop.json|workflows\/[^/]+\.ya?ml)$/
 						.test(
 							path,
 						),
@@ -285,4 +299,9 @@ export class RepositoryGateway {
 		}
 		return { url: text(pull.html_url), head };
 	}
+}
+
+export interface Credentials {
+	GITHUB_APP_ID: string;
+	GITHUB_APP_PRIVATE_KEY: string;
 }

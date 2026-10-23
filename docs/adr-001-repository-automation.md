@@ -44,5 +44,4 @@ The dashboard uses server-rendered HTML and a small browser client. Physical-key
 registration uses the browser's WebAuthn APIs. Generic Actions connect repository
 workflows to the service.
 
-Deployment instructions are in [deployment.md](deployment.md); the transition
-from the route-based publisher is in [migration.md](migration.md).
+Deployment instructions are in [deployment.md](deployment.md).

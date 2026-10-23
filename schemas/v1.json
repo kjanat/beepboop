@@ -24,7 +24,8 @@
 					"oci",
 					"goreleaser",
 					"manifest",
-					"workflow"
+					"workflow",
+					"pre-commit"
 				]
 			}
 		},
@@ -121,6 +122,38 @@
 						"observe",
 						"dispatch"
 					]
+				},
+				"refs": {
+					"type": "object",
+					"additionalProperties": false,
+					"required": [
+						"phase"
+					],
+					"properties": {
+						"phase": {
+							"enum": [
+								"version",
+								"aliases"
+							]
+						},
+						"prefix": {
+							"type": "string",
+							"pattern": "^[A-Za-z0-9._-]*$"
+						},
+						"aliases": {
+							"type": "array",
+							"uniqueItems": true,
+							"items": {
+								"enum": [
+									"major",
+									"minor"
+								]
+							}
+						},
+						"signed": {
+							"type": "boolean"
+						}
+					}
 				}
 			},
 			"required": [
@@ -211,6 +244,23 @@
 					"type": "array",
 					"items": {
 						"type": "string"
+					}
+				},
+				"versionSource": {
+					"type": "object",
+					"additionalProperties": false,
+					"required": [
+						"kind",
+						"prefix"
+					],
+					"properties": {
+						"kind": {
+							"const": "tags"
+						},
+						"prefix": {
+							"type": "string",
+							"pattern": "^[A-Za-z0-9._-]*$"
+						}
 					}
 				}
 			}

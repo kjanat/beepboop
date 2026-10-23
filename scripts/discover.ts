@@ -10,7 +10,7 @@ function command(args: string[]): string {
 }
 const selected = (path: string) =>
 	!/(?:^|\/)(?:node_modules|vendor|target|testdata|fixtures|\.build)\//.test(path)
-	&& /(?:^|\/)(?:targets.json|Cargo.toml|Cargo.lock|package.json|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock|\.?goreleaser[^/]*\.ya?ml)$|^\.github\/(?:beepboop.json|workflows\/[^/]+\.ya?ml)$/
+	&& /(?:^|\/)(?:\.pre-commit-config\.ya?ml|targets.json|Cargo.toml|Cargo.lock|package.json|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock|\.?goreleaser[^/]*\.ya?ml)$|^\.github\/(?:beepboop.json|workflows\/[^/]+\.ya?ml)$/
 		.test(
 			path,
 		);

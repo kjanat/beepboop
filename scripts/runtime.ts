@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Miniflare } from 'miniflare';
+import { Miniflare, Response as RuntimeResponse } from 'miniflare';
 
 const directory = await mkdtemp(join(tmpdir(), 'release-automation-'));
 const bundle = await readFile('.dry-run/index.js', 'utf8');
-const migration = await readFile('migrations/0001_automation.sql', 'utf8');
+const migration = (await Promise.all(
+	(await readdir('migrations')).filter(name => name.endsWith('.sql')).sort().map(name =>
+		readFile(`migrations/${name}`, 'utf8')
+	),
+)).join('\n');
 const fixture = {
 	id: 'fixture-execution',
 	repositoryId: 91,
@@ -62,14 +66,14 @@ function runtime() {
 								type: 'esm',
 								contents: `
 import worker,{AutomationCoordinator} from './index.js';
-export class Probe extends AutomationCoordinator {async fetch(request){const path=new URL(request.url).pathname;if(path==='/enqueue')return Response.json(await this.enqueue(await request.json()));return Response.json(await this.ctx.storage.get('execution:fixture-execution'));}}
+export class Probe extends AutomationCoordinator {async fetch(request){const path=new URL(request.url).pathname;if(path==='/enqueue')return Response.json(await this.enqueue(await request.json()));if(path==='/events')return Response.json(await this.releaseEvents());return Response.json(await this.ctx.storage.get('execution:fixture-execution'));}}
 export default {async fetch(request,env){const path=new URL(request.url).pathname;if(path==='/init'){for(const sql of ${
 									JSON.stringify(
 										migration,
 									)
 								}.split(';').filter(s=>s.trim()))await env.DB.prepare(sql).run();return new Response('ready')}
 if(path==='/index')return Response.json(await env.DB.prepare('SELECT document FROM executions').all());
-if(path==='/enqueue'||path==='/journal')return env.AUTOMATION.getByName('91').fetch(request);
+if(path==='/enqueue'||path==='/journal'||path==='/events')return env.AUTOMATION.getByName('91').fetch(request);
 return worker.fetch(request,env)}};
 `,
 							},
@@ -79,7 +83,6 @@ return worker.fetch(request,env)}};
 					env: {
 						AUTOMATION: { type: 'durable-object', worker: 'automation-test', exportName: 'Probe' },
 						DB: { type: 'd1', name: 'automation-test', id: '00000000-0000-0000-0000-000000000001' },
-						AUTOMATION_ENABLED: { type: 'text', value: 'true' },
 						OWNER_ID: { type: 'text', value: '1' },
 						APPLICATION_ORIGIN: { type: 'text', value: 'https://automation.test' },
 						OPENAUTH_ISSUER: { type: 'text', value: 'https://auth.test' },
@@ -93,7 +96,7 @@ return worker.fetch(request,env)}};
 						type: 'fetcher',
 						handler: () => {
 							outbound++;
-							return new Response('Network disabled', { status: 503 });
+							return new RuntimeResponse('Network disabled', { status: 503 });
 						},
 					},
 				},
@@ -143,14 +146,47 @@ try {
 	});
 	assert.equal(ignored.status, 204);
 	assert.equal(outbound, 0);
+	const released = {
+		...fixture,
+		id: 'completed-release',
+		operation: 'publish',
+		state: 'succeeded',
+		version: '1.2.3',
+		publications: [{
+			id: 'npm:fixture',
+			manager: 'npm',
+			name: 'fixture',
+			version: '1.2.3',
+			outcome: 'succeeded',
+			required: true,
+		}],
+		configuration: {
+			...fixture.configuration,
+			streams: { main: { ...fixture.configuration.streams.main, required: ['npm:fixture'] } },
+		},
+	};
+	const completed = await instance.dispatchFetch('https://automation.test/enqueue', {
+		method: 'POST',
+		body: JSON.stringify(released),
+	});
+	assert.equal(completed.status, 200);
+	const events = await (await instance.dispatchFetch('https://automation.test/events')).json() as {
+		release: { commit: string; repository: { id: number }; version: string };
+	}[];
+	assert.equal(events.length, 1);
+	assert.equal(events[0]?.release.commit, fixture.sourceSha);
+	assert.equal(events[0]?.release.repository.id, fixture.repositoryId);
+	assert.equal(events[0]?.release.version, '1.2.3');
 	await instance.dispose();
 	instance = runtime();
 	const journal = await instance.dispatchFetch('https://automation.test/journal');
 	assert.equal(((await journal.json()) as typeof fixture).sourceSha, fixture.sourceSha);
 	const index = await instance.dispatchFetch('https://automation.test/index');
 	const indexed = (await index.json()) as { results: { document: string }[] };
-	assert.equal(indexed.results.length, 1);
-	assert.equal(JSON.parse(indexed.results[0]?.document ?? '{}').state, 'blocked');
+	assert.equal(indexed.results.length, 2);
+	assert.ok(indexed.results.some(row => JSON.parse(row.document).state === 'blocked'));
+	const durableEvents = await (await instance.dispatchFetch('https://automation.test/events')).json() as unknown[];
+	assert.equal(durableEvents.length, 1);
 	console.log(
 		'Automation Worker: authentication gates, unrelated event filtering, immutable enqueue, D1 indexing and Durable Object restart passed',
 	);

@@ -6,7 +6,7 @@ import { type AutomationBindings, AutomationService } from './service.ts';
 /** Exposed only as a named service-binding entrypoint, never by the public router. */
 export class VermonEvents extends WorkerEntrypoint<AutomationBindings> {
 	async fetch(request: Request): Promise<Response> {
-		if (request.method !== 'POST' || this.env.AUTOMATION_ENABLED !== 'true') {
+		if (request.method !== 'POST') {
 			return new Response(null, { status: 404 });
 		}
 		const data = record(JSON.parse(new TextDecoder().decode(await readBody(request))));

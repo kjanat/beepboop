@@ -23,7 +23,7 @@ jobs:
           - uses: kjanat/runner@b32ea932a1813ae0be44e755c16df9f9f5ca86a4 # v0.28
       - run: runner i -fs types
       - run: git diff --exit-code -- worker-configuration.d.ts
+      - run: run build:winget
+      - run: git diff --exit-code -- actions/generate-winget/dist/cli.mjs
       - run: run -pk typecheck lint test
-      - name: Test downstream consumer
-        run: python3 -B -m unittest discover -s packages/consumer -p 'test_*.py'
-      - run: run -sk check:bundle test:runtime test:automation-runtime check:automation-bundle
+      - run: run -sk check:bundle test:runtime

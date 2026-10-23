@@ -1,15 +1,15 @@
 import { DurableObject } from 'cloudflare:workers';
-import type { Credentials } from '#github';
 import { array, integer, record, sha } from '#model';
 import type { WorkflowIdentity } from './auth.ts';
 import { completion, createExecution, mergePublications } from './execution.ts';
-import { RepositoryGateway } from './github.ts';
+import { type Credentials, RepositoryGateway } from './github.ts';
 import { discover, verifyPublication } from './managers.ts';
 import { verifyManifest } from './manifest.ts';
 import { verifyImage } from './oci.ts';
 import { matchesRef } from './policy.ts';
+import { planRefs, type RefPlan } from './refs.ts';
 import { Store } from './store.ts';
-import type { Artifact, Execution, Publication } from './types.ts';
+import type { Artifact, AutomationEvent, Execution, Publication, ReleaseReference } from './types.ts';
 
 export interface CoordinatorBindings extends Credentials {
 	DB: D1Database;
@@ -34,6 +34,51 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		await this.ctx.storage.put(`execution:${execution.id}`, execution);
 		await this.ctx.storage.setAlarm(Date.now() + 15000);
 		await this.store().putExecution(execution);
+		if (execution.state === 'succeeded') await this.captureReleaseEvent(execution);
+	}
+	private async captureReleaseEvent(execution: Execution): Promise<void> {
+		if (!execution.version) return;
+		const required = execution.configuration.streams[execution.stream]?.required ?? [];
+		if (!required.length) return;
+		const id =
+			`release:${execution.repositoryId}:${execution.stream}:${execution.configurationSha}:${execution.sourceSha}:${execution.version}`;
+		if (await this.ctx.storage.get(`release-emitted:${id}`)) return;
+		const group = [...(await this.ctx.storage.list<Execution>({ prefix: 'execution:' })).values()]
+			.filter(e =>
+				e.state === 'succeeded' && e.stream === execution.stream && e.version === execution.version
+				&& e.sourceSha === execution.sourceSha && e.configurationSha === execution.configurationSha
+			);
+		if (!required.every(key => group.some(e => e.publications.some(p => p.id === key && p.outcome === 'succeeded')))) {
+			return;
+		}
+		const references = group.flatMap(e => e.release ? [e.release] : []);
+		if (references.some(r => r.tag !== references[0]?.tag || r.releaseId !== references[0]?.releaseId)) {
+			throw new Error('Conflicting release identities');
+		}
+		const release: ReleaseReference = {
+			id,
+			repository: { id: execution.repositoryId, name: execution.repository },
+			stream: execution.stream,
+			commit: execution.sourceSha,
+			version: execution.version,
+			...(references[0]?.tag ? { tag: references[0].tag, releaseId: references[0].releaseId } : {}),
+			publications: mergePublications([], group.flatMap(e => e.publications)),
+			artifacts: [...new Map(group.flatMap(e => e.artifacts).map(a => [a.id, a])).values()],
+		};
+		const event: AutomationEvent = {
+			id,
+			source: execution.repository,
+			event: 'release',
+			version: execution.version,
+			release,
+		};
+		await this.ctx.storage.put({ [`release-event:${id}`]: event, [`release-emitted:${id}`]: true });
+	}
+	async releaseEvents(): Promise<AutomationEvent[]> {
+		return [...(await this.ctx.storage.list<AutomationEvent>({ prefix: 'release-event:', limit: 100 })).values()];
+	}
+	async acknowledgeReleaseEvent(id: string): Promise<void> {
+		await this.ctx.storage.delete(`release-event:${id}`);
 	}
 	async enqueue(execution: Execution): Promise<Execution> {
 		return this.serial(async () => {
@@ -113,6 +158,67 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return next;
 		});
 	}
+	async refs(id: string, identity: WorkflowIdentity, complete = false): Promise<RefPlan> {
+		return this.serial(async () => {
+			const execution = await this.get(id);
+			if (
+				execution.state !== 'running' || execution.repositoryId !== identity.repositoryId
+				|| execution.repository !== identity.repository || execution.runId !== identity.runId
+				|| execution.runAttempt !== identity.attempt || execution.workflowSha !== identity.workflowSha
+			) throw new Error('Ref operation identity mismatch');
+			if (!execution.workflow.refs || !execution.version) throw new Error('No configured ref operation');
+			if (execution.operation !== 'promote') {
+				const visited = new Set<string>();
+				const approved = async (current: Execution): Promise<boolean> => {
+					if (visited.has(current.id)) return false;
+					visited.add(current.id);
+					if (current.state !== 'succeeded' || current.sourceSha !== execution.sourceSha) return false;
+					if (current.operation === 'promote') return true;
+					for (const dependency of current.dependencies) if (await approved(await this.get(dependency))) return true;
+					return false;
+				};
+				let found = false;
+				for (const dependency of execution.dependencies) if (await approved(await this.get(dependency))) found = true;
+				if (!found) throw new Error('Ref operation requires completed promotion');
+			}
+			const gateway = this.gateway();
+			const refs = await gateway.tagRefs(execution.repository, execution.repositoryId);
+			if (!execution.refPlan) {
+				if (complete) throw new Error('Ref plan has not been authorized');
+				execution.refPlan = {
+					repository: execution.repository,
+					executionId: id,
+					version: execution.version,
+					changes: planRefs(execution.workflow.refs, execution.version, execution.sourceSha, refs),
+				};
+				await this.put(execution);
+			}
+			if (complete) {
+				for (const change of execution.refPlan.changes) {
+					const actual = refs.find(ref => ref.name === change.name);
+					if (actual?.commit !== change.commit) throw new Error('Published ref does not match the plan');
+					if (change.annotated) {
+						const token = await gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
+						const tag = record(await gateway.call(`/repos/${execution.repository}/git/tags/${actual.oid}`, token));
+						if (
+							record(tag.object).sha !== change.commit || tag.tag !== change.name
+							|| (change.signed && record(tag.verification).verified !== true)
+						) throw new Error('Version tag verification failed');
+					}
+				}
+				execution.publications = mergePublications(execution.publications, [{
+					id: `refs:${execution.operation}`,
+					manager: 'workflow',
+					name: execution.repository,
+					version: execution.version,
+					outcome: 'succeeded',
+					required: true,
+				}]);
+				await this.put(execution);
+			}
+			return execution.refPlan;
+		});
+	}
 	async report(
 		id: string,
 		identity: WorkflowIdentity,
@@ -152,6 +258,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			const verified: Publication[] = [];
 			for (const publication of publications) {
+				if (publication.id.startsWith('refs:')) {
+					throw new Error('Ref results are verified by the ref completion endpoint');
+				}
 				if (['cargo', 'npm'].includes(publication.manager) && publication.outcome === 'succeeded') {
 					verified.push(await verifyPublication(publication));
 				} else if (publication.manager === 'manifest' && publication.outcome === 'succeeded') {
@@ -194,6 +303,24 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						&& release.tag_name === publication.version
 						&& target.type === 'commit'
 						&& target.sha === execution.sourceSha;
+					if (valid) {
+						const reference: ReleaseReference = {
+							id: `github:${execution.repositoryId}:${integer(release.id)}`,
+							repository: { id: execution.repositoryId, name: execution.repository },
+							stream: execution.stream,
+							commit: execution.sourceSha,
+							version: execution.version ?? publication.version.replace(/^v/, ''),
+							tag: publication.version,
+							releaseId: integer(release.id),
+							artifacts: [],
+							publications: [],
+						};
+						if (
+							execution.release
+							&& (execution.release.tag !== reference.tag || execution.release.releaseId !== reference.releaseId)
+						) throw new Error('Release identity changed');
+						execution.release = reference;
+					}
 					verified.push({ ...publication, outcome: valid ? 'succeeded' : 'failed' });
 				} else verified.push(publication);
 			}
@@ -439,6 +566,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		if (active.length) await this.ctx.storage.setAlarm(Date.now() + 60000);
 		for (const execution of executions) {
 			await this.store().putExecution(execution);
+			if (execution.state === 'succeeded') await this.captureReleaseEvent(execution);
 			if (
 				!active.includes(execution)
 				|| execution.state === 'pending'

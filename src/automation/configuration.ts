@@ -4,6 +4,7 @@ import { validRef } from './policy.ts';
 import type { Configuration, ManagerName, Stream, WorkflowBinding } from './types.ts';
 
 export const managerNames: ManagerName[] = [
+	'pre-commit',
 	'cargo',
 	'npm',
 	'github-release',
@@ -25,7 +26,7 @@ function binding(value: unknown): WorkflowBinding {
 	const data = record(value);
 	keys(
 		data,
-		['file', 'ref', 'inputs', 'required', 'needs', 'schedule', 'publications', 'mode'],
+		['file', 'ref', 'inputs', 'required', 'needs', 'schedule', 'publications', 'mode', 'refs'],
 		'workflow',
 	);
 	if (data.schedule !== undefined) {
@@ -37,6 +38,25 @@ function binding(value: unknown): WorkflowBinding {
 	}
 	if (data.mode !== undefined && !['observe', 'dispatch'].includes(String(data.mode))) {
 		throw new Error('Invalid workflow mode');
+	}
+	let refs: WorkflowBinding['refs'];
+	if (data.refs !== undefined) {
+		const policy = record(data.refs);
+		keys(policy, ['phase', 'prefix', 'aliases', 'signed'], 'refs');
+		if (!['version', 'aliases'].includes(String(policy.phase))) throw new Error('Invalid ref phase');
+		const prefix = policy.prefix === undefined ? 'v' : String(policy.prefix);
+		if (!/^[A-Za-z0-9._-]*$/.test(prefix) || prefix.includes('..')) throw new Error('Invalid tag prefix');
+		const aliases = strings(policy.aliases ?? []);
+		if (aliases.some(alias => !['major', 'minor'].includes(alias)) || new Set(aliases).size !== aliases.length) {
+			throw new Error('Invalid aliases');
+		}
+		if (policy.signed !== undefined && typeof policy.signed !== 'boolean') throw new Error('Invalid signed policy');
+		refs = {
+			phase: policy.phase as 'version' | 'aliases',
+			prefix,
+			aliases: aliases as ('major' | 'minor')[],
+			signed: policy.signed === true,
+		};
 	}
 	const file = text(data.file);
 	if (data.ref !== undefined && !validRef(text(data.ref))) throw new Error('Invalid workflow ref');
@@ -54,6 +74,7 @@ function binding(value: unknown): WorkflowBinding {
 		throw new Error('Invalid required flag');
 	}
 	return {
+		...(refs ? { refs } : {}),
 		...(data.mode === undefined ? {} : { mode: data.mode as WorkflowBinding['mode'] }),
 		...(data.needs === undefined ? {} : { needs: strings(data.needs) }),
 		...(data.publications === undefined ? {} : { publications: strings(data.publications) }),
@@ -79,6 +100,7 @@ export function parseRepositoryConfiguration(value: unknown): Configuration {
 			row,
 			[
 				'versioning',
+				'versionSource',
 				'packages',
 				'prepare',
 				'promote',
@@ -121,7 +143,17 @@ export function parseRepositoryConfiguration(value: unknown): Configuration {
 			if (!identifier.test(operation)) throw new Error('Invalid operation name');
 			workflows[operation] = binding(value);
 		}
+		let versionSource: Stream['versionSource'];
+		if (row.versionSource !== undefined) {
+			const source = record(row.versionSource);
+			keys(source, ['kind', 'prefix'], 'versionSource');
+			if (source.kind !== 'tags' || typeof source.prefix !== 'string' || !/^[A-Za-z0-9._-]*$/.test(source.prefix)) {
+				throw new Error('Invalid tag version source');
+			}
+			versionSource = { kind: 'tags', prefix: source.prefix };
+		}
 		streams[name] = {
+			...(versionSource ? { versionSource } : {}),
 			...(row.packages === undefined ? {} : { packages: strings(row.packages) }),
 			versioning: versioning as Stream['versioning'],
 			concurrency: concurrency as Stream['concurrency'],
@@ -164,6 +196,12 @@ export function parseRepositoryConfiguration(value: unknown): Configuration {
 			done.add(name);
 		};
 		for (const [name, operation] of Object.entries(operations)) if (operation) visit(name);
+		const approved = (name: string): boolean => name === 'promote' || (operations[name]?.needs ?? []).some(approved);
+		for (const [name, operation] of Object.entries(operations)) {
+			if (operation?.refs && !approved(name)) {
+				throw new Error('Ref publication requires promotion approval in its dependencies');
+			}
+		}
 	}
 	const subscriptions = array(data.subscriptions ?? []).map((raw) => {
 		const row = record(raw);

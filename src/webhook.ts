@@ -1,5 +1,3 @@
-import { type Configuration, integer, record, text } from '#model';
-
 const MAX_BODY = 1_048_576;
 export async function readBody(request: Request): Promise<Uint8Array> {
 	const reader = request.body?.getReader();
@@ -46,24 +44,4 @@ export async function verifySignature(
 		['verify'],
 	);
 	return crypto.subtle.verify('HMAC', key, bytes, new Uint8Array(body));
-}
-/** A webhook only wakes the reconciler. No payload field can select workflow, ref, or URL. */
-export function acceptsEvent(
-	event: string | null,
-	value: unknown,
-	configuration: Configuration,
-): boolean {
-	if (event !== 'release' && event !== 'workflow_run') return false;
-	const data = record(value);
-	const repository = record(data.repository);
-	if (integer(record(repository.owner).id) !== configuration.ownerId) return false;
-	const id = integer(repository.id);
-	const name = text(repository.full_name);
-	const known = configuration.routes.some((route) =>
-		[route.source, route.destination].some((repo) => repo.id === id && repo.name === name)
-	);
-	if (!known) return false;
-	return event === 'release'
-		? data.action === 'published' || data.action === 'edited' || data.action === 'deleted'
-		: data.action === 'completed';
 }

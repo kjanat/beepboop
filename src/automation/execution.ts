@@ -1,4 +1,4 @@
-import type { Execution, Publication, RepositoryRecord, WorkflowBinding } from './types.ts';
+import type { Execution, Publication, ReleaseReference, RepositoryRecord, WorkflowBinding } from './types.ts';
 
 export async function executionId(
 	repositoryId: number,
@@ -19,6 +19,7 @@ export async function createExecution(
 	eventId: string,
 	version?: string,
 	observed = false,
+	upstreamRelease?: ReleaseReference,
 ): Promise<Execution> {
 	if (!repository.configuration || repository.diagnostics.length) {
 		throw new Error('Repository configuration is not ready');
@@ -43,6 +44,7 @@ export async function createExecution(
 	return {
 		id: await executionId(repository.id, streamName, operation, eventId),
 		repositoryId: repository.id,
+		...(upstreamRelease ? { upstreamRelease: structuredClone(upstreamRelease) } : {}),
 		repository: repository.name,
 		stream: streamName,
 		operation,
@@ -66,6 +68,10 @@ export async function createExecution(
 }
 export function completion(execution: Execution, runSucceeded: boolean): Execution['state'] {
 	if (!runSucceeded) return 'failed';
+	if (
+		execution.workflow.refs
+		&& !execution.publications.some(p => p.id === `refs:${execution.operation}` && p.outcome === 'succeeded')
+	) return 'blocked';
 	const required = execution.workflow.publications
 		?? (execution.operation === 'publish'
 			? (execution.configuration.streams[execution.stream]?.required ?? [])

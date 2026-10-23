@@ -1,23 +1,30 @@
 import { CronExpressionParser } from 'cron-parser';
 import schema from '#$/schemas/v1.json' with { type: 'json' };
-import type { Credentials } from '#github';
-import { array, integer, record, semver, sha, text } from '#model';
+import { array, compareVersions, integer, record, semver, sha, text } from '#model';
 import { readBody, verifySignature } from '#webhook';
 import { type AuthBindings, Authenticators, administrator, authRoute, workflowIdentity } from './auth.ts';
 import { resolveConfiguration } from './configuration.ts';
 import type { AutomationCoordinator } from './coordinator.ts';
 import { createExecution } from './execution.ts';
-import { RepositoryGateway } from './github.ts';
+import { type Credentials, RepositoryGateway } from './github.ts';
 import { discover, planRelease } from './managers.ts';
 import { onboardingBody, onboardingConfiguration } from './onboarding.ts';
 import { matchesRef } from './policy.ts';
+import { planHookUpdates } from './precommit.ts';
 import { Store } from './store.ts';
-import type { Artifact, Execution, Publication, RepositoryRecord } from './types.ts';
+import type {
+	Artifact,
+	AutomationEvent,
+	Execution,
+	Publication,
+	RepositoryRecord,
+	SubscriptionDelivery,
+} from './types.ts';
 import { renderDashboard } from './ui.ts';
 import { parseGrant, Vault } from './vault.ts';
+import { nextVersion, parseVersionRequest } from './version.ts';
 
 export interface AutomationBindings extends AuthBindings, Credentials {
-	AUTOMATION_ENABLED?: string;
 	AUTOMATION: DurableObjectNamespace<AutomationCoordinator>;
 	OWNER_ID: string;
 	GITHUB_WEBHOOK_SECRET: string;
@@ -64,7 +71,10 @@ export class AutomationService {
 				operation,
 				execution.eventId,
 				execution.version,
+				false,
+				execution.upstreamRelease,
 			);
+			dependency.sourceSha = execution.sourceSha;
 			await this.enqueue(repository, dependency);
 		}
 		if (execution.workflow.ref?.includes('*')) {
@@ -187,15 +197,16 @@ export class AutomationService {
 		}
 		return new Response(null, { status: 202 });
 	}
-	async event(event: {
-		id: string;
-		source: string;
-		event: 'release' | 'workflow_run' | 'package.version.changed';
-		version?: string;
-		workflow?: string;
-	}): Promise<void> {
+	async event(event: AutomationEvent): Promise<void> {
+		if (
+			event.event === 'release'
+			&& (!event.release || event.release.repository.name !== event.source || event.release.version !== event.version)
+		) {
+			throw new Error('Release event requires its upstream identity');
+		}
+		const deliveries: SubscriptionDelivery[] = [];
 		for (const repository of await this.store.repositories()) {
-			if (!repository.configuration || repository.diagnostics.length) continue;
+			if (!repository.configuration || repository.diagnostics.length || repository.suspended) continue;
 			for (const subscription of repository.configuration.subscriptions) {
 				if (subscription.source !== event.source || subscription.event !== event.event) continue;
 				if (subscription.workflow && subscription.workflow !== event.workflow) continue;
@@ -205,16 +216,41 @@ export class AutomationService {
 					subscription.operation,
 					`${subscription.id}:${event.id}`,
 					event.version,
+					false,
+					event.release,
 				);
-				await this.enqueue(repository, execution);
+				deliveries.push({ id: execution.id, eventId: event.id, repositoryId: repository.id, execution });
+			}
+		}
+		await this.store.queueEvent(event, deliveries);
+		await this.deliverEvents();
+	}
+	private async deliverEvents(): Promise<void> {
+		for (const delivery of await this.store.pendingDeliveries()) {
+			try {
+				const repository = await this.store.repository(delivery.repositoryId);
+				if (!repository || repository.suspended) throw new Error('Destination unavailable');
+				await this.enqueue({
+					...repository,
+					configuration: delivery.execution.configuration,
+					sha: delivery.execution.configurationSha,
+				}, delivery.execution);
+				await this.store.deliveryResult(delivery.id, true);
+			} catch {
+				await this.store.deliveryResult(delivery.id, false);
 			}
 		}
 	}
 	async scheduled(): Promise<void> {
+		await this.deliverEvents();
 		for (const repository of await this.store.repositories()) {
 			try {
 				const refreshed = await this.refresh(repository.name, repository.id);
 				await this.coordinator(repository.id).wake();
+				for (const event of await this.coordinator(repository.id).releaseEvents()) {
+					await this.event(event);
+					await this.coordinator(repository.id).acknowledgeReleaseEvent(event.id);
+				}
 				if (!refreshed.configuration || refreshed.diagnostics.length) continue;
 				const now = Date.now();
 				for (const [streamName, stream] of Object.entries(refreshed.configuration.streams)) {
@@ -247,29 +283,6 @@ export class AutomationService {
 								.prepare('UPDATE schedules SET last_tick=? WHERE id=?')
 								.bind(tick, key)
 								.run();
-						}
-					}
-					if (!stream.required.length) continue;
-					const completed = (await this.store.executions(repository.id)).filter(
-						(e) => e.stream === streamName && e.state === 'succeeded' && e.version,
-					);
-					const groups = new Map<string, Execution[]>();
-					for (const execution of completed) {
-						const key = `${execution.sourceSha}:${execution.version}`;
-						groups.set(key, [...(groups.get(key) ?? []), execution]);
-					}
-					for (const [key, group] of groups) {
-						if (
-							stream.required.every((id) =>
-								group.some((e) => e.publications.some((p) => p.id === id && p.outcome === 'succeeded'))
-							)
-						) {
-							await this.event({
-								id: `ready:${repository.id}:${streamName}:${key}`,
-								source: repository.name,
-								event: 'release',
-								version: group[0]?.version,
-							});
 						}
 					}
 				}
@@ -384,6 +397,28 @@ export class AutomationService {
 			await this.store.audit(actor, 'repository.onboard', String(repository.id));
 			return Response.json(result);
 		}
+		if (path === '/api/releases/update-references') {
+			const repository = await this.store.repository(integer(body.repositoryId));
+			if (
+				!repository?.configuration || repository.suspended || !repository.configuration.managers.includes('pre-commit')
+			) throw new Error('Hook manager is not enabled');
+			const event = await this.store.event(text(body.releaseEventId));
+			if (event?.event !== 'release' || !event.release) throw new Error('Verified upstream release event required');
+			const snapshot = await this.gateway.snapshot(repository.name, repository.id);
+			const edits = planHookUpdates(snapshot, event.release);
+			if (body.preview !== false || !edits.length) {
+				return Response.json({ sourceSha: snapshot.sha, upstreamRelease: event.release, edits });
+			}
+			const result = await this.gateway.pullRequest(
+				snapshot,
+				`release/hooks/${event.release.repository.id}/${event.release.commit}`,
+				`chore: update hooks to ${event.release.version}`,
+				`Upstream: ${event.source}\nCommit: ${event.release.commit}`,
+				edits,
+			);
+			await this.store.audit(actor, 'hooks.prepare', result.url);
+			return Response.json(result);
+		}
 		if (path === '/api/releases/plan' || path === '/api/releases/prepare') {
 			const repository = await this.store.repository(integer(body.repositoryId));
 			if (!repository?.configuration) throw new Error('Repository not configured');
@@ -404,11 +439,27 @@ export class AutomationService {
 			if (stream.packages && selected?.some((name) => !stream.packages?.includes(name))) {
 				throw new Error('Package is outside this release stream');
 			}
+			let target: unknown = body.version;
+			if (stream.versionSource?.kind === 'tags') {
+				const prefix = stream.versionSource.prefix;
+				const versions = (await this.gateway.tagRefs(repository.name, repository.id)).flatMap(ref => {
+					if (!ref.name.startsWith(prefix)) return [];
+					try {
+						return [semver(ref.name.slice(prefix.length)).replace(/^v/, '')];
+					} catch {
+						return [];
+					}
+				}).sort(compareVersions);
+				const request = parseVersionRequest(body.version);
+				const current = versions.at(-1);
+				if (!current && !('version' in request)) throw new Error('Select an explicit version for the first release');
+				target = current ? nextVersion(current, request) : ('version' in request ? request.version : undefined);
+			}
 			const plan = stream.prepare.strategy !== 'workflow'
 					&& repository.inventory.packages.some((p) => p.publish)
-				? planRelease(snapshot, repository.inventory, text(body.version), selected)
+				? planRelease(snapshot, repository.inventory, target, selected)
 				: {
-					version: semver(body.version).replace(/^v/, ''),
+					version: semver(target).replace(/^v/, ''),
 					sourceSha: snapshot.sha,
 					packages: [],
 					edits: [],
@@ -545,6 +596,15 @@ export class AutomationService {
 		const body = record(JSON.parse(new TextDecoder().decode(await readBody(request))));
 		const path = new URL(request.url).pathname;
 		let executionId = typeof body.executionId === 'string' ? body.executionId : undefined;
+		if (path.endsWith('/refs-plan') || path.endsWith('/refs-complete')) {
+			return Response.json(
+				await this.coordinator(identity.repositoryId).refs(
+					text(body.executionId),
+					identity,
+					path.endsWith('/refs-complete'),
+				),
+			);
+		}
 		if (path.endsWith('/begin') && !executionId) {
 			const repository = await this.store.repository(identity.repositoryId);
 			if (!repository) throw new Error('Repository not enrolled');

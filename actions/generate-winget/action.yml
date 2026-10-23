@@ -1,0 +1,44 @@
+name: Generate WinGet manifests
+description: Generate validated version, installer and locale manifests from package metadata and release checksums
+inputs:
+  config:
+    description: Package metadata JSON file
+    required: true
+  version:
+    description: Stable release version
+    required: true
+  tag:
+    description: Release tag (defaults to v followed by the version)
+  checksums:
+    description: Release SHA256 checksums file
+    required: true
+  release-notes:
+    description: Markdown release notes file
+    required: true
+  release-date:
+    description: Release date in YYYY-MM-DD format
+    required: true
+  out:
+    description: Output directory
+    required: true
+outputs:
+  directory:
+    description: Absolute output directory
+    value: ${{ steps.generate.outputs.directory }}
+  files:
+    description: JSON array of generated manifest paths
+    value: ${{ steps.generate.outputs.files }}
+runs:
+  using: composite
+  steps:
+    - id: generate
+      shell: bash
+      env:
+        WINGET_CONFIG: ${{ inputs.config }}
+        WINGET_VERSION: ${{ inputs.version }}
+        WINGET_TAG: ${{ inputs.tag }}
+        WINGET_CHECKSUMS: ${{ inputs.checksums }}
+        WINGET_RELEASE_NOTES: ${{ inputs.release-notes }}
+        WINGET_RELEASE_DATE: ${{ inputs.release-date }}
+        WINGET_OUT: ${{ inputs.out }}
+      run: node "${{ github.action_path }}/dist/cli.mjs"

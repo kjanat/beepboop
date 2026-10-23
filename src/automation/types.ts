@@ -1,4 +1,6 @@
+import type { RefPlan, RefPolicy } from './refs.ts';
 export type ManagerName =
+	| 'pre-commit'
 	| 'cargo'
 	| 'npm'
 	| 'github-release'
@@ -7,6 +9,7 @@ export type ManagerName =
 	| 'manifest'
 	| 'workflow';
 export interface WorkflowBinding {
+	refs?: RefPolicy;
 	mode?: 'observe' | 'dispatch';
 	needs?: string[];
 	publications?: string[];
@@ -17,6 +20,7 @@ export interface WorkflowBinding {
 	required?: boolean;
 }
 export interface Stream {
+	versionSource?: { kind: 'tags'; prefix: string };
 	packages?: string[];
 	versioning: 'workspace' | 'independent' | 'none';
 	prepare: { version: 'manual'; workflow?: WorkflowBinding; strategy?: 'managed' | 'workflow' };
@@ -68,6 +72,7 @@ export interface DiscoveredWorkflow {
 	publication: boolean;
 }
 export interface Inventory {
+	references?: import('./precommit.ts').HookReference[];
 	packages: Package[];
 	workflows: DiscoveredWorkflow[];
 	managers: ManagerName[];
@@ -116,7 +121,35 @@ export type ExecutionState =
 	| 'failed'
 	| 'cancelled'
 	| 'uncertain';
+export interface ReleaseReference {
+	id: string;
+	repository: { id: number; name: string };
+	stream: string;
+	commit: string;
+	version: string;
+	tag?: string;
+	releaseId?: number;
+	artifacts: Artifact[];
+	publications: Publication[];
+}
+export interface AutomationEvent {
+	id: string;
+	source: string;
+	event: 'release' | 'workflow_run' | 'package.version.changed';
+	version?: string;
+	workflow?: string;
+	release?: ReleaseReference;
+}
+export interface SubscriptionDelivery {
+	id: string;
+	eventId: string;
+	repositoryId: number;
+	execution: Execution;
+}
 export interface Execution {
+	refPlan?: RefPlan;
+	upstreamRelease?: ReleaseReference;
+	release?: ReleaseReference;
 	plan?: ReleasePlan;
 	id: string;
 	repositoryId: number;

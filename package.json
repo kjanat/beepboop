@@ -9,29 +9,34 @@
 	},
 	"scripts": {
 		"app:manifest": "bun scripts/app-manifest.ts",
-		"check:automation-bundle": "wrangler deploy --config wrangler.automation.jsonc --dry-run --outdir .dry-run-automation",
+		"build:winget": "bun build scripts/winget.ts --target=node --format=esm --minify --outfile actions/generate-winget/dist/cli.mjs",
 		"check:bundle": "wrangler deploy --dry-run --outdir .dry-run",
 		"discover": "bun scripts/discover.ts",
 		"format": "mise exec -- dprint fmt",
 		"lint": "biome check . --error-on-warnings",
 		"test": "bun test",
-		"test:automation-runtime": "node scripts/runtime-automation.ts",
-		"test:runtime": "node scripts/runtime-smoke.ts && node scripts/runtime-flow.ts",
+		"test:runtime": "node scripts/runtime.ts",
 		"typecheck": "tsc --noEmit",
-		"types": "bun scripts/types.ts"
+		"types": "bun scripts/types.ts",
+		"winget": "bun scripts/winget.ts"
 	},
 	"dependencies": {
 		"@openauthjs/openauth": "^0.4.3",
 		"@simplewebauthn/server": "^14.0.3",
 		"cron-parser": "^5.10.2",
 		"jose": "6.2.13",
+		"remark": "15.0.1",
+		"remark-gfm": "4.0.1",
 		"smol-toml": "^1.9.1",
+		"strip-markdown": "6.0.0",
 		"tweetnacl-sealedbox-js": "^1.2.0",
-		"yaml": "^2.9.1"
+		"yaml": "^2.9.1",
+		"zod": "4.6.7"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.6.2",
 		"@types/bun": "1.4.3",
+		"@types/mdast": "4.0.4",
 		"libsodium-wrappers": "^0.8.4",
 		"miniflare": "5.20261019.0-beta",
 		"typescript": "7.0.2",

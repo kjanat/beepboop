@@ -35,6 +35,7 @@ else if (mode === 'report') {
 		artifacts: JSON.parse(process.env.ARTIFACTS || '[]'),
 	};
 } else if (mode === 'credentials') body = { executionId, aliases: JSON.parse(process.env.ALIASES || '[]') };
+else if (mode === 'refs-plan' || mode === 'refs-complete') body = { executionId };
 else throw Error('Unknown integration action');
 const result = await fetch(new URL(`/api/workflow/${mode}`, origin), {
 	method: 'POST',

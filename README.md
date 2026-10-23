@@ -25,8 +25,9 @@ package generation run in your repository's GitHub Actions workflows.
 
 - [User guide](docs/automation.md): onboarding, release streams, Actions, credentials, and subscriptions.
 - [Deployment](docs/deployment.md): Cloudflare, GitHub App, login, and security keys.
+- [WinGet manifest generation](docs/winget.md): configurable package metadata,
+  installer assets, checksums, and release notes.
 - [Configuration schema](schemas/v1.json) and [preset templates](presets/).
-- [Migration guide](docs/migration.md): moving from the route-based publisher.
 - [Architecture](docs/adr-001-repository-automation.md): execution storage, authentication, and recovery.
 
 ## Development
@@ -36,8 +37,8 @@ bun install --frozen-lockfile
 bun run typecheck
 bun run lint
 bun test
-bun run check:automation-bundle
-bun run test:automation-runtime
+bun run check:bundle
+bun run test:runtime
 ```
 
 Preview discovery from a checkout's committed HEAD or a GitHub repository:

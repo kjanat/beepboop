@@ -1,6 +1,5 @@
 node_modules/
 .dry-run/
-.dry-run-automation/
 .wrangler/
 .dev.vars
 .env*
