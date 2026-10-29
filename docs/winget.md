@@ -18,7 +18,7 @@ filename; duplicate filenames and missing selected assets are errors.
 ## GitHub Action
 
 ```yaml
-- uses: kjanat/beepboop/actions/generate-winget@IMPLEMENTATION_SHA
+- uses: kjanat/beepboop/actions/generate-winget@PUBLISHED_SHA
   id: winget
   with:
     config: distribution/winget.json
@@ -29,9 +29,11 @@ filename; duplicate filenames and missing selected assets are errors.
     out: dist/winget
 ```
 
-Replace `IMPLEMENTATION_SHA` with the reviewed Beepboop commit. The `release`
-step in this example supplies the release version and date. The Action ships a
-bundled Node entrypoint and outputs `directory` and `files` (a JSON path array).
+Replace `PUBLISHED_SHA` with the distribution commit reported by the **Publish
+Actions** workflow. That commit lives on the `actions` branch and includes the
+bundled Node entrypoint. Source commits on `master` omit generated bundles.
+The `release` step in this example supplies the release version and date.
+The Action outputs `directory` and `files` (a JSON path array).
 Attach those files as build artifacts or pass them to your submission operation.
 
 ## CLI
@@ -62,13 +64,30 @@ installer success codes are only emitted when explicitly configured.
 
 ## Development
 
-The generator is in `src/distribution/winget`. Rebuild the Action after changing
-it or its dependencies:
+The generator is in `src/distribution/winget`. Build and test it locally with:
 
 ```sh
 bun run build:winget
 bun test test/winget.test.ts
 ```
 
-CI rebuilds the bundled Action and checks for a diff. The generator performs no
-network requests and uses the checksums supplied by the calling release workflow.
+`bun run test` also builds the Action before running the full test suite. Generated
+bundles are ignored in source checkouts. CI tests a fresh build instead of comparing
+generated JavaScript with a committed copy.
+
+## Publish the Action
+
+Run the **Publish Actions** workflow manually against `master`. It verifies the
+selected source commit, rebuilds and tests the Node entrypoint, then publishes
+the complete repository snapshot with the bundle to the `actions` branch. The
+workflow summary records both the source SHA and the distribution SHA to pin in
+consumer workflows. Other Actions and their shared runtime retain their paths.
+
+Publication preserves the previous distribution commit as a parent and uses a
+normal fast-forward push. It rejects an older source revision and concurrent
+branch changes. Repeating publication with the same source and bundle reuses the
+existing distribution commit. Repository branch rules apply to `actions`; the
+workflow does not force-push or create tags or GitHub releases.
+
+The generator performs no network requests and uses the checksums supplied by
+the calling release workflow.

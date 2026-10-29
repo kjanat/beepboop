@@ -2,9 +2,10 @@ name: Verify
 on:
   push: { branches: [master] }
   pull_request:
+  workflow_call:
 permissions: { contents: read }
 concurrency:
-  group: verify-${{ github.ref }}
+  group: verify-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   verify:
@@ -20,10 +21,9 @@ jobs:
             with: { node-version-file: "mise.toml" }
           - name: Setup Bun
             uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+            with: { bun-version: "1.4.4" }
           - uses: kjanat/runner@b32ea932a1813ae0be44e755c16df9f9f5ca86a4 # v0.28
       - run: runner i -fs types
       - run: git diff --exit-code -- worker-configuration.d.ts
-      - run: run build:winget
-      - run: git diff --exit-code -- actions/generate-winget/dist/cli.mjs
       - run: run -pk typecheck lint test
       - run: run -sk check:bundle test:runtime

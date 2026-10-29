@@ -35,7 +35,7 @@ Microsoft manifest repository is a separate publication operation.
 ```sh
 bun run typecheck
 bun run lint
-bun test
+bun run test
 bun run build:winget
 bun run check:bundle
 bun run test:runtime

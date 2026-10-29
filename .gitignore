@@ -8,4 +8,6 @@ node_modules/
 app-manifest.json
 
 # Generated application bundles
+/dist/
 /src/**/dist/
+/actions/**/dist/

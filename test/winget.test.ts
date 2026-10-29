@@ -139,7 +139,7 @@ test('bundled WinGet Action runs with Node without installing dependencies in th
 		writeFileSync(join(root, 'package.json'), JSON.stringify(configuration));
 		writeFileSync(join(root, 'checksums.txt'), options.checksums);
 		writeFileSync(join(root, 'notes.md'), options.releaseNotes);
-		const entry = new URL('../actions/generate-winget/dist/cli.mjs', import.meta.url).pathname;
+		const entry = new URL('../dist/winget/cli.mjs', import.meta.url).pathname;
 		const run = spawnSync('node', [entry], {
 			cwd: root,
 			encoding: 'utf8',

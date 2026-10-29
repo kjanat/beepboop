@@ -45,7 +45,7 @@ ciphertexts require their corresponding keys until migrated or deleted.
 
 ```sh
 bun run typecheck
-bun test
+bun run test
 bun run check:bundle
 bun run test:runtime
 bunx wrangler deploy --config wrangler.jsonc
