@@ -9,14 +9,15 @@
 	},
 	"scripts": {
 		"app:manifest": "bun scripts/app-manifest.ts",
+		"build:ui": "bun scripts/build-ui.ts",
 		"build:winget": "bun build scripts/winget.ts --target=node --format=esm --minify --outfile actions/generate-winget/dist/cli.mjs",
 		"check:bundle": "wrangler deploy --dry-run --outdir .dry-run",
 		"discover": "bun scripts/discover.ts",
 		"format": "mise exec -- dprint fmt",
 		"lint": "biome check . --error-on-warnings",
-		"test": "bun test",
+		"test": "bun run build:ui && bun test",
 		"test:runtime": "node scripts/runtime.ts",
-		"typecheck": "tsc --noEmit",
+		"typecheck": "bun run build:ui && tsc --noEmit && tsc --project src/ui/browser/tsconfig.json --noEmit",
 		"types": "bun scripts/types.ts",
 		"winget": "bun scripts/winget.ts"
 	},

@@ -1,15 +1,22 @@
 import { DurableObject } from 'cloudflare:workers';
 import { array, integer, record, sha } from '#model';
 import type { WorkflowIdentity } from './auth.ts';
-import { completion, createExecution, mergePublications } from './execution.ts';
+import {
+	completion,
+	createExecution,
+	dependenciesReady,
+	mergePublications,
+	validatePublicationIdentity,
+} from './execution.ts';
 import { type Credentials, RepositoryGateway } from './github.ts';
-import { discover, verifyPublication } from './managers.ts';
+import { canVerifyPublication, discover, verifyPublication } from './managers.ts';
 import { verifyManifest } from './manifest.ts';
-import { verifyImage } from './oci.ts';
+import { mergeArtifacts, resolveInputs } from './outputs.ts';
 import { matchesRef } from './policy.ts';
 import { planRefs, type RefPlan } from './refs.ts';
+import { compileReleaseSet } from './release-set.ts';
 import { Store } from './store.ts';
-import type { Artifact, AutomationEvent, Execution, Publication, ReleaseReference } from './types.ts';
+import type { Artifact, AutomationEvent, Edit, Execution, Publication, ReleaseReference } from './types.ts';
 
 export interface CoordinatorBindings extends Credentials {
 	DB: D1Database;
@@ -38,15 +45,20 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private async captureReleaseEvent(execution: Execution): Promise<void> {
 		if (!execution.version) return;
-		const required = execution.configuration.streams[execution.stream]?.required ?? [];
+		const required = execution.releaseSet?.required ?? execution.configuration.streams[execution.stream]?.required
+			?? [];
 		if (!required.length) return;
 		const id =
-			`release:${execution.repositoryId}:${execution.stream}:${execution.configurationSha}:${execution.sourceSha}:${execution.version}`;
+			`release:${execution.repositoryId}:${execution.stream}:${execution.configurationSha}:${execution.sourceSha}:${execution.version}${
+				execution.releaseSet ? `:${execution.releaseSet.preparationId}:${execution.releaseSet.group}` : ''
+			}`;
 		if (await this.ctx.storage.get(`release-emitted:${id}`)) return;
 		const group = [...(await this.ctx.storage.list<Execution>({ prefix: 'execution:' })).values()]
 			.filter(e =>
 				e.state === 'succeeded' && e.stream === execution.stream && e.version === execution.version
 				&& e.sourceSha === execution.sourceSha && e.configurationSha === execution.configurationSha
+				&& e.releaseSet?.preparationId === execution.releaseSet?.preparationId
+				&& e.releaseSet?.group === execution.releaseSet?.group
 			);
 		if (!required.every(key => group.some(e => e.publications.some(p => p.id === key && p.outcome === 'succeeded')))) {
 			return;
@@ -57,6 +69,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		}
 		const release: ReleaseReference = {
 			id,
+			...(execution.releaseSet ? { group: execution.releaseSet.group } : {}),
 			repository: { id: execution.repositoryId, name: execution.repository },
 			stream: execution.stream,
 			commit: execution.sourceSha,
@@ -80,8 +93,50 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	async acknowledgeReleaseEvent(id: string): Promise<void> {
 		await this.ctx.storage.delete(`release-event:${id}`);
 	}
+	async startReleaseSet(preparationId: string, target: string): Promise<Execution[]> {
+		return this.serial(async () => {
+			const preparation = await this.get(preparationId);
+			if ((await this.store().repository(preparation.repositoryId))?.suspended) {
+				throw new Error('Repository is suspended');
+			}
+			const key = `release-set:${preparationId}`;
+			const prior = await this.ctx.storage.get<{ target: string; ids: string[] }>(key);
+			if (prior) {
+				if (prior.target !== target) throw new Error('Release set already targets another revision');
+				return Promise.all(prior.ids.map(id => this.get(id)));
+			}
+			const result = preparation.managed?.result ?? preparation.prepared?.result;
+			const plan = preparation.managed?.plan ?? preparation.plan;
+			if (!result || !plan) throw new Error('Preparation result unavailable');
+			const snapshot = await this.gateway().preparedSnapshot(
+				preparation.repository,
+				preparation.repositoryId,
+				result,
+				sha(target),
+				(preparation.prepared?.edits ?? plan.edits).map(edit => edit.path),
+			);
+			for (const edit of preparation.prepared?.edits ?? []) {
+				if (snapshot.files[edit.path] !== edit.after) {
+					throw new Error(`Generated preparation file changed: ${edit.path}`);
+				}
+			}
+			const executions = await compileReleaseSet(preparation, snapshot);
+			await this.ctx.storage.transaction(async storage => {
+				await storage.put({
+					[key]: { target, ids: executions.map(execution => execution.id) },
+					...Object.fromEntries(executions.map(execution => [`execution:${execution.id}`, execution])),
+				});
+				await storage.setAlarm(Date.now() + 1000);
+			});
+			for (const execution of executions) await this.store().putExecution(execution);
+			return executions;
+		});
+	}
 	async enqueue(execution: Execution): Promise<Execution> {
 		return this.serial(async () => {
+			if (Boolean(execution.workflow) === Boolean(execution.managed)) {
+				throw new Error('Execution needs exactly one runner');
+			}
 			const prior = await this.ctx.storage.get<Execution>(`execution:${execution.id}`);
 			if (prior) return prior;
 			if (execution.configuration.streams[execution.stream]?.concurrency === 'supersede-pending') {
@@ -108,9 +163,54 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		if (!execution) throw new Error('Unknown execution');
 		return execution;
 	}
+	async prepared(id: string, identity: WorkflowIdentity, edits: Edit[]): Promise<{ url: string; head: string }> {
+		return this.serial(async () => {
+			const execution = await this.get(id);
+			if (
+				!execution.workflow || execution.managed || execution.operation !== 'prepare' || !execution.plan
+				|| execution.state !== 'running' || execution.repositoryId !== identity.repositoryId
+				|| execution.runId !== identity.runId || execution.runAttempt !== identity.attempt
+				|| execution.workflowSha !== identity.workflowSha
+			) throw new Error('Preparation run identity mismatch');
+			const ordered = [...edits].sort((a, b) => a.path.localeCompare(b.path));
+			if (execution.prepared && JSON.stringify(execution.prepared.edits) !== JSON.stringify(ordered)) {
+				throw new Error('Submitted preparation changed; create a new preparation');
+			}
+			if (execution.prepared?.result) return execution.prepared.result;
+			execution.prepared ??= { edits: ordered };
+			await this.put(execution);
+			const gateway = this.gateway();
+			const source = await gateway.snapshot(
+				execution.repository,
+				execution.repositoryId,
+				execution.sourceSha,
+				ordered.map(edit => edit.path),
+			);
+			const branch = `release/${execution.stream}/${execution.id}`;
+			const title = `chore(release): prepare ${execution.version ?? 'release set'}`;
+			const body =
+				`Source: ${execution.sourceSha}\nPreparation execution: ${execution.id}\n\nPromotion requires approval.`;
+			const result = execution.prepared.head
+				? await gateway.resumePreparation(source, branch, title, body, execution.prepared.head)
+				: await gateway.pullRequest(source, branch, title, body, ordered, undefined, async head => {
+					if (!execution.prepared) throw new Error('Missing preparation checkpoint');
+					execution.prepared.head = head;
+					await this.put(execution);
+				});
+			execution.prepared.result = result;
+			await this.put(execution);
+			return result;
+		});
+	}
 	async register(id: string, identity: WorkflowIdentity): Promise<Execution> {
 		return this.serial(async () => {
 			const execution = await this.get(id);
+			if (!execution.workflow || execution.managed) throw new Error('Operation is not a workflow');
+			const dependencies = await Promise.all(execution.dependencies.map(id => this.get(id)));
+			if (!dependenciesReady(execution, dependencies)) throw new Error('Execution dependencies have not succeeded');
+			if (execution.attempts === 0 && execution.eventId !== `observed:${identity.runId}`) {
+				throw new Error('Execution has not been dispatched');
+			}
 			if (
 				execution.repositoryId !== identity.repositoryId
 				|| execution.repository !== identity.repository
@@ -146,6 +246,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			const next: Execution = {
 				...execution,
+				resolvedInputs: resolveInputs(execution, dependencies),
 				state: 'running',
 				runId: identity.runId,
 				runAttempt: identity.attempt,
@@ -161,6 +262,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	async refs(id: string, identity: WorkflowIdentity, complete = false): Promise<RefPlan> {
 		return this.serial(async () => {
 			const execution = await this.get(id);
+			if (!execution.workflow || execution.managed) throw new Error('Operation is not a workflow');
 			if (
 				execution.state !== 'running' || execution.repositoryId !== identity.repositoryId
 				|| execution.repository !== identity.repository || execution.runId !== identity.runId
@@ -227,6 +329,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	): Promise<Execution> {
 		return this.serial(async () => {
 			const execution = await this.get(id);
+			if (!execution.workflow || execution.managed) throw new Error('Operation is not a workflow');
 			if (
 				execution.repositoryId !== identity.repositoryId
 				|| execution.runId !== identity.runId
@@ -238,6 +341,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			for (const artifact of artifacts) {
 				if (artifact.runId !== identity.runId) throw new Error('Artifact producer mismatch');
+				if (!/^sha256:[a-f0-9]{64}$/.test(artifact.digest) || !(Date.parse(artifact.expiresAt) > Date.now())) {
+					throw new Error('Artifact has no usable digest or has expired');
+				}
 				const gateway = this.gateway(),
 					token = await gateway.token(execution.repository, execution.repositoryId);
 				const actual = record(
@@ -261,12 +367,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (publication.id.startsWith('refs:')) {
 					throw new Error('Ref results are verified by the ref completion endpoint');
 				}
-				if (['cargo', 'npm'].includes(publication.manager) && publication.outcome === 'succeeded') {
+				validatePublicationIdentity(execution, publication);
+				if (canVerifyPublication(publication.manager) && publication.outcome === 'succeeded') {
 					verified.push(await verifyPublication(publication));
 				} else if (publication.manager === 'manifest' && publication.outcome === 'succeeded') {
 					verified.push(await verifyManifest(publication, this.gateway()));
-				} else if (publication.manager === 'oci' && publication.outcome === 'succeeded') {
-					verified.push(await verifyImage(publication));
 				} else if (
 					publication.manager === 'github-release'
 					&& publication.outcome === 'succeeded'
@@ -327,9 +432,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const next = {
 				...execution,
 				publications: mergePublications(execution.publications, verified),
-				artifacts: [
-					...new Map([...execution.artifacts, ...artifacts].map((a) => [a.id, a])).values(),
-				],
+				artifacts: mergeArtifacts(execution.artifacts, artifacts, execution.workflow.outputs),
 			};
 			await this.put(next);
 			return next;
@@ -524,7 +627,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 									&& (!stream.packages || stream.packages.includes(`${p.manager}:${p.name}`)),
 							)
 						) {
-							if (!['cargo', 'npm'].includes(pkg.manager)) continue;
+							if (!canVerifyPublication(pkg.manager)) continue;
 							const publication: Publication = {
 								id: `${pkg.manager}:${pkg.name}`,
 								manager: pkg.manager,
@@ -546,6 +649,52 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	async alarm(): Promise<void> {
 		await this.serial(() => this.reconcile());
+	}
+	private async runManaged(execution: Execution): Promise<void> {
+		const operation = execution.managed;
+		if (!operation || execution.workflow) throw new Error('Invalid managed operation');
+		try {
+			if (operation.result) {
+				await this.put({ ...execution, state: 'succeeded' });
+				return;
+			}
+			if (operation.plan.requiresPreparation || operation.plan.sourceSha !== execution.sourceSha) {
+				throw new Error('Managed preparation plan is not executable');
+			}
+			const gateway = this.gateway();
+			const snapshot = await gateway.snapshot(
+				execution.repository,
+				execution.repositoryId,
+				execution.sourceSha,
+				operation.plan.edits.map(edit => edit.path),
+			);
+			execution.state = 'running';
+			execution.attempts++;
+			await this.put(execution);
+			operation.result = operation.head
+				? await gateway.resumePreparation(snapshot, operation.branch, operation.title, operation.body, operation.head)
+				: await gateway.pullRequest(
+					snapshot,
+					operation.branch,
+					operation.title,
+					operation.body,
+					operation.plan.edits,
+					undefined,
+					async head => {
+						operation.head = head;
+						await this.put(execution);
+					},
+				);
+			execution.state = 'succeeded';
+			delete execution.reason;
+			await this.put(execution);
+		} catch (error) {
+			await this.put({
+				...execution,
+				state: 'uncertain',
+				reason: error instanceof Error ? error.message : 'Managed preparation interrupted',
+			});
+		}
 	}
 	private async reconcile(): Promise<void> {
 		await this.observations();
@@ -574,6 +723,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			) {
 				continue;
 			}
+			if (execution.managed) {
+				await this.runManaged(execution);
+				continue;
+			}
+			if (!execution.workflow) throw new Error('Execution has no runner');
 			try {
 				const gateway = this.gateway();
 				const token = await gateway.token(execution.repository, execution.repositoryId, {
@@ -598,7 +752,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							const publication = execution.publications[i];
 							if (
 								publication
-								&& ['cargo', 'npm'].includes(publication.manager)
+								&& canVerifyPublication(publication.manager)
 								&& ['pending', 'uncertain'].includes(publication.outcome)
 							) {
 								execution.publications[i] = await verifyPublication(publication);
@@ -631,8 +785,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						.filter(
 							(run) =>
 								run.display_title === `Release operation ${execution.id}`
-								&& run.path === `.github/workflows/${execution.workflow.file}`
-								&& run.head_branch === execution.workflow.ref?.replace(/^refs\/(heads|tags)\//, '')
+								&& run.path === `.github/workflows/${execution.workflow?.file}`
+								&& run.head_branch === execution.workflow?.ref?.replace(/^refs\/(heads|tags)\//, '')
 								&& record(run.repository).id === execution.repositoryId,
 						);
 					if (matches.length === 1) {
@@ -655,14 +809,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					}
 					continue;
 				}
-				if (
-					execution.dependencies.some(
-						(id) => executions.find((e) => e.id === id)?.state !== 'succeeded',
-					)
-				) {
+				if (!dependenciesReady(execution, executions)) {
 					continue;
 				}
 				if (busy.has(execution.stream)) continue;
+				execution.resolvedInputs = resolveInputs(execution, executions);
 				busy.add(execution.stream);
 				await this.put({ ...execution, state: 'dispatching', attempts: execution.attempts + 1 });
 				const response = await gateway.call(

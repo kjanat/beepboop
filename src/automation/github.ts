@@ -1,5 +1,6 @@
 import { importPKCS8, SignJWT } from 'jose';
 import { array, integer, record, sha, text } from '#model';
+import { safeVersionPath } from './editors.ts';
 import type { RefState } from './refs.ts';
 import type { Edit, Snapshot } from './types.ts';
 
@@ -72,7 +73,13 @@ export class RepositoryGateway {
 			for (const row of rows) {
 				const tag = text(row.name);
 				const reference = record(await this.call(`/repos/${name}/git/ref/tags/${encodeURIComponent(tag)}`, token));
-				result.push({ name: tag, oid: sha(record(reference.object).sha), commit: sha(record(row.commit).sha) });
+				const oid = sha(record(reference.object).sha);
+				let target = record(reference.object);
+				for (let depth = 0; target.type === 'tag' && depth < 8; depth++) {
+					target = record(record(await this.call(`/repos/${name}/git/tags/${sha(target.sha)}`, token)).object);
+				}
+				if (target.type !== 'commit') throw new Error('Tag does not resolve to a commit');
+				result.push({ name: tag, oid, commit: sha(target.sha) });
 			}
 			if (rows.length < 100) return result;
 		}
@@ -100,7 +107,7 @@ export class RepositoryGateway {
 			Uint8Array.from(atob(data.content.replace(/\s/g, '')), (c) => c.charCodeAt(0)),
 		);
 	}
-	async snapshot(name: string, id: number, revision?: string): Promise<Snapshot> {
+	async snapshot(name: string, id: number, revision?: string, extraPaths: string[] = []): Promise<Snapshot> {
 		const token = await this.token(name, id);
 		const repository = record(await this.call(`/repos/${name}`, token));
 		const defaultBranch = text(repository.default_branch);
@@ -117,17 +124,23 @@ export class RepositoryGateway {
 		if (tree.truncated) {
 			throw new Error('Repository tree truncated; discovery requires complete input');
 		}
+		if (extraPaths.some(path => !safeVersionPath(path))) throw new Error('Unsafe version file path');
+		const blobs = array(tree.tree).map(record).filter(entry => entry.type === 'blob' && entry.mode !== '120000');
+		if (extraPaths.some(path => !blobs.some(entry => entry.path === path))) {
+			throw new Error('Version file missing or not a regular file');
+		}
 		const candidates = array(tree.tree)
 			.map(record)
 			.filter((entry) => entry.type === 'blob' && entry.mode !== '120000')
 			.map((entry) => text(entry.path))
 			.filter(
 				(path) =>
-					!/(?:^|\/)(?:node_modules|vendor|target|testdata|fixtures|\.git)\//.test(path)
-					&& /(?:^|\/)(?:\.pre-commit-config\.ya?ml|targets.json|Cargo.toml|Cargo.lock|package.json|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock|\.?goreleaser[^/]*\.ya?ml)$|^\.github\/(?:beepboop.json|workflows\/[^/]+\.ya?ml)$/
-						.test(
-							path,
-						),
+					extraPaths.includes(path)
+					|| !/(?:^|\/)(?:node_modules|vendor|target|testdata|fixtures|\.git)\//.test(path)
+						&& /(?:^|\/)(?:\.pre-commit-config\.ya?ml|targets.json|Cargo.toml|Cargo.lock|package.json|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock|\.?goreleaser[^/]*\.ya?ml)$|^\.github\/(?:beepboop.json|workflows\/[^/]+\.ya?ml)$/
+							.test(
+								path,
+							),
 			);
 		if (candidates.length > 400) throw new Error('Discovery file limit exceeded');
 		const files: Record<string, string> = {};
@@ -135,7 +148,10 @@ export class RepositoryGateway {
 			await Promise.all(
 				candidates.slice(offset, offset + 8).map(async (path) => {
 					// Lockfiles only indicate the need for repository preparation; avoid transferring large generated files.
-					if (/(?:Cargo.lock|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock)$/.test(path)) {
+					if (
+						!extraPaths.includes(path)
+						&& /(?:Cargo.lock|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock)$/.test(path)
+					) {
 						files[path] = '';
 						return;
 					}
@@ -170,6 +186,7 @@ export class RepositoryGateway {
 		body: string,
 		edits: Edit[],
 		expectedHead?: string,
+		checkpoint?: (head: string) => Promise<void>,
 	): Promise<{ url: string; head: string }> {
 		const { name, id } = snapshot.repository;
 		const token = await this.token(name, id, { contents: 'write', pull_requests: 'write' });
@@ -230,6 +247,7 @@ export class RepositoryGateway {
 				throw new Error('Preparation commit does not satisfy the branch signature requirement');
 			}
 		}
+		if (checkpoint) await checkpoint(head);
 		if (existing) {
 			await this.call(
 				`/repos/${name}/git/refs/heads/${encodeURIComponent(branch)}`,
@@ -243,14 +261,84 @@ export class RepositoryGateway {
 				sha: head,
 			});
 		}
+		return this.finishPullRequest(snapshot, branch, title, body, head, token);
+	}
+	/** Bind release execution to the merged preparation pull request. */
+	async preparedSnapshot(
+		repository: string,
+		repositoryId: number,
+		result: { url: string; head: string },
+		target: string,
+		extraPaths: string[] = [],
+	): Promise<Snapshot> {
+		const url = new URL(result.url);
+		const prefix = `/${repository}/pull/`;
+		if (
+			url.origin !== 'https://github.com' || !url.pathname.startsWith(prefix)
+			|| !/^[1-9][0-9]*$/.test(url.pathname.slice(prefix.length))
+		) throw new Error('Invalid preparation PR identity');
+		const token = await this.token(repository, repositoryId, { contents: 'read', pull_requests: 'read' });
+		const pull = record(await this.call(`/repos/${repository}/pulls/${url.pathname.slice(prefix.length)}`, token));
+		if (
+			pull.merged !== true || pull.merge_commit_sha !== sha(target)
+			|| record(pull.head).sha !== result.head || record(record(pull.base).repo).id !== repositoryId
+		) {
+			throw new Error('Target is not the merged preparation revision');
+		}
+		const snapshot = await this.snapshot(repository, repositoryId, target, extraPaths);
+		if (record(pull.base).ref !== snapshot.repository.defaultBranch) {
+			throw new Error('Preparation was merged into a different branch');
+		}
+		return snapshot;
+	}
+	/** Resume only the exact commit checkpointed before branch publication. */
+	async resumePreparation(
+		snapshot: Snapshot,
+		branch: string,
+		title: string,
+		body: string,
+		head: string,
+	): Promise<{ url: string; head: string }> {
+		const { name, id } = snapshot.repository;
+		const token = await this.token(name, id, { contents: 'write', pull_requests: 'write' });
+		const commit = record(await this.call(`/repos/${name}/git/commits/${sha(head)}`, token));
+		const parents = array(commit.parents).map(record);
+		if (parents.length !== 1 || parents[0]?.sha !== snapshot.sha) {
+			throw new Error('Preparation commit ancestry changed');
+		}
+		const rules = await this.call(`/repos/${name}/rules/branches/${encodeURIComponent(branch)}`, token);
+		if (rules === null) throw new Error('Branch rules unavailable');
+		if (
+			array(rules).map(record).some(rule => rule.type === 'required_signatures')
+			&& record(commit.verification).verified !== true
+		) {
+			throw new Error('Preparation commit signature is not verified');
+		}
+		const existing = await this.call(`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`, token);
+		if (existing && sha(record(record(existing).object).sha) !== head) throw new Error('Preparation branch changed');
+		if (!existing) {
+			await this.call(`/repos/${name}/git/refs`, token, 'POST', { ref: `refs/heads/${branch}`, sha: head });
+		}
+		return this.finishPullRequest(snapshot, branch, title, body, head, token);
+	}
+	private async finishPullRequest(
+		snapshot: Snapshot,
+		branch: string,
+		title: string,
+		body: string,
+		head: string,
+		token: string,
+	): Promise<{ url: string; head: string }> {
+		const { name } = snapshot.repository;
 		const owner = name.split('/')[0];
 		const pulls = array(
 			await this.call(
-				`/repos/${name}/pulls?state=open&head=${encodeURIComponent(`${owner}:${branch}`)}`,
+				`/repos/${name}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`,
 				token,
 			),
 		);
 		if (pulls.length > 1) throw new Error('Multiple matching pull requests');
+		if (pulls[0] && record(pulls[0]).state !== 'open') throw new Error('Preparation pull request was closed');
 		const pull = pulls[0]
 			? record(
 				await this.call(
@@ -296,6 +384,13 @@ export class RepositoryGateway {
 			.map((label) => text(label.name));
 		if (labels.some((name) => !applied.includes(name))) {
 			throw new Error('Pull request labels were not confirmed');
+		}
+		const actual = record(await this.call(`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`, token));
+		if (
+			sha(record(actual.object).sha) !== head || record(pull.head).sha !== head
+			|| record(pull.base).ref !== snapshot.repository.defaultBranch
+		) {
+			throw new Error('Preparation pull request identity changed');
 		}
 		return { url: text(pull.html_url), head };
 	}

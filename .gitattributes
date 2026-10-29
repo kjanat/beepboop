@@ -1,0 +1,4 @@
+# Keep generated files tracked without expanding their contents in diffs.
+**/dist/** -diff linguist-generated=true
+/worker-configuration.d.ts -diff linguist-generated=true
+/bun.lock -diff linguist-generated=true

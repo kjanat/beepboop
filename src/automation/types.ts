@@ -1,3 +1,4 @@
+import type { InputDeclaration, OutputDeclaration, Platform, ResolvedInput } from './outputs.ts';
 import type { RefPlan, RefPolicy } from './refs.ts';
 export type ManagerName =
 	| 'pre-commit'
@@ -9,6 +10,9 @@ export type ManagerName =
 	| 'manifest'
 	| 'workflow';
 export interface WorkflowBinding {
+	platform?: Platform;
+	outputs?: OutputDeclaration[];
+	artifactInputs?: InputDeclaration[];
 	refs?: RefPolicy;
 	mode?: 'observe' | 'dispatch';
 	needs?: string[];
@@ -20,6 +24,7 @@ export interface WorkflowBinding {
 	required?: boolean;
 }
 export interface Stream {
+	versionFiles?: import('./editors.ts').VersionFile[];
 	versionSource?: { kind: 'tags'; prefix: string };
 	packages?: string[];
 	versioning: 'workspace' | 'independent' | 'none';
@@ -32,6 +37,9 @@ export interface Stream {
 	concurrency: 'queue' | 'supersede-pending';
 }
 export interface Subscription {
+	sourceStream?: string;
+	sourceGroup?: string;
+	publication?: string;
 	workflow?: string;
 	id: string;
 	source: string;
@@ -85,6 +93,7 @@ export interface Edit {
 	after: string;
 }
 export interface ReleasePlan {
+	lockfiles?: string[];
 	version: string;
 	sourceSha: string;
 	edits: Edit[];
@@ -122,6 +131,7 @@ export type ExecutionState =
 	| 'cancelled'
 	| 'uncertain';
 export interface ReleaseReference {
+	group?: string;
 	id: string;
 	repository: { id: number; name: string };
 	stream: string;
@@ -147,10 +157,22 @@ export interface SubscriptionDelivery {
 	execution: Execution;
 }
 export interface Execution {
+	prepared?: { edits: Edit[]; head?: string; result?: { url: string; head: string } };
+	releaseSet?: { preparationId: string; group: string; required: string[] };
+	managed?: {
+		kind: 'prepare';
+		plan: ReleasePlan | import('./planning.ts').ReleaseSetPlan;
+		branch: string;
+		title: string;
+		body: string;
+		head?: string;
+		result?: { url: string; head: string };
+	};
+	resolvedInputs?: ResolvedInput[];
 	refPlan?: RefPlan;
 	upstreamRelease?: ReleaseReference;
 	release?: ReleaseReference;
-	plan?: ReleasePlan;
+	plan?: ReleasePlan | import('./planning.ts').ReleaseSetPlan;
 	id: string;
 	repositoryId: number;
 	repository: string;
@@ -166,7 +188,7 @@ export interface Execution {
 	version?: string;
 	state: ExecutionState;
 	dependencies: string[];
-	workflow: WorkflowBinding;
+	workflow?: WorkflowBinding;
 	runId?: number;
 	runAttempt?: number;
 	attempts: number;

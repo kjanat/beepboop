@@ -11,5 +11,6 @@
 		"skipLibCheck": true,
 		"types": ["bun"],
 	},
+	"exclude": ["src/ui/browser/**"],
 	"include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts", "worker-configuration.d.ts"]
 }

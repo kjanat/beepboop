@@ -24,6 +24,9 @@ package generation run in your repository's GitHub Actions workflows.
 ## Configure and operate
 
 - [User guide](docs/automation.md): onboarding, release streams, Actions, credentials, and subscriptions.
+- [Release planning](docs/release-planning.md): independent versions, platform outputs,
+  managed and workflow preparation, and declarative version files.
+- [Ecosystem managers](docs/managers.md): discovery, editing, and verification adapters.
 - [Deployment](docs/deployment.md): Cloudflare, GitHub App, login, and security keys.
 - [WinGet manifest generation](docs/winget.md): configurable package metadata,
   installer assets, checksums, and release notes.
@@ -36,10 +39,16 @@ package generation run in your repository's GitHub Actions workflows.
 bun install --frozen-lockfile
 bun run typecheck
 bun run lint
-bun test
+bun run test
 bun run check:bundle
 bun run test:runtime
 ```
+
+Dashboard sources live in `src/ui`: server templates in `templates/`, browser
+TypeScript in `browser/`, and styles in `dashboard.css`. `bun run build:ui` uses
+Bun to bundle and minify assets into ignored `dist/` output. Wrangler runs this
+build for development and deployment; `typecheck` and `test` also build first.
+The browser has its own DOM-only TypeScript configuration.
 
 Preview discovery from a checkout's committed HEAD or a GitHub repository:
 

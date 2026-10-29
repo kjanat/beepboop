@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { planRefs, type RefPolicy } from '#automation/refs';
@@ -80,6 +80,55 @@ test('ref Action publishes an annotated tag and aliases, rejecting a concurrent 
 		expect(
 			spawnSync('git', ['--git-dir', remote, 'rev-parse', '--verify', 'refs/tags/v3'], { encoding: 'utf8' }).status,
 		).not.toBe(0);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test('ref Action creates and re-verifies a cryptographically signed version tag', () => {
+	const root = mkdtempSync(join(tmpdir(), 'signed-refs-'));
+	const git = (...args: string[]) => {
+		const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+		if (result.status !== 0) throw new Error(result.stderr);
+		return result.stdout.trim();
+	};
+	try {
+		const key = join(root, 'signing-key');
+		const generated = spawnSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', key], { encoding: 'utf8' });
+		if (generated.status !== 0) throw new Error('Could not generate fixture signing key');
+		const signers = join(root, 'allowed-signers');
+		writeFileSync(signers, `fixture@example.test ${readFileSync(`${key}.pub`, 'utf8')}`);
+		git('init', '--bare', 'remote.git');
+		git('init', 'work');
+		const work = join(root, 'work'), remote = join(root, 'remote.git');
+		for (
+			const [name, value] of Object.entries({
+				'user.name': 'Fixture',
+				'user.email': 'fixture@example.test',
+				'gpg.format': 'ssh',
+				'user.signingkey': key,
+				'gpg.ssh.allowedSignersFile': signers,
+			})
+		) git('-C', work, 'config', name, value);
+		git('-C', work, 'commit', '-S', '--allow-empty', '-m', 'signed fixture');
+		const commit = git('-C', work, 'rev-parse', 'HEAD');
+		git('-C', work, 'verify-commit', commit);
+		const signed = { ...policy, phase: 'version' as const, signed: true };
+		const plan = {
+			repository: 'example/action',
+			executionId: 'signed',
+			version: '1.2.3',
+			changes: planRefs(signed, '1.2.3', commit, []),
+		};
+		publishRefs(plan, work, remote);
+		git('-C', work, 'verify-tag', 'v1.2.3');
+		const oid = git('--git-dir', remote, 'rev-parse', 'refs/tags/v1.2.3');
+		publishRefs(
+			{ ...plan, changes: planRefs(signed, '1.2.3', commit, [{ name: 'v1.2.3', oid, commit }]) },
+			work,
+			remote,
+		);
+		expect(git('--git-dir', remote, 'rev-parse', 'refs/tags/v1.2.3^{}')).toBe(commit);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

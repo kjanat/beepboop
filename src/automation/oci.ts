@@ -1,4 +1,4 @@
-import type { Fetcher } from './managers.ts';
+import type { Fetcher } from './managers/registry.ts';
 import type { Publication } from './types.ts';
 
 /** Public distribution verification. Never forwards GitHub or vault credentials to registries. */

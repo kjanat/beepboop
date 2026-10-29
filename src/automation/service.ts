@@ -5,13 +5,17 @@ import { readBody, verifySignature } from '#webhook';
 import { type AuthBindings, Authenticators, administrator, authRoute, workflowIdentity } from './auth.ts';
 import { resolveConfiguration } from './configuration.ts';
 import type { AutomationCoordinator } from './coordinator.ts';
+import { planVersionFiles } from './editors.ts';
 import { createExecution } from './execution.ts';
 import { type Credentials, RepositoryGateway } from './github.ts';
+import { createReleasePreparation, planIdentity } from './managed.ts';
 import { discover, planRelease } from './managers.ts';
 import { onboardingBody, onboardingConfiguration } from './onboarding.ts';
+import { planReleaseSet } from './planning.ts';
 import { matchesRef } from './policy.ts';
 import { planHookUpdates } from './precommit.ts';
 import { Store } from './store.ts';
+import { matchesSubscription } from './subscriptions.ts';
 import type {
 	Artifact,
 	AutomationEvent,
@@ -42,6 +46,7 @@ export class AutomationService {
 		return this.env.AUTOMATION.getByName(String(id));
 	}
 	private async enqueue(repository: RepositoryRecord, execution: Execution): Promise<Execution> {
+		if (execution.managed) return this.coordinator(repository.id).enqueue(execution);
 		const existing = await this.store.execution(execution.id);
 		if (existing) return this.coordinator(repository.id).enqueue(existing);
 		if (
@@ -54,6 +59,7 @@ export class AutomationService {
 				repository.name,
 				repository.id,
 				execution.sourceSha,
+				(repository.configuration?.streams[execution.stream]?.versionFiles ?? []).map(rule => rule.path),
 			);
 			if (repository.inventory.packages.some((p) => p.publish)) {
 				execution.plan = planRelease(
@@ -61,10 +67,12 @@ export class AutomationService {
 					repository.inventory,
 					execution.version,
 					repository.configuration?.streams[execution.stream]?.packages,
+					undefined,
+					repository.configuration?.streams[execution.stream]?.versionFiles,
 				);
 			}
 		}
-		for (const operation of execution.workflow.needs ?? []) {
+		for (const operation of execution.workflow?.needs ?? []) {
 			const dependency = await createExecution(
 				repository,
 				execution.stream,
@@ -77,7 +85,7 @@ export class AutomationService {
 			dependency.sourceSha = execution.sourceSha;
 			await this.enqueue(repository, dependency);
 		}
-		if (execution.workflow.ref?.includes('*')) {
+		if (execution.workflow?.ref?.includes('*')) {
 			throw new Error(
 				'Dispatch requires an exact workflow ref; wildcard bindings support observation only',
 			);
@@ -208,8 +216,7 @@ export class AutomationService {
 		for (const repository of await this.store.repositories()) {
 			if (!repository.configuration || repository.diagnostics.length || repository.suspended) continue;
 			for (const subscription of repository.configuration.subscriptions) {
-				if (subscription.source !== event.source || subscription.event !== event.event) continue;
-				if (subscription.workflow && subscription.workflow !== event.workflow) continue;
+				if (!matchesSubscription(subscription, event)) continue;
 				const execution = await createExecution(
 					repository,
 					subscription.stream,
@@ -419,12 +426,48 @@ export class AutomationService {
 			await this.store.audit(actor, 'hooks.prepare', result.url);
 			return Response.json(result);
 		}
+		if (path === '/api/releases/start-set') {
+			const preparation = await this.store.execution(text(body.preparationId));
+			if (!preparation) throw new Error('Unknown preparation');
+			const executions = await this.coordinator(preparation.repositoryId).startReleaseSet(
+				preparation.id,
+				sha(body.sourceSha),
+			);
+			await this.store.audit(actor, 'release.start-set', preparation.id);
+			return Response.json(executions);
+		}
+		if (path === '/api/releases/plan-set' || path === '/api/releases/prepare-set') {
+			const repository = await this.store.repository(integer(body.repositoryId));
+			if (!repository?.configuration || repository.diagnostics.length) throw new Error('Repository not configured');
+			const stream = repository.configuration.streams[text(body.stream)];
+			if (stream?.versioning !== 'independent') throw new Error('Select an independent release stream');
+			const snapshot = await this.gateway.snapshot(
+				repository.name,
+				repository.id,
+				undefined,
+				(stream.versionFiles ?? []).map(rule => rule.path),
+			);
+			if (snapshot.sha !== repository.sha) throw new Error('Refresh discovery before planning this revision');
+			const plan = planReleaseSet(snapshot, repository.inventory, body.plan, stream.packages, stream.versionFiles);
+			const planId = await planIdentity(plan, repository);
+			if (path.endsWith('/plan-set')) return Response.json({ ...plan, planId });
+			if (sha(body.sourceSha) !== plan.sourceSha) throw new Error('Preview source revision changed');
+			if (body.planId !== planId) throw new Error('Release plan changed; preview it again');
+			const execution = await createReleasePreparation(repository, text(body.stream), plan);
+			await this.store.audit(actor, 'release.prepare-set', execution.id);
+			return Response.json(await this.enqueue(repository, execution));
+		}
 		if (path === '/api/releases/plan' || path === '/api/releases/prepare') {
 			const repository = await this.store.repository(integer(body.repositoryId));
 			if (!repository?.configuration) throw new Error('Repository not configured');
 			const stream = repository.configuration.streams[text(body.stream)];
 			if (!stream) throw new Error('Unknown stream');
-			const snapshot = await this.gateway.snapshot(repository.name, repository.id);
+			const snapshot = await this.gateway.snapshot(
+				repository.name,
+				repository.id,
+				undefined,
+				(stream.versionFiles ?? []).map(rule => rule.path),
+			);
 			if (snapshot.sha !== repository.sha) {
 				throw new Error('Refresh discovery before preparing this revision');
 			}
@@ -457,7 +500,9 @@ export class AutomationService {
 			}
 			const plan = stream.prepare.strategy !== 'workflow'
 					&& repository.inventory.packages.some((p) => p.publish)
-				? planRelease(snapshot, repository.inventory, target, selected)
+				? planRelease(snapshot, repository.inventory, target, selected, undefined, stream.versionFiles)
+				: stream.prepare.strategy !== 'workflow' && stream.versionFiles?.length
+				? planVersionFiles(snapshot, target, stream.versionFiles)
 				: {
 					version: semver(target).replace(/^v/, ''),
 					sourceSha: snapshot.sha,
@@ -466,34 +511,29 @@ export class AutomationService {
 					diagnostics: ['Preparation is delegated to the configured repository workflow'],
 					requiresPreparation: true,
 				};
-			if (path.endsWith('/plan')) return Response.json(plan);
+			const planId = await planIdentity(plan, repository);
+			if (path.endsWith('/plan')) return Response.json({ ...plan, planId });
+			if (sha(body.sourceSha) !== plan.sourceSha || body.planId !== planId) {
+				throw new Error('Release plan changed; preview it again');
+			}
 			if (stream.prepare.workflow) {
+				if (stream.prepare.strategy !== 'workflow') {
+					return Response.json(
+						await this.enqueue(repository, await createReleasePreparation(repository, text(body.stream), plan)),
+					);
+				}
 				const execution = await createExecution(
 					repository,
 					text(body.stream),
 					'prepare',
-					`release:${plan.version}`,
+					`plan:${planId}`,
 					plan.version,
 				);
-				if (stream.prepare.strategy !== 'workflow') execution.plan = plan;
 				return Response.json(await this.enqueue(repository, execution));
 			}
-			if (plan.requiresPreparation) {
-				throw new Error(
-					'Bind a preparation workflow to regenerate lockfiles before opening a release PR',
-				);
-			}
-			const result = await this.gateway.pullRequest(
-				snapshot,
-				`release/${text(body.stream)}/${plan.version}`,
-				`chore(release): prepare ${plan.version}`,
-				`Release ${plan.version}\n\nSource: ${snapshot.sha}\n\nRequired publications: ${
-					stream.required.join(', ') || 'configure publication requirements before promotion'
-				}\n\nPromotion requires approval.`,
-				plan.edits,
-			);
-			await this.store.audit(actor, 'release.prepare', result.url);
-			return Response.json(result);
+			const execution = await createReleasePreparation(repository, text(body.stream), plan);
+			await this.store.audit(actor, 'release.prepare', execution.id);
+			return Response.json(await this.enqueue(repository, execution));
 		}
 		if (path === '/api/executions/start') {
 			const repository = await this.store.repository(integer(body.repositoryId));
@@ -621,6 +661,7 @@ export class AutomationService {
 			if (execution.operation === 'promote') {
 				throw new Error('Promotion must be approved before registration');
 			}
+			if (!execution.workflow) throw new Error('Operation is not a workflow');
 			const configuredRef = execution.workflow.ref as string;
 			if (!matchesRef(configuredRef, identity.ref)) {
 				throw new Error('Observed run does not match configured ref');
@@ -653,6 +694,7 @@ export class AutomationService {
 				execution.repository,
 				execution.repositoryId,
 				execution.sourceSha,
+				execution.plan.edits.map(edit => edit.path),
 			);
 			const proposed = array(body.files).map((raw) => {
 				const file = record(raw);
@@ -666,6 +708,9 @@ export class AutomationService {
 					/(?:^|\/)(Cargo.lock|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock)$/.test(path)
 				),
 			);
+			if ([...allowedLocks].some(path => !proposed.some(file => file.path === path))) {
+				throw new Error('Prepared release is missing a lockfile');
+			}
 			const token = await this.gateway.token(execution.repository, execution.repositoryId);
 			const edits = [];
 			for (const file of proposed) {
@@ -678,46 +723,13 @@ export class AutomationService {
 				}
 				const before = (await this.gateway.file(execution.repository, file.path, execution.sourceSha, token))
 					?? '';
-				if (before !== file.after) edits.push({ path: file.path, before, after: file.after });
+				edits.push({ path: file.path, before, after: file.after });
 			}
 			if (execution.plan.edits.some((edit) => !proposed.some((file) => file.path === edit.path))) {
 				throw new Error('Prepared release is missing a planned edit');
 			}
 			if (!edits.length) return Response.json({ unchanged: true });
-			const key = `${execution.repositoryId}:${execution.stream}:${execution.version}`;
-			const prior = await this.store.db
-				.prepare('SELECT document FROM preparations WHERE id=?')
-				.bind(key)
-				.first<{ document: string }>();
-			const saved = prior ? record(JSON.parse(prior.document)) : undefined;
-			if (saved?.sourceSha && saved.sourceSha !== execution.sourceSha) {
-				throw new Error('Preparation source changed; review the existing release branch');
-			}
-			if (saved?.edits && JSON.stringify(saved.edits) === JSON.stringify(edits)) {
-				return Response.json({ url: saved.url, unchanged: true });
-			}
-			const branchEdits = edits.map((edit) => ({
-				...edit,
-				before: saved?.edits
-					? ((array(saved.edits)
-						.map(record)
-						.find((old) => old.path === edit.path)?.after as string | undefined) ?? edit.before)
-					: edit.before,
-			}));
-			const result = await this.gateway.pullRequest(
-				source,
-				`release/${execution.stream}/${execution.version}`,
-				`chore(release): prepare ${execution.version}`,
-				`Release ${execution.version}\n\nSource: ${execution.sourceSha}\n\nPreparation run: https://github.com/${execution.repository}/actions/runs/${identity.runId}\n\nPromotion requires approval.`,
-				branchEdits,
-				saved?.head as string | undefined,
-			);
-			await this.store.db
-				.prepare(
-					'INSERT INTO preparations VALUES(?,?) ON CONFLICT(id) DO UPDATE SET document=excluded.document',
-				)
-				.bind(key, JSON.stringify({ ...result, edits, sourceSha: execution.sourceSha }))
-				.run();
+			const result = await this.coordinator(execution.repositoryId).prepared(execution.id, identity, edits);
 			await this.store.audit(`run:${identity.runId}`, 'release.prepared', result.url);
 			return Response.json(result);
 		}

@@ -34,7 +34,11 @@ if (process.env.PREPARATION_MODE === 'apply') {
 } else if (process.env.PREPARATION_MODE === 'submit') {
 	const result = spawnSync('git', ['diff', '--name-only', '-z', 'HEAD'], { cwd: root, encoding: 'utf8' });
 	if (result.status !== 0) throw Error('Cannot inspect prepared changes');
-	const paths = new Set([...context.plan.edits.map(edit => edit.path), ...result.stdout.split('\0').filter(Boolean)]);
+	const paths = new Set([
+		...context.plan.edits.map(edit => edit.path),
+		...(context.plan.lockfiles || []),
+		...result.stdout.split('\0').filter(Boolean),
+	]);
 	const files = [...paths].map(path => ({ path, content: readFileSync(safe(path), 'utf8') }));
 	const target = join(process.env.RUNNER_TEMP, `release-prepared-${context.id}.json`);
 	writeFileSync(target, JSON.stringify({ executionId: context.id, files }), { mode: 0o600 });

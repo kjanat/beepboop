@@ -1,5 +1,7 @@
 import { CronExpressionParser } from 'cron-parser';
 import { array, record, text } from '#model';
+import { versionFileSchema } from './editors.ts';
+import { inputSchema, outputSchema, platformSchema } from './outputs.ts';
 import { validRef } from './policy.ts';
 import type { Configuration, ManagerName, Stream, WorkflowBinding } from './types.ts';
 
@@ -26,7 +28,20 @@ function binding(value: unknown): WorkflowBinding {
 	const data = record(value);
 	keys(
 		data,
-		['file', 'ref', 'inputs', 'required', 'needs', 'schedule', 'publications', 'mode', 'refs'],
+		[
+			'file',
+			'ref',
+			'inputs',
+			'required',
+			'needs',
+			'schedule',
+			'publications',
+			'mode',
+			'refs',
+			'platform',
+			'outputs',
+			'artifactInputs',
+		],
 		'workflow',
 	);
 	if (data.schedule !== undefined) {
@@ -73,10 +88,22 @@ function binding(value: unknown): WorkflowBinding {
 	if (data.required !== undefined && typeof data.required !== 'boolean') {
 		throw new Error('Invalid required flag');
 	}
+	const outputs = data.outputs === undefined ? undefined : array(data.outputs).map(value => outputSchema.parse(value));
+	if (outputs && new Set(outputs.map(output => output.id)).size !== outputs.length) throw new Error('Duplicate output');
+	const artifactInputs = data.artifactInputs === undefined
+		? undefined
+		: array(data.artifactInputs).map(value => inputSchema.parse(value));
 	return {
+		...(outputs ? { outputs } : {}),
+		...(artifactInputs ? { artifactInputs } : {}),
+		...(data.platform === undefined ? {} : { platform: platformSchema.parse(data.platform) }),
 		...(refs ? { refs } : {}),
 		...(data.mode === undefined ? {} : { mode: data.mode as WorkflowBinding['mode'] }),
-		...(data.needs === undefined ? {} : { needs: strings(data.needs) }),
+		...(data.needs === undefined && !artifactInputs
+			? {}
+			: {
+				needs: [...new Set([...strings(data.needs ?? []), ...(artifactInputs ?? []).map(input => input.operation)])],
+			}),
 		...(data.publications === undefined ? {} : { publications: strings(data.publications) }),
 		...(data.schedule === undefined ? {} : { schedule: text(data.schedule) }),
 		file,
@@ -100,6 +127,7 @@ export function parseRepositoryConfiguration(value: unknown): Configuration {
 			row,
 			[
 				'versioning',
+				'versionFiles',
 				'versionSource',
 				'packages',
 				'prepare',
@@ -153,6 +181,9 @@ export function parseRepositoryConfiguration(value: unknown): Configuration {
 			versionSource = { kind: 'tags', prefix: source.prefix };
 		}
 		streams[name] = {
+			...(row.versionFiles === undefined
+				? {}
+				: { versionFiles: array(row.versionFiles).map(value => versionFileSchema.parse(value)) }),
 			...(versionSource ? { versionSource } : {}),
 			...(row.packages === undefined ? {} : { packages: strings(row.packages) }),
 			versioning: versioning as Stream['versioning'],
@@ -198,6 +229,11 @@ export function parseRepositoryConfiguration(value: unknown): Configuration {
 		for (const [name, operation] of Object.entries(operations)) if (operation) visit(name);
 		const approved = (name: string): boolean => name === 'promote' || (operations[name]?.needs ?? []).some(approved);
 		for (const [name, operation] of Object.entries(operations)) {
+			for (const input of operation?.artifactInputs ?? []) {
+				if (!operations[input.operation]?.outputs?.some(output => output.id === input.output)) {
+					throw new Error(`Unknown output: ${input.operation}/${input.output}`);
+				}
+			}
 			if (operation?.refs && !approved(name)) {
 				throw new Error('Ref publication requires promotion approval in its dependencies');
 			}
@@ -205,7 +241,17 @@ export function parseRepositoryConfiguration(value: unknown): Configuration {
 	}
 	const subscriptions = array(data.subscriptions ?? []).map((raw) => {
 		const row = record(raw);
-		keys(row, ['id', 'source', 'event', 'stream', 'operation', 'workflow'], 'subscription');
+		keys(row, [
+			'id',
+			'source',
+			'event',
+			'stream',
+			'operation',
+			'workflow',
+			'sourceStream',
+			'sourceGroup',
+			'publication',
+		], 'subscription');
 		const id = text(row.id),
 			event = text(row.event),
 			stream = text(row.stream),
@@ -227,6 +273,9 @@ export function parseRepositoryConfiguration(value: unknown): Configuration {
 		}
 		return {
 			id,
+			...(row.sourceStream === undefined ? {} : { sourceStream: text(row.sourceStream) }),
+			...(row.sourceGroup === undefined ? {} : { sourceGroup: text(row.sourceGroup) }),
+			...(row.publication === undefined ? {} : { publication: text(row.publication) }),
 			source: text(row.source),
 			event: event as Configuration['subscriptions'][number]['event'],
 			stream,

@@ -65,6 +65,18 @@
 					},
 					"workflow": {
 						"type": "string"
+					},
+					"sourceStream": {
+						"type": "string",
+						"minLength": 1
+					},
+					"sourceGroup": {
+						"type": "string",
+						"minLength": 1
+					},
+					"publication": {
+						"type": "string",
+						"minLength": 1
 					}
 				},
 				"required": [
@@ -152,6 +164,75 @@
 						},
 						"signed": {
 							"type": "boolean"
+						}
+					}
+				},
+				"platform": {
+					"type": "object",
+					"additionalProperties": false,
+					"required": [
+						"os",
+						"arch"
+					],
+					"properties": {
+						"os": {
+							"type": "string",
+							"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+						},
+						"arch": {
+							"type": "string",
+							"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+						},
+						"abi": {
+							"type": "string",
+							"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+						}
+					}
+				},
+				"outputs": {
+					"type": "array",
+					"items": {
+						"type": "object",
+						"additionalProperties": false,
+						"required": [
+							"id",
+							"kind"
+						],
+						"properties": {
+							"id": {
+								"type": "string",
+								"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+							},
+							"kind": {
+								"enum": [
+									"archive",
+									"binary",
+									"manifest",
+									"package",
+									"checksums"
+								]
+							}
+						}
+					}
+				},
+				"artifactInputs": {
+					"type": "array",
+					"items": {
+						"type": "object",
+						"additionalProperties": false,
+						"required": [
+							"operation",
+							"output"
+						],
+						"properties": {
+							"operation": {
+								"type": "string",
+								"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+							},
+							"output": {
+								"type": "string",
+								"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+							}
 						}
 					}
 				}
@@ -261,6 +342,176 @@
 							"type": "string",
 							"pattern": "^[A-Za-z0-9._-]*$"
 						}
+					}
+				},
+				"versionFiles": {
+					"type": "array",
+					"items": {
+						"oneOf": [
+							{
+								"type": "object",
+								"properties": {
+									"path": {
+										"type": "string"
+									},
+									"group": {
+										"type": "string",
+										"minLength": 1
+									},
+									"template": {
+										"default": "{version}",
+										"type": "string",
+										"maxLength": 1000
+									},
+									"format": {
+										"type": "string",
+										"const": "json"
+									},
+									"key": {
+										"minItems": 1,
+										"type": "array",
+										"items": {
+											"anyOf": [
+												{
+													"type": "string",
+													"minLength": 1
+												},
+												{
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												}
+											]
+										}
+									}
+								},
+								"required": [
+									"path",
+									"template",
+									"format",
+									"key"
+								],
+								"additionalProperties": false
+							},
+							{
+								"type": "object",
+								"properties": {
+									"path": {
+										"type": "string"
+									},
+									"group": {
+										"type": "string",
+										"minLength": 1
+									},
+									"template": {
+										"default": "{version}",
+										"type": "string",
+										"maxLength": 1000
+									},
+									"format": {
+										"type": "string",
+										"const": "yaml"
+									},
+									"key": {
+										"minItems": 1,
+										"type": "array",
+										"items": {
+											"anyOf": [
+												{
+													"type": "string",
+													"minLength": 1
+												},
+												{
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												}
+											]
+										}
+									}
+								},
+								"required": [
+									"path",
+									"template",
+									"format",
+									"key"
+								],
+								"additionalProperties": false
+							},
+							{
+								"type": "object",
+								"properties": {
+									"path": {
+										"type": "string"
+									},
+									"group": {
+										"type": "string",
+										"minLength": 1
+									},
+									"template": {
+										"default": "{version}",
+										"type": "string",
+										"maxLength": 1000
+									},
+									"format": {
+										"type": "string",
+										"const": "toml"
+									},
+									"key": {
+										"minItems": 1,
+										"type": "array",
+										"items": {
+											"type": "string",
+											"pattern": "^[A-Za-z0-9_-]+$"
+										}
+									}
+								},
+								"required": [
+									"path",
+									"template",
+									"format",
+									"key"
+								],
+								"additionalProperties": false
+							},
+							{
+								"type": "object",
+								"properties": {
+									"path": {
+										"type": "string"
+									},
+									"group": {
+										"type": "string",
+										"minLength": 1
+									},
+									"template": {
+										"default": "{version}",
+										"type": "string",
+										"maxLength": 1000
+									},
+									"format": {
+										"type": "string",
+										"const": "text"
+									},
+									"prefix": {
+										"type": "string",
+										"minLength": 1
+									},
+									"suffix": {
+										"type": "string",
+										"minLength": 1
+									}
+								},
+								"required": [
+									"path",
+									"template",
+									"format",
+									"prefix",
+									"suffix"
+								],
+								"additionalProperties": false
+							}
+						]
 					}
 				}
 			}

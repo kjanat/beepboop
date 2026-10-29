@@ -1,3 +1,4 @@
+import { outputsComplete } from './outputs.ts';
 import type { Execution, Publication, ReleaseReference, RepositoryRecord, WorkflowBinding } from './types.ts';
 
 export async function executionId(
@@ -68,11 +69,14 @@ export async function createExecution(
 }
 export function completion(execution: Execution, runSucceeded: boolean): Execution['state'] {
 	if (!runSucceeded) return 'failed';
+	if (execution.managed) return execution.managed.result ? 'succeeded' : 'blocked';
+	if (execution.operation === 'prepare' && execution.plan && !execution.prepared?.result) return 'blocked';
+	if (!outputsComplete(execution)) return 'blocked';
 	if (
-		execution.workflow.refs
+		execution.workflow?.refs
 		&& !execution.publications.some(p => p.id === `refs:${execution.operation}` && p.outcome === 'succeeded')
 	) return 'blocked';
-	const required = execution.workflow.publications
+	const required = execution.workflow?.publications
 		?? (execution.operation === 'publish'
 			? (execution.configuration.streams[execution.stream]?.required ?? [])
 			: []);
@@ -100,4 +104,26 @@ export function mergePublications(prior: Publication[], incoming: Publication[])
 		result.set(publication.id, { ...publication, required: old?.required || publication.required });
 	}
 	return [...result.values()];
+}
+
+export function validatePublicationIdentity(execution: Execution, publication: Publication): void {
+	if (publication.id !== `${publication.manager}:${publication.name}`) {
+		throw new Error('Publication ID does not match its manager and package identity');
+	}
+	if (
+		execution.version && ['cargo', 'npm'].includes(publication.manager) && publication.version !== execution.version
+	) {
+		throw new Error('Publication version does not match the execution');
+	}
+}
+
+export function dependenciesReady(execution: Execution, candidates: Execution[]): boolean {
+	return execution.dependencies.every(id =>
+		candidates.some(dependency =>
+			dependency.id === id
+			&& dependency.state === 'succeeded' && dependency.repositoryId === execution.repositoryId
+			&& dependency.eventId === execution.eventId && dependency.sourceSha === execution.sourceSha
+			&& dependency.configurationSha === execution.configurationSha
+		)
+	);
 }
