@@ -90,7 +90,10 @@ function cookie(request: Request, name: string): string | undefined {
 function cookieHeader(name: string, value: string, seconds: number): string {
 	return `${name}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${seconds}`;
 }
-export async function administrator(request: Request, env: AuthBindings): Promise<string> {
+export async function administrator(
+	request: Request,
+	env: Pick<AuthBindings, 'APPLICATION_ORIGIN' | 'OPENAUTH_ISSUER' | 'OPENAUTH_CLIENT_ID' | 'ADMIN_SUBJECT'>,
+): Promise<string> {
 	const token = cookie(request, '__Host-beepboop_access');
 	if (!token || token.length > 20000) throw new Error('Administrator login required');
 	let key = keys.get(env.OPENAUTH_ISSUER);
@@ -102,7 +105,7 @@ export async function administrator(request: Request, env: AuthBindings): Promis
 		issuer: env.OPENAUTH_ISSUER,
 		audience: env.OPENAUTH_CLIENT_ID,
 		algorithms: ['ES256', 'RS256'],
-		requiredClaims: ['exp', 'sub', 'iat'],
+		requiredClaims: ['exp', 'sub'],
 	});
 	if (payload.mode !== 'access' || payload.type !== 'user') {
 		throw new Error('Administrator access token required');
