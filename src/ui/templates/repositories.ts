@@ -1,7 +1,7 @@
 import type { RepositoryRecord } from '../../automation/types.ts';
 import { htmlEscape } from './html.ts';
 
-function renderRepository(repository: RepositoryRecord): string {
+function renderRepository(repository: RepositoryRecord, pull: string | undefined): string {
 	const packages = repository.inventory.packages.map(pkg => `
 		<tr>
 			<td>${htmlEscape(pkg.name)}</td>
@@ -23,7 +23,9 @@ function renderRepository(repository: RepositoryRecord): string {
 			${
 		repository.configuration
 			? ''
-			: `<p><button data-onboard="${
+			: pull
+			? `<p>Onboarding PR: <a href="${htmlEscape(pull)}">${htmlEscape(pull)}</a></p>`
+			: `<p data-onboarding="${repository.id}"><button data-onboard="${
 				htmlEscape(repository.name)
 			}" data-repository-id="${repository.id}">Open onboarding PR</button></p>`
 	}
@@ -39,7 +41,10 @@ function renderRepository(repository: RepositoryRecord): string {
 		</article>`;
 }
 
-export function renderRepositories(repositories: RepositoryRecord[]): string {
+export function renderRepositories(
+	repositories: RepositoryRecord[],
+	onboarding: ReadonlyMap<number, string>,
+): string {
 	return `
 		<section id="repositories">
 			<h2>Repositories</h2>
@@ -49,7 +54,8 @@ export function renderRepositories(repositories: RepositoryRecord[]): string {
 				<button name="action" value="onboard">Open onboarding PR</button>
 			</form>
 			${
-		repositories.map(renderRepository).join('') || '<p>No repositories enrolled. Inspect a repository to begin.</p>'
+		repositories.map(repository => renderRepository(repository, onboarding.get(repository.id))).join('')
+		|| '<p>No repositories enrolled. Inspect a repository to begin.</p>'
 	}
 		</section>`;
 }

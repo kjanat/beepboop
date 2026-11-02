@@ -8,6 +8,7 @@ import { renderRepositories } from './templates/repositories.ts';
 export function renderPage(
 	repositories: RepositoryRecord[],
 	executions: Execution[],
+	onboarding: ReadonlyMap<number, string>,
 	nonce: string,
 	script: string,
 	style: string,
@@ -29,7 +30,7 @@ export function renderPage(
 					<form action="/auth/logout" method="post"><button>Sign out</button></form>
 				</header>
 				<nav aria-label="Dashboard">${navigation}</nav>
-				${renderRepositories(repositories)}
+				${renderRepositories(repositories, onboarding)}
 				${renderReleases(repositories, executions)}
 				${renderExecutions(executions)}
 				${renderCredentials()}

@@ -12,13 +12,28 @@ for (const button of tabs) {
 	});
 }
 
-async function onboard(repository: Record<string, unknown>): Promise<void> {
-	const { url } = await api<{ url: string }>('/api/repositories/onboard', repository);
-	show(`Onboarding PR: ${url}`);
+const onboardButtons = () =>
+	document.querySelectorAll<HTMLButtonElement>('[data-onboard], #discover button[value="onboard"]');
+async function onboard(repository: { repository: string; repositoryId?: number }): Promise<void> {
+	for (const button of onboardButtons()) button.disabled = true;
+	show(`Opening the onboarding PR for ${repository.repository}…`);
+	try {
+		const { url } = await api<{ url: string }>('/api/repositories/onboard', repository);
+		const slot = document.querySelector<HTMLElement>(`[data-onboarding="${repository.repositoryId}"]`);
+		if (slot) {
+			const link = document.createElement('a');
+			link.href = url;
+			link.textContent = url;
+			slot.replaceChildren('Onboarding PR: ', link);
+		}
+		show(`Onboarding PR: ${url}`);
+	} finally {
+		for (const button of onboardButtons()) button.disabled = false;
+	}
 }
 submit('discover', async (data, action) => {
 	if (action === 'onboard') {
-		await onboard(data);
+		await onboard({ repository: data.repository ?? '' });
 	} else {
 		await api('/api/repositories/discover', data);
 		location.reload();
@@ -26,13 +41,12 @@ submit('discover', async (data, action) => {
 });
 for (const button of document.querySelectorAll<HTMLButtonElement>('[data-onboard]')) {
 	button.addEventListener('click', async () => {
-		button.disabled = true;
+		const { onboard: repository, repositoryId } = button.dataset;
+		if (!repository) return;
 		try {
-			await onboard({ repository: button.dataset.onboard, repositoryId: Number(button.dataset.repositoryId) });
+			await onboard({ repository, repositoryId: Number(repositoryId) });
 		} catch (error) {
 			showError(error);
-		} finally {
-			button.disabled = false;
 		}
 	});
 }

@@ -320,7 +320,11 @@ export class AutomationService {
 				: Response.json({ error: 'Administrator authentication required' }, { status: 401 });
 		}
 		if (path === '/' && request.method === 'GET') {
-			return renderDashboard(await this.store.repositories(), await this.store.executions());
+			return renderDashboard(
+				await this.store.repositories(),
+				await this.store.executions(),
+				await this.store.onboardingPulls(),
+			);
 		}
 		if (request.method === 'GET') {
 			if (path === '/api/authenticators') {

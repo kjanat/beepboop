@@ -58,3 +58,33 @@ test('a repository card offers onboarding only until it has a configuration', as
 	};
 	expect(await renderDashboard([configured], []).text()).not.toContain('data-onboard=');
 });
+
+test('a card with an open onboarding PR links it instead of offering the button', async () => {
+	const { discover } = await import('#automation/managers');
+	const snapshot = {
+		repository: { id: 9, name: 'example/linked', defaultBranch: 'main' },
+		sha: 'b'.repeat(40),
+		files: { 'package.json': '{"name":"linked","version":"1.0.0"}' },
+	};
+	const repository = {
+		...snapshot.repository,
+		sha: snapshot.sha,
+		inventory: discover(snapshot),
+		diagnostics: [],
+		presetShas: {},
+		updatedAt: 0,
+	};
+	const page = await renderDashboard([repository], [], new Map([[9, 'https://github.com/example/linked/pull/4']]))
+		.text();
+	expect(page).toContain('Onboarding PR: <a href="https://github.com/example/linked/pull/4">');
+	expect(page).not.toContain('data-onboard=');
+	expect(await renderDashboard([repository], []).text()).toContain('data-onboarding="9"');
+});
+
+test('onboarding rows yield each repository PR and skip rows without one', async () => {
+	const { onboardingPulls } = await import('#automation/store');
+	expect(onboardingPulls([
+		{ repository_id: 1, document: JSON.stringify({ url: 'https://github.com/a/b/pull/1', head: 'x' }) },
+		{ repository_id: 2, document: JSON.stringify({ head: 'y' }) },
+	])).toEqual(new Map([[1, 'https://github.com/a/b/pull/1']]));
+});

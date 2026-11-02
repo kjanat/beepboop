@@ -1,4 +1,15 @@
+import { record } from '#model';
+
 import type { AutomationEvent, Execution, RepositoryRecord, SubscriptionDelivery } from './types.ts';
+
+export function onboardingPulls(rows: { repository_id: number; document: string }[]): Map<number, string> {
+	const pulls = new Map<number, string>();
+	for (const row of rows) {
+		const url = record(JSON.parse(row.document)).url;
+		if (typeof url === 'string') pulls.set(row.repository_id, url);
+	}
+	return pulls;
+}
 
 export class Store {
 	constructor(readonly db: D1Database) {}
@@ -14,6 +25,13 @@ export class Store {
 			.prepare('SELECT document FROM repositories ORDER BY name')
 			.all<{ document: string }>();
 		return result.results.map((row) => JSON.parse(row.document));
+	}
+	async onboardingPulls(): Promise<Map<number, string>> {
+		const result = await this.db.prepare('SELECT repository_id, document FROM onboarding').all<{
+			repository_id: number;
+			document: string;
+		}>();
+		return onboardingPulls(result.results);
 	}
 	async putRepository(repository: RepositoryRecord): Promise<void> {
 		await this.db
