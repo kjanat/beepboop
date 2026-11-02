@@ -169,6 +169,33 @@ try {
 	});
 	assert.equal(ignored.status, 204);
 	assert.equal(outbound, 0);
+	const cookieless = await instance.dispatchFetch('https://automation.test/auth/callback?code=c&state=s', {
+		redirect: 'manual',
+	});
+	assert.equal(cookieless.status, 401);
+	assert.match(await cookieless.text(), /Sign in again/);
+	const stale = await instance.dispatchFetch('https://automation.test/auth/callback?code=c&state=s', {
+		redirect: 'manual',
+		headers: { cookie: '__Host-beepboop_flow=no-such-flow' },
+	});
+	assert.equal(stale.status, 302);
+	assert.equal(stale.headers.get('location'), '/auth/login');
+	const login = await instance.dispatchFetch('https://automation.test/auth/login', { redirect: 'manual' });
+	assert.equal(login.status, 302);
+	const flowId = /__Host-beepboop_flow=([^;]+)/.exec(login.headers.get('set-cookie') ?? '')?.[1];
+	const state = new URL(login.headers.get('location') ?? '').searchParams.get('state');
+	assert.ok(flowId && state);
+	const unreachable = await instance.dispatchFetch(
+		`https://automation.test/auth/callback?code=c&state=${encodeURIComponent(state)}`,
+		{ redirect: 'manual', headers: { cookie: `__Host-beepboop_flow=${flowId}` } },
+	);
+	assert.equal(unreachable.status, 401);
+	assert.match(await unreachable.text(), /Login exchange failed/);
+	const reusedLogin = await instance.dispatchFetch(
+		`https://automation.test/auth/callback?code=c&state=${encodeURIComponent(state)}`,
+		{ redirect: 'manual', headers: { cookie: `__Host-beepboop_flow=${flowId}` } },
+	);
+	assert.equal(reusedLogin.headers.get('location'), '/auth/login');
 	const released = {
 		...fixture,
 		id: 'completed-release',

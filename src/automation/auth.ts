@@ -118,6 +118,50 @@ export async function administrator(
 	}
 	return payload.sub;
 }
+export interface LoginCompletion {
+	consumeFlow(id: string): Promise<string | null>;
+	exchange(code: string, verifier: string): Promise<{ access: string; expiresIn: number }>;
+	verify(access: string): Promise<string>;
+}
+function escapeHtml(value: string): string {
+	return value.replace(/[&<>"']/g, (character) => `&#${character.charCodeAt(0)};`);
+}
+function loginFailed(reason: string): Response {
+	return new Response(
+		`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign-in failed · Beepboop</title></head><body><main><h1>Sign-in failed</h1><p>${
+			escapeHtml(reason)
+		}</p><p><a href="/auth/login">Sign in again</a></p></main></body></html>`,
+		{
+			status: 401,
+			headers: {
+				'Content-Type': 'text/html; charset=utf-8',
+				'Cache-Control': 'no-store',
+				'Set-Cookie': cookieHeader('__Host-beepboop_flow', '', 0),
+			},
+		},
+	);
+}
+export async function completeLogin(request: Request, steps: LoginCompletion): Promise<Response> {
+	const id = cookie(request, '__Host-beepboop_flow');
+	if (!id) return loginFailed('This sign-in link has no login attempt behind it. Cookies may be blocked.');
+	const document = await steps.consumeFlow(id);
+	if (!document) return new Response(null, { status: 302, headers: { Location: '/auth/login' } });
+	try {
+		const flow = record(JSON.parse(document)),
+			url = new URL(request.url);
+		if (url.searchParams.get('state') !== flow.state) {
+			return new Response(null, { status: 302, headers: { Location: '/auth/login' } });
+		}
+		const tokens = await steps.exchange(text(url.searchParams.get('code')), text(flow.verifier));
+		await steps.verify(tokens.access);
+		return new Response(null, {
+			status: 302,
+			headers: { Location: '/', 'Set-Cookie': cookieHeader('__Host-beepboop_access', tokens.access, tokens.expiresIn) },
+		});
+	} catch (error) {
+		return loginFailed(error instanceof Error ? error.message : 'Login failed');
+	}
+}
 export async function authRoute(
 	request: Request,
 	env: AuthBindings,
@@ -140,37 +184,23 @@ export async function authRoute(
 		});
 	}
 	if (path === '/auth/callback') {
-		const id = cookie(request, '__Host-beepboop_flow');
-		const row = id
-			? await env.DB.prepare('DELETE FROM sessions WHERE id=? AND expires_at>? RETURNING document')
-				.bind(id, Date.now())
-				.first<{ document: string }>()
-			: null;
-		if (!row) throw new Error('Login expired');
-		const flow = record(JSON.parse(row.document)),
-			url = new URL(request.url);
-		if (url.searchParams.get('state') !== flow.state) throw new Error('Login state mismatch');
-		const result = await client.exchange(
-			text(url.searchParams.get('code')),
-			`${env.APPLICATION_ORIGIN}/auth/callback`,
-			text(flow.verifier),
-		);
-		if (result.err) throw new Error('Login exchange failed');
-		// Validate the exchanged token before creating the browser session.
-		const probe = new Request(`${env.APPLICATION_ORIGIN}/`, {
-			headers: { Cookie: `__Host-beepboop_access=${result.tokens.access}` },
-		});
-		await administrator(probe, env);
-		return new Response(null, {
-			status: 302,
-			headers: {
-				Location: '/',
-				'Set-Cookie': cookieHeader(
-					'__Host-beepboop_access',
-					result.tokens.access,
-					result.tokens.expiresIn,
-				),
+		return completeLogin(request, {
+			consumeFlow: async (id) =>
+				(await env.DB.prepare('DELETE FROM sessions WHERE id=? AND expires_at>? RETURNING document')
+					.bind(id, Date.now())
+					.first<{ document: string }>())?.document ?? null,
+			exchange: async (code, verifier) => {
+				const result = await client.exchange(code, `${env.APPLICATION_ORIGIN}/auth/callback`, verifier).catch(() =>
+					null
+				);
+				if (!result || result.err) throw new Error('Login exchange failed');
+				return { access: result.tokens.access, expiresIn: result.tokens.expiresIn };
 			},
+			verify: (access) =>
+				administrator(
+					new Request(`${env.APPLICATION_ORIGIN}/`, { headers: { Cookie: `__Host-beepboop_access=${access}` } }),
+					env,
+				),
 		});
 	}
 	if (path === '/auth/logout' && request.method === 'POST') {
