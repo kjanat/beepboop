@@ -6,7 +6,7 @@ import {
 	verifyAuthenticationResponse,
 	verifyRegistrationResponse,
 } from '@simplewebauthn/server';
-import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { createRemoteJWKSet, type JWTVerifyGetKey, jwtVerify } from 'jose';
 import { integer, record, sha, text } from '#model';
 
 export interface AuthBindings {
@@ -22,6 +22,7 @@ export interface WorkflowIdentity {
 	repositoryId: number;
 	repository: string;
 	ownerId: number;
+	actorId: number;
 	runId: number;
 	attempt: number;
 	sha: string;
@@ -45,10 +46,11 @@ export async function workflowIdentity(
 	request: Request,
 	audience: string,
 	ownerId: number,
+	issuerKeys: JWTVerifyGetKey = githubKeys,
 ): Promise<WorkflowIdentity> {
 	const token = request.headers.get('authorization')?.replace(/^Bearer /, '');
 	if (!token || token.length > 20000) throw new Error('Workflow authentication required');
-	const { payload } = await jwtVerify(token, githubKeys, {
+	const { payload } = await jwtVerify(token, issuerKeys, {
 		issuer: 'https://token.actions.githubusercontent.com',
 		audience,
 		algorithms: ['RS256'],
@@ -58,6 +60,7 @@ export async function workflowIdentity(
 		repositoryId: integer(Number(payload.repository_id)),
 		repository: text(payload.repository),
 		ownerId: integer(Number(payload.repository_owner_id)),
+		actorId: integer(Number(payload.actor_id)),
 		runId: integer(Number(payload.run_id)),
 		attempt: integer(Number(payload.run_attempt)),
 		sha: sha(payload.sha),
@@ -70,7 +73,7 @@ export async function workflowIdentity(
 	};
 	if (
 		identity.ownerId !== ownerId
-		|| ['pull_request', 'pull_request_target'].includes(identity.event)
+		|| identity.event === 'pull_request_target'
 	) {
 		throw new Error('Workflow identity is not eligible');
 	}

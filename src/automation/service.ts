@@ -16,6 +16,7 @@ import { matchesRef } from './policy.ts';
 import { planHookUpdates } from './precommit.ts';
 import { Store } from './store.ts';
 import { matchesSubscription } from './subscriptions.ts';
+import { workflowToken } from './token.ts';
 import type {
 	Artifact,
 	AutomationEvent,
@@ -306,6 +307,9 @@ export class AutomationService {
 		if (path === '/webhooks/github' && request.method === 'POST') return this.webhook(request);
 		const auth = await authRoute(request, this.env);
 		if (auth) return auth;
+		if (path === '/api/workflow/token') {
+			return workflowToken(request, this.env.APPLICATION_ORIGIN, Number(this.env.OWNER_ID), this.gateway, this.store);
+		}
 		if (path.startsWith('/api/workflow/')) return this.workflow(request);
 		let actor: string;
 		try {

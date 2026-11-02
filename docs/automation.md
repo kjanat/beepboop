@@ -210,6 +210,29 @@ previously issued.
 
 See [deployment](deployment.md) for encryption keys, login, and security-key enrollment.
 
+## Repository token
+
+`actions/token` gives a workflow a Beepboop App installation token for its own
+repository. Pushes and pull requests made with it start workflow runs, unlike
+`GITHUB_TOKEN`. The job needs `id-token: write`, and the run must have been
+started by the owner account: bots, apps and other users get no token. Push and
+same-repository `pull_request` runs qualify, `pull_request_target` runs do not,
+and the repository does not have to be enrolled.
+
+```yaml
+- uses: kjanat/beepboop/actions/token@IMPLEMENTATION_SHA
+  id: beepboop
+  with:
+    permissions: '{"contents":"write","pull_requests":"write"}'
+- run: gh pr comment "$PR" --body "Done."
+  env:
+    GH_TOKEN: ${{ steps.beepboop.outputs.token }}
+```
+
+The route issues `contents`, `pull_requests`, `issues`, `checks`, `statuses`
+and `metadata`, each `read` or `write`, and refuses every other permission.
+Every issued token is recorded in the audit log.
+
 ## Subscriptions
 
 Start an operation when a package changes:

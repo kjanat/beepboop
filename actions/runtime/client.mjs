@@ -36,6 +36,7 @@ else if (mode === 'report') {
 	};
 } else if (mode === 'credentials') body = { executionId, aliases: JSON.parse(process.env.ALIASES || '[]') };
 else if (mode === 'refs-plan' || mode === 'refs-complete') body = { executionId };
+else if (mode === 'token') body = { permissions: JSON.parse(process.env.PERMISSIONS || '{}') };
 else throw Error('Unknown integration action');
 const result = await fetch(new URL(`/api/workflow/${mode}`, origin), {
 	method: 'POST',
@@ -62,4 +63,8 @@ if (mode === 'begin') {
 		output(alias, value);
 	}
 	output('values', JSON.stringify(data));
+} else if (mode === 'token') {
+	if (typeof data.token !== 'string') throw Error('Invalid token response');
+	mask(data.token);
+	output('token', data.token);
 } else output('result', JSON.stringify(data));

@@ -40,6 +40,7 @@ const identity: WorkflowIdentity = {
 	repositoryId: 91,
 	repository: 'example/seventh',
 	ownerId: 1,
+	actorId: 1,
 	runId: 7,
 	attempt: 1,
 	sha: 'a'.repeat(40),

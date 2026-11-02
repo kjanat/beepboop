@@ -1,0 +1,22 @@
+name: Beepboop token
+description: A Beepboop GitHub App token for this repository, using GitHub OIDC
+inputs:
+  service:
+    description: Beepboop service origin
+    default: https://beepboop.kjanat.dev
+  permissions:
+    description: JSON object of GitHub App permissions, each read or write
+    default: '{"contents":"write","pull_requests":"write"}'
+outputs:
+  token:
+    description: Masked installation token scoped to this repository
+    value: ${{ steps.client.outputs.token }}
+runs:
+  using: composite
+  steps:
+    - id: client
+      shell: bash
+      env:
+        SERVICE_ORIGIN: ${{ inputs.service }}
+        PERMISSIONS: ${{ inputs.permissions }}
+      run: node "${{ github.action_path }}/../runtime/client.mjs" token
