@@ -17,11 +17,23 @@ export const workflowManager: Manager = {
 						? trigger.map(String)
 						: Object.keys(object(trigger));
 					const jobs = object(workflow.jobs);
+					const push = object(object(trigger).push);
+					const createsRelease = Object.values(jobs).some(job => {
+						const steps = object(job).steps;
+						return Array.isArray(steps) && steps.some(step => {
+							const { uses, run } = object(step);
+							return (typeof uses === 'string'
+								&& /^(?:softprops\/action-gh-release|ncipollo\/release-action)@/.test(uses))
+								|| (typeof run === 'string' && /\bgh release create\b/.test(run));
+						});
+					});
 					const localActions = [
 						...source.matchAll(/uses:\s*["']?((?:\.\/|\$\/)\.github\/[^\s"']+)/g),
 					].map((m) => m[1] as string);
 					inventory.workflows.push({
-						tagTriggered: events.includes('release') || Array.isArray(object(object(trigger).push).tags),
+						...(Array.isArray(push.tags) ? { tagPatterns: push.tags.map(String) } : {}),
+						...(Array.isArray(push.branches) ? { branchPatterns: push.branches.map(String) } : {}),
+						...(createsRelease ? { createsRelease } : {}),
 						file: path.slice('.github/workflows/'.length),
 						name: String(workflow.name ?? path),
 						events,
@@ -33,7 +45,7 @@ export const workflowManager: Manager = {
 						),
 					});
 					detected.add('workflow');
-					if (events.includes('release') || /gh release|releases\/|release-action/.test(source)) {
+					if (events.includes('release') || createsRelease || /gh release|releases\/|release-action/.test(source)) {
 						detected.add('github-release');
 					}
 					if (/docker\/(?:build-push|metadata)-action|skopeo copy/.test(source)) detected.add('oci');

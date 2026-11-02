@@ -116,7 +116,7 @@ describe('ecosystem discovery and version planning', () => {
 		);
 		expect(inventory.workflows[0]?.dispatchInputs).toEqual(['beepboop_execution_id']);
 		expect(
-			parseRepositoryConfiguration(onboardingConfiguration(inventory)).streams.main?.workflows
+			parseRepositoryConfiguration(onboardingConfiguration(snapshot, inventory)).streams.main?.workflows
 				.release?.file,
 		).toBe('release.yml');
 	});
@@ -303,7 +303,7 @@ describe('migration and orchestration contracts', () => {
 			'@example/linux-x64',
 			'@example/freebsd-arm64',
 		]);
-		const config = parseRepositoryConfiguration(onboardingConfiguration(inventory));
+		const config = parseRepositoryConfiguration(onboardingConfiguration(snapshot, inventory));
 		expect(config.streams.main?.required).toContain('npm:@example/linux-x64');
 		expect(config.streams.main?.required).not.toContain('npm:@example/freebsd-arm64');
 	});

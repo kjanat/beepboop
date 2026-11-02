@@ -59,7 +59,7 @@ console.log(
 			repository: snapshot.repository,
 			sha: snapshot.sha,
 			inventory,
-			proposedConfiguration: onboardingConfiguration(inventory),
+			proposedConfiguration: onboardingConfiguration(snapshot, inventory),
 		},
 		null,
 		2,

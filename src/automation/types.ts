@@ -70,7 +70,9 @@ export interface Package {
 	dependencies: string[];
 }
 export interface DiscoveredWorkflow {
-	tagTriggered?: boolean;
+	tagPatterns?: string[];
+	branchPatterns?: string[];
+	createsRelease?: boolean;
 	file: string;
 	name: string;
 	events: string[];

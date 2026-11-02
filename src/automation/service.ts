@@ -8,6 +8,7 @@ import type { AutomationCoordinator } from './coordinator.ts';
 import { planVersionFiles } from './editors.ts';
 import { createExecution } from './execution.ts';
 import { type Credentials, RepositoryGateway } from './github.ts';
+import { formatJson } from './json.ts';
 import { createReleasePreparation, planIdentity } from './managed.ts';
 import { discover, planRelease } from './managers.ts';
 import { onboardingBody, onboardingConfiguration } from './onboarding.ts';
@@ -387,7 +388,7 @@ export class AutomationService {
 				.bind(repository.id)
 				.first<{ document: string }>();
 			const saved = prior ? record(JSON.parse(prior.document)) : undefined;
-			const content = `${JSON.stringify(onboardingConfiguration(repository.inventory), null, 2)}\n`;
+			const content = formatJson(onboardingConfiguration(snapshot, repository.inventory));
 			if (saved?.content === content) return Response.json({ url: saved.url, unchanged: true });
 			const result = await this.gateway.pullRequest(
 				snapshot,
