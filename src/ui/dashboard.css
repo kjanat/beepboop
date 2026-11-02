@@ -27,6 +27,7 @@ button, a {
 	color: inherit;
 }
 button {
+	font: inherit;
 	cursor: pointer;
 	background: #243344;
 	border: 1px solid #456078;
@@ -49,11 +50,23 @@ article, form {
 	border-radius: 8px;
 	margin: 12px 0;
 }
+form {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: 12px;
+}
+form > h3, form > output, form > label.wide {
+	flex-basis: 100%;
+	margin: 0;
+}
+form > label.wide {
+	display: flex;
+}
 label {
 	display: inline-flex;
 	flex-direction: column;
 	gap: 5px;
-	margin: 8px 12px 8px 0;
 }
 input, select, textarea {
 	padding: 9px;
@@ -66,11 +79,6 @@ textarea {
 	display: block;
 	width: 95%;
 	min-height: 100px;
-}
-label.wide {
-	display: flex;
-	width: 100%;
-	margin-right: 0;
 }
 label.wide textarea {
 	box-sizing: border-box;

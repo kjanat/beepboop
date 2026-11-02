@@ -20,6 +20,13 @@ function renderRepository(repository: RepositoryRecord): string {
 				<code>${htmlEscape(repository.sha.slice(0, 12))}</code>
 			</p>
 			${diagnostics(repository.diagnostics)}
+			${
+		repository.configuration
+			? ''
+			: `<p><button data-onboard="${
+				htmlEscape(repository.name)
+			}" data-repository-id="${repository.id}">Open onboarding PR</button></p>`
+	}
 			<details>
 				<summary>${repository.inventory.packages.length} packages · ${repository.inventory.workflows.length} workflows</summary>
 				<table>

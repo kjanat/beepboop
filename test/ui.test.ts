@@ -31,3 +31,30 @@ test('the feedback box is a contained block that hides when empty', async () => 
 	}
 	expect(page).toMatch(/#feedback\[hidden\]\s*\{\s*display:\s*none;?\s*\}/);
 });
+
+test('a repository card offers onboarding only until it has a configuration', async () => {
+	const { parseRepositoryConfiguration } = await import('#automation/configuration');
+	const { discover } = await import('#automation/managers');
+	const snapshot = {
+		repository: { id: 7, name: 'example/tool', defaultBranch: 'main' },
+		sha: 'a'.repeat(40),
+		files: { 'package.json': '{"name":"tool","version":"1.0.0"}' },
+	};
+	const awaiting = {
+		...snapshot.repository,
+		sha: snapshot.sha,
+		inventory: discover(snapshot),
+		diagnostics: ['Onboarding configuration is not merged'],
+		presetShas: {},
+		updatedAt: 0,
+	};
+	const awaitingPage = await renderDashboard([awaiting], []).text();
+	expect(awaitingPage).toContain('data-onboard="example/tool" data-repository-id="7"');
+	expect(awaitingPage).toContain('[data-onboard]');
+	const configured = {
+		...awaiting,
+		diagnostics: [],
+		configuration: parseRepositoryConfiguration({ streams: { main: { versioning: 'independent' } } }),
+	};
+	expect(await renderDashboard([configured], []).text()).not.toContain('data-onboard=');
+});

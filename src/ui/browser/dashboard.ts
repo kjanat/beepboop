@@ -12,15 +12,30 @@ for (const button of tabs) {
 	});
 }
 
+async function onboard(repository: Record<string, unknown>): Promise<void> {
+	const { url } = await api<{ url: string }>('/api/repositories/onboard', repository);
+	show(`Onboarding PR: ${url}`);
+}
 submit('discover', async (data, action) => {
 	if (action === 'onboard') {
-		const { url } = await api<{ url: string }>('/api/repositories/onboard', data);
-		show(`Onboarding PR: ${url}`);
+		await onboard(data);
 	} else {
 		await api('/api/repositories/discover', data);
 		location.reload();
 	}
 });
+for (const button of document.querySelectorAll<HTMLButtonElement>('[data-onboard]')) {
+	button.addEventListener('click', async () => {
+		button.disabled = true;
+		try {
+			await onboard({ repository: button.dataset.onboard, repositoryId: Number(button.dataset.repositoryId) });
+		} catch (error) {
+			showError(error);
+		} finally {
+			button.disabled = false;
+		}
+	});
+}
 setupReleases();
 setupCredentials();
 refresh('#load-activity', '#activity-list', '/api/activity');
