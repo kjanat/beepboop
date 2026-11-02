@@ -88,3 +88,9 @@ test('onboarding rows yield each repository PR and skip rows without one', async
 		{ repository_id: 2, document: JSON.stringify({ head: 'y' }) },
 	])).toEqual(new Map([[1, 'https://github.com/a/b/pull/1']]));
 });
+
+test('same-origin form posts carry the Origin header the administrator check requires', async () => {
+	const response = renderDashboard([], []);
+	expect(response.headers.get('Referrer-Policy')).toBe('same-origin');
+	expect(await response.text()).toContain('<form action="/auth/logout" method="post">');
+});

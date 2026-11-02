@@ -15,7 +15,7 @@ export function renderDashboard(
 			'Cache-Control': 'no-store',
 			'Content-Security-Policy':
 				`default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
-			'Referrer-Policy': 'no-referrer',
+			'Referrer-Policy': 'same-origin',
 			'X-Content-Type-Options': 'nosniff',
 		},
 	});
