@@ -1,6 +1,7 @@
 import { importPKCS8, SignJWT } from 'jose';
 import { array, integer, record, sha, text } from '#model';
 import { safeVersionPath } from './editors.ts';
+import type { Fetcher } from './managers/registry.ts';
 import type { RefState } from './refs.ts';
 import type { Edit, Snapshot } from './types.ts';
 
@@ -9,11 +10,12 @@ export class RepositoryGateway {
 	constructor(
 		private credentials: Credentials,
 		private ownerId: number,
-		private transport: typeof fetch = fetch,
+		private transport: Fetcher = fetch,
 	) {}
 	async call(path: string, token: string, method = 'GET', body?: unknown): Promise<unknown> {
 		if (!path.startsWith('/')) throw new Error('Invalid API path');
-		const response = await this.transport(`https://api.github.com${path}`, {
+		const transport = this.transport;
+		const response = await transport(`https://api.github.com${path}`, {
 			method,
 			redirect: 'error',
 			signal: AbortSignal.timeout(20_000),

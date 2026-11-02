@@ -206,3 +206,15 @@ test('tag discovery resolves the actual ref object instead of a stale tag-list c
 		commit: 'c'.repeat(40),
 	}]);
 });
+
+test('the gateway calls fetch unbound', async () => {
+	const seen: unknown[] = [];
+	function transport(this: unknown, _input: string | URL | Request, _init?: RequestInit): Promise<Response> {
+		seen.push(this);
+		if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
+		return Promise.resolve(Response.json({ ok: true }));
+	}
+	const gateway = new RepositoryGateway({ GITHUB_APP_ID: '', GITHUB_APP_PRIVATE_KEY: '' }, 1, transport);
+	expect(await gateway.call('/meta', 'token')).toEqual({ ok: true });
+	expect(seen).toEqual([undefined]);
+});
