@@ -22,7 +22,7 @@ export class RepositoryGateway {
 			headers: {
 				...(token ? { Authorization: `Bearer ${token}` } : {}),
 				Accept: 'application/vnd.github+json',
-				'X-GitHub-Api-Version': '2022-11-28',
+				'X-GitHub-Api-Version': '2026-03-10',
 				'User-Agent': 'beepboop',
 				'Content-Type': 'application/json',
 			},
@@ -280,9 +280,10 @@ export class RepositoryGateway {
 			|| !/^[1-9][0-9]*$/.test(url.pathname.slice(prefix.length))
 		) throw new Error('Invalid preparation PR identity');
 		const token = await this.token(repository, repositoryId, { contents: 'read', pull_requests: 'read' });
-		const pull = record(await this.call(`/repos/${repository}/pulls/${url.pathname.slice(prefix.length)}`, token));
+		const number = url.pathname.slice(prefix.length);
+		const pull = record(await this.call(`/repos/${repository}/pulls/${number}`, token));
 		if (
-			pull.merged !== true || pull.merge_commit_sha !== sha(target)
+			pull.merged !== true || (await this.mergeCommit(repository, number, token)) !== sha(target)
 			|| record(pull.head).sha !== result.head || record(record(pull.base).repo).id !== repositoryId
 		) {
 			throw new Error('Target is not the merged preparation revision');
@@ -292,6 +293,17 @@ export class RepositoryGateway {
 			throw new Error('Preparation was merged into a different branch');
 		}
 		return snapshot;
+	}
+	private async mergeCommit(repository: string, number: string, token: string): Promise<string | undefined> {
+		for (let page = 1; page <= 10; page++) {
+			const events = array(
+				await this.call(`/repos/${repository}/issues/${number}/events?per_page=100&page=${page}`, token),
+			).map(record);
+			const merged = events.find((event) => event.event === 'merged');
+			if (merged) return typeof merged.commit_id === 'string' ? merged.commit_id : undefined;
+			if (events.length < 100) return undefined;
+		}
+		return undefined;
 	}
 	/** Resume only the exact commit checkpointed before branch publication. */
 	async resumePreparation(

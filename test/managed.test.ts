@@ -160,13 +160,18 @@ test('release-set target must be the merged preparation PR revision', async () =
 		override async token() {
 			return 'fixture';
 		}
-		override async call(): Promise<unknown> {
-			return {
-				merged: this.merged,
-				merge_commit_sha: 'd'.repeat(40),
-				head: { sha: 'b'.repeat(40) },
-				base: { ref: 'main', repo: { id: 1 } },
-			};
+		override async call(path: string): Promise<unknown> {
+			if (path.startsWith('/repos/example/tool/issues/1/events?')) {
+				return [
+					{ event: 'labeled' },
+					...(this.merged ? [{ event: 'merged', commit_id: 'd'.repeat(40) }] : []),
+					{ event: 'closed', commit_id: 'd'.repeat(40) },
+				];
+			}
+			if (path === '/repos/example/tool/pulls/1') {
+				return { merged: this.merged, head: { sha: 'b'.repeat(40) }, base: { ref: 'main', repo: { id: 1 } } };
+			}
+			throw new Error(`Unexpected fixture request ${path}`);
 		}
 		override async snapshot() {
 			return { ...snapshot, sha: 'd'.repeat(40) };
@@ -207,14 +212,56 @@ test('tag discovery resolves the actual ref object instead of a stale tag-list c
 	}]);
 });
 
-test('the gateway calls fetch unbound', async () => {
-	const seen: unknown[] = [];
-	function transport(this: unknown, _input: string | URL | Request, _init?: RequestInit): Promise<Response> {
-		seen.push(this);
+test('the gateway calls fetch unbound, at the current GitHub API version', async () => {
+	const seen: { receiver: unknown; init: RequestInit | undefined }[] = [];
+	function transport(this: unknown, _input: string | URL | Request, init?: RequestInit): Promise<Response> {
+		seen.push({ receiver: this, init });
 		if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
 		return Promise.resolve(Response.json({ ok: true }));
 	}
 	const gateway = new RepositoryGateway({ GITHUB_APP_ID: '', GITHUB_APP_PRIVATE_KEY: '' }, 1, transport);
 	expect(await gateway.call('/meta', 'token')).toEqual({ ok: true });
-	expect(seen).toEqual([undefined]);
+	expect(seen[0]?.receiver).toBeUndefined();
+	expect(new Headers(seen[0]?.init?.headers).get('X-GitHub-Api-Version')).toBe('2026-03-10');
+});
+
+test('the merge commit comes from the merged issue event on any page', async () => {
+	class PagedGateway extends RepositoryGateway {
+		requests: string[] = [];
+		constructor(private mergedEvent?: Record<string, unknown>) {
+			super({ GITHUB_APP_ID: '', GITHUB_APP_PRIVATE_KEY: '' }, 1);
+		}
+		override async token() {
+			return 'fixture';
+		}
+		override async call(path: string): Promise<unknown> {
+			this.requests.push(path);
+			if (path === '/repos/example/tool/pulls/1') {
+				return { merged: true, head: { sha: 'b'.repeat(40) }, base: { ref: 'main', repo: { id: 1 } } };
+			}
+			const page = path.match(/^\/repos\/example\/tool\/issues\/1\/events\?per_page=100&page=(\d+)$/)?.[1];
+			if (page === '2' && this.mergedEvent) return [this.mergedEvent];
+			if (page) return Array.from({ length: 100 }, () => ({ event: 'commented' }));
+			throw new Error(`Unexpected fixture request ${path}`);
+		}
+		override async snapshot() {
+			return { ...snapshot, sha: 'd'.repeat(40) };
+		}
+	}
+	const result = { url: 'https://github.com/example/tool/pull/1', head: 'b'.repeat(40) };
+	const paged = new PagedGateway({ event: 'merged', commit_id: 'd'.repeat(40) });
+	expect((await paged.preparedSnapshot('example/tool', 1, result, 'd'.repeat(40))).sha).toBe('d'.repeat(40));
+	expect(paged.requests).toEqual([
+		'/repos/example/tool/pulls/1',
+		'/repos/example/tool/issues/1/events?per_page=100&page=1',
+		'/repos/example/tool/issues/1/events?per_page=100&page=2',
+	]);
+	await expect(
+		new PagedGateway({ event: 'merged', commit_id: null }).preparedSnapshot('example/tool', 1, result, 'd'.repeat(40)),
+	).rejects.toThrow('merged preparation');
+	const unmerged = new PagedGateway();
+	await expect(unmerged.preparedSnapshot('example/tool', 1, result, 'd'.repeat(40))).rejects.toThrow(
+		'merged preparation',
+	);
+	expect(unmerged.requests.length).toBe(11);
 });
