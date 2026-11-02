@@ -57,14 +57,14 @@
 		"OPENAUTH_ISSUER": "https://auth.kjanat.com",
 		"OPENAUTH_CLIENT_ID": "beepboop",
 		"OWNER_ID": "6353477",
-		"ADMIN_SUBJECT": "REPLACE_WITH_OPENAUTH_SUBJECT",
+		"ADMIN_SUBJECT": "57513d5461547c30a38d12deeed83320",
 		"VAULT_ACTIVE_KEY": "v1"
 	},
 	"d1_databases": [
 		{
 			"binding": "DB",
 			"database_name": "beepboop",
-			"database_id": "REPLACE_WITH_D1_DATABASE_ID",
+			"database_id": "19241404-a424-4771-8093-0c13a22b0958",
 			"migrations_dir": "migrations"
 		}
 	]
