@@ -69,16 +69,18 @@ describe('tokenPermissions', () => {
 	});
 
 	test('never issues permissions that reach CI configuration or secrets', () => {
-		for (const name of [
-			'workflows',
-			'secrets',
-			'variables',
-			'environments',
-			'administration',
-			'dependabot_secrets',
-			'actions',
-			'packages',
-		]) {
+		for (
+			const name of [
+				'workflows',
+				'secrets',
+				'variables',
+				'environments',
+				'administration',
+				'dependabot_secrets',
+				'actions',
+				'packages',
+			]
+		) {
 			expect(() => tokenPermissions({ contents: 'read', [name]: 'read' })).toThrow('Invalid token permission');
 		}
 	});
@@ -155,6 +157,36 @@ describe('workflowToken', () => {
 		expect(response.status).toBe(405);
 		expect(minted).toEqual([]);
 	});
+});
+
+test('the token Action client reports why Beepboop refused', () => {
+	const work = mkdtempSync(join(tmpdir(), 'token-refused-'));
+	try {
+		const preload = join(work, 'fetch.ts');
+		writeFileSync(
+			preload,
+			`globalThis.fetch = async (input) => {
+	const url = String(input);
+	if (url.startsWith('https://oidc.example/')) return Response.json({ value: 'oidc-jwt' });
+	return Response.json({ error: 'Workflow run was not started by the owner' }, { status: 400 });
+};
+`,
+		);
+		const result = spawnSync(process.execPath, ['--preload', preload, resolve('actions/runtime/client.mjs'), 'token'], {
+			encoding: 'utf8',
+			env: {
+				...process.env,
+				SERVICE_ORIGIN: 'https://beepboop.example',
+				ACTIONS_ID_TOKEN_REQUEST_URL: 'https://oidc.example/token',
+				ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'request-token',
+				GITHUB_OUTPUT: join(work, 'github_output'),
+			},
+		});
+		expect(result.status).not.toBe(0);
+		expect(result.stderr).toContain('Beepboop request failed: HTTP 400: Workflow run was not started by the owner');
+	} finally {
+		rmSync(work, { recursive: true, force: true });
+	}
 });
 
 test('the token Action client requests a token and writes it masked', () => {

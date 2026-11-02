@@ -45,7 +45,10 @@ const result = await fetch(new URL(`/api/workflow/${mode}`, origin), {
 	redirect: 'error',
 	signal: AbortSignal.timeout(30000),
 });
-if (!result.ok) throw Error(`Release automation request failed: HTTP ${result.status}`);
+if (!result.ok) {
+	const reason = await result.json().then(body => body?.error, () => undefined);
+	throw Error(`Beepboop request failed: HTTP ${result.status}${typeof reason === 'string' ? `: ${reason}` : ''}`);
+}
 const data = await result.json();
 function output(name, value) {
 	if (!/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(name)) throw Error('Invalid output name');

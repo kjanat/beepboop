@@ -67,7 +67,9 @@ describe('workflowIdentity', () => {
 
 	test('refuses a token signed by another key', async () => {
 		const other = await generateKeyPair('RS256');
-		const otherKeys = createLocalJWKSet({ keys: [{ ...(await exportJWK(other.publicKey)), kid: 'test', alg: 'RS256' }] });
+		const otherKeys = createLocalJWKSet({
+			keys: [{ ...(await exportJWK(other.publicKey)), kid: 'test', alg: 'RS256' }],
+		});
 		await expect(workflowIdentity(await request({}), audience, ownerId, otherKeys)).rejects.toThrow();
 	});
 });
