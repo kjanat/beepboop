@@ -25,3 +25,8 @@ jobs:
       - run: runner i -fs types
       - run: run -pk check lint test
       - run: run -sk deploy:dry test:runtime
+        env:
+          GITHUB_APP_ID: "0"
+          GITHUB_APP_PRIVATE_KEY: "ci-build-placeholder"
+          GITHUB_WEBHOOK_SECRET: "ci-build-placeholder"
+          VAULT_KEYS: "{}"
