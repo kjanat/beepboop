@@ -34,6 +34,22 @@ export async function api<T = unknown>(path: string, body?: unknown): Promise<T>
 	return response.json();
 }
 
+interface Tab {
+	dataset: { tab?: string };
+	setAttribute(name: string, value: string): void;
+}
+interface Panel {
+	id: string;
+	hidden: boolean | string;
+}
+
+export function selectTab(name: string, tabs: readonly Tab[], panels: readonly Panel[]): boolean {
+	if (!tabs.some(tab => tab.dataset.tab === name)) return false;
+	for (const panel of panels) panel.hidden = panel.id !== name;
+	for (const tab of tabs) tab.setAttribute('aria-selected', String(tab.dataset.tab === name));
+	return true;
+}
+
 export type Fields = Record<string, string>;
 
 export function submit(id: string, handler: (data: Fields, action: string) => Promise<void>): void {

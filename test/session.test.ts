@@ -60,3 +60,19 @@ test('a dashboard request with an expired session sends the browser back to logi
 	await expect(api('/api/activity')).rejects.toThrow('Session expired. Signing in again.');
 	expect(visited).toEqual(['/auth/login']);
 });
+
+test('the tab named in the URL hash opens and unknown hashes keep the default tab', async () => {
+	const { selectTab } = await import('../src/ui/browser/dom.ts');
+	const selected = new Map<string, string>();
+	const tabs = ['repositories', 'activity'].map(tab => ({
+		dataset: { tab },
+		setAttribute: (_name: string, value: string) => selected.set(tab, value),
+	}));
+	const panels = [{ id: 'repositories', hidden: false }, { id: 'activity', hidden: true }];
+	expect(selectTab('activity', tabs, panels)).toBe(true);
+	expect(panels).toEqual([{ id: 'repositories', hidden: true }, { id: 'activity', hidden: false }]);
+	expect(Object.fromEntries(selected)).toEqual({ repositories: 'false', activity: 'true' });
+	expect(selectTab('', tabs, panels)).toBe(false);
+	expect(selectTab('missing', tabs, panels)).toBe(false);
+	expect(panels).toEqual([{ id: 'repositories', hidden: true }, { id: 'activity', hidden: false }]);
+});

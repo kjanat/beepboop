@@ -1,16 +1,16 @@
 import { setupCredentials } from './credentials.ts';
-import { api, displayJson, element, show, showError, submit } from './dom.ts';
+import { api, displayJson, element, selectTab, show, showError, submit } from './dom.ts';
 import { setupReleases } from './releases.ts';
 
-const tabs = document.querySelectorAll<HTMLButtonElement>('[data-tab]');
+const tabs = [...document.querySelectorAll<HTMLButtonElement>('[data-tab]')];
+const panels = [...document.querySelectorAll<HTMLElement>('body > section')];
 for (const button of tabs) {
 	button.addEventListener('click', () => {
-		for (const section of document.querySelectorAll<HTMLElement>('body > section')) {
-			section.hidden = section.id !== button.dataset.tab;
-		}
-		for (const tab of tabs) tab.setAttribute('aria-selected', String(tab === button));
+		const name = button.dataset.tab ?? '';
+		if (selectTab(name, tabs, panels)) history.replaceState(null, '', `#${name}`);
 	});
 }
+selectTab(location.hash.slice(1), tabs, panels);
 
 const onboardButtons = () =>
 	document.querySelectorAll<HTMLButtonElement>('[data-onboard], #discover button[value="onboard"]');
