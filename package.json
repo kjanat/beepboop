@@ -2,28 +2,30 @@
 	"name": "beepboop",
 	"private": true,
 	"type": "module",
-	"imports": {
-		"#pkg": "./package.json",
-		"#*": "./src/*.ts",
-		"#$*": "./*"
-	},
 	"scripts": {
 		"app:manifest": "bun scripts/app-manifest.ts",
-		"build:ui": "bun scripts/build-ui.ts",
+		"build": "astro build",
+		"build:ui": "astro build",
 		"build:winget": "bun build scripts/winget.ts --target=node --format=esm --minify --outfile dist/winget/cli.mjs",
-		"check:bundle": "wrangler deploy --dry-run --outdir .dry-run",
+		"check:bundle": "bun run build && wrangler deploy --dry-run --outdir .dry-run",
+		"db:local": "wrangler d1 migrations apply beepboop --local --config wrangler.jsonc",
+		"dev": "bun run db:local && astro dev",
 		"discover": "bun scripts/discover.ts",
 		"format": "mise exec -- dprint fmt",
 		"lint": "biome check . --error-on-warnings",
-		"test": "bun run build:ui && bun run build:winget && bun test",
+		"prepare": "wrangler types",
+		"preview": "astro preview",
+		"test": "bun run build:winget && bun test",
 		"test:runtime": "node scripts/runtime.ts",
-		"typecheck": "bun run build:ui && tsc --noEmit && tsc --project src/ui/browser/tsconfig.json --noEmit",
+		"typecheck": "astro sync && astro check --tsconfig tsconfig.astro.json && node node_modules/typescript-native/bin/tsc --noEmit && node node_modules/typescript-native/bin/tsc --project src/ui/browser/tsconfig.json --noEmit",
 		"types": "bun scripts/types.ts",
 		"winget": "bun scripts/winget.ts"
 	},
 	"dependencies": {
+		"@astrojs/cloudflare": "^14.4.4",
 		"@openauthjs/openauth": "^0.4.3",
 		"@simplewebauthn/server": "^14.0.3",
+		"astro": "^7.4.5",
 		"cron-parser": "^5.10.2",
 		"jose": "6.2.13",
 		"remark": "15.0.1",
@@ -35,12 +37,14 @@
 		"zod": "4.6.7"
 	},
 	"devDependencies": {
+		"@astrojs/check": "^0.9.12",
 		"@biomejs/biome": "2.6.2",
 		"@types/bun": "1.4.3",
 		"@types/mdast": "4.0.4",
 		"libsodium-wrappers": "^0.8.4",
 		"miniflare": "5.20261019.0-beta",
-		"typescript": "7.0.2",
+		"typescript": "^6.0.3",
+		"typescript-native": "npm:typescript@7.0.2",
 		"wrangler": "4.151.3"
 	},
 	"devEngines": {

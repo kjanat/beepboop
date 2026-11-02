@@ -1,4 +1,4 @@
-import { record } from '#model';
+import { record } from '@/model';
 
 import type { ActivityEntry, AutomationEvent, Execution, RepositoryRecord, SubscriptionDelivery } from './types.ts';
 

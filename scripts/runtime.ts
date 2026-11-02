@@ -1,12 +1,26 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { Miniflare, Response as RuntimeResponse } from 'miniflare';
 
 const directory = await mkdtemp(join(tmpdir(), 'release-automation-'));
-const bundle = await readFile('.dry-run/index.js', 'utf8');
+const moduleNames = (await readdir('.dry-run', { recursive: true })).filter(name => name.endsWith('.mjs'));
+const modules = Object.fromEntries(
+	await Promise.all(
+		moduleNames.map(
+			async name => [name, { type: 'esm' as const, contents: await readFile(`.dry-run/${name}`, 'utf8') }],
+		),
+	),
+);
+const { privateKey, publicKey } = await generateKeyPair('ES256');
+const jwks = { keys: [{ ...await exportJWK(publicKey), kid: 'fixture', alg: 'ES256', use: 'sig' }] };
+const access = await new SignJWT({ mode: 'access', type: 'user', properties: {} })
+	.setProtectedHeader({ alg: 'ES256', kid: 'fixture' }).setIssuer('https://auth.test')
+	.setAudience('fixture').setSubject('user:fixture').setExpirationTime('10m').sign(privateKey);
 const migration = (await Promise.all(
 	(await readdir('migrations')).filter(name => name.endsWith('.sql')).sort().map(name =>
 		readFile(`migrations/${name}`, 'utf8')
@@ -49,6 +63,7 @@ const fixture = {
 	updatedAt: 1,
 };
 let outbound = 0;
+let allowExchange = false;
 function runtime() {
 	return new Miniflare({
 		resourcePersistencePath: directory,
@@ -58,14 +73,16 @@ function runtime() {
 				config: {
 					name: 'automation-test',
 					compatibilityDate: '2026-10-20',
+					compatibilityFlags: ['nodejs_compat'],
+					assets: { directory: 'dist/client', hasUserWorker: true },
 					manifest: {
 						mainModule: 'probe.js',
 						modules: {
-							'index.js': { type: 'esm', contents: bundle },
+							...modules,
 							'probe.js': {
 								type: 'esm',
 								contents: `
-import worker,{AutomationCoordinator} from './index.js';
+import worker,{AutomationCoordinator} from './entry.mjs';
 export class Probe extends AutomationCoordinator {
  gateway(){return {
   token:async()=> 'fixture-token',
@@ -90,14 +107,14 @@ export class Probe extends AutomationCoordinator {
  if(path==='/tick-managed'){await this.alarm();return Response.json(await this.ctx.storage.get('execution:managed-fixture'));}
  return Response.json(await this.ctx.storage.get('execution:fixture-execution'));
  }}
-export default {async fetch(request,env){const path=new URL(request.url).pathname;if(path==='/init'){for(const sql of ${
+export default {async fetch(request,env,ctx){const path=new URL(request.url).pathname;if(path==='/init'){for(const sql of ${
 									JSON.stringify(
 										migration,
 									)
 								}.split(';').filter(s=>s.trim()))await env.DB.prepare(sql).run();return new Response('ready')}
 if(path==='/index')return Response.json(await env.DB.prepare('SELECT document FROM executions').all());
 if(path==='/enqueue'||path==='/journal'||path==='/events'||path==='/tick-managed'||path==='/start-set'||path==='/prepared-probe'||path==='/approve-probe'||path==='/register-probe')return env.AUTOMATION.getByName('91').fetch(request);
-return worker.fetch(request,env)}};
+return worker.fetch(request,env,ctx)}};
 `,
 							},
 						},
@@ -105,6 +122,7 @@ return worker.fetch(request,env)}};
 					exports: { Probe: { type: 'durable-object', storage: 'sqlite' } },
 					env: {
 						AUTOMATION: { type: 'durable-object', worker: 'automation-test', exportName: 'Probe' },
+						ASSETS: { type: 'assets' },
 						DB: { type: 'd1', name: 'automation-test', id: '00000000-0000-0000-0000-000000000001' },
 						OWNER_ID: { type: 'text', value: '1' },
 						APPLICATION_ORIGIN: { type: 'text', value: 'https://automation.test' },
@@ -117,7 +135,15 @@ return worker.fetch(request,env)}};
 				dev: {
 					outboundService: {
 						type: 'fetcher',
-						handler: () => {
+						handler: request => {
+							if (request.url === 'https://auth.test/.well-known/jwks.json') return RuntimeResponse.json(jwks);
+							if (allowExchange && request.url === 'https://auth.test/token') {
+								return RuntimeResponse.json({
+									access_token: access,
+									refresh_token: 'fixture-refresh',
+									expires_in: 600,
+								});
+							}
 							outbound++;
 							return new RuntimeResponse('Network disabled', { status: 503 });
 						},
@@ -169,6 +195,22 @@ try {
 	});
 	assert.equal(ignored.status, 204);
 	assert.equal(outbound, 0);
+	for (const path of ['/', '/repositories', '/releases', '/runs', '/secrets', '/activity', '/security']) {
+		const page = await instance.dispatchFetch(`https://automation.test${path}`, {
+			redirect: 'manual',
+			headers: { cookie: `__Host-beepboop_access=${access}` },
+		});
+		assert.equal(page.status, 200, `Authenticated Astro page ${path}: ${await page.clone().text()}`);
+		const html = await page.text();
+		assert.match(html, /Beepboop/);
+		assert.match(html, /<nav aria-label="Main navigation"/);
+		assert.ok(page.headers.get('content-security-policy')?.includes("frame-ancestors 'none'"));
+		assert.ok(page.headers.get('content-security-policy')?.includes("style-src 'self';"));
+		assert.ok(!page.headers.get('content-security-policy')?.includes("'unsafe-inline'"));
+	}
+	const absent = await instance.dispatchFetch('https://automation.test/no-such-page');
+	assert.equal(absent.status, 404);
+
 	const cookieless = await instance.dispatchFetch('https://automation.test/auth/callback?code=c&state=s', {
 		redirect: 'manual',
 	});
@@ -196,6 +238,26 @@ try {
 		{ redirect: 'manual', headers: { cookie: `__Host-beepboop_flow=${flowId}` } },
 	);
 	assert.equal(reusedLogin.headers.get('location'), '/auth/login');
+	allowExchange = true;
+	const freshLogin = await instance.dispatchFetch('https://automation.test/auth/login', { redirect: 'manual' });
+	const freshLocation = new URL(freshLogin.headers.get('location') ?? '');
+	assert.equal(freshLocation.searchParams.get('redirect_uri'), 'https://automation.test/auth/callback');
+	assert.equal(freshLocation.searchParams.get('code_challenge_method'), 'S256');
+	const freshCookie = freshLogin.headers.get('set-cookie')?.split(';')[0];
+	assert.ok(freshCookie);
+	const callback = await instance.dispatchFetch(
+		`https://automation.test/auth/callback?code=fixture&state=${freshLocation.searchParams.get('state')}`,
+		{ redirect: 'manual', headers: { cookie: freshCookie } },
+	);
+	assert.equal(callback.status, 302, await callback.clone().text());
+	const sessionCookie = callback.headers.get('set-cookie')?.split(';')[0];
+	assert.ok(sessionCookie?.startsWith('__Host-beepboop_access='));
+	const signedIn = await instance.dispatchFetch('https://automation.test/', {
+		redirect: 'manual',
+		headers: { cookie: sessionCookie },
+	});
+	assert.equal(signedIn.status, 200);
+	assert.match(await signedIn.text(), /What needs to ship/);
 	const released = {
 		...fixture,
 		id: 'completed-release',
@@ -350,6 +412,100 @@ try {
 	const approved = await instance.dispatchFetch('https://automation.test/approve-probe');
 	assert.equal(approved.status, 200);
 	assert.equal((await approved.json() as { state: string }).state, 'ready');
+	if (process.argv.includes('--browser')) {
+		const db = await instance.getD1Database('DB', 'automation-test');
+		const repository = {
+			id: 91,
+			name: 'example/seventh',
+			defaultBranch: 'main',
+			sha: 'a'.repeat(40),
+			configuration: {
+				...fixture.configuration,
+				streams: {
+					main: {
+						...fixture.configuration.streams.main,
+						credentials: ['npm-token'],
+						workflows: { publish: { file: 'release.yml', ref: 'refs/heads/main' } },
+					},
+				},
+			},
+			presetShas: {},
+			diagnostics: [],
+			updatedAt: Date.now(),
+			inventory: {
+				packages: [{
+					name: 'example-cli',
+					manager: 'npm',
+					version: '1.2.3',
+					published: '1.2.2',
+					manifest: 'package.json',
+					versionSource: 'package.json',
+					publish: true,
+					dependencies: [],
+				}],
+				workflows: [{
+					name: 'Release',
+					file: 'release.yml',
+					events: ['workflow_dispatch'],
+					dispatchInputs: ['beepboop_execution_id'],
+					jobs: [],
+					localActions: [],
+					publication: true,
+				}],
+				managers: ['npm'],
+				diagnostics: [],
+			},
+		};
+		await db.prepare('INSERT OR REPLACE INTO repositories VALUES(?,?,?,?)').bind(
+			91,
+			repository.name,
+			JSON.stringify(repository),
+			Date.now(),
+		).run();
+		await db.prepare('INSERT OR REPLACE INTO credentials VALUES(?,?,?,?,?,1,?)').bind(
+			'npm-token',
+			1,
+			'fixture',
+			'fixture',
+			'fixture',
+			Date.now(),
+		).run();
+		await db.prepare('INSERT OR REPLACE INTO authenticators VALUES(?,?,?)').bind(
+			'fixture-key',
+			'user:fixture',
+			JSON.stringify({ id: 'fixture-key', label: 'Fixture key', publicKey: 'fixture', counter: 0 }),
+		).run();
+		const previewRuntime = instance;
+		const server = createServer(async (request, response) => {
+			try {
+				const chunks: Buffer[] = [];
+				for await (const chunk of request) chunks.push(Buffer.from(chunk));
+				const headers = new Headers();
+				for (const [key, value] of Object.entries(request.headers)) {
+					if (value && key !== 'host') headers.set(key, Array.isArray(value) ? value.join(',') : value);
+				}
+				headers.set('cookie', `__Host-beepboop_access=${access}`);
+				if (headers.has('origin')) headers.set('origin', 'https://automation.test');
+				const result = await previewRuntime.dispatchFetch(`https://automation.test${request.url}`, {
+					method: request.method,
+					headers: Object.fromEntries(headers),
+					body: chunks.length ? Buffer.concat(chunks) : undefined,
+					redirect: 'manual',
+				});
+				response.writeHead(result.status, Object.fromEntries(result.headers));
+				response.end(Buffer.from(await result.arrayBuffer()));
+			} catch {
+				response.writeHead(500);
+				response.end('Fixture request failed');
+			}
+		});
+		await new Promise<void>(resolve => server.listen(4331, '127.0.0.1', resolve));
+		console.log('Authenticated test fixture at http://127.0.0.1:4331 (isolated temporary database).');
+		await new Promise<void>(resolve => {
+			process.once('SIGINT', () => server.close(() => resolve()));
+			process.once('SIGTERM', () => server.close(() => resolve()));
+		});
+	}
 	console.log(
 		'Automation Worker: authentication gates, unrelated event filtering, immutable enqueue, D1 indexing, Durable Object restart and managed and workflow preparation recovery release-set replay and promotion gates passed',
 	);

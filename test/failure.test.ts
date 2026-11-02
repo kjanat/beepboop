@@ -1,5 +1,5 @@
 import { afterEach, expect, spyOn, test } from 'bun:test';
-import { failure } from '#failure';
+import { failure } from '@/failure';
 
 const logged = spyOn(console, 'error').mockImplementation(() => {});
 afterEach(() => logged.mockClear());

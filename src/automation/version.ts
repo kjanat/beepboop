@@ -1,4 +1,4 @@
-import { compareVersions, record, semver, text } from '#model';
+import { compareVersions, record, semver, text } from '@/model';
 
 export type VersionRequest =
 	| { version: string }

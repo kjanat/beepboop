@@ -1,4 +1,4 @@
-import { semver } from '#model';
+import { semver } from '@/model';
 import type { Publication } from '../types.ts';
 import type { Fetcher, RegistryVersion } from './registry.ts';
 

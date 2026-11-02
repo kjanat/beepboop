@@ -1,0 +1,87 @@
+---
+import '@/styles/dashboard.css';
+
+interface Props {
+	title: string;
+	description: string;
+	section: string;
+}
+const { title, description, section } = Astro.props;
+const navigation = [
+	['overview', '/', 'Overview'],
+	['repositories', '/repositories', 'Repositories'],
+	['releases', '/releases', 'Prepare a release'],
+	['runs', '/runs', 'Release runs'],
+	['secrets', '/secrets', 'Secrets'],
+	['activity', '/activity', 'Activity'],
+	['security', '/security', 'Security keys'],
+];
+---
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<title>{title} · Beepboop</title>
+		<link rel="icon" href="/favicon.ico?v=beepboop" sizes="16x16 32x32 48x48">
+		<link
+			rel="icon"
+			type="image/png"
+			href="/favicon-32.png?v=beepboop"
+			sizes="32x32"
+		>
+		<link
+			rel="icon"
+			type="image/png"
+			href="/icon-192.png?v=beepboop"
+			sizes="192x192"
+		>
+		<link
+			rel="apple-touch-icon"
+			href="/apple-touch-icon.png?v=beepboop"
+			sizes="180x180"
+		>
+	</head>
+	<body>
+		<a class="skip" href="#main">Skip to content</a>
+		<aside class="sidebar">
+			<a class="brand" href="/"><span class="robot" aria-hidden="true"
+				>[b·b]</span> Beepboop</a>
+			<p class="sidebar-caption">From commit to published.</p>
+			<nav aria-label="Main navigation">
+				{navigation.map(([key, href, label]) => (
+					<a
+						href={href}
+						aria-current={key === section ? 'page' : undefined}
+					>{label}</a>
+				))}
+			</nav>
+			<div class="sidebar-bottom">
+				<p>Repository-owned releases.<br>One place to follow them.</p>
+				<form action="/auth/logout" method="post">
+					<button class="quiet">Sign out</button>
+				</form>
+			</div>
+		</aside>
+		<main id="main">
+			<header class="page-header">
+				<div>
+					<p class="eyebrow">Release automation</p>
+					<h1>{title}</h1>
+					<p class="lede">{description}</p>
+				</div><a class="quiet button" href={Astro.url.pathname}>Refresh</a>
+			</header>
+			<output
+				id="feedback"
+				role="status"
+				aria-live="polite"
+				tabindex="-1"
+				hidden
+			></output>
+			<slot />
+		</main>
+		<script>
+			import '@/ui/browser/app.ts';
+		</script>
+	</body>
+</html>

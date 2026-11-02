@@ -1,8 +1,8 @@
 import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
-import { Store } from '#automation/store';
-import type { AutomationEvent, SubscriptionDelivery } from '#automation/types';
+import { Store } from '@/automation/store';
+import type { AutomationEvent, SubscriptionDelivery } from '@/automation/types';
 
 function database(): { store: Store; sqlite: Database } {
 	const sqlite = new Database(':memory:');

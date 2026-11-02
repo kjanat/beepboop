@@ -1,9 +1,45 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.6.2/schema.json",
 	"files": {
-		"includes": ["src/**", "test/**", "scripts/**", "*.json", "!worker-configuration.d.ts", "!src/**/dist"]
+		"includes": [
+			"src/**",
+			"test/**",
+			"scripts/**",
+			"*.json",
+			"!worker-configuration.d.ts",
+			"!**/dist",
+			"!**/*.y*ml"
+		]
 	},
-	"formatter": { "enabled": false },
-	"linter": { "enabled": true, "rules": { "preset": "recommended" } },
-	"assist": { "actions": { "source": { "organizeImports": "on" } } }
+	"formatter": {
+		"enabled": false
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended"
+		}
+	},
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	},
+	"overrides": [
+		{
+			"includes": [
+				"**/*.astro"
+			],
+			"linter": {
+				"rules": {
+					"correctness": {
+						"noUnusedImports": "off",
+						"noUnusedVariables": "off"
+					}
+				}
+			}
+		}
+	]
 }

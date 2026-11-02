@@ -1,5 +1,5 @@
 import { seal } from 'tweetnacl-sealedbox-js';
-import { integer, record, text } from '#model';
+import { integer, record, text } from '@/model';
 import { base64, bytes, type WorkflowIdentity } from './auth.ts';
 import type { RepositoryGateway } from './github.ts';
 import { matchesRef } from './policy.ts';

@@ -1,7 +1,7 @@
 import { parse as parseToml } from 'smol-toml';
 import { isScalar, parseDocument } from 'yaml';
 import { z } from 'zod';
-import { semver } from '#model';
+import { semver } from '@/model';
 import type { ReleasePlan, Snapshot } from './types.ts';
 
 export function safeVersionPath(path: string): boolean {

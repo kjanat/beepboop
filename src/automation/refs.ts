@@ -1,4 +1,4 @@
-import { compareVersions, semver } from '#model';
+import { compareVersions, semver } from '@/model';
 
 export interface RefPolicy {
 	phase: 'version' | 'aliases';

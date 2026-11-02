@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test';
-import { parseRepositoryConfiguration } from '#automation/configuration';
-import { completion, createExecution } from '#automation/execution';
-import { mergeArtifacts, resolveInputs } from '#automation/outputs';
-import type { Artifact, RepositoryRecord } from '#automation/types';
+import { parseRepositoryConfiguration } from '@/automation/configuration';
+import { completion, createExecution } from '@/automation/execution';
+import { mergeArtifacts, resolveInputs } from '@/automation/outputs';
+import type { Artifact, RepositoryRecord } from '@/automation/types';
 
 const configuration = {
 	streams: {

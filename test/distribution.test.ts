@@ -1,17 +1,17 @@
 import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { parseRepositoryConfiguration } from '#automation/configuration';
-import { completion, createExecution, dependenciesReady } from '#automation/execution';
-import { createReleasePreparation } from '#automation/managed';
-import { discover, verifyPublication } from '#automation/managers';
-import { resolveInputs } from '#automation/outputs';
-import { planReleaseSet } from '#automation/planning';
-import { planHookUpdates } from '#automation/precommit';
-import { planRefs } from '#automation/refs';
-import { compileReleaseSet } from '#automation/release-set';
-import { matchesSubscription } from '#automation/subscriptions';
-import type { Execution, ReleaseReference, RepositoryRecord, Snapshot } from '#automation/types';
+import { parseRepositoryConfiguration } from '@/automation/configuration';
+import { completion, createExecution, dependenciesReady } from '@/automation/execution';
+import { createReleasePreparation } from '@/automation/managed';
+import { discover, verifyPublication } from '@/automation/managers';
+import { resolveInputs } from '@/automation/outputs';
+import { planReleaseSet } from '@/automation/planning';
+import { planHookUpdates } from '@/automation/precommit';
+import { planRefs } from '@/automation/refs';
+import { compileReleaseSet } from '@/automation/release-set';
+import { matchesSubscription } from '@/automation/subscriptions';
+import type { Execution, ReleaseReference, RepositoryRecord, Snapshot } from '@/automation/types';
 import { generateManifests, renderManifests } from '../src/distribution/winget/generate.ts';
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');

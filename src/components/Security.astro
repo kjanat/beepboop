@@ -1,0 +1,49 @@
+---
+import type { Dashboard } from '@/server/dashboard.ts';
+
+interface Props {
+	data: Dashboard;
+}
+const { data } = Astro.props;
+---
+<article>
+	<h2>
+		{data.keys.length
+			? 'Add a backup security key'
+			: 'Enroll your first security key'}
+	</h2>
+	<p>
+		{data.keys.length
+			? 'Touch an enrolled key to authorize adding another, then touch the new key when your browser asks.'
+			: 'Your signed-in administrator session can enroll the first key. Your browser will ask you to touch it.'}
+	</p>
+	<form
+		data-action="key-enroll"
+		data-first={String(!data.keys.length)}
+		class="form-row"
+	>
+		<label>Key name<input
+				name="label"
+				placeholder="Primary YubiKey"
+				required
+			></label><button class="primary">Enroll security key</button>
+	</form>
+</article>
+{data.keys.map(key => (
+	<article class="section-heading">
+		<div>
+			<h2>{key.label}</h2>
+			<p>
+				{data.keys.length === 1
+					? 'Keep this key: at least one must remain enrolled.'
+					: 'Available to authorize secret and access changes.'}
+			</p>
+		</div>{data.keys.length > 1 && (
+			<form data-action="key-remove">
+				<input type="hidden" name="id" value={key.id}><button class="danger">
+					Remove key
+				</button>
+			</form>
+		)}
+	</article>
+))}

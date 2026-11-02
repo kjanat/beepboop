@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { compareVersions, semver } from '#model';
+import { compareVersions, semver } from '@/model';
 
 test('SemVer precedence includes numeric prereleases and ignores build metadata', () => {
 	const values = [

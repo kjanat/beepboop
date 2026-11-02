@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { verifySignature } from '#webhook';
+import { verifySignature } from '@/webhook';
 
 const body = new TextEncoder().encode('{"action":"published"}');
 async function sign(bytes: Uint8Array, secret: string): Promise<string> {

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { nextVersion, parseVersionRequest } from '#automation/version';
+import { nextVersion, parseVersionRequest } from '@/automation/version';
 
 test('version requests calculate stable and prerelease transitions', () => {
 	for (

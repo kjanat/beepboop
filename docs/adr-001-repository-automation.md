@@ -40,7 +40,9 @@ producer's result, with artifact metadata checked against GitHub's API.
 
 ## Interface
 
-The dashboard uses server-rendered HTML and a small browser client. Physical-key
+Astro serves the dashboard pages and API endpoints through its Cloudflare adapter.
+A small browser client handles forms and security-key prompts. The custom Worker
+entrypoint retains scheduled events, Durable Objects, and service bindings. Physical-key
 registration uses the browser's WebAuthn APIs. Generic Actions connect repository
 workflows to the service.
 

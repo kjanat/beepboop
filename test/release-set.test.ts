@@ -1,11 +1,11 @@
 import { expect, test } from 'bun:test';
-import { parseRepositoryConfiguration } from '#automation/configuration';
-import { dependenciesReady, validatePublicationIdentity } from '#automation/execution';
-import { createManagedPreparation } from '#automation/managed';
-import { discover } from '#automation/managers';
-import { planReleaseSet } from '#automation/planning';
-import { compileReleaseSet } from '#automation/release-set';
-import type { RepositoryRecord, Snapshot } from '#automation/types';
+import { parseRepositoryConfiguration } from '@/automation/configuration';
+import { dependenciesReady, validatePublicationIdentity } from '@/automation/execution';
+import { createManagedPreparation } from '@/automation/managed';
+import { discover } from '@/automation/managers';
+import { planReleaseSet } from '@/automation/planning';
+import { compileReleaseSet } from '@/automation/release-set';
+import type { RepositoryRecord, Snapshot } from '@/automation/types';
 
 async function fixture() {
 	const snapshot: Snapshot = {

@@ -1,0 +1,139 @@
+---
+import type { Execution } from '@/automation/types.ts';
+import { date } from '@/server/dashboard.ts';
+
+interface Props {
+	executions: Execution[];
+}
+const { executions } = Astro.props;
+---
+{!executions.length && (
+	<article class="empty">
+		<h2>No release runs yet</h2>
+		<p>
+			Prepare a release or connect an existing publishing workflow to start
+			tracking its results.
+		</p><a href="/releases">Prepare a release →</a>
+	</article>
+)}
+{executions.map(run => {
+	const preparation = run.managed?.result ?? run.prepared?.result;
+	const required = run.configuration.streams[run.stream]?.required ?? [];
+	const missing = required.filter(id =>
+		!run.publications.some(p => p.id === id && p.outcome === 'succeeded')
+	);
+	return (
+	 <article class="run-card" id={run.id}>
+		 <div class="section-heading">
+			 <div>
+				 <p class="eyebrow">{run.repository} / {run.stream}</p>
+				 <h2>
+					 {run.version ? `Version ${run.version}` : 'Workflow operation'} <span
+						 class="muted"
+					 >· {run.operation}</span>
+				 </h2>
+			 </div><span
+				 class:list={['badge', run.state]}
+			 >{run.state.replaceAll('-', ' ')}</span>
+		 </div>
+		 <p>
+			 {run.reason
+			 	|| (run.state === 'succeeded'
+			 		? 'This operation completed.'
+			 		: 'Follow the workflow and publication results below.')}
+		 </p>
+		 <p class="metadata">
+			 Commit <a
+				 href={`https://github.com/${run.repository}/commit/${run.sourceSha}`}
+			 ><code>{run.sourceSha.slice(0, 12)}</code></a> · Updated
+			 {date(run.updatedAt)} {run.runId && (
+				 <>
+					 · <a
+						 href={`https://github.com/${run.repository}/actions/runs/${run.runId}`}
+					 >Open GitHub run ↗</a></>
+			 )}
+		 </p>
+		 {preparation?.url.startsWith('https://github.com/') && (
+			 <a class="button" href={preparation.url}>Review preparation PR ↗</a>
+		 )}
+		 {!!run.publications.length && (
+			 <div class="table-scroll">
+				 <table>
+					 <thead>
+						 <tr>
+							 <th>Publication</th>
+							 <th>Version</th>
+							 <th>Result</th>
+						 </tr>
+					 </thead>
+					 <tbody>
+						 {run.publications.map(p => (
+							 <tr>
+								 <td>
+									 {p.name}<small>{p.manager} ·
+										 {p.required ? 'required' : 'optional'}</small>
+								 </td>
+								 <td>{p.version}</td>
+								 <td>
+									 <span class:list={['badge', p.outcome]}>{p.outcome}</span>
+								 </td>
+							 </tr>
+						 ))}
+					 </tbody>
+				 </table>
+			 </div>
+		 )}
+		 {!!missing.length && (
+			 <p class="notice">
+				 Still needed for this release: {missing.join(', ')}.
+			 </p>
+		 )}
+		 {run.state === 'blocked' && run.operation === 'promote' && (
+			 <form data-action="approve">
+				 <input type="hidden" name="id" value={run.id}><input
+					 type="hidden"
+					 name="sourceSha"
+					 value={run.sourceSha}
+				 ><p>
+					 Approve publishing from commit <code>{run.sourceSha}</code>. Beepboop
+					 will verify the signature and required checks.
+				 </p>
+				 <button class="primary">Approve this commit</button>
+			 </form>
+		 )}
+		 {run.workflow && ['failed', 'cancelled'].includes(run.state) && (
+			 <form data-action="recover">
+				 <input type="hidden" name="id" value={run.id}><input
+					 type="hidden"
+					 name="action"
+					 value="retry"
+				 ><button>Retry failed jobs</button>
+			 </form>
+		 )}
+		 {run.state === 'uncertain' && (
+			 <form data-action="recover">
+				 <input type="hidden" name="id" value={run.id}><input
+					 type="hidden"
+					 name="action"
+					 value="reconcile"
+				 ><p>
+					 Check whether GitHub accepted the earlier request before attempting
+					 another dispatch.
+				 </p>
+				 <button>Check workflow outcome</button>
+			 </form>
+		 )}
+		 <details>
+			 <summary>Release evidence</summary>
+			 <dl>
+				 <dt>Configuration commit</dt>
+				 <dd><code>{run.configurationSha}</code></dd>
+				 <dt>Workflow commit</dt>
+				 <dd><code>{run.workflowSha ?? 'Not dispatched yet'}</code></dd>
+				 <dt>Run attempt</dt>
+				 <dd>{run.runAttempt ?? 'Not started'}</dd>
+			 </dl>{run.artifacts.map(a => <p>{a.name} <code>{a.digest}</code></p>)}
+		 </details>
+	 </article>
+ );
+})}

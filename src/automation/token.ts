@@ -1,6 +1,6 @@
 import type { JWTVerifyGetKey } from 'jose';
-import { record } from '#model';
-import { readBody } from '#webhook';
+import { record } from '@/model';
+import { readBody } from '@/webhook';
 import { workflowIdentity } from './auth.ts';
 
 export type TokenPermissions = Record<string, 'read' | 'write'>;

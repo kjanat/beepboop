@@ -1,0 +1,223 @@
+---
+import { type Dashboard, workflowChoices } from '@/server/dashboard.ts';
+
+interface Props {
+	data: Dashboard;
+}
+const { data } = Astro.props;
+const available = data.repositories.filter(r =>
+	r.configuration && !r.suspended && !r.diagnostics.length
+);
+const repository =
+	available.find(r => String(r.id) === Astro.url.searchParams.get('repository'))
+		?? available[0];
+const streams = Object.entries(repository?.configuration?.streams ?? {});
+const streamName =
+	streams.some(([name]) => name === Astro.url.searchParams.get('stream'))
+		? (Astro.url.searchParams.get('stream') ?? undefined)
+		: streams[0]?.[0];
+const stream = streamName
+	? repository?.configuration?.streams[streamName]
+	: undefined;
+const workflows = repository
+	? workflowChoices(repository).filter(w =>
+		w.stream === streamName && w.mode !== 'observe' && !w.ref.includes('*')
+	)
+	: [];
+const packages = repository?.inventory.packages.filter(p =>
+	p.publish
+	&& (!stream?.packages || stream.packages.includes(`${p.manager}:${p.name}`))
+) ?? [];
+const groups = [...new Set(packages.map(p => p.versionSource))].map((
+	source,
+	index,
+) => ({
+	id: `group-${index + 1}`,
+	packages: packages.filter(p => p.versionSource === source),
+}));
+const preparations = data.executions.filter(e =>
+	e.state === 'succeeded' && e.repositoryId === repository?.id
+	&& ((e.managed?.plan && 'groups' in e.managed.plan)
+		|| (e.plan && 'groups' in e.plan))
+);
+---
+{!repository ? (
+	<article class="empty">
+		<h2>Configure a repository first</h2>
+		<p>
+			A release needs a repository configuration that describes its packages and
+			workflows.
+		</p><a class="button primary" href="/repositories">Set up a repository</a>
+	</article>
+) : (
+	 <>
+		 <form class="selection" method="get" action="/releases">
+			 <label>Repository<select name="repository">
+					 {available.map(r => (
+						 <option value={r.id} selected={r.id === repository.id}>
+							 {r.name}
+						 </option>
+					 ))}
+				 </select></label><label>Release stream<select name="stream">
+					 {streams.map(([name]) => (
+						 <option selected={name === streamName}>{name}</option>
+					 ))}
+				 </select></label><button>Choose</button>
+		 </form>
+		 <p class="hint">
+			 A release stream groups packages and workflows that release together.
+			 These choices come from this repository's configuration.
+		 </p>
+		 <article>
+			 <h2>Choose the next version</h2>
+			 <p>
+				 Preview changes against <a
+					 href={`https://github.com/${repository.name}/commit/${repository.sha}`}
+				 ><code>{repository.sha.slice(0, 12)}</code></a>. You will review file
+				 changes before preparing the pull request.
+			 </p>
+			 <form data-action={stream?.versioning === 'independent' ? 'release-set' : 'release-prepare'}>
+				 <input type="hidden" name="repositoryId" value={repository.id}><input
+					 type="hidden"
+					 name="stream"
+					 value={streamName}
+				 >
+				 {stream?.versioning === 'independent' ? (
+					 <>
+						 <p>
+							 Packages sharing a version source are selected together. Choose a
+							 version for each group you want to release.
+						 </p>
+						 {groups.map(group => (
+							 <fieldset
+								 data-group={group.id}
+								 data-packages={JSON.stringify(group.packages.map(p => `${p.manager}:${p.name}`))}
+							 >
+								 <legend>
+									 <label class="check"><input
+											 type="checkbox"
+											 name={`include-${group.id}`}
+										 >{group.packages.map(p => p.name).join(', ')}</label>
+								 </legend>
+								 <p class="hint">
+									 Current:
+									 {group.packages.map(p => `${p.name} ${p.version ?? 'unreleased'}`).join(' · ')}
+								 </p><label>Next version<input
+										 name={`version-${group.id}`}
+										 placeholder="1.2.3"
+									 ></label>
+							 </fieldset>
+						 ))}
+						 <h3>Workflows for this release</h3><p class="hint">
+							 Assign each workflow to a selected version group. Required
+							 dependencies must also be assigned.
+						 </p>
+						 {workflows.filter(w => w.operation !== 'prepare').map(w => (
+							 <label>{w.operation} ·
+								 {w.file}<select data-operation={w.operation}>
+									 <option value="">
+										 Do not include
+									 </option>{groups.map(group => (
+										 <option value={group.id}>
+											 {group.packages.map(p => p.name).join(', ')}
+										 </option>
+									 ))}
+								 </select></label>
+						 ))}
+					 </>
+				 ) : (
+						<><div class="form-grid">
+								<label>Version change<select name="versionMode">
+										<option value="explicit">Set a version</option>
+										<option value="patch">Patch — bug fixes</option>
+										<option value="minor">Minor — new features</option>
+										<option value="major">Major — breaking changes</option>
+										<option value="prerelease">Start a prerelease</option>
+										<option value="next">Next prerelease</option>
+										<option value="stable">Promote prerelease to stable</option>
+									</select></label><label data-explicit>Version<input
+										name="version"
+										placeholder="1.2.3"
+										required
+									></label><label data-prerelease hidden>Prerelease
+									base<select name="base">
+										<option>patch</option>
+										<option>minor</option>
+										<option>major</option>
+									</select></label><label data-prerelease hidden>Prerelease
+									name<input name="identifier" value="alpha"></label>
+							</div></>
+					)}
+				 <div class="actions">
+					 <button class="primary" name="action" value="preview">
+						 Preview changes
+					 </button>
+					 <button name="action" value="prepare" disabled>
+						 Prepare reviewed release
+					 </button>
+				 </div>
+				 <div class="plan-result" aria-live="polite"></div>
+			 </form>
+		 </article>
+		 {!!preparations.length && (
+			 <article>
+				 <h2>Start a prepared release set</h2>
+				 <p>
+					 After merging its preparation PR, select the preparation and the full
+					 merged commit SHA. Beepboop verifies that the prepared contents match
+					 that commit.
+				 </p>
+				 <form data-action="start-set">
+					 <label>Preparation<select name="preparationId">
+							 {preparations.map(e => (
+								 <option value={e.id}>
+									 {e.repository} / {e.stream} ·
+									 {new Date(e.createdAt).toISOString().slice(0, 10)}
+								 </option>
+							 ))}
+						 </select></label><label>Merged commit<input
+							 name="sourceSha"
+							 pattern="[a-f0-9]{40}"
+							 required
+						 ></label><button>Start prepared workflows</button>
+				 </form>
+			 </article>
+		 )}
+		 <article>
+			 <h2>Run a configured workflow</h2>
+			 <p>
+				 Start an operation from this release stream. Promotion creates an
+				 approval request for the chosen commit.
+			 </p>{workflows.length ? (
+				 <form data-action="start">
+					 <input type="hidden" name="repositoryId" value={repository.id}><input
+						 type="hidden"
+						 name="stream"
+						 value={streamName}
+					 ><div class="form-grid">
+						 <label>Workflow<select name="operation">
+								 {workflows.map(w => (
+									 <option value={w.operation}>{w.operation} · {w.file}</option>
+								 ))}
+							 </select></label><label>Version, if needed<input
+								 name="version"
+								 placeholder="1.2.3"
+							 ></label><label>Target commit<input
+								 name="sourceSha"
+								 value={repository.sha}
+								 pattern="[a-f0-9]{40}"
+								 required
+							 ></label>
+					 </div>
+					 <button>Start workflow</button>
+				 </form>
+			 ) : (
+					<p class="notice">
+						This stream only observes externally triggered workflows, or has no
+						dispatchable workflow. Start it from GitHub using the repository's
+						release process.
+					</p>
+				)}
+		 </article>
+	 </>
+ )}

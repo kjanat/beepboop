@@ -44,11 +44,26 @@ bun run check:bundle
 bun run test:runtime
 ```
 
-Dashboard sources live in `src/ui`: server templates in `templates/`, browser
-TypeScript in `browser/`, and styles in `dashboard.css`. `bun run build:ui` uses
-Bun to bundle and minify assets into ignored `dist/` output. Wrangler runs this
-build for development and deployment; `typecheck` and `test` also build first.
-The browser has its own DOM-only TypeScript configuration.
+Start the dashboard with `bun run dev` at `http://localhost:4321`. This applies
+pending migrations to the local D1 database before starting Astro. Local login
+requires the exact `http://localhost:4321/auth/callback` URL to be registered for
+the `beepboop` client at the configured OpenAuth issuer. Production registration
+alone does not enable localhost login. See [local development](docs/deployment.md#local-development).
+
+Astro pages, components, and layouts live in `src/pages`, `src/components`, and
+`src/layouts`. Browser interactions live in `src/ui/browser`; styles live in
+`src/styles`. Import paths are defined in `tsconfig.json`. `bun run build`
+builds the Cloudflare Worker and browser assets into `dist/`. The custom Worker
+entrypoint also exports the release coordinator, scheduled reconciliation, and
+Vermon service binding. API routes preserve the existing GitHub Actions contracts.
+
+Astro's checker currently needs the TypeScript 6 language-service API. The
+`typescript-native` dependency retains TypeScript 7 for application and browser
+checks; `bun run typecheck` runs both explicitly.
+
+`bun run test:runtime --browser` serves an authenticated fixture on port 4331
+for browser checks after the runtime suite passes. It uses a temporary database
+and a test issuer; it does not sign you into the real dashboard or contact GitHub.
 
 Preview discovery from a checkout's committed HEAD or a GitHub repository:
 

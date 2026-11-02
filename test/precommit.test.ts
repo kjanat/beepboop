@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test';
-import { parseRepositoryConfiguration } from '#automation/configuration';
-import { createExecution } from '#automation/execution';
-import { discoverHooks, planHookUpdates } from '#automation/precommit';
-import type { ReleaseReference, Snapshot } from '#automation/types';
+import { parseRepositoryConfiguration } from '@/automation/configuration';
+import { createExecution } from '@/automation/execution';
+import { discoverHooks, planHookUpdates } from '@/automation/precommit';
+import type { ReleaseReference, Snapshot } from '@/automation/types';
 
 const release: ReleaseReference = {
 	id: 'release-1',

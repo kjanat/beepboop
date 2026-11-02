@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { parseRepositoryConfiguration, resolveConfiguration } from '#automation/configuration';
-import { completion, createExecution, mergePublications } from '#automation/execution';
-import { discover, planRelease, publicationOrder, verifyPublication } from '#automation/managers';
-import { onboardingConfiguration } from '#automation/onboarding';
-import type { Publication, RepositoryRecord, Snapshot } from '#automation/types';
-import { parseGrant } from '#automation/vault';
+import { parseRepositoryConfiguration, resolveConfiguration } from '@/automation/configuration';
+import { completion, createExecution, mergePublications } from '@/automation/execution';
+import { discover, planRelease, publicationOrder, verifyPublication } from '@/automation/managers';
+import { onboardingConfiguration } from '@/automation/onboarding';
+import type { Publication, RepositoryRecord, Snapshot } from '@/automation/types';
+import { parseGrant } from '@/automation/vault';
 import { edgeFetch } from './edge-fetch.ts';
 
 const snapshot: Snapshot = {
@@ -324,7 +324,7 @@ describe('migration and orchestration contracts', () => {
 		);
 	});
 	test('OCI verifier checks manifest bytes and rejects arbitrary registries', async () => {
-		const { verifyImage } = await import('#automation/oci');
+		const { verifyImage } = await import('@/automation/oci');
 		const content = '{"schemaVersion":2}';
 		const digest = `sha256:${
 			Array.from(

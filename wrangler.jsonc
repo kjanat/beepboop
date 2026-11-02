@@ -3,10 +3,6 @@
 	"name": "beepboop",
 	"account_id": "83a61abe8741defe835d035b1f4e49af",
 	"main": "src/index.ts",
-	"build": {
-		"command": "bun run build:ui",
-		"watch_dir": ["src/ui/browser", "src/ui/templates", "src/ui/dashboard.css", "src/ui/page.ts", "scripts/build-ui.ts"]
-	},
 	"compatibility_date": "2026-10-20",
 	"workers_dev": false,
 	"preview_urls": false,
@@ -67,5 +63,8 @@
 			"database_id": "19241404-a424-4771-8093-0c13a22b0958",
 			"migrations_dir": "migrations"
 		}
+	],
+	"compatibility_flags": [
+		"nodejs_compat"
 	]
 }

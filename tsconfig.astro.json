@@ -1,0 +1,5 @@
+{
+	"extends": "./tsconfig.json",
+	"include": [".astro/types.d.ts", "src/**/*.astro", "src/**/*.ts", "worker-configuration.d.ts"],
+	"exclude": ["src/ui/browser/**", "test/**", "scripts/**"]
+}

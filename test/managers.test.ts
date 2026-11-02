@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
-import { discover, planRelease } from '#automation/managers';
-import { emptyInventory, ManagerRegistry } from '#automation/managers/registry';
-import type { Snapshot } from '#automation/types';
+import { discover, planRelease } from '@/automation/managers';
+import { emptyInventory, ManagerRegistry } from '@/automation/managers/registry';
+import type { Snapshot } from '@/automation/types';
 
 const snapshot: Snapshot = {
 	repository: { id: 1, name: 'example/tools', defaultBranch: 'main' },

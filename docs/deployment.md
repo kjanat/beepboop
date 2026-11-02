@@ -17,6 +17,30 @@ repository includes the configuration for `beepboop.kjanat.dev` and the
    bunx wrangler d1 migrations apply beepboop --remote --config wrangler.jsonc
    ```
 
+## Local development
+
+Run `bun run dev` and open `http://localhost:4321`. Startup applies the D1
+migrations locally; it never migrates the deployed database. If you start Astro
+directly, first run `bun run db:local`. A missing `sessions` table means these
+migrations have not run against the local database.
+
+Development uses `http://localhost:4321` as the application origin, including
+login callbacks, mutation origin checks, and security-key registration. The port
+is fixed so callback registration cannot silently drift when another process
+occupies it. Production continues to use `APPLICATION_ORIGIN` from Wrangler.
+
+The OpenAuth issuer must allow the exact callback
+`http://localhost:4321/auth/callback` for client `beepboop`. Update and deploy the
+issuer's registered client configuration through its normal deployment path;
+changing this application's configuration cannot register an OAuth callback.
+Use localhost consistently rather than switching to an IP address.
+
+The local D1 database is independent of production: repositories, secret values,
+and enrolled security keys must be configured locally. For GitHub operations and
+encrypted storage, provide the required Worker secrets in local `.dev.vars`
+using your secret-management tooling. Do not copy production database contents
+into development to bypass setup.
+
 ## Configure the GitHub App
 
 Generate the App manifest with `bun run app:manifest`. Review the requested
@@ -47,7 +71,7 @@ bun run typecheck
 bun run test
 bun run check:bundle
 bun run test:runtime
-bunx wrangler deploy --config wrangler.jsonc
+bunx wrangler deploy
 ```
 
 Sign in to the dashboard and enroll the first physical security key. Enroll a

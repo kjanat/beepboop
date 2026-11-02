@@ -44,14 +44,3 @@ export function renderActivityRows(entries: ActivityEntry[], repositories: Repos
 		</tr>`;
 	}).join('');
 }
-
-export function renderActivity(entries: ActivityEntry[], repositories: RepositoryRecord[]): string {
-	return `<section id="activity" hidden>
-		<h2>Activity</h2>
-		<button id="load-activity">Refresh activity</button>
-		<table>
-			<thead><tr><th>When</th><th>Action</th><th>Actor</th><th>Target</th></tr></thead>
-			<tbody id="activity-list">${renderActivityRows(entries, repositories)}</tbody>
-		</table>
-		</section>`;
-}

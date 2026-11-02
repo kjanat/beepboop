@@ -1,0 +1,139 @@
+---
+import ReleaseSummary from '@/components/ReleaseSummary.astro';
+import Releases from '@/components/Releases.astro';
+import Repositories from '@/components/Repositories.astro';
+import Runs from '@/components/Runs.astro';
+import Secrets from '@/components/Secrets.astro';
+import Security from '@/components/Security.astro';
+import Layout from '@/layouts/Dashboard.astro';
+import { bindings } from '@/server/bindings.ts';
+import { dashboard, date } from '@/server/dashboard.ts';
+
+const { section } = Astro.props;
+const data = await dashboard(bindings(), Astro.locals.actor);
+const copy: Record<string, [string, string]> = {
+	overview: [
+		'What needs to ship?',
+		'Follow releases from preparation to every required publication.',
+	],
+	repositories: [
+		'Repositories',
+		'Connect a project and review how its packages reach their users.',
+	],
+	releases: [
+		'Prepare a release',
+		'Choose what to release, review the changes, then open a preparation pull request.',
+	],
+	runs: [
+		'Release runs',
+		'See what shipped, what is waiting, and what needs your attention.',
+	],
+	secrets: [
+		'Secrets',
+		'Store publishing credentials and choose which workflows may use them.',
+	],
+	activity: [
+		'Activity',
+		'The history of release operations, access changes, and workflow requests.',
+	],
+	security: [
+		'Security keys',
+		'Use a physical security key to approve access to publishing credentials.',
+	],
+};
+const [title, description] = copy[section]
+	?? ['Overview', 'Follow your releases.'];
+const attention = data.executions.filter(e =>
+	['blocked', 'failed', 'uncertain', 'cancelled'].includes(e.state)
+);
+const running = data.executions.filter(e =>
+	['running', 'ready', 'dispatching'].includes(e.state)
+);
+const setup = data.repositories.filter(r =>
+	!r.configuration || r.diagnostics.length || r.suspended
+);
+---
+<Layout title={title} description={description} section={section}>
+	{section === 'overview' && (
+		<>
+			<div class="release-path" aria-label="Release process">
+				<span>Prepare changes</span><span>Review & merge</span><span>Approve
+					commit</span><span>Verify publications</span>
+			</div>
+			<div class="overview-grid">
+				<a class="metric" href="/runs"><strong>{attention.length}</strong><span
+					>runs need attention</span></a>
+				<a class="metric" href="/runs"><strong>{running.length}</strong><span
+					>runs in progress</span></a>
+				<a class="metric" href="/repositories"><strong
+					>{setup.length}</strong><span>repositories need setup</span></a>
+			</div>
+			{data.repositories.length === 0 ? (
+				<article class="empty">
+					<h2>Start with a repository</h2>
+					<p>
+						Install the Beepboop GitHub App on your repository, then inspect it.
+						You will review the packages and release workflows before opening
+						its setup pull request.
+					</p><a class="button primary" href="/repositories"
+					>Connect a repository</a>
+				</article>
+			) : (
+				 <>
+					 <div class="section-heading">
+						 <h2>
+							 {attention.length ? 'Needs your attention' : 'Recent releases'}
+						 </h2><a class="button primary" href="/releases"
+						 >Prepare a release</a>
+					 </div>
+					 <ReleaseSummary executions={data.executions} />
+				 </>
+			 )}
+		</>
+	)}
+	{section === 'repositories' && <Repositories data={data} />}
+	{section === 'releases' && <Releases data={data} />}
+	{section === 'runs' && <Runs executions={data.executions} />}
+	{section === 'secrets' && <Secrets data={data} />}
+	{section === 'security' && <Security data={data} />}
+	{section === 'activity' && (
+		<div class="table-scroll">
+			<table>
+				<thead>
+					<tr>
+						<th>When</th>
+						<th>Action</th>
+						<th>Who</th>
+						<th>Target</th>
+					</tr>
+				</thead>
+				<tbody>
+					{data.activity.map(entry => (
+						<tr>
+							<td>
+								<time
+									datetime={new Date(entry.createdAt).toISOString()}
+								>{date(entry.createdAt)}</time>
+							</td>
+							<td>
+								{entry.action.replaceAll('.', ' · ').replaceAll('-', ' ')}
+							</td>
+							<td>
+								{entry.actor.startsWith('run:')
+									? `Workflow ${entry.actor.slice(4)}`
+									: 'Administrator'}
+							</td>
+							<td class="break">{entry.target}</td>
+						</tr>
+					))}{!data.activity.length && (
+						<tr>
+							<td colspan="4">
+								No activity yet. Release and access changes will appear here.
+							</td>
+						</tr>
+					)}
+				</tbody>
+			</table>
+		</div>
+	)}
+</Layout>

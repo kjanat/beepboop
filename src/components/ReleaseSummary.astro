@@ -1,0 +1,61 @@
+---
+import type { Execution } from '@/automation/types.ts';
+import { releaseSummaries } from '@/server/releases.ts';
+
+interface Props {
+	executions: Execution[];
+}
+const releases = releaseSummaries(Astro.props.executions).slice(0, 10);
+---
+{releases.map(release => (
+	<article>
+		<div class="section-heading">
+			<div>
+				<p class="eyebrow">{release.repository} / {release.stream}</p>
+				<h2>
+					{release.version ? `Version ${release.version}` : 'Release preparation'}
+				</h2>
+			</div><span
+				class:list={[
+					'badge',
+					release.attention
+						? 'blocked'
+						: release.publications.length
+								&& release.verified === release.publications.length
+						? 'succeeded'
+						: 'running',
+				]}
+			>{release.attention
+				? 'Needs attention'
+				: release.publications.length
+						&& release.verified === release.publications.length
+				? 'Required publications verified'
+				: 'In progress'}</span>
+		</div>
+		<p class="metadata">
+			Commit <a
+				href={`https://github.com/${release.repository}/commit/${release.commit}`}
+			><code>{release.commit.slice(0, 12)}</code></a>
+		</p>
+		{release.publications.length ? (
+			<><p>
+					<strong>{release.verified} of {release.publications.length}</strong>
+					required publications verified.
+				</p><div class="publication-list">
+					{release.publications.map(p => (
+						<span class:list={['badge', p.outcome]}>{p.id} · {p.outcome}</span>
+					))}
+				</div></>
+		) : (
+			 <p class="hint">
+				 No required publications are configured for this stream. Workflow
+				 success alone does not establish release completeness.
+			 </p>
+		 )}
+		<div class="actions">
+			{release.runs.map(run => (
+				<a href={`/runs#${run.id}`}>{run.operation} · {run.state} →</a>
+			))}
+		</div>
+	</article>
+))}

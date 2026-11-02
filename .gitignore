@@ -11,3 +11,8 @@ app-manifest.json
 /dist/
 /src/**/dist/
 /actions/**/dist/
+
+.astro/
+
+.playwright-cli/
+worker-configuration.d.ts

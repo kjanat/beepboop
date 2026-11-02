@@ -1,0 +1,142 @@
+---
+import type { Dashboard } from '@/server/dashboard.ts';
+import { date, workflowChoices } from '@/server/dashboard.ts';
+
+interface Props {
+	data: Dashboard;
+}
+const { data } = Astro.props;
+---
+<article>
+	<h2>Connect a repository</h2>
+	<p>
+		First install the Beepboop GitHub App on the repository. Inspection reads
+		its packages and workflows; the setup pull request lets you review its
+		release configuration.
+	</p>
+	<form data-action="discover" class="form-row">
+		<label>GitHub repository<input
+				name="repository"
+				placeholder="owner/repository"
+				pattern="[\w.\-]+/[\w.\-]+"
+				required
+			></label><button class="primary">Inspect repository</button>
+	</form>
+</article>
+{data.repositories.map(repository => (
+	<article>
+		<div class="section-heading">
+			<div>
+				<h2>
+					<a href={`https://github.com/${repository.name}`}>{repository.name}
+						↗</a>
+				</h2>
+				<p class="metadata">
+					Inspected {date(repository.updatedAt)} · <code
+					>{repository.sha.slice(0, 12)}</code>
+				</p>
+			</div><span
+				class:list={[
+					'badge',
+					repository.suspended || repository.diagnostics.length
+						? 'blocked'
+						: 'succeeded',
+				]}
+			>{repository.suspended
+				? 'App access unavailable'
+				: repository.configuration && !repository.diagnostics.length
+				? 'Ready'
+				: 'Setup needed'}</span>
+		</div>
+		{repository.diagnostics.map(message => <p class="notice">{message}</p>)}
+		<div class="actions">
+			<form data-action="discover">
+				<input type="hidden" name="repository" value={repository.name}><button>
+					Refresh inspection
+				</button>
+			</form>
+			{!repository.configuration
+				&& (data.onboarding.get(repository.id) ? (
+				 <a class="button primary" href={data.onboarding.get(repository.id)}
+				 >Review setup PR ↗</a>
+			 ) : (
+				 <form data-action="onboard">
+					 <input
+						 type="hidden"
+						 name="repository"
+						 value={repository.name}
+					 ><button class="primary">Open setup PR</button>
+				 </form>
+			 ))}
+			{repository.configuration && !repository.suspended
+				&& !repository.diagnostics.length && (
+				 <a
+					 class="button primary"
+					 href={`/releases?repository=${repository.id}`}
+				 >Prepare a release</a>
+			 )}
+		</div>
+		<div class="repository-grid">
+			<div>
+				<h3>Packages</h3>{repository.inventory.packages.length ? (
+					<table>
+						<thead>
+							<tr>
+								<th>Package</th>
+								<th>Published</th>
+								<th>In repository</th>
+							</tr>
+						</thead>
+						<tbody>
+							{repository.inventory.packages.map(p => (
+								<tr>
+									<td>{p.name}<small>{p.manager}</small></td>
+									<td>{p.published ?? 'Not found'}</td>
+									<td>{p.version ?? 'From tags'}</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+				) : (
+					 <p>
+						 No package manifests discovered. Releases may be driven by tags or
+						 custom workflows.
+					 </p>
+				 )}
+			</div>
+			<div>
+				<h3>Release workflows</h3>{workflowChoices(repository).map(w => (
+					<p>
+						<strong>{w.stream} / {w.operation}</strong><small><a
+								href={`https://github.com/${repository.name}/blob/${repository.sha}/.github/workflows/${w.file}`}
+							>{w.file}</a> · {w.ref} ·
+							{w.mode === 'observe' ? 'Tracks existing triggers' : 'Can be dispatched'}</small>
+					</p>
+				))}{!repository.configuration && (
+					<p>Review discovered workflows in the setup PR.</p>
+				)}
+			</div>
+		</div>
+		{repository.configuration && (
+			<details>
+				<summary>
+					Required publications and automation
+				</summary>{Object.entries(repository.configuration.streams).map((
+					[name, stream],
+				) => (
+					<p>
+						<strong>{name}</strong>:
+						{stream.required.join(', ') || 'No required publications configured'}
+					</p>
+				))}{repository.configuration.subscriptions.map(s => (
+					<p>
+						When {s.source} emits {s.event}, start {s.stream} / {s.operation}.
+					</p>
+				))}
+			</details>
+		)}
+		{repository.inventory.diagnostics.map(message => (
+			<p class="notice">{message}</p>
+		))}
+	</article>
+))}

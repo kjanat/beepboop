@@ -1,13 +1,14 @@
-import { type AutomationBindings, AutomationService } from './automation/service.ts';
-import { failure } from './failure.ts';
+import { handle } from '@astrojs/cloudflare/handler';
+import { type AutomationBindings, AutomationService } from '@/automation/service.ts';
+import { failure } from '@/failure.ts';
 
-export { AutomationCoordinator } from './automation/coordinator.ts';
-export { VermonEvents } from './automation/vermon.ts';
+export { AutomationCoordinator } from '@/automation/coordinator.ts';
+export { VermonEvents } from '@/automation/vermon.ts';
 
 export default {
-	async fetch(request: Request, env: AutomationBindings): Promise<Response> {
+	async fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response> {
 		try {
-			const response = await new AutomationService(env).fetch(request);
+			const response = await handle(request, env, context);
 			const headers = new Headers(response.headers);
 			headers.set('Cache-Control', 'no-store');
 			headers.set('X-Content-Type-Options', 'nosniff');
@@ -19,4 +20,4 @@ export default {
 	async scheduled(_event: ScheduledController, env: AutomationBindings): Promise<void> {
 		await new AutomationService(env).scheduled();
 	},
-} satisfies ExportedHandler<AutomationBindings>;
+} satisfies ExportedHandler<Env>;

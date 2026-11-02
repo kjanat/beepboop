@@ -1,6 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
 
-const generator = Bun.spawn(['bun', 'x', 'wrangler', 'types'], {
+const generator = Bun.spawn(['bun', 'x', 'wrangler', 'types', '--config', 'wrangler.jsonc'], {
 	stdout: 'inherit',
 	stderr: 'inherit',
 });

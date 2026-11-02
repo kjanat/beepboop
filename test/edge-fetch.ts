@@ -1,4 +1,4 @@
-import type { Fetcher } from '#automation/managers/registry';
+import type { Fetcher } from '@/automation/managers/registry';
 
 export interface EdgeFetch {
 	fetch: Fetcher;

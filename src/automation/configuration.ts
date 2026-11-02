@@ -1,5 +1,5 @@
 import { CronExpressionParser } from 'cron-parser';
-import { array, record, text } from '#model';
+import { array, record, text } from '@/model';
 import { versionFileSchema } from './editors.ts';
 import { inputSchema, outputSchema, platformSchema } from './outputs.ts';
 import { validRef } from './policy.ts';

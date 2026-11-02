@@ -1,16 +1,29 @@
 {
+	"extends": "astro/tsconfigs/strict",
 	"compilerOptions": {
+		"paths": {
+			"@/*": ["./src/*"],
+			"@root/*": ["./*"]
+		},
 		"target": "ES2022",
 		"module": "ESNext",
 		"moduleResolution": "Bundler",
 		"strict": true,
 		"noUncheckedIndexedAccess": true,
 		"noEmit": true,
+		"allowJs": false,
 		"allowImportingTsExtensions": true,
 		"resolveJsonModule": true,
 		"skipLibCheck": true,
 		"types": ["bun"],
 	},
 	"exclude": ["src/ui/browser/**"],
-	"include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts", "worker-configuration.d.ts"]
+	"include": [
+		".astro/types.d.ts",
+		"src/**/*.astro",
+		"src/**/*.ts",
+		"test/**/*.ts",
+		"scripts/**/*.ts",
+		"worker-configuration.d.ts"
+	]
 }

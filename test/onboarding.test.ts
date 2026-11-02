@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import schema from '#$/schemas/v1.json' with { type: 'json' };
-import { parseRepositoryConfiguration } from '#automation/configuration';
-import { formatJson } from '#automation/json';
-import { discover, resolvePublished } from '#automation/managers';
-import { onboardingBody, onboardingConfiguration, onboardingReferences } from '#automation/onboarding';
-import type { Snapshot } from '#automation/types';
+import schema from '@root/schemas/v1.json' with { type: 'json' };
+import { parseRepositoryConfiguration } from '@/automation/configuration';
+import { formatJson } from '@/automation/json';
+import { discover, resolvePublished } from '@/automation/managers';
+import { onboardingBody, onboardingConfiguration, onboardingReferences } from '@/automation/onboarding';
+import type { Snapshot } from '@/automation/types';
 
 function repository(name: string, files: Record<string, string>, tags?: string[]): Snapshot {
 	return {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
-import { workflowIdentity } from '#automation/auth';
+import { workflowIdentity } from '@/automation/auth';
 
 const audience = 'https://beepboop.example';
 const ownerId = 4242;

@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { planRefs, type RefPolicy } from '#automation/refs';
+import { planRefs, type RefPolicy } from '@/automation/refs';
 // @ts-expect-error The runtime Action is plain JavaScript.
 import { publishRefs } from '../actions/runtime/refs.mjs';
 

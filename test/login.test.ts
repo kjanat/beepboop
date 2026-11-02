@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { completeLogin, type LoginCompletion } from '#automation/auth';
+import { completeLogin, type LoginCompletion } from '@/automation/auth';
 
 const flow = JSON.stringify({ state: 'state-1', verifier: 'verifier-1' });
 

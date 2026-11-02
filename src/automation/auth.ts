@@ -7,7 +7,7 @@ import {
 	verifyRegistrationResponse,
 } from '@simplewebauthn/server';
 import { createRemoteJWKSet, type JWTVerifyGetKey, jwtVerify } from 'jose';
-import { integer, record, sha, text } from '#model';
+import { integer, record, sha, text } from '@/model';
 
 export interface AuthBindings {
 	DB: D1Database;

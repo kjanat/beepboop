@@ -1,8 +1,8 @@
 import { resolve } from 'node:path';
-import { discover, resolvePublished } from '#automation/managers';
-import { tagQueries } from '#automation/managers/tags';
-import { onboardingConfiguration } from '#automation/onboarding';
-import type { Snapshot } from '#automation/types';
+import { discover, resolvePublished } from '@/automation/managers';
+import { tagQueries } from '@/automation/managers/tags';
+import { onboardingConfiguration } from '@/automation/onboarding';
+import type { Snapshot } from '@/automation/types';
 
 function command(args: string[]): string {
 	const result = Bun.spawnSync(args);

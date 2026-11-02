@@ -1,5 +1,5 @@
 import { parseDocument } from 'yaml';
-import { record } from '#model';
+import { record } from '@/model';
 export function object(value: unknown): Record<string, unknown> {
 	return value !== null && typeof value === 'object' && !Array.isArray(value) ? record(value) : {};
 }

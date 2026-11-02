@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
-import { type TokenPermissions, tokenPermissions, workflowToken } from '#automation/token';
+import { type TokenPermissions, tokenPermissions, workflowToken } from '@/automation/token';
 
 const audience = 'https://beepboop.example';
 const ownerId = 4242;

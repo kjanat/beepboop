@@ -3,9 +3,9 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import sodium from 'libsodium-wrappers';
 import { seal } from 'tweetnacl-sealedbox-js';
-import { base64, type WorkflowIdentity } from '#automation/auth';
-import { Store } from '#automation/store';
-import { parseGrant, Vault } from '#automation/vault';
+import { base64, type WorkflowIdentity } from '@/automation/auth';
+import { Store } from '@/automation/store';
+import { parseGrant, Vault } from '@/automation/vault';
 
 function database(): { store: Store; sqlite: Database } {
 	const sqlite = new Database(':memory:');

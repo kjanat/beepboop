@@ -1,4 +1,4 @@
-import { record, text } from '#model';
+import { record, text } from '@/model';
 import type { RepositoryGateway } from './github.ts';
 import type { Publication } from './types.ts';
 

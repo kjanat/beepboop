@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
-import { type AuthBindings, administrator } from '#automation/auth';
+import { type AuthBindings, administrator } from '@/automation/auth';
 
 const issuer = 'https://auth.administrator.test';
 const { privateKey, publicKey } = await generateKeyPair('ES256');

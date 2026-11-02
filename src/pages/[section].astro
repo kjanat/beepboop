@@ -1,0 +1,17 @@
+---
+import Workspace from '@/components/Workspace.astro';
+
+const sections = [
+	'repositories',
+	'releases',
+	'runs',
+	'secrets',
+	'activity',
+	'security',
+];
+const section = Astro.params.section ?? '';
+if (!sections.includes(section)) {
+	return new Response('Page not found', { status: 404 });
+}
+---
+<Workspace section={section} />

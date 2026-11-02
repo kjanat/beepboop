@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { array, integer, record, sha } from '#model';
+import { array, integer, record, sha } from '@/model';
 import type { WorkflowIdentity } from './auth.ts';
 import {
 	completion,
