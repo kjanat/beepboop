@@ -94,3 +94,69 @@ test('same-origin form posts carry the Origin header the administrator check req
 	expect(response.headers.get('Referrer-Policy')).toBe('same-origin');
 	expect(await response.text()).toContain('<form action="/auth/logout" method="post">');
 });
+
+test('repository cards link the repository, commit, workflows, manifests and published versions', async () => {
+	const { discover } = await import('#automation/managers');
+	const sha = 'c'.repeat(40);
+	const snapshot = {
+		repository: { id: 11, name: 'example/linked-refs', defaultBranch: 'main' },
+		sha,
+		files: {
+			'package.json': '{"name":"@scope/tool","version":"1.2.0"}',
+			'.github/workflows/release.yml': 'on:\n  push:\n    tags: ["v*"]\njobs: {}\n',
+		},
+	};
+	const repository = {
+		...snapshot.repository,
+		sha,
+		inventory: discover(snapshot),
+		diagnostics: [],
+		presetShas: {},
+		updatedAt: 0,
+	};
+	const page = await renderDashboard([repository], []).text();
+	expect(page).toContain('<h3><a href="https://github.com/example/linked-refs">example/linked-refs</a></h3>');
+	expect(page).toContain(`<a href="https://github.com/example/linked-refs/commit/${sha}">${sha.slice(0, 12)}</a>`);
+	expect(page).toContain(
+		`<a href="https://github.com/example/linked-refs/blob/${sha}/.github/workflows/release.yml">release.yml</a>`,
+	);
+	expect(page).toContain(`<a href="https://github.com/example/linked-refs/blob/${sha}/package.json">@scope/tool</a>`);
+	expect(page).toContain('<a href="https://www.npmjs.com/package/%40scope/tool/v/1.2.0">1.2.0</a>');
+});
+
+test('link helpers encode path segments and only link registries they know', async () => {
+	const { githubHref, link, registryHref } = await import('../src/ui/templates/html.ts');
+	expect(githubHref('o/r', 'blob', 'abc', 'dir/a b.json')).toBe('https://github.com/o/r/blob/abc/dir/a%20b.json');
+	expect(registryHref('cargo', 'crate', '0.1.0')).toBe('https://crates.io/crates/crate/0.1.0');
+	expect(registryHref('workflow', 'x', '1')).toBeUndefined();
+	expect(link('https://x/"', '<b>')).toBe('<a href="https://x/&quot;">&lt;b&gt;</a>');
+});
+
+test('execution cards link the repository, source commit and workflow run', async () => {
+	const { parseRepositoryConfiguration } = await import('#automation/configuration');
+	const sha = 'd'.repeat(40);
+	const execution: import('#automation/types').Execution = {
+		id: 'exec-1',
+		repositoryId: 12,
+		repository: 'example/runs',
+		stream: 'main',
+		operation: 'release',
+		eventId: 'event-1',
+		configuration: parseRepositoryConfiguration({}),
+		configurationSha: sha,
+		presetShas: {},
+		sourceSha: sha,
+		state: 'succeeded',
+		dependencies: [],
+		runId: 4242,
+		attempts: 1,
+		publications: [],
+		artifacts: [],
+		createdAt: 0,
+		updatedAt: 0,
+	};
+	const page = await renderDashboard([], [execution]).text();
+	expect(page).toContain('<h3><a href="https://github.com/example/runs">example/runs</a> · main / release</h3>');
+	expect(page).toContain(`<a href="https://github.com/example/runs/commit/${sha}">${sha}</a>`);
+	expect(page).toContain('<a href="https://github.com/example/runs/actions/runs/4242">Workflow run 4242</a>');
+});

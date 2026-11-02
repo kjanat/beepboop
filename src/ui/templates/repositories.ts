@@ -1,23 +1,28 @@
 import type { RepositoryRecord } from '../../automation/types.ts';
-import { htmlEscape } from './html.ts';
+import { githubHref, htmlEscape, link, registryHref } from './html.ts';
 
 function renderRepository(repository: RepositoryRecord, pull: string | undefined): string {
-	const packages = repository.inventory.packages.map(pkg => `
+	const packages = repository.inventory.packages.map(pkg => {
+		const registry = pkg.publish ? registryHref(pkg.manager, pkg.name, pkg.version) : undefined;
+		return `
 		<tr>
-			<td>${htmlEscape(pkg.name)}</td>
-			<td>${htmlEscape(pkg.version)}</td>
+			<td>${link(githubHref(repository.name, 'blob', repository.sha, pkg.manifest), pkg.name)}</td>
+			<td>${registry ? link(registry, pkg.version) : htmlEscape(pkg.version)}</td>
 			<td>${htmlEscape(pkg.manager)}</td>
-		</tr>`).join('');
+		</tr>`;
+	}).join('');
 	const workflows = repository.inventory.workflows.map(workflow =>
-		`<li>${htmlEscape(workflow.file)} — ${htmlEscape(workflow.events.join(', '))}</li>`
+		`<li>${
+			link(githubHref(repository.name, 'blob', repository.sha, '.github/workflows', workflow.file), workflow.file)
+		} — ${htmlEscape(workflow.events.join(', '))}</li>`
 	).join('');
 	const diagnostics = (messages: string[]) => messages.map(message => `<p>${htmlEscape(message)}</p>`).join('');
 	return `
 		<article>
-			<h3>${htmlEscape(repository.name)}</h3>
+			<h3>${link(githubHref(repository.name), repository.name)}</h3>
 			<p>${htmlEscape(repository.inventory.managers.join(' · '))}</p>
 			<p>${repository.configuration ? 'Configuration discovered' : 'Awaiting onboarding'} ·
-				<code>${htmlEscape(repository.sha.slice(0, 12))}</code>
+				<code>${link(githubHref(repository.name, 'commit', repository.sha), repository.sha.slice(0, 12))}</code>
 			</p>
 			${diagnostics(repository.diagnostics)}
 			${

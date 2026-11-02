@@ -1,5 +1,5 @@
 import type { Execution } from '../../automation/types.ts';
-import { htmlEscape } from './html.ts';
+import { githubHref, htmlEscape, link } from './html.ts';
 
 function publications(execution: Execution): string {
 	if (!execution.publications.length) return '<p class="muted">Awaiting publication reports.</p>';
@@ -38,9 +38,9 @@ function renderExecution(execution: Execution): string {
 		? `<p>Target: ${htmlEscape([platform.os, platform.arch, platform.abi].filter(Boolean).join(' / '))}</p>`
 		: '';
 	const run = execution.runId
-		? ` · <a href="https://github.com/${
-			htmlEscape(execution.repository)
-		}/actions/runs/${execution.runId}">Workflow run ${execution.runId}</a>`
+		? ` · ${
+			link(githubHref(execution.repository, 'actions/runs', String(execution.runId)), `Workflow run ${execution.runId}`)
+		}`
 		: '';
 	const identity = JSON.stringify(
 		{
@@ -57,7 +57,7 @@ function renderExecution(execution: Execution): string {
 	);
 	return `
 		<article>
-			<h3>${htmlEscape(execution.repository)} · ${htmlEscape(execution.stream)} / ${
+			<h3>${link(githubHref(execution.repository), execution.repository)} · ${htmlEscape(execution.stream)} / ${
 		htmlEscape(execution.operation)
 	}</h3>
 			<span class="state">${htmlEscape(execution.state)}</span> ${htmlEscape(execution.version)}
@@ -65,7 +65,9 @@ function renderExecution(execution: Execution): string {
 			${preparationLink}
 			${execution.releaseSet ? `<p>Release group: ${htmlEscape(execution.releaseSet.group)}</p>` : ''}
 			${target}
-			<p>Source <code>${htmlEscape(execution.sourceSha)}</code>${run}</p>
+			<p>Source <code>${
+		link(githubHref(execution.repository, 'commit', execution.sourceSha), execution.sourceSha)
+	}</code>${run}</p>
 			${publications(execution)}
 			${controls(execution)}
 			<details><summary>Artifacts and identity</summary><pre>${htmlEscape(identity)}</pre></details>
