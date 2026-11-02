@@ -21,7 +21,6 @@ jobs:
             with: { node-version-file: "mise.toml" }
           - name: Setup Bun
             uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-            with: { bun-version: "1.4.4" }
           - uses: kjanat/runner@b32ea932a1813ae0be44e755c16df9f9f5ca86a4 # v0.28
       - run: runner i -fs types
       - run: run -pk check lint test
