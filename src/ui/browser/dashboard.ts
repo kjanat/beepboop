@@ -1,5 +1,5 @@
 import { setupCredentials } from './credentials.ts';
-import { api, displayJson, refresh, show, showError, submit } from './dom.ts';
+import { api, displayJson, element, show, showError, submit } from './dom.ts';
 import { setupReleases } from './releases.ts';
 
 const tabs = document.querySelectorAll<HTMLButtonElement>('[data-tab]');
@@ -52,7 +52,13 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('[data-onboard
 }
 setupReleases();
 setupCredentials();
-refresh('#load-activity', '#activity-list', '/api/activity');
+element('#load-activity', HTMLButtonElement).addEventListener('click', async () => {
+	try {
+		element('#activity-list', HTMLTableSectionElement).innerHTML = (await api<{ html: string }>('/api/activity')).html;
+	} catch (error) {
+		showError(error);
+	}
+});
 
 for (const button of document.querySelectorAll<HTMLButtonElement>('[data-approve],[data-retry],[data-reconcile]')) {
 	button.addEventListener('click', async () => {

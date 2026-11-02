@@ -2,6 +2,7 @@ import { CronExpressionParser } from 'cron-parser';
 import schema from '#$/schemas/v1.json' with { type: 'json' };
 import { array, compareVersions, integer, record, semver, sha, text } from '#model';
 import { readBody, verifySignature } from '#webhook';
+import { renderActivityRows } from '../ui/templates/activity.ts';
 import { type AuthBindings, Authenticators, administrator, authRoute, workflowIdentity } from './auth.ts';
 import { resolveConfiguration } from './configuration.ts';
 import type { AutomationCoordinator } from './coordinator.ts';
@@ -325,6 +326,8 @@ export class AutomationService {
 				await this.store.repositories(),
 				await this.store.executions(),
 				await this.store.onboardingPulls(),
+				await new Authenticators(this.env).enrolled(actor),
+				await this.store.activity(),
 			);
 		}
 		if (request.method === 'GET') {
@@ -334,13 +337,9 @@ export class AutomationService {
 			if (path === '/api/repositories') return Response.json(await this.store.repositories());
 			if (path === '/api/executions') return Response.json(await this.store.executions());
 			if (path === '/api/activity') {
-				return Response.json(
-					(
-						await this.store.db
-							.prepare('SELECT * FROM audit ORDER BY created_at DESC LIMIT 200')
-							.all()
-					).results,
-				);
+				return Response.json({
+					html: renderActivityRows(await this.store.activity(), await this.store.repositories()),
+				});
 			}
 			if (path === '/api/credentials') {
 				return Response.json({
@@ -592,7 +591,7 @@ export class AutomationService {
 				await authenticators.options(
 					actor,
 					register,
-					body.bootstrap as string | undefined,
+					typeof body.bootstrap === 'string' ? body.bootstrap : undefined,
 					body.label === undefined ? undefined : text(body.label),
 				),
 			);

@@ -23,6 +23,10 @@ export async function api<T = unknown>(path: string, body?: unknown): Promise<T>
 			body: JSON.stringify(body),
 		},
 	);
+	if (response.status === 401) {
+		location.assign('/auth/login');
+		throw new Error('Session expired. Signing in again.');
+	}
 	if (!response.ok) {
 		const data: { error?: string } = await response.json();
 		throw new Error(data.error || 'Request failed');

@@ -1,7 +1,57 @@
-export function renderActivity(): string {
+import type { ActivityEntry, RepositoryRecord } from '../../automation/types.ts';
+import { githubHref, htmlEscape, link } from './html.ts';
+
+function repositoryLink(name: string): string {
+	return link(githubHref(name), name);
+}
+
+function runRepository(entry: ActivityEntry): string | undefined {
+	return /^(?:https:\/\/github\.com\/)?([\w.-]+\/[\w.-]+)/.exec(entry.target)?.[1];
+}
+
+function actor(entry: ActivityEntry): string {
+	const run = /^run:(\d+)$/.exec(entry.actor)?.[1];
+	if (!run) return 'Administrator';
+	const repository = runRepository(entry);
+	return repository
+		? link(githubHref(repository, 'actions', 'runs', run), `Workflow run ${run}`)
+		: htmlEscape(`Workflow run ${run}`);
+}
+
+function target(entry: ActivityEntry, names: ReadonlyMap<number, string>): string {
+	if (entry.action === 'repository.onboard') {
+		const name = names.get(Number(entry.target));
+		return name ? repositoryLink(name) : htmlEscape(entry.target);
+	}
+	if (entry.action === 'token.issued') {
+		const [repository = '', permissions = ''] = entry.target.split(' ');
+		return `${repositoryLink(repository)} <span class="muted">${htmlEscape(permissions)}</span>`;
+	}
+	if (entry.target.startsWith('https://')) return link(entry.target, entry.target);
+	return htmlEscape(entry.target);
+}
+
+export function renderActivityRows(entries: ActivityEntry[], repositories: RepositoryRecord[]): string {
+	if (entries.length === 0) return '<tr><td colspan="4">No activity yet.</td></tr>';
+	const names = new Map(repositories.map(repository => [repository.id, repository.name]));
+	return entries.map(entry => {
+		const time = new Date(entry.createdAt).toISOString();
+		return `<tr>
+			<td><time datetime="${time}">${time.slice(0, 19).replace('T', ' ')} UTC</time></td>
+			<td><code>${htmlEscape(entry.action)}</code></td>
+			<td>${actor(entry)}</td>
+			<td>${target(entry, names)}</td>
+		</tr>`;
+	}).join('');
+}
+
+export function renderActivity(entries: ActivityEntry[], repositories: RepositoryRecord[]): string {
 	return `<section id="activity" hidden>
 		<h2>Activity</h2>
 		<button id="load-activity">Refresh activity</button>
-		<pre id="activity-list"></pre>
+		<table>
+			<thead><tr><th>When</th><th>Action</th><th>Actor</th><th>Target</th></tr></thead>
+			<tbody id="activity-list">${renderActivityRows(entries, repositories)}</tbody>
+		</table>
 		</section>`;
 }

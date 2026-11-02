@@ -212,3 +212,11 @@ export interface RepositoryRecord {
 	diagnostics: string[];
 	updatedAt: number;
 }
+
+export interface ActivityEntry {
+	id: string;
+	actor: string;
+	action: string;
+	target: string;
+	createdAt: number;
+}

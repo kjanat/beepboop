@@ -1,14 +1,16 @@
 import { script, style } from '../ui/dist/assets.ts';
 import { renderPage } from '../ui/page.ts';
-import type { Execution, RepositoryRecord } from './types.ts';
+import type { ActivityEntry, Execution, RepositoryRecord } from './types.ts';
 
 export function renderDashboard(
 	repositories: RepositoryRecord[],
 	executions: Execution[],
 	onboarding: ReadonlyMap<number, string> = new Map(),
+	enrolledKeys = 0,
+	activity: ActivityEntry[] = [],
 ): Response {
 	const nonce = crypto.randomUUID();
-	const page = renderPage(repositories, executions, onboarding, nonce, script, style);
+	const page = renderPage(repositories, executions, onboarding, enrolledKeys, activity, nonce, script, style);
 	return new Response(page, {
 		headers: {
 			'Content-Type': 'text/html; charset=utf-8',

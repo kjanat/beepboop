@@ -1,4 +1,4 @@
-import type { Execution, RepositoryRecord } from '../automation/types.ts';
+import type { ActivityEntry, Execution, RepositoryRecord } from '../automation/types.ts';
 import { renderActivity } from './templates/activity.ts';
 import { renderCredentials } from './templates/credentials.ts';
 import { renderExecutions } from './templates/executions.ts';
@@ -9,6 +9,8 @@ export function renderPage(
 	repositories: RepositoryRecord[],
 	executions: Execution[],
 	onboarding: ReadonlyMap<number, string>,
+	enrolledKeys: number,
+	activity: ActivityEntry[],
 	nonce: string,
 	script: string,
 	style: string,
@@ -33,8 +35,8 @@ export function renderPage(
 				${renderRepositories(repositories, onboarding)}
 				${renderReleases(repositories, executions)}
 				${renderExecutions(executions)}
-				${renderCredentials()}
-				${renderActivity()}
+				${renderCredentials(enrolledKeys)}
+				${renderActivity(activity, repositories)}
 				<output id="feedback" hidden></output>
 				<script nonce="${nonce}">${script}</script>
 			</body>

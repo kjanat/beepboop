@@ -203,15 +203,34 @@ export async function authRoute(
 				),
 		});
 	}
-	if (path === '/auth/logout' && request.method === 'POST') {
-		await administrator(request, env);
-		return new Response(null, {
-			status: 303,
-			headers: {
-				Location: '/auth/login',
-				'Set-Cookie': cookieHeader('__Host-beepboop_access', '', 0),
-			},
-		});
+	if (path === '/auth/logout' && request.method === 'POST') return signOut(request, env.APPLICATION_ORIGIN);
+	return undefined;
+}
+export function signOut(request: Request, origin: string): Response {
+	if (request.headers.get('origin') !== origin) {
+		return Response.json({ error: 'Invalid request origin' }, { status: 403 });
+	}
+	return new Response(null, {
+		status: 303,
+		headers: {
+			Location: '/auth/login',
+			'Set-Cookie': cookieHeader('__Host-beepboop_access', '', 0),
+		},
+	});
+}
+export function enrollmentRefusal(
+	register: boolean,
+	enrolled: number,
+	configured: string | undefined,
+	bootstrap: string | undefined,
+): string | undefined {
+	if (enrolled > 0) return undefined;
+	if (!register) return 'Enroll a security key first, with the initial enrollment token.';
+	if (!configured) {
+		return 'Initial enrollment is closed. Set the AUTHENTICATOR_BOOTSTRAP_TOKEN Worker secret and enter its value here.';
+	}
+	if (bootstrap !== configured) {
+		return 'The initial enrollment token differs from the AUTHENTICATOR_BOOTSTRAP_TOKEN Worker secret.';
 	}
 	return undefined;
 }
@@ -240,14 +259,13 @@ export class Authenticators {
 	): Promise<unknown> {
 		const credentials = await this.credentials(subject),
 			rpID = new URL(this.env.APPLICATION_ORIGIN).hostname;
-		if (
-			register
-			&& credentials.length === 0
-			&& (!this.env.AUTHENTICATOR_BOOTSTRAP_TOKEN
-				|| bootstrap !== this.env.AUTHENTICATOR_BOOTSTRAP_TOKEN)
-		) {
-			throw new Error('Initial key enrollment requires the deployment bootstrap token');
-		}
+		const refusal = enrollmentRefusal(
+			register,
+			credentials.length,
+			this.env.AUTHENTICATOR_BOOTSTRAP_TOKEN,
+			bootstrap,
+		);
+		if (refusal) throw new Error(refusal);
 		const options = register
 			? await generateRegistrationOptions({
 				rpID,

@@ -1,6 +1,6 @@
 import { record } from '#model';
 
-import type { AutomationEvent, Execution, RepositoryRecord, SubscriptionDelivery } from './types.ts';
+import type { ActivityEntry, AutomationEvent, Execution, RepositoryRecord, SubscriptionDelivery } from './types.ts';
 
 export function onboardingPulls(rows: { repository_id: number; document: string }[]): Map<number, string> {
 	const pulls = new Map<number, string>();
@@ -111,6 +111,12 @@ export class Store {
 	async deliveryResult(id: string, succeeded: boolean): Promise<void> {
 		await this.db.prepare('UPDATE subscription_deliveries SET state=?,error=?,updated_at=? WHERE id=?')
 			.bind(succeeded ? 'delivered' : 'pending', succeeded ? null : 'Delivery awaiting retry', Date.now(), id).run();
+	}
+	async activity(): Promise<ActivityEntry[]> {
+		const result = await this.db
+			.prepare('SELECT id, actor, action, target, created_at FROM audit ORDER BY created_at DESC LIMIT 200')
+			.all<{ id: string; actor: string; action: string; target: string; created_at: number }>();
+		return result.results.map(({ created_at, ...entry }) => ({ ...entry, createdAt: created_at }));
 	}
 	async audit(actor: string, action: string, target: string): Promise<void> {
 		await this.db

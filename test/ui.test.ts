@@ -160,3 +160,72 @@ test('execution cards link the repository, source commit and workflow run', asyn
 	expect(page).toContain(`<a href="https://github.com/example/runs/commit/${sha}">${sha}</a>`);
 	expect(page).toContain('<a href="https://github.com/example/runs/actions/runs/4242">Workflow run 4242</a>');
 });
+
+test('the activity tab renders a table with linked runs, repositories and targets', async () => {
+	const { discover } = await import('#automation/managers');
+	const snapshot = {
+		repository: { id: 21, name: 'example/audited', defaultBranch: 'main' },
+		sha: 'e'.repeat(40),
+		files: {},
+	};
+	const repository = {
+		...snapshot.repository,
+		sha: snapshot.sha,
+		inventory: discover(snapshot),
+		diagnostics: [],
+		presetShas: {},
+		updatedAt: 0,
+	};
+	const activity = [
+		{
+			id: 'a',
+			actor: 'run:77',
+			action: 'token.issued',
+			target: 'example/audited contents:write',
+			createdAt: Date.UTC(2026, 10, 2, 14, 30, 5),
+		},
+		{ id: 'b', actor: 'subject-hash', action: 'repository.onboard', target: '21', createdAt: 0 },
+		{
+			id: 'c',
+			actor: 'run:78',
+			action: 'release.prepared',
+			target: 'https://github.com/example/audited/pull/3',
+			createdAt: 0,
+		},
+		{ id: 'd', actor: 'subject-hash', action: 'credential.replace', target: '<alias>', createdAt: 0 },
+	];
+	const page = await renderDashboard([repository], [], new Map(), 1, activity).text();
+	expect(page).not.toContain('<pre id="activity-list">');
+	expect(page).toContain('<tbody id="activity-list">');
+	expect(page).toContain('<time datetime="2026-11-02T14:30:05.000Z">2026-11-02 14:30:05 UTC</time>');
+	expect(page).toContain('<a href="https://github.com/example/audited/actions/runs/77">Workflow run 77</a>');
+	expect(page).toContain(
+		'<a href="https://github.com/example/audited">example/audited</a> <span class="muted">contents:write</span>',
+	);
+	expect(page).toContain('<td>Administrator</td>\n\t\t\t<td><a href="https://github.com/example/audited">');
+	expect(page).toContain('<a href="https://github.com/example/audited/actions/runs/78">Workflow run 78</a>');
+	expect(page).toContain(
+		'<a href="https://github.com/example/audited/pull/3">https://github.com/example/audited/pull/3</a>',
+	);
+	expect(page).toContain('<td>&lt;alias&gt;</td>');
+});
+
+test('activity rows fall back to plain text for unknown repositories and show an empty state', async () => {
+	const { renderActivityRows } = await import('../src/ui/templates/activity.ts');
+	expect(renderActivityRows([], [])).toBe('<tr><td colspan="4">No activity yet.</td></tr>');
+	const rows = renderActivityRows([
+		{ id: 'a', actor: 'run:5', action: 'release.prepared', target: 'not a repository', createdAt: 0 },
+		{ id: 'b', actor: 'subject-hash', action: 'repository.onboard', target: '404', createdAt: 0 },
+	], []);
+	expect(rows).toContain('<td>Workflow run 5</td>');
+	expect(rows).toContain('<td>404</td>');
+});
+
+test('the first key enrollment asks for the bootstrap token and later enrollments do not', async () => {
+	const first = await renderDashboard([], []).text();
+	expect(first).toContain('<input name="bootstrap" type="password" autocomplete="off" required>');
+	expect(first).toContain('<code>AUTHENTICATOR_BOOTSTRAP_TOKEN</code>');
+	const later = await renderDashboard([], [], new Map(), 1).text();
+	expect(later).not.toContain('name="bootstrap"');
+	expect(later).toContain('Enrolling another key requires a touch of an enrolled key.');
+});
