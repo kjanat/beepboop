@@ -27,7 +27,7 @@
 		"@simplewebauthn/server": "^14.0.3",
 		"astro": "^7.4.5",
 		"cron-parser": "^5.10.2",
-		"jose": "6.2.13",
+		"jose": "6.2.15",
 		"remark": "15.0.1",
 		"remark-gfm": "4.0.1",
 		"smol-toml": "^1.9.1",
