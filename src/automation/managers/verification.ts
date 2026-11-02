@@ -11,7 +11,7 @@ export async function verifyRegistry(
 ): Promise<Publication> {
 	try {
 		const response = await request(url, {
-			redirect: 'error',
+			redirect: 'manual',
 			signal: AbortSignal.timeout(15_000),
 			headers: { 'User-Agent': 'beepboop release verification' },
 		});
@@ -22,7 +22,7 @@ export async function verifyRegistry(
 			return { ...publication, outcome: 'failed', url };
 		}
 		if (channel) {
-			const response = await request(channel, { redirect: 'error', signal: AbortSignal.timeout(15_000) });
+			const response = await request(channel, { redirect: 'manual', signal: AbortSignal.timeout(15_000) });
 			if (!response.ok) return { ...publication, outcome: 'pending', url };
 			const tags: unknown = await response.json();
 			if (!tags || typeof tags !== 'object' || Reflect.get(tags, publication.channel ?? '') !== publication.version) {

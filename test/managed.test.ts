@@ -5,6 +5,7 @@ import { createManagedPreparation, createReleasePreparation, planIdentity } from
 import { discover } from '#automation/managers';
 import { planReleaseSet } from '#automation/planning';
 import type { RepositoryRecord, Snapshot } from '#automation/types';
+import { edgeFetch } from './edge-fetch.ts';
 
 const snapshot: Snapshot = {
 	repository: { id: 1, name: 'example/tool', defaultBranch: 'main' },
@@ -264,4 +265,17 @@ test('the merge commit comes from the merged issue event on any page', async () 
 		'merged preparation',
 	);
 	expect(unmerged.requests.length).toBe(11);
+});
+
+test('GitHub requests run on the Workers fetch and refuse a redirect', async () => {
+	const ok = edgeFetch(() => Response.json({ ok: true }));
+	expect(
+		await new RepositoryGateway({ GITHUB_APP_ID: '', GITHUB_APP_PRIVATE_KEY: '' }, 1, ok.fetch).call('/meta', 'token'),
+	)
+		.toEqual({ ok: true });
+	const moved = edgeFetch(() => new Response(null, { status: 302, headers: { Location: 'https://example.invalid/' } }));
+	await expect(
+		new RepositoryGateway({ GITHUB_APP_ID: '', GITHUB_APP_PRIVATE_KEY: '' }, 1, moved.fetch).call('/meta', 'token'),
+	).rejects.toThrow('GitHub HTTP 302');
+	expect(moved.urls).toEqual(['https://api.github.com/meta']);
 });

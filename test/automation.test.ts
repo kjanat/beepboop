@@ -5,6 +5,7 @@ import { discover, planRelease, publicationOrder, verifyPublication } from '#aut
 import { onboardingConfiguration } from '#automation/onboarding';
 import type { Publication, RepositoryRecord, Snapshot } from '#automation/types';
 import { parseGrant } from '#automation/vault';
+import { edgeFetch } from './edge-fetch.ts';
 
 const snapshot: Snapshot = {
 	repository: { id: 91, name: 'example/seventh', defaultBranch: 'main' },
@@ -199,6 +200,20 @@ describe('publication verification and grants', () => {
 				.outcome,
 		).toBe('uncertain');
 	});
+	test('registry checks run on the Workers fetch and treat a redirect as uncertain', async () => {
+		const npm = edgeFetch((url) =>
+			url.endsWith('/dist-tags')
+				? Response.json({ latest: '1.0.0' })
+				: Response.json({ name: 'one', version: '1.0.0', dist: { integrity: 'sha512-abc' } })
+		);
+		expect((await verifyPublication({ ...publication, channel: 'latest' }, npm.fetch)).outcome).toBe('succeeded');
+		expect(npm.urls).toHaveLength(2);
+		const moved = edgeFetch(() =>
+			new Response(null, { status: 301, headers: { Location: 'https://example.invalid/' } })
+		);
+		expect((await verifyPublication(publication, moved.fetch)).outcome).toBe('uncertain');
+		expect(moved.urls).toHaveLength(1);
+	});
 	test('requires explicit grant boundaries', () => {
 		const grant = {
 			id: 'npm-main',
@@ -349,6 +364,17 @@ describe('migration and orchestration contracts', () => {
 				)
 			).outcome,
 		).toBe('failed');
+		const registry = edgeFetch((url) => {
+			if (url.startsWith('https://ghcr.io/token?')) return Response.json({ token: 'pull' });
+			if (registry.urls.length === 1) return new Response(null, { status: 401 });
+			return new Response(content, { headers: { 'docker-content-digest': digest } });
+		});
+		expect((await verifyImage(image, registry.fetch)).outcome).toBe('succeeded');
+		expect(registry.urls).toHaveLength(3);
+		const moved = edgeFetch(() =>
+			new Response(null, { status: 307, headers: { Location: 'https://example.invalid/' } })
+		);
+		expect((await verifyImage(image, moved.fetch)).outcome).toBe('uncertain');
 	});
 });
 

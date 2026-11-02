@@ -20,7 +20,7 @@ export async function verifyImage(
 	try {
 		let response = await request(url, {
 			headers,
-			redirect: 'error',
+			redirect: 'manual',
 			signal: AbortSignal.timeout(15000),
 		});
 		if (response.status === 401) {
@@ -33,7 +33,7 @@ export async function verifyImage(
 			);
 			tokenUrl.searchParams.set('scope', `repository:${image}:pull`);
 			const auth = await request(tokenUrl, {
-				redirect: 'error',
+				redirect: 'manual',
 				signal: AbortSignal.timeout(15000),
 			});
 			if (!auth.ok) return { ...publication, outcome: 'uncertain', url };
@@ -43,7 +43,7 @@ export async function verifyImage(
 			headers.Authorization = `Bearer ${token}`;
 			response = await request(url, {
 				headers,
-				redirect: 'error',
+				redirect: 'manual',
 				signal: AbortSignal.timeout(15000),
 			});
 		}

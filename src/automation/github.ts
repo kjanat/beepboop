@@ -17,7 +17,7 @@ export class RepositoryGateway {
 		const transport = this.transport;
 		const response = await transport(`https://api.github.com${path}`, {
 			method,
-			redirect: 'error',
+			redirect: 'manual',
 			signal: AbortSignal.timeout(20_000),
 			headers: {
 				...(token ? { Authorization: `Bearer ${token}` } : {}),
