@@ -1,4 +1,5 @@
 import { createExecution, executionId } from './execution.ts';
+import { tagPrefix } from './managers/tags.ts';
 import { discover } from './managers.ts';
 import type { Execution, RepositoryRecord, Snapshot, WorkflowBinding } from './types.ts';
 
@@ -24,7 +25,11 @@ export async function compileReleaseSet(preparation: Execution, snapshot: Snapsh
 	for (const group of plan.groups) {
 		for (const name of group.packages) {
 			const matches = inventory.packages.filter(pkg => `${pkg.manager}:${pkg.name}` === name);
-			if (matches.length !== 1 || matches[0]?.version !== group.version) {
+			const [match] = matches;
+			if (
+				matches.length !== 1 || !match
+				|| (tagPrefix(match.versionSource) === undefined && match.version !== group.version)
+			) {
 				throw new Error(`Prepared package version mismatch: ${name}`);
 			}
 		}

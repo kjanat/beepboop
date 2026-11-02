@@ -2,9 +2,19 @@ import { parse as parseToml } from 'smol-toml';
 import { directory, inWorkspace, object } from './helpers.ts';
 import type { Manager } from './registry.ts';
 import { emptyInventory } from './registry.ts';
-import { verifyRegistry } from './verification.ts';
+import { latestVersion, verifyRegistry } from './verification.ts';
 export const cargoManager: Manager = {
 	name: 'cargo',
+	latest(pkg, request) {
+		return latestVersion(
+			request,
+			`https://crates.io/api/v1/crates/${encodeURIComponent(pkg.name)}`,
+			body => {
+				const crate = object(object(body).crate);
+				return crate.max_stable_version ?? crate.max_version;
+			},
+		);
+	},
 	verifyPublication(publication, request) {
 		const url = `https://crates.io/api/v1/crates/${encodeURIComponent(publication.name)}/${
 			encodeURIComponent(publication.version)

@@ -1,5 +1,6 @@
+import { semver } from '#model';
 import type { Publication } from '../types.ts';
-import type { Fetcher } from './registry.ts';
+import type { Fetcher, RegistryVersion } from './registry.ts';
 
 /** Transport handling is shared; registry response semantics belong to each adapter. */
 export async function verifyRegistry(
@@ -32,5 +33,28 @@ export async function verifyRegistry(
 		return { ...publication, outcome: 'succeeded', digest, url };
 	} catch {
 		return { ...publication, outcome: 'uncertain', url };
+	}
+}
+export async function latestVersion(
+	request: Fetcher,
+	url: string,
+	decode: (body: unknown) => unknown,
+): Promise<RegistryVersion> {
+	try {
+		const response = await request(url, {
+			redirect: 'manual',
+			signal: AbortSignal.timeout(15_000),
+			headers: { 'User-Agent': 'beepboop release verification' },
+		});
+		if (response.status === 404) return { kind: 'missing', url };
+		if (!response.ok) return { kind: 'failed', url, reason: `HTTP ${response.status}` };
+		const version = decode(await response.json());
+		try {
+			return { kind: 'published', version: semver(version).replace(/^v/, '') };
+		} catch {
+			return { kind: 'failed', url, reason: 'no valid version' };
+		}
+	} catch {
+		return { kind: 'failed', url, reason: 'request failed' };
 	}
 }

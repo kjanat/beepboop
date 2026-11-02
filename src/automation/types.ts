@@ -7,6 +7,7 @@ export type ManagerName =
 	| 'github-release'
 	| 'oci'
 	| 'goreleaser'
+	| 'go'
 	| 'manifest'
 	| 'workflow';
 export interface WorkflowBinding {
@@ -57,13 +58,15 @@ export interface Snapshot {
 	repository: { id: number; name: string; defaultBranch: string };
 	sha: string;
 	files: Record<string, string>;
+	tags?: string[];
 }
 export interface Package {
 	generated?: boolean;
 	optional?: boolean;
 	manager: ManagerName;
 	name: string;
-	version: string;
+	version?: string;
+	published?: string;
 	manifest: string;
 	versionSource: string;
 	publish: boolean;

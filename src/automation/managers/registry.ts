@@ -7,9 +7,18 @@ export interface Manager {
 	ownsVersionSource?(source: string): boolean;
 	editVersion?(context: VersionEdit): string;
 	updateDependencies?(context: DependencyEdit): void;
-	verifyPublication?(publication: Publication, request: Fetcher): Promise<Publication>;
+	verifyPublication?(publication: Publication, request: Fetcher, context?: VerificationContext): Promise<Publication>;
+	latest?(pkg: Package, request: Fetcher): Promise<RegistryVersion>;
 }
 export type Fetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+export interface VerificationContext {
+	repository: string;
+	github(path: string): Promise<unknown>;
+}
+export type RegistryVersion =
+	| { kind: 'published'; version: string }
+	| { kind: 'missing'; url: string }
+	| { kind: 'failed'; url: string; reason: string };
 export interface VersionEdit {
 	source: string;
 	before: string;
@@ -49,11 +58,37 @@ export class ManagerRegistry {
 			if (packages.length) manager.updateDependencies?.({ ...context, packages });
 		}
 	}
-	async verifyPublication(publication: Publication, request: Fetcher): Promise<Publication> {
+	async verifyPublication(
+		publication: Publication,
+		request: Fetcher,
+		context?: VerificationContext,
+	): Promise<Publication> {
 		const manager = this.managers.get(publication.manager);
 		return manager?.verifyPublication
-			? manager.verifyPublication(publication, request)
+			? manager.verifyPublication(publication, request, context)
 			: { ...publication, outcome: 'uncertain' };
+	}
+	async resolvePublished(inventory: Inventory, request: Fetcher): Promise<Inventory> {
+		const packages = inventory.packages.map(pkg => ({ ...pkg }));
+		const diagnostics: string[] = [];
+		const pending = packages.filter(pkg => pkg.publish && this.managers.get(pkg.manager)?.latest);
+		for (let offset = 0; offset < pending.length; offset += 8) {
+			await Promise.all(
+				pending.slice(offset, offset + 8).map(async pkg => {
+					const result = await this.managers.get(pkg.manager)?.latest?.(pkg, request);
+					if (!result) return;
+					if (result.kind === 'published') pkg.published = result.version;
+					else {
+						diagnostics.push(
+							`${pkg.manager}:${pkg.name}: ${
+								result.kind === 'missing' ? 'HTTP 404' : result.reason
+							} from ${result.url}`,
+						);
+					}
+				}),
+			);
+		}
+		return { ...inventory, packages, diagnostics: [...new Set([...inventory.diagnostics, ...diagnostics])] };
 	}
 	canVerify(name: ManagerName): boolean {
 		return Boolean(this.managers.get(name)?.verifyPublication);

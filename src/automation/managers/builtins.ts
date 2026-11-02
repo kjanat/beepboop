@@ -1,7 +1,8 @@
 import { verifyImage } from '../oci.ts';
 import { discoverHooks } from '../precommit.ts';
 import { cargoManager } from './cargo.ts';
-import { yaml } from './helpers.ts';
+import { goManager } from './go.ts';
+import { goreleaserManager } from './goreleaser.ts';
 import { npmManager } from './npm.ts';
 import { emptyInventory, ManagerRegistry } from './registry.ts';
 import { workflowManager } from './workflow.ts';
@@ -19,22 +20,8 @@ export const managerRegistry = new ManagerRegistry([
 			return result;
 		},
 	})),
-	{
-		name: 'goreleaser',
-		discover(snapshot) {
-			const result = emptyInventory();
-			for (const [path, source] of Object.entries(snapshot.files)) {
-				if (!/^\.?goreleaser.*\.ya?ml$/.test(path)) continue;
-				try {
-					yaml(source);
-					result.managers.push('goreleaser');
-				} catch {
-					result.diagnostics.push(`${path}: cannot safely discover configuration`);
-				}
-			}
-			return result;
-		},
-	},
+	goreleaserManager,
+	goManager,
 	{
 		name: 'manifest',
 		discover(snapshot) {

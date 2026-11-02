@@ -127,9 +127,52 @@ test('repository cards link the repository, commit, workflows, manifests and pub
 test('link helpers encode path segments and only link registries they know', async () => {
 	const { githubHref, link, registryHref } = await import('../src/ui/templates/html.ts');
 	expect(githubHref('o/r', 'blob', 'abc', 'dir/a b.json')).toBe('https://github.com/o/r/blob/abc/dir/a%20b.json');
-	expect(registryHref('cargo', 'crate', '0.1.0')).toBe('https://crates.io/crates/crate/0.1.0');
-	expect(registryHref('workflow', 'x', '1')).toBeUndefined();
+	expect(registryHref('cargo', 'crate', '0.1.0', 'o/r')).toBe('https://crates.io/crates/crate/0.1.0');
+	expect(registryHref('go', 'actionlint.kjanat.dev/v2', '2.0.0-rc.1', 'o/r')).toBe(
+		'https://pkg.go.dev/actionlint.kjanat.dev/v2@v2.0.0-rc.1',
+	);
+	expect(registryHref('goreleaser', 'actionlint', '1.17.0', 'kjanat/actionlint')).toBe(
+		'https://github.com/kjanat/actionlint/releases/tag/v1.17.0',
+	);
+	expect(registryHref('workflow', 'x', '1', 'o/r')).toBeUndefined();
 	expect(link('https://x/"', '<b>')).toBe('<a href="https://x/&quot;">&lt;b&gt;</a>');
+});
+
+test('repository cards show the published version, the differing manifest version and unreleased packages', async () => {
+	const { discover, resolvePublished } = await import('#automation/managers');
+	const { edgeFetch } = await import('./edge-fetch.ts');
+	const sha = 'e'.repeat(40);
+	const snapshot = {
+		repository: { id: 13, name: 'kjanat/actionlint', defaultBranch: 'master' },
+		sha,
+		files: {
+			'distribution/npm/facade/package.json': '{"name":"@kjanat/actionlint","version":"0.0.0"}',
+			'packages/feed/package.json': '{"name":"feed","version":"0.0.3"}',
+			'.goreleaser.yaml': 'version: 2\nproject_name: actionlint\n',
+			'go.mod': 'module actionlint.kjanat.dev/v2\n',
+		},
+		tags: ['v1.16.1', 'v1.17.0'],
+	};
+	const registry = edgeFetch(url =>
+		url.includes('%40kjanat%2Factionlint') ? Response.json({ latest: '1.17.0' }) : Response.json({ latest: '0.0.3' })
+	);
+	const repository = {
+		...snapshot.repository,
+		sha,
+		inventory: await resolvePublished(discover(snapshot), registry.fetch),
+		diagnostics: [],
+		presetShas: {},
+		updatedAt: 0,
+	};
+	const page = await renderDashboard([repository], []).text();
+	expect(page).toContain(
+		'<td><a href="https://www.npmjs.com/package/%40kjanat/actionlint/v/1.17.0">1.17.0</a> <small>manifest 0.0.0</small></td>',
+	);
+	expect(page).toContain('<td><a href="https://www.npmjs.com/package/feed/v/0.0.3">0.0.3</a></td>');
+	expect(page).toContain(
+		'<td><a href="https://github.com/kjanat/actionlint/releases/tag/v1.17.0">1.17.0</a></td>',
+	);
+	expect(page).toContain('<td>unreleased</td>');
 });
 
 test('execution cards link the repository, source commit and workflow run', async () => {

@@ -3,11 +3,18 @@ import { githubHref, htmlEscape, link, registryHref } from './html.ts';
 
 function renderRepository(repository: RepositoryRecord, pull: string | undefined): string {
 	const packages = repository.inventory.packages.map(pkg => {
-		const registry = pkg.publish ? registryHref(pkg.manager, pkg.name, pkg.version) : undefined;
+		const version = pkg.published ?? pkg.version;
+		const registry = pkg.publish && version !== undefined
+			? registryHref(pkg.manager, pkg.name, version, repository.name)
+			: undefined;
+		const shown = version === undefined ? 'unreleased' : registry ? link(registry, version) : htmlEscape(version);
+		const manifest = pkg.published !== undefined && pkg.version !== undefined && pkg.version !== pkg.published
+			? ` <small>manifest ${htmlEscape(pkg.version)}</small>`
+			: '';
 		return `
 		<tr>
 			<td>${link(githubHref(repository.name, 'blob', repository.sha, pkg.manifest), pkg.name)}</td>
-			<td>${registry ? link(registry, pkg.version) : htmlEscape(pkg.version)}</td>
+			<td>${shown}${manifest}</td>
 			<td>${htmlEscape(pkg.manager)}</td>
 		</tr>`;
 	}).join('');

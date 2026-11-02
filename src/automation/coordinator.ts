@@ -9,7 +9,7 @@ import {
 	validatePublicationIdentity,
 } from './execution.ts';
 import { type Credentials, RepositoryGateway } from './github.ts';
-import { canVerifyPublication, discover, verifyPublication } from './managers.ts';
+import { canVerifyPublication, discover, observedVersion, verifyPublication } from './managers.ts';
 import { verifyManifest } from './manifest.ts';
 import { mergeArtifacts, resolveInputs } from './outputs.ts';
 import { matchesRef } from './policy.ts';
@@ -369,7 +369,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 				validatePublicationIdentity(execution, publication);
 				if (canVerifyPublication(publication.manager) && publication.outcome === 'succeeded') {
-					verified.push(await verifyPublication(publication));
+					verified.push(
+						await verifyPublication(
+							publication,
+							fetch,
+							this.gateway().verification(execution.repository, execution.repositoryId),
+						),
+					);
 				} else if (publication.manager === 'manifest' && publication.outcome === 'succeeded') {
 					verified.push(await verifyManifest(publication, this.gateway()));
 				} else if (
@@ -628,15 +634,23 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							)
 						) {
 							if (!canVerifyPublication(pkg.manager)) continue;
+							const released = observedVersion(pkg, branch);
+							if (released === undefined) continue;
 							const publication: Publication = {
 								id: `${pkg.manager}:${pkg.name}`,
 								manager: pkg.manager,
 								name: pkg.name,
-								version: pkg.version,
+								version: released,
 								outcome: 'pending',
 								required: !pkg.optional,
 							};
-							execution.publications.push(await verifyPublication(publication));
+							execution.publications.push(
+								await verifyPublication(
+									publication,
+									fetch,
+									this.gateway().verification(repository.name, repository.id),
+								),
+							);
 						}
 						await this.put(execution);
 					}
@@ -755,7 +769,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 								&& canVerifyPublication(publication.manager)
 								&& ['pending', 'uncertain'].includes(publication.outcome)
 							) {
-								execution.publications[i] = await verifyPublication(publication);
+								execution.publications[i] = await verifyPublication(
+									publication,
+									fetch,
+									this.gateway().verification(execution.repository, execution.repositoryId),
+								);
 							}
 						}
 						const next = {

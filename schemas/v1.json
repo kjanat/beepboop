@@ -23,6 +23,7 @@
 					"github-release",
 					"oci",
 					"goreleaser",
+					"go",
 					"manifest",
 					"workflow",
 					"pre-commit"

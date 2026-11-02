@@ -3,9 +3,16 @@ import type { Package } from '../types.ts';
 import { directory, inWorkspace, object } from './helpers.ts';
 import type { Manager } from './registry.ts';
 import { emptyInventory } from './registry.ts';
-import { verifyRegistry } from './verification.ts';
+import { latestVersion, verifyRegistry } from './verification.ts';
 export const npmManager: Manager = {
 	name: 'npm',
+	latest(pkg, request) {
+		return latestVersion(
+			request,
+			`https://registry.npmjs.org/-/package/${encodeURIComponent(pkg.name)}/dist-tags`,
+			body => object(body).latest,
+		);
+	},
 	verifyPublication(publication, request) {
 		const url = `https://registry.npmjs.org/${encodeURIComponent(publication.name)}/${
 			encodeURIComponent(publication.version)

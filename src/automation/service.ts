@@ -11,7 +11,7 @@ import { createExecution } from './execution.ts';
 import { type Credentials, RepositoryGateway } from './github.ts';
 import { formatJson } from './json.ts';
 import { createReleasePreparation, planIdentity } from './managed.ts';
-import { discover, planRelease } from './managers.ts';
+import { discover, planRelease, resolvePublished, versionsInFiles } from './managers.ts';
 import { onboardingBody, onboardingConfiguration } from './onboarding.ts';
 import { planReleaseSet } from './planning.ts';
 import { matchesRef } from './policy.ts';
@@ -64,7 +64,7 @@ export class AutomationService {
 				execution.sourceSha,
 				(repository.configuration?.streams[execution.stream]?.versionFiles ?? []).map(rule => rule.path),
 			);
-			if (repository.inventory.packages.some((p) => p.publish)) {
+			if (versionsInFiles(repository.inventory)) {
 				execution.plan = planRelease(
 					snapshot,
 					repository.inventory,
@@ -123,6 +123,7 @@ export class AutomationService {
 				);
 			}
 		} else repository.diagnostics.push('Onboarding configuration is not merged');
+		repository.inventory = await resolvePublished(repository.inventory);
 		await this.store.putRepository(repository);
 		return repository;
 	}
@@ -507,7 +508,7 @@ export class AutomationService {
 				target = current ? nextVersion(current, request) : ('version' in request ? request.version : undefined);
 			}
 			const plan = stream.prepare.strategy !== 'workflow'
-					&& repository.inventory.packages.some((p) => p.publish)
+					&& versionsInFiles(repository.inventory)
 				? planRelease(snapshot, repository.inventory, target, selected, undefined, stream.versionFiles)
 				: stream.prepare.strategy !== 'workflow' && stream.versionFiles?.length
 				? planVersionFiles(snapshot, target, stream.versionFiles)
@@ -747,7 +748,7 @@ export class AutomationService {
 					manager = text(p.manager),
 					outcome = text(p.outcome);
 				if (
-					!['cargo', 'npm', 'github-release', 'oci', 'goreleaser', 'manifest', 'workflow'].includes(
+					!['cargo', 'npm', 'github-release', 'oci', 'goreleaser', 'go', 'manifest', 'workflow'].includes(
 						manager,
 					)
 					|| !['pending', 'succeeded', 'failed', 'uncertain', 'skipped'].includes(outcome)

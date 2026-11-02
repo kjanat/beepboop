@@ -133,3 +133,55 @@ test('dependencies require success for the same source and configuration revisio
 		false,
 	);
 });
+
+test('tag-versioned groups compile without a manifest version', async () => {
+	const snapshot: Snapshot = {
+		repository: { id: 1, name: 'example/tools', defaultBranch: 'main' },
+		sha: 'a'.repeat(40),
+		files: {
+			'package.json': '{"name":"cli","version":"1.0.0"}',
+			'client/go.mod': 'module github.com/example/tools/client\n',
+			'.github/workflows/release.yml':
+				'on:\n  workflow_dispatch:\n    inputs:\n      beepboop_execution_id: {type: string}\njobs: {}',
+		},
+		tags: ['client/v0.1.0'],
+	};
+	const configuration = parseRepositoryConfiguration({
+		streams: {
+			main: {
+				versioning: 'independent',
+				required: ['npm:cli', 'go:github.com/example/tools/client'],
+				workflows: {
+					'publish-cli': { file: 'release.yml', publications: ['npm:cli'] },
+					'publish-client': { file: 'release.yml', publications: ['go:github.com/example/tools/client'] },
+				},
+			},
+		},
+	});
+	const repository: RepositoryRecord = {
+		...snapshot.repository,
+		sha: snapshot.sha,
+		configuration,
+		inventory: discover(snapshot),
+		presetShas: {},
+		diagnostics: [],
+		updatedAt: 0,
+	};
+	const plan = planReleaseSet(snapshot, repository.inventory, {
+		groups: [
+			{ id: 'cli', packages: ['npm:cli'], version: { bump: 'patch' } },
+			{ id: 'client', packages: ['go:github.com/example/tools/client'], version: { bump: 'minor' } },
+		],
+		operations: [{ id: 'publish-cli', group: 'cli' }, { id: 'publish-client', group: 'client' }],
+	});
+	expect(plan.groups.map(group => [group.id, group.version])).toEqual([['cli', '1.0.1'], ['client', '0.2.0']]);
+	expect(plan.edits.map(edit => edit.path)).toEqual(['package.json']);
+	const preparation = await createManagedPreparation(repository, 'main', plan);
+	preparation.state = 'succeeded';
+	if (!preparation.managed) throw new Error('Missing managed preparation');
+	preparation.managed.result = { url: 'https://github.com/example/tools/pull/1', head: 'b'.repeat(40) };
+	const merged = { ...snapshot, sha: 'c'.repeat(40), files: { ...snapshot.files } };
+	for (const edit of plan.edits) merged.files[edit.path] = edit.after;
+	const executions = await compileReleaseSet(preparation, merged);
+	expect(executions.find(op => op.operation === 'publish-client')?.version).toBe('0.2.0');
+});

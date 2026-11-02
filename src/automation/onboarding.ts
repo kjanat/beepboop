@@ -1,3 +1,4 @@
+import { tagPrefix } from './managers/tags.ts';
 import { validRef } from './policy.ts';
 import type { DiscoveredWorkflow, Inventory, ManagerName, Snapshot, Stream } from './types.ts';
 
@@ -54,6 +55,14 @@ function refPattern(namespace: 'heads' | 'tags', patterns: string[]): string {
 	for (const prefix of prefixes) while (!prefix.startsWith(common)) common = common.slice(0, -1);
 	const pattern = `refs/${namespace}/${common}*`;
 	return validRef(pattern) ? pattern : `refs/${namespace}/*`;
+}
+function coversTags(workflow: DiscoveredWorkflow, prefix: string): boolean {
+	return workflow.events.includes('release') || positive(workflow.tagPatterns ?? []).some(pattern => {
+		const fixed = literal(pattern);
+		return fixed.startsWith(prefix)
+			|| (prefix.startsWith(fixed)
+				&& (!prefix.slice(fixed.length).includes('/') || pattern.slice(fixed.length).startsWith('**')));
+	});
 }
 function trigger(workflow: DiscoveredWorkflow): { ref: string; source: string } | undefined {
 	if (workflow.events.includes('release')) return { ref: 'refs/tags/*', source: code('on.release') };
@@ -122,7 +131,11 @@ function derive(snapshot: Snapshot, inventory: Inventory): Onboarding {
 	}
 
 	const publishable = inventory.packages.filter(p => p.publish);
-	const versions = [...new Set(publishable.map(p => p.version))];
+	const released = publishable.flatMap(p => {
+		const version = p.published ?? p.version;
+		return version === undefined ? [] : [version];
+	});
+	const versions = [...new Set(released)];
 	const tagged = Object.values(workflows).some(binding => binding.ref?.startsWith('refs/tags/'));
 	const versioning = versions.length > 1 ? 'independent' : publishable.length || tagged ? 'workspace' : 'none';
 	const meaning = `${code('streams.main.versioning')} sets one version for the stream (${
@@ -132,8 +145,14 @@ function derive(snapshot: Snapshot, inventory: Inventory): Onboarding {
 		`- ${meaning} ${
 			versioning === 'independent'
 				? `Publishable packages carry versions ${list(versions)}.`
-				: publishable.length
+				: versions.length && released.length === publishable.length
 				? `Every publishable package carries version ${list(versions)}.`
+				: versions.length
+				? `Released publishable packages carry version ${list(versions)}.`
+				: publishable.length && tagged
+				? 'No publishable package has a release. Tag-triggered workflows carry the version.'
+				: publishable.length
+				? 'No publishable package has a release.'
 				: tagged
 				? 'No package is publishable. Tag-triggered workflows carry the version.'
 				: 'No publishable package or tag trigger carries a version.'
@@ -145,17 +164,28 @@ function derive(snapshot: Snapshot, inventory: Inventory): Onboarding {
 			.filter(pattern => literal(pattern) !== pattern)
 			.map(pattern => ({ prefix: literal(pattern), file: workflow.file }))
 	);
+	const tagVersioned = publishable.flatMap(p => {
+		const prefix = tagPrefix(p.versionSource);
+		return prefix === undefined ? [] : [{ id: `${p.manager}:${p.name}`, prefix, released: p.version !== undefined }];
+	});
+	const fileVersioned = publishable.length > tagVersioned.length;
 	const prefixes = [...new Set(sources.map(source => source.prefix))];
-	const [prefix] = prefixes;
-	const versionSource: OnboardingStream['versionSource'] =
-		!publishable.length && prefixes.length === 1 && prefix !== undefined && /^[A-Za-z0-9._-]*$/.test(prefix)
-			? { kind: 'tags', prefix }
-			: undefined;
+	const packagePrefixes = [...new Set(tagVersioned.map(entry => entry.prefix))];
+	const [prefix] = prefixes.length ? prefixes : packagePrefixes;
+	const versionSource: OnboardingStream['versionSource'] = !fileVersioned
+			&& (prefixes.length ? prefixes : packagePrefixes).length === 1 && prefix !== undefined
+			&& /^[A-Za-z0-9._-]*$/.test(prefix)
+		? { kind: 'tags', prefix }
+		: undefined;
 	if (versionSource) {
 		derived.push(
 			`- ${code('streams.main.versionSource')} reads the current version from tags starting with ${
 				code(versionSource.prefix)
-			}. The prefix comes from ${code('on.push.tags')} in ${list([...new Set(sources.map(source => source.file))])}.`,
+			}. The prefix comes from ${
+				prefixes.length
+					? `${code('on.push.tags')} in ${list([...new Set(sources.map(source => source.file))])}`
+					: `the tag versions of ${list(tagVersioned.map(entry => entry.id))}`
+			}.`,
 		);
 	}
 
@@ -169,8 +199,30 @@ function derive(snapshot: Snapshot, inventory: Inventory): Onboarding {
 		...(bindings.length ? bindings : ['  - No workflow name mentions publish, release, deploy or promote.']),
 	);
 
+	const triggers = [...bound.values()];
 	const required = inventory.packages
 		.filter(p => p.publish && !p.optional)
+		.filter(p => {
+			const id = `${p.manager}:${p.name}`, prefix = tagPrefix(p.versionSource);
+			if (prefix === undefined) return true;
+			if (p.version === undefined) {
+				review.push(
+					`- ${code(id)} has no release tag starting with ${code(prefix)}. Add it to ${
+						code('streams.main.required')
+					} after its first tagged release.`,
+				);
+				return false;
+			}
+			if (!triggers.some(workflow => coversTags(workflow, prefix))) {
+				review.push(
+					`- ${code(id)} takes its version from tags starting with ${
+						code(prefix)
+					}. No bound workflow runs on those tags.`,
+				);
+				return false;
+			}
+			return true;
+		})
 		.map(p => ({ id: `${p.manager}:${p.name}`, source: code(p.manifest) }));
 	const releasers = [...bound.values()].filter(workflow => workflow.createsRelease).map(workflow => workflow.file);
 	const release = `github-release:${snapshot.repository.name}`;
@@ -230,7 +282,12 @@ export function onboardingBody(snapshot: Snapshot, inventory: Inventory): string
 		'| Manager | Package | Version | Publish |',
 		'| --- | --- | --- | --- |',
 		...inventory.packages.map(
-			(p) => `| ${p.manager} | ${p.name} | ${p.version} | ${p.publish ? 'yes' : 'no'} |`,
+			(p) =>
+				`| ${p.manager} | ${p.name} | ${p.published ?? p.version ?? 'unreleased'}${
+					p.published !== undefined && p.version !== undefined && p.published !== p.version
+						? ` (manifest ${p.version})`
+						: ''
+				} | ${p.publish ? 'yes' : 'no'} |`,
 		),
 		'',
 		'## Workflow bindings',

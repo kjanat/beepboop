@@ -12,6 +12,7 @@ export const managerNames: ManagerName[] = [
 	'github-release',
 	'oci',
 	'goreleaser',
+	'go',
 	'manifest',
 	'workflow',
 ];

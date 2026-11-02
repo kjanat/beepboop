@@ -1,7 +1,8 @@
 import { importPKCS8, SignJWT } from 'jose';
 import { array, integer, record, sha, text } from '#model';
 import { safeVersionPath } from './editors.ts';
-import type { Fetcher } from './managers/registry.ts';
+import type { Fetcher, VerificationContext } from './managers/registry.ts';
+import { tagQueries } from './managers/tags.ts';
 import type { RefState } from './refs.ts';
 import type { Edit, Snapshot } from './types.ts';
 
@@ -87,6 +88,14 @@ export class RepositoryGateway {
 		}
 		throw new Error('Tag discovery limit exceeded');
 	}
+	verification(name: string, id: number): VerificationContext {
+		let token: Promise<string> | undefined;
+		const installation = () => {
+			token ??= this.token(name, id);
+			return token;
+		};
+		return { repository: name, github: async path => this.call(path, await installation()) };
+	}
 	async identify(name: string): Promise<number> {
 		const token = await this.token(name, undefined);
 		return integer(record(await this.call(`/repos/${name}`, token)).id);
@@ -139,7 +148,7 @@ export class RepositoryGateway {
 				(path) =>
 					extraPaths.includes(path)
 					|| !/(?:^|\/)(?:node_modules|vendor|target|testdata|fixtures|\.git)\//.test(path)
-						&& /(?:^|\/)(?:\.pre-commit-config\.ya?ml|targets.json|Cargo.toml|Cargo.lock|package.json|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock|\.?goreleaser[^/]*\.ya?ml)$|^\.github\/(?:beepboop.json|workflows\/[^/]+\.ya?ml)$/
+						&& /(?:^|\/)(?:\.pre-commit-config\.ya?ml|targets.json|Cargo.toml|Cargo.lock|package.json|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock|go\.mod|\.?goreleaser[^/]*\.ya?ml)$|^\.github\/(?:beepboop.json|workflows\/[^/]+\.ya?ml)$/
 							.test(
 								path,
 							),
@@ -162,7 +171,20 @@ export class RepositoryGateway {
 				}),
 			);
 		}
-		return { repository: { id, name, defaultBranch }, sha: commitSha, files };
+		const tags = await this.tags(name, tagQueries(candidates), token);
+		return { repository: { id, name, defaultBranch }, sha: commitSha, files, ...(tags ? { tags } : {}) };
+	}
+	private async tags(name: string, prefixes: string[], token: string): Promise<string[] | undefined> {
+		if (!prefixes.length) return undefined;
+		const refs = await Promise.all(prefixes.map(async prefix =>
+			array(
+				await this.call(
+					`/repos/${name}/git/matching-refs/tags/${prefix.split('/').map(encodeURIComponent).join('/')}`,
+					token,
+				) ?? [],
+			).map(row => text(record(row).ref).slice('refs/tags/'.length))
+		));
+		return [...new Set(refs.flat())].sort();
 	}
 	async preset(reference: string): Promise<{ value: unknown; sha: string }> {
 		const match = reference.match(/^github>([\w.-]+\/[\w.-]+):([\w-]+)(?:#([\w./-]+))?$/);

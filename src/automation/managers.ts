@@ -1,10 +1,16 @@
 import { applyVersionFiles, type VersionFile } from './editors.ts';
 import { managerRegistry } from './managers/builtins.ts';
-import type { Fetcher, ManagerRegistry } from './managers/registry.ts';
-import type { Inventory, ManagerName, Publication, ReleasePlan, Snapshot } from './types.ts';
-import { nextVersion, parseVersionRequest } from './version.ts';
+import type { Fetcher, ManagerRegistry, VerificationContext } from './managers/registry.ts';
+import { tagPrefix } from './managers/tags.ts';
+import type { Inventory, ManagerName, Package, Publication, ReleasePlan, Snapshot } from './types.ts';
+import { nextVersion, parseVersionRequest, type VersionRequest } from './version.ts';
 
 export { publicationOrder } from './managers/order.ts';
+
+function explicit(request: VersionRequest): string {
+	if (!('version' in request)) throw new Error('Select an explicit version for the first release');
+	return request.version;
+}
 export function discover(snapshot: Snapshot, enabled: ManagerName[] = managerRegistry.names()): Inventory {
 	return managerRegistry.discover(snapshot, enabled);
 }
@@ -29,11 +35,15 @@ export function planRelease(
 	if (new Set(packages.map(p => `${p.manager}:${p.name}`)).size !== packages.length) {
 		throw new Error('Duplicate selected package identity');
 	}
-	const current = [...new Set(packages.map(p => p.version))];
+	const current = [...new Set(packages.flatMap(p => p.version === undefined ? [] : [p.version]))];
+	if (!('version' in request) && packages.some(p => p.version === undefined)) {
+		throw new Error('Select an explicit version for the first release');
+	}
 	if (!('version' in request) && current.length !== 1) {
 		throw new Error('Select a synchronized version group or supply an explicit version');
 	}
-	const version = nextVersion(current[0] as string, request);
+	const [first] = current;
+	const version = first === undefined || 'version' in request ? explicit(request) : nextVersion(first, request);
 	for (const previous of current) nextVersion(previous, { version });
 	const diagnostics: string[] = [],
 		changed = new Map<string, string>();
@@ -50,6 +60,7 @@ export function planRelease(
 		throw new Error('Selected packages share a version source with packages outside the selection');
 	}
 	for (const source of sources) {
+		if (tagPrefix(source) !== undefined) continue;
 		const path = source.split('#')[0];
 		if (!path) throw new Error('Invalid version source');
 		const before = changed.get(path) ?? snapshot.files[path];
@@ -84,10 +95,25 @@ export function planRelease(
 	};
 }
 
-export type { Fetcher } from './managers/registry.ts';
+export type { Fetcher, VerificationContext } from './managers/registry.ts';
 export function canVerifyPublication(manager: ManagerName): boolean {
 	return managerRegistry.canVerify(manager);
 }
-export async function verifyPublication(publication: Publication, request: Fetcher = fetch): Promise<Publication> {
-	return managerRegistry.verifyPublication(publication, request);
+export async function verifyPublication(
+	publication: Publication,
+	request: Fetcher = fetch,
+	context?: VerificationContext,
+): Promise<Publication> {
+	return managerRegistry.verifyPublication(publication, request, context);
+}
+export async function resolvePublished(inventory: Inventory, request: Fetcher = fetch): Promise<Inventory> {
+	return managerRegistry.resolvePublished(inventory, request);
+}
+export function observedVersion(pkg: Package, tag: string): string | undefined {
+	const prefix = tagPrefix(pkg.versionSource);
+	if (prefix === undefined) return pkg.version;
+	return tag.startsWith(prefix) ? tag.slice(prefix.length).replace(/^v/, '') : undefined;
+}
+export function versionsInFiles(inventory: Inventory): boolean {
+	return inventory.packages.some(p => p.publish && tagPrefix(p.versionSource) === undefined);
 }

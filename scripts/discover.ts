@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
-import { discover } from '#automation/managers';
+import { discover, resolvePublished } from '#automation/managers';
+import { tagQueries } from '#automation/managers/tags';
 import { onboardingConfiguration } from '#automation/onboarding';
 import type { Snapshot } from '#automation/types';
 
@@ -10,7 +11,7 @@ function command(args: string[]): string {
 }
 const selected = (path: string) =>
 	!/(?:^|\/)(?:node_modules|vendor|target|testdata|fixtures|\.build)\//.test(path)
-	&& /(?:^|\/)(?:\.pre-commit-config\.ya?ml|targets.json|Cargo.toml|Cargo.lock|package.json|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock|\.?goreleaser[^/]*\.ya?ml)$|^\.github\/(?:beepboop.json|workflows\/[^/]+\.ya?ml)$/
+	&& /(?:^|\/)(?:\.pre-commit-config\.ya?ml|targets.json|Cargo.toml|Cargo.lock|package.json|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock|go\.mod|\.?goreleaser[^/]*\.ya?ml)$|^\.github\/(?:beepboop.json|workflows\/[^/]+\.ya?ml)$/
 		.test(
 			path,
 		);
@@ -37,10 +38,16 @@ if (process.argv[2] === '--github') {
 			files[entry.path] = Buffer.from(file.content, 'base64').toString('utf8');
 		}
 	}
+	const tags = tagQueries(Object.keys(files)).flatMap(prefix =>
+		gh(`repos/${name}/git/matching-refs/tags/${prefix}`).map((row: { ref: string }) =>
+			row.ref.slice('refs/tags/'.length)
+		)
+	);
 	snapshot = {
 		repository: { id: metadata.id, name, defaultBranch: metadata.default_branch },
 		sha,
 		files,
+		tags: [...new Set<string>(tags)].sort(),
 	};
 } else {
 	const root = resolve(process.argv[2] ?? '.');
@@ -50,9 +57,10 @@ if (process.argv[2] === '--github') {
 	for (const path of git('ls-tree', '-r', '--name-only', sha).split('\n').filter(selected)) {
 		files[path] = lock(path) ? '' : git('show', `${sha}:${path}`);
 	}
-	snapshot = { repository: { id: 1, name: 'local/inspection', defaultBranch: 'HEAD' }, sha, files };
+	const tags = git('tag', '--list').split('\n').filter(Boolean);
+	snapshot = { repository: { id: 1, name: 'local/inspection', defaultBranch: 'HEAD' }, sha, files, tags };
 }
-const inventory = discover(snapshot);
+const inventory = await resolvePublished(discover(snapshot));
 console.log(
 	JSON.stringify(
 		{

@@ -170,14 +170,16 @@ workflow dispatch offers reconciliation.
 Reports contain `publications` and optional `artifacts` JSON arrays. The workflow's
 OIDC identity binds reports to its repository, run, and attempt.
 
-| Manager                  | Result fields and checks                                                                                                 |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| `cargo`                  | Crate name, version, optional expected archive checksum.                                                                 |
-| `npm`                    | Package name, version, integrity, optional distribution channel.                                                         |
-| `oci`                    | `ghcr.io/owner/image` or `docker.io/owner/image`, version tag, required `sha256:` digest, optional channel.              |
-| `github-release`         | `owner/repository`, tag as version, release commit matching the source SHA.                                              |
-| `manifest`               | Public `owner/repository/path.json` or `.rb`, version, required `sha256:` content digest. Checks default-branch content. |
-| `workflow`, `goreleaser` | Authenticated workflow result with optional artifacts.                                                                   |
+| Manager          | Result fields and checks                                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `cargo`          | Crate name, version, optional expected archive checksum.                                                                 |
+| `npm`            | Package name, version, integrity, optional distribution channel.                                                         |
+| `oci`            | `ghcr.io/owner/image` or `docker.io/owner/image`, version tag, required `sha256:` digest, optional channel.              |
+| `github-release` | `owner/repository`, tag as version, release commit matching the source SHA.                                              |
+| `manifest`       | Public `owner/repository/path.json` or `.rb`, version, required `sha256:` content digest. Checks default-branch content. |
+| `go`             | Module path, version without `v`, optional expected origin commit. Checks `proxy.golang.org`.                            |
+| `goreleaser`     | Project name, version without `v`. The `v<version>` GitHub release must be public with every asset uploaded.             |
+| `workflow`       | Authenticated workflow result with optional artifacts.                                                                   |
 
 Artifact fields are `id`, `runId`, `name`, `digest`, and `expiresAt`. Beepboop
 checks these against GitHub's API.

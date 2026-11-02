@@ -17,8 +17,10 @@ export function githubHref(repository: string, ...path: string[]): string {
 	return `https://github.com/${encodePath(repository, ...path)}`;
 }
 
-export function registryHref(manager: string, name: string, version: string): string | undefined {
+export function registryHref(manager: string, name: string, version: string, repository: string): string | undefined {
 	if (manager === 'npm') return `https://www.npmjs.com/package/${encodePath(name)}/v/${encodePath(version)}`;
 	if (manager === 'cargo') return `https://crates.io/crates/${encodePath(name, version)}`;
+	if (manager === 'go') return `https://pkg.go.dev/${encodePath(name)}@v${encodeURIComponent(version)}`;
+	if (manager === 'goreleaser') return githubHref(repository, 'releases', 'tag', `v${version}`);
 	return undefined;
 }
