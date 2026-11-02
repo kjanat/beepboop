@@ -164,6 +164,41 @@ export class WinGetService {
 		await this.store.db.prepare('UPDATE winget_submissions SET document=?,updated_at=? WHERE id=? AND lease=?')
 			.bind(JSON.stringify(value), value.updatedAt, value.plan.id, lease).run();
 	}
+	private async replaceFailedPlan(saved: WinGetSubmission, pending: WinGetSubmission, lease: string): Promise<void> {
+		if (saved.state !== 'failed' || saved.number || saved.url || saved.head) {
+			throw Error('The previous plan is already submitted or in progress; it cannot be replaced');
+		}
+		const token = text(this.env.WINGET_GITHUB_TOKEN);
+		const fork = text(this.env.WINGET_FORK);
+		const forkInfo = record(await this.gateway.call(`/repos/${fork}`, token));
+		if (!forkInfo.fork || record(forkInfo.parent).full_name !== upstream) {
+			throw Error('Cannot verify the previous submission fork');
+		}
+		const old = saved.plan;
+		const branch = `winget/${old.packageIdentifier}/${old.version}/${old.digest.slice(0, 16)}`;
+		const pulls = array(
+			await this.gateway.call(
+				`/repos/${upstream}/pulls?state=all&head=${encodeURIComponent(`${fork.split('/')[0]}:${branch}`)}&per_page=100`,
+				token,
+			),
+		);
+		const ref = await this.gateway.call(`/repos/${fork}/git/ref/heads/${branch}`, token);
+		if (pulls.length || ref) {
+			throw Error('The previous plan has a branch or pull request; inspect it before changing the submission');
+		}
+		const updated = await this.store.db.prepare(
+			'UPDATE winget_submissions SET package=?,version=?,document=?,updated_at=? WHERE id=? AND lease=? AND lease_until>?',
+		).bind(
+			pending.plan.packageIdentifier,
+			pending.plan.version,
+			JSON.stringify(pending),
+			pending.updatedAt,
+			pending.plan.id,
+			lease,
+			Date.now(),
+		).run();
+		if (!updated.meta.changes) throw Error('Submission lease expired; preview again');
+	}
 	async submit(repo: RepositoryRecord, releaseId: number, expectedDigest: string): Promise<WinGetSubmission> {
 		if (!this.setup()) throw Error('Configure the WinGet bot token and fork before submitting');
 		const plan = await this.plan(repo, releaseId);
@@ -173,18 +208,27 @@ export class WinGetService {
 			'INSERT OR IGNORE INTO winget_submissions(id,package,version,document,updated_at) VALUES(?,?,?,?,?)',
 		)
 			.bind(plan.id, plan.packageIdentifier, plan.version, JSON.stringify(pending), pending.updatedAt).run();
-		const saved = await this.get(plan.id);
-		if (!saved || saved.plan.digest !== plan.digest) {
+		let saved = await this.get(plan.id);
+		if (!saved) {
 			throw Error('This package version already has a different submission; inspect its existing PR');
 		}
-		if (saved.state === 'merged' || saved.state === 'closed') return saved;
 		const lease = crypto.randomUUID();
 		const locked = await this.store.db.prepare(
 			'UPDATE winget_submissions SET lease=?,lease_until=? WHERE id=? AND lease_until<?',
 		)
 			.bind(lease, Date.now() + 600_000, plan.id, Date.now()).run();
 		if (!locked.meta.changes) throw Error('Submission is already in progress; refresh shortly');
+		let attempted = false;
 		try {
+			// Re-read under the lease so a concurrent completed attempt cannot be overwritten.
+			saved = await this.get(plan.id);
+			if (!saved) throw Error('Submission record disappeared');
+			if (saved.plan.digest !== plan.digest) {
+				await this.replaceFailedPlan(saved, pending, lease);
+				saved = pending;
+			}
+			if (saved.state === 'merged' || saved.state === 'closed') return saved;
+			attempted = true;
 			const token = text(this.env.WINGET_GITHUB_TOKEN);
 			const fork = text(this.env.WINGET_FORK);
 			const call = (path: string, method = 'GET', body?: unknown) => this.gateway.call(path, token, method, body);
@@ -265,12 +309,14 @@ export class WinGetService {
 			await this.store.audit('winget', 'winget.submit', result.url ?? plan.id);
 			return result;
 		} catch (error) {
-			await this.save({
-				...saved,
-				state: 'failed',
-				reason: error instanceof Error ? error.message : 'Submission failed',
-				updatedAt: Date.now(),
-			}, lease);
+			if (attempted && saved) {
+				await this.save({
+					...saved,
+					state: 'failed',
+					reason: error instanceof Error ? error.message : 'Submission failed',
+					updatedAt: Date.now(),
+				}, lease);
+			}
 			throw error;
 		} finally {
 			await this.store.db.prepare('UPDATE winget_submissions SET lease_until=0 WHERE id=? AND lease=?').bind(

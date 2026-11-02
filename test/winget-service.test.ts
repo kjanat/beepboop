@@ -39,6 +39,12 @@ function fixture() {
 		pull = false;
 		merged = false;
 		failAfterPr = false;
+		failBeforeBranch = false;
+		failLookup = false;
+		expireLookup = false;
+		packageIdentifier = configuration.packageIdentifier;
+		releaseNotes = 'Release notes';
+		requests: string[] = [];
 		draft = false;
 		prerelease = false;
 		digest = true;
@@ -55,10 +61,16 @@ function fixture() {
 			return {
 				repository: { id: 1, name: repo.name, defaultBranch: 'main' },
 				sha: 'b'.repeat(40),
-				files: { 'distribution/winget.json': JSON.stringify(configuration) },
+				files: {
+					'distribution/winget.json': JSON.stringify({ ...configuration, packageIdentifier: this.packageIdentifier }),
+				},
 			};
 		}
 		async call(path: string, _token: string, method = 'GET', body?: unknown): Promise<unknown> {
+			this.requests.push(path);
+			if (this.failBeforeBranch && path === '/repos/bot/winget-pkgs') throw Error('Permission denied');
+			if (this.failLookup && path.includes('/pulls?')) throw Error('Lookup unavailable');
+			if (this.expireLookup && path.includes('/pulls?')) sqlite.run('UPDATE winget_submissions SET lease_until=0');
 			if (method === 'POST') this.posts.push(path);
 			if (path === '/repos/example/tool') return { private: this.privateRepo };
 			if (path.includes('/releases/42/assets')) {
@@ -77,7 +89,7 @@ function fixture() {
 					draft: this.draft,
 					prerelease: this.prerelease,
 					published_at: '2026-11-02T00:00:00Z',
-					body: 'Release notes',
+					body: this.releaseNotes,
 					html_url: 'https://github.com/example/tool/releases/tag/v1.2.3',
 				};
 			}
@@ -341,6 +353,94 @@ test('WinGet release-list failure does not prevent coordinator wake, event deliv
 				row.action === 'winget.failed' && row.target.includes('Release API unavailable')
 			),
 		).toBe(true);
+	} finally {
+		f.sqlite.close();
+	}
+});
+
+test('a fresh preview replaces a failed WinGet plan only after checking for its branch and PR', async () => {
+	const f = fixture();
+	try {
+		const old = await f.service.plan(repo, 42);
+		f.gateway.failBeforeBranch = true;
+		await rejects(f.service.submit(repo, 42, old.digest), /Permission denied/);
+		expect(f.gateway.posts).toEqual([]);
+		f.gateway.failBeforeBranch = false;
+		f.gateway.releaseNotes = 'Corrected release notes';
+		const fresh = await f.service.plan(repo, 42);
+		expect(fresh.digest).not.toBe(old.digest);
+		await rejects(f.service.submit(repo, 42, old.digest), /preview again/);
+		const result = await f.service.submit(repo, 42, fresh.digest);
+		expect(result.state).toBe('open');
+		expect((await f.service.get(old.id))?.plan.digest).toBe(fresh.digest);
+		const oldBranch = `winget/${old.packageIdentifier}/${old.version}/${old.digest.slice(0, 16)}`;
+		expect(f.gateway.requests.some(path => path.includes(encodeURIComponent(`bot:${oldBranch}`)))).toBe(true);
+		expect(f.gateway.requests).toContain(`/repos/bot/winget-pkgs/git/ref/heads/${oldBranch}`);
+		expect(f.gateway.posts.filter(path => path.endsWith('/pulls'))).toHaveLength(1);
+	} finally {
+		f.sqlite.close();
+	}
+});
+
+test('a changed WinGet plan cannot replace a failed attempt that already created a branch or PR', async () => {
+	for (const existing of ['branch', 'pull'] as const) {
+		const f = fixture();
+		try {
+			const old = await f.service.plan(repo, 42);
+			f.gateway.tampered = existing === 'branch';
+			f.gateway.failAfterPr = existing === 'pull';
+			await rejects(f.service.submit(repo, 42, old.digest));
+			f.gateway.releaseNotes = 'Changed after attempted submission';
+			const fresh = await f.service.plan(repo, 42);
+			const posts = f.gateway.posts.length;
+			await rejects(f.service.submit(repo, 42, fresh.digest), /previous plan.*branch or pull request/i);
+			expect((await f.service.get(old.id))?.plan.digest).toBe(old.digest);
+			expect(f.gateway.posts).toHaveLength(posts);
+		} finally {
+			f.sqlite.close();
+		}
+	}
+});
+
+test('WinGet plan replacement requires an available lease and successful upstream lookup', async () => {
+	const f = fixture();
+	try {
+		const old = await f.service.plan(repo, 42);
+		f.gateway.failBeforeBranch = true;
+		await rejects(f.service.submit(repo, 42, old.digest));
+		f.gateway.failBeforeBranch = false;
+		f.gateway.releaseNotes = 'Corrected';
+		const fresh = await f.service.plan(repo, 42);
+		f.sqlite.run('UPDATE winget_submissions SET lease_until=?', [Date.now() + 60_000]);
+		await rejects(f.service.submit(repo, 42, fresh.digest), /already in progress/);
+		f.sqlite.run('UPDATE winget_submissions SET lease_until=0');
+		f.gateway.failLookup = true;
+		await rejects(f.service.submit(repo, 42, fresh.digest), /Lookup unavailable/);
+		f.gateway.failLookup = false;
+		f.gateway.expireLookup = true;
+		await rejects(f.service.submit(repo, 42, fresh.digest), /lease expired/);
+		expect((await f.service.get(old.id))?.plan.digest).toBe(old.digest);
+		expect(f.gateway.posts).toEqual([]);
+	} finally {
+		f.sqlite.close();
+	}
+});
+
+test('a corrected WinGet package identifier updates the failed submission uniqueness key', async () => {
+	const f = fixture();
+	try {
+		const old = await f.service.plan(repo, 42);
+		f.gateway.failBeforeBranch = true;
+		await rejects(f.service.submit(repo, 42, old.digest));
+		f.gateway.failBeforeBranch = false;
+		f.gateway.packageIdentifier = 'Example.Corrected';
+		const fresh = await f.service.plan(repo, 42);
+		await f.service.submit(repo, 42, fresh.digest);
+		expect((await f.service.get(old.id))?.plan.packageIdentifier).toBe('Example.Corrected');
+		expect(f.sqlite.query('SELECT package,version FROM winget_submissions WHERE id=?').get(old.id)).toEqual({
+			package: 'Example.Corrected',
+			version: '1.2.3',
+		});
 	} finally {
 		f.sqlite.close();
 	}
