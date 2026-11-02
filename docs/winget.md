@@ -67,7 +67,7 @@ installer success codes are only emitted when explicitly configured.
 The generator is in `src/distribution/winget`. Build and test it locally with:
 
 ```sh
-bun run build:winget
+bun run winget:build
 bun test test/winget.test.ts
 ```
 

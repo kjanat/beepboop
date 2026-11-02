@@ -37,10 +37,10 @@ package generation run in your repository's GitHub Actions workflows.
 
 ```sh
 bun install --frozen-lockfile
-bun run typecheck
+bun run check
 bun run lint
 bun run test
-bun run check:bundle
+bun run deploy:dry
 bun run test:runtime
 ```
 
@@ -57,9 +57,8 @@ builds the Cloudflare Worker and browser assets into `dist/`. The custom Worker
 entrypoint also exports the release coordinator, scheduled reconciliation, and
 Vermon service binding. API routes preserve the existing GitHub Actions contracts.
 
-Astro's checker currently needs the TypeScript 6 language-service API. The
-`typescript-native` dependency retains TypeScript 7 for application and browser
-checks; `bun run typecheck` runs both explicitly.
+Astro's checker currently needs the TypeScript 6 language-service API. `bun run check` uses Astro to check the project;
+`typescript-native` remains available as a separate dependency.
 
 `bun run test:runtime --browser` serves an authenticated fixture on port 4331
 for browser checks after the runtime suite passes. It uses a temporary database

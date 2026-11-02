@@ -35,11 +35,11 @@ gateway and real SQLite storage; it does not publish live upstream PRs.
 ## Repeatable checks
 
 ```sh
-bun run typecheck
+bun run check
 bun run lint
 bun run test
-bun run build:winget
-bun run check:bundle
+bun run winget:build
+bun run deploy:dry
 bun run test:runtime
 git diff --check
 ```

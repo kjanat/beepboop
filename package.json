@@ -18,13 +18,13 @@
 		"fmt": "kfmt",
 		"lint": "biome check . --error-on-warnings",
 		"prepare": "run -qs types sync",
-		"pretypecheck": "run -s types sync",
+		"precheck": "run -s types sync",
 		"prepreview": "wrangler types",
 		"preview": "astro preview",
 		"prestart": "wrangler types",
 		"start": "astro dev",
 		"sync": "astro sync",
-		"pretest": "run build:winget",
+		"pretest": "run winget:build",
 		"test": "bun test",
 		"test:runtime": "node scripts/runtime.ts",
 		"types": "wrangler types >/dev/null",
@@ -62,7 +62,7 @@
 	"devEngines": {
 		"packageManager": {
 			"name": "bun",
-			"version": "1.4.3"
+			"version": "1.4.4"
 		}
 	},
 	"trustedDependencies": [

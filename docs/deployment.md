@@ -66,8 +66,8 @@ ciphertexts require their corresponding keys until migrated or deleted.
 
 ## Generated types
 
-`bun run sync` runs Wrangler type generation from `wrangler.toml`, then Astro
-sync. Install preparation and typechecking use that same script; development,
+`bun run types` generates Worker types from `wrangler.toml`; `bun run sync`
+runs Astro sync. Install preparation and checking run both commands; development,
 build and preview also generate Worker types before starting. The generated
 `worker-configuration.d.ts` is ignored by Git and referenced once through the
 base TypeScript configuration. Secret names are declared in Wrangler's
@@ -77,9 +77,9 @@ There is no custom type-generation wrapper or duplicated hand-written `Env`.
 ## Deploy and enroll keys
 
 ```sh
-bun run typecheck
+bun run check
 bun run test
-bun run check:bundle
+bun run deploy:dry
 bun run test:runtime
 bun run deploy
 ```
@@ -92,7 +92,7 @@ Dependency installation and `astro sync` do not build the Worker. Running
 entrypoint and fails on Astro's virtual modules. Do not add aliases for those
 modules; Astro resolves them during its build.
 
-`bun run check:bundle` uses the same deployment script with `--dry-run` so CI
+`bun run deploy:dry` uses the same deployment script with `--dry-run` so CI
 checks the production build path without publishing a Worker.
 
 Sign in to the dashboard and enroll the first physical security key. Enroll a
