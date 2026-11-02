@@ -60,7 +60,7 @@ form {
 	align-items: flex-end;
 	gap: 12px;
 }
-form > h3, form > output, form > label.wide {
+form > h3, form > p, form > output, form > label.wide {
 	flex-basis: 100%;
 	margin: 0;
 }
