@@ -1,0 +1,55 @@
+export const fixture = {
+	id: 'fixture-execution',
+	repositoryId: 91,
+	repository: 'example/seventh',
+	stream: 'main',
+	operation: 'promote',
+	eventId: 'fixture',
+	configuration: {
+		extends: [],
+		managers: ['workflow'],
+		subscriptions: [],
+		streams: {
+			main: {
+				versioning: 'none',
+				prepare: { version: 'manual' },
+				promote: { approval: 'required' },
+				workflows: {},
+				required: [],
+				credentials: [],
+				channels: { stable: 'latest', prerelease: 'next' },
+				concurrency: 'queue',
+			},
+		},
+	},
+	configurationSha: 'a'.repeat(40),
+	presetShas: {},
+	sourceSha: 'b'.repeat(40),
+	state: 'blocked',
+	dependencies: [],
+	workflow: { file: 'release.yml', ref: 'main' },
+	attempts: 0,
+	publications: [],
+	artifacts: [],
+	createdAt: 1,
+	updatedAt: 1,
+};
+
+export const managed = {
+	...fixture,
+	id: 'managed-fixture',
+	operation: 'prepare',
+	state: 'ready',
+	workflow: undefined,
+	managed: {
+		kind: 'prepare',
+		branch: 'release/main/fixture',
+		title: 'prepare',
+		body: 'fixture',
+		plan: {
+			sourceSha: fixture.sourceSha,
+			requiresPreparation: false,
+			edits: [{ path: 'version.txt', before: '1', after: '2' }],
+		},
+	},
+};

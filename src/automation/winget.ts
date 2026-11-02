@@ -1,8 +1,8 @@
+import type { RepositoryGateway } from '@/automation/github';
+import type { Store } from '@/automation/store';
+import type { RepositoryRecord } from '@/automation/types';
 import { generateManifests, renderManifests } from '@/distribution/winget/generate';
 import { array, record, sha, text } from '@/model';
-import type { RepositoryGateway } from './github';
-import type { Store } from './store';
-import type { RepositoryRecord } from './types';
 
 export interface WinGetPolicy {
 	config: string;

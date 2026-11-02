@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import schema from '@root/schemas/v1.json' with { type: 'json' };
+import { edgeFetch } from '@root/test/edge-fetch';
 import { managerNames, parseRepositoryConfiguration } from '@/automation/configuration';
 import { RepositoryGateway } from '@/automation/github';
 import {
@@ -16,7 +17,6 @@ import { escapeModule, splitModulePath } from '@/automation/managers/go';
 import { directory } from '@/automation/managers/helpers';
 import { latestTag, tagPrefix, tagQueries } from '@/automation/managers/tags';
 import type { Publication, Snapshot } from '@/automation/types';
-import { edgeFetch } from './edge-fetch.ts';
 
 function repository(name: string, files: Record<string, string>, tags?: string[]): Snapshot {
 	return {

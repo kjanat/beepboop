@@ -2,9 +2,20 @@
 // Copyright (c) 2026 Kaj Kowalski; Copyright (c) 2021 rhysd
 import { stringify } from 'yaml';
 import * as z from 'zod';
-import { plainText } from './notes.ts';
-import type { DefaultLocaleManifest, InstallerManifest, ManifestType, VersionManifest } from './schema.ts';
-import { defaultLocaleManifest, installerManifest, manifestTypes, schemaVersion, versionManifest } from './schema.ts';
+import { plainText } from '@/distribution/winget/notes';
+import type {
+	DefaultLocaleManifest,
+	InstallerManifest,
+	ManifestType,
+	VersionManifest,
+} from '@/distribution/winget/schema';
+import {
+	defaultLocaleManifest,
+	installerManifest,
+	manifestTypes,
+	schemaVersion,
+	versionManifest,
+} from '@/distribution/winget/schema';
 
 const metadata = defaultLocaleManifest.omit({
 	PackageIdentifier: true,

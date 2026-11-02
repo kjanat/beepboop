@@ -1,22 +1,22 @@
 import { DurableObject } from 'cloudflare:workers';
-import { array, integer, record, sha } from '@/model';
-import type { WorkflowIdentity } from './auth.ts';
+import type { WorkflowIdentity } from '@/automation/auth';
 import {
 	completion,
 	createExecution,
 	dependenciesReady,
 	mergePublications,
 	validatePublicationIdentity,
-} from './execution.ts';
-import { type Credentials, RepositoryGateway } from './github.ts';
-import { canVerifyPublication, discover, observedVersion, verifyPublication } from './managers.ts';
-import { verifyManifest } from './manifest.ts';
-import { mergeArtifacts, resolveInputs } from './outputs.ts';
-import { matchesRef } from './policy.ts';
-import { planRefs, type RefPlan } from './refs.ts';
-import { compileReleaseSet } from './release-set.ts';
-import { Store } from './store.ts';
-import type { Artifact, AutomationEvent, Edit, Execution, Publication, ReleaseReference } from './types.ts';
+} from '@/automation/execution';
+import { type Credentials, RepositoryGateway } from '@/automation/github';
+import { canVerifyPublication, discover, observedVersion, verifyPublication } from '@/automation/managers';
+import { verifyManifest } from '@/automation/manifest';
+import { mergeArtifacts, resolveInputs } from '@/automation/outputs';
+import { matchesRef } from '@/automation/policy';
+import { planRefs, type RefPlan } from '@/automation/refs';
+import { compileReleaseSet } from '@/automation/release-set';
+import { Store } from '@/automation/store';
+import type { Artifact, AutomationEvent, Edit, Execution, Publication, ReleaseReference } from '@/automation/types';
+import { array, integer, record, sha } from '@/model';
 
 export interface CoordinatorBindings extends Credentials {
 	DB: D1Database;
@@ -32,7 +32,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private store(): Store {
 		return new Store(this.env.DB);
 	}
-	private gateway(): RepositoryGateway {
+	protected gateway(): RepositoryGateway {
 		return new RepositoryGateway(this.env, Number(this.env.OWNER_ID));
 	}
 	private async put(execution: Execution): Promise<void> {

@@ -1,6 +1,6 @@
-import { tagPrefix } from './managers/tags.ts';
-import { validRef } from './policy.ts';
-import type { DiscoveredWorkflow, Inventory, ManagerName, Snapshot, Stream } from './types.ts';
+import { tagPrefix } from '@/automation/managers/tags';
+import { validRef } from '@/automation/policy';
+import type { DiscoveredWorkflow, Inventory, ManagerName, Snapshot, Stream } from '@/automation/types';
 
 type Binding = { file: string; mode: 'observe'; ref?: string };
 type OnboardingStream = {

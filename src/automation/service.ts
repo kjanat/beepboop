@@ -1,25 +1,22 @@
 import schema from '@root/schemas/v1.json' with { type: 'json' };
 import { CronExpressionParser } from 'cron-parser';
 import { configuredGrant } from '@/automation/access';
-import { array, compareVersions, integer, record, semver, sha, text } from '@/model';
-import { readBody, verifySignature } from '@/webhook';
-import { renderActivityRows } from '../ui/templates/activity.ts';
-import { type AuthBindings, Authenticators, administrator, authRoute, workflowIdentity } from './auth.ts';
-import { resolveConfiguration } from './configuration.ts';
-import type { AutomationCoordinator } from './coordinator.ts';
-import { planVersionFiles } from './editors.ts';
-import { createExecution } from './execution.ts';
-import { type Credentials, RepositoryGateway } from './github.ts';
-import { formatJson } from './json.ts';
-import { createReleasePreparation, planIdentity } from './managed.ts';
-import { discover, planRelease, resolvePublished, versionsInFiles } from './managers.ts';
-import { onboardingBody, onboardingConfiguration } from './onboarding.ts';
-import { planReleaseSet } from './planning.ts';
-import { matchesRef } from './policy.ts';
-import { planHookUpdates } from './precommit.ts';
-import { Store } from './store.ts';
-import { matchesSubscription } from './subscriptions.ts';
-import { workflowToken } from './token.ts';
+import { type AuthBindings, Authenticators, administrator, authRoute, workflowIdentity } from '@/automation/auth';
+import { resolveConfiguration } from '@/automation/configuration';
+import type { AutomationCoordinator } from '@/automation/coordinator';
+import { planVersionFiles } from '@/automation/editors';
+import { createExecution } from '@/automation/execution';
+import { type Credentials, RepositoryGateway } from '@/automation/github';
+import { formatJson } from '@/automation/json';
+import { createReleasePreparation, planIdentity } from '@/automation/managed';
+import { discover, planRelease, resolvePublished, versionsInFiles } from '@/automation/managers';
+import { onboardingBody, onboardingConfiguration } from '@/automation/onboarding';
+import { planReleaseSet } from '@/automation/planning';
+import { matchesRef } from '@/automation/policy';
+import { planHookUpdates } from '@/automation/precommit';
+import { Store } from '@/automation/store';
+import { matchesSubscription } from '@/automation/subscriptions';
+import { workflowToken } from '@/automation/token';
 import type {
 	Artifact,
 	AutomationEvent,
@@ -27,10 +24,13 @@ import type {
 	Publication,
 	RepositoryRecord,
 	SubscriptionDelivery,
-} from './types.ts';
-import { parseGrant, Vault } from './vault.ts';
-import { nextVersion, parseVersionRequest } from './version.ts';
-import { type WinGetBindings, WinGetService } from './winget';
+} from '@/automation/types';
+import { parseGrant, Vault } from '@/automation/vault';
+import { nextVersion, parseVersionRequest } from '@/automation/version';
+import { type WinGetBindings, WinGetService } from '@/automation/winget';
+import { array, compareVersions, integer, record, semver, sha, text } from '@/model';
+import { renderActivityRows } from '@/ui/templates/activity';
+import { readBody, verifySignature } from '@/webhook';
 
 export interface AutomationBindings extends AuthBindings, Credentials, WinGetBindings {
 	AUTOMATION: DurableObjectNamespace<AutomationCoordinator>;

@@ -1,11 +1,11 @@
-import { applyVersionFiles, type VersionFile } from './editors.ts';
-import { managerRegistry } from './managers/builtins.ts';
-import type { Fetcher, ManagerRegistry, VerificationContext } from './managers/registry.ts';
-import { tagPrefix } from './managers/tags.ts';
-import type { Inventory, ManagerName, Package, Publication, ReleasePlan, Snapshot } from './types.ts';
-import { nextVersion, parseVersionRequest, type VersionRequest } from './version.ts';
+import { applyVersionFiles, type VersionFile } from '@/automation/editors';
+import { managerRegistry } from '@/automation/managers/builtins';
+import type { Fetcher, ManagerRegistry, VerificationContext } from '@/automation/managers/registry';
+import { tagPrefix } from '@/automation/managers/tags';
+import type { Inventory, ManagerName, Package, Publication, ReleasePlan, Snapshot } from '@/automation/types';
+import { nextVersion, parseVersionRequest, type VersionRequest } from '@/automation/version';
 
-export { publicationOrder } from './managers/order.ts';
+export { publicationOrder } from '@/automation/managers/order';
 
 function explicit(request: VersionRequest): string {
 	if (!('version' in request)) throw new Error('Select an explicit version for the first release');
@@ -95,7 +95,7 @@ export function planRelease(
 	};
 }
 
-export type { Fetcher, VerificationContext } from './managers/registry.ts';
+export type { Fetcher, VerificationContext } from '@/automation/managers/registry';
 export function canVerifyPublication(manager: ManagerName): boolean {
 	return managerRegistry.canVerify(manager);
 }

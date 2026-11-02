@@ -1,6 +1,6 @@
+import type { RepositoryGateway } from '@/automation/github';
+import type { Publication } from '@/automation/types';
 import { record, text } from '@/model';
-import type { RepositoryGateway } from './github.ts';
-import type { Publication } from './types.ts';
 
 /** Verify the current default-branch manifest without evaluating package code. */
 export async function verifyManifest(

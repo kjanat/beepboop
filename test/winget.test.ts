@@ -4,14 +4,9 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
-import type { GenerateOptions, WingetConfiguration } from '../src/distribution/winget/generate.ts';
-import {
-	capReleaseNotes,
-	generateManifests,
-	parseChecksums,
-	renderManifests,
-} from '../src/distribution/winget/generate.ts';
-import { installerManifest } from '../src/distribution/winget/schema.ts';
+import type { GenerateOptions, WingetConfiguration } from '@/distribution/winget/generate';
+import { capReleaseNotes, generateManifests, parseChecksums, renderManifests } from '@/distribution/winget/generate';
+import { installerManifest } from '@/distribution/winget/schema';
 
 const configuration = JSON.parse(
 	readFileSync(new URL('../examples/winget/package.json', import.meta.url), 'utf8'),

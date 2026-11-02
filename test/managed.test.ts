@@ -1,12 +1,12 @@
 import { expect, test } from 'bun:test';
 import { rejects } from 'node:assert/strict';
+import { edgeFetch } from '@root/test/edge-fetch';
 import { parseRepositoryConfiguration } from '@/automation/configuration';
 import { RepositoryGateway } from '@/automation/github';
 import { createManagedPreparation, createReleasePreparation, planIdentity } from '@/automation/managed';
 import { discover } from '@/automation/managers';
 import { planReleaseSet } from '@/automation/planning';
 import type { RepositoryRecord, Snapshot } from '@/automation/types';
-import { edgeFetch } from './edge-fetch.ts';
 
 const snapshot: Snapshot = {
 	repository: { id: 1, name: 'example/tool', defaultBranch: 'main' },

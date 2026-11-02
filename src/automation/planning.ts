@@ -1,9 +1,9 @@
 import { z } from 'zod';
-import { applyVersionFiles, type VersionFile } from './editors.ts';
-import { planRelease, publicationOrder } from './managers.ts';
-import { inputSchema, outputSchema, platformSchema } from './outputs.ts';
-import type { Edit, Inventory, Snapshot } from './types.ts';
-import { parseVersionRequest } from './version.ts';
+import { applyVersionFiles, type VersionFile } from '@/automation/editors';
+import { planRelease, publicationOrder } from '@/automation/managers';
+import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
+import type { Edit, Inventory, Snapshot } from '@/automation/types';
+import { parseVersionRequest } from '@/automation/version';
 
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
 const operation = z.strictObject({

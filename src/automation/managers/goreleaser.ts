@@ -1,9 +1,9 @@
 import { parse as parseToml } from 'smol-toml';
-import type { Publication, Snapshot } from '../types.ts';
-import { goreleaserConfig, object, yaml } from './helpers.ts';
-import type { Manager, VerificationContext } from './registry.ts';
-import { emptyInventory } from './registry.ts';
-import { latestTag, tagSource } from './tags.ts';
+import { goreleaserConfig, object, yaml } from '@/automation/managers/helpers';
+import type { Manager, VerificationContext } from '@/automation/managers/registry';
+import { emptyInventory } from '@/automation/managers/registry';
+import { latestTag, tagSource } from '@/automation/managers/tags';
+import type { Publication, Snapshot } from '@/automation/types';
 
 function cargoName(snapshot: Snapshot): unknown {
 	try {

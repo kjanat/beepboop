@@ -1,5 +1,5 @@
-import type { Inventory, ManagerName, Package, Publication, Snapshot } from '../types.ts';
-import { publicationOrder } from './order.ts';
+import { publicationOrder } from '@/automation/managers/order';
+import type { Inventory, ManagerName, Package, Publication, Snapshot } from '@/automation/types';
 
 export interface Manager {
 	readonly name: ManagerName;

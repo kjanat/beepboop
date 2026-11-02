@@ -1,10 +1,10 @@
 import { importPKCS8, SignJWT } from 'jose';
+import { safeVersionPath } from '@/automation/editors';
+import type { Fetcher, VerificationContext } from '@/automation/managers/registry';
+import { tagQueries } from '@/automation/managers/tags';
+import type { RefState } from '@/automation/refs';
+import type { Edit, Snapshot } from '@/automation/types';
 import { array, integer, record, sha, text } from '@/model';
-import { safeVersionPath } from './editors.ts';
-import type { Fetcher, VerificationContext } from './managers/registry.ts';
-import { tagQueries } from './managers/tags.ts';
-import type { RefState } from './refs.ts';
-import type { Edit, Snapshot } from './types.ts';
 
 type Permission = Record<string, 'read' | 'write'>;
 export class RepositoryGateway {

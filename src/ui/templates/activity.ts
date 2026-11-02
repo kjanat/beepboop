@@ -1,5 +1,5 @@
-import type { ActivityEntry, RepositoryRecord } from '../../automation/types.ts';
-import { githubHref, htmlEscape, link } from './html.ts';
+import type { ActivityEntry, RepositoryRecord } from '@/automation/types';
+import { githubHref, htmlEscape, link } from '@/ui/templates/html';
 
 function repositoryLink(name: string): string {
 	return link(githubHref(name), name);

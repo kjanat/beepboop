@@ -1,7 +1,7 @@
-import { createExecution, executionId } from './execution.ts';
-import { tagPrefix } from './managers/tags.ts';
-import { discover } from './managers.ts';
-import type { Execution, RepositoryRecord, Snapshot, WorkflowBinding } from './types.ts';
+import { createExecution, executionId } from '@/automation/execution';
+import { discover } from '@/automation/managers';
+import { tagPrefix } from '@/automation/managers/tags';
+import type { Execution, RepositoryRecord, Snapshot, WorkflowBinding } from '@/automation/types';
 
 /** Compile a frozen preparation into operations for its verified merged revision. */
 export async function compileReleaseSet(preparation: Execution, snapshot: Snapshot): Promise<Execution[]> {

@@ -12,7 +12,7 @@ import { planRefs } from '@/automation/refs';
 import { compileReleaseSet } from '@/automation/release-set';
 import { matchesSubscription } from '@/automation/subscriptions';
 import type { Execution, ReleaseReference, RepositoryRecord, Snapshot } from '@/automation/types';
-import { generateManifests, renderManifests } from '../src/distribution/winget/generate.ts';
+import { generateManifests, renderManifests } from '@/distribution/winget/generate';
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 test('distribution contracts compose preparation, platform outputs, publication, manifests, aliases and hook consumption', async () => {

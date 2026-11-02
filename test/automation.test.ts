@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { rejects } from 'node:assert/strict';
+import { edgeFetch } from '@root/test/edge-fetch';
 import { parseRepositoryConfiguration, resolveConfiguration } from '@/automation/configuration';
 import { completion, createExecution, mergePublications } from '@/automation/execution';
 import { discover, planRelease, publicationOrder, verifyPublication } from '@/automation/managers';
 import { onboardingConfiguration } from '@/automation/onboarding';
 import type { Publication, RepositoryRecord, Snapshot } from '@/automation/types';
 import { parseGrant } from '@/automation/vault';
-import { edgeFetch } from './edge-fetch.ts';
 
 const snapshot: Snapshot = {
 	repository: { id: 91, name: 'example/seventh', defaultBranch: 'main' },

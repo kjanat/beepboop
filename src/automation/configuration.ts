@@ -1,10 +1,10 @@
 import { CronExpressionParser } from 'cron-parser';
+import { versionFileSchema } from '@/automation/editors';
+import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
+import { validRef } from '@/automation/policy';
+import type { Configuration, ManagerName, Stream, WorkflowBinding } from '@/automation/types';
+import { parseWinGetPolicy } from '@/automation/winget';
 import { array, record, text } from '@/model';
-import { versionFileSchema } from './editors.ts';
-import { inputSchema, outputSchema, platformSchema } from './outputs.ts';
-import { validRef } from './policy.ts';
-import type { Configuration, ManagerName, Stream, WorkflowBinding } from './types.ts';
-import { parseWinGetPolicy } from './winget';
 
 export const managerNames: ManagerName[] = [
 	'pre-commit',

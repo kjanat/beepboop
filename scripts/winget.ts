@@ -2,7 +2,7 @@
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { generateManifests, renderManifests } from '../src/distribution/winget/generate.ts';
+import { generateManifests, renderManifests } from '@/distribution/winget/generate';
 
 const { values } = parseArgs({
 	options: {

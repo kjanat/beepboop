@@ -60,8 +60,12 @@ Vermon service binding. API routes preserve the existing GitHub Actions contract
 Astro's checker currently needs the TypeScript 6 language-service API. `bun run check` uses Astro to check the project;
 `typescript-native` remains available as a separate dependency.
 
-`bun run test:runtime --browser` serves an authenticated fixture on port 4331
-for browser checks after the runtime suite passes. It uses a temporary database
+Runtime integration tests live in `test/runtime/`. Run `bun run deploy:dry` first
+to build the Worker they exercise, then `bun run test:runtime`. Each named test
+uses isolated storage; the typed probe and mock GitHub gateway are separate fixtures.
+
+`bun run test:browser` serves an authenticated fixture on port 4331
+for browser checks, independently of the runtime suite. It uses a temporary database
 and a test issuer; it does not sign you into the real dashboard or contact GitHub.
 
 Preview discovery from a checkout's committed HEAD or a GitHub repository:

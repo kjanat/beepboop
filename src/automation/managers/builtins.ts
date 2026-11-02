@@ -1,11 +1,11 @@
-import { verifyImage } from '../oci.ts';
-import { discoverHooks } from '../precommit.ts';
-import { cargoManager } from './cargo.ts';
-import { goManager } from './go.ts';
-import { goreleaserManager } from './goreleaser.ts';
-import { npmManager } from './npm.ts';
-import { emptyInventory, ManagerRegistry } from './registry.ts';
-import { workflowManager } from './workflow.ts';
+import { cargoManager } from '@/automation/managers/cargo';
+import { goManager } from '@/automation/managers/go';
+import { goreleaserManager } from '@/automation/managers/goreleaser';
+import { npmManager } from '@/automation/managers/npm';
+import { emptyInventory, ManagerRegistry } from '@/automation/managers/registry';
+import { workflowManager } from '@/automation/managers/workflow';
+import { verifyImage } from '@/automation/oci';
+import { discoverHooks } from '@/automation/precommit';
 
 export const managerRegistry = new ManagerRegistry([
 	cargoManager,
@@ -14,7 +14,7 @@ export const managerRegistry = new ManagerRegistry([
 	...(['github-release', 'oci'] as const).map(name => ({
 		name,
 		...(name === 'oci' ? { verifyPublication: verifyImage } : {}),
-		discover: (snapshot: import('../types.ts').Snapshot) => {
+		discover: (snapshot: import('@/automation/types').Snapshot) => {
 			const result = emptyInventory();
 			if (workflowManager.discover(snapshot).managers.includes(name)) result.managers.push(name);
 			return result;

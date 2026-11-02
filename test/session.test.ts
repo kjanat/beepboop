@@ -48,7 +48,7 @@ afterEach(() => {
 });
 
 test('a dashboard request with an expired session sends the browser back to login', async () => {
-	const { api } = await import('../src/ui/browser/dom.ts');
+	const { api } = await import('@/ui/browser/dom');
 	const visited: string[] = [];
 	Object.defineProperty(globalThis, 'location', {
 		value: { assign: (url: string) => visited.push(url) },

@@ -1,5 +1,5 @@
-import { outputsComplete } from './outputs.ts';
-import type { Execution, Publication, ReleaseReference, RepositoryRecord, WorkflowBinding } from './types.ts';
+import { outputsComplete } from '@/automation/outputs';
+import type { Execution, Publication, ReleaseReference, RepositoryRecord, WorkflowBinding } from '@/automation/types';
 
 export async function executionId(
 	repositoryId: number,
