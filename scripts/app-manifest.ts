@@ -1,3 +1,5 @@
+#!/usr/bin/env bun
+
 const origin = new URL(process.argv[2] ?? 'https://beepboop.kjanat.dev');
 if (origin.protocol !== 'https:' || origin.username || origin.password || origin.pathname !== '/') {
 	throw new Error('Expected HTTPS origin');

@@ -1,3 +1,5 @@
+#!/usr/bin/env bun
+
 import { resolve } from 'node:path';
 import { discover, resolvePublished } from '@/automation/managers';
 import { tagQueries } from '@/automation/managers/tags';

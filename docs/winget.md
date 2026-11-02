@@ -91,3 +91,72 @@ workflow does not force-push or create tags or GitHub releases.
 
 The generator performs no network requests and uses the checksums supplied by
 the calling release workflow.
+
+## Bot submissions
+
+The **WinGet** dashboard page submits published stable GitHub releases to
+`microsoft/winget-pkgs`. Select an enrolled repository and release, preview the
+three manifests, and choose **Submit to WinGet**. The page tracks the PR link,
+validation checks, change requests, closure and merge. A PR being open or its
+checks passing is not reported as a completed publication: Microsoft controls
+review and merge. The bot never merges or enables auto-merge.
+
+Add this to the source repository's `.github/beepboop.json`:
+
+```json
+{
+  "winget": {
+    "config": "distribution/winget.json",
+    "tagPrefix": "v",
+    "automatic": false
+  }
+}
+```
+
+The referenced file has the same format as the package configuration example.
+It is read from the exact release-tag commit, not the current branch. Installers
+must be uploaded assets on that public GitHub release, and GitHub must expose
+SHA-256 digests for them. Missing digests, mismatched URLs, drafts, prereleases,
+and changed preview inputs block submission. Older assets without GitHub digests
+remain usable with the standalone generator but cannot use this service.
+
+After merging the configuration, refresh the repository in Beepboop. Set
+`automatic: true` to submit future published stable releases. Automation starts
+when Beepboop first refreshes the enabled configuration; it does not backfill
+historical releases. Published-release webhooks and scheduled reconciliation
+process the latest 30 releases. Historical releases in that list can also be
+submitted manually. Refresh after disabling automatic submission before enabling
+it again to reset its start time.
+
+Service setup:
+
+1. Apply `migrations/0003_winget.sql` through the normal D1 migration path.
+2. Create a fork of `microsoft/winget-pkgs` owned by the submission identity.
+3. Set `WINGET_FORK` to `owner/winget-pkgs` and store `WINGET_GITHUB_TOKEN` as a
+   Worker secret. This must be a token for the intended bot/service account that
+   can write the fork and open PRs against the public Microsoft repository
+   (for example a classic token with `public_repo`). The source repository's
+   ordinary Actions token does not provide that cross-repository access.
+4. The source-repository GitHub App installation still provides read access for
+   release metadata and source configuration. The submission credential stays
+   on the Worker and is never sent to workflows or the browser.
+
+The dashboard displays a setup notice and disables submission when the bot
+bindings are missing. Generation and preview do not mutate GitHub. Submission
+uses a durable record, a lease, and a deterministic branch. A retry after a lost
+GitHub response recovers the existing branch or PR. Existing branches must contain
+exactly the expected new manifests. Closed PRs are not automatically reopened;
+reviewer-requested edits can be made on the linked PR's branch. Automatic runs
+never overwrite those edits or create a replacement for a closed submission.
+
+Administrator API endpoints (the normal session and origin checks apply):
+
+- `GET /api/winget`: recent submissions.
+- `POST /api/winget/releases`: `{ "repositoryId": 123 }`.
+- `POST /api/winget/preview`: `{ "repositoryId": 123, "releaseId": 456 }`.
+- `POST /api/winget/submit`: the same identifiers plus the preview's `digest`.
+- `POST /api/winget/refresh`: refresh upstream checks and PR state.
+
+Submission state and manifests are persisted in D1. Release selection is scoped
+to enrolled repositories; the service validates the configured fork's upstream
+and always targets `microsoft/winget-pkgs`.

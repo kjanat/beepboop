@@ -15,7 +15,7 @@
 		"allowImportingTsExtensions": true,
 		"resolveJsonModule": true,
 		"skipLibCheck": true,
-		"types": ["bun"],
+		"types": ["bun", "./worker-configuration.d.ts"],
 	},
 	"exclude": ["src/ui/browser/**"],
 	"include": [
@@ -23,7 +23,6 @@
 		"src/**/*.astro",
 		"src/**/*.ts",
 		"test/**/*.ts",
-		"scripts/**/*.ts",
-		"worker-configuration.d.ts"
+		"scripts/**/*.ts"
 	]
 }

@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -38,10 +39,7 @@ for (const [name, content] of Object.entries(renderManifests(manifests))) {
 	files.push(path);
 	console.log(path);
 }
-if (process.env.GITHUB_OUTPUT) {
-	const delimiter = `output_${crypto.randomUUID()}`;
-	await appendFile(
-		process.env.GITHUB_OUTPUT,
-		`directory<<${delimiter}\n${out}\n${delimiter}\nfiles=${JSON.stringify(files)}\n`,
-	);
-}
+const delimiter = `output_${crypto.randomUUID()}`;
+const output = `directory<<${delimiter}\n${out}\n${delimiter}\nfiles=${JSON.stringify(files)}\n`;
+if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, output);
+else process.stderr.write(output);

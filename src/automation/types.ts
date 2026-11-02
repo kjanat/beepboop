@@ -49,6 +49,7 @@ export interface Subscription {
 	operation: string;
 }
 export interface Configuration {
+	winget?: import('./winget').WinGetPolicy;
 	extends: string[];
 	managers: ManagerName[];
 	streams: Record<string, Stream>;

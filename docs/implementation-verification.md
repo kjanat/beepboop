@@ -27,8 +27,10 @@ plans, report outputs, publish guarded refs, and generate WinGet manifests.
 The combined contract fixture supplies promotion and producer outcomes. Separate
 fixtures exercise cryptographic Git signing, coordinator approval gates, artifact
 contracts, and durable recovery. Builds and registry publication commands execute
-in repository workflows. WinGet generates manifest files; submission to the
-Microsoft manifest repository is a separate publication operation.
+in repository workflows. WinGet generation and bot submission are implemented separately: the submission
+service opens upstream PRs and tracks their checks and merge state.
+`winget-service.test.ts` exercises submission and retry against a mocked GitHub
+gateway and real SQLite storage; it does not publish live upstream PRs.
 
 ## Repeatable checks
 

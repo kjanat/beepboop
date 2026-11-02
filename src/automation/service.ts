@@ -30,8 +30,9 @@ import type {
 } from './types.ts';
 import { parseGrant, Vault } from './vault.ts';
 import { nextVersion, parseVersionRequest } from './version.ts';
+import { type WinGetBindings, WinGetService } from './winget';
 
-export interface AutomationBindings extends AuthBindings, Credentials {
+export interface AutomationBindings extends AuthBindings, Credentials, WinGetBindings {
 	AUTOMATION: DurableObjectNamespace<AutomationCoordinator>;
 	OWNER_ID: string;
 	GITHUB_WEBHOOK_SECRET: string;
@@ -95,6 +96,9 @@ export class AutomationService {
 		}
 		return this.coordinator(repository.id).enqueue(execution);
 	}
+	winget() {
+		return new WinGetService(this.store, this.gateway, this.env);
+	}
 	private vault() {
 		return new Vault(this.store, JSON.parse(this.env.VAULT_KEYS), this.env.VAULT_ACTIVE_KEY);
 	}
@@ -125,6 +129,7 @@ export class AutomationService {
 		} else repository.diagnostics.push('Onboarding configuration is not merged');
 		repository.inventory = await resolvePublished(repository.inventory);
 		await this.store.putRepository(repository);
+		await this.winget().watch(repository);
 		return repository;
 	}
 	async webhook(request: Request): Promise<Response> {
@@ -178,6 +183,7 @@ export class AutomationService {
 		if (!repository || repository.name !== source.full_name) {
 			return new Response(null, { status: 204 });
 		}
+		if (event === 'release' && payload.action === 'published') await this.winget().automatic(repository);
 		if (event === 'push' && payload.ref === `refs/heads/${repository.defaultBranch}`) {
 			await this.refresh(repository.name, repository.id);
 		} else if (event === 'workflow_run') {
@@ -254,9 +260,11 @@ export class AutomationService {
 	}
 	async scheduled(): Promise<void> {
 		await this.deliverEvents();
+		await this.winget().reconcile();
 		for (const repository of await this.store.repositories()) {
 			try {
 				const refreshed = await this.refresh(repository.name, repository.id);
+				await this.winget().automatic(refreshed);
 				await this.coordinator(repository.id).wake();
 				for (const event of await this.coordinator(repository.id).releaseEvents()) {
 					await this.event(event);
@@ -329,6 +337,7 @@ export class AutomationService {
 			if (path === '/api/authenticators') {
 				return Response.json(await new Authenticators(this.env).list(actor));
 			}
+			if (path === '/api/winget') return Response.json(await this.winget().list());
 			if (path === '/api/repositories') return Response.json(await this.store.repositories());
 			if (path === '/api/executions') return Response.json(await this.store.executions());
 			if (path === '/api/activity') {
@@ -356,6 +365,23 @@ export class AutomationService {
 		}
 		if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
 		const body = record(JSON.parse(new TextDecoder().decode(await readBody(request))));
+		if (path.startsWith('/api/winget/')) {
+			if (path === '/api/winget/refresh') {
+				await this.winget().reconcile();
+				return Response.json({ ok: true });
+			}
+			const repository = await this.store.repository(integer(body.repositoryId));
+			if (!repository) throw new Error('Repository not enrolled');
+			if (path === '/api/winget/releases') return Response.json(await this.winget().releases(repository));
+			const releaseId = integer(body.releaseId);
+			if (path === '/api/winget/preview') return Response.json(await this.winget().plan(repository, releaseId));
+			if (path === '/api/winget/submit') {
+				const result = await this.winget().submit(repository, releaseId, text(body.digest));
+				await this.store.audit(actor, 'winget.request', result.plan.id);
+				return Response.json(result);
+			}
+			return new Response('Not found', { status: 404 });
+		}
 		if (path === '/api/repositories/discover') {
 			return Response.json(
 				await this.refresh(

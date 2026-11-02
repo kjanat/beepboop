@@ -4,6 +4,7 @@ import { versionFileSchema } from './editors.ts';
 import { inputSchema, outputSchema, platformSchema } from './outputs.ts';
 import { validRef } from './policy.ts';
 import type { Configuration, ManagerName, Stream, WorkflowBinding } from './types.ts';
+import { parseWinGetPolicy } from './winget';
 
 export const managerNames: ManagerName[] = [
 	'pre-commit',
@@ -115,7 +116,7 @@ function binding(value: unknown): WorkflowBinding {
 }
 export function parseRepositoryConfiguration(value: unknown): Configuration {
 	const data = record(value);
-	keys(data, ['$schema', 'extends', 'managers', 'streams', 'subscriptions'], 'configuration');
+	keys(data, ['$schema', 'extends', 'managers', 'streams', 'subscriptions', 'winget'], 'configuration');
 	const managers = data.managers === undefined ? [...managerNames] : strings(data.managers);
 	if (managers.some((name) => !managerNames.includes(name as ManagerName))) {
 		throw new Error('Unknown manager');
@@ -288,6 +289,7 @@ export function parseRepositoryConfiguration(value: unknown): Configuration {
 		throw new Error('Duplicate subscription');
 	}
 	return {
+		...(data.winget === undefined ? {} : { winget: parseWinGetPolicy(data.winget) }),
 		extends: strings(data.extends ?? []),
 		managers: managers as ManagerName[],
 		streams,

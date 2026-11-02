@@ -28,7 +28,7 @@ package generation run in your repository's GitHub Actions workflows.
   managed and workflow preparation, and declarative version files.
 - [Ecosystem managers](docs/managers.md): discovery, editing, and verification adapters.
 - [Deployment](docs/deployment.md): Cloudflare, GitHub App, login, and security keys.
-- [WinGet manifest generation](docs/winget.md): configurable package metadata,
+- [WinGet manifests and bot submissions](docs/winget.md): configurable package metadata,
   installer assets, checksums, and release notes.
 - [Configuration schema](schemas/v1.json) and [preset templates](presets/).
 - [Architecture](docs/adr-001-repository-automation.md): execution storage, authentication, and recovery.

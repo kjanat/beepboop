@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { rejects } from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -113,7 +114,7 @@ describe('workflowToken', () => {
 
 	test('refuses a repository owned by someone else before minting', async () => {
 		const { minted, issuer, log } = fakes();
-		await expect(
+		await rejects(
 			workflowToken(
 				await request({ permissions: { contents: 'read' } }, { repository_owner_id: 1 }),
 				audience,
@@ -122,14 +123,15 @@ describe('workflowToken', () => {
 				log,
 				issuerKeys,
 			),
-		).rejects.toThrow('Workflow identity is not eligible');
+			/Workflow identity is not eligible/,
+		);
 		expect(minted).toEqual([]);
 	});
 
 	test('refuses a run started by anyone but the owner before minting', async () => {
 		for (const actor_id of [49699333, 29139614, 1]) {
 			const { minted, issuer, log } = fakes();
-			await expect(
+			await rejects(
 				workflowToken(
 					await request({ permissions: { contents: 'read' } }, { actor_id }),
 					audience,
@@ -138,16 +140,18 @@ describe('workflowToken', () => {
 					log,
 					issuerKeys,
 				),
-			).rejects.toThrow('Workflow run was not started by the owner');
+				/Workflow run was not started by the owner/,
+			);
 			expect(minted).toEqual([]);
 		}
 	});
 
 	test('refuses invalid permissions before minting', async () => {
 		const { minted, issuer, log } = fakes();
-		await expect(
+		await rejects(
 			workflowToken(await request({ permissions: { contents: 'admin' } }), audience, ownerId, issuer, log, issuerKeys),
-		).rejects.toThrow('Invalid token permission');
+			/Invalid token permission/,
+		);
 		expect(minted).toEqual([]);
 	});
 

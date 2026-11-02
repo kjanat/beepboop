@@ -3,31 +3,41 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"app:manifest": "bun scripts/app-manifest.ts",
+		"app:manifest": "./scripts/app-manifest.ts",
+		"astro": "astro",
+		"prebuild": "run -s types check",
 		"build": "astro build",
-		"build:ui": "astro build",
-		"build:winget": "bun build scripts/winget.ts --target=node --format=esm --minify --outfile dist/winget/cli.mjs",
-		"check:bundle": "bun run build && wrangler deploy --dry-run --outdir .dry-run",
-		"db:local": "wrangler d1 migrations apply beepboop --local --config wrangler.jsonc",
-		"dev": "bun run db:local && astro dev",
-		"discover": "bun scripts/discover.ts",
-		"format": "mise exec -- dprint fmt",
+		"check": "astro check",
+		"db:local": "wrangler d1 migrations apply beepboop --local --config wrangler.toml",
+		"predeploy": "run build",
+		"deploy": "wrangler deploy --config dist/server/wrangler.json",
+		"deploy:dry": "run deploy --dry-run --outdir .dry-run",
+		"predev": "run -pk types db:local",
+		"dev": "astro dev",
+		"discover": "./scripts/discover.ts",
+		"fmt": "kfmt",
 		"lint": "biome check . --error-on-warnings",
-		"prepare": "wrangler types",
+		"prepare": "run -qs types sync",
+		"pretypecheck": "run -s types sync",
+		"prepreview": "wrangler types",
 		"preview": "astro preview",
-		"test": "bun run build:winget && bun test",
+		"prestart": "wrangler types",
+		"start": "astro dev",
+		"sync": "astro sync",
+		"pretest": "run build:winget",
+		"test": "bun test",
 		"test:runtime": "node scripts/runtime.ts",
-		"typecheck": "astro sync && astro check --tsconfig tsconfig.astro.json && node node_modules/typescript-native/bin/tsc --noEmit && node node_modules/typescript-native/bin/tsc --project src/ui/browser/tsconfig.json --noEmit",
-		"types": "bun scripts/types.ts",
-		"winget": "bun scripts/winget.ts"
+		"types": "wrangler types >/dev/null",
+		"winget": "./scripts/winget.ts",
+		"winget:build": "bun build scripts/winget.ts --target=node --format=esm --minify --outfile dist/winget/cli.mjs"
 	},
 	"dependencies": {
 		"@astrojs/cloudflare": "^14.4.4",
 		"@openauthjs/openauth": "^0.4.3",
 		"@simplewebauthn/server": "^14.0.3",
 		"astro": "^7.4.5",
-		"cron-parser": "^5.10.2",
-		"jose": "6.2.13",
+		"cron-parser": "^5.10.3",
+		"jose": "6.2.15",
 		"remark": "15.0.1",
 		"remark-gfm": "4.0.1",
 		"smol-toml": "^1.9.1",
@@ -38,19 +48,26 @@
 	},
 	"devDependencies": {
 		"@astrojs/check": "^0.9.12",
-		"@biomejs/biome": "2.6.2",
-		"@types/bun": "1.4.3",
+		"@biomejs/biome": "2.6.4",
+		"@kjanat/fmt": "^0.60.6",
+		"@types/bun": "1.4.4",
 		"@types/mdast": "4.0.4",
 		"libsodium-wrappers": "^0.8.4",
 		"miniflare": "5.20261019.0-beta",
+		"runner-run": "^0.28.0",
 		"typescript": "^6.0.3",
 		"typescript-native": "npm:typescript@7.0.2",
-		"wrangler": "4.151.3"
+		"wrangler": "4.156.2"
 	},
 	"devEngines": {
 		"packageManager": {
 			"name": "bun",
 			"version": "1.4.3"
 		}
-	}
+	},
+	"trustedDependencies": [
+		"@kprint/kprint",
+		"esbuild",
+		"workerd"
+	]
 }

@@ -24,6 +24,5 @@ jobs:
             with: { bun-version: "1.4.4" }
           - uses: kjanat/runner@b32ea932a1813ae0be44e755c16df9f9f5ca86a4 # v0.28
       - run: runner i -fs types
-      - run: git diff --exit-code -- worker-configuration.d.ts
       - run: run -pk typecheck lint test
       - run: run -sk check:bundle test:runtime

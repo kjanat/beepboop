@@ -102,6 +102,40 @@ function selectedWorkflow(form: HTMLFormElement): Choice {
 	if (!choice) throw new Error('Choose a repository and workflow.');
 	return choice;
 }
+const wingetPlans = new WeakMap<HTMLFormElement, { digest: string }>();
+for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action="winget-submit"]')) {
+	const submit = form.querySelector<HTMLButtonElement>('button[value="submit"]');
+	if (!submit) throw Error('Missing WinGet submit button');
+	let revision = 0;
+	form.addEventListener('change', async event => {
+		wingetPlans.delete(form);
+		submit.disabled = true;
+		form.querySelector('.plan-result')?.replaceChildren();
+		if (event.target !== input(form, 'repositoryId')) return;
+		const current = ++revision;
+		const release = input(form, 'releaseId') as HTMLSelectElement;
+		release.disabled = true;
+		release.replaceChildren(new Option('Loading releases…', ''));
+		if (!input(form, 'repositoryId').value) {
+			release.replaceChildren(new Option('Choose a repository first', ''));
+			return;
+		}
+		try {
+			const rows = await api<{ id: number; tag: string; name: string }[]>('/api/winget/releases', {
+				repositoryId: Number(input(form, 'repositoryId').value),
+			});
+			if (revision !== current) return;
+			release.replaceChildren(new Option(rows.length ? 'Choose a release' : 'No eligible stable releases', ''));
+			for (const row of rows) release.add(new Option(`${row.tag} · ${row.name}`, String(row.id)));
+			release.disabled = !rows.length;
+		} catch (error) {
+			if (revision === current) {
+				release.replaceChildren(new Option('Unable to load releases', ''));
+				showError(error);
+			}
+		}
+	});
+}
 for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action="grant-save"]')) {
 	const repositories = JSON.parse(form.dataset.repositories ?? '[]') as RepositoryChoice[];
 	const repository = input(form, 'repositoryId'), choice = input(form, 'choice') as HTMLSelectElement;
@@ -185,7 +219,49 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action]
 		form.dataset.busy = 'true';
 		button.disabled = true;
 		try {
-			if (action === 'release-prepare' || action === 'release-set') {
+			if (action === 'winget-refresh') {
+				await api('/api/winget/refresh', {});
+				location.reload();
+			} else if (action === 'winget-retry') {
+				await api('/api/winget/submit', {
+					...data,
+					repositoryId: Number(data.repositoryId),
+					releaseId: Number(data.releaseId),
+				});
+				location.reload();
+			} else if (action === 'winget-submit') {
+				const selection = { repositoryId: Number(data.repositoryId), releaseId: Number(data.releaseId) };
+				if (clicked === 'preview') {
+					const plan = await api<{ digest: string; sourceSha: string; files: Record<string, string> }>(
+						'/api/winget/preview',
+						selection,
+					);
+					if (
+						input(form, 'repositoryId').value !== data.repositoryId || input(form, 'releaseId').value !== data.releaseId
+					) throw Error('Selection changed; preview again.');
+					wingetPlans.set(form, plan);
+					const result = form.querySelector('.plan-result');
+					if (!result) throw Error('Missing WinGet preview');
+					result.replaceChildren(
+						node('h3', 'Review the WinGet submission'),
+						node('p', `Source commit: ${plan.sourceSha}`),
+					);
+					for (const [path, content] of Object.entries(plan.files)) {
+						const detail = node('details', '');
+						detail.append(node('summary', path), node('pre', content));
+						result.append(detail);
+					}
+					const submit = form.querySelector<HTMLButtonElement>('button[value="submit"]');
+					if (!submit) throw Error('Missing WinGet submit button');
+					submit.disabled = submit.dataset.submitReady !== 'true';
+					show('Review the manifests, then submit. Microsoft controls acceptance and merging.');
+				} else {
+					const plan = wingetPlans.get(form);
+					if (!plan) throw Error('Preview the release before submitting.');
+					await api('/api/winget/submit', { ...selection, digest: plan.digest });
+					location.reload();
+				}
+			} else if (action === 'release-prepare' || action === 'release-set') {
 				const common = { repositoryId: Number(data.repositoryId), stream: data.stream };
 				const version = data.versionMode === 'explicit'
 					? data.version

@@ -36,19 +36,26 @@ export function workflowChoices(repository: RepositoryRecord) {
 
 export async function dashboard(env: AutomationBindings, actor: string) {
 	const service = new AutomationService(env);
-	const [repositories, executions, onboarding, activity, keys, secrets, grants, deliveries] = await Promise.all([
-		service.store.repositories(),
-		service.store.executions(),
-		service.store.onboardingPulls(),
-		service.store.activity(),
-		new Authenticators(env).list(actor),
-		service.store.db.prepare('SELECT alias,version,created_at FROM credentials WHERE active=1 ORDER BY alias').all<
-			SecretSummary
-		>(),
-		service.store.db.prepare('SELECT document FROM grants').all<{ document: string }>(),
-		service.store.db.prepare('SELECT grant_id,version,state,updated_at FROM secret_deliveries').all<DeliverySummary>(),
-	]);
+	const [repositories, executions, onboarding, activity, keys, secrets, grants, deliveries, winget] = await Promise.all(
+		[
+			service.store.repositories(),
+			service.store.executions(),
+			service.store.onboardingPulls(),
+			service.store.activity(),
+			new Authenticators(env).list(actor),
+			service.store.db.prepare('SELECT alias,version,created_at FROM credentials WHERE active=1 ORDER BY alias').all<
+				SecretSummary
+			>(),
+			service.store.db.prepare('SELECT document FROM grants').all<{ document: string }>(),
+			service.store.db.prepare('SELECT grant_id,version,state,updated_at FROM secret_deliveries').all<
+				DeliverySummary
+			>(),
+			service.winget().list(),
+		],
+	);
 	return {
+		winget,
+		wingetReady: service.winget().setup(),
 		repositories,
 		executions,
 		onboarding,

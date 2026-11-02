@@ -1,3 +1,5 @@
+#!/usr/bin/env bun
+
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
@@ -195,7 +197,7 @@ try {
 	});
 	assert.equal(ignored.status, 204);
 	assert.equal(outbound, 0);
-	for (const path of ['/', '/repositories', '/releases', '/runs', '/secrets', '/activity', '/security']) {
+	for (const path of ['/', '/repositories', '/releases', '/runs', '/winget', '/secrets', '/activity', '/security']) {
 		const page = await instance.dispatchFetch(`https://automation.test${path}`, {
 			redirect: 'manual',
 			headers: { cookie: `__Host-beepboop_access=${access}` },
@@ -211,6 +213,8 @@ try {
 	const absent = await instance.dispatchFetch('https://automation.test/no-such-page');
 	assert.equal(absent.status, 404);
 
+	const wingetUnauthorized = await instance.dispatchFetch('https://automation.test/api/winget');
+	assert.equal(wingetUnauthorized.status, 401);
 	const cookieless = await instance.dispatchFetch('https://automation.test/auth/callback?code=c&state=s', {
 		redirect: 'manual',
 	});
@@ -421,6 +425,7 @@ try {
 			sha: 'a'.repeat(40),
 			configuration: {
 				...fixture.configuration,
+				winget: { config: 'distribution/winget.json', tagPrefix: 'v', automatic: false },
 				streams: {
 					main: {
 						...fixture.configuration.streams.main,
