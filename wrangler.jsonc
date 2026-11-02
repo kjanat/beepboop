@@ -19,7 +19,7 @@
 	"observability": {
 		"enabled": true,
 		"logs": {
-			"invocation_logs": false
+			"invocation_logs": true
 		}
 	},
 	"triggers": {
