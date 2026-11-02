@@ -1,5 +1,5 @@
 import { setupCredentials } from './credentials.ts';
-import { api, refresh, show, showError, submit } from './dom.ts';
+import { api, displayJson, refresh, show, showError, submit } from './dom.ts';
 import { setupReleases } from './releases.ts';
 
 const tabs = document.querySelectorAll<HTMLButtonElement>('[data-tab]');
@@ -13,7 +13,13 @@ for (const button of tabs) {
 }
 
 submit('discover', async (data, action) => {
-	show(await api(`/api/repositories/${action}`, data));
+	if (action === 'onboard') {
+		const { url } = await api<{ url: string }>('/api/repositories/onboard', data);
+		show(`Onboarding PR: ${url}`);
+	} else {
+		await api('/api/repositories/discover', data);
+		location.reload();
+	}
 });
 setupReleases();
 setupCredentials();
@@ -27,7 +33,8 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('[data-approve
 			const result = approve
 				? await api('/api/executions/approve', { id: approve, sourceSha: sha })
 				: await api('/api/executions/recover', { id: retry || reconcile, action: retry ? 'retry' : 'reconcile' });
-			show(result);
+			displayJson('#execution-result', result);
+			show(approve ? 'Promotion approved.' : retry ? 'Retry requested.' : 'Reconciliation requested.');
 		} catch (error) {
 			showError(error);
 		} finally {

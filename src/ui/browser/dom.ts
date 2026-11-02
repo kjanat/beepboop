@@ -4,10 +4,10 @@ export function element<T extends Element>(selector: string, type: { new(): T })
 	return found;
 }
 
-export function show(message: unknown): void {
+export function show(message: string): void {
 	const feedback = element('#feedback', HTMLOutputElement);
 	feedback.hidden = false;
-	feedback.textContent = typeof message === 'string' ? message : JSON.stringify(message, null, 2);
+	feedback.textContent = message;
 }
 
 export function showError(error: unknown): void {

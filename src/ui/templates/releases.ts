@@ -61,5 +61,6 @@ export function renderReleases(repositories: RepositoryRecord[], executions: Exe
 		<label>Target commit (optional)<input name="sourceSha" pattern="[a-f0-9]{40}"></label>
 		<button>Start</button>
 	</form>
+	<pre id="start-result"></pre>
 	</section>`;
 }

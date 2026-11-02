@@ -1,4 +1,4 @@
-import { api, element, refresh, show, submit } from './dom.ts';
+import { api, displayJson, element, refresh, show, submit } from './dom.ts';
 
 interface AuthenticationChallenge {
 	id: string;
@@ -55,16 +55,19 @@ export function setupCredentials(): void {
 			}, 30_000);
 			show('Credential revealed for 30 seconds.');
 		} else {
-			show(result);
+			displayJson('#credential-result', result);
+			show(action === 'sync' ? 'Credential synchronized.' : 'Credential replaced.');
 		}
 	});
 
 	submit('grant', async data => {
 		const grant = { ...data, repositoryId: Number(data.repositoryId) };
-		show(await api('/api/credentials/grant', { grant, proof: await elevated() }));
+		displayJson('#credential-result', await api('/api/credentials/grant', { grant, proof: await elevated() }));
+		show('Grant saved.');
 	});
 	submit('revoke', async data => {
-		show(await api('/api/credentials/revoke', { ...data, proof: await elevated() }));
+		displayJson('#credential-result', await api('/api/credentials/revoke', { ...data, proof: await elevated() }));
+		show('Grant revoked.');
 	});
 	refresh('#load-credentials', '#credential-list', '/api/credentials');
 }

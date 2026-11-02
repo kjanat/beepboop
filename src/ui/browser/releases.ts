@@ -71,12 +71,14 @@ export function setupReleases(): void {
 		show('Release set started. Promotion gates still require approval.');
 	});
 	submit('start', async data => {
-		show(
+		displayJson(
+			'#start-result',
 			await api('/api/executions/start', {
 				...data,
 				...repository(data),
 				requestId: crypto.randomUUID(),
 			}),
 		);
+		show('Operation started.');
 	});
 }

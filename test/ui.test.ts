@@ -12,3 +12,22 @@ test('release-set dashboard exposes preview, preparation and merged-revision con
 	if (!script) throw new Error('Missing dashboard script');
 	expect(() => new Script(script)).not.toThrow();
 });
+
+test('every element the dashboard script looks up is on the page', async () => {
+	const page = await renderDashboard([], []).text();
+	const script = page.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/)?.[1] ?? '';
+	const ids = new Set([...script.matchAll(/["'`]#([a-z][\w-]*)/g)].map(([, id]) => id));
+	expect([...ids]).toEqual(
+		expect.arrayContaining(['feedback', 'credential-result', 'start-result', 'execution-result']),
+	);
+	for (const id of ids) expect(page).toContain(`id="${id}"`);
+});
+
+test('the feedback box is a contained block that hides when empty', async () => {
+	const page = await renderDashboard([], []).text();
+	const rule = page.match(/#feedback\s*\{([^}]*)\}/)?.[1]?.replace(/\s/g, '') ?? '';
+	for (const declaration of ['display:block', 'max-height:35vh', 'overflow:auto', 'z-index:10']) {
+		expect(rule).toContain(declaration);
+	}
+	expect(page).toMatch(/#feedback\[hidden\]\s*\{\s*display:\s*none;?\s*\}/);
+});

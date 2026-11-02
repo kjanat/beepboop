@@ -99,12 +99,19 @@ pre {
 	overflow-wrap: anywhere;
 }
 #feedback {
+	display: block;
 	position: sticky;
 	bottom: 12px;
+	z-index: 10;
+	max-height: 35vh;
+	overflow: auto;
 	background: #20382e;
 	padding: 14px;
 	white-space: pre-wrap;
 	border-radius: 8px;
+}
+#feedback[hidden] {
+	display: none;
 }
 details {
 	margin: 12px 0;

@@ -41,5 +41,6 @@ export function renderCredentials(): string {
 			<label>Grant ID<input name="grantId" required></label>
 			<button>Revoke grant</button>
 		</form>
+		<pre id="credential-result"></pre>
 	</section>`;
 }

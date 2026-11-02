@@ -76,6 +76,7 @@ export function renderExecutions(executions: Execution[]): string {
 	return `
 		<section id="executions" hidden>
 			<h2>Executions</h2>
+			<pre id="execution-result"></pre>
 			${executions.map(renderExecution).join('') || '<p>No executions yet.</p>'}
 		</section>`;
 }
