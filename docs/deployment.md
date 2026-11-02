@@ -30,13 +30,12 @@ Environments write permissions, according to the grant's delivery type.
 
 Set these with `wrangler secret put NAME --config wrangler.jsonc`:
 
-| Secret                          | Value                                                         |
-| ------------------------------- | ------------------------------------------------------------- |
-| `GITHUB_APP_ID`                 | GitHub App ID                                                 |
-| `GITHUB_APP_PRIVATE_KEY`        | App private key in PKCS8 PEM format                           |
-| `GITHUB_WEBHOOK_SECRET`         | App webhook signing secret                                    |
-| `VAULT_KEYS`                    | JSON map of key IDs to base64-encoded 32-byte encryption keys |
-| `AUTHENTICATOR_BOOTSTRAP_TOKEN` | Temporary token for the first security-key enrollment         |
+| Secret                   | Value                                                         |
+| ------------------------ | ------------------------------------------------------------- |
+| `GITHUB_APP_ID`          | GitHub App ID                                                 |
+| `GITHUB_APP_PRIVATE_KEY` | App private key in PKCS8 PEM format                           |
+| `GITHUB_WEBHOOK_SECRET`  | App webhook signing secret                                    |
+| `VAULT_KEYS`             | JSON map of key IDs to base64-encoded 32-byte encryption keys |
 
 `VAULT_ACTIVE_KEY` selects an entry in `VAULT_KEYS` for new ciphertexts. Older
 ciphertexts require their corresponding keys until migrated or deleted.
@@ -51,9 +50,8 @@ bun run test:runtime
 bunx wrangler deploy --config wrangler.jsonc
 ```
 
-Sign in to the dashboard. Enroll the first physical security key with the
-bootstrap token, then enroll a second using the first key. Delete the bootstrap
-secret after enrollment.
+Sign in to the dashboard and enroll the first physical security key. Enroll a
+second key with a touch of the first.
 
 The login uses authorization code with PKCE and a secure HttpOnly cookie. An
 expired session requires login again. Credential operations require a fresh

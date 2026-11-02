@@ -25,10 +25,10 @@ async function elevated(): Promise<string> {
 
 export function setupCredentials(): void {
 	submit('enroll', async data => {
-		const proof = data.bootstrap ? undefined : await elevated();
+		const first = element('#enroll', HTMLFormElement).dataset.first === 'true';
+		const proof = first ? undefined : await elevated();
 		const challenge = await api<RegistrationChallenge>('/api/authenticators/options', {
 			register: true,
-			bootstrap: data.bootstrap,
 			label: data.label,
 			proof,
 		});

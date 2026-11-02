@@ -33,17 +33,11 @@ test('signing out from another origin is refused', async () => {
 	expect(await response.json()).toEqual({ error: 'Invalid request origin' });
 });
 
-test('enrollment refusals explain the bootstrap token', () => {
-	expect(enrollmentRefusal(true, 1, undefined, undefined)).toBeUndefined();
-	expect(enrollmentRefusal(false, 2, 'secret', undefined)).toBeUndefined();
-	expect(enrollmentRefusal(true, 0, 'secret', 'secret')).toBeUndefined();
-	expect(enrollmentRefusal(false, 0, 'secret', undefined)).toBe(
-		'Enroll a security key first, with the initial enrollment token.',
-	);
-	expect(enrollmentRefusal(true, 0, undefined, 'guess')).toContain('Initial enrollment is closed');
-	expect(enrollmentRefusal(true, 0, 'secret', 'guess')).toBe(
-		'The initial enrollment token differs from the AUTHENTICATOR_BOOTSTRAP_TOKEN Worker secret.',
-	);
+test('the first key enrolls with the login alone and key checks need an enrolled key', () => {
+	expect(enrollmentRefusal(true, 0)).toBeUndefined();
+	expect(enrollmentRefusal(true, 1)).toBeUndefined();
+	expect(enrollmentRefusal(false, 2)).toBeUndefined();
+	expect(enrollmentRefusal(false, 0)).toBe('Enroll a security key first.');
 });
 
 const realFetch = globalThis.fetch;

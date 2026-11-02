@@ -7,13 +7,9 @@ function renderEnrollment(enrolledKeys: number): string {
 			<button>Enroll key</button>
 		</form>`;
 	}
-	return `<form id="enroll">
+	return `<form id="enroll" data-first="true">
 			<h3>Enroll your first security key</h3>
-			<p>Generate a random token with <code>openssl rand -base64 32</code>, store it as the
-				<code>AUTHENTICATOR_BOOTSTRAP_TOKEN</code> Worker secret, and enter the same value here. Enroll a
-				second key with the first one, then delete the secret.</p>
 			<label>Key name<input name="label" placeholder="Primary YubiKey" required></label>
-			<label>Initial enrollment token<input name="bootstrap" type="password" autocomplete="off" required></label>
 			<button>Enroll key</button>
 		</form>`;
 }

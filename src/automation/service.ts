@@ -592,7 +592,6 @@ export class AutomationService {
 				await authenticators.options(
 					actor,
 					register,
-					typeof body.bootstrap === 'string' ? body.bootstrap : undefined,
 					body.label === undefined ? undefined : text(body.label),
 				),
 			);

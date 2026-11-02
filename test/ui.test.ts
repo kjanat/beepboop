@@ -264,11 +264,11 @@ test('activity rows fall back to plain text for unknown repositories and show an
 	expect(rows).toContain('<td>404</td>');
 });
 
-test('the first key enrollment asks for the bootstrap token and later enrollments do not', async () => {
+test('the first key enrollment asks only for a key name and later enrollments require a key touch', async () => {
 	const first = await renderDashboard([], []).text();
-	expect(first).toContain('<input name="bootstrap" type="password" autocomplete="off" required>');
-	expect(first).toContain('<code>AUTHENTICATOR_BOOTSTRAP_TOKEN</code>');
+	expect(first).toContain('<form id="enroll" data-first="true">');
+	expect(first).not.toContain('bootstrap');
 	const later = await renderDashboard([], [], new Map(), 1).text();
-	expect(later).not.toContain('name="bootstrap"');
+	expect(later).toContain('<form id="enroll">');
 	expect(later).toContain('Enrolling another key requires a touch of an enrolled key.');
 });

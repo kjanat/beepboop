@@ -15,7 +15,6 @@ export interface AuthBindings {
 	OPENAUTH_ISSUER: string;
 	OPENAUTH_CLIENT_ID: string;
 	ADMIN_SUBJECT: string;
-	AUTHENTICATOR_BOOTSTRAP_TOKEN?: string;
 }
 export interface WorkflowIdentity {
 	helperSha?: string;
@@ -218,21 +217,8 @@ export function signOut(request: Request, origin: string): Response {
 		},
 	});
 }
-export function enrollmentRefusal(
-	register: boolean,
-	enrolled: number,
-	configured: string | undefined,
-	bootstrap: string | undefined,
-): string | undefined {
-	if (enrolled > 0) return undefined;
-	if (!register) return 'Enroll a security key first, with the initial enrollment token.';
-	if (!configured) {
-		return 'Initial enrollment is closed. Set the AUTHENTICATOR_BOOTSTRAP_TOKEN Worker secret and enter its value here.';
-	}
-	if (bootstrap !== configured) {
-		return 'The initial enrollment token differs from the AUTHENTICATOR_BOOTSTRAP_TOKEN Worker secret.';
-	}
-	return undefined;
+export function enrollmentRefusal(register: boolean, enrolled: number): string | undefined {
+	return !register && enrolled === 0 ? 'Enroll a security key first.' : undefined;
 }
 
 interface SavedCredential {
@@ -254,17 +240,11 @@ export class Authenticators {
 	async options(
 		subject: string,
 		register: boolean,
-		bootstrap?: string,
 		label?: string,
 	): Promise<unknown> {
 		const credentials = await this.credentials(subject),
 			rpID = new URL(this.env.APPLICATION_ORIGIN).hostname;
-		const refusal = enrollmentRefusal(
-			register,
-			credentials.length,
-			this.env.AUTHENTICATOR_BOOTSTRAP_TOKEN,
-			bootstrap,
-		);
+		const refusal = enrollmentRefusal(register, credentials.length);
 		if (refusal) throw new Error(refusal);
 		const options = register
 			? await generateRegistrationOptions({
@@ -293,7 +273,7 @@ export class Authenticators {
 				JSON.stringify({
 					subject,
 					register,
-					bootstrap: register && credentials.length === 0,
+					first: register && credentials.length === 0,
 					label: label?.slice(0, 80),
 					challenge: options.challenge,
 				}),
@@ -334,7 +314,7 @@ export class Authenticators {
 				label: challenge.label,
 				publicKey: base64(c.publicKey),
 			});
-			const insert = challenge.bootstrap === true
+			const insert = challenge.first === true
 				? this.env.DB.prepare(
 					'INSERT INTO authenticators SELECT ?,?,? WHERE NOT EXISTS (SELECT 1 FROM authenticators WHERE subject=?)',
 				).bind(c.id, subject, document, subject)
