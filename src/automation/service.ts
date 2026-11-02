@@ -264,7 +264,15 @@ export class AutomationService {
 		for (const repository of await this.store.repositories()) {
 			try {
 				const refreshed = await this.refresh(repository.name, repository.id);
-				await this.winget().automatic(refreshed);
+				try {
+					await this.winget().automatic(refreshed);
+				} catch (error) {
+					await this.store.audit(
+						'winget',
+						'winget.failed',
+						`${repository.name}: ${error instanceof Error ? error.message : 'Polling failed'}`,
+					);
+				}
 				await this.coordinator(repository.id).wake();
 				for (const event of await this.coordinator(repository.id).releaseEvents()) {
 					await this.event(event);

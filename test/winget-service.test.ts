@@ -4,8 +4,9 @@ import { rejects } from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseRepositoryConfiguration } from '@/automation/configuration';
 import { RepositoryGateway } from '@/automation/github';
+import { type AutomationBindings, AutomationService } from '@/automation/service';
 import { Store } from '@/automation/store';
-import type { RepositoryRecord } from '@/automation/types';
+import type { AutomationEvent, Execution, RepositoryRecord } from '@/automation/types';
 import { parseWinGetPolicy, WinGetService } from '@/automation/winget';
 
 const configuration = JSON.parse(readFileSync('examples/winget/package.json', 'utf8'));
@@ -23,6 +24,7 @@ const repo: RepositoryRecord = {
 function fixture() {
 	const sqlite = new Database(':memory:');
 	sqlite.run(readFileSync('migrations/0001_automation.sql', 'utf8'));
+	sqlite.run(readFileSync('migrations/0002_release_events.sql', 'utf8'));
 	sqlite.run(readFileSync('migrations/0003_winget.sql', 'utf8'));
 	const prepare = (sql: string, args: unknown[] = []): unknown => ({
 		bind: (...values: unknown[]) => prepare(sql, values),
@@ -42,6 +44,10 @@ function fixture() {
 		digest = true;
 		tampered = false;
 		privateRepo = false;
+		failReleases = false;
+		reconciled: number[] = [];
+		checks = { total_count: 1, check_runs: [{ status: 'completed', conclusion: 'success' }] };
+		statuses = { total_count: 0, state: 'pending' };
 		async token() {
 			return 'fixture';
 		}
@@ -75,6 +81,7 @@ function fixture() {
 					html_url: 'https://github.com/example/tool/releases/tag/v1.2.3',
 				};
 			}
+			if (this.failReleases && path.includes('/releases?')) throw Error('Release API unavailable');
 			if (path.includes('/releases?')) return [{ id: 42, tag_name: 'v1.2.3', published_at: '2026-11-02T00:00:00Z' }];
 			if (path === '/repos/bot/winget-pkgs') return { fork: true, parent: { full_name: 'microsoft/winget-pkgs' } };
 			if (path === '/repos/microsoft/winget-pkgs') return { default_branch: 'master' };
@@ -86,14 +93,18 @@ function fixture() {
 				head: { sha: 'c'.repeat(40) },
 			};
 			if (path.includes('/pulls?')) return this.pull ? [pr] : [];
-			if (path.endsWith('/pulls/7')) return pr;
-			if (path.endsWith('/pulls/7/reviews?per_page=100')) {
+			const pullNumber = /\/pulls\/(\d+)$/.exec(path)?.[1];
+			if (pullNumber) {
+				this.reconciled.push(Number(pullNumber));
+				return pr;
+			}
+			if (/\/pulls\/\d+\/reviews\?per_page=100$/.test(path)) {
 				return [{ state: 'CHANGES_REQUESTED', user: { login: 'reviewer' } }];
 			}
 			if (path.endsWith('/check-runs?per_page=100')) {
-				return { total_count: 1, check_runs: [{ status: 'completed', conclusion: 'success' }] };
+				return this.checks;
 			}
-			if (path.endsWith('/status')) return { total_count: 0, state: 'pending' };
+			if (path.endsWith('/status')) return this.statuses;
 			if (path === '/repos/microsoft/winget-pkgs/pulls' && method === 'POST') {
 				this.pull = true;
 				if (this.failAfterPr) throw Error('Lost response');
@@ -208,4 +219,129 @@ test('WinGet policy rejects traversal and unsupported fields', () => {
 	expect(() => parseWinGetPolicy({ config: '../private.json' })).toThrow();
 	expect(() => parseWinGetPolicy({ config: 'package.json', automatic: 'yes' })).toThrow();
 	expect(() => parseWinGetPolicy({ config: 'package.json', token: 'secret' })).toThrow();
+});
+
+test('WinGet reconciliation visits every open submission beyond the dashboard limit', async () => {
+	const f = fixture();
+	try {
+		const plan = await f.service.plan(repo, 42);
+		for (let i = 0; i < 305; i++) {
+			const id = String(i).padStart(4, '0');
+			const saved = { plan: { ...plan, id }, state: i < 205 ? 'open' : 'closed', number: i + 1, updatedAt: i };
+			f.sqlite.run('INSERT INTO winget_submissions(id,package,version,document,updated_at) VALUES(?,?,?,?,?)', [
+				id,
+				`Example.Tool${i}`,
+				'1.2.3',
+				JSON.stringify(saved),
+				i,
+			]);
+		}
+		expect(await f.service.list()).toHaveLength(100);
+		f.gateway.merged = true;
+		await f.service.reconcile();
+		expect(f.gateway.reconciled).toHaveLength(205);
+		expect(new Set(f.gateway.reconciled).size).toBe(205);
+		expect((await f.service.get('0000'))?.state).toBe('merged');
+		expect((await f.service.get('0204'))?.state).toBe('merged');
+		expect((await f.service.get('0304'))?.state).toBe('closed');
+	} finally {
+		f.sqlite.close();
+	}
+});
+
+test('WinGet reconciliation recognizes status-only validation and keeps absent validation pending', async () => {
+	const f = fixture();
+	try {
+		const plan = await f.service.plan(repo, 42);
+		await f.service.submit(repo, 42, plan.digest);
+		f.gateway.checks = { total_count: 0, check_runs: [] };
+		for (
+			const [state, total_count, expected] of [
+				['success', 1, 'passed'],
+				['success', 0, 'pending'],
+				['pending', 1, 'pending'],
+				['failure', 1, 'failed'],
+				['error', 1, 'failed'],
+			] as const
+		) {
+			f.gateway.statuses = { state, total_count };
+			await f.service.reconcile();
+			expect((await f.service.get(plan.id))?.checks).toBe(expected);
+		}
+	} finally {
+		f.sqlite.close();
+	}
+});
+
+test('WinGet release-list failure does not prevent coordinator wake, event delivery, or scheduled workflows', async () => {
+	const f = fixture();
+	try {
+		const scheduled: RepositoryRecord = {
+			...repo,
+			configuration: parseRepositoryConfiguration({
+				winget: { config: 'distribution/winget.json', automatic: true },
+				streams: { main: { workflows: { publish: { file: 'release.yml', schedule: '* * * * *' } } } },
+			}),
+			inventory: {
+				...repo.inventory,
+				workflows: [{
+					name: 'Release',
+					file: 'release.yml',
+					events: ['workflow_dispatch'],
+					dispatchInputs: ['beepboop_execution_id'],
+					jobs: [],
+					localActions: [],
+					publication: true,
+				}],
+			},
+		};
+		f.sqlite.run('INSERT INTO repositories VALUES(?,?,?,?)', [repo.id, repo.name, JSON.stringify(scheduled), 0]);
+		const lastTick = Math.floor(Date.now() / 60_000) * 60_000 - 60_000;
+		f.sqlite.run('INSERT INTO schedules VALUES(?,?)', ['1:main:publish:* * * * *', lastTick]);
+		const calls: string[] = [];
+		const event: AutomationEvent = {
+			id: 'released',
+			source: repo.name,
+			event: 'package.version.changed',
+			version: '1.2.3',
+		};
+		const coordinator = {
+			wake: async () => {
+				calls.push('wake');
+			},
+			releaseEvents: async () => [event],
+			acknowledgeReleaseEvent: async (id: string) => {
+				calls.push(`ack:${id}`);
+			},
+			enqueue: async (execution: Execution) => {
+				calls.push(`enqueue:${execution.operation}`);
+				return execution;
+			},
+		};
+		class Service extends AutomationService {
+			override async refresh() {
+				return scheduled;
+			}
+			override winget() {
+				return f.service;
+			}
+			override async event(value: AutomationEvent) {
+				calls.push(`event:${value.id}`);
+			}
+		}
+		const service = new Service({
+			DB: f.service.store.db,
+			AUTOMATION: { getByName: () => coordinator },
+		} as unknown as AutomationBindings);
+		f.gateway.failReleases = true;
+		await service.scheduled();
+		expect(calls).toEqual(['wake', 'event:released', 'ack:released', 'enqueue:publish']);
+		expect(
+			(await service.store.activity()).some(row =>
+				row.action === 'winget.failed' && row.target.includes('Release API unavailable')
+			),
+		).toBe(true);
+	} finally {
+		f.sqlite.close();
+	}
 });

@@ -289,9 +289,23 @@ export class WinGetService {
 			updatedAt: Date.now(),
 		};
 	}
+	private async *openSubmissions(): AsyncGenerator<WinGetSubmission> {
+		let after: string | null = null;
+		while (true) {
+			const rows: D1Result<{ id: string; document: string }> = await this.store.db.prepare(
+				"SELECT id,document FROM winget_submissions WHERE json_extract(document,'$.state')='open' AND (? IS NULL OR id>?) ORDER BY id LIMIT 100",
+			).bind(after, after).all<{ id: string; document: string }>();
+			if (!rows.results.length) return;
+			for (const row of rows.results) {
+				// Use the stable ID: reconciliation changes both state and updated_at.
+				after = row.id;
+				yield JSON.parse(row.document) as WinGetSubmission;
+			}
+		}
+	}
 	async reconcile(): Promise<void> {
 		if (!this.setup()) return;
-		for (const saved of await this.list()) {
+		for await (const saved of this.openSubmissions()) {
 			if (!saved.number || saved.state !== 'open') continue;
 			try {
 				const token = text(this.env.WINGET_GITHUB_TOKEN);
@@ -323,7 +337,7 @@ export class WinGetService {
 						? 'pending'
 						: runs.some(run => !['success', 'neutral', 'skipped'].includes(String(run.conclusion)))
 						? 'failed'
-						: runs.length
+						: runs.length || statuses.state === 'success' && Number(statuses.total_count) > 0
 						? 'passed'
 						: 'pending';
 				await this.store.db.prepare(
