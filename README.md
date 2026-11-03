@@ -1,6 +1,6 @@
 # Beepboop
 
-<img src="assets/beepboop.png" alt="Beepboop robot" width="180">
+<img align="right" src="assets/beepboop.png" alt="Beepboop robot" width="130">
 
 Release automation for ~~your~~ *my* GitHub repositories.
 
