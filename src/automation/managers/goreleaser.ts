@@ -1,4 +1,5 @@
 import { parse as parseToml } from 'smol-toml';
+import type { Channel } from '@/automation/destinations';
 import { goreleaserConfig, object, yaml } from '@/automation/managers/helpers';
 import type { Manager, VerificationContext } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
@@ -29,6 +30,48 @@ export function projectName(snapshot: Snapshot, config: Record<string, unknown>)
 		moduleName(snapshot),
 		snapshot.repository.name.split('/')[1],
 	].find((name): name is string => typeof name === 'string' && name.trim() !== '');
+}
+function literal(value: unknown): string | undefined {
+	return typeof value === 'string' && !value.includes('{{') ? value.replace(/^\/+|\/+$/g, '') : undefined;
+}
+function entries(config: Record<string, unknown>, key: string): Record<string, unknown>[] {
+	const value = config[key];
+	return Array.isArray(value) ? value.map(object) : [];
+}
+function channelsOf(path: string, config: Record<string, unknown>, project: string) {
+	const channels: Channel[] = [];
+	const diagnostics: string[] = [];
+	const skip = (key: string, index: number) =>
+		diagnostics.push(`${path}: ${key}[${index}] has a templated or missing name or repository; not checked`);
+	for (
+		const [key, directory] of [['homebrew_casks', 'Casks'], ['brews', 'Formula'], ['scoops', '']] as const
+	) {
+		for (const [index, entry] of entries(config, key).entries()) {
+			const repository = object(entry.repository);
+			const owner = literal(repository.owner);
+			const name = literal(repository.name);
+			const file = literal(entry.name ?? project);
+			const folder = literal(entry.directory ?? directory);
+			if (!owner || !name || !file || folder === undefined) {
+				skip(key, index);
+				continue;
+			}
+			const target = { repository: `${owner}/${name}`, directory: folder, name: file, manifest: path };
+			channels.push(
+				key === 'scoops'
+					? { destination: 'scoop', ...target }
+					: { destination: 'homebrew', kind: key === 'brews' ? 'formula' : 'cask', ...target },
+			);
+		}
+	}
+	for (const [key, suffix] of [['aurs', '-bin'], ['aur_sources', '']] as const) {
+		for (const [index, entry] of entries(config, key).entries()) {
+			const name = literal(entry.name ?? `${project}${suffix}`);
+			if (name) channels.push({ destination: 'aur', name, manifest: path });
+			else skip(key, index);
+		}
+	}
+	return { channels, diagnostics };
 }
 async function verifyRelease(
 	publication: Publication,
@@ -86,6 +129,8 @@ export const goreleaserManager: Manager = {
 				result.diagnostics.push(`${path}: release.disable is a template; publication assumed`);
 			}
 			const version = latestTag(snapshot.tags ?? [], 'v');
+			const { channels, diagnostics } = channelsOf(path, config, name);
+			result.diagnostics.push(...diagnostics);
 			result.packages.push({
 				manager: 'goreleaser',
 				name,
@@ -94,6 +139,7 @@ export const goreleaserManager: Manager = {
 				versionSource: tagSource('v'),
 				publication: disable === true || disable === 'true' ? excluded('publish-disabled') : registry,
 				dependencies: [],
+				...(channels.length ? { channels } : {}),
 			});
 		}
 		return result;

@@ -1,9 +1,14 @@
 import {
+	type Channel,
+	type ChannelOutcome,
+	channelKey,
 	destinationsOf,
+	isChannelOutcome,
+	type ManagerDestinationId,
 	managerDestinations,
-	type RegistryDestinationId,
 	type RegistryOutcome,
 } from '@/automation/destinations';
+import { checkChannel, pkgbuildChannels } from '@/automation/managers/channels';
 import { publicationOrder } from '@/automation/managers/order';
 import { packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
@@ -19,7 +24,7 @@ export interface Manager {
 	updateDependencies?(context: DependencyEdit): void;
 	verifyPublication?(publication: Publication, request: Fetcher, context?: VerificationContext): Promise<Publication>;
 	latest?(pkg: Package, request: Fetcher): Promise<RegistryVersion>;
-	secondaryLatest?: Partial<Record<RegistryDestinationId, RegistryLookup>>;
+	secondaryLatest?: Partial<Record<ManagerDestinationId, RegistryLookup>>;
 }
 export type RegistryLookup = (pkg: Package, request: Fetcher) => Promise<RegistryVersion>;
 export type Fetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -90,12 +95,21 @@ export class ManagerRegistry {
 				? {
 					...rest,
 					publicationStatus: 'unchecked',
-					destinations: destinationsOf(pkg.manager).map(destination => ({ destination, state: 'unchecked' })),
+					destinations: [
+						...destinationsOf(pkg.manager).map(destination => unchecked({ destination })),
+						...(pkg.channels ?? []).map(unchecked),
+					],
 				}
 				: { ...rest, publicationStatus: 'unchecked' };
 		});
 		const diagnostics: string[] = [];
-		const lookups = (pkg: Package): { destination: RegistryDestinationId; latest: RegistryLookup }[] => {
+		const channels = async (list: Channel[], label: (channel: Channel) => string): Promise<ChannelOutcome[]> =>
+			Promise.all(list.map(async channel => {
+				const { outcome, failure } = await checkChannel(channel, request);
+				if (failure) diagnostics.push(`${label(channel)}: ${failure}`);
+				return outcome;
+			}));
+		const lookups = (pkg: Package): { destination: ManagerDestinationId; latest: RegistryLookup }[] => {
 			const manager = this.managers.get(pkg.manager);
 			const mapped = managerDestinations[pkg.manager];
 			if (!manager || !mapped || !publishable(pkg)) return [];
@@ -108,17 +122,24 @@ export class ManagerRegistry {
 				}),
 			];
 		};
-		const pending = packages.filter(pkg => lookups(pkg).length);
+		const pending = packages.filter(pkg => lookups(pkg).length || (publishable(pkg) && pkg.channels?.length));
 		for (let offset = 0; offset < pending.length; offset += 8) {
 			await Promise.all(
 				pending.slice(offset, offset + 8).map(async pkg => {
 					const primary = managerDestinations[pkg.manager]?.primary;
-					const results = await Promise.all(
-						lookups(pkg).map(async ({ destination, latest }) => ({
-							destination,
-							result: await latest(pkg, request),
-						})),
-					);
+					const [results, checked] = await Promise.all([
+						Promise.all(
+							lookups(pkg).map(async ({ destination, latest }) => ({
+								destination,
+								result: await latest(pkg, request),
+							})),
+						),
+						channels(pkg.channels ?? [], () => `${pkg.manager}:${pkg.name}`),
+					]);
+					pkg.destinations = [
+						...(pkg.destinations ?? []).filter(outcome => !isChannelOutcome(outcome)),
+						...checked,
+					];
 					for (const { destination, result } of results) {
 						pkg.destinations = pkg.destinations?.map(outcome =>
 							outcome.destination === destination ? registryOutcome(destination, result) : outcome
@@ -134,7 +155,18 @@ export class ManagerRegistry {
 				}),
 			);
 		}
-		return { ...inventory, packages, diagnostics: [...new Set([...inventory.diagnostics, ...diagnostics])] };
+		const { destinations: _destinations, ...rest } = inventory;
+		const repositoryChannels = inventory.channels ?? [];
+		const destinations: ChannelOutcome[] = [];
+		for (let offset = 0; offset < repositoryChannels.length; offset += 8) {
+			destinations.push(...await channels(repositoryChannels.slice(offset, offset + 8), channel => channel.manifest));
+		}
+		return {
+			...rest,
+			...(destinations.length ? { destinations } : {}),
+			packages,
+			diagnostics: [...new Set([...inventory.diagnostics, ...diagnostics])],
+		};
 	}
 	canVerify(name: ManagerName): boolean {
 		return Boolean(this.managers.get(name)?.verifyPublication);
@@ -159,6 +191,11 @@ export class ManagerRegistry {
 				result.references.push(...inventory.references);
 			}
 		}
+		const pkgbuilds = pkgbuildChannels(snapshot);
+		const claimed = new Set(result.packages.flatMap(pkg => pkg.channels ?? []).map(channelKey));
+		const channels = pkgbuilds.channels.filter(channel => !claimed.has(channelKey(channel)));
+		if (channels.length) result.channels = channels;
+		result.diagnostics.push(...pkgbuilds.diagnostics);
 		const identities = new Set<string>();
 		for (const pkg of result.packages) {
 			const identity = packageId(pkg);
@@ -178,7 +215,10 @@ export class ManagerRegistry {
 		return result;
 	}
 }
-function registryOutcome(destination: RegistryDestinationId, result: RegistryVersion): RegistryOutcome {
+function unchecked<T extends object>(target: T): T & { state: 'unchecked' } {
+	return { ...target, state: 'unchecked' };
+}
+function registryOutcome(destination: ManagerDestinationId, result: RegistryVersion): RegistryOutcome {
 	if (result.kind === 'published') return { destination, state: 'published', version: result.version };
 	if (result.kind === 'failed') return { destination, state: 'failed', reason: result.reason };
 	return { destination, state: 'missing' };

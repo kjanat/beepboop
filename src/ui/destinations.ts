@@ -1,12 +1,16 @@
 import {
+	type ChannelOutcome,
+	channelKey,
+	isChannelOutcome,
 	type ManifestOutcome,
 	managerDestinations,
 	type RegistryOutcome,
+	type RegistryState,
 	registryDestination,
 	winget,
 } from '@/automation/destinations';
-import type { Package } from '@/automation/types';
-import { registryHref } from '@/ui/templates/html';
+import type { Inventory, Package } from '@/automation/types';
+import { channelHref, registryHref } from '@/ui/templates/html';
 
 export interface DestinationEntry {
 	label: string;
@@ -47,16 +51,36 @@ export function manifestEntry(outcome: ManifestOutcome): DestinationEntry {
 	};
 }
 
-function registryEntry(outcome: RegistryOutcome, name: string, repository: string): DestinationEntry {
-	const { label } = registryDestination(outcome.destination);
-	const version = outcome.state === 'published' ? outcome.version : undefined;
-	const href = registryHref(outcome.destination, name, version, repository);
-	const status = outcome.state === 'published'
+export function repositoryChannels(inventory: Inventory): { outcome: ChannelOutcome; entry: DestinationEntry }[] {
+	const checked = new Map((inventory.destinations ?? []).map(outcome => [channelKey(outcome), outcome]));
+	return (inventory.channels ?? []).map(channel => {
+		const outcome: ChannelOutcome = checked.get(channelKey(channel)) ?? { ...channel, state: 'unchecked' };
+		return { outcome, entry: channelEntry(outcome) };
+	});
+}
+
+function stateLabel(outcome: RegistryState): string {
+	return outcome.state === 'published'
 		? outcome.version
 		: outcome.state === 'missing'
 		? 'Not published'
 		: outcome.state === 'failed'
 		? `Lookup failed (${outcome.reason})`
 		: 'Not checked';
-	return { label, status, ...(href ? { href } : {}) };
+}
+
+function channelEntry(outcome: ChannelOutcome): DestinationEntry {
+	return {
+		label: `${registryDestination(outcome.destination).label} ${outcome.name}`,
+		status: outcome.state === 'tracking' ? 'Tracks the default branch' : stateLabel(outcome),
+		href: channelHref(outcome),
+	};
+}
+
+function registryEntry(outcome: RegistryOutcome, name: string, repository: string): DestinationEntry {
+	if (isChannelOutcome(outcome)) return channelEntry(outcome);
+	const { label } = registryDestination(outcome.destination);
+	const version = outcome.state === 'published' ? outcome.version : undefined;
+	const href = registryHref(outcome.destination, name, version, repository);
+	return { label, status: stateLabel(outcome), ...(href ? { href } : {}) };
 }

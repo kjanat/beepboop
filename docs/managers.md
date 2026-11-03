@@ -67,3 +67,14 @@ The first destination is primary and supplies the package's `published`
 version. WinGet is a manifest destination. Beepboop submits its manifests
 itself. The Repositories page lists every destination per package and shows
 the latest WinGet submission for repositories that configure `winget`.
+
+Homebrew, Scoop, and AUR destinations are channels with parameters. The
+`goreleaser` adapter reads them from `homebrew_casks`, `brews`, `scoops`,
+`aurs`, and `aur_sources`, and attaches them to its package. Entries with a
+templated name or repository produce a diagnostic. Discovery also reads
+`pkgname` from every `PKGBUILD` and lists those AUR packages as repository
+rows. Beepboop reads the cask or formula `version` line, or the version in a
+formula `url`, from the tap, the manifest `version` from the bucket, and the
+AUR RPC version without epoch or `pkgrel`. AUR packages ending in `-git` track
+the default branch, and Beepboop skips their version check. The repository's
+own workflows publish to these channels.

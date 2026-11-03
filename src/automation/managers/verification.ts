@@ -41,10 +41,24 @@ export interface RegistryQuery {
 	headers: Record<string, string>;
 	body: string;
 }
-export async function latestVersion(
+export class LookupFailure {
+	constructor(readonly reason: string) {}
+}
+export function latestVersion(
 	request: Fetcher,
 	url: string,
 	decode: (body: unknown) => unknown,
+	query?: RegistryQuery,
+): Promise<RegistryVersion> {
+	return lookup(request, url, async response => decode(await response.json()), query);
+}
+export function latestText(request: Fetcher, url: string, decode: (body: string) => unknown): Promise<RegistryVersion> {
+	return lookup(request, url, async response => decode(await response.text()));
+}
+async function lookup(
+	request: Fetcher,
+	url: string,
+	read: (response: Response) => Promise<unknown>,
 	query?: RegistryQuery,
 ): Promise<RegistryVersion> {
 	try {
@@ -56,8 +70,9 @@ export async function latestVersion(
 		});
 		if (response.status === 404) return { kind: 'missing', url };
 		if (!response.ok) return { kind: 'failed', url, reason: `HTTP ${response.status}` };
-		const version = decode(await response.json());
+		const version = await read(response);
 		if (version === unpublished) return { kind: 'missing', url };
+		if (version instanceof LookupFailure) return { kind: 'failed', url, reason: version.reason };
 		try {
 			return { kind: 'published', version: semver(version).replace(/^v/, '') };
 		} catch {

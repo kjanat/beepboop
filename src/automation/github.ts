@@ -171,7 +171,7 @@ export class RepositoryGateway {
 					extraPaths.includes(path)
 					|| /^actions\/(?:begin|prepare|report)\/action\.ya?ml$/.test(path)
 					|| !/(?:^|\/)(?:node_modules|vendor|target|testdata|fixtures|\.git)\//.test(path)
-						&& /(?:^|\/)(?:\.pre-commit-config\.ya?ml|targets.json|Cargo.toml|Cargo.lock|package.json|jsr.json|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock|go\.mod|\.?goreleaser[^/]*\.ya?ml)$|^\.github\/(?:beepboop.json|workflows\/[^/]+\.ya?ml)$/
+						&& /(?:^|\/)(?:\.pre-commit-config\.ya?ml|targets.json|Cargo.toml|Cargo.lock|package.json|jsr.json|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock|go\.mod|PKGBUILD|\.?goreleaser[^/]*\.ya?ml)$|^\.github\/(?:beepboop.json|workflows\/[^/]+\.ya?ml)$/
 							.test(
 								path,
 							),

@@ -1,4 +1,4 @@
-import type { RegistryDestinationId } from '@/automation/destinations';
+import type { Channel, ManagerDestinationId } from '@/automation/destinations';
 
 export function htmlEscape(value: unknown): string {
 	return String(value ?? '').replace(
@@ -19,8 +19,14 @@ export function githubHref(repository: string, ...path: string[]): string {
 	return `https://github.com/${encodePath(repository, ...path)}`;
 }
 
+export function channelHref(channel: Channel): string {
+	if (channel.destination === 'aur') return `https://aur.archlinux.org/packages/${encodeURIComponent(channel.name)}`;
+	const file = `${channel.name}.${channel.destination === 'scoop' ? 'json' : 'rb'}`;
+	return githubHref(channel.repository, 'blob', 'HEAD', channel.directory, file);
+}
+
 export function registryHref(
-	destination: RegistryDestinationId,
+	destination: ManagerDestinationId,
 	name: string,
 	version: string | undefined,
 	repository: string,

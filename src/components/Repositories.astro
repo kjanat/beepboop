@@ -5,7 +5,11 @@ import type { RepositoryRecord } from '@/automation/types';
 import type { Dashboard } from '@/server/dashboard.ts';
 import { date, workflowChoices } from '@/server/dashboard.ts';
 import { packageUrl } from '@/server/package-url';
-import { manifestEntry, packageDestinations } from '@/ui/destinations';
+import {
+	manifestEntry,
+	packageDestinations,
+	repositoryChannels,
+} from '@/ui/destinations';
 
 interface Props {
 	data: Dashboard;
@@ -17,7 +21,8 @@ const repositories = [...data.repositories].sort((left, right) =>
 );
 function listsPackages(repository: RepositoryRecord) {
 	return repository.inventory.packages.some(publishable)
-		|| Boolean(repository.configuration?.winget);
+		|| Boolean(repository.configuration?.winget)
+		|| Boolean(repository.inventory.channels?.length);
 }
 function wingetDestination(repository: RepositoryRecord) {
 	const policy = repository.configuration?.winget;
@@ -174,6 +179,27 @@ function wingetDestination(repository: RepositoryRecord) {
 											<td>
 												Release tags starting with <code
 												>{winget.policy.tagPrefix}</code>
+											</td>
+										</tr>
+									))}
+									{repositoryChannels(repository.inventory).map((
+										{ outcome, entry },
+									) => (
+										<tr>
+											<td>
+												<code>{outcome.name}</code><small><a
+														href={`https://github.com/${repository.name}/blob/${repository.sha}/${
+															outcome.manifest.split('/').map(encodeURIComponent).join('/')
+														}`}
+													>{outcome.manifest}</a></small>
+											</td>
+											<td>
+												<div>
+													<a href={entry.href}>{entry.label}</a>: {entry.status}
+												</div>
+											</td>
+											<td>
+												{outcome.state === 'tracking' ? 'Default branch' : 'Not linked to a package'}
 											</td>
 										</tr>
 									))}

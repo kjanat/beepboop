@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { type RegistryOutcome, registryDestinationIds } from '@/automation/destinations';
+import {
+	type Channel,
+	type ChannelOutcome,
+	managerDestinationIds,
+	type RegistryOutcome,
+} from '@/automation/destinations';
 import { versionFileSchema } from '@/automation/editors';
 import { inputSchema, outputSchema, platformSchema, type ResolvedInput } from '@/automation/outputs';
 import {
@@ -126,18 +131,44 @@ const publication: z.ZodType<PackagePublication> = z.discriminatedUnion('kind', 
 	z.object({ kind: z.literal('registry') }),
 	z.object({ kind: z.literal('excluded'), reason: z.enum(exclusionReasons) }),
 ]);
-const registryDestination = z.enum(registryDestinationIds);
-const registryOutcome: z.ZodType<RegistryOutcome> = z.discriminatedUnion('state', [
-	z.object({ destination: registryDestination, state: z.literal('published'), version: z.string() }),
-	z.object({ destination: registryDestination, state: z.literal('missing') }),
-	z.object({ destination: registryDestination, state: z.literal('failed'), reason: z.string() }),
-	z.object({ destination: registryDestination, state: z.literal('unchecked') }),
+const registryState = z.discriminatedUnion('state', [
+	z.object({ state: z.literal('published'), version: z.string() }),
+	z.object({ state: z.literal('missing') }),
+	z.object({ state: z.literal('failed'), reason: z.string() }),
+	z.object({ state: z.literal('unchecked') }),
+]);
+const channel: z.ZodType<Channel> = z.discriminatedUnion('destination', [
+	z.object({
+		destination: z.literal('homebrew'),
+		kind: z.enum(['cask', 'formula']),
+		repository: z.string(),
+		directory: z.string(),
+		name: z.string(),
+		manifest: z.string(),
+	}),
+	z.object({
+		destination: z.literal('scoop'),
+		repository: z.string(),
+		directory: z.string(),
+		name: z.string(),
+		manifest: z.string(),
+	}),
+	z.object({ destination: z.literal('aur'), name: z.string(), manifest: z.string() }),
+]);
+const channelOutcome: z.ZodType<ChannelOutcome> = z.intersection(
+	channel,
+	z.union([registryState, z.object({ state: z.literal('tracking') })]),
+);
+const registryOutcome: z.ZodType<RegistryOutcome> = z.union([
+	z.intersection(z.object({ destination: z.enum(managerDestinationIds) }), registryState),
+	channelOutcome,
 ]);
 const storedPackage: z.ZodType<StoredPackage> = z.object({
 	identity: identity.optional(),
 	previousModule: z.object({ name: z.string(), version: z.string() }).optional(),
 	publicationStatus: z.enum(['published', 'missing', 'failed', 'unchecked']).optional(),
 	destinations: z.array(registryOutcome).optional(),
+	channels: z.array(channel).optional(),
 	generated: z.boolean().optional(),
 	optional: z.boolean().optional(),
 	manager: managerName,
@@ -165,6 +196,8 @@ const discoveredWorkflow: z.ZodType<DiscoveredWorkflow> = z.object({
 });
 const inventory: z.ZodType<StoredInventory> = z.object({
 	references: z.array(z.object({ repository: z.string(), path: z.string(), ref: z.string() })).optional(),
+	channels: z.array(channel).optional(),
+	destinations: z.array(channelOutcome).optional(),
 	packages: z.array(storedPackage),
 	workflows: z.array(discoveredWorkflow),
 	managers: z.array(managerName),

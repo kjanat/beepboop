@@ -1,7 +1,7 @@
 import type { ManagerName } from '@/automation/types';
 import type { WinGetSubmission } from '@/automation/winget';
 
-export const registryDestinationIds = [
+export const managerDestinationIds = [
 	'npm',
 	'crates-io',
 	'jsr',
@@ -11,6 +11,9 @@ export const registryDestinationIds = [
 	'vscode-marketplace',
 	'open-vsx',
 ] as const;
+export const channelDestinationIds = ['homebrew', 'scoop', 'aur'] as const;
+export const registryDestinationIds = [...managerDestinationIds, ...channelDestinationIds] as const;
+export type ManagerDestinationId = (typeof managerDestinationIds)[number];
 export type RegistryDestinationId = (typeof registryDestinationIds)[number];
 export type ManifestDestinationId = 'winget';
 export type DestinationId = RegistryDestinationId | ManifestDestinationId;
@@ -27,6 +30,9 @@ const registryLabels: Record<RegistryDestinationId, string> = {
 	oci: 'Container registry',
 	'vscode-marketplace': 'Visual Studio Marketplace',
 	'open-vsx': 'Open VSX',
+	homebrew: 'Homebrew',
+	scoop: 'Scoop',
+	aur: 'AUR',
 };
 export function registryDestination(id: RegistryDestinationId): Destination {
 	return { kind: 'registry', id, label: registryLabels[id] };
@@ -34,8 +40,8 @@ export function registryDestination(id: RegistryDestinationId): Destination {
 export const winget: Destination = { kind: 'manifest', id: 'winget', label: 'WinGet' };
 
 export interface ManagerDestinations {
-	primary: RegistryDestinationId;
-	secondary: readonly RegistryDestinationId[];
+	primary: ManagerDestinationId;
+	secondary: readonly ManagerDestinationId[];
 }
 export const managerDestinations: Record<ManagerName, ManagerDestinations | undefined> = {
 	npm: { primary: 'npm', secondary: [] },
@@ -50,16 +56,41 @@ export const managerDestinations: Record<ManagerName, ManagerDestinations | unde
 	workflow: undefined,
 	'pre-commit': undefined,
 };
-export function destinationsOf(manager: ManagerName): RegistryDestinationId[] {
+export function destinationsOf(manager: ManagerName): ManagerDestinationId[] {
 	const mapped = managerDestinations[manager];
 	return mapped ? [mapped.primary, ...mapped.secondary] : [];
 }
 
-export type RegistryOutcome =
-	| { destination: RegistryDestinationId; state: 'published'; version: string }
-	| { destination: RegistryDestinationId; state: 'missing' }
-	| { destination: RegistryDestinationId; state: 'failed'; reason: string }
-	| { destination: RegistryDestinationId; state: 'unchecked' };
+export type Channel =
+	| {
+		destination: 'homebrew';
+		kind: 'cask' | 'formula';
+		repository: string;
+		directory: string;
+		name: string;
+		manifest: string;
+	}
+	| { destination: 'scoop'; repository: string; directory: string; name: string; manifest: string }
+	| { destination: 'aur'; name: string; manifest: string };
+export function channelKey(channel: Channel): string {
+	return channel.destination === 'aur'
+		? `aur:${channel.name}`
+		: `${channel.destination}:${channel.repository}/${channel.directory}/${channel.name}`;
+}
+export function tracksBranch(channel: Channel): boolean {
+	return channel.destination === 'aur' && channel.name.endsWith('-git');
+}
+
+export type RegistryState =
+	| { state: 'published'; version: string }
+	| { state: 'missing' }
+	| { state: 'failed'; reason: string }
+	| { state: 'unchecked' };
+export type ChannelOutcome = Channel & (RegistryState | { state: 'tracking' });
+export type RegistryOutcome = ({ destination: ManagerDestinationId } & RegistryState) | ChannelOutcome;
+export function isChannelOutcome(outcome: RegistryOutcome): outcome is ChannelOutcome {
+	return channelDestinationIds.some(id => id === outcome.destination);
+}
 export type ManifestOutcome =
 	| { destination: ManifestDestinationId; state: 'unsubmitted' }
 	| { destination: ManifestDestinationId; state: WinGetSubmission['state']; version: string; url?: string };

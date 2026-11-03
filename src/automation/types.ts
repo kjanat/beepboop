@@ -1,4 +1,4 @@
-import type { RegistryOutcome } from '@/automation/destinations';
+import type { Channel, ChannelOutcome, RegistryOutcome } from '@/automation/destinations';
 import type { InputDeclaration, OutputDeclaration, Platform, ResolvedInput } from '@/automation/outputs';
 import type { PackagePublication } from '@/automation/package-publication';
 import type { RefPlan, RefPolicy } from '@/automation/refs';
@@ -72,6 +72,7 @@ export interface Package {
 	previousModule?: { name: string; version: string };
 	publicationStatus?: 'published' | 'missing' | 'failed' | 'unchecked';
 	destinations?: RegistryOutcome[];
+	channels?: Channel[];
 	generated?: boolean;
 	optional?: boolean;
 	manager: ManagerName;
@@ -97,6 +98,8 @@ export interface DiscoveredWorkflow {
 }
 export interface Inventory {
 	references?: import('@/automation/precommit').HookReference[];
+	channels?: Channel[];
+	destinations?: ChannelOutcome[];
 	packages: Package[];
 	workflows: DiscoveredWorkflow[];
 	managers: ManagerName[];

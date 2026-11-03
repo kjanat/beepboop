@@ -1,0 +1,87 @@
+import { z } from 'zod';
+import { type Channel, type ChannelOutcome, tracksBranch } from '@/automation/destinations';
+import type { Fetcher, RegistryVersion } from '@/automation/managers/registry';
+import { LookupFailure, latestText, latestVersion, unpublished } from '@/automation/managers/verification';
+import type { Snapshot } from '@/automation/types';
+
+const aurInfo = z.object({
+	type: z.string(),
+	error: z.string().optional(),
+	results: z.array(z.object({ Name: z.string(), Version: z.string() })),
+});
+const scoopManifest = z.object({ version: z.string() });
+const aurName = /^[a-z0-9@_+][a-z0-9@._+-]*$/;
+
+function raw(repository: string, directory: string, file: string): string {
+	const path = [...repository.split('/'), 'HEAD', ...directory.split('/').filter(Boolean), file];
+	return `https://raw.githubusercontent.com/${path.map(encodeURIComponent).join('/')}`;
+}
+function aurVersion(body: unknown, name: string): unknown {
+	const parsed = aurInfo.safeParse(body);
+	if (!parsed.success) return undefined;
+	if (parsed.data.type === 'error') return new LookupFailure(parsed.data.error ?? 'AUR error');
+	const found = parsed.data.results.find(result => result.Name === name);
+	return found ? found.Version.replace(/^\d+:/, '').replace(/-[^-]*$/, '') : unpublished;
+}
+function formulaVersion(source: string): unknown {
+	const literal = /^\s*version\s+"([^"#]+)"/m.exec(source)?.[1];
+	if (literal) return literal;
+	const url = /^\s*url\s+"([^"#]+)"/m.exec(source)?.[1];
+	return (url && /\/v?(\d+\.\d+\.\d+)(?:\/|\.tar|\.tgz|\.zip)/.exec(url)?.[1])
+		?? new LookupFailure('no literal version or versioned url');
+}
+function latest(channel: Channel, request: Fetcher): Promise<RegistryVersion> {
+	if (channel.destination === 'aur') {
+		return latestVersion(
+			request,
+			`https://aur.archlinux.org/rpc/v5/info?arg[]=${encodeURIComponent(channel.name)}`,
+			body => aurVersion(body, channel.name),
+		);
+	}
+	if (channel.destination === 'scoop') {
+		return latestVersion(
+			request,
+			raw(channel.repository, channel.directory, `${channel.name}.json`),
+			body => scoopManifest.safeParse(body).data?.version,
+		);
+	}
+	return latestText(request, raw(channel.repository, channel.directory, `${channel.name}.rb`), formulaVersion);
+}
+export async function checkChannel(
+	channel: Channel,
+	request: Fetcher,
+): Promise<{ outcome: ChannelOutcome; failure?: string }> {
+	if (tracksBranch(channel)) return { outcome: { ...channel, state: 'tracking' } };
+	const result = await latest(channel, request);
+	if (result.kind === 'published') return { outcome: { ...channel, state: 'published', version: result.version } };
+	if (result.kind === 'missing') return { outcome: { ...channel, state: 'missing' } };
+	return {
+		outcome: { ...channel, state: 'failed', reason: result.reason },
+		failure: `${result.reason} from ${result.url}`,
+	};
+}
+
+export function pkgbuildChannels(snapshot: Snapshot): { channels: Channel[]; diagnostics: string[] } {
+	const channels: Channel[] = [];
+	const diagnostics: string[] = [];
+	for (const [path, source] of Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b))) {
+		if (path !== 'PKGBUILD' && !path.endsWith('/PKGBUILD')) continue;
+		const values = [...source.matchAll(/^pkgname=(.*)$/gm)].map(match => match[1]?.trim() ?? '');
+		const [value] = values;
+		if (values.length !== 1 || value === undefined) {
+			diagnostics.push(`${path}: expected exactly one pkgname assignment`);
+			continue;
+		}
+		if (value.startsWith('(')) {
+			diagnostics.push(`${path}: split packages are not supported`);
+			continue;
+		}
+		const name = /^(['"]?)([^'"]*)\1$/.exec(value)?.[2];
+		if (!name || !aurName.test(name)) {
+			diagnostics.push(`${path}: pkgname must be a literal package name`);
+			continue;
+		}
+		channels.push({ destination: 'aur', name, manifest: path });
+	}
+	return { channels, diagnostics };
+}
