@@ -28,14 +28,17 @@ export function showError(error: unknown): void {
 const failure = z.object({ error: z.string().optional() }).catch({});
 
 export async function api<T>(path: string, schema: z.ZodType<T>, body?: unknown): Promise<T> {
-	const response = await fetch(
-		path,
-		body === undefined ? {} : {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(body),
-		},
-	);
+	const send = () =>
+		fetch(
+			path,
+			body === undefined ? {} : {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body),
+			},
+		);
+	let response = await send();
+	if (response.status === 401 && (await fetch('/auth/renew', { method: 'POST' })).ok) response = await send();
 	if (response.status === 401) {
 		location.assign(`/auth/login?return=${encodeURIComponent(`${location.pathname}${location.search}`)}`);
 		throw new Error('Session expired. Signing in again.');

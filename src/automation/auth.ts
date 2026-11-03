@@ -120,6 +120,20 @@ function cookie(request: Request, name: string): string | undefined {
 function cookieHeader(name: string, value: string, seconds: number): string {
 	return `${name}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${seconds}`;
 }
+const accessCookie = '__Host-beepboop_access';
+const refreshCookie = '__Host-beepboop_refresh';
+const refreshSeconds = 60 * 60 * 24 * 30;
+export interface SessionTokens {
+	access: string;
+	refresh: string;
+	expiresIn: number;
+}
+function sessionHeaders(tokens: SessionTokens | undefined, location?: string): Headers {
+	const headers = new Headers(location === undefined ? {} : { Location: location });
+	headers.append('Set-Cookie', cookieHeader(accessCookie, tokens?.access ?? '', tokens?.expiresIn ?? 0));
+	headers.append('Set-Cookie', cookieHeader(refreshCookie, tokens?.refresh ?? '', tokens ? refreshSeconds : 0));
+	return headers;
+}
 export async function administrator(
 	request: Request,
 	env:
@@ -153,7 +167,7 @@ export async function administrator(
 }
 export interface LoginCompletion {
 	consumeFlow(id: string): Promise<string | null>;
-	exchange(code: string, verifier: string): Promise<{ access: string; expiresIn: number }>;
+	exchange(code: string, verifier: string): Promise<SessionTokens>;
 	verify(access: string): Promise<string>;
 }
 function escapeHtml(value: string): string {
@@ -181,6 +195,11 @@ export function returnPath(value: unknown): string {
 		? `${url.pathname}${url.search}`
 		: '/';
 }
+function loginTarget(cli: unknown, target: unknown): string {
+	return typeof cli === 'string' && /^[a-f0-9]{64}$/.test(cli)
+		? `/auth/cli/authorize?challenge=${cli}`
+		: returnPath(target);
+}
 export async function completeLogin(request: Request, steps: LoginCompletion): Promise<Response> {
 	const id = cookie(request, '__Host-beepboop_flow');
 	if (!id) return loginFailed('This sign-in link has no login attempt behind it. Cookies may be blocked.');
@@ -194,15 +213,7 @@ export async function completeLogin(request: Request, steps: LoginCompletion): P
 		}
 		const tokens = await steps.exchange(text(url.searchParams.get('code')), text(flow.verifier));
 		await steps.verify(tokens.access);
-		return new Response(null, {
-			status: 302,
-			headers: {
-				Location: typeof flow.cli === 'string' && /^[a-f0-9]{64}$/.test(flow.cli)
-					? `/auth/cli/authorize?challenge=${flow.cli}`
-					: returnPath(flow.return),
-				'Set-Cookie': cookieHeader('__Host-beepboop_access', tokens.access, tokens.expiresIn),
-			},
-		});
+		return new Response(null, { status: 302, headers: sessionHeaders(tokens, loginTarget(flow.cli, flow.return)) });
 	} catch (error) {
 		return loginFailed(error instanceof Error ? error.message : 'Login failed');
 	}
@@ -214,7 +225,34 @@ export async function authRoute(
 	const path = new URL(request.url).pathname;
 	if (path.startsWith('/auth/cli/')) return cliAuthRoute(request, env, administrator);
 	const client = createClient({ clientID: env.OPENAUTH_CLIENT_ID, issuer: env.OPENAUTH_ISSUER });
+	const renew = async (): Promise<SessionTokens | undefined> => {
+		const refresh = cookie(request, refreshCookie);
+		if (!refresh || refresh.length > 4096) return undefined;
+		const result = await client.refresh(refresh).catch(() => undefined);
+		if (!result || result.err || !result.tokens) return undefined;
+		const tokens = result.tokens;
+		const verified = await administrator(
+			new Request(`${env.APPLICATION_ORIGIN}/`, { headers: { Cookie: `${accessCookie}=${tokens.access}` } }),
+			env,
+		).catch(() => undefined);
+		return verified ? { access: tokens.access, refresh: tokens.refresh, expiresIn: tokens.expiresIn } : undefined;
+	};
+	if (path === '/auth/renew' && request.method === 'POST') {
+		if (request.headers.get('origin') !== env.APPLICATION_ORIGIN) {
+			return Response.json({ error: 'Invalid request origin' }, { status: 403 });
+		}
+		const tokens = await renew();
+		return new Response(null, { status: tokens ? 204 : 401, headers: sessionHeaders(tokens) });
+	}
 	if (path === '/auth/login') {
+		const parameters = new URL(request.url).searchParams;
+		const renewed = await renew();
+		if (renewed) {
+			return new Response(null, {
+				status: 302,
+				headers: sessionHeaders(renewed, loginTarget(parameters.get('cli'), parameters.get('return'))),
+			});
+		}
 		const { url, challenge } = await client.authorize(
 			`${env.APPLICATION_ORIGIN}/auth/callback`,
 			'code',
@@ -250,7 +288,11 @@ export async function authRoute(
 					null
 				);
 				if (!result || result.err) throw new Error('Login exchange failed');
-				return { access: result.tokens.access, expiresIn: result.tokens.expiresIn };
+				return {
+					access: result.tokens.access,
+					refresh: result.tokens.refresh,
+					expiresIn: result.tokens.expiresIn,
+				};
 			},
 			verify: (access) =>
 				administrator(
@@ -266,13 +308,7 @@ export function signOut(request: Request, origin: string): Response {
 	if (request.headers.get('origin') !== origin) {
 		return Response.json({ error: 'Invalid request origin' }, { status: 403 });
 	}
-	return new Response(null, {
-		status: 303,
-		headers: {
-			Location: '/auth/login',
-			'Set-Cookie': cookieHeader('__Host-beepboop_access', '', 0),
-		},
-	});
+	return new Response(null, { status: 303, headers: sessionHeaders(undefined, '/auth/login') });
 }
 export function enrollmentRefusal(register: boolean, enrolled: number): string | undefined {
 	return !register && enrolled === 0 ? 'Enroll a security key first.' : undefined;
