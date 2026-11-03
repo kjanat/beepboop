@@ -151,7 +151,13 @@ export class AutomationService {
 					error instanceof Error ? error.message : 'Configuration invalid',
 				);
 			}
-		} else repository.diagnostics.push('Onboarding configuration is not merged');
+		} else {
+			repository.diagnostics.push(
+				await this.gateway.openSetupPull(name, id)
+					? 'The setup pull request is open. Merge it to enable releases.'
+					: 'Not configured yet. Configure releases opens a setup pull request.',
+			);
+		}
 		repository.inventory = await resolvePublished(repository.inventory, fetch, this.gateway.verification(name, id));
 		await this.store.putRepository(repository);
 		try {
