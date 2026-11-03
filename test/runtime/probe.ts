@@ -4,6 +4,8 @@ import type { WorkflowIdentity } from '@/automation/auth';
 import type { Execution } from '@/automation/types';
 import worker, { AutomationCoordinator } from '@/index';
 
+export { ReleaseWorkflow } from '@/index';
+
 const identity: WorkflowIdentity = {
 	repositoryId: 91,
 	repository: 'example/seventh',
@@ -37,7 +39,34 @@ export class Probe extends AutomationCoordinator {
 				return this.expectedFailure(() => this.approve('fixture-execution', 'b'.repeat(40), 'fixture'));
 			case '/register-probe':
 				return this.expectedFailure(() => this.register('fixture-execution', { ...identity, runId: 12 }));
+			case '/set-progress': {
+				const instance = await this.env.RELEASE_WORKFLOW.get('release-set-prep');
+				const operations = await this.releaseOperations('set-prep', 'release-set-prep');
+				return Response.json({
+					status: await instance.status(),
+					dispatches: this.fixtureGateway.dispatchedIds.length,
+					executions: await Promise.all(operations.map(op => this.ctx.storage.get(`execution:${op.id}`))),
+				});
+			}
+			case '/finish-set':
+				this.fixtureGateway.finished = true;
+				await this.wake();
+				await this.alarm();
+				return new Response('ok');
+			case '/interrupt-set':
+				await (await this.env.RELEASE_WORKFLOW.get('release-set-prep')).terminate();
+				return new Response('ok');
+			case '/notify-set':
+				await this.wake();
+				await this.alarm();
+				return new Response('ok');
+			case '/recover-set': {
+				const [operation] = await this.releaseOperations('set-prep', 'release-set-prep');
+				if (!operation) throw new Error('Missing release operation');
+				return Response.json(await this.recover(operation.id, 'reconcile', 'fixture'));
+			}
 			case '/start-set':
+				this.fixtureGateway.lostDispatchResponse = url.searchParams.has('lost');
 				return Response.json(await this.startReleaseSet('set-prep', 'd'.repeat(40)));
 			case '/prepared-probe':
 				return Response.json(
@@ -67,6 +96,11 @@ const probeRoutes = new Set([
 	'/events',
 	'/tick-managed',
 	'/start-set',
+	'/set-progress',
+	'/finish-set',
+	'/interrupt-set',
+	'/notify-set',
+	'/recover-set',
 	'/prepared-probe',
 	'/approve-probe',
 	'/register-probe',

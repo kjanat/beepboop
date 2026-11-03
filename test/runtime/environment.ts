@@ -66,9 +66,18 @@ export async function createRuntime() {
 								},
 							},
 						},
-						exports: { Probe: { type: 'durable-object', storage: 'sqlite' } },
+						exports: {
+							Probe: { type: 'durable-object', storage: 'sqlite' },
+							ReleaseWorkflow: { type: 'workflow', name: 'test-release' },
+						},
 						env: {
 							MIGRATIONS: { type: 'text', value: migration },
+							RELEASE_WORKFLOW: {
+								type: 'workflow',
+								name: 'test-release',
+								worker: 'automation-test',
+								exportName: 'ReleaseWorkflow',
+							},
 							AUTOMATION: { type: 'durable-object', worker: 'automation-test', exportName: 'Probe' },
 							ASSETS: { type: 'assets' },
 							DB: { type: 'd1', name: 'automation-test', id: '00000000-0000-0000-0000-000000000001' },

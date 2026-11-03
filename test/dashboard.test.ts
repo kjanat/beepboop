@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { configuredGrant } from '@/automation/access';
 import { parseRepositoryConfiguration } from '@/automation/configuration';
 import type { Execution, RepositoryRecord } from '@/automation/types';
-import { releaseSummaries } from '@/server/releases';
+import { releaseSetSummaries, releaseSummaries } from '@/server/releases';
 
 const repository: RepositoryRecord = {
 	id: 91,
@@ -89,4 +89,26 @@ test('release overview combines publication evidence only for the same revision 
 	expect(unrelated.every(r => r.verified === 1)).toBe(true);
 	expect(releaseSummaries([npm, { ...cargo, version: '2.0.0' }])).toHaveLength(2);
 	expect(releaseSummaries([npm, { ...cargo, configurationSha: 'd'.repeat(40) }])).toHaveLength(2);
+});
+
+test('monorepo overview isolates preparations and uses each group publication contract', () => {
+	const npm = run('npm', 'npm:tool');
+	npm.releaseSet = {
+		preparationId: 'first',
+		group: 'npm',
+		required: ['npm:tool'],
+		workflowId: 'release-first',
+		operationCount: 2,
+	};
+	const cargo = run('cargo', 'cargo:tool');
+	cargo.version = '2.0.0';
+	cargo.releaseSet = { ...npm.releaseSet, group: 'cargo', required: ['cargo:tool'] };
+	expect(releaseSummaries([npm, cargo]).map(group => group.publications.length)).toEqual([1, 1]);
+	expect(releaseSetSummaries([npm, cargo])[0]?.state).toBe('succeeded');
+	// A dashboard history window containing only one operation must not claim completion.
+	expect(releaseSetSummaries([npm])[0]?.state).toBe('in progress');
+	const another = { ...npm, releaseSet: { ...npm.releaseSet, preparationId: 'second', workflowId: 'release-second' } };
+	expect(releaseSummaries([npm, another])).toHaveLength(2);
+	expect(releaseSetSummaries([npm, another])).toHaveLength(2);
+	expect(releaseSetSummaries([npm, { ...cargo, state: 'failed' }])[0]?.state).toBe('needs attention');
 });

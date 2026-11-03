@@ -1,34 +1,34 @@
 #:schema node_modules/wrangler/config-schema.json
 
-name = "beepboop"
-account_id = "83a61abe8741defe835d035b1f4e49af"
-main = "src/index.ts"
-compatibility_date = "2026-10-20"
-workers_dev = false
-preview_urls = false
-upload_source_maps = true
-send_metrics = true
+name                = "beepboop"
+account_id          = "83a61abe8741defe835d035b1f4e49af"
+main                = "src/index.ts"
+compatibility_date  = "2026-10-20"
+workers_dev         = false
+preview_urls        = false
+upload_source_maps  = true
+send_metrics        = true
 compatibility_flags = ["nodejs_compat"]
 
 [[routes]]
-pattern = "beepboop.kjanat.dev"
+pattern       = "beepboop.kjanat.dev"
 custom_domain = true
 
 [observability]
-enabled = true
-head_sampling_rate = 1
+enabled             = true
+head_sampling_rate  = 1
 redact_query_string = false
 
 [observability.logs]
-enabled = true
+enabled            = true
 head_sampling_rate = 1
-invocation_logs = true
-persist = true
+invocation_logs    = true
+persist            = true
 
 [observability.traces]
-enabled = true
+enabled            = true
 head_sampling_rate = 1
-persist = true
+persist            = true
 
 [observability.issue_detection]
 enabled = true
@@ -36,31 +36,36 @@ enabled = true
 [triggers]
 crons = ["*/10 * * * *"]
 
+[[workflows]]
+name       = "beepboop-release"
+binding    = "RELEASE_WORKFLOW"
+class_name = "ReleaseWorkflow"
+
 [[durable_objects.bindings]]
-name = "AUTOMATION"
+name       = "AUTOMATION"
 class_name = "AutomationCoordinator"
 
 [[migrations]]
-tag = "v1"
+tag                = "v1"
 new_sqlite_classes = ["ReleaseCoordinator"]
 
 [[migrations]]
-tag = "v2"
+tag                = "v2"
 new_sqlite_classes = ["AutomationCoordinator"]
-deleted_classes = ["ReleaseCoordinator"]
+deleted_classes    = ["ReleaseCoordinator"]
 
 [vars]
 APPLICATION_ORIGIN = "https://beepboop.kjanat.dev"
-OPENAUTH_ISSUER = "https://auth.kjanat.com"
+OPENAUTH_ISSUER    = "https://auth.kjanat.com"
 OPENAUTH_CLIENT_ID = "beepboop"
-OWNER_ID = "6353477"
-ADMIN_SUBJECT = "57513d5461547c30a38d12deeed83320"
-VAULT_ACTIVE_KEY = "v1"
+OWNER_ID           = "6353477"
+ADMIN_SUBJECT      = "57513d5461547c30a38d12deeed83320"
+VAULT_ACTIVE_KEY   = "v1"
 
 [[d1_databases]]
-binding = "DB"
-database_name = "beepboop"
-database_id = "19241404-a424-4771-8093-0c13a22b0958"
+binding        = "DB"
+database_name  = "beepboop"
+database_id    = "19241404-a424-4771-8093-0c13a22b0958"
 migrations_dir = "migrations"
 
 [secrets]

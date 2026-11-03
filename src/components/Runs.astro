@@ -1,12 +1,67 @@
 ---
 import type { Execution } from '@/automation/types.ts';
 import { date } from '@/server/dashboard.ts';
+import { releaseSetSummaries } from '@/server/releases';
 
 interface Props {
 	executions: Execution[];
 }
 const { executions } = Astro.props;
 ---
+{releaseSetSummaries(executions).map(release => (
+	<article class="run-card">
+		<div class="section-heading">
+			<div>
+				<p class="eyebrow">{release.repository}</p>
+				<h2>Monorepo release</h2>
+			</div>
+			<span class="badge">{release.state}</span>
+		</div>
+		<p>
+			{release.complete} of {release.total} operations complete. Each package
+			group keeps its own version.
+		</p>
+		<p>
+			Source <a
+				href={`https://github.com/${release.repository}/commit/${release.sourceSha}`}
+			><code>{release.sourceSha.slice(0, 12)}</code></a>
+		</p>
+		<div class="table-scroll">
+			<table>
+				<thead>
+					<tr>
+						<th>Package group</th>
+						<th>Version</th>
+						<th>Operation</th>
+						<th>Progress</th>
+					</tr>
+				</thead>
+				<tbody>
+					{release.runs.map(run => (
+						<tr>
+							<td>{run.releaseSet?.group}</td>
+							<td>{run.version}</td>
+							<td><a href={`#${run.id}`}>{run.operation}</a></td>
+							<td>{run.state}</td>
+						</tr>
+					))}
+				</tbody>
+			</table>
+		</div>
+		{release.error && <p class="notice">{release.error}</p>}
+		{release.complete !== release.total && (
+			<form data-action="recover">
+				<input type="hidden" name="id" value={release.recoveryId}>
+				<input type="hidden" name="action" value="reconcile">
+				<button>Check coordination</button>
+			</form>
+		)}
+		<details>
+			<summary>Coordination details</summary>
+			<p>Cloudflare Workflow: <code>{release.id}</code></p>
+		</details>
+	</article>
+))}
 {!executions.length && (
 	<article class="empty">
 		<h2>No release runs yet</h2>
@@ -18,7 +73,8 @@ const { executions } = Astro.props;
 )}
 {executions.map(run => {
 	const preparation = run.managed?.result ?? run.prepared?.result;
-	const required = run.configuration.streams[run.stream]?.required ?? [];
+	const required = run.releaseSet?.required
+		?? run.configuration.streams[run.stream]?.required ?? [];
 	const missing = required.filter(id =>
 		!run.publications.some(p => p.id === id && p.outcome === 'succeeded')
 	);

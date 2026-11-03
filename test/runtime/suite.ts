@@ -228,56 +228,109 @@ describe('built Cloudflare Worker', () => {
 		assert.equal(resumedWorkflow.head, 'c'.repeat(40));
 	});
 
-	it('release-set replay preserves execution identities', async () => {
-		const setPreparation = {
-			...managed,
-			id: 'set-prep',
-			state: 'succeeded',
-			configuration: {
-				...fixture.configuration,
-				managers: ['workflow', 'npm'],
-				streams: {
-					main: {
-						...fixture.configuration.streams.main,
-						workflows: { build: { file: 'release.yml' }, publish: { file: 'release.yml', needs: ['build'] } },
+	it.each([false, true])(
+		'Cloudflare release Workflow resumes without duplicate dispatch (lost response: %s)',
+		async lost => {
+			const setPreparation = {
+				...managed,
+				id: 'set-prep',
+				state: 'succeeded',
+				configuration: {
+					...fixture.configuration,
+					managers: ['workflow', 'npm'],
+					streams: {
+						main: {
+							...fixture.configuration.streams.main,
+							workflows: {
+								build: { file: 'release.yml' },
+								publish: { file: 'release.yml', needs: ['build'] },
+								docs: { file: 'release.yml' },
+							},
+						},
 					},
 				},
-			},
-			managed: {
-				...managed.managed,
-				result: { url: 'https://github.com/example/seventh/pull/2', head: 'c'.repeat(40) },
-				plan: {
-					sourceSha: fixture.sourceSha,
-					edits: [{ path: 'package.json', before: '{}', after: '{"name":"tool","version":"2.0.0"}' }],
-					groups: [{ id: 'tool', version: '2.0.0', packages: ['npm:tool'] }],
-					operations: ['build', 'publish'].map(id => ({
-						id,
-						group: 'tool',
-						version: '2.0.0',
-						inputs: [],
-						outputs: [],
-						needs: [],
-					})),
+				managed: {
+					...managed.managed,
+					result: { url: 'https://github.com/example/seventh/pull/2', head: 'c'.repeat(40) },
+					plan: {
+						sourceSha: fixture.sourceSha,
+						edits: [{ path: 'package.json', before: '{}', after: '{"name":"tool","version":"2.0.0"}' }],
+						groups: [{ id: 'tool', version: '2.0.0', packages: ['npm:tool'] }],
+						operations: ['build', 'publish', 'docs'].map(id => ({
+							id,
+							group: 'tool',
+							version: '2.0.0',
+							inputs: [],
+							outputs: [],
+							needs: [],
+						})),
+					},
 				},
-			},
-		};
-		await context.fetch('https://automation.test/enqueue', {
-			method: 'POST',
-			body: JSON.stringify(setPreparation),
-		});
-		const started = await (await context.fetch('https://automation.test/start-set')).json() as {
-			id: string;
-			version: string;
-			dependencies: string[];
-		}[];
-		assert.equal(started.length, 2);
-		assert.equal(started[0]?.version, '2.0.0');
-		assert.deepEqual(started[1]?.dependencies, [started[0]?.id]);
-		await context.restart();
-		const replayed = await (await context.fetch('https://automation.test/start-set'))
-			.json() as typeof started;
-		assert.deepEqual(replayed.map(execution => execution.id), started.map(execution => execution.id));
-	});
+			};
+			await context.fetch('https://automation.test/enqueue', {
+				method: 'POST',
+				body: JSON.stringify(setPreparation),
+			});
+			const started = await (await context.fetch(`https://automation.test/start-set${lost ? '?lost=1' : ''}`))
+				.json() as {
+					id: string;
+					version: string;
+					dependencies: string[];
+				}[];
+			assert.equal(started.length, 3);
+			assert.equal(started[0]?.version, '2.0.0');
+			assert.deepEqual(started[1]?.dependencies, [started[0]?.id]);
+			// Start the real Workflow engine; the publication must wait for the build.
+			await context.fetch('https://automation.test/tick-managed');
+			async function progress() {
+				return (await (await context.fetch('https://automation.test/set-progress')).json()) as {
+					status: { status: string };
+					dispatches: number;
+					executions: { id: string; state: string; attempts: number }[];
+				};
+			}
+			async function until(predicate: (value: Awaited<ReturnType<typeof progress>>) => boolean) {
+				for (let i = 0; i < 100; i++) {
+					const value = await progress();
+					if (predicate(value)) return value;
+					await Bun.sleep(50);
+				}
+				throw new Error(`Workflow did not reach expected state: ${JSON.stringify(await progress())}`);
+			}
+			const waiting = await until(value =>
+				value.executions[0]?.state === 'running' && value.executions[2]?.state === 'running'
+			);
+			assert.equal(waiting.executions[1]?.attempts, 0);
+			assert.equal(waiting.dispatches, 2);
+			await context.restart();
+			const replayed = await (await context.fetch('https://automation.test/start-set'))
+				.json() as typeof started;
+			assert.deepEqual(replayed.map(execution => execution.id), started.map(execution => execution.id));
+			if (lost) {
+				const interruption = await context.fetch('https://automation.test/interrupt-set');
+				assert.equal(interruption.status, 200);
+				await until(value => value.status.status === 'terminated');
+				await context.fetch('https://automation.test/notify-set');
+				const interrupted = await context.fetch('https://automation.test/runs', {
+					headers: { cookie: `__Host-beepboop_access=${context.access}` },
+				});
+				assert.match(await interrupted.text(), /Release coordination interrupted/);
+				assert.equal((await context.fetch('https://automation.test/recover-set')).status, 200);
+			}
+			await context.fetch('https://automation.test/finish-set');
+			const completed = await until(value => value.status.status === 'complete');
+			assert.deepEqual(completed.executions.map(execution => execution.state), ['succeeded', 'succeeded', 'succeeded']);
+			assert.deepEqual(completed.executions.map(execution => execution.attempts), [1, 1, 1]);
+			const overview = await context.fetch('https://automation.test/runs', {
+				headers: { cookie: `__Host-beepboop_access=${context.access}` },
+			});
+			assert.equal(overview.status, 200);
+			const html = await overview.text();
+			assert.match(html, /Monorepo release/);
+			assert.match(html, /3 of 3 operations complete/);
+			assert.doesNotMatch(html, /Release coordination interrupted/);
+		},
+	);
 
 	it('promotion requires dispatch, signatures, and successful checks', async () => {
 		const premature = await context.fetch('https://automation.test/register-probe');

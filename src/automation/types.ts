@@ -166,7 +166,14 @@ export interface SubscriptionDelivery {
 }
 export interface Execution {
 	prepared?: { edits: Edit[]; head?: string; result?: { url: string; head: string } };
-	releaseSet?: { preparationId: string; group: string; required: string[] };
+	releaseSet?: {
+		preparationId: string;
+		group: string;
+		required: string[];
+		workflowId?: string;
+		operationCount?: number;
+		workflowError?: string;
+	};
 	managed?: {
 		kind: 'prepare';
 		plan: ReleasePlan | import('@/automation/planning').ReleaseSetPlan;

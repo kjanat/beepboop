@@ -192,3 +192,42 @@ regular files inside the repository; symbolic links are rejected during snapshot
 loading. Duplicate rules and conflicts with ecosystem version edits fail instead
 of silently overwriting a different version. Rules become part of the immutable
 preparation plan. Lockfile regeneration still runs in a preparation workflow.
+
+## Durable release coordination
+
+Starting a new release set creates one Cloudflare Workflow instance, identified
+by `release-<preparation ID>`. Its named operation steps follow the reviewed
+release graph. GitHub Actions continues to own builds, matrices, packaging, and
+publishing; Cloudflare Workflows waits for operation progress and approvals.
+Independent operations in the same release set may run together. Dependencies
+still require successful producer operations, and another release cannot take
+over a stream with an active run.
+The Release runs page groups all operations, versions, and results under the
+monorepo release, with links to individual operations and GitHub runs.
+
+The existing Durable Object journal owns dispatch intent, repository concurrency,
+approval checks, and publication verification. The Cloudflare Workflow calls it
+through RPC. An interrupted or retried step reconciles the stored intent before
+contacting GitHub again. An ambiguous dispatch is never automatically dispatched
+a second time. Operations managed by this Workflow are excluded from the legacy
+alarm dispatcher; existing releases continue on their original path.
+
+Signed GitHub webhooks, approvals, and reports persist wake-up notifications in
+the journal before delivery to the Workflow. Event payloads cannot approve or
+complete an operation: each resumed step reads authoritative execution state.
+An hourly reconciliation handles missed notifications and delayed publications.
+Failed GitHub runs wait for the existing **Retry failed jobs** action. **Check
+coordination** wakes a waiting release or restarts an interrupted Cloudflare
+instance; completed operations remain in the journal and are not dispatched again.
+
+D1 keeps the dashboard records after Cloudflare's completed-instance retention
+expires. This is not an unlimited Workflow history: Cloudflare's plan-specific
+step and retention limits still apply. Coordination failures are exposed in the
+release overview. The `RELEASE_WORKFLOW` binding and `ReleaseWorkflow` entrypoint
+are deployed with the Astro Worker through the existing Cloudflare Builds path.
+No separate dashboard setup or manual production migration is required.
+
+This integrates the existing workflow-dispatch contract. Repository workflows
+currently still declare `beepboop_execution_id` and use the begin/report Actions
+when their outputs require Beepboop verification; adopting Workflows does not by
+itself translate arbitrary existing workflow inputs or preparation outputs.

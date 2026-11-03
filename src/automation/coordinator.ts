@@ -14,6 +14,7 @@ import { mergeArtifacts, resolveInputs } from '@/automation/outputs';
 import { matchesRef } from '@/automation/policy';
 import { planRefs, type RefPlan } from '@/automation/refs';
 import { compileReleaseSet } from '@/automation/release-set';
+import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
 import { Store } from '@/automation/store';
 import type { Artifact, AutomationEvent, Edit, Execution, Publication, ReleaseReference } from '@/automation/types';
 import { array, integer, record, sha } from '@/model';
@@ -21,6 +22,14 @@ import { array, integer, record, sha } from '@/model';
 export interface CoordinatorBindings extends Credentials {
 	DB: D1Database;
 	OWNER_ID: string;
+	RELEASE_WORKFLOW: Workflow<ReleaseWorkflowParams>;
+}
+interface ReleaseSetRecord {
+	target: string;
+	ids: string[];
+	workflowId?: string;
+	started?: boolean;
+	completed?: boolean;
 }
 export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private pending: Promise<unknown> = Promise.resolve();
@@ -36,10 +45,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return new RepositoryGateway(this.env, Number(this.env.OWNER_ID));
 	}
 	private async put(execution: Execution): Promise<void> {
+		const previous = await this.ctx.storage.get<Execution>(`execution:${execution.id}`);
 		execution.updatedAt = Date.now();
 		// The journal is authoritative. D1 is an asynchronously repairable dashboard index.
 		await this.ctx.storage.put(`execution:${execution.id}`, execution);
-		await this.ctx.storage.setAlarm(Date.now() + 15000);
+		if (!execution.releaseSet?.workflowId) await this.ctx.storage.setAlarm(Date.now() + 15000);
+		if (JSON.stringify({ ...previous, updatedAt: 0 }) !== JSON.stringify({ ...execution, updatedAt: 0 })) {
+			await this.wakeReleaseWorkflows();
+		}
 		await this.store().putExecution(execution);
 		if (execution.state === 'succeeded') await this.captureReleaseEvent(execution);
 	}
@@ -93,6 +106,101 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	async acknowledgeReleaseEvent(id: string): Promise<void> {
 		await this.ctx.storage.delete(`release-event:${id}`);
 	}
+	/** Persist wake-ups separately so failed delivery survives Worker restarts. */
+	private async wakeReleaseWorkflows(): Promise<void> {
+		for (const [key, release] of await this.ctx.storage.list<ReleaseSetRecord>({ prefix: 'release-set:' })) {
+			if (!release.workflowId || release.completed) continue;
+			await this.ctx.storage.put(`release-wake:${key.slice('release-set:'.length)}`, true);
+			await this.ctx.storage.setAlarm(Date.now() + 1000);
+		}
+	}
+	private async deliverReleaseEvents(): Promise<void> {
+		for (const key of (await this.ctx.storage.list({ prefix: 'release-wake:' })).keys()) {
+			const preparationId = key.slice('release-wake:'.length);
+			const release = await this.ctx.storage.get<ReleaseSetRecord>(`release-set:${preparationId}`);
+			if (!release?.workflowId || release.completed) {
+				await this.ctx.storage.delete(key);
+				continue;
+			}
+			try {
+				const binding = this.env.RELEASE_WORKFLOW;
+				if (!release.started) {
+					const preparation = await this.get(preparationId);
+					try {
+						await binding.create({
+							id: release.workflowId,
+							params: { repositoryId: preparation.repositoryId, preparationId },
+						});
+					} catch (error) {
+						// A create response can be lost after Cloudflare accepts the instance.
+						try {
+							await (await binding.get(release.workflowId)).status();
+						} catch {
+							throw error;
+						}
+					}
+					release.started = true;
+					await this.ctx.storage.put(`release-set:${preparationId}`, release);
+				}
+				const instance = await binding.get(release.workflowId);
+				const status = await instance.status();
+				if (['errored', 'terminated'].includes(status.status)) {
+					await this.recordReleaseWorkflowInterruption(preparationId, release.workflowId);
+				}
+				if (!['complete', 'errored', 'terminated'].includes(status.status)) {
+					for (const id of release.ids) await instance.sendEvent({ type: id, payload: {} });
+				}
+				await this.ctx.storage.delete(key);
+			} catch {
+				await this.ctx.storage.setAlarm(Date.now() + 60000);
+			}
+		}
+	}
+	async releaseOperations(preparationId: string, workflowId: string) {
+		const release = await this.ctx.storage.get<ReleaseSetRecord>(`release-set:${preparationId}`);
+		if (!release || release.workflowId !== workflowId) throw new Error('Release Workflow identity mismatch');
+		return Promise.all(release.ids.map(async id => {
+			const execution = await this.get(id);
+			return { id, operation: execution.operation, dependencies: execution.dependencies };
+		}));
+	}
+	async advanceReleaseOperation(preparationId: string, workflowId: string, id: string) {
+		return this.serial(async () => {
+			const operations = await this.releaseOperations(preparationId, workflowId);
+			if (!operations.some(operation => operation.id === id)) throw new Error('Operation is not in this release');
+			await this.reconcile(id);
+			return (await this.get(id)).state;
+		});
+	}
+	async releaseWorkflowInterrupted(preparationId: string, workflowId: string): Promise<void> {
+		return this.serial(() => this.recordReleaseWorkflowInterruption(preparationId, workflowId));
+	}
+	private async recordReleaseWorkflowInterruption(
+		preparationId: string,
+		workflowId: string,
+		interrupted = true,
+	): Promise<void> {
+		for (const operation of await this.releaseOperations(preparationId, workflowId)) {
+			const execution = await this.get(operation.id);
+			if (!execution.releaseSet) continue;
+			execution.releaseSet.workflowError = interrupted
+				? 'Release coordination interrupted. Check coordination to resume.'
+				: undefined;
+			await this.ctx.storage.put(`execution:${execution.id}`, execution);
+			await this.store().putExecution(execution);
+		}
+	}
+	async completeReleaseWorkflow(preparationId: string, workflowId: string): Promise<void> {
+		return this.serial(async () => {
+			const operations = await this.releaseOperations(preparationId, workflowId);
+			for (const operation of operations) {
+				if ((await this.get(operation.id)).state !== 'succeeded') throw new Error('Release is incomplete');
+			}
+			const key = `release-set:${preparationId}`;
+			const release = await this.ctx.storage.get<ReleaseSetRecord>(key);
+			await this.ctx.storage.put(key, { ...release, completed: true });
+		});
+	}
 	async startReleaseSet(preparationId: string, target: string): Promise<Execution[]> {
 		return this.serial(async () => {
 			const preparation = await this.get(preparationId);
@@ -100,7 +208,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				throw new Error('Repository is suspended');
 			}
 			const key = `release-set:${preparationId}`;
-			const prior = await this.ctx.storage.get<{ target: string; ids: string[] }>(key);
+			const prior = await this.ctx.storage.get<ReleaseSetRecord>(key);
 			if (prior) {
 				if (prior.target !== target) throw new Error('Release set already targets another revision');
 				return Promise.all(prior.ids.map(id => this.get(id)));
@@ -121,9 +229,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 			}
 			const executions = await compileReleaseSet(preparation, snapshot);
+			const workflowId = `release-${preparationId}`;
+			for (const execution of executions) {
+				if (execution.releaseSet) {
+					execution.releaseSet.workflowId = workflowId;
+					execution.releaseSet.operationCount = executions.length;
+				}
+			}
 			await this.ctx.storage.transaction(async storage => {
 				await storage.put({
-					[key]: { target, ids: executions.map(execution => execution.id) },
+					[key]: { target, ids: executions.map(execution => execution.id), workflowId },
+					[`release-wake:${preparationId}`]: true,
 					...Object.fromEntries(executions.map(execution => [`execution:${execution.id}`, execution])),
 				});
 				await storage.setAlarm(Date.now() + 1000);
@@ -517,12 +633,25 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					token,
 					'POST',
 				);
-			} else await this.ctx.storage.setAlarm(Date.now() + 1000);
+			} else await this.wake();
+			if (execution.releaseSet?.workflowId) {
+				const instance = await this.env.RELEASE_WORKFLOW.get(execution.releaseSet.workflowId);
+				const status = await instance.status();
+				if (['errored', 'terminated'].includes(status.status)) {
+					await instance.restart();
+					await this.recordReleaseWorkflowInterruption(
+						execution.releaseSet.preparationId,
+						execution.releaseSet.workflowId,
+						false,
+					);
+				}
+			}
 			await this.store().audit(actor, `execution.${action}`, id);
 			return this.get(id);
 		});
 	}
 	async wake(): Promise<void> {
+		await this.wakeReleaseWorkflows();
 		await this.ctx.storage.setAlarm(Date.now() + 1000);
 	}
 	async observeRun(repositoryId: number, runId: number): Promise<void> {
@@ -662,7 +791,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		}
 	}
 	async alarm(): Promise<void> {
-		await this.serial(() => this.reconcile());
+		await this.serial(async () => {
+			await this.deliverReleaseEvents();
+			await this.reconcile();
+		});
 	}
 	private async runManaged(execution: Execution): Promise<void> {
 		const operation = execution.managed;
@@ -710,8 +842,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			});
 		}
 	}
-	private async reconcile(): Promise<void> {
-		await this.observations();
+	private async reconcile(onlyExecution?: string): Promise<void> {
+		if (!onlyExecution) await this.observations();
 		const executions = [
 			...(await this.ctx.storage.list<Execution>({ prefix: 'execution:' })).values(),
 		].sort((a, b) => a.createdAt - b.createdAt);
@@ -726,8 +858,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				.filter((e) => ['dispatching', 'running', 'uncertain'].includes(e.state))
 				.map((e) => e.stream),
 		);
-		if (active.length) await this.ctx.storage.setAlarm(Date.now() + 60000);
+		if (active.some(e => !e.releaseSet?.workflowId)) await this.ctx.storage.setAlarm(Date.now() + 60000);
 		for (const execution of executions) {
+			if (onlyExecution ? execution.id !== onlyExecution : Boolean(execution.releaseSet?.workflowId)) continue;
 			await this.store().putExecution(execution);
 			if (execution.state === 'succeeded') await this.captureReleaseEvent(execution);
 			if (
@@ -830,7 +963,18 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (!dependenciesReady(execution, executions)) {
 					continue;
 				}
-				if (busy.has(execution.stream)) continue;
+				if (busy.has(execution.stream)) {
+					const releaseId = execution.releaseSet?.workflowId;
+					// Independent operations within one frozen release may run together.
+					// Other releases and legacy executions still own the stream exclusively.
+					if (
+						!releaseId || active.some(other =>
+							other.stream === execution.stream
+							&& ['dispatching', 'running', 'uncertain'].includes(other.state)
+							&& other.releaseSet?.workflowId !== releaseId
+						)
+					) continue;
+				}
 				execution.resolvedInputs = resolveInputs(execution, executions);
 				busy.add(execution.stream);
 				await this.put({ ...execution, state: 'dispatching', attempts: execution.attempts + 1 });
