@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { arg, cli, command, flag, group } from '@kjanat/dreamcli';
 import { Client } from '@/cli/client';
+import { emit, failure } from '@/cli/output';
 import { setupRepository } from '@/cli/setup';
 import { array, integer, record, string, text } from '@/model';
 
@@ -50,16 +51,22 @@ const repository = (name: string, description: string) =>
 		.arg(
 			'repository',
 			arg.string().prompt({ kind: 'input', message: 'Repository (owner/name)' }).required().describe(
-				'Enrolled repository, owner/name',
+				'Repository, owner/name',
 			),
 		);
 async function repositoryId(client: Client, name: string): Promise<number> {
 	const found = repositoryRows(await client.request('/api/repositories')).find(repository => repository.name === name);
-	if (!found) throw new Error(`Repository ${name} is not enrolled; run beepboop repositories discover ${name}`);
+	if (!found) {
+		throw failure(
+			`Repository ${name} is not enrolled`,
+			'NOT_ENROLLED',
+			`Run beepboop repositories discover ${name}`,
+		);
+	}
 	return found.id;
 }
 export const authStatus = base('status', 'Verify your saved session with the server').action(async ({ flags, out }) =>
-	out.json(await new Client(flags.server).request('/auth/cli/status'))
+	emit(out, await new Client(flags.server).request('/auth/cli/status'))
 );
 const auth = group('auth').description('Sign in, inspect your session, or revoke it')
 	.command(
@@ -114,7 +121,7 @@ const repositories = group('repositories').description('Inspect and configure re
 		base('list', 'List enrolled repositories').action(async ({ flags, out }) => {
 			const response = await new Client(flags.server).request('/api/repositories');
 			const rows = repositoryRows(response);
-			if (out.jsonMode) out.json(response);
+			if (out.jsonMode) await emit(out, response);
 			else {out.table(
 					rows.map(row => ({
 						repository: row.name,
@@ -129,14 +136,23 @@ const repositories = group('repositories').description('Inspect and configure re
 		repository('show', 'Show repository configuration, packages and workflows').action(async ({ flags, args, out }) => {
 			const rows = repositoryRows(await new Client(flags.server).request('/api/repositories'));
 			const found = rows.find(row => row.name === args.repository);
-			if (!found) throw new Error('Repository not enrolled');
-			out.json(found.raw);
+			if (!found) {
+				throw failure(
+					`Repository ${args.repository} is not enrolled`,
+					'NOT_ENROLLED',
+					`Run beepboop repositories discover ${args.repository}`,
+				);
+			}
+			await emit(out, found.raw);
 		}),
 	)
 	.command(
 		repository('discover', 'Inspect a repository installed on the Beepboop GitHub App').action(
 			async ({ flags, args, out }) => {
-				out.json(await new Client(flags.server).request('/api/repositories/discover', { repository: args.repository }));
+				await emit(
+					out,
+					await new Client(flags.server).request('/api/repositories/discover', { repository: args.repository }),
+				);
 			},
 		),
 	);
@@ -145,7 +161,7 @@ const runs = group('runs').description('Follow, approve and recover release oper
 		base('list', 'List release operations').action(async ({ flags, out }) => {
 			const response = await new Client(flags.server).request('/api/executions');
 			const rows = executionRows(response);
-			if (out.jsonMode) out.json(response);
+			if (out.jsonMode) await emit(out, response);
 			else out.table(rows);
 		}),
 	)
@@ -157,7 +173,8 @@ const runs = group('runs').description('Follow, approve and recover release oper
 					.required(),
 			)
 			.action(async ({ flags, args, out }) =>
-				out.json(
+				emit(
+					out,
 					await new Client(flags.server).request('/api/executions/approve', {
 						id: args.id,
 						sourceSha: flags.sourceSha,
@@ -172,7 +189,8 @@ const runs = group('runs').description('Follow, approve and recover release oper
 				flag.enum(['reconcile', 'retry']).prompt({ kind: 'select', message: 'Recovery action' }).default('reconcile'),
 			)
 			.action(async ({ flags, args, out }) =>
-				out.json(
+				emit(
+					out,
 					await new Client(flags.server).request('/api/executions/recover', { id: args.id, action: flags.action }),
 				)
 			),
@@ -205,10 +223,11 @@ for (const operation of ['plan', 'prepare'] as const) {
 			)
 			.action(async ({ flags, args, out }) => {
 				if (operation === 'prepare' && (!flags.sourceSha || !flags.planId)) {
-					throw new Error('Run releases plan first; supply its --sourceSha and --planId');
+					throw failure('Prepare needs --sourceSha and --planId', 'PLAN_REQUIRED', 'Run beepboop releases plan first');
 				}
 				const client = new Client(flags.server);
-				out.json(
+				await emit(
+					out,
 					await client.request(`/api/releases/${operation}`, {
 						repositoryId: await repositoryId(client, args.repository),
 						stream: flags.stream,
@@ -222,7 +241,12 @@ for (const operation of ['plan', 'prepare'] as const) {
 }
 for (const operation of ['plan-set', 'prepare-set'] as const) {
 	releases = releases.command(
-		repository(operation, 'Preview or prepare an independent monorepo release plan')
+		repository(
+			operation,
+			operation === 'plan-set'
+				? 'Preview an independent monorepo release'
+				: 'Prepare an independent monorepo release from a reviewed plan',
+		)
 			.flag('stream', flag.string().prompt({ kind: 'input', message: 'Release stream' }).required())
 			.flag(
 				'plan',
@@ -230,8 +254,11 @@ for (const operation of ['plan-set', 'prepare-set'] as const) {
 					'Release plan JSON file',
 				),
 			)
-			.flag('sourceSha', flag.string({ pattern: /^[a-f0-9]{40}$/ }))
-			.flag('planId', flag.string())
+			.flag(
+				'sourceSha',
+				flag.string({ pattern: /^[a-f0-9]{40}$/ }).describe('Required for prepare-set: source SHA from plan-set'),
+			)
+			.flag('planId', flag.string().describe('Required for prepare-set: plan identity from plan-set'))
 			.interactive(() =>
 				operation === 'prepare-set'
 					? {
@@ -242,10 +269,15 @@ for (const operation of ['plan-set', 'prepare-set'] as const) {
 			)
 			.action(async ({ flags, args, out }) => {
 				if (operation === 'prepare-set' && (!flags.sourceSha || !flags.planId)) {
-					throw new Error('Run releases plan-set first; supply its --sourceSha and --planId');
+					throw failure(
+						'prepare-set needs --sourceSha and --planId',
+						'PLAN_REQUIRED',
+						'Run beepboop releases plan-set first',
+					);
 				}
 				const client = new Client(flags.server);
-				out.json(
+				await emit(
+					out,
 					await client.request(`/api/releases/${operation}`, {
 						repositoryId: await repositoryId(client, args.repository),
 						stream: flags.stream,
@@ -265,7 +297,8 @@ releases = releases.command(
 				.required(),
 		)
 		.action(async ({ flags, args, out }) =>
-			out.json(
+			emit(
+				out,
 				await new Client(flags.server).request('/api/releases/start-set', {
 					preparationId: args.preparationId,
 					sourceSha: flags.sourceSha,
@@ -278,7 +311,7 @@ export const app = cli('beepboop')
 	.links()
 	.command(auth).command(repositories).command(releases).command(runs)
 	.command(
-		base('secrets', 'List secret metadata and grants; values and security-key operations stay in the dashboard')
-			.action(async ({ flags, out }) => out.json(await new Client(flags.server).request('/api/credentials'))),
+		base('secrets', 'List secret names and workflow access')
+			.action(async ({ flags, out }) => emit(out, await new Client(flags.server).request('/api/credentials'))),
 	).completions();
 if (import.meta.main) await app.run();

@@ -1,7 +1,10 @@
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { isCLIError } from '@kjanat/dreamcli';
 import { credentialHash } from '@/automation/cli-auth';
+import { failure, signIn } from '@/cli/output';
+import { record } from '@/model';
 
 export interface Session {
 	token: string;
@@ -13,16 +16,24 @@ function parseSession(value: unknown): Session | undefined {
 	if (typeof token !== 'string' || !/^cli_[a-f0-9]{64}$/.test(token) || typeof expiresAt !== 'number') return undefined;
 	return { token, expiresAt };
 }
+function reason(body: string): string {
+	try {
+		const error = record(JSON.parse(body)).error;
+		return typeof error === 'string' ? error : body;
+	} catch {
+		return body;
+	}
+}
 export function serverOrigin(value: string): string {
 	const url = new URL(value);
 	if (
 		url.protocol !== 'https:'
 		&& !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))
 	) {
-		throw new Error('Use HTTPS, or HTTP on localhost for development');
+		throw failure('Use HTTPS, or HTTP on localhost for development', 'INVALID_SERVER');
 	}
 	if (url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
-		throw new Error('Server must be an origin, without credentials or a path');
+		throw failure('Server must be an origin, without credentials or a path', 'INVALID_SERVER');
 	}
 	return url.origin;
 }
@@ -55,17 +66,17 @@ export class Client {
 		try {
 			saved = JSON.parse(await readFile(await this.file(), 'utf8'));
 		} catch {
-			throw new Error('Not signed in. Run beepboop auth login');
+			throw failure('Not signed in', 'NOT_SIGNED_IN', signIn);
 		}
 		const session = parseSession(saved);
-		if (!session || session.expiresAt <= Date.now()) throw new Error('Session expired. Run beepboop auth login');
+		if (!session || session.expiresAt <= Date.now()) throw failure('Session expired', 'SESSION_EXPIRED', signIn);
 		return session;
 	}
 	async logout(): Promise<void> {
 		try {
 			await this.request('/auth/cli/logout', {});
 		} catch (error) {
-			if (!(error instanceof Error) || !/^(Not signed in|Session expired)/.test(error.message)) throw error;
+			if (!isCLIError(error) || !['NOT_SIGNED_IN', 'SESSION_EXPIRED'].includes(error.code)) throw error;
 		}
 		await rm(await this.file(), { force: true });
 	}
@@ -78,8 +89,10 @@ export class Client {
 			redirect: 'error',
 			signal: AbortSignal.timeout(30000),
 		});
-		if (response.status === 401) throw new Error('Session expired or revoked. Run beepboop auth login');
-		if (!response.ok) throw new Error(`Beepboop request failed (${response.status}): ${await response.text()}`);
+		if (response.status === 401) throw failure('Session expired or revoked', 'SESSION_EXPIRED', signIn);
+		if (!response.ok) {
+			throw failure(`Beepboop request failed (${response.status}): ${reason(await response.text())}`, 'REQUEST_FAILED');
+		}
 		return response.json();
 	}
 	async login(
@@ -101,16 +114,20 @@ export class Client {
 				continue;
 			}
 			if (response.status === 401 || response.status === 404) {
-				throw new Error(
-					'This server does not provide CLI login yet. Deploy the matching Beepboop server or choose another --server.',
+				throw failure(
+					'This server does not provide CLI login',
+					'LOGIN_UNAVAILABLE',
+					'Deploy the matching Beepboop server or choose another --server',
 				);
 			}
-			if (!response.ok) throw new Error(`Login failed (${response.status})`);
+			if (!response.ok) {
+				throw failure(`Login failed (${response.status}): ${reason(await response.text())}`, 'LOGIN_FAILED');
+			}
 			const session = parseSession(await response.json());
 			if (!session || !(session.expiresAt > Date.now())) throw new Error('Invalid login response');
 			await this.save(session);
 			return;
 		}
-		throw new Error('Login timed out. Run beepboop auth login again');
+		throw failure('Login timed out', 'LOGIN_TIMEOUT', signIn);
 	}
 }

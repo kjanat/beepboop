@@ -3,6 +3,7 @@ import { publishable } from '@/automation/package-publication';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import type { Client } from '@/cli/client';
+import { emit, failure } from '@/cli/output';
 import { record, string } from '@/model';
 import { packageLabel } from '@/ui/package-label';
 
@@ -19,7 +20,9 @@ export async function chooseSetup(plan: SetupPlan, ask: Ask): Promise<SetupChoic
 			? [{ value: plan.packageIds[index] ?? '', label: `${pkg.name} (${packageLabel(plan.packageIds[index] ?? '')})` }]
 			: []
 	);
-	if (!candidates.length) throw new Error('No publishable packages discovered; inspect repository diagnostics first');
+	if (!candidates.length) {
+		throw failure('No publishable packages discovered', 'NO_PACKAGES', 'Inspect the repository diagnostics first');
+	}
 	const chooseWorkflow = async (
 		stream: string,
 		operation: 'prepare' | 'promote',
@@ -149,10 +152,13 @@ export async function setupRepository(
 	out: Out,
 ) {
 	if (flags.plan) {
-		if (!flags.apply || flags.choices) throw new Error('Use --plan with --apply, without --choices');
+		if (!flags.apply || flags.choices) throw failure('Use --plan with --apply, without --choices', 'INVALID_FLAGS');
 		const reviewed = parseSetupPlan(await Bun.file(flags.plan).json());
-		if (reviewed.repository !== repository) throw new Error('Reviewed plan belongs to another repository');
-		out.json(
+		if (reviewed.repository !== repository) {
+			throw failure('The reviewed plan belongs to another repository', 'PLAN_MISMATCH');
+		}
+		await emit(
+			out,
 			await client.request('/api/repositories/setup/apply', {
 				repository,
 				choices: reviewed.choices,
@@ -163,7 +169,7 @@ export async function setupRepository(
 		);
 		return;
 	}
-	if (flags.apply) throw new Error('Noninteractive apply requires --plan pointing to a reviewed preview');
+	if (flags.apply) throw failure('--apply needs --plan pointing to a reviewed preview', 'PLAN_REQUIRED');
 	const initial = parseSetupPlan(await client.request('/api/repositories/setup/preview', { repository }));
 	const choices: unknown = flags.choices
 		? await Bun.file(flags.choices).json()
@@ -172,7 +178,7 @@ export async function setupRepository(
 	const plan = parseSetupPlan(preview);
 	if (flags.output) await Bun.write(flags.output, `${JSON.stringify(preview, null, 2)}\n`);
 	if (out.jsonMode) {
-		out.json(preview);
+		await emit(out, preview);
 		return;
 	}
 	out.log(`Inspected commit: ${plan.sourceSha}`);
