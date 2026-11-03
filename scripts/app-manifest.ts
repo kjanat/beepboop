@@ -15,6 +15,7 @@ console.log(
 			default_permissions: {
 				contents: 'write',
 				actions: 'write',
+				workflows: 'write',
 				metadata: 'read',
 				pull_requests: 'write',
 				checks: 'read',

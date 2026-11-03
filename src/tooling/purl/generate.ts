@@ -22,7 +22,8 @@ async function emit(path: string, source: string): Promise<void> {
 		}
 	} else await Bun.write(path, output);
 }
-const banner = '/* Generated from pinned upstream PURL data by bun run purl:generate. Do not edit. */';
+const banner =
+	'/* Generated from pinned upstream PURL data and local extensions by bun run purl:generate. Do not edit. */';
 const schema = await Bun.file(`${root}/type-definition.schema.json`).json() as JSONSchema;
 const definitionTypes = await compile(schema, 'TypeDefinition', {
 	bannerComment: banner,
@@ -30,13 +31,19 @@ const definitionTypes = await compile(schema, 'TypeDefinition', {
 });
 await emit(`${root}/definition.generated.ts`, definitionTypes);
 const names = (await readdir(`${root}/definitions`)).filter(name => name.endsWith('-definition.json')).sort();
+const extensions = (await readdir(`${root}/extensions`)).filter(name => name.endsWith('-definition.json')).sort();
+if (extensions.some(name => names.includes(name))) {
+	throw new Error('A local PURL extension now exists upstream; reconcile its definition before generating');
+}
+const sources = [...names.map(name => `definitions/${name}`), ...extensions.map(name => `extensions/${name}`)];
 const imports: string[] = [];
 const identities: string[] = [];
 const typeNames: string[] = [];
-for (const [index, filename] of names.entries()) {
-	const definition = parseTypeDefinition(await Bun.file(`${root}/definitions/${filename}`).json());
+for (const [index, source] of sources.entries()) {
+	const filename = source.split('/').at(-1);
+	const definition = parseTypeDefinition(await Bun.file(`${root}/${source}`).json());
 	if (filename !== `${definition.type}-definition.json`) throw new Error(`Type filename mismatch: ${filename}`);
-	imports.push(`import definition${index} from '@/package-url/definitions/${filename}';`);
+	imports.push(`import definition${index} from '@/package-url/${source}';`);
 	typeNames.push(JSON.stringify(definition.type));
 	const namespace = definition.namespace_definition.requirement === 'prohibited'
 		? 'namespace?: never;'
@@ -57,11 +64,17 @@ for (const [index, filename] of names.entries()) {
 }
 await emit(
 	`${root}/definitions/index.ts`,
-	`${banner}\n${imports.join('\n')}\nexport default [${names.map((_, i) => `definition${i}`).join(', ')}];\n`,
+	`${banner}\n${imports.join('\n')}\nexport default [${sources.map((_, i) => `definition${i}`).join(', ')}];\n`,
 );
 await emit(
 	`${root}/identity.generated.ts`,
-	`${banner}\nexport type RegisteredPackageType = ${typeNames.join(' | ')};\nexport type RegisteredPackageIdentity =\n${
-		identities.map(value => `\t| ${value}`).join('\n')
-	};\n`,
+	`${banner}\nexport type RegisteredPackageType = ${
+		typeNames.slice(0, names.length).join(' | ')
+	};\nexport type RegisteredPackageIdentity =\n${
+		identities.slice(0, names.length).map(value => `\t| ${value}`).join('\n')
+	};\nexport type ProposedPackageType = ${
+		typeNames.slice(names.length).join(' | ')
+	};\nexport type ProposedPackageIdentity = ${
+		identities.slice(names.length).join(' | ')
+	};\nexport type KnownPackageType = RegisteredPackageType | ProposedPackageType;\nexport type KnownPackageIdentity = RegisteredPackageIdentity | ProposedPackageIdentity;\n`,
 );

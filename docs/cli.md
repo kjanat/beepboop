@@ -103,3 +103,31 @@ source <(beepboop completions zsh)
 
 For persistent zsh setup, save the output as `_beepboop` in a directory on your
 `fpath` before running `compinit` in your shell configuration.
+
+## Configure repository releases
+
+`beepboop repositories setup owner/repository` uses DreamCLI's built-in prompts
+to select streams, packages, jobs, trigger handover, and missing integration
+commands. It prints the current and proposed files, then asks before creating or
+refreshing a setup PR. Unresolved requirements block apply.
+
+For automation, pass a JSON choices file with `--choices choices.json` and save
+the preview with `--output setup-plan.json`. That invocation only previews.
+After reviewing the file, apply it with:
+
+```sh
+beepboop repositories setup owner/repository --plan setup-plan.json --apply
+```
+
+`--json` prints the full preview and never prompts to apply. `--apply` requires a
+saved plan; it cannot skip review by combining it with new choices. The server
+rejects changes to the source, choices, generated files, preset revisions or setup
+branch since preview. The dashboard uses the same API and validation rules.
+
+A choices file contains `streams` and, for external integration actions,
+`actionsRevision` (the full published Actions commit). Each stream selects `name`,
+`packages` (PURLs), `versioning`, `required`, `prepare` and `promote`. Workflow
+choices contain `file`, optional `job`, `triggers` (`review`, `dispatchOnly`, or
+`preserve`), `commands`, and `publicationSteps` mapping PURLs to publishing step
+IDs. Existing integrated reporting needs no new mappings. Leaving trigger
+conflicts unresolved produces a blocked preview rather than an implicit handover.

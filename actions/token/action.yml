@@ -7,7 +7,19 @@ inputs:
   permissions:
     description: JSON object of GitHub App permissions, each read or write
     default: '{"contents":"write","pull_requests":"write"}'
+  purpose:
+    description: Optional publish-actions purpose for the owner-dispatched publication workflow on the current default branch
+    default: ""
 outputs:
+  bot-login:
+    description: Login of the configured Beepboop App bot
+    value: ${{ steps.client.outputs.bot-login }}
+  bot-id:
+    description: Numeric GitHub user ID of the App bot
+    value: ${{ steps.client.outputs.bot-id }}
+  bot-email:
+    description: Git commit email of the App bot
+    value: ${{ steps.client.outputs.bot-email }}
   token:
     description: Masked installation token scoped to this repository
     value: ${{ steps.client.outputs.token }}
@@ -30,5 +42,7 @@ runs:
       shell: bash
       env:
         SERVICE_ORIGIN: ${{ inputs.service }}
+        TOKEN_PURPOSE: ${{ inputs.purpose }}
+        TOKEN_IDENTITY: "true"
         PERMISSIONS: ${{ inputs.permissions }}
       run: bun "${GITHUB_ACTION_PATH}/../runtime/client.mjs" token

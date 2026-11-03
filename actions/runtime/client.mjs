@@ -36,8 +36,13 @@ else if (mode === 'report') {
 	};
 } else if (mode === 'credentials') body = { executionId, aliases: JSON.parse(process.env.ALIASES || '[]') };
 else if (mode === 'refs-plan' || mode === 'refs-complete') body = { executionId };
-else if (mode === 'token') body = { permissions: JSON.parse(process.env.PERMISSIONS || '{}') };
-else throw Error('Unknown integration action');
+else if (mode === 'token') {
+	body = {
+		permissions: JSON.parse(process.env.PERMISSIONS || '{}'),
+		...(process.env.TOKEN_PURPOSE ? { purpose: process.env.TOKEN_PURPOSE } : {}),
+		...(process.env.TOKEN_IDENTITY === 'true' ? { identity: true } : {}),
+	};
+} else throw Error('Unknown integration action');
 const result = await fetch(new URL(`/api/workflow/${mode}`, origin), {
 	method: 'POST',
 	headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -68,6 +73,17 @@ if (mode === 'begin') {
 	output('values', JSON.stringify(data));
 } else if (mode === 'token') {
 	if (typeof data.token !== 'string') throw Error('Invalid token response');
+	if (process.env.TOKEN_IDENTITY === 'true') {
+		const bot = data.bot;
+		if (
+			!bot || typeof bot.login !== 'string' || !/^[a-z0-9-]+\[bot\]$/.test(bot.login)
+			|| !Number.isSafeInteger(bot.id) || bot.id <= 0
+			|| bot.email !== `${bot.id}+${bot.login}@users.noreply.github.com`
+		) throw Error('Invalid bot identity response');
+		output('bot-login', bot.login);
+		output('bot-id', String(bot.id));
+		output('bot-email', bot.email);
+	}
 	mask(data.token);
 	output('token', data.token);
 } else output('result', JSON.stringify(data));

@@ -441,7 +441,7 @@ describe('repository onboarding dashboard', () => {
 			assert.match(html, /pkg:npm\/private-app/);
 			assert.match(html, /Not selected for registry publication/);
 			assert.match(html, /deploy\.yml/);
-			assert.match(html, /Refresh setup PR/);
+			assert.match(html, /Refresh setup proposal/);
 			assert.match(html, /https:\/\/github.com\/example\/private-app\/pull\/10/);
 			assert.doesNotMatch(html, /No package manifests discovered/);
 		} finally {

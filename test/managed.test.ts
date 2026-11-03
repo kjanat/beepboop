@@ -303,3 +303,81 @@ test('refreshing setup documentation updates the existing PR without a commit an
 	);
 	expect(gateway.bodies).toEqual(['new inspection']);
 });
+
+test('setup refresh builds on current default-branch files and refuses unrelated proposal edits', async () => {
+	class SetupGateway extends Gateway {
+		changed = ['.github/beepboop.json'];
+		modified = false;
+		seenTree: unknown;
+		seenParents: unknown;
+		override async file(_name?: string, path?: string, revision?: string) {
+			if (path === '.github/beepboop.json') {
+				return revision === snapshot.sha
+					? '{"current":true}'
+					: this.modified
+					? 'human edit'
+					: '{"old":true}';
+			}
+			return 'unrelated';
+		}
+		override async call(path: string, token: string, method = 'GET', body?: unknown): Promise<unknown> {
+			if (path.includes('/compare/')) return { files: this.changed.map(filename => ({ filename })) };
+			if (path.includes(`/git/commits/${snapshot.sha}`)) return { tree: { sha: 'e'.repeat(40) } };
+			if (path.endsWith('/git/trees')) this.seenTree = (body as { base_tree: string }).base_tree;
+			if (path.endsWith('/git/commits')) this.seenParents = (body as { parents: string[] }).parents;
+			if (path.includes('/git/refs/heads/') && method === 'PATCH') {
+				expect(body).toEqual({ sha: this.head, force: false });
+				this.branch = this.head;
+				return {};
+			}
+			return super.call(path, token, method, body);
+		}
+	}
+	const gateway = new SetupGateway();
+	gateway.branch = 'f'.repeat(40);
+	gateway.pulls = 1;
+	const previous = [{ path: '.github/beepboop.json', before: '', after: '{"old":true}' }];
+	const edits = [{ path: '.github/beepboop.json', before: '{"current":true}', after: '{"new":true}' }];
+	await gateway.pullRequest(
+		snapshot,
+		'automation/onboarding',
+		'setup',
+		'reviewed',
+		edits,
+		gateway.branch,
+		undefined,
+		previous,
+	);
+	expect(gateway.seenTree).toBe('e'.repeat(40));
+	expect(gateway.seenParents).toEqual(['f'.repeat(40), snapshot.sha]);
+	gateway.changed.push('human.txt');
+	await rejects(
+		gateway.pullRequest(
+			snapshot,
+			'automation/onboarding',
+			'setup',
+			'reviewed',
+			edits,
+			gateway.branch,
+			undefined,
+			previous,
+		),
+		/unrelated/,
+	);
+	gateway.changed = ['.github/beepboop.json'];
+	gateway.modified = true;
+	await rejects(
+		gateway.pullRequest(
+			snapshot,
+			'automation/onboarding',
+			'setup',
+			'reviewed',
+			edits,
+			gateway.branch,
+			undefined,
+			previous,
+		),
+		/was edited/,
+	);
+	expect(gateway.commits).toBe(1);
+});

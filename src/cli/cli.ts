@@ -2,6 +2,7 @@
 import { arg, cli, command, flag, group } from '@kjanat/dreamcli';
 import type { Execution, RepositoryRecord } from '@/automation/types';
 import { Client } from '@/cli/client';
+import { setupRepository } from '@/cli/setup';
 
 const base = (name: string, description: string, promptServer = false) =>
 	command(name).description(description)
@@ -69,7 +70,20 @@ const auth = group('auth').description('Sign in, inspect your session, or revoke
 			out.log('Signed out.');
 		}),
 	);
-const repositories = group('repositories').description('Inspect and discover repositories')
+const repositories = group('repositories').description('Inspect and configure repository releases')
+	.command(
+		repository('setup', 'Review release configuration and workflow integration in a setup PR')
+			.flag(
+				'choices',
+				flag.path({ mustExist: true }).describe('JSON setup choices; preview without interactive prompts'),
+			)
+			.flag('output', flag.path().describe('Save the reviewed preview as JSON'))
+			.flag('plan', flag.path({ mustExist: true }).describe('Previously reviewed preview to apply'))
+			.flag('apply', flag.boolean().default(false).describe('Apply the exact reviewed --plan'))
+			.action(async ({ flags, args, ask, out }) =>
+				setupRepository(new Client(flags.server), args.repository, flags, ask, out)
+			),
+	)
 	.command(
 		base('list', 'List enrolled repositories').action(async ({ flags, out }) => {
 			const rows = await new Client(flags.server).request<RepositoryRecord[]>('/api/repositories');

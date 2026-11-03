@@ -1,4 +1,4 @@
-/* Generated from pinned upstream PURL data by bun run purl:generate. Do not edit. */
+/* Generated from pinned upstream PURL data and local extensions by bun run purl:generate. Do not edit. */
 
 /**
  * The unique identifier URI for this PURL type definition.

@@ -54,9 +54,15 @@ provenance. A retry skips an existing npm version only if its tarball integrity
 matches the newly built package. A conflicting version fails rather than
 silently overwriting or accepting it.
 
-JSR has no registered type in our pinned PURL definitions. Its adapter therefore
-uses `pkg:generic/%40kjanat/beepboop?repository_url=https:%2F%2Fjsr.io`, distinct
-from `pkg:npm/%40kjanat/beepboop`. No unofficial `jsr` PURL type is introduced.
+JSR uses `pkg:jsr/%40kjanat/beepboop`, distinct from `pkg:npm/%40kjanat/beepboop`.
+This is a provisional extension following [PURL proposal #457](https://github.com/package-url/purl-spec/issues/457),
+not a registered upstream definition. Its JSON definition lives in `src/package-url/extensions`;
+the same generator produces its TypeScript identity and runtime validation. All JSR packages
+require an `@scope`, lowercase registry names, and an optional SemVer version.
+Upstream refreshes leave local extensions intact. Historical
+`pkg:generic/%40kjanat/beepboop?repository_url=https:%2F%2Fjsr.io` references in
+stored records, configurations and frozen releases resolve to the new JSR identity.
+The general PURL parser still preserves explicit generic identities unchanged.
 
 ## Local verification
 

@@ -4,12 +4,13 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
+import { createLocalJWKSet, exportJWK, exportPKCS8, generateKeyPair, SignJWT } from 'jose';
+import { RepositoryGateway } from '@/automation/github';
 import { type TokenPermissions, tokenPermissions, workflowToken } from '@/automation/token';
 
 const audience = 'https://beepboop.example';
 const ownerId = 4242;
-const { privateKey, publicKey } = await generateKeyPair('RS256');
+const { privateKey, publicKey } = await generateKeyPair('RS256', { extractable: true });
 const issuerKeys = createLocalJWKSet({ keys: [{ ...(await exportJWK(publicKey)), kid: 'test', alg: 'RS256' }] });
 
 async function request(body: unknown, claims: Record<string, unknown> = {}, method = 'POST'): Promise<Request> {
@@ -48,6 +49,12 @@ function fakes() {
 		minted,
 		audited,
 		issuer: {
+			botIdentity: async () => ({
+				login: 'beepboop[bot]',
+				id: 123,
+				email: '123+beepboop[bot]@users.noreply.github.com',
+			}),
+			defaultRevision: async () => ({ ref: 'refs/heads/master', sha: 'a'.repeat(40) }),
 			token: async (name: string, id: number, permissions: TokenPermissions) => {
 				minted.push({ name, id, permissions });
 				return 'ghs_installation';
@@ -210,7 +217,7 @@ globalThis.fetch = async (input, init) => {
 				JSON.stringify(requests)
 			}, JSON.stringify({ url, authorization: headers.get('authorization'), body: init?.body ?? null }) + '\\n');
 	if (url.startsWith('https://oidc.example/')) return Response.json({ value: 'oidc-jwt' });
-	if (url === 'https://beepboop.example/api/workflow/token') return Response.json({ token: 'ghs_installation' });
+	if (url === 'https://beepboop.example/api/workflow/token') return Response.json({ token: 'ghs_installation', bot: { login: 'beepboop[bot]', id: 123, email: '123+beepboop[bot]@users.noreply.github.com' } });
 	return new Response('unexpected', { status: 500 });
 };
 `,
@@ -226,21 +233,126 @@ globalThis.fetch = async (input, init) => {
 					ACTIONS_ID_TOKEN_REQUEST_URL: 'https://oidc.example/token?api-version=2.0',
 					ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'request-token',
 					PERMISSIONS: '{"contents":"write","pull_requests":"write"}',
+					TOKEN_IDENTITY: 'true',
 					GITHUB_OUTPUT: outputs,
 				},
 			},
 		);
 		expect(result.status).toBe(0);
 		expect(result.stdout).toContain('::add-mask::ghs_installation');
-		expect(readFileSync(outputs, 'utf8')).toMatch(/^token<<value_[\w-]+\nghs_installation\nvalue_[\w-]+\n$/);
+		expect(readFileSync(outputs, 'utf8')).toMatch(/token<<value_[\w-]+\nghs_installation\nvalue_[\w-]+\n$/);
+		expect(readFileSync(outputs, 'utf8')).toContain('\nbeepboop[bot]\n');
+		expect(readFileSync(outputs, 'utf8')).toContain('\n123+beepboop[bot]@users.noreply.github.com\n');
 		const sent = readFileSync(requests, 'utf8').trim().split('\n').map(line => JSON.parse(line));
 		expect(sent[0].url).toBe('https://oidc.example/token?api-version=2.0&audience=https%3A%2F%2Fbeepboop.example');
 		expect(sent[1]).toEqual({
 			url: 'https://beepboop.example/api/workflow/token',
 			authorization: 'Bearer oidc-jwt',
-			body: '{"permissions":{"contents":"write","pull_requests":"write"}}',
+			body: '{"permissions":{"contents":"write","pull_requests":"write"},"identity":true}',
 		});
 	} finally {
 		rmSync(work, { recursive: true, force: true });
 	}
+});
+
+const publicationClaims = {
+	event_name: 'workflow_dispatch',
+	ref: 'refs/heads/master',
+	workflow_sha: 'a'.repeat(40),
+	workflow_ref: 'kjanat/example/.github/workflows/publish-actions.yml@refs/heads/master',
+};
+const publicationRequest = {
+	purpose: 'publish-actions',
+	identity: true,
+	permissions: { contents: 'write', workflows: 'write' },
+};
+test('owner publication gets repository-scoped App credentials and the App bot identity', async () => {
+	const { issuer, log, minted } = fakes();
+	const result = await workflowToken(
+		await request(publicationRequest, publicationClaims),
+		audience,
+		ownerId,
+		issuer,
+		log,
+		issuerKeys,
+	);
+	expect(await result.json()).toEqual({ token: 'ghs_installation', bot: await issuer.botIdentity() });
+	expect(minted).toEqual([{ name: 'kjanat/example', id: 7, permissions: { contents: 'write', workflows: 'write' } }]);
+});
+test('publication privileges reject PRs, other workflows, reusable jobs, stale revisions and extra permissions', async () => {
+	for (
+		const claims of [
+			{ event_name: 'pull_request' },
+			{ actor_id: 1 },
+			{ repository_owner_id: 1 },
+			{ workflow_ref: 'kjanat/example/.github/workflows/other.yml@refs/heads/master' },
+			{ workflow_sha: 'b'.repeat(40) },
+			{ job_workflow_sha: 'a'.repeat(40) },
+			{
+				ref: 'refs/heads/topic',
+				workflow_ref: 'kjanat/example/.github/workflows/publish-actions.yml@refs/heads/topic',
+			},
+			{ sha: 'b'.repeat(40), workflow_sha: 'b'.repeat(40) },
+		]
+	) {
+		const { issuer, log, minted } = fakes();
+		await rejects(
+			workflowToken(
+				await request(publicationRequest, { ...publicationClaims, ...claims }),
+				audience,
+				ownerId,
+				issuer,
+				log,
+				issuerKeys,
+			),
+		);
+		expect(minted).toEqual([]);
+	}
+	for (
+		const body of [
+			{ ...publicationRequest, purpose: undefined },
+			{ ...publicationRequest, purpose: 'unknown' },
+			{ ...publicationRequest, permissions: { contents: 'write', workflows: 'write', secrets: 'read' } },
+		]
+	) {
+		const { issuer, log, minted } = fakes();
+		await rejects(workflowToken(await request(body, publicationClaims), audience, ownerId, issuer, log, issuerKeys));
+		expect(minted).toEqual([]);
+	}
+});
+
+test('bot identity comes from the configured App and its actual GitHub bot user', async () => {
+	const key = await exportPKCS8(privateKey);
+	const paths: string[] = [];
+	const gateway = new RepositoryGateway(
+		{ GITHUB_APP_ID: '999', GITHUB_APP_PRIVATE_KEY: key },
+		ownerId,
+		async (input, init) => {
+			const path = new URL(String(input)).pathname;
+			paths.push(path);
+			if (path === '/app') {
+				expect(new Headers(init?.headers).get('authorization')).toMatch(/^Bearer ey/);
+				return Response.json({ slug: 'my-beepboop' });
+			}
+			expect(path).toBe('/users/my-beepboop%5Bbot%5D');
+			return Response.json({ login: 'my-beepboop[bot]', type: 'Bot', id: 123 });
+		},
+	);
+	expect(await gateway.botIdentity()).toEqual({
+		login: 'my-beepboop[bot]',
+		id: 123,
+		email: '123+my-beepboop[bot]@users.noreply.github.com',
+	});
+	expect(paths).toHaveLength(2);
+	const wrong = new RepositoryGateway(
+		{ GITHUB_APP_ID: '999', GITHUB_APP_PRIVATE_KEY: key },
+		ownerId,
+		async input =>
+			Response.json(
+				new URL(String(input)).pathname === '/app'
+					? { slug: 'my-beepboop' }
+					: { login: 'other[bot]', type: 'Bot', id: 123 },
+			),
+	);
+	await rejects(wrong.botIdentity(), /identity mismatch/);
 });

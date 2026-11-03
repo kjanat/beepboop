@@ -1,6 +1,7 @@
 import { CronExpressionParser } from 'cron-parser';
 import { versionFileSchema } from '@/automation/editors';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
+import { releaseIdentity } from '@/automation/package-identity';
 import { validRef } from '@/automation/policy';
 import type { Configuration, ManagerName, Stream, WorkflowBinding } from '@/automation/types';
 import { parseWinGetPolicy } from '@/automation/winget';
@@ -8,7 +9,7 @@ import { array, record, text } from '@/model';
 import { purl } from '@/package-url';
 
 function packageReferences(value: unknown): string[] {
-	return strings(value).map(reference => reference.startsWith('pkg:') ? purl(reference) : reference);
+	return strings(value).map(reference => reference.startsWith('pkg:') ? purl(releaseIdentity(reference)) : reference);
 }
 export const managerNames: ManagerName[] = [
 	'pre-commit',

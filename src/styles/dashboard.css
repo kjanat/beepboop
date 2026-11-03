@@ -592,3 +592,29 @@ dd {
 .winget {
 	overflow-wrap: anywhere;
 }
+
+.release-setup {
+	margin: 20px 0;
+}
+.release-setup textarea {
+	width: 100%;
+	min-height: 90px;
+	padding: 10px 12px;
+	color: var(--ink);
+	background: #fbfcfd;
+	border: 1px solid #b9c9d5;
+	border-radius: 5px;
+	font: inherit;
+}
+.release-setup .check {
+	margin: 10px 0;
+	gap: 10px;
+	overflow-wrap: anywhere;
+}
+.release-setup > button {
+	margin: 8px 10px 8px 0;
+}
+.setup-result pre {
+	max-height: 32rem;
+	overflow: auto;
+}

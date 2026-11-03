@@ -7,20 +7,20 @@ import type { AutomationCoordinator } from '@/automation/coordinator';
 import { planVersionFiles } from '@/automation/editors';
 import { createExecution } from '@/automation/execution';
 import { type Credentials, RepositoryGateway } from '@/automation/github';
-import { formatJson } from '@/automation/json';
 import { createReleasePreparation, planIdentity } from '@/automation/managed';
 import { discover, planRelease, resolvePublished, versionsInFiles } from '@/automation/managers';
-import { onboardingBody, onboardingConfiguration } from '@/automation/onboarding';
 import { matchesPackage } from '@/automation/package-identity';
 import { planReleaseSet } from '@/automation/planning';
 import { matchesRef } from '@/automation/policy';
 import { planHookUpdates } from '@/automation/precommit';
+import { previewSetup, setupBody } from '@/automation/setup';
 import { Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
 import { workflowToken } from '@/automation/token';
 import type {
 	Artifact,
 	AutomationEvent,
+	Edit,
 	Execution,
 	Publication,
 	RepositoryRecord,
@@ -402,54 +402,87 @@ export class AutomationService {
 			);
 		}
 		if (path === '/api/repositories/onboard') {
-			const repository = await this.refresh(
-				text(body.repository),
-				body.repositoryId === undefined
-					? await this.gateway.identify(text(body.repository))
-					: integer(body.repositoryId),
-			);
-			const snapshot = await this.gateway.snapshot(repository.name, repository.id, repository.sha);
-			if (snapshot.files['.github/beepboop.json']) {
-				throw new Error('Repository already has configuration');
+			throw new Error('Preview release setup before applying it: /api/repositories/setup/preview');
+		}
+		if (path === '/api/repositories/setup/preview' || path === '/api/repositories/setup/apply') {
+			const name = text(body.repository), id = await this.gateway.identify(name);
+			const snapshot = await this.gateway.snapshot(name, id);
+			const raw = JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}');
+			const resolved = await resolveConfiguration(raw, ref => this.gateway.preset(ref));
+			const inventory = discover(snapshot);
+			const row = await this.store.db.prepare('SELECT document FROM onboarding WHERE repository_id=?')
+				.bind(id).first<{ document: string }>();
+			const saved = row ? record(JSON.parse(row.document)) : undefined;
+			const head = await this.gateway.setupHead(name, id);
+			const savedEdits = Array.isArray(saved?.edits) ? saved.edits as Edit[] : [];
+			const priorConfiguration = savedEdits.find(edit => edit.path === '.github/beepboop.json')?.before ?? '';
+			const choices = body.choices
+				?? ((snapshot.files['.github/beepboop.json'] ?? '') === priorConfiguration ? saved?.choices : undefined);
+			const plan = await previewSetup(snapshot, inventory, choices, {
+				head,
+				workflowPermission: await this.gateway.canEditWorkflows(name, id),
+				branchConflict: !!head && saved?.head !== head,
+				presetShas: resolved.presetShas,
+				...(typeof saved?.url === 'string'
+					? { prior: { url: saved.url, content: typeof saved.content === 'string' ? saved.content : undefined } }
+					: {}),
+			}, resolved.configuration);
+			if (path.endsWith('/preview')) return Response.json(plan);
+			if (body.planId !== plan.planId || body.sourceSha !== plan.sourceSha || body.setupHead !== head) {
+				throw new Error('Setup source, choices or branch changed; preview again');
 			}
-			const prior = await this.store.db
-				.prepare('SELECT document FROM onboarding WHERE repository_id=?')
-				.bind(repository.id)
-				.first<{ document: string }>();
-			const saved = prior ? record(JSON.parse(prior.document)) : undefined;
-			const content = formatJson(onboardingConfiguration(snapshot, repository.inventory));
-			if (saved?.content === content) {
-				const result = await this.gateway.refreshPullRequest(
-					snapshot,
-					'automation/onboarding',
-					'chore: configure release automation',
-					onboardingBody(snapshot, repository.inventory),
-					text(saved.head),
+			if (plan.blockers.length) throw new Error(plan.blockers.join('\n'));
+			if (!plan.edits.length) throw new Error('Release setup already matches the reviewed configuration');
+			if (head && saved?.head !== head) {
+				throw new Error('Setup branch changed; preserve human edits and review the conflict');
+			}
+			const previous: Edit[] = Array.isArray(saved?.edits) ? saved.edits as Edit[] : typeof saved?.content === 'string'
+				? [{ path: '.github/beepboop.json', before: '', after: saved.content }]
+				: [];
+			if (head && saved?.sourceSha === snapshot.sha && JSON.stringify(previous) === JSON.stringify(plan.edits)) {
+				return Response.json(
+					await this.gateway.refreshPullRequest(
+						snapshot,
+						'automation/onboarding',
+						'chore: configure release automation',
+						setupBody(plan),
+						head,
+					),
 				);
-				await this.store.audit(actor, 'repository.onboard.refresh', String(repository.id));
-				return Response.json(result);
 			}
 			const result = await this.gateway.pullRequest(
 				snapshot,
 				'automation/onboarding',
 				'chore: configure release automation',
-				onboardingBody(snapshot, repository.inventory),
-				[
-					{
-						path: '.github/beepboop.json',
-						before: typeof saved?.content === 'string' ? saved.content : '',
-						after: content,
-					},
-				],
-				saved?.head as string | undefined,
+				setupBody(plan),
+				plan.edits,
+				head ?? undefined,
+				undefined,
+				previous,
 			);
-			await this.store.db
-				.prepare(
-					'INSERT INTO onboarding VALUES(?,?) ON CONFLICT(repository_id) DO UPDATE SET document=excluded.document',
-				)
-				.bind(repository.id, JSON.stringify({ ...result, content }))
-				.run();
-			await this.store.audit(actor, 'repository.onboard', String(repository.id));
+			const content = plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after
+				?? snapshot.files['.github/beepboop.json'];
+			// Keep the complete set of generated files for safe later refreshes, including unchanged ones.
+			const generated = new Map(
+				previous.filter(edit => snapshot.files[edit.path] !== undefined).map(
+					edit => [edit.path, { ...edit, after: snapshot.files[edit.path] as string }],
+				),
+			);
+			for (const edit of plan.edits) generated.set(edit.path, edit);
+			await this.store.db.prepare(
+				'INSERT INTO onboarding VALUES(?,?) ON CONFLICT(repository_id) DO UPDATE SET document=excluded.document',
+			)
+				.bind(
+					id,
+					JSON.stringify({
+						...result,
+						content,
+						sourceSha: snapshot.sha,
+						choices: plan.choices,
+						edits: [...generated.values()],
+					}),
+				).run();
+			await this.store.audit(actor, 'repository.setup', String(id));
 			return Response.json(result);
 		}
 		if (path === '/api/releases/update-references') {

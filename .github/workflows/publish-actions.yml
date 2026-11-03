@@ -8,17 +8,34 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions: { contents: write }
+    permissions: { contents: read, id-token: write }
     steps:
       - name: Checkout source
         uses: actions/checkout@v7
-        with: { ref: "${{ github.sha }}", fetch-depth: 0 }
+        with: { ref: "${{ github.sha }}", fetch-depth: 0, persist-credentials: false }
       - uses: jdx/mise-action@v5
       - run: runner i -f
       - run: bun test ./test/winget.test.ts ./test/actions/winget.ts
+      - name: Authenticate as Beepboop
+        id: bot
+        uses: $/actions/token
+        with:
+          purpose: publish-actions
+          permissions: '{"contents":"write","workflows":"write"}'
+      - name: Configure checkout with Beepboop credentials
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          token: ${{ steps.bot.outputs.token }}
       - name: Publish distribution commit
         shell: bash -euo pipefail {0}
-        env: { repository_url: "${{ github.repositoryUrl }}" }
+        env:
+          repository_url: ${{ github.server_url }}/${{ github.repository }}
+          GIT_AUTHOR_NAME: ${{ steps.bot.outputs.bot-login }}
+          GIT_AUTHOR_EMAIL: ${{ steps.bot.outputs.bot-email }}
+          GIT_COMMITTER_NAME: ${{ steps.bot.outputs.bot-login }}
+          GIT_COMMITTER_EMAIL: ${{ steps.bot.outputs.bot-email }}
         run: |
           head=$(git rev-parse HEAD)
           [[ "${head}" == "${GITHUB_SHA}" ]]
@@ -45,8 +62,7 @@ jobs:
               exit 0
             fi
           fi
-          commit=$(git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            commit-tree "${tree}" "${parents[@]}" -m "Publish Actions from ${GITHUB_SHA}")
+          commit=$(git commit-tree "${tree}" "${parents[@]}" -m "Publish Actions from ${GITHUB_SHA}")
           git push origin "${commit}:refs/heads/actions"
           {
             echo "Source commit: [\`${GITHUB_SHA}\`](${repository_url}/commit/${GITHUB_SHA})"

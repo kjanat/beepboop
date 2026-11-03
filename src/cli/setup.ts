@@ -1,0 +1,195 @@
+import type { Ask, Out, SelectChoice } from '@kjanat/dreamcli';
+import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
+import type { Client } from '@/cli/client';
+
+function options(entries: SelectChoice[]): [SelectChoice, ...SelectChoice[]] {
+	const [first, ...rest] = entries;
+	if (!first) throw new Error('No choices available');
+	return [first, ...rest];
+}
+/** Both frontends submit exactly the same policy choices to the preview/apply service. */
+export async function chooseSetup(plan: SetupPlan, ask: Ask): Promise<SetupChoices> {
+	const choices: SetupChoices = { streams: [] };
+	const candidates = plan.inventory.packages.flatMap((pkg, index) =>
+		pkg.publish ? [{ value: plan.packageIds[index] ?? '', label: `${pkg.name} (${plan.packageIds[index]})` }] : []
+	);
+	if (!candidates.length) throw new Error('No publishable packages discovered; inspect repository diagnostics first');
+	const chooseWorkflow = async (
+		stream: string,
+		operation: 'prepare' | 'promote',
+		previous?: SetupWorkflow,
+	): Promise<SetupWorkflow> => {
+		const selected = await ask({
+			kind: 'select',
+			message: `${stream}: ${operation} workflow${previous ? ` (currently ${previous.file})` : ''}`,
+			choices: options([...plan.workflows.map(w => ({ value: w.file, label: `${w.file} (${w.events.join(', ')})` })), {
+				value: 'new',
+				label: 'Create a workflow',
+			}]),
+		});
+		const file = selected === 'new'
+			? await ask({
+				kind: 'input',
+				message: 'Workflow filename',
+				default: `${operation}-${stream}.yml`,
+				validate: value => /^[A-Za-z0-9_-]+\.ya?ml$/.test(value) || 'Use a YAML filename',
+			})
+			: selected;
+		const evidence = plan.workflows.find(w => w.file === file);
+		const job = evidence
+			? await ask({
+				kind: 'select',
+				message: 'Job to integrate',
+				choices: options(evidence.jobs.map(value => ({ value }))),
+			})
+			: operation;
+		const triggers = await ask({
+			kind: 'select',
+			message: 'Trigger handover',
+			choices: [
+				{ value: 'review', label: 'Keep unchanged and report conflicts' },
+				{ value: 'dispatchOnly', label: 'Replace existing triggers with Beepboop dispatch' },
+				{ value: 'preserve', label: 'Preserve existing triggers; block incompatible integration' },
+			],
+		});
+		const integrated = operation === 'prepare'
+			? evidence?.preparationJobs.includes(job)
+			: evidence?.reportingJobs.includes(job);
+		const commands = integrated ? '' : await ask({
+			kind: 'input',
+			empty: 'accept',
+			message: operation === 'prepare'
+				? 'Preparation commands (install, update lockfiles, build and test; blank to leave unresolved)'
+				: 'Additional publication commands (blank to use existing command steps)',
+		});
+		const publicationSteps: Record<string, string> = {};
+		if (operation === 'promote' && !integrated && !commands) {
+			for (const id of choices.streams.find(row => row.name === stream)?.packages ?? []) {
+				publicationSteps[id] = await ask({
+					kind: 'select',
+					message: `Command step publishing ${id}`,
+					choices: options([
+						{ value: '', label: 'Unresolved — block apply' },
+						...(evidence?.steps.filter(step => step.job === job).map(step => ({ value: step.id, label: step.label }))
+							?? []),
+					]),
+				});
+			}
+		}
+		return { file, job, triggers, commands, publicationSteps };
+	};
+	for (const proposed of plan.choices.streams) {
+		if (!await ask({ kind: 'confirm', message: `Configure stream ${proposed.name}?`, default: true })) continue;
+		const stream = { ...proposed };
+		stream.packages = await ask({
+			kind: 'multiselect',
+			message: `${stream.name}: packages (current: ${stream.packages.join(', ') || 'none'})`,
+			min: 1,
+			choices: options(candidates),
+		});
+		stream.versioning = await ask({
+			kind: 'select',
+			message: 'Versioning',
+			choices: [{ value: 'workspace', label: 'One version for the stream' }, {
+				value: 'independent',
+				label: 'Independent package versions',
+			}, { value: 'none', label: 'No version' }],
+		});
+		stream.required = await ask({
+			kind: 'multiselect',
+			message: 'Required publications',
+			choices: options(stream.packages.map(value => ({ value }))),
+		});
+		choices.streams.push(stream);
+		stream.prepare = await chooseWorkflow(stream.name, 'prepare', stream.prepare);
+		stream.promote = await chooseWorkflow(stream.name, 'promote', stream.promote);
+	}
+	while (await ask({ kind: 'confirm', message: 'Add another release stream?', default: false })) {
+		const name = await ask({
+			kind: 'input',
+			message: 'Stream name',
+			validate: value => /^[a-z][a-z0-9-]{0,63}$/.test(value) || 'Use lowercase letters, numbers and hyphens',
+		});
+		const packages = await ask({ kind: 'multiselect', message: 'Packages', min: 1, choices: options(candidates) });
+		const versioning = await ask({
+			kind: 'select',
+			message: 'Versioning',
+			choices: [{ value: 'workspace' }, { value: 'independent' }, { value: 'none' }],
+		});
+		const required = await ask({
+			kind: 'multiselect',
+			message: 'Required publications',
+			choices: options(packages.map(value => ({ value }))),
+		});
+		const stream: SetupChoices['streams'][number] = { name, packages, versioning, required };
+		choices.streams.push(stream);
+		stream.prepare = await chooseWorkflow(name, 'prepare');
+		stream.promote = await chooseWorkflow(name, 'promote');
+	}
+	const revision = await ask({
+		kind: 'input',
+		message: 'Published Beepboop Actions commit (blank for local actions)',
+		empty: 'accept',
+		validate: value => !value || /^[a-f0-9]{40}$/.test(value) || 'Use a full commit SHA',
+	});
+	if (revision) choices.actionsRevision = revision;
+	return choices;
+}
+export async function setupRepository(
+	client: Client,
+	repository: string,
+	flags: { choices?: string; plan?: string; apply: boolean; output?: string },
+	ask: Ask,
+	out: Out,
+) {
+	if (flags.plan) {
+		if (!flags.apply || flags.choices) throw new Error('Use --plan with --apply, without --choices');
+		const reviewed: SetupPlan = await Bun.file(flags.plan).json();
+		if (reviewed.repository !== repository) throw new Error('Reviewed plan belongs to another repository');
+		out.json(
+			await client.request('/api/repositories/setup/apply', {
+				repository,
+				choices: reviewed.choices,
+				planId: reviewed.planId,
+				sourceSha: reviewed.sourceSha,
+				setupHead: reviewed.setupHead,
+			}),
+		);
+		return;
+	}
+	if (flags.apply) throw new Error('Noninteractive apply requires --plan pointing to a reviewed preview');
+	const initial = await client.request<SetupPlan>('/api/repositories/setup/preview', { repository });
+	const choices = flags.choices
+		? await Bun.file(flags.choices).json()
+		: await chooseSetup(initial, ask);
+	const plan = await client.request<SetupPlan>('/api/repositories/setup/preview', { repository, choices });
+	if (flags.output) await Bun.write(flags.output, `${JSON.stringify(plan, null, 2)}\n`);
+	if (out.jsonMode) {
+		out.json(plan);
+		return;
+	}
+	out.log(`Inspected commit: ${plan.sourceSha}`);
+	for (const edit of plan.edits) out.log(`\n${edit.path}\nCurrent:\n${edit.before}\nProposed:\n${edit.after}`);
+	for (const message of [...plan.blockers, ...plan.notes]) out.log(message);
+	if (plan.blockers.length) {
+		out.setExitCode(1);
+		return;
+	}
+	if (!plan.edits.length) {
+		out.log('Release setup already matches.');
+		return;
+	}
+	if (
+		!flags.choices
+		&& await ask({ kind: 'confirm', message: 'Open or refresh the setup PR with these exact changes?', default: false })
+	) {
+		const result = await client.request<{ url: string }>('/api/repositories/setup/apply', {
+			repository,
+			choices,
+			planId: plan.planId,
+			sourceSha: plan.sourceSha,
+			setupHead: plan.setupHead,
+		});
+		out.log(result.url);
+	}
+}

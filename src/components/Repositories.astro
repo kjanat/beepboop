@@ -47,7 +47,7 @@ const { data } = Astro.props;
 			>{repository.suspended
 				? 'App access unavailable'
 				: repository.configuration && !repository.diagnostics.length
-				? 'Ready'
+				? 'Configured'
 				: 'Setup needed'}</span>
 		</div>
 		{repository.diagnostics.map(message => <p class="notice">{message}</p>)}
@@ -57,25 +57,10 @@ const { data } = Astro.props;
 					Refresh inspection
 				</button>
 			</form>
-			{!repository.configuration
-				&& (data.onboarding.get(repository.id) ? (
-				 <>
-					 <a class="button" href={data.onboarding.get(repository.id)}
-					 >Review setup PR ↗</a>
-					 <form data-action="onboard">
-						 <input type="hidden" name="repository" value={repository.name}>
-						 <button class="primary">Refresh setup PR</button>
-					 </form>
-				 </>
-			 ) : (
-				 <form data-action="onboard">
-					 <input
-						 type="hidden"
-						 name="repository"
-						 value={repository.name}
-					 ><button class="primary">Open setup PR</button>
-				 </form>
-			 ))}
+			{data.onboarding.get(repository.id) && (
+				<a class="button" href={data.onboarding.get(repository.id)}
+				>Review previous setup PR ↗</a>
+			)}
 			{repository.configuration && !repository.suspended
 				&& !repository.diagnostics.length && (
 				 <a
@@ -84,6 +69,19 @@ const { data } = Astro.props;
 				 >Prepare a release</a>
 			 )}
 		</div>
+		<form
+			data-action="setup"
+			data-repository={repository.name}
+			class="release-setup"
+		>
+			<button class="primary">
+				{repository.configuration
+					? 'Edit release setup'
+					: data.onboarding.get(repository.id)
+					? 'Refresh setup proposal'
+					: 'Configure releases'}
+			</button>
+		</form>
 		<div class="repository-grid">
 			<div>
 				<h3>Discovered packages</h3>{repository.inventory.packages.length ? (

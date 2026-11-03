@@ -41,6 +41,11 @@ function fixture() {
 			env: {
 				...process.env,
 				GITHUB_SHA: source,
+				repository_url: 'https://github.example/owner/repo',
+				GIT_AUTHOR_NAME: 'beepboop[bot]',
+				GIT_AUTHOR_EMAIL: '123+beepboop[bot]@users.noreply.github.com',
+				GIT_COMMITTER_NAME: 'beepboop[bot]',
+				GIT_COMMITTER_EMAIL: '123+beepboop[bot]@users.noreply.github.com',
 				GITHUB_SERVER_URL: 'https://github.example',
 				GITHUB_REPOSITORY: 'owner/repo',
 				GITHUB_STEP_SUMMARY: join(root, 'summary'),
@@ -57,6 +62,9 @@ test('publication publishes the source tree and shared Actions', () => {
 		const result = run();
 		expect(result.status, result.stderr).toBe(0);
 		const published = head();
+		expect(git('show', '-s', '--format=%an <%ae>%n%cn <%ce>', published)).toBe(
+			'beepboop[bot] <123+beepboop[bot]@users.noreply.github.com>\nbeepboop[bot] <123+beepboop[bot]@users.noreply.github.com>',
+		);
 		expect(git('rev-parse', `${published}^1`)).toBe(source);
 		expect(git('diff', '--name-only', source, published)).toBe('');
 		expect(git('show', `${published}:actions/runtime/client.mjs`)).toBe('export {};');
@@ -118,4 +126,23 @@ test('publication refuses a concurrent distribution branch update', () => {
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
+});
+
+test('publication push credentials and both commit identities come from Beepboop', () => {
+	const job = workflow.jobs.publish;
+	expect(job.permissions).toEqual({ contents: 'read', 'id-token': 'write' });
+	const checkouts = job.steps.filter((step: { uses?: string }) => step.uses?.startsWith('actions/checkout@'));
+	expect(checkouts[0].with['persist-credentials']).toBe(false);
+	expect(checkouts[1].with.token).toBe(`\${{ steps.bot.outputs.token }}`);
+	expect(checkouts[1].with.ref).toBe(`\${{ github.sha }}`);
+	const bot = job.steps.find((step: { id?: string }) => step.id === 'bot');
+	expect(bot.uses).toBe('$/actions/token');
+	expect(bot.with.purpose).toBe('publish-actions');
+	expect(JSON.parse(bot.with.permissions)).toEqual({ contents: 'write', workflows: 'write' });
+	const env = job.steps.find((step: { name?: string }) => step.name === 'Publish distribution commit').env;
+	for (const role of ['AUTHOR', 'COMMITTER']) {
+		expect(env[`GIT_${role}_NAME`]).toBe(`\${{ steps.bot.outputs.bot-login }}`);
+		expect(env[`GIT_${role}_EMAIL`]).toBe(`\${{ steps.bot.outputs.bot-email }}`);
+	}
+	expect(publish).not.toContain('github-actions[bot]');
 });

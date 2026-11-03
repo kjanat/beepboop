@@ -1,4 +1,4 @@
-/* Generated from pinned upstream PURL data by bun run purl:generate. Do not edit. */
+/* Generated from pinned upstream PURL data and local extensions by bun run purl:generate. Do not edit. */
 export type RegisteredPackageType =
 	| 'alpm'
 	| 'apk'
@@ -397,3 +397,14 @@ export type RegisteredPackageIdentity =
 		qualifiers?: Record<string, string> & { 'repository_url'?: string; 'layer_version'?: string };
 		subpath?: string;
 	};
+export type ProposedPackageType = 'jsr';
+export type ProposedPackageIdentity = {
+	type: 'jsr';
+	namespace: string;
+	name: string;
+	version?: string;
+	qualifiers?: Record<string, string> & {};
+	subpath?: string;
+};
+export type KnownPackageType = RegisteredPackageType | ProposedPackageType;
+export type KnownPackageIdentity = RegisteredPackageIdentity | ProposedPackageIdentity;

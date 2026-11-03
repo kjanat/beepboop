@@ -4,7 +4,6 @@ import { latestVersion } from '@/automation/managers/verification';
 import { identityOf } from '@/automation/package-identity';
 
 const packageName = /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/;
-/** JSR has no registered PURL type; use generic with an explicit registry qualifier. */
 export const jsrManager: Manager = {
 	name: 'jsr',
 	identity: pkg => identityOf(pkg),

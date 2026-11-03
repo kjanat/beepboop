@@ -4,16 +4,15 @@ import { type PackageIdentity, packageIdentity, purl } from '@/package-url';
 type PackageRecord = Pick<Package, 'manager' | 'name' | 'version' | 'identity'>;
 /** Legacy records acquire a typed identity at the boundary; adapters stay independent of purl types. */
 export function identityOf(pkg: PackageRecord, repository?: string): PackageIdentity {
-	if (pkg.identity) return packageIdentity(pkg.identity);
+	if (pkg.identity) return releaseIdentity(pkg.identity);
 	if (pkg.manager === 'jsr') {
 		const [namespace, name] = pkg.name.split('/');
 		if (!namespace?.startsWith('@') || !name) throw new Error('Invalid JSR package name');
 		return packageIdentity({
-			type: 'generic',
+			type: 'jsr',
 			namespace,
 			name,
 			version: pkg.version,
-			qualifiers: { repository_url: 'https://jsr.io' },
 		});
 	}
 	const type = pkg.manager === 'go' && pkg.name.includes('/') ? 'golang' : ['npm', 'cargo'].includes(pkg.manager)
@@ -52,7 +51,7 @@ export function packageUrl(pkg: PackageRecord): string {
 /** Old repository configs and frozen releases can still select their original manager:name references. */
 export function matchesPackage(reference: string, pkg: PackageRecord): boolean {
 	if (!reference.startsWith('pkg:')) return reference === `${pkg.manager}:${pkg.name}`;
-	const identity = packageIdentity(reference);
+	const identity = releaseIdentity(reference);
 	return identity.version ? purl(identity) === packageUrl(pkg) : packageKey(identity) === packageId(pkg);
 }
 export function matchesPublication(reference: string, publication: Publication): boolean {
@@ -100,6 +99,17 @@ export function selectorKey(reference: string, packages: Package[] = []): string
 
 /** Versionless selection key; registry, platform and subpath distinctions remain significant. */
 export function packageKey(input: PackageIdentity | string): string {
-	const { version: _version, ...identity } = packageIdentity(input);
+	const { version: _version, ...identity } = releaseIdentity(input);
 	return purl(identity);
+}
+
+/** Upgrade only Beepboop's historical JSR encoding; generic PURL parsing stays lossless. */
+export function releaseIdentity(input: PackageIdentity | string): PackageIdentity {
+	const identity = packageIdentity(input);
+	if (
+		identity.type !== 'generic' || !identity.namespace?.startsWith('@')
+		|| !['https://jsr.io', 'https://jsr.io/'].includes(identity.qualifiers?.repository_url ?? '')
+	) return identity;
+	const { repository_url: _repository, ...qualifiers } = identity.qualifiers ?? {};
+	return packageIdentity({ ...identity, type: 'jsr', qualifiers });
 }

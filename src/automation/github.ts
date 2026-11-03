@@ -3,6 +3,7 @@ import { safeVersionPath } from '@/automation/editors';
 import type { Fetcher, VerificationContext } from '@/automation/managers/registry';
 import { tagQueries } from '@/automation/managers/tags';
 import type { RefState } from '@/automation/refs';
+import type { BotIdentity } from '@/automation/token';
 import type { Edit, Snapshot } from '@/automation/types';
 import { array, integer, record, sha, text } from '@/model';
 
@@ -40,13 +41,7 @@ export class RepositoryGateway {
 		permissions: Permission = { contents: 'read', actions: 'read' },
 	): Promise<string> {
 		if (!/^[\w.-]+\/[\w.-]+$/.test(name)) throw new Error('Invalid repository');
-		const key = await importPKCS8(this.credentials.GITHUB_APP_PRIVATE_KEY, 'RS256');
-		const jwt = await new SignJWT({})
-			.setProtectedHeader({ alg: 'RS256' })
-			.setIssuer(this.credentials.GITHUB_APP_ID)
-			.setIssuedAt(Math.floor(Date.now() / 1000) - 60)
-			.setExpirationTime('9m')
-			.sign(key);
+		const jwt = await this.appToken();
 		const installation = record(await this.call(`/repos/${name}/installation`, jwt));
 		if (integer(record(installation.account).id) !== this.ownerId) {
 			throw new Error('Owner mismatch');
@@ -67,6 +62,33 @@ export class RepositoryGateway {
 			throw new Error('Repository mismatch');
 		}
 		return token;
+	}
+	/** JWT for the configured App, never the workflow's GITHUB_TOKEN. */
+	private async appToken(): Promise<string> {
+		const key = await importPKCS8(this.credentials.GITHUB_APP_PRIVATE_KEY, 'RS256');
+		return new SignJWT({})
+			.setProtectedHeader({ alg: 'RS256' })
+			.setIssuer(this.credentials.GITHUB_APP_ID)
+			.setIssuedAt(Math.floor(Date.now() / 1000) - 60)
+			.setExpirationTime('9m')
+			.sign(key);
+	}
+	async botIdentity(): Promise<BotIdentity> {
+		const app = record(await this.call('/app', await this.appToken()));
+		const slug = text(app.slug);
+		if (!/^[a-z0-9-]+$/.test(slug)) throw new Error('Invalid App slug');
+		const login = `${slug}[bot]`;
+		const user = record(await this.call(`/users/${encodeURIComponent(login)}`, ''));
+		if (user.login !== login || user.type !== 'Bot') throw new Error('App bot identity mismatch');
+		const id = integer(user.id);
+		return { login, id, email: `${id}+${login}@users.noreply.github.com` };
+	}
+	async defaultRevision(name: string, id: number): Promise<{ ref: string; sha: string }> {
+		const token = await this.token(name, id, { contents: 'read' });
+		const repository = record(await this.call(`/repos/${name}`, token));
+		const branch = text(repository.default_branch);
+		const commit = record(await this.call(`/repos/${name}/commits/${encodeURIComponent(branch)}`, token));
+		return { ref: `refs/heads/${branch}`, sha: sha(commit.sha) };
 	}
 	async tagRefs(name: string, id: number): Promise<RefState[]> {
 		const token = await this.token(name, id, { contents: 'read' });
@@ -147,6 +169,7 @@ export class RepositoryGateway {
 			.filter(
 				(path) =>
 					extraPaths.includes(path)
+					|| /^actions\/(?:begin|prepare|report)\/action\.ya?ml$/.test(path)
 					|| !/(?:^|\/)(?:node_modules|vendor|target|testdata|fixtures|\.git)\//.test(path)
 						&& /(?:^|\/)(?:\.pre-commit-config\.ya?ml|targets.json|Cargo.toml|Cargo.lock|package.json|jsr.json|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock|go\.mod|\.?goreleaser[^/]*\.ya?ml)$|^\.github\/(?:beepboop.json|workflows\/[^/]+\.ya?ml)$/
 							.test(
@@ -203,6 +226,22 @@ export class RepositoryGateway {
 		if (content === null) throw new Error('Preset missing');
 		return { value: JSON.parse(content), sha: commitSha };
 	}
+	/** Check an already-granted installation permission without changing repository contents. */
+	async canEditWorkflows(name: string, id: number): Promise<boolean> {
+		try {
+			await this.token(name, id, { contents: 'read', workflows: 'write' });
+			return true;
+		} catch (error) {
+			if (error instanceof Error && /^GitHub HTTP (403|422)$/.test(error.message)) return false;
+			throw error;
+		}
+	}
+	/** Read the proposal head without modifying or creating a branch. */
+	async setupHead(name: string, id: number): Promise<string | null> {
+		const token = await this.token(name, id);
+		const ref = await this.call(`/repos/${name}/git/ref/heads/automation/onboarding`, token);
+		return ref ? sha(record(record(ref).object).sha) : null;
+	}
 	async pullRequest(
 		snapshot: Snapshot,
 		branch: string,
@@ -211,9 +250,14 @@ export class RepositoryGateway {
 		edits: Edit[],
 		expectedHead?: string,
 		checkpoint?: (head: string) => Promise<void>,
+		setupEdits?: Edit[],
 	): Promise<{ url: string; head: string }> {
 		const { name, id } = snapshot.repository;
-		const token = await this.token(name, id, { contents: 'write', pull_requests: 'write' });
+		const token = await this.token(name, id, {
+			contents: 'write',
+			pull_requests: 'write',
+			...(edits.some(edit => edit.path.startsWith('.github/workflows/')) ? { workflows: 'write' as const } : {}),
+		});
 		const existing = await this.call(
 			`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`,
 			token,
@@ -222,9 +266,22 @@ export class RepositoryGateway {
 		if (existing && (!expectedHead || expectedHead !== base)) {
 			throw new Error('Branch changed; preserve user edits and review the conflict');
 		}
-		const commit = record(await this.call(`/repos/${name}/git/commits/${base}`, token));
+		if (existing && setupEdits) {
+			const comparison = record(await this.call(`/repos/${name}/compare/${snapshot.sha}...${base}`, token));
+			const changed = array(comparison.files).map(record);
+			if (changed.length >= 300 || changed.some(file => !setupEdits.some(edit => edit.path === file.filename))) {
+				throw new Error('Setup branch contains unrelated changes; review it before refreshing');
+			}
+			for (const edit of setupEdits) {
+				if (await this.file(name, edit.path, base, token) !== edit.after) {
+					throw new Error(`Setup branch was edited: ${edit.path}`);
+				}
+			}
+		}
+		const treeBase = setupEdits ? snapshot.sha : base;
+		const commit = record(await this.call(`/repos/${name}/git/commits/${treeBase}`, token));
 		for (const edit of edits) {
-			const current = await this.file(name, edit.path, base, token);
+			const current = await this.file(name, edit.path, treeBase, token);
 			if ((current ?? '') !== edit.before) throw new Error(`File changed: ${edit.path}`);
 			if (
 				edit.path.startsWith('/')
@@ -248,7 +305,7 @@ export class RepositoryGateway {
 			await this.call(`/repos/${name}/git/commits`, token, 'POST', {
 				message: title,
 				tree: sha(tree.sha),
-				parents: [base],
+				parents: setupEdits && base !== snapshot.sha ? [base, snapshot.sha] : [base],
 			}),
 		);
 		const head = sha(next.sha);

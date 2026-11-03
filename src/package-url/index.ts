@@ -3,7 +3,14 @@ import { type ComponentDefinition, parseTypeDefinition, type TypeDefinition } fr
 import definitions from '@/package-url/definitions';
 
 export type { ComponentDefinition, TypeDefinition } from '@/package-url/definition';
-export type { RegisteredPackageIdentity, RegisteredPackageType } from '@/package-url/identity.generated';
+export type {
+	KnownPackageIdentity,
+	KnownPackageType,
+	ProposedPackageIdentity,
+	ProposedPackageType,
+	RegisteredPackageIdentity,
+	RegisteredPackageType,
+} from '@/package-url/identity.generated';
 
 export interface PackageIdentity {
 	type: string;

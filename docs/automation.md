@@ -5,13 +5,40 @@
 Install the GitHub App, then open the dashboard and select **Inspect**. Beepboop
 reads the default branch and displays its packages and release workflows.
 
-Select **Open onboarding PR** to create `.github/beepboop.json`. Review the
-package list, split independently versioned packages into separate streams, and
-choose the required publications. Initial workflow bindings use `mode: "observe"`
-to track releases started by your existing triggers.
+Select **Configure releases** (or **Edit release setup** for an existing
+configuration). Choose the packages in each release stream, their versioning,
+required publications, and preparation and publication jobs. Beepboop recognizes
+existing integration steps; workflow names alone never establish a release role.
 
-Merge the PR, then connect preparation and promotion workflows when you want to
-start those operations from the dashboard.
+Preview shows the inspected commit, configuration and workflow changes, and any
+unresolved requirements. You must explicitly choose dispatch-only triggers before
+an automatically triggered publishing workflow can move under Beepboop approval.
+Existing build and publish commands stay in the proposal. Missing commands and
+publication-step mappings require your choices. Matrix, reusable, dependent,
+conditional and container jobs need explicit integration in a dedicated workflow.
+
+The GitHub App needs **Workflows: write** in addition to contents and pull request
+permissions to propose workflow changes. The app manifest includes it; existing
+installations must approve the permission update. Preview blocks apply until it
+is available. This does not change the live app automatically.
+
+External integration actions require the full commit SHA of a published Beepboop
+Actions distribution. Local actions use `$/actions/...` when their definitions
+exist in the repository. npm/JSR registry permissions and trusted-publisher setup
+remain separate; a setup PR does not publish anything.
+
+Select **Open or refresh setup PR** after reviewing the preview. A changed source
+commit or setup branch invalidates it. Refreshing a proposal incorporates current
+default-branch files and refuses human changes on the setup branch. The dashboard
+also links earlier proposals, including proposals superseded by configuration now
+on the default branch. Merge the setup PR yourself, then refresh inspection.
+
+The authenticated API exposes `POST /api/repositories/setup/preview` with
+`repository` and optional `choices`, and `POST /api/repositories/setup/apply` with
+those same choices plus the returned `planId`, `sourceSha`, and `setupHead`.
+Preview does not persist inspection or create branches. Apply recomputes the plan
+and checks those values before publishing the reviewed changes. The old
+`/api/repositories/onboard` endpoint directs clients to preview first.
 
 ## Configure release streams
 
@@ -232,8 +259,21 @@ and the repository does not have to be enrolled.
 ```
 
 The route issues `contents`, `pull_requests`, `issues`, `checks`, `statuses`
-and `metadata`, each `read` or `write`, and refuses every other permission.
+and `metadata`, each `read` or `write`, and refuses other permissions by default.
+The action also outputs `bot-login`, `bot-id` and `bot-email`, resolved from the
+configured App and its GitHub bot user. Use those outputs for Git author and
+committer identity; use the installation token for push authentication.
 Every issued token is recorded in the audit log.
+
+Actions publication uses the explicit `purpose: publish-actions` with exactly
+`contents: write` and `workflows: write` because the distribution tree includes
+workflow files. The endpoint requires an owner-started `workflow_dispatch` of
+`.github/workflows/publish-actions.yml` at the current default-branch SHA,
+matching source and workflow SHAs, without a reusable workflow identity.
+PR runs, other workflow files and stale revisions cannot obtain this token.
+Deploy the service implementation through Cloudflare Builds before using the
+updated action. The App installation must have approved Contents and Workflows
+write access; the action does not alter installation permissions.
 
 ## Subscriptions
 

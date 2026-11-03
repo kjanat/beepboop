@@ -1,4 +1,5 @@
 import { api, show, showError } from '@/ui/browser/dom.ts';
+import { canApplySetup, setup } from '@/ui/browser/setup';
 
 interface Choice {
 	stream: string;
@@ -219,7 +220,9 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action]
 		form.dataset.busy = 'true';
 		button.disabled = true;
 		try {
-			if (action === 'winget-refresh') {
+			if (action === 'setup') {
+				await setup(form, clicked);
+			} else if (action === 'winget-refresh') {
 				await api('/api/winget/refresh', {});
 				location.reload();
 			} else if (action === 'winget-retry') {
@@ -306,9 +309,6 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action]
 				}
 			} else if (action === 'discover') {
 				await api('/api/repositories/discover', { repository: data.repository });
-				location.reload();
-			} else if (action === 'onboard') {
-				await api('/api/repositories/onboard', { repository: data.repository });
 				location.reload();
 			} else if (action === 'approve' || action === 'recover') {
 				await api(`/api/executions/${action === 'approve' ? 'approve' : 'recover'}`, data);
@@ -404,7 +404,8 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action]
 			document.querySelector<HTMLElement>('#feedback')?.focus();
 		} finally {
 			form.dataset.busy = 'false';
-			button.disabled = clicked === 'prepare' && !previews.has(form);
+			button.disabled = (clicked === 'prepare' && !previews.has(form))
+				|| (action === 'setup' && clicked === 'apply' && !canApplySetup(form));
 		}
 	});
 }

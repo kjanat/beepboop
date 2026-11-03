@@ -1,6 +1,7 @@
 import { object, yaml } from '@/automation/managers/helpers';
 import type { Manager } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
+import { workflowEvidence } from '@/automation/setup-workflows';
 export const workflowManager: Manager = {
 	name: 'workflow',
 	discover(snapshot) {
@@ -9,6 +10,7 @@ export const workflowManager: Manager = {
 		for (const [path, source] of Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b))) {
 			try {
 				if (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) {
+					const evidence = workflowEvidence(path.slice('.github/workflows/'.length), source);
 					const workflow = yaml(source),
 						trigger = workflow.on;
 					const events = typeof trigger === 'string'
@@ -28,7 +30,7 @@ export const workflowManager: Manager = {
 						});
 					});
 					const localActions = [
-						...source.matchAll(/uses:\s*["']?((?:\.\/|\$\/)\.github\/[^\s"']+)/g),
+						...source.matchAll(/uses:\s*["']?((?:\.\/|\$\/)[^\s"']+)/g),
 					].map((m) => m[1] as string);
 					inventory.workflows.push({
 						...(Array.isArray(push.tags) ? { tagPatterns: push.tags.map(String) } : {}),
@@ -40,9 +42,10 @@ export const workflowManager: Manager = {
 						jobs: Object.keys(jobs),
 						localActions,
 						dispatchInputs: Object.keys(object(object(object(trigger).workflow_dispatch).inputs)),
-						publication: /\b(?:publish|release|deploy|promotion|promote)\b/i.test(
-							String(workflow.name ?? path),
-						),
+						publication: !evidence.prepares
+							&& (evidence.publishes || evidence.reports || /\b(?:publish|release|deploy|promotion|promote)\b/i.test(
+								String(workflow.name ?? path),
+							)),
 					});
 					detected.add('workflow');
 					if (events.includes('release') || createsRelease || /gh release|releases\/|release-action/.test(source)) {
