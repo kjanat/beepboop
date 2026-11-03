@@ -46,7 +46,7 @@ export class Store {
 	}
 	async repositories(): Promise<RepositoryRecord[]> {
 		const result = await this.db
-			.prepare('SELECT document FROM repositories ORDER BY name')
+			.prepare('SELECT document FROM repositories ORDER BY COALESCE(added_at, updated_at) DESC, name')
 			.all();
 		return result.results.map((row) => identifyRepository(repositorySchema.parse(rowDocument(row))));
 	}
@@ -57,9 +57,15 @@ export class Store {
 	async putRepository(repository: RepositoryRecord): Promise<void> {
 		await this.db
 			.prepare(
-				'INSERT INTO repositories(id,name,document,updated_at) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,document=excluded.document,updated_at=excluded.updated_at',
+				'INSERT INTO repositories(id,name,document,updated_at,added_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,document=excluded.document,updated_at=excluded.updated_at',
 			)
-			.bind(repository.id, repository.name, JSON.stringify(identifyRepository(repository)), repository.updatedAt)
+			.bind(
+				repository.id,
+				repository.name,
+				JSON.stringify(identifyRepository(repository)),
+				repository.updatedAt,
+				repository.updatedAt,
+			)
 			.run();
 	}
 	async execution(id: string): Promise<Execution | undefined> {

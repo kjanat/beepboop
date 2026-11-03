@@ -45,7 +45,7 @@ export async function seedBrowser(db: D1Database): Promise<void> {
 			diagnostics: [],
 		},
 	};
-	await db.prepare('INSERT OR REPLACE INTO repositories VALUES(?,?,?,?)').bind(
+	await db.prepare('INSERT OR REPLACE INTO repositories(id,name,document,updated_at) VALUES(?,?,?,?)').bind(
 		91,
 		repository.name,
 		JSON.stringify(repository),
@@ -85,7 +85,7 @@ export async function seedOnboarding(db: D1Database): Promise<void> {
 		presetShas: {},
 		updatedAt: Date.now(),
 	};
-	await db.prepare('INSERT OR REPLACE INTO repositories VALUES(?,?,?,?)').bind(
+	await db.prepare('INSERT OR REPLACE INTO repositories(id,name,document,updated_at) VALUES(?,?,?,?)').bind(
 		92,
 		repository.name,
 		JSON.stringify(repository),
