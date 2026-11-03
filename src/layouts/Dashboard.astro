@@ -1,4 +1,5 @@
 ---
+import icon from '@root/assets/beepboop-icon.png';
 import '@/styles/dashboard.css';
 
 interface Props {
@@ -46,8 +47,13 @@ const navigation = [
 	<body>
 		<a class="skip" href="#main">Skip to content</a>
 		<aside class="sidebar">
-			<a class="brand" href="/"><span class="robot" aria-hidden="true"
-				>[bb]</span> Beepboop</a>
+			<a class="brand" href="/"><img
+					class="robot"
+					src={icon.src}
+					width="36"
+					height="36"
+					alt=""
+				> Beepboop</a>
 			<p class="sidebar-caption">From commit to published.</p>
 			<nav aria-label="Main navigation">
 				{navigation.map(([key, href, label]) => (

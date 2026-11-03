@@ -107,9 +107,8 @@ label > span {
 	gap: 10px;
 }
 .robot {
-	font-family: monospace;
-	font-size: 23px;
-	color: #a3c8e5;
+	width: 36px;
+	height: 36px;
 }
 .sidebar-caption {
 	font-size: 12px;
