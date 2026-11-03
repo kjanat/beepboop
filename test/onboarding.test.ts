@@ -325,7 +325,7 @@ describe('workflow release discovery', () => {
 		expect(creates('[{run: gh pr list}]')).toEqual({ flag: undefined, managers: ['workflow'] });
 		const reusable = repository('example/release', {
 			'.github/workflows/release.yml':
-				'name: Release\non: workflow_dispatch\njobs:\n  release:\n    uses: ./.github/workflows/build.yml\n',
+				'name: Release\non: workflow_dispatch\njobs:\n  release:\n    uses: $/.github/workflows/build.yml\n',
 		});
 		expect(discover(reusable).workflows[0]?.createsRelease).toBeUndefined();
 	});

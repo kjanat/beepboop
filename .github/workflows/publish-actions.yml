@@ -8,7 +8,7 @@ concurrency:
 jobs:
   verify:
     if: github.ref == 'refs/heads/master'
-    uses: ./.github/workflows/ci.yml
+    uses: $/.github/workflows/ci.yml
   publish:
     needs: verify
     runs-on: ubuntu-latest
