@@ -247,5 +247,5 @@ export const app = cli('beepboop').description('Coordinate repository releases t
 	.command(
 		base('secrets', 'List secret metadata and grants; values and security-key operations stay in the dashboard')
 			.action(async ({ flags, out }) => out.json(await new Client(flags.server).request('/api/credentials'))),
-	);
+	).completions();
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) await app.run();

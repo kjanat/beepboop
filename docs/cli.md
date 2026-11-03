@@ -75,3 +75,25 @@ beepboop releases prepare-set OWNER/REPO --stream main --plan release-plan.json 
 The `secrets` command returns metadata and grants, never secret values. Secret
 writes, reveals, grant changes, and security-key management use the dashboard's
 fresh WebAuthn verification. A CLI session does not remove that requirement.
+
+## Shell completions
+
+DreamCLI generates completions directly from the command schema:
+
+```sh
+beepboop completions zsh
+beepboop completions bash
+beepboop completions fish
+beepboop completions powershell
+```
+
+For the current zsh session, enable completion and load the generated script:
+
+```zsh
+autoload -Uz compinit
+compinit
+source <(beepboop completions zsh)
+```
+
+For persistent zsh setup, save the output as `_beepboop` in a directory on your
+`fpath` before running `compinit` in your shell configuration.
