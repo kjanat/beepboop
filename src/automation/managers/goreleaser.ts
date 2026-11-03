@@ -107,6 +107,20 @@ export const goreleaserManager: Manager = {
 		});
 	},
 	verifyPublication: (publication, _request, context) => verifyRelease(publication, context),
+	async latest(_pkg, _request, context) {
+		if (!context) return { kind: 'failed', url: 'https://api.github.com', reason: 'GitHub access unavailable' };
+		const url = `https://github.com/${context.repository}/releases/latest`;
+		try {
+			const found = await context.github(`/repos/${context.repository}/releases/latest`);
+			if (found === null) return { kind: 'missing', url };
+			const tag = object(found).tag_name;
+			return typeof tag === 'string' && /^v?\d+\.\d+\.\d+/.test(tag)
+				? { kind: 'published', version: tag.replace(/^v/, '') }
+				: { kind: 'failed', url, reason: 'no valid version' };
+		} catch {
+			return { kind: 'failed', url, reason: 'request failed' };
+		}
+	},
 	discover(snapshot) {
 		const result = emptyInventory();
 		for (const [path, source] of Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b))) {

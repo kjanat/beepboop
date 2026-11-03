@@ -112,8 +112,12 @@ export async function verifyPublication(
 ): Promise<Publication> {
 	return managerRegistry.verifyPublication(publication, request, context);
 }
-export async function resolvePublished(inventory: Inventory, request: Fetcher = fetch): Promise<Inventory> {
-	return managerRegistry.resolvePublished(inventory, request);
+export async function resolvePublished(
+	inventory: Inventory,
+	request: Fetcher = fetch,
+	context?: VerificationContext,
+): Promise<Inventory> {
+	return managerRegistry.resolvePublished(inventory, request, context);
 }
 export function observedVersion(pkg: Package, tag: string): string | undefined {
 	const prefix = tagPrefix(pkg.versionSource);

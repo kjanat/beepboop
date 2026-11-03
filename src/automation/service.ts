@@ -134,7 +134,7 @@ export class AutomationService {
 				);
 			}
 		} else repository.diagnostics.push('Onboarding configuration is not merged');
-		repository.inventory = await resolvePublished(repository.inventory);
+		repository.inventory = await resolvePublished(repository.inventory, fetch, this.gateway.verification(name, id));
 		await this.store.putRepository(repository);
 		try {
 			await maintainSetup(this.store, this.gateway, snapshot);

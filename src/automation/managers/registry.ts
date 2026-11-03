@@ -23,10 +23,14 @@ export interface Manager {
 	editVersion?(context: VersionEdit): string;
 	updateDependencies?(context: DependencyEdit): void;
 	verifyPublication?(publication: Publication, request: Fetcher, context?: VerificationContext): Promise<Publication>;
-	latest?(pkg: Package, request: Fetcher): Promise<RegistryVersion>;
+	latest?(pkg: Package, request: Fetcher, context?: VerificationContext): Promise<RegistryVersion>;
 	secondaryLatest?: Partial<Record<ManagerDestinationId, RegistryLookup>>;
 }
-export type RegistryLookup = (pkg: Package, request: Fetcher) => Promise<RegistryVersion>;
+export type RegistryLookup = (
+	pkg: Package,
+	request: Fetcher,
+	context?: VerificationContext,
+) => Promise<RegistryVersion>;
 export type Fetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 export interface VerificationContext {
 	repository: string;
@@ -88,7 +92,7 @@ export class ManagerRegistry {
 			? manager.verifyPublication(publication, request, context)
 			: { ...publication, outcome: 'uncertain' };
 	}
-	async resolvePublished(inventory: Inventory, request: Fetcher): Promise<Inventory> {
+	async resolvePublished(inventory: Inventory, request: Fetcher, context?: VerificationContext): Promise<Inventory> {
 		const packages: Package[] = inventory.packages.map(pkg => {
 			const { published: _published, previousModule: _previous, destinations: _destinations, ...rest } = pkg;
 			return publishable(pkg)
@@ -131,7 +135,7 @@ export class ManagerRegistry {
 						Promise.all(
 							lookups(pkg).map(async ({ destination, latest }) => ({
 								destination,
-								result: await latest(pkg, request),
+								result: await latest(pkg, request, context),
 							})),
 						),
 						channels(pkg.channels ?? [], () => `${pkg.manager}:${pkg.name}`),

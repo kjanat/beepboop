@@ -75,7 +75,19 @@ if (process.argv[2] === '--github') {
 	const tags = git('tag', '--list').split('\n').filter(Boolean);
 	snapshot = { repository: { id: 1, name: 'local/inspection', defaultBranch: 'HEAD' }, sha, files, tags };
 }
-const inventory = await resolvePublished(discover(snapshot));
+function githubApi(path: string): unknown {
+	const result = Bun.spawnSync(['gh', 'api', path]);
+	if (result.exitCode === 0) return JSON.parse(new TextDecoder().decode(result.stdout));
+	if (new TextDecoder().decode(result.stderr).includes('HTTP 404')) return null;
+	throw new Error(`gh api ${path} failed`);
+}
+const inventory = await resolvePublished(
+	discover(snapshot),
+	fetch,
+	process.argv[2] === '--github'
+		? { repository: snapshot.repository.name, github: async path => githubApi(path) }
+		: undefined,
+);
 console.log(
 	JSON.stringify(
 		{
