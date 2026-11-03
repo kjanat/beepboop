@@ -2,7 +2,8 @@ import { credentialHash } from '@/automation/cli-auth';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
 import { formatJson, json } from '@/automation/json';
 import { object } from '@/automation/managers/helpers';
-import { packageId, selectorKey } from '@/automation/package-identity';
+import { tagPrefix } from '@/automation/managers/tags';
+import { matchesPackage, packageId, selectorKey } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import {
 	type SetupChoices,
@@ -12,9 +13,23 @@ import {
 	setupChoicesSchema,
 } from '@/automation/setup-types';
 import { integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
-import type { Configuration, Inventory, Snapshot } from '@/automation/types';
+import type { Configuration, Inventory, Package, RepositoryRecord, Snapshot } from '@/automation/types';
 import { packageLabel } from '@/ui/package-label';
 
+function releasedPackage(pkg: Package | undefined): boolean {
+	return !!pkg && publishable(pkg) && pkg.published !== undefined
+		&& !(tagPrefix(pkg.versionSource) !== undefined && pkg.version === undefined);
+}
+export function publishedOutsideRequired(repository: RepositoryRecord): { stream: string; packages: string[] }[] {
+	return Object.entries(repository.configuration?.streams ?? {}).flatMap(([stream, configuration]) => {
+		const packages = repository.inventory.packages.filter(pkg =>
+			releasedPackage(pkg)
+			&& (!configuration.packages || configuration.packages.some(reference => matchesPackage(reference, pkg)))
+			&& !configuration.required.some(reference => matchesPackage(reference, pkg))
+		).map(packageId);
+		return packages.length ? [{ stream, packages }] : [];
+	});
+}
 export function withRegistryStatus(inventory: Inventory, stored: Inventory | undefined): Inventory {
 	const checked = new Map(stored?.packages.map(pkg => [packageId(pkg), pkg.publicationStatus]));
 	return {
@@ -69,7 +84,12 @@ export function suggestSetup(snapshot: Snapshot, inventory: Inventory, resolved?
 				? current.versioning
 				: 'workspace',
 			required: Array.isArray(current.required)
-				? current.required.map(value => selectorKey(String(value), inventory.packages))
+				? [
+					...new Set([
+						...current.required.map(value => selectorKey(String(value), inventory.packages)),
+						...selected.filter(id => releasedPackage(inventory.packages.find(pkg => packageId(pkg) === id))),
+					]),
+				]
 				: selected.filter(id => inventory.packages.find(pkg => packageId(pkg) === id)?.publicationStatus !== 'missing'),
 			prepare: choose('prepare'),
 			promote: choose('promote'),

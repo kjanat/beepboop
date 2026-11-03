@@ -1,6 +1,7 @@
 ---
 import { wingetOutcome } from '@/automation/destinations';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
+import { publishedOutsideRequired } from '@/automation/setup';
 import type { RepositoryRecord } from '@/automation/types';
 import type { Dashboard } from '@/server/dashboard.ts';
 import { date, workflowChoices } from '@/server/dashboard.ts';
@@ -10,6 +11,7 @@ import {
 	packageDestinations,
 	repositoryChannels,
 } from '@/ui/destinations';
+import { packageLabel } from '@/ui/package-label';
 
 interface Props {
 	data: Dashboard;
@@ -79,6 +81,13 @@ function wingetDestination(repository: RepositoryRecord) {
 					: 'Setup needed'}</span>
 			</summary>
 			{repository.diagnostics.map(message => <p class="notice">{message}</p>)}
+			{publishedOutsideRequired(repository).map(gap => (
+				<p class="notice">
+					Published but not required in <strong>{gap.stream}</strong>:{' '}
+					{gap.packages.map(packageLabel).join(', ')}. Edit release setup
+					proposes adding them.
+				</p>
+			))}
 			<div class="actions">
 				<form data-action="discover">
 					<input
