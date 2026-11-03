@@ -8,6 +8,7 @@ import type { Edit, Snapshot } from '@/automation/types';
 import { array, integer, record, sha, text } from '@/model';
 
 type Permission = Record<string, 'read' | 'write'>;
+const ownerLogins = new Map<number, string>();
 export class RepositoryGateway {
 	constructor(
 		private credentials: Credentials,
@@ -236,6 +237,13 @@ export class RepositoryGateway {
 		}
 	}
 	/** Read the proposal head without modifying or creating a branch. */
+	async ownerLogin(): Promise<string> {
+		const cached = ownerLogins.get(this.ownerId);
+		if (cached) return cached;
+		const login = text(record(await this.call(`/user/${this.ownerId}`, '')).login);
+		ownerLogins.set(this.ownerId, login);
+		return login;
+	}
 	async generatedHead(name: string, id: number, head: string): Promise<boolean> {
 		const token = await this.token(name, id, { contents: 'read' });
 		const base = text(record(await this.call(`/repos/${name}`, token)).default_branch);

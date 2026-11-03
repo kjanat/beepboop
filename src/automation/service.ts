@@ -14,6 +14,7 @@ import { matchesPackage } from '@/automation/package-identity';
 import { planReleaseSet } from '@/automation/planning';
 import { matchesRef } from '@/automation/policy';
 import { planHookUpdates } from '@/automation/precommit';
+import { repositoryName } from '@/automation/repository-name';
 import { documentRow, rowDocument, setupOptionsSchema } from '@/automation/schemas';
 import { bodyChoices, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import { maintainSetup, setupEdits } from '@/automation/setup-maintenance';
@@ -459,12 +460,11 @@ export class AutomationService {
 			return new Response('Not found', { status: 404 });
 		}
 		if (path === '/api/repositories/discover') {
+			const name = await repositoryName(text(body.repository), () => this.gateway.ownerLogin());
 			return Response.json(
 				await this.refresh(
-					text(body.repository),
-					body.repositoryId === undefined
-						? await this.gateway.identify(text(body.repository))
-						: integer(body.repositoryId),
+					name,
+					body.repositoryId === undefined ? await this.gateway.identify(name) : integer(body.repositoryId),
 				),
 			);
 		}
@@ -472,7 +472,8 @@ export class AutomationService {
 			throw new Error('Preview release setup before applying it: /api/repositories/setup/preview');
 		}
 		if (path === '/api/repositories/setup/preview' || path === '/api/repositories/setup/apply') {
-			const name = text(body.repository), id = await this.gateway.identify(name);
+			const name = await repositoryName(text(body.repository), () => this.gateway.ownerLogin());
+			const id = await this.gateway.identify(name);
 			const snapshot = await this.gateway.snapshot(name, id);
 			const raw = JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}');
 			const resolved = await resolveConfiguration(raw, ref => this.gateway.preset(ref));

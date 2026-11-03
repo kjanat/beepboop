@@ -1,5 +1,6 @@
 import type { Ask, Out, SelectChoice } from '@kjanat/dreamcli';
 import { publishable } from '@/automation/package-publication';
+import { repositoryReference } from '@/automation/repository-name';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import type { Client } from '@/cli/client';
@@ -154,7 +155,12 @@ export async function setupRepository(
 	if (flags.plan) {
 		if (!flags.apply || flags.choices) throw failure('Use --plan with --apply, without --choices', 'INVALID_FLAGS');
 		const reviewed = parseSetupPlan(await Bun.file(flags.plan).json());
-		if (reviewed.repository !== repository) {
+		const requested = repositoryReference(repository);
+		if (
+			requested.owner
+				? reviewed.repository !== `${requested.owner}/${requested.name}`
+				: !reviewed.repository.endsWith(`/${requested.name}`)
+		) {
 			throw failure('The reviewed plan belongs to another repository', 'PLAN_MISMATCH');
 		}
 		await emit(

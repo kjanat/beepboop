@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { arg, cli, command, flag, group } from '@kjanat/dreamcli';
+import { repositoryReference } from '@/automation/repository-name';
 import { Client } from '@/cli/client';
 import { emit, failure } from '@/cli/output';
 import { setupRepository } from '@/cli/setup';
@@ -50,20 +51,25 @@ const repository = (name: string, description: string) =>
 	base(name, description)
 		.arg(
 			'repository',
-			arg.string().prompt({ kind: 'input', message: 'Repository (owner/name)' }).required().describe(
-				'Repository, owner/name',
-			),
+			arg.string().prompt({ kind: 'input', message: 'Repository (name, owner/name or GitHub URL)' }).required()
+				.describe(
+					'Repository: name, owner/name or GitHub URL',
+				),
 		);
-async function repositoryId(client: Client, name: string): Promise<number> {
-	const found = repositoryRows(await client.request('/api/repositories')).find(repository => repository.name === name);
-	if (!found) {
-		throw failure(
-			`Repository ${name} is not enrolled`,
-			'NOT_ENROLLED',
-			`Run beepboop repositories discover ${name}`,
-		);
-	}
-	return found.id;
+async function enrolled(client: Client, input: string) {
+	const reference = repositoryReference(input);
+	const rows = repositoryRows(await client.request('/api/repositories'));
+	const matches = rows.filter(row =>
+		reference.owner ? row.name === `${reference.owner}/${reference.name}` : row.name.endsWith(`/${reference.name}`)
+	);
+	const [found, ...others] = matches;
+	if (found && !others.length) return found;
+	throw others.length
+		? failure(`Repository ${input} matches ${matches.map(row => row.name).join(', ')}`, 'AMBIGUOUS', 'Name the owner')
+		: failure(`Repository ${input} is not enrolled`, 'NOT_ENROLLED', `Run beepboop repositories discover ${input}`);
+}
+async function repositoryId(client: Client, input: string): Promise<number> {
+	return (await enrolled(client, input)).id;
 }
 export const authStatus = base('status', 'Verify your saved session with the server').action(async ({ flags, out }) =>
 	emit(out, await new Client(flags.server).request('/auth/cli/status'))
@@ -134,16 +140,7 @@ const repositories = group('repositories').description('Inspect and configure re
 	)
 	.command(
 		repository('show', 'Show repository configuration, packages and workflows').action(async ({ flags, args, out }) => {
-			const rows = repositoryRows(await new Client(flags.server).request('/api/repositories'));
-			const found = rows.find(row => row.name === args.repository);
-			if (!found) {
-				throw failure(
-					`Repository ${args.repository} is not enrolled`,
-					'NOT_ENROLLED',
-					`Run beepboop repositories discover ${args.repository}`,
-				);
-			}
-			await emit(out, found.raw);
+			await emit(out, (await enrolled(new Client(flags.server), args.repository)).raw);
 		}),
 	)
 	.command(
