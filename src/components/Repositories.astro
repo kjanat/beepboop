@@ -1,5 +1,4 @@
 ---
-import { isGoPseudoVersion } from '@/automation/managers/go';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
 import type { Dashboard } from '@/server/dashboard.ts';
 import { date, workflowChoices } from '@/server/dashboard.ts';
@@ -117,8 +116,6 @@ const { data } = Astro.props;
 													: p.publicationStatus === 'failed'
 													? 'Lookup failed — inspect diagnostics'
 													: 'Not checked — inspect repository')}
-											{p.manager === 'go' && p.published && isGoPseudoVersion(p.published)
-												&& <small>Commit pseudo-version; no release tag</small>}
 										</td>
 										<td>
 											{p.version
