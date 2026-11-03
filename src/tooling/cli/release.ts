@@ -2,6 +2,7 @@ import { appendFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { packageId } from '@/automation/package-identity';
+import { record } from '@/model';
 
 const directory = resolve(import.meta.dir, '../../../packages/cli');
 const npm = await Bun.file(join(directory, 'package.json')).json();
@@ -51,8 +52,8 @@ switch (process.argv[2]) {
 			await output('integrity', integrity);
 			const response = await registry(`https://registry.npmjs.org/${encodeURIComponent(npm.name)}/${npm.version}`);
 			if (response.ok) {
-				const existing = await response.json() as { dist?: { integrity?: string } };
-				if (existing.dist?.integrity !== integrity) {
+				const existing = record(await response.json());
+				if (record(existing.dist ?? {}).integrity !== integrity) {
 					throw new Error('Published npm tarball differs from this approved build');
 				}
 				console.log('Identical npm tarball already published; resuming release');

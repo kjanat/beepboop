@@ -4,6 +4,10 @@ export function record(value: unknown): Record<string, unknown> {
 	}
 	return Object.fromEntries(Object.entries(value));
 }
+export function string(value: unknown): string {
+	if (typeof value !== 'string') throw new Error('Expected string');
+	return value;
+}
 export function text(value: unknown): string {
 	if (typeof value !== 'string' || value.length === 0) throw new Error('Expected nonempty string');
 	return value;
@@ -71,4 +75,9 @@ export function compareVersions(left: string, right: string): number {
 		return x < y ? -1 : 1;
 	}
 	return 0;
+}
+export function oneOf<const T extends string>(value: unknown, allowed: readonly T[], message: string): T {
+	const match = allowed.find(item => item === value);
+	if (match === undefined) throw new Error(message);
+	return match;
 }

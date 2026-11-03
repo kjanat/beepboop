@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { RepositoryGateway } from '@/automation/github';
 import type { Store } from '@/automation/store';
 import type { RepositoryRecord } from '@/automation/types';
@@ -49,6 +50,33 @@ export interface WinGetSubmission {
 	reviews?: string;
 	reason?: string;
 	updatedAt: number;
+}
+const submissionSchema: z.ZodType<WinGetSubmission> = z.object({
+	plan: z.object({
+		id: z.string(),
+		repositoryId: z.number(),
+		repository: z.string(),
+		releaseId: z.number(),
+		tag: z.string(),
+		version: z.string(),
+		packageIdentifier: z.string(),
+		sourceSha: z.string(),
+		configurationSha: z.string(),
+		files: z.record(z.string(), z.string()),
+		releaseUrl: z.string(),
+		digest: z.string(),
+	}),
+	state: z.enum(['pending', 'open', 'merged', 'closed', 'failed']),
+	number: z.number().optional(),
+	url: z.string().optional(),
+	head: z.string().optional(),
+	checks: z.string().optional(),
+	reviews: z.string().optional(),
+	reason: z.string().optional(),
+	updatedAt: z.number(),
+});
+function parseSubmission(document: string): WinGetSubmission {
+	return submissionSchema.parse(JSON.parse(document));
 }
 export interface WinGetBindings {
 	WINGET_GITHUB_TOKEN?: string;
@@ -152,13 +180,13 @@ export class WinGetService {
 		const rows = await this.store.db.prepare(
 			'SELECT document FROM winget_submissions ORDER BY updated_at DESC LIMIT 100',
 		).all<{ document: string }>();
-		return rows.results.map(row => JSON.parse(row.document));
+		return rows.results.map(row => parseSubmission(row.document));
 	}
 	async get(id: string): Promise<WinGetSubmission | undefined> {
 		const row = await this.store.db.prepare('SELECT document FROM winget_submissions WHERE id=?').bind(id).first<
 			{ document: string }
 		>();
-		return row ? JSON.parse(row.document) : undefined;
+		return row ? parseSubmission(row.document) : undefined;
 	}
 	private async save(value: WinGetSubmission, lease: string) {
 		await this.store.db.prepare('UPDATE winget_submissions SET document=?,updated_at=? WHERE id=? AND lease=?')
@@ -345,7 +373,7 @@ export class WinGetService {
 			for (const row of rows.results) {
 				// Use the stable ID: reconciliation changes both state and updated_at.
 				after = row.id;
-				yield JSON.parse(row.document) as WinGetSubmission;
+				yield parseSubmission(row.document);
 			}
 		}
 	}

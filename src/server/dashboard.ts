@@ -1,7 +1,7 @@
 import { Authenticators } from '@/automation/auth.ts';
 import { type AutomationBindings, AutomationService } from '@/automation/service.ts';
 import type { RepositoryRecord } from '@/automation/types.ts';
-import type { Grant } from '@/automation/vault.ts';
+import { parseGrant } from '@/automation/vault.ts';
 
 export interface SecretSummary {
 	alias: string;
@@ -62,7 +62,7 @@ export async function dashboard(env: AutomationBindings, actor: string) {
 		activity,
 		keys,
 		secrets: secrets.results,
-		grants: grants.results.map(row => JSON.parse(row.document) as Grant),
+		grants: grants.results.map(row => parseGrant(JSON.parse(row.document))),
 		deliveries: deliveries.results,
 	};
 }

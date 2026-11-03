@@ -7,6 +7,12 @@ export interface Session {
 	token: string;
 	expiresAt: number;
 }
+function parseSession(value: unknown): Session | undefined {
+	if (typeof value !== 'object' || value === null || !('token' in value) || !('expiresAt' in value)) return undefined;
+	const { token, expiresAt } = value;
+	if (typeof token !== 'string' || !/^cli_[a-f0-9]{64}$/.test(token) || typeof expiresAt !== 'number') return undefined;
+	return { token, expiresAt };
+}
 export function serverOrigin(value: string): string {
 	const url = new URL(value);
 	if (
@@ -45,15 +51,14 @@ export class Client {
 		}
 	}
 	async session(): Promise<Session> {
-		let session: Session;
+		let saved: unknown;
 		try {
-			session = JSON.parse(await readFile(await this.file(), 'utf8'));
+			saved = JSON.parse(await readFile(await this.file(), 'utf8'));
 		} catch {
 			throw new Error('Not signed in. Run beepboop auth login');
 		}
-		if (!/^cli_[a-f0-9]{64}$/.test(session.token) || session.expiresAt <= Date.now()) {
-			throw new Error('Session expired. Run beepboop auth login');
-		}
+		const session = parseSession(saved);
+		if (!session || session.expiresAt <= Date.now()) throw new Error('Session expired. Run beepboop auth login');
 		return session;
 	}
 	async logout(): Promise<void> {
@@ -64,7 +69,7 @@ export class Client {
 		}
 		await rm(await this.file(), { force: true });
 	}
-	async request<T = unknown>(path: string, body?: unknown): Promise<T> {
+	async request(path: string, body?: unknown): Promise<unknown> {
 		const session = await this.session();
 		const response = await fetch(`${this.origin}${path}`, {
 			method: body === undefined ? 'GET' : 'POST',
@@ -75,7 +80,7 @@ export class Client {
 		});
 		if (response.status === 401) throw new Error('Session expired or revoked. Run beepboop auth login');
 		if (!response.ok) throw new Error(`Beepboop request failed (${response.status}): ${await response.text()}`);
-		return response.json() as Promise<T>;
+		return response.json();
 	}
 	async login(
 		show: (url: string, code: string) => void | Promise<void>,
@@ -101,10 +106,8 @@ export class Client {
 				);
 			}
 			if (!response.ok) throw new Error(`Login failed (${response.status})`);
-			const session = await response.json() as Session;
-			if (!/^cli_[a-f0-9]{64}$/.test(session.token) || !(session.expiresAt > Date.now())) {
-				throw new Error('Invalid login response');
-			}
+			const session = parseSession(await response.json());
+			if (!session || !(session.expiresAt > Date.now())) throw new Error('Invalid login response');
 			await this.save(session);
 			return;
 		}

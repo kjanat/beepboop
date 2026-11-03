@@ -90,7 +90,11 @@ export function planRelease(
 		sourceSha: snapshot.sha,
 		packages,
 		edits: [...changed]
-			.map(([path, after]) => ({ path, before: snapshot.files[path] as string, after }))
+			.map(([path, after]) => {
+				const before = snapshot.files[path];
+				if (before === undefined) throw new Error('Missing planned manifest');
+				return { path, before, after };
+			})
 			.filter((e) => e.before !== e.after),
 		diagnostics,
 		requiresPreparation,

@@ -209,7 +209,7 @@ export interface Execution {
 	version?: string;
 	state: ExecutionState;
 	dependencies: string[];
-	workflow?: WorkflowBinding;
+	workflow?: WorkflowBinding & { ref: string };
 	runId?: number;
 	runAttempt?: number;
 	attempts: number;

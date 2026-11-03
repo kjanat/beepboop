@@ -1,3 +1,4 @@
+import { array, integer, record, string } from '@/model';
 import { api, show, showError } from '@/ui/browser/dom.ts';
 import { canApplySetup, setup } from '@/ui/browser/setup';
 
@@ -34,6 +35,30 @@ function input(form: HTMLFormElement, name: string): HTMLInputElement | HTMLSele
 		throw new Error(`Missing field: ${name}`);
 	}
 	return field;
+}
+function selectInput(form: HTMLFormElement, name: string): HTMLSelectElement {
+	const field = form.elements.namedItem(name);
+	if (!(field instanceof HTMLSelectElement)) throw new Error(`Missing field: ${name}`);
+	return field;
+}
+function repositoryChoices(form: HTMLFormElement): RepositoryChoice[] {
+	return array(JSON.parse(form.dataset.repositories ?? '[]')).map(raw => {
+		const repository = record(raw);
+		return {
+			id: integer(repository.id),
+			name: string(repository.name),
+			workflows: array(repository.workflows).map(value => {
+				const workflow = record(value);
+				return {
+					stream: string(workflow.stream),
+					operation: string(workflow.operation),
+					file: string(workflow.file),
+					ref: string(workflow.ref),
+					credentials: array(workflow.credentials).map(string),
+				};
+			}),
+		};
+	});
 }
 function fields(form: HTMLFormElement): Record<string, string> {
 	return Object.fromEntries(
@@ -97,8 +122,7 @@ function renderPlan(form: HTMLFormElement, plan: Plan) {
 	result.append(node('p', 'Review these changes before preparing. You will merge the preparation PR yourself.'));
 }
 function selectedWorkflow(form: HTMLFormElement): Choice {
-	const repositories = JSON.parse(form.dataset.repositories ?? '[]') as RepositoryChoice[];
-	const repository = repositories.find(r => String(r.id) === input(form, 'repositoryId').value);
+	const repository = repositoryChoices(form).find(r => String(r.id) === input(form, 'repositoryId').value);
 	const choice = repository?.workflows[Number(input(form, 'choice').value)];
 	if (!choice) throw new Error('Choose a repository and workflow.');
 	return choice;
@@ -114,7 +138,7 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action=
 		form.querySelector('.plan-result')?.replaceChildren();
 		if (event.target !== input(form, 'repositoryId')) return;
 		const current = ++revision;
-		const release = input(form, 'releaseId') as HTMLSelectElement;
+		const release = selectInput(form, 'releaseId');
 		release.disabled = true;
 		release.replaceChildren(new Option('Loading releases…', ''));
 		if (!input(form, 'repositoryId').value) {
@@ -138,8 +162,8 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action=
 	});
 }
 for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action="grant-save"]')) {
-	const repositories = JSON.parse(form.dataset.repositories ?? '[]') as RepositoryChoice[];
-	const repository = input(form, 'repositoryId'), choice = input(form, 'choice') as HTMLSelectElement;
+	const repositories = repositoryChoices(form);
+	const repository = input(form, 'repositoryId'), choice = selectInput(form, 'choice');
 	const updateScope = () => {
 		const scope = form.querySelector<HTMLElement>('.workflow-scope');
 		const selected = choice.value === ''
@@ -163,7 +187,7 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action=
 				scope.append(details);
 			} else scope.textContent = 'Choose a repository and workflow.';
 		}
-		const runtime = (input(form, 'delivery') as HTMLSelectElement).options[0];
+		const runtime = selectInput(form, 'delivery').options[0];
 		if (runtime) runtime.disabled = !!selected && !selected.credentials.includes(input(form, 'alias').value);
 		const help = form.querySelector<HTMLElement>('.delivery-help');
 		if (help) {
@@ -284,11 +308,12 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action]
 					: data.versionMode === 'prerelease'
 					? { bump: 'prerelease', base: data.base, identifier: data.identifier }
 					: { bump: data.versionMode };
-				const groups = [...form.querySelectorAll<HTMLFieldSetElement>('fieldset[data-group]')].filter(group =>
-					(group.querySelector('input[type=checkbox]') as HTMLInputElement)?.checked
-				).map(group => ({
+				const groups = [...form.querySelectorAll<HTMLFieldSetElement>('fieldset[data-group]')].filter(group => {
+					const selected = group.querySelector('input[type=checkbox]');
+					return selected instanceof HTMLInputElement && selected.checked;
+				}).map(group => ({
 					id: group.dataset.group,
-					packages: JSON.parse(group.dataset.packages ?? '[]') as string[],
+					packages: array(JSON.parse(group.dataset.packages ?? '[]')).map(string),
 					version: input(form, `version-${group.dataset.group}`).value,
 				}));
 				const operations = [...form.querySelectorAll<HTMLSelectElement>('select[data-operation]')].filter(select =>

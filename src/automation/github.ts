@@ -210,9 +210,8 @@ export class RepositoryGateway {
 		return [...new Set(refs.flat())].sort();
 	}
 	async preset(reference: string): Promise<{ value: unknown; sha: string }> {
-		const match = reference.match(/^github>([\w.-]+\/[\w.-]+):([\w-]+)(?:#([\w./-]+))?$/);
-		if (!match) throw new Error('Invalid preset');
-		const [, name, preset, ref] = match;
+		const [, name, preset, ref] = reference.match(/^github>([\w.-]+\/[\w.-]+):([\w-]+)(?:#([\w./-]+))?$/) ?? [];
+		if (!name) throw new Error('Invalid preset');
 		// Public presets need no installation grant; repository configuration cannot redirect credential-bearing requests.
 		const metadata = record(await this.call(`/repos/${name}`, ''));
 		const revision = record(
@@ -222,7 +221,7 @@ export class RepositoryGateway {
 			),
 		);
 		const commitSha = sha(revision.sha);
-		const content = await this.file(name as string, `${preset}.json`, commitSha, '');
+		const content = await this.file(name, `${preset}.json`, commitSha, '');
 		if (content === null) throw new Error('Preset missing');
 		return { value: JSON.parse(content), sha: commitSha };
 	}

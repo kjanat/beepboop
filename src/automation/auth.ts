@@ -7,8 +7,37 @@ import {
 	verifyRegistrationResponse,
 } from '@simplewebauthn/server';
 import { createRemoteJWKSet, type JWTVerifyGetKey, jwtVerify } from 'jose';
+import { z } from 'zod';
 import { cliAuthRoute, cliSubject } from '@/automation/cli-auth';
 import { integer, record, sha, text } from '@/model';
+
+const clientExtensionResults = z.object({}).catch({});
+const registrationResponse: z.ZodType<RegistrationResponseJSON> = z.object({
+	id: z.string(),
+	rawId: z.string(),
+	type: z.literal('public-key'),
+	response: z.object({
+		clientDataJSON: z.string(),
+		attestationObject: z.string(),
+		authenticatorData: z.string().optional(),
+		transports: z.array(z.string()).optional(),
+		publicKeyAlgorithm: z.number().optional(),
+		publicKey: z.string().optional(),
+	}),
+	clientExtensionResults,
+});
+const authenticationResponse: z.ZodType<AuthenticationResponseJSON> = z.object({
+	id: z.string(),
+	rawId: z.string(),
+	type: z.literal('public-key'),
+	response: z.object({
+		clientDataJSON: z.string(),
+		authenticatorData: z.string(),
+		signature: z.string(),
+		userHandle: z.string().nullish().transform(value => value ?? undefined),
+	}),
+	clientExtensionResults,
+});
 
 export interface AuthBindings {
 	DB: D1Database;
@@ -308,7 +337,7 @@ export class Authenticators {
 		const rpID = new URL(this.env.APPLICATION_ORIGIN).hostname;
 		if (challenge.register) {
 			const result = await verifyRegistrationResponse({
-				response: response as RegistrationResponseJSON,
+				response: registrationResponse.parse(response),
 				expectedChallenge: text(challenge.challenge),
 				expectedOrigin: this.env.APPLICATION_ORIGIN,
 				expectedRPID: rpID,
@@ -345,7 +374,7 @@ export class Authenticators {
 		const saved = (await this.credentials(subject)).find((c) => c.id === record(response).id);
 		if (!saved) throw new Error('Unknown authenticator');
 		const result = await verifyAuthenticationResponse({
-			response: response as AuthenticationResponseJSON,
+			response: authenticationResponse.parse(response),
 			expectedChallenge: text(challenge.challenge),
 			expectedOrigin: this.env.APPLICATION_ORIGIN,
 			expectedRPID: rpID,

@@ -1,5 +1,7 @@
 import { publishable } from '@/automation/package-publication';
+import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
+import { oneOf, record, string } from '@/model';
 import { api, show } from '@/ui/browser/dom';
 import { packageLabel } from '@/ui/package-label';
 
@@ -54,7 +56,7 @@ function workflow(
 	box.append(element('legend', role === 'prepare' ? 'Preparation workflow' : 'Publication workflow'));
 	const file = select(box, 'Workflow', [
 		['', 'Select a workflow'],
-		...plan.workflows.map(w => [w.file, `${w.file} (${w.events.join(', ')})`] as [string, string]),
+		...plan.workflows.map((w): [string, string] => [w.file, `${w.file} (${w.events.join(', ')})`]),
 		['new', 'Create a workflow'],
 	], choice?.file ?? '');
 	const newFile = text(box, 'New workflow filename', '');
@@ -95,9 +97,10 @@ function workflow(
 					purl,
 					select(mappings, pkg.name, [
 						['', 'New publication commands'],
-						...(evidence?.steps ?? []).filter(step => step.job === job.value).map(step =>
-							[step.id, `${step.job} / ${step.label}`] as [string, string]
-						),
+						...(evidence?.steps ?? []).filter(step => step.job === job.value).map((step): [string, string] => [
+							step.id,
+							`${step.job} / ${step.label}`,
+						]),
 					], choice?.publicationSteps[purl] ?? ''),
 				);
 			}
@@ -125,7 +128,7 @@ function workflow(
 			? {
 				file: file.value === 'new' ? newFile.value : file.value,
 				job: job.value || undefined,
-				triggers: triggers.value as SetupWorkflow['triggers'],
+				triggers: oneOf(triggers.value, ['review', 'dispatchOnly', 'preserve'], 'Invalid trigger handover'),
 				commands: commands.value,
 				publicationSteps: Object.fromEntries(
 					[...mappingControls].filter(([, control]) => control.value).map(([id, control]) => [id, control.value]),
@@ -183,7 +186,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 		streams.append(box);
 		readers.push(() => ({
 			name: enabled.checked ? name.value : '',
-			versioning: versioning.value as typeof value.versioning,
+			versioning: oneOf(versioning.value, ['workspace', 'independent', 'none'], 'Invalid versioning'),
 			packages: packages(),
 			required: required(),
 			prepare: prepare(),
@@ -252,7 +255,7 @@ export async function setup(form: HTMLFormElement, action: string) {
 	const repository = form.dataset.repository;
 	if (!repository) throw new Error('Repository missing');
 	if (!sessions.has(form)) {
-		const plan = await api<SetupPlan>('/api/repositories/setup/preview', { repository });
+		const plan = parseSetupPlan(await api('/api/repositories/setup/preview', { repository }));
 		editor(form, plan);
 		review(form, plan);
 		const apply = form.querySelector<HTMLButtonElement>('button[value="apply"]');
@@ -264,7 +267,7 @@ export async function setup(form: HTMLFormElement, action: string) {
 	const choices = session.choices(), identity = JSON.stringify(choices);
 	if (action !== 'apply') {
 		delete session.reviewed;
-		const plan = await api<SetupPlan>('/api/repositories/setup/preview', { repository, choices });
+		const plan = parseSetupPlan(await api('/api/repositories/setup/preview', { repository, choices }));
 		session.plan = plan;
 		if (!plan.blockers.length) session.reviewed = identity;
 		review(form, plan);
@@ -272,18 +275,20 @@ export async function setup(form: HTMLFormElement, action: string) {
 	}
 	if (session.reviewed !== identity) throw new Error('Preview these choices again before applying.');
 	const { planId, sourceSha, setupHead } = session.plan;
-	const result = await api<{ url: string }>('/api/repositories/setup/apply', {
-		repository,
-		choices,
-		planId,
-		sourceSha,
-		setupHead,
-	});
+	const result = record(
+		await api('/api/repositories/setup/apply', {
+			repository,
+			choices,
+			planId,
+			sourceSha,
+			setupHead,
+		}),
+	);
 	delete session.reviewed;
 	const output = form.querySelector('.setup-result');
 	if (output) {
 		const link = element('a', 'Review setup pull request');
-		link.href = result.url;
+		link.href = string(result.url);
 		output.replaceChildren(link);
 	}
 	show('Setup PR ready for review. Merge it yourself, then refresh inspection.');

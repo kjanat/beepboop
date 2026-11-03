@@ -99,10 +99,10 @@ export function selectorKey(reference: string, packages: Package[] = []): string
 	if (found) return packageId(found);
 	if (reference.startsWith('pkg:')) return packageKey(reference);
 	const colon = reference.indexOf(':');
-	const manager = reference.slice(0, colon);
-	if (['npm', 'jsr', 'cargo', 'go', 'github-release', 'goreleaser'].includes(manager)) {
-		return packageId({ manager: manager as Package['manager'], name: reference.slice(colon + 1) });
-	}
+	const manager = (['npm', 'jsr', 'cargo', 'go', 'github-release', 'goreleaser'] as const).find(name =>
+		name === reference.slice(0, colon)
+	);
+	if (manager) return packageId({ manager, name: reference.slice(colon + 1) });
 	return reference;
 }
 

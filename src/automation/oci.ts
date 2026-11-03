@@ -1,17 +1,17 @@
 import type { Fetcher } from '@/automation/managers/registry';
 import type { Publication } from '@/automation/types';
+import { record } from '@/model';
 
 /** Public distribution verification. Never forwards GitHub or vault credentials to registries. */
 export async function verifyImage(
 	publication: Publication,
 	request: Fetcher = fetch,
 ): Promise<Publication> {
-	const match = publication.name.match(/^(ghcr\.io|docker\.io)\/([a-z0-9][a-z0-9._/-]*)$/);
-	if (!match || match[2]?.includes('..') || !/^[\w][\w.-]{0,127}$/.test(publication.version)) {
+	const [, host, image] = publication.name.match(/^(ghcr\.io|docker\.io)\/([a-z0-9][a-z0-9._/-]*)$/) ?? [];
+	if (!image || image.includes('..') || !/^[\w][\w.-]{0,127}$/.test(publication.version)) {
 		return { ...publication, outcome: 'failed' };
 	}
-	const registry = match[1] === 'docker.io' ? 'registry-1.docker.io' : 'ghcr.io';
-	const image = match[2] as string;
+	const registry = host === 'docker.io' ? 'registry-1.docker.io' : 'ghcr.io';
 	const url = `https://${registry}/v2/${image}/manifests/${encodeURIComponent(publication.version)}`;
 	const headers: Record<string, string> = {
 		Accept:
@@ -37,7 +37,7 @@ export async function verifyImage(
 				signal: AbortSignal.timeout(15000),
 			});
 			if (!auth.ok) return { ...publication, outcome: 'uncertain', url };
-			const data = (await auth.json()) as { token?: string; access_token?: string };
+			const data = record(await auth.json());
 			const token = data.token ?? data.access_token;
 			if (typeof token !== 'string') return { ...publication, outcome: 'uncertain', url };
 			headers.Authorization = `Bearer ${token}`;

@@ -1,10 +1,12 @@
-export type ExclusionReason =
-	| 'private'
-	| 'vscode-extension'
-	| 'publish-disabled'
-	| 'other-registry'
-	| 'unlocated-module'
-	| 'unrecorded';
+export const exclusionReasons = [
+	'private',
+	'vscode-extension',
+	'publish-disabled',
+	'other-registry',
+	'unlocated-module',
+	'unrecorded',
+] as const;
+export type ExclusionReason = (typeof exclusionReasons)[number];
 export type PackagePublication = { kind: 'registry' } | { kind: 'excluded'; reason: ExclusionReason };
 export const registry: PackagePublication = { kind: 'registry' };
 export function excluded(reason: ExclusionReason): PackagePublication {

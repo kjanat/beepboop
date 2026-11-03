@@ -2,6 +2,19 @@ export type Json = string | number | boolean | null | Json[] | { [key: string]: 
 
 const width = 80;
 
+export function json(value: unknown): Json {
+	if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+		return value;
+	}
+	if (Array.isArray(value)) return value.map(json);
+	if (typeof value === 'object') {
+		return Object.fromEntries(
+			Object.entries(value).map(([key, item]) => [key, item === undefined ? undefined : json(item)] as const),
+		);
+	}
+	throw new Error('Expected JSON value');
+}
+
 export function formatJson(value: Json): string {
 	return `${render(value, '', 0, 0)}\n`;
 }

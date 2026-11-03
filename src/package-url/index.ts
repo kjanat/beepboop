@@ -27,6 +27,20 @@ export const purlDefinitions: ReadonlyMap<string, TypeDefinition> = new Map(
 	}),
 );
 
+function stringIdentity(
+	parts: ReturnType<typeof PackageURL.parseString>,
+	qualifiers: Record<string, string> | undefined,
+): PackageIdentity {
+	return {
+		type: parts[0] ?? '',
+		namespace: parts[1],
+		name: parts[2] ?? '',
+		version: parts[3],
+		qualifiers,
+		subpath: parts[5],
+	};
+}
+
 /** Apply the pinned type definition without discarding qualifiers or package subpaths. */
 export function packageIdentity(input: PackageIdentity | string): PackageIdentity {
 	if (typeof input === 'string' && /\/@[^/]*$/.test(input.split(/[?#]/)[0] ?? '')) {
@@ -39,14 +53,15 @@ export function packageIdentity(input: PackageIdentity | string): PackageIdentit
 		const end = fragment < 0 ? input.length : fragment;
 		const question = input.indexOf('?');
 		if (question >= 0 && question < end) {
-			qualifiers = Object.create(null) as Record<string, string>;
+			const pairs = new Map<string, string>();
 			for (const pair of input.slice(question + 1, end).split('&')) {
 				const equal = pair.indexOf('=');
 				if (equal < 0) throw new Error('Qualifier requires key=value');
 				const key = pair.slice(0, equal);
-				if (Object.hasOwn(qualifiers, key)) throw new Error(`Duplicate qualifier key: ${key}`);
-				qualifiers[key] = decodeURIComponent(pair.slice(equal + 1));
+				if (pairs.has(key)) throw new Error(`Duplicate qualifier key: ${key}`);
+				pairs.set(key, decodeURIComponent(pair.slice(equal + 1)));
 			}
+			qualifiers = Object.fromEntries(pairs);
 			parseInput = input.slice(0, question) + input.slice(end);
 		}
 	}
@@ -54,20 +69,12 @@ export function packageIdentity(input: PackageIdentity | string): PackageIdentit
 		if (key !== key.toLowerCase()) throw new Error('Qualifier keys must be lowercase');
 		if (!/^[a-z][a-z0-9._-]*$/.test(key)) throw new Error('Invalid qualifier key');
 	}
-	const parts = typeof parseInput === 'string' ? PackageURL.parseString(parseInput) : undefined;
-	const raw: PackageIdentity = parts
-		? {
-			type: parts[0] ?? '',
-			namespace: parts[1],
-			name: parts[2] ?? '',
-			version: parts[3],
-			qualifiers,
-			subpath: parts[5],
-		}
-		: input as PackageIdentity;
+	const raw: PackageIdentity = typeof parseInput === 'string'
+		? stringIdentity(PackageURL.parseString(parseInput), qualifiers)
+		: parseInput;
 	const type = raw.type.toLowerCase();
 	if (!/^[a-z][a-z0-9.-]*$/.test(type)) throw new Error('Invalid package URL type');
-	if (type === 'git' && parts && raw.namespace?.includes('/')) {
+	if (type === 'git' && typeof parseInput === 'string' && raw.namespace?.includes('/')) {
 		const [host, ...path] = raw.namespace.split('/');
 		raw.namespace = host;
 		raw.name = [...path, raw.name].join('/');

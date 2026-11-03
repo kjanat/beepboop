@@ -5,7 +5,7 @@ import { releaseIdentity } from '@/automation/package-identity';
 import { validRef } from '@/automation/policy';
 import type { Configuration, ManagerName, Stream, WorkflowBinding } from '@/automation/types';
 import { parseWinGetPolicy } from '@/automation/winget';
-import { array, record, text } from '@/model';
+import { array, oneOf, record, text } from '@/model';
 import { purl } from '@/package-url';
 
 function packageReferences(value: unknown): string[] {
@@ -31,6 +31,10 @@ function keys(data: Record<string, unknown>, allowed: string[], context: string)
 }
 function strings(value: unknown): string[] {
 	return array(value).map(text);
+}
+function workflowInput(value: unknown): string | boolean | number {
+	if (typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number') return value;
+	throw new Error('Invalid workflow input');
 }
 function binding(value: unknown): WorkflowBinding {
 	const data = record(value);
@@ -59,40 +63,28 @@ function binding(value: unknown): WorkflowBinding {
 		}
 		CronExpressionParser.parse(schedule, { tz: 'UTC' });
 	}
-	if (data.mode !== undefined && !['observe', 'dispatch'].includes(String(data.mode))) {
-		throw new Error('Invalid workflow mode');
-	}
+	const mode = data.mode === undefined ? undefined : oneOf(data.mode, ['observe', 'dispatch'], 'Invalid workflow mode');
 	let refs: WorkflowBinding['refs'];
 	if (data.refs !== undefined) {
 		const policy = record(data.refs);
 		keys(policy, ['phase', 'prefix', 'aliases', 'signed'], 'refs');
-		if (!['version', 'aliases'].includes(String(policy.phase))) throw new Error('Invalid ref phase');
+		const phase = oneOf(policy.phase, ['version', 'aliases'], 'Invalid ref phase');
 		const prefix = policy.prefix === undefined ? 'v' : String(policy.prefix);
 		if (!/^[A-Za-z0-9._-]*$/.test(prefix) || prefix.includes('..')) throw new Error('Invalid tag prefix');
-		const aliases = strings(policy.aliases ?? []);
-		if (aliases.some(alias => !['major', 'minor'].includes(alias)) || new Set(aliases).size !== aliases.length) {
-			throw new Error('Invalid aliases');
-		}
+		const aliases = strings(policy.aliases ?? []).map(alias => oneOf(alias, ['major', 'minor'], 'Invalid aliases'));
+		if (new Set(aliases).size !== aliases.length) throw new Error('Invalid aliases');
 		if (policy.signed !== undefined && typeof policy.signed !== 'boolean') throw new Error('Invalid signed policy');
-		refs = {
-			phase: policy.phase as 'version' | 'aliases',
-			prefix,
-			aliases: aliases as ('major' | 'minor')[],
-			signed: policy.signed === true,
-		};
+		refs = { phase, prefix, aliases, signed: policy.signed === true };
 	}
 	const file = text(data.file);
 	if (data.ref !== undefined && !validRef(text(data.ref))) throw new Error('Invalid workflow ref');
 	if (!/^[A-Za-z0-9_-]+\.ya?ml$/.test(file)) throw new Error('Workflow must be a filename');
-	const inputs = data.inputs === undefined ? {} : record(data.inputs);
-	for (const [key, value] of Object.entries(inputs)) {
-		if (
-			key === 'beepboop_execution_id'
-			|| !['string', 'boolean', 'number'].includes(typeof value)
-		) {
-			throw new Error('Invalid workflow input');
-		}
-	}
+	const inputs = Object.fromEntries(
+		Object.entries(data.inputs === undefined ? {} : record(data.inputs)).map(([key, value]) => {
+			if (key === 'beepboop_execution_id') throw new Error('Invalid workflow input');
+			return [key, workflowInput(value)] as const;
+		}),
+	);
 	if (data.required !== undefined && typeof data.required !== 'boolean') {
 		throw new Error('Invalid required flag');
 	}
@@ -106,7 +98,7 @@ function binding(value: unknown): WorkflowBinding {
 		...(artifactInputs ? { artifactInputs } : {}),
 		...(data.platform === undefined ? {} : { platform: platformSchema.parse(data.platform) }),
 		...(refs ? { refs } : {}),
-		...(data.mode === undefined ? {} : { mode: data.mode as WorkflowBinding['mode'] }),
+		...(mode === undefined ? {} : { mode }),
 		...(data.needs === undefined && !artifactInputs
 			? {}
 			: {
@@ -116,17 +108,16 @@ function binding(value: unknown): WorkflowBinding {
 		...(data.schedule === undefined ? {} : { schedule: text(data.schedule) }),
 		file,
 		...(data.ref === undefined ? {} : { ref: text(data.ref) }),
-		inputs: inputs as WorkflowBinding['inputs'],
+		inputs,
 		required: data.required !== false,
 	};
 }
 export function parseRepositoryConfiguration(value: unknown): Configuration {
 	const data = record(value);
 	keys(data, ['$schema', 'extends', 'managers', 'streams', 'subscriptions', 'winget'], 'configuration');
-	const managers = data.managers === undefined ? [...managerNames] : strings(data.managers);
-	if (managers.some((name) => !managerNames.includes(name as ManagerName))) {
-		throw new Error('Unknown manager');
-	}
+	const managers = data.managers === undefined
+		? [...managerNames]
+		: strings(data.managers).map(name => oneOf(name, managerNames, 'Unknown manager'));
 	const streams: Record<string, Stream> = {};
 	for (const [name, raw] of Object.entries(record(data.streams ?? {}))) {
 		if (!identifier.test(name)) throw new Error('Invalid stream name');
@@ -152,12 +143,9 @@ export function parseRepositoryConfiguration(value: unknown): Configuration {
 			promote = record(row.promote ?? {}),
 			channels = record(row.channels ?? {});
 		keys(prepare, ['version', 'workflow', 'strategy'], 'prepare');
-		if (
-			prepare.strategy !== undefined
-			&& !['managed', 'workflow'].includes(String(prepare.strategy))
-		) {
-			throw new Error('Invalid preparation strategy');
-		}
+		const strategy = prepare.strategy === undefined
+			? undefined
+			: oneOf(prepare.strategy, ['managed', 'workflow'], 'Invalid preparation strategy');
 		keys(promote, ['approval', 'workflow'], 'promote');
 		keys(channels, ['stable', 'prerelease'], 'channels');
 		if (prepare.version !== undefined && prepare.version !== 'manual') {
@@ -166,14 +154,8 @@ export function parseRepositoryConfiguration(value: unknown): Configuration {
 		if (promote.approval !== undefined && promote.approval !== 'required') {
 			throw new Error('Promotion requires approval');
 		}
-		const versioning = row.versioning ?? 'workspace',
-			concurrency = row.concurrency ?? 'queue';
-		if (!['workspace', 'independent', 'none'].includes(String(versioning))) {
-			throw new Error('Invalid versioning');
-		}
-		if (!['queue', 'supersede-pending'].includes(String(concurrency))) {
-			throw new Error('Invalid concurrency');
-		}
+		const versioning = oneOf(row.versioning ?? 'workspace', ['workspace', 'independent', 'none'], 'Invalid versioning'),
+			concurrency = oneOf(row.concurrency ?? 'queue', ['queue', 'supersede-pending'], 'Invalid concurrency');
 		const workflows: Record<string, WorkflowBinding> = {};
 		for (const [operation, value] of Object.entries(record(row.workflows ?? {}))) {
 			if (!identifier.test(operation)) throw new Error('Invalid operation name');
@@ -194,12 +176,10 @@ export function parseRepositoryConfiguration(value: unknown): Configuration {
 				: { versionFiles: array(row.versionFiles).map(value => versionFileSchema.parse(value)) }),
 			...(versionSource ? { versionSource } : {}),
 			...(row.packages === undefined ? {} : { packages: packageReferences(row.packages) }),
-			versioning: versioning as Stream['versioning'],
-			concurrency: concurrency as Stream['concurrency'],
+			versioning,
+			concurrency,
 			prepare: {
-				...(prepare.strategy === undefined
-					? {}
-					: { strategy: prepare.strategy as 'managed' | 'workflow' }),
+				...(strategy === undefined ? {} : { strategy }),
 				version: 'manual',
 				...(prepare.workflow ? { workflow: binding(prepare.workflow) } : {}),
 			},
@@ -261,15 +241,11 @@ export function parseRepositoryConfiguration(value: unknown): Configuration {
 			'publication',
 		], 'subscription');
 		const id = text(row.id),
-			event = text(row.event),
+			kind = text(row.event),
 			stream = text(row.stream),
 			operation = text(row.operation);
-		if (
-			!identifier.test(id)
-			|| !['release', 'package.version.changed', 'workflow_run'].includes(event)
-		) {
-			throw new Error('Invalid subscription');
-		}
+		if (!identifier.test(id)) throw new Error('Invalid subscription');
+		const event = oneOf(kind, ['release', 'package.version.changed', 'workflow_run'], 'Invalid subscription');
 		if (!streams[stream]?.workflows[operation]) {
 			throw new Error('Subscription references an unknown operation');
 		}
@@ -285,7 +261,7 @@ export function parseRepositoryConfiguration(value: unknown): Configuration {
 			...(row.sourceGroup === undefined ? {} : { sourceGroup: text(row.sourceGroup) }),
 			...(row.publication === undefined ? {} : { publication: text(row.publication) }),
 			source: text(row.source),
-			event: event as Configuration['subscriptions'][number]['event'],
+			event,
 			stream,
 			operation,
 			...(row.workflow === undefined ? {} : { workflow: text(row.workflow) }),
@@ -297,7 +273,7 @@ export function parseRepositoryConfiguration(value: unknown): Configuration {
 	return {
 		...(data.winget === undefined ? {} : { winget: parseWinGetPolicy(data.winget) }),
 		extends: strings(data.extends ?? []),
-		managers: managers as ManagerName[],
+		managers,
 		streams,
 		subscriptions,
 	};

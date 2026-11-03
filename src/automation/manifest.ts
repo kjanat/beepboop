@@ -7,12 +7,10 @@ export async function verifyManifest(
 	publication: Publication,
 	gateway: RepositoryGateway,
 ): Promise<Publication> {
-	const match = publication.name.match(/^([\w.-]+\/[\w.-]+)\/(.+\.(?:json|rb))$/);
-	if (!match || match[2]?.split('/').some((part) => part === '..' || part === '')) {
+	const [, repository, path] = publication.name.match(/^([\w.-]+\/[\w.-]+)\/(.+\.(?:json|rb))$/) ?? [];
+	if (!repository || !path || path.split('/').some((part) => part === '..' || part === '')) {
 		return { ...publication, outcome: 'failed' };
 	}
-	const repository = match[1] as string,
-		path = match[2] as string;
 	try {
 		const metadata = record(await gateway.call(`/repos/${repository}`, ''));
 		const content = await gateway.file(repository, path, text(metadata.default_branch), '');

@@ -1,8 +1,35 @@
 #!/usr/bin/env bun
 import { arg, cli, command, flag, group } from '@kjanat/dreamcli';
-import type { Execution, RepositoryRecord } from '@/automation/types';
 import { Client } from '@/cli/client';
 import { setupRepository } from '@/cli/setup';
+import { array, integer, record, string, text } from '@/model';
+
+function repositoryRows(value: unknown) {
+	return array(value).map(raw => {
+		const row = record(raw);
+		return {
+			raw: row,
+			id: integer(row.id),
+			name: text(row.name),
+			defaultBranch: text(row.defaultBranch),
+			streams: Object.keys(row.configuration === undefined ? {} : record(record(row.configuration).streams)),
+			diagnostics: array(row.diagnostics).map(string),
+		};
+	});
+}
+function executionRows(value: unknown) {
+	return array(value).map(raw => {
+		const row = record(raw);
+		return {
+			id: text(row.id),
+			repository: text(row.repository),
+			stream: text(row.stream),
+			operation: text(row.operation),
+			version: row.version === undefined ? '' : text(row.version),
+			state: text(row.state),
+		};
+	});
+}
 
 const base = (name: string, description: string, promptServer = false) =>
 	command(name).description(description)
@@ -27,8 +54,7 @@ const repository = (name: string, description: string) =>
 			),
 		);
 async function repositoryId(client: Client, name: string): Promise<number> {
-	const repositories = await client.request<RepositoryRecord[]>('/api/repositories');
-	const found = repositories.find(repository => repository.name === name);
+	const found = repositoryRows(await client.request('/api/repositories')).find(repository => repository.name === name);
 	if (!found) throw new Error(`Repository ${name} is not enrolled; run beepboop repositories discover ${name}`);
 	return found.id;
 }
@@ -86,13 +112,14 @@ const repositories = group('repositories').description('Inspect and configure re
 	)
 	.command(
 		base('list', 'List enrolled repositories').action(async ({ flags, out }) => {
-			const rows = await new Client(flags.server).request<RepositoryRecord[]>('/api/repositories');
-			if (out.jsonMode) out.json(rows);
+			const response = await new Client(flags.server).request('/api/repositories');
+			const rows = repositoryRows(response);
+			if (out.jsonMode) out.json(response);
 			else {out.table(
 					rows.map(row => ({
 						repository: row.name,
 						branch: row.defaultBranch,
-						streams: Object.keys(row.configuration?.streams ?? {}).join(', '),
+						streams: row.streams.join(', '),
 						problems: row.diagnostics.join('; '),
 					})),
 				);}
@@ -100,10 +127,10 @@ const repositories = group('repositories').description('Inspect and configure re
 	)
 	.command(
 		repository('show', 'Show repository configuration, packages and workflows').action(async ({ flags, args, out }) => {
-			const rows = await new Client(flags.server).request<RepositoryRecord[]>('/api/repositories');
+			const rows = repositoryRows(await new Client(flags.server).request('/api/repositories'));
 			const found = rows.find(row => row.name === args.repository);
 			if (!found) throw new Error('Repository not enrolled');
-			out.json(found);
+			out.json(found.raw);
 		}),
 	)
 	.command(
@@ -116,18 +143,10 @@ const repositories = group('repositories').description('Inspect and configure re
 const runs = group('runs').description('Follow, approve and recover release operations')
 	.command(
 		base('list', 'List release operations').action(async ({ flags, out }) => {
-			const rows = await new Client(flags.server).request<Execution[]>('/api/executions');
-			if (out.jsonMode) out.json(rows);
-			else {out.table(
-					rows.map(row => ({
-						id: row.id,
-						repository: row.repository,
-						stream: row.stream,
-						operation: row.operation,
-						version: row.version ?? '',
-						state: row.state,
-					})),
-				);}
+			const response = await new Client(flags.server).request('/api/executions');
+			const rows = executionRows(response);
+			if (out.jsonMode) out.json(response);
+			else out.table(rows);
 		}),
 	)
 	.command(

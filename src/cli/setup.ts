@@ -1,7 +1,9 @@
 import type { Ask, Out, SelectChoice } from '@kjanat/dreamcli';
 import { publishable } from '@/automation/package-publication';
+import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import type { Client } from '@/cli/client';
+import { record, string } from '@/model';
 import { packageLabel } from '@/ui/package-label';
 
 function options(entries: SelectChoice[]): [SelectChoice, ...SelectChoice[]] {
@@ -148,7 +150,7 @@ export async function setupRepository(
 ) {
 	if (flags.plan) {
 		if (!flags.apply || flags.choices) throw new Error('Use --plan with --apply, without --choices');
-		const reviewed: SetupPlan = await Bun.file(flags.plan).json();
+		const reviewed = parseSetupPlan(await Bun.file(flags.plan).json());
 		if (reviewed.repository !== repository) throw new Error('Reviewed plan belongs to another repository');
 		out.json(
 			await client.request('/api/repositories/setup/apply', {
@@ -162,14 +164,15 @@ export async function setupRepository(
 		return;
 	}
 	if (flags.apply) throw new Error('Noninteractive apply requires --plan pointing to a reviewed preview');
-	const initial = await client.request<SetupPlan>('/api/repositories/setup/preview', { repository });
-	const choices = flags.choices
+	const initial = parseSetupPlan(await client.request('/api/repositories/setup/preview', { repository }));
+	const choices: unknown = flags.choices
 		? await Bun.file(flags.choices).json()
 		: await chooseSetup(initial, ask);
-	const plan = await client.request<SetupPlan>('/api/repositories/setup/preview', { repository, choices });
-	if (flags.output) await Bun.write(flags.output, `${JSON.stringify(plan, null, 2)}\n`);
+	const preview = await client.request('/api/repositories/setup/preview', { repository, choices });
+	const plan = parseSetupPlan(preview);
+	if (flags.output) await Bun.write(flags.output, `${JSON.stringify(preview, null, 2)}\n`);
 	if (out.jsonMode) {
-		out.json(plan);
+		out.json(preview);
 		return;
 	}
 	out.log(`Inspected commit: ${plan.sourceSha}`);
@@ -187,13 +190,15 @@ export async function setupRepository(
 		!flags.choices
 		&& await ask({ kind: 'confirm', message: 'Open or refresh the setup PR with these exact changes?', default: false })
 	) {
-		const result = await client.request<{ url: string }>('/api/repositories/setup/apply', {
-			repository,
-			choices,
-			planId: plan.planId,
-			sourceSha: plan.sourceSha,
-			setupHead: plan.setupHead,
-		});
-		out.log(result.url);
+		const result = record(
+			await client.request('/api/repositories/setup/apply', {
+				repository,
+				choices,
+				planId: plan.planId,
+				sourceSha: plan.sourceSha,
+				setupHead: plan.setupHead,
+			}),
+		);
+		out.log(string(result.url));
 	}
 }

@@ -31,7 +31,7 @@ export const workflowManager: Manager = {
 					});
 					const localActions = [
 						...source.matchAll(/uses:\s*["']?((?:\.\/|\$\/)[^\s"']+)/g),
-					].map((m) => m[1] as string);
+					].flatMap((m) => m[1] ?? []);
 					inventory.workflows.push({
 						...(Array.isArray(push.tags) ? { tagPatterns: push.tags.map(String) } : {}),
 						...(Array.isArray(push.branches) ? { branchPatterns: push.branches.map(String) } : {}),

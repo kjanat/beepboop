@@ -3,9 +3,9 @@ import { base64, bytes, type WorkflowIdentity } from '@/automation/auth';
 import type { RepositoryGateway } from '@/automation/github';
 import { matchesRef } from '@/automation/policy';
 import type { Store } from '@/automation/store';
-import { integer, record, text } from '@/model';
+import { integer, oneOf, record, text } from '@/model';
 
-export interface Grant {
+interface GrantFields {
 	id: string;
 	alias: string;
 	repositoryId: number;
@@ -14,9 +14,12 @@ export interface Grant {
 	workflow: string;
 	ref: string;
 	environment?: string;
-	delivery: 'runtime' | 'repository' | 'environment';
 	secretName?: string;
 }
+export type Grant =
+	| (GrantFields & { delivery: 'runtime' })
+	| (GrantFields & { delivery: 'repository'; secretName: string })
+	| (GrantFields & { delivery: 'environment'; environment: string; secretName: string });
 export function parseGrant(value: unknown): Grant {
 	const data = record(value);
 	for (const key of Object.keys(data)) {
@@ -37,7 +40,7 @@ export function parseGrant(value: unknown): Grant {
 			throw new Error('Unknown grant field');
 		}
 	}
-	const grant: Grant = {
+	const fields = {
 		id: text(data.id),
 		alias: text(data.alias),
 		repositoryId: integer(data.repositoryId),
@@ -45,31 +48,25 @@ export function parseGrant(value: unknown): Grant {
 		operation: text(data.operation),
 		workflow: text(data.workflow),
 		ref: text(data.ref),
-		delivery: text(data.delivery) as Grant['delivery'],
+		delivery: text(data.delivery),
 		...(data.environment === undefined ? {} : { environment: text(data.environment) }),
 		...(data.secretName === undefined ? {} : { secretName: text(data.secretName) }),
 	};
 	if (
-		!/^[\w-]+$/.test(grant.alias)
-		|| !/^[\w.-]+\/[\w.-]+$/.test(grant.repository)
-		|| !/^[\w-]+\.ya?ml$/.test(grant.workflow)
-		|| !grant.ref.startsWith('refs/')
+		!/^[\w-]+$/.test(fields.alias)
+		|| !/^[\w.-]+\/[\w.-]+$/.test(fields.repository)
+		|| !/^[\w-]+\.ya?ml$/.test(fields.workflow)
+		|| !fields.ref.startsWith('refs/')
 	) {
 		throw new Error('Invalid grant');
 	}
-	if (!['runtime', 'repository', 'environment'].includes(grant.delivery)) {
-		throw new Error('Invalid delivery mode');
-	}
-	if (
-		grant.delivery !== 'runtime'
-		&& (!grant.secretName || !/^[A-Z_][A-Z0-9_]*$/.test(grant.secretName))
-	) {
-		throw new Error('Secret name required');
-	}
-	if (grant.delivery === 'environment' && !grant.environment) {
-		throw new Error('Environment required');
-	}
-	return grant;
+	const delivery = oneOf(fields.delivery, ['runtime', 'repository', 'environment'], 'Invalid delivery mode');
+	if (delivery === 'runtime') return { ...fields, delivery };
+	const { environment, secretName } = fields;
+	if (!secretName || !/^[A-Z_][A-Z0-9_]*$/.test(secretName)) throw new Error('Secret name required');
+	if (delivery === 'repository') return { ...fields, delivery, secretName };
+	if (!environment) throw new Error('Environment required');
+	return { ...fields, delivery, environment, secretName };
 }
 export class Vault {
 	constructor(
@@ -156,7 +153,7 @@ export class Vault {
 			.bind(alias, identity.repositoryId)
 			.all<{ document: string }>();
 		const allowed = rows.results
-			.map((r) => JSON.parse(r.document) as Grant)
+			.map((r) => parseGrant(JSON.parse(r.document)))
 			.some(
 				(g) =>
 					g.delivery === 'runtime'
@@ -185,7 +182,7 @@ export class Vault {
 			outcomes: { id: string; state: string }[] = [];
 		for (
 			const grant of rows.results
-				.map((row) => JSON.parse(row.document) as Grant)
+				.map((row) => parseGrant(JSON.parse(row.document)))
 				.filter((g) => g.delivery !== 'runtime')
 		) {
 			let state = 'failed';
@@ -197,7 +194,7 @@ export class Vault {
 				const path = grant.delivery === 'environment'
 					? `/repositories/${grant.repositoryId}/environments/${
 						encodeURIComponent(
-							grant.environment as string,
+							grant.environment,
 						)
 					}/secrets`
 					: `/repos/${grant.repository}/actions/secrets`;

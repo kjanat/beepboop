@@ -369,8 +369,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			) {
 				throw new Error('Run identity mismatch');
 			}
-			const expectedRef = execution.workflow.ref as string;
-			if (!matchesRef(expectedRef, identity.ref)) throw new Error('Workflow ref mismatch');
+			if (!matchesRef(execution.workflow.ref, identity.ref)) throw new Error('Workflow ref mismatch');
 			if (execution.attempts > 0 && run.display_title !== `Release operation ${id}`) {
 				throw new Error('Dispatch correlation mismatch');
 			}
@@ -956,8 +955,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 								&& run.head_branch === execution.workflow?.ref?.replace(/^refs\/(heads|tags)\//, '')
 								&& record(run.repository).id === execution.repositoryId,
 						);
-					if (matches.length === 1) {
-						const run = matches[0] as Record<string, unknown>;
+					const run = matches.length === 1 ? matches[0] : undefined;
+					if (run) {
 						await this.put({
 							...execution,
 							state: 'running',

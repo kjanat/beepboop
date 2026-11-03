@@ -1,6 +1,6 @@
 import { credentialHash } from '@/automation/cli-auth';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
-import { formatJson, type Json } from '@/automation/json';
+import { formatJson, json } from '@/automation/json';
 import { object } from '@/automation/managers/helpers';
 import { packageId, selectorKey } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
@@ -173,7 +173,7 @@ export async function previewSetup(
 	}
 	const before = snapshot.files['.github/beepboop.json'] ?? '';
 	// Do not reformat an unchanged configuration simply to make a PR.
-	const after = JSON.stringify(raw) === JSON.stringify(configuration) ? before : formatJson(configuration as Json);
+	const after = JSON.stringify(raw) === JSON.stringify(configuration) ? before : formatJson(json(configuration));
 	if (after !== before) edits.unshift({ path: '.github/beepboop.json', before, after });
 	notes.push(
 		'Registry permissions and trusted-publisher linkage are configured separately; this proposal does not publish packages.',

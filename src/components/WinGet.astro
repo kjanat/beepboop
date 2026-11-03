@@ -2,7 +2,10 @@
 import type { Dashboard } from '@/server/dashboard';
 import { date } from '@/server/dashboard';
 
-const { data } = Astro.props as { data: Dashboard };
+interface Props {
+	data: Dashboard;
+}
+const { data } = Astro.props;
 const repositories = data.repositories.filter(repo =>
 	repo.configuration?.winget && !repo.suspended && !repo.diagnostics.length
 );

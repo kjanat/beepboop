@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { credentialHash } from '@/automation/cli-auth';
 import { resolveConfiguration } from '@/automation/configuration';
 import type { RepositoryGateway } from '@/automation/github';
@@ -10,6 +11,14 @@ import type { Edit, Snapshot } from '@/automation/types';
 import { record } from '@/model';
 import { packageLabel } from '@/ui/package-label';
 
+const editsSchema = z.array(z.object({ path: z.string(), before: z.string(), after: z.string() }));
+export function setupEdits(saved: Record<string, unknown> | undefined): Edit[] {
+	if (Array.isArray(saved?.edits)) return editsSchema.parse(saved.edits);
+	return typeof saved?.content === 'string'
+		? [{ path: '.github/beepboop.json', before: '', after: saved.content }]
+		: [];
+}
+
 /** Reconcile an already-open proposal after discovery, without starting a release or changing human edits. */
 export async function maintainSetup(store: Store, gateway: RepositoryGateway, snapshot: Snapshot): Promise<void> {
 	const { name, id } = snapshot.repository;
@@ -20,9 +29,7 @@ export async function maintainSetup(store: Store, gateway: RepositoryGateway, sn
 	const saved = record(JSON.parse(row.document));
 	const pull = await gateway.openSetupPull(name, id);
 	if (!pull) return;
-	const previous: Edit[] = Array.isArray(saved.edits) ? saved.edits as Edit[] : typeof saved.content === 'string'
-		? [{ path: '.github/beepboop.json', before: '', after: saved.content }]
-		: [];
+	const previous = setupEdits(saved);
 	const conflict = saved.head !== pull.head;
 	const inventory = discover(snapshot);
 	const summary = `Inspected [${snapshot.sha}](https://github.com/${name}/commit/${snapshot.sha}).\n\n`
@@ -87,8 +94,10 @@ export async function maintainSetup(store: Store, gateway: RepositoryGateway, sn
 			pull.number,
 		);
 		const generated = new Map(
-			previous.filter(edit => snapshot.files[edit.path] !== undefined)
-				.map(edit => [edit.path, { ...edit, after: snapshot.files[edit.path] as string }]),
+			previous.flatMap(edit => {
+				const after = snapshot.files[edit.path];
+				return after === undefined ? [] : [[edit.path, { ...edit, after }] as const];
+			}),
 		);
 		for (const edit of plan.edits) generated.set(edit.path, edit);
 		await save({

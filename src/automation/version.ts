@@ -16,18 +16,18 @@ export function parseVersionRequest(value: unknown): VersionRequest {
 		: ['bump'];
 	if (Object.keys(input).some(key => !allowed.includes(key))) throw new Error('Ambiguous version request');
 	if (input.version !== undefined) return { version: semver(input.version).replace(/^v/, '') };
-	if (['patch', 'minor', 'major', 'next', 'stable'].includes(String(input.bump))) {
-		return { bump: input.bump as 'patch' | 'minor' | 'major' | 'next' | 'stable' };
-	}
-	if (input.bump === 'prerelease' && ['patch', 'minor', 'major'].includes(String(input.base))) {
+	const bump = (['patch', 'minor', 'major', 'next', 'stable'] as const).find(kind => kind === input.bump);
+	if (bump) return { bump };
+	const base = (['patch', 'minor', 'major'] as const).find(kind => kind === input.base);
+	if (input.bump === 'prerelease' && base) {
 		const identifier = text(input.identifier);
 		if (!/^[A-Za-z][A-Za-z0-9-]*$/.test(identifier)) throw new Error('Invalid prerelease identifier');
-		return { bump: 'prerelease', base: input.base as 'patch' | 'minor' | 'major', identifier };
+		return { bump: 'prerelease', base, identifier };
 	}
 	throw new Error('Invalid version request');
 }
 export function nextVersion(current: string, request: VersionRequest): string {
-	const normalized = semver(current).replace(/^v/, '').split('+')[0] as string;
+	const normalized = semver(current).replace(/^v/, '').split('+')[0] ?? '';
 	const split = normalized.indexOf('-');
 	const core = split < 0 ? normalized : normalized.slice(0, split);
 	const pre = split < 0 ? undefined : normalized.slice(split + 1);
@@ -44,7 +44,9 @@ export function nextVersion(current: string, request: VersionRequest): string {
 		const values = core.split('.').map(BigInt);
 		const kind = request.bump === 'prerelease' ? request.base : request.bump;
 		const index = kind === 'major' ? 0 : kind === 'minor' ? 1 : 2;
-		values[index] = (values[index] as bigint) + 1n;
+		const value = values[index];
+		if (value === undefined) throw new Error('Invalid version');
+		values[index] = value + 1n;
 		for (let i = index + 1; i < 3; i++) values[i] = 0n;
 		target = values.join('.') + (request.bump === 'prerelease' ? `-${request.identifier}.1` : '');
 	}

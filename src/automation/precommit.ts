@@ -16,11 +16,11 @@ function entries(source: string) {
 		const repo = item.get('repo');
 		if (repo === 'local' || repo === 'meta') return [];
 		if (typeof repo !== 'string') throw new Error('Expected hook repository URL');
-		const match = repo.match(/^https:\/\/github\.com\/([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/);
-		if (!match) return [];
+		const repository = repo.match(/^https:\/\/github\.com\/([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/)?.[1];
+		if (!repository) return [];
 		const rev = item.get('rev', true);
 		if (!isScalar(rev) || typeof rev.value !== 'string' || !rev.range) throw new Error('Expected scalar hook revision');
-		return [{ repository: match[1] as string, rev }];
+		return [{ repository, rev, range: rev.range }];
 	});
 }
 export function discoverHooks(snapshot: Snapshot): HookReference[] {
@@ -37,11 +37,10 @@ export function planHookUpdates(snapshot: Snapshot, release: ReleaseReference): 
 			entry.repository.toLowerCase() === release.repository.name.toLowerCase()
 		);
 		let after = before;
-		for (const { rev } of updates.sort((a, b) => (b.rev.range?.[0] ?? 0) - (a.rev.range?.[0] ?? 0))) {
+		for (const { rev, range } of updates.sort((a, b) => b.range[0] - a.range[0])) {
 			const target = /^[a-f0-9]{40}$/.test(String(rev.value)) ? release.commit : release.tag;
 			if (!target) throw new Error('Hook update requires an upstream version tag');
 			if (!/^[a-f0-9]{40}$/.test(release.commit)) throw new Error('Invalid upstream release commit');
-			const range = rev.range as [number, number, number];
 			const original = before.slice(range[0], range[1]);
 			const replacement = original.startsWith("'")
 				? `'${target.replaceAll("'", "''")}'`

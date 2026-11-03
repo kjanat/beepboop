@@ -14,14 +14,13 @@ import { planReleaseSet } from '@/automation/planning';
 import { matchesRef } from '@/automation/policy';
 import { planHookUpdates } from '@/automation/precommit';
 import { previewSetup, setupBody } from '@/automation/setup';
-import { maintainSetup } from '@/automation/setup-maintenance';
+import { maintainSetup, setupEdits } from '@/automation/setup-maintenance';
 import { Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
 import { workflowToken } from '@/automation/token';
 import type {
 	Artifact,
 	AutomationEvent,
-	Edit,
 	Execution,
 	Publication,
 	RepositoryRecord,
@@ -30,7 +29,7 @@ import type {
 import { parseGrant, Vault } from '@/automation/vault';
 import { nextVersion, parseVersionRequest } from '@/automation/version';
 import { type WinGetBindings, WinGetService } from '@/automation/winget';
-import { array, compareVersions, integer, record, semver, sha, text } from '@/model';
+import { array, compareVersions, integer, oneOf, record, semver, sha, text } from '@/model';
 import { renderActivityRows } from '@/ui/templates/activity';
 import { readBody, verifySignature } from '@/webhook';
 
@@ -217,7 +216,7 @@ export class AutomationService {
 			await this.event({
 				id: text(request.headers.get('x-github-delivery')),
 				source: repository.name,
-				event: event as 'release' | 'workflow_run',
+				event,
 
 				workflow: event === 'workflow_run'
 					? text(record(payload.workflow_run).path).replace(/^\.github\/workflows\//, '')
@@ -424,8 +423,8 @@ export class AutomationService {
 				.bind(id).first<{ document: string }>();
 			const saved = row ? record(JSON.parse(row.document)) : undefined;
 			const head = await this.gateway.setupHead(name, id);
-			const savedEdits = Array.isArray(saved?.edits) ? saved.edits as Edit[] : [];
-			const priorConfiguration = savedEdits.find(edit => edit.path === '.github/beepboop.json')?.before ?? '';
+			const previous = setupEdits(saved);
+			const priorConfiguration = previous.find(edit => edit.path === '.github/beepboop.json')?.before ?? '';
 			const choices = body.choices
 				?? ((snapshot.files['.github/beepboop.json'] ?? '') === priorConfiguration ? saved?.choices : undefined);
 			const plan = await previewSetup(snapshot, inventory, choices, {
@@ -446,9 +445,6 @@ export class AutomationService {
 			if (head && saved?.head !== head) {
 				throw new Error('Setup branch changed; preserve human edits and review the conflict');
 			}
-			const previous: Edit[] = Array.isArray(saved?.edits) ? saved.edits as Edit[] : typeof saved?.content === 'string'
-				? [{ path: '.github/beepboop.json', before: '', after: saved.content }]
-				: [];
 			if (head && saved?.sourceSha === snapshot.sha && JSON.stringify(previous) === JSON.stringify(plan.edits)) {
 				return Response.json(
 					await this.gateway.refreshPullRequest(
@@ -474,9 +470,10 @@ export class AutomationService {
 				?? snapshot.files['.github/beepboop.json'];
 			// Keep the complete set of generated files for safe later refreshes, including unchanged ones.
 			const generated = new Map(
-				previous.filter(edit => snapshot.files[edit.path] !== undefined).map(
-					edit => [edit.path, { ...edit, after: snapshot.files[edit.path] as string }],
-				),
+				previous.flatMap(edit => {
+					const after = snapshot.files[edit.path];
+					return after === undefined ? [] : [[edit.path, { ...edit, after }] as const];
+				}),
 			);
 			for (const edit of plan.edits) generated.set(edit.path, edit);
 			await this.store.db.prepare(
@@ -661,12 +658,11 @@ export class AutomationService {
 					),
 				);
 			}
-			const action = text(body.action);
-			if (!['retry', 'reconcile'].includes(action)) throw new Error('Unknown recovery');
+			const action = oneOf(text(body.action), ['retry', 'reconcile'], 'Unknown recovery');
 			return Response.json(
 				await this.coordinator(execution.repositoryId).recover(
 					execution.id,
-					action as 'retry' | 'reconcile',
+					action,
 					actor,
 				),
 			);
@@ -769,8 +765,7 @@ export class AutomationService {
 				throw new Error('Promotion must be approved before registration');
 			}
 			if (!execution.workflow) throw new Error('Operation is not a workflow');
-			const configuredRef = execution.workflow.ref as string;
-			if (!matchesRef(configuredRef, identity.ref)) {
+			if (!matchesRef(execution.workflow.ref, identity.ref)) {
 				throw new Error('Observed run does not match configured ref');
 			}
 			await this.coordinator(identity.repositoryId).enqueue(execution);
@@ -842,23 +837,23 @@ export class AutomationService {
 		}
 		if (path.endsWith('/report')) {
 			const publications = array(body.publications ?? []).map((raw): Publication => {
-				const p = record(raw),
-					manager = text(p.manager),
-					outcome = text(p.outcome);
-				if (
-					!['cargo', 'npm', 'jsr', 'github-release', 'oci', 'goreleaser', 'go', 'manifest', 'workflow'].includes(
-						manager,
-					)
-					|| !['pending', 'succeeded', 'failed', 'uncertain', 'skipped'].includes(outcome)
-				) {
-					throw new Error('Invalid publication');
-				}
+				const p = record(raw);
+				const manager = oneOf(
+					text(p.manager),
+					['cargo', 'npm', 'jsr', 'github-release', 'oci', 'goreleaser', 'go', 'manifest', 'workflow'],
+					'Invalid publication',
+				);
+				const outcome = oneOf(
+					text(p.outcome),
+					['pending', 'succeeded', 'failed', 'uncertain', 'skipped'],
+					'Invalid publication',
+				);
 				return {
 					id: text(p.id),
-					manager: manager as Publication['manager'],
+					manager,
 					name: text(p.name),
 					version: text(p.version),
-					outcome: outcome as Publication['outcome'],
+					outcome,
 					required: p.required !== false,
 					...(p.digest === undefined ? {} : { digest: text(p.digest) }),
 					...(p.url === undefined ? {} : { url: text(p.url) }),

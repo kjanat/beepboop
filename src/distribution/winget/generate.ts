@@ -75,8 +75,9 @@ export function parseChecksums(source: string): Map<string, string> {
 }
 function expand(value: string, variables: Record<string, string>): string {
 	return value.replace(/\{([^{}]+)\}/g, (_match, key: string) => {
-		if (!Object.hasOwn(variables, key)) throw new Error(`Unknown template variable ${key}`);
-		return variables[key] as string;
+		const variable = Object.hasOwn(variables, key) ? variables[key] : undefined;
+		if (variable === undefined) throw new Error(`Unknown template variable ${key}`);
+		return variable;
 	});
 }
 function https(value: string): string {

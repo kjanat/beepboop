@@ -2,7 +2,7 @@ import { createExecution, executionId } from '@/automation/execution';
 import { discover } from '@/automation/managers';
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage, selectorKey } from '@/automation/package-identity';
-import type { Execution, RepositoryRecord, Snapshot, WorkflowBinding } from '@/automation/types';
+import type { Execution, RepositoryRecord, Snapshot } from '@/automation/types';
 
 /** Compile a frozen preparation into operations for its verified merged revision. */
 export async function compileReleaseSet(preparation: Execution, snapshot: Snapshot): Promise<Execution[]> {
@@ -89,7 +89,7 @@ export async function compileReleaseSet(preparation: Execution, snapshot: Snapsh
 		execution.releaseSet = { preparationId: preparation.id, group: operation.group, required: [] };
 		operations.push(execution);
 	}
-	const bindings = new Map(operations.map(op => [op.operation, op.workflow as WorkflowBinding]));
+	const bindings = new Map(operations.map(op => [op.operation, op.workflow]));
 	const visited = new Set<string>(), visiting = new Set<string>();
 	function visit(name: string) {
 		if (visited.has(name)) return;

@@ -1,7 +1,8 @@
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { compile, type JSONSchema } from 'json-schema-to-typescript';
+import { compile } from 'json-schema-to-typescript';
+import { record } from '@/model';
 import { parseTypeDefinition } from '@/package-url/definition';
 
 const root = resolve(import.meta.dir, '../../package-url');
@@ -24,7 +25,7 @@ async function emit(path: string, source: string): Promise<void> {
 }
 const banner =
 	'/* Generated from pinned upstream PURL data and local extensions by bun run purl:generate. Do not edit. */';
-const schema = await Bun.file(`${root}/type-definition.schema.json`).json() as JSONSchema;
+const schema = record(await Bun.file(`${root}/type-definition.schema.json`).json());
 const definitionTypes = await compile(schema, 'TypeDefinition', {
 	bannerComment: banner,
 	style: { singleQuote: true, useTabs: true },
