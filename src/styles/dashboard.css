@@ -397,8 +397,21 @@ article > details > summary {
 article > details > summary::-webkit-details-marker {
 	display: none;
 }
-article > details[open] > summary {
+article > details > summary.section-heading {
+	margin-bottom: 0;
+}
+article > details[open] > summary.section-heading {
 	margin-bottom: 20px;
+}
+article > details > summary h2::before {
+	content: "▸";
+	display: inline-block;
+	margin-right: 8px;
+	color: var(--blue);
+	transition: transform 0.15s;
+}
+article > details[open] > summary h2::before {
+	transform: rotate(90deg);
 }
 article.pending {
 	opacity: 0.7;

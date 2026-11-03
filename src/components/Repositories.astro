@@ -206,8 +206,11 @@ function wingetDestination(repository: RepositoryRecord) {
 								>{w.ref}</code></small><small>
 								{w.mode === 'observe' ? 'Tracks existing triggers' : 'Can be dispatched'}</small>
 						</p>
-					))}{!repository.configuration && (
+					))}{!workflowChoices(repository).length && (
 						<>
+							{repository.configuration && (
+								<p class="notice">No release workflows configured.</p>
+							)}
 							{repository.inventory.workflows.map(workflow => (
 								<p>
 									<strong><a
