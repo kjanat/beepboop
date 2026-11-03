@@ -40,6 +40,7 @@ export async function seedBrowser(db: D1Database): Promise<void> {
 				localActions: [],
 				publication: true,
 			}],
+			publicationOrder: ['npm:example-cli'],
 			managers: ['npm'],
 			diagnostics: [],
 		},
@@ -62,5 +63,36 @@ export async function seedBrowser(db: D1Database): Promise<void> {
 		'fixture-key',
 		'user:fixture',
 		JSON.stringify({ id: 'fixture-key', label: 'Fixture key', publicKey: 'fixture', counter: 0 }),
+	).run();
+}
+
+export async function seedOnboarding(db: D1Database): Promise<void> {
+	const { discover } = await import('@/automation/managers');
+	const snapshot = {
+		repository: { id: 92, name: 'example/private-app', defaultBranch: 'main' },
+		sha: 'a'.repeat(40),
+		files: {
+			'package.json': '{"name":"private-app","private":true}',
+			'.github/workflows/deploy.yml':
+				'name: Deploy\non: workflow_dispatch\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bun run deploy\n',
+		},
+	};
+	const repository = {
+		...snapshot.repository,
+		sha: snapshot.sha,
+		inventory: discover(snapshot),
+		diagnostics: ['Onboarding configuration is not merged'],
+		presetShas: {},
+		updatedAt: Date.now(),
+	};
+	await db.prepare('INSERT OR REPLACE INTO repositories VALUES(?,?,?,?)').bind(
+		92,
+		repository.name,
+		JSON.stringify(repository),
+		repository.updatedAt,
+	).run();
+	await db.prepare('INSERT OR REPLACE INTO onboarding VALUES(?,?)').bind(
+		92,
+		JSON.stringify({ url: 'https://github.com/example/private-app/pull/10' }),
 	).run();
 }

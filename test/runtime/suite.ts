@@ -427,3 +427,25 @@ describe('built Worker package identity persistence', () => {
 		}
 	}, 30000);
 });
+
+describe('repository onboarding dashboard', () => {
+	it('shows private versionless packages, discovered workflows and an existing setup PR refresh action', async () => {
+		const runtime = await createRuntime();
+		try {
+			assert.equal((await runtime.fetch('https://automation.test/onboarding-init')).status, 200);
+			const response = await runtime.fetch('https://automation.test/repositories', {
+				headers: { cookie: `__Host-beepboop_access=${runtime.access}` },
+			});
+			assert.equal(response.status, 200);
+			const html = await response.text();
+			assert.match(html, /pkg:npm\/private-app/);
+			assert.match(html, /Not selected for registry publication/);
+			assert.match(html, /deploy\.yml/);
+			assert.match(html, /Refresh setup PR/);
+			assert.match(html, /https:\/\/github.com\/example\/private-app\/pull\/10/);
+			assert.doesNotMatch(html, /No package manifests discovered/);
+		} finally {
+			await runtime.close();
+		}
+	}, 30000);
+});

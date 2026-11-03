@@ -23,7 +23,7 @@ jobs:
             uses: oven-sh/setup-bun@v2
           - uses: kjanat/runner@v0.28.0
       - run: runner i -fs types
-      - run: run -pk check lint test test:actions
+      - run: run -pk check lint test test:actions purl:check
       - run: run -sk deploy:dry test:runtime
         env:
           GITHUB_APP_ID: "0"

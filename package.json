@@ -3,7 +3,10 @@
 	"private": true,
 	"description": "Coordinate repository releases through Beepboop",
 	"homepage": "https://beepboop.kjanat.dev",
-	"repository": { "type": "git", "url": "https://github.com/kjanat/beepboop.git" },
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/kjanat/beepboop.git"
+	},
 	"type": "module",
 	"bin": {
 		"beepboop": "src/cli/cli.ts",
@@ -31,6 +34,10 @@
 		"prepare": "run -qs types sync",
 		"prepreview": "wrangler types",
 		"preview": "astro preview",
+		"purl:check": "bun src/tooling/purl/generate.ts --check",
+		"purl:fetch": "bun src/tooling/purl/fetch.ts",
+		"purl:generate": "bun src/tooling/purl/generate.ts",
+		"purl:update": "run -s purl:fetch purl:generate",
 		"prestart": "wrangler types",
 		"start": "astro dev",
 		"sync": "astro sync",
@@ -46,6 +53,7 @@
 	},
 	"dependencies": {
 		"@astrojs/cloudflare": "^14.4.4",
+		"@cfworker/json-schema": "^4.1.4",
 		"@kjanat/dreamcli": "^5.0.0",
 		"@kjanat/openauth": "^0.5.1",
 		"@simplewebauthn/server": "^14.0.3",
@@ -67,6 +75,7 @@
 		"@kjanat/fmt": "^0.60.6",
 		"@types/bun": "1.4.4",
 		"@types/mdast": "4.0.4",
+		"json-schema-to-typescript": "^16.0.0",
 		"libsodium-wrappers": "^0.8.4",
 		"miniflare": "5.20261019.0-beta",
 		"runner-run": "^0.28.0",

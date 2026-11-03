@@ -1,3 +1,4 @@
+/* Generated from pinned upstream PURL data by bun run purl:generate. Do not edit. */
 import definition0 from '@/package-url/definitions/alpm-definition.json';
 import definition1 from '@/package-url/definitions/apk-definition.json';
 import definition2 from '@/package-url/definitions/bazel-definition.json';
@@ -40,8 +41,6 @@ import definition38 from '@/package-url/definitions/swift-definition.json';
 import definition39 from '@/package-url/definitions/vcpkg-definition.json';
 import definition40 from '@/package-url/definitions/vscode-extension-definition.json';
 import definition41 from '@/package-url/definitions/yocto-definition.json';
-
-/** All registered types from the pinned upstream specification. */
 export default [
 	definition0,
 	definition1,

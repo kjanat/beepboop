@@ -1,8 +1,9 @@
 import { PackageURL } from 'packageurl-js';
-import { type ComponentDefinition, type TypeDefinition, typeDefinitionSchema } from '@/package-url/definition';
+import { type ComponentDefinition, parseTypeDefinition, type TypeDefinition } from '@/package-url/definition';
 import definitions from '@/package-url/definitions';
 
 export type { ComponentDefinition, TypeDefinition } from '@/package-url/definition';
+export type { RegisteredPackageIdentity, RegisteredPackageType } from '@/package-url/identity.generated';
 
 export interface PackageIdentity {
 	type: string;
@@ -14,7 +15,7 @@ export interface PackageIdentity {
 }
 export const purlDefinitions: ReadonlyMap<string, TypeDefinition> = new Map(
 	definitions.map(value => {
-		const definition = typeDefinitionSchema.parse(value);
+		const definition = parseTypeDefinition(value);
 		return [definition.type, definition];
 	}),
 );

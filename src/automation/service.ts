@@ -418,7 +418,17 @@ export class AutomationService {
 				.first<{ document: string }>();
 			const saved = prior ? record(JSON.parse(prior.document)) : undefined;
 			const content = formatJson(onboardingConfiguration(snapshot, repository.inventory));
-			if (saved?.content === content) return Response.json({ url: saved.url, unchanged: true });
+			if (saved?.content === content) {
+				const result = await this.gateway.refreshPullRequest(
+					snapshot,
+					'automation/onboarding',
+					'chore: configure release automation',
+					onboardingBody(snapshot, repository.inventory),
+					text(saved.head),
+				);
+				await this.store.audit(actor, 'repository.onboard.refresh', String(repository.id));
+				return Response.json(result);
+			}
 			const result = await this.gateway.pullRequest(
 				snapshot,
 				'automation/onboarding',

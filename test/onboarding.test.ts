@@ -382,3 +382,20 @@ describe('onboarding pull request body', () => {
 		);
 	});
 });
+
+test('private manifests without a version are discovered and explained in setup', () => {
+	const snapshot = repository('kjanat/beepboop', {
+		'package.json': '{"name":"beepboop","private":true,"bin":{"beepboop":"src/cli/cli.ts"}}',
+	});
+	const inventory = discover(snapshot);
+	expect(inventory.managers).toContain('npm');
+	expect(inventory.packages[0]).toMatchObject({
+		name: 'beepboop',
+		manifest: 'package.json',
+		publish: false,
+		identity: { type: 'npm', name: 'beepboop' },
+	});
+	expect(inventory.packages[0]?.version).toBeUndefined();
+	expect(onboardingBody(snapshot, inventory)).toContain('beepboop');
+	expect(onboardingConfiguration(snapshot, inventory).streams.main.required).toEqual([]);
+});

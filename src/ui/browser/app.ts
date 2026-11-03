@@ -308,14 +308,8 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action]
 				await api('/api/repositories/discover', { repository: data.repository });
 				location.reload();
 			} else if (action === 'onboard') {
-				const result = await api<{ url: string }>('/api/repositories/onboard', { repository: data.repository });
-				const link = node('a', 'Open setup pull request →');
-				link.href = result.url;
-				form.replaceChildren(
-					node('p', 'Setup pull request ready. Review and merge it on GitHub, then refresh inspection.'),
-					link,
-				);
-				show('Setup pull request opened.');
+				await api('/api/repositories/onboard', { repository: data.repository });
+				location.reload();
 			} else if (action === 'approve' || action === 'recover') {
 				await api(`/api/executions/${action === 'approve' ? 'approve' : 'recover'}`, data);
 				location.reload();

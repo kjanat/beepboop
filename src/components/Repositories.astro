@@ -59,8 +59,14 @@ const { data } = Astro.props;
 			</form>
 			{!repository.configuration
 				&& (data.onboarding.get(repository.id) ? (
-				 <a class="button primary" href={data.onboarding.get(repository.id)}
-				 >Review setup PR ↗</a>
+				 <>
+					 <a class="button" href={data.onboarding.get(repository.id)}
+					 >Review setup PR ↗</a>
+					 <form data-action="onboard">
+						 <input type="hidden" name="repository" value={repository.name}>
+						 <button class="primary">Refresh setup PR</button>
+					 </form>
+				 </>
 			 ) : (
 				 <form data-action="onboard">
 					 <input
@@ -80,7 +86,7 @@ const { data } = Astro.props;
 		</div>
 		<div class="repository-grid">
 			<div>
-				<h3>Release packages</h3>{repository.inventory.packages.length ? (
+				<h3>Discovered packages</h3>{repository.inventory.packages.length ? (
 					<>
 						<table>
 							<thead>
@@ -91,7 +97,7 @@ const { data } = Astro.props;
 								</tr>
 							</thead>
 							<tbody>
-								{repository.inventory.packages.filter(p => p.publish).map(p => (
+								{repository.inventory.packages.map(p => (
 									<tr>
 										<td>
 											<code>{packageUrl(p)}</code><small><a
@@ -104,7 +110,7 @@ const { data } = Astro.props;
 											)}
 										</td>
 										<td>
-											{p.published
+											{!p.publish ? 'Not selected for registry publication' : p.published
 												?? (p.publicationStatus === 'missing'
 													? 'Not published'
 													: p.publicationStatus === 'failed'
@@ -126,20 +132,6 @@ const { data } = Astro.props;
 								))}
 							</tbody>
 						</table>
-						{repository.inventory.packages.some(p => !p.publish) && (
-							<details>
-								<summary>
-									Modules and packages not selected for publication
-								</summary>
-								<ul>
-									{repository.inventory.packages.filter(p => !p.publish).map(p => (
-										<li>
-											<strong>{p.name}</strong> — {p.manifest} ({p.manager})
-										</li>
-									))}
-								</ul>
-							</details>
-						)}
 					</>
 				) : (
 					 <p>
@@ -157,7 +149,19 @@ const { data } = Astro.props;
 							{w.mode === 'observe' ? 'Tracks existing triggers' : 'Can be dispatched'}</small>
 					</p>
 				))}{!repository.configuration && (
-					<p>Review discovered workflows in the setup PR.</p>
+					<>
+						{repository.inventory.workflows.map(workflow => (
+							<p>
+								<strong><a
+										href={`https://github.com/${repository.name}/blob/${repository.sha}/.github/workflows/${workflow.file}`}
+									>{workflow.name || workflow.file}</a></strong><small
+								>{workflow.events.join(', ') || 'No supported triggers'}</small>
+							</p>
+						))}
+						{!repository.inventory.workflows.length && (
+							<p>No workflows discovered.</p>
+						)}
+					</>
 				)}
 			</div>
 		</div>

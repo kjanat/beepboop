@@ -1,13 +1,13 @@
 import { expect, test } from 'bun:test';
 import { identityOf } from '@/automation/package-identity';
 import { packageIdentity, purl, purlDefinitions } from '@/package-url';
-import { typeDefinitionSchema } from '@/package-url/definition';
+import { parseTypeDefinition } from '@/package-url/definition';
 import definitions from '@/package-url/definitions';
 import { packageMetadata } from '@/package-url/metadata';
 
 test('the complete definition model preserves all upstream fields', () => {
 	for (const definition of definitions) {
-		expect(typeDefinitionSchema.parse(definition) as unknown).toEqual(definition);
+		expect(parseTypeDefinition(definition) as unknown).toEqual(definition);
 		expect(purlDefinitions.get(definition.type) as unknown).toEqual(definition);
 	}
 });
@@ -34,9 +34,9 @@ test('an explicit identity is authoritative, independent of release adapter fiel
 test('definition model rejects missing metadata and invalid requirement values', () => {
 	const npm = purlDefinitions.get('npm');
 	expect(npm).toBeDefined();
-	expect(() => typeDefinitionSchema.parse({ ...npm, repository: undefined })).toThrow();
-	expect(() => typeDefinitionSchema.parse({ ...npm, namespace_definition: { requirement: 'maybe' } })).toThrow();
-	expect(() => typeDefinitionSchema.parse({ ...npm, name_definition: { requirement: 'optional' } })).toThrow();
+	expect(() => parseTypeDefinition({ ...npm, repository: undefined })).toThrow();
+	expect(() => parseTypeDefinition({ ...npm, namespace_definition: { requirement: 'maybe' } })).toThrow();
+	expect(() => parseTypeDefinition({ ...npm, name_definition: { requirement: 'optional' } })).toThrow();
 });
 
 test('strict parsing applies the same qualifier rules to strings and structured inputs', () => {

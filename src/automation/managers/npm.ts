@@ -61,13 +61,17 @@ export const npmManager: Manager = {
 			try {
 				if ((path === 'package.json' || path.endsWith('/package.json'))) {
 					const pkg = object(JSON.parse(source));
-					if (typeof pkg.name !== 'string' || typeof pkg.version !== 'string') continue;
+					if (typeof pkg.name !== 'string' || !pkg.name.trim()) {
+						inventory.diagnostics.push(`${path}: package manifest has no package name`);
+						detected.add('npm');
+						continue;
+					}
 					const member = path === 'package.json' || inWorkspace(directory(path), npmMembers, []);
 					// Standalone nested packages are still inventoried; independent versions are not silently synchronized.
 					inventory.packages.push({
 						manager: 'npm',
 						name: pkg.name,
-						version: pkg.version,
+						...(typeof pkg.version === 'string' ? { version: pkg.version } : {}),
 						manifest: path,
 						versionSource: `${path}#version`,
 						publish: pkg.private !== true && typeof object(pkg.engines).vscode !== 'string',

@@ -1,4 +1,4 @@
-import { seedBrowser } from '@root/test/runtime/browser-fixture';
+import { seedBrowser, seedOnboarding } from '@root/test/runtime/browser-fixture';
 import { FixtureGateway } from '@root/test/runtime/gateway';
 import type { WorkflowIdentity } from '@/automation/auth';
 import type { Execution } from '@/automation/types';
@@ -110,6 +110,10 @@ export default {
 		const local = new URL(request.url);
 		request = new Request(new URL(local.pathname + local.search, env.APPLICATION_ORIGIN), request);
 		const path = local.pathname;
+		if (path === '/onboarding-init') {
+			await seedOnboarding(env.DB);
+			return new Response('ready');
+		}
 		if (path === '/browser-init') {
 			await seedBrowser(env.DB);
 			return new Response('ready');

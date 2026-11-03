@@ -357,6 +357,27 @@ export class RepositoryGateway {
 		}
 		return this.finishPullRequest(snapshot, branch, title, body, head, token);
 	}
+	/** Refresh setup documentation without creating an empty commit or overwriting branch edits. */
+	async refreshPullRequest(
+		snapshot: Snapshot,
+		branch: string,
+		title: string,
+		body: string,
+		expectedHead: string,
+	): Promise<{ url: string; head: string }> {
+		const token = await this.token(snapshot.repository.name, snapshot.repository.id, {
+			contents: 'read',
+			pull_requests: 'write',
+		});
+		const current = await this.call(
+			`/repos/${snapshot.repository.name}/git/ref/heads/${encodeURIComponent(branch)}`,
+			token,
+		);
+		if (!current || sha(record(record(current).object).sha) !== expectedHead) {
+			throw new Error('Branch changed; preserve user edits and review the conflict');
+		}
+		return this.finishPullRequest(snapshot, branch, title, body, expectedHead, token);
+	}
 	private async finishPullRequest(
 		snapshot: Snapshot,
 		branch: string,

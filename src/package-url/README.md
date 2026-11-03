@@ -6,12 +6,14 @@ https://github.com/package-url/purl-spec at commit
 `definitions/index.ts` registers every file in filename order. The upstream license is in `LICENSE`. Corresponding
 upstream type tests are copied unchanged into `test/fixtures/purl`.
 
-`type-definition.schema.json` contains upstream schema 1.1; repository formatting
-orders its unordered `required` lists.
-`definition.ts` models its complete field structure with runtime validation and
-inferred TypeScript types. Loading a definition preserves its repository data,
-component rules, registered namespace values, qualifier defaults, explanatory
-notes, examples and reference URLs.
+`source.json` pins the upstream repository and revision. `type-definition.schema.json`
+contains its schema 1.1. `definition.generated.ts` is generated from that schema
+with `json-schema-to-typescript`, including the upstream field descriptions.
+`identity.generated.ts` is generated from all type definitions: it exposes the
+registered type union and a discriminated identity union with required/prohibited
+namespaces and required qualifiers for each type. Extra qualifiers remain allowed.
+`definition.ts` validates data directly against the original JSON schema using a
+Worker-compatible validator; there is no hand-maintained copy of its rules.
 
 `index.ts` implements core parsing and serialization with `packageurl-js` and
 checks registered type rules. Syntactically valid future types can be represented
@@ -48,6 +50,23 @@ updates cannot silently inherit these corrections. These are deviations from the
 fixture expectations, not claims of passing them unchanged. See
 [ECMA-427 §5.6.6](https://github.com/package-url/purl-spec/blob/856b0939f0a5636bb67c5bb67fec99be079bda84/docs/specification/standard/Clause-5-Package-URL-Specification.md#566-qualifiers).
 
-Updating: clone the upstream repository, record its exact commit, copy every
-`types/*-definition.json` file and update `definitions/index.ts`, then copy `tests/types/*-test.json` without
-editing their contents, include `tests/spec/specification-test.json`, and run `bun test test/purl-conformance.test.ts`.
+Regenerate deterministically without network access:
+
+```sh
+bun run purl:generate
+bun run purl:check
+```
+
+Fetch the pinned upstream data and regenerate:
+
+```sh
+bun run purl:update
+```
+
+To advance the source, change the full revision in `source.json` first. Fetching
+uses Git in a temporary checkout, verifies the revision, copies every definition,
+the schema, license and both test groups, and removes files no longer present
+upstream. `bun run purl:fetch --source /path/to/purl-spec` uses an existing checkout
+at the pinned revision. Generation reads all definition files, so a new upstream
+type automatically enters the registry and generated identity union. CI runs
+`purl:check` to reject stale generated output.

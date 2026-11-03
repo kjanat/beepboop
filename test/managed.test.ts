@@ -273,3 +273,33 @@ test('GitHub requests run on the Workers fetch and refuse a redirect', async () 
 	);
 	expect(moved.urls).toEqual(['https://api.github.com/meta']);
 });
+
+test('refreshing setup documentation updates the existing PR without a commit and refuses changed branches', async () => {
+	class RefreshGateway extends Gateway {
+		bodies: string[] = [];
+		override async call(path: string, token: string, method = 'GET', body?: unknown): Promise<unknown> {
+			if (path.endsWith('/pulls/1') && method === 'PATCH') this.bodies.push((body as { body: string }).body);
+			return super.call(path, token, method, body);
+		}
+	}
+	const gateway = new RefreshGateway();
+	gateway.branch = gateway.head;
+	gateway.pulls = 1;
+	const updated = await gateway.refreshPullRequest(
+		{ ...snapshot, sha: 'f'.repeat(40) },
+		'automation/onboarding',
+		'setup',
+		'new inspection',
+		gateway.head,
+	);
+	expect(updated.url).toBe('https://github.com/example/tool/pull/1');
+	expect(gateway.bodies).toEqual(['new inspection']);
+	expect(gateway.commits).toBe(0);
+	expect(gateway.pulls).toBe(1);
+	gateway.branch = 'e'.repeat(40);
+	await rejects(
+		gateway.refreshPullRequest(snapshot, 'automation/onboarding', 'setup', 'do not overwrite', gateway.head),
+		/Branch changed/,
+	);
+	expect(gateway.bodies).toEqual(['new inspection']);
+});
