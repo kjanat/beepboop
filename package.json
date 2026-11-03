@@ -34,6 +34,9 @@
 		"types": "wrangler types >/dev/null",
 		"winget": "bun src/distribution/winget/cli.ts"
 	},
+	"overrides": {
+		"wrangler": "4.156.2"
+	},
 	"dependencies": {
 		"@astrojs/cloudflare": "^14.4.4",
 		"@kjanat/dreamcli": "^5.0.0",
