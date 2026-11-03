@@ -206,6 +206,12 @@ function derive(snapshot: Snapshot, inventory: Inventory): Onboarding {
 		.filter(p => publishable(p) && !p.optional)
 		.filter(p => {
 			const id = packageId(p), prefix = tagPrefix(p.versionSource);
+			if (p.publicationStatus === 'missing') {
+				review.push(
+					`- ${code(id)} is not published yet. Add it to ${code('streams.main.required')} after its first publication.`,
+				);
+				return false;
+			}
 			if (prefix === undefined) return true;
 			if (p.version === undefined) {
 				review.push(

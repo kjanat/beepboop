@@ -6,7 +6,7 @@ import { discover } from '@/automation/managers';
 import { packageId } from '@/automation/package-identity';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
 import { documentRow } from '@/automation/schemas';
-import { previewSetup, setupBody } from '@/automation/setup';
+import { previewSetup, setupBody, withRegistryStatus } from '@/automation/setup';
 import type { Store } from '@/automation/store';
 import type { Edit, Snapshot } from '@/automation/types';
 import { record } from '@/model';
@@ -32,7 +32,7 @@ export async function maintainSetup(store: Store, gateway: RepositoryGateway, sn
 	if (!pull) return;
 	const previous = setupEdits(saved);
 	const conflict = saved.head !== pull.head && !(await gateway.generatedHead(name, id, pull.head));
-	const inventory = discover(snapshot);
+	const inventory = withRegistryStatus(discover(snapshot), (await store.repository(id))?.inventory);
 	const summary = `Inspected [${snapshot.sha}](https://github.com/${name}/commit/${snapshot.sha}).\n\n`
 		+ 'Discovered packages:\n'
 		+ inventory.packages.map(pkg =>

@@ -9,6 +9,16 @@ import { integrateWorkflow, workflowEvidence } from '@/automation/setup-workflow
 import type { Configuration, Inventory, Snapshot } from '@/automation/types';
 import { packageLabel } from '@/ui/package-label';
 
+export function withRegistryStatus(inventory: Inventory, stored: Inventory | undefined): Inventory {
+	const checked = new Map(stored?.packages.map(pkg => [packageId(pkg), pkg.publicationStatus]));
+	return {
+		...inventory,
+		packages: inventory.packages.map(pkg => {
+			const publicationStatus = checked.get(packageId(pkg));
+			return publicationStatus === undefined ? pkg : { ...pkg, publicationStatus };
+		}),
+	};
+}
 /** Suggestions are editable policy, never permission to apply or publish. */
 export function suggestSetup(snapshot: Snapshot, inventory: Inventory, resolved?: Configuration): SetupChoices {
 	const raw = object(JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}'));
@@ -54,7 +64,7 @@ export function suggestSetup(snapshot: Snapshot, inventory: Inventory, resolved?
 				: 'workspace',
 			required: Array.isArray(current.required)
 				? current.required.map(value => selectorKey(String(value), inventory.packages))
-				: selected,
+				: selected.filter(id => inventory.packages.find(pkg => packageId(pkg) === id)?.publicationStatus !== 'missing'),
 			prepare: choose('prepare'),
 			promote: choose('promote'),
 		});

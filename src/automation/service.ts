@@ -15,7 +15,7 @@ import { planReleaseSet } from '@/automation/planning';
 import { matchesRef } from '@/automation/policy';
 import { planHookUpdates } from '@/automation/precommit';
 import { documentRow, rowDocument } from '@/automation/schemas';
-import { previewSetup, setupBody } from '@/automation/setup';
+import { previewSetup, setupBody, withRegistryStatus } from '@/automation/setup';
 import { maintainSetup, setupEdits } from '@/automation/setup-maintenance';
 import { Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
@@ -426,7 +426,7 @@ export class AutomationService {
 			const snapshot = await this.gateway.snapshot(name, id);
 			const raw = JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}');
 			const resolved = await resolveConfiguration(raw, ref => this.gateway.preset(ref));
-			const inventory = discover(snapshot);
+			const inventory = withRegistryStatus(discover(snapshot), (await this.store.repository(id))?.inventory);
 			const row = documentRow.nullable().parse(
 				await this.store.db.prepare('SELECT document FROM onboarding WHERE repository_id=?').bind(id).first(),
 			);
