@@ -36,7 +36,7 @@ jobs:
           context: ${{ steps.release.outputs.context }}
       - run: bun install
       - run: bun run check
-      - run: bun test
+      - run: bun run test
       - run: bun run build:cli
       - run: bun run check:cli
       - run: bun run check:jsr

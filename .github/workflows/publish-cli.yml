@@ -1,14 +1,12 @@
 name: Publish CLI
 run-name: Release operation ${{ inputs.beepboop_execution_id }}
 on:
-  release:
-    types: created
-#  workflow_dispatch:
-#    inputs:
-#      beepboop_execution_id:
-#        description: Approved Beepboop promotion execution
-#        required: true
-#        type: string
+  workflow_dispatch:
+    inputs:
+      beepboop_execution_id:
+        description: Approved Beepboop promotion execution
+        required: true
+        type: string
 permissions: { contents: read, id-token: write }
 concurrency:
   group: cli-publication
@@ -57,6 +55,7 @@ jobs:
         env:
           RELEASE_CONTEXT: ${{ steps.release.outputs.context }}
           NPM_OUTCOME: ${{ steps.npm.outcome }}
+          NPM_INTEGRITY: ${{ steps.npm.outputs.integrity }}
           JSR_OUTCOME: ${{ steps.jsr.outcome }}
       - uses: $/actions/report
         if: ${{ !cancelled() && steps.report.outcome == 'success' }}

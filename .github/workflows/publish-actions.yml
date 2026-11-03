@@ -15,7 +15,7 @@ jobs:
         with: { ref: "${{ github.sha }}", fetch-depth: 0, persist-credentials: false }
       - uses: jdx/mise-action@v5
       - run: runner i -f
-      - run: bun test ./test/winget.test.ts ./test/actions/winget.ts
+      - run: bun run test:actions
       - name: Authenticate as Beepboop
         id: bot
         uses: $/actions/token

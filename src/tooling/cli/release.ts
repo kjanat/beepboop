@@ -48,6 +48,7 @@ switch (process.argv[2]) {
 			const integrity = `sha512-${
 				new Bun.CryptoHasher('sha512').update(await Bun.file(tarball).arrayBuffer()).digest('base64')
 			}`;
+			await output('integrity', integrity);
 			const response = await registry(`https://registry.npmjs.org/${encodeURIComponent(npm.name)}/${npm.version}`);
 			if (response.ok) {
 				const existing = await response.json() as { dist?: { integrity?: string } };
@@ -85,7 +86,9 @@ switch (process.argv[2]) {
 				version: npm.version,
 				required: true,
 				outcome: successful ? 'succeeded' : 'failed',
-				...(manager === 'npm' ? { channel } : {}),
+				...(manager === 'npm'
+					? { channel, ...(process.env.NPM_INTEGRITY ? { digest: process.env.NPM_INTEGRITY } : {}) }
+					: {}),
 			});
 		}
 		await output('publications', JSON.stringify(publications));

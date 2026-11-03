@@ -19,8 +19,8 @@ export const npmManager: Manager = {
 	latest(pkg, request) {
 		return latestVersion(
 			request,
-			`https://registry.npmjs.org/-/package/${encodeURIComponent(pkg.name)}/dist-tags`,
-			body => object(body).latest,
+			`https://registry.npmjs.org/${encodeURIComponent(pkg.name)}`,
+			body => object(object(body)['dist-tags']).latest,
 		);
 	},
 	verifyPublication(publication, request) {
