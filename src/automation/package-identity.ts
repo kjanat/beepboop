@@ -1,3 +1,4 @@
+import { excluded, type PackagePublication, registry } from '@/automation/package-publication';
 import type { Execution, Inventory, Package, Publication, RepositoryRecord } from '@/automation/types';
 import { type PackageIdentity, packageIdentity, purl } from '@/package-url';
 
@@ -59,15 +60,23 @@ export function matchesPublication(reference: string, publication: Publication):
 		|| ((publication.id.startsWith('pkg:') || publication.id === `${publication.manager}:${publication.name}`)
 			&& matchesPackage(reference, publication));
 }
-export function identifyInventory(inventory: Inventory, repository?: string): Inventory {
-	const packages = inventory.packages.map(pkg => ({ ...pkg, identity: identityOf(pkg, repository) }));
+type StoredPackage = Omit<Package, 'publication'> & { publication?: PackagePublication; publish?: boolean };
+type StoredInventory = Omit<Inventory, 'packages'> & { packages: StoredPackage[] };
+export function identifyInventory(inventory: StoredInventory, repository?: string): Inventory {
+	const packages = inventory.packages.map(({ publish, publication, ...pkg }): Package => ({
+		...pkg,
+		publication: publication ?? (publish === false ? excluded('unrecorded') : registry),
+		identity: identityOf(pkg, repository),
+	}));
 	return {
 		...inventory,
 		packages,
 		publicationOrder: inventory.publicationOrder.map(reference => selectorKey(reference, packages)),
 	};
 }
-export function identifyRepository(repository: RepositoryRecord): RepositoryRecord {
+export function identifyRepository(
+	repository: Omit<RepositoryRecord, 'inventory'> & { inventory: StoredInventory },
+): RepositoryRecord {
 	return { ...repository, inventory: identifyInventory(repository.inventory, repository.name) };
 }
 export function identifyExecution(execution: Execution): Execution {

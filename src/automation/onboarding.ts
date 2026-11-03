@@ -1,5 +1,6 @@
 import { tagPrefix } from '@/automation/managers/tags';
 import { packageId } from '@/automation/package-identity';
+import { exclusionLabel, publishable } from '@/automation/package-publication';
 import { validRef } from '@/automation/policy';
 import type { DiscoveredWorkflow, Inventory, ManagerName, Snapshot, Stream } from '@/automation/types';
 
@@ -99,7 +100,7 @@ function derive(snapshot: Snapshot, inventory: Inventory): Onboarding {
 
 	const dropped = inventory.managers.filter(name => {
 		const owned = inventory.packages.filter(p => p.manager === name);
-		return owned.length > 0 && !owned.some(p => p.publish);
+		return owned.length > 0 && !owned.some(publishable);
 	});
 	const managers = inventory.managers.filter(name => !dropped.includes(name));
 	derived.push(
@@ -131,14 +132,14 @@ function derive(snapshot: Snapshot, inventory: Inventory): Onboarding {
 		}
 	}
 
-	const publishable = inventory.packages.filter(p => p.publish);
-	const released = publishable.flatMap(p => {
+	const registryPackages = inventory.packages.filter(publishable);
+	const released = registryPackages.flatMap(p => {
 		const version = p.published ?? p.version;
 		return version === undefined ? [] : [version];
 	});
 	const versions = [...new Set(released)];
 	const tagged = Object.values(workflows).some(binding => binding.ref?.startsWith('refs/tags/'));
-	const versioning = versions.length > 1 ? 'independent' : publishable.length || tagged ? 'workspace' : 'none';
+	const versioning = versions.length > 1 ? 'independent' : registryPackages.length || tagged ? 'workspace' : 'none';
 	const meaning = `${code('streams.main.versioning')} sets one version for the stream (${
 		code('workspace')
 	}), separate package versions (${code('independent')}), or no version (${code('none')}).`;
@@ -146,13 +147,13 @@ function derive(snapshot: Snapshot, inventory: Inventory): Onboarding {
 		`- ${meaning} ${
 			versioning === 'independent'
 				? `Publishable packages carry versions ${list(versions)}.`
-				: versions.length && released.length === publishable.length
+				: versions.length && released.length === registryPackages.length
 				? `Every publishable package carries version ${list(versions)}.`
 				: versions.length
 				? `Released publishable packages carry version ${list(versions)}.`
-				: publishable.length && tagged
+				: registryPackages.length && tagged
 				? 'No publishable package has a release. Tag-triggered workflows carry the version.'
-				: publishable.length
+				: registryPackages.length
 				? 'No publishable package has a release.'
 				: tagged
 				? 'No package is publishable. Tag-triggered workflows carry the version.'
@@ -165,11 +166,11 @@ function derive(snapshot: Snapshot, inventory: Inventory): Onboarding {
 			.filter(pattern => literal(pattern) !== pattern)
 			.map(pattern => ({ prefix: literal(pattern), file: workflow.file }))
 	);
-	const tagVersioned = publishable.flatMap(p => {
+	const tagVersioned = registryPackages.flatMap(p => {
 		const prefix = tagPrefix(p.versionSource);
 		return prefix === undefined ? [] : [{ id: packageId(p), prefix, released: p.version !== undefined }];
 	});
-	const fileVersioned = publishable.length > tagVersioned.length;
+	const fileVersioned = registryPackages.length > tagVersioned.length;
 	const prefixes = [...new Set(sources.map(source => source.prefix))];
 	const packagePrefixes = [...new Set(tagVersioned.map(entry => entry.prefix))];
 	const [prefix] = prefixes.length ? prefixes : packagePrefixes;
@@ -202,7 +203,7 @@ function derive(snapshot: Snapshot, inventory: Inventory): Onboarding {
 
 	const triggers = [...bound.values()];
 	const required = inventory.packages
-		.filter(p => p.publish && !p.optional)
+		.filter(p => publishable(p) && !p.optional)
 		.filter(p => {
 			const id = packageId(p), prefix = tagPrefix(p.versionSource);
 			if (prefix === undefined) return true;
@@ -288,7 +289,7 @@ export function onboardingBody(snapshot: Snapshot, inventory: Inventory): string
 					p.published !== undefined && p.version !== undefined && p.published !== p.version
 						? ` (manifest ${p.version})`
 						: ''
-				} | ${p.publish ? 'yes' : 'no'} |`,
+				} | ${exclusionLabel(p.publication) ?? 'yes'} |`,
 		),
 		'',
 		'## Workflow bindings',

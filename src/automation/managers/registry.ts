@@ -1,5 +1,6 @@
 import { publicationOrder } from '@/automation/managers/order';
 import { packageId } from '@/automation/package-identity';
+import { publishable } from '@/automation/package-publication';
 import type { Inventory, ManagerName, Package, Publication, Snapshot } from '@/automation/types';
 import { type PackageIdentity, packageIdentity } from '@/package-url';
 
@@ -80,7 +81,7 @@ export class ManagerRegistry {
 			return { ...rest, publicationStatus: 'unchecked' };
 		});
 		const diagnostics: string[] = [];
-		const pending = packages.filter(pkg => pkg.publish && this.managers.get(pkg.manager)?.latest);
+		const pending = packages.filter(pkg => publishable(pkg) && this.managers.get(pkg.manager)?.latest);
 		for (let offset = 0; offset < pending.length; offset += 8) {
 			await Promise.all(
 				pending.slice(offset, offset + 8).map(async pkg => {

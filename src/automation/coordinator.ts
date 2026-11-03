@@ -19,6 +19,7 @@ import {
 	packageId,
 	publicationIdentity,
 } from '@/automation/package-identity';
+import { publishable } from '@/automation/package-publication';
 import { matchesRef } from '@/automation/policy';
 import { planRefs, type RefPlan } from '@/automation/refs';
 import { compileReleaseSet } from '@/automation/release-set';
@@ -772,7 +773,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							const pkg of inventory.packages.filter(
 								(p) =>
 									Boolean(version)
-									&& p.publish
+									&& publishable(p)
 									&& (!stream.packages || stream.packages.some(reference => matchesPackage(reference, p))),
 							)
 						) {

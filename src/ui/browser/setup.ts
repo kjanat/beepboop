@@ -1,3 +1,4 @@
+import { publishable } from '@/automation/package-publication';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import { api, show } from '@/ui/browser/dom';
 import { packageLabel } from '@/ui/package-label';
@@ -85,7 +86,7 @@ function workflow(
 			mappings.append(
 				element('p', 'Select the command step publishing each package. For new commands below, leave this empty.'),
 			);
-			for (const pkg of plan.inventory.packages.filter(pkg => pkg.publish)) {
+			for (const pkg of plan.inventory.packages.filter(pkg => publishable(pkg))) {
 				// The API returns canonical identities; no display-only identifier reconstruction.
 				const id = plan.inventory.packages.indexOf(pkg);
 				const purl = planPackageIds(plan)[id];
@@ -168,7 +169,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 			'Independent package versions',
 		], ['none', 'No version']], value.versioning);
 		const entries = plan.inventory.packages.flatMap((pkg, index): [string, string][] =>
-			pkg.publish
+			publishable(pkg)
 				? [[
 					planPackageIds(plan)[index] ?? '',
 					`${pkg.name} — ${packageLabel(planPackageIds(plan)[index] ?? '')} (${pkg.manifest})`,

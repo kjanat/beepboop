@@ -3,6 +3,7 @@ import type { Fetcher, Manager } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestTag, majorSuffix, tagSource } from '@/automation/managers/tags';
 import { latestVersion } from '@/automation/managers/verification';
+import { excluded, registry } from '@/automation/package-publication';
 import type { Package, Publication } from '@/automation/types';
 import { packageIdentity } from '@/package-url';
 
@@ -177,7 +178,7 @@ export const goManager: Manager = {
 				...(version === undefined ? {} : { version }),
 				manifest: path,
 				versionSource: tagSource(prefix),
-				publish: located,
+				publication: located ? registry : excluded('unlocated-module'),
 				dependencies: mod.requires,
 			};
 			inventory.packages.push(pkg);

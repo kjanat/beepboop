@@ -28,7 +28,7 @@ export async function seedBrowser(db: D1Database): Promise<void> {
 				published: '1.2.2',
 				manifest: 'package.json',
 				versionSource: 'package.json',
-				publish: true,
+				publication: { kind: 'registry' },
 				dependencies: [],
 			}],
 			workflows: [{

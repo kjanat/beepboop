@@ -1,5 +1,6 @@
 ---
 import { isGoPseudoVersion } from '@/automation/managers/go';
+import { exclusionLabel, publishable } from '@/automation/package-publication';
 import type { Dashboard } from '@/server/dashboard.ts';
 import { date, workflowChoices } from '@/server/dashboard.ts';
 import { packageUrl } from '@/server/package-url';
@@ -86,7 +87,7 @@ const { data } = Astro.props;
 			<div>
 				<h3>
 					Release packages
-				</h3>{repository.inventory.packages.some(p => p.publish) ? (
+				</h3>{repository.inventory.packages.some(publishable) ? (
 					<>
 						<table>
 							<thead>
@@ -97,7 +98,7 @@ const { data } = Astro.props;
 								</tr>
 							</thead>
 							<tbody>
-								{repository.inventory.packages.filter(p => p.publish).map(p => (
+								{repository.inventory.packages.filter(publishable).map(p => (
 									<tr>
 										<td>
 											<code>{packageUrl(p)}</code><small><a
@@ -110,7 +111,7 @@ const { data } = Astro.props;
 											)}
 										</td>
 										<td>
-											{!p.publish ? 'Not selected for registry publication' : p.published
+											{p.published
 												?? (p.publicationStatus === 'missing'
 													? 'Not published'
 													: p.publicationStatus === 'failed'
@@ -131,11 +132,21 @@ const { data } = Astro.props;
 						</table>
 					</>
 				) : (
-					 <p>
-						 No publishable packages discovered. Private workspace packages are
-						 excluded.
-					 </p>
-				 )}
+					 <p>No publishable packages discovered.</p>
+				 )}{repository.inventory.packages.some(p => !publishable(p)) && (
+					<p class="metadata">
+						Excluded:{repository.inventory.packages.filter(p => !publishable(p)).map((
+							p,
+							index,
+						) => (
+							<span>{index ? ', ' : ' '}<a
+									href={`https://github.com/${repository.name}/blob/${repository.sha}/${
+										p.manifest.split('/').map(encodeURIComponent).join('/')
+									}`}
+								>{p.name}</a> ({exclusionLabel(p.publication)})</span>
+						))}
+					</p>
+				)}
 			</div>
 			<div>
 				<h3>Release workflows</h3>{workflowChoices(repository).map(w => (

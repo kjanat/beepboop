@@ -3,6 +3,7 @@ import { managerRegistry } from '@/automation/managers/builtins';
 import type { Fetcher, ManagerRegistry, VerificationContext } from '@/automation/managers/registry';
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage, packageId } from '@/automation/package-identity';
+import { publishable } from '@/automation/package-publication';
 import type { Inventory, ManagerName, Package, Publication, ReleasePlan, Snapshot } from '@/automation/types';
 import { nextVersion, parseVersionRequest, type VersionRequest } from '@/automation/version';
 
@@ -26,11 +27,11 @@ export function planRelease(
 	versionFiles: VersionFile[] = [],
 ): ReleasePlan {
 	const request = parseVersionRequest(target);
-	if (selected?.some(name => !inventory.packages.some(p => p.publish && matchesPackage(name, p)))) {
+	if (selected?.some(name => !inventory.packages.some(p => publishable(p) && matchesPackage(name, p)))) {
 		throw new Error('Unknown selected publishable package');
 	}
 	const packages = inventory.packages.filter(
-		(p) => p.publish && (!selected || selected.some(reference => matchesPackage(reference, p))),
+		(p) => publishable(p) && (!selected || selected.some(reference => matchesPackage(reference, p))),
 	);
 	if (!packages.length) throw new Error('No selected publishable packages');
 	if (new Set(packages.map(packageId)).size !== packages.length) {
@@ -53,7 +54,7 @@ export function planRelease(
 		selected
 		&& inventory.packages.some(
 			(p) =>
-				p.publish
+				publishable(p)
 				&& sources.has(p.versionSource)
 				&& !packages.some((chosen) => chosen.manager === p.manager && chosen.name === p.name),
 		)
@@ -116,5 +117,5 @@ export function observedVersion(pkg: Package, tag: string): string | undefined {
 	return tag.startsWith(prefix) ? tag.slice(prefix.length).replace(/^v/, '') : undefined;
 }
 export function versionsInFiles(inventory: Inventory): boolean {
-	return inventory.packages.some(p => p.publish && tagPrefix(p.versionSource) === undefined);
+	return inventory.packages.some(p => publishable(p) && tagPrefix(p.versionSource) === undefined);
 }

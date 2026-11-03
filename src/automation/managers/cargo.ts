@@ -3,6 +3,7 @@ import { directory, inWorkspace, object } from '@/automation/managers/helpers';
 import type { Manager } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
+import { excluded, registry } from '@/automation/package-publication';
 import { packageIdentity } from '@/package-url';
 export const cargoManager: Manager = {
 	name: 'cargo',
@@ -71,8 +72,11 @@ export const cargoManager: Manager = {
 						versionSource: inherited
 							? 'Cargo.toml#workspace.package.version'
 							: `${path}#package.version`,
-						publish: pkg.publish !== false
-							&& (!Array.isArray(pkg.publish) || pkg.publish.includes('crates-io')),
+						publication: pkg.publish === false
+							? excluded('publish-disabled')
+							: Array.isArray(pkg.publish) && !pkg.publish.includes('crates-io')
+							? excluded('other-registry')
+							: registry,
 						dependencies: Object.entries(deps).map(([name, value]) => {
 							const dep = object(object(value).workspace === true ? shared[name] : value);
 							return typeof dep.package === 'string' ? dep.package : name;

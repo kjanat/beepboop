@@ -3,6 +3,7 @@ import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/c
 import { formatJson, type Json } from '@/automation/json';
 import { object } from '@/automation/managers/helpers';
 import { packageId, selectorKey } from '@/automation/package-identity';
+import { publishable } from '@/automation/package-publication';
 import { type SetupChoices, type SetupPlan, setupChoicesSchema } from '@/automation/setup-types';
 import { integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Snapshot } from '@/automation/types';
@@ -24,7 +25,7 @@ export function suggestSetup(snapshot: Snapshot, inventory: Inventory, resolved?
 			? current.packages.map(value => selectorKey(String(value), inventory.packages))
 			: [];
 		const selected = packages.length ? packages : inventory.packages.filter(pkg =>
-			pkg.publish && (
+			publishable(pkg) && (
 				names.size === 1 || pkg.manifest.split('/').slice(0, -1).includes(name)
 			)
 		).map(packageId);
@@ -94,7 +95,7 @@ export async function previewSetup(
 	for (const selection of choices.streams) {
 		if (names.has(selection.name)) throw new Error('Duplicate selected stream');
 		names.add(selection.name);
-		const selected = inventory.packages.filter(pkg => selection.packages.includes(packageId(pkg)) && pkg.publish);
+		const selected = inventory.packages.filter(pkg => selection.packages.includes(packageId(pkg)) && publishable(pkg));
 		if (!selection.packages.length) blockers.push(`${selection.name}: select the packages in this release stream.`);
 		if (selection.packages.some(id => !selected.some(pkg => packageId(pkg) === id))) {
 			blockers.push(`${selection.name}: selected package is no longer publishable or discovered.`);

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { PackagePublication } from '@/automation/package-publication';
 
 const workflow = z.object({
 	file: z.string().regex(/^[A-Za-z0-9_-]+\.ya?ml$/),
@@ -43,7 +44,7 @@ export interface SetupPlan {
 	planId: string;
 	setupHead: string | null;
 	choices: SetupChoices;
-	inventory: { packages: { name: string; manifest: string; publish: boolean }[] };
+	inventory: { packages: { name: string; manifest: string; publication: PackagePublication }[] };
 	packageIds: string[];
 	workflows: WorkflowEvidence[];
 	edits: { path: string; before: string; after: string }[];

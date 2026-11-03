@@ -3,6 +3,7 @@ import { object } from '@/automation/managers/helpers';
 import type { Manager } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
+import { excluded, registry } from '@/automation/package-publication';
 import type { Package } from '@/automation/types';
 import { packageIdentity } from '@/package-url';
 export const npmManager: Manager = {
@@ -64,7 +65,11 @@ export const npmManager: Manager = {
 						...(typeof pkg.version === 'string' ? { version: pkg.version } : {}),
 						manifest: path,
 						versionSource: `${path}#version`,
-						publish: pkg.private !== true && typeof object(pkg.engines).vscode !== 'string',
+						publication: pkg.private === true
+							? excluded('private')
+							: typeof object(pkg.engines).vscode === 'string'
+							? excluded('vscode-extension')
+							: registry,
 						dependencies: Object.keys({
 							...object(pkg.dependencies),
 							...object(pkg.optionalDependencies),
@@ -101,7 +106,7 @@ export const npmManager: Manager = {
 						version,
 						manifest: path,
 						versionSource: 'Cargo.toml#workspace.package.version',
-						publish: true,
+						publication: registry,
 						dependencies,
 						generated: true,
 						optional,

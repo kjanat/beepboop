@@ -3,6 +3,7 @@ import { applyVersionFiles, type VersionFile } from '@/automation/editors';
 import { planRelease, publicationOrder } from '@/automation/managers';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { matchesPackage, selectorKey } from '@/automation/package-identity';
+import { publishable } from '@/automation/package-publication';
 import type { Edit, Inventory, Snapshot } from '@/automation/types';
 import { parseVersionRequest } from '@/automation/version';
 
@@ -45,7 +46,7 @@ export function planReleaseSet(
 			if (allowed && !allowed.some(reference => selectorKey(reference, inventory.packages) === name)) {
 				throw new Error(`Package is outside this release stream: ${name}`);
 			}
-			if (!inventory.packages.some(p => p.publish && matchesPackage(name, p))) {
+			if (!inventory.packages.some(p => publishable(p) && matchesPackage(name, p))) {
 				throw new Error(`Unknown publishable package: ${name}`);
 			}
 			selected.add(name);

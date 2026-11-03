@@ -1,4 +1,5 @@
 import { packageId } from '@/automation/package-identity';
+import { publishable } from '@/automation/package-publication';
 import type { Package } from '@/automation/types';
 export function publicationOrder(packages: Package[]): string[] {
 	const byName = new Map(packages.map((p) => [packageId(p), p]));
@@ -17,7 +18,7 @@ export function publicationOrder(packages: Package[]): string[] {
 		}
 		visiting.delete(key);
 		visited.add(key);
-		if (pkg.publish) order.push(key);
+		if (publishable(pkg)) order.push(key);
 	}
 	for (const key of [...byName.keys()].sort()) visit(key);
 	return order;

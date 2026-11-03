@@ -3,6 +3,7 @@ import { goreleaserConfig, object, yaml } from '@/automation/managers/helpers';
 import type { Manager, VerificationContext } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestTag, tagSource } from '@/automation/managers/tags';
+import { excluded, registry } from '@/automation/package-publication';
 import type { Publication, Snapshot } from '@/automation/types';
 import { packageIdentity } from '@/package-url';
 
@@ -91,7 +92,7 @@ export const goreleaserManager: Manager = {
 				...(version === undefined ? {} : { version }),
 				manifest: path,
 				versionSource: tagSource('v'),
-				publish: disable !== true && disable !== 'true',
+				publication: disable === true || disable === 'true' ? excluded('publish-disabled') : registry,
 				dependencies: [],
 			});
 		}

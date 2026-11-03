@@ -1,4 +1,5 @@
 import type { Ask, Out, SelectChoice } from '@kjanat/dreamcli';
+import { publishable } from '@/automation/package-publication';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import type { Client } from '@/cli/client';
 import { packageLabel } from '@/ui/package-label';
@@ -12,7 +13,7 @@ function options(entries: SelectChoice[]): [SelectChoice, ...SelectChoice[]] {
 export async function chooseSetup(plan: SetupPlan, ask: Ask): Promise<SetupChoices> {
 	const choices: SetupChoices = { streams: [] };
 	const candidates = plan.inventory.packages.flatMap((pkg, index) =>
-		pkg.publish
+		publishable(pkg)
 			? [{ value: plan.packageIds[index] ?? '', label: `${pkg.name} (${packageLabel(plan.packageIds[index] ?? '')})` }]
 			: []
 	);

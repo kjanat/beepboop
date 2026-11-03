@@ -1,4 +1,5 @@
 import type { InputDeclaration, OutputDeclaration, Platform, ResolvedInput } from '@/automation/outputs';
+import type { PackagePublication } from '@/automation/package-publication';
 import type { RefPlan, RefPolicy } from '@/automation/refs';
 import type { PackageIdentity } from '@/package-url';
 export type ManagerName =
@@ -76,7 +77,7 @@ export interface Package {
 	published?: string;
 	manifest: string;
 	versionSource: string;
-	publish: boolean;
+	publication: PackagePublication;
 	dependencies: string[];
 }
 export interface DiscoveredWorkflow {

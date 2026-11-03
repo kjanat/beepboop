@@ -438,8 +438,8 @@ describe('repository onboarding dashboard', () => {
 			});
 			assert.equal(response.status, 200);
 			const html = await response.text();
-			assert.match(html, /pkg:npm\/private-app/);
-			assert.match(html, /Not selected for registry publication/);
+			assert.doesNotMatch(html, /pkg:npm\/private-app/);
+			assert.match(html, /private-app<\/a>\s*\(private\)/);
 			assert.match(html, /deploy\.yml/);
 			assert.match(html, /Refresh setup proposal/);
 			assert.match(html, /https:\/\/github.com\/example\/private-app\/pull\/10/);

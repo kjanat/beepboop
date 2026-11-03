@@ -2,6 +2,7 @@ import { object } from '@/automation/managers/helpers';
 import { emptyInventory, type Manager } from '@/automation/managers/registry';
 import { latestVersion } from '@/automation/managers/verification';
 import { identityOf } from '@/automation/package-identity';
+import { registry } from '@/automation/package-publication';
 
 const packageName = /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/;
 export const jsrManager: Manager = {
@@ -23,7 +24,7 @@ export const jsrManager: Manager = {
 					manifest: path,
 					...(typeof manifest.version === 'string' ? { version: manifest.version } : {}),
 					versionSource: `${path}#version`,
-					publish: true,
+					publication: registry,
 					dependencies: [],
 				});
 			} catch {

@@ -1,5 +1,6 @@
 ---
 import { matchesPackage, packageId } from '@/automation/package-identity';
+import { publishable } from '@/automation/package-publication';
 import { type Dashboard, workflowChoices } from '@/server/dashboard.ts';
 import { packageUrl } from '@/server/package-url';
 
@@ -27,7 +28,7 @@ const workflows = repository
 	)
 	: [];
 const packages = repository?.inventory.packages.filter(p =>
-	p.publish
+	publishable(p)
 	&& (!stream?.packages
 		|| stream.packages.some(reference => matchesPackage(reference, p)))
 ) ?? [];

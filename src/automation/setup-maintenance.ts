@@ -3,6 +3,7 @@ import { resolveConfiguration } from '@/automation/configuration';
 import type { RepositoryGateway } from '@/automation/github';
 import { discover } from '@/automation/managers';
 import { packageId } from '@/automation/package-identity';
+import { exclusionLabel, publishable } from '@/automation/package-publication';
 import { previewSetup, setupBody } from '@/automation/setup';
 import type { Store } from '@/automation/store';
 import type { Edit, Snapshot } from '@/automation/types';
@@ -27,7 +28,9 @@ export async function maintainSetup(store: Store, gateway: RepositoryGateway, sn
 	const summary = `Inspected [${snapshot.sha}](https://github.com/${name}/commit/${snapshot.sha}).\n\n`
 		+ 'Discovered packages:\n'
 		+ inventory.packages.map(pkg =>
-			`- \`${packageLabel(packageId(pkg))}\` (${pkg.manifest}${pkg.publish ? '' : ', private'})`
+			`- \`${publishable(pkg) ? packageLabel(packageId(pkg)) : pkg.name}\` (${
+				[pkg.manifest, exclusionLabel(pkg.publication)].filter(Boolean).join(', ')
+			})`
 		).join(
 			'\n',
 		);
