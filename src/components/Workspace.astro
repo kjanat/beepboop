@@ -119,7 +119,7 @@ const setup = data.repositories.filter(r =>
 								>{date(entry.createdAt)}</time>
 							</td>
 							<td>
-								{entry.action.replaceAll('.', ' · ').replaceAll('-', ' ')}
+								{entry.action.replaceAll('.', ' ').replaceAll('-', ' ')}
 							</td>
 							<td>
 								{entry.actor.startsWith('run:')

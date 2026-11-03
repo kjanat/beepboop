@@ -87,7 +87,7 @@ const { executions } = Astro.props;
 				 <h2>
 					 {run.version ? `Version ${run.version}` : 'Workflow operation'} <span
 						 class="muted"
-					 >· {run.operation}</span>
+					 >Operation: {run.operation}</span>
 				 </h2>
 			 </div><span
 				 class:list={['badge', run.state]}
@@ -99,13 +99,13 @@ const { executions } = Astro.props;
 			 		? 'This operation completed.'
 			 		: 'Follow the workflow and publication results below.')}
 		 </p>
-		 <p class="metadata">
-			 Commit <a
-				 href={`https://github.com/${run.repository}/commit/${run.sourceSha}`}
-			 ><code>{run.sourceSha.slice(0, 12)}</code></a> · Updated
-			 {date(run.updatedAt)} {run.runId && (
+		 <p class="metadata metadata-fields">
+			 <span>Commit <a
+					 href={`https://github.com/${run.repository}/commit/${run.sourceSha}`}
+				 ><code>{run.sourceSha.slice(0, 12)}</code></a></span><span>Updated
+				 {date(run.updatedAt)}</span> {run.runId && (
 				 <>
-					 · <a
+					 <a
 						 href={`https://github.com/${run.repository}/actions/runs/${run.runId}`}
 					 >Open GitHub run ↗</a></>
 			 )}

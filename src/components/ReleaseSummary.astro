@@ -1,6 +1,7 @@
 ---
 import type { Execution } from '@/automation/types.ts';
 import { releaseSummaries } from '@/server/releases.ts';
+import { packageLabel } from '@/ui/package-label';
 
 interface Props {
 	executions: Execution[];
@@ -43,7 +44,8 @@ const releases = releaseSummaries(Astro.props.executions).slice(0, 10);
 					required publications verified.
 				</p><div class="publication-list">
 					{release.publications.map(p => (
-						<span class:list={['badge', p.outcome]}>{p.id} · {p.outcome}</span>
+						<span class:list={['badge', p.outcome]}><span
+							>{packageLabel(p.id)}</span><span>{p.outcome}</span></span>
 					))}
 				</div></>
 		) : (
@@ -54,7 +56,9 @@ const releases = releaseSummaries(Astro.props.executions).slice(0, 10);
 		 )}
 		<div class="actions">
 			{release.runs.map(run => (
-				<a href={`/runs#${run.id}`}>{run.operation} · {run.state} →</a>
+				<a href={`/runs#${run.id}`}><span>{run.operation}</span> <span
+						class="badge"
+					>{run.state}</span></a>
 			))}
 		</div>
 	</article>

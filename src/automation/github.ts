@@ -251,12 +251,15 @@ export class RepositoryGateway {
 		expectedHead?: string,
 		checkpoint?: (head: string) => Promise<void>,
 		setupEdits?: Edit[],
+		existingPull?: number,
 	): Promise<{ url: string; head: string }> {
 		const { name, id } = snapshot.repository;
 		const token = await this.token(name, id, {
 			contents: 'write',
 			pull_requests: 'write',
-			...(edits.some(edit => edit.path.startsWith('.github/workflows/')) ? { workflows: 'write' as const } : {}),
+			...(setupEdits !== undefined || edits.some(edit => edit.path.startsWith('.github/workflows/'))
+				? { workflows: 'write' as const }
+				: {}),
 		});
 		const existing = await this.call(
 			`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`,
@@ -327,6 +330,13 @@ export class RepositoryGateway {
 			if (verification.verified !== true) {
 				throw new Error('Preparation commit does not satisfy the branch signature requirement');
 			}
+		}
+		if (existingPull !== undefined) {
+			const pull = record(await this.call(`/repos/${name}/pulls/${existingPull}`, token));
+			if (
+				pull.state !== 'open' || record(pull.head).sha !== base || record(pull.head).ref !== branch
+				|| record(record(pull.head).repo).id !== id
+			) throw new Error('Setup pull request changed during refresh');
 		}
 		if (checkpoint) await checkpoint(head);
 		if (existing) {
@@ -413,6 +423,48 @@ export class RepositoryGateway {
 			await this.call(`/repos/${name}/git/refs`, token, 'POST', { ref: `refs/heads/${branch}`, sha: head });
 		}
 		return this.finishPullRequest(snapshot, branch, title, body, head, token);
+	}
+	/** Inspect the existing setup proposal; automatic maintenance never opens a replacement PR. */
+	async openSetupPull(
+		name: string,
+		id: number,
+	): Promise<{ number: number; head: string; url: string; body: string } | undefined> {
+		const token = await this.token(name, id, { contents: 'read', pull_requests: 'read' });
+		const rows = array(
+			await this.call(
+				`/repos/${name}/pulls?state=open&head=${encodeURIComponent(`${name.split('/')[0]}:automation/onboarding`)}`,
+				token,
+			),
+		).map(record);
+		if (rows.length > 1) throw new Error('Multiple open setup pull requests');
+		const pull = rows[0];
+		if (!pull) return;
+		if (record(record(pull.head).repo).id !== id || record(pull.head).ref !== 'automation/onboarding') {
+			throw new Error('Setup pull request repository mismatch');
+		}
+		return {
+			number: integer(pull.number),
+			head: sha(record(pull.head).sha),
+			url: text(pull.html_url),
+			body: typeof pull.body === 'string' ? pull.body : '',
+		};
+	}
+	/** Update only the bot's status section, including when a human changed the proposal branch. */
+	async setupStatus(name: string, id: number, number: number, status: string): Promise<void> {
+		const token = await this.token(name, id, { pull_requests: 'write' });
+		const pull = record(await this.call(`/repos/${name}/pulls/${number}`, token));
+		if (
+			pull.state !== 'open' || record(pull.head).ref !== 'automation/onboarding'
+			|| record(record(pull.head).repo).id !== id
+		) return;
+		const start = '<!-- beepboop:setup-status -->', end = '<!-- /beepboop:setup-status -->';
+		const current = typeof pull.body === 'string' ? pull.body : '';
+		const section = `${start}\n${status}\n${end}`;
+		const from = current.indexOf(start), to = current.indexOf(end, from);
+		const body = from >= 0 && to >= from
+			? current.slice(0, from) + section + current.slice(to + end.length)
+			: `${current}\n\n${section}`;
+		if (body !== current) await this.call(`/repos/${name}/pulls/${number}`, token, 'PATCH', { body });
 	}
 	/** Refresh setup documentation without creating an empty commit or overwriting branch edits. */
 	async refreshPullRequest(

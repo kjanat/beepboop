@@ -33,9 +33,9 @@ const { data } = Astro.props;
 					<a href={`https://github.com/${repository.name}`}>{repository.name}
 						↗</a>
 				</h2>
-				<p class="metadata">
-					Inspected {date(repository.updatedAt)} · <code
-					>{repository.sha.slice(0, 12)}</code>
+				<p class="metadata metadata-fields">
+					<span>Inspected {date(repository.updatedAt)}</span><span>Commit <code
+						>{repository.sha.slice(0, 12)}</code></span>
 				</p>
 			</div><span
 				class:list={[
@@ -84,7 +84,9 @@ const { data } = Astro.props;
 		</form>
 		<div class="repository-grid">
 			<div>
-				<h3>Discovered packages</h3>{repository.inventory.packages.length ? (
+				<h3>
+					Release packages
+				</h3>{repository.inventory.packages.some(p => p.publish) ? (
 					<>
 						<table>
 							<thead>
@@ -95,7 +97,7 @@ const { data } = Astro.props;
 								</tr>
 							</thead>
 							<tbody>
-								{repository.inventory.packages.map(p => (
+								{repository.inventory.packages.filter(p => p.publish).map(p => (
 									<tr>
 										<td>
 											<code>{packageUrl(p)}</code><small><a
@@ -121,10 +123,7 @@ const { data } = Astro.props;
 											{p.version
 												?? (p.versionSource.startsWith('tags:')
 													? 'No matching release tag'
-													: 'No version found')}<small
-											>{p.versionSource.startsWith('tags:')
-												? `Tag prefix: ${p.versionSource.slice(5)}`
-												: p.versionSource}</small>
+													: 'No version found')}
 										</td>
 									</tr>
 								))}
@@ -133,8 +132,8 @@ const { data } = Astro.props;
 					</>
 				) : (
 					 <p>
-						 No package manifests discovered. Releases may be driven by tags or
-						 custom workflows.
+						 No publishable packages discovered. Private workspace packages are
+						 excluded.
 					 </p>
 				 )}
 			</div>
@@ -143,7 +142,8 @@ const { data } = Astro.props;
 					<p>
 						<strong>{w.stream} / {w.operation}</strong><small><a
 								href={`https://github.com/${repository.name}/blob/${repository.sha}/.github/workflows/${w.file}`}
-							>{w.file}</a> · {w.ref} ·
+							>{w.file}</a></small><small>Ref: <code
+							>{w.ref}</code></small><small>
 							{w.mode === 'observe' ? 'Tracks existing triggers' : 'Can be dispatched'}</small>
 					</p>
 				))}{!repository.configuration && (

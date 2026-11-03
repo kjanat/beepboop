@@ -1,5 +1,5 @@
 import { parse as parseToml } from 'smol-toml';
-import { directory, inWorkspace, object } from '@/automation/managers/helpers';
+import { object } from '@/automation/managers/helpers';
 import type { Manager } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
@@ -47,26 +47,16 @@ export const npmManager: Manager = {
 	discover(snapshot) {
 		const inventory = emptyInventory();
 		const detected = new Set<import('@/automation/types').ManagerName>();
-		let npmMembers: string[] = [];
-		try {
-			const root = object(JSON.parse(snapshot.files['package.json'] ?? '{}'));
-			const workspaces = Array.isArray(root.workspaces)
-				? root.workspaces
-				: object(root.workspaces).packages;
-			if (Array.isArray(workspaces)) npmMembers = workspaces.map(String);
-		} catch {
-			inventory.diagnostics.push('package.json: invalid JSON');
-		}
 		for (const [path, source] of Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b))) {
 			try {
 				if ((path === 'package.json' || path.endsWith('/package.json'))) {
 					const pkg = object(JSON.parse(source));
 					if (typeof pkg.name !== 'string' || !pkg.name.trim()) {
-						inventory.diagnostics.push(`${path}: package manifest has no package name`);
-						detected.add('npm');
+						if (Object.hasOwn(pkg, 'name')) {
+							inventory.diagnostics.push(`${path}: package name must be a nonempty string`);
+						}
 						continue;
 					}
-					const member = path === 'package.json' || inWorkspace(directory(path), npmMembers, []);
 					// Standalone nested packages are still inventoried; independent versions are not silently synchronized.
 					inventory.packages.push({
 						manager: 'npm',
@@ -81,11 +71,6 @@ export const npmManager: Manager = {
 							...object(pkg.peerDependencies),
 						}),
 					});
-					if (!member && pkg.private !== true) {
-						inventory.diagnostics.push(
-							`${path}: standalone package; assign its release stream explicitly`,
-						);
-					}
 					detected.add('npm');
 				}
 			} catch {

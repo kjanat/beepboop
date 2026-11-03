@@ -127,7 +127,7 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action=
 			});
 			if (revision !== current) return;
 			release.replaceChildren(new Option(rows.length ? 'Choose a release' : 'No eligible stable releases', ''));
-			for (const row of rows) release.add(new Option(`${row.tag} · ${row.name}`, String(row.id)));
+			for (const row of rows) release.add(new Option(`${row.name} (${row.tag})`, String(row.id)));
 			release.disabled = !rows.length;
 		} catch (error) {
 			if (revision === current) {
@@ -146,9 +146,22 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action=
 			? undefined
 			: repositories.find(r => String(r.id) === repository.value)?.workflows[Number(choice.value)];
 		if (scope) {
-			scope.textContent = selected
-				? `${selected.stream} / ${selected.operation} · ${selected.file} · Allowed ref: ${selected.ref}`
-				: 'Choose a repository and workflow.';
+			scope.replaceChildren();
+			if (selected) {
+				const details = node('dl', '');
+				details.className = 'metadata-grid';
+				for (
+					const [label, value] of [['Stream', selected.stream], ['Operation', selected.operation], [
+						'Workflow',
+						selected.file,
+					], ['Allowed ref', selected.ref]]
+				) {
+					const field = node('div', '');
+					field.append(node('dt', label ?? ''), node('dd', value ?? ''));
+					details.append(field);
+				}
+				scope.append(details);
+			} else scope.textContent = 'Choose a repository and workflow.';
 		}
 		const runtime = (input(form, 'delivery') as HTMLSelectElement).options[0];
 		if (runtime) runtime.disabled = !!selected && !selected.credentials.includes(input(form, 'alias').value);
@@ -163,7 +176,7 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action=
 		const selected = repositories.find(r => String(r.id) === repository.value);
 		choice.replaceChildren(new Option('Choose a workflow', ''));
 		selected?.workflows.forEach((w, index) => {
-			choice.add(new Option(`${w.stream} / ${w.operation} · ${w.file}`, String(index)));
+			choice.add(new Option(`${w.stream} / ${w.operation} (${w.file})`, String(index)));
 		});
 		choice.disabled = !selected;
 		updateScope();

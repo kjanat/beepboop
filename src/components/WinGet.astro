@@ -78,19 +78,38 @@ const repositories = data.repositories.filter(repo =>
 		{data.winget.map(item => (
 			<article class="panel">
 				<h3>{item.plan.packageIdentifier} {item.plan.version}</h3>
-				<p>
-					{item.plan.repository} · {item.plan.tag} · {item.state === 'merged'
-						? 'Merged by Microsoft'
-						: item.state === 'closed'
-						? 'Closed without merging'
-						: item.state === 'open'
-						? 'Awaiting Microsoft review'
-						: item.state}
-				</p>
-				<p>
-					Updated
-					{date(item.updatedAt)}{item.checks && ` · Validation: ${item.checks}`}
-				</p>
+				<dl class="metadata-grid">
+					<div>
+						<dt>Repository</dt>
+						<dd>{item.plan.repository}</dd>
+					</div>
+					<div>
+						<dt>Tag</dt>
+						<dd><code>{item.plan.tag}</code></dd>
+					</div>
+					<div>
+						<dt>Status</dt>
+						<dd>
+							<span class:list={['badge', item.state]}>{item.state === 'merged'
+								? 'Merged by Microsoft'
+								: item.state === 'closed'
+								? 'Closed without merging'
+								: item.state === 'open'
+								? 'Awaiting Microsoft review'
+								: item.state}</span>
+						</dd>
+					</div>
+					<div>
+						<dt>Updated</dt>
+						<dd>{date(item.updatedAt)}</dd>
+					</div>
+					{item.checks && (
+						<div>
+							<dt>Validation</dt>
+							<dd>{item.checks}</dd>
+						</div>
+					)}
+				</dl>
 				{item.url && (
 					<a href={item.url} target="_blank" rel="noreferrer">Open submission
 						#{item.number}</a>

@@ -6,6 +6,7 @@ import { packageId, selectorKey } from '@/automation/package-identity';
 import { type SetupChoices, type SetupPlan, setupChoicesSchema } from '@/automation/setup-types';
 import { integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Snapshot } from '@/automation/types';
+import { packageLabel } from '@/ui/package-label';
 
 /** Suggestions are editable policy, never permission to apply or publish. */
 export function suggestSetup(snapshot: Snapshot, inventory: Inventory, resolved?: Configuration): SetupChoices {
@@ -211,9 +212,9 @@ export function setupBody(plan: SetupPlan): string {
 	return `Configure releases from inspected commit [${plan.sourceSha}](https://github.com/${plan.repository}/commit/${plan.sourceSha}).\n\n`
 		+ plan.choices.streams.map(stream =>
 			`- **${stream.name}** (${stream.versioning}): ${
-				stream.packages.map(id => `\`${id}\``).join(', ')
+				stream.packages.map(id => `\`${packageLabel(id)}\``).join(', ')
 			}\n  Prepare: \`${stream.prepare?.file}\`; publish: \`${stream.promote?.file}\`; approval required.`
 		).join('\n')
 		+ '\n\n' + plan.notes.map(note => `- ${note}`).join('\n')
-		+ '\n\nReview all file changes, merge this PR, then refresh inspection. Preparation and publication remain separate explicit operations.\n';
+		+ '\n\nBeepboop keeps this proposal current when the default branch changes. Review all file changes before merging. Preparation and publication remain separate explicit operations.\n';
 }

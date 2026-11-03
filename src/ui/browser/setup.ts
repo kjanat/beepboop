@@ -1,5 +1,6 @@
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import { api, show } from '@/ui/browser/dom';
+import { packageLabel } from '@/ui/package-label';
 
 const sessions = new WeakMap<HTMLFormElement, { plan: SetupPlan; choices: () => SetupChoices; reviewed?: string }>();
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = ''): HTMLElementTagNameMap[K] {
@@ -168,7 +169,10 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 		], ['none', 'No version']], value.versioning);
 		const entries = plan.inventory.packages.flatMap((pkg, index): [string, string][] =>
 			pkg.publish
-				? [[planPackageIds(plan)[index] ?? '', `${pkg.name} — ${planPackageIds(plan)[index]} (${pkg.manifest})`]]
+				? [[
+					planPackageIds(plan)[index] ?? '',
+					`${pkg.name} — ${packageLabel(planPackageIds(plan)[index] ?? '')} (${pkg.manifest})`,
+				]]
 				: []
 		);
 		const packages = checks(box, 'Packages', entries, value.packages);

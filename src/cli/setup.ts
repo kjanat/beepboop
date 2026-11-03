@@ -1,6 +1,7 @@
 import type { Ask, Out, SelectChoice } from '@kjanat/dreamcli';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import type { Client } from '@/cli/client';
+import { packageLabel } from '@/ui/package-label';
 
 function options(entries: SelectChoice[]): [SelectChoice, ...SelectChoice[]] {
 	const [first, ...rest] = entries;
@@ -11,7 +12,9 @@ function options(entries: SelectChoice[]): [SelectChoice, ...SelectChoice[]] {
 export async function chooseSetup(plan: SetupPlan, ask: Ask): Promise<SetupChoices> {
 	const choices: SetupChoices = { streams: [] };
 	const candidates = plan.inventory.packages.flatMap((pkg, index) =>
-		pkg.publish ? [{ value: plan.packageIds[index] ?? '', label: `${pkg.name} (${plan.packageIds[index]})` }] : []
+		pkg.publish
+			? [{ value: plan.packageIds[index] ?? '', label: `${pkg.name} (${packageLabel(plan.packageIds[index] ?? '')})` }]
+			: []
 	);
 	if (!candidates.length) throw new Error('No publishable packages discovered; inspect repository diagnostics first');
 	const chooseWorkflow = async (
@@ -67,7 +70,7 @@ export async function chooseSetup(plan: SetupPlan, ask: Ask): Promise<SetupChoic
 			for (const id of choices.streams.find(row => row.name === stream)?.packages ?? []) {
 				publicationSteps[id] = await ask({
 					kind: 'select',
-					message: `Command step publishing ${id}`,
+					message: `Command step publishing ${packageLabel(id)}`,
 					choices: options([
 						{ value: '', label: 'Unresolved — block apply' },
 						...(evidence?.steps.filter(step => step.job === job).map(step => ({ value: step.id, label: step.label }))
@@ -83,7 +86,7 @@ export async function chooseSetup(plan: SetupPlan, ask: Ask): Promise<SetupChoic
 		const stream = { ...proposed };
 		stream.packages = await ask({
 			kind: 'multiselect',
-			message: `${stream.name}: packages (current: ${stream.packages.join(', ') || 'none'})`,
+			message: `${stream.name}: packages (current: ${stream.packages.map(packageLabel).join(', ') || 'none'})`,
 			min: 1,
 			choices: options(candidates),
 		});
@@ -98,7 +101,7 @@ export async function chooseSetup(plan: SetupPlan, ask: Ask): Promise<SetupChoic
 		stream.required = await ask({
 			kind: 'multiselect',
 			message: 'Required publications',
-			choices: options(stream.packages.map(value => ({ value }))),
+			choices: options(stream.packages.map(value => ({ value, label: packageLabel(value) }))),
 		});
 		choices.streams.push(stream);
 		stream.prepare = await chooseWorkflow(stream.name, 'prepare', stream.prepare);
@@ -119,7 +122,7 @@ export async function chooseSetup(plan: SetupPlan, ask: Ask): Promise<SetupChoic
 		const required = await ask({
 			kind: 'multiselect',
 			message: 'Required publications',
-			choices: options(packages.map(value => ({ value }))),
+			choices: options(packages.map(value => ({ value, label: packageLabel(value) }))),
 		});
 		const stream: SetupChoices['streams'][number] = { name, packages, versioning, required };
 		choices.streams.push(stream);

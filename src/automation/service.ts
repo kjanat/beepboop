@@ -14,6 +14,7 @@ import { planReleaseSet } from '@/automation/planning';
 import { matchesRef } from '@/automation/policy';
 import { planHookUpdates } from '@/automation/precommit';
 import { previewSetup, setupBody } from '@/automation/setup';
+import { maintainSetup } from '@/automation/setup-maintenance';
 import { Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
 import { workflowToken } from '@/automation/token';
@@ -130,6 +131,15 @@ export class AutomationService {
 		} else repository.diagnostics.push('Onboarding configuration is not merged');
 		repository.inventory = await resolvePublished(repository.inventory);
 		await this.store.putRepository(repository);
+		try {
+			await maintainSetup(this.store, this.gateway, snapshot);
+		} catch (error) {
+			await this.store.audit(
+				'beepboop',
+				'repository.setup.failed',
+				`${name}: ${error instanceof Error ? error.message : 'Setup maintenance failed'}`,
+			);
+		}
 		await this.winget().watch(repository);
 		return repository;
 	}

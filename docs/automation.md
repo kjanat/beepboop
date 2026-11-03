@@ -353,3 +353,17 @@ and skip `local` and `meta` hooks.
 For Windows package files, use the [WinGet generation Action](winget.md).
 
 Package selections and publication records use [structured PURL identities](package-identities.md). Existing `manager:name` references remain accepted for saved configurations and workflow reports.
+
+### Automatic setup PR maintenance
+
+For an enrolled repository with an existing open setup PR, default-branch push
+webhooks and the scheduled repository refresh recompute the proposal from the
+current source. Saved stream choices are reused while their source configuration
+is unchanged. Older proposals without saved choices are rediscovered from the
+current manifests and workflow integrations.
+
+Beepboop updates its generated branch without force-pushing. A changed proposal
+head or edits to generated files stop branch updates and put the conflict on the
+PR. Missing permissions and unresolved workflow choices are also shown there.
+Unchanged proposals do not create commits. Closed and merged setup PRs are not
+reopened, and maintenance never approves or dispatches a release.

@@ -104,7 +104,13 @@ const preparations = data.executions.filter(e =>
 								 </legend>
 								 <p class="hint">
 									 Current:
-									 {group.packages.map(packageUrl).join(' · ')}
+									 {group.packages.map(pkg => (
+										 <span
+											 class="package-line"
+										 >{packageUrl(pkg)}{pkg.version && (
+											 <span class="badge">{pkg.version}</span>
+										 )}</span>
+									 ))}
 								 </p><label>Next version<input
 										 name={`version-${group.id}`}
 										 placeholder="1.2.3"
@@ -116,8 +122,8 @@ const preparations = data.executions.filter(e =>
 							 dependencies must also be assigned.
 						 </p>
 						 {workflows.filter(w => w.operation !== 'prepare').map(w => (
-							 <label>{w.operation} ·
-								 {w.file}<select data-operation={w.operation}>
+							 <label>{w.operation}<small>
+									 {w.file}</small><select data-operation={w.operation}>
 									 <option value="">
 										 Do not include
 									 </option>{groups.map(group => (
@@ -174,7 +180,7 @@ const preparations = data.executions.filter(e =>
 					 <label>Preparation<select name="preparationId">
 							 {preparations.map(e => (
 								 <option value={e.id}>
-									 {e.repository} / {e.stream} ·
+									 {e.repository} ({e.stream})
 									 {new Date(e.createdAt).toISOString().slice(0, 10)}
 								 </option>
 							 ))}
@@ -200,7 +206,7 @@ const preparations = data.executions.filter(e =>
 					 ><div class="form-grid">
 						 <label>Workflow<select name="operation">
 								 {workflows.map(w => (
-									 <option value={w.operation}>{w.operation} · {w.file}</option>
+									 <option value={w.operation}>{w.operation} ({w.file})</option>
 								 ))}
 							 </select></label><label>Version, if needed<input
 								 name="version"

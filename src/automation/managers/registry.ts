@@ -89,11 +89,9 @@ export class ManagerRegistry {
 					pkg.publicationStatus = result.kind;
 					if (result.previousModule) pkg.previousModule = result.previousModule;
 					if (result.kind === 'published') pkg.published = result.version;
-					else {
+					else if (result.kind === 'failed') {
 						diagnostics.push(
-							`${pkg.manager}:${pkg.name}: ${
-								result.kind === 'missing' ? 'HTTP 404' : result.reason
-							} from ${result.url}`,
+							`${pkg.manager}:${pkg.name}: ${result.reason} from ${result.url}`,
 						);
 					}
 				}),
