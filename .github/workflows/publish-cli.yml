@@ -1,12 +1,14 @@
 name: Publish CLI
 run-name: Release operation ${{ inputs.beepboop_execution_id }}
 on:
-  workflow_dispatch:
-    inputs:
-      beepboop_execution_id:
-        description: Approved Beepboop promotion execution
-        required: true
-        type: string
+  release:
+    types: created
+#  workflow_dispatch:
+#    inputs:
+#      beepboop_execution_id:
+#        description: Approved Beepboop promotion execution
+#        required: true
+#        type: string
 permissions: { contents: read, id-token: write }
 concurrency:
   group: cli-publication
