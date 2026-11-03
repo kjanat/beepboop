@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { applyVersionFiles, type VersionFile } from '@/automation/editors';
 import { planRelease, publicationOrder } from '@/automation/managers';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
+import { matchesPackage, selectorKey } from '@/automation/package-identity';
 import type { Edit, Inventory, Snapshot } from '@/automation/types';
 import { parseVersionRequest } from '@/automation/version';
 
@@ -37,11 +38,14 @@ export function planReleaseSet(
 	const groups = new Map<string, { id: string; packages: string[]; version: string }>();
 	const selected = new Set<string>();
 	for (const group of request.groups) {
+		group.packages = group.packages.map(reference => selectorKey(reference, inventory.packages));
 		if (groups.has(group.id)) throw new Error(`Duplicate release group: ${group.id}`);
 		for (const name of group.packages) {
 			if (selected.has(name)) throw new Error(`Package selected more than once: ${name}`);
-			if (allowed && !allowed.includes(name)) throw new Error(`Package is outside this release stream: ${name}`);
-			if (!inventory.packages.some(p => p.publish && `${p.manager}:${p.name}` === name)) {
+			if (allowed && !allowed.some(reference => selectorKey(reference, inventory.packages) === name)) {
+				throw new Error(`Package is outside this release stream: ${name}`);
+			}
+			if (!inventory.packages.some(p => p.publish && matchesPackage(name, p))) {
 				throw new Error(`Unknown publishable package: ${name}`);
 			}
 			selected.add(name);
@@ -107,7 +111,9 @@ export function planReleaseSet(
 		sourceSha: snapshot.sha,
 		groups: [...groups.values()].sort((a, b) => a.id.localeCompare(b.id)),
 		operations: order,
-		publicationOrder: publicationOrder(inventory.packages.filter(p => selected.has(`${p.manager}:${p.name}`))),
+		publicationOrder: publicationOrder(
+			inventory.packages.filter(p => [...selected].some(reference => matchesPackage(reference, p))),
+		),
 		edits,
 		diagnostics: [...diagnostics],
 		requiresPreparation,

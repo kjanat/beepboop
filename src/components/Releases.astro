@@ -1,4 +1,5 @@
 ---
+import { matchesPackage, packageId } from '@/automation/package-identity';
 import { type Dashboard, workflowChoices } from '@/server/dashboard.ts';
 import { packageUrl } from '@/server/package-url';
 
@@ -27,7 +28,8 @@ const workflows = repository
 	: [];
 const packages = repository?.inventory.packages.filter(p =>
 	p.publish
-	&& (!stream?.packages || stream.packages.includes(`${p.manager}:${p.name}`))
+	&& (!stream?.packages
+		|| stream.packages.some(reference => matchesPackage(reference, p)))
 ) ?? [];
 const groups = [...new Set(packages.map(p => p.versionSource))].map((
 	source,
@@ -92,7 +94,7 @@ const preparations = data.executions.filter(e =>
 						 {groups.map(group => (
 							 <fieldset
 								 data-group={group.id}
-								 data-packages={JSON.stringify(group.packages.map(p => `${p.manager}:${p.name}`))}
+								 data-packages={JSON.stringify(group.packages.map(p => packageId(p)))}
 							 >
 								 <legend>
 									 <label class="check"><input

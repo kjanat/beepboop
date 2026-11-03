@@ -5,7 +5,11 @@ import { validRef } from '@/automation/policy';
 import type { Configuration, ManagerName, Stream, WorkflowBinding } from '@/automation/types';
 import { parseWinGetPolicy } from '@/automation/winget';
 import { array, record, text } from '@/model';
+import { purl } from '@/package-url';
 
+function packageReferences(value: unknown): string[] {
+	return strings(value).map(reference => reference.startsWith('pkg:') ? purl(reference) : reference);
+}
 export const managerNames: ManagerName[] = [
 	'pre-commit',
 	'cargo',
@@ -106,7 +110,7 @@ function binding(value: unknown): WorkflowBinding {
 			: {
 				needs: [...new Set([...strings(data.needs ?? []), ...(artifactInputs ?? []).map(input => input.operation)])],
 			}),
-		...(data.publications === undefined ? {} : { publications: strings(data.publications) }),
+		...(data.publications === undefined ? {} : { publications: packageReferences(data.publications) }),
 		...(data.schedule === undefined ? {} : { schedule: text(data.schedule) }),
 		file,
 		...(data.ref === undefined ? {} : { ref: text(data.ref) }),
@@ -187,7 +191,7 @@ export function parseRepositoryConfiguration(value: unknown): Configuration {
 				? {}
 				: { versionFiles: array(row.versionFiles).map(value => versionFileSchema.parse(value)) }),
 			...(versionSource ? { versionSource } : {}),
-			...(row.packages === undefined ? {} : { packages: strings(row.packages) }),
+			...(row.packages === undefined ? {} : { packages: packageReferences(row.packages) }),
 			versioning: versioning as Stream['versioning'],
 			concurrency: concurrency as Stream['concurrency'],
 			prepare: {
@@ -202,7 +206,7 @@ export function parseRepositoryConfiguration(value: unknown): Configuration {
 				...(promote.workflow ? { workflow: binding(promote.workflow) } : {}),
 			},
 			workflows,
-			required: strings(row.required ?? []),
+			required: packageReferences(row.required ?? []),
 			credentials: strings(row.credentials ?? []),
 			channels: {
 				stable: text(channels.stable ?? 'latest'),

@@ -1,4 +1,5 @@
 import { tagPrefix } from '@/automation/managers/tags';
+import { packageId } from '@/automation/package-identity';
 import { validRef } from '@/automation/policy';
 import type { DiscoveredWorkflow, Inventory, ManagerName, Snapshot, Stream } from '@/automation/types';
 
@@ -166,7 +167,7 @@ function derive(snapshot: Snapshot, inventory: Inventory): Onboarding {
 	);
 	const tagVersioned = publishable.flatMap(p => {
 		const prefix = tagPrefix(p.versionSource);
-		return prefix === undefined ? [] : [{ id: `${p.manager}:${p.name}`, prefix, released: p.version !== undefined }];
+		return prefix === undefined ? [] : [{ id: packageId(p), prefix, released: p.version !== undefined }];
 	});
 	const fileVersioned = publishable.length > tagVersioned.length;
 	const prefixes = [...new Set(sources.map(source => source.prefix))];
@@ -203,7 +204,7 @@ function derive(snapshot: Snapshot, inventory: Inventory): Onboarding {
 	const required = inventory.packages
 		.filter(p => p.publish && !p.optional)
 		.filter(p => {
-			const id = `${p.manager}:${p.name}`, prefix = tagPrefix(p.versionSource);
+			const id = packageId(p), prefix = tagPrefix(p.versionSource);
 			if (prefix === undefined) return true;
 			if (p.version === undefined) {
 				review.push(
@@ -223,15 +224,15 @@ function derive(snapshot: Snapshot, inventory: Inventory): Onboarding {
 			}
 			return true;
 		})
-		.map(p => ({ id: `${p.manager}:${p.name}`, source: code(p.manifest) }));
+		.map(p => ({ id: packageId(p), source: code(p.manifest) }));
 	const releasers = [...bound.values()].filter(workflow => workflow.createsRelease).map(workflow => workflow.file);
-	const release = `github-release:${snapshot.repository.name}`;
+	const release = packageId({ manager: 'github-release', name: snapshot.repository.name });
 	if (releasers.length && versioning !== 'independent') {
 		required.push({ id: release, source: `the release step in ${list(releasers)}` });
 	}
 	derived.push(
 		`- ${code('streams.main.required')} lists publication IDs (${
-			code('<manager>:<name>')
+			code('pkg:type/namespace/name')
 		}) that must succeed before Beepboop emits a release event.`,
 		...(required.length
 			? required.map(entry => `  - ${code(entry.id)} from ${entry.source}.`)
@@ -258,7 +259,7 @@ function derive(snapshot: Snapshot, inventory: Inventory): Onboarding {
 					...(versionSource ? { versionSource } : {}),
 					prepare: { version: 'manual' },
 					workflows,
-					required: required.map(entry => entry.id),
+					required: [...new Set(required.map(entry => entry.id))],
 				},
 			},
 		},

@@ -37,10 +37,10 @@ and promotes through branch workflows and observes publication from a tag:
           "file": "release.yml",
           "mode": "observe",
           "ref": "refs/tags/v*",
-          "publications": ["npm:example-package"]
+          "publications": ["pkg:npm/example-package"]
         }
       },
-      "required": ["npm:example-package"],
+      "required": ["pkg:npm/example-package"],
       "credentials": ["npm-bootstrap"],
       "channels": { "stable": "latest", "prerelease": "next" }
     }
@@ -48,16 +48,16 @@ and promotes through branch workflows and observes publication from a tag:
 }
 ```
 
-| Setting            | Use                                                                                                                                              |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `versioning`       | `workspace`, `independent`, or `none` for maintenance operations.                                                                                |
-| `packages`         | Select package IDs, such as `cargo:example-core` or `npm:@example/cli`. Independent streams can also select packages in the preparation request. |
-| `prepare.strategy` | `managed` for Beepboop's version edits; `workflow` for your own preparation script.                                                              |
-| `needs`            | Operation names that must complete before this workflow starts.                                                                                  |
-| `publications`     | Report IDs required to complete this operation.                                                                                                  |
-| `required`         | Publication IDs required for the stream's release gate. Also the default for an operation called `publish`.                                      |
-| `credentials`      | Credential aliases requested by the stream; access also needs an administrator grant.                                                            |
-| `concurrency`      | `queue` or `supersede-pending`, which cancels older undispatched operations.                                                                     |
+| Setting            | Use                                                                                                                                                        |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `versioning`       | `workspace`, `independent`, or `none` for maintenance operations.                                                                                          |
+| `packages`         | Select package IDs, such as `pkg:cargo/example-core` or `pkg:npm/%40example/cli`. Independent streams can also select packages in the preparation request. |
+| `prepare.strategy` | `managed` for Beepboop's version edits; `workflow` for your own preparation script.                                                                        |
+| `needs`            | Operation names that must complete before this workflow starts.                                                                                            |
+| `publications`     | Report IDs required to complete this operation.                                                                                                            |
+| `required`         | Publication IDs required for the stream's release gate. Also the default for an operation called `publish`.                                                |
+| `credentials`      | Credential aliases requested by the stream; access also needs an administrator grant.                                                                      |
+| `concurrency`      | `queue` or `supersede-pending`, which cancels older undispatched operations.                                                                               |
 
 Versions are selected manually and use SemVer. Packages sharing a version source
 must be selected together. Dependencies use operation names within the same
@@ -73,7 +73,7 @@ Use `extends` to share configuration:
 {
   "extends": ["github>owner/release-presets:rust-workspace"],
   "streams": {
-    "main": { "required": ["cargo:example-core", "cargo:example-cli"] }
+    "main": { "required": ["pkg:cargo/example-core", "pkg:cargo/example-cli"] }
   }
 }
 ```
@@ -115,7 +115,7 @@ jobs:
       - uses: kjanat/beepboop/actions/report@IMPLEMENTATION_SHA
         with:
           publications: >-
-            [{"id":"npm:example-package","manager":"npm",
+            [{"id":"pkg:npm/example-package","manager":"npm",
             "name":"example-package","version":"1.2.3",
             "digest":"sha512-EXPECTED_INTEGRITY",
             "outcome":"succeeded","required":true}]
@@ -311,3 +311,5 @@ a PR. Updates use a verified release event, preserve SHA pins and YAML comments,
 and skip `local` and `meta` hooks.
 
 For Windows package files, use the [WinGet generation Action](winget.md).
+
+Package selections and publication records use [structured PURL identities](package-identities.md). Existing `manager:name` references remain accepted for saved configurations and workflow reports.

@@ -11,6 +11,13 @@ import { type Credentials, RepositoryGateway } from '@/automation/github';
 import { canVerifyPublication, discover, observedVersion, verifyPublication } from '@/automation/managers';
 import { verifyManifest } from '@/automation/manifest';
 import { mergeArtifacts, resolveInputs } from '@/automation/outputs';
+import {
+	identifyExecution,
+	identityOf,
+	matchesPackage,
+	matchesPublication,
+	packageId,
+} from '@/automation/package-identity';
 import { matchesRef } from '@/automation/policy';
 import { planRefs, type RefPlan } from '@/automation/refs';
 import { compileReleaseSet } from '@/automation/release-set';
@@ -45,6 +52,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return new RepositoryGateway(this.env, Number(this.env.OWNER_ID));
 	}
 	private async put(execution: Execution): Promise<void> {
+		Object.assign(execution, identifyExecution(execution));
 		const previous = await this.ctx.storage.get<Execution>(`execution:${execution.id}`);
 		execution.updatedAt = Date.now();
 		// The journal is authoritative. D1 is an asynchronously repairable dashboard index.
@@ -73,7 +81,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				&& e.releaseSet?.preparationId === execution.releaseSet?.preparationId
 				&& e.releaseSet?.group === execution.releaseSet?.group
 			);
-		if (!required.every(key => group.some(e => e.publications.some(p => p.id === key && p.outcome === 'succeeded')))) {
+		if (
+			!required.every(key =>
+				group.some(e => e.publications.some(p => matchesPublication(key, p) && p.outcome === 'succeeded'))
+			)
+		) {
 			return;
 		}
 		const references = group.flatMap(e => e.release ? [e.release] : []);
@@ -254,7 +266,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				throw new Error('Execution needs exactly one runner');
 			}
 			const prior = await this.ctx.storage.get<Execution>(`execution:${execution.id}`);
-			if (prior) return prior;
+			if (prior) return identifyExecution(prior);
 			if (execution.configuration.streams[execution.stream]?.concurrency === 'supersede-pending') {
 				for (
 					const old of (
@@ -277,7 +289,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private async get(id: string): Promise<Execution> {
 		const execution = await this.ctx.storage.get<Execution>(`execution:${id}`);
 		if (!execution) throw new Error('Unknown execution');
-		return execution;
+		return identifyExecution(execution);
 	}
 	async prepared(id: string, identity: WorkflowIdentity, edits: Edit[]): Promise<{ url: string; head: string }> {
 		return this.serial(async () => {
@@ -479,7 +491,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 			}
 			const verified: Publication[] = [];
-			for (const publication of publications) {
+			for (const reported of publications) {
+				const publication = { ...reported, identity: identityOf(reported, execution.repository) };
 				if (publication.id.startsWith('refs:')) {
 					throw new Error('Ref results are verified by the ref completion endpoint');
 				}
@@ -759,14 +772,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 								(p) =>
 									Boolean(version)
 									&& p.publish
-									&& (!stream.packages || stream.packages.includes(`${p.manager}:${p.name}`)),
+									&& (!stream.packages || stream.packages.some(reference => matchesPackage(reference, p))),
 							)
 						) {
 							if (!canVerifyPublication(pkg.manager)) continue;
 							const released = observedVersion(pkg, branch);
 							if (released === undefined) continue;
 							const publication: Publication = {
-								id: `${pkg.manager}:${pkg.name}`,
+								id: packageId(pkg),
+								identity: identityOf({ ...pkg, version: released }),
 								manager: pkg.manager,
 								name: pkg.name,
 								version: released,

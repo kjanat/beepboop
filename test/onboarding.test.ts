@@ -121,7 +121,7 @@ describe('onboarding configuration', () => {
           "ref": "refs/tags/v*"
         }
       },
-      "required": ["github-release:kjanat/gpg-signing-service"]
+      "required": ["pkg:github/kjanat/gpg-signing-service"]
     }
   }
 }
@@ -187,9 +187,9 @@ describe('onboarding configuration', () => {
 		});
 		const { configuration, body } = onboard(snapshot);
 		expect(configuration.managers).toEqual(['cargo']);
-		expect(configuration.streams.main.required).toEqual(['cargo:core']);
+		expect(configuration.streams.main.required).toEqual(['pkg:cargo/core']);
 		expect(body).toContain('- `npm` is omitted. Its packages in `package.json` are unpublishable.');
-		expect(body).toContain('  - `cargo:core` from `Cargo.toml`.');
+		expect(body).toContain('  - `pkg:cargo/core` from `Cargo.toml`.');
 		expect(body).toContain('Every publishable package carries version `1.0.0`.');
 	});
 	test('leaves GitHub release requirements of independent streams to review', () => {
@@ -198,7 +198,7 @@ describe('onboarding configuration', () => {
 			'packages/core/package.json': '{"name":"core","version":"2.0.0"}',
 		};
 		const plain = onboard(repository('example/independent', files));
-		expect(plain.configuration.streams.main.required).toEqual(['npm:tool', 'npm:core']);
+		expect(plain.configuration.streams.main.required).toEqual(['pkg:npm/tool', 'pkg:npm/core']);
 		expect(plain.body).toContain('- Assign independently versioned packages to their release streams.');
 		expect(plain.body).toContain('Publishable packages carry versions `1.0.0`, `2.0.0`.');
 		expect(plain.body).not.toContain('creates a GitHub release');
@@ -206,9 +206,9 @@ describe('onboarding configuration', () => {
 			...files,
 			'.github/workflows/release.yml': workflow('Release', '  workflow_dispatch:', '[{run: gh release create v1}]'),
 		}));
-		expect(released.configuration.streams.main.required).toEqual(['npm:tool', 'npm:core']);
+		expect(released.configuration.streams.main.required).toEqual(['pkg:npm/tool', 'pkg:npm/core']);
 		expect(released.body).toContain(
-			'- `release.yml` creates a GitHub release. Add `github-release:example/independent` to the `publications` of the operation that publishes it.',
+			'- `release.yml` creates a GitHub release. Add `pkg:github/example/independent` to the `publications` of the operation that publishes it.',
 		);
 	});
 	test('reports an empty repository without inventing values', () => {
@@ -250,14 +250,14 @@ describe('tag-versioned packages', () => {
 			versioning: 'workspace',
 			prepare: { version: 'manual' },
 			workflows: { release: { file: 'release.yml', mode: 'observe', ref: 'refs/tags/*' } },
-			required: ['npm:@kjanat/actionlint', 'goreleaser:actionlint'],
+			required: ['pkg:npm/%40kjanat/actionlint', 'pkg:github/kjanat/actionlint'],
 		});
 		expect(body).toContain('| npm | @kjanat/actionlint | 1.17.0 (manifest 0.0.0) | yes |');
 		expect(body).toContain('| goreleaser | actionlint | 1.17.0 | yes |');
 		expect(body).toContain('| go | actionlint.kjanat.dev/v2/analyzers | unreleased | no |');
 		expect(body).toContain('Released publishable packages carry version `1.17.0`.');
 		expect(body).toContain(
-			'- `go:actionlint.kjanat.dev/v2` has no release tag starting with `v`. Add it to `streams.main.required` after its first tagged release.',
+			'- `pkg:golang/actionlint.kjanat.dev/v2` has no release tag starting with `v`. Add it to `streams.main.required` after its first tagged release.',
 		);
 	});
 	test('released tag-versioned packages need a workflow on their tags', () => {
@@ -268,36 +268,36 @@ describe('tag-versioned packages', () => {
 			'.github/workflows/release.yml': workflow('Release', '  push:\n    tags: ["v*", "tools/v*"]'),
 		}, tags));
 		expect(covered.configuration.streams.main.required).toEqual([
-			'goreleaser:actionlint',
-			'go:github.com/kjanat/actionlint/tools',
+			'pkg:github/kjanat/actionlint',
+			'pkg:golang/github.com/kjanat/actionlint/tools',
 		]);
 		const root = onboard(repository('kjanat/actionlint', {
 			...files,
 			'.github/workflows/release.yml': workflow('Release', '  push:\n    tags: ["*"]'),
 		}, tags));
-		expect(root.configuration.streams.main.required).toEqual(['goreleaser:actionlint']);
+		expect(root.configuration.streams.main.required).toEqual(['pkg:github/kjanat/actionlint']);
 		expect(root.body).toContain(
-			'- `go:github.com/kjanat/actionlint/tools` takes its version from tags starting with `tools/v`. No bound workflow runs on those tags.',
+			'- `pkg:golang/github.com/kjanat/actionlint/tools` takes its version from tags starting with `tools/v`. No bound workflow runs on those tags.',
 		);
 		const deep = onboard(repository('kjanat/actionlint', {
 			...files,
 			'.github/workflows/release.yml': workflow('Release', '  push:\n    tags: ["**"]'),
 		}, tags));
 		expect(deep.configuration.streams.main.required).toEqual([
-			'goreleaser:actionlint',
-			'go:github.com/kjanat/actionlint/tools',
+			'pkg:github/kjanat/actionlint',
+			'pkg:golang/github.com/kjanat/actionlint/tools',
 		]);
 		const prefixed = onboard(repository('kjanat/actionlint', {
 			...files,
 			'.github/workflows/release.yml': workflow('Release', '  push:\n    tags: ["tools/v1.*"]'),
 		}, tags));
-		expect(prefixed.configuration.streams.main.required).toEqual(['go:github.com/kjanat/actionlint/tools']);
+		expect(prefixed.configuration.streams.main.required).toEqual(['pkg:golang/github.com/kjanat/actionlint/tools']);
 	});
 	test('the stream version source comes from package tags without a tag trigger', () => {
 		const tagged = onboard(repository('o/r', { 'go.mod': 'module github.com/o/r\n' }, ['v0.4.0']));
 		expect(tagged.configuration.streams.main.versionSource).toEqual({ kind: 'tags', prefix: 'v' });
 		expect(tagged.body).toContain(
-			'- `streams.main.versionSource` reads the current version from tags starting with `v`. The prefix comes from the tag versions of `go:github.com/o/r`.',
+			'- `streams.main.versionSource` reads the current version from tags starting with `v`. The prefix comes from the tag versions of `pkg:golang/github.com/o/r`.',
 		);
 		expect(tagged.body).toContain('Every publishable package carries version `0.4.0`.');
 		const untagged = onboard(repository('o/r', { 'go.mod': 'module github.com/o/r\n' }));
@@ -361,13 +361,13 @@ describe('onboarding pull request body', () => {
 		expect(body).toContain('No publishable package has a release. Tag-triggered workflows carry the version.');
 		expect(body).toContain('| go | github.com/kjanat/gpg-signing-service/client | unreleased | yes |');
 		expect(body).toContain(
-			'- `go:github.com/kjanat/gpg-signing-service/client` has no release tag starting with `client/v`. Add it to `streams.main.required` after its first tagged release.',
+			'- `pkg:golang/github.com/kjanat/gpg-signing-service/client` has no release tag starting with `client/v`. Add it to `streams.main.required` after its first tagged release.',
 		);
 		expect(body).toContain(
 			'- `streams.main.versionSource` reads the current version from tags starting with `v`. The prefix comes from `on.push.tags` in `release.yml`.',
 		);
 		expect(body).toContain('  - `release`: `release.yml`. `ref` `refs/tags/v*` covers `on.push.tags` `v*.*.*`.');
-		expect(body).toContain('  - `github-release:kjanat/gpg-signing-service` from the release step in `release.yml`.');
+		expect(body).toContain('  - `pkg:github/kjanat/gpg-signing-service` from the release step in `release.yml`.');
 		expect(body).toContain(
 			'- `release.yml` also runs on `workflow_dispatch`. Those runs start on a branch and fall outside `refs/tags/v*`.',
 		);

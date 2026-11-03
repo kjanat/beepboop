@@ -111,11 +111,11 @@ describe('ecosystem discovery and version planning', () => {
 			'root',
 			'two',
 		]);
-		expect(inventory.publicationOrder.indexOf('cargo:core')).toBeLessThan(
-			inventory.publicationOrder.indexOf('cargo:cli'),
+		expect(inventory.publicationOrder.indexOf('pkg:cargo/core')).toBeLessThan(
+			inventory.publicationOrder.indexOf('pkg:cargo/cli'),
 		);
-		expect(inventory.publicationOrder.indexOf('npm:one')).toBeLessThan(
-			inventory.publicationOrder.indexOf('npm:two'),
+		expect(inventory.publicationOrder.indexOf('pkg:npm/one')).toBeLessThan(
+			inventory.publicationOrder.indexOf('pkg:npm/two'),
 		);
 		expect(inventory.workflows[0]?.dispatchInputs).toEqual(['beepboop_execution_id']);
 		expect(
@@ -305,8 +305,8 @@ describe('migration and orchestration contracts', () => {
 			'@example/freebsd-arm64',
 		]);
 		const config = parseRepositoryConfiguration(onboardingConfiguration(snapshot, inventory));
-		expect(config.streams.main?.required).toContain('npm:@example/linux-x64');
-		expect(config.streams.main?.required).not.toContain('npm:@example/freebsd-arm64');
+		expect(config.streams.main?.required).toContain('pkg:npm/%40example/linux-x64');
+		expect(config.streams.main?.required).not.toContain('pkg:npm/%40example/freebsd-arm64');
 	});
 	test('does not treat a VSCode extension as an npm publication', () => {
 		const source = {

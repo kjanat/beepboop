@@ -11,6 +11,7 @@ import { formatJson } from '@/automation/json';
 import { createReleasePreparation, planIdentity } from '@/automation/managed';
 import { discover, planRelease, resolvePublished, versionsInFiles } from '@/automation/managers';
 import { onboardingBody, onboardingConfiguration } from '@/automation/onboarding';
+import { matchesPackage } from '@/automation/package-identity';
 import { planReleaseSet } from '@/automation/planning';
 import { matchesRef } from '@/automation/policy';
 import { planHookUpdates } from '@/automation/precommit';
@@ -516,7 +517,14 @@ export class AutomationService {
 				throw new Error('Select packages for an independent release');
 			}
 			const selected = body.packages === undefined ? stream.packages : array(body.packages).map(text);
-			if (stream.packages && selected?.some((name) => !stream.packages?.includes(name))) {
+			if (
+				stream.packages
+				&& selected?.some((name) =>
+					!repository.inventory.packages.some(pkg =>
+						matchesPackage(name, pkg) && stream.packages?.some(reference => matchesPackage(reference, pkg))
+					)
+				)
+			) {
 				throw new Error('Package is outside this release stream');
 			}
 			let target: unknown = body.version;

@@ -1,4 +1,5 @@
 import { outputsComplete } from '@/automation/outputs';
+import { identityOf, matchesPackage, matchesPublication, packageId } from '@/automation/package-identity';
 import type { Execution, Publication, ReleaseReference, RepositoryRecord, WorkflowBinding } from '@/automation/types';
 
 export async function executionId(
@@ -80,17 +81,20 @@ export function completion(execution: Execution, runSucceeded: boolean): Executi
 		?? (execution.operation === 'publish'
 			? (execution.configuration.streams[execution.stream]?.required ?? [])
 			: []);
-	if (required.some((id) => !execution.publications.some((p) => p.id === id))) return 'blocked';
-	const publications = execution.publications.filter((p) => p.required || required.includes(p.id));
+	if (required.some((id) => !execution.publications.some((p) => matchesPublication(id, p)))) return 'blocked';
+	const publications = execution.publications.filter((p) =>
+		p.required || required.some(id => matchesPublication(id, p))
+	);
 	if (publications.some((p) => p.outcome === 'failed')) return 'failed';
 	if (publications.some((p) => p.outcome === 'uncertain')) return 'uncertain';
 	if (publications.some((p) => p.outcome !== 'succeeded')) return 'blocked';
 	return 'succeeded';
 }
 export function mergePublications(prior: Publication[], incoming: Publication[]): Publication[] {
-	const result = new Map(prior.map((p) => [p.id, p]));
+	const key = (p: Publication) => p.id.startsWith('pkg:') || p.id === `${p.manager}:${p.name}` ? packageId(p) : p.id;
+	const result = new Map(prior.map((p) => [key(p), p]));
 	for (const publication of incoming) {
-		const old = result.get(publication.id);
+		const old = result.get(key(publication));
 		if (
 			old
 			&& (old.manager !== publication.manager
@@ -101,13 +105,13 @@ export function mergePublications(prior: Publication[], incoming: Publication[])
 			throw new Error('Publication identity changed');
 		}
 		if (old?.outcome === 'succeeded' && publication.outcome !== 'succeeded') continue;
-		result.set(publication.id, { ...publication, required: old?.required || publication.required });
+		result.set(key(publication), { ...publication, required: old?.required || publication.required });
 	}
 	return [...result.values()];
 }
 
 export function validatePublicationIdentity(execution: Execution, publication: Publication): void {
-	if (publication.id !== `${publication.manager}:${publication.name}`) {
+	if (!matchesPackage(publication.id, { ...publication, identity: identityOf(publication, execution.repository) })) {
 		throw new Error('Publication ID does not match its manager and package identity');
 	}
 	if (

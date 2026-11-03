@@ -1,3 +1,4 @@
+import { matchesPublication } from '@/automation/package-identity';
 import type { Execution } from '@/automation/types.ts';
 
 /** Never combine evidence from different commits, configurations, or versions. */
@@ -22,7 +23,7 @@ export function releaseSummaries(executions: Execution[]) {
 		if (!first) throw new Error('Release group is empty');
 		const required = first.releaseSet?.required ?? first.configuration.streams[first.stream]?.required ?? [];
 		const publications = required.map(id => {
-			const reports = runs.flatMap(run => run.publications.filter(publication => publication.id === id));
+			const reports = runs.flatMap(run => run.publications.filter(publication => matchesPublication(id, publication)));
 			const succeeded = reports.find(report => report.outcome === 'succeeded');
 			return { id, outcome: succeeded?.outcome ?? reports.at(-1)?.outcome ?? 'waiting' };
 		});

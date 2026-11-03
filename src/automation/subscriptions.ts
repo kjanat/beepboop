@@ -1,3 +1,4 @@
+import { matchesPublication } from '@/automation/package-identity';
 import type { AutomationEvent, Subscription } from '@/automation/types';
 
 export function matchesSubscription(subscription: Subscription, event: AutomationEvent): boolean {
@@ -8,7 +9,7 @@ export function matchesSubscription(subscription: Subscription, event: Automatio
 		&& (!subscription.publication
 			|| Boolean(
 				event.release?.publications.some(publication =>
-					publication.id === subscription.publication && publication.outcome === 'succeeded'
+					matchesPublication(subscription.publication ?? '', publication) && publication.outcome === 'succeeded'
 				),
 			));
 }

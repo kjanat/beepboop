@@ -46,6 +46,7 @@ describe('go module discovery', () => {
 		const [pkg] = packages(snapshot);
 		expect(pkg).toEqual({
 			manager: 'go',
+			identity: { type: 'golang', namespace: 'github.com/example', name: 'tool', version: '1.10.0-rc.1' },
 			name: 'github.com/example/tool',
 			version: '1.10.0-rc.1',
 			manifest: 'go.mod',
@@ -61,6 +62,12 @@ describe('go module discovery', () => {
 		}, ['v1.2.0', 'client/v0.3.0', 'client/v0.4.0']);
 		expect(packages(snapshot)).toEqual([{
 			manager: 'go',
+			identity: {
+				type: 'golang',
+				namespace: 'github.com/kjanat/gpg-signing-service',
+				name: 'client',
+				version: '0.4.0',
+			},
 			name: 'github.com/kjanat/gpg-signing-service/client',
 			version: '0.4.0',
 			manifest: 'client/go.mod',
@@ -153,7 +160,7 @@ describe('go module discovery', () => {
 			['github.com/o/r', ['github.com/o/r/lib']],
 			['github.com/o/r/lib', []],
 		]);
-		expect(found.publicationOrder).toEqual(['go:github.com/o/r/lib', 'go:github.com/o/r']);
+		expect(found.publicationOrder).toEqual(['pkg:golang/github.com/o/r/lib', 'pkg:golang/github.com/o/r']);
 	});
 	test('a go.mod without a module directive is reported', () => {
 		const found = discover(repository('o/r', { 'go.mod': 'go 1.24\n' }), ['go']);
@@ -175,6 +182,7 @@ describe('goreleaser discovery', () => {
 		expect(found.managers).toEqual(['goreleaser']);
 		expect(found.packages).toEqual([{
 			manager: 'goreleaser',
+			identity: { type: 'github', namespace: 'kjanat', name: 'actionlint', version: 'v1.17.0' },
 			name: 'actionlint',
 			version: '1.17.0',
 			manifest: '.goreleaser.yaml',

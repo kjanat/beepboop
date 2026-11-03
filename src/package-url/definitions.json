@@ -1,0 +1,1705 @@
+[
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/alpm-definition.json",
+		"type": "alpm",
+		"type_name": "Arch Linux package",
+		"description": "Arch Linux packages and other users of the libalpm/pacman package manager.",
+		"repository": {
+			"use_repository": true,
+			"note": "There is no default package repository; this should be implied either from the distro qualifiers key  or using a repository base url as  repository_url qualifiers key."
+		},
+		"namespace_definition": {
+			"requirement": "required",
+			"note": "The namespace is the vendor such as arch, arch32, archarm, manjaro or msys.",
+			"case_sensitive": false,
+			"native_name": "vendor",
+			"normalization_rules": [
+				"It is not case sensitive and shall be lowercased."
+			]
+		},
+		"name_definition": {
+			"requirement": "required",
+			"note": "The name is the package name. It is not case sensitive and shall be lowercased.",
+			"case_sensitive": false,
+			"native_name": "name"
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"native_name": "version",
+			"note": "The version is the version of the package as specified in vercmp(8) at (https://man.archlinux.org/man/vercmp.8#DESCRIPTION as part of alpm.",
+			"case_sensitive": true,
+			"normalization_rules": [
+				"normalize version as specified in vercmp(8) at https://man.archlinux.org/man/vercmp.8#DESCRIPTION as part of alpm."
+			]
+		},
+		"qualifiers_definition": [
+			{
+				"key": "arch",
+				"requirement": "optional",
+				"native_name": "arch",
+				"description": "The arch is the qualifiers key for a package architecture."
+			}
+		],
+		"examples": [
+			"pkg:alpm/arch/pacman@6.0.1-1?arch=x86_64",
+			"pkg:alpm/arch/python-pip@21.0-1?arch=any",
+			"pkg:alpm/arch/containers-common@1:0.47.4-4?arch=x86_64"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/apk-definition.json",
+		"type": "apk",
+		"type_name": "APK-based packages",
+		"description": "Alpine Linux APK-based packages",
+		"repository": {
+			"use_repository": true,
+			"note": "There is no default package repository; this should be implied either from the distro qualifiers key  or using a repository base url as repository_url qualifiers key."
+		},
+		"namespace_definition": {
+			"requirement": "required",
+			"note": "The namespace is the vendor such as alpine or openwrt. It is not case sensitive and shall be lowercased.",
+			"native_name": "vendor",
+			"case_sensitive": false
+		},
+		"name_definition": {
+			"requirement": "required",
+			"note": "The name is the package name. It is not case sensitive and shall be lowercased.",
+			"native_name": "name",
+			"case_sensitive": false
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"note": "The version is a package version as expected by apk.",
+			"native_name": "version"
+		},
+		"qualifiers_definition": [
+			{
+				"key": "arch",
+				"description": "The arch is the qualifiers key for a package architecture."
+			}
+		],
+		"examples": [
+			"pkg:apk/alpine/curl@7.83.0-r0?arch=x86",
+			"pkg:apk/alpine/apk@2.12.9-r3?arch=x86"
+		],
+		"note": "not to be confused with Android packages with a .apk extension."
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/bazel-definition.json",
+		"type": "bazel",
+		"type_name": "Bazel modules",
+		"description": "Bazel modules as specified at https://bazel.build/external/module",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://bcr.bazel.build",
+			"note": "The default repository is the Bazel Central Registry (BCR)"
+		},
+		"namespace_definition": {
+			"requirement": "prohibited",
+			"note": "Bazel modules do not use namespaces"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"note": "The name as defined in the MODULE.bazel file"
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"note": "The version as defined in the MODULE.bazel file. Uses a relaxed semantic versioning format described at https://bazel.build/external/module#version-format."
+		},
+		"subpath_definition": {
+			"requirement": "optional",
+			"native_name": "label",
+			"note": "The optional subpath MAY refer to a label of a particular package or target in the module (https://bazel.build/concepts/labels). The label shall not include a repo name and the leading '//' shall be omitted. When referring to targets, the label shall include the name of the target, separated from the package by ':'. If there is no target name, subpath is assumed to refer to the whole package."
+		},
+		"qualifiers_definition": [
+			{
+				"key": "repository_url",
+				"native_name": "registry",
+				"requirement": "optional",
+				"default_value": "https://bcr.bazel.build",
+				"description": "The URL of the registry that hosts this Bazel module. If not specified, it defaults to the BCR URL."
+			}
+		],
+		"examples": [
+			"pkg:bazel/rules_java@7.8.0",
+			"pkg:bazel/curl@8.8.0.bcr.1",
+			"pkg:bazel/curl@8.8.0?repository_url=https:%2F%2Fexample.org%2Fbazel-registry",
+			"pkg:bazel/rules_java@8.5.0#java/runfiles",
+			"pkg:bazel/rules_java@8.5.0#java/runfiles:runfiles",
+			"pkg:bazel/rules_go@0.48.0#go"
+		],
+		"reference_urls": [
+			"https://bazel.build/external/module"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/bitbucket-definition.json",
+		"type": "bitbucket",
+		"type_name": "Bitbucket",
+		"description": "Bitbucket-based packages",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://bitbucket.org"
+		},
+		"namespace_definition": {
+			"requirement": "required",
+			"note": "The namespace is the user or organization. It is not case sensitive and shall be lowercased.",
+			"native_name": "user or organization",
+			"case_sensitive": false
+		},
+		"name_definition": {
+			"requirement": "required",
+			"note": "The name is the repository name. It is not case sensitive and shall be lowercased.",
+			"native_name": "repository name",
+			"case_sensitive": false
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"note": "The version is a commit or tag.",
+			"native_name": "commit or tag"
+		},
+		"examples": [
+			"pkg:bitbucket/birkenfeld/pygments-main@244fd47e07d1014f0aed9c"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/bitnami-definition.json",
+		"type": "bitnami",
+		"type_name": "Bitnami",
+		"description": "Bitnami-based packages",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://downloads.bitnami.com/files/stacksmith"
+		},
+		"namespace_definition": {
+			"requirement": "prohibited",
+			"note": "there is no namespace"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"note": "The name is the component name. It shall be lowercased.",
+			"case_sensitive": false,
+			"native_name": "name"
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"native_name": "full package version, including version and revision",
+			"note": "The version is the full Bitnami package version, including version and revision."
+		},
+		"qualifiers_definition": [
+			{
+				"key": "arch",
+				"description": "The arch is the qualifiers key for a package architecture. Available values are amd64 (default) and arm64.",
+				"default_value": "amd64"
+			},
+			{
+				"key": "distro",
+				"description": "The distro is the qualifiers key for the distribution associated to the package."
+			}
+		],
+		"examples": [
+			"pkg:bitnami/wordpress?distro=debian-12",
+			"pkg:bitnami/wordpress@6.2.0?distro=debian-12",
+			"pkg:bitnami/wordpress@6.2.0?arch=arm64&distro=debian-12",
+			"pkg:bitnami/wordpress@6.2.0?arch=arm64&distro=photon-4"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/brew-definition.json",
+		"type": "brew",
+		"type_name": "Homebrew",
+		"description": "Homebrew packages for macOS and Linux",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://formulae.brew.sh/",
+			"note": "The default repository is the Homebrew Formulae at https://formulae.brew.sh/. Homebrew also supports third-party taps (repositories) which can be specified using the namespace or repository_url qualifier."
+		},
+		"namespace_definition": {
+			"requirement": "optional",
+			"native_name": "tap",
+			"case_sensitive": false,
+			"note": "The namespace is the Homebrew tap name, typically in the format 'owner/repo' (e.g., 'homebrew/core', 'some-org/some-tap'). It is not case sensitive and shall be lowercased. When not specified, formulas are assumed to come from the default 'homebrew/core' tap."
+		},
+		"name_definition": {
+			"requirement": "required",
+			"native_name": "formula",
+			"case_sensitive": false,
+			"note": "The name is the Homebrew formula or cask name. It is not case sensitive and shall be lowercased. Formula names containing '@' (used for versioned formulas like 'postgresql@12') shall have the '@' character percent-encoded as '%40' in the PURL string."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"native_name": "version",
+			"note": "The version is the Homebrew package version. Versions are optional to support use cases where the latest or any available version is acceptable."
+		},
+		"qualifiers_definition": [
+			{
+				"key": "repository_url",
+				"description": "The git URL of the tap repository when using a non-default tap. For example, 'https://github.com/some-org/homebrew-some-tap.git'."
+			}
+		],
+		"examples": [
+			"pkg:brew/sqlite@3.43.2",
+			"pkg:brew/go",
+			"pkg:brew/postgresql%4012@12.17",
+			"pkg:brew/homebrew/core/sqlite@3.43.2",
+			"pkg:brew/some-org/some-tap/some-app@1.2.3?repository_url=https:%2F%2Fgithub.com%2Fsome-org%2Fhomebrew-some-tap.git"
+		],
+		"reference_urls": [
+			"https://brew.sh/",
+			"https://formulae.brew.sh/",
+			"https://docs.brew.sh/Taps"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/cargo-definition.json",
+		"type": "cargo",
+		"type_name": "Cargo",
+		"description": "Cargo packages for Rust",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://crates.io/"
+		},
+		"namespace_definition": {
+			"requirement": "prohibited",
+			"note": "there is no namespace"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"native_name": "name",
+			"case_sensitive": true,
+			"note": "The name is the repository name."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"native_name": "version",
+			"note": "The version is the package version."
+		},
+		"examples": [
+			"pkg:cargo/rand@0.7.2",
+			"pkg:cargo/clap@2.33.0",
+			"pkg:cargo/structopt@0.3.11"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/chrome-definition.json",
+		"type": "chrome-extension",
+		"type_name": "Chrome Browser Extensions",
+		"description": "Chrome Browser Extensions. Note: there are currently no officially documented APIs, further there appears to be no way to query different versions of a package - there only seems to be responses on the latest version. To this end the version component of a chrome purl can be optional. Two known data sources are a sitemap which can be crawled to discover (some) extensions at https://chromewebstore.google.com/sitemap, and an 'updatecheck' API which you can read about here https://github.com/Rob--W/crxviewer , and perhaps here https://github.com/chromium/chromium/blob/main/docs/updater/protocol_3_1.md",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://chromewebstore.google.com/",
+			"note": "There is no documented API, only a sitemap and 'updatecheck' endpoints."
+		},
+		"namespace_definition": {
+			"requirement": "prohibited",
+			"note": "There is no namespace"
+		},
+		"name_definition": {
+			"native_name": "extension_id",
+			"requirement": "required",
+			"permitted_characters": "^[a-p]{32}$",
+			"case_sensitive": false,
+			"note": "The name is 32 characters in the range a-p (base16-encoded with letters instead of hex digits) and is case insensitive. This is not the same as the display name which is human readable and may vary with locale."
+		},
+		"version_definition": {
+			"native_name": "version",
+			"requirement": "optional",
+			"permitted_characters": "^\\d+(\\.\\d+){0,3}$",
+			"note": "The chrome extension version is semver-like but 1-4 segments. See https://developer.chrome.com/docs/extensions/reference/manifest/version"
+		},
+		"examples": [
+			"pkg:chrome-extension/hlepfoohegkhhmjieoechaddaejaokhf@25.7.1",
+			"pkg:chrome-extension/dncgedbnidfkppmdgfgidcepclnokpkb@6.0.2.3611",
+			"pkg:chrome-extension/kanfjhdeebkfgkbmnfknhejpadhlmiab@0.6",
+			"pkg:chrome-extension/dlpngalgnefjeiefhmpklpfiohadpglk@1",
+			"pkg:chrome-extension/dlpngalgnefjeiefhmpklpfiohadpglk"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/cocoapods-definition.json",
+		"type": "cocoapods",
+		"type_name": "CocoaPods",
+		"description": "CocoaPods pods",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://cdn.cocoapods.org/"
+		},
+		"namespace_definition": {
+			"requirement": "prohibited",
+			"note": "there is no namespace"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"case_sensitive": true,
+			"native_name": "pod name",
+			"note": "The name is the pod name and is case sensitive, cannot contain whitespace, a plus (+) character, or begin with a period (.)."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"native_name": "package version",
+			"note": "The version is the package version."
+		},
+		"subpath_definition": {
+			"requirement": "optional",
+			"note": "The purl subpath is used to represent a pods subspec (if present)."
+		},
+		"examples": [
+			"pkg:cocoapods/AFNetworking@4.0.1",
+			"pkg:cocoapods/MapsIndoors@3.24.0",
+			"pkg:cocoapods/ShareKit@2.0#Twitter",
+			"pkg:cocoapods/GoogleUtilities@7.5.2#NSData+zlib"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/composer-definition.json",
+		"type": "composer",
+		"type_name": "Composer",
+		"description": "Composer PHP packages",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://packagist.org"
+		},
+		"namespace_definition": {
+			"requirement": "required",
+			"case_sensitive": false,
+			"native_name": "vendor",
+			"note": "The namespace is the vendor. The namespace is not case sensitive and shall be lowercased."
+		},
+		"name_definition": {
+			"requirement": "required",
+			"case_sensitive": false,
+			"native_name": "name",
+			"note": "The name is not case sensitive and shall be lowercased. Private, local packages may have no name. In this case you cannot create a purl for these."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"native_name": "version"
+		},
+		"examples": [
+			"pkg:composer/laravel/laravel@5.5.0"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/conan-definition.json",
+		"type": "conan",
+		"type_name": "Conan C/C++ packages",
+		"description": "Conan C/C++ packages. The purl is designed to closely resemble the Conan-native <package-name>/<package-version>@<user>/<channel> syntax for package references as specified in https://docs.conan.io/en/1.46/cheatsheet.html#package-terminology",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://center.conan.io"
+		},
+		"namespace_definition": {
+			"requirement": "optional",
+			"native_name": "vendor",
+			"note": "The vendor of the package."
+		},
+		"name_definition": {
+			"requirement": "required",
+			"native_name": "package-name",
+			"note": "The Conan <package-name>."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"native_name": "package-version",
+			"note": "The Conan <package-version>."
+		},
+		"qualifiers_definition": [
+			{
+				"key": "user",
+				"native_name": "user",
+				"requirement": "optional",
+				"description": "The Conan <user>. Only required if the Conan package was published with <user>."
+			},
+			{
+				"key": "channel",
+				"native_name": "channel",
+				"requirement": "optional",
+				"description": "The Conan <channel>. Only required if the Conan package was published with Conan <channel>."
+			},
+			{
+				"key": "rrev",
+				"native_name": "recipe revision",
+				"requirement": "optional",
+				"description": "The Conan recipe revision (optional). If omitted, the purl refers to the latest recipe revision available for the given version."
+			},
+			{
+				"key": "prev",
+				"native_name": "package revision",
+				"requirement": "optional",
+				"description": "The Conan package revision (optional). If omitted, the purl refers to the latest package revision available for the given version and recipe revision."
+			}
+		],
+		"note": "Additional qualifiers can be used to distinguish Conan packages with different settings or options, e.g. os=Linux, build_type=Debug or shared=True. If no additional qualifiers are used to distinguish Conan packages build with different settings or options, then the purl is ambiguous and it is up to the user to work out which package is being referred to (e.g. with context information).",
+		"examples": [
+			"pkg:conan/openssl@3.0.3",
+			"pkg:conan/openssl.org/openssl@3.0.3?channel=stable&user=bincrafters",
+			"pkg:conan/openssl.org/openssl@3.0.3?arch=x86_64&build_type=Debug&compiler=Visual%20Studio&compiler.runtime=MDd&compiler.version=16&os=Windows&prev=b429db8a0e324114c25ec387bfd8281f330d7c5c&rrev=93a82349c31917d2d674d22065c7a9ef9f380c8e&shared=True"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/conda-definition.json",
+		"type": "conda",
+		"type_name": "Conda",
+		"description": "conda is for Conda packages",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://repo.anaconda.com"
+		},
+		"namespace_definition": {
+			"note": "there is no namspace",
+			"requirement": "prohibited"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"native_name": "name",
+			"note": "The name is the package name."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"native_name": "version",
+			"note": "The version is the package version."
+		},
+		"qualifiers_definition": [
+			{
+				"key": "build",
+				"description": "the build string."
+			},
+			{
+				"key": "channel",
+				"description": "the package stored location."
+			},
+			{
+				"key": "subdir",
+				"description": "the associated platform."
+			},
+			{
+				"key": "type",
+				"description": "package type."
+			}
+		],
+		"examples": [
+			"pkg:conda/absl-py@0.4.1?build=py36h06a4308_0&channel=main&subdir=linux-64&type=tar.bz2"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/cpan-definition.json",
+		"type": "cpan",
+		"type_name": "CPAN",
+		"description": "Perl package distributions published on CPAN",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://www.cpan.org/"
+		},
+		"namespace_definition": {
+			"requirement": "optional",
+			"native_name": "CPAN author/publisher ID (CPANID)",
+			"note": "When present, it represents the CPAN author/publisher ID (CPANID) and shall be uppercase. It is appropriate to use 'namespace' for compatibility with existing CPAN purl producers/consumers or when a workflow explicitly requires author-scoped identifiers. For new identifiers, the 'author' qualifier is the preferred way to specify the author/publisher. When 'version' is omitted, author scoping via 'namespace' may be ambiguous because a distribution can change maintainers over time."
+		},
+		"name_definition": {
+			"requirement": "required",
+			"case_sensitive": true,
+			"native_name": "distribution name",
+			"note": "The name is the distribution name and is case sensitive. A distribution name shall not contain the string '::'"
+		},
+		"version_definition": {
+			"note": "The version is the distribution version",
+			"requirement": "optional",
+			"native_name": "version"
+		},
+		"qualifiers_definition": [
+			{
+				"key": "author",
+				"requirement": "optional",
+				"description": "CPAN author/publisher ID (CPANID)"
+			},
+			{
+				"key": "distpath",
+				"requirement": "optional",
+				"description": "Repository-relative path (not a URL) to the distribution archive or directory, typically under 'authors/id/...'"
+			},
+			{
+				"key": "repository_url",
+				"requirement": "optional",
+				"description": "CPAN/MetaCPAN/BackPAN/DarkPAN repository base URL"
+			},
+			{
+				"key": "download_url",
+				"requirement": "optional",
+				"description": "URL of package or distribution"
+			},
+			{
+				"key": "vcs_url",
+				"requirement": "optional",
+				"description": "extra URL for a package version control system"
+			},
+			{
+				"key": "ext",
+				"requirement": "optional",
+				"description": "distribution file extension",
+				"default_value": "tar.gz"
+			}
+		],
+		"note": "The PURL 'name' shall be the CPAN distribution name (case sensitive) and shall not contain the '::' separator (module name). The CPAN author/publisher ID (CPANID) is OPTIONAL: when needed, it should be provided using the 'author' qualifier. The PURL 'namespace' is OPTIONAL and, when present, represents the CPANID and shall be uppercase; it may be used for compatibility with existing identifiers or tooling. When PURL 'version' is omitted, author scoping (via 'author' qualifier or 'namespace') may be ambiguous because a distribution can change maintainers over time.",
+		"examples": [
+			"pkg:cpan/perl@5.42",
+			"pkg:cpan/DBI@1.646",
+			"pkg:cpan/SBOM-CycloneDX",
+			"pkg:cpan/URI-PackageURL?author=GDT",
+			"pkg:cpan/libwww-perl@6.76?author=OALDERS",
+			"pkg:cpan/DateTime@1.55?author=DROLSKY&repository_url=backpan.perl.org",
+			"pkg:cpan/Term-Gnuplot@0.90380906?distpath=authors%2Fid%2FI%2FIL%2FILYAZ%2Fmodules%2FTerm-Gnuplot-0.90380906.zip"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/cran-definition.json",
+		"type": "cran",
+		"type_name": "CRAN",
+		"description": "CRAN R packages",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://cran.r-project.org"
+		},
+		"namespace_definition": {
+			"requirement": "prohibited",
+			"note": "there is no namespace"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"native_name": "name",
+			"case_sensitive": true,
+			"note": "The name is the package name and is case sensitive, but there cannot be two packages on CRAN with the same name ignoring case."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"native_name": "version",
+			"note": "The version is the package version."
+		},
+		"examples": [
+			"pkg:cran/A3@1.0.0",
+			"pkg:cran/rJava@1.0-4",
+			"pkg:cran/caret@6.0-88"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/deb-definition.json",
+		"type": "deb",
+		"type_name": "Debian package",
+		"description": "Debian packages, Debian derivatives, and Ubuntu packages",
+		"repository": {
+			"use_repository": true,
+			"note": "There is no default package repository, this should be implied either from the distro qualifiers key or using a base url as a repository_url qualifiers key."
+		},
+		"namespace_definition": {
+			"native_name": "vendor",
+			"case_sensitive": false,
+			"note": "The namespace is the \"vendor\" name such as \"debian\" or \"ubuntu\". It is not case sensitive and shall be lowercased.",
+			"requirement": "required"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"native_name": "name",
+			"case_sensitive": false,
+			"note": "The name is not case sensitive and shall be lowercased."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"native_name": "version",
+			"note": "The version is the version of the binary (or source) package."
+		},
+		"qualifiers_definition": [
+			{
+				"key": "arch",
+				"description": "arch is the qualifiers key for a package architecture. The special value arch=source identifies a Debian source package that usually consists of a Debian Source control file (.dsc) and corresponding upstream and Debian sources. The dpkg-query command can print the name and version of the corresponding source package of a binary package, e.g. dpkg-query -f ${source:Package} ${source:Version} -W <binary package name>"
+			}
+		],
+		"examples": [
+			"pkg:deb/debian/curl@7.50.3-1?arch=i386&distro=jessie",
+			"pkg:deb/debian/dpkg@1.19.0.4?arch=amd64&distro=stretch",
+			"pkg:deb/ubuntu/dpkg@1.19.0.4?arch=amd64",
+			"pkg:deb/debian/attr@1:2.4.47-2?arch=source",
+			"pkg:deb/debian/attr@1:2.4.47-2%2Bb1?arch=amd64"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/docker-definition.json",
+		"type": "docker",
+		"type_name": "Docker image",
+		"description": "for Docker images",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://hub.docker.com"
+		},
+		"namespace_definition": {
+			"note": "The namespace is the registry/user/organization if present.",
+			"requirement": "optional"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"native_name": "name"
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"note": "The version should be the image id sha256 or a tag. Since tags can be moved, a sha256 image id is preferred."
+		},
+		"examples": [
+			"pkg:docker/cassandra@latest",
+			"pkg:docker/smartentry/debian@dc437cc87d10",
+			"pkg:docker/customer/dockerimage@sha256%3A244fd47e07d10?repository_url=gcr.io"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/gem-definition.json",
+		"type": "gem",
+		"type_name": "RubyGems",
+		"description": "RubyGems",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://rubygems.org"
+		},
+		"namespace_definition": {
+			"requirement": "prohibited",
+			"note": "There is no namespace"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"native_name": "name"
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"native_name": "version"
+		},
+		"qualifiers_definition": [
+			{
+				"key": "platform",
+				"native_name": "platform",
+				"requirement": "optional",
+				"default_value": "ruby",
+				"description": "qualifiers key is used to specify an alternative platform. such as java for JRuby. The implied default is ruby for Ruby MRI."
+			}
+		],
+		"examples": [
+			"pkg:gem/ruby-advisory-db-check@0.12.4",
+			"pkg:gem/jruby-launcher@1.1.2?platform=java"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/generic-definition.json",
+		"type": "generic",
+		"type_name": "Generic Package",
+		"description": "The generic type is for plain, generic packages that do not fit anywhere else such as for \"upstream-from-distro\" packages. In particular this is handy for a plain version control repository such as a bare git repo in combination with a vcs_url.",
+		"repository": {
+			"use_repository": false,
+			"note": "There is no default repository."
+		},
+		"namespace_definition": {
+			"requirement": "optional",
+			"note": "there is no generic namespace definition"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"note": "as for other type, the name component is mandatory. In the worst case it can be a file or directory name."
+		},
+		"qualifiers_definition": [
+			{
+				"key": "download_url",
+				"description": "A download_url and checksum may be provided in qualifiers or as separate attributes outside of a purl for proper identification and location."
+			},
+			{
+				"key": "checksum",
+				"description": "A checksum may be provided in qualifiers or as separate attributes outside of a purl for proper identification and location."
+			}
+		],
+		"note": "When possible another or a new purl type should be used instead of using the generic type and eventually contributed back to this specification. Example have been truncated for brevity",
+		"examples": [
+			"pkg:generic/openssl@1.1.10g",
+			"pkg:generic/openssl@1.1.10g?download_url=https:%2F%2Fopenssl.org%2Fsource%2Fopenssl-1.1.0g.tar.gz&checksum=sha256:de4d501267da",
+			"pkg:generic/bitwarderl?vcs_url=git%2Bhttps:%2F%2Fgit.fsfe.org%2Fdxtr%2Fbitwarderl%40cc55108da32"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/git-definition.json",
+		"type": "git",
+		"type_name": "Git",
+		"description": "Git-based source packages",
+		"repository": {
+			"use_repository": true,
+			"note": "There is no default package repository, this should be implied from namespace."
+		},
+		"namespace_definition": {
+			"requirement": "required",
+			"case_sensitive": true,
+			"native_name": "The url path to the git host",
+			"note": "The source host for the git repository. See: https://git-scm.com/docs/git-clone.html#_git_urls"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"case_sensitive": true,
+			"native_name": "repository name with owner",
+			"note": "The path on the host to the git repository. See: https://git-scm.com/docs/git-clone.html#_git_urls"
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"native_name": "A git reference",
+			"note": "The version is a git reference (https://git-scm.com/book/en/v2/Git-Internals-Git-References). Ideally a commit or tag."
+		},
+		"examples": [
+			"pkg:git/codeberg.org/forgejo/forgejo@a72d2c07cfca03b55371089de6aa230d8c951fa0#options/locale_readme.md",
+			"pkg:git/cygwin.com/cgit/newlib-cygwin@6d049c54c3314da31d9ffac133a6a2f2dfecaac2",
+			"pkg:git/projects.blender.org/blender/blender.git",
+			"pkg:git/gitlab.gnome.org/GNOME/adwaita-fonts"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/github-definition.json",
+		"type": "github",
+		"type_name": "GitHub",
+		"description": "GitHub-based packages",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://github.com"
+		},
+		"namespace_definition": {
+			"requirement": "required",
+			"case_sensitive": false,
+			"native_name": "user or organization",
+			"note": "The namespace is the user or organization. It is not case sensitive and shall be lowercased."
+		},
+		"name_definition": {
+			"requirement": "required",
+			"case_sensitive": false,
+			"native_name": "repository name",
+			"note": "The name is the repository name. It is not case sensitive and shall be lowercased."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"native_name": "commit or tag",
+			"note": "The version is a commit or tag."
+		},
+		"examples": [
+			"pkg:github/package-url/purl-spec@244fd47e07d1004",
+			"pkg:github/package-url/purl-spec@244fd47e07d1004#everybody/loves/dogs"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/golang-definition.json",
+		"type": "golang",
+		"type_name": "Go package",
+		"description": "Go packages",
+		"repository": {
+			"use_repository": true,
+			"note": "There is no default package repository, this is implied in the namespace using the go get command conventions. In practice the Go module proxy acts as a public default repository."
+		},
+		"namespace_definition": {
+			"requirement": "required",
+			"case_sensitive": true,
+			"note": "The namespace shall be lowercased."
+		},
+		"name_definition": {
+			"requirement": "required",
+			"case_sensitive": true,
+			"note": "The name shall be lowercased."
+		},
+		"subpath_definition": {
+			"requirement": "optional",
+			"note": "The subpath is used to point to a subpath inside a package."
+		},
+		"note": "The current definition predates Go modules and has several practical problems, and in particular it is impossible to determine what is a module and what is a package short of having full access to the source code or making an API call to the Go module proxy.",
+		"version_definition": {
+			"requirement": "optional",
+			"note": "The version is often empty when a commit is not specified and should be the commit in most cases when available."
+		},
+		"examples": [
+			"pkg:golang/github.com/gorilla/context@234fd47e07d1004f0aed9c",
+			"pkg:golang/google.golang.org/genproto#googleapis/api/annotations",
+			"pkg:golang/github.com/gorilla/context@234fd47e07d1004f0aed9c#api"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/hackage-definition.json",
+		"type": "hackage",
+		"type_name": "Haskell package",
+		"description": "Haskell packages",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://hackage.haskell.org"
+		},
+		"namespace_definition": {
+			"requirement": "prohibited",
+			"note": "there is no namespace"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"case_sensitive": true,
+			"native_name": "name",
+			"normalization_rules": [
+				"Apply kebab-case"
+			],
+			"note": "The name is case sensitive and use kebab-case."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"native_name": "version",
+			"note": "The version is package version."
+		},
+		"examples": [
+			"pkg:hackage/a50@0.5",
+			"pkg:hackage/AC-HalfInteger@1.2.1",
+			"pkg:hackage/3d-graphics-examples@0.0.0.2"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/hex-definition.json",
+		"type": "hex",
+		"type_name": "Hex",
+		"description": "Hex packages",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://repo.hex.pm"
+		},
+		"namespace_definition": {
+			"requirement": "optional",
+			"case_sensitive": false,
+			"native_name": "organization for private packages",
+			"note": "The namespace is optional; it may be used to specify the organization for private packages on hex.pm. It is not case sensitive and shall be lowercased."
+		},
+		"name_definition": {
+			"requirement": "required",
+			"case_sensitive": false,
+			"native_name": "name",
+			"note": "The name is not case sensitive and shall be lowercased."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"native_name": "version"
+		},
+		"examples": [
+			"pkg:hex/jason@1.1.2",
+			"pkg:hex/acme/foo@2.3.",
+			"pkg:hex/phoenix_html@2.13.3#priv/static/phoenix_html.js",
+			"pkg:hex/bar@1.2.3?repository_url=https:%2F%2Fmyrepo.example.com"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/huggingfaces-definition.json",
+		"type": "huggingface",
+		"type_name": "HuggingFace models",
+		"description": "Hugging Face ML models",
+		"repository": {
+			"use_repository": true,
+			"note": "The default repository is https://huggingface.co."
+		},
+		"namespace_definition": {
+			"requirement": "required",
+			"case_sensitive": true,
+			"native_name": "model repository username or organization",
+			"note": "The namespace is the model repository username or organization, if present. It is case sensitive."
+		},
+		"name_definition": {
+			"requirement": "required",
+			"case_sensitive": true,
+			"native_name": "model repository name",
+			"note": "The name is the model repository name. It is case sensitive."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"case_sensitive": false,
+			"native_name": "model revision Git commit hash",
+			"note": "The version is the model revision Git commit hash. It is case insensitive and shall be lowercased in the package URL."
+		},
+		"examples": [
+			"pkg:huggingface/distilbert/distilbert-base-uncased@043235d6088ecd3dd5fb5ca3592b6913fd516027",
+			"pkg:huggingface/microsoft/deberta-v3-base@559062ad13d311b87b2c455e67dcd5f1c8f65111?repository_url=https:%2F%2Fhub-ci.huggingface.co"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/julia-definition.json",
+		"type": "julia",
+		"type_name": "Julia Package",
+		"description": "Julia packages",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://github.com/JuliaRegistries/General"
+		},
+		"namespace_definition": {
+			"requirement": "prohibited",
+			"note": "there is no namespace"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"native_name": "name",
+			"case_sensitive": true,
+			"note": "The name is the package name (without a `.jl` suffix). The name is case sensitive."
+		},
+		"version_definition": {
+			"native_name": "version",
+			"requirement": "optional",
+			"note": "The version is the package version."
+		},
+		"qualifiers_definition": [
+			{
+				"key": "uuid",
+				"native_name": "uuid",
+				"requirement": "required",
+				"description": "The Julia package UUID."
+			}
+		],
+		"examples": [
+			"pkg:julia/Dates@1.9.0?uuid=ade2ca70-3891-5945-98fb-dc099432e06a",
+			"pkg:julia/Dates?uuid=ade2ca70-3891-5945-98fb-dc099432e06a",
+			"pkg:julia/RegisterQD@0.3.1?uuid=ac24ea0c-1830-11e9-18d4-81f172323054",
+			"pkg:julia/RegisterQD@0.3.1?uuid=ac24ea0c-1830-11e9-18d4-81f172323054&repository_url=https:%2F%2Fgithub.com%2FHolyLab%2FHolyLabRegistry"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/luarocks-definition.json",
+		"type": "luarocks",
+		"type_name": "LuaRocks",
+		"description": "Lua packages installed with LuaRocks",
+		"repository": {
+			"use_repository": true
+		},
+		"namespace_definition": {
+			"case_sensitive": false,
+			"native_name": "user manifest",
+			"note": "The user manifest under which the package is registered. If not given, the root manifest is assumed. It is case insensitive, but lowercase is encouraged since namespaces are normalized to ASCII lowercase.",
+			"requirement": "optional"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"case_sensitive": false,
+			"native_name": "name",
+			"note": "The LuaRocks package name. It is case insensitive, but lowercase is encouraged since package names are normalized to ASCII lowercase."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"case_sensitive": true,
+			"native_name": "full package version, including module version and rockspec revision",
+			"note": "The full LuaRocks package version, including module version and rockspec revision. It is case sensitive, and lowercase shall be used to avoid compatibility issues with older LuaRocks versions. The full version number is required to uniquely identify a version."
+		},
+		"qualifiers_definition": [
+			{
+				"key": "repository_url",
+				"description": "The LuaRocks rocks server to be used; useful in case a private server is used (optional). If omitted, https://luarocks.org as default server is assumed."
+			}
+		],
+		"examples": [
+			"pkg:luarocks/luasocket@3.1.0-1",
+			"pkg:luarocks/hisham/luafilesystem@1.8.0-1",
+			"pkg:luarocks/username/packagename@0.1.0-1?repository_url=https:%2F%2Fexample.com%2Fprivate_rocks_server%2F"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/maven-definition.json",
+		"type": "maven",
+		"type_name": "Maven",
+		"description": "PURL type for Maven JARs and related artifacts.",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://repo.maven.apache.org/maven2/",
+			"note": "The Maven Central repository is the public repository for Apache Maven packages. This repository is also mirrored at https://repo1.maven.org/maven2/. Use the standard repository_url qualifier to point to another repository"
+		},
+		"namespace_definition": {
+			"requirement": "required",
+			"case_sensitive": true,
+			"native_name": "groupId",
+			"note": "The group id is the namespace."
+		},
+		"name_definition": {
+			"requirement": "required",
+			"case_sensitive": true,
+			"native_name": "artifactId",
+			"note": "The artifact id is the name."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"case_sensitive": true,
+			"native_name": "version"
+		},
+		"qualifiers_definition": [
+			{
+				"key": "classifier",
+				"requirement": "optional",
+				"description": "The maven classifier as defined in the POM documentation.",
+				"native_name": "classifier"
+			},
+			{
+				"key": "type",
+				"requirement": "optional",
+				"description": "The maven type as defined in the POM documentation. Note that Maven uses a concept / coordinate called packaging which does not map directly 1:1 to a file extension. In this use case, we need to construct a link to one of many possible artifacts. Maven itself uses type in a dependency declaration when needed to disambiguate between them.",
+				"native_name": "type",
+				"default_value": "jar"
+			}
+		],
+		"examples": [
+			"pkg:maven/org.apache.xmlgraphics/batik-anim@1.9.1",
+			"pkg:maven/org.apache.xmlgraphics/batik-anim@1.9.1?type=pom",
+			"pkg:maven/org.apache.xmlgraphics/batik-anim@1.9.1?classifier=sources",
+			"pkg:maven/org.apache.xmlgraphics/batik-anim@1.9.1?type=zip&classifier=dist",
+			"pkg:maven/net.sf.jacob-projec/jacob@1.14.3?classifier=x86&type=dll",
+			"pkg:maven/net.sf.jacob-projec/jacob@1.14.3?classifier=x64&type=dll",
+			"pkg:maven/groovy/groovy@1.0?repository_url=https:%2F%2Fmaven.google.com"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/mlflow-definition.json",
+		"type": "mlflow",
+		"type_name": "MLflow",
+		"description": "MLflow ML models (Azure ML, Databricks, etc.)",
+		"repository": {
+			"use_repository": true,
+			"note": "The repository is the MLflow tracking URI. There is no default. Some examples include Azure ML https://<region>.api.azureml.ms/mlflow/v1.0/subscriptions/<subscription-id>/resourceGroups/<resource-group-name>/providers/Microsoft.MachineLearningServices/workspaces/<workspace-name> and Azure Databricks https://adb-<numbers>.<number>.azuredatabricks.net/api/2.0/mlflow and AWS Databricks https://dbc-<alphanumeric>-<alphanumeric>.cloud.databricks.com/api/2.0/mlflow and GCP Databricks https://<numbers>.<number>.gcp.databricks.com/api/2.0/mlflow"
+		},
+		"namespace_definition": {
+			"requirement": "prohibited",
+			"note": "there is no namespace"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"note": "The name is the model name. Case sensitivity depends on the server implementation, such as for Azure ML, it is case sensitive and shall be kept as-is in the package URL; and for Databricks, it is case insensitive and shall be lowercased in the package URL."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"native_name": "version",
+			"note": "The version is the model version."
+		},
+		"qualifiers_definition": [
+			{
+				"key": "model_uuid",
+				"native_name": "model_uuid",
+				"description": "model_uuid as defined in the MLflow documentation."
+			},
+			{
+				"key": "run_id",
+				"native_name": "run_id",
+				"description": "run_id as defined in the MLflow documentation."
+			}
+		],
+		"examples": [
+			"pkg:mlflow/creditfraud@3?repository_url=https:%2F%2Fwestus2.api.azureml.ms%2Fmlflow%2Fv1.0%2Fsubscriptions%2Fa50f2011-fab8-4164-af23-c62881ef8c95%2FresourceGroups%2FTestResourceGroup%2Fproviders%2FMicrosoft.MachineLearningServices%2Fworkspaces%2FTestWorkspace",
+			"pkg:mlflow/trafficsigns@10?model_uuid=36233173b22f4c89b451f1228d700d49&run_id=410a3121-2709-4f88-98dd-dba0ef056b0a&repository_url=https:%2F%2Fadb-5245952564735461.0.azuredatabricks.net%2Fapi%2F2.0%2Fmlflow"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/npm-definition.json",
+		"type": "npm",
+		"type_name": "Node NPM packages",
+		"description": "PURL type for npm packages.",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://registry.npmjs.org/",
+			"note": "The default repository is the npm Registry at https://registry.npmjs.org"
+		},
+		"namespace_definition": {
+			"requirement": "optional",
+			"case_sensitive": true,
+			"native_name": "scope",
+			"note": "The namespace is used for the scope of a scoped NPM package. The npm scope @ sign prefix is always percent encoded, as it was in the early days of npm scope."
+		},
+		"name_definition": {
+			"requirement": "required",
+			"case_sensitive": true,
+			"native_name": "name",
+			"note": "The package.json spec changed in 2015 to require that a new package 'shall not have uppercase letters in the name', but old packages with mixed case names were \"grandfathered in\"."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"case_sensitive": true,
+			"native_name": "version"
+		},
+		"examples": [
+			"pkg:npm/foobar@12.3.1",
+			"pkg:npm/%40angular/animation@12.3.1",
+			"pkg:npm/mypackage@12.4.5?vcs_url=git:%2F%2Fhost.com%2F%2Fpath%2Fto%2Frepo.git%404345abcd34343"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/nuget-definition.json",
+		"type": "nuget",
+		"type_name": "NuGet",
+		"description": "NuGet .NET packages",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://www.nuget.org"
+		},
+		"namespace_definition": {
+			"requirement": "prohibited",
+			"note": "there is no namespace"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"native_name": "version",
+			"case_sensitive": true,
+			"note": "Technically the name is case-preserving, but case-insensitive, and NuGet packages archives are case-preserving, while some NuGet API calls demand to lowercase the package name."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"native_name": "version",
+			"note": "The NuGet version is semver-like but may contain more than three segments"
+		},
+		"note": "There is no namespace per se even if the common convention is to use dot-separated package names where the first segment is namespace-like.",
+		"examples": [
+			"pkg:nuget/EnterpriseLibrary.Common@6.0.1304"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/oci-definition.json",
+		"type": "oci",
+		"type_name": "OCI image",
+		"description": "For artifacts stored in registries that conform to the OCI Distribution Specification https://github.com/opencontainers/distribution-spec including container images built by Docker and others",
+		"repository": {
+			"use_repository": true,
+			"note": "There is no canonical package repository for OCI artifacts. Therefore oci purls shall be registry agnostic by default. To specify the repository, provide a repository_url value."
+		},
+		"namespace_definition": {
+			"requirement": "prohibited",
+			"note": "OCI purls do not contain a namespace, although, repository_url may contain a namespace as part of the physical location of the package."
+		},
+		"name_definition": {
+			"requirement": "required",
+			"case_sensitive": false,
+			"note": "The name is not case sensitive and shall be lowercased. The name is the last fragment of the repository name. For example if the repository name is library/debian then the name is debian."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"case_sensitive": false,
+			"note": "The version is the sha256:hex_encoded_lowercase_digest of the artifact and is required to uniquely identify the artifact."
+		},
+		"qualifiers_definition": [
+			{
+				"key": "arch",
+				"description": "key for a package architecture, when relevant."
+			},
+			{
+				"key": "repository_url",
+				"description": "A repository URL where the artifact may be found, but not intended as the only location. This value is encouraged to identify a location the content may be fetched."
+			},
+			{
+				"key": "tag",
+				"description": "artifact tag that may have been associated with the digest at the time."
+			}
+		],
+		"reference_urls": [
+			"https://github.com/opencontainers/distribution-spec"
+		],
+		"examples": [
+			"pkg:oci/debian@sha256%3A244fd47e07d10?repository_url=docker.io%2Flibrary%2Fdebian&arch=amd64&tag=latest",
+			"pkg:oci/debian@sha256%3A244fd47e07d10?repository_url=ghcr.io%2Fdebian&tag=bullseye",
+			"pkg:oci/static@sha256%3A244fd47e07d10?repository_url=gcr.io%2Fdistroless%2Fstatic&tag=latest",
+			"pkg:oci/hello-wasm@sha256:244fd47e07d10?tag=v1"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/opam-definition.json",
+		"type": "opam",
+		"type_name": "Opam package",
+		"description": "Opam packages",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://opam.ocaml.org"
+		},
+		"namespace_definition": {
+			"requirement": "prohibited",
+			"note": "there is no namespace"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"case_sensitive": true,
+			"native_name": "name",
+			"note": "The name is case sensitive."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"native_name": "version",
+			"note": "The version is package version."
+		},
+		"examples": [
+			"pkg:opam/ocaml-base-compiler@5.2.0",
+			"pkg:opam/git@3/16.1"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/otp-definition.json",
+		"type": "otp",
+		"type_name": "BEAM/OTP Application",
+		"description": "BEAM/OTP applications written in Elixir, Erlang, Gleam and other BEAM languages",
+		"note": "- If the component was fetched from a Hex repository, prefer a ``hex`` purl\n  because Hex provides a global, collision-free namespace that uniquely ties\n  the version to the published source.\n- There is no default package repository. When the application can be\n  fetched from a known location, add a general qualifier such as\n  `repository_url`, `download_url` or `vcs_url`.",
+		"repository": {
+			"use_repository": false
+		},
+		"namespace_definition": {
+			"requirement": "prohibited",
+			"note": "The component is unused and shall be empty"
+		},
+		"name_definition": {
+			"case_sensitive": false,
+			"native_name": "name",
+			"note": "The OTP application name from the `.app` file; it is case-insensitive and shall be lower-cased.",
+			"requirement": "required"
+		},
+		"version_definition": {
+			"native_name": "version",
+			"note": "The OTP application version (the `vsn` attribute).",
+			"requirement": "optional"
+		},
+		"subpath_definition": {
+			"case_sensitive": false,
+			"native_name": "May be added to reference a specific file or directory inside the OTP application.",
+			"requirement": "optional"
+		},
+		"qualifiers_definition": [
+			{
+				"key": "repository_url",
+				"requirement": "optional",
+				"native_name": "Repository URL",
+				"description": "The canonical origin of the OTP application source. This qualifier is optional, but it should be included whenever the origin is known, and should point to a trusted source repository."
+			},
+			{
+				"key": "platform",
+				"requirement": "optional",
+				"native_name": "platform",
+				"description": "The target operating system for native code (e.g. ``linux``, ``darwin``, ``freebsd``, ``sunos``, ``win32``; case-insensitive)."
+			},
+			{
+				"key": "arch",
+				"requirement": "optional",
+				"native_name": "arch",
+				"description": "The arch is the qualifiers key for a package architecture."
+			}
+		],
+		"examples": [
+			"pkg:otp/erts@10.6.3?platform=linux&arch=amd64&repository_url=https:%2F%2Fgithub.com%2Ferlang%2Fotp&vcs_url=git%2Bhttps:%2F%2Fgithub.com%2Ferlang%2Fotp.git",
+			"pkg:otp/stdlib@3.11.2?repository_url=https:%2F%2Fgithub.com%2Ferlang%2Fotp&vcs_url=git%2Bhttps:%2F%2Fgithub.com%2Ferlang%2Fotp.git",
+			"pkg:otp/crypto@4.6.4?platform=darwin&arch=x86_64&repository_url=https:%2F%2Fgithub.com%2Ferlang%2Fotp&vcs_url=git%2Bhttps:%2F%2Fgithub.com%2Ferlang%2Fotp.git",
+			"pkg:otp/elixir@1.10.0?repository_url=https:%2F%2Fgithub.com%2Felixir-lang%2Felixir&vcs_url=git%2Bhttps:%2F%2Fgithub.com%2Felixir-lang%2Felixir.git",
+			"pkg:otp/eex@1.10.0?repository_url=https:%2F%2Fgithub.com%2Felixir-lang%2Felixir&vcs_url=git%2Bhttps:%2F%2Fgithub.com%2Felixir-lang%2Felixir.git",
+			"pkg:otp/logger@1.10.0?repository_url=https:%2F%2Fgithub.com%2Felixir-lang%2Felixir&vcs_url=git%2Bhttps:%2F%2Fgithub.com%2Felixir-lang%2Felixir.git",
+			"pkg:otp/rebar@3.13.0?repository_url=https:%2F%2Fgithub.com%2Ferlang%2Frebar3&vcs_url=git%2Bhttps:%2F%2Fgithub.com%2Ferlang%2Frebar3.git",
+			"pkg:otp/hex@2.1.1?repository_url=https:%2F%2Fgithub.com%2Fhexpm%2Fhex&vcs_url=git%2Bhttps:%2F%2Fgithub.com%2Fhexpm%2Fhex.git"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/pub-definition.json",
+		"type": "pub",
+		"type_name": "Pub",
+		"description": "Dart and Flutter pub packages",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://pub.dartlang.org"
+		},
+		"namespace_definition": {
+			"requirement": "prohibited",
+			"note": "there is no namespace"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"native_name": "name",
+			"case_sensitive": false,
+			"permitted_characters": "^[a-z0-9_]",
+			"normalization_rules": [
+				"Replace non-[a-z] letters, non-[0-9] digits with underscore _"
+			],
+			"note": "Pub normalizes all package names to be lowercase and using underscores. The only allowed characters are [a-z0-9_]. More information on pub naming and versioning is available in the pubspec documentation https://dart.dev/tools/pub/pubspec"
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"native_name": "version"
+		},
+		"examples": [
+			"pkg:pub/characters@1.2.0",
+			"pkg:pub/flutter@0.0.0"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/pypi-definition.json",
+		"type": "pypi",
+		"type_name": "PyPI",
+		"description": "Python packages",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://pypi.org",
+			"note": "Previously https://pypi.python.org"
+		},
+		"namespace_definition": {
+			"requirement": "prohibited",
+			"note": "there is no namespace"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"native_name": "name",
+			"case_sensitive": false,
+			"normalization_rules": [
+				"Replace underscore _ with dash -",
+				"Replace dot . with underscore _ when used in distribution (sdist, wheel) names"
+			],
+			"note": "PyPI treats - and _ as the same character and is not case sensitive. Therefore a PyPI package name shall be lowercased and underscore _ replaced with a dash -. Note that PyPI itself is preserving the case of package names. When used in distribution and wheel names, the dot . is replaced with an underscore _"
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"case_sensitive": false,
+			"native_name": "version"
+		},
+		"qualifiers_definition": [
+			{
+				"key": "file_name",
+				"requirement": "optional",
+				"description": "The file_name qualifier selects a particular distribution file (case-sensitive). For naming convention, see the Python Packaging User Guide on source distributions https://packaging.python.org/en/latest/specifications/source-distribution-format/#source-distribution-file-name and on binary distributions https://packaging.python.org/en/latest/specifications/binary-distribution-format/#file-name-convention and the rules for platform compatibility tags https://packaging.python.org/en/latest/specifications/platform-compatibility-tags/"
+			}
+		],
+		"examples": [
+			"pkg:pypi/django@1.11.1",
+			"pkg:pypi/django@1.11.1?file_name=Django-1.11.1.tar.gz",
+			"pkg:pypi/django@1.11.1?file_name=Django-1.11.1-py2.py3-none-any.whl",
+			"pkg:pypi/django-allauth@12.23"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/qpkg-definition.json",
+		"type": "qpkg",
+		"type_name": "QNX package",
+		"description": "QNX packages",
+		"repository": {
+			"use_repository": true,
+			"note": "There is no default package repository, this should be implied either from the namespace or using a repository base URL as repository_url qualifiers key."
+		},
+		"namespace_definition": {
+			"case_sensitive": false,
+			"native_name": "vendor",
+			"note": "The namespace is the vendor of the package. It is not case sensitive and shall be lowercased.",
+			"requirement": "required"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"native_name": "name"
+		},
+		"examples": [
+			"pkg:qpkg/blackberry/com.qnx.sdp@7.0.0.SGA201702151847",
+			"pkg:qpkg/blackberry/com.qnx.qnx710.foo.bar.qux@0.0.4.01449T202205040833L"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/rpm-definition.json",
+		"type": "rpm",
+		"type_name": "RPM",
+		"description": "RPM packages",
+		"repository": {
+			"use_repository": true,
+			"note": "There is no default package repository, this should be implied either from the distro qualifiers key or using a repository base URL as repository_url qualifiers key."
+		},
+		"namespace_definition": {
+			"case_sensitive": false,
+			"native_name": "vendor",
+			"note": "The namespace is the vendor such as Fedora or OpenSUSE. It is not case sensitive and shall be lowercased.",
+			"requirement": "required"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"case_sensitive": true,
+			"note": "The name is the RPM name and is case sensitive.",
+			"native_name": "name"
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"note": "The version is the combined version and release of an RPM.",
+			"native_name": "version-release"
+		},
+		"qualifiers_definition": [
+			{
+				"key": "epoch",
+				"requirement": "optional",
+				"description": "(optional for RPMs) is a qualifier as its not required for unique identification, but when the epoch exists we strongly encourage using it."
+			},
+			{
+				"key": "arch",
+				"description": "the qualifiers key for a package architecture."
+			}
+		],
+		"examples": [
+			"pkg:rpm/fedora/curl@7.50.3-1.fc25?arch=i386&distro=fedora-25",
+			"pkg:rpm/fedora/centerim@4.22.10-1.el6?arch=i686&epoch=1&distro=fedora-25"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/swid-definition.json",
+		"type": "swid",
+		"type_name": "Software Identification (SWID) Tag",
+		"description": "PURL type for ISO-IEC 19770-2 Software Identification (SWID) tags.",
+		"repository": {
+			"use_repository": false,
+			"note": "There is no default package repository."
+		},
+		"namespace_definition": {
+			"requirement": "optional",
+			"case_sensitive": true,
+			"native_name": "softwareCreator",
+			"note": "The namespace is the optional name and regid of the entity with a role of softwareCreator. If specified, name is required and is the first segment in the namespace. If regid is known, it shall be specified as the second segment in the namespace. A maximum of two segments are supported."
+		},
+		"name_definition": {
+			"requirement": "required",
+			"case_sensitive": true,
+			"native_name": "SoftwareIdentity/name",
+			"note": "The name is the name as defined in the SWID SoftwareIdentity element."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"case_sensitive": true,
+			"native_name": "SoftwareIdentity/version",
+			"note": "The version is the version as defined in the SWID SoftwareIdentity element."
+		},
+		"qualifiers_definition": [
+			{
+				"key": "tag_id",
+				"requirement": "required",
+				"description": "The qualifier tag_id shall not be empty and corresponds to the tagId as defined in the SWID SoftwareIdentity element. Per the SWID specification, GUIDs are recommended. If a GUID is used, it shall be lowercase. If a GUID is not used, the tag_id qualifier is case aware but not case sensitive."
+			},
+			{
+				"key": "tag_version",
+				"requirement": "optional",
+				"description": "The qualifier tag_version is an optional integer and corresponds to the tagVersion as defined in the SWID SoftwareIdentity element. If not specified, defaults to 0."
+			},
+			{
+				"key": "patch",
+				"requirement": "optional",
+				"description": "The qualifier patch is optional and corresponds to the patch as defined in the SWID SoftwareIdentity element. If not specified, defaults to false."
+			},
+			{
+				"key": "tag_creator_name",
+				"requirement": "optional",
+				"description": "The qualifier tag_creator_name is optional. If the tag creator is different from the software creator, the tag_creator_name qualifier should be specified."
+			},
+			{
+				"key": "tag_creator_regid",
+				"requirement": "optional",
+				"description": "The qualifier tag_creator_regid is optional. If the tag creator is different from the software creator, the tag_creator_regid qualifier should be specified."
+			}
+		],
+		"note": "Use of known qualifiers key/value pairs such as download_url can be used to specify where the package was retrieved from.",
+		"examples": [
+			"pkg:swid/Acme/example.com/Enterprise%2BServer@1.0.0?tag_id=75b8c285-fa7b-485b-b199-4745e3004d0d",
+			"pkg:swid/Fedora@29?tag_id=org.fedoraproject.Fedora-29",
+			"pkg:swid/Adobe%2BSystems%2BIncorporated/Adobe%2BInDesign@CC?tag_id=CreativeCloud-CS6-Win-GM-MUL"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/swift-definition.json",
+		"type": "swift",
+		"type_name": "Swift packages",
+		"description": "Swift packages",
+		"repository": {
+			"use_repository": true,
+			"note": "There is no default package repository, this should be implied from namespace."
+		},
+		"namespace_definition": {
+			"requirement": "required",
+			"note": "The namespace is source host and user/organization and is required.",
+			"case_sensitive": true
+		},
+		"name_definition": {
+			"requirement": "required",
+			"case_sensitive": true,
+			"native_name": "repository name"
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"case_sensitive": true,
+			"native_name": "package version"
+		},
+		"examples": [
+			"pkg:swift/github.com/Alamofire/Alamofire@5.4.3",
+			"pkg:swift/github.com/RxSwiftCommunity/RxFlow@2.12.4"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/vcpkg-definition.json",
+		"type": "vcpkg",
+		"type_name": "Vcpkg C/C++ packages",
+		"description": "Packages from the vcpkg C/C++ package manager.",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://github.com/microsoft/vcpkg/",
+			"note": "The absolute URL of the vcpkg registry where the package is available. If omitted, the default registry `https://github.com/microsoft/vcpkg` is assumed. For filesystem registries or [overlay ports](https://learn.microsoft.com/vcpkg/concepts/overlay-ports), the URL uses the `file` scheme."
+		},
+		"namespace_definition": {
+			"requirement": "prohibited"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"native_name": "package-name",
+			"note": "The vcpkg package name."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"native_name": "package-version",
+			"note": "The vcpkg package version."
+		},
+		"qualifiers_definition": [
+			{
+				"key": "port_version",
+				"native_name": "port_version",
+				"requirement": "optional",
+				"description": "The vcpkg [port-version](https://learn.microsoft.com/vcpkg/reference/vcpkg-json#port-version). If omitted, the purl refers to port-version 0."
+			},
+			{
+				"key": "repository_revision",
+				"native_name": "repository_revision",
+				"requirement": "optional",
+				"description": "The full 40-character commit hash of the vcpkg registry baseline. For git registries this is the `baseline` field in `vcpkg-configuration.json`. A baseline fixes the state of the whole registry rather than a single port, and the same port version can be reached from many baselines, so the exact port recipe is pinned by the `vcs_url` git-tree instead. If omitted, the purl refers to the latest revision available."
+			},
+			{
+				"key": "triplet",
+				"native_name": "triplet",
+				"requirement": "optional",
+				"description": "The vcpkg [triplet](https://learn.microsoft.com/vcpkg/concepts/triplets) describing the target build configuration (architecture, operating system, and CRT/library linkage), for example `x64-windows` or `arm64-osx`. It describes the build target and does not affect package identity."
+			},
+			{
+				"key": "vcs_url",
+				"requirement": "optional",
+				"description": "The `vcs_url` common qualifier carries the port's version-control URL in pip VCS form, for example `git+https://github.com/microsoft/vcpkg@<git-tree>`. Its git-tree pins the exact port recipe."
+			}
+		],
+		"note": "A purl may carry extra qualifiers that describe the context in which the package is used, such as build configuration or platform. Parsers shall tolerate these and may ignore any they do not expect. The `vcs_url` common qualifier carries the port's version-control URL in pip VCS form, for example `git+https://github.com/microsoft/vcpkg@<git-tree>`. Its git-tree pins the exact port recipe. The `features` qualifier, a comma-separated list of enabled vcpkg feature names, records which optional features were enabled at build time; it is informational and not currently normative.",
+		"examples": [
+			"pkg:vcpkg/bzip2@1.0.8?port_version=6",
+			"pkg:vcpkg/zlib@1.3.1?triplet=x64-linux&vcs_url=git%2Bhttps:%2F%2Fgithub.com%2Fmicrosoft%2Fvcpkg%40b5d3197b1a8a3f4c2d9e0f1a2b3c4d5e6f708192",
+			"pkg:vcpkg/ffmpeg@5.1.2?repository_url=https:%2F%2Fgithub.com%2Fazure-sdk%2Fvcpkg",
+			"pkg:vcpkg/zlib@1.3.1?repository_url=https:%2F%2Fgithub.com%2Fazure-sdk%2Fvcpkg&triplet=x64-linux&vcs_url=git%2Bhttps:%2F%2Fgithub.com%2Fazure-sdk%2Fvcpkg%40b5d3197b1a8a3f4c2d9e0f1a2b3c4d5e6f708192",
+			"pkg:vcpkg/llvm@15.0.7?repository_url=file:%2F%2F%2FC:%2Flocal-registry%2Fvcpkg",
+			"pkg:vcpkg/bzip2@1.0.8?port_version=6&repository_revision=84a143e4caf6b70db57f28d04c41df4a85c480fa&triplet=x64-linux"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/vscode-extension-definition.json",
+		"type": "vscode-extension",
+		"type_name": "VS Code Extension packages",
+		"description": "VS Code Extension packages",
+		"repository": {
+			"use_repository": true,
+			"default_repository_url": "https://marketplace.visualstudio.com/vscode"
+		},
+		"namespace_definition": {
+			"requirement": "required",
+			"case_sensitive": false,
+			"native_name": "publisher",
+			"note": "The namespace is the publisher or vendor of the extension (e.g., 'redhat', 'microsoft'). This corresponds to the 'Publisher' property of the 'Identity' element in the package's .vsixmanifest file."
+		},
+		"name_definition": {
+			"requirement": "required",
+			"case_sensitive": false,
+			"native_name": "name",
+			"note": "The extension name. This corresponds to the 'Id' property of the 'Identity' element in the package's .vsixmanifest file."
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"case_sensitive": false,
+			"native_name": "version",
+			"note": "The extension version. This corresponds to the 'Version' property of the 'Identity' element in the package's .vsixmanifest file."
+		},
+		"qualifiers_definition": [
+			{
+				"key": "platform",
+				"requirement": "optional",
+				"description": "The target platform for the extension. Common values include 'universal', 'linux-x64', 'linux-arm64', 'darwin-x64', 'darwin-arm64', 'win32-x64', 'win32-arm64', etc.",
+				"default_value": "universal",
+				"native_name": "targetPlatform"
+			}
+		],
+		"examples": [
+			"pkg:vscode-extension/ms-python/python@2023.25.10292213",
+			"pkg:vscode-extension/muhammad-sammy/csharp@2.15.30?repository_url=https:%2F%2Fopen-vsx.org",
+			"pkg:vscode-extension/golang/go@0.39.1?platform=win32-x64"
+		],
+		"reference_urls": [
+			"https://open-vsx.org/",
+			"https://github.com/eclipse/openvsx",
+			"https://code.visualstudio.com/api/working-with-extensions/publishing-extension#platformspecific-extensions"
+		]
+	},
+	{
+		"$schema": "https://packageurl.org/purl-schemas/purl-type-definition.schema-1.1.json",
+		"$id": "https://packageurl.org/purl-types/yocto-definition.json",
+		"type": "yocto",
+		"type_name": "Yocto Project",
+		"description": "Yocto Project recipes",
+		"repository": {
+			"use_repository": true,
+			"note": "There is no default package repository. The classifier repository_url is optional."
+		},
+		"namespace_definition": {
+			"case_sensitive": false,
+			"native_name": "layer",
+			"note": "The namespace is the name of the layer which provides the recipe. The layer name as specified in the BBFILE_COLLECTIONS variable in conf/layer.conf of the layer.",
+			"requirement": "optional"
+		},
+		"name_definition": {
+			"requirement": "required",
+			"case_sensitive": true,
+			"note": "The name of the package with common prefixes and suffixes removed, also known as BPN (https://docs.yoctoproject.org/ref-manual/variables.html#term-BPN) in a yocto recipe.",
+			"native_name": "BPN"
+		},
+		"version_definition": {
+			"requirement": "optional",
+			"note": "The version of the package also known as PV (https://docs.yoctoproject.org/ref-manual/variables.html#term-PV>) in a yocto recipe.",
+			"native_name": "PV"
+		},
+		"qualifiers_definition": [
+			{
+				"key": "repository_url",
+				"requirement": "optional",
+				"description": "The GIT URL of the layer. In example: https:%2F%2Fgit.openembedded.org%2Fopenembedded-core or https:%2F%2Fgithub.com%2Fakuster%2Fmeta-odroid. The URL scheme is mandatory and shall be one of https, http, ssh, or git."
+			},
+			{
+				"key": "layer_version",
+				"requirement": "optional",
+				"description": "layer_version is the version of the yocto layer which is a SHA1 commit, tag or branch of the yocto layer GIT repository. It should support also short commits (https://git-scm.com/book/en/v2/Git-Tools-Revision-Selection#_short_sha_1)."
+			}
+		],
+		"examples": [
+			"pkg:yocto/core/glibc@2.35",
+			"pkg:yocto/core/glibc@2.35&repository_url=https:%2F%2Fgit.openembedded.org%2Fopenembedded-core&layer_version=kirkstone",
+			"pkg:yocto/core/glibc@2.35&repository_url=https:%2F%2Fgit.openembedded.org%2Fopenembedded-core&layer_version=25ba9895b9",
+			"pkg:yocto/core/glibc@2.35&repository_url=https:%2F%2Fgit.openembedded.org%2Fopenembedded-core&layer_version=25ba9895b98715adb66a06e50f644aea2e2c9eb6",
+			"pkg:yocto/xilinx/u-boot-xlnx-uenv@1.0.0",
+			"pkg:yocto/odroid-layer/emmc@1.0.0?layer_version=4e07fab&repository_url=https:%2F%2Fgithub.com%2Fakuster%2Fmeta-odroid"
+		]
+	}
+]

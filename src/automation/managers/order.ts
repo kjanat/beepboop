@@ -1,6 +1,7 @@
+import { packageId } from '@/automation/package-identity';
 import type { Package } from '@/automation/types';
 export function publicationOrder(packages: Package[]): string[] {
-	const byName = new Map(packages.map((p) => [`${p.manager}:${p.name}`, p]));
+	const byName = new Map(packages.map((p) => [packageId(p), p]));
 	const visiting = new Set<string>(),
 		visited = new Set<string>(),
 		order: string[] = [];
@@ -10,7 +11,10 @@ export function publicationOrder(packages: Package[]): string[] {
 		const pkg = byName.get(key);
 		if (!pkg) return;
 		visiting.add(key);
-		for (const name of [...pkg.dependencies].sort()) visit(`${pkg.manager}:${name}`);
+		for (const name of [...pkg.dependencies].sort()) {
+			const dependency = packages.find(candidate => candidate.manager === pkg.manager && candidate.name === name);
+			if (dependency) visit(packageId(dependency));
+		}
 		visiting.delete(key);
 		visited.add(key);
 		if (pkg.publish) order.push(key);

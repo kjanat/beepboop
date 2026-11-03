@@ -1,6 +1,7 @@
 import { createExecution, executionId } from '@/automation/execution';
 import { discover } from '@/automation/managers';
 import { tagPrefix } from '@/automation/managers/tags';
+import { matchesPackage, selectorKey } from '@/automation/package-identity';
 import type { Execution, RepositoryRecord, Snapshot, WorkflowBinding } from '@/automation/types';
 
 /** Compile a frozen preparation into operations for its verified merged revision. */
@@ -24,7 +25,7 @@ export async function compileReleaseSet(preparation: Execution, snapshot: Snapsh
 	const inventory = discover(snapshot, preparation.configuration.managers);
 	for (const group of plan.groups) {
 		for (const name of group.packages) {
-			const matches = inventory.packages.filter(pkg => `${pkg.manager}:${pkg.name}` === name);
+			const matches = inventory.packages.filter(pkg => matchesPackage(name, pkg));
 			const [match] = matches;
 			if (
 				matches.length !== 1 || !match
@@ -109,8 +110,12 @@ export async function compileReleaseSet(preparation: Execution, snapshot: Snapsh
 	for (const group of plan.groups) {
 		const members = operations.filter(op => op.releaseSet?.group === group.id);
 		if (!members.length) throw new Error(`Release group has no operations: ${group.id}`);
-		const publications = new Set([...group.packages, ...members.flatMap(op => op.workflow?.publications ?? [])]);
-		const required = stream.required.filter(id => publications.has(id));
+		const publications = new Set(
+			[...group.packages, ...members.flatMap(op => op.workflow?.publications ?? [])].map(reference =>
+				selectorKey(reference, inventory.packages)
+			),
+		);
+		const required = stream.required.filter(id => publications.has(selectorKey(id, inventory.packages)));
 		for (const id of required) {
 			if (assigned.has(id)) throw new Error(`Publication assigned to multiple groups: ${id}`);
 			assigned.add(id);

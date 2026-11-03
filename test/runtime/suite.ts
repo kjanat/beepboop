@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { createRuntime, type Runtime } from '@root/test/runtime/environment';
 import { fixture, managed } from '@root/test/runtime/fixtures';
+import type { Execution } from '@/automation/types';
 
 describe('built Cloudflare Worker', () => {
 	let context: Runtime;
@@ -40,7 +41,7 @@ describe('built Cloudflare Worker', () => {
 			body: JSON.stringify(fixture),
 		});
 		assert.equal(response.status, 200);
-		const first = (await response.json()) as typeof fixture;
+		const first = (await response.json()) as Execution;
 		assert.equal(first.sourceSha, fixture.sourceSha);
 		const duplicate = await context.fetch('https://automation.test/enqueue', {
 			method: 'POST',
@@ -382,6 +383,45 @@ describe('built Worker CLI authentication', () => {
 				(await runtime.fetch('https://automation.test/auth/cli/token', { method: 'POST', body: verifier })).status,
 				202,
 			);
+		} finally {
+			await runtime.close();
+		}
+	}, 30000);
+});
+
+describe('built Worker package identity persistence', () => {
+	it('writes canonical publication identities to the journal and D1, including after restart', async () => {
+		const runtime = await createRuntime();
+		try {
+			const publication = {
+				id: 'npm:@Scope/Tool',
+				manager: 'npm',
+				name: '@Scope/Tool',
+				version: '1.0.0',
+				outcome: 'pending',
+				required: true,
+			};
+			const response = await runtime.fetch('https://automation.test/enqueue', {
+				method: 'POST',
+				body: JSON.stringify({ ...fixture, publications: [publication] }),
+			});
+			assert.equal(response.status, 200);
+			assert.equal(((await response.json()) as Execution).publications[0]?.id, 'pkg:npm/%40Scope/Tool');
+			await runtime.restart();
+			const journal = await runtime.fetch('https://automation.test/journal');
+			const saved = await journal.json() as Execution;
+			assert.equal(saved.publications[0]?.id, 'pkg:npm/%40Scope/Tool');
+			assert.deepEqual(saved.publications[0]?.identity, {
+				type: 'npm',
+				namespace: '@Scope',
+				name: 'Tool',
+				version: '1.0.0',
+			});
+			const responseIndex = await runtime.fetch('https://automation.test/api/executions', {
+				headers: { cookie: `__Host-beepboop_access=${runtime.access}` },
+			});
+			const indexed = await responseIndex.json() as Execution[];
+			assert.deepEqual(indexed[0]?.publications, saved.publications);
 		} finally {
 			await runtime.close();
 		}

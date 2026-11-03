@@ -145,7 +145,7 @@
 				"publications": {
 					"type": "array",
 					"items": {
-						"type": "string"
+						"$ref": "#/$defs/packageReference"
 					}
 				},
 				"schedule": {
@@ -316,7 +316,7 @@
 				"required": {
 					"type": "array",
 					"items": {
-						"type": "string"
+						"$ref": "#/$defs/packageReference"
 					}
 				},
 				"credentials": {
@@ -346,7 +346,7 @@
 				"packages": {
 					"type": "array",
 					"items": {
-						"type": "string"
+						"$ref": "#/$defs/packageReference"
 					}
 				},
 				"versionSource": {
@@ -537,6 +537,11 @@
 					}
 				}
 			}
+		},
+		"packageReference": {
+			"type": "string",
+			"minLength": 1,
+			"description": "Package URL (versionless for release selection). Legacy manager:name references are accepted for compatibility."
 		}
 	}
 }

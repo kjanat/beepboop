@@ -1,9 +1,9 @@
 {
 	"name": "beepboop",
+	"private": true,
 	"description": "Coordinate repository releases through Beepboop",
 	"homepage": "https://beepboop.kjanat.dev",
 	"repository": { "type": "git", "url": "https://github.com/kjanat/beepboop.git" },
-	"private": true,
 	"type": "module",
 	"bin": {
 		"beepboop": "src/cli/cli.ts",

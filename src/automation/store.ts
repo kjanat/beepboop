@@ -1,3 +1,4 @@
+import { identifyExecution, identifyRepository } from '@/automation/package-identity';
 import type {
 	ActivityEntry,
 	AutomationEvent,
@@ -23,13 +24,13 @@ export class Store {
 			.prepare('SELECT document FROM repositories WHERE id=?')
 			.bind(id)
 			.first<{ document: string }>();
-		return row ? JSON.parse(row.document) : undefined;
+		return row ? identifyRepository(JSON.parse(row.document)) : undefined;
 	}
 	async repositories(): Promise<RepositoryRecord[]> {
 		const result = await this.db
 			.prepare('SELECT document FROM repositories ORDER BY name')
 			.all<{ document: string }>();
-		return result.results.map((row) => JSON.parse(row.document));
+		return result.results.map((row) => identifyRepository(JSON.parse(row.document)));
 	}
 	async onboardingPulls(): Promise<Map<number, string>> {
 		const result = await this.db.prepare('SELECT repository_id, document FROM onboarding').all<{
@@ -43,7 +44,7 @@ export class Store {
 			.prepare(
 				'INSERT INTO repositories(id,name,document,updated_at) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,document=excluded.document,updated_at=excluded.updated_at',
 			)
-			.bind(repository.id, repository.name, JSON.stringify(repository), repository.updatedAt)
+			.bind(repository.id, repository.name, JSON.stringify(identifyRepository(repository)), repository.updatedAt)
 			.run();
 	}
 	async execution(id: string): Promise<Execution | undefined> {
@@ -51,7 +52,7 @@ export class Store {
 			.prepare('SELECT document FROM executions WHERE id=?')
 			.bind(id)
 			.first<{ document: string }>();
-		return row ? JSON.parse(row.document) : undefined;
+		return row ? identifyExecution(JSON.parse(row.document)) : undefined;
 	}
 	async executions(repositoryId?: number): Promise<Execution[]> {
 		const query = repositoryId === undefined
@@ -61,7 +62,7 @@ export class Store {
 					'SELECT document FROM executions WHERE repository_id=? ORDER BY updated_at DESC LIMIT 200',
 				)
 				.bind(repositoryId);
-		return (await query.all<{ document: string }>()).results.map((row) => JSON.parse(row.document));
+		return (await query.all<{ document: string }>()).results.map((row) => identifyExecution(JSON.parse(row.document)));
 	}
 	async putExecution(execution: Execution): Promise<void> {
 		await this.db
@@ -72,7 +73,7 @@ export class Store {
 				execution.id,
 				execution.repositoryId,
 				execution.state,
-				JSON.stringify(execution),
+				JSON.stringify(identifyExecution(execution)),
 				execution.updatedAt,
 			)
 			.run();

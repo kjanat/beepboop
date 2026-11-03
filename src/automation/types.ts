@@ -1,5 +1,6 @@
 import type { InputDeclaration, OutputDeclaration, Platform, ResolvedInput } from '@/automation/outputs';
 import type { RefPlan, RefPolicy } from '@/automation/refs';
+import type { PackageIdentity } from '@/package-url';
 export type ManagerName =
 	| 'pre-commit'
 	| 'cargo'
@@ -62,6 +63,8 @@ export interface Snapshot {
 	tags?: string[];
 }
 export interface Package {
+	/** Absent only on legacy records; normalized at discovery and persistence boundaries. */
+	identity?: PackageIdentity;
 	previousModule?: { name: string; version: string };
 	publicationStatus?: 'published' | 'missing' | 'failed' | 'unchecked';
 	generated?: boolean;
@@ -111,6 +114,7 @@ export interface ReleasePlan {
 }
 export type Outcome = 'pending' | 'succeeded' | 'failed' | 'uncertain' | 'skipped';
 export interface Publication {
+	identity?: PackageIdentity;
 	id: string;
 	manager: ManagerName;
 	name: string;

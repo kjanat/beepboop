@@ -23,7 +23,7 @@ test('independent versions compose edits and dependencies against one source rev
 		version: '1.0.1',
 		dependencies: { core: '^2.1.0' },
 	});
-	expect(plan.publicationOrder).toEqual(['npm:core', 'npm:cli']);
+	expect(plan.publicationOrder).toEqual(['pkg:npm/core', 'pkg:npm/cli']);
 	expect(planReleaseSet(snapshot, discover(snapshot), { groups: [...groups].reverse() })).toEqual(plan);
 });
 test('platform consumers depend on all declared producer outputs', () => {

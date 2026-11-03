@@ -1,4 +1,5 @@
 import { publicationOrder } from '@/automation/managers/order';
+import { identityOf, packageId } from '@/automation/package-identity';
 import type { Inventory, ManagerName, Package, Publication, Snapshot } from '@/automation/types';
 
 export interface Manager {
@@ -118,7 +119,8 @@ export class ManagerRegistry {
 		}
 		const identities = new Set<string>();
 		for (const pkg of result.packages) {
-			const identity = `${pkg.manager}:${pkg.name}`;
+			pkg.identity = identityOf(pkg, snapshot.repository.name);
+			const identity = packageId(pkg);
 			if (identities.has(identity)) result.diagnostics.push(`Duplicate package identity: ${identity}`);
 			identities.add(identity);
 			pkg.dependencies = pkg.dependencies.filter(name =>
