@@ -11,11 +11,8 @@ repository includes the configuration for `beepboop.kjanat.dev` and the
 3. Set the account, domain, owner ID, OpenAuth issuer/client, and exact
    `ADMIN_SUBJECT` for your deployment.
 4. Register the OpenAuth callback URL: `<APPLICATION_ORIGIN>/auth/callback`.
-5. Apply the database migration:
-
-   ```sh
-   bunx wrangler d1 migrations apply beepboop --remote --config wrangler.toml
-   ```
+5. Deploy through Cloudflare Workers Builds. The deployment command applies
+   pending database migrations before uploading the Worker.
 
 ## Local development
 
@@ -92,14 +89,19 @@ bun run deploy
 
 For Cloudflare Workers Builds, set the deploy command to `bun run deploy`.
 The build-command field can stay empty: the deploy script runs `astro build`
-first, then deploys its generated `dist/server/wrangler.json` configuration.
+first, applies pending D1 migrations to the production `beepboop` database,
+then deploys its generated `dist/server/wrangler.json` configuration. Migration
+failure stops deployment. The Builds API token must have D1 edit access.
 Dependency installation and `astro sync` do not build the Worker. Running
 `bunx wrangler deploy` directly from a fresh checkout instead bundles the source
 entrypoint and fails on Astro's virtual modules. Do not add aliases for those
 modules; Astro resolves them during its build.
 
-`bun run deploy:dry` uses the same deployment script with `--dry-run` so CI
-checks the production build path without publishing a Worker.
+`bun run deploy:dry` builds Astro and checks the generated Worker with
+`wrangler deploy --dry-run`. It never applies remote migrations or publishes a
+Worker. Runtime tests apply the migrations to an isolated local database.
+Keep schema migrations compatible with the currently running Worker because
+migrations run before its replacement is uploaded.
 
 Sign in to the dashboard and enroll the first physical security key. Enroll a
 second key with a touch of the first.
