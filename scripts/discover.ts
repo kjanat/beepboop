@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { resolve } from 'node:path';
+import { z } from 'zod';
 import { discover, resolvePublished } from '@/automation/managers';
 import { tagQueries } from '@/automation/managers/tags';
 import { onboardingConfiguration } from '@/automation/onboarding';
@@ -22,11 +23,20 @@ let snapshot: Snapshot;
 if (process.argv[2] === '--github') {
 	const name = process.argv[3];
 	if (!name || !/^\w[\w.-]*\/[\w.-]+$/.test(name)) throw new Error('Expected owner/repository');
-	const gh = (path: string) => JSON.parse(command(['gh', 'api', path]));
-	const metadata = gh(`repos/${name}`);
-	const revision = gh(`repos/${name}/commits/${encodeURIComponent(metadata.default_branch)}`);
-	const sha = revision.sha;
-	const tree = gh(`repos/${name}/git/trees/${sha}?recursive=1`);
+	const gh = <T extends z.ZodType>(path: string, schema: T): z.output<T> =>
+		schema.parse(JSON.parse(command(['gh', 'api', path])));
+	const metadata = gh(`repos/${name}`, z.object({ id: z.number(), default_branch: z.string() }));
+	const { sha } = gh(
+		`repos/${name}/commits/${encodeURIComponent(metadata.default_branch)}`,
+		z.object({ sha: z.string() }),
+	);
+	const tree = gh(
+		`repos/${name}/git/trees/${sha}?recursive=1`,
+		z.object({
+			truncated: z.boolean(),
+			tree: z.array(z.object({ path: z.string(), type: z.string(), mode: z.string() })),
+		}),
+	);
 	if (tree.truncated) throw new Error('Truncated repository tree');
 	const files: Record<string, string> = {};
 	for (const entry of tree.tree) {
@@ -35,13 +45,16 @@ if (process.argv[2] === '--github') {
 				files[entry.path] = '';
 				continue;
 			}
-			const file = gh(`repos/${name}/contents/${entry.path}?ref=${sha}`);
+			const file = gh(
+				`repos/${name}/contents/${entry.path}?ref=${sha}`,
+				z.object({ size: z.number(), content: z.string() }),
+			);
 			if (file.size > 1048576) throw new Error('Discovery file limit exceeded');
 			files[entry.path] = Buffer.from(file.content, 'base64').toString('utf8');
 		}
 	}
 	const tags = tagQueries(Object.keys(files)).flatMap(prefix =>
-		gh(`repos/${name}/git/matching-refs/tags/${prefix}`).map((row: { ref: string }) =>
+		gh(`repos/${name}/git/matching-refs/tags/${prefix}`, z.array(z.object({ ref: z.string() }))).map(row =>
 			row.ref.slice('refs/tags/'.length)
 		)
 	);

@@ -1,7 +1,7 @@
 import { seedBrowser, seedOnboarding } from '@root/test/runtime/browser-fixture';
 import { FixtureGateway } from '@root/test/runtime/gateway';
 import type { WorkflowIdentity } from '@/automation/auth';
-import type { Execution } from '@/automation/types';
+import { executionSchema } from '@/automation/schemas';
 import worker, { AutomationCoordinator } from '@/index';
 
 export { ReleaseWorkflow } from '@/index';
@@ -30,7 +30,7 @@ export class Probe extends AutomationCoordinator {
 		const url = new URL(request.url);
 		switch (url.pathname) {
 			case '/enqueue':
-				return Response.json(await this.enqueue(await request.json<Execution>()));
+				return Response.json(await this.enqueue(executionSchema.parse(await request.json())));
 			case '/events':
 				return Response.json(await this.releaseEvents());
 			case '/approve-probe':
