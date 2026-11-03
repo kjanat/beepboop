@@ -8,7 +8,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
 		try {
 			context.locals.actor = await administrator(context.request, bindings());
 		} catch {
-			return context.redirect('/auth/login', 302);
+			return context.redirect(
+				`/auth/login?return=${encodeURIComponent(`${context.url.pathname}${context.url.search}`)}`,
+				302,
+			);
 		}
 	}
 	const response = await next();

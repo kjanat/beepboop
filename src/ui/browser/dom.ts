@@ -37,7 +37,7 @@ export async function api<T>(path: string, schema: z.ZodType<T>, body?: unknown)
 		},
 	);
 	if (response.status === 401) {
-		location.assign('/auth/login');
+		location.assign(`/auth/login?return=${encodeURIComponent(`${location.pathname}${location.search}`)}`);
 		throw new Error('Session expired. Signing in again.');
 	}
 	if (!response.ok) {

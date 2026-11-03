@@ -174,6 +174,13 @@ function loginFailed(reason: string): Response {
 		},
 	);
 }
+export function returnPath(value: unknown): string {
+	if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') || value.includes('\\')) return '/';
+	const url = new URL(value, 'https://beepboop.invalid');
+	return url.origin === 'https://beepboop.invalid' && !url.pathname.startsWith('/auth/')
+		? `${url.pathname}${url.search}`
+		: '/';
+}
 export async function completeLogin(request: Request, steps: LoginCompletion): Promise<Response> {
 	const id = cookie(request, '__Host-beepboop_flow');
 	if (!id) return loginFailed('This sign-in link has no login attempt behind it. Cookies may be blocked.');
@@ -192,7 +199,7 @@ export async function completeLogin(request: Request, steps: LoginCompletion): P
 			headers: {
 				Location: typeof flow.cli === 'string' && /^[a-f0-9]{64}$/.test(flow.cli)
 					? `/auth/cli/authorize?challenge=${flow.cli}`
-					: '/',
+					: returnPath(flow.return),
 				'Set-Cookie': cookieHeader('__Host-beepboop_access', tokens.access, tokens.expiresIn),
 			},
 		});
@@ -217,7 +224,11 @@ export async function authRoute(
 		await env.DB.prepare('INSERT INTO sessions VALUES(?,?,?)')
 			.bind(
 				id,
-				JSON.stringify({ ...challenge, cli: new URL(request.url).searchParams.get('cli') }),
+				JSON.stringify({
+					...challenge,
+					cli: new URL(request.url).searchParams.get('cli'),
+					return: returnPath(new URL(request.url).searchParams.get('return')),
+				}),
 				Date.now() + 600000,
 			)
 			.run();
