@@ -15,13 +15,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with: { persist-credentials: false }
-      - parallel:
-          - name: Setup Node
-            uses: actions/setup-node@v7
-            with: { node-version-file: "mise.toml" }
-          - name: Setup Bun
-            uses: oven-sh/setup-bun@v2
-          - uses: kjanat/runner@v0.28.0
+      - uses: jdx/mise-action@v5
       - run: runner i -fs types
       - run: run -pk check lint test test:actions purl:check
       - run: run -s build:cli check:cli check:jsr

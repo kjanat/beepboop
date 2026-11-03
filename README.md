@@ -2,7 +2,7 @@
 
 <img src="assets/beepboop.png" alt="Beepboop robot" width="180">
 
-Release automation for your GitHub repositories.
+Release automation for ~~your~~ *my* GitHub repositories.
 
 Beepboop discovers packages, opens release preparation PRs, starts publishing workflows,
 and tracks their results. Configure each repository in `.github/beepboop.json`,
@@ -10,7 +10,7 @@ share defaults through presets, and manage releases from one dashboard.
 
 ## Release a project
 
-1. Install the GitHub App on the repository.
+1. Install the [GitHub App](https://github.com/apps/beepboop-by-kjanat) on the repository.
 2. Open the dashboard and select **Inspect** to discover its packages and workflows.
 3. Open and review the onboarding PR. Assign packages to release streams and choose the publications required for each release.
 4. Connect preparation and promotion workflows using the [Actions integration](docs/automation.md#connect-a-workflow).
