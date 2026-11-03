@@ -16,9 +16,12 @@ export interface VerificationContext {
 	github(path: string): Promise<unknown>;
 }
 export type RegistryVersion =
-	| { kind: 'published'; version: string }
-	| { kind: 'missing'; url: string }
-	| { kind: 'failed'; url: string; reason: string };
+	& (
+		| { kind: 'published'; version: string }
+		| { kind: 'missing'; url: string }
+		| { kind: 'failed'; url: string; reason: string }
+	)
+	& { previousModule?: { name: string; version: string } };
 export interface VersionEdit {
 	source: string;
 	before: string;
@@ -69,7 +72,10 @@ export class ManagerRegistry {
 			: { ...publication, outcome: 'uncertain' };
 	}
 	async resolvePublished(inventory: Inventory, request: Fetcher): Promise<Inventory> {
-		const packages = inventory.packages.map(pkg => ({ ...pkg }));
+		const packages: Package[] = inventory.packages.map(pkg => {
+			const { published: _published, previousModule: _previous, ...rest } = pkg;
+			return { ...rest, publicationStatus: 'unchecked' };
+		});
 		const diagnostics: string[] = [];
 		const pending = packages.filter(pkg => pkg.publish && this.managers.get(pkg.manager)?.latest);
 		for (let offset = 0; offset < pending.length; offset += 8) {
@@ -77,6 +83,8 @@ export class ManagerRegistry {
 				pending.slice(offset, offset + 8).map(async pkg => {
 					const result = await this.managers.get(pkg.manager)?.latest?.(pkg, request);
 					if (!result) return;
+					pkg.publicationStatus = result.kind;
+					if (result.previousModule) pkg.previousModule = result.previousModule;
 					if (result.kind === 'published') pkg.published = result.version;
 					else {
 						diagnostics.push(

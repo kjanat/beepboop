@@ -13,7 +13,7 @@ import {
 	versionsInFiles,
 } from '@/automation/managers';
 import { managerRegistry } from '@/automation/managers/builtins';
-import { escapeModule, splitModulePath } from '@/automation/managers/go';
+import { escapeModule, isGoPseudoVersion, splitModulePath } from '@/automation/managers/go';
 import { directory } from '@/automation/managers/helpers';
 import { latestTag, tagPrefix, tagQueries } from '@/automation/managers/tags';
 import type { Publication, Snapshot } from '@/automation/types';
@@ -29,6 +29,13 @@ function repository(name: string, files: Record<string, string>, tags?: string[]
 function packages(snapshot: Snapshot, managers: Parameters<typeof discover>[1] = ['go', 'goreleaser']) {
 	return discover(snapshot, managers).packages;
 }
+
+test('Go pseudo-versions are distinct from release tags', () => {
+	expect(isGoPseudoVersion('2.0.0-20260102030405-012345abcdef')).toBe(true);
+	expect(isGoPseudoVersion('v1.2.4-0.20260102030405-012345abcdef')).toBe(true);
+	expect(isGoPseudoVersion('1.17.0')).toBe(false);
+	expect(isGoPseudoVersion('2.0.0-rc.1')).toBe(false);
+});
 
 describe('go module discovery', () => {
 	test('a root module takes its version from v tags', () => {
@@ -340,11 +347,15 @@ describe('published registry versions', () => {
 		const registry = edgeFetch(url =>
 			url.startsWith('https://registry.npmjs.org/')
 				? Response.json({ latest: '1.17.0', next: '1.18.0-rc.1' })
+				: url.startsWith('https://proxy.golang.org/')
+				? Response.json({ Version: url.includes('/v2/') ? 'v2.0.0-20260102030405-012345abcdef' : 'v1.17.0' })
 				: Response.json({ crate: { max_stable_version: '0.2.0', max_version: '0.3.0-alpha.1' } })
 		);
 		const inventory = await resolvePublished(discover(snapshot), registry.fetch);
 		expect(registry.urls.sort()).toEqual([
 			'https://crates.io/api/v1/crates/actionlint-extension-api',
+			'https://proxy.golang.org/actionlint.kjanat.dev/@latest',
+			'https://proxy.golang.org/actionlint.kjanat.dev/v2/@latest',
 			'https://registry.npmjs.org/-/package/%40kjanat%2Factionlint/dist-tags',
 		]);
 		expect(
@@ -355,10 +366,50 @@ describe('published registry versions', () => {
 				'npm:@kjanat/actionlint': ['0.0.0', '1.17.0'],
 				'npm:actionlint': ['0.0.0', undefined],
 				'goreleaser:actionlint': ['1.17.0', undefined],
-				'go:actionlint.kjanat.dev/v2': [undefined, undefined],
+				'go:actionlint.kjanat.dev/v2': [undefined, '2.0.0-20260102030405-012345abcdef'],
 			});
 		expect(inventory.diagnostics).toEqual([]);
 	});
+	test('Go discovery queries current and unversioned module paths without conflating versions', async () => {
+		const registry = edgeFetch(url =>
+			Response.json({ Version: url.includes('/v2/') ? 'v2.0.0-20260102030405-012345abcdef' : 'v1.17.0' })
+		);
+		const inventory = await resolvePublished(discover(snapshot, ['go']), registry.fetch);
+		expect(inventory.packages[0]?.publicationStatus).toBe('published');
+		expect(inventory.packages[0]?.published).toBe('2.0.0-20260102030405-012345abcdef');
+		expect(inventory.packages[0]?.previousModule).toEqual({ name: 'actionlint.kjanat.dev', version: '1.17.0' });
+		expect(inventory.packages[0]?.version).toBeUndefined();
+	});
+	test('Go lookup distinguishes absence, failure and wrong-major responses', async () => {
+		for (const [status, expected] of [[404, 'missing'], [503, 'failed']] as const) {
+			const inventory = await resolvePublished(discover(snapshot, ['go']), async () => new Response(null, { status }));
+			expect(inventory.packages[0]?.publicationStatus).toBe(expected);
+			expect(inventory.packages[0]?.published).toBeUndefined();
+		}
+		const inventory = await resolvePublished(
+			discover(snapshot, ['go']),
+			async () => Response.json({ Version: 'v1.17.0' }),
+		);
+		expect(inventory.packages[0]?.publicationStatus).toBe('failed');
+		expect(inventory.packages[0]?.published).toBeUndefined();
+		expect(inventory.packages[0]?.previousModule?.version).toBe('1.17.0');
+	});
+	test('Go proxy requests escape module case and skip non-publishable modules', async () => {
+		const registry = edgeFetch(() => Response.json({ Version: 'v1.2.3' }));
+		const inventory = await resolvePublished(
+			discover(
+				repository('o/r', {
+					'go.mod': 'module Example.dev/Tool\n',
+					'.github/tool/go.mod': 'module internal-tool\n',
+				}),
+				['go'],
+			),
+			registry.fetch,
+		);
+		expect(registry.urls).toEqual(['https://proxy.golang.org/!example.dev/!tool/@latest']);
+		expect(inventory.packages.find(p => p.name === 'internal-tool')?.publicationStatus).toBe('unchecked');
+	});
+
 	test('crates with only prereleases report their newest version', async () => {
 		const inventory = await resolvePublished(
 			discover(snapshot, ['cargo']),

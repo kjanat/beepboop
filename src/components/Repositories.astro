@@ -1,4 +1,5 @@
 ---
+import { isGoPseudoVersion } from '@/automation/managers/go';
 import type { Dashboard } from '@/server/dashboard.ts';
 import { date, workflowChoices } from '@/server/dashboard.ts';
 
@@ -78,25 +79,64 @@ const { data } = Astro.props;
 		</div>
 		<div class="repository-grid">
 			<div>
-				<h3>Packages</h3>{repository.inventory.packages.length ? (
-					<table>
-						<thead>
-							<tr>
-								<th>Package</th>
-								<th>Published</th>
-								<th>In repository</th>
-							</tr>
-						</thead>
-						<tbody>
-							{repository.inventory.packages.map(p => (
+				<h3>Release packages</h3>{repository.inventory.packages.length ? (
+					<>
+						<table>
+							<thead>
 								<tr>
-									<td>{p.name}<small>{p.manager}</small></td>
-									<td>{p.published ?? 'Not found'}</td>
-									<td>{p.version ?? 'From tags'}</td>
+									<th>Package</th>
+									<th>Published</th>
+									<th>In repository</th>
 								</tr>
-							))}
-						</tbody>
-					</table>
+							</thead>
+							<tbody>
+								{repository.inventory.packages.filter(p => p.publish).map(p => (
+									<tr>
+										<td>
+											{p.name}<small>{p.manager} ·
+												{p.manifest}</small>{p.previousModule && (
+												<small>Earlier module: {p.previousModule.name} —
+													{p.previousModule.version}</small>
+											)}
+										</td>
+										<td>
+											{p.published
+												?? (p.publicationStatus === 'missing'
+													? 'Not published'
+													: p.publicationStatus === 'failed'
+													? 'Lookup failed — inspect diagnostics'
+													: 'Not checked — inspect repository')}
+											{p.manager === 'go' && p.published && isGoPseudoVersion(p.published)
+												&& <small>Commit pseudo-version; no release tag</small>}
+										</td>
+										<td>
+											{p.version
+												?? (p.versionSource.startsWith('tags:')
+													? 'No matching release tag'
+													: 'No version found')}<small
+											>{p.versionSource.startsWith('tags:')
+												? `Tag prefix: ${p.versionSource.slice(5)}`
+												: p.versionSource}</small>
+										</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+						{repository.inventory.packages.some(p => !p.publish) && (
+							<details>
+								<summary>
+									Modules and packages not selected for publication
+								</summary>
+								<ul>
+									{repository.inventory.packages.filter(p => !p.publish).map(p => (
+										<li>
+											<strong>{p.name}</strong> — {p.manifest} ({p.manager})
+										</li>
+									))}
+								</ul>
+							</details>
+						)}
+					</>
 				) : (
 					 <p>
 						 No package manifests discovered. Releases may be driven by tags or

@@ -62,6 +62,8 @@ export interface Snapshot {
 	tags?: string[];
 }
 export interface Package {
+	previousModule?: { name: string; version: string };
+	publicationStatus?: 'published' | 'missing' | 'failed' | 'unchecked';
 	generated?: boolean;
 	optional?: boolean;
 	manager: ManagerName;

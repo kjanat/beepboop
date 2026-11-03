@@ -2,10 +2,15 @@ import { directory, object } from '@/automation/managers/helpers';
 import type { Fetcher, Manager } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestTag, majorSuffix, tagSource } from '@/automation/managers/tags';
+import { latestVersion } from '@/automation/managers/verification';
 import type { Package, Publication } from '@/automation/types';
 
 const pseudoVersion =
 	/^v[0-9]+\.(?:0\.0-|\d+\.\d+-(?:[^+]*\.)?0\.)\d{14}-[A-Za-z0-9]+(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
+export function isGoPseudoVersion(version: string): boolean {
+	return pseudoVersion.test(`v${version.replace(/^v/, '')}`);
+}
 
 interface GoMod {
 	module: string;
@@ -93,6 +98,29 @@ async function verifyModule(publication: Publication, request: Fetcher): Promise
 
 export const goManager: Manager = {
 	name: 'go',
+	async latest(pkg, request) {
+		const split = splitModulePath(pkg.name);
+		const lookup = (name: string) =>
+			latestVersion(
+				request,
+				`https://proxy.golang.org/${escapeModule(name)}/@latest`,
+				body => {
+					const version = object(body).Version;
+					const module = splitModulePath(name);
+					return typeof version === 'string' && /^v\d/.test(version)
+							&& module?.majors.includes(Number(version.slice(1).split('.')[0]))
+						? version
+						: undefined;
+				},
+			);
+		const [current, previous] = await Promise.all([
+			lookup(pkg.name),
+			split?.suffix ? lookup(split.prefix) : undefined,
+		]);
+		return previous?.kind === 'published' && split
+			? { ...current, previousModule: { name: split.prefix, version: previous.version } }
+			: current;
+	},
 	verifyPublication: verifyModule,
 	discover(snapshot) {
 		const inventory = emptyInventory();
@@ -125,7 +153,7 @@ export const goManager: Manager = {
 					snapshot.tags ?? [],
 					prefix,
 					value =>
-						/^\d/.test(value) && !value.includes('+') && !pseudoVersion.test(`v${value}`)
+						/^\d/.test(value) && !value.includes('+') && !isGoPseudoVersion(value)
 						&& split.majors.includes(Number(value.split('.')[0])),
 				)
 				: undefined;
