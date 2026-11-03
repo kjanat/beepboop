@@ -16,6 +16,7 @@ import {
 import { exclusionReasons, type PackagePublication } from '@/automation/package-publication';
 import type { ReleaseSetPlan } from '@/automation/planning';
 import type { RefPlan, RefPolicy } from '@/automation/refs';
+import { type SetupEdit, type SetupOption, setupChoicesSchema } from '@/automation/setup-types';
 import type {
 	Artifact,
 	AutomationEvent,
@@ -372,4 +373,22 @@ export const deliverySchema: z.ZodType<SubscriptionDelivery> = z.object({
 	eventId: z.string(),
 	repositoryId: z.number(),
 	execution: executionSchema,
+});
+export const setupOptionsSchema: z.ZodType<SetupOption[]> = z.array(z.union([
+	z.object({ kind: z.enum(['package', 'required']), stream: z.string(), package: z.string() }),
+	z.object({
+		kind: z.literal('workflow'),
+		stream: z.string(),
+		operation: z.enum(['prepare', 'promote']),
+		file: z.string(),
+		job: z.string().optional(),
+	}),
+]));
+export const setupEditSchema: z.ZodType<SetupEdit> = z.object({
+	repositoryId: z.number(),
+	number: z.number(),
+	head: z.string(),
+	body: z.string(),
+	choices: setupChoicesSchema,
+	due: z.number(),
 });

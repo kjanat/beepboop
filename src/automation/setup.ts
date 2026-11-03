@@ -4,7 +4,13 @@ import { formatJson, json } from '@/automation/json';
 import { object } from '@/automation/managers/helpers';
 import { packageId, selectorKey } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
-import { type SetupChoices, type SetupPlan, setupChoicesSchema } from '@/automation/setup-types';
+import {
+	type SetupChoices,
+	type SetupOption,
+	type SetupPlan,
+	type SetupWorkflow,
+	setupChoicesSchema,
+} from '@/automation/setup-types';
 import { integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Snapshot } from '@/automation/types';
 import { packageLabel } from '@/ui/package-label';
@@ -219,13 +225,126 @@ export async function previewSetup(
 	const planId = await credentialHash(JSON.stringify({ ...plan, presetShas: baseline.presetShas ?? {} }));
 	return { ...plan, planId };
 }
+type Operation = 'prepare' | 'promote';
+const operations: Operation[] = ['prepare', 'promote'];
+export function setupOptions(plan: SetupPlan): SetupOption[] {
+	const candidates = plan.packageIds.filter((_, index) => {
+		const pkg = plan.inventory.packages[index];
+		return pkg !== undefined && publishable(pkg);
+	});
+	return plan.choices.streams.flatMap((stream): SetupOption[] => [
+		...[...new Set([...candidates, ...stream.packages])].map((id): SetupOption => ({
+			kind: 'package',
+			stream: stream.name,
+			package: id,
+		})),
+		...stream.packages.map((id): SetupOption => ({ kind: 'required', stream: stream.name, package: id })),
+		...operations.flatMap(operation => {
+			const current = stream[operation];
+			const suggested = plan.workflows.flatMap(evidence => {
+				const role = evidence.roles.find(role => role.stream === stream.name && role.operation === operation);
+				return role && evidence.file !== current?.file ? [{ file: evidence.file, job: role.job }] : [];
+			});
+			return [...(current ? [{ file: current.file, job: current.job }] : []), ...suggested].map((
+				binding,
+			): SetupOption => ({
+				kind: 'workflow',
+				stream: stream.name,
+				operation,
+				file: binding.file,
+				...(binding.job === undefined ? {} : { job: binding.job }),
+			}));
+		}),
+	]);
+}
+function optionId(option: SetupOption): string {
+	const parts = option.kind === 'workflow'
+		? [option.kind, option.stream, option.operation, option.file]
+		: [option.kind, option.stream, option.package];
+	return parts.map(part => encodeURIComponent(part).replaceAll('-', '%2D')).join(':');
+}
+function selected(option: SetupOption, choices: SetupChoices): boolean {
+	const stream = choices.streams.find(row => row.name === option.stream);
+	if (option.kind === 'workflow') return stream?.[option.operation]?.file === option.file;
+	return (option.kind === 'package' ? stream?.packages : stream?.required)?.includes(option.package) ?? false;
+}
+export function bodyChoices(body: string, options: SetupOption[], base: SetupChoices): SetupChoices {
+	const known = new Set(options.map(optionId));
+	const ticked = new Map<string, boolean>();
+	for (const [, mark, id] of body.matchAll(/^[ \t]*[-*+] \[([ xX])\] <!-- beepboop:choice:([^\s>]+) -->/gm)) {
+		if (id && known.has(id) && !ticked.has(id)) ticked.set(id, mark !== ' ');
+	}
+	const state = (option: SetupOption) => ticked.get(optionId(option)) ?? selected(option, base);
+	return {
+		streams: base.streams.map(stream => {
+			const own = options.filter(option => option.stream === stream.name);
+			const pick = (kind: 'package' | 'required', current: string[]) => {
+				const offered = own.flatMap(option =>
+					option.kind !== 'workflow' && option.kind === kind ? [option.package] : []
+				);
+				return [...new Set([...current, ...offered])].filter(id => state({ kind, stream: stream.name, package: id }));
+			};
+			const packages = pick('package', stream.packages);
+			const binding = (operation: Operation): SetupWorkflow | undefined => {
+				const current = stream[operation];
+				const candidates = own.flatMap(option =>
+					option.kind === 'workflow' && option.operation === operation ? [option] : []
+				);
+				if (current && !candidates.some(option => option.file === current.file)) return current;
+				const chosen = candidates.filter(state);
+				const next = chosen.find(option => option.file !== current?.file) ?? chosen[0];
+				if (!next) return undefined;
+				if (next.file === current?.file) return current;
+				return {
+					file: next.file,
+					...(next.job === undefined ? {} : { job: next.job }),
+					triggers: 'review',
+					commands: '',
+					publicationSteps: {},
+				};
+			};
+			const prepare = binding('prepare'), promote = binding('promote');
+			return {
+				name: stream.name,
+				packages,
+				versioning: stream.versioning,
+				required: pick('required', stream.required).filter(id => packages.includes(id)),
+				...(prepare ? { prepare } : {}),
+				...(promote ? { promote } : {}),
+			};
+		}),
+		...(base.actionsRevision ? { actionsRevision: base.actionsRevision } : {}),
+	};
+}
 export function setupBody(plan: SetupPlan): string {
+	const options = setupOptions(plan);
+	const box = (option: SetupOption, label: string) =>
+		`    - [${selected(option, plan.choices) ? 'x' : ' '}] <!-- beepboop:choice:${optionId(option)} --> ${label}`;
+	const group = (title: string, rows: string[]) => rows.length ? [`  - ${title}`, ...rows] : [];
 	return `Configure releases from inspected commit [${plan.sourceSha}](https://github.com/${plan.repository}/commit/${plan.sourceSha}).\n\n`
-		+ plan.choices.streams.map(stream =>
-			`- **${stream.name}** (${stream.versioning}): ${
-				stream.packages.map(id => `\`${packageLabel(id)}\``).join(', ')
-			}\n  Prepare: \`${stream.prepare?.file}\`; publish: \`${stream.promote?.file}\`; approval required.`
-		).join('\n')
+		+ 'Tick or untick the boxes to change this proposal. Beepboop rebuilds it 5 seconds after the last edit.\n\n'
+		+ plan.choices.streams.map(stream => {
+			const own = options.filter(option => option.stream === stream.name);
+			const packages = (kind: 'package' | 'required') =>
+				own.flatMap(option =>
+					option.kind !== 'workflow' && option.kind === kind
+						? [box(option, `\`${packageLabel(option.package)}\``)]
+						: []
+				);
+			const workflows = (operation: Operation) =>
+				own.flatMap(option =>
+					option.kind === 'workflow' && option.operation === operation
+						? [box(option, `\`${option.file}\`${option.job ? ` (job \`${option.job}\`)` : ''}`)]
+						: []
+				);
+			return [
+				`- **${stream.name}** (${stream.versioning}); approval required.`,
+				...group('Packages', packages('package')),
+				...group('Required publications', packages('required')),
+				...group('Preparation workflow', workflows('prepare')),
+				...group('Publication workflow', workflows('promote')),
+			].join('\n');
+		}).join('\n')
 		+ '\n\n' + plan.notes.map(note => `- ${note}`).join('\n')
 		+ '\n\nBeepboop keeps this proposal current when the default branch changes. Review all file changes before merging. Preparation and publication remain separate explicit operations.\n';
 }

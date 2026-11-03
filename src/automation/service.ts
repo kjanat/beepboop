@@ -14,9 +14,10 @@ import { matchesPackage } from '@/automation/package-identity';
 import { planReleaseSet } from '@/automation/planning';
 import { matchesRef } from '@/automation/policy';
 import { planHookUpdates } from '@/automation/precommit';
-import { documentRow, rowDocument } from '@/automation/schemas';
-import { previewSetup, setupBody, withRegistryStatus } from '@/automation/setup';
+import { documentRow, rowDocument, setupOptionsSchema } from '@/automation/schemas';
+import { bodyChoices, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import { maintainSetup, setupEdits } from '@/automation/setup-maintenance';
+import { setupChoicesSchema } from '@/automation/setup-types';
 import { Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
 import { workflowToken } from '@/automation/token';
@@ -35,6 +36,23 @@ import { array, compareVersions, integer, oneOf, record, semver, sha, text } fro
 import { renderActivityRows } from '@/ui/templates/activity';
 import { readBody, verifySignature } from '@/webhook';
 
+const setupPullEdit = z.object({
+	action: z.literal('edited'),
+	changes: z.object({ body: z.object({ from: z.string().nullable() }) }),
+	sender: z.object({ id: z.number() }),
+	pull_request: z.object({
+		number: z.number().int().positive(),
+		state: z.literal('open'),
+		body: z.string().nullable(),
+		user: z.object({ id: z.number() }),
+		head: z.object({
+			ref: z.literal('automation/onboarding'),
+			sha: z.string().regex(/^[a-f0-9]{40}$/),
+			repo: z.object({ id: z.number() }),
+		}),
+		base: z.object({ repo: z.object({ id: z.number() }) }),
+	}),
+});
 export interface AutomationBindings extends AuthBindings, Credentials, WinGetBindings {
 	AUTOMATION: DurableObjectNamespace<AutomationCoordinator>;
 	OWNER_ID: string;
@@ -161,9 +179,8 @@ export class AutomationService {
 		}
 		const event = request.headers.get('x-github-event');
 		if (
-			!['push', 'release', 'workflow_run', 'installation', 'installation_repositories'].includes(
-				event ?? '',
-			)
+			!['push', 'release', 'workflow_run', 'pull_request', 'installation', 'installation_repositories']
+				.includes(event ?? '')
 		) {
 			return new Response(null, { status: 204 });
 		}
@@ -199,6 +216,10 @@ export class AutomationService {
 		if (!repository || repository.name !== source.full_name) {
 			return new Response(null, { status: 204 });
 		}
+		if (event === 'pull_request') {
+			await this.setupEdited(repository, payload);
+			return new Response(null, { status: 202 });
+		}
 		if (event === 'release' && payload.action === 'published') await this.winget().automatic(repository);
 		if (event === 'push' && payload.ref === `refs/heads/${repository.defaultBranch}`) {
 			await this.refresh(repository.name, repository.id);
@@ -230,6 +251,29 @@ export class AutomationService {
 			});
 		}
 		return new Response(null, { status: 202 });
+	}
+	private async setupEdited(repository: RepositoryRecord, payload: unknown): Promise<void> {
+		const parsed = setupPullEdit.safeParse(payload);
+		if (!parsed.success) return;
+		const { pull_request: pull, sender } = parsed.data;
+		if (pull.head.repo.id !== repository.id || pull.base.repo.id !== repository.id) return;
+		const bot = await this.gateway.botIdentity();
+		if (sender.id === bot.id || pull.user.id !== bot.id) return;
+		const row = documentRow.nullable().parse(
+			await this.store.db.prepare('SELECT document FROM onboarding WHERE repository_id=?').bind(repository.id).first(),
+		);
+		if (!row) return;
+		const saved = record(JSON.parse(row.document));
+		if (saved.url !== `https://github.com/${repository.name}/pull/${pull.number}`) return;
+		const options = setupOptionsSchema.optional().parse(saved.options);
+		const base = setupChoicesSchema.optional().parse(saved.choices);
+		if (!options || !base) return;
+		const body = pull.body ?? '';
+		const choices = setupChoicesSchema.parse(bodyChoices(body, options, base));
+		await this.coordinator(repository.id).setupEdited(
+			{ repositoryId: repository.id, number: pull.number, head: pull.head.sha, body, choices },
+			JSON.stringify(choices) !== JSON.stringify(base),
+		);
 	}
 	async event(event: AutomationEvent): Promise<void> {
 		if (
@@ -455,27 +499,25 @@ export class AutomationService {
 			if (branchConflict) {
 				throw new Error('Setup branch changed; preserve human edits and review the conflict');
 			}
-			if (head && saved?.sourceSha === snapshot.sha && JSON.stringify(previous) === JSON.stringify(plan.edits)) {
-				return Response.json(
-					await this.gateway.refreshPullRequest(
-						snapshot,
-						'automation/onboarding',
-						'chore: configure release automation',
-						setupBody(plan),
-						head,
-					),
+			const result = head && saved?.sourceSha === snapshot.sha
+					&& JSON.stringify(previous) === JSON.stringify(plan.edits)
+				? await this.gateway.refreshPullRequest(
+					snapshot,
+					'automation/onboarding',
+					'chore: configure release automation',
+					setupBody(plan),
+					head,
+				)
+				: await this.gateway.pullRequest(
+					snapshot,
+					'automation/onboarding',
+					'chore: configure release automation',
+					setupBody(plan),
+					plan.edits,
+					head ?? undefined,
+					undefined,
+					previous,
 				);
-			}
-			const result = await this.gateway.pullRequest(
-				snapshot,
-				'automation/onboarding',
-				'chore: configure release automation',
-				setupBody(plan),
-				plan.edits,
-				head ?? undefined,
-				undefined,
-				previous,
-			);
 			const content = plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after
 				?? snapshot.files['.github/beepboop.json'];
 			// Keep the complete set of generated files for safe later refreshes, including unchanged ones.
@@ -496,6 +538,7 @@ export class AutomationService {
 						content,
 						sourceSha: snapshot.sha,
 						choices: plan.choices,
+						options: setupOptions(plan),
 						edits: [...generated.values()],
 					}),
 				).run();

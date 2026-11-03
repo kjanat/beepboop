@@ -6,7 +6,8 @@ import { discover } from '@/automation/managers';
 import { packageId } from '@/automation/package-identity';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
 import { documentRow } from '@/automation/schemas';
-import { previewSetup, setupBody, withRegistryStatus } from '@/automation/setup';
+import { previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
+import type { SetupChoices } from '@/automation/setup-types';
 import type { Store } from '@/automation/store';
 import type { Edit, Snapshot } from '@/automation/types';
 import { record } from '@/model';
@@ -21,7 +22,12 @@ export function setupEdits(saved: Record<string, unknown> | undefined): Edit[] {
 }
 
 /** Reconcile an already-open proposal after discovery, without starting a release or changing human edits. */
-export async function maintainSetup(store: Store, gateway: RepositoryGateway, snapshot: Snapshot): Promise<void> {
+export async function maintainSetup(
+	store: Store,
+	gateway: RepositoryGateway,
+	snapshot: Snapshot,
+	requested?: { number: number; choices: SetupChoices },
+): Promise<void> {
 	const { name, id } = snapshot.repository;
 	const row = documentRow.nullable().parse(
 		await store.db.prepare('SELECT document FROM onboarding WHERE repository_id=?').bind(id).first(),
@@ -29,7 +35,7 @@ export async function maintainSetup(store: Store, gateway: RepositoryGateway, sn
 	if (!row) return;
 	const saved = record(JSON.parse(row.document));
 	const pull = await gateway.openSetupPull(name, id);
-	if (!pull) return;
+	if (!pull || (requested && pull.number !== requested.number)) return;
 	const previous = setupEdits(saved);
 	const conflict = saved.head !== pull.head && !(await gateway.generatedHead(name, id, pull.head));
 	const inventory = withRegistryStatus(discover(snapshot), (await store.repository(id))?.inventory);
@@ -53,7 +59,8 @@ export async function maintainSetup(store: Store, gateway: RepositoryGateway, sn
 			ref => gateway.preset(ref),
 		);
 		const original = previous.find(edit => edit.path === '.github/beepboop.json')?.before ?? '';
-		const choices = (snapshot.files['.github/beepboop.json'] ?? '') === original ? saved.choices : undefined;
+		const choices = requested?.choices
+			?? ((snapshot.files['.github/beepboop.json'] ?? '') === original ? saved.choices : undefined);
 		const plan = await previewSetup(snapshot, inventory, choices, {
 			head: pull.head,
 			branchConflict: conflict,
@@ -109,10 +116,15 @@ export async function maintainSetup(store: Store, gateway: RepositoryGateway, sn
 			content: plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after
 				?? snapshot.files['.github/beepboop.json'],
 			choices: plan.choices,
+			options: setupOptions(plan),
 			edits: [...generated.values()],
 			maintenanceFingerprint: undefined,
 		});
-		await store.audit('beepboop', 'repository.setup.refreshed', `${name} ${snapshot.sha} ${result.url}`);
+		await store.audit(
+			'beepboop',
+			requested ? 'repository.setup.edited' : 'repository.setup.refreshed',
+			`${name} ${snapshot.sha} ${result.url}`,
+		);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Setup refresh failed';
 		await gateway.setupStatus(

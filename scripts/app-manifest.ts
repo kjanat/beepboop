@@ -25,6 +25,7 @@ console.log(
 				'push',
 				'release',
 				'workflow_run',
+				'pull_request',
 				'installation',
 				'installation_repositories',
 			],

@@ -26,6 +26,17 @@ export const setupChoicesSchema = z.object({
 }).strict();
 export type SetupChoices = z.infer<typeof setupChoicesSchema>;
 export type SetupWorkflow = NonNullable<SetupChoices['streams'][number]['prepare']>;
+export type SetupOption =
+	| { kind: 'package' | 'required'; stream: string; package: string }
+	| { kind: 'workflow'; stream: string; operation: 'prepare' | 'promote'; file: string; job?: string };
+export interface SetupEdit {
+	repositoryId: number;
+	number: number;
+	head: string;
+	body: string;
+	choices: SetupChoices;
+	due: number;
+}
 export interface WorkflowEvidence {
 	file: string;
 	jobs: string[];

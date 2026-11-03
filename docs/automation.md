@@ -368,3 +368,20 @@ head or edits to generated files stop branch updates and put the conflict on the
 PR. Missing permissions and unresolved workflow choices are also shown there.
 Unchanged proposals do not create commits. Closed and merged setup PRs are not
 reopened, and maintenance never approves or dispatches a release.
+
+### Edit the setup PR with checkboxes
+
+The setup PR description lists each release stream with a checkbox for every
+publishable package, every required publication, and every suggested preparation
+and publication workflow. Tick or untick boxes in the GitHub UI to change the
+proposal. Beepboop waits until 5 seconds pass without another edit, then rebuilds
+the proposal once from the boxes and commits the result to the setup branch.
+
+Beepboop reads only the boxes it rendered. Each committed rebuild rewrites the
+whole description. A required publication counts only while its package is
+ticked. Ticking a second workflow for the same role replaces the current one.
+Unresolved choices and edited setup-branch files appear on the PR, as with
+automatic maintenance, and leave the branch as it is.
+
+The GitHub App needs the **Pull request** event. The app manifest subscribes to
+it; existing installations must tick the event in the App settings.

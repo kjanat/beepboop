@@ -25,7 +25,9 @@ import { matchesRef } from '@/automation/policy';
 import { planRefs, type RefPlan } from '@/automation/refs';
 import { compileReleaseSet } from '@/automation/release-set';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
-import { automationEventSchema, executionSchema } from '@/automation/schemas';
+import { automationEventSchema, executionSchema, setupEditSchema } from '@/automation/schemas';
+import { maintainSetup } from '@/automation/setup-maintenance';
+import type { SetupEdit } from '@/automation/setup-types';
 import { Store } from '@/automation/store';
 import type { Artifact, AutomationEvent, Edit, Execution, Publication, ReleaseReference } from '@/automation/types';
 import { array, integer, record, sha } from '@/model';
@@ -823,11 +825,49 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 		}
 	}
+	async setupEdited(edit: Omit<SetupEdit, 'due'>, changed: boolean): Promise<void> {
+		const previous = setupEditSchema.optional().parse(await this.ctx.storage.get('setup-edit'));
+		if (previous ? previous.number === edit.number && previous.body === edit.body : !changed) return;
+		const due = Date.now() + 5000;
+		await this.ctx.storage.put('setup-edit', { ...edit, due });
+		await this.arm(due);
+	}
+	private async arm(at: number): Promise<void> {
+		const current = await this.ctx.storage.getAlarm();
+		if (current === null || current > at || current <= Date.now()) await this.ctx.storage.setAlarm(at);
+	}
+	private async rebuildSetup(): Promise<void> {
+		const edit = setupEditSchema.optional().parse(await this.ctx.storage.get('setup-edit'));
+		if (!edit) return;
+		if (edit.due > Date.now()) return this.arm(edit.due);
+		const store = this.store();
+		try {
+			const repository = await store.repository(edit.repositoryId);
+			if (repository && !repository.suspended) {
+				const gateway = this.gateway();
+				await maintainSetup(store, gateway, await gateway.snapshot(repository.name, repository.id), {
+					number: edit.number,
+					choices: edit.choices,
+				});
+			}
+		} catch (error) {
+			await store.audit(
+				'beepboop',
+				'repository.setup.failed',
+				`${edit.repositoryId} ${edit.head}: ${error instanceof Error ? error.message : 'Setup edit failed'}`,
+			);
+		}
+		const current = setupEditSchema.optional().parse(await this.ctx.storage.get('setup-edit'));
+		if (current?.due === edit.due) await this.ctx.storage.delete('setup-edit');
+	}
 	async alarm(): Promise<void> {
-		await this.serial(async () => {
-			await this.deliverReleaseEvents();
-			await this.reconcile();
-		});
+		await Promise.all([
+			this.serial(async () => {
+				await this.deliverReleaseEvents();
+				await this.reconcile();
+			}),
+			this.serial(() => this.rebuildSetup()),
+		]);
 	}
 	private async runManaged(execution: Execution): Promise<void> {
 		const operation = execution.managed;
