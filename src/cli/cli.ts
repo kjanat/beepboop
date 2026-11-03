@@ -242,7 +242,9 @@ releases = releases.command(
 			)
 		),
 );
-export const app = cli('beepboop').description('Coordinate repository releases through Beepboop')
+export const app = cli('beepboop')
+	.manifest({ from: import.meta.url })
+	.links()
 	.command(auth).command(repositories).command(releases).command(runs)
 	.command(
 		base('secrets', 'List secret metadata and grants; values and security-key operations stay in the dashboard')
