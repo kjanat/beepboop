@@ -5,6 +5,17 @@ type PackageRecord = Pick<Package, 'manager' | 'name' | 'version' | 'identity'>;
 /** Legacy records acquire a typed identity at the boundary; adapters stay independent of purl types. */
 export function identityOf(pkg: PackageRecord, repository?: string): PackageIdentity {
 	if (pkg.identity) return packageIdentity(pkg.identity);
+	if (pkg.manager === 'jsr') {
+		const [namespace, name] = pkg.name.split('/');
+		if (!namespace?.startsWith('@') || !name) throw new Error('Invalid JSR package name');
+		return packageIdentity({
+			type: 'generic',
+			namespace,
+			name,
+			version: pkg.version,
+			qualifiers: { repository_url: 'https://jsr.io' },
+		});
+	}
 	const type = pkg.manager === 'go' && pkg.name.includes('/') ? 'golang' : ['npm', 'cargo'].includes(pkg.manager)
 		? pkg.manager
 		: (repository || pkg.name.includes('/')) && ['goreleaser', 'github-release'].includes(pkg.manager)
@@ -81,7 +92,7 @@ export function selectorKey(reference: string, packages: Package[] = []): string
 	if (reference.startsWith('pkg:')) return packageKey(reference);
 	const colon = reference.indexOf(':');
 	const manager = reference.slice(0, colon);
-	if (['npm', 'cargo', 'go', 'github-release', 'goreleaser'].includes(manager)) {
+	if (['npm', 'jsr', 'cargo', 'go', 'github-release', 'goreleaser'].includes(manager)) {
 		return packageId({ manager: manager as Package['manager'], name: reference.slice(colon + 1) });
 	}
 	return reference;

@@ -803,7 +803,7 @@ export class AutomationService {
 					manager = text(p.manager),
 					outcome = text(p.outcome);
 				if (
-					!['cargo', 'npm', 'github-release', 'oci', 'goreleaser', 'go', 'manifest', 'workflow'].includes(
+					!['cargo', 'npm', 'jsr', 'github-release', 'oci', 'goreleaser', 'go', 'manifest', 'workflow'].includes(
 						manager,
 					)
 					|| !['pending', 'succeeded', 'failed', 'uncertain', 'skipped'].includes(outcome)

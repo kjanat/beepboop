@@ -39,7 +39,13 @@ an interactive terminal. Explicit arguments skip their prompts; scripts must
 supply required inputs. Use `auth login --server URL --no-browser` to print the
 login link without opening a browser.
 
-Flags use camelCase, including `--sourceSha` and `--planId`.
+Flags use camelCase, including `--releaseVersion`, `--sourceSha` and `--planId`.
+The root `--version` prints the installed CLI version.
+
+The publishable package is `@kjanat/beepboop` on npm and JSR. After its first
+release, install it with `bun add --global @kjanat/beepboop`.
+See [how Beepboop releases itself](cli-release.md) for the preparation, approval
+and publication flow.
 
 ## Release preparation and execution
 
@@ -47,8 +53,8 @@ Use stream names from `repositories show`. Repository numbers are resolved from
 the enrolled repository name.
 
 ```sh
-beepboop releases plan kjanat/actionlint --stream main --version 2.1.0
-beepboop releases prepare kjanat/actionlint --stream main --version 2.1.0 \
+beepboop releases plan kjanat/actionlint --stream main --releaseVersion 2.1.0
+beepboop releases prepare kjanat/actionlint --stream main --releaseVersion 2.1.0 \
   --sourceSha REVIEWED_SOURCE_SHA --planId REVIEWED_PLAN_ID
 beepboop releases start PREPARATION_ID --sourceSha REVIEWED_SOURCE_SHA
 beepboop runs list

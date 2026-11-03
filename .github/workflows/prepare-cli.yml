@@ -1,0 +1,46 @@
+name: Prepare CLI release
+run-name: Release operation ${{ inputs.beepboop_execution_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      beepboop_execution_id:
+        description: Beepboop preparation execution
+        required: true
+        type: string
+permissions: { contents: read, id-token: write }
+concurrency:
+  group: cli-prepare-${{ inputs.beepboop_execution_id }}
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: oven-sh/setup-bun@v2
+      - uses: ./actions/begin
+        id: release
+        with:
+          execution-id: ${{ inputs.beepboop_execution_id }}
+          stream: cli
+          operation: prepare
+      - name: Checkout planned source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ fromJSON(steps.release.outputs.context).sourceSha }}
+          persist-credentials: false
+      - uses: ./actions/prepare
+        with:
+          mode: apply
+          context: ${{ steps.release.outputs.context }}
+      - run: bun install
+      - run: bun run check
+      - run: bun test
+      - run: bun run build:cli
+      - run: bun run check:cli
+      - run: bun run check:jsr
+      - uses: ./actions/prepare
+        with:
+          mode: submit
+          context: ${{ steps.release.outputs.context }}

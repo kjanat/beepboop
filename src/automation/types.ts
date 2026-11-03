@@ -5,6 +5,7 @@ export type ManagerName =
 	| 'pre-commit'
 	| 'cargo'
 	| 'npm'
+	| 'jsr'
 	| 'github-release'
 	| 'oci'
 	| 'goreleaser'

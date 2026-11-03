@@ -1,0 +1,20 @@
+{
+	"name": "@kjanat/beepboop",
+	"version": "0.0.0",
+	"description": "Authenticated CLI for Beepboop release automation",
+	"homepage": "https://beepboop.kjanat.dev",
+	"bugs": { "url": "https://github.com/kjanat/beepboop/issues" },
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/kjanat/beepboop.git",
+		"directory": "packages/cli"
+	},
+	"license": "UNLICENSED",
+	"type": "module",
+	"exports": { ".": "./mod.ts" },
+	"bin": { "beepboop": "cli.js" },
+	"files": ["cli.js", "mod.ts", "README.md"],
+	"dependencies": { "@kjanat/dreamcli": "^5.0.0" },
+	"engines": { "bun": ">=1.4.4" },
+	"publishConfig": { "access": "public" }
+}

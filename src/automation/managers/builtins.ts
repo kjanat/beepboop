@@ -1,6 +1,7 @@
 import { cargoManager } from '@/automation/managers/cargo';
 import { goManager } from '@/automation/managers/go';
 import { goreleaserManager } from '@/automation/managers/goreleaser';
+import { jsrManager } from '@/automation/managers/jsr';
 import { npmManager } from '@/automation/managers/npm';
 import { emptyInventory, ManagerRegistry } from '@/automation/managers/registry';
 import { workflowManager } from '@/automation/managers/workflow';
@@ -10,6 +11,7 @@ import { discoverHooks } from '@/automation/precommit';
 export const managerRegistry = new ManagerRegistry([
 	cargoManager,
 	npmManager,
+	jsrManager,
 	workflowManager,
 	...(['github-release', 'oci'] as const).map(name => ({
 		name,

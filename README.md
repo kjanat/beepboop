@@ -83,4 +83,5 @@ Both commands print the package inventory and proposed configuration as JSON.
 
 Run `bun run beepboop auth login` to authorize your terminal, then
 `bun run beepboop --help` to explore repository and release commands.
-See [CLI usage and authentication](docs/cli.md).
+See [CLI usage and authentication](docs/cli.md) and the
+[Beepboop-managed npm and JSR release flow](docs/cli-release.md) for `@kjanat/beepboop`.

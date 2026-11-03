@@ -1,0 +1,67 @@
+name: Publish CLI
+run-name: Release operation ${{ inputs.beepboop_execution_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      beepboop_execution_id:
+        description: Approved Beepboop promotion execution
+        required: true
+        type: string
+permissions: { contents: read, id-token: write }
+concurrency:
+  group: cli-publication
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v7
+        with: { node-version-file: "mise.toml", package-manager-cache: false }
+      - uses: oven-sh/setup-bun@v2
+      - uses: ./actions/begin
+        id: release
+        with:
+          execution-id: ${{ inputs.beepboop_execution_id }}
+          stream: cli
+          operation: promote
+      - name: Checkout approved source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ fromJSON(steps.release.outputs.context).sourceSha }}
+          persist-credentials: false
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: bun test
+      - run: bun run build:cli
+      - run: bun run check:cli
+      - run: bun run check:jsr
+      - name: Validate release version
+        id: metadata
+        run: bun src/tooling/cli/release.ts metadata
+        env:
+          RELEASE_CONTEXT: ${{ steps.release.outputs.context }}
+      - name: Publish npm
+        id: npm
+        run: bun src/tooling/cli/release.ts npm
+        env:
+          RELEASE_CONTEXT: ${{ steps.release.outputs.context }}
+      - name: Publish JSR
+        id: jsr
+        if: ${{ !cancelled() && steps.metadata.outcome == 'success' }}
+        run: bunx jsr publish --config packages/cli/jsr.json
+      - name: Publication report
+        id: report
+        if: ${{ !cancelled() && steps.metadata.outcome == 'success' }}
+        run: bun src/tooling/cli/release.ts report
+        env:
+          RELEASE_CONTEXT: ${{ steps.release.outputs.context }}
+          NPM_OUTCOME: ${{ steps.npm.outcome }}
+          JSR_OUTCOME: ${{ steps.jsr.outcome }}
+      - uses: ./actions/report
+        if: ${{ !cancelled() && steps.report.outcome == 'success' }}
+        with:
+          execution-id: ${{ steps.release.outputs.execution-id }}
+          publications: ${{ steps.report.outputs.publications }}

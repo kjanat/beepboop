@@ -1,6 +1,4 @@
 #!/usr/bin/env bun
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { arg, cli, command, flag, group } from '@kjanat/dreamcli';
 import type { Execution, RepositoryRecord } from '@/automation/types';
 import { Client } from '@/cli/client';
@@ -156,7 +154,7 @@ for (const operation of ['plan', 'prepare'] as const) {
 				: 'Prepare a release from a reviewed plan',
 		)
 			.flag('stream', flag.string().prompt({ kind: 'input', message: 'Release stream' }).required()).flag(
-				'version',
+				'releaseVersion',
 				flag.string().prompt({ kind: 'input', message: 'Version or bump (major, minor, patch)' }).required(),
 			)
 			.flag(
@@ -181,7 +179,7 @@ for (const operation of ['plan', 'prepare'] as const) {
 					await client.request(`/api/releases/${operation}`, {
 						repositoryId: await repositoryId(client, args.repository),
 						stream: flags.stream,
-						version: flags.version,
+						version: flags.releaseVersion,
 						sourceSha: flags.sourceSha,
 						planId: flags.planId,
 					}),
@@ -250,4 +248,4 @@ export const app = cli('beepboop')
 		base('secrets', 'List secret metadata and grants; values and security-key operations stay in the dashboard')
 			.action(async ({ flags, out }) => out.json(await new Client(flags.server).request('/api/credentials'))),
 	).completions();
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) await app.run();
+if (import.meta.main) await app.run();

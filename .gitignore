@@ -16,3 +16,7 @@ app-manifest.json
 
 .playwright-cli/
 worker-configuration.d.ts
+
+# Publishable CLI bundle
+/packages/cli/cli.js
+/packages/cli/*.tgz

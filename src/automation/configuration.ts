@@ -14,6 +14,7 @@ export const managerNames: ManagerName[] = [
 	'pre-commit',
 	'cargo',
 	'npm',
+	'jsr',
 	'github-release',
 	'oci',
 	'goreleaser',

@@ -20,6 +20,7 @@
 				"enum": [
 					"cargo",
 					"npm",
+					"jsr",
 					"github-release",
 					"oci",
 					"goreleaser",
