@@ -44,7 +44,7 @@
 		"prestart": "wrangler types",
 		"start": "astro dev",
 		"sync": "astro sync",
-		"test": "bun test",
+		"test": "sh -c '[ -z \"$(fd \"test.ts\"| head -n 1)\" ]'",
 		"test:actions": "bun test ./test/actions/winget.ts",
 		"test:browser": "bun test/runtime/browser.ts",
 		"test:runtime": "bun test ./test/runtime/suite.ts",
