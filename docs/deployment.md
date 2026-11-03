@@ -74,6 +74,12 @@ base TypeScript configuration. Secret names are declared in Wrangler's
 `secrets.required`; their values stay in Worker secrets or local secret files.
 There is no custom type-generation wrapper or duplicated hand-written `Env`.
 
+Type checking uses TypeScript 7.1 beta with `@astrojs/ts-content-mapper`
+registered in the root tsconfig. `bun run check` runs `tsc --noEmit
+--runExternalCode` for the server and Astro components, then checks browser
+code with its existing DOM tsconfig. The external-code flag enables Astro's
+mapper; `astro check` and the separate TypeScript alias are no longer used.
+
 ## Deploy and enroll keys
 
 ```sh

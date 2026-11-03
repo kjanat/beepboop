@@ -17,6 +17,9 @@
 		"skipLibCheck": true,
 		"types": ["bun", "./worker-configuration.d.ts"],
 	},
+	"contentMappers": [
+		{ "package": "@astrojs/ts-content-mapper", "extensions": [".astro"] }
+	],
 	"exclude": ["src/ui/browser/**"],
 	"include": [
 		".astro/types.d.ts",
