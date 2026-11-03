@@ -2,6 +2,7 @@
 import { isGoPseudoVersion } from '@/automation/managers/go';
 import type { Dashboard } from '@/server/dashboard.ts';
 import { date, workflowChoices } from '@/server/dashboard.ts';
+import { packageUrl } from '@/server/package-url';
 
 interface Props {
 	data: Dashboard;
@@ -93,8 +94,11 @@ const { data } = Astro.props;
 								{repository.inventory.packages.filter(p => p.publish).map(p => (
 									<tr>
 										<td>
-											{p.name}<small>{p.manager} ·
-												{p.manifest}</small>{p.previousModule && (
+											<code>{packageUrl(p)}</code><small><a
+													href={`https://github.com/${repository.name}/blob/${repository.sha}/${
+														p.manifest.split('/').map(encodeURIComponent).join('/')
+													}`}
+												>{p.manifest}</a></small>{p.previousModule && (
 												<small>Earlier module: {p.previousModule.name} —
 													{p.previousModule.version}</small>
 											)}

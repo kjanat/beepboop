@@ -1,5 +1,6 @@
 ---
 import { type Dashboard, workflowChoices } from '@/server/dashboard.ts';
+import { packageUrl } from '@/server/package-url';
 
 interface Props {
 	data: Dashboard;
@@ -101,7 +102,7 @@ const preparations = data.executions.filter(e =>
 								 </legend>
 								 <p class="hint">
 									 Current:
-									 {group.packages.map(p => `${p.name} ${p.version ?? 'unreleased'}`).join(' · ')}
+									 {group.packages.map(packageUrl).join(' · ')}
 								 </p><label>Next version<input
 										 name={`version-${group.id}`}
 										 placeholder="1.2.3"

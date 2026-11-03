@@ -1,6 +1,7 @@
 ---
 import type { Execution } from '@/automation/types.ts';
 import { date } from '@/server/dashboard.ts';
+import { packageUrl } from '@/server/package-url';
 import { releaseSetSummaries } from '@/server/releases';
 
 interface Props {
@@ -126,7 +127,7 @@ const { executions } = Astro.props;
 						 {run.publications.map(p => (
 							 <tr>
 								 <td>
-									 {p.name}<small>{p.manager} ·
+									 <code>{packageUrl(p)}</code><small>
 										 {p.required ? 'required' : 'optional'}</small>
 								 </td>
 								 <td>{p.version}</td>
