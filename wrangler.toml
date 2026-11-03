@@ -1,4 +1,4 @@
-#:schema node_modules/wrangler/config-schema.json
+#:schema https://cdn.jsdelivr.net/npm/wrangler@4/config-schema.json
 
 name                = "beepboop"
 account_id          = "83a61abe8741defe835d035b1f4e49af"
@@ -30,7 +30,7 @@ enabled            = true
 head_sampling_rate = 1
 persist            = true
 
-[observability.issue_detection]
+[observability.issues]
 enabled = true
 
 [triggers]
