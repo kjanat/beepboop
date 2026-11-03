@@ -107,7 +107,8 @@ test('WinGet CLI writes files for the supplied configuration', () => {
 		writeFileSync(join(root, 'checksums.txt'), options.checksums);
 		writeFileSync(join(root, 'notes.md'), options.releaseNotes);
 		const run = spawnSync('bun', [
-			'scripts/winget.ts',
+			'src/distribution/winget/cli.ts',
+			'generate',
 			'--config',
 			join(root, 'package.json'),
 			'--version',
@@ -123,38 +124,6 @@ test('WinGet CLI writes files for the supplied configuration', () => {
 		], { encoding: 'utf8' });
 		expect(run.status, run.stderr).toBe(0);
 		expect(readFileSync(join(root, 'out', 'Example.Tool.yaml'), 'utf8')).toContain('PackageVersion: 1.2.3');
-	} finally {
-		rmSync(root, { recursive: true, force: true });
-	}
-});
-
-test('bundled WinGet Action runs with Node without installing dependencies in the consumer', () => {
-	const root = mkdtempSync(join(tmpdir(), 'beepboop-winget-action-'));
-	try {
-		writeFileSync(join(root, 'package.json'), JSON.stringify(configuration));
-		writeFileSync(join(root, 'checksums.txt'), options.checksums);
-		writeFileSync(join(root, 'notes.md'), options.releaseNotes);
-		const entry = new URL('../dist/winget/cli.mjs', import.meta.url).pathname;
-		const run = spawnSync('node', [entry], {
-			cwd: root,
-			encoding: 'utf8',
-			env: {
-				...process.env,
-				WINGET_CONFIG: join(root, 'package.json'),
-				WINGET_VERSION: options.version,
-				WINGET_TAG: '',
-				WINGET_CHECKSUMS: join(root, 'checksums.txt'),
-				WINGET_RELEASE_NOTES: join(root, 'notes.md'),
-				WINGET_RELEASE_DATE: options.releaseDate,
-				WINGET_OUT: join(root, 'out'),
-				GITHUB_OUTPUT: join(root, 'outputs'),
-			},
-		});
-		expect(run.status, run.stderr).toBe(0);
-		expect(readFileSync(join(root, 'out', 'Example.Tool.installer.yaml'), 'utf8')).toContain(
-			`InstallerSha256: ${'A'.repeat(64)}`,
-		);
-		expect(readFileSync(join(root, 'outputs'), 'utf8')).toContain('files=[');
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

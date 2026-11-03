@@ -26,6 +26,18 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Check for Bun
+      id: bun
+      shell: bash
+      run: |
+        if command -v bun >/dev/null 2>&1; then
+          echo "available=true" >> "${GITHUB_OUTPUT}"
+        fi
+    - name: Setup Bun
+      if: steps.bun.outputs.available != 'true'
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: latest
     - id: client
       shell: bash
       env:
@@ -34,4 +46,4 @@ runs:
         STREAM: ${{ inputs.stream }}
         OPERATION: ${{ inputs.operation }}
         RELEASE_VERSION: ${{ inputs.version }}
-      run: node "${{ github.action_path }}/../runtime/client.mjs" begin
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.mjs" begin

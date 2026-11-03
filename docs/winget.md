@@ -30,8 +30,9 @@ filename; duplicate filenames and missing selected assets are errors.
 ```
 
 Replace `PUBLISHED_SHA` with the distribution commit reported by the **Publish
-Actions** workflow. That commit lives on the `actions` branch and includes the
-bundled Node entrypoint. Source commits on `master` omit generated bundles.
+Actions** workflow. That commit lives on the `actions` branch and runs the source directly with Bun. Each composite Action uses Bun from PATH
+or installs the latest Bun with `oven-sh/setup-bun@v2`. The generator installs
+locked production dependencies in the Action checkout with lifecycle scripts disabled.
 The `release` step in this example supplies the release version and date.
 The Action outputs `directory` and `files` (a JSON path array).
 Attach those files as build artifacts or pass them to your submission operation.
@@ -64,28 +65,27 @@ installer success codes are only emitted when explicitly configured.
 
 ## Development
 
-The generator is in `src/distribution/winget`. Build and test it locally with:
+The generator is in `src/distribution/winget`. Test it locally with:
 
 ```sh
-bun run winget:build
+bun run test:actions
 bun test test/winget.test.ts
 ```
 
-`bun run test` also builds the Action before running the full test suite. Generated
-bundles are ignored in source checkouts. CI tests a fresh build instead of comparing
-generated JavaScript with a committed copy.
+The CLI and Action run the same source. No Action bundle is built or committed.
+The Action test invokes Bun from a separate consumer directory.
 
 ## Publish the Action
 
 Run the **Publish Actions** workflow manually against `master`. It verifies the
-selected source commit, rebuilds and tests the Node entrypoint, then publishes
-the complete repository snapshot with the bundle to the `actions` branch. The
+selected source commit, tests the Bun entrypoint, then publishes
+the complete source repository snapshot to the `actions` branch. The
 workflow summary records both the source SHA and the distribution SHA to pin in
-consumer workflows. Other Actions and their shared runtime retain their paths.
+consumer workflows. Other Actions and their shared runtime keep their paths.
 
 Publication preserves the previous distribution commit as a parent and uses a
 normal fast-forward push. It rejects an older source revision and concurrent
-branch changes. Repeating publication with the same source and bundle reuses the
+branch changes. Repeating publication with the same source reuses the
 existing distribution commit. Repository branch rules apply to `actions`; the
 workflow does not force-push or create tags or GitHub releases.
 

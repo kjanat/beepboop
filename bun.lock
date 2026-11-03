@@ -6,7 +6,8 @@
       "name": "beepboop",
       "dependencies": {
         "@astrojs/cloudflare": "^14.4.4",
-        "@openauthjs/openauth": "^0.4.3",
+        "@kjanat/dreamcli": "^5.0.0",
+        "@kjanat/openauth": "^0.5.1",
         "@simplewebauthn/server": "^14.0.3",
         "astro": "^7.4.5",
         "cron-parser": "^5.10.3",
@@ -290,7 +291,11 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.9", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.0.3", "@jridgewell/sourcemap-codec": "^1.4.10" } }, "sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ=="],
 
+    "@kjanat/dreamcli": ["@kjanat/dreamcli@5.0.0", "", { "dependencies": { "ansispeck": "^0.4.3" } }, "sha512-pKQJu6KDnW8U4EQI2vZTwZz2v+H/z9uwfK4jnOV9BLrn2LDnmVNM91/iNxsxpZaFMZyhOU8AggMA6OhD5dqhdQ=="],
+
     "@kjanat/fmt": ["@kjanat/fmt@0.60.6", "", { "dependencies": { "@kprint/kprint": "0.60.6" }, "bin": { "fmt": "fmt.cjs", "kfmt": "fmt.cjs" } }, "sha512-q0bjKO1pAFLFT35ZSs4L3tnBfzvWSjk2QU2ZrcJ0jOy/vFHH7sP7zdt15vcyIf4O3iG1jF6UGMiYGJT0eoqBgg=="],
+
+    "@kjanat/openauth": ["@kjanat/openauth@0.5.1", "", { "dependencies": { "@standard-schema/spec": "1.1.0", "aws4fetch": "1.0.20", "jose": "6.2.15" }, "peerDependencies": { "arctic": "^2.2.2", "hono": "^4.0.0" } }, "sha512-f5F7sR3JKtTMLpG2NqL4StdDxJX/D2QHx4WcJTzylFzsiIFpdxs862kJkLeZRXrLhlCdOgvoQ7tcC2DD1oLKpg=="],
 
     "@kprint/kprint": ["@kprint/kprint@0.60.6", "", { "optionalDependencies": { "@kprint/kprint-android-arm64": "0.60.6", "@kprint/kprint-android-x64": "0.60.6", "@kprint/kprint-darwin-arm64": "0.60.6", "@kprint/kprint-darwin-x64": "0.60.6", "@kprint/kprint-freebsd-x64": "0.60.6", "@kprint/kprint-linux-arm64-glibc": "0.60.6", "@kprint/kprint-linux-arm64-musl": "0.60.6", "@kprint/kprint-linux-loong64-glibc": "0.60.6", "@kprint/kprint-linux-loong64-musl": "0.60.6", "@kprint/kprint-linux-ppc64-glibc": "0.60.6", "@kprint/kprint-linux-ppc64-musl": "0.60.6", "@kprint/kprint-linux-riscv64-glibc": "0.60.6", "@kprint/kprint-linux-x64-glibc": "0.60.6", "@kprint/kprint-linux-x64-musl": "0.60.6", "@kprint/kprint-win32-arm64": "0.60.6", "@kprint/kprint-win32-x64": "0.60.6" }, "hasInstallScript": true, "bin": { "dprint": "bin.cjs", "kprint": "bin.cjs" } }, "sha512-cqGQDVFzV3hbWPhzQAZl7FfIO1JIN02MjHDDeeTmQZEsGP3YXHzseSdaMlviClKnqcLeDztb1YP9tk1voMyM0g=="],
 
@@ -329,8 +334,6 @@
     "@levischuck/tiny-cbor": ["@levischuck/tiny-cbor@0.2.11", "", {}, "sha512-llBRm4dT4Z89aRsm6u2oEZ8tfwL/2l6BwpZ7JcyieouniDECM5AqNgr/y08zalEIvW3RSK4upYyybDcmjXqAow=="],
 
     "@napi-rs/wasm-runtime": ["@napi-rs/wasm-runtime@1.2.4", "", { "dependencies": { "@tybys/wasm-util": "^0.10.3" }, "peerDependencies": { "@emnapi/core": "^1.7.1 || ^2.0.0-alpha.4", "@emnapi/runtime": "^1.7.1 || ^2.0.0-alpha.4" } }, "sha512-AJxoUD2/15ESHbvpcyjU274nsAPLuOtPHCk0vKJM5pj//Fg/B1FXNWjPnXTT9PymCYYiHo4zPj0ZomXBKhoy7g=="],
-
-    "@openauthjs/openauth": ["@openauthjs/openauth@0.4.3", "", { "dependencies": { "@standard-schema/spec": "1.0.0-beta.3", "aws4fetch": "1.0.20", "jose": "5.9.6" }, "peerDependencies": { "arctic": "^2.2.2", "hono": "^4.0.0" } }, "sha512-RlnjqvHzqcbFVymEwhlUEuac4utA5h4nhSK/i2szZuQmxTIqbGUxZ+nM+avM+VV4Ing+/ZaNLKILoXS3yrkOOw=="],
 
     "@oslojs/asn1": ["@oslojs/asn1@1.0.0", "", { "dependencies": { "@oslojs/binary": "1.0.0" } }, "sha512-zw/wn0sj0j0QKbIXfIlnEcTviaCzYOY3V5rAyjR6YtOByFtJiT574+8p9Wlach0lZH9fddD4yb9laEAIl4vXQA=="],
 
@@ -462,7 +465,7 @@
 
     "@speed-highlight/core": ["@speed-highlight/core@1.2.24", "", {}, "sha512-qeW2e1l78afw8VhRPfPQ1Gjj+KU5XFQ/OFV5ti6eTa9bruO7mJyZtA4vw0ofqmA3tKCkROE9xLk3VZoeRc98nw=="],
 
-    "@standard-schema/spec": ["@standard-schema/spec@1.0.0-beta.3", "", {}, "sha512-0ifF3BjA1E8SY9C+nUew8RefNOIq0cDlYALPty4rhUm8Rrl6tCM8hBT4bhGhx7I7iXD0uAgt50lgo8dD73ACMw=="],
+    "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 
     "@tybys/wasm-util": ["@tybys/wasm-util@0.10.4", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-W3c4gRigFS0T/Ma4qIYF3GDAc5AQdHb1yL5znJT1Zv1YaD9Kitx656wBjvr19qbiosmZT8lWDM5BEMynUqX65A=="],
 
@@ -1123,8 +1126,6 @@
     "@cloudflare/vite-plugin/wrangler": ["wrangler@4.156.1", "", { "dependencies": { "@cloudflare/kv-asset-handler": "0.5.0", "@cloudflare/unenv-preset": "2.16.2", "blake3-wasm": "2.1.5", "esbuild": "0.28.2", "miniflare": "5.20261101.0-beta", "path-to-regexp": "6.3.0", "unenv": "2.0.0-rc.24", "workerd": "1.20261101.1" }, "optionalDependencies": { "fsevents": "2.3.3" }, "peerDependencies": { "@cloudflare/workers-types": "^5.20261101.1" }, "optionalPeers": ["@cloudflare/workers-types"], "bin": { "wrangler": "bin/wrangler.js", "wrangler2": "bin/wrangler.js", "cf-wrangler": "bin/cf-wrangler.js" } }, "sha512-aZngeNRosSVly6wgxpaJAtFPtEoyM3hD8mLMMcHNXTnofMq4ZN+RMXOdHETyttNP+//+mfiD1hb5E8YFtiMMRQ=="],
 
     "@cloudflare/vite-plugin/ws": ["ws@8.22.0", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": ">=5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg=="],
-
-    "@openauthjs/openauth/jose": ["jose@5.9.6", "", {}, "sha512-AMlnetc9+CV9asI19zHmrgS/WYsWUwCn2R7RzlbJWD7F9eWYUTGyBmU9o6PxngtLGOiDGPRu+Uc4fhKzbpteZQ=="],
 
     "@oslojs/jwt/@oslojs/encoding": ["@oslojs/encoding@0.4.1", "", {}, "sha512-hkjo6MuIK/kQR5CrGNdAPZhS01ZCXuWDRJ187zh6qqF2+yMHZpD9fAYpX8q2bOO6Ryhl3XpCT6kUX76N8hhm4Q=="],
 
