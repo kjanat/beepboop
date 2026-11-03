@@ -145,8 +145,14 @@ function inspecting(form: HTMLFormElement, name: string): () => void {
 	const card = form.closest('article');
 	if (!card) return () => {};
 	if (form.querySelector('input[type="hidden"][name="repository"]')) {
+		const badge = find(card, 'summary .badge', HTMLElement);
+		const previous = badge?.textContent ?? '';
 		card.classList.add('pending');
-		return () => card.classList.remove('pending');
+		if (badge) badge.textContent = 'Inspecting…';
+		return () => {
+			card.classList.remove('pending');
+			if (badge) badge.textContent = previous;
+		};
 	}
 	const placeholder = node('article', '');
 	placeholder.className = 'pending';

@@ -414,7 +414,8 @@ article > details[open] > summary h2::before {
 	transform: rotate(90deg);
 }
 article.pending {
-	opacity: 0.7;
+	opacity: 0.55;
+	cursor: progress;
 }
 table {
 	width: 100%;
