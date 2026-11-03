@@ -21,7 +21,13 @@ function aurVersion(body: unknown, name: string): unknown {
 	if (!parsed.success) return undefined;
 	if (parsed.data.type === 'error') return new LookupFailure(parsed.data.error ?? 'AUR error');
 	const found = parsed.data.results.find(result => result.Name === name);
-	return found ? found.Version.replace(/^\d+:/, '').replace(/-[^-]*$/, '') : unpublished;
+	return found ? pkgver(found.Version.replace(/^\d+:/, '').replace(/-[^-]*$/, '')) : unpublished;
+}
+export function pkgver(value: string): string {
+	return value.replace(
+		/^(\d+\.\d+\.\d+)[._]?((?:alpha|beta|rc|pre)(?:[._]?\d+)?)$/i,
+		(_, core: string, pre: string) => `${core}-${pre.replace(/^([a-z]+)[._]?(\d+)$/i, '$1.$2')}`,
+	).replaceAll('_', '-');
 }
 function formulaVersion(source: string): unknown {
 	const literal = /^\s*version\s+"([^"#]+)"/m.exec(source)?.[1];
