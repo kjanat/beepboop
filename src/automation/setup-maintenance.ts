@@ -31,7 +31,7 @@ export async function maintainSetup(store: Store, gateway: RepositoryGateway, sn
 	const pull = await gateway.openSetupPull(name, id);
 	if (!pull) return;
 	const previous = setupEdits(saved);
-	const conflict = saved.head !== pull.head;
+	const conflict = saved.head !== pull.head && !(await gateway.generatedHead(name, id, pull.head));
 	const inventory = discover(snapshot);
 	const summary = `Inspected [${snapshot.sha}](https://github.com/${name}/commit/${snapshot.sha}).\n\n`
 		+ 'Discovered packages:\n'

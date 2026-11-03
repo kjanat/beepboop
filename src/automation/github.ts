@@ -236,6 +236,17 @@ export class RepositoryGateway {
 		}
 	}
 	/** Read the proposal head without modifying or creating a branch. */
+	async generatedHead(name: string, id: number, head: string): Promise<boolean> {
+		const token = await this.token(name, id, { contents: 'read' });
+		const base = text(record(await this.call(`/repos/${name}`, token)).default_branch);
+		const comparison = record(await this.call(`/repos/${name}/compare/${encodeURIComponent(base)}...${head}`, token));
+		const commits = array(comparison.commits).map(record);
+		if (!commits.length || commits.length !== Number(comparison.ahead_by) || commits.at(-1)?.sha !== head) return false;
+		const bot = await this.botIdentity();
+		return commits.every(commit =>
+			record(commit.author).id === bot.id && record(record(commit.commit).verification).verified === true
+		);
+	}
 	async setupHead(name: string, id: number): Promise<string | null> {
 		const token = await this.token(name, id);
 		const ref = await this.call(`/repos/${name}/git/ref/heads/automation/onboarding`, token);

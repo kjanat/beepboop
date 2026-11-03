@@ -432,6 +432,7 @@ export class AutomationService {
 			);
 			const saved = row ? record(JSON.parse(row.document)) : undefined;
 			const head = await this.gateway.setupHead(name, id);
+			const branchConflict = !!head && saved?.head !== head && !(await this.gateway.generatedHead(name, id, head));
 			const previous = setupEdits(saved);
 			const priorConfiguration = previous.find(edit => edit.path === '.github/beepboop.json')?.before ?? '';
 			const choices = body.choices
@@ -439,7 +440,7 @@ export class AutomationService {
 			const plan = await previewSetup(snapshot, inventory, choices, {
 				head,
 				workflowPermission: await this.gateway.canEditWorkflows(name, id),
-				branchConflict: !!head && saved?.head !== head,
+				branchConflict,
 				presetShas: resolved.presetShas,
 				...(typeof saved?.url === 'string'
 					? { prior: { url: saved.url, content: typeof saved.content === 'string' ? saved.content : undefined } }
@@ -451,7 +452,7 @@ export class AutomationService {
 			}
 			if (plan.blockers.length) throw new Error(plan.blockers.join('\n'));
 			if (!plan.edits.length) throw new Error('Release setup already matches the reviewed configuration');
-			if (head && saved?.head !== head) {
+			if (branchConflict) {
 				throw new Error('Setup branch changed; preserve human edits and review the conflict');
 			}
 			if (head && saved?.sourceSha === snapshot.sha && JSON.stringify(previous) === JSON.stringify(plan.edits)) {
