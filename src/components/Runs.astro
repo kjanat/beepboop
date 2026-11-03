@@ -152,8 +152,10 @@ const { executions } = Astro.props;
 					 name="sourceSha"
 					 value={run.sourceSha}
 				 ><p>
-					 Approve publishing from commit <code>{run.sourceSha}</code>. Beepboop
-					 will verify the signature and required checks.
+					 Approve publishing from commit <a
+						 href={`https://github.com/${run.repository}/commit/${run.sourceSha}`}
+					 ><code>{run.sourceSha}</code></a>. Beepboop will verify the signature
+					 and required checks.
 				 </p>
 				 <button class="primary">Approve this commit</button>
 			 </form>
@@ -184,9 +186,21 @@ const { executions } = Astro.props;
 			 <summary>Release evidence</summary>
 			 <dl>
 				 <dt>Configuration commit</dt>
-				 <dd><code>{run.configurationSha}</code></dd>
+				 <dd>
+					 <a
+						 href={`https://github.com/${run.repository}/commit/${run.configurationSha}`}
+					 ><code>{run.configurationSha}</code></a>
+				 </dd>
 				 <dt>Workflow commit</dt>
-				 <dd><code>{run.workflowSha ?? 'Not dispatched yet'}</code></dd>
+				 <dd>
+					 {run.workflowSha
+					 	? (
+							<a
+								href={`https://github.com/${run.repository}/commit/${run.workflowSha}`}
+							><code>{run.workflowSha}</code></a>
+						)
+					 	: 'Not dispatched yet'}
+				 </dd>
 				 <dt>Run attempt</dt>
 				 <dd>{run.runAttempt ?? 'Not started'}</dd>
 			 </dl>{run.artifacts.map(a => <p>{a.name} <code>{a.digest}</code></p>)}

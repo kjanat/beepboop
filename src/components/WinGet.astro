@@ -139,7 +139,9 @@ const repositories = data.repositories.filter(repo =>
 				<details>
 					<summary>Submitted manifests and source commit</summary>
 					<p>
-						<code>{item.plan.sourceSha}</code>
+						<a
+							href={`https://github.com/${item.plan.repository}/commit/${item.plan.sourceSha}`}
+						><code>{item.plan.sourceSha}</code></a>
 					</p>{Object.entries(item.plan.files).map(([path, content]) => (
 						<details>
 							<summary>{path}</summary>

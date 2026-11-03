@@ -141,6 +141,24 @@ function node<K extends keyof HTMLElementTagNameMap>(tag: K, text: string): HTML
 	element.textContent = text;
 	return element;
 }
+function inspecting(form: HTMLFormElement, name: string): () => void {
+	const card = form.closest('article');
+	if (!card) return () => {};
+	if (form.querySelector('input[type="hidden"][name="repository"]')) {
+		card.classList.add('pending');
+		return () => card.classList.remove('pending');
+	}
+	const placeholder = node('article', '');
+	placeholder.className = 'pending';
+	const heading = node('div', '');
+	heading.className = 'section-heading';
+	const badge = node('span', 'Inspecting…');
+	badge.className = 'badge running';
+	heading.append(node('h2', name), badge);
+	placeholder.append(heading);
+	card.after(placeholder);
+	return () => placeholder.remove();
+}
 function renderPlan(form: HTMLFormElement, plan: Plan) {
 	const result = find(form, '.plan-result', HTMLElement);
 	if (!result) return;
@@ -398,8 +416,16 @@ for (const form of findAll(document, 'form[data-action]', HTMLFormElement)) {
 					location.assign(`/runs#${encodeURIComponent(run.id)}`);
 				}
 			} else if (action === 'discover') {
-				await api('/api/repositories/discover', z.unknown(), { repository: data.repository });
-				location.reload();
+				const undo = inspecting(form, data.repository ?? '');
+				try {
+					const repository = await api('/api/repositories/discover', z.object({ name: z.string() }), {
+						repository: data.repository,
+					});
+					location.assign(`/repositories?repository=${encodeURIComponent(repository.name)}`);
+				} catch (error) {
+					undo();
+					throw error;
+				}
 			} else if (action === 'approve' || action === 'recover') {
 				await api(`/api/executions/${action === 'approve' ? 'approve' : 'recover'}`, z.unknown(), data);
 				location.reload();

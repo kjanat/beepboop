@@ -8,6 +8,10 @@ interface Props {
 	data: Dashboard;
 }
 const { data } = Astro.props;
+const selected = Astro.url.searchParams.get('repository');
+const repositories = [...data.repositories].sort((left, right) =>
+	Number(right.name === selected) - Number(left.name === selected)
+);
 ---
 <article>
 	<h2>Connect a repository</h2>
@@ -25,172 +29,179 @@ const { data } = Astro.props;
 			></label><button class="primary">Inspect repository</button>
 	</form>
 </article>
-{data.repositories.map(repository => (
-	<article>
-		<div class="section-heading">
-			<div>
-				<h2>
-					<a href={`https://github.com/${repository.name}`}>{repository.name}
-						↗</a>
-				</h2>
-				<p class="metadata metadata-fields">
-					<span>Inspected {date(repository.updatedAt)}</span><span>Commit <code
-						>{repository.sha.slice(0, 12)}</code></span>
-				</p>
-			</div><span
-				class:list={[
-					'badge',
-					repository.suspended || repository.diagnostics.length
-						? 'blocked'
-						: 'succeeded',
-				]}
-			>{repository.suspended
-				? 'App access unavailable'
-				: repository.configuration && !repository.diagnostics.length
-				? 'Configured'
-				: 'Setup needed'}</span>
-		</div>
-		{repository.diagnostics.map(message => <p class="notice">{message}</p>)}
-		<div class="actions">
-			<form data-action="discover">
-				<input type="hidden" name="repository" value={repository.name}><button>
-					Refresh inspection
+{repositories.map(repository => (
+	<article id={`repository-${repository.id}`}>
+		<details open={repository.name === selected || repositories.length === 1}>
+			<summary class="section-heading">
+				<div>
+					<h2>
+						<a href={`https://github.com/${repository.name}`}>{repository.name}
+							↗</a>
+					</h2>
+					<p class="metadata metadata-fields">
+						<span>Inspected {date(repository.updatedAt)}</span><span>Commit <a
+								href={`https://github.com/${repository.name}/commit/${repository.sha}`}
+							><code>{repository.sha.slice(0, 12)}</code></a></span>
+					</p>
+				</div><span
+					class:list={[
+						'badge',
+						repository.suspended || repository.diagnostics.length
+							? 'blocked'
+							: 'succeeded',
+					]}
+				>{repository.suspended
+					? 'App access unavailable'
+					: repository.configuration && !repository.diagnostics.length
+					? 'Configured'
+					: 'Setup needed'}</span>
+			</summary>
+			{repository.diagnostics.map(message => <p class="notice">{message}</p>)}
+			<div class="actions">
+				<form data-action="discover">
+					<input
+						type="hidden"
+						name="repository"
+						value={repository.name}
+					><button>
+						Refresh inspection
+					</button>
+				</form>
+				{data.onboarding.get(repository.id) && (
+					<a class="button" href={data.onboarding.get(repository.id)}
+					>Review previous setup PR ↗</a>
+				)}
+				{repository.configuration && !repository.suspended
+					&& !repository.diagnostics.length && (
+					 <a
+						 class="button primary"
+						 href={`/releases?repository=${repository.id}`}
+					 >Prepare a release</a>
+				 )}
+			</div>
+			<form
+				data-action="setup"
+				data-repository={repository.name}
+				class="release-setup"
+			>
+				<button class="primary">
+					{repository.configuration
+						? 'Edit release setup'
+						: data.onboarding.get(repository.id)
+						? 'Refresh setup proposal'
+						: 'Configure releases'}
 				</button>
 			</form>
-			{data.onboarding.get(repository.id) && (
-				<a class="button" href={data.onboarding.get(repository.id)}
-				>Review previous setup PR ↗</a>
-			)}
-			{repository.configuration && !repository.suspended
-				&& !repository.diagnostics.length && (
-				 <a
-					 class="button primary"
-					 href={`/releases?repository=${repository.id}`}
-				 >Prepare a release</a>
-			 )}
-		</div>
-		<form
-			data-action="setup"
-			data-repository={repository.name}
-			class="release-setup"
-		>
-			<button class="primary">
-				{repository.configuration
-					? 'Edit release setup'
-					: data.onboarding.get(repository.id)
-					? 'Refresh setup proposal'
-					: 'Configure releases'}
-			</button>
-		</form>
-		<div class="repository-grid">
-			<div>
-				<h3>
-					Release packages
-				</h3>{repository.inventory.packages.some(publishable) ? (
-					<>
-						<table>
-							<thead>
-								<tr>
-									<th>Package</th>
-									<th>Published</th>
-									<th>In repository</th>
-								</tr>
-							</thead>
-							<tbody>
-								{repository.inventory.packages.filter(publishable).map(p => (
+			<div class="repository-grid">
+				<div>
+					<h3>
+						Release packages
+					</h3>{repository.inventory.packages.some(publishable) ? (
+						<>
+							<table>
+								<thead>
 									<tr>
-										<td>
-											<code>{packageUrl(p)}</code><small><a
-													href={`https://github.com/${repository.name}/blob/${repository.sha}/${
-														p.manifest.split('/').map(encodeURIComponent).join('/')
-													}`}
-												>{p.manifest}</a></small>{p.previousModule && (
-												<small>Earlier module: {p.previousModule.name} —
-													{p.previousModule.version}</small>
-											)}
-										</td>
-										<td>
-											{p.published
-												?? (p.publicationStatus === 'missing'
-													? 'Not published'
-													: p.publicationStatus === 'failed'
-													? 'Lookup failed — inspect diagnostics'
-													: 'Not checked — inspect repository')}
-										</td>
-										<td>
-											{p.version
-												?? (p.versionSource.startsWith('tags:')
-													? 'No matching release tag'
-													: 'No version found')}
-										</td>
+										<th>Package</th>
+										<th>Published</th>
+										<th>In repository</th>
 									</tr>
-								))}
-							</tbody>
-						</table>
-					</>
-				) : (
-					 <p>No publishable packages discovered.</p>
-				 )}{repository.inventory.packages.some(p => !publishable(p)) && (
-					<p class="metadata">
-						Excluded:{repository.inventory.packages.filter(p => !publishable(p)).map((
-							p,
-							index,
-						) => (
-							<span>{index ? ', ' : ' '}<a
-									href={`https://github.com/${repository.name}/blob/${repository.sha}/${
-										p.manifest.split('/').map(encodeURIComponent).join('/')
-									}`}
-								>{p.name}</a> ({exclusionLabel(p.publication)})</span>
-						))}
-					</p>
-				)}
+								</thead>
+								<tbody>
+									{repository.inventory.packages.filter(publishable).map(p => (
+										<tr>
+											<td>
+												<code>{packageUrl(p)}</code><small><a
+														href={`https://github.com/${repository.name}/blob/${repository.sha}/${
+															p.manifest.split('/').map(encodeURIComponent).join('/')
+														}`}
+													>{p.manifest}</a></small>{p.previousModule && (
+													<small>Earlier module: {p.previousModule.name} —
+														{p.previousModule.version}</small>
+												)}
+											</td>
+											<td>
+												{p.published
+													?? (p.publicationStatus === 'missing'
+														? 'Not published'
+														: p.publicationStatus === 'failed'
+														? 'Lookup failed — inspect diagnostics'
+														: 'Not checked — inspect repository')}
+											</td>
+											<td>
+												{p.version
+													?? (p.versionSource.startsWith('tags:')
+														? 'No matching release tag'
+														: 'No version found')}
+											</td>
+										</tr>
+									))}
+								</tbody>
+							</table>
+						</>
+					) : (
+						 <p>No publishable packages discovered.</p>
+					 )}{repository.inventory.packages.some(p => !publishable(p)) && (
+						<p class="metadata">
+							Excluded:{repository.inventory.packages.filter(p => !publishable(p)).map((
+								p,
+								index,
+							) => (
+								<span>{index ? ', ' : ' '}<a
+										href={`https://github.com/${repository.name}/blob/${repository.sha}/${
+											p.manifest.split('/').map(encodeURIComponent).join('/')
+										}`}
+									>{p.name}</a> ({exclusionLabel(p.publication)})</span>
+							))}
+						</p>
+					)}
+				</div>
+				<div>
+					<h3>Release workflows</h3>{workflowChoices(repository).map(w => (
+						<p>
+							<strong>{w.stream} / {w.operation}</strong><small><a
+									href={`https://github.com/${repository.name}/blob/${repository.sha}/.github/workflows/${w.file}`}
+								>{w.file}</a></small><small>Ref: <code
+								>{w.ref}</code></small><small>
+								{w.mode === 'observe' ? 'Tracks existing triggers' : 'Can be dispatched'}</small>
+						</p>
+					))}{!repository.configuration && (
+						<>
+							{repository.inventory.workflows.map(workflow => (
+								<p>
+									<strong><a
+											href={`https://github.com/${repository.name}/blob/${repository.sha}/.github/workflows/${workflow.file}`}
+										>{workflow.name || workflow.file}</a></strong><small
+									>{workflow.events.join(', ') || 'No supported triggers'}</small>
+								</p>
+							))}
+							{!repository.inventory.workflows.length && (
+								<p>No workflows discovered.</p>
+							)}
+						</>
+					)}
+				</div>
 			</div>
-			<div>
-				<h3>Release workflows</h3>{workflowChoices(repository).map(w => (
-					<p>
-						<strong>{w.stream} / {w.operation}</strong><small><a
-								href={`https://github.com/${repository.name}/blob/${repository.sha}/.github/workflows/${w.file}`}
-							>{w.file}</a></small><small>Ref: <code
-							>{w.ref}</code></small><small>
-							{w.mode === 'observe' ? 'Tracks existing triggers' : 'Can be dispatched'}</small>
-					</p>
-				))}{!repository.configuration && (
-					<>
-						{repository.inventory.workflows.map(workflow => (
-							<p>
-								<strong><a
-										href={`https://github.com/${repository.name}/blob/${repository.sha}/.github/workflows/${workflow.file}`}
-									>{workflow.name || workflow.file}</a></strong><small
-								>{workflow.events.join(', ') || 'No supported triggers'}</small>
-							</p>
-						))}
-						{!repository.inventory.workflows.length && (
-							<p>No workflows discovered.</p>
-						)}
-					</>
-				)}
-			</div>
-		</div>
-		{repository.configuration && (
-			<details>
-				<summary>
-					Required publications and automation
-				</summary>{Object.entries(repository.configuration.streams).map((
-					[name, stream],
-				) => (
-					<p>
-						<strong>{name}</strong>:
-						{stream.required.join(', ') || 'No required publications configured'}
-					</p>
-				))}{repository.configuration.subscriptions.map(s => (
-					<p>
-						When {s.source} emits {s.event}, start {s.stream} / {s.operation}.
-					</p>
-				))}
-			</details>
-		)}
-		{repository.inventory.diagnostics.map(message => (
-			<p class="notice">{message}</p>
-		))}
+			{repository.configuration && (
+				<details>
+					<summary>
+						Required publications and automation
+					</summary>{Object.entries(repository.configuration.streams).map((
+						[name, stream],
+					) => (
+						<p>
+							<strong>{name}</strong>:
+							{stream.required.join(', ') || 'No required publications configured'}
+						</p>
+					))}{repository.configuration.subscriptions.map(s => (
+						<p>
+							When {s.source} emits {s.event}, start {s.stream} / {s.operation}.
+						</p>
+					))}
+				</details>
+			)}
+			{repository.inventory.diagnostics.map(message => (
+				<p class="notice">{message}</p>
+			))}
+		</details>
 	</article>
 ))}
