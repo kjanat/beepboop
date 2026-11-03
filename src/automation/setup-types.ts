@@ -26,9 +26,15 @@ export const setupChoicesSchema = z.object({
 }).strict();
 export type SetupChoices = z.infer<typeof setupChoicesSchema>;
 export type SetupWorkflow = NonNullable<SetupChoices['streams'][number]['prepare']>;
+export type Versioning = SetupChoices['streams'][number]['versioning'];
+export type TriggerHandover = SetupWorkflow['triggers'];
+export const versionings: readonly Versioning[] = ['workspace', 'independent', 'none'];
+export const triggerHandovers: readonly TriggerHandover[] = ['review', 'dispatchOnly', 'preserve'];
 export type SetupOption =
 	| { kind: 'package' | 'required'; stream: string; package: string }
-	| { kind: 'workflow'; stream: string; operation: 'prepare' | 'promote'; file: string; job?: string };
+	| { kind: 'workflow'; stream: string; operation: 'prepare' | 'promote'; file: string; job?: string }
+	| { kind: 'versioning'; stream: string; value: Versioning }
+	| { kind: 'triggers'; stream: string; operation: 'prepare' | 'promote'; value: TriggerHandover };
 export interface SetupEdit {
 	repositoryId: number;
 	number: number;

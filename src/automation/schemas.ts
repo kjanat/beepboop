@@ -383,6 +383,13 @@ export const setupOptionsSchema: z.ZodType<SetupOption[]> = z.array(z.union([
 		file: z.string(),
 		job: z.string().optional(),
 	}),
+	z.object({ kind: z.literal('versioning'), stream: z.string(), value: z.enum(['workspace', 'independent', 'none']) }),
+	z.object({
+		kind: z.literal('triggers'),
+		stream: z.string(),
+		operation: z.enum(['prepare', 'promote']),
+		value: z.enum(['review', 'dispatchOnly', 'preserve']),
+	}),
 ]));
 export const setupEditSchema: z.ZodType<SetupEdit> = z.object({
 	repositoryId: z.number(),

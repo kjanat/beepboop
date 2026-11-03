@@ -11,6 +11,10 @@ import {
 	type SetupPlan,
 	type SetupWorkflow,
 	setupChoicesSchema,
+	type TriggerHandover,
+	triggerHandovers,
+	type Versioning,
+	versionings,
 } from '@/automation/setup-types';
 import { integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Package, RepositoryRecord, Snapshot } from '@/automation/types';
@@ -275,17 +279,29 @@ export function setupOptions(plan: SetupPlan): SetupOption[] {
 				...(binding.job === undefined ? {} : { job: binding.job }),
 			}));
 		}),
+		...versionings.map((value): SetupOption => ({ kind: 'versioning', stream: stream.name, value })),
+		...operations.flatMap(operation =>
+			stream[operation]
+				? triggerHandovers.map((value): SetupOption => ({ kind: 'triggers', stream: stream.name, operation, value }))
+				: []
+		),
 	]);
 }
 function optionId(option: SetupOption): string {
 	const parts = option.kind === 'workflow'
 		? [option.kind, option.stream, option.operation, option.file]
+		: option.kind === 'versioning'
+		? [option.kind, option.stream, option.value]
+		: option.kind === 'triggers'
+		? [option.kind, option.stream, option.operation, option.value]
 		: [option.kind, option.stream, option.package];
 	return parts.map(part => encodeURIComponent(part).replaceAll('-', '%2D')).join(':');
 }
 function selected(option: SetupOption, choices: SetupChoices): boolean {
 	const stream = choices.streams.find(row => row.name === option.stream);
 	if (option.kind === 'workflow') return stream?.[option.operation]?.file === option.file;
+	if (option.kind === 'versioning') return stream?.versioning === option.value;
+	if (option.kind === 'triggers') return stream?.[option.operation]?.triggers === option.value;
 	return (option.kind === 'package' ? stream?.packages : stream?.required)?.includes(option.package) ?? false;
 }
 export function bodyChoices(body: string, options: SetupOption[], base: SetupChoices): SetupChoices {
@@ -300,7 +316,7 @@ export function bodyChoices(body: string, options: SetupOption[], base: SetupCho
 			const own = options.filter(option => option.stream === stream.name);
 			const pick = (kind: 'package' | 'required', current: string[]) => {
 				const offered = own.flatMap(option =>
-					option.kind !== 'workflow' && option.kind === kind ? [option.package] : []
+					option.kind === kind && (option.kind === 'package' || option.kind === 'required') ? [option.package] : []
 				);
 				return [...new Set([...current, ...offered])].filter(id => state({ kind, stream: stream.name, package: id }));
 			};
@@ -323,11 +339,20 @@ export function bodyChoices(body: string, options: SetupOption[], base: SetupCho
 					publicationSteps: {},
 				};
 			};
-			const prepare = binding('prepare'), promote = binding('promote');
+			const handover = (operation: Operation, chosen: SetupWorkflow | undefined): SetupWorkflow | undefined => {
+				if (!chosen) return undefined;
+				const ticked = own.flatMap(option =>
+					option.kind === 'triggers' && option.operation === operation && state(option) ? [option.value] : []
+				);
+				const value = ticked.find(value => value !== chosen.triggers) ?? ticked[0] ?? chosen.triggers;
+				return value === chosen.triggers ? chosen : { ...chosen, triggers: value };
+			};
+			const prepare = handover('prepare', binding('prepare')), promote = handover('promote', binding('promote'));
+			const versions = own.flatMap(option => option.kind === 'versioning' && state(option) ? [option.value] : []);
 			return {
 				name: stream.name,
 				packages,
-				versioning: stream.versioning,
+				versioning: versions.find(value => value !== stream.versioning) ?? versions[0] ?? stream.versioning,
 				required: pick('required', stream.required).filter(id => packages.includes(id)),
 				...(prepare ? { prepare } : {}),
 				...(promote ? { promote } : {}),
@@ -336,6 +361,16 @@ export function bodyChoices(body: string, options: SetupOption[], base: SetupCho
 		...(base.actionsRevision ? { actionsRevision: base.actionsRevision } : {}),
 	};
 }
+const versioningLabels: Record<Versioning, string> = {
+	workspace: 'One version for the stream',
+	independent: 'Independent package versions',
+	none: 'No version',
+};
+const triggerLabels: Record<TriggerHandover, string> = {
+	review: 'Keep existing triggers and report conflicts',
+	dispatchOnly: 'Replace existing triggers with Beepboop dispatch',
+	preserve: 'Preserve existing triggers; block incompatible integration',
+};
 export function setupBody(plan: SetupPlan): string {
 	const options = setupOptions(plan);
 	const box = (option: SetupOption, label: string) =>
@@ -347,7 +382,7 @@ export function setupBody(plan: SetupPlan): string {
 			const own = options.filter(option => option.stream === stream.name);
 			const packages = (kind: 'package' | 'required') =>
 				own.flatMap(option =>
-					option.kind !== 'workflow' && option.kind === kind
+					option.kind === kind && (option.kind === 'package' || option.kind === 'required')
 						? [box(option, `\`${packageLabel(option.package)}\``)]
 						: []
 				);
@@ -357,12 +392,24 @@ export function setupBody(plan: SetupPlan): string {
 						? [box(option, `\`${option.file}\`${option.job ? ` (job \`${option.job}\`)` : ''}`)]
 						: []
 				);
+			const handovers = (operation: Operation) =>
+				own.flatMap(option =>
+					option.kind === 'triggers' && option.operation === operation
+						? [box(option, triggerLabels[option.value])]
+						: []
+				);
 			return [
 				`- **${stream.name}** (${stream.versioning}); approval required.`,
 				...group('Packages', packages('package')),
 				...group('Required publications', packages('required')),
 				...group('Preparation workflow', workflows('prepare')),
 				...group('Publication workflow', workflows('promote')),
+				...group(
+					'Versioning',
+					own.flatMap(option => option.kind === 'versioning' ? [box(option, versioningLabels[option.value])] : []),
+				),
+				...group('Preparation triggers', handovers('prepare')),
+				...group('Publication triggers', handovers('promote')),
 			].join('\n');
 		}).join('\n')
 		+ '\n\n' + plan.notes.map(note => `- ${note}`).join('\n')

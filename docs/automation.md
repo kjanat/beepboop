@@ -372,14 +372,16 @@ reopened, and maintenance never approves or dispatches a release.
 ### Edit the setup PR with checkboxes
 
 The setup PR description lists each release stream with a checkbox for every
-publishable package, every required publication, and every suggested preparation
-and publication workflow. Tick or untick boxes in the GitHub UI to change the
+publishable package, every required publication, every suggested preparation
+and publication workflow, its versioning, and the trigger handover of each bound
+workflow. Tick or untick boxes in the GitHub UI to change the
 proposal. Beepboop waits until 5 seconds pass without another edit, then rebuilds
 the proposal once from the boxes and commits the result to the setup branch.
 
 Beepboop reads only the boxes it rendered. Each committed rebuild rewrites the
 whole description. A required publication counts only while its package is
-ticked. Ticking a second workflow for the same role replaces the current one.
+ticked. Ticking a second workflow for the same role replaces the current one;
+versioning and trigger handover work the same way.
 Unresolved choices and edited setup-branch files appear on the PR, as with
 automatic maintenance, and leave the branch as it is.
 
