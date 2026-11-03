@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { z } from 'zod';
 import type { WorkflowIdentity } from '@/automation/auth';
 import {
 	completion,
@@ -24,6 +25,7 @@ import { matchesRef } from '@/automation/policy';
 import { planRefs, type RefPlan } from '@/automation/refs';
 import { compileReleaseSet } from '@/automation/release-set';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
+import { automationEventSchema, executionSchema } from '@/automation/schemas';
 import { Store } from '@/automation/store';
 import type { Artifact, AutomationEvent, Edit, Execution, Publication, ReleaseReference } from '@/automation/types';
 import { array, integer, record, sha } from '@/model';
@@ -40,6 +42,14 @@ interface ReleaseSetRecord {
 	started?: boolean;
 	completed?: boolean;
 }
+const releaseSetRecord: z.ZodType<ReleaseSetRecord> = z.object({
+	target: z.string(),
+	ids: z.array(z.string()),
+	workflowId: z.string().optional(),
+	started: z.boolean().optional(),
+	completed: z.boolean().optional(),
+});
+const observation = z.object({ repositoryId: z.number(), runId: z.number() });
 export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private pending: Promise<unknown> = Promise.resolve();
 	private serial<T>(work: () => Promise<T>): Promise<T> {
@@ -53,9 +63,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	protected gateway(): RepositoryGateway {
 		return new RepositoryGateway(this.env, Number(this.env.OWNER_ID));
 	}
+	private async journal(): Promise<Execution[]> {
+		return [...(await this.ctx.storage.list({ prefix: 'execution:' })).values()].map(value =>
+			executionSchema.parse(value)
+		);
+	}
+	private async releaseSet(key: string): Promise<ReleaseSetRecord | undefined> {
+		return releaseSetRecord.optional().parse(await this.ctx.storage.get(key));
+	}
 	private async put(execution: Execution): Promise<void> {
 		Object.assign(execution, identifyExecution(execution));
-		const previous = await this.ctx.storage.get<Execution>(`execution:${execution.id}`);
+		const previous = executionSchema.optional().parse(await this.ctx.storage.get(`execution:${execution.id}`));
 		execution.updatedAt = Date.now();
 		// The journal is authoritative. D1 is an asynchronously repairable dashboard index.
 		await this.ctx.storage.put(`execution:${execution.id}`, execution);
@@ -76,7 +94,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				execution.releaseSet ? `:${execution.releaseSet.preparationId}:${execution.releaseSet.group}` : ''
 			}`;
 		if (await this.ctx.storage.get(`release-emitted:${id}`)) return;
-		const group = [...(await this.ctx.storage.list<Execution>({ prefix: 'execution:' })).values()]
+		const group = (await this.journal())
 			.filter(e =>
 				e.state === 'succeeded' && e.stream === execution.stream && e.version === execution.version
 				&& e.sourceSha === execution.sourceSha && e.configurationSha === execution.configurationSha
@@ -115,14 +133,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		await this.ctx.storage.put({ [`release-event:${id}`]: event, [`release-emitted:${id}`]: true });
 	}
 	async releaseEvents(): Promise<AutomationEvent[]> {
-		return [...(await this.ctx.storage.list<AutomationEvent>({ prefix: 'release-event:', limit: 100 })).values()];
+		return [...(await this.ctx.storage.list({ prefix: 'release-event:', limit: 100 })).values()].map(value =>
+			automationEventSchema.parse(value)
+		);
 	}
 	async acknowledgeReleaseEvent(id: string): Promise<void> {
 		await this.ctx.storage.delete(`release-event:${id}`);
 	}
 	/** Persist wake-ups separately so failed delivery survives Worker restarts. */
 	private async wakeReleaseWorkflows(): Promise<void> {
-		for (const [key, release] of await this.ctx.storage.list<ReleaseSetRecord>({ prefix: 'release-set:' })) {
+		for (const [key, value] of await this.ctx.storage.list({ prefix: 'release-set:' })) {
+			const release = releaseSetRecord.parse(value);
 			if (!release.workflowId || release.completed) continue;
 			await this.ctx.storage.put(`release-wake:${key.slice('release-set:'.length)}`, true);
 			await this.ctx.storage.setAlarm(Date.now() + 1000);
@@ -131,7 +152,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private async deliverReleaseEvents(): Promise<void> {
 		for (const key of (await this.ctx.storage.list({ prefix: 'release-wake:' })).keys()) {
 			const preparationId = key.slice('release-wake:'.length);
-			const release = await this.ctx.storage.get<ReleaseSetRecord>(`release-set:${preparationId}`);
+			const release = await this.releaseSet(`release-set:${preparationId}`);
 			if (!release?.workflowId || release.completed) {
 				await this.ctx.storage.delete(key);
 				continue;
@@ -171,7 +192,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		}
 	}
 	async releaseOperations(preparationId: string, workflowId: string) {
-		const release = await this.ctx.storage.get<ReleaseSetRecord>(`release-set:${preparationId}`);
+		const release = await this.releaseSet(`release-set:${preparationId}`);
 		if (!release || release.workflowId !== workflowId) throw new Error('Release Workflow identity mismatch');
 		return Promise.all(release.ids.map(async id => {
 			const execution = await this.get(id);
@@ -211,7 +232,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if ((await this.get(operation.id)).state !== 'succeeded') throw new Error('Release is incomplete');
 			}
 			const key = `release-set:${preparationId}`;
-			const release = await this.ctx.storage.get<ReleaseSetRecord>(key);
+			const release = await this.releaseSet(key);
 			await this.ctx.storage.put(key, { ...release, completed: true });
 		});
 	}
@@ -222,7 +243,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				throw new Error('Repository is suspended');
 			}
 			const key = `release-set:${preparationId}`;
-			const prior = await this.ctx.storage.get<ReleaseSetRecord>(key);
+			const prior = await this.releaseSet(key);
 			if (prior) {
 				if (prior.target !== target) throw new Error('Release set already targets another revision');
 				return Promise.all(prior.ids.map(id => this.get(id)));
@@ -267,14 +288,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (Boolean(execution.workflow) === Boolean(execution.managed)) {
 				throw new Error('Execution needs exactly one runner');
 			}
-			const prior = await this.ctx.storage.get<Execution>(`execution:${execution.id}`);
+			const prior = executionSchema.optional().parse(await this.ctx.storage.get(`execution:${execution.id}`));
 			if (prior) return identifyExecution(prior);
 			if (execution.configuration.streams[execution.stream]?.concurrency === 'supersede-pending') {
-				for (
-					const old of (
-						await this.ctx.storage.list<Execution>({ prefix: 'execution:' })
-					).values()
-				) {
+				for (const old of await this.journal()) {
 					if (
 						old.stream === execution.stream
 						&& old.operation === execution.operation
@@ -289,7 +306,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		});
 	}
 	private async get(id: string): Promise<Execution> {
-		const execution = await this.ctx.storage.get<Execution>(`execution:${id}`);
+		const execution = executionSchema.optional().parse(await this.ctx.storage.get(`execution:${id}`));
 		if (!execution) throw new Error('Unknown execution');
 		return identifyExecution(execution);
 	}
@@ -673,12 +690,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		await this.wake();
 	}
 	private async observations(): Promise<void> {
-		const pending = await this.ctx.storage.list<{ repositoryId: number; runId: number }>({
+		const pending = await this.ctx.storage.list({
 			prefix: 'observe:',
 		});
 		if (pending.size) await this.ctx.storage.setAlarm(Date.now() + 60000);
-		for (const [key, event] of pending) {
+		for (const [key, value] of pending) {
 			try {
+				const event = observation.parse(value);
 				const repository = await this.store().repository(event.repositoryId);
 				if (!repository?.configuration || repository.suspended || repository.diagnostics.length) {
 					await this.ctx.storage.delete(key);
@@ -859,9 +877,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private async reconcile(onlyExecution?: string): Promise<void> {
 		if (!onlyExecution) await this.observations();
-		const executions = [
-			...(await this.ctx.storage.list<Execution>({ prefix: 'execution:' })).values(),
-		].sort((a, b) => a.createdAt - b.createdAt);
+		const executions = (await this.journal()).sort((a, b) => a.createdAt - b.createdAt);
 		if (executions[0] && (await this.store().repository(executions[0].repositoryId))?.suspended) {
 			return;
 		}

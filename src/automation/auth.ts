@@ -9,6 +9,7 @@ import {
 import { createRemoteJWKSet, type JWTVerifyGetKey, jwtVerify } from 'jose';
 import { z } from 'zod';
 import { cliAuthRoute, cliSubject } from '@/automation/cli-auth';
+import { documentRow } from '@/automation/schemas';
 import { integer, record, sha, text } from '@/model';
 
 const clientExtensionResults = z.object({}).catch({});
@@ -228,9 +229,11 @@ export async function authRoute(
 	if (path === '/auth/callback') {
 		return completeLogin(request, {
 			consumeFlow: async (id) =>
-				(await env.DB.prepare('DELETE FROM sessions WHERE id=? AND expires_at>? RETURNING document')
-					.bind(id, Date.now())
-					.first<{ document: string }>())?.document ?? null,
+				documentRow.nullable().parse(
+					await env.DB.prepare('DELETE FROM sessions WHERE id=? AND expires_at>? RETURNING document')
+						.bind(id, Date.now())
+						.first(),
+				)?.document ?? null,
 			exchange: async (code, verifier) => {
 				const result = await client.exchange(code, `${env.APPLICATION_ORIGIN}/auth/callback`, verifier).catch(() =>
 					null
@@ -271,14 +274,27 @@ interface SavedCredential {
 	counter: number;
 	transports?: WebAuthnCredential['transports'];
 }
+const savedCredential: z.ZodType<SavedCredential> = z.object({
+	label: z.string().optional(),
+	id: z.string(),
+	publicKey: z.string(),
+	counter: z.number(),
+	transports: z.array(z.string()).optional(),
+});
 export class Authenticators {
 	constructor(private env: AuthBindings) {}
-	private async credentials(subject: string): Promise<SavedCredential[]> {
+	private async saved(subject: string): Promise<{ document: string; credential: SavedCredential }[]> {
 		return (
 			await this.env.DB.prepare('SELECT document FROM authenticators WHERE subject=?')
 				.bind(subject)
-				.all<{ document: string }>()
-		).results.map((row) => JSON.parse(row.document));
+				.all()
+		).results.map((row) => {
+			const { document } = documentRow.parse(row);
+			return { document, credential: savedCredential.parse(JSON.parse(document)) };
+		});
+	}
+	private async credentials(subject: string): Promise<SavedCredential[]> {
+		return (await this.saved(subject)).map(entry => entry.credential);
 	}
 	async options(
 		subject: string,
@@ -326,11 +342,13 @@ export class Authenticators {
 		return { id, options };
 	}
 	async verify(subject: string, id: string, response: unknown): Promise<{ proof?: string }> {
-		const row = await this.env.DB.prepare(
-			'DELETE FROM sessions WHERE id=? AND expires_at>? RETURNING document',
-		)
-			.bind(id, Date.now())
-			.first<{ document: string }>();
+		const row = documentRow.nullable().parse(
+			await this.env.DB.prepare(
+				'DELETE FROM sessions WHERE id=? AND expires_at>? RETURNING document',
+			)
+				.bind(id, Date.now())
+				.first(),
+		);
 		if (!row) throw new Error('Challenge expired');
 		const challenge = record(JSON.parse(row.document));
 		if (challenge.subject !== subject) throw new Error('Challenge subject mismatch');
@@ -371,8 +389,9 @@ export class Authenticators {
 			}
 			return {};
 		}
-		const saved = (await this.credentials(subject)).find((c) => c.id === record(response).id);
-		if (!saved) throw new Error('Unknown authenticator');
+		const stored = (await this.saved(subject)).find((entry) => entry.credential.id === record(response).id);
+		if (!stored) throw new Error('Unknown authenticator');
+		const saved = stored.credential;
 		const result = await verifyAuthenticationResponse({
 			response: authenticationResponse.parse(response),
 			expectedChallenge: text(challenge.challenge),
@@ -388,7 +407,7 @@ export class Authenticators {
 			.bind(
 				JSON.stringify({ ...saved, counter: result.authenticationInfo.newCounter }),
 				saved.id,
-				JSON.stringify(saved),
+				stored.document,
 			)
 			.run();
 		if (update.meta.changes !== 1) throw new Error('Authenticator changed during verification');
@@ -399,11 +418,13 @@ export class Authenticators {
 		return { proof };
 	}
 	async consume(subject: string, proof: string): Promise<void> {
-		const row = await this.env.DB.prepare(
-			'DELETE FROM sessions WHERE id=? AND expires_at>? RETURNING document',
-		)
-			.bind(proof, Date.now())
-			.first<{ document: string }>();
+		const row = documentRow.nullable().parse(
+			await this.env.DB.prepare(
+				'DELETE FROM sessions WHERE id=? AND expires_at>? RETURNING document',
+			)
+				.bind(proof, Date.now())
+				.first(),
+		);
 		if (!row) throw new Error('Fresh security-key authentication required');
 		const data = record(JSON.parse(row.document));
 		if (data.subject !== subject || data.elevated !== true) {

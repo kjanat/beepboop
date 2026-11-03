@@ -1,9 +1,13 @@
 import { seal } from 'tweetnacl-sealedbox-js';
+import { z } from 'zod';
 import { base64, bytes, type WorkflowIdentity } from '@/automation/auth';
 import type { RepositoryGateway } from '@/automation/github';
 import { matchesRef } from '@/automation/policy';
+import { rowDocument } from '@/automation/schemas';
 import type { Store } from '@/automation/store';
 import { integer, oneOf, record, text } from '@/model';
+
+const credentialRow = z.object({ version: z.number(), key_id: z.string(), iv: z.string(), ciphertext: z.string() });
 
 interface GrantFields {
 	id: string;
@@ -85,10 +89,12 @@ export class Vault {
 		if (!/^[\w-]{1,64}$/.test(alias) || !value || value.length > 48000) {
 			throw new Error('Invalid credential');
 		}
-		const latest = await this.store.db
-			.prepare('SELECT MAX(version) AS version FROM credentials WHERE alias=?')
-			.bind(alias)
-			.first<{ version: number | null }>();
+		const latest = z.object({ version: z.number().nullable() }).nullable().parse(
+			await this.store.db
+				.prepare('SELECT MAX(version) AS version FROM credentials WHERE alias=?')
+				.bind(alias)
+				.first(),
+		);
 		const version = (latest?.version ?? 0) + 1,
 			iv = crypto.getRandomValues(new Uint8Array(12));
 		const ciphertext = await crypto.subtle.encrypt(
@@ -117,10 +123,12 @@ export class Vault {
 		return version;
 	}
 	async reveal(alias: string, actor: string): Promise<{ value: string; version: number }> {
-		const row = await this.store.db
-			.prepare('SELECT * FROM credentials WHERE alias=? AND active=1')
-			.bind(alias)
-			.first<{ version: number; key_id: string; iv: string; ciphertext: string }>();
+		const row = credentialRow.nullable().parse(
+			await this.store.db
+				.prepare('SELECT * FROM credentials WHERE alias=? AND active=1')
+				.bind(alias)
+				.first(),
+		);
 		if (!row) throw new Error('Credential unavailable');
 		const clear = await crypto.subtle.decrypt(
 			{
@@ -151,9 +159,9 @@ export class Vault {
 		const rows = await this.store.db
 			.prepare('SELECT document FROM grants WHERE alias=? AND repository_id=?')
 			.bind(alias, identity.repositoryId)
-			.all<{ document: string }>();
+			.all();
 		const allowed = rows.results
-			.map((r) => parseGrant(JSON.parse(r.document)))
+			.map((r) => parseGrant(rowDocument(r)))
 			.some(
 				(g) =>
 					g.delivery === 'runtime'
@@ -177,12 +185,12 @@ export class Vault {
 		const rows = await this.store.db
 			.prepare('SELECT document FROM grants WHERE alias=?')
 			.bind(alias)
-			.all<{ document: string }>();
+			.all();
 		const secret = await this.reveal(alias, actor),
 			outcomes: { id: string; state: string }[] = [];
 		for (
 			const grant of rows.results
-				.map((row) => parseGrant(JSON.parse(row.document)))
+				.map((row) => parseGrant(rowDocument(row)))
 				.filter((g) => g.delivery !== 'runtime')
 		) {
 			let state = 'failed';

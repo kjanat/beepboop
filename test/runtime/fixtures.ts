@@ -47,9 +47,12 @@ export const managed = {
 		title: 'prepare',
 		body: 'fixture',
 		plan: {
+			version: '2',
 			sourceSha: fixture.sourceSha,
 			requiresPreparation: false,
 			edits: [{ path: 'version.txt', before: '1', after: '2' }],
+			packages: [],
+			diagnostics: [],
 		},
 	},
 };

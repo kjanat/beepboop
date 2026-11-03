@@ -5,6 +5,7 @@ import type { RepositoryGateway } from '@/automation/github';
 import { discover } from '@/automation/managers';
 import { packageId } from '@/automation/package-identity';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
+import { documentRow } from '@/automation/schemas';
 import { previewSetup, setupBody } from '@/automation/setup';
 import type { Store } from '@/automation/store';
 import type { Edit, Snapshot } from '@/automation/types';
@@ -22,9 +23,9 @@ export function setupEdits(saved: Record<string, unknown> | undefined): Edit[] {
 /** Reconcile an already-open proposal after discovery, without starting a release or changing human edits. */
 export async function maintainSetup(store: Store, gateway: RepositoryGateway, snapshot: Snapshot): Promise<void> {
 	const { name, id } = snapshot.repository;
-	const row = await store.db.prepare('SELECT document FROM onboarding WHERE repository_id=?').bind(id).first<
-		{ document: string }
-	>();
+	const row = documentRow.nullable().parse(
+		await store.db.prepare('SELECT document FROM onboarding WHERE repository_id=?').bind(id).first(),
+	);
 	if (!row) return;
 	const saved = record(JSON.parse(row.document));
 	const pull = await gateway.openSetupPull(name, id);

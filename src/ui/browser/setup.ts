@@ -1,10 +1,12 @@
+import { z } from 'zod';
 import { publishable } from '@/automation/package-publication';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
-import { oneOf, record, string } from '@/model';
-import { api, show } from '@/ui/browser/dom';
+import { oneOf } from '@/model';
+import { api, find, show } from '@/ui/browser/dom';
 import { packageLabel } from '@/ui/package-label';
 
+const setupPlan = z.unknown().transform(parseSetupPlan);
 const sessions = new WeakMap<HTMLFormElement, { plan: SetupPlan; choices: () => SetupChoices; reviewed?: string }>();
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = ''): HTMLElementTagNameMap[K] {
 	const node = document.createElement(tag);
@@ -248,17 +250,17 @@ function review(form: HTMLFormElement, plan: SetupPlan) {
 		result.append(details);
 	}
 	if (!plan.edits.length) result.append(element('p', 'No file changes needed.'));
-	const apply = form.querySelector<HTMLButtonElement>('button[value="apply"]');
+	const apply = find(form, 'button[value="apply"]', HTMLButtonElement);
 	if (apply) apply.disabled = !!plan.blockers.length || !plan.edits.length;
 }
 export async function setup(form: HTMLFormElement, action: string) {
 	const repository = form.dataset.repository;
 	if (!repository) throw new Error('Repository missing');
 	if (!sessions.has(form)) {
-		const plan = parseSetupPlan(await api('/api/repositories/setup/preview', { repository }));
+		const plan = await api('/api/repositories/setup/preview', setupPlan, { repository });
 		editor(form, plan);
 		review(form, plan);
-		const apply = form.querySelector<HTMLButtonElement>('button[value="apply"]');
+		const apply = find(form, 'button[value="apply"]', HTMLButtonElement);
 		if (apply) apply.disabled = true;
 		return;
 	}
@@ -267,7 +269,7 @@ export async function setup(form: HTMLFormElement, action: string) {
 	const choices = session.choices(), identity = JSON.stringify(choices);
 	if (action !== 'apply') {
 		delete session.reviewed;
-		const plan = parseSetupPlan(await api('/api/repositories/setup/preview', { repository, choices }));
+		const plan = await api('/api/repositories/setup/preview', setupPlan, { repository, choices });
 		session.plan = plan;
 		if (!plan.blockers.length) session.reviewed = identity;
 		review(form, plan);
@@ -275,20 +277,18 @@ export async function setup(form: HTMLFormElement, action: string) {
 	}
 	if (session.reviewed !== identity) throw new Error('Preview these choices again before applying.');
 	const { planId, sourceSha, setupHead } = session.plan;
-	const result = record(
-		await api('/api/repositories/setup/apply', {
-			repository,
-			choices,
-			planId,
-			sourceSha,
-			setupHead,
-		}),
-	);
+	const result = await api('/api/repositories/setup/apply', z.object({ url: z.string() }), {
+		repository,
+		choices,
+		planId,
+		sourceSha,
+		setupHead,
+	});
 	delete session.reviewed;
 	const output = form.querySelector('.setup-result');
 	if (output) {
 		const link = element('a', 'Review setup pull request');
-		link.href = string(result.url);
+		link.href = result.url;
 		output.replaceChildren(link);
 	}
 	show('Setup PR ready for review. Merge it yourself, then refresh inspection.');

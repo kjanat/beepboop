@@ -1,5 +1,6 @@
+import { z } from 'zod';
 import { array, integer, record, string } from '@/model';
-import { api, show, showError } from '@/ui/browser/dom.ts';
+import { api, find, findAll, show, showError } from '@/ui/browser/dom.ts';
 import { canApplySetup, setup } from '@/ui/browser/setup';
 
 interface Choice {
@@ -26,6 +27,47 @@ interface Preview {
 	identity: string;
 	plan: Plan;
 }
+const planSchema: z.ZodType<Plan> = z.object({
+	sourceSha: z.string(),
+	planId: z.string(),
+	version: z.string().optional(),
+	edits: z.array(z.object({ path: z.string(), before: z.string(), after: z.string() })),
+	groups: z.array(z.object({ id: z.string(), version: z.string(), packages: z.array(z.string()) })).optional(),
+	diagnostics: z.array(z.string()).optional(),
+});
+const credentialDescriptor = z.looseObject({
+	id: z.string(),
+	type: z.string(),
+	transports: z.array(z.string()).optional(),
+});
+const extensions = z.looseObject({ appid: z.string().optional(), credProps: z.boolean().optional() });
+const requirement = z.enum(['discouraged', 'preferred', 'required']);
+const requestOptions: z.ZodType<PublicKeyCredentialRequestOptionsJSON> = z.looseObject({
+	allowCredentials: z.array(credentialDescriptor).optional(),
+	challenge: z.string(),
+	extensions: extensions.optional(),
+	hints: z.array(z.string()).optional(),
+	rpId: z.string().optional(),
+	timeout: z.number().optional(),
+	userVerification: z.string().optional(),
+});
+const creationOptions: z.ZodType<PublicKeyCredentialCreationOptionsJSON> = z.looseObject({
+	attestation: z.string().optional(),
+	authenticatorSelection: z.looseObject({
+		authenticatorAttachment: z.enum(['cross-platform', 'platform']).optional(),
+		requireResidentKey: z.boolean().optional(),
+		residentKey: requirement.optional(),
+		userVerification: requirement.optional(),
+	}).optional(),
+	challenge: z.string(),
+	excludeCredentials: z.array(credentialDescriptor).optional(),
+	extensions: extensions.optional(),
+	hints: z.array(z.string()).optional(),
+	pubKeyCredParams: z.array(z.looseObject({ alg: z.number(), type: z.literal('public-key') })),
+	rp: z.looseObject({ id: z.string().optional(), name: z.string() }),
+	timeout: z.number().optional(),
+	user: z.looseObject({ displayName: z.string(), id: z.string(), name: z.string() }),
+});
 const previews = new WeakMap<HTMLFormElement, Preview>();
 const revealTimers = new Map<HTMLOutputElement, ReturnType<typeof setTimeout>>();
 
@@ -69,15 +111,16 @@ function fields(form: HTMLFormElement): Record<string, string> {
 }
 async function elevated(): Promise<string> {
 	show('Touch your enrolled security key to approve this action.');
-	const challenge = await api<{ id: string; options: PublicKeyCredentialRequestOptionsJSON }>(
+	const challenge = await api(
 		'/api/authenticators/options',
+		z.object({ id: z.string(), options: requestOptions }),
 		{ register: false },
 	);
 	const credential = await navigator.credentials.get({
 		publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(challenge.options),
 	});
 	if (!(credential instanceof PublicKeyCredential)) throw new Error('Security key authentication cancelled.');
-	return (await api<{ proof: string }>('/api/authenticators/verify', {
+	return (await api('/api/authenticators/verify', z.object({ proof: z.string() }), {
 		id: challenge.id,
 		response: credential.toJSON(),
 	})).proof;
@@ -99,7 +142,7 @@ function node<K extends keyof HTMLElementTagNameMap>(tag: K, text: string): HTML
 	return element;
 }
 function renderPlan(form: HTMLFormElement, plan: Plan) {
-	const result = form.querySelector<HTMLElement>('.plan-result');
+	const result = find(form, '.plan-result', HTMLElement);
 	if (!result) return;
 	result.replaceChildren(node('h3', plan.version ? `Review version ${plan.version}` : 'Review release set'));
 	result.append(node('p', `Source commit: ${plan.sourceSha}`));
@@ -128,8 +171,8 @@ function selectedWorkflow(form: HTMLFormElement): Choice {
 	return choice;
 }
 const wingetPlans = new WeakMap<HTMLFormElement, { digest: string }>();
-for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action="winget-submit"]')) {
-	const submit = form.querySelector<HTMLButtonElement>('button[value="submit"]');
+for (const form of findAll(document, 'form[data-action="winget-submit"]', HTMLFormElement)) {
+	const submit = find(form, 'button[value="submit"]', HTMLButtonElement);
 	if (!submit) throw Error('Missing WinGet submit button');
 	let revision = 0;
 	form.addEventListener('change', async event => {
@@ -146,9 +189,11 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action=
 			return;
 		}
 		try {
-			const rows = await api<{ id: number; tag: string; name: string }[]>('/api/winget/releases', {
-				repositoryId: Number(input(form, 'repositoryId').value),
-			});
+			const rows = await api(
+				'/api/winget/releases',
+				z.array(z.object({ id: z.number(), tag: z.string(), name: z.string() })),
+				{ repositoryId: Number(input(form, 'repositoryId').value) },
+			);
 			if (revision !== current) return;
 			release.replaceChildren(new Option(rows.length ? 'Choose a release' : 'No eligible stable releases', ''));
 			for (const row of rows) release.add(new Option(`${row.name} (${row.tag})`, String(row.id)));
@@ -161,11 +206,11 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action=
 		}
 	});
 }
-for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action="grant-save"]')) {
+for (const form of findAll(document, 'form[data-action="grant-save"]', HTMLFormElement)) {
 	const repositories = repositoryChoices(form);
 	const repository = input(form, 'repositoryId'), choice = selectInput(form, 'choice');
 	const updateScope = () => {
-		const scope = form.querySelector<HTMLElement>('.workflow-scope');
+		const scope = find(form, '.workflow-scope', HTMLElement);
 		const selected = choice.value === ''
 			? undefined
 			: repositories.find(r => String(r.id) === repository.value)?.workflows[Number(choice.value)];
@@ -189,7 +234,7 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action=
 		}
 		const runtime = selectInput(form, 'delivery').options[0];
 		if (runtime) runtime.disabled = !!selected && !selected.credentials.includes(input(form, 'alias').value);
-		const help = form.querySelector<HTMLElement>('.delivery-help');
+		const help = find(form, '.delivery-help', HTMLElement);
 		if (help) {
 			help.textContent = selected && !selected.credentials.includes(input(form, 'alias').value)
 				? 'Runtime retrieval is unavailable until this name is added to this release stream’s credentials list in .github/beepboop.json. You can choose GitHub delivery instead.'
@@ -208,7 +253,7 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action=
 	choice.addEventListener('change', updateScope);
 	input(form, 'delivery').addEventListener('change', () => {
 		const delivery = input(form, 'delivery').value;
-		const label = form.querySelector<HTMLElement>('[data-secret-name]');
+		const label = find(form, '[data-secret-name]', HTMLElement);
 		if (label) label.hidden = delivery === 'runtime';
 		const secretName = input(form, 'secretName');
 		secretName.disabled = delivery === 'runtime';
@@ -218,11 +263,13 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action=
 	});
 }
 for (
-	const form of document.querySelectorAll<HTMLFormElement>(
+	const form of findAll(
+		document,
 		'form[data-action="release-prepare"],form[data-action="release-set"]',
+		HTMLFormElement,
 	)
 ) {
-	const prepare = form.querySelector<HTMLButtonElement>('button[value="prepare"]');
+	const prepare = find(form, 'button[value="prepare"]', HTMLButtonElement);
 	form.addEventListener('input', () => {
 		previews.delete(form);
 		if (prepare) prepare.disabled = true;
@@ -231,21 +278,21 @@ for (
 	form.addEventListener('change', () => {
 		const mode = form.elements.namedItem('versionMode');
 		if (!(mode instanceof HTMLSelectElement)) return;
-		for (const element of form.querySelectorAll<HTMLElement>('[data-explicit]')) {
+		for (const element of findAll(form, '[data-explicit]', HTMLElement)) {
 			element.hidden = mode.value !== 'explicit';
 		}
-		for (const element of form.querySelectorAll<HTMLElement>('[data-prerelease]')) {
+		for (const element of findAll(form, '[data-prerelease]', HTMLElement)) {
 			element.hidden = mode.value !== 'prerelease';
 		}
 		input(form, 'version').required = mode.value === 'explicit';
 	});
 }
-const repositorySelection = document.querySelector<HTMLSelectElement>('.selection select[name="repository"]');
+const repositorySelection = find(document, '.selection select[name="repository"]', HTMLSelectElement);
 repositorySelection?.addEventListener('change', () => {
 	location.assign(`/releases?repository=${encodeURIComponent(repositorySelection.value)}`);
 });
 
-for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action]')) {
+for (const form of findAll(document, 'form[data-action]', HTMLFormElement)) {
 	form.addEventListener('submit', async event => {
 		event.preventDefault();
 		const action = form.dataset.action;
@@ -260,10 +307,10 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action]
 			if (action === 'setup') {
 				await setup(form, clicked);
 			} else if (action === 'winget-refresh') {
-				await api('/api/winget/refresh', {});
+				await api('/api/winget/refresh', z.unknown(), {});
 				location.reload();
 			} else if (action === 'winget-retry') {
-				await api('/api/winget/submit', {
+				await api('/api/winget/submit', z.unknown(), {
 					...data,
 					repositoryId: Number(data.repositoryId),
 					releaseId: Number(data.releaseId),
@@ -272,8 +319,9 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action]
 			} else if (action === 'winget-submit') {
 				const selection = { repositoryId: Number(data.repositoryId), releaseId: Number(data.releaseId) };
 				if (clicked === 'preview') {
-					const plan = await api<{ digest: string; sourceSha: string; files: Record<string, string> }>(
+					const plan = await api(
 						'/api/winget/preview',
+						z.object({ digest: z.string(), sourceSha: z.string(), files: z.record(z.string(), z.string()) }),
 						selection,
 					);
 					if (
@@ -291,14 +339,14 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action]
 						detail.append(node('summary', path), node('pre', content));
 						result.append(detail);
 					}
-					const submit = form.querySelector<HTMLButtonElement>('button[value="submit"]');
+					const submit = find(form, 'button[value="submit"]', HTMLButtonElement);
 					if (!submit) throw Error('Missing WinGet submit button');
 					submit.disabled = submit.dataset.submitReady !== 'true';
 					show('Review the manifests, then submit. Microsoft controls acceptance and merging.');
 				} else {
 					const plan = wingetPlans.get(form);
 					if (!plan) throw Error('Preview the release before submitting.');
-					await api('/api/winget/submit', { ...selection, digest: plan.digest });
+					await api('/api/winget/submit', z.unknown(), { ...selection, digest: plan.digest });
 					location.reload();
 				}
 			} else if (action === 'release-prepare' || action === 'release-set') {
@@ -308,7 +356,7 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action]
 					: data.versionMode === 'prerelease'
 					? { bump: 'prerelease', base: data.base, identifier: data.identifier }
 					: { bump: data.versionMode };
-				const groups = [...form.querySelectorAll<HTMLFieldSetElement>('fieldset[data-group]')].filter(group => {
+				const groups = findAll(form, 'fieldset[data-group]', HTMLFieldSetElement).filter(group => {
 					const selected = group.querySelector('input[type=checkbox]');
 					return selected instanceof HTMLInputElement && selected.checked;
 				}).map(group => ({
@@ -316,9 +364,8 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action]
 					packages: array(JSON.parse(group.dataset.packages ?? '[]')).map(string),
 					version: input(form, `version-${group.dataset.group}`).value,
 				}));
-				const operations = [...form.querySelectorAll<HTMLSelectElement>('select[data-operation]')].filter(select =>
-					select.value
-				).map(select => ({ id: select.dataset.operation, group: select.value }));
+				const operations = findAll(form, 'select[data-operation]', HTMLSelectElement).filter(select => select.value)
+					.map(select => ({ id: select.dataset.operation, group: select.value }));
 				if (action === 'release-set' && !groups.length) throw new Error('Select at least one package group.');
 				if (action === 'release-set' && groups.some(group => !group.version)) {
 					throw new Error('Enter a version for each selected group.');
@@ -327,10 +374,14 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action]
 				const identity = JSON.stringify(request);
 				if (clicked === 'preview') {
 					previews.delete(form);
-					const plan = await api<Plan>(`/api/releases/${action === 'release-set' ? 'plan-set' : 'plan'}`, request);
+					const plan = await api(
+						`/api/releases/${action === 'release-set' ? 'plan-set' : 'plan'}`,
+						planSchema,
+						request,
+					);
 					previews.set(form, { identity, plan });
 					renderPlan(form, plan);
-					const prepare = form.querySelector<HTMLButtonElement>('button[value="prepare"]');
+					const prepare = find(form, 'button[value="prepare"]', HTMLButtonElement);
 					if (prepare) prepare.disabled = false;
 					show('Review the proposed changes below, then prepare the release.');
 				} else {
@@ -338,22 +389,24 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action]
 					if (!preview || preview.identity !== identity) {
 						throw new Error('Preview these choices again before preparing.');
 					}
-					const run = await api<{ id: string }>(
+					const run = await api(
 						`/api/releases/${action === 'release-set' ? 'prepare-set' : 'prepare'}`,
+						z.object({ id: z.string() }),
 						{ ...request, sourceSha: preview.plan.sourceSha, planId: preview.plan.planId },
 					);
 					previews.delete(form);
 					location.assign(`/runs#${encodeURIComponent(run.id)}`);
 				}
 			} else if (action === 'discover') {
-				await api('/api/repositories/discover', { repository: data.repository });
+				await api('/api/repositories/discover', z.unknown(), { repository: data.repository });
 				location.reload();
 			} else if (action === 'approve' || action === 'recover') {
-				await api(`/api/executions/${action === 'approve' ? 'approve' : 'recover'}`, data);
+				await api(`/api/executions/${action === 'approve' ? 'approve' : 'recover'}`, z.unknown(), data);
 				location.reload();
 			} else if (action === 'start' || action === 'start-set') {
 				await api(
 					action === 'start' ? '/api/executions/start' : '/api/releases/start-set',
+					z.unknown(),
 					action === 'start'
 						? { ...data, repositoryId: Number(data.repositoryId), requestId: crypto.randomUUID() }
 						: data,
@@ -362,11 +415,11 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action]
 			} else if (action === 'secret-save') {
 				const value = data.value;
 				input(form, 'value').value = '';
-				await api('/api/credentials/replace', { alias: data.alias, value, proof: await elevated() });
+				await api('/api/credentials/replace', z.unknown(), { alias: data.alias, value, proof: await elevated() });
 				location.reload();
 			} else if (action === 'secret-reveal') {
 				clearRevealed();
-				const result = await api<{ value: string }>('/api/credentials/reveal', {
+				const result = await api('/api/credentials/reveal', z.object({ value: z.string() }), {
 					alias: data.alias,
 					proof: await elevated(),
 				});
@@ -383,10 +436,11 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action]
 				}
 				show('Value revealed for 30 seconds. It also clears when you leave this page.');
 			} else if (action === 'secret-sync') {
-				const results = await api<{ id: string; state: string }[]>('/api/credentials/sync', {
-					alias: data.alias,
-					proof: await elevated(),
-				});
+				const results = await api(
+					'/api/credentials/sync',
+					z.array(z.object({ id: z.string(), state: z.string() })),
+					{ alias: data.alias, proof: await elevated() },
+				);
 				const failed = results.filter(r => r.state !== 'succeeded').length;
 				show(
 					failed
@@ -398,7 +452,7 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action]
 				if (data.delivery === 'runtime' && !selected.credentials.includes(data.alias ?? '')) {
 					throw new Error('Add this name to the stream’s credentials list before choosing runtime delivery.');
 				}
-				await api('/api/credentials/grant', {
+				await api('/api/credentials/grant', z.unknown(), {
 					selection: {
 						alias: data.alias,
 						repositoryId: Number(data.repositoryId),
@@ -418,12 +472,13 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action]
 						'Remove this permission? The value already copied to GitHub will remain there. Delete that GitHub secret separately to remove it.',
 					)
 				) return;
-				await api('/api/credentials/revoke', { ...data, proof: await elevated() });
+				await api('/api/credentials/revoke', z.unknown(), { ...data, proof: await elevated() });
 				location.reload();
 			} else if (action === 'key-enroll') {
 				const proof = form.dataset.first === 'true' ? undefined : await elevated();
-				const challenge = await api<{ id: string; options: PublicKeyCredentialCreationOptionsJSON }>(
+				const challenge = await api(
 					'/api/authenticators/options',
+					z.object({ id: z.string(), options: creationOptions }),
 					{ register: true, label: data.label, proof },
 				);
 				show('Touch the security key you want to enroll.');
@@ -431,15 +486,15 @@ for (const form of document.querySelectorAll<HTMLFormElement>('form[data-action]
 					publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(challenge.options),
 				});
 				if (!(credential instanceof PublicKeyCredential)) throw new Error('Security key enrollment cancelled.');
-				await api('/api/authenticators/verify', { id: challenge.id, response: credential.toJSON() });
+				await api('/api/authenticators/verify', z.unknown(), { id: challenge.id, response: credential.toJSON() });
 				location.reload();
 			} else if (action === 'key-remove') {
-				await api('/api/authenticators/remove', { ...data, proof: await elevated() });
+				await api('/api/authenticators/remove', z.unknown(), { ...data, proof: await elevated() });
 				location.reload();
 			}
 		} catch (error) {
 			showError(error);
-			document.querySelector<HTMLElement>('#feedback')?.focus();
+			find(document, '#feedback', HTMLElement)?.focus();
 		} finally {
 			form.dataset.busy = 'false';
 			button.disabled = (clicked === 'prepare' && !previews.has(form))

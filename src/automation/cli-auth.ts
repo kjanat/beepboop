@@ -1,4 +1,5 @@
 import type { AuthBindings } from '@/automation/auth';
+import { record, string } from '@/model';
 
 /** Store only hashes of terminal credentials; the browser never receives them. */
 export async function credentialHash(value: string): Promise<string> {
@@ -11,12 +12,12 @@ export async function cliSubject(request: Request, env: CLIEnvironment): Promise
 	const token = request.headers.get('authorization')?.match(/^Bearer (cli_[a-f0-9]{64})$/)?.[1];
 	if (!token || !env.DB) throw new Error('CLI login required');
 	const row = await env.DB.prepare('SELECT document FROM sessions WHERE id=? AND expires_at>?')
-		.bind(`cli:${await credentialHash(token)}`, Date.now()).first<{ document: string }>();
-	const session = row ? JSON.parse(row.document) : null;
+		.bind(`cli:${await credentialHash(token)}`, Date.now()).first();
+	const session = row ? record(JSON.parse(string(row.document))) : null;
 	if (session?.kind !== 'cli' || !env.ADMIN_SUBJECT || session.subject !== env.ADMIN_SUBJECT) {
 		throw new Error('CLI session expired or revoked; run beepboop auth login');
 	}
-	return session.subject;
+	return string(session.subject);
 }
 
 /** Browser approval and a one-time, verifier-bound exchange, using the existing OAuth login. */
@@ -32,9 +33,9 @@ export async function cliAuthRoute(
 		const verifier = await request.text();
 		if (!/^[a-f0-9]{64}$/.test(verifier)) return json({ error: 'Invalid login verifier' }, 400);
 		const row = await env.DB.prepare('DELETE FROM sessions WHERE id=? AND expires_at>? RETURNING document')
-			.bind(`cli-approval:${await credentialHash(verifier)}`, Date.now()).first<{ document: string }>();
+			.bind(`cli-approval:${await credentialHash(verifier)}`, Date.now()).first();
 		if (!row) return json({ pending: true }, 202);
-		const approval = JSON.parse(row.document);
+		const approval = record(JSON.parse(string(row.document)));
 		if (approval.subject !== env.ADMIN_SUBJECT) return json({ error: 'Access denied' }, 403);
 		const token = `cli_${crypto.randomUUID().replaceAll('-', '')}${crypto.randomUUID().replaceAll('-', '')}`;
 		const expiresAt = Date.now() + 8 * 60 * 60 * 1000;

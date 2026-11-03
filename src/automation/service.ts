@@ -1,5 +1,6 @@
 import schema from '@root/schemas/v1.json' with { type: 'json' };
 import { CronExpressionParser } from 'cron-parser';
+import { z } from 'zod';
 import { configuredGrant } from '@/automation/access';
 import { type AuthBindings, Authenticators, administrator, authRoute, workflowIdentity } from '@/automation/auth';
 import { resolveConfiguration } from '@/automation/configuration';
@@ -13,6 +14,7 @@ import { matchesPackage } from '@/automation/package-identity';
 import { planReleaseSet } from '@/automation/planning';
 import { matchesRef } from '@/automation/policy';
 import { planHookUpdates } from '@/automation/precommit';
+import { documentRow, rowDocument } from '@/automation/schemas';
 import { previewSetup, setupBody } from '@/automation/setup';
 import { maintainSetup, setupEdits } from '@/automation/setup-maintenance';
 import { Store } from '@/automation/store';
@@ -101,7 +103,11 @@ export class AutomationService {
 		return new WinGetService(this.store, this.gateway, this.env);
 	}
 	private vault() {
-		return new Vault(this.store, JSON.parse(this.env.VAULT_KEYS), this.env.VAULT_ACTIVE_KEY);
+		return new Vault(
+			this.store,
+			z.record(z.string(), z.string()).parse(JSON.parse(this.env.VAULT_KEYS)),
+			this.env.VAULT_ACTIVE_KEY,
+		);
 	}
 	async refresh(name: string, id: number): Promise<RepositoryRecord> {
 		const snapshot = await this.gateway.snapshot(name, id);
@@ -294,10 +300,12 @@ export class AutomationService {
 					for (const [operation, binding] of Object.entries(stream.workflows)) {
 						if (!binding.schedule) continue;
 						const key = `${repository.id}:${streamName}:${operation}:${binding.schedule}`;
-						const cursor = await this.store.db
-							.prepare('SELECT last_tick FROM schedules WHERE id=?')
-							.bind(key)
-							.first<{ last_tick: number }>();
+						const cursor = z.object({ last_tick: z.number() }).nullable().parse(
+							await this.store.db
+								.prepare('SELECT last_tick FROM schedules WHERE id=?')
+								.bind(key)
+								.first(),
+						);
 						if (!cursor) {
 							await this.store.db
 								.prepare('INSERT OR IGNORE INTO schedules VALUES(?,?)')
@@ -373,8 +381,8 @@ export class AutomationService {
 							.all()
 					).results,
 					grants: (
-						await this.store.db.prepare('SELECT document FROM grants').all<{ document: string }>()
-					).results.map((r) => JSON.parse(r.document)),
+						await this.store.db.prepare('SELECT document FROM grants').all()
+					).results.map((r) => parseGrant(rowDocument(r))),
 					deliveries: (await this.store.db.prepare('SELECT * FROM secret_deliveries').all())
 						.results,
 				});
@@ -419,8 +427,9 @@ export class AutomationService {
 			const raw = JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}');
 			const resolved = await resolveConfiguration(raw, ref => this.gateway.preset(ref));
 			const inventory = discover(snapshot);
-			const row = await this.store.db.prepare('SELECT document FROM onboarding WHERE repository_id=?')
-				.bind(id).first<{ document: string }>();
+			const row = documentRow.nullable().parse(
+				await this.store.db.prepare('SELECT document FROM onboarding WHERE repository_id=?').bind(id).first(),
+			);
 			const saved = row ? record(JSON.parse(row.document)) : undefined;
 			const head = await this.gateway.setupHead(name, id);
 			const previous = setupEdits(saved);

@@ -2,10 +2,13 @@ import { strict as assert } from 'node:assert';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { z } from 'zod';
 
 const root = resolve(import.meta.dir, '../../..');
 const directory = resolve(root, 'packages/cli');
-const manifest = await Bun.file(`${directory}/package.json`).json();
+const manifest = z.object({ name: z.string(), version: z.string() }).parse(
+	await Bun.file(`${directory}/package.json`).json(),
+);
 const temporary = await mkdtemp(join(tmpdir(), 'beepboop-package-'));
 async function run(args: string[], cwd: string): Promise<string> {
 	const process = Bun.spawn(args, { cwd, stdout: 'pipe', stderr: 'pipe' });

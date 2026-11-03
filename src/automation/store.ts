@@ -1,4 +1,13 @@
+import { z } from 'zod';
 import { identifyExecution, identifyRepository } from '@/automation/package-identity';
+import {
+	automationEventSchema,
+	deliverySchema,
+	documentRow,
+	executionSchema,
+	repositorySchema,
+	rowDocument,
+} from '@/automation/schemas';
 import type {
 	ActivityEntry,
 	AutomationEvent,
@@ -7,6 +16,15 @@ import type {
 	SubscriptionDelivery,
 } from '@/automation/types';
 import { record } from '@/model';
+
+const onboardingRow = z.object({ repository_id: z.number(), document: z.string() });
+const activityRow = z.object({
+	id: z.string(),
+	actor: z.string(),
+	action: z.string(),
+	target: z.string(),
+	created_at: z.number(),
+});
 
 export function onboardingPulls(rows: { repository_id: number; document: string }[]): Map<number, string> {
 	const pulls = new Map<number, string>();
@@ -23,21 +41,18 @@ export class Store {
 		const row = await this.db
 			.prepare('SELECT document FROM repositories WHERE id=?')
 			.bind(id)
-			.first<{ document: string }>();
-		return row ? identifyRepository(JSON.parse(row.document)) : undefined;
+			.first();
+		return row ? identifyRepository(repositorySchema.parse(rowDocument(row))) : undefined;
 	}
 	async repositories(): Promise<RepositoryRecord[]> {
 		const result = await this.db
 			.prepare('SELECT document FROM repositories ORDER BY name')
-			.all<{ document: string }>();
-		return result.results.map((row) => identifyRepository(JSON.parse(row.document)));
+			.all();
+		return result.results.map((row) => identifyRepository(repositorySchema.parse(rowDocument(row))));
 	}
 	async onboardingPulls(): Promise<Map<number, string>> {
-		const result = await this.db.prepare('SELECT repository_id, document FROM onboarding').all<{
-			repository_id: number;
-			document: string;
-		}>();
-		return onboardingPulls(result.results);
+		const result = await this.db.prepare('SELECT repository_id, document FROM onboarding').all();
+		return onboardingPulls(z.array(onboardingRow).parse(result.results));
 	}
 	async putRepository(repository: RepositoryRecord): Promise<void> {
 		await this.db
@@ -51,8 +66,8 @@ export class Store {
 		const row = await this.db
 			.prepare('SELECT document FROM executions WHERE id=?')
 			.bind(id)
-			.first<{ document: string }>();
-		return row ? identifyExecution(JSON.parse(row.document)) : undefined;
+			.first();
+		return row ? identifyExecution(executionSchema.parse(rowDocument(row))) : undefined;
 	}
 	async executions(repositoryId?: number): Promise<Execution[]> {
 		const query = repositoryId === undefined
@@ -62,7 +77,7 @@ export class Store {
 					'SELECT document FROM executions WHERE repository_id=? ORDER BY updated_at DESC LIMIT 200',
 				)
 				.bind(repositoryId);
-		return (await query.all<{ document: string }>()).results.map((row) => identifyExecution(JSON.parse(row.document)));
+		return (await query.all()).results.map((row) => identifyExecution(executionSchema.parse(rowDocument(row))));
 	}
 	async putExecution(execution: Execution): Promise<void> {
 		await this.db
@@ -79,10 +94,8 @@ export class Store {
 			.run();
 	}
 	async event(id: string): Promise<AutomationEvent | undefined> {
-		const row = await this.db.prepare('SELECT document FROM release_events WHERE id=?').bind(id).first<
-			{ document: string }
-		>();
-		return row ? JSON.parse(row.document) : undefined;
+		const row = await this.db.prepare('SELECT document FROM release_events WHERE id=?').bind(id).first();
+		return row ? automationEventSchema.parse(rowDocument(row)) : undefined;
 	}
 	async queueEvent(event: AutomationEvent, deliveries: SubscriptionDelivery[]): Promise<void> {
 		const serialized = JSON.stringify(event);
@@ -103,16 +116,16 @@ export class Store {
 					)
 			),
 		]);
-		const saved = await this.db.prepare('SELECT document FROM release_events WHERE id=?').bind(event.id).first<
-			{ document: string }
-		>();
+		const saved = documentRow.nullable().parse(
+			await this.db.prepare('SELECT document FROM release_events WHERE id=?').bind(event.id).first(),
+		);
 		if (saved?.document !== serialized) throw new Error('Event identity changed');
 	}
 	async pendingDeliveries(): Promise<SubscriptionDelivery[]> {
 		const rows = await this.db.prepare(
 			"SELECT document FROM subscription_deliveries WHERE state='pending' ORDER BY updated_at,id LIMIT 100",
-		).all<{ document: string }>();
-		return rows.results.map(row => JSON.parse(row.document));
+		).all();
+		return rows.results.map(row => deliverySchema.parse(rowDocument(row)));
 	}
 	async deliveryResult(id: string, succeeded: boolean): Promise<void> {
 		await this.db.prepare('UPDATE subscription_deliveries SET state=?,error=?,updated_at=? WHERE id=?')
@@ -121,8 +134,11 @@ export class Store {
 	async activity(): Promise<ActivityEntry[]> {
 		const result = await this.db
 			.prepare('SELECT id, actor, action, target, created_at FROM audit ORDER BY created_at DESC LIMIT 200')
-			.all<{ id: string; actor: string; action: string; target: string; created_at: number }>();
-		return result.results.map(({ created_at, ...entry }) => ({ ...entry, createdAt: created_at }));
+			.all();
+		return z.array(activityRow).parse(result.results).map(({ created_at, ...entry }) => ({
+			...entry,
+			createdAt: created_at,
+		}));
 	}
 	async audit(actor: string, action: string, target: string): Promise<void> {
 		await this.db

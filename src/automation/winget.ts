@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { RepositoryGateway } from '@/automation/github';
+import { documentRow } from '@/automation/schemas';
 import type { Store } from '@/automation/store';
 import type { RepositoryRecord } from '@/automation/types';
 import { generateManifests, renderManifests } from '@/distribution/winget/generate';
@@ -78,6 +79,7 @@ const submissionSchema: z.ZodType<WinGetSubmission> = z.object({
 function parseSubmission(document: string): WinGetSubmission {
 	return submissionSchema.parse(JSON.parse(document));
 }
+const submissionRow = z.object({ id: z.string(), document: z.string() });
 export interface WinGetBindings {
 	WINGET_GITHUB_TOKEN?: string;
 	WINGET_FORK?: string;
@@ -179,13 +181,13 @@ export class WinGetService {
 	async list(): Promise<WinGetSubmission[]> {
 		const rows = await this.store.db.prepare(
 			'SELECT document FROM winget_submissions ORDER BY updated_at DESC LIMIT 100',
-		).all<{ document: string }>();
-		return rows.results.map(row => parseSubmission(row.document));
+		).all();
+		return rows.results.map(row => parseSubmission(documentRow.parse(row).document));
 	}
 	async get(id: string): Promise<WinGetSubmission | undefined> {
-		const row = await this.store.db.prepare('SELECT document FROM winget_submissions WHERE id=?').bind(id).first<
-			{ document: string }
-		>();
+		const row = documentRow.nullable().parse(
+			await this.store.db.prepare('SELECT document FROM winget_submissions WHERE id=?').bind(id).first(),
+		);
 		return row ? parseSubmission(row.document) : undefined;
 	}
 	private async save(value: WinGetSubmission, lease: string) {
@@ -366,11 +368,13 @@ export class WinGetService {
 	private async *openSubmissions(): AsyncGenerator<WinGetSubmission> {
 		let after: string | null = null;
 		while (true) {
-			const rows: D1Result<{ id: string; document: string }> = await this.store.db.prepare(
-				"SELECT id,document FROM winget_submissions WHERE json_extract(document,'$.state')='open' AND (? IS NULL OR id>?) ORDER BY id LIMIT 100",
-			).bind(after, after).all<{ id: string; document: string }>();
-			if (!rows.results.length) return;
-			for (const row of rows.results) {
+			const rows: { id: string; document: string }[] = z.array(submissionRow).parse(
+				(await this.store.db.prepare(
+					"SELECT id,document FROM winget_submissions WHERE json_extract(document,'$.state')='open' AND (? IS NULL OR id>?) ORDER BY id LIMIT 100",
+				).bind(after, after).all()).results,
+			);
+			if (!rows.length) return;
+			for (const row of rows) {
 				// Use the stable ID: reconciliation changes both state and updated_at.
 				after = row.id;
 				yield parseSubmission(row.document);
@@ -432,8 +436,9 @@ export class WinGetService {
 	async automatic(repo: RepositoryRecord): Promise<void> {
 		if (!repo.configuration?.winget?.automatic || repo.suspended || repo.diagnostics.length || !this.setup()) return;
 		await this.watch(repo);
-		const watch = await this.store.db.prepare('SELECT since FROM winget_watches WHERE repository_id=?').bind(repo.id)
-			.first<{ since: number }>();
+		const watch = z.object({ since: z.number() }).nullable().parse(
+			await this.store.db.prepare('SELECT since FROM winget_watches WHERE repository_id=?').bind(repo.id).first(),
+		);
 		for (const release of await this.releases(repo)) {
 			if (!watch || release.publishedAt <= watch.since) continue;
 			// Enabling automation must not submit historical releases without review.

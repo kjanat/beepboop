@@ -1,13 +1,20 @@
 import { appendFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { z } from 'zod';
 import { packageId } from '@/automation/package-identity';
 import { record } from '@/model';
 
 const directory = resolve(import.meta.dir, '../../../packages/cli');
-const npm = await Bun.file(join(directory, 'package.json')).json();
-const jsr = await Bun.file(join(directory, 'jsr.json')).json();
-const context = JSON.parse(process.env.RELEASE_CONTEXT ?? '{}');
+const manifest = z.object({ name: z.string(), version: z.string() });
+const npm = manifest.parse(await Bun.file(join(directory, 'package.json')).json());
+const jsr = manifest.parse(await Bun.file(join(directory, 'jsr.json')).json());
+const context = z.object({
+	sourceSha: z.string().optional(),
+	operation: z.string().optional(),
+	stream: z.string().optional(),
+	version: z.string().optional(),
+}).parse(JSON.parse(process.env.RELEASE_CONTEXT ?? '{}'));
 const revision = Bun.spawnSync(['git', 'rev-parse', 'HEAD'], { cwd: directory });
 if (revision.exitCode !== 0 || revision.stdout.toString().trim() !== context.sourceSha) {
 	throw new Error('Checkout is not the approved commit');

@@ -213,6 +213,9 @@ describe('built Cloudflare Worker', () => {
 				sourceSha: fixture.sourceSha,
 				version: '2.0.0',
 				edits: [{ path: 'version.txt', before: '1', after: '2' }],
+				packages: [],
+				diagnostics: [],
+				requiresPreparation: true,
 			},
 		};
 		await context.fetch('https://automation.test/enqueue', {
@@ -254,7 +257,11 @@ describe('built Cloudflare Worker', () => {
 					...managed.managed,
 					result: { url: 'https://github.com/example/seventh/pull/2', head: 'c'.repeat(40) },
 					plan: {
+						lockfiles: [],
 						sourceSha: fixture.sourceSha,
+						publicationOrder: [],
+						diagnostics: [],
+						requiresPreparation: false,
 						edits: [{ path: 'package.json', before: '{}', after: '{"name":"tool","version":"2.0.0"}' }],
 						groups: [{ id: 'tool', version: '2.0.0', packages: ['npm:tool'] }],
 						operations: ['build', 'publish', 'docs'].map(id => ({
