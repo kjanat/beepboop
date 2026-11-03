@@ -3,11 +3,13 @@
 	"private": true,
 	"type": "module",
 	"bin": {
+		"beepboop": "src/cli/cli.ts",
 		"winget": "src/distribution/winget/cli.ts"
 	},
 	"scripts": {
 		"app:manifest": "./scripts/app-manifest.ts",
 		"astro": "astro",
+		"beepboop": "bun src/cli/cli.ts",
 		"prebuild": "run -s types check",
 		"build": "astro build",
 		"precheck": "run -s types sync",

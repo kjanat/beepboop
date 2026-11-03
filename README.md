@@ -78,3 +78,9 @@ bun run discover --github owner/repository
 Both commands print the package inventory and proposed configuration as JSON.
 
 <!-- markdownlint-disable-file -->
+
+## Authenticated CLI
+
+Run `bun run beepboop auth login` to authorize your terminal, then
+`bun run beepboop --help` to explore repository and release commands.
+See [CLI usage and authentication](docs/cli.md).

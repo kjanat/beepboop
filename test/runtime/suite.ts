@@ -347,3 +347,43 @@ describe('built Cloudflare Worker', () => {
 		assert.equal((await approved.json() as { state: string }).state, 'ready');
 	});
 });
+
+describe('built Worker CLI authentication', () => {
+	it('exchanges a browser-approved challenge and uses then revokes a real API session', async () => {
+		const runtime = await createRuntime();
+		try {
+			const verifier = 'ab'.repeat(32);
+			const challenge = new Bun.CryptoHasher('sha256').update(verifier).digest('hex');
+			const path = `https://automation.test/auth/cli/authorize?challenge=${challenge}`;
+			const headers = { cookie: `__Host-beepboop_access=${runtime.access}`, origin: 'https://automation.test' };
+			assert.equal((await runtime.fetch(path, { headers })).status, 200);
+			assert.equal((await runtime.fetch(path, { method: 'POST', headers })).status, 200);
+			const exchange = await runtime.fetch('https://automation.test/auth/cli/token', {
+				method: 'POST',
+				body: verifier,
+			});
+			assert.equal(exchange.status, 200);
+			const { token } = await exchange.json() as { token: string };
+			const authorization = { authorization: `Bearer ${token}` };
+			assert.equal(
+				(await runtime.fetch('https://automation.test/api/repositories', { headers: authorization })).status,
+				200,
+			);
+			assert.equal(
+				(await runtime.fetch('https://automation.test/auth/cli/logout', { method: 'POST', headers: authorization }))
+					.status,
+				200,
+			);
+			assert.equal(
+				(await runtime.fetch('https://automation.test/api/repositories', { headers: authorization })).status,
+				401,
+			);
+			assert.equal(
+				(await runtime.fetch('https://automation.test/auth/cli/token', { method: 'POST', body: verifier })).status,
+				202,
+			);
+		} finally {
+			await runtime.close();
+		}
+	}, 30000);
+});

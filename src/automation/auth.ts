@@ -7,6 +7,7 @@ import {
 	verifyRegistrationResponse,
 } from '@simplewebauthn/server';
 import { createRemoteJWKSet, type JWTVerifyGetKey, jwtVerify } from 'jose';
+import { cliAuthRoute, cliSubject } from '@/automation/cli-auth';
 import { integer, record, sha, text } from '@/model';
 
 export interface AuthBindings {
@@ -91,8 +92,11 @@ function cookieHeader(name: string, value: string, seconds: number): string {
 }
 export async function administrator(
 	request: Request,
-	env: Pick<AuthBindings, 'APPLICATION_ORIGIN' | 'OPENAUTH_ISSUER' | 'OPENAUTH_CLIENT_ID' | 'ADMIN_SUBJECT'>,
+	env:
+		& Pick<AuthBindings, 'APPLICATION_ORIGIN' | 'OPENAUTH_ISSUER' | 'OPENAUTH_CLIENT_ID' | 'ADMIN_SUBJECT'>
+		& Partial<Pick<AuthBindings, 'DB'>>,
 ): Promise<string> {
+	if (request.headers.has('authorization')) return cliSubject(request, env);
 	const token = cookie(request, '__Host-beepboop_access');
 	if (!token || token.length > 20000) throw new Error('Administrator login required');
 	let key = keys.get(env.OPENAUTH_ISSUER);
@@ -155,7 +159,12 @@ export async function completeLogin(request: Request, steps: LoginCompletion): P
 		await steps.verify(tokens.access);
 		return new Response(null, {
 			status: 302,
-			headers: { Location: '/', 'Set-Cookie': cookieHeader('__Host-beepboop_access', tokens.access, tokens.expiresIn) },
+			headers: {
+				Location: typeof flow.cli === 'string' && /^[a-f0-9]{64}$/.test(flow.cli)
+					? `/auth/cli/authorize?challenge=${flow.cli}`
+					: '/',
+				'Set-Cookie': cookieHeader('__Host-beepboop_access', tokens.access, tokens.expiresIn),
+			},
 		});
 	} catch (error) {
 		return loginFailed(error instanceof Error ? error.message : 'Login failed');
@@ -166,6 +175,7 @@ export async function authRoute(
 	env: AuthBindings,
 ): Promise<Response | undefined> {
 	const path = new URL(request.url).pathname;
+	if (path.startsWith('/auth/cli/')) return cliAuthRoute(request, env, administrator);
 	const client = createClient({ clientID: env.OPENAUTH_CLIENT_ID, issuer: env.OPENAUTH_ISSUER });
 	if (path === '/auth/login') {
 		const { url, challenge } = await client.authorize(
@@ -175,7 +185,11 @@ export async function authRoute(
 		);
 		const id = crypto.randomUUID();
 		await env.DB.prepare('INSERT INTO sessions VALUES(?,?,?)')
-			.bind(id, JSON.stringify(challenge), Date.now() + 600000)
+			.bind(
+				id,
+				JSON.stringify({ ...challenge, cli: new URL(request.url).searchParams.get('cli') }),
+				Date.now() + 600000,
+			)
 			.run();
 		return new Response(null, {
 			status: 302,
