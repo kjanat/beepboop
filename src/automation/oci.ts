@@ -1,5 +1,5 @@
-import type { Fetcher } from './managers/registry.ts';
-import type { Publication } from './types.ts';
+import type { Fetcher } from '@/automation/managers/registry';
+import type { Publication } from '@/automation/types';
 
 /** Public distribution verification. Never forwards GitHub or vault credentials to registries. */
 export async function verifyImage(

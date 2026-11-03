@@ -1,11 +1,11 @@
-import { object, yaml } from './helpers.ts';
-import type { Manager } from './registry.ts';
-import { emptyInventory } from './registry.ts';
+import { object, yaml } from '@/automation/managers/helpers';
+import type { Manager } from '@/automation/managers/registry';
+import { emptyInventory } from '@/automation/managers/registry';
 export const workflowManager: Manager = {
 	name: 'workflow',
 	discover(snapshot) {
 		const inventory = emptyInventory();
-		const detected = new Set<import('../types.ts').ManagerName>();
+		const detected = new Set<import('@/automation/types').ManagerName>();
 		for (const [path, source] of Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b))) {
 			try {
 				if (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) {

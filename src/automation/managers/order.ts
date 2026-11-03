@@ -1,4 +1,4 @@
-import type { Package } from '../types.ts';
+import type { Package } from '@/automation/types';
 export function publicationOrder(packages: Package[]): string[] {
 	const byName = new Map(packages.map((p) => [`${p.manager}:${p.name}`, p]));
 	const visiting = new Set<string>(),

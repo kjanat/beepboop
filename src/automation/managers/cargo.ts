@@ -1,8 +1,8 @@
 import { parse as parseToml } from 'smol-toml';
-import { directory, inWorkspace, object } from './helpers.ts';
-import type { Manager } from './registry.ts';
-import { emptyInventory } from './registry.ts';
-import { latestVersion, verifyRegistry } from './verification.ts';
+import { directory, inWorkspace, object } from '@/automation/managers/helpers';
+import type { Manager } from '@/automation/managers/registry';
+import { emptyInventory } from '@/automation/managers/registry';
+import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
 export const cargoManager: Manager = {
 	name: 'cargo',
 	latest(pkg, request) {
@@ -30,7 +30,7 @@ export const cargoManager: Manager = {
 
 	discover(snapshot) {
 		const inventory = emptyInventory();
-		const detected = new Set<import('../types.ts').ManagerName>();
+		const detected = new Set<import('@/automation/types').ManagerName>();
 		let workspace: Record<string, unknown> = {};
 		try {
 			workspace = object(parseToml(snapshot.files['Cargo.toml'] ?? '').workspace);

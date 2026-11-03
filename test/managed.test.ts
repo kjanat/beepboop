@@ -1,11 +1,12 @@
 import { expect, test } from 'bun:test';
+import { rejects } from 'node:assert/strict';
+import { edgeFetch } from '@root/test/edge-fetch';
 import { parseRepositoryConfiguration } from '@/automation/configuration';
 import { RepositoryGateway } from '@/automation/github';
 import { createManagedPreparation, createReleasePreparation, planIdentity } from '@/automation/managed';
 import { discover } from '@/automation/managers';
 import { planReleaseSet } from '@/automation/planning';
 import type { RepositoryRecord, Snapshot } from '@/automation/types';
-import { edgeFetch } from './edge-fetch.ts';
 
 const snapshot: Snapshot = {
 	repository: { id: 1, name: 'example/tool', defaultBranch: 'main' },
@@ -32,12 +33,8 @@ test('managed preparation has stable identity, a frozen plan, and no workflow bi
 	expect(first.managed?.plan).toEqual(plan);
 	expect(first.managed?.plan).not.toBe(plan);
 	expect(first.managed?.branch).toMatch(/^release\/main\/[a-f0-9]{64}$/);
-	await expect(createManagedPreparation(repository, 'main', { ...plan, requiresPreparation: true })).rejects.toThrow(
-		'lockfiles',
-	);
-	await expect(createManagedPreparation(repository, 'main', { ...plan, sourceSha: 'b'.repeat(40) })).rejects.toThrow(
-		'revision',
-	);
+	await rejects(createManagedPreparation(repository, 'main', { ...plan, requiresPreparation: true }), /lockfiles/);
+	await rejects(createManagedPreparation(repository, 'main', { ...plan, sourceSha: 'b'.repeat(40) }), /revision/);
 });
 
 test('reviewed plan identity binds versions, source revision and preset configuration', async () => {
@@ -136,19 +133,20 @@ class Gateway extends RepositoryGateway {
 test('preparation resumes the checkpointed commit without creating another commit or PR', async () => {
 	const gateway = new Gateway();
 	let checkpoint = '';
-	await expect(gateway.pullRequest(snapshot, 'release/test', 'prepare', 'body', plan.edits, undefined, async head => {
-		checkpoint = head;
-		gateway.checkpointed = true;
-	})).rejects.toThrow('Interrupted');
+	await rejects(
+		gateway.pullRequest(snapshot, 'release/test', 'prepare', 'body', plan.edits, undefined, async head => {
+			checkpoint = head;
+			gateway.checkpointed = true;
+		}),
+		/Interrupted/,
+	);
 	const result = await gateway.resumePreparation(snapshot, 'release/test', 'prepare', 'body', checkpoint);
 	expect(result.head).toBe(checkpoint);
 	await gateway.resumePreparation(snapshot, 'release/test', 'prepare', 'body', checkpoint);
 	expect(gateway.commits).toBe(1);
 	expect(gateway.pulls).toBe(1);
 	gateway.branch = 'e'.repeat(40);
-	await expect(gateway.resumePreparation(snapshot, 'release/test', 'prepare', 'body', checkpoint)).rejects.toThrow(
-		'branch changed',
-	);
+	await rejects(gateway.resumePreparation(snapshot, 'release/test', 'prepare', 'body', checkpoint), /branch changed/);
 	expect(gateway.pulls).toBe(1);
 });
 
@@ -181,14 +179,10 @@ test('release-set target must be the merged preparation PR revision', async () =
 	const gateway = new PreparedGateway();
 	const result = { url: 'https://github.com/example/tool/pull/1', head: 'b'.repeat(40) };
 	expect((await gateway.preparedSnapshot('example/tool', 1, result, 'd'.repeat(40))).sha).toBe('d'.repeat(40));
-	await expect(gateway.preparedSnapshot('example/tool', 1, result, 'e'.repeat(40))).rejects.toThrow(
-		'merged preparation',
-	);
-	await expect(gateway.preparedSnapshot('example/other', 1, result, 'd'.repeat(40))).rejects.toThrow('PR identity');
+	await rejects(gateway.preparedSnapshot('example/tool', 1, result, 'e'.repeat(40)), /merged preparation/);
+	await rejects(gateway.preparedSnapshot('example/other', 1, result, 'd'.repeat(40)), /PR identity/);
 	gateway.merged = false;
-	await expect(gateway.preparedSnapshot('example/tool', 1, result, 'd'.repeat(40))).rejects.toThrow(
-		'merged preparation',
-	);
+	await rejects(gateway.preparedSnapshot('example/tool', 1, result, 'd'.repeat(40)), /merged preparation/);
 });
 
 test('tag discovery resolves the actual ref object instead of a stale tag-list commit', async () => {
@@ -257,13 +251,12 @@ test('the merge commit comes from the merged issue event on any page', async () 
 		'/repos/example/tool/issues/1/events?per_page=100&page=1',
 		'/repos/example/tool/issues/1/events?per_page=100&page=2',
 	]);
-	await expect(
+	await rejects(
 		new PagedGateway({ event: 'merged', commit_id: null }).preparedSnapshot('example/tool', 1, result, 'd'.repeat(40)),
-	).rejects.toThrow('merged preparation');
-	const unmerged = new PagedGateway();
-	await expect(unmerged.preparedSnapshot('example/tool', 1, result, 'd'.repeat(40))).rejects.toThrow(
-		'merged preparation',
+		/merged preparation/,
 	);
+	const unmerged = new PagedGateway();
+	await rejects(unmerged.preparedSnapshot('example/tool', 1, result, 'd'.repeat(40)), /merged preparation/);
 	expect(unmerged.requests.length).toBe(11);
 });
 
@@ -274,8 +267,9 @@ test('GitHub requests run on the Workers fetch and refuse a redirect', async () 
 	)
 		.toEqual({ ok: true });
 	const moved = edgeFetch(() => new Response(null, { status: 302, headers: { Location: 'https://example.invalid/' } }));
-	await expect(
+	await rejects(
 		new RepositoryGateway({ GITHUB_APP_ID: '', GITHUB_APP_PRIVATE_KEY: '' }, 1, moved.fetch).call('/meta', 'token'),
-	).rejects.toThrow('GitHub HTTP 302');
+		/GitHub HTTP 302/,
+	);
 	expect(moved.urls).toEqual(['https://api.github.com/meta']);
 });

@@ -28,7 +28,7 @@ package generation run in your repository's GitHub Actions workflows.
   managed and workflow preparation, and declarative version files.
 - [Ecosystem managers](docs/managers.md): discovery, editing, and verification adapters.
 - [Deployment](docs/deployment.md): Cloudflare, GitHub App, login, and security keys.
-- [WinGet manifest generation](docs/winget.md): configurable package metadata,
+- [WinGet manifests and bot submissions](docs/winget.md): configurable package metadata,
   installer assets, checksums, and release notes.
 - [Configuration schema](schemas/v1.json) and [preset templates](presets/).
 - [Architecture](docs/adr-001-repository-automation.md): execution storage, authentication, and recovery.
@@ -37,10 +37,10 @@ package generation run in your repository's GitHub Actions workflows.
 
 ```sh
 bun install --frozen-lockfile
-bun run typecheck
+bun run check
 bun run lint
 bun run test
-bun run check:bundle
+bun run deploy:dry
 bun run test:runtime
 ```
 
@@ -57,12 +57,15 @@ builds the Cloudflare Worker and browser assets into `dist/`. The custom Worker
 entrypoint also exports the release coordinator, scheduled reconciliation, and
 Vermon service binding. API routes preserve the existing GitHub Actions contracts.
 
-Astro's checker currently needs the TypeScript 6 language-service API. The
-`typescript-native` dependency retains TypeScript 7 for application and browser
-checks; `bun run typecheck` runs both explicitly.
+Astro's checker currently needs the TypeScript 6 language-service API. `bun run check` uses Astro to check the project;
+`typescript-native` remains available as a separate dependency.
 
-`bun run test:runtime --browser` serves an authenticated fixture on port 4331
-for browser checks after the runtime suite passes. It uses a temporary database
+Runtime integration tests live in `test/runtime/`. Run `bun run deploy:dry` first
+to build the Worker they exercise, then `bun run test:runtime`. Each named test
+uses isolated storage; the typed probe and mock GitHub gateway are separate fixtures.
+
+`bun run test:browser` serves an authenticated fixture on port 4331
+for browser checks, independently of the runtime suite. It uses a temporary database
 and a test issuer; it does not sign you into the real dashboard or contact GitHub.
 
 Preview discovery from a checkout's committed HEAD or a GitHub repository:

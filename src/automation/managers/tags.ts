@@ -1,5 +1,5 @@
+import { directory, goreleaserConfig } from '@/automation/managers/helpers';
 import { compareVersions, semver } from '@/model';
-import { directory, goreleaserConfig } from './helpers.ts';
 
 export const majorSuffix = /^v(?:[2-9]|[1-9][0-9]+)$/;
 

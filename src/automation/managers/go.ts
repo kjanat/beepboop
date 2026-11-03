@@ -1,8 +1,8 @@
-import type { Package, Publication } from '../types.ts';
-import { directory, object } from './helpers.ts';
-import type { Fetcher, Manager } from './registry.ts';
-import { emptyInventory } from './registry.ts';
-import { latestTag, majorSuffix, tagSource } from './tags.ts';
+import { directory, object } from '@/automation/managers/helpers';
+import type { Fetcher, Manager } from '@/automation/managers/registry';
+import { emptyInventory } from '@/automation/managers/registry';
+import { latestTag, majorSuffix, tagSource } from '@/automation/managers/tags';
+import type { Package, Publication } from '@/automation/types';
 
 const pseudoVersion =
 	/^v[0-9]+\.(?:0\.0-|\d+\.\d+-(?:[^+]*\.)?0\.)\d{14}-[A-Za-z0-9]+(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;

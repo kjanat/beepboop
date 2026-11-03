@@ -1,4 +1,4 @@
-import type { AutomationEvent, Subscription } from './types.ts';
+import type { AutomationEvent, Subscription } from '@/automation/types';
 
 export function matchesSubscription(subscription: Subscription, event: AutomationEvent): boolean {
 	return subscription.source === event.source && subscription.event === event.event

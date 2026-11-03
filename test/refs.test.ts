@@ -3,9 +3,8 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { publishRefs } from '@root/actions/runtime/refs.mjs';
 import { planRefs, type RefPolicy } from '@/automation/refs';
-// @ts-expect-error The runtime Action is plain JavaScript.
-import { publishRefs } from '../actions/runtime/refs.mjs';
 
 const commit = 'a'.repeat(40), old = 'b'.repeat(40);
 const policy: RefPolicy = { phase: 'aliases', prefix: 'v', aliases: ['major', 'minor'], signed: false };

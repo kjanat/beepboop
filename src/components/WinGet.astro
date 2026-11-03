@@ -1,0 +1,131 @@
+---
+import type { Dashboard } from '@/server/dashboard';
+import { date } from '@/server/dashboard';
+
+const { data } = Astro.props as { data: Dashboard };
+const repositories = data.repositories.filter(repo =>
+	repo.configuration?.winget && !repo.suspended && !repo.diagnostics.length
+);
+---
+<div class="winget">
+	{!data.wingetReady && (
+		<article class="panel">
+			<h2>Connect the submission bot</h2>
+			<p>
+				The service needs a GitHub token for the submission identity and a fork
+				of microsoft/winget-pkgs. An administrator must configure
+				WINGET_GITHUB_TOKEN and WINGET_FORK before submissions can be opened.
+			</p>
+		</article>
+	)}
+	<article class="panel">
+		<h2>Submit a published release</h2>
+		<p>
+			Choose a release, review its manifests, then ask the bot to open a pull
+			request in microsoft/winget-pkgs. Microsoft reviews and merges
+			submissions.
+		</p>
+		{repositories.length ? (
+			<form data-action="winget-submit">
+				<div class="form-grid">
+					<label>Repository<select name="repositoryId" required>
+							<option value="">
+								Choose a repository
+							</option>{repositories.map(repo => (
+								<option value={repo.id}>{repo.name}</option>
+							))}
+						</select></label>
+					<label>Release<select name="releaseId" required disabled>
+							<option value="">Choose a repository first</option>
+						</select></label>
+				</div>
+				<button type="submit" value="preview">Preview manifests</button>
+				<button
+					type="submit"
+					value="submit"
+					disabled
+					data-submit-ready={data.wingetReady}
+				>
+					Submit to WinGet
+				</button>
+				<div class="plan-result" aria-live="polite"></div>
+			</form>
+		) : (
+			 <p>
+				 Add a <code>winget</code> section to your repository’s <code
+				 >.github/beepboop.json</code>, merge it, and refresh the repository to
+				 enable submissions.
+			 </p>
+		 )}
+		<details>
+			<summary>Repository configuration</summary>
+			<pre>{JSON.stringify({ winget: { config: 'distribution/winget.json', tagPrefix: 'v', automatic: false } }, null, 2)}</pre>
+			<p>
+				The config file contains package metadata and installer asset templates.
+				Enable automatic to submit future stable releases after setup.
+				Historical releases remain available for manual preview.
+			</p>
+		</details>
+	</article>
+	<section aria-label="WinGet submissions">
+		<div class="section-heading">
+			<h2>Submissions</h2>
+			<form data-action="winget-refresh">
+				<button>Refresh PR status</button>
+			</form>
+		</div>
+		{!data.winget.length && <p>No WinGet submissions yet.</p>}
+		{data.winget.map(item => (
+			<article class="panel">
+				<h3>{item.plan.packageIdentifier} {item.plan.version}</h3>
+				<p>
+					{item.plan.repository} · {item.plan.tag} · {item.state === 'merged'
+						? 'Merged by Microsoft'
+						: item.state === 'closed'
+						? 'Closed without merging'
+						: item.state === 'open'
+						? 'Awaiting Microsoft review'
+						: item.state}
+				</p>
+				<p>
+					Updated
+					{date(item.updatedAt)}{item.checks && ` · Validation: ${item.checks}`}
+				</p>
+				{item.url && (
+					<a href={item.url} target="_blank" rel="noreferrer">Open submission
+						#{item.number}</a>
+				)}
+				{item.reviews && <p>{item.reviews}</p>}
+				{item.reason && <p class="hint">{item.reason}</p>}
+				{(item.state === 'failed' || item.state === 'pending') && (
+					<form data-action="winget-retry">
+						<input
+							type="hidden"
+							name="repositoryId"
+							value={item.plan.repositoryId}
+						><input
+							type="hidden"
+							name="releaseId"
+							value={item.plan.releaseId}
+						><input
+							type="hidden"
+							name="digest"
+							value={item.plan.digest}
+						><button disabled={!data.wingetReady}>Retry submission</button>
+					</form>
+				)}
+				<details>
+					<summary>Submitted manifests and source commit</summary>
+					<p>
+						<code>{item.plan.sourceSha}</code>
+					</p>{Object.entries(item.plan.files).map(([path, content]) => (
+						<details>
+							<summary>{path}</summary>
+							<pre>{content}</pre>
+						</details>
+					))}
+				</details>
+			</article>
+		))}
+	</section>
+</div>

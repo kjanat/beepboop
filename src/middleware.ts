@@ -2,7 +2,7 @@ import { defineMiddleware } from 'astro:middleware';
 import { administrator } from '@/automation/auth.ts';
 import { bindings } from '@/server/bindings.ts';
 
-const pages = new Set(['/', '/repositories', '/releases', '/runs', '/secrets', '/activity', '/security']);
+const pages = new Set(['/', '/repositories', '/releases', '/runs', '/winget', '/secrets', '/activity', '/security']);
 export const onRequest = defineMiddleware(async (context, next) => {
 	if (pages.has(context.url.pathname.replace(/\/$/, '') || '/')) {
 		try {

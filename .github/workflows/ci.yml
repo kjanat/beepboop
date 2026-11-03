@@ -13,17 +13,20 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        uses: actions/checkout@v7
         with: { persist-credentials: false }
       - parallel:
           - name: Setup Node
-            uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+            uses: actions/setup-node@v7
             with: { node-version-file: "mise.toml" }
           - name: Setup Bun
-            uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-            with: { bun-version: "1.4.4" }
-          - uses: kjanat/runner@b32ea932a1813ae0be44e755c16df9f9f5ca86a4 # v0.28
+            uses: oven-sh/setup-bun@v2
+          - uses: kjanat/runner@v0.28.0
       - run: runner i -fs types
-      - run: git diff --exit-code -- worker-configuration.d.ts
-      - run: run -pk typecheck lint test
-      - run: run -sk check:bundle test:runtime
+      - run: run -pk check lint test test:actions
+      - run: run -sk deploy:dry test:runtime
+        env:
+          GITHUB_APP_ID: "0"
+          GITHUB_APP_PRIVATE_KEY: "ci-build-placeholder"
+          GITHUB_WEBHOOK_SECRET: "ci-build-placeholder"
+          VAULT_KEYS: "{}"

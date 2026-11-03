@@ -1,9 +1,9 @@
 import { parse as parseToml } from 'smol-toml';
-import type { Package } from '../types.ts';
-import { directory, inWorkspace, object } from './helpers.ts';
-import type { Manager } from './registry.ts';
-import { emptyInventory } from './registry.ts';
-import { latestVersion, verifyRegistry } from './verification.ts';
+import { directory, inWorkspace, object } from '@/automation/managers/helpers';
+import type { Manager } from '@/automation/managers/registry';
+import { emptyInventory } from '@/automation/managers/registry';
+import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
+import type { Package } from '@/automation/types';
 export const npmManager: Manager = {
 	name: 'npm',
 	latest(pkg, request) {
@@ -36,7 +36,7 @@ export const npmManager: Manager = {
 
 	discover(snapshot) {
 		const inventory = emptyInventory();
-		const detected = new Set<import('../types.ts').ManagerName>();
+		const detected = new Set<import('@/automation/types').ManagerName>();
 		let npmMembers: string[] = [];
 		try {
 			const root = object(JSON.parse(snapshot.files['package.json'] ?? '{}'));

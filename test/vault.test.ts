@@ -1,5 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
+import { rejects } from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import sodium from 'libsodium-wrappers';
 import { seal } from 'tweetnacl-sealedbox-js';
@@ -9,7 +10,7 @@ import { parseGrant, Vault } from '@/automation/vault';
 
 function database(): { store: Store; sqlite: Database } {
 	const sqlite = new Database(':memory:');
-	sqlite.exec(readFileSync(new URL('../migrations/0001_automation.sql', import.meta.url), 'utf8'));
+	sqlite.run(readFileSync(new URL('../migrations/0001_automation.sql', import.meta.url), 'utf8'));
 	const prepare = (sql: string, args: unknown[] = []): unknown => ({
 		bind: (...values: unknown[]) => prepare(sql, values),
 		first: async () => sqlite.query(sql).get(...(args as never[])),
@@ -22,14 +23,14 @@ function database(): { store: Store; sqlite: Database } {
 	const db = {
 		prepare,
 		batch: async (statements: { run: () => Promise<unknown> }[]) => {
-			sqlite.exec('BEGIN');
+			sqlite.run('BEGIN');
 			try {
 				const results = [];
 				for (const s of statements) results.push(await s.run());
-				sqlite.exec('COMMIT');
+				sqlite.run('COMMIT');
 				return results;
 			} catch (e) {
-				sqlite.exec('ROLLBACK');
+				sqlite.run('ROLLBACK');
 				throw e;
 			}
 		},
@@ -73,8 +74,8 @@ describe('credential encryption and grants', () => {
 		expect(JSON.stringify(sqlite.query('SELECT * FROM audit').all())).not.toContain(
 			'fixture-value',
 		);
-		sqlite.exec("UPDATE credentials SET alias='substituted' WHERE alias='registry'");
-		await expect(vault.reveal('substituted', 'admin')).rejects.toThrow();
+		sqlite.run("UPDATE credentials SET alias='substituted' WHERE alias='registry'");
+		await rejects(vault.reveal('substituted', 'admin'));
 		sqlite.close();
 	});
 	test('rejects wrong repository, environment, ref and operation', async () => {
@@ -108,11 +109,11 @@ describe('credential encryption and grants', () => {
 				{ ...identity, workflowRef: 'example/seventh/.github/workflows/evil.yml@refs/tags/v1.0.0' },
 			]
 		) {
-			await expect(vault.runtime('registry', 'publish', altered)).rejects.toThrow('denied');
+			await rejects(vault.runtime('registry', 'publish', altered), /denied/);
 		}
-		await expect(vault.runtime('registry', 'prepare', identity)).rejects.toThrow('denied');
+		await rejects(vault.runtime('registry', 'prepare', identity), /denied/);
 		await vault.revoke('publish', 'admin');
-		await expect(vault.runtime('registry', 'publish', identity)).rejects.toThrow('denied');
+		await rejects(vault.runtime('registry', 'publish', identity), /denied/);
 		sqlite.close();
 	});
 	test('GitHub secret encryption is interoperable with libsodium', async () => {

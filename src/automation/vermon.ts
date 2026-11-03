@@ -1,7 +1,7 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
+import { type AutomationBindings, AutomationService } from '@/automation/service';
 import { record, text } from '@/model';
 import { readBody } from '@/webhook';
-import { type AutomationBindings, AutomationService } from './service.ts';
 
 /** Exposed only as a named service-binding entrypoint, never by the public router. */
 export class VermonEvents extends WorkerEntrypoint<AutomationBindings> {

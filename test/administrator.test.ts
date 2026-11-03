@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { rejects } from 'node:assert/strict';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { type AuthBindings, administrator } from '@/automation/auth';
 
@@ -51,9 +52,12 @@ test('an OpenAuth access token without iat signs the administrator in', async ()
 });
 
 test('the administrator gate still refuses other subjects and non-access tokens', async () => {
-	await expect(administrator(dashboard(await openauthAccessToken('user:someone')), env)).rejects.toThrow(
-		'Administrator access denied',
+	await rejects(
+		administrator(dashboard(await openauthAccessToken('user:someone')), env),
+		/Administrator access denied/,
 	);
-	await expect(administrator(dashboard(await openauthAccessToken('user:admin', { mode: 'refresh' })), env)).rejects
-		.toThrow('Administrator access token required');
+	await rejects(
+		administrator(dashboard(await openauthAccessToken('user:admin', { mode: 'refresh' })), env),
+		/Administrator access token required/,
+	);
 });

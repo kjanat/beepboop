@@ -1,5 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
+import { rejects } from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { Store } from '@/automation/store';
 import type { AutomationEvent, SubscriptionDelivery } from '@/automation/types';
@@ -7,7 +8,7 @@ import type { AutomationEvent, SubscriptionDelivery } from '@/automation/types';
 function database(): { store: Store; sqlite: Database } {
 	const sqlite = new Database(':memory:');
 	for (const name of ['0001_automation.sql', '0002_release_events.sql']) {
-		sqlite.exec(readFileSync(new URL(`../migrations/${name}`, import.meta.url), 'utf8'));
+		sqlite.run(readFileSync(new URL(`../migrations/${name}`, import.meta.url), 'utf8'));
 	}
 	const prepare = (sql: string, args: unknown[] = []): unknown => ({
 		bind: (...values: unknown[]) => prepare(sql, values),
@@ -21,14 +22,14 @@ function database(): { store: Store; sqlite: Database } {
 	const db = {
 		prepare,
 		batch: async (statements: { run: () => Promise<unknown> }[]) => {
-			sqlite.exec('BEGIN');
+			sqlite.run('BEGIN');
 			try {
 				const results = [];
 				for (const s of statements) results.push(await s.run());
-				sqlite.exec('COMMIT');
+				sqlite.run('COMMIT');
 				return results;
 			} catch (e) {
-				sqlite.exec('ROLLBACK');
+				sqlite.run('ROLLBACK');
 				throw e;
 			}
 		},
@@ -58,6 +59,6 @@ test('delivery survives replay and rejects changed event identity', async () => 
 	await store.deliveryResult(delivery.id, true);
 	await store.queueEvent(event, [delivery]);
 	expect(await store.pendingDeliveries()).toEqual([]);
-	await expect(store.queueEvent({ ...event, version: '2.0.0' }, [delivery])).rejects.toThrow('Event identity changed');
+	await rejects(store.queueEvent({ ...event, version: '2.0.0' }, [delivery]), /Event identity changed/);
 	sqlite.close();
 });

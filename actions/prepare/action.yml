@@ -17,14 +17,26 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Check for Bun
+      id: bun
+      shell: bash
+      run: |
+        if command -v bun >/dev/null 2>&1; then
+          echo "available=true" >> "${GITHUB_OUTPUT}"
+        fi
+    - name: Setup Bun
+      if: steps.bun.outputs.available != 'true'
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: latest
     - shell: bash
       env:
         RELEASE_CONTEXT: ${{ inputs.context }}
         PREPARATION_MODE: ${{ inputs.mode }}
-      run: node "${{ github.action_path }}/../runtime/prepare.mjs"
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/prepare.mjs"
     - id: submit
       if: inputs.mode == 'submit'
       shell: bash
       env:
         SERVICE_ORIGIN: ${{ inputs.service }}
-      run: node "${{ github.action_path }}/../runtime/client.mjs" prepared
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.mjs" prepared

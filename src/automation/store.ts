@@ -1,6 +1,11 @@
+import type {
+	ActivityEntry,
+	AutomationEvent,
+	Execution,
+	RepositoryRecord,
+	SubscriptionDelivery,
+} from '@/automation/types';
 import { record } from '@/model';
-
-import type { ActivityEntry, AutomationEvent, Execution, RepositoryRecord, SubscriptionDelivery } from './types.ts';
 
 export function onboardingPulls(rows: { repository_id: number; document: string }[]): Map<number, string> {
 	const pulls = new Map<number, string>();

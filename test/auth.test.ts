@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { rejects } from 'node:assert/strict';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { workflowIdentity } from '@/automation/auth';
 
@@ -54,15 +55,17 @@ describe('workflowIdentity', () => {
 	});
 
 	test('refuses pull_request_target', async () => {
-		await expect(
+		await rejects(
 			workflowIdentity(await request({ event_name: 'pull_request_target' }), audience, ownerId, issuerKeys),
-		).rejects.toThrow('Workflow identity is not eligible');
+			/Workflow identity is not eligible/,
+		);
 	});
 
 	test('refuses a repository owned by someone else', async () => {
-		await expect(
+		await rejects(
 			workflowIdentity(await request({ repository_owner_id: 1 }), audience, ownerId, issuerKeys),
-		).rejects.toThrow('Workflow identity is not eligible');
+			/Workflow identity is not eligible/,
+		);
 	});
 
 	test('refuses a token signed by another key', async () => {
@@ -70,6 +73,6 @@ describe('workflowIdentity', () => {
 		const otherKeys = createLocalJWKSet({
 			keys: [{ ...(await exportJWK(other.publicKey)), kid: 'test', alg: 'RS256' }],
 		});
-		await expect(workflowIdentity(await request({}), audience, ownerId, otherKeys)).rejects.toThrow();
+		await rejects(workflowIdentity(await request({}), audience, ownerId, otherKeys));
 	});
 });

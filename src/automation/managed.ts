@@ -1,6 +1,6 @@
-import { createExecution, executionId } from './execution.ts';
-import type { ReleaseSetPlan } from './planning.ts';
-import type { Execution, ReleasePlan, RepositoryRecord } from './types.ts';
+import { createExecution, executionId } from '@/automation/execution';
+import type { ReleaseSetPlan } from '@/automation/planning';
+import type { Execution, ReleasePlan, RepositoryRecord } from '@/automation/types';
 
 export async function planIdentity(
 	plan: ReleasePlan | ReleaseSetPlan,

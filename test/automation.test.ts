@@ -1,11 +1,12 @@
 import { describe, expect, test } from 'bun:test';
+import { rejects } from 'node:assert/strict';
+import { edgeFetch } from '@root/test/edge-fetch';
 import { parseRepositoryConfiguration, resolveConfiguration } from '@/automation/configuration';
 import { completion, createExecution, mergePublications } from '@/automation/execution';
 import { discover, planRelease, publicationOrder, verifyPublication } from '@/automation/managers';
 import { onboardingConfiguration } from '@/automation/onboarding';
 import type { Publication, RepositoryRecord, Snapshot } from '@/automation/types';
 import { parseGrant } from '@/automation/vault';
-import { edgeFetch } from './edge-fetch.ts';
 
 const snapshot: Snapshot = {
 	repository: { id: 91, name: 'example/seventh', defaultBranch: 'main' },
@@ -79,23 +80,25 @@ describe('repository configuration', () => {
 		expect(result.presetShas['github>example/presets:base']).toBe('b'.repeat(40));
 	});
 	test('rejects cycles, invalid workflow paths and inherited unknown fields', async () => {
-		await expect(
+		await rejects(
 			resolveConfiguration({ extends: ['github>example/presets:base'] }, async () => ({
 				sha: 'b'.repeat(40),
 				value: { extends: ['github>example/presets:base'] },
 			})),
-		).rejects.toThrow('cycle');
+			/cycle/,
+		);
 		expect(() =>
 			parseRepositoryConfiguration({
 				streams: { main: { workflows: { publish: { file: '../release.yml' } } } },
 			})
 		).toThrow('filename');
-		await expect(
+		await rejects(
 			resolveConfiguration({ extends: ['github>example/presets:base'] }, async () => ({
 				sha: 'b'.repeat(40),
 				value: { typo: true },
 			})),
-		).rejects.toThrow('unknown');
+			/unknown/,
+		);
 	});
 });
 describe('ecosystem discovery and version planning', () => {
@@ -248,9 +251,7 @@ describe('migration and orchestration contracts', () => {
 		expect((await createExecution(repo, 'main', 'publish', 'run:1', '1.0.0', true)).state).toBe(
 			'pending',
 		);
-		await expect(createExecution(repo, 'main', 'publish', 'manual:1')).rejects.toThrow(
-			'workflow_dispatch',
-		);
+		await rejects(createExecution(repo, 'main', 'publish', 'manual:1'), /workflow_dispatch/);
 	});
 	test('rejects missing dependencies and cycles', () => {
 		expect(() =>

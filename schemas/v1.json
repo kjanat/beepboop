@@ -88,6 +88,27 @@
 					"operation"
 				]
 			}
+		},
+		"winget": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"config"
+			],
+			"properties": {
+				"config": {
+					"type": "string",
+					"description": "Path to WinGet package JSON in the release commit"
+				},
+				"tagPrefix": {
+					"type": "string",
+					"default": "v"
+				},
+				"automatic": {
+					"type": "boolean",
+					"default": false
+				}
+			}
 		}
 	},
 	"$defs": {

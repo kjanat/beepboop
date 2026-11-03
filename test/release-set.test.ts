@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { rejects } from 'node:assert/strict';
 import { parseRepositoryConfiguration } from '@/automation/configuration';
 import { dependenciesReady, validatePublicationIdentity } from '@/automation/execution';
 import { createManagedPreparation } from '@/automation/managed';
@@ -88,12 +89,14 @@ test('release set compiles group versions and preserves approval and output depe
 });
 test('release set rejects changed prepared files and omitted configured dependencies', async () => {
 	const { preparation, merged } = await fixture();
-	await expect(compileReleaseSet(preparation, { ...merged, files: { ...merged.files, 'package.json': '{}' } })).rejects
-		.toThrow('Prepared content changed');
+	await rejects(
+		compileReleaseSet(preparation, { ...merged, files: { ...merged.files, 'package.json': '{}' } }),
+		/Prepared content changed/,
+	);
 	const plan = preparation.managed?.plan;
 	if (!plan || !('groups' in plan)) throw new Error('Missing release set');
 	plan.operations = plan.operations.filter(operation => operation.id !== 'promote');
-	await expect(compileReleaseSet(preparation, merged)).rejects.toThrow('omits a dependency');
+	await rejects(compileReleaseSet(preparation, merged), /omits a dependency/);
 });
 test('combined configured and planned edges cannot introduce a cycle', async () => {
 	const { preparation, merged } = await fixture();
@@ -101,7 +104,7 @@ test('combined configured and planned edges cannot introduce a cycle', async () 
 	if (!plan || !('groups' in plan)) throw new Error('Missing release set');
 	const promote = plan.operations.find(operation => operation.id === 'promote');
 	if (promote) promote.needs = ['publish-cli'];
-	await expect(compileReleaseSet(preparation, merged)).rejects.toThrow('cycle');
+	await rejects(compileReleaseSet(preparation, merged), /cycle/);
 });
 
 test('publication evidence cannot satisfy another manager or group version', async () => {

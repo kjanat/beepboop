@@ -5,6 +5,7 @@ import Repositories from '@/components/Repositories.astro';
 import Runs from '@/components/Runs.astro';
 import Secrets from '@/components/Secrets.astro';
 import Security from '@/components/Security.astro';
+import WinGet from '@/components/WinGet.astro';
 import Layout from '@/layouts/Dashboard.astro';
 import { bindings } from '@/server/bindings.ts';
 import { dashboard, date } from '@/server/dashboard.ts';
@@ -12,6 +13,7 @@ import { dashboard, date } from '@/server/dashboard.ts';
 const { section } = Astro.props;
 const data = await dashboard(bindings(), Astro.locals.actor);
 const copy: Record<string, [string, string]> = {
+	winget: ['WinGet', 'Submit Windows releases and follow Microsoft’s review.'],
 	overview: [
 		'What needs to ship?',
 		'Follow releases from preparation to every required publication.',
@@ -54,6 +56,7 @@ const setup = data.repositories.filter(r =>
 );
 ---
 <Layout title={title} description={description} section={section}>
+	{section === 'winget' && <WinGet data={data} />}
 	{section === 'overview' && (
 		<>
 			<div class="release-path" aria-label="Release process">

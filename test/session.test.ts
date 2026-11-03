@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
+import { rejects } from 'node:assert/strict';
 import { type AuthBindings, authRoute, enrollmentRefusal, signOut } from '@/automation/auth';
 
 const origin = 'https://beepboop.example';
@@ -47,7 +48,7 @@ afterEach(() => {
 });
 
 test('a dashboard request with an expired session sends the browser back to login', async () => {
-	const { api } = await import('../src/ui/browser/dom.ts');
+	const { api } = await import('@/ui/browser/dom');
 	const visited: string[] = [];
 	Object.defineProperty(globalThis, 'location', {
 		value: { assign: (url: string) => visited.push(url) },
@@ -57,6 +58,6 @@ test('a dashboard request with an expired session sends the browser back to logi
 		async () => Response.json({ error: 'Administrator authentication required' }, { status: 401 }),
 		{ preconnect: realFetch.preconnect },
 	);
-	await expect(api('/api/activity')).rejects.toThrow('Session expired. Signing in again.');
+	await rejects(api('/api/activity'), /Session expired\. Signing in again\./);
 	expect(visited).toEqual(['/auth/login']);
 });

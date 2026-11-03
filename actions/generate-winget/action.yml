@@ -31,6 +31,22 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Check for Bun
+      id: bun
+      shell: bash
+      run: |
+        if command -v bun >/dev/null 2>&1; then
+          echo "available=true" >> "${GITHUB_OUTPUT}"
+        fi
+    - name: Setup Bun
+      if: steps.bun.outputs.available != 'true'
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: latest
+    - name: Install generator dependencies
+      shell: bash
+      working-directory: ${{ github.action_path }}/../..
+      run: bun install --frozen-lockfile --production --ignore-scripts
     - id: generate
       shell: bash
       env:
@@ -41,4 +57,4 @@ runs:
         WINGET_RELEASE_NOTES: ${{ inputs.release-notes }}
         WINGET_RELEASE_DATE: ${{ inputs.release-date }}
         WINGET_OUT: ${{ inputs.out }}
-      run: node "${{ github.action_path }}/dist/cli.mjs"
+      run: bun "${GITHUB_ACTION_PATH}/../../src/distribution/winget/cli.ts"

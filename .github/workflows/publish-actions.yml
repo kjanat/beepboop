@@ -16,57 +16,53 @@ jobs:
     permissions: { contents: write }
     steps:
       - name: Checkout source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
       - name: Setup Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        uses: actions/setup-node@v7
         with: { node-version-file: "mise.toml" }
       - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with: { bun-version: "1.4.4" }
+        uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bun run build:winget
-      - run: bun test test/winget.test.ts
+      - run: bun test test/winget.test.ts ./test/actions/winget.ts
       - name: Publish distribution commit
         shell: bash
-        env:
-          SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          repository_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          head=$(git rev-parse HEAD)
+          [[ "${head}" == "${GITHUB_SHA}" ]]
           git diff --exit-code HEAD
           index_dir=$(mktemp -d)
-          trap 'rm -rf "$index_dir"' EXIT
-          export GIT_INDEX_FILE="$index_dir/index"
-          git read-tree "$SOURCE_SHA"
-          mkdir -p actions/generate-winget/dist
-          cp dist/winget/cli.mjs actions/generate-winget/dist/cli.mjs
-          git add --force actions/generate-winget/dist/cli.mjs
+          trap 'rm -rf "${index_dir}"' EXIT
+          export GIT_INDEX_FILE="${index_dir}/index"
+          git read-tree "${GITHUB_SHA}"
           tree=$(git write-tree)
-          parents=(-p "$SOURCE_SHA")
+          parents=(-p "${GITHUB_SHA}")
           previous=$(git ls-remote --exit-code origin refs/heads/actions) || {
             result=$?
-            if [ "$result" -ne 2 ]; then exit "$result"; fi
+            if [[ "${result}" -ne 2 ]]; then exit "${result}"; fi
           }
-          if [ -n "$previous" ]; then
-            read -r previous _ <<< "$previous"
-            git fetch --no-tags origin "$previous"
-            previous_source=$(git rev-parse "$previous^1")
-            git merge-base --is-ancestor "$previous_source" "$SOURCE_SHA"
-            parents+=(-p "$previous")
-            if [ "$previous_source" = "$SOURCE_SHA" ] && [ "$(git rev-parse "$previous^{tree}")" = "$tree" ]; then
-              echo "Actions already published at \`$previous\`." >> "$GITHUB_STEP_SUMMARY"
+          if [[ -n "${previous}" ]]; then
+            read -r previous _ <<< "${previous}"
+            git fetch --no-tags origin "${previous}"
+            previous_source=$(git rev-parse "${previous}^1")
+            git merge-base --is-ancestor "${previous_source}" "${GITHUB_SHA}"
+            parents+=(-p "${previous}")
+            previous_tree=$(git rev-parse "${previous}^{tree}")
+            if [[ "${previous_source}" == "${GITHUB_SHA}" && "${previous_tree}" == "${tree}" ]]; then
+              echo "Actions already published at [\`${previous}\`](${repository_url}/commit/${previous})." >> "${GITHUB_STEP_SUMMARY}"
               exit 0
             fi
           fi
           commit=$(git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            commit-tree "$tree" "${parents[@]}" -m "Build Actions from $SOURCE_SHA")
-          git push origin "$commit:refs/heads/actions"
+            commit-tree "${tree}" "${parents[@]}" -m "Publish Actions from ${GITHUB_SHA}")
+          git push origin "${commit}:refs/heads/actions"
           {
-            echo "Source commit: \`$SOURCE_SHA\`"
-            echo "Published Actions commit: \`$commit\`"
+            echo "Source commit: [\`${GITHUB_SHA}\`](${repository_url}/commit/${GITHUB_SHA})"
+            echo "Published Actions commit: [\`${commit}\`](${repository_url}/commit/${commit})"
             echo
-            echo "Pin consumers to \`kjanat/beepboop/actions/generate-winget@$commit\`."
-          } >> "$GITHUB_STEP_SUMMARY"
+            echo "Pin consumers to \`kjanat/beepboop/actions/generate-winget@${commit}\`."
+          } >> "${GITHUB_STEP_SUMMARY}"

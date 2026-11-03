@@ -588,3 +588,7 @@ dd {
 		padding: 24px;
 	}
 }
+
+.winget {
+	overflow-wrap: anywhere;
+}

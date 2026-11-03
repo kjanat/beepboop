@@ -1,25 +1,22 @@
 import schema from '@root/schemas/v1.json' with { type: 'json' };
 import { CronExpressionParser } from 'cron-parser';
 import { configuredGrant } from '@/automation/access';
-import { array, compareVersions, integer, record, semver, sha, text } from '@/model';
-import { readBody, verifySignature } from '@/webhook';
-import { renderActivityRows } from '../ui/templates/activity.ts';
-import { type AuthBindings, Authenticators, administrator, authRoute, workflowIdentity } from './auth.ts';
-import { resolveConfiguration } from './configuration.ts';
-import type { AutomationCoordinator } from './coordinator.ts';
-import { planVersionFiles } from './editors.ts';
-import { createExecution } from './execution.ts';
-import { type Credentials, RepositoryGateway } from './github.ts';
-import { formatJson } from './json.ts';
-import { createReleasePreparation, planIdentity } from './managed.ts';
-import { discover, planRelease, resolvePublished, versionsInFiles } from './managers.ts';
-import { onboardingBody, onboardingConfiguration } from './onboarding.ts';
-import { planReleaseSet } from './planning.ts';
-import { matchesRef } from './policy.ts';
-import { planHookUpdates } from './precommit.ts';
-import { Store } from './store.ts';
-import { matchesSubscription } from './subscriptions.ts';
-import { workflowToken } from './token.ts';
+import { type AuthBindings, Authenticators, administrator, authRoute, workflowIdentity } from '@/automation/auth';
+import { resolveConfiguration } from '@/automation/configuration';
+import type { AutomationCoordinator } from '@/automation/coordinator';
+import { planVersionFiles } from '@/automation/editors';
+import { createExecution } from '@/automation/execution';
+import { type Credentials, RepositoryGateway } from '@/automation/github';
+import { formatJson } from '@/automation/json';
+import { createReleasePreparation, planIdentity } from '@/automation/managed';
+import { discover, planRelease, resolvePublished, versionsInFiles } from '@/automation/managers';
+import { onboardingBody, onboardingConfiguration } from '@/automation/onboarding';
+import { planReleaseSet } from '@/automation/planning';
+import { matchesRef } from '@/automation/policy';
+import { planHookUpdates } from '@/automation/precommit';
+import { Store } from '@/automation/store';
+import { matchesSubscription } from '@/automation/subscriptions';
+import { workflowToken } from '@/automation/token';
 import type {
 	Artifact,
 	AutomationEvent,
@@ -27,11 +24,15 @@ import type {
 	Publication,
 	RepositoryRecord,
 	SubscriptionDelivery,
-} from './types.ts';
-import { parseGrant, Vault } from './vault.ts';
-import { nextVersion, parseVersionRequest } from './version.ts';
+} from '@/automation/types';
+import { parseGrant, Vault } from '@/automation/vault';
+import { nextVersion, parseVersionRequest } from '@/automation/version';
+import { type WinGetBindings, WinGetService } from '@/automation/winget';
+import { array, compareVersions, integer, record, semver, sha, text } from '@/model';
+import { renderActivityRows } from '@/ui/templates/activity';
+import { readBody, verifySignature } from '@/webhook';
 
-export interface AutomationBindings extends AuthBindings, Credentials {
+export interface AutomationBindings extends AuthBindings, Credentials, WinGetBindings {
 	AUTOMATION: DurableObjectNamespace<AutomationCoordinator>;
 	OWNER_ID: string;
 	GITHUB_WEBHOOK_SECRET: string;
@@ -95,6 +96,9 @@ export class AutomationService {
 		}
 		return this.coordinator(repository.id).enqueue(execution);
 	}
+	winget() {
+		return new WinGetService(this.store, this.gateway, this.env);
+	}
 	private vault() {
 		return new Vault(this.store, JSON.parse(this.env.VAULT_KEYS), this.env.VAULT_ACTIVE_KEY);
 	}
@@ -125,6 +129,7 @@ export class AutomationService {
 		} else repository.diagnostics.push('Onboarding configuration is not merged');
 		repository.inventory = await resolvePublished(repository.inventory);
 		await this.store.putRepository(repository);
+		await this.winget().watch(repository);
 		return repository;
 	}
 	async webhook(request: Request): Promise<Response> {
@@ -178,6 +183,7 @@ export class AutomationService {
 		if (!repository || repository.name !== source.full_name) {
 			return new Response(null, { status: 204 });
 		}
+		if (event === 'release' && payload.action === 'published') await this.winget().automatic(repository);
 		if (event === 'push' && payload.ref === `refs/heads/${repository.defaultBranch}`) {
 			await this.refresh(repository.name, repository.id);
 		} else if (event === 'workflow_run') {
@@ -254,9 +260,19 @@ export class AutomationService {
 	}
 	async scheduled(): Promise<void> {
 		await this.deliverEvents();
+		await this.winget().reconcile();
 		for (const repository of await this.store.repositories()) {
 			try {
 				const refreshed = await this.refresh(repository.name, repository.id);
+				try {
+					await this.winget().automatic(refreshed);
+				} catch (error) {
+					await this.store.audit(
+						'winget',
+						'winget.failed',
+						`${repository.name}: ${error instanceof Error ? error.message : 'Polling failed'}`,
+					);
+				}
 				await this.coordinator(repository.id).wake();
 				for (const event of await this.coordinator(repository.id).releaseEvents()) {
 					await this.event(event);
@@ -329,6 +345,7 @@ export class AutomationService {
 			if (path === '/api/authenticators') {
 				return Response.json(await new Authenticators(this.env).list(actor));
 			}
+			if (path === '/api/winget') return Response.json(await this.winget().list());
 			if (path === '/api/repositories') return Response.json(await this.store.repositories());
 			if (path === '/api/executions') return Response.json(await this.store.executions());
 			if (path === '/api/activity') {
@@ -356,6 +373,23 @@ export class AutomationService {
 		}
 		if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
 		const body = record(JSON.parse(new TextDecoder().decode(await readBody(request))));
+		if (path.startsWith('/api/winget/')) {
+			if (path === '/api/winget/refresh') {
+				await this.winget().reconcile();
+				return Response.json({ ok: true });
+			}
+			const repository = await this.store.repository(integer(body.repositoryId));
+			if (!repository) throw new Error('Repository not enrolled');
+			if (path === '/api/winget/releases') return Response.json(await this.winget().releases(repository));
+			const releaseId = integer(body.releaseId);
+			if (path === '/api/winget/preview') return Response.json(await this.winget().plan(repository, releaseId));
+			if (path === '/api/winget/submit') {
+				const result = await this.winget().submit(repository, releaseId, text(body.digest));
+				await this.store.audit(actor, 'winget.request', result.plan.id);
+				return Response.json(result);
+			}
+			return new Response('Not found', { status: 404 });
+		}
 		if (path === '/api/repositories/discover') {
 			return Response.json(
 				await this.refresh(

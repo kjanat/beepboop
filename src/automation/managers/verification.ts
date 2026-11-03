@@ -1,6 +1,6 @@
+import type { Fetcher, RegistryVersion } from '@/automation/managers/registry';
+import type { Publication } from '@/automation/types';
 import { semver } from '@/model';
-import type { Publication } from '../types.ts';
-import type { Fetcher, RegistryVersion } from './registry.ts';
 
 /** Transport handling is shared; registry response semantics belong to each adapter. */
 export async function verifyRegistry(

@@ -1,4 +1,4 @@
-import { createClient } from '@openauthjs/openauth/client';
+import { createClient } from '@kjanat/openauth/client';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON, WebAuthnCredential } from '@simplewebauthn/server';
 import {
 	generateAuthenticationOptions,

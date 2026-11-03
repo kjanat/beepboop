@@ -7,14 +7,14 @@ repository includes the configuration for `beepboop.kjanat.dev` and the
 ## Configure Cloudflare and login
 
 1. Install dependencies with `bun install --frozen-lockfile`.
-2. Create a D1 database and enter its ID in `wrangler.jsonc`.
+2. Create a D1 database and enter its ID in `wrangler.toml`.
 3. Set the account, domain, owner ID, OpenAuth issuer/client, and exact
    `ADMIN_SUBJECT` for your deployment.
 4. Register the OpenAuth callback URL: `<APPLICATION_ORIGIN>/auth/callback`.
 5. Apply the database migration:
 
    ```sh
-   bunx wrangler d1 migrations apply beepboop --remote --config wrangler.jsonc
+   bunx wrangler d1 migrations apply beepboop --remote --config wrangler.toml
    ```
 
 ## Local development
@@ -52,7 +52,7 @@ Environments write permissions, according to the grant's delivery type.
 
 ## Add Worker secrets
 
-Set these with `wrangler secret put NAME --config wrangler.jsonc`:
+Set these with `wrangler secret put NAME --config wrangler.toml`:
 
 | Secret                   | Value                                                         |
 | ------------------------ | ------------------------------------------------------------- |
@@ -64,15 +64,36 @@ Set these with `wrangler secret put NAME --config wrangler.jsonc`:
 `VAULT_ACTIVE_KEY` selects an entry in `VAULT_KEYS` for new ciphertexts. Older
 ciphertexts require their corresponding keys until migrated or deleted.
 
+## Generated types
+
+`bun run types` generates Worker types from `wrangler.toml`; `bun run sync`
+runs Astro sync. Install preparation and checking run both commands; development,
+build and preview also generate Worker types before starting. The generated
+`worker-configuration.d.ts` is ignored by Git and referenced once through the
+base TypeScript configuration. Secret names are declared in Wrangler's
+`secrets.required`; their values stay in Worker secrets or local secret files.
+There is no custom type-generation wrapper or duplicated hand-written `Env`.
+
 ## Deploy and enroll keys
 
 ```sh
-bun run typecheck
+bun run check
 bun run test
-bun run check:bundle
+bun run deploy:dry
 bun run test:runtime
-bunx wrangler deploy
+bun run deploy
 ```
+
+For Cloudflare Workers Builds, set the deploy command to `bun run deploy`.
+The build-command field can stay empty: the deploy script runs `astro build`
+first, then deploys its generated `dist/server/wrangler.json` configuration.
+Dependency installation and `astro sync` do not build the Worker. Running
+`bunx wrangler deploy` directly from a fresh checkout instead bundles the source
+entrypoint and fails on Astro's virtual modules. Do not add aliases for those
+modules; Astro resolves them during its build.
+
+`bun run deploy:dry` uses the same deployment script with `--dry-run` so CI
+checks the production build path without publishing a Worker.
 
 Sign in to the dashboard and enroll the first physical security key. Enroll a
 second key with a touch of the first.

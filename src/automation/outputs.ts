@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { Artifact, Execution } from './types.ts';
+import type { Artifact, Execution } from '@/automation/types';
 
 const name = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
 export const outputSchema = z.strictObject({

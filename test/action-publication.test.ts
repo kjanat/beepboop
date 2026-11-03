@@ -34,19 +34,23 @@ function fixture() {
 	git('add', '.');
 	git('commit', '-qm', 'source');
 	git('push', '-q', 'origin', 'master');
-	mkdirSync(join(work, 'dist', 'winget'), { recursive: true });
-	writeFileSync(join(work, 'dist', 'winget', 'cli.mjs'), 'console.log("fixture");\n');
 	const run = (source = git('rev-parse', 'HEAD')) =>
 		spawnSync('bash', ['-euo', 'pipefail', '-c', publish], {
 			cwd: work,
 			encoding: 'utf8',
-			env: { ...process.env, SOURCE_SHA: source, GITHUB_STEP_SUMMARY: join(root, 'summary') },
+			env: {
+				...process.env,
+				GITHUB_SHA: source,
+				GITHUB_SERVER_URL: 'https://github.example',
+				GITHUB_REPOSITORY: 'owner/repo',
+				GITHUB_STEP_SUMMARY: join(root, 'summary'),
+			},
 		});
 	const head = () => git('--git-dir', remote, 'rev-parse', 'refs/heads/actions');
 	return { root, work, remote, git, run, head };
 }
 
-test('publication adds the runnable bundle and preserves source and shared Actions', () => {
+test('publication publishes the source tree and shared Actions', () => {
 	const { root, git, run, head } = fixture();
 	try {
 		const source = git('rev-parse', 'HEAD');
@@ -54,12 +58,17 @@ test('publication adds the runnable bundle and preserves source and shared Actio
 		expect(result.status, result.stderr).toBe(0);
 		const published = head();
 		expect(git('rev-parse', `${published}^1`)).toBe(source);
-		expect(git('diff', '--name-only', source, published)).toBe('actions/generate-winget/dist/cli.mjs');
+		expect(git('diff', '--name-only', source, published)).toBe('');
 		expect(git('show', `${published}:actions/runtime/client.mjs`)).toBe('export {};');
-		expect(git('show', `${published}:actions/generate-winget/dist/cli.mjs`)).toBe('console.log("fixture");');
 		expect(git('rev-parse', 'refs/heads/master')).toBe(source);
 		expect(readFileSync(join(root, 'summary'), 'utf8')).toContain(`generate-winget@${published}`);
+		const summary = readFileSync(join(root, 'summary'), 'utf8');
+		expect(summary).toContain(`](https://github.example/owner/repo/commit/${source})`);
+		expect(summary).toContain(`](https://github.example/owner/repo/commit/${published})`);
 		expect(run().status).toBe(0);
+		expect(readFileSync(join(root, 'summary'), 'utf8')).toContain(
+			`Actions already published at [\`${published}\`](https://github.example/owner/repo/commit/${published}).`,
+		);
 		expect(head()).toBe(published);
 	} finally {
 		rmSync(root, { recursive: true, force: true });

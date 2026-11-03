@@ -1,0 +1,296 @@
+import { afterEach, beforeEach, describe, it } from 'bun:test';
+import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
+import { createRuntime, type Runtime } from '@root/test/runtime/environment';
+import { fixture, managed } from '@root/test/runtime/fixtures';
+
+describe('built Cloudflare Worker', () => {
+	let context: Runtime;
+	beforeEach(async () => {
+		context = await createRuntime();
+		await context.fetch('https://automation.test/enqueue', {
+			method: 'POST',
+			body: JSON.stringify(fixture),
+		});
+	});
+	afterEach(async () => {
+		await context?.close();
+	});
+
+	it('authentication gates', async () => {
+		assert.equal((await context.fetch('https://automation.test/health')).status, 200);
+		assert.equal(
+			(await context.fetch('https://automation.test/api/credentials')).status,
+			401,
+		);
+		assert.equal(
+			(
+				await context.fetch('https://automation.test/api/executions/start', {
+					method: 'POST',
+					body: '{}',
+				})
+			).status,
+			401,
+		);
+	});
+
+	it('immutable execution enqueue', async () => {
+		const response = await context.fetch('https://automation.test/enqueue', {
+			method: 'POST',
+			body: JSON.stringify(fixture),
+		});
+		assert.equal(response.status, 200);
+		const first = (await response.json()) as typeof fixture;
+		assert.equal(first.sourceSha, fixture.sourceSha);
+		const duplicate = await context.fetch('https://automation.test/enqueue', {
+			method: 'POST',
+			body: JSON.stringify({ ...fixture, sourceSha: 'c'.repeat(40) }),
+		});
+		assert.equal(((await duplicate.json()) as typeof fixture).sourceSha, fixture.sourceSha);
+	});
+
+	it('unrelated webhooks do not contact GitHub', async () => {
+		const body = JSON.stringify({
+			action: 'published',
+			repository: { id: 999, full_name: 'example/unrelated', owner: { id: 1 } },
+		});
+		const signature = createHmac('sha256', 'fixture-secret').update(body).digest('hex');
+		const ignored = await context.fetch('https://automation.test/webhooks/github', {
+			method: 'POST',
+			body,
+			headers: { 'x-github-event': 'release', 'x-hub-signature-256': `sha256=${signature}` },
+		});
+		assert.equal(ignored.status, 204);
+		assert.equal(context.network.outbound, 0);
+	});
+
+	it('authenticated dashboard pages and security headers', async () => {
+		for (const path of ['/', '/repositories', '/releases', '/runs', '/winget', '/secrets', '/activity', '/security']) {
+			const page = await context.fetch(`https://automation.test${path}`, {
+				redirect: 'manual',
+				headers: { cookie: `__Host-beepboop_access=${context.access}` },
+			});
+			assert.equal(page.status, 200, `Authenticated Astro page ${path}: ${await page.clone().text()}`);
+			const html = await page.text();
+			assert.match(html, /Beepboop/);
+			assert.match(html, /<nav aria-label="Main navigation"/);
+			assert.ok(page.headers.get('content-security-policy')?.includes("frame-ancestors 'none'"));
+			assert.ok(page.headers.get('content-security-policy')?.includes("style-src 'self';"));
+			assert.ok(!page.headers.get('content-security-policy')?.includes("'unsafe-inline'"));
+		}
+		const absent = await context.fetch('https://automation.test/no-such-page');
+		assert.equal(absent.status, 404);
+	});
+
+	it('login rejects invalid flows and accepts a fresh exchange', async () => {
+		const wingetUnauthorized = await context.fetch('https://automation.test/api/winget');
+		assert.equal(wingetUnauthorized.status, 401);
+		const cookieless = await context.fetch('https://automation.test/auth/callback?code=c&state=s', {
+			redirect: 'manual',
+		});
+		assert.equal(cookieless.status, 401);
+		assert.match(await cookieless.text(), /Sign in again/);
+		const stale = await context.fetch('https://automation.test/auth/callback?code=c&state=s', {
+			redirect: 'manual',
+			headers: { cookie: '__Host-beepboop_flow=no-such-flow' },
+		});
+		assert.equal(stale.status, 302);
+		assert.equal(stale.headers.get('location'), '/auth/login');
+		const login = await context.fetch('https://automation.test/auth/login', { redirect: 'manual' });
+		assert.equal(login.status, 302);
+		const flowId = /__Host-beepboop_flow=([^;]+)/.exec(login.headers.get('set-cookie') ?? '')?.[1];
+		const state = new URL(login.headers.get('location') ?? '').searchParams.get('state');
+		assert.ok(flowId && state);
+		const unreachable = await context.fetch(
+			`https://automation.test/auth/callback?code=c&state=${encodeURIComponent(state)}`,
+			{ redirect: 'manual', headers: { cookie: `__Host-beepboop_flow=${flowId}` } },
+		);
+		assert.equal(unreachable.status, 401);
+		assert.match(await unreachable.text(), /Login exchange failed/);
+		const reusedLogin = await context.fetch(
+			`https://automation.test/auth/callback?code=c&state=${encodeURIComponent(state)}`,
+			{ redirect: 'manual', headers: { cookie: `__Host-beepboop_flow=${flowId}` } },
+		);
+		assert.equal(reusedLogin.headers.get('location'), '/auth/login');
+		context.network.allowExchange = true;
+		const freshLogin = await context.fetch('https://automation.test/auth/login', {
+			redirect: 'manual',
+		});
+		const freshLocation = new URL(freshLogin.headers.get('location') ?? '');
+		assert.equal(freshLocation.searchParams.get('redirect_uri'), 'https://automation.test/auth/callback');
+		assert.equal(freshLocation.searchParams.get('code_challenge_method'), 'S256');
+		const freshCookie = freshLogin.headers.get('set-cookie')?.split(';')[0];
+		assert.ok(freshCookie);
+		const callback = await context.fetch(
+			`https://automation.test/auth/callback?code=fixture&state=${freshLocation.searchParams.get('state')}`,
+			{ redirect: 'manual', headers: { cookie: freshCookie } },
+		);
+		assert.equal(callback.status, 302, await callback.clone().text());
+		const sessionCookie = callback.headers.get('set-cookie')?.split(';')[0];
+		assert.ok(sessionCookie);
+		assert.ok(sessionCookie.startsWith('__Host-beepboop_access='));
+		const signedIn = await context.fetch('https://automation.test/', {
+			redirect: 'manual',
+			headers: { cookie: sessionCookie },
+		});
+		assert.equal(signedIn.status, 200);
+		assert.match(await signedIn.text(), /What needs to ship/);
+	});
+
+	it('execution index and release events survive restart', async () => {
+		const released = {
+			...fixture,
+			id: 'completed-release',
+			operation: 'publish',
+			state: 'succeeded',
+			version: '1.2.3',
+			publications: [{
+				id: 'npm:fixture',
+				manager: 'npm',
+				name: 'fixture',
+				version: '1.2.3',
+				outcome: 'succeeded',
+				required: true,
+			}],
+			configuration: {
+				...fixture.configuration,
+				streams: { main: { ...fixture.configuration.streams.main, required: ['npm:fixture'] } },
+			},
+		};
+		const completed = await context.fetch('https://automation.test/enqueue', {
+			method: 'POST',
+			body: JSON.stringify(released),
+		});
+		assert.equal(completed.status, 200);
+		const events = await (await context.fetch('https://automation.test/events')).json() as {
+			release: { commit: string; repository: { id: number }; version: string };
+		}[];
+		assert.equal(events.length, 1);
+		assert.equal(events[0]?.release.commit, fixture.sourceSha);
+		assert.equal(events[0]?.release.repository.id, fixture.repositoryId);
+		assert.equal(events[0]?.release.version, '1.2.3');
+		await context.restart();
+		const journal = await context.fetch('https://automation.test/journal');
+		assert.equal(((await journal.json()) as typeof fixture).sourceSha, fixture.sourceSha);
+		const index = await context.fetch('https://automation.test/index');
+		const indexed = (await index.json()) as { results: { document: string }[] };
+		assert.equal(indexed.results.length, 2);
+		assert.ok(indexed.results.some(row => JSON.parse(row.document).state === 'blocked'));
+		const durableEvents = await (await context.fetch('https://automation.test/events'))
+			.json() as unknown[];
+		assert.equal(durableEvents.length, 1);
+	});
+
+	it('managed preparation recovers after checkpoint interruption', async () => {
+		await context.fetch('https://automation.test/enqueue', {
+			method: 'POST',
+			body: JSON.stringify(managed),
+		});
+		const interrupted = await (await context.fetch('https://automation.test/tick-managed')).json() as {
+			state: string;
+			managed: { head: string; result?: { head: string } };
+		};
+		assert.equal(interrupted.state, 'uncertain');
+		assert.equal(interrupted.managed.head, 'c'.repeat(40));
+		await context.restart();
+		const resumed = await (await context.fetch('https://automation.test/tick-managed'))
+			.json() as typeof interrupted;
+		assert.equal(resumed.state, 'succeeded');
+		assert.equal(resumed.managed.result?.head, interrupted.managed.head);
+	});
+
+	it('workflow preparation recovers after restart', async () => {
+		const workflowPreparation = {
+			...fixture,
+			id: 'workflow-prep',
+			operation: 'prepare',
+			state: 'running',
+			runId: 10,
+			runAttempt: 1,
+			workflowSha: 'a'.repeat(40),
+			plan: {
+				sourceSha: fixture.sourceSha,
+				version: '2.0.0',
+				edits: [{ path: 'version.txt', before: '1', after: '2' }],
+			},
+		};
+		await context.fetch('https://automation.test/enqueue', {
+			method: 'POST',
+			body: JSON.stringify(workflowPreparation),
+		});
+		const interruptedWorkflow = await context.fetch('https://automation.test/prepared-probe');
+		assert.equal(interruptedWorkflow.status, 500);
+		await context.restart();
+		const resumedWorkflow = await (await context.fetch('https://automation.test/prepared-probe'))
+			.json() as {
+				head: string;
+			};
+		assert.equal(resumedWorkflow.head, 'c'.repeat(40));
+	});
+
+	it('release-set replay preserves execution identities', async () => {
+		const setPreparation = {
+			...managed,
+			id: 'set-prep',
+			state: 'succeeded',
+			configuration: {
+				...fixture.configuration,
+				managers: ['workflow', 'npm'],
+				streams: {
+					main: {
+						...fixture.configuration.streams.main,
+						workflows: { build: { file: 'release.yml' }, publish: { file: 'release.yml', needs: ['build'] } },
+					},
+				},
+			},
+			managed: {
+				...managed.managed,
+				result: { url: 'https://github.com/example/seventh/pull/2', head: 'c'.repeat(40) },
+				plan: {
+					sourceSha: fixture.sourceSha,
+					edits: [{ path: 'package.json', before: '{}', after: '{"name":"tool","version":"2.0.0"}' }],
+					groups: [{ id: 'tool', version: '2.0.0', packages: ['npm:tool'] }],
+					operations: ['build', 'publish'].map(id => ({
+						id,
+						group: 'tool',
+						version: '2.0.0',
+						inputs: [],
+						outputs: [],
+						needs: [],
+					})),
+				},
+			},
+		};
+		await context.fetch('https://automation.test/enqueue', {
+			method: 'POST',
+			body: JSON.stringify(setPreparation),
+		});
+		const started = await (await context.fetch('https://automation.test/start-set')).json() as {
+			id: string;
+			version: string;
+			dependencies: string[];
+		}[];
+		assert.equal(started.length, 2);
+		assert.equal(started[0]?.version, '2.0.0');
+		assert.deepEqual(started[1]?.dependencies, [started[0]?.id]);
+		await context.restart();
+		const replayed = await (await context.fetch('https://automation.test/start-set'))
+			.json() as typeof started;
+		assert.deepEqual(replayed.map(execution => execution.id), started.map(execution => execution.id));
+	});
+
+	it('promotion requires dispatch, signatures, and successful checks', async () => {
+		const premature = await context.fetch('https://automation.test/register-probe');
+		assert.equal(premature.status, 400);
+		assert.match((await premature.json() as { error: string }).error, /not been dispatched/);
+		const unsigned = await context.fetch('https://automation.test/approve-probe?unsigned=1');
+		assert.equal(unsigned.status, 400);
+		assert.match((await unsigned.json() as { error: string }).error, /signature/);
+		const failedChecks = await context.fetch('https://automation.test/approve-probe?failed=1');
+		assert.equal(failedChecks.status, 400);
+		assert.match((await failedChecks.json() as { error: string }).error, /checks/);
+		const approved = await context.fetch('https://automation.test/approve-probe');
+		assert.equal(approved.status, 200);
+		assert.equal((await approved.json() as { state: string }).state, 'ready');
+	});
+});

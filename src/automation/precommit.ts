@@ -1,5 +1,5 @@
 import { isMap, isScalar, isSeq, parseDocument } from 'yaml';
-import type { Edit, ReleaseReference, Snapshot } from './types.ts';
+import type { Edit, ReleaseReference, Snapshot } from '@/automation/types';
 
 export interface HookReference {
 	repository: string;

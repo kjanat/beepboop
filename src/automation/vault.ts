@@ -1,9 +1,9 @@
 import { seal } from 'tweetnacl-sealedbox-js';
+import { base64, bytes, type WorkflowIdentity } from '@/automation/auth';
+import type { RepositoryGateway } from '@/automation/github';
+import { matchesRef } from '@/automation/policy';
+import type { Store } from '@/automation/store';
 import { integer, record, text } from '@/model';
-import { base64, bytes, type WorkflowIdentity } from './auth.ts';
-import type { RepositoryGateway } from './github.ts';
-import { matchesRef } from './policy.ts';
-import type { Store } from './store.ts';
 
 export interface Grant {
 	id: string;

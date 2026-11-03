@@ -1,5 +1,5 @@
-import type { InputDeclaration, OutputDeclaration, Platform, ResolvedInput } from './outputs.ts';
-import type { RefPlan, RefPolicy } from './refs.ts';
+import type { InputDeclaration, OutputDeclaration, Platform, ResolvedInput } from '@/automation/outputs';
+import type { RefPlan, RefPolicy } from '@/automation/refs';
 export type ManagerName =
 	| 'pre-commit'
 	| 'cargo'
@@ -25,7 +25,7 @@ export interface WorkflowBinding {
 	required?: boolean;
 }
 export interface Stream {
-	versionFiles?: import('./editors.ts').VersionFile[];
+	versionFiles?: import('@/automation/editors').VersionFile[];
 	versionSource?: { kind: 'tags'; prefix: string };
 	packages?: string[];
 	versioning: 'workspace' | 'independent' | 'none';
@@ -49,6 +49,7 @@ export interface Subscription {
 	operation: string;
 }
 export interface Configuration {
+	winget?: import('@/automation/winget').WinGetPolicy;
 	extends: string[];
 	managers: ManagerName[];
 	streams: Record<string, Stream>;
@@ -85,7 +86,7 @@ export interface DiscoveredWorkflow {
 	publication: boolean;
 }
 export interface Inventory {
-	references?: import('./precommit.ts').HookReference[];
+	references?: import('@/automation/precommit').HookReference[];
 	packages: Package[];
 	workflows: DiscoveredWorkflow[];
 	managers: ManagerName[];
@@ -166,7 +167,7 @@ export interface Execution {
 	releaseSet?: { preparationId: string; group: string; required: string[] };
 	managed?: {
 		kind: 'prepare';
-		plan: ReleasePlan | import('./planning.ts').ReleaseSetPlan;
+		plan: ReleasePlan | import('@/automation/planning').ReleaseSetPlan;
 		branch: string;
 		title: string;
 		body: string;
@@ -177,7 +178,7 @@ export interface Execution {
 	refPlan?: RefPlan;
 	upstreamRelease?: ReleaseReference;
 	release?: ReleaseReference;
-	plan?: ReleasePlan | import('./planning.ts').ReleaseSetPlan;
+	plan?: ReleasePlan | import('@/automation/planning').ReleaseSetPlan;
 	id: string;
 	repositoryId: number;
 	repository: string;
