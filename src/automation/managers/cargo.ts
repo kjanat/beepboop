@@ -3,8 +3,10 @@ import { directory, inWorkspace, object } from '@/automation/managers/helpers';
 import type { Manager } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
+import { packageIdentity } from '@/package-url';
 export const cargoManager: Manager = {
 	name: 'cargo',
+	identity: pkg => packageIdentity({ type: 'cargo', name: pkg.name, version: pkg.version }),
 	latest(pkg, request) {
 		return latestVersion(
 			request,

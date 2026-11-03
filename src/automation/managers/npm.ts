@@ -4,8 +4,18 @@ import type { Manager } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
 import type { Package } from '@/automation/types';
+import { packageIdentity } from '@/package-url';
 export const npmManager: Manager = {
 	name: 'npm',
+	identity(pkg) {
+		const slash = pkg.name.lastIndexOf('/');
+		return packageIdentity({
+			type: 'npm',
+			name: slash < 0 ? pkg.name : pkg.name.slice(slash + 1),
+			namespace: slash < 0 ? undefined : pkg.name.slice(0, slash),
+			version: pkg.version,
+		});
+	},
 	latest(pkg, request) {
 		return latestVersion(
 			request,

@@ -1,10 +1,12 @@
 import { publicationOrder } from '@/automation/managers/order';
-import { identityOf, packageId } from '@/automation/package-identity';
+import { packageId } from '@/automation/package-identity';
 import type { Inventory, ManagerName, Package, Publication, Snapshot } from '@/automation/types';
+import { type PackageIdentity, packageIdentity } from '@/package-url';
 
 export interface Manager {
 	readonly name: ManagerName;
 	discover(snapshot: Snapshot): Inventory;
+	identity?(pkg: Package, snapshot: Snapshot): PackageIdentity;
 	ownsVersionSource?(source: string): boolean;
 	editVersion?(context: VersionEdit): string;
 	updateDependencies?(context: DependencyEdit): void;
@@ -108,7 +110,12 @@ export class ManagerRegistry {
 			const manager = this.managers.get(name);
 			if (!manager) throw new Error(`Unknown manager: ${name}`);
 			const inventory = manager.discover(snapshot);
-			result.packages.push(...inventory.packages);
+			for (const pkg of inventory.packages) {
+				const identity = pkg.identity ?? manager.identity?.(pkg, snapshot);
+				if (!identity) throw new Error(`Manager ${name} did not identify package ${pkg.name}`);
+				pkg.identity = packageIdentity(identity);
+				result.packages.push(pkg);
+			}
 			result.workflows.push(...inventory.workflows);
 			result.managers.push(...inventory.managers);
 			result.diagnostics.push(...inventory.diagnostics);
@@ -119,7 +126,6 @@ export class ManagerRegistry {
 		}
 		const identities = new Set<string>();
 		for (const pkg of result.packages) {
-			pkg.identity = identityOf(pkg, snapshot.repository.name);
 			const identity = packageId(pkg);
 			if (identities.has(identity)) result.diagnostics.push(`Duplicate package identity: ${identity}`);
 			identities.add(identity);

@@ -53,6 +53,7 @@ test('release planner accepts an injected version manager', () => {
 		discover: () => ({
 			...emptyInventory(),
 			packages: [{
+				identity: { type: 'generic', namespace: 'manifest', name: 'tool', version: '1.0.0' },
 				manager: 'manifest',
 				name: 'tool',
 				version: '1.0.0',
@@ -67,4 +68,22 @@ test('release planner accepts an injected version manager', () => {
 	}]);
 	const plan = planRelease(fixture, registry.discover(fixture), { bump: 'minor' }, undefined, registry);
 	expect(plan.edits).toEqual([{ path: 'version.txt', before: '1.0.0\n', after: '1.1.0\n' }]);
+});
+
+test('discovery requires an explicit identity and does not derive its type from the adapter', () => {
+	const pkg = {
+		manager: 'manifest' as const,
+		name: 'legacy-name',
+		version: '1.0.0',
+		manifest: 'vcpkg.json',
+		versionSource: 'vcpkg.json#version',
+		publish: true,
+		dependencies: [],
+	};
+	const adapter = { name: 'manifest' as const, discover: () => ({ ...emptyInventory(), packages: [{ ...pkg }] }) };
+	expect(() => new ManagerRegistry([adapter]).discover(snapshot)).toThrow('did not identify');
+	const identity = { type: 'vcpkg', name: 'zlib', version: '1.3.1', qualifiers: { triplet: 'x64-linux' } };
+	const inventory = new ManagerRegistry([{ ...adapter, identity: () => identity }]).discover(snapshot);
+	expect(inventory.packages[0]?.identity).toEqual(identity);
+	expect(inventory.publicationOrder).toEqual(['pkg:vcpkg/zlib?triplet=x64-linux']);
 });

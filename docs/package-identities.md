@@ -12,12 +12,20 @@ Packages and publication records carry a structured `identity`:
 }
 ```
 
-The shared model accepts every registered type in the pinned upstream definitions
+The standalone model supports the core syntax and every registered type in the pinned upstream definitions
 and preserves namespace, version, qualifiers and subpath. `packageUrl` serializes
 it as a purl. `packageId` removes only the version to produce a selection key;
 registry, platform, and subpath distinctions remain significant. npm case is
 preserved, while GitHub owner/repository and VS Code publisher/name follow their
-type-specific case rules. Unsupported namespaces are rejected.
+type-specific case rules. Prohibited namespaces are rejected. Types without a
+registered definition follow core syntax and receive a metadata warning, without
+invented ecosystem rules.
+
+`packageIdentity` validates components; `purl` serializes them. `normalizePackage`
+explicitly repairs qualifier-key casing. `packageMetadata` supplies the full type
+definition, effective repository and qualifier defaults, and advisory diagnostics.
+Defaults are metadata, not additions to the stored identity. The release-specific
+`packageId`/`packageKey` policy lives in the automation layer.
 
 The release `manager` is a discovery/editing/verification adapter, not the purl
 type. Go maps to `golang`. GoReleaser packages discovered in a repository map to
@@ -25,7 +33,11 @@ that GitHub repository and its release tag, not a fictitious GoReleaser registry
 Local packages lacking an ecosystem identity use `generic`. A registered purl
 type does not imply that Beepboop can publish to or verify that ecosystem.
 
-Discovery populates identities. D1 repository and execution reads normalize
+An explicit identity is authoritative. Reading or writing a record does not replace
+its version, namespace or qualifiers with legacy adapter fields. The legacy adapter mapping
+is used only for records that do not yet carry an identity. Discovery adapters
+provide an identity explicitly; the registry validates it and rejects missing
+identities instead of inferring an ecosystem from an adapter name. D1 repository and execution reads normalize
 legacy documents; writes persist normalized identities. Durable Object reads and
 writes normalize publication identities as well. This uses existing JSON
 columns and requires no destructive database migration. Existing execution IDs,

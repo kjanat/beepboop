@@ -1,5 +1,8 @@
 import { PackageURL } from 'packageurl-js';
-import definitions from '@/package-url/definitions.json';
+import { type ComponentDefinition, type TypeDefinition, typeDefinitionSchema } from '@/package-url/definition';
+import definitions from '@/package-url/definitions';
+
+export type { ComponentDefinition, TypeDefinition } from '@/package-url/definition';
 
 export interface PackageIdentity {
 	type: string;
@@ -9,21 +12,11 @@ export interface PackageIdentity {
 	qualifiers?: Record<string, string>;
 	subpath?: string;
 }
-interface ComponentDefinition {
-	requirement?: string;
-	case_sensitive?: boolean;
-	permitted_characters?: string;
-}
-interface TypeDefinition {
-	type: string;
-	namespace_definition: ComponentDefinition;
-	name_definition: ComponentDefinition;
-	version_definition?: ComponentDefinition;
-	subpath_definition?: ComponentDefinition;
-	qualifiers_definition?: (ComponentDefinition & { key: string })[];
-}
-export const purlDefinitions = new Map<string, TypeDefinition>(
-	definitions.map(definition => [definition.type, definition]),
+export const purlDefinitions: ReadonlyMap<string, TypeDefinition> = new Map(
+	definitions.map(value => {
+		const definition = typeDefinitionSchema.parse(value);
+		return [definition.type, definition];
+	}),
 );
 
 /** Apply the pinned type definition without discarding qualifiers or package subpaths. */
@@ -31,42 +24,69 @@ export function packageIdentity(input: PackageIdentity | string): PackageIdentit
 	if (typeof input === 'string' && /\/@[^/]*$/.test(input.split(/[?#]/)[0] ?? '')) {
 		throw new Error('Package name required');
 	}
+	let parseInput = input;
+	let qualifiers = typeof input === 'string' ? undefined : input.qualifiers;
 	if (typeof input === 'string') {
-		const query = input.split('?')[1]?.split('#')[0];
-		for (const key of new URLSearchParams(query).keys()) {
-			if (key !== key.toLowerCase()) throw new Error('Qualifier keys must be lowercase');
+		const fragment = input.indexOf('#');
+		const end = fragment < 0 ? input.length : fragment;
+		const question = input.indexOf('?');
+		if (question >= 0 && question < end) {
+			qualifiers = Object.create(null) as Record<string, string>;
+			for (const pair of input.slice(question + 1, end).split('&')) {
+				const equal = pair.indexOf('=');
+				if (equal < 0) throw new Error('Qualifier requires key=value');
+				const key = pair.slice(0, equal);
+				if (Object.hasOwn(qualifiers, key)) throw new Error(`Duplicate qualifier key: ${key}`);
+				qualifiers[key] = decodeURIComponent(pair.slice(equal + 1));
+			}
+			parseInput = input.slice(0, question) + input.slice(end);
 		}
 	}
-	const parts = typeof input === 'string' ? PackageURL.parseString(input) : undefined;
+	for (const key of Object.keys(qualifiers ?? {})) {
+		if (key !== key.toLowerCase()) throw new Error('Qualifier keys must be lowercase');
+		if (!/^[a-z][a-z0-9._-]*$/.test(key)) throw new Error('Invalid qualifier key');
+	}
+	const parts = typeof parseInput === 'string' ? PackageURL.parseString(parseInput) : undefined;
 	const raw: PackageIdentity = parts
 		? {
 			type: parts[0] ?? '',
 			namespace: parts[1],
 			name: parts[2] ?? '',
 			version: parts[3],
-			qualifiers: parts[4],
+			qualifiers,
 			subpath: parts[5],
 		}
 		: input as PackageIdentity;
 	const type = raw.type.toLowerCase();
+	if (!/^[a-z][a-z0-9.-]*$/.test(type)) throw new Error('Invalid package URL type');
 	if (type === 'git' && parts && raw.namespace?.includes('/')) {
 		const [host, ...path] = raw.namespace.split('/');
 		raw.namespace = host;
 		raw.name = [...path, raw.name].join('/');
 	}
 	const definition = purlDefinitions.get(type);
-	if (!definition) throw new Error(`Unregistered package URL type: ${type}`);
 	// packageurl-js 2.x lowercases npm names, contrary to the current definition.
 	// Use its core syntax validation/encoding and apply current type rules here.
+	// Textual name normalization from the pinned definitions. Case-sensitive Hackage
+	// names keep their case; pub names use lowercase ASCII words separated by underscores.
+	const nativeName = type === 'hackage'
+		? raw.name.replace(/[_\s]+/g, '-')
+		: type === 'pub'
+		? raw.name.toLowerCase().replace(/[^a-z0-9]/g, '_')
+		: raw.name;
 	const parsed = new PackageURL(
-		type === 'npm' ? 'generic' : type,
+		!definition || type === 'npm' ? 'generic' : type,
 		raw.namespace,
-		raw.name,
+		nativeName,
 		raw.version,
 		raw.qualifiers,
 		raw.subpath,
 	);
 	parsed.type = type;
+	// PURL qualifier values are URI components, not form data: '+' is literal, and spaces are significant.
+	parsed.qualifiers = qualifiers
+		? Object.fromEntries(Object.entries(qualifiers).filter(([, value]) => value !== ''))
+		: undefined;
 	function component(
 		value: string | undefined,
 		rule: ComponentDefinition | undefined,
@@ -80,24 +100,21 @@ export function packageIdentity(input: PackageIdentity | string): PackageIdentit
 		}
 		return normalized;
 	}
-	const namespace = component(parsed.namespace, definition.namespace_definition, 'namespace');
-	const name = component(parsed.name, definition.name_definition, 'name');
+	const namespace = component(parsed.namespace, definition?.namespace_definition, 'namespace');
+	const name = component(parsed.name, definition?.name_definition, 'name');
 	const version = component(
 		parsed.version,
-		'version_definition' in definition ? definition.version_definition : undefined,
+		definition?.version_definition,
 		'version',
 	);
 	const subpath = component(
 		parsed.subpath,
-		'subpath_definition' in definition ? definition.subpath_definition : undefined,
+		definition?.subpath_definition,
 		'subpath',
 	);
-	for (const qualifier of definition.qualifiers_definition ?? []) {
+	for (const qualifier of definition?.qualifiers_definition ?? []) {
 		if (qualifier.requirement === 'required' && !parsed.qualifiers?.[qualifier.key]) {
 			throw new Error(`${type} requires qualifier ${qualifier.key}`);
-		}
-		if (qualifier.requirement === 'prohibited' && parsed.qualifiers?.[qualifier.key]) {
-			throw new Error(`${type} prohibits qualifier ${qualifier.key}`);
 		}
 	}
 	if (type === 'cpan' && name?.includes('::')) throw new Error('CPAN requires a distribution name, not a module name');
@@ -123,6 +140,7 @@ export function purl(input: PackageIdentity | string): string {
 		identity.subpath,
 	);
 	result.type = identity.type;
+	result.qualifiers = identity.qualifiers;
 	if (identity.type === 'git' && identity.name.includes('/')) {
 		const segments = identity.name.split('/');
 		result.name = segments.pop() ?? '';
@@ -130,10 +148,4 @@ export function purl(input: PackageIdentity | string): string {
 	}
 	const serialized = result.toString().replaceAll('%3A', ':');
 	return identity.type === 'deb' ? serialized.replaceAll('+', '%2B') : serialized;
-}
-
-/** Versionless selection key; registry, platform and subpath distinctions remain significant. */
-export function packageKey(input: PackageIdentity | string): string {
-	const { version: _version, ...identity } = packageIdentity(input);
-	return purl(identity);
 }

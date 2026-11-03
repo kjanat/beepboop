@@ -17,6 +17,7 @@ import {
 	matchesPackage,
 	matchesPublication,
 	packageId,
+	publicationIdentity,
 } from '@/automation/package-identity';
 import { matchesRef } from '@/automation/policy';
 import { planRefs, type RefPlan } from '@/automation/refs';
@@ -780,7 +781,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							if (released === undefined) continue;
 							const publication: Publication = {
 								id: packageId(pkg),
-								identity: identityOf({ ...pkg, version: released }),
+								identity: publicationIdentity(pkg, released),
 								manager: pkg.manager,
 								name: pkg.name,
 								version: released,

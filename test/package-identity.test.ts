@@ -2,11 +2,11 @@ import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
 import { completion, mergePublications, validatePublicationIdentity } from '@/automation/execution';
 import { discover } from '@/automation/managers';
-import { identifyExecution, matchesPackage, packageId, packageUrl } from '@/automation/package-identity';
+import { identifyExecution, matchesPackage, packageId, packageKey, packageUrl } from '@/automation/package-identity';
 import { planReleaseSet } from '@/automation/planning';
 import { Store } from '@/automation/store';
 import type { Execution, Package, Publication, RepositoryRecord, Snapshot } from '@/automation/types';
-import { packageIdentity, packageKey, purl } from '@/package-url';
+import { packageIdentity, purl } from '@/package-url';
 
 const snapshot: Snapshot = {
 	repository: { id: 1, name: 'Owner/Repo', defaultBranch: 'main' },
@@ -121,14 +121,17 @@ test('D1 reads legacy documents and persists structured identities and qualifier
 		const pkg = restored.inventory.packages[0] as Package;
 		pkg.identity = packageIdentity({
 			...pkg.identity as NonNullable<Package['identity']>,
+			version: '2.0.0',
 			qualifiers: { repository_url: 'https://registry.example' },
 			subpath: 'src',
 		});
 		await store.putRepository(restored);
 		const stored = sqlite.query('SELECT document FROM repositories WHERE id=1').get() as { document: string };
 		const saved = JSON.parse(stored.document) as RepositoryRecord;
+		expect(saved.inventory.packages[0]?.version).toBe('1.0.0');
+		expect((await store.repository(1))?.inventory.packages[0]?.identity?.version).toBe('2.0.0');
 		expect(packageUrl(saved.inventory.packages[0] as Package)).toBe(
-			'pkg:npm/%40Scope/MixedCase@1.0.0?repository_url=https:%2F%2Fregistry.example#src',
+			'pkg:npm/%40Scope/MixedCase@2.0.0?repository_url=https:%2F%2Fregistry.example#src',
 		);
 	} finally {
 		sqlite.close();

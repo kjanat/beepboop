@@ -4,6 +4,7 @@ import { emptyInventory } from '@/automation/managers/registry';
 import { latestTag, majorSuffix, tagSource } from '@/automation/managers/tags';
 import { latestVersion } from '@/automation/managers/verification';
 import type { Package, Publication } from '@/automation/types';
+import { packageIdentity } from '@/package-url';
 
 const pseudoVersion =
 	/^v[0-9]+\.(?:0\.0-|\d+\.\d+-(?:[^+]*\.)?0\.)\d{14}-[A-Za-z0-9]+(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
@@ -98,6 +99,19 @@ async function verifyModule(publication: Publication, request: Fetcher): Promise
 
 export const goManager: Manager = {
 	name: 'go',
+	identity(pkg) {
+		const slash = pkg.name.lastIndexOf('/');
+		return packageIdentity(
+			slash < 0
+				? { type: 'generic', namespace: 'go', name: pkg.name, version: pkg.version }
+				: {
+					type: 'golang',
+					namespace: pkg.name.slice(0, slash),
+					name: pkg.name.slice(slash + 1),
+					version: pkg.version,
+				},
+		);
+	},
 	async latest(pkg, request) {
 		const split = splitModulePath(pkg.name);
 		const lookup = (name: string) =>

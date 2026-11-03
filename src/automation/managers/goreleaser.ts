@@ -4,6 +4,7 @@ import type { Manager, VerificationContext } from '@/automation/managers/registr
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestTag, tagSource } from '@/automation/managers/tags';
 import type { Publication, Snapshot } from '@/automation/types';
+import { packageIdentity } from '@/package-url';
 
 function cargoName(snapshot: Snapshot): unknown {
 	try {
@@ -52,6 +53,15 @@ async function verifyRelease(
 
 export const goreleaserManager: Manager = {
 	name: 'goreleaser',
+	identity(pkg, snapshot) {
+		const slash = snapshot.repository.name.lastIndexOf('/');
+		return packageIdentity({
+			type: 'github',
+			namespace: snapshot.repository.name.slice(0, slash),
+			name: snapshot.repository.name.slice(slash + 1),
+			version: pkg.version === undefined ? undefined : `v${pkg.version.replace(/^v/, '')}`,
+		});
+	},
 	verifyPublication: (publication, _request, context) => verifyRelease(publication, context),
 	discover(snapshot) {
 		const result = emptyInventory();

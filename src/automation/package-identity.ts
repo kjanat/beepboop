@@ -1,19 +1,18 @@
 import type { Execution, Inventory, Package, Publication, RepositoryRecord } from '@/automation/types';
-import { type PackageIdentity, packageIdentity, packageKey, purl } from '@/package-url';
+import { type PackageIdentity, packageIdentity, purl } from '@/package-url';
 
 type PackageRecord = Pick<Package, 'manager' | 'name' | 'version' | 'identity'>;
 /** Legacy records acquire a typed identity at the boundary; adapters stay independent of purl types. */
 export function identityOf(pkg: PackageRecord, repository?: string): PackageIdentity {
-	const type = pkg.identity?.type
-		?? (pkg.manager === 'go' && pkg.name.includes('/') ? 'golang' : ['npm', 'cargo'].includes(pkg.manager)
-			? pkg.manager
-			: (repository || pkg.name.includes('/')) && ['goreleaser', 'github-release'].includes(pkg.manager)
-			? 'github'
-			: 'generic');
+	if (pkg.identity) return packageIdentity(pkg.identity);
+	const type = pkg.manager === 'go' && pkg.name.includes('/') ? 'golang' : ['npm', 'cargo'].includes(pkg.manager)
+		? pkg.manager
+		: (repository || pkg.name.includes('/')) && ['goreleaser', 'github-release'].includes(pkg.manager)
+		? 'github'
+		: 'generic';
 	const version = type === 'github' && pkg.manager === 'goreleaser' && pkg.version
 		? `v${pkg.version.replace(/^v/, '')}`
 		: pkg.version;
-	if (pkg.identity) return packageIdentity({ ...pkg.identity, version });
 	const qualified = type === 'github' ? repository ?? pkg.name : pkg.name;
 	const slash = qualified.lastIndexOf('/');
 	return packageIdentity({
@@ -21,6 +20,16 @@ export function identityOf(pkg: PackageRecord, repository?: string): PackageIden
 		name: type === 'generic' ? qualified : slash < 0 ? qualified : qualified.slice(slash + 1),
 		namespace: type === 'generic' ? pkg.manager : slash < 0 ? undefined : qualified.slice(0, slash),
 		version,
+	});
+}
+/** An adapter explicitly selects a new publication version; other identity components stay unchanged. */
+export function publicationIdentity(pkg: PackageRecord, version: string): PackageIdentity {
+	const identity = identityOf(pkg);
+	return packageIdentity({
+		...identity,
+		version: identity.type === 'github' && pkg.manager === 'goreleaser'
+			? `v${version.replace(/^v/, '')}`
+			: version,
 	});
 }
 export function packageId(pkg: PackageRecord): string {
@@ -76,4 +85,10 @@ export function selectorKey(reference: string, packages: Package[] = []): string
 		return packageId({ manager: manager as Package['manager'], name: reference.slice(colon + 1) });
 	}
 	return reference;
+}
+
+/** Versionless selection key; registry, platform and subpath distinctions remain significant. */
+export function packageKey(input: PackageIdentity | string): string {
+	const { version: _version, ...identity } = packageIdentity(input);
+	return purl(identity);
 }
