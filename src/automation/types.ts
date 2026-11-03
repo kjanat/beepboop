@@ -1,3 +1,4 @@
+import type { RegistryOutcome } from '@/automation/destinations';
 import type { InputDeclaration, OutputDeclaration, Platform, ResolvedInput } from '@/automation/outputs';
 import type { PackagePublication } from '@/automation/package-publication';
 import type { RefPlan, RefPolicy } from '@/automation/refs';
@@ -11,6 +12,7 @@ export type ManagerName =
 	| 'oci'
 	| 'goreleaser'
 	| 'go'
+	| 'vscode'
 	| 'manifest'
 	| 'workflow';
 export interface WorkflowBinding {
@@ -69,6 +71,7 @@ export interface Package {
 	identity?: PackageIdentity;
 	previousModule?: { name: string; version: string };
 	publicationStatus?: 'published' | 'missing' | 'failed' | 'unchecked';
+	destinations?: RegistryOutcome[];
 	generated?: boolean;
 	optional?: boolean;
 	manager: ManagerName;

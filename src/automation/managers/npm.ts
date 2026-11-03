@@ -52,6 +52,7 @@ export const npmManager: Manager = {
 			try {
 				if ((path === 'package.json' || path.endsWith('/package.json'))) {
 					const pkg = object(JSON.parse(source));
+					if (typeof object(pkg.engines).vscode === 'string') continue;
 					if (typeof pkg.name !== 'string' || !pkg.name.trim()) {
 						if (Object.hasOwn(pkg, 'name')) {
 							inventory.diagnostics.push(`${path}: package name must be a nonempty string`);
@@ -65,11 +66,7 @@ export const npmManager: Manager = {
 						...(typeof pkg.version === 'string' ? { version: pkg.version } : {}),
 						manifest: path,
 						versionSource: `${path}#version`,
-						publication: pkg.private === true
-							? excluded('private')
-							: typeof object(pkg.engines).vscode === 'string'
-							? excluded('vscode-extension')
-							: registry,
+						publication: pkg.private === true ? excluded('private') : registry,
 						dependencies: Object.keys({
 							...object(pkg.dependencies),
 							...object(pkg.optionalDependencies),

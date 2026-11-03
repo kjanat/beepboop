@@ -1,8 +1,11 @@
 ---
+import { wingetOutcome } from '@/automation/destinations';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
+import type { RepositoryRecord } from '@/automation/types';
 import type { Dashboard } from '@/server/dashboard.ts';
 import { date, workflowChoices } from '@/server/dashboard.ts';
 import { packageUrl } from '@/server/package-url';
+import { manifestEntry, packageDestinations } from '@/ui/destinations';
 
 interface Props {
 	data: Dashboard;
@@ -12,6 +15,20 @@ const selected = Astro.url.searchParams.get('repository');
 const repositories = [...data.repositories].sort((left, right) =>
 	Number(right.name === selected) - Number(left.name === selected)
 );
+function listsPackages(repository: RepositoryRecord) {
+	return repository.inventory.packages.some(publishable)
+		|| Boolean(repository.configuration?.winget);
+}
+function wingetDestination(repository: RepositoryRecord) {
+	const policy = repository.configuration?.winget;
+	if (!policy) return undefined;
+	const submission = data.latestWinget.get(repository.id);
+	return {
+		policy,
+		packageIdentifier: submission?.plan.packageIdentifier,
+		entry: manifestEntry(wingetOutcome(submission)),
+	};
+}
 ---
 <article>
 	<h2>Connect a repository</h2>
@@ -96,13 +113,13 @@ const repositories = [...data.repositories].sort((left, right) =>
 				<div>
 					<h3>
 						Release packages
-					</h3>{repository.inventory.packages.some(publishable) ? (
+					</h3>{listsPackages(repository) ? (
 						<>
 							<table>
 								<thead>
 									<tr>
 										<th>Package</th>
-										<th>Published</th>
+										<th>Destinations</th>
 										<th>In repository</th>
 									</tr>
 								</thead>
@@ -120,18 +137,43 @@ const repositories = [...data.repositories].sort((left, right) =>
 												)}
 											</td>
 											<td>
-												{p.published
-													?? (p.publicationStatus === 'missing'
-														? 'Not published'
-														: p.publicationStatus === 'failed'
-														? 'Lookup failed — inspect diagnostics'
-														: 'Not checked — inspect repository')}
+												{packageDestinations(p, repository.name).map(entry => (
+													<div>
+														{entry.href ? (
+															<a href={entry.href}>{entry.label}</a>
+														) : entry.label}: {entry.status}
+													</div>
+												))}
 											</td>
 											<td>
 												{p.version
 													?? (p.versionSource.startsWith('tags:')
 														? 'No matching release tag'
 														: 'No version found')}
+											</td>
+										</tr>
+									))}
+									{[wingetDestination(repository)].map(winget => winget && (
+										<tr>
+											<td>
+												<code
+												>{winget.packageIdentifier ?? 'WinGet manifest'}</code><small
+												><a
+														href={`https://github.com/${repository.name}/blob/${repository.sha}/${
+															winget.policy.config.split('/').map(encodeURIComponent).join('/')
+														}`}
+													>{winget.policy.config}</a></small>
+											</td>
+											<td>
+												<div>
+													{winget.entry.href ? (
+														<a href={winget.entry.href}>{winget.entry.label}</a>
+													) : winget.entry.label}: {winget.entry.status}
+												</div>
+											</td>
+											<td>
+												Release tags starting with <code
+												>{winget.policy.tagPrefix}</code>
 											</td>
 										</tr>
 									))}

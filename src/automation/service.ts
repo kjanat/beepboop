@@ -849,7 +849,7 @@ export class AutomationService {
 				const p = record(raw);
 				const manager = oneOf(
 					text(p.manager),
-					['cargo', 'npm', 'jsr', 'github-release', 'oci', 'goreleaser', 'go', 'manifest', 'workflow'],
+					['cargo', 'npm', 'jsr', 'github-release', 'oci', 'goreleaser', 'go', 'vscode', 'manifest', 'workflow'],
 					'Invalid publication',
 				);
 				const outcome = oneOf(

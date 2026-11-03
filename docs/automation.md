@@ -206,6 +206,7 @@ OIDC identity binds reports to its repository, run, and attempt.
 | `manifest`       | Public `owner/repository/path.json` or `.rb`, version, required `sha256:` content digest. Checks default-branch content. |
 | `go`             | Module path, version without `v`, optional expected origin commit. Checks `proxy.golang.org`.                            |
 | `goreleaser`     | Project name, version without `v`. The `v<version>` GitHub release must be public with every asset uploaded.             |
+| `vscode`         | Extension ID `publisher.name`, version. Checks the Visual Studio Marketplace.                                            |
 | `workflow`       | Authenticated workflow result with optional artifacts.                                                                   |
 
 Artifact fields are `id`, `runId`, `name`, `digest`, and `expiresAt`. Beepboop

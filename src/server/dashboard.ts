@@ -44,7 +44,18 @@ export function workflowChoices(repository: RepositoryRecord) {
 
 export async function dashboard(env: AutomationBindings, actor: string) {
 	const service = new AutomationService(env);
-	const [repositories, executions, onboarding, activity, keys, secrets, grants, deliveries, winget] = await Promise.all(
+	const [
+		repositories,
+		executions,
+		onboarding,
+		activity,
+		keys,
+		secrets,
+		grants,
+		deliveries,
+		winget,
+		latestWinget,
+	] = await Promise.all(
 		[
 			service.store.repositories(),
 			service.store.executions(),
@@ -55,10 +66,12 @@ export async function dashboard(env: AutomationBindings, actor: string) {
 			service.store.db.prepare('SELECT document FROM grants').all(),
 			service.store.db.prepare('SELECT grant_id,version,state,updated_at FROM secret_deliveries').all(),
 			service.winget().list(),
+			service.winget().latestByRepository(),
 		],
 	);
 	return {
 		winget,
+		latestWinget,
 		wingetReady: service.winget().setup(),
 		repositories,
 		executions,

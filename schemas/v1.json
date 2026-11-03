@@ -25,6 +25,7 @@
 					"oci",
 					"goreleaser",
 					"go",
+					"vscode",
 					"manifest",
 					"workflow",
 					"pre-commit"

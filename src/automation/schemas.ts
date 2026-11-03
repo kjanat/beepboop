@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { type RegistryOutcome, registryDestinationIds } from '@/automation/destinations';
 import { versionFileSchema } from '@/automation/editors';
 import { inputSchema, outputSchema, platformSchema, type ResolvedInput } from '@/automation/outputs';
 import {
@@ -44,6 +45,7 @@ const managerName: z.ZodType<ManagerName> = z.enum([
 	'oci',
 	'goreleaser',
 	'go',
+	'vscode',
 	'manifest',
 	'workflow',
 ]);
@@ -124,10 +126,18 @@ const publication: z.ZodType<PackagePublication> = z.discriminatedUnion('kind', 
 	z.object({ kind: z.literal('registry') }),
 	z.object({ kind: z.literal('excluded'), reason: z.enum(exclusionReasons) }),
 ]);
+const registryDestination = z.enum(registryDestinationIds);
+const registryOutcome: z.ZodType<RegistryOutcome> = z.discriminatedUnion('state', [
+	z.object({ destination: registryDestination, state: z.literal('published'), version: z.string() }),
+	z.object({ destination: registryDestination, state: z.literal('missing') }),
+	z.object({ destination: registryDestination, state: z.literal('failed'), reason: z.string() }),
+	z.object({ destination: registryDestination, state: z.literal('unchecked') }),
+]);
 const storedPackage: z.ZodType<StoredPackage> = z.object({
 	identity: identity.optional(),
 	previousModule: z.object({ name: z.string(), version: z.string() }).optional(),
 	publicationStatus: z.enum(['published', 'missing', 'failed', 'unchecked']).optional(),
+	destinations: z.array(registryOutcome).optional(),
 	generated: z.boolean().optional(),
 	optional: z.boolean().optional(),
 	manager: managerName,

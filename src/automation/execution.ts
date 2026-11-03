@@ -115,7 +115,7 @@ export function validatePublicationIdentity(execution: Execution, publication: P
 		throw new Error('Publication ID does not match its manager and package identity');
 	}
 	if (
-		execution.version && ['cargo', 'npm', 'jsr'].includes(publication.manager)
+		execution.version && ['cargo', 'npm', 'jsr', 'vscode'].includes(publication.manager)
 		&& publication.version !== execution.version
 	) {
 		throw new Error('Publication version does not match the execution');

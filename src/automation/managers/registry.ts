@@ -1,3 +1,9 @@
+import {
+	destinationsOf,
+	managerDestinations,
+	type RegistryDestinationId,
+	type RegistryOutcome,
+} from '@/automation/destinations';
 import { publicationOrder } from '@/automation/managers/order';
 import { packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
@@ -13,7 +19,9 @@ export interface Manager {
 	updateDependencies?(context: DependencyEdit): void;
 	verifyPublication?(publication: Publication, request: Fetcher, context?: VerificationContext): Promise<Publication>;
 	latest?(pkg: Package, request: Fetcher): Promise<RegistryVersion>;
+	secondaryLatest?: Partial<Record<RegistryDestinationId, RegistryLookup>>;
 }
+export type RegistryLookup = (pkg: Package, request: Fetcher) => Promise<RegistryVersion>;
 export type Fetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 export interface VerificationContext {
 	repository: string;
@@ -77,23 +85,51 @@ export class ManagerRegistry {
 	}
 	async resolvePublished(inventory: Inventory, request: Fetcher): Promise<Inventory> {
 		const packages: Package[] = inventory.packages.map(pkg => {
-			const { published: _published, previousModule: _previous, ...rest } = pkg;
-			return { ...rest, publicationStatus: 'unchecked' };
+			const { published: _published, previousModule: _previous, destinations: _destinations, ...rest } = pkg;
+			return publishable(pkg)
+				? {
+					...rest,
+					publicationStatus: 'unchecked',
+					destinations: destinationsOf(pkg.manager).map(destination => ({ destination, state: 'unchecked' })),
+				}
+				: { ...rest, publicationStatus: 'unchecked' };
 		});
 		const diagnostics: string[] = [];
-		const pending = packages.filter(pkg => publishable(pkg) && this.managers.get(pkg.manager)?.latest);
+		const lookups = (pkg: Package): { destination: RegistryDestinationId; latest: RegistryLookup }[] => {
+			const manager = this.managers.get(pkg.manager);
+			const mapped = managerDestinations[pkg.manager];
+			if (!manager || !mapped || !publishable(pkg)) return [];
+			const latest = manager.latest?.bind(manager);
+			return [
+				...(latest ? [{ destination: mapped.primary, latest }] : []),
+				...mapped.secondary.flatMap(destination => {
+					const latest = manager.secondaryLatest?.[destination];
+					return latest ? [{ destination, latest }] : [];
+				}),
+			];
+		};
+		const pending = packages.filter(pkg => lookups(pkg).length);
 		for (let offset = 0; offset < pending.length; offset += 8) {
 			await Promise.all(
 				pending.slice(offset, offset + 8).map(async pkg => {
-					const result = await this.managers.get(pkg.manager)?.latest?.(pkg, request);
-					if (!result) return;
-					pkg.publicationStatus = result.kind;
-					if (result.previousModule) pkg.previousModule = result.previousModule;
-					if (result.kind === 'published') pkg.published = result.version;
-					else if (result.kind === 'failed') {
-						diagnostics.push(
-							`${pkg.manager}:${pkg.name}: ${result.reason} from ${result.url}`,
+					const primary = managerDestinations[pkg.manager]?.primary;
+					const results = await Promise.all(
+						lookups(pkg).map(async ({ destination, latest }) => ({
+							destination,
+							result: await latest(pkg, request),
+						})),
+					);
+					for (const { destination, result } of results) {
+						pkg.destinations = pkg.destinations?.map(outcome =>
+							outcome.destination === destination ? registryOutcome(destination, result) : outcome
 						);
+						if (result.kind === 'failed') {
+							diagnostics.push(`${pkg.manager}:${pkg.name}: ${result.reason} from ${result.url}`);
+						}
+						if (destination !== primary) continue;
+						pkg.publicationStatus = result.kind;
+						if (result.previousModule) pkg.previousModule = result.previousModule;
+						if (result.kind === 'published') pkg.published = result.version;
 					}
 				}),
 			);
@@ -141,4 +177,9 @@ export class ManagerRegistry {
 		result.diagnostics = [...new Set(result.diagnostics)];
 		return result;
 	}
+}
+function registryOutcome(destination: RegistryDestinationId, result: RegistryVersion): RegistryOutcome {
+	if (result.kind === 'published') return { destination, state: 'published', version: result.version };
+	if (result.kind === 'failed') return { destination, state: 'failed', reason: result.reason };
+	return { destination, state: 'missing' };
 }

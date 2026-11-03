@@ -35,20 +35,29 @@ export async function verifyRegistry(
 		return { ...publication, outcome: 'uncertain', url };
 	}
 }
+export const unpublished: unique symbol = Symbol('unpublished');
+export interface RegistryQuery {
+	method: 'POST';
+	headers: Record<string, string>;
+	body: string;
+}
 export async function latestVersion(
 	request: Fetcher,
 	url: string,
 	decode: (body: unknown) => unknown,
+	query?: RegistryQuery,
 ): Promise<RegistryVersion> {
 	try {
 		const response = await request(url, {
 			redirect: 'manual',
 			signal: AbortSignal.timeout(15_000),
-			headers: { 'User-Agent': 'beepboop release verification' },
+			...(query ? { method: query.method, body: query.body } : {}),
+			headers: { 'User-Agent': 'beepboop release verification', ...query?.headers },
 		});
 		if (response.status === 404) return { kind: 'missing', url };
 		if (!response.ok) return { kind: 'failed', url, reason: `HTTP ${response.status}` };
 		const version = decode(await response.json());
+		if (version === unpublished) return { kind: 'missing', url };
 		try {
 			return { kind: 'published', version: semver(version).replace(/^v/, '') };
 		} catch {

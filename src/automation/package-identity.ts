@@ -16,6 +16,10 @@ export function identityOf(pkg: PackageRecord, repository?: string): PackageIden
 			version: pkg.version,
 		});
 	}
+	if (pkg.manager === 'vscode') {
+		const { publisher, extension } = extensionParts(pkg.name);
+		return packageIdentity({ type: 'vscode-extension', namespace: publisher, name: extension, version: pkg.version });
+	}
 	const type = pkg.manager === 'go' && pkg.name.includes('/') ? 'golang' : ['npm', 'cargo'].includes(pkg.manager)
 		? pkg.manager
 		: (repository || pkg.name.includes('/')) && ['goreleaser', 'github-release'].includes(pkg.manager)
@@ -32,6 +36,11 @@ export function identityOf(pkg: PackageRecord, repository?: string): PackageIden
 		namespace: type === 'generic' ? pkg.manager : slash < 0 ? undefined : qualified.slice(0, slash),
 		version,
 	});
+}
+export function extensionParts(id: string): { publisher: string; extension: string } {
+	const dot = id.indexOf('.');
+	if (dot < 1 || dot === id.length - 1) throw new Error('Invalid VS Code extension ID');
+	return { publisher: id.slice(0, dot), extension: id.slice(dot + 1) };
 }
 /** An adapter explicitly selects a new publication version; other identity components stay unchanged. */
 export function publicationIdentity(pkg: PackageRecord, version: string): PackageIdentity {
@@ -100,7 +109,7 @@ export function selectorKey(reference: string, packages: Package[] = []): string
 	if (found) return packageId(found);
 	if (reference.startsWith('pkg:')) return packageKey(reference);
 	const colon = reference.indexOf(':');
-	const manager = (['npm', 'jsr', 'cargo', 'go', 'github-release', 'goreleaser'] as const).find(name =>
+	const manager = (['npm', 'jsr', 'cargo', 'go', 'github-release', 'goreleaser', 'vscode'] as const).find(name =>
 		name === reference.slice(0, colon)
 	);
 	if (manager) return packageId({ manager, name: reference.slice(colon + 1) });

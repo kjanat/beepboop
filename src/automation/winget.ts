@@ -184,6 +184,13 @@ export class WinGetService {
 		).all();
 		return rows.results.map(row => parseSubmission(documentRow.parse(row).document));
 	}
+	async latestByRepository(): Promise<Map<number, WinGetSubmission>> {
+		const rows = await this.store.db.prepare(
+			"SELECT document FROM (SELECT document,ROW_NUMBER() OVER (PARTITION BY json_extract(document,'$.plan.repositoryId') ORDER BY json_extract(document,'$.plan.releaseId') DESC) AS position FROM winget_submissions) WHERE position=1",
+		).all();
+		const submissions = rows.results.map(row => parseSubmission(documentRow.parse(row).document));
+		return new Map(submissions.map(submission => [submission.plan.repositoryId, submission]));
+	}
 	async get(id: string): Promise<WinGetSubmission | undefined> {
 		const row = documentRow.nullable().parse(
 			await this.store.db.prepare('SELECT document FROM winget_submissions WHERE id=?').bind(id).first(),

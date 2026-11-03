@@ -20,6 +20,7 @@ export const managerNames: ManagerName[] = [
 	'oci',
 	'goreleaser',
 	'go',
+	'vscode',
 	'manifest',
 	'workflow',
 ];
