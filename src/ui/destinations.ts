@@ -1,4 +1,5 @@
 import {
+	type Channel,
 	type ChannelOutcome,
 	channelKey,
 	isChannelOutcome,
@@ -11,8 +12,13 @@ import {
 import type { Inventory, Package } from '@/automation/types';
 import type { WinGetSubmission } from '@/automation/winget';
 import { managerSpec } from '@/contract/catalog';
-import { registryHref } from '@/contract/links';
-import { channelHref } from '@/ui/templates/html';
+import { githubHref, registryHref } from '@/contract/links';
+
+function channelHref(channel: Channel): string {
+	if (channel.destination === 'aur') return `https://aur.archlinux.org/packages/${encodeURIComponent(channel.name)}`;
+	const file = `${channel.name}.${channel.destination === 'scoop' ? 'json' : 'rb'}`;
+	return githubHref(channel.repository, 'blob', 'HEAD', channel.directory, file);
+}
 
 export interface DestinationEntry {
 	label: string;

@@ -47,7 +47,6 @@ import { nextVersion, parseVersionRequest } from '@/automation/version';
 import { type WinGetBindings, WinGetService } from '@/automation/winget';
 import { isLockfile, managerNames } from '@/contract/catalog';
 import { array, compareVersions, integer, oneOf, record, semver, sha, text } from '@/model';
-import { renderActivityRows } from '@/ui/templates/activity';
 import { readBody, verifySignature } from '@/webhook';
 
 const setupPullEdit = z.object({
@@ -520,11 +519,6 @@ export class AutomationService {
 			if (path === '/api/winget') return Response.json(await this.winget().list());
 			if (path === '/api/repositories') return Response.json(await this.store.repositories());
 			if (path === '/api/executions') return Response.json(await this.store.executions());
-			if (path === '/api/activity') {
-				return Response.json({
-					html: renderActivityRows(await this.store.activity(), await this.store.repositories()),
-				});
-			}
 			if (path === '/api/notifications') {
 				const notifications = this.notifications();
 				return Response.json({

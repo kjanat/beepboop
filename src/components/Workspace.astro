@@ -8,6 +8,8 @@ import Runs from '@/components/Runs.astro';
 import Secrets from '@/components/Secrets.astro';
 import Security from '@/components/Security.astro';
 import WinGet from '@/components/WinGet.astro';
+import { githubHref } from '@/contract/links';
+import { actorLabel, parseActor, runRepository } from '@/domain/audit';
 import Layout from '@/layouts/Dashboard.astro';
 import { bindings } from '@/server/bindings.ts';
 import { dashboard, date } from '@/server/dashboard.ts';
@@ -56,6 +58,19 @@ const copy: Record<string, [string, string]> = {
 		'Use a physical security key to approve access to publishing credentials.',
 	],
 };
+function activityActor(
+	value: string,
+	target: string,
+): { label: string; href?: string } {
+	const actor = parseActor(value);
+	const repository = actor.kind === 'run' ? runRepository(target) : undefined;
+	return {
+		label: actorLabel(actor),
+		...(actor.kind === 'run' && repository
+			? { href: githubHref(repository, 'actions', 'runs', String(actor.runId)) }
+			: {}),
+	};
+}
 const [title, description] = copy[section]
 	?? ['Overview', 'Follow your releases.'];
 const attention =
@@ -135,24 +150,27 @@ const unconnected = !data.repositories.length
 					</tr>
 				</thead>
 				<tbody>
-					{data.activity.map(entry => (
-						<tr>
-							<td>
-								<time
-									datetime={new Date(entry.createdAt).toISOString()}
-								>{date(entry.createdAt)}</time>
-							</td>
-							<td>
-								{entry.action.replaceAll('.', ' ').replaceAll('-', ' ')}
-							</td>
-							<td>
-								{entry.actor.startsWith('run:')
-									? `Workflow ${entry.actor.slice(4)}`
-									: 'Administrator'}
-							</td>
-							<td class="break">{entry.target}</td>
-						</tr>
-					))}{!data.activity.length && (
+					{data.activity.map(entry => {
+						const actor = activityActor(entry.actor, entry.target);
+						return (
+						 <tr>
+							 <td>
+								 <time
+									 datetime={new Date(entry.createdAt).toISOString()}
+								 >{date(entry.createdAt)}</time>
+							 </td>
+							 <td>
+								 {entry.action.replaceAll('.', ' ').replaceAll('-', ' ')}
+							 </td>
+							 <td>
+								 {actor.href ? (
+									 <a href={actor.href}>{actor.label}</a>
+								 ) : actor.label}
+							 </td>
+							 <td class="break">{entry.target}</td>
+						 </tr>
+					 );
+					})}{!data.activity.length && (
 						<tr>
 							<td colspan="4">
 								No activity yet. Release and access changes will appear here.
