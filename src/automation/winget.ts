@@ -7,27 +7,6 @@ import { blocking } from '@/contract/diagnostics';
 import { generateManifests, renderManifests } from '@/distribution/winget/generate';
 import { array, integer, record, sha, text } from '@/model';
 
-export interface WinGetPolicy {
-	config: string;
-	tagPrefix: string;
-	automatic: boolean;
-}
-export function parseWinGetPolicy(value: unknown): WinGetPolicy {
-	const row = record(value);
-	if (Object.keys(row).some(key => !['config', 'tagPrefix', 'automatic'].includes(key))) {
-		throw Error('Unknown WinGet setting');
-	}
-	const config = text(row.config);
-	if (!/^[\w./-]+\.json$/.test(config) || config.startsWith('/') || config.split('/').includes('..')) {
-		throw Error('Invalid WinGet configuration path');
-	}
-	const tagPrefix = row.tagPrefix === undefined ? 'v' : String(row.tagPrefix);
-	if (!/^[\w.-]*$/.test(tagPrefix)) throw Error('Invalid WinGet tag prefix');
-	if (row.automatic !== undefined && typeof row.automatic !== 'boolean') {
-		throw Error('Invalid WinGet automatic setting');
-	}
-	return { config, tagPrefix, automatic: row.automatic === true };
-}
 export interface WinGetPlan {
 	id: string;
 	repositoryId: number;

@@ -1,56 +1,13 @@
 import type { Channel, ChannelOutcome, RegistryOutcome } from '@/automation/destinations';
-import type { InputDeclaration, OutputDeclaration, Platform, ResolvedInput } from '@/automation/outputs';
+import type { ResolvedInput } from '@/automation/outputs';
 import type { PackagePublication } from '@/automation/package-publication';
-import type { RefPlan, RefPolicy } from '@/automation/refs';
+import type { RefPlan } from '@/automation/refs';
 import type { ManagerName } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
+import type { Configuration, WorkflowBinding } from '@/domain/configuration';
 import type { PackageIdentity } from '@/package-url';
-export interface WorkflowBinding {
-	platform?: Platform;
-	outputs?: OutputDeclaration[];
-	artifactInputs?: InputDeclaration[];
-	refs?: RefPolicy;
-	mode?: 'observe' | 'dispatch';
-	each?: 'package';
-	needs?: string[];
-	publications?: string[];
-	schedule?: string;
-	file: string;
-	ref?: string;
-	inputs?: Record<string, string | boolean | number>;
-	required?: boolean;
-}
-export interface Stream {
-	versionFiles?: import('@/automation/editors').VersionFile[];
-	versionSource?: { kind: 'tags'; prefix: string };
-	packages?: string[];
-	versioning: 'workspace' | 'independent' | 'none';
-	prepare: { version: 'manual'; workflow?: WorkflowBinding; strategy?: 'managed' | 'workflow' };
-	promote: { approval: 'required' | 'merge' | 'push'; workflow?: WorkflowBinding };
-	workflows: Record<string, WorkflowBinding>;
-	required: string[];
-	credentials: string[];
-	channels: { stable: string; prerelease: string };
-	concurrency: 'queue' | 'supersede-pending';
-}
-export interface Subscription {
-	sourceStream?: string;
-	sourceGroup?: string;
-	publication?: string;
-	workflow?: string;
-	id: string;
-	source: string;
-	event: 'release' | 'package.version.changed' | 'workflow_run';
-	stream: string;
-	operation: string;
-}
-export interface Configuration {
-	winget?: import('@/automation/winget').WinGetPolicy;
-	extends: string[];
-	managers: ManagerName[];
-	streams: Record<string, Stream>;
-	subscriptions: Subscription[];
-}
+
+export type { Configuration, Stream, Subscription, WorkflowBinding } from '@/domain/configuration';
 export interface Snapshot {
 	repository: { id: number; name: string; defaultBranch: string };
 	sha: string;

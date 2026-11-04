@@ -20,7 +20,6 @@ export const diagnosticCodes = [
 	'license-missing',
 	'legacy',
 	'invalid-configuration',
-	'configuration-drift',
 	'lookup-failed',
 	'unconfigured',
 ] as const;

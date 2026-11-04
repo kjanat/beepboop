@@ -1,11 +1,13 @@
+import { z } from 'zod';
 import { resolveConfiguration } from '@/automation/configuration';
 import { discover } from '@/automation/managers';
 import { encodeRepository } from '@/automation/package-identity';
 import { repositoryName, repositoryReference } from '@/automation/repository-name';
 import { branchConflictBlocker, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import { sameEdits, setupEdits } from '@/automation/setup-maintenance';
-import { conflict, invalid, notFound, precondition } from '@/contract/errors';
+import { conflict, DomainError, invalid, notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
+import { configurationDiagnostics } from '@/domain/configuration';
 import { record } from '@/model';
 import { admin, type Context } from '@/server/handlers/kit';
 
@@ -113,7 +115,12 @@ async function setupReview(
 	const id = await service.gateway.identify(name);
 	const snapshot = await service.gateway.snapshot(name, id);
 	const raw = JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}');
-	const resolved = await resolveConfiguration(raw, ref => service.gateway.preset(ref));
+	const resolved = await resolveConfiguration(raw, ref => service.gateway.preset(ref)).catch((error: unknown) => {
+		if (error instanceof z.ZodError) {
+			throw new DomainError({ code: 'precondition', diagnostics: configurationDiagnostics(error) });
+		}
+		throw error;
+	});
 	const inventory = withRegistryStatus(discover(snapshot), (await service.store.repository(id))?.inventory);
 	const document = await service.onboarding.document(id);
 	const saved = document === undefined ? undefined : record(JSON.parse(document));

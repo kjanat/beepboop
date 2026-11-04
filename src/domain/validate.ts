@@ -1,15 +1,8 @@
 import { matchesPackage, releaseIdentity } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
-import type { Configuration, Inventory, Snapshot, Stream, WorkflowBinding } from '@/automation/types';
+import type { Configuration, Inventory, Snapshot } from '@/automation/types';
 import type { Diagnostic, DiagnosticSubject } from '@/contract/diagnostics';
-
-function bindings(stream: Stream): [string, WorkflowBinding][] {
-	return [
-		...Object.entries(stream.workflows).filter(([name]) => name !== 'prepare' && name !== 'promote'),
-		...(stream.prepare.workflow ? [['prepare', stream.prepare.workflow] satisfies [string, WorkflowBinding]] : []),
-		...(stream.promote.workflow ? [['promote', stream.promote.workflow] satisfies [string, WorkflowBinding]] : []),
-	];
-}
+import { operations as operationsOf } from '@/domain/configuration';
 
 function versioned(reference: string): boolean {
 	if (!reference.startsWith('pkg:')) return false;
@@ -32,7 +25,7 @@ export function validateAgainst(
 	const paths = new Set(snapshot.paths);
 	for (const [name, stream] of Object.entries(configuration.streams)) {
 		const subject: DiagnosticSubject = { kind: 'stream', name };
-		const operations = bindings(stream);
+		const operations = [...operationsOf(stream)];
 		const references: [string, string][] = [
 			...(stream.packages ?? []).map((reference): [string, string] => ['packages', reference]),
 			...stream.required.map((reference): [string, string] => ['required', reference]),

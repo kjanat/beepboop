@@ -23,6 +23,7 @@ import { type WinGetBindings, WinGetService } from '@/automation/winget';
 import { blocking } from '@/contract/diagnostics';
 import { precondition } from '@/contract/errors';
 import { setupChoicesSchema } from '@/contract/setup';
+import { configurationDiagnostics, configurationProblem } from '@/domain/configuration';
 import { validateAgainst } from '@/domain/validate';
 import { array, integer, record, text } from '@/model';
 import { CLISessionStore } from '@/persistence/d1/cli-sessions';
@@ -153,16 +154,14 @@ export class AutomationService {
 				);
 				repository.configuration = resolved.configuration;
 				repository.presetShas = resolved.presetShas;
-				repository.diagnostics.push(...resolved.drift);
 				repository.inventory = discover(snapshot, resolved.configuration.managers);
 				repository.diagnostics.push(...validateAgainst(resolved.configuration, repository.inventory, snapshot));
 			} catch (error) {
-				repository.diagnostics.push({
-					code: 'invalid-configuration',
-					severity: 'blocking',
-					subject: { kind: 'file', path: '.github/beepboop.json' },
-					message: error instanceof Error ? error.message : 'Configuration invalid',
-				});
+				repository.diagnostics.push(
+					...(error instanceof z.ZodError
+						? configurationDiagnostics(error)
+						: [configurationProblem(error instanceof Error ? error.message : 'Configuration invalid')]),
+				);
 			}
 		} else {
 			repository.diagnostics.push({

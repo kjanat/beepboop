@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import type { Channel, ChannelOutcome, RegistryOutcome } from '@/automation/destinations';
-import { versionFileSchema } from '@/automation/editors';
 import { inputSchema, outputSchema, platformSchema, type ResolvedInput } from '@/automation/outputs';
 import {
 	identifyExecution,
@@ -12,12 +11,11 @@ import {
 } from '@/automation/package-identity';
 import { exclusionReasons, type PackagePublication } from '@/automation/package-publication';
 import type { ReleaseSetPlan } from '@/automation/planning';
-import type { RefPlan, RefPolicy } from '@/automation/refs';
+import type { RefPlan } from '@/automation/refs';
 import type { SetupEdit } from '@/automation/setup-types';
 import type {
 	Artifact,
 	AutomationEvent,
-	Configuration,
 	DiscoveredWorkflow,
 	Edit,
 	Execution,
@@ -26,83 +24,17 @@ import type {
 	ReleasePlan,
 	ReleaseReference,
 	RepositoryRecord,
-	Stream,
-	Subscription,
 	SubscriptionDelivery,
-	WorkflowBinding,
 } from '@/automation/types';
-import type { WinGetPolicy } from '@/automation/winget';
 import { managerDestinationIds, managerNames } from '@/contract/catalog';
 import { diagnostic } from '@/contract/diagnostics';
 import { setupChoicesSchema } from '@/contract/setup';
 import type { PackageIdentity } from '@/package-url';
+import { storedBinding, storedConfiguration } from '@/persistence/codecs/configuration';
 
 const managerName = z.enum(managerNames);
 const strings = z.array(z.string());
 const shas = z.record(z.string(), z.string());
-
-const refPolicy: z.ZodType<RefPolicy> = z.object({
-	phase: z.enum(['version', 'aliases']),
-	prefix: z.string(),
-	aliases: z.array(z.enum(['major', 'minor'])),
-	signed: z.boolean(),
-});
-const binding = {
-	outputs: z.array(outputSchema).optional(),
-	artifactInputs: z.array(inputSchema).optional(),
-	platform: platformSchema.optional(),
-	refs: refPolicy.optional(),
-	mode: z.enum(['observe', 'dispatch']).optional(),
-	each: z.literal('package').optional(),
-	needs: strings.optional(),
-	publications: strings.optional(),
-	schedule: z.string().optional(),
-	file: z.string(),
-	ref: z.string().optional(),
-	inputs: z.record(z.string(), z.union([z.string(), z.boolean(), z.number()])).optional(),
-	required: z.boolean().optional(),
-};
-const workflowBinding: z.ZodType<WorkflowBinding> = z.object(binding);
-const stream: z.ZodType<Stream> = z.object({
-	versionFiles: z.array(versionFileSchema).optional(),
-	versionSource: z.object({ kind: z.literal('tags'), prefix: z.string() }).optional(),
-	packages: strings.optional(),
-	versioning: z.enum(['workspace', 'independent', 'none']),
-	concurrency: z.enum(['queue', 'supersede-pending']),
-	prepare: z.object({
-		strategy: z.enum(['managed', 'workflow']).optional(),
-		version: z.literal('manual'),
-		workflow: workflowBinding.optional(),
-	}),
-	promote: z.object({ approval: z.enum(['required', 'merge', 'push']), workflow: workflowBinding.optional() }),
-	workflows: z.record(z.string(), workflowBinding),
-	required: strings,
-	credentials: strings,
-	channels: z.object({ stable: z.string(), prerelease: z.string() }),
-});
-const subscription: z.ZodType<Subscription> = z.object({
-	id: z.string(),
-	sourceStream: z.string().optional(),
-	sourceGroup: z.string().optional(),
-	publication: z.string().optional(),
-	source: z.string(),
-	event: z.enum(['release', 'package.version.changed', 'workflow_run']),
-	stream: z.string(),
-	operation: z.string(),
-	workflow: z.string().optional(),
-});
-const winget: z.ZodType<WinGetPolicy> = z.object({
-	config: z.string(),
-	tagPrefix: z.string(),
-	automatic: z.boolean(),
-});
-const configuration: z.ZodType<Configuration> = z.object({
-	winget: winget.optional(),
-	extends: strings,
-	managers: z.array(managerName),
-	streams: z.record(z.string(), stream),
-	subscriptions: z.array(subscription),
-});
 
 const identity: z.ZodType<PackageIdentity> = z.object({
 	type: z.string(),
@@ -196,7 +128,7 @@ const repositorySchema: z.ZodType<StoredRepository> = z.object({
 	name: z.string(),
 	defaultBranch: z.string(),
 	sha: z.string(),
-	configuration: configuration.optional(),
+	configuration: storedConfiguration.optional(),
 	presetShas: shas,
 	inventory,
 	diagnostics: strings,
@@ -320,7 +252,7 @@ const executionSchema: z.ZodType<Execution> = z.object({
 	stream: z.string(),
 	operation: z.string(),
 	eventId: z.string(),
-	configuration,
+	configuration: storedConfiguration,
 	configurationSha: z.string(),
 	presetShas: shas,
 	sourceSha: z.string(),
@@ -339,7 +271,7 @@ const executionSchema: z.ZodType<Execution> = z.object({
 		'uncertain',
 	]),
 	dependencies: strings,
-	workflow: z.object({ ...binding, ref: z.string() }).optional(),
+	workflow: z.intersection(storedBinding, z.object({ ref: z.string() })).optional(),
 	runId: z.number().optional(),
 	runAttempt: z.number().optional(),
 	attempts: z.number(),

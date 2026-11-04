@@ -224,17 +224,18 @@ const winget = z.strictObject({
 	automatic: z.boolean().default(false),
 }).transform(({ config, tagPrefix, automatic }) => ({ config, tagPrefix, automatic }));
 
-type BindingOutput = z.output<ReturnType<typeof bindingSchema>>;
-type StreamOutput = z.output<ReturnType<typeof streamSchema>>;
-export function operations(stream: StreamOutput): ReadonlyMap<string, BindingOutput> {
-	const result = new Map<string, BindingOutput>(Object.entries(stream.workflows));
+export type WorkflowBinding = z.output<ReturnType<typeof bindingSchema>>;
+export type Stream = z.output<ReturnType<typeof streamSchema>>;
+export type Subscription = z.output<ReturnType<typeof subscriptionSchema>>;
+export function operations(stream: Stream): ReadonlyMap<string, WorkflowBinding> {
+	const result = new Map<string, WorkflowBinding>(Object.entries(stream.workflows));
 	for (const name of reservedOperations) result.delete(name);
 	if (stream.prepare.workflow) result.set('prepare', stream.prepare.workflow);
 	if (stream.promote.workflow) result.set('promote', stream.promote.workflow);
 	return result;
 }
 
-function graph(stream: StreamOutput, path: (string | number)[], ctx: z.RefinementCtx): void {
+function graph(stream: Stream, path: (string | number)[], ctx: z.RefinementCtx): void {
 	const operationsOf = operations(stream);
 	const where = (name: string): (string | number)[] =>
 		reservedOperations.some(reserved => reserved === name) ? [...path, name, 'workflow'] : [...path, 'workflows', name];
@@ -324,8 +325,9 @@ function configurationOf(rules: boolean) {
 
 export const configurationSchema = configurationOf(true);
 export const configurationShape = configurationOf(false);
+export const workflowBindingShape = bindingSchema(false);
 export type ConfigurationInput = z.input<typeof configurationSchema>;
-export type ParsedConfiguration = z.output<typeof configurationSchema>;
+export type Configuration = z.output<typeof configurationSchema>;
 
 export const configurationPath = '.github/beepboop.json';
 
@@ -339,27 +341,10 @@ export function issueMessage(issue: z.core.$ZodIssue): string {
 	return issue.path.length ? `${issue.path.map(String).join('.')}: ${issue.message}` : issue.message;
 }
 
-export function configurationDiagnostics(error: z.ZodError): Diagnostic[] {
-	return error.issues.map(issue => ({
-		code: codeOf(issue),
-		severity: 'blocking',
-		subject: { kind: 'file', path: configurationPath },
-		message: issueMessage(issue),
-	}));
+export function configurationProblem(message: string, code: DiagnosticCode = 'invalid-configuration'): Diagnostic {
+	return { code, severity: 'blocking', subject: { kind: 'file', path: configurationPath }, message };
 }
 
-export function configurationDrift(value: unknown, legacy: unknown): Diagnostic[] {
-	const parsed = configurationSchema.safeParse(value);
-	const drift = (message: string): Diagnostic => ({
-		code: 'configuration-drift',
-		severity: 'warning',
-		subject: { kind: 'file', path: configurationPath },
-		message,
-	});
-	if (!parsed.success) {
-		return parsed.error.issues.map(issue => drift(`The configuration schema rejects ${issueMessage(issue)}`));
-	}
-	return JSON.stringify(parsed.data) === JSON.stringify(legacy)
-		? []
-		: [drift('The configuration schema reads this file differently from the current parser')];
+export function configurationDiagnostics(error: z.ZodError): Diagnostic[] {
+	return error.issues.map(issue => configurationProblem(issueMessage(issue), codeOf(issue)));
 }

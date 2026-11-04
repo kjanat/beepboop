@@ -3,6 +3,7 @@ import type { ReleaseSetPlan } from '@/automation/planning';
 import type { Execution, ReleasePlan, RepositoryRecord } from '@/automation/types';
 import { blocking } from '@/contract/diagnostics';
 import { sha256Hex } from '@/contract/ids';
+import { encodeConfigurationV1 } from '@/persistence/codecs/configuration';
 
 export async function planIdentity(
 	plan: ReleasePlan | ReleaseSetPlan,
@@ -10,7 +11,7 @@ export async function planIdentity(
 ): Promise<string> {
 	return sha256Hex(JSON.stringify({
 		plan,
-		configuration: provenance?.configuration,
+		configuration: provenance?.configuration && encodeConfigurationV1(provenance.configuration),
 		presetShas: provenance?.presetShas,
 	}));
 }
