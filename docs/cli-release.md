@@ -3,7 +3,7 @@
 The `cli` stream in `.github/beepboop.json` releases **@kjanat/beepboop** to
 npm and JSR. The private Astro/Worker package stays private. The public package
 contains only the Bun CLI bundle, its typed `run()` entrypoint, metadata and
-README; DreamCLI is its only runtime dependency. Its license is `UNLICENSED`.
+README; DreamCLI is its only runtime dependency. Its license is `GPL-3.0-only`.
 
 ## One-time registry setup
 

@@ -38,4 +38,4 @@ await run();
 
 ## License
 
-UNLICENSED. No open-source license is granted.
+GPL-3.0-only. See [LICENSE](LICENSE).
