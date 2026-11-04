@@ -10,6 +10,7 @@ import { createExecution } from '@/automation/execution';
 import { type Credentials, RepositoryGateway } from '@/automation/github';
 import { createReleasePreparation, planIdentity } from '@/automation/managed';
 import { discover, planRelease, resolvePublished, versionsInFiles } from '@/automation/managers';
+import { jsrTokenAlias, prepareJsrPackage } from '@/automation/managers/jsr';
 import { destinationInput, Notifications, subscriptionInput } from '@/automation/notifications';
 import { matchesPackage } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
@@ -214,6 +215,19 @@ export class AutomationService {
 			} catch {}
 		}
 		return undefined;
+	}
+	private async prepareJsr(execution: Execution): Promise<void> {
+		const ids = new Set([
+			...(execution.workflow?.publications ?? []),
+			...(execution.releaseSet?.required ?? execution.configuration.streams[execution.stream]?.required ?? []),
+		]);
+		const names = [...ids].flatMap(id => id.startsWith('pkg:jsr/') ? [decodeURIComponent(id.slice(8))] : []);
+		if (!names.length) return;
+		const token = await this.vault().reveal(jsrTokenAlias, `setup:${execution.id}`).then(
+			credential => credential.value,
+			() => undefined,
+		);
+		for (const name of names) await prepareJsrPackage(name, execution.repository, token, fetch);
 	}
 	private async releaseFromManifest(repository: RepositoryRecord): Promise<void> {
 		if (repository.diagnostics.length || repository.suspended) return;
@@ -1004,6 +1018,7 @@ export class AutomationService {
 			throw new Error('Execution repository mismatch');
 		}
 		if (path.endsWith('/begin')) {
+			if (execution.operation === 'promote') await this.prepareJsr(execution);
 			return Response.json(
 				await this.coordinator(identity.repositoryId).register(executionId, identity),
 			);

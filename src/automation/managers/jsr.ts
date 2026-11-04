@@ -22,6 +22,44 @@ export function jsrLatest(name: string, request: Fetcher): Promise<RegistryVersi
 			: undefined;
 	});
 }
+export const jsrTokenAlias = 'jsr-token';
+export async function prepareJsrPackage(
+	name: string,
+	repository: string,
+	token: string | undefined,
+	request: Fetcher,
+): Promise<void> {
+	if (!packageName.test(name)) throw new Error('Invalid JSR package name');
+	const [scope, bare] = name.slice(1).split('/');
+	const [owner, repo] = repository.split('/');
+	const call = async (path: string, method = 'GET', body?: unknown): Promise<Response> => {
+		if (method !== 'GET' && !token) {
+			throw new Error(`Store a JSR access token as ${jsrTokenAlias} so Beepboop can set up ${name}`);
+		}
+		const response = await request(`https://api.jsr.io${path}`, {
+			method,
+			redirect: 'error',
+			signal: AbortSignal.timeout(15_000),
+			headers: {
+				'User-Agent': 'beepboop release setup',
+				...(token ? { Authorization: `Bearer ${token}` } : {}),
+				...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+			},
+			...(body === undefined ? {} : { body: JSON.stringify(body) }),
+		});
+		if (!response.ok && !(method === 'GET' && response.status === 404)) {
+			throw new Error(`JSR ${method} ${path} failed: HTTP ${response.status} ${await response.text()}`);
+		}
+		return response;
+	};
+	const existing = await call(`/scopes/${scope}/packages/${bare}`);
+	if (existing.status === 404) await call(`/scopes/${scope}/packages`, 'POST', { package: bare });
+	const linked = existing.ok ? object(object(await existing.json()).githubRepository) : {};
+	if (linked.owner !== owner || linked.name !== repo) {
+		await call(`/scopes/${scope}/packages/${bare}`, 'PATCH', { githubRepository: { owner, name: repo } });
+	}
+	if (token) await call(`/scopes/${scope}`, 'PATCH', { ghActionsVerifyActor: false });
+}
 export const jsrManager: Manager = {
 	name: 'jsr',
 	identity: pkg => identityOf(pkg),

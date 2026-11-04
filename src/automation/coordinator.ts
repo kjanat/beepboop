@@ -1221,9 +1221,33 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				.filter((e) => ['dispatching', 'running', 'uncertain'].includes(e.state))
 				.map((e) => e.stream),
 		);
-		if (active.some(e => !e.releaseSet?.workflowId)) await this.ctx.storage.setAlarm(Date.now() + 60000);
+		const unresolved = (execution: Execution) =>
+			['succeeded', 'failed'].includes(execution.state)
+			&& execution.publications.some(p =>
+				canVerifyPublication(p.manager) && ['pending', 'uncertain'].includes(p.outcome)
+			);
+		if (active.some(e => !e.releaseSet?.workflowId) || executions.some(unresolved)) {
+			await this.ctx.storage.setAlarm(Date.now() + 60000);
+		}
 		for (const execution of executions) {
 			if (onlyExecution ? execution.id !== onlyExecution : Boolean(execution.releaseSet?.workflowId)) continue;
+			if (unresolved(execution)) {
+				const publications = await Promise.all(
+					execution.publications.map(publication =>
+						canVerifyPublication(publication.manager) && ['pending', 'uncertain'].includes(publication.outcome)
+							? verifyPublication(
+								publication,
+								fetch,
+								this.gateway().verification(execution.repository, execution.repositoryId),
+							)
+							: publication
+					),
+				);
+				if (publications.some((publication, i) => publication.outcome !== execution.publications[i]?.outcome)) {
+					await this.put({ ...execution, publications });
+					continue;
+				}
+			}
 			await this.store().putExecution(execution);
 			if (execution.state === 'succeeded') await this.captureReleaseEvent(execution);
 			if (!active.includes(execution) || execution.state === 'pending') continue;

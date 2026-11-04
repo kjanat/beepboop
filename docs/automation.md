@@ -24,8 +24,11 @@ is available. This does not change the live app automatically.
 
 External integration actions require the full commit SHA of a published Beepboop
 Actions distribution. Local actions use `$/actions/...` when their definitions
-exist in the repository. npm/JSR registry permissions and trusted-publisher setup
-remain separate; a setup PR does not publish anything.
+exist in the repository. npm trusted-publisher setup remains separate; a setup PR
+does not publish anything. When a promotion starts, Beepboop creates each JSR
+package it publishes, links it to the repository and lets GitHub Actions runs
+started by Beepboop publish to the scope, using the credential stored as
+`jsr-token`.
 
 Select **Open or refresh setup PR** after reviewing the preview. A changed source
 commit or setup branch invalidates it. Refreshing a proposal incorporates current

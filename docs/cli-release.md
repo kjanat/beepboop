@@ -12,11 +12,11 @@ release:
 
 - Create/reserve `@kjanat/beepboop` on npm and configure its trusted publisher:
   GitHub owner `kjanat`, repository `beepboop`, workflow `publish-cli.yml`, no
-  environment. If npm requires an initial authenticated publication before
-  enabling trust, perform that bootstrap through an explicitly authorized
-  release; the workflow does not silently fall back to a stored token.
-- Create `@kjanat/beepboop` on JSR and link it to `kjanat/beepboop` in its package
-  settings. GitHub OIDC supplies publishing credentials.
+  environment. Until npm trusts the workflow, the `cli` stream's granted
+  `npm-token` credential authenticates the publication.
+- Store a JSR access token as `jsr-token`. Beepboop creates `@kjanat/beepboop`
+  on JSR and links it to `kjanat/beepboop` when a promotion starts. GitHub OIDC
+  supplies publishing credentials.
 - Deploy this revision through the existing Cloudflare Builds path, then refresh
   the enrolled repository's inspection so it reads the `cli` stream and JSR
   adapter. The existing setup PR is unnecessary once this configuration is on
