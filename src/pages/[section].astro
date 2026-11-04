@@ -1,9 +1,9 @@
 ---
 import Workspace from '@/components/Workspace.astro';
-import { section } from '@/server/sections.ts';
+import { sectionAt } from '@/server/sections.ts';
 
-const current = section(Astro.params.section ?? '');
-if (!current) {
+const current = sectionAt(`/${Astro.params.section ?? ''}`);
+if (!current || current === 'overview') {
 	return new Response('Page not found', { status: 404 });
 }
 ---

@@ -1,0 +1,59 @@
+---
+import Time from '@/components/Time.astro';
+import { githubHref } from '@/contract/links';
+import { actorLabel, parseActor, runRepository } from '@/domain/audit';
+import type { ViewOf } from '@/server/loaders.ts';
+
+interface Props {
+	data: ViewOf<'activity'>;
+}
+const { data } = Astro.props;
+function activityActor(
+	value: string,
+	target: string,
+): { label: string; href?: string } {
+	const actor = parseActor(value);
+	const repository = actor.kind === 'run' ? runRepository(target) : undefined;
+	return {
+		label: actorLabel(actor),
+		...(actor.kind === 'run' && repository
+			? { href: githubHref(repository, 'actions', 'runs', String(actor.runId)) }
+			: {}),
+	};
+}
+---
+<div class="table-scroll">
+	<table>
+		<thead>
+			<tr>
+				<th>When</th>
+				<th>Action</th>
+				<th>Who</th>
+				<th>Target</th>
+			</tr>
+		</thead>
+		<tbody>
+			{data.activity.map(entry => {
+				const actor = activityActor(entry.actor, entry.target);
+				return (
+				 <tr>
+					 <td>
+						 <Time value={entry.createdAt} />
+					 </td>
+					 <td>{entry.action.replaceAll('.', ' ').replaceAll('-', ' ')}</td>
+					 <td>
+						 {actor.href ? <a href={actor.href}>{actor.label}</a> : actor.label}
+					 </td>
+					 <td class="break">{entry.target}</td>
+				 </tr>
+			 );
+			})}{!data.activity.length && (
+				<tr>
+					<td colspan="4">
+						No activity yet. Release and access changes will appear here.
+					</td>
+				</tr>
+			)}
+		</tbody>
+	</table>
+</div>

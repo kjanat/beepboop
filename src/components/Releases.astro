@@ -7,12 +7,13 @@ import {
 } from '@/automation/release-version';
 import type { Package } from '@/automation/types';
 import { formatTime } from '@/contract/time';
-import { type Dashboard, workflowChoices } from '@/server/dashboard.ts';
+import type { ViewOf } from '@/server/loaders.ts';
 import { packageDisplayName } from '@/server/package-name';
+import { workflowChoices } from '@/server/views/workflows.ts';
 import { primaryStatus } from '@/ui/destinations';
 
 interface Props {
-	data: Dashboard;
+	data: ViewOf<'releases'>;
 }
 const { data } = Astro.props;
 const available = data.repositories.filter(r =>

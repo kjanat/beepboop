@@ -93,9 +93,9 @@ the calling release workflow.
 
 ## Bot submissions
 
-The WinGet panel on the **Release runs** page submits published stable GitHub releases to
+The dashboard's **WinGet** page submits published stable GitHub releases to
 `microsoft/winget-pkgs`. Select an enrolled repository and release, preview the
-three manifests, and choose **Submit to WinGet**. The panel tracks the PR link,
+three manifests, and choose **Submit to WinGet**. The page tracks the PR link,
 validation checks, change requests, closure and merge. A PR being open or its
 checks passing is not reported as a completed publication: Microsoft controls
 review and merge. The bot never merges or enables auto-merge.

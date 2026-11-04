@@ -1,27 +1,16 @@
 ---
 import icon from '@root/assets/beepboop-icon.png';
 import Field from '@/components/Field.astro';
-import { githubOutage } from '@/server/github-status.ts';
+import type { GitHubOutage } from '@/server/github-status.ts';
+import { type Section, sectionPages, sections } from '@/server/sections.ts';
 import '@/styles/dashboard.css';
 
 interface Props {
-	title: string;
-	description: string;
-	section: string;
+	section: Section;
+	outage: GitHubOutage | undefined;
 }
-const { title, description, section } = Astro.props;
-const outage = await githubOutage();
-const navigation = [
-	['overview', '/', 'Overview'],
-	['repositories', '/repositories', 'Repositories'],
-	['packages', '/packages', 'Packages'],
-	['notifications', '/notifications', 'Notifications'],
-	['releases', '/releases', 'Prepare a release'],
-	['runs', '/runs', 'Release runs'],
-	['secrets', '/secrets', 'Secrets'],
-	['activity', '/activity', 'Activity'],
-	['security', '/security', 'Security keys'],
-];
+const { section, outage } = Astro.props;
+const { title, description } = sectionPages[section];
 ---
 <!DOCTYPE html>
 <html lang="en">
@@ -60,11 +49,11 @@ const navigation = [
 				> Beepboop</a>
 			<p class="sidebar-caption">From commit to published.</p>
 			<nav aria-label="Main navigation">
-				{navigation.map(([key, href, label]) => (
+				{sections.map(key => (
 					<a
-						href={href}
+						href={sectionPages[key].path}
 						aria-current={key === section ? 'page' : undefined}
-					>{label}</a>
+					>{sectionPages[key].nav}</a>
 				))}
 			</nav>
 			<div class="sidebar-bottom">

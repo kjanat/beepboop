@@ -1,20 +1,19 @@
 ---
 import { matchesPublication } from '@/automation/package-identity.ts';
-import type { UnreadableExecution } from '@/automation/store.ts';
 import type { Execution } from '@/automation/types.ts';
 import Field from '@/components/Field.astro';
 import Time from '@/components/Time.astro';
 import { formatTime } from '@/contract/time';
 import { defaultTagPolicy, semVer, tagFor } from '@/contract/version';
 import { packageLabel } from '@/domain/package-label';
+import type { ViewOf } from '@/server/loaders.ts';
 import { packageDisplayName } from '@/server/package-name';
 import { releaseSetSummaries } from '@/server/releases';
 
 interface Props {
-	executions: Execution[];
-	unreadable: UnreadableExecution[];
+	data: ViewOf<'runs'>;
 }
-const { executions, unreadable } = Astro.props;
+const { readable: executions, unreadable } = Astro.props.data.executions;
 const now = Date.now();
 const waiting = (run: Execution): string | undefined =>
 	run.notBefore !== undefined && run.notBefore > now

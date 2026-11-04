@@ -1,9 +1,9 @@
 ---
 import Time from '@/components/Time.astro';
-import type { Dashboard } from '@/server/dashboard.ts';
+import type { ViewOf } from '@/server/loaders.ts';
 
 interface Props {
-	data: Dashboard;
+	data: ViewOf<'security'>;
 }
 const { data } = Astro.props;
 ---

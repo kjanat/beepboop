@@ -1,12 +1,11 @@
 ---
-import type { Execution } from '@/automation/types.ts';
 import { packageLabel } from '@/domain/package-label';
-import { releaseSummaries } from '@/server/releases.ts';
+import type { releaseSummaries } from '@/server/releases.ts';
 
 interface Props {
-	executions: Execution[];
+	releases: ReturnType<typeof releaseSummaries>;
 }
-const releases = releaseSummaries(Astro.props.executions).slice(0, 10);
+const { releases } = Astro.props;
 ---
 {releases.map(release => (
 	<article>

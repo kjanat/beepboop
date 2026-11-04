@@ -1,14 +1,14 @@
 ---
-import { wingetOutcome } from '@/automation/destinations';
+import { winget, wingetOutcome } from '@/automation/destinations';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
 import { publishedOutsideRequired } from '@/automation/setup';
 import type { RepositoryRecord } from '@/automation/types';
 import Field from '@/components/Field.astro';
 import Time from '@/components/Time.astro';
 import { packageLabel } from '@/domain/package-label';
-import type { Dashboard } from '@/server/dashboard.ts';
-import { workflowChoices } from '@/server/dashboard.ts';
+import type { ViewOf } from '@/server/loaders.ts';
 import { packageDisplayName } from '@/server/package-name';
+import { workflowChoices } from '@/server/views/workflows.ts';
 import {
 	manifestEntry,
 	packageDestinations,
@@ -16,11 +16,11 @@ import {
 } from '@/ui/destinations';
 
 interface Props {
-	data: Dashboard;
+	data: ViewOf<'repositories'>;
 }
 const { data } = Astro.props;
 const selected = Astro.url.searchParams.get('repository');
-const repositories = [...data.repositories].sort((left, right) =>
+const repositories = [...data.repositories.readable].sort((left, right) =>
 	Number(right.name === selected) - Number(left.name === selected)
 );
 function listsPackages(repository: RepositoryRecord) {
@@ -31,7 +31,14 @@ function listsPackages(repository: RepositoryRecord) {
 function wingetDestination(repository: RepositoryRecord) {
 	const policy = repository.configuration?.winget;
 	if (!policy) return undefined;
-	const submission = data.latestWinget.get(repository.id);
+	if (data.latestWinget.kind === 'failed') {
+		return {
+			policy,
+			packageIdentifier: undefined,
+			entry: { label: winget.label, status: 'Submission status unavailable' },
+		};
+	}
+	const submission = data.latestWinget.value.get(repository.id);
 	return {
 		policy,
 		packageIdentifier: submission?.plan.packageIdentifier,
@@ -59,7 +66,7 @@ function wingetDestination(repository: RepositoryRecord) {
 			></label><button class="primary">Inspect repository</button>
 	</form>
 </article>
-{data.unreadable.repositories.map(row => (
+{data.repositories.unreadable.map(row => (
 	<article id={`repository-${row.id}`}>
 		<div class="section-heading">
 			<h2><a href={`https://github.com/${row.name}`}>{row.name} ↗</a></h2><span

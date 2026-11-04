@@ -1,10 +1,10 @@
 ---
 import Time from '@/components/Time.astro';
-import type { Dashboard } from '@/server/dashboard';
+import type { ViewOf } from '@/server/loaders.ts';
 import { submissionLabels } from '@/ui/destinations';
 
 interface Props {
-	data: Dashboard;
+	data: ViewOf<'winget'>;
 }
 const { data } = Astro.props;
 const repositories = data.repositories.filter(repo =>
@@ -12,7 +12,7 @@ const repositories = data.repositories.filter(repo =>
 );
 ---
 <div class="winget">
-	{!data.wingetReady && (
+	{!data.ready && (
 		<article class="panel">
 			<h2>Connect the submission bot</h2>
 			<p>
@@ -52,7 +52,7 @@ const repositories = data.repositories.filter(repo =>
 					type="submit"
 					value="submit"
 					disabled
-					data-submit-ready={data.wingetReady}
+					data-submit-ready={data.ready}
 				>
 					Submit to WinGet
 				</button>
@@ -86,79 +86,84 @@ const repositories = data.repositories.filter(repo =>
 				<button>Refresh PR status</button>
 			</form>
 		</div>
-		{!data.winget.length && <p>No WinGet submissions yet.</p>}
-		{data.winget.map(item => (
-			<article class="panel">
-				<h3>{item.plan.packageIdentifier} {item.plan.version}</h3>
-				<dl class="metadata-grid">
-					<div>
-						<dt>Repository</dt>
-						<dd>{item.plan.repository}</dd>
-					</div>
-					<div>
-						<dt>Tag</dt>
-						<dd><code>{item.plan.tag}</code></dd>
-					</div>
-					<div>
-						<dt>Status</dt>
-						<dd>
-							<span
-								class:list={['badge', item.state]}
-							>{submissionLabels[item.state]}</span>
-						</dd>
-					</div>
-					<div>
-						<dt>Updated</dt>
-						<dd><Time value={item.updatedAt} /></dd>
-					</div>
-					{item.checks && (
-						<div>
-							<dt>Validation</dt>
-							<dd>{item.checks}</dd>
-						</div>
-					)}
-				</dl>
-				{item.url && (
-					<a href={item.url} target="_blank" rel="noreferrer">Open submission
-						#{item.number}</a>
-				)}
-				{item.reviews && <p>{item.reviews}</p>}
-				{item.reason && <p class="hint">{item.reason}</p>}
-				{(item.state === 'failed' || item.state === 'pending') && (
-					<form
-						data-action="winget-retry"
-						method="post"
-						action="/api/winget/submit"
-					>
-						<input
-							type="hidden"
-							name="repositoryId"
-							value={item.plan.repositoryId}
-						><input
-							type="hidden"
-							name="releaseId"
-							value={item.plan.releaseId}
-						><input
-							type="hidden"
-							name="digest"
-							value={item.plan.digest}
-						><button disabled={!data.wingetReady}>Retry submission</button>
-					</form>
-				)}
-				<details>
-					<summary>Submitted manifests and source commit</summary>
-					<p>
-						<a
-							href={`https://github.com/${item.plan.repository}/commit/${item.plan.sourceSha}`}
-						><code>{item.plan.sourceSha}</code></a>
-					</p>{Object.entries(item.plan.files).map(([path, content]) => (
-						<details>
-							<summary>{path}</summary>
-							<pre>{content}</pre>
-						</details>
-					))}
-				</details>
-			</article>
-		))}
+		{data.submissions.kind === 'failed' && (
+			<p class="notice">WinGet submissions could not be loaded.</p>
+		)}
+		{data.submissions.kind === 'loaded' && !data.submissions.value.length
+			&& <p>No WinGet submissions yet.</p>}
+		{data.submissions.kind === 'loaded'
+			&& data.submissions.value.map(item => (
+			 <article class="panel">
+				 <h3>{item.plan.packageIdentifier} {item.plan.version}</h3>
+				 <dl class="metadata-grid">
+					 <div>
+						 <dt>Repository</dt>
+						 <dd>{item.plan.repository}</dd>
+					 </div>
+					 <div>
+						 <dt>Tag</dt>
+						 <dd><code>{item.plan.tag}</code></dd>
+					 </div>
+					 <div>
+						 <dt>Status</dt>
+						 <dd>
+							 <span
+								 class:list={['badge', item.state]}
+							 >{submissionLabels[item.state]}</span>
+						 </dd>
+					 </div>
+					 <div>
+						 <dt>Updated</dt>
+						 <dd><Time value={item.updatedAt} /></dd>
+					 </div>
+					 {item.checks && (
+						 <div>
+							 <dt>Validation</dt>
+							 <dd>{item.checks}</dd>
+						 </div>
+					 )}
+				 </dl>
+				 {item.url && (
+					 <a href={item.url} target="_blank" rel="noreferrer">Open submission
+						 #{item.number}</a>
+				 )}
+				 {item.reviews && <p>{item.reviews}</p>}
+				 {item.reason && <p class="hint">{item.reason}</p>}
+				 {(item.state === 'failed' || item.state === 'pending') && (
+					 <form
+						 data-action="winget-retry"
+						 method="post"
+						 action="/api/winget/submit"
+					 >
+						 <input
+							 type="hidden"
+							 name="repositoryId"
+							 value={item.plan.repositoryId}
+						 ><input
+							 type="hidden"
+							 name="releaseId"
+							 value={item.plan.releaseId}
+						 ><input
+							 type="hidden"
+							 name="digest"
+							 value={item.plan.digest}
+						 ><button disabled={!data.ready}>Retry submission</button>
+					 </form>
+				 )}
+				 <details>
+					 <summary>Submitted manifests and source commit</summary>
+					 <p>
+						 <a
+							 href={`https://github.com/${item.plan.repository}/commit/${item.plan.sourceSha}`}
+						 ><code>{item.plan.sourceSha}</code></a>
+					 </p>{Object.entries(item.plan.files).map(([path, content]) => (
+						 <details>
+							 <summary>{path}</summary>
+							 <pre>{content}</pre>
+						 </details>
+					 ))}
+				 </details>
+			 </article>
+		 ))}
 	</section>
 </div>

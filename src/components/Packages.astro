@@ -2,10 +2,10 @@
 import Time from '@/components/Time.astro';
 import { destinationLabels, watchedRegistries } from '@/contract/catalog';
 import { watchedPackageHref } from '@/contract/links';
-import type { Dashboard } from '@/server/dashboard.ts';
+import type { ViewOf } from '@/server/loaders.ts';
 
 interface Props {
-	data: Dashboard;
+	data: ViewOf<'packages'>;
 }
 const { data } = Astro.props;
 const subscribed = (destinationId: string, registry: string, name: string) =>

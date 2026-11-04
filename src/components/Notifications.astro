@@ -2,10 +2,10 @@
 import Time from '@/components/Time.astro';
 import { notificationKindLabels, notificationKinds } from '@/contract/catalog';
 import { registryPackageLabel } from '@/domain/package-label';
-import type { Dashboard } from '@/server/dashboard.ts';
+import type { ViewOf } from '@/server/loaders.ts';
 
 interface Props {
-	data: Dashboard;
+	data: ViewOf<'notifications'>;
 }
 const { data } = Astro.props;
 const destinationName = (id: string) =>
