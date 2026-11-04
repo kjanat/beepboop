@@ -11,7 +11,7 @@
 		"url": "https://github.com/kjanat/beepboop.git",
 		"directory": "packages/cli"
 	},
-	"license": "UNLICENSED",
+	"license": "GPL-3.0-only",
 	"type": "module",
 	"exports": {
 		".": "./mod.ts"

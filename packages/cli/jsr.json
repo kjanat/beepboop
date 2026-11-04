@@ -1,14 +1,15 @@
 {
 	"name": "@kjanat/beepboop",
 	"version": "0.0.0",
-	"license": "LicenseRef-Proprietary",
+	"license": "GPL-3.0-only",
 	"exports": "./mod.ts",
 	"publish": {
 		"include": [
 			"cli.js",
 			"mod.ts",
 			"package.json",
-			"README.md"
+			"README.md",
+			"LICENSE"
 		]
 	}
 }
