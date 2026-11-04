@@ -204,7 +204,8 @@ and generated file contents; manual edits produce a conflict for review.
 Merge the preparation PR, choose the promotion commit, and approve it in the
 dashboard. Repeating an operation for the same release attaches to its existing
 execution. Failed jobs can be retried from the execution page; an ambiguous
-workflow dispatch offers reconciliation.
+workflow dispatch offers reconciliation. Retrying a promotion that was cancelled
+before its first dispatch returns it to approval.
 
 ## Publication results
 
