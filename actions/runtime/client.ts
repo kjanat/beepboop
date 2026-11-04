@@ -44,7 +44,7 @@ function publication(value: unknown): unknown {
 	if (entry.outcome !== 'rate-limited') return value;
 	const field = text(entry.retryAfter);
 	const retryAfter = parseRetryAfter(field, Date.now())
-		?? (/^\d{4}-\d{2}-\d{2}T/.test(field) ? Date.parse(field) : Number.NaN);
+		?? (/^\d+$/.test(field.trim()) ? Number.NaN : Date.parse(field));
 	if (Number.isNaN(retryAfter)) throw Error('A rate-limited publication needs a Retry-After value');
 	return { ...entry, retryAfter: new Date(retryAfter).toISOString() };
 }
