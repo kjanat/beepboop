@@ -280,7 +280,7 @@ test('stored repositories keep their plan identity and decode under the configur
 	expect(configurationSchema.safeParse(legacy.configuration).success).toBe(false);
 });
 
-test('refresh refuses a workflow named after a reserved operation', async () => {
+test('refresh records schema drift as a warning while the current parser keeps releasing', async () => {
 	const repository = widget(world.github);
 	const configuration = widgetDocument();
 	configuration.streams.main.workflows = { prepare: { file: 'publish.yml' } };
@@ -290,13 +290,17 @@ test('refresh refuses a workflow named after a reserved operation', async () => 
 
 	const discovered = await api('/api/repositories/discover', { repository: 'octo/widget' });
 	expect(discovered.status).toBe(200);
-	const findings = (await stored(repository.id)).findings;
-	expect(findings.map(entry => [entry.code, entry.severity])).toEqual([['reserved-operation', 'blocking']]);
-	expect(diagnostics(discovered)).toEqual([
-		'streams.main.workflows.prepare: prepare is configured under prepare.workflow',
-	]);
+	expect(diagnostics(discovered)).toEqual([]);
+	const document = await stored(repository.id);
+	expect(document.diagnostics).toEqual([]);
+	expect(document.findings).toEqual([{
+		code: 'configuration-drift',
+		severity: 'warning',
+		message:
+			'The configuration schema rejects streams.main.workflows.prepare: prepare is configured under prepare.workflow',
+	}]);
 	const plan = await api('/api/releases/plan', { repositoryId: repository.id, stream: 'main', version: '1.1.0' });
-	expect(plan.status).toBe(422);
+	expect(plan.status).toBe(200);
 });
 
 test('editors validate with the published schema and refuse what refresh refuses', async () => {
@@ -335,79 +339,96 @@ test('schema:check refuses a hand-edited schema file', async () => {
 });
 
 type Stream = WidgetDocument['streams']['main'];
-interface LateFailure {
+interface Finding {
 	name: string;
-	code: string;
+	codes: string[];
 	edit: (stream: Stream) => void;
 }
-const lateFailures: LateFailure[] = [
-	{
-		name: 'a workflow preparation strategy without a workflow',
-		code: 'binding-missing',
-		edit: stream => {
-			stream.prepare = { strategy: 'workflow' };
-		},
-	},
+const lateFailures: Finding[] = [
 	{
 		name: 'a stream package that discovery never finds',
-		code: 'unknown-reference',
+		codes: ['unknown-reference'],
 		edit: stream => {
 			stream.packages = ['pkg:npm/widget', 'pkg:npm/gadget'];
 		},
 	},
 	{
-		name: 'a versioned package reference',
-		code: 'versioned-reference',
-		edit: stream => {
-			stream.packages = ['pkg:npm/widget@1.0.0'];
-		},
-	},
-	{
-		name: 'a binding whose workflow file is missing',
-		code: 'binding-missing',
+		name: 'a promotion whose workflow file is missing',
+		codes: ['binding-missing'],
 		edit: stream => {
 			stream.promote.workflow.file = 'release.yml';
 		},
 	},
 	{
-		name: 'a binding whose workflow cannot be dispatched',
-		code: 'binding-not-dispatchable',
+		name: 'a promotion dependency whose workflow cannot be dispatched',
+		codes: ['binding-not-dispatchable'],
 		edit: stream => {
+			stream.promote.workflow.needs = ['lint'];
 			stream.workflows = { lint: { file: 'ci.yml' } };
 		},
 	},
 	{
-		name: 'a dispatch binding with a wildcard ref',
-		code: 'wildcard-ref',
+		name: 'a promotion with a wildcard ref',
+		codes: ['wildcard-ref'],
 		edit: stream => {
 			stream.promote.workflow.ref = 'release/*';
 		},
 	},
 	{
 		name: 'a per-package workflow without a package input',
-		code: 'each-package-input',
+		codes: ['each-package-input'],
 		edit: stream => {
 			stream.workflows = { mirror: { file: 'publish.yml', each: 'package', needs: ['promote'] } };
 		},
 	},
 	{
+		name: 'a version file missing from the tree',
+		codes: ['version-file-missing'],
+		edit: stream => {
+			stream.versionFiles = [{ path: 'VERSION', format: 'text', prefix: 'version=', suffix: '\n' }];
+		},
+	},
+];
+const workingConfigurations: Finding[] = [
+	{
+		name: 'a workflow preparation strategy without a workflow',
+		codes: ['configuration-drift'],
+		edit: stream => {
+			stream.prepare = { strategy: 'workflow' };
+		},
+	},
+	{
+		name: 'a versioned package reference',
+		codes: ['versioned-reference'],
+		edit: stream => {
+			stream.packages = ['pkg:npm/widget@1.0.0'];
+		},
+	},
+	{
+		name: 'a custom operation whose workflow file is missing',
+		codes: ['binding-missing'],
+		edit: stream => {
+			stream.workflows = { lint: { file: 'lint.yml' } };
+		},
+	},
+	{
+		name: 'a custom operation served by observation through begin',
+		codes: ['binding-not-dispatchable', 'wildcard-ref'],
+		edit: stream => {
+			stream.workflows = { lint: { file: 'ci.yml', ref: 'release/*' } };
+		},
+	},
+	{
 		name: 'a required publication no release group can cover',
-		code: 'required-uncovered',
+		codes: ['required-uncovered'],
 		edit: stream => {
 			stream.versioning = 'independent';
 			stream.required = ['pkg:npm/widget', 'pkg:npm/gadget'];
 		},
 	},
 	{
-		name: 'a version file missing from the tree',
-		code: 'version-file-missing',
-		edit: stream => {
-			stream.versionFiles = [{ path: 'VERSION', format: 'text', prefix: 'version=', suffix: '\n' }];
-		},
-	},
-	{
-		name: 'a required publication no operation reports',
-		code: 'required-uncovered',
+		name: 'a required publication only the promotion run reports',
+		codes: ['required-uncovered'],
 		edit: stream => {
 			stream.required = ['pkg:npm/widget', 'pkg:github/octo/widget'];
 		},
@@ -415,30 +436,54 @@ const lateFailures: LateFailure[] = [
 ];
 
 const finding = z.object({ code: z.string(), severity: z.string(), message: z.string() });
+async function refreshed(edit: (configuration: WidgetDocument) => void, message: string) {
+	const repository = widget(world.github);
+	const configuration = widgetDocument();
+	edit(configuration);
+	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, message);
+	passChecks(repository, world.github.head(repository));
+	const api = bearer(world, await world.cliSession());
+	const discovered = await api('/api/repositories/discover', { repository: 'octo/widget' });
+	expect(discovered.status).toBe(200);
+	const findings = (await stored(repository.id)).findings.map(entry => finding.parse(entry));
+	const plan = await api('/api/releases/plan', { repositoryId: repository.id, stream: 'main', version: '1.1.0' });
+	return { discovered, findings, plan };
+}
 for (const failure of lateFailures) {
 	test(`refresh blocks ${failure.name}`, async () => {
-		const repository = widget(world.github);
-		const configuration = widgetDocument();
-		failure.edit(configuration.streams.main);
-		world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, failure.name);
-		passChecks(repository, world.github.head(repository));
-		const api = bearer(world, await world.cliSession());
-
-		const discovered = await api('/api/repositories/discover', { repository: 'octo/widget' });
-		expect(discovered.status).toBe(200);
-		const blocking = (await stored(repository.id)).findings.map(entry => finding.parse(entry)).filter(entry =>
-			entry.severity === 'blocking'
+		const { discovered, findings, plan } = await refreshed(
+			configuration => failure.edit(configuration.streams.main),
+			failure.name,
 		);
-		expect(blocking.map(entry => entry.code)).toEqual([failure.code]);
+		const blocking = findings.filter(entry => entry.severity === 'blocking');
+		expect(blocking.map(entry => entry.code)).toEqual(failure.codes);
 		expect(diagnostics(discovered)).toEqual(blocking.map(entry => entry.message));
-
-		const plan = await api('/api/releases/plan', { repositoryId: repository.id, stream: 'main', version: '1.1.0' });
 		expect(plan.status).toBe(422);
 		expect(field(field(plan.body, 'problem'), 'diagnostics')).toEqual(
 			blocking.map(entry => expect.objectContaining({ code: entry.code, message: entry.message })),
 		);
 	});
 }
+for (const working of workingConfigurations) {
+	test(`refresh warns about ${working.name} and keeps planning`, async () => {
+		const { discovered, findings, plan } = await refreshed(
+			configuration => working.edit(configuration.streams.main),
+			working.name,
+		);
+		expect(findings.filter(entry => entry.severity === 'blocking')).toEqual([]);
+		expect(findings.map(entry => entry.code)).toEqual(working.codes);
+		expect(diagnostics(discovered)).toEqual([]);
+		expect(plan.status).toBe(200);
+	});
+}
+
+test('refresh finds bindings by path when the workflow manager is excluded', async () => {
+	const { findings, plan } = await refreshed(configuration => {
+		configuration.managers = ['npm'];
+	}, 'Skip workflow discovery');
+	expect(findings).toEqual([]);
+	expect(plan.status).toBe(200);
+});
 
 test('setup preview blocks a proposal that refresh would refuse', async () => {
 	const repository = widget(world.github);

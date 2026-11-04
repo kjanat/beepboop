@@ -1,4 +1,4 @@
-import { mergeConfiguration } from '@/automation/configuration';
+import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
 import { formatJson, json } from '@/automation/json';
 import { discover } from '@/automation/managers';
 import { object } from '@/automation/managers/helpers';
@@ -20,7 +20,7 @@ import type { Configuration, Inventory, Package, RepositoryRecord, Snapshot } fr
 import { blocking } from '@/contract/diagnostics';
 import { sha256Hex } from '@/contract/ids';
 import { setupChoicesSchema } from '@/contract/setup';
-import { configurationDiagnostics, configurationSchema } from '@/domain/configuration';
+import { configurationDrift } from '@/domain/configuration';
 import { packageMarkdown } from '@/domain/package-label';
 import { validateAgainst } from '@/domain/validate';
 
@@ -220,16 +220,15 @@ export async function previewSetup(
 	configuration.managers = [...managers].sort();
 	try {
 		const proposal = resolved ? mergeConfiguration({ ...resolved }, configuration) : configuration;
-		const parsed = configurationSchema.safeParse(proposal);
-		if (parsed.success) {
-			const proposed: Snapshot = {
-				...snapshot,
-				files: { ...snapshot.files, ...Object.fromEntries(edits.map(edit => [edit.path, edit.after])) },
-				paths: [...new Set([...snapshot.paths, ...edits.map(edit => edit.path)])],
-			};
-			const found = validateAgainst(parsed.data, discover(proposed, parsed.data.managers), proposed);
-			blockers.push(...blocking(found).map(entry => entry.message));
-		} else blockers.push(...configurationDiagnostics(parsed.error).map(entry => entry.message));
+		const legacy = parseRepositoryConfiguration(proposal);
+		notes.push(...configurationDrift(proposal, legacy).map(entry => entry.message));
+		const proposed: Snapshot = {
+			...snapshot,
+			files: { ...snapshot.files, ...Object.fromEntries(edits.map(edit => [edit.path, edit.after])) },
+			paths: [...new Set([...snapshot.paths, ...edits.map(edit => edit.path)])],
+		};
+		const found = validateAgainst(legacy, discover(proposed, legacy.managers), proposed);
+		blockers.push(...blocking(found).map(entry => entry.message));
 	} catch (error) {
 		blockers.push(error instanceof Error ? error.message : 'Invalid configuration');
 	}

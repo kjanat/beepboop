@@ -328,3 +328,19 @@ export function configurationProblem(message: string, code: DiagnosticCode = 'in
 export function configurationDiagnostics(error: z.ZodError): Diagnostic[] {
 	return error.issues.map(issue => configurationProblem(issueMessage(issue), codeOf(issue)));
 }
+
+export function configurationDrift(value: unknown, legacy: Configuration): Diagnostic[] {
+	const parsed = configurationSchema.safeParse(value);
+	const drift = (message: string): Diagnostic => ({
+		code: 'configuration-drift',
+		severity: 'warning',
+		subject: { kind: 'file', path: configurationPath },
+		message,
+	});
+	if (!parsed.success) {
+		return parsed.error.issues.map(issue => drift(`The configuration schema rejects ${issueMessage(issue)}`));
+	}
+	return JSON.stringify(parsed.data) === JSON.stringify(legacy)
+		? []
+		: [drift('The configuration schema reads this file differently from the current parser')];
+}

@@ -154,6 +154,7 @@ export class AutomationService {
 				);
 				repository.configuration = resolved.configuration;
 				repository.presetShas = resolved.presetShas;
+				repository.diagnostics.push(...resolved.drift);
 				repository.inventory = discover(snapshot, resolved.configuration.managers);
 				repository.diagnostics.push(...validateAgainst(resolved.configuration, repository.inventory, snapshot));
 			} catch (error) {
