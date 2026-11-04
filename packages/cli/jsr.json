@@ -3,5 +3,12 @@
 	"version": "0.0.0",
 	"license": "UNLICENSED",
 	"exports": "./mod.ts",
-	"publish": { "include": ["cli.js", "mod.ts", "package.json", "README.md"] }
+	"publish": {
+		"include": [
+			"cli.js",
+			"mod.ts",
+			"package.json",
+			"README.md"
+		]
+	}
 }
