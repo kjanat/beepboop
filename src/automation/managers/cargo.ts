@@ -72,6 +72,7 @@ export const cargoManager: Manager = {
 						);
 					}
 					const shared = object(workspace.dependencies);
+					const publish = object(pkg.publish).workspace === true ? object(workspace.package).publish : pkg.publish;
 					inventory.packages.push({
 						manager: 'cargo',
 						name: pkg.name,
@@ -82,9 +83,9 @@ export const cargoManager: Manager = {
 							: `${path}#package.version`,
 						publication: patched.has(directory(path))
 							? excluded('upstream-patch')
-							: pkg.publish === false
+							: publish === false
 							? excluded('publish-disabled')
-							: Array.isArray(pkg.publish) && !pkg.publish.includes('crates-io')
+							: Array.isArray(publish) && !publish.includes('crates-io')
 							? excluded('other-registry')
 							: registry,
 						dependencies: Object.entries(deps).map(([name, value]) => {
