@@ -248,16 +248,38 @@ export class RepositoryGateway {
 		ownerLogins.set(this.ownerId, login);
 		return login;
 	}
-	async generatedHead(name: string, id: number, head: string): Promise<boolean> {
-		const token = await this.token(name, id, { contents: 'read' });
+	private async generatedComparison(name: string, head: string, token: string) {
 		const base = text(record(await this.call(`/repos/${name}`, token)).default_branch);
 		const comparison = record(await this.call(`/repos/${name}/compare/${encodeURIComponent(base)}...${head}`, token));
 		const commits = array(comparison.commits).map(record);
-		if (!commits.length || commits.length !== Number(comparison.ahead_by) || commits.at(-1)?.sha !== head) return false;
+		if (!commits.length || commits.length !== Number(comparison.ahead_by) || commits.at(-1)?.sha !== head) {
+			return undefined;
+		}
 		const bot = await this.botIdentity();
-		return commits.every(commit =>
+		const generated = commits.every(commit =>
 			record(commit.author).id === bot.id && record(record(commit.commit).verification).verified === true
 		);
+		return generated ? comparison : undefined;
+	}
+	async generatedHead(name: string, id: number, head: string): Promise<boolean> {
+		const token = await this.token(name, id, { contents: 'read' });
+		return (await this.generatedComparison(name, head, token)) !== undefined;
+	}
+	async generatedFiles(name: string, id: number, head: string): Promise<Edit[] | undefined> {
+		const token = await this.token(name, id, { contents: 'read' });
+		const comparison = await this.generatedComparison(name, head, token);
+		if (!comparison) return undefined;
+		const files = array(comparison.files).map(record);
+		if (files.length >= 300) return undefined;
+		const mergeBase = sha(record(comparison.merge_base_commit).sha);
+		return Promise.all(files.map(async file => {
+			const path = text(file.filename);
+			return {
+				path,
+				before: (await this.file(name, path, mergeBase, token)) ?? '',
+				after: (await this.file(name, path, head, token)) ?? '',
+			};
+		}));
 	}
 	async setupHead(name: string, id: number): Promise<string | null> {
 		const token = await this.token(name, id);

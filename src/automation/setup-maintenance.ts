@@ -14,6 +14,10 @@ import { record } from '@/model';
 import { packageLabel } from '@/ui/package-label';
 
 const editsSchema = z.array(z.object({ path: z.string(), before: z.string(), after: z.string() }));
+export function sameEdits(left: Edit[], right: Edit[]): boolean {
+	const sorted = (edits: Edit[]) => JSON.stringify([...edits].sort((a, b) => a.path.localeCompare(b.path)));
+	return sorted(left) === sorted(right);
+}
 export function setupEdits(saved: Record<string, unknown> | undefined): Edit[] {
 	if (Array.isArray(saved?.edits)) return editsSchema.parse(saved.edits);
 	return typeof saved?.content === 'string'
@@ -36,8 +40,9 @@ export async function maintainSetup(
 	const saved = record(JSON.parse(row.document));
 	const pull = await gateway.openSetupPull(name, id);
 	if (!pull || (requested && pull.number !== requested.number)) return;
-	const previous = setupEdits(saved);
-	const conflict = saved.head !== pull.head && !(await gateway.generatedHead(name, id, pull.head));
+	const generated = await gateway.generatedFiles(name, id, pull.head);
+	const previous = generated ?? setupEdits(saved);
+	const conflict = saved.head !== pull.head && !generated;
 	const inventory = withRegistryStatus(discover(snapshot), (await store.repository(id))?.inventory);
 	const summary = `Inspected [${snapshot.sha}](https://github.com/${name}/commit/${snapshot.sha}).\n\n`
 		+ 'Discovered packages:\n'
@@ -97,7 +102,7 @@ export async function maintainSetup(
 			return;
 		}
 		// Even an unchanged source may need a newer generator's output. An identical proposal needs no commit.
-		if (saved.sourceSha === snapshot.sha && JSON.stringify(previous) === JSON.stringify(plan.edits)) {
+		if (saved.sourceSha === snapshot.sha && sameEdits(previous, plan.edits)) {
 			const boxes = await addBoxes();
 			await gateway.setupStatus(name, id, pull.number, `${summary}\n\nThe proposal is up to date.`);
 			await save({ ...saved, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha, ...boxes });

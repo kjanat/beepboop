@@ -17,7 +17,7 @@ import { planHookUpdates } from '@/automation/precommit';
 import { repositoryName } from '@/automation/repository-name';
 import { documentRow, rowDocument, setupOptionsSchema } from '@/automation/schemas';
 import { bodyChoices, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
-import { maintainSetup, setupEdits } from '@/automation/setup-maintenance';
+import { maintainSetup, sameEdits, setupEdits } from '@/automation/setup-maintenance';
 import { setupChoicesSchema } from '@/automation/setup-types';
 import { Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
@@ -483,8 +483,9 @@ export class AutomationService {
 			);
 			const saved = row ? record(JSON.parse(row.document)) : undefined;
 			const head = await this.gateway.setupHead(name, id);
-			const branchConflict = !!head && saved?.head !== head && !(await this.gateway.generatedHead(name, id, head));
-			const previous = setupEdits(saved);
+			const branchFiles = head ? await this.gateway.generatedFiles(name, id, head) : undefined;
+			const branchConflict = !!head && saved?.head !== head && !branchFiles;
+			const previous = branchFiles ?? setupEdits(saved);
 			const priorConfiguration = previous.find(edit => edit.path === '.github/beepboop.json')?.before ?? '';
 			const choices = body.choices
 				?? ((snapshot.files['.github/beepboop.json'] ?? '') === priorConfiguration ? saved?.choices : undefined);
@@ -507,7 +508,7 @@ export class AutomationService {
 				throw new Error('Setup branch changed; preserve human edits and review the conflict');
 			}
 			const result = head && saved?.sourceSha === snapshot.sha
-					&& JSON.stringify(previous) === JSON.stringify(plan.edits)
+					&& sameEdits(previous, plan.edits)
 				? await this.gateway.refreshPullRequest(
 					snapshot,
 					'automation/onboarding',
