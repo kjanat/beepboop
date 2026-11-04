@@ -4,6 +4,7 @@
 		"cli": {
 			"packages": ["pkg:npm/%40kjanat/beepboop", "pkg:jsr/%40kjanat/beepboop"],
 			"versioning": "workspace",
+			"credentials": ["npm-token"],
 			"required": ["pkg:npm/%40kjanat/beepboop", "pkg:jsr/%40kjanat/beepboop"],
 			"prepare": {
 				"strategy": "managed",

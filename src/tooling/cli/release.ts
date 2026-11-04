@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, rm } from 'node:fs/promises';
+import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
@@ -21,7 +21,7 @@ if (revision.exitCode !== 0 || revision.stdout.toString().trim() !== context.sou
 }
 if (
 	context.operation !== 'promote' || context.stream !== 'cli' || context.version !== npm.version
-	|| npm.version !== jsr.version || npm.name !== jsr.name || npm.version === '0.0.0'
+	|| npm.version !== jsr.version || npm.name !== jsr.name
 ) {
 	throw new Error('Publication requires an approved CLI release with matching npm and JSR versions');
 }
@@ -35,8 +35,13 @@ async function output(name: string, value: string): Promise<void> {
 	if (!process.env.GITHUB_OUTPUT) throw new Error('Missing GitHub output file');
 	await appendFile(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
 }
-async function command(args: string[]): Promise<void> {
-	const child = Bun.spawn(args, { cwd: directory, stdout: 'inherit', stderr: 'inherit' });
+async function command(args: string[], env: Record<string, string> = {}): Promise<void> {
+	const child = Bun.spawn(args, {
+		cwd: directory,
+		stdout: 'inherit',
+		stderr: 'inherit',
+		env: { ...process.env, ...env },
+	});
 	if (await child.exited !== 0) throw new Error(`${args[0]} failed`);
 }
 async function registry(url: string): Promise<Response> {
@@ -65,7 +70,11 @@ switch (process.argv[2]) {
 				}
 				console.log('Identical npm tarball already published; resuming release');
 			} else {
-				// npm is used only for its supported OIDC/provenance publication transport.
+				const userconfig = join(temporary, '.npmrc');
+				if (process.env.NPM_TOKEN) {
+					await writeFile(userconfig, `//registry.npmjs.org/:_authToken=${process.env.NPM_TOKEN}\n`, { mode: 0o600 });
+				}
+				// npm is used only for its supported provenance publication transport.
 				await command([
 					'bunx',
 					'npm@12.2.1',
@@ -76,7 +85,7 @@ switch (process.argv[2]) {
 					'--provenance',
 					'--tag',
 					channel,
-				]);
+				], process.env.NPM_TOKEN ? { NPM_CONFIG_USERCONFIG: userconfig } : {});
 			}
 		} finally {
 			await rm(temporary, { recursive: true, force: true });

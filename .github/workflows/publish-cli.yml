@@ -44,10 +44,16 @@ jobs:
         id: metadata
         run: bun src/tooling/cli/release.ts metadata
         env: { RELEASE_CONTEXT: "${{ steps.release.outputs.context }}" }
+      - uses: $/actions/credentials
+        id: credentials
+        with:
+          aliases: '["npm-token"]'
       - name: Publish npm
         id: npm
         run: bun src/tooling/cli/release.ts npm
-        env: { RELEASE_CONTEXT: "${{ steps.release.outputs.context }}" }
+        env:
+          RELEASE_CONTEXT: ${{ steps.release.outputs.context }}
+          NPM_TOKEN: ${{ fromJSON(steps.credentials.outputs.values)['npm-token'] }}
       - name: Publish JSR
         id: jsr
         if: ${{ !cancelled() && steps.metadata.outcome == 'success' }}
