@@ -9,6 +9,7 @@ import { array, integer, record, sha, text } from '@/model';
 
 type Permission = Record<string, 'read' | 'write'>;
 const ownerLogins = new Map<number, string>();
+const botIdentities = new Map<string, BotIdentity>();
 export class RepositoryGateway {
 	constructor(
 		private credentials: Credentials,
@@ -75,14 +76,27 @@ export class RepositoryGateway {
 			.sign(key);
 	}
 	async botIdentity(): Promise<BotIdentity> {
-		const app = record(await this.call('/app', await this.appToken()));
+		const cached = botIdentities.get(this.credentials.GITHUB_APP_ID);
+		if (cached) return cached;
+		const jwt = await this.appToken();
+		const app = record(await this.call('/app', jwt));
 		const slug = text(app.slug);
 		if (!/^[a-z0-9-]+$/.test(slug)) throw new Error('Invalid App slug');
 		const login = `${slug}[bot]`;
-		const user = record(await this.call(`/users/${encodeURIComponent(login)}`, ''));
+		const installation = await this.ownerInstallation(jwt);
+		const token = text(
+			record(
+				await this.call(`/app/installations/${integer(installation.id)}/access_tokens`, jwt, 'POST', {
+					permissions: { metadata: 'read' },
+				}),
+			).token,
+		);
+		const user = record(await this.call(`/users/${encodeURIComponent(login)}`, token));
 		if (user.login !== login || user.type !== 'Bot') throw new Error('App bot identity mismatch');
 		const id = integer(user.id);
-		return { login, id, email: `${id}+${login}@users.noreply.github.com` };
+		const identity = { login, id, email: `${id}+${login}@users.noreply.github.com` };
+		botIdentities.set(this.credentials.GITHUB_APP_ID, identity);
+		return identity;
 	}
 	async defaultRevision(name: string, id: number): Promise<{ ref: string; sha: string }> {
 		const token = await this.token(name, id, { contents: 'read' });
@@ -237,14 +251,16 @@ export class RepositoryGateway {
 		}
 	}
 	/** Read the proposal head without modifying or creating a branch. */
+	private async ownerInstallation(jwt: string): Promise<Record<string, unknown>> {
+		const installation = array(await this.call('/app/installations?per_page=100', jwt)).map(record)
+			.find(installation => record(installation.account).id === this.ownerId);
+		if (!installation) throw new Error('The GitHub App is not installed on the owner account');
+		return installation;
+	}
 	async ownerLogin(): Promise<string> {
 		const cached = ownerLogins.get(this.ownerId);
 		if (cached) return cached;
-		const installations = array(await this.call('/app/installations?per_page=100', await this.appToken())).map(record);
-		const account = installations.map(installation => record(installation.account))
-			.find(account => account.id === this.ownerId);
-		if (!account) throw new Error('The GitHub App is not installed on the owner account');
-		const login = text(account.login);
+		const login = text(record((await this.ownerInstallation(await this.appToken())).account).login);
 		ownerLogins.set(this.ownerId, login);
 		return login;
 	}
