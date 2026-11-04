@@ -88,7 +88,7 @@ export class Store {
 	async putExecution(execution: Execution): Promise<void> {
 		await this.db
 			.prepare(
-				'INSERT INTO executions(id,repository_id,state,document,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,document=excluded.document,updated_at=excluded.updated_at',
+				'INSERT INTO executions(id,repository_id,state,document,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,document=excluded.document,updated_at=excluded.updated_at WHERE excluded.updated_at>=executions.updated_at',
 			)
 			.bind(
 				execution.id,
