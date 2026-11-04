@@ -1,6 +1,6 @@
 ---
+import Time from '@/components/Time.astro';
 import type { Dashboard } from '@/server/dashboard';
-import { date } from '@/server/dashboard';
 import { submissionLabels } from '@/ui/destinations';
 
 interface Props {
@@ -109,7 +109,7 @@ const repositories = data.repositories.filter(repo =>
 					</div>
 					<div>
 						<dt>Updated</dt>
-						<dd>{date(item.updatedAt)}</dd>
+						<dd><Time value={item.updatedAt} /></dd>
 					</div>
 					{item.checks && (
 						<div>

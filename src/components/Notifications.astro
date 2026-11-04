@@ -1,7 +1,8 @@
 ---
+import Time from '@/components/Time.astro';
 import { notificationKindLabels, notificationKinds } from '@/contract/catalog';
 import { registryPackageLabel } from '@/domain/package-label';
-import { type Dashboard, date } from '@/server/dashboard.ts';
+import type { Dashboard } from '@/server/dashboard.ts';
 
 interface Props {
 	data: Dashboard;
@@ -163,9 +164,7 @@ const destinationName = (id: string) =>
 			{data.notifications.map(delivery => (
 				<tr>
 					<td>
-						<time
-							datetime={new Date(delivery.updatedAt).toISOString()}
-						>{date(delivery.updatedAt)}</time>
+						<Time value={delivery.updatedAt} />
 					</td>
 					<td>
 						{registryPackageLabel(

@@ -7,12 +7,13 @@ import Repositories from '@/components/Repositories.astro';
 import Runs from '@/components/Runs.astro';
 import Secrets from '@/components/Secrets.astro';
 import Security from '@/components/Security.astro';
+import Time from '@/components/Time.astro';
 import WinGet from '@/components/WinGet.astro';
 import { githubHref } from '@/contract/links';
 import { actorLabel, parseActor, runRepository } from '@/domain/audit';
 import Layout from '@/layouts/Dashboard.astro';
 import { bindings } from '@/server/bindings.ts';
-import { dashboard, date } from '@/server/dashboard.ts';
+import { dashboard } from '@/server/dashboard.ts';
 
 const { section } = Astro.props;
 const { actor } = Astro.locals;
@@ -155,9 +156,7 @@ const unconnected = !data.repositories.length
 						return (
 						 <tr>
 							 <td>
-								 <time
-									 datetime={new Date(entry.createdAt).toISOString()}
-								 >{date(entry.createdAt)}</time>
+								 <Time value={entry.createdAt} />
 							 </td>
 							 <td>
 								 {entry.action.replaceAll('.', ' ').replaceAll('-', ' ')}

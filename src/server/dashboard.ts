@@ -114,6 +114,3 @@ export async function dashboard(env: AutomationBindings, actor: string) {
 	};
 }
 export type Dashboard = Awaited<ReturnType<typeof dashboard>>;
-export function date(value: number) {
-	return `${new Date(value).toISOString().replace('T', ' ').slice(0, 16)} UTC`;
-}

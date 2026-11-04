@@ -1,7 +1,8 @@
 ---
+import Time from '@/components/Time.astro';
 import { destinationLabels, watchedRegistries } from '@/contract/catalog';
 import { watchedPackageHref } from '@/contract/links';
-import { type Dashboard, date } from '@/server/dashboard.ts';
+import type { Dashboard } from '@/server/dashboard.ts';
 
 interface Props {
 	data: Dashboard;
@@ -71,9 +72,7 @@ const subscribed = (destinationId: string, registry: string, name: string) =>
 						<td>{pkg.version ?? 'Not checked yet'}</td>
 						<td>
 							{pkg.checkedAt ? (
-								<time
-									datetime={new Date(pkg.checkedAt).toISOString()}
-								>{date(pkg.checkedAt)}</time>
+								<Time value={pkg.checkedAt} />
 							) : 'Never'}{pkg.error && (
 								<span class="badge failed">{pkg.error}</span>
 							)}

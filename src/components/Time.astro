@@ -1,0 +1,9 @@
+---
+import { formatTime, machineTime } from '@/contract/time';
+
+interface Props {
+	value: number;
+}
+const { value } = Astro.props;
+---
+<time datetime={machineTime(value)}>{formatTime(value)}</time>

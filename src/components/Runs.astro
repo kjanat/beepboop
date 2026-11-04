@@ -3,9 +3,10 @@ import { matchesPublication } from '@/automation/package-identity.ts';
 import type { UnreadableExecution } from '@/automation/store.ts';
 import type { Execution } from '@/automation/types.ts';
 import Field from '@/components/Field.astro';
+import Time from '@/components/Time.astro';
+import { formatTime } from '@/contract/time';
 import { defaultTagPolicy, semVer, tagFor } from '@/contract/version';
 import { packageLabel } from '@/domain/package-label';
-import { date } from '@/server/dashboard.ts';
 import { packageDisplayName } from '@/server/package-name';
 import { releaseSetSummaries } from '@/server/releases';
 
@@ -18,7 +19,7 @@ const now = Date.now();
 const waiting = (run: Execution): string | undefined =>
 	run.notBefore !== undefined && run.notBefore > now
 		&& ['pending', 'ready'].includes(run.state)
-		? date(run.notBefore)
+		? formatTime(run.notBefore)
 		: undefined;
 const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 const progress = (run: Execution): string => {
@@ -167,7 +168,7 @@ const refTag = (run: Execution, version: string): string => {
 					 href={`https://github.com/${run.repository}/commit/${run.sourceSha}`}
 				 ><code>{run.sourceSha.slice(0, 12)}</code></a></Field><Field
 				 label="Updated"
-			 >{date(run.updatedAt)}</Field> {run.runId && (
+			 ><Time value={run.updatedAt} /></Field> {run.runId && (
 				 <>
 					 <a
 						 href={`https://github.com/${run.repository}/actions/runs/${run.runId}`}
