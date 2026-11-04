@@ -36,14 +36,14 @@ function wingetDestination(repository: RepositoryRecord) {
 	if (data.latestWinget.kind === 'failed') {
 		return {
 			policy,
-			packageIdentifier: undefined,
+			title: 'WinGet manifest',
 			entry: { label: winget.label, status: 'Submission status unavailable' },
 		};
 	}
 	const submission = data.latestWinget.value.get(repository.id);
 	return {
 		policy,
-		packageIdentifier: submission?.plan.packageIdentifier,
+		title: submission?.plan.packageIdentifier ?? 'WinGet manifest',
 		entry: manifestEntry(wingetOutcome(submission)),
 	};
 }
@@ -210,8 +210,7 @@ function wingetDestination(repository: RepositoryRecord) {
 								{[wingetDestination(repository)].map(winget => winget && (
 									<tr>
 										<td>
-											<code
-											>{winget.packageIdentifier ?? 'WinGet manifest'}</code>
+											<code>{winget.title}</code>
 											<small>
 												<a
 													href={`https://github.com/${repository.name}/blob/${repository.sha}/${
@@ -226,8 +225,8 @@ function wingetDestination(repository: RepositoryRecord) {
 											) : winget.entry.label}: {winget.entry.status}
 										</td>
 										<td>
-											Release tags starting with <code
-											>{winget.policy.tagPrefix}</code>
+											Release tags starting with
+											<code>{winget.policy.tagPrefix}</code>
 										</td>
 									</tr>
 								))}

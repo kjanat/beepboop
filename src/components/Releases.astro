@@ -72,22 +72,31 @@ const preparations = data.executions.filter(e =>
 		<p>
 			A release needs a repository configuration that describes its packages and
 			workflows.
-		</p><a class="button primary" href="/repositories">Set up a repository</a>
+		</p>
+		<a class="button primary" href="/repositories">Set up a repository</a>
 	</article>
 ) : (
 	 <>
 		 <form class="selection" method="get" action="/releases">
-			 <label>Repository<select name="repository">
+			 <label>
+				 Repository
+				 <select name="repository">
 					 {available.map(r => (
 						 <option value={r.id} selected={r.id === repository.id}>
 							 {r.name}
 						 </option>
 					 ))}
-				 </select></label><label>Release stream<select name="stream">
+				 </select>
+			 </label>
+			 <label>
+				 Release stream
+				 <select name="stream">
 					 {streams.map(([name]) => (
 						 <option selected={name === streamName}>{name}</option>
 					 ))}
-				 </select></label><button>Choose</button>
+				 </select>
+			 </label>
+			 <button>Choose</button>
 		 </form>
 		 <p class="hint">
 			 A release stream groups packages and workflows that release together.
@@ -109,11 +118,8 @@ const preparations = data.executions.filter(e =>
 				 ? '/api/releases/plan-set'
 				 : '/api/releases/plan'}
 			 >
-				 <input type="hidden" name="repositoryId" value={repository.id}><input
-					 type="hidden"
-					 name="stream"
-					 value={streamName}
-				 >
+				 <input type="hidden" name="repositoryId" value={repository.id}>
+				 <input type="hidden" name="stream" value={streamName}>
 				 {stream?.versioning === 'independent' ? (
 					 <>
 						 <p>
@@ -126,10 +132,10 @@ const preparations = data.executions.filter(e =>
 								 data-packages={JSON.stringify(group.packages.map(p => packageId(p)))}
 							 >
 								 <legend>
-									 <label class="check"><input
-											 type="checkbox"
-											 name={`include-${group.id}`}
-										 >{group.packages.map(p => p.name).join(', ')}</label>
+									 <label class="check">
+										 <input type="checkbox" name={`include-${group.id}`}>
+										 {group.packages.map(p => p.name).join(', ')}
+									 </label>
 								 </legend>
 								 <ul class="package-list hint">
 									 {group.packages.map(pkg => (
@@ -140,40 +146,51 @@ const preparations = data.executions.filter(e =>
 											 ))}
 										 </li>
 									 ))}
-								 </ul><label>Next version<input
+								 </ul>
+								 <label>
+									 Next version
+									 <input
 										 name={`version-${group.id}`}
 										 placeholder="1.2.3"
 										 value={recommendedVersion(group.packages)}
-									 ></label>
+									 >
+								 </label>
 							 </fieldset>
 						 ))}
-						 <h3>Workflows for this release</h3><p class="hint">
+						 <h3>Workflows for this release</h3>
+						 <p class="hint">
 							 Assign each workflow to a selected version group. Required
 							 dependencies must also be assigned.
 						 </p>
 						 {workflows.filter(w => w.operation !== 'prepare').map(w => (
-							 <label>{w.operation}<small>
-									 {w.file}</small><select data-operation={w.operation}>
-									 <option value="">
-										 Do not include
-									 </option>{groups.map(group => (
+							 <label>
+								 {w.operation}
+								 <small>{w.file}</small>
+								 <select data-operation={w.operation}>
+									 <option value="">Do not include</option>
+									 {groups.map(group => (
 										 <option value={group.id}>
 											 {group.packages.map(p => p.name).join(', ')}
 										 </option>
 									 ))}
-								 </select></label>
+								 </select>
+							 </label>
 						 ))}
 					 </>
 				 ) : (
-						<><ul class="package-list hint">
+						<>
+							<ul class="package-list hint">
 								{packages.map(pkg => (
 									<li>
 										{packageDisplayName(pkg)}
 										{packageStatuses(pkg).map(status => <Badge {...status} />)}
 									</li>
 								))}
-							</ul><div class="form-grid">
-								<label>Version change<select name="versionMode">
+							</ul>
+							<div class="form-grid">
+								<label>
+									Version change
+									<select name="versionMode">
 										<option value="explicit">Set a version</option>
 										<option value="patch">
 											Patch — bug fixes{bump('patch')}
@@ -187,19 +204,31 @@ const preparations = data.executions.filter(e =>
 										<option value="prerelease">Start a prerelease</option>
 										<option value="next">Next prerelease</option>
 										<option value="stable">Promote prerelease to stable</option>
-									</select></label><label data-explicit>Version<input
+									</select>
+								</label>
+								<label data-explicit>
+									Version
+									<input
 										name="version"
 										placeholder="1.2.3"
 										value={recommended}
 										required
-									></label><label data-prerelease hidden>Prerelease
-									base<select name="base">
+									>
+								</label>
+								<label data-prerelease hidden>
+									Prerelease base
+									<select name="base">
 										<option>patch</option>
 										<option>minor</option>
 										<option>major</option>
-									</select></label><label data-prerelease hidden>Prerelease
-									name<input name="identifier" value="alpha"></label>
-							</div></>
+									</select>
+								</label>
+								<label data-prerelease hidden>
+									Prerelease name
+									<input name="identifier" value="alpha">
+								</label>
+							</div>
+						</>
 					)}
 				 <div class="actions">
 					 <button class="primary" name="action" value="prepare">
@@ -221,17 +250,21 @@ const preparations = data.executions.filter(e =>
 					 method="post"
 					 action="/api/releases/start-set"
 				 >
-					 <label>Preparation<select name="preparationId">
+					 <label>
+						 Preparation
+						 <select name="preparationId">
 							 {preparations.map(e => (
 								 <option value={e.id}>
 									 {`${e.repository} (${e.stream}) ${formatTime(e.createdAt)}`}
 								 </option>
 							 ))}
-						 </select></label><label>Merged commit<input
-							 name="sourceSha"
-							 pattern="[a-f0-9]{40}"
-							 required
-						 ></label><button>Start prepared workflows</button>
+						 </select>
+					 </label>
+					 <label>
+						 Merged commit
+						 <input name="sourceSha" pattern="[a-f0-9]{40}" required>
+					 </label>
+					 <button>Start prepared workflows</button>
 				 </form>
 			 </article>
 		 )}
