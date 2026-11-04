@@ -9,7 +9,7 @@ interface Classified {
 
 const d1Failure = /^D1_ERROR\b/;
 
-function classify(error: unknown, incident: string): Classified {
+export function classify(error: unknown, incident: string): Classified {
 	if (error instanceof DomainError) return { problem: error.problem, message: error.message };
 	if (error instanceof z.ZodError) {
 		const problem: ApiError = { code: 'internal', incident };

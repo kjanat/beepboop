@@ -1,4 +1,5 @@
 import { CronExpressionParser } from 'cron-parser';
+import { Effect, Layer } from 'effect';
 import { z } from 'zod';
 import type { AuthBindings } from '@/automation/auth';
 import { resolveConfiguration } from '@/automation/configuration';
@@ -7,7 +8,7 @@ import { createExecution, deriveExecution } from '@/automation/execution';
 import { type Credentials, RepositoryGateway } from '@/automation/github';
 import { type InboxEvent, inboxEvent, type SetupPullEdit } from '@/automation/inbox';
 import { discover, planRelease, resolvePublished, versionsInFiles } from '@/automation/managers';
-import { jsrTokenAlias, prepareJsrPackage } from '@/automation/managers/jsr';
+import { jsrTokenAlias, jsrTokenRefused, setUpJsrPackage } from '@/automation/managers/jsr';
 import { Notifications } from '@/automation/notifications';
 import { matchesPackage } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
@@ -26,6 +27,8 @@ import { setupChoicesSchema } from '@/contract/setup';
 import { configurationDiagnostics, configurationProblem } from '@/domain/configuration';
 import { type Access, type ReadyRepository, readiness, requireReady } from '@/domain/repository';
 import { validateAgainst } from '@/domain/validate';
+import { run } from '@/effect/runtime';
+import { registryLayer, Secrets, secretsLayer } from '@/effect/services';
 import { array, integer, record } from '@/model';
 import { ChangeLog } from '@/persistence/d1/changes';
 import { CLISessionStore } from '@/persistence/d1/cli-sessions';
@@ -244,13 +247,16 @@ export class AutomationService {
 		]);
 		const names = [...ids].flatMap(id => id.startsWith('pkg:jsr/') ? [decodeURIComponent(id.slice(8))] : []);
 		if (!names.length) return;
-		const token = await this.vault().reveal(jsrTokenAlias, `setup:${execution.id}`).then(
-			credential => credential.value,
-			() => {
-				throw precondition(`Store a JSR access token as ${jsrTokenAlias} so Beepboop can set up ${names.join(', ')}`);
-			},
+		const repository = execution.repository;
+		await run(
+			Effect.gen(function*() {
+				const secrets = yield* Secrets;
+				const token = yield* secrets.reveal(jsrTokenAlias, `setup:${execution.id}`).pipe(
+					Effect.catchTag('Refused', () => Effect.fail(jsrTokenRefused(names))),
+				);
+				for (const name of names) yield* setUpJsrPackage(name, repository, token);
+			}).pipe(Effect.provide(Layer.mergeAll(registryLayer(fetch), secretsLayer(this.vault())))),
 		);
-		for (const name of names) await prepareJsrPackage(name, execution.repository, token, fetch);
 	}
 	private async releaseFromManifest(stored: RepositoryRecord): Promise<void> {
 		const state = readiness(stored);

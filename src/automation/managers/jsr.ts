@@ -1,3 +1,4 @@
+import { Effect } from 'effect';
 import { applyEdits, modify, type ParseError, parse } from 'jsonc-parser';
 import { directory, object } from '@/automation/managers/helpers';
 import { type Adapter, emptyInventory, type Fetcher, type RegistryVersion } from '@/automation/managers/registry';
@@ -6,6 +7,8 @@ import { identityOf } from '@/automation/package-identity';
 import { registry } from '@/automation/package-publication';
 import { jsrManifest } from '@/contract/catalog';
 import { fileProblem } from '@/contract/diagnostics';
+import { attempt, type Failure, Refused, Upstream } from '@/effect/errors';
+import { Registry } from '@/effect/services';
 
 const packageName = /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/;
 const precedence = ['jsr.json', 'jsr.jsonc', 'deno.json', 'deno.jsonc'];
@@ -32,44 +35,59 @@ export function jsrLatest(name: string, request: Fetcher): Promise<RegistryVersi
 	});
 }
 export const jsrTokenAlias = 'jsr-token';
-export async function prepareJsrPackage(
+function setupRefused(message: string): Refused {
+	return new Refused({
+		problem: { code: 'precondition', diagnostics: [{ code: 'registry-setup', severity: 'blocking', message }] },
+		message,
+	});
+}
+export function setUpJsrPackage(
 	name: string,
 	repository: string,
-	token: string | undefined,
-	request: Fetcher,
-): Promise<void> {
-	if (!packageName.test(name)) throw new Error('Invalid JSR package name');
-	const [scope, bare] = name.slice(1).split('/');
-	const [owner, repo] = repository.split('/');
-	const call = async (path: string, method = 'GET', body?: unknown): Promise<Response> => {
-		if (method !== 'GET' && !token) {
-			throw new Error(`Store a JSR access token as ${jsrTokenAlias} so Beepboop can set up ${name}`);
+	token: string,
+): Effect.Effect<void, Failure, Registry> {
+	return Effect.gen(function*() {
+		if (!packageName.test(name)) return yield* setupRefused(`Invalid JSR package name ${name}`);
+		const registry = yield* Registry;
+		const [scope, bare] = name.slice(1).split('/');
+		const [owner, repo] = repository.split('/');
+		const call = (path: string, method = 'GET', body?: unknown) =>
+			registry.fetch(`https://api.jsr.io${path}`, {
+				method,
+				redirect: 'manual',
+				signal: AbortSignal.timeout(15_000),
+				headers: {
+					'User-Agent': 'beepboop release setup',
+					Authorization: `Bearer ${token}`,
+					...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+				},
+				...(body === undefined ? {} : { body: JSON.stringify(body) }),
+			}).pipe(Effect.flatMap(response => {
+				if (response.ok || (method === 'GET' && response.status === 404)) return Effect.succeed(response);
+				const failed = `JSR ${method} ${path} failed with HTTP ${response.status}`;
+				return attempt(() => response.text()).pipe(Effect.flatMap(detail =>
+					Effect.fail(
+						response.status >= 500 || response.status === 429
+							? new Upstream({ service: 'registry', message: `${failed}: ${detail}` })
+							: setupRefused(`${failed}: ${detail}`),
+					)
+				));
+			}));
+		const existing = yield* call(`/scopes/${scope}/packages/${bare}`);
+		if (existing.status === 404) yield* call(`/scopes/${scope}/packages`, 'POST', { package: bare });
+		const linked = existing.ok ? object(object(yield* attempt(() => existing.json())).githubRepository) : {};
+		if (linked.owner === undefined) {
+			yield* call(`/scopes/${scope}/packages/${bare}`, 'PATCH', { githubRepository: { owner, name: repo } });
+		} else if (linked.owner !== owner || linked.name !== repo) {
+			return yield* setupRefused(
+				`${name} is linked to ${String(linked.owner)}/${String(linked.name)}, not ${repository}`,
+			);
 		}
-		const response = await request(`https://api.jsr.io${path}`, {
-			method,
-			redirect: 'manual',
-			signal: AbortSignal.timeout(15_000),
-			headers: {
-				'User-Agent': 'beepboop release setup',
-				...(token ? { Authorization: `Bearer ${token}` } : {}),
-				...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-			},
-			...(body === undefined ? {} : { body: JSON.stringify(body) }),
-		});
-		if (!response.ok && !(method === 'GET' && response.status === 404)) {
-			throw new Error(`JSR ${method} ${path} failed: HTTP ${response.status} ${await response.text()}`);
-		}
-		return response;
-	};
-	const existing = await call(`/scopes/${scope}/packages/${bare}`);
-	if (existing.status === 404) await call(`/scopes/${scope}/packages`, 'POST', { package: bare });
-	const linked = existing.ok ? object(object(await existing.json()).githubRepository) : {};
-	if (linked.owner === undefined) {
-		await call(`/scopes/${scope}/packages/${bare}`, 'PATCH', { githubRepository: { owner, name: repo } });
-	} else if (linked.owner !== owner || linked.name !== repo) {
-		throw new Error(`${name} is linked to ${String(linked.owner)}/${String(linked.name)}, not ${repository}`);
-	}
-	if (token) await call(`/scopes/${scope}`, 'PATCH', { ghActionsVerifyActor: false });
+		yield* call(`/scopes/${scope}`, 'PATCH', { ghActionsVerifyActor: false });
+	});
+}
+export function jsrTokenRefused(names: string[]): Refused {
+	return setupRefused(`Store a JSR access token as ${jsrTokenAlias} so Beepboop can set up ${names.join(', ')}`);
 }
 export const jsrManager: Adapter<'jsr'> = {
 	name: 'jsr',
