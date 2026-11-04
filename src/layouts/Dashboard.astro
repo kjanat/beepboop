@@ -1,5 +1,6 @@
 ---
 import icon from '@root/assets/beepboop-icon.png';
+import { githubOutage } from '@/server/github-status.ts';
 import '@/styles/dashboard.css';
 
 interface Props {
@@ -8,6 +9,7 @@ interface Props {
 	section: string;
 }
 const { title, description, section } = Astro.props;
+const outage = await githubOutage();
 const navigation = [
 	['overview', '/', 'Overview'],
 	['repositories', '/repositories', 'Repositories'],
@@ -72,6 +74,34 @@ const navigation = [
 			</div>
 		</aside>
 		<main id="main">
+			{outage && (
+				<section class="outage" role="alert">
+					<p>
+						<strong>GitHub: {outage.description}.</strong> Beepboop's runs,
+						pushes and pull requests may fail or stall until GitHub recovers.
+					</p>
+					{outage.incidents.length > 0 && (
+						<ul>
+							{outage.incidents.map(incident => (
+								<li>
+									<a href={incident.url}>{incident.name}</a> ({incident.status})
+								</li>
+							))}
+						</ul>
+					)}
+					{outage.components.length > 0 && (
+						<p>
+							Affected:
+							{outage.components.map(component => `${component.name} (${component.status})`)
+								.join(', ')}
+						</p>
+					)}
+					<p>
+						<a href={outage.page}>Live status</a> <small><a href={outage.source}
+							>githubstatus.com</a></small>
+					</p>
+				</section>
+			)}
 			<header class="page-header">
 				<div>
 					<p class="eyebrow">Release automation</p>

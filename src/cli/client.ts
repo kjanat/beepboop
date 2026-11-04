@@ -23,6 +23,13 @@ function reason(body: string): string {
 		return body;
 	}
 }
+let warned = false;
+function warnOutage(response: Response): void {
+	const notice = response.headers.get('beepboop-github-status');
+	if (!notice || warned) return;
+	warned = true;
+	process.stderr.write(`warning: ${notice}\n`);
+}
 export function serverOrigin(value: string): string {
 	const url = new URL(value);
 	if (
@@ -88,6 +95,7 @@ export class Client {
 			redirect: 'error',
 			signal: AbortSignal.timeout(30000),
 		});
+		warnOutage(response);
 		if (response.status === 401) throw failure('Session revoked', 'SESSION_REVOKED', signIn);
 		if (!response.ok) {
 			throw failure(`Beepboop request failed (${response.status}): ${reason(await response.text())}`, 'REQUEST_FAILED');
@@ -108,6 +116,7 @@ export class Client {
 				redirect: 'error',
 				signal,
 			});
+			warnOutage(response);
 			if (response.status === 202) {
 				await Bun.sleep(1500);
 				continue;
