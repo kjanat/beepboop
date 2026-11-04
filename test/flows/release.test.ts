@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { z } from 'zod';
 import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { runAction } from '../support/actions.ts';
 import { botId, ownerId } from '../support/github.ts';
 import { bearer, type Reply, text } from '../support/http.ts';
-import { passChecks, widget } from '../support/repositories.ts';
+import { passChecks, widget, widgetConfiguration } from '../support/repositories.ts';
 import { World } from '../support/world.ts';
 
 let world: World;
@@ -101,4 +102,44 @@ test('a managed release travels from discovery to a verified publication', async
 	expect(journal.some(entry => entry.key.startsWith('release-event:'))).toBe(true);
 	expect(world.github.unhandled).toEqual([]);
 	expect(world.network.unrouted).toEqual([]);
+});
+
+test('a promotion whose workflow branch was deleted fails with the missing ref named', async () => {
+	const repository = widget(world.github);
+	world.npm.publish('widget', '1.0.0');
+	const configuration = z.looseObject({
+		streams: z.looseObject({
+			main: z.looseObject({ promote: z.looseObject({ workflow: z.looseObject({}) }) }),
+		}),
+	}).parse(JSON.parse(widgetConfiguration()));
+	configuration.streams.main.promote.workflow.ref = 'release-line';
+	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Release from a branch');
+	passChecks(repository, world.github.head(repository));
+	const api = bearer(world, await world.cliSession());
+	await api('/api/repositories/discover', { repository: 'octo/widget' });
+
+	const request = { repositoryId: repository.id, stream: 'main', version: '1.1.0' };
+	const plan = await api('/api/releases/plan', request);
+	await api('/api/releases/prepare', {
+		...request,
+		sourceSha: text(plan.body, 'sourceSha'),
+		planId: text(plan.body, 'planId'),
+	});
+	await world.wait(20_000);
+	const [pull] = repository.pulls;
+	if (!pull) throw new Error('No preparation pull request');
+	const merged = world.github.merge(repository, pull.number);
+	passChecks(repository, merged.sha);
+	repository.refs.set('heads/release-line', merged.sha);
+	await world.push(repository);
+	const promotion = await only(api, 'promote');
+	const approved = await api('/api/executions/approve', { id: promotion.id, sourceSha: merged.sha });
+	expect(text(approved.body, 'state')).toBe('ready');
+
+	repository.refs.delete('heads/release-line');
+	await world.wait(16_000);
+	expect(world.github.dispatches).toEqual([]);
+	expect((await only(api, 'promote')).reason).toBe(
+		'Beepboop could not continue: Workflow ref release-line no longer exists',
+	);
 });

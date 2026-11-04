@@ -923,10 +923,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private async refHead(execution: Execution, token: string): Promise<{ ref: string; sha: string } | undefined> {
 		const ref = execution.workflow?.ref.replace(/^refs\/(heads|tags)\//, '');
 		if (!ref) return undefined;
-		const commit = record(
-			await this.gateway().call(`/repos/${execution.repository}/commits/${encodeURIComponent(ref)}`, token),
+		const commit = await this.gateway().call(
+			`/repos/${execution.repository}/commits/${encodeURIComponent(ref)}`,
+			token,
 		);
-		return { ref, sha: text(commit.sha) };
+		if (commit === null) throw new Error(`Workflow ref ${ref} no longer exists`);
+		return { ref, sha: text(record(commit).sha) };
 	}
 	private async redispatch(execution: Execution, publications: Publication[]): Promise<void> {
 		const gateway = this.gateway(),
