@@ -392,7 +392,7 @@ export function setupBody(plan: SetupPlan): string {
 		+ plan.choices.streams.map(stream => {
 			const packages = options.flatMap(option =>
 				option.kind === 'package' && option.stream === stream.name
-					? [box('    ', option, `\`${packageLabel(option.package)}\``)]
+					? [box('    ', option, packageLabel(option.package))]
 					: []
 			);
 			return [

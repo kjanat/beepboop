@@ -1,9 +1,11 @@
 ---
 import { matchesPublication } from '@/automation/package-identity.ts';
 import type { Execution } from '@/automation/types.ts';
+import Field from '@/components/Field.astro';
 import { date } from '@/server/dashboard.ts';
 import { packageUrl } from '@/server/package-url';
 import { releaseSetSummaries } from '@/server/releases';
+import { packageLabel } from '@/ui/package-label';
 
 interface Props {
 	executions: Execution[];
@@ -109,9 +111,12 @@ const progress = (run: Execution): string => {
 			 <div>
 				 <p class="eyebrow">{run.repository} / {run.stream}</p>
 				 <h2>
-					 {run.version ? `Version ${run.version}` : 'Workflow operation'} <span
+					 {run.version ? `Version ${run.version}` : 'Workflow operation'}<Field
 						 class="muted"
-					 >{`Operation: ${run.operation}${run.package ? ` for ${run.package.id}` : ''}`}</span>
+						 label="Operation"
+					 >{run.operation}{run.package && (
+						 <Field label="for">{packageLabel(run.package.id)}</Field>
+					 )}</Field>
 				 </h2>
 			 </div><span
 				 class:list={['badge', run.state]}
@@ -136,10 +141,11 @@ const progress = (run: Execution): string => {
 			 </p>
 		 )}
 		 <p class="metadata metadata-fields">
-			 <span>Commit <a
+			 <Field label="Commit"><a
 					 href={`https://github.com/${run.repository}/commit/${run.sourceSha}`}
-				 ><code>{run.sourceSha.slice(0, 12)}</code></a></span><span
-			 >{`Updated ${date(run.updatedAt)}`}</span> {run.runId && (
+				 ><code>{run.sourceSha.slice(0, 12)}</code></a></Field><Field
+				 label="Updated"
+			 >{date(run.updatedAt)}</Field> {run.runId && (
 				 <>
 					 <a
 						 href={`https://github.com/${run.repository}/actions/runs/${run.runId}`}
@@ -163,9 +169,9 @@ const progress = (run: Execution): string => {
 						 {run.publications.map(p => (
 							 <tr>
 								 <td>
-									 <code>{p.id.startsWith('refs:')
+									 <span>{p.id.startsWith('refs:')
 									 	? `tag ${run.workflow?.refs?.prefix ?? 'v'}${p.version}`
-									 	: packageUrl(p)}</code><small>
+									 	: packageUrl(p)}</span><small>
 										 {p.required ? 'required' : 'optional'}</small>
 								 </td>
 								 <td>{p.version}</td>
@@ -182,8 +188,9 @@ const progress = (run: Execution): string => {
 		 	&& run.state !== 'cancelled'
 		 	&& (
 				<p class="notice">
-					Still to publish:
-					{missing.map(id => decodeURIComponent(id)).join(', ')}.
+					<Field
+						label="Still to publish"
+					>{missing.map(packageLabel).join(', ')}</Field>
 				</p>
 			)}
 		 {approving && (

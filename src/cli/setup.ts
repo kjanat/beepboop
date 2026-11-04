@@ -18,7 +18,10 @@ export async function chooseSetup(plan: SetupPlan, ask: Ask): Promise<SetupChoic
 	const choices: SetupChoices = { streams: [] };
 	const candidates = plan.inventory.packages.flatMap((pkg, index) =>
 		publishable(pkg)
-			? [{ value: plan.packageIds[index] ?? '', label: `${pkg.name} (${packageLabel(plan.packageIds[index] ?? '')})` }]
+			? [{
+				value: plan.packageIds[index] ?? '',
+				label: `${packageLabel(plan.packageIds[index] ?? '')} (${pkg.manifest})`,
+			}]
 			: []
 	);
 	if (!candidates.length) {

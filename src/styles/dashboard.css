@@ -791,3 +791,16 @@ dd {
 	margin-left: 8px;
 	color: var(--muted);
 }
+
+.field {
+	display: inline-flex;
+	flex-wrap: wrap;
+	gap: 0.35em;
+	align-items: baseline;
+}
+.field-label {
+	color: var(--muted);
+}
+h2 > .field {
+	margin-inline-start: 0.5em;
+}

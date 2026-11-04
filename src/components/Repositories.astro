@@ -3,6 +3,7 @@ import { wingetOutcome } from '@/automation/destinations';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
 import { publishedOutsideRequired } from '@/automation/setup';
 import type { RepositoryRecord } from '@/automation/types';
+import Field from '@/components/Field.astro';
 import type { Dashboard } from '@/server/dashboard.ts';
 import { date, workflowChoices } from '@/server/dashboard.ts';
 import { packageUrl } from '@/server/package-url';
@@ -140,7 +141,7 @@ function wingetDestination(repository: RepositoryRecord) {
 									{repository.inventory.packages.filter(publishable).map(p => (
 										<tr>
 											<td>
-												<code>{packageUrl(p)}</code><small><a
+												<span>{packageUrl(p)}</span><small><a
 														href={`https://github.com/${repository.name}/blob/${repository.sha}/${
 															p.manifest.split('/').map(encodeURIComponent).join('/')
 														}`}
@@ -268,8 +269,9 @@ function wingetDestination(repository: RepositoryRecord) {
 						[name, stream],
 					) => (
 						<p>
-							<strong
-							>{name}</strong>{`: ${stream.required.join(', ') || 'No publications configured'}`}
+							<Field
+								label={name}
+							>{stream.required.map(packageLabel).join(', ') || 'No publications configured'}</Field>
 						</p>
 					))}{repository.configuration.subscriptions.map(s => (
 						<p>

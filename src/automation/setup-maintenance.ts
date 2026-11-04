@@ -47,7 +47,7 @@ export async function maintainSetup(
 	const summary = `Inspected [${snapshot.sha}](https://github.com/${name}/commit/${snapshot.sha}).\n\n`
 		+ 'Discovered packages:\n'
 		+ inventory.packages.map(pkg =>
-			`- \`${publishable(pkg) ? packageLabel(packageId(pkg)) : pkg.name}\` (${
+			`- ${publishable(pkg) ? packageLabel(packageId(pkg)) : pkg.name} (${
 				[pkg.manifest, exclusionLabel(pkg.publication)].filter(Boolean).join(', ')
 			})`
 		).join(

@@ -180,7 +180,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 			publishable(pkg)
 				? [[
 					planPackageIds(plan)[index] ?? '',
-					`${pkg.name} — ${packageLabel(planPackageIds(plan)[index] ?? '')} (${pkg.manifest})`,
+					`${packageLabel(planPackageIds(plan)[index] ?? '')} (${pkg.manifest})`,
 				]]
 				: []
 		);
