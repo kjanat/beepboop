@@ -95,7 +95,9 @@ export async function workflowIdentity(
 		attempt: integer(Number(payload.run_attempt)),
 		sha: sha(payload.sha),
 		workflowSha: sha(payload.workflow_sha),
-		...(payload.job_workflow_sha === undefined ? {} : { helperSha: sha(payload.job_workflow_sha) }),
+		...(payload.job_workflow_sha === undefined || payload.job_workflow_ref === payload.workflow_ref
+			? {}
+			: { helperSha: sha(payload.job_workflow_sha) }),
 		workflowRef: text(payload.workflow_ref),
 		ref: text(payload.ref),
 		event: text(payload.event_name),
