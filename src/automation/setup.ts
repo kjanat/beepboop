@@ -148,9 +148,14 @@ export async function previewSetup(
 		if (new Set(selected.map(packageId)).size !== selected.length) {
 			blockers.push(`${selection.name}: duplicate package identities need distinct package configuration.`);
 		}
-		const required = selected.filter(requirablePackage).map(packageId);
 		for (const pkg of selected) managers.add(pkg.manager);
 		const current = object(streams[selection.name]);
+		const key = (value: unknown) => selectorKey(String(value), inventory.packages);
+		const configuredRequired = Array.isArray(current.required) ? current.required.map(key) : undefined;
+		const optional = configuredRequired && Array.isArray(current.packages)
+			? current.packages.map(key).filter(id => !configuredRequired.includes(id))
+			: [];
+		const required = selected.filter(requirablePackage).map(packageId).filter(id => !optional.includes(key(id)));
 		const updated = {
 			...current,
 			packages: selection.packages,
