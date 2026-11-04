@@ -3,11 +3,13 @@ import { winget, wingetOutcome } from '@/automation/destinations';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
 import { publishedOutsideRequired } from '@/automation/setup';
 import type { RepositoryRecord } from '@/automation/types';
+import Badge from '@/components/Badge.astro';
 import Field from '@/components/Field.astro';
 import Time from '@/components/Time.astro';
 import { packageLabel } from '@/domain/package-label';
 import type { ViewOf } from '@/server/loaders.ts';
 import { packageDisplayName } from '@/server/package-name';
+import { repositoryStatus } from '@/server/views/tone.ts';
 import { workflowChoices } from '@/server/views/workflows.ts';
 import {
 	manifestEntry,
@@ -69,9 +71,8 @@ function wingetDestination(repository: RepositoryRecord) {
 {data.repositories.unreadable.map(row => (
 	<article id={`repository-${row.id}`}>
 		<div class="section-heading">
-			<h2><a href={`https://github.com/${row.name}`}>{row.name} ↗</a></h2><span
-				class="badge failed"
-			>Record unreadable</span>
+			<h2><a href={`https://github.com/${row.name}`}>{row.name} ↗</a></h2>
+			<Badge tone="error" label="Record unreadable" />
 		</div>
 		<pre>{row.error}</pre>
 	</article>
@@ -91,18 +92,8 @@ function wingetDestination(repository: RepositoryRecord) {
 								href={`https://github.com/${repository.name}/commit/${repository.sha}`}
 							><code>{repository.sha.slice(0, 12)}</code></a></span>
 					</p>
-				</div><span
-					class:list={[
-						'badge',
-						repository.suspended || repository.diagnostics.length
-							? 'blocked'
-							: 'succeeded',
-					]}
-				>{repository.suspended
-					? 'App access unavailable'
-					: repository.configuration && !repository.diagnostics.length
-					? 'Configured'
-					: 'Setup needed'}</span>
+				</div>
+				<Badge {...repositoryStatus(repository)} />
 			</summary>
 			{repository.diagnostics.map(message => <p class="notice">{message}</p>)}
 			{publishedOutsideRequired(repository).map(gap => (

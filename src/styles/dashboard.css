@@ -338,20 +338,23 @@ article {
 	font-size: 12px;
 	font-weight: 650;
 }
-.badge.succeeded {
+.badge[data-tone="ok"] {
 	background: var(--badge-green);
 	color: var(--green);
 }
-.badge.failed, .badge.cancelled {
+.badge[data-tone="error"] {
 	background: var(--badge-red);
 	color: var(--red);
 }
-.badge.blocked, .badge.uncertain {
+.badge[data-tone="warn"] {
 	background: var(--badge-amber);
 	color: var(--amber-ink);
 }
-.badge.running, .badge.ready {
+.badge[data-tone="active"] {
 	background: var(--badge-blue);
+	color: var(--blue);
+}
+.badge[data-tone="waiting"] {
 	color: var(--blue);
 }
 .notice {
@@ -712,13 +715,16 @@ dd {
 	gap: 0.35rem 1.25rem;
 	align-items: baseline;
 }
-.package-line {
-	display: block;
-	margin-block: 0.25rem;
+.package-list, .publication-list {
+	list-style: none;
+	padding: 0;
+	display: grid;
+	gap: 0.5rem;
 }
-.publication-list .badge {
-	display: inline-flex;
-	gap: 1rem;
+.package-list li, .publication-list li, .run-link {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
 	align-items: baseline;
 }
 

@@ -1,6 +1,7 @@
 ---
 import { matchesPublication } from '@/automation/package-identity.ts';
 import type { Execution } from '@/automation/types.ts';
+import Badge from '@/components/Badge.astro';
 import Field from '@/components/Field.astro';
 import Time from '@/components/Time.astro';
 import { formatTime } from '@/contract/time';
@@ -9,6 +10,11 @@ import { packageLabel } from '@/domain/package-label';
 import type { ViewOf } from '@/server/loaders.ts';
 import { packageDisplayName } from '@/server/package-name';
 import { releaseSetSummaries } from '@/server/releases';
+import {
+	executionTone,
+	publicationTone,
+	releaseSetTone,
+} from '@/server/views/tone.ts';
 
 interface Props {
 	data: ViewOf<'runs'>;
@@ -40,7 +46,7 @@ const refTag = (run: Execution, version: string): string => {
 				<p class="eyebrow">{release.repository}</p>
 				<h2>Monorepo release</h2>
 			</div>
-			<span class="badge">{release.state}</span>
+			<Badge tone={releaseSetTone[release.state]} label={release.state} />
 		</div>
 		<p>
 			{release.complete} of {release.total} operations complete. Each package
@@ -101,7 +107,8 @@ const refTag = (run: Execution, version: string): string => {
 			<div>
 				<p class="eyebrow">Repository {row.repositoryId}</p>
 				<h2>Execution <code>{row.id.slice(0, 12)}</code></h2>
-			</div><span class="badge failed">record unreadable</span>
+			</div>
+			<Badge tone="error" label="record unreadable" />
 		</div>
 		<pre>{row.error}</pre>
 	</article>
@@ -142,7 +149,8 @@ const refTag = (run: Execution, version: string): string => {
 						 <Field label="for">{packageLabel(run.package.id)}</Field>
 					 )}</Field>
 				 </h2>
-			 </div><span class:list={['badge', run.state]}>{run.state}</span>
+			 </div>
+			 <Badge tone={executionTone[run.state]} label={run.state} />
 		 </div>
 		 <p>
 			 {approving
@@ -198,7 +206,7 @@ const refTag = (run: Execution, version: string): string => {
 								 </td>
 								 <td>{p.version}</td>
 								 <td>
-									 <span class:list={['badge', p.outcome]}>{p.outcome}</span>
+									 <Badge tone={publicationTone[p.outcome]} label={p.outcome} />
 								 </td>
 							 </tr>
 						 ))}

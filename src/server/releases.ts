@@ -1,5 +1,5 @@
 import { matchesPublication } from '@/automation/package-identity';
-import type { Execution } from '@/automation/types.ts';
+import type { Execution, Publication } from '@/automation/types.ts';
 
 /** Never combine evidence from different commits, configurations, or versions. */
 export function releaseSummaries(executions: Execution[]) {
@@ -25,7 +25,8 @@ export function releaseSummaries(executions: Execution[]) {
 		const publications = required.map(id => {
 			const reports = runs.flatMap(run => run.publications.filter(publication => matchesPublication(id, publication)));
 			const succeeded = reports.find(report => report.outcome === 'succeeded');
-			return { id, outcome: succeeded?.outcome ?? reports.at(-1)?.outcome ?? 'waiting' };
+			const outcome: Publication['outcome'] | 'waiting' = succeeded?.outcome ?? reports.at(-1)?.outcome ?? 'waiting';
+			return { id, outcome };
 		});
 		const verified = publications.filter(p => p.outcome === 'succeeded').length;
 		return {
@@ -41,6 +42,8 @@ export function releaseSummaries(executions: Execution[]) {
 		};
 	}).sort((a, b) => b.updatedAt - a.updatedAt);
 }
+
+export type ReleaseSetState = 'succeeded' | 'needs attention' | 'awaiting approval' | 'in progress';
 
 /** Group the operations of one frozen monorepo release, including independent versions. */
 export function releaseSetSummaries(executions: Execution[]) {
@@ -59,6 +62,13 @@ export function releaseSetSummaries(executions: Execution[]) {
 		const complete = runs.filter(run => run.state === 'succeeded').length;
 		const error = runs.find(run => run.releaseSet?.workflowError)?.releaseSet?.workflowError;
 		const attention = Boolean(error) || runs.some(run => ['failed', 'cancelled', 'uncertain'].includes(run.state));
+		const state: ReleaseSetState = complete === total
+			? 'succeeded'
+			: attention
+			? 'needs attention'
+			: runs.some(run => run.operation === 'promote' && run.state === 'blocked')
+			? 'awaiting approval'
+			: 'in progress';
 		return {
 			id,
 			repository: first.repository,
@@ -68,11 +78,7 @@ export function releaseSetSummaries(executions: Execution[]) {
 			runs,
 			error,
 			recoveryId: first.id,
-			state: complete === total ? 'succeeded' : attention
-				? 'needs attention'
-				: runs.some(run => run.operation === 'promote' && run.state === 'blocked')
-				? 'awaiting approval'
-				: 'in progress',
+			state,
 		};
 	});
 }

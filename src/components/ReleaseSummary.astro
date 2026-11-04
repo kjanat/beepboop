@@ -1,6 +1,12 @@
 ---
+import Badge from '@/components/Badge.astro';
 import { packageLabel } from '@/domain/package-label';
 import type { releaseSummaries } from '@/server/releases.ts';
+import {
+	executionTone,
+	publicationTone,
+	releaseStatus,
+} from '@/server/views/tone.ts';
 
 interface Props {
 	releases: ReturnType<typeof releaseSummaries>;
@@ -15,22 +21,8 @@ const { releases } = Astro.props;
 				<h2>
 					{release.version ? `Version ${release.version}` : 'Release preparation'}
 				</h2>
-			</div><span
-				class:list={[
-					'badge',
-					release.attention
-						? 'blocked'
-						: release.publications.length
-								&& release.verified === release.publications.length
-						? 'succeeded'
-						: 'running',
-				]}
-			>{release.attention
-				? 'Needs attention'
-				: release.publications.length
-						&& release.verified === release.publications.length
-				? 'Required publications verified'
-				: 'In progress'}</span>
+			</div>
+			<Badge {...releaseStatus(release)} />
 		</div>
 		<p class="metadata">
 			Commit <a
@@ -41,12 +33,15 @@ const { releases } = Astro.props;
 			<><p>
 					<strong>{release.verified} of {release.publications.length}</strong>
 					required publications verified.
-				</p><div class="publication-list">
+				</p>
+				<ul class="publication-list">
 					{release.publications.map(p => (
-						<span class:list={['badge', p.outcome]}><span
-							>{packageLabel(p.id)}</span><span>{p.outcome}</span></span>
+						<li>
+							{packageLabel(p.id)}
+							<Badge tone={publicationTone[p.outcome]} label={p.outcome} />
+						</li>
 					))}
-				</div></>
+				</ul></>
 		) : (
 			 <p class="hint">
 				 No required publications are configured for this stream. Workflow
@@ -55,9 +50,10 @@ const { releases } = Astro.props;
 		 )}
 		<div class="actions">
 			{release.runs.map(run => (
-				<a href={`/runs#${run.id}`}><span>{run.operation}</span> <span
-						class="badge"
-					>{run.state}</span></a>
+				<a class="run-link" href={`/runs#${run.id}`}>
+					{run.operation}
+					<Badge tone={executionTone[run.state]} label={run.state} />
+				</a>
 			))}
 		</div>
 	</article>

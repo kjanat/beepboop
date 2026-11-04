@@ -1,0 +1,10 @@
+---
+import type { Tone } from '@/contract/views';
+
+interface Props {
+	tone: Tone;
+	label: string;
+}
+const { tone, label } = Astro.props;
+---
+<span class="badge" data-tone={tone}>{label}</span>

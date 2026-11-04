@@ -6,7 +6,9 @@ import {
 	recommendedVersion,
 } from '@/automation/release-version';
 import type { Package } from '@/automation/types';
+import Badge from '@/components/Badge.astro';
 import { formatTime } from '@/contract/time';
+import type { Status } from '@/contract/views';
 import type { ViewOf } from '@/server/loaders.ts';
 import { packageDisplayName } from '@/server/package-name';
 import { workflowChoices } from '@/server/views/workflows.ts';
@@ -52,10 +54,11 @@ const bump = (kind: 'patch' | 'minor' | 'major') => {
 	const version = bumpedVersion(packages, { bump: kind });
 	return version ? ` (${version})` : '';
 };
-function manifestNote(pkg: Package): string | undefined {
+function packageStatuses(pkg: Package): Status[] {
+	const published: Status = { tone: 'neutral', label: primaryStatus(pkg) };
 	return pkg.version && pkg.version !== pkg.published
-		? `Manifest ${pkg.version}`
-		: undefined;
+		? [published, { tone: 'neutral', label: `Manifest ${pkg.version}` }]
+		: [published];
 }
 const preparations = data.executions.filter(e =>
 	e.state === 'succeeded' && e.repositoryId === repository?.id
@@ -128,15 +131,16 @@ const preparations = data.executions.filter(e =>
 											 name={`include-${group.id}`}
 										 >{group.packages.map(p => p.name).join(', ')}</label>
 								 </legend>
-								 <p class="hint">
+								 <ul class="package-list hint">
 									 {group.packages.map(pkg => (
-										 <span class="package-line">{packageDisplayName(pkg)}<span
-												 class="badge"
-											 >{primaryStatus(pkg)}</span>{manifestNote(pkg) && (
-												 <span class="badge">{manifestNote(pkg)}</span>
-											 )}</span>
+										 <li>
+											 {packageDisplayName(pkg)}
+											 {packageStatuses(pkg).map(status => (
+												 <Badge {...status} />
+											 ))}
+										 </li>
 									 ))}
-								 </p><label>Next version<input
+								 </ul><label>Next version<input
 										 name={`version-${group.id}`}
 										 placeholder="1.2.3"
 										 value={recommendedVersion(group.packages)}
@@ -161,15 +165,14 @@ const preparations = data.executions.filter(e =>
 						 ))}
 					 </>
 				 ) : (
-						<><p class="hint">
+						<><ul class="package-list hint">
 								{packages.map(pkg => (
-									<span class="package-line">{packageDisplayName(pkg)}<span
-											class="badge"
-										>{primaryStatus(pkg)}</span>{manifestNote(pkg) && (
-											<span class="badge">{manifestNote(pkg)}</span>
-										)}</span>
+									<li>
+										{packageDisplayName(pkg)}
+										{packageStatuses(pkg).map(status => <Badge {...status} />)}
+									</li>
 								))}
-							</p><div class="form-grid">
+							</ul><div class="form-grid">
 								<label>Version change<select name="versionMode">
 										<option value="explicit">Set a version</option>
 										<option value="patch">

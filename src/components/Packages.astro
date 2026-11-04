@@ -1,4 +1,5 @@
 ---
+import Badge from '@/components/Badge.astro';
 import Time from '@/components/Time.astro';
 import { destinationLabels, watchedRegistries } from '@/contract/catalog';
 import { watchedPackageHref } from '@/contract/links';
@@ -64,7 +65,7 @@ const subscribed = (destinationId: string, registry: string, name: string) =>
 				{data.packages.map(pkg => (
 					<tr>
 						<td>
-							<span class="badge">{destinationLabels[pkg.registry]}</span>
+							<Badge tone="neutral" label={destinationLabels[pkg.registry]} />
 							<a
 								href={watchedPackageHref(pkg.registry, pkg.name)}
 							>{pkg.name}</a>
@@ -74,28 +75,34 @@ const subscribed = (destinationId: string, registry: string, name: string) =>
 							{pkg.checkedAt ? (
 								<Time value={pkg.checkedAt} />
 							) : 'Never'}{pkg.error && (
-								<span class="badge failed">{pkg.error}</span>
+								<Badge tone="error" label={pkg.error} />
 							)}
 						</td>
 						<td>
-							{pkg.publishers.length
-								? pkg.publishers.map(name => (
-								 <a
-									 class="package-line"
-									 href={`/repositories?repository=${encodeURIComponent(name)}`}
-								 >{name}</a>
-							 ))
-								: '—'}
+							{pkg.publishers.length ? (
+								<ul class="package-list">
+									{pkg.publishers.map(name => (
+										<li>
+											<a
+												href={`/repositories?repository=${encodeURIComponent(name)}`}
+											>{name}</a>
+										</li>
+									))}
+								</ul>
+							) : '—'}
 						</td>
 						<td>
-							{pkg.dependents.length
-								? pkg.dependents.map(name => (
-								 <a
-									 class="package-line"
-									 href={`/repositories?repository=${encodeURIComponent(name)}`}
-								 >{name}</a>
-							 ))
-								: '—'}
+							{pkg.dependents.length ? (
+								<ul class="package-list">
+									{pkg.dependents.map(name => (
+										<li>
+											<a
+												href={`/repositories?repository=${encodeURIComponent(name)}`}
+											>{name}</a>
+										</li>
+									))}
+								</ul>
+							) : '—'}
 						</td>
 						<td>
 							{data.destinations.length

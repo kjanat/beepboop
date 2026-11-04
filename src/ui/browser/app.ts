@@ -173,12 +173,18 @@ function inspecting(form: HTMLFormElement, name: string): () => void {
 	if (!card) return () => {};
 	if (form.querySelector('input[type="hidden"][name="repository"]')) {
 		const badge = find(card, 'summary .badge', HTMLElement);
-		const previous = badge?.textContent ?? '';
+		const previous = { label: badge?.textContent ?? '', tone: badge?.dataset.tone ?? 'neutral' };
 		card.classList.add('pending');
-		if (badge) badge.textContent = 'Inspecting…';
+		if (badge) {
+			badge.textContent = 'Inspecting…';
+			badge.dataset.tone = 'active';
+		}
 		return () => {
 			card.classList.remove('pending');
-			if (badge) badge.textContent = previous;
+			if (badge) {
+				badge.textContent = previous.label;
+				badge.dataset.tone = previous.tone;
+			}
 		};
 	}
 	const placeholder = node('article', '');
@@ -186,7 +192,8 @@ function inspecting(form: HTMLFormElement, name: string): () => void {
 	const heading = node('div', '');
 	heading.className = 'section-heading';
 	const badge = node('span', 'Inspecting…');
-	badge.className = 'badge running';
+	badge.className = 'badge';
+	badge.dataset.tone = 'active';
 	heading.append(node('h2', name), badge);
 	placeholder.append(heading);
 	card.after(placeholder);

@@ -1,6 +1,8 @@
 ---
+import Badge from '@/components/Badge.astro';
 import Time from '@/components/Time.astro';
 import type { ViewOf } from '@/server/loaders.ts';
+import { submissionTone } from '@/server/views/tone.ts';
 import { submissionLabels } from '@/ui/destinations';
 
 interface Props {
@@ -107,9 +109,10 @@ const repositories = data.repositories.filter(repo =>
 					 <div>
 						 <dt>Status</dt>
 						 <dd>
-							 <span
-								 class:list={['badge', item.state]}
-							 >{submissionLabels[item.state]}</span>
+							 <Badge
+								 tone={submissionTone[item.state]}
+								 label={submissionLabels[item.state]}
+							 />
 						 </dd>
 					 </div>
 					 <div>
