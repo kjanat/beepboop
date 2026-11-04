@@ -44,9 +44,6 @@ const groups = [...new Set(packages.map(p => p.versionSource))].map((
 	id: `group-${index + 1}`,
 	packages: packages.filter(p => p.versionSource === source),
 }));
-const runnable = workflows.filter(w =>
-	w.operation !== 'prepare' && w.operation !== 'promote'
-);
 const recommended = recommendedVersion(packages);
 const bump = (kind: 'patch' | 'minor' | 'major') => {
 	const version = bumpedVersion(packages, { bump: kind });
@@ -234,41 +231,5 @@ const preparations = data.executions.filter(e =>
 				 </form>
 			 </article>
 		 )}
-		 <article>
-			 <h2>Run a configured workflow</h2>
-			 <p>
-				 Start another operation from this release stream. Releases start from
-				 Choose the next version above.
-			 </p>{runnable.length ? (
-				 <form data-action="start">
-					 <input type="hidden" name="repositoryId" value={repository.id}><input
-						 type="hidden"
-						 name="stream"
-						 value={streamName}
-					 ><div class="form-grid">
-						 <label>Workflow<select name="operation">
-								 {runnable.map(w => (
-									 <option value={w.operation}>{w.operation} ({w.file})</option>
-								 ))}
-							 </select></label><label>Version, if needed<input
-								 name="version"
-								 placeholder="1.2.3"
-							 ></label><label>Target commit<input
-								 name="sourceSha"
-								 value={repository.sha}
-								 pattern="[a-f0-9]{40}"
-								 required
-							 ></label>
-					 </div>
-					 <button>Start workflow</button>
-				 </form>
-			 ) : (
-					<p class="notice">
-						This stream only observes externally triggered workflows, or has no
-						dispatchable workflow. Start it from GitHub using the repository's
-						release process.
-					</p>
-				)}
-		 </article>
 	 </>
  )}

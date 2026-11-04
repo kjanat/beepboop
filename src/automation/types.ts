@@ -233,6 +233,7 @@ export interface Execution {
 	supersededRuns?: number[];
 	draftRelease?: { id: number; tag: string };
 	titled?: boolean;
+	dispatchedAt?: number;
 	publications: Publication[];
 	artifacts: Artifact[];
 	createdAt: number;

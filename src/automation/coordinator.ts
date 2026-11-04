@@ -1253,6 +1253,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							runAttempt: integer(run.run_attempt),
 							workflowSha: undefined,
 						});
+					} else if (!matches.length && Date.now() - (execution.dispatchedAt ?? 0) > 120_000) {
+						await this.put({
+							...execution,
+							state: 'ready',
+							reason: 'GitHub started no run for the last dispatch; dispatching again',
+						});
 					} else {
 						await this.put({
 							...execution,
@@ -1283,7 +1289,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const draftRelease = await this.draftRelease(execution);
 				if (draftRelease) execution.draftRelease = draftRelease;
 				busy.add(execution.stream);
-				await this.put({ ...execution, state: 'dispatching', attempts: execution.attempts + 1 });
+				await this.put({
+					...execution,
+					state: 'dispatching',
+					attempts: execution.attempts + 1,
+					dispatchedAt: Date.now(),
+				});
 				const response = await gateway.call(
 					`/repos/${execution.repository}/actions/workflows/${execution.workflow.file}/dispatches`,
 					token,

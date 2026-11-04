@@ -485,14 +485,8 @@ for (const form of findAll(document, 'form[data-action]', HTMLFormElement)) {
 			} else if (action === 'approve' || action === 'recover') {
 				await api(`/api/executions/${action === 'approve' ? 'approve' : 'recover'}`, z.unknown(), data);
 				location.reload();
-			} else if (action === 'start' || action === 'start-set') {
-				await api(
-					action === 'start' ? '/api/executions/start' : '/api/releases/start-set',
-					z.unknown(),
-					action === 'start'
-						? { ...data, repositoryId: Number(data.repositoryId), requestId: crypto.randomUUID() }
-						: data,
-				);
+			} else if (action === 'start-set') {
+				await api('/api/releases/start-set', z.unknown(), data);
 				location.assign('/runs');
 			} else if (action === 'secret-save') {
 				if (!overwriteConfirmed(form, data.alias ?? '')) return;
