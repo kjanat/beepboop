@@ -1,39 +1,37 @@
 import { createExecution } from '@/automation/execution';
 import type { ReleaseSetPlan } from '@/automation/planning';
-import type { Execution, ReleasePlan, RepositoryRecord } from '@/automation/types';
-import { blocking } from '@/contract/diagnostics';
+import type { Execution, ReleasePlan } from '@/automation/types';
+import type { ReadyRepository } from '@/domain/repository';
 import { executionId, planIdentity } from '@/persistence/identity-keys';
 
 export async function createReleasePreparation(
-	repository: RepositoryRecord,
+	repository: ReadyRepository,
 	stream: string,
 	plan: ReleasePlan | ReleaseSetPlan,
 ): Promise<Execution> {
-	if (!repository.configuration?.streams[stream]?.prepare.workflow) {
+	if (!repository.configuration.streams[stream]?.prepare.workflow) {
 		return createManagedPreparation(repository, stream, plan);
 	}
-	if (repository.suspended || plan.sourceSha !== repository.sha) throw new Error('Preparation source is not available');
+	if (plan.sourceSha !== repository.sha) throw new Error('Preparation source is not available');
 	const identity = await planIdentity(plan, repository);
-	const execution = await createExecution(
-		repository,
+	const execution = await createExecution(repository, {
 		stream,
-		'prepare',
-		`plan:${identity}`,
-		'version' in plan ? plan.version : undefined,
-	);
+		operation: 'prepare',
+		eventId: `plan:${identity}`,
+		sourceSha: repository.sha,
+		version: 'version' in plan ? plan.version : undefined,
+	});
 	execution.plan = structuredClone(plan);
 	return execution;
 }
 
 export async function createManagedPreparation(
-	repository: RepositoryRecord,
+	repository: ReadyRepository,
 	stream: string,
 	plan: ReleasePlan | ReleaseSetPlan,
 ): Promise<Execution> {
 	const configuration = repository.configuration;
-	if (!configuration?.streams[stream] || blocking(repository.diagnostics).length || repository.suspended) {
-		throw new Error('Repository configuration is not ready');
-	}
+	if (!configuration.streams[stream]) throw new Error('Unknown stream');
 	if (plan.sourceSha !== repository.sha) throw new Error('Preparation source revision changed');
 	if (plan.requiresPreparation) throw new Error('A preparation workflow must regenerate lockfiles');
 	if (!plan.edits.length) throw new Error('Preparation has no edits');

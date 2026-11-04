@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { AuthBindings } from '@/automation/auth';
 import { resolveConfiguration } from '@/automation/configuration';
 import type { AutomationCoordinator } from '@/automation/coordinator';
-import { createExecution } from '@/automation/execution';
+import { createExecution, deriveExecution } from '@/automation/execution';
 import { type Credentials, RepositoryGateway } from '@/automation/github';
 import { type InboxEvent, inboxEvent, type SetupPullEdit } from '@/automation/inbox';
 import { discover, planRelease, resolvePublished, versionsInFiles } from '@/automation/managers';
@@ -21,10 +21,10 @@ import { matchesSubscription } from '@/automation/subscriptions';
 import type { AutomationEvent, Execution, RepositoryRecord, SubscriptionDelivery } from '@/automation/types';
 import { Vault } from '@/automation/vault';
 import { type WinGetBindings, WinGetService } from '@/automation/winget';
-import { blocking } from '@/contract/diagnostics';
 import { precondition } from '@/contract/errors';
 import { setupChoicesSchema } from '@/contract/setup';
 import { configurationDiagnostics, configurationProblem } from '@/domain/configuration';
+import { type Access, type ReadyRepository, readiness, requireReady } from '@/domain/repository';
 import { validateAgainst } from '@/domain/validate';
 import { array, integer, record } from '@/model';
 import { ChangeLog } from '@/persistence/d1/changes';
@@ -65,44 +65,44 @@ export class AutomationService {
 	coordinator(id: number) {
 		return this.env.AUTOMATION.getByName(String(id));
 	}
-	async enqueue(repository: RepositoryRecord, execution: Execution): Promise<Execution> {
+	async enqueue(repository: ReadyRepository, execution: Execution): Promise<Execution> {
+		if (execution.repositoryId !== repository.id) throw new Error('Execution belongs to another repository');
 		if (execution.managed) return this.coordinator(repository.id).enqueue(execution);
 		const existing = await this.coordinator(repository.id).execution(execution.id);
 		if (existing) return this.coordinator(repository.id).enqueue(existing);
+		const stream = execution.configuration.streams[execution.stream];
 		if (
 			execution.operation === 'prepare'
 			&& !execution.plan
 			&& execution.version
-			&& repository.configuration?.streams[execution.stream]?.prepare.strategy !== 'workflow'
+			&& stream?.prepare.strategy !== 'workflow'
 		) {
 			const snapshot = await this.gateway.snapshot(
 				repository.name,
 				repository.id,
 				execution.sourceSha,
-				(repository.configuration?.streams[execution.stream]?.versionFiles ?? []).map(rule => rule.path),
+				(stream?.versionFiles ?? []).map(rule => rule.path),
 			);
 			if (versionsInFiles(repository.inventory)) {
 				execution.plan = planRelease(
 					snapshot,
 					repository.inventory,
 					execution.version,
-					repository.configuration?.streams[execution.stream]?.packages,
+					stream?.packages,
 					undefined,
-					repository.configuration?.streams[execution.stream]?.versionFiles,
+					stream?.versionFiles,
 				);
 			}
 		}
 		for (const operation of execution.workflow?.needs ?? []) {
-			const dependency = await createExecution(
-				repository,
-				execution.stream,
+			const dependency = await deriveExecution(execution, repository, {
+				stream: execution.stream,
 				operation,
-				execution.eventId,
-				execution.version,
-				false,
-				execution.upstreamRelease,
-			);
-			dependency.sourceSha = execution.sourceSha;
+				eventId: execution.eventId,
+				sourceSha: execution.sourceSha,
+				version: execution.version,
+				upstreamRelease: execution.upstreamRelease,
+			});
 			await this.enqueue(repository, dependency);
 		}
 		if (execution.workflow?.ref?.includes('*')) {
@@ -126,8 +126,10 @@ export class AutomationService {
 	}
 	async refresh(name: string, id: number): Promise<RepositoryRecord> {
 		const snapshot = await this.gateway.snapshot(name, id);
+		const prior = await this.store.repository(id);
 		const repository: RepositoryRecord = {
 			...snapshot.repository,
+			access: prior?.access ?? { kind: 'active' },
 			sha: snapshot.sha,
 			inventory: discover(snapshot),
 			presetShas: {},
@@ -163,7 +165,7 @@ export class AutomationService {
 		}
 		repository.inventory = await resolvePublished(repository.inventory, fetch, this.gateway.verification(name, id));
 		await this.store.putRepository(repository);
-		await this.coordinator(id).setAccess(repository.suspended === true);
+		await this.coordinator(id).setAccess(repository.access.kind === 'suspended');
 		try {
 			await this.releaseFromManifest(repository);
 		} catch (error) {
@@ -214,9 +216,11 @@ export class AutomationService {
 		);
 		for (const name of names) await prepareJsrPackage(name, execution.repository, token, fetch);
 	}
-	private async releaseFromManifest(repository: RepositoryRecord): Promise<void> {
-		if (blocking(repository.diagnostics).length || repository.suspended) return;
-		for (const [name, stream] of Object.entries(repository.configuration?.streams ?? {})) {
+	private async releaseFromManifest(stored: RepositoryRecord): Promise<void> {
+		const state = readiness(stored);
+		if (state.kind !== 'ready') return;
+		const repository = state.repository;
+		for (const [name, stream] of Object.entries(repository.configuration.streams)) {
 			if (!stream.promote.workflow || stream.versionSource?.kind === 'tags') continue;
 			const packages = repository.inventory.packages.filter(pkg =>
 				publishable(pkg) && (!stream.packages || stream.packages.some(reference => matchesPackage(reference, pkg)))
@@ -241,14 +245,13 @@ export class AutomationService {
 				stream.versionFiles,
 			);
 			if (plan.edits.length || plan.requiresPreparation) continue;
-			const promotion = await createExecution(
-				repository,
-				name,
-				'promote',
-				`release:${version}:${plan.sourceSha}`,
+			const promotion = await createExecution(repository, {
+				stream: name,
+				operation: 'promote',
+				eventId: `release:${version}:${plan.sourceSha}`,
+				sourceSha: plan.sourceSha,
 				version,
-			);
-			promotion.sourceSha = plan.sourceSha;
+			});
 			if (await this.coordinator(repository.id).execution(promotion.id)) continue;
 			if (merge) promotion.approvedBy = 'merge';
 			await this.store.audit('beepboop', 'release.push', promotion.id);
@@ -278,22 +281,21 @@ export class AutomationService {
 			const account = record(record(payload.installation).account);
 			if (account.id !== Number(this.env.OWNER_ID)) return new Response(null, { status: 204 });
 			// Enrollment is explicit. Lifecycle events reconcile only repositories already enrolled.
-			const removed = new Set(
-				array(payload.repositories_removed ?? []).map((item) => integer(record(item).id)),
-			);
+			const ids = (items: unknown) => new Set(array(items ?? []).map((item) => integer(record(item).id)));
+			const removed = ids(payload.repositories_removed);
+			const added = ids(payload.action === 'created' ? payload.repositories : payload.repositories_added);
+			const all = payload.action === 'unsuspend'
+				|| (payload.action === 'created' && payload.repository_selection === 'all');
 			for (const repository of await this.store.repositories()) {
-				if (
-					payload.action === 'deleted'
-					|| payload.action === 'suspend'
-					|| removed.has(repository.id)
-				) {
-					await this.store.putRepository({
-						...repository,
-						suspended: true,
-						diagnostics: [{ code: 'unsupported', severity: 'blocking', message: 'App access removed or suspended' }],
-						updatedAt: Date.now(),
-					});
-					await this.coordinator(repository.id).setAccess(true);
+				const access: Access | undefined =
+					payload.action === 'deleted' || payload.action === 'suspend' || removed.has(repository.id)
+						? { kind: 'suspended', since: Date.now() }
+						: all || added.has(repository.id)
+						? { kind: 'active' }
+						: undefined;
+				if (access) {
+					await this.store.setAccess(repository.id, access);
+					await this.coordinator(repository.id).setAccess(access.kind === 'suspended');
 				} else await this.coordinator(repository.id).wake();
 			}
 			return new Response(null, { status: 202 });
@@ -383,19 +385,20 @@ export class AutomationService {
 			throw new Error('Release event requires its upstream identity');
 		}
 		const deliveries: SubscriptionDelivery[] = [];
-		for (const repository of await this.store.repositories()) {
-			if (!repository.configuration || blocking(repository.diagnostics).length || repository.suspended) continue;
+		for (const stored of await this.store.repositories()) {
+			const state = readiness(stored);
+			if (state.kind !== 'ready') continue;
+			const repository = state.repository;
 			for (const subscription of repository.configuration.subscriptions) {
 				if (!matchesSubscription(subscription, event)) continue;
-				const execution = await createExecution(
-					repository,
-					subscription.stream,
-					subscription.operation,
-					`${subscription.id}:${event.id}`,
-					event.version,
-					false,
-					event.release,
-				);
+				const execution = await createExecution(repository, {
+					stream: subscription.stream,
+					operation: subscription.operation,
+					eventId: `${subscription.id}:${event.id}`,
+					sourceSha: repository.sha,
+					version: event.version,
+					upstreamRelease: event.release,
+				});
 				deliveries.push({ id: execution.id, eventId: event.id, repositoryId: repository.id, execution });
 			}
 		}
@@ -406,12 +409,8 @@ export class AutomationService {
 		for (const delivery of await this.store.pendingDeliveries()) {
 			try {
 				const repository = await this.store.repository(delivery.repositoryId);
-				if (!repository || repository.suspended) throw new Error('Destination unavailable');
-				await this.enqueue({
-					...repository,
-					configuration: delivery.execution.configuration,
-					sha: delivery.execution.configurationSha,
-				}, delivery.execution);
+				if (!repository) throw new Error('Destination unavailable');
+				await this.enqueue(requireReady(repository), delivery.execution);
 				await this.store.deliveryResult(delivery.id, true);
 			} catch {
 				await this.store.deliveryResult(delivery.id, false);
@@ -440,9 +439,11 @@ export class AutomationService {
 					await this.event(event);
 					await this.coordinator(repository.id).acknowledgeReleaseEvent(event.id);
 				}
-				if (!refreshed.configuration || blocking(refreshed.diagnostics).length) continue;
+				const state = readiness(refreshed);
+				if (state.kind !== 'ready') continue;
+				const ready = state.repository;
 				const now = Date.now();
-				for (const [streamName, stream] of Object.entries(refreshed.configuration.streams)) {
+				for (const [streamName, stream] of Object.entries(ready.configuration.streams)) {
 					for (const [operation, binding] of Object.entries(stream.workflows)) {
 						if (!binding.schedule) continue;
 						const key = `${repository.id}:${streamName}:${operation}:${binding.schedule}`;
@@ -459,8 +460,13 @@ export class AutomationService {
 							const tick = schedule.next().getTime();
 							if (tick > now) break;
 							await this.enqueue(
-								refreshed,
-								await createExecution(refreshed, streamName, operation, `schedule:${tick}`),
+								ready,
+								await createExecution(ready, {
+									stream: streamName,
+									operation,
+									eventId: `schedule:${tick}`,
+									sourceSha: ready.sha,
+								}),
 							);
 							await this.schedules.advance(key, tick);
 						}

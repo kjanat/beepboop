@@ -6,26 +6,28 @@ import { matchesPackage } from '@/automation/package-identity';
 import { planReleaseSet } from '@/automation/planning';
 import { planHookUpdates } from '@/automation/precommit';
 import type { AutomationService } from '@/automation/service';
-import type { RepositoryRecord, Stream } from '@/automation/types';
+import type { Stream } from '@/automation/types';
 import { nextVersion, parseVersionRequest } from '@/automation/version';
-import { blocking } from '@/contract/diagnostics';
-import { conflict, DomainError, notFound, precondition } from '@/contract/errors';
+import { conflict, notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
+import { type ReadyRepository, requireReady } from '@/domain/repository';
 import { compareVersions, semver } from '@/model';
 import { planIdentity } from '@/persistence/identity-keys';
 import { type AdminContext, admin } from '@/server/handlers/kit';
 
 interface Selected {
-	repository: RepositoryRecord;
+	repository: ReadyRepository;
 	stream: Stream;
 }
 
-async function configured(service: AutomationService, repositoryId: number, name: string): Promise<Selected> {
+async function ready(service: AutomationService, repositoryId: number): Promise<ReadyRepository> {
 	const repository = await service.store.repository(repositoryId);
 	if (!repository) throw notFound('repository', 'Repository not configured', String(repositoryId));
-	const problems = blocking(repository.diagnostics);
-	if (problems.length) throw new DomainError({ code: 'precondition', diagnostics: problems });
-	if (!repository.configuration) throw precondition('Repository not configured');
+	return requireReady(repository);
+}
+
+async function configured(service: AutomationService, repositoryId: number, name: string): Promise<Selected> {
+	const repository = await ready(service, repositoryId);
 	const stream = repository.configuration.streams[name];
 	if (!stream) throw notFound('stream', 'Unknown stream', name);
 	return { repository, stream };
@@ -99,10 +101,7 @@ async function releasePlan(input: ReleaseInput, { service }: AdminContext) {
 }
 
 async function setPlan(input: { repositoryId: number; stream: string; plan: unknown }, { service }: AdminContext) {
-	const repository = await service.store.repository(input.repositoryId);
-	if (!repository?.configuration || blocking(repository.diagnostics).length) {
-		throw precondition('Repository not configured');
-	}
+	const repository = await ready(service, input.repositoryId);
 	const stream = repository.configuration.streams[input.stream];
 	if (stream?.versioning !== 'independent') throw precondition('Select an independent release stream');
 	const snapshot = await current(service, { repository, stream }, 'Refresh discovery before planning this revision');
@@ -123,19 +122,24 @@ export const releaseEndpoints = {
 			throw conflict('stale-plan', 'Release plan changed; preview it again');
 		}
 		if (!plan.edits.length && !plan.requiresPreparation) {
-			const promotion = await createExecution(
-				repository,
-				input.stream,
-				'promote',
-				`release:${plan.version}:${plan.sourceSha}`,
-				plan.version,
-			);
-			promotion.sourceSha = plan.sourceSha;
+			const promotion = await createExecution(repository, {
+				stream: input.stream,
+				operation: 'promote',
+				eventId: `release:${plan.version}:${plan.sourceSha}`,
+				sourceSha: plan.sourceSha,
+				version: plan.version,
+			});
 			await service.store.audit(actor, 'release.prepare', promotion.id);
 			return service.enqueue(repository, promotion);
 		}
 		const execution = stream.prepare.workflow && stream.prepare.strategy === 'workflow'
-			? await createExecution(repository, input.stream, 'prepare', `plan:${planId}`, plan.version)
+			? await createExecution(repository, {
+				stream: input.stream,
+				operation: 'prepare',
+				eventId: `plan:${planId}`,
+				sourceSha: repository.sha,
+				version: plan.version,
+			})
 			: await createReleasePreparation(repository, input.stream, plan);
 		await service.store.audit(actor, 'release.prepare', execution.id);
 		return service.enqueue(repository, execution);
@@ -163,10 +167,8 @@ export const releaseEndpoints = {
 		return executions;
 	}),
 	hooksUpdate: admin(routes.hooksUpdate, async (input, { service, actor }) => {
-		const repository = await service.store.repository(input.repositoryId);
-		if (
-			!repository?.configuration || repository.suspended || !repository.configuration.managers.includes('pre-commit')
-		) throw precondition('Hook manager is not enabled');
+		const repository = await ready(service, input.repositoryId);
+		if (!repository.configuration.managers.includes('pre-commit')) throw precondition('Hook manager is not enabled');
 		const event = await service.store.event(input.releaseEventId);
 		if (event?.event !== 'release' || !event.release) {
 			throw notFound('release-event', 'Verified upstream release event required', input.releaseEventId);

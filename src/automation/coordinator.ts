@@ -36,13 +36,13 @@ import { maintainSetup } from '@/automation/setup-maintenance';
 import type { SetupEdit } from '@/automation/setup-types';
 import { decodeError, Store } from '@/automation/store';
 import type { Artifact, AutomationEvent, Edit, Execution, Publication, ReleaseReference } from '@/automation/types';
-import { blocking } from '@/contract/diagnostics';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
+import { readiness } from '@/domain/repository';
 import { array, integer, record, sha, text } from '@/model';
 import { decodeEventV1, decodeExecutionV1, decodeSetupEditV1 } from '@/persistence/codecs/v1';
 import type { SqlDatabase } from '@/persistence/d1/database';
 import { ProjectionStore } from '@/persistence/d1/projection';
-import { releaseEventId } from '@/persistence/identity-keys';
+import { executionId, releaseEventId } from '@/persistence/identity-keys';
 import { type Committed, earliest, Journal } from '@/persistence/journal';
 
 export interface CoordinatorBindings extends AutomationBindings {
@@ -309,7 +309,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private async suspended(repositoryId: number): Promise<boolean> {
 		const copy = access.safeParse(await this.ctx.storage.get('access'));
 		if (copy.success) return copy.data.suspended;
-		const suspended = (await this.store().repository(repositoryId))?.suspended === true;
+		const stored = await this.store().repository(repositoryId);
+		const suspended = stored !== undefined && readiness(stored).kind === 'suspended';
 		await this.ctx.storage.put('access', { suspended });
 		return suspended;
 	}
@@ -1246,11 +1247,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const event = parsed.data;
 			if ((event.due ?? 0) > now) continue;
 			try {
-				const repository = await this.store().repository(event.repositoryId);
-				if (!repository?.configuration || repository.suspended || blocking(repository.diagnostics).length) {
+				const stored = await this.store().repository(event.repositoryId);
+				const state = stored && readiness(stored);
+				if (state?.kind !== 'ready') {
 					await this.ctx.storage.delete(key);
 					continue;
 				}
+				const repository = state.repository;
 				const gateway = this.gateway(),
 					token = await gateway.token(repository.name, repository.id);
 				const run = record(
@@ -1277,21 +1280,22 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							continue;
 						}
 						const version = ref.startsWith('refs/tags/') ? branch.replace(/^v/, '') : undefined;
-						const execution = await createExecution(
-							repository,
-							streamName,
-							operation,
-							`observed:${event.runId}`,
-							version,
-							true,
-						);
-						if (await this.ctx.storage.get(`execution:${execution.id}`)) continue;
+						const eventId = `observed:${event.runId}`;
+						const id = await executionId(repository.id, streamName, operation, eventId);
+						if (await this.ctx.storage.get(`execution:${id}`)) continue;
 						const snapshot = await gateway.snapshot(
 							repository.name,
 							repository.id,
 							sha(run.head_sha),
 						);
-						execution.sourceSha = snapshot.sha;
+						const execution = await createExecution(repository, {
+							stream: streamName,
+							operation,
+							eventId,
+							sourceSha: snapshot.sha,
+							version,
+							observed: true,
+						});
 						execution.runId = event.runId;
 						execution.runAttempt = integer(run.run_attempt);
 						execution.state = 'running';
@@ -1397,7 +1401,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		const store = this.store();
 		try {
 			const repository = await store.repository(edit.repositoryId);
-			if (repository && !repository.suspended) {
+			if (repository && readiness(repository).kind !== 'suspended') {
 				const gateway = this.gateway();
 				await maintainSetup(store, gateway, await gateway.snapshot(repository.name, repository.id), {
 					number: edit.number,

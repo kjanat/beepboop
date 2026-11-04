@@ -8,8 +8,16 @@ import type {
 	RepositoryRecord,
 	SubscriptionDelivery,
 } from '@/automation/types';
+import type { Access } from '@/domain/repository';
 import { record } from '@/model';
-import { decodeDeliveryV1, decodeEventV1, decodeExecutionV1, decodeRepositoryV1 } from '@/persistence/codecs/v1';
+import {
+	decodeRepository,
+	encodeAccess,
+	type RepositoryRow,
+	repositoryColumns,
+	repositoryRow,
+} from '@/persistence/codecs/repository';
+import { decodeDeliveryV1, decodeEventV1, decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { AuditStore } from '@/persistence/d1/audit';
 import type { SqlDatabase } from '@/persistence/d1/database';
 
@@ -26,7 +34,6 @@ export interface UnreadableExecution {
 	repositoryId: number;
 	error: string;
 }
-const repositoryRow = z.object({ id: z.number(), name: z.string(), document: z.string() });
 const executionRow = z.object({ id: z.string(), repository_id: z.number(), document: z.string() });
 export function decodeError(error: unknown): string {
 	if (error instanceof z.ZodError) return z.prettifyError(error);
@@ -51,24 +58,26 @@ export class Store {
 	}
 	async repository(id: number): Promise<RepositoryRecord | undefined> {
 		const row = await this.db
-			.prepare('SELECT document FROM repositories WHERE id=?')
+			.prepare(`SELECT ${repositoryColumns} FROM repositories WHERE id=?`)
 			.bind(id)
 			.first();
-		return row ? decodeRepositoryV1(rowDocument(row)) : undefined;
+		return row ? decodeRepository(repositoryRow.parse(row)) : undefined;
 	}
-	private async repositoryRows(): Promise<z.output<typeof repositoryRow>[]> {
+	private async repositoryRows(): Promise<RepositoryRow[]> {
 		const result = await this.db
-			.prepare('SELECT id, name, document FROM repositories ORDER BY COALESCE(added_at, updated_at) DESC, name')
+			.prepare(
+				`SELECT ${repositoryColumns} FROM repositories ORDER BY COALESCE(added_at, updated_at) DESC, name`,
+			)
 			.all();
 		return z.array(repositoryRow).parse(result.results);
 	}
 	async repositories(): Promise<RepositoryRecord[]> {
-		return (await this.repositoryRows()).map(row => decodeRepositoryV1(JSON.parse(row.document)));
+		return (await this.repositoryRows()).map(decodeRepository);
 	}
 	async readRepositories(): Promise<(Readable<RepositoryRecord> | UnreadableRepository)[]> {
 		return (await this.repositoryRows()).map(row => {
 			try {
-				return { kind: 'readable', value: decodeRepositoryV1(JSON.parse(row.document)) };
+				return { kind: 'readable', value: decodeRepository(row) };
 			} catch (error) {
 				return { kind: 'unreadable', id: row.id, name: row.name, error: decodeError(error) };
 			}
@@ -81,7 +90,7 @@ export class Store {
 	async putRepository(repository: RepositoryRecord): Promise<void> {
 		await this.db
 			.prepare(
-				'INSERT INTO repositories(id,name,document,updated_at,added_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,document=excluded.document,updated_at=excluded.updated_at',
+				'INSERT INTO repositories(id,name,document,updated_at,added_at,access,suspended_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,document=excluded.document,updated_at=excluded.updated_at',
 			)
 			.bind(
 				repository.id,
@@ -89,7 +98,17 @@ export class Store {
 				JSON.stringify(encodeRepository(identifyRepository(encodeRepository(repository)))),
 				repository.updatedAt,
 				repository.updatedAt,
+				...encodeAccess(repository.access),
 			)
+			.run();
+	}
+	async setAccess(id: number, access: Access): Promise<void> {
+		const [state, since] = encodeAccess(access);
+		await this.db
+			.prepare(
+				"UPDATE repositories SET access=?1, suspended_at=CASE WHEN ?1='active' THEN NULL WHEN access='suspended' THEN suspended_at ELSE ?2 END, document=CASE WHEN ?1='suspended' THEN json_set(document,'$.suspended',json('true')) ELSE json_remove(document,'$.suspended') END WHERE id=?3",
+			)
+			.bind(state, since, id)
 			.run();
 	}
 	async execution(id: string): Promise<Execution | undefined> {

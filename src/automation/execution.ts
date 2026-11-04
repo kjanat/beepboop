@@ -1,24 +1,71 @@
 import { outputsComplete } from '@/automation/outputs';
 import { identityOf, matchesPackage, matchesPublication, packageId } from '@/automation/package-identity';
-import type { Execution, Publication, ReleaseReference, RepositoryRecord, WorkflowBinding } from '@/automation/types';
+import type {
+	Configuration,
+	DiscoveredWorkflow,
+	Execution,
+	Publication,
+	ReleaseReference,
+	RepositoryRecord,
+	WorkflowBinding,
+} from '@/automation/types';
 import { managerSpec } from '@/contract/catalog';
-import { blocking } from '@/contract/diagnostics';
+import type { ReadyRepository } from '@/domain/repository';
 import { executionId } from '@/persistence/identity-keys';
 
-export async function createExecution(
-	repository: RepositoryRecord,
-	streamName: string,
-	operation: string,
-	eventId: string,
-	version?: string,
-	observed = false,
-	upstreamRelease?: ReleaseReference,
-	perPackage = false,
+export interface ExecutionRequest {
+	stream: string;
+	operation: string;
+	eventId: string;
+	sourceSha: string;
+	version?: string | undefined;
+	observed?: boolean;
+	upstreamRelease?: ReleaseReference | undefined;
+	perPackage?: boolean;
+}
+
+interface ExecutionSource {
+	repositoryId: number;
+	repository: string;
+	defaultBranch: string;
+	configuration: Configuration;
+	configurationSha: string;
+	presetShas: Record<string, string>;
+	workflows: readonly DiscoveredWorkflow[];
+}
+
+export function createExecution(repository: ReadyRepository, request: ExecutionRequest): Promise<Execution> {
+	return executionFrom({
+		repositoryId: repository.id,
+		repository: repository.name,
+		defaultBranch: repository.defaultBranch,
+		configuration: repository.configuration,
+		configurationSha: repository.sha,
+		presetShas: repository.presetShas,
+		workflows: repository.inventory.workflows,
+	}, request);
+}
+
+export function deriveExecution(
+	parent: Execution,
+	revision: Pick<RepositoryRecord, 'defaultBranch' | 'inventory'>,
+	request: ExecutionRequest,
 ): Promise<Execution> {
-	if (!repository.configuration || blocking(repository.diagnostics).length) {
-		throw new Error('Repository configuration is not ready');
-	}
-	const stream = repository.configuration.streams[streamName];
+	return executionFrom({
+		repositoryId: parent.repositoryId,
+		repository: parent.repository,
+		defaultBranch: revision.defaultBranch,
+		configuration: parent.configuration,
+		configurationSha: parent.configurationSha,
+		presetShas: parent.presetShas,
+		workflows: revision.inventory.workflows,
+	}, request);
+}
+
+async function executionFrom(source: ExecutionSource, request: ExecutionRequest): Promise<Execution> {
+	const { stream: streamName, operation, eventId, version, upstreamRelease } = request;
+	const observed = request.observed === true;
+	const stream = source.configuration.streams[streamName];
 	if (!stream) throw new Error('Unknown stream');
 	const binding: WorkflowBinding | undefined = operation === 'prepare'
 		? stream.prepare.workflow
@@ -26,8 +73,10 @@ export async function createExecution(
 		? stream.promote.workflow
 		: stream.workflows[operation];
 	if (!binding) throw new Error('Operation has no workflow binding');
-	if (binding.each === 'package' && !perPackage) throw new Error('Per-package operations run inside a release set');
-	const workflow = repository.inventory.workflows.find((w) => w.file === binding.file);
+	if (binding.each === 'package' && request.perPackage !== true) {
+		throw new Error('Per-package operations run inside a release set');
+	}
+	const workflow = source.workflows.find((w) => w.file === binding.file);
 	if (
 		!observed
 		&& (!workflow?.events.includes('workflow_dispatch')
@@ -37,23 +86,23 @@ export async function createExecution(
 		throw new Error('Workflow needs workflow_dispatch and beepboop_execution_id');
 	}
 	return {
-		id: await executionId(repository.id, streamName, operation, eventId),
-		repositoryId: repository.id,
+		id: await executionId(source.repositoryId, streamName, operation, eventId),
+		repositoryId: source.repositoryId,
 		...(upstreamRelease ? { upstreamRelease: structuredClone(upstreamRelease) } : {}),
-		repository: repository.name,
+		repository: source.repository,
 		stream: streamName,
 		operation,
 		eventId,
-		configuration: structuredClone(repository.configuration),
-		configurationSha: repository.sha,
-		presetShas: { ...repository.presetShas },
-		sourceSha: repository.sha,
+		configuration: structuredClone(source.configuration),
+		configurationSha: source.configurationSha,
+		presetShas: { ...source.presetShas },
+		sourceSha: request.sourceSha,
 		...(version ? { version } : {}),
 		state: observed ? 'pending' : operation === 'promote' ? 'blocked' : 'ready',
 		dependencies: await Promise.all(
-			(binding.needs ?? []).map((operation) => executionId(repository.id, streamName, operation, eventId)),
+			(binding.needs ?? []).map((operation) => executionId(source.repositoryId, streamName, operation, eventId)),
 		),
-		workflow: { ...binding, ref: binding.ref ?? repository.defaultBranch },
+		workflow: { ...binding, ref: binding.ref ?? source.defaultBranch },
 		...(workflow?.dispatchInputs.includes('beepboop_title') ? { titled: true } : {}),
 		attempts: 0,
 		publications: [],

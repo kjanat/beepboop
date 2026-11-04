@@ -1,8 +1,8 @@
-import { createExecution } from '@/automation/execution';
+import { deriveExecution } from '@/automation/execution';
 import { discover } from '@/automation/managers';
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage, packageId, selectorKey } from '@/automation/package-identity';
-import type { Execution, Inventory, RepositoryRecord, Snapshot } from '@/automation/types';
+import type { Execution, Inventory, Snapshot } from '@/automation/types';
 import { executionId } from '@/persistence/identity-keys';
 
 async function expandPackages(
@@ -77,30 +77,20 @@ export async function compileReleaseSet(preparation: Execution, snapshot: Snapsh
 			}
 		}
 	}
-	const repository: RepositoryRecord = {
-		...snapshot.repository,
-		sha: preparation.configurationSha,
-		configuration: preparation.configuration,
-		presetShas: preparation.presetShas,
-		inventory,
-		diagnostics: [],
-		updatedAt: Date.now(),
-	};
+	const revision = { defaultBranch: snapshot.repository.defaultBranch, inventory };
 	const event = `release-set:${preparation.id}:${snapshot.sha}`;
 	const operations: Execution[] = [];
 	const names = new Set(plan.operations.map(op => op.id));
 	for (const operation of plan.operations) {
 		if (operation.id === 'prepare') throw new Error('Release set cannot repeat preparation');
-		const execution = await createExecution(
-			repository,
-			preparation.stream,
-			operation.id,
-			event,
-			operation.version,
-			false,
-			undefined,
-			true,
-		);
+		const execution = await deriveExecution(preparation, revision, {
+			stream: preparation.stream,
+			operation: operation.id,
+			eventId: event,
+			sourceSha: snapshot.sha,
+			version: operation.version,
+			perPackage: true,
+		});
 		const binding = execution.workflow;
 		if (!binding || binding.ref?.includes('*')) throw new Error('Exact workflow binding required');
 		if (
@@ -126,7 +116,6 @@ export async function compileReleaseSet(preparation: Execution, snapshot: Snapsh
 			...new Set([...(binding.needs ?? []), ...operation.needs, ...[...inputs.values()].map(input => input.operation)]),
 		].sort();
 		if (needs.some(name => !names.has(name))) throw new Error(`Release set omits a dependency of ${operation.id}`);
-		execution.sourceSha = snapshot.sha;
 		execution.workflow = {
 			...binding,
 			needs,
@@ -135,7 +124,7 @@ export async function compileReleaseSet(preparation: Execution, snapshot: Snapsh
 			platform: operation.platform ?? binding.platform,
 		};
 		execution.dependencies = await Promise.all(
-			needs.map(name => executionId(repository.id, preparation.stream, name, event)),
+			needs.map(name => executionId(preparation.repositoryId, preparation.stream, name, event)),
 		);
 		execution.releaseSet = { preparationId: preparation.id, group: operation.group, required: [] };
 		operations.push(execution);
@@ -182,7 +171,7 @@ export async function compileReleaseSet(preparation: Execution, snapshot: Snapsh
 						)
 					)
 					: required;
-				const expanded = await expandPackages(member, targets, inventory, repository.id, event);
+				const expanded = await expandPackages(member, targets, inventory, preparation.repositoryId, event);
 				operations.splice(operations.indexOf(member), 1, ...expanded);
 				const ids = expanded.map(execution => execution.id);
 				for (const other of operations) {

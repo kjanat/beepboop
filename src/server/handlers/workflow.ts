@@ -6,6 +6,7 @@ import type { Artifact, Execution, Publication } from '@/automation/types';
 import { isLockfile, reportableManagerNames } from '@/contract/catalog';
 import { forbidden, parseRequest, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
+import { requireReady } from '@/domain/repository';
 import { type EnrolledContext, workflow, workflowToken } from '@/server/handlers/kit';
 
 const outcomes = ['pending', 'succeeded', 'failed', 'uncertain', 'skipped', 'rate-limited'] as const;
@@ -58,16 +59,14 @@ async function bound(context: EnrolledContext, id: string): Promise<Execution> {
 
 async function observed(context: EnrolledContext, stream: string, operation: string, version?: string) {
 	const { identity, service } = context;
-	const execution = await createExecution(
-		context.enrollment,
+	const execution = await createExecution(requireReady(context.enrollment), {
 		stream,
 		operation,
-		`observed:${identity.runId}`,
+		eventId: `observed:${identity.runId}`,
+		sourceSha: identity.sha,
 		version,
-		true,
-	);
-	execution.sourceSha = identity.sha;
-	execution.state = 'pending';
+		observed: true,
+	});
 	if (execution.operation === 'promote') throw precondition('Promotion must be approved before registration');
 	if (!execution.workflow) throw precondition('Operation is not a workflow');
 	if (!matchesRef(execution.workflow.ref, identity.ref)) {

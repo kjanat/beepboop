@@ -1,8 +1,10 @@
 import type { RepositoryRecord } from '@/automation/types.ts';
-import { blocking } from '@/contract/diagnostics';
+import { readiness } from '@/domain/repository';
 
-export function workflowChoices(repository: RepositoryRecord) {
-	if (!repository.configuration || repository.suspended || blocking(repository.diagnostics).length) return [];
+export function workflowChoices(stored: RepositoryRecord) {
+	const state = readiness(stored);
+	if (state.kind !== 'ready') return [];
+	const repository = state.repository;
 	return Object.entries(repository.configuration.streams).flatMap(([stream, configuration]) => {
 		const bindings = {
 			...configuration.workflows,

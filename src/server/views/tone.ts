@@ -1,8 +1,8 @@
 import type { DeliveryState, NotificationDelivery } from '@/automation/notifications.ts';
 import type { ExecutionState, Publication, RepositoryRecord } from '@/automation/types.ts';
 import type { WinGetSubmission } from '@/automation/winget.ts';
-import { blocking } from '@/contract/diagnostics';
 import type { Status, Tone } from '@/contract/views';
+import { type Readiness, readiness } from '@/domain/repository';
 import type { ReleaseSetState, releaseSummaries } from '@/server/releases.ts';
 
 export const executionTone = {
@@ -65,11 +65,15 @@ export function releaseStatus(release: ReturnType<typeof releaseSummaries>[numbe
 	return { tone: 'active', label: 'In progress' };
 }
 
+const repositoryStatuses = {
+	ready: { tone: 'ok', label: 'Configured' },
+	suspended: { tone: 'warn', label: 'App access unavailable' },
+	unconfigured: { tone: 'neutral', label: 'Not configured' },
+	invalid: { tone: 'warn', label: 'Setup needed' },
+} as const satisfies Record<Readiness['kind'], Status>;
+
 export function repositoryStatus(repository: RepositoryRecord): Status {
-	if (repository.suspended) return { tone: 'warn', label: 'App access unavailable' };
-	if (blocking(repository.diagnostics).length) return { tone: 'warn', label: 'Setup needed' };
-	if (!repository.configuration) return { tone: 'neutral', label: 'Setup needed' };
-	return { tone: 'ok', label: 'Configured' };
+	return repositoryStatuses[readiness(repository).kind];
 }
 
 export function destinationStatus(enabled: boolean): Status {

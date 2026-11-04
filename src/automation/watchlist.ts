@@ -1,6 +1,7 @@
 import { publishable } from '@/automation/package-publication';
 import type { RepositoryRecord } from '@/automation/types';
 import { type WatchedRegistry, watchedRegistries } from '@/contract/catalog';
+import { readiness } from '@/domain/repository';
 
 export interface WatchedPackage {
 	registry: WatchedRegistry;
@@ -24,7 +25,7 @@ export function watchlist(repositories: RepositoryRecord[]): WatchedPackage[] {
 		return created;
 	};
 	for (const repository of repositories) {
-		if (repository.suspended) continue;
+		if (readiness(repository).kind === 'suspended') continue;
 		for (const pkg of repository.inventory.packages) {
 			const registry = watchedRegistry(pkg.manager);
 			if (!registry || !publishable(pkg)) continue;

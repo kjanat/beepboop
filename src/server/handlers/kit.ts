@@ -4,6 +4,7 @@ import type { AutomationBindings, AutomationService } from '@/automation/service
 import type { RepositoryRecord } from '@/automation/types';
 import { forbidden, parseRequest } from '@/contract/errors';
 import type { AnyRoute, Known, Route } from '@/contract/routes';
+import { readiness } from '@/domain/repository';
 
 export interface Context {
 	request: Request;
@@ -95,7 +96,7 @@ export function workflow<Q extends z.ZodType, S extends z.ZodType>(
 		async run(context, read) {
 			const identity = await identify(context);
 			const enrollment = await context.service.store.repository(identity.repositoryId);
-			if (!enrollment || enrollment.suspended) {
+			if (!enrollment || readiness(enrollment).kind === 'suspended') {
 				throw forbidden('Repository is not enrolled or has been suspended');
 			}
 			return respond(

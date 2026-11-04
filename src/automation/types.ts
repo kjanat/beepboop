@@ -5,6 +5,7 @@ import type { RefPlan } from '@/automation/refs';
 import type { ManagerName } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
 import type { Configuration, WorkflowBinding } from '@/domain/configuration';
+import type { Access } from '@/domain/repository';
 import type { PackageIdentity } from '@/package-url';
 
 export type { Configuration, Stream, Subscription, WorkflowBinding } from '@/domain/configuration';
@@ -191,7 +192,7 @@ export interface Execution {
 	reason?: string;
 }
 export interface RepositoryRecord {
-	suspended?: boolean;
+	access: Access;
 	id: number;
 	name: string;
 	defaultBranch: string;

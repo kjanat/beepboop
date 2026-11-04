@@ -2,6 +2,7 @@ import { configuredGrant } from '@/automation/access';
 import { parseGrant, validCredential } from '@/automation/vault';
 import { conflict, notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
+import { requireReady } from '@/domain/repository';
 import type { CredentialStore } from '@/persistence/d1/credentials';
 import { admin, elevated } from '@/server/handlers/kit';
 
@@ -39,7 +40,7 @@ export const credentialEndpoints = {
 		const { repositoryId } = input.selection;
 		const repository = await service.store.repository(repositoryId);
 		if (!repository) throw notFound('repository', 'Repository is not enrolled', String(repositoryId));
-		const grant = configuredGrant(repository, input.selection);
+		const grant = configuredGrant(requireReady(repository), input.selection);
 		if (await service.credentials.activeVersion(grant.alias) === undefined) {
 			throw precondition('Store a value under this name before granting access');
 		}

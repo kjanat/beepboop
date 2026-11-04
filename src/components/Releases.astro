@@ -7,9 +7,9 @@ import {
 } from '@/automation/release-version';
 import type { Package } from '@/automation/types';
 import Badge from '@/components/Badge.astro';
-import { blocking } from '@/contract/diagnostics';
 import { formatTime } from '@/contract/time';
 import type { Status } from '@/contract/views';
+import { readiness } from '@/domain/repository';
 import type { ViewOf } from '@/server/loaders.ts';
 import { packageDisplayName } from '@/server/package-name';
 import { workflowChoices } from '@/server/views/workflows.ts';
@@ -19,9 +19,10 @@ interface Props {
 	data: ViewOf<'releases'>;
 }
 const { data } = Astro.props;
-const available = data.repositories.filter(r =>
-	r.configuration && !r.suspended && !blocking(r.diagnostics).length
-);
+const available = data.repositories.flatMap(r => {
+	const state = readiness(r);
+	return state.kind === 'ready' ? [state.repository] : [];
+});
 const repository =
 	available.find(r => String(r.id) === Astro.url.searchParams.get('repository'))
 		?? available[0];

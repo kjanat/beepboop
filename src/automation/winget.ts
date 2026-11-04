@@ -3,8 +3,8 @@ import type { RepositoryGateway } from '@/automation/github';
 import { documentRow } from '@/automation/schemas';
 import type { Store } from '@/automation/store';
 import type { RepositoryRecord } from '@/automation/types';
-import { blocking } from '@/contract/diagnostics';
 import { generateManifests, renderManifests } from '@/distribution/winget/generate';
+import { readiness } from '@/domain/repository';
 import { array, integer, record, sha, text } from '@/model';
 
 export interface WinGetPlan {
@@ -75,10 +75,11 @@ export class WinGetService {
 		return !!this.env.WINGET_GITHUB_TOKEN && /^[\w.-]+\/[\w.-]+$/.test(this.env.WINGET_FORK ?? '');
 	}
 	private policy(repo: RepositoryRecord) {
-		if (repo.suspended || blocking(repo.diagnostics).length || !repo.configuration?.winget) {
+		const state = readiness(repo);
+		if (state.kind !== 'ready' || !state.repository.configuration.winget) {
 			throw Error('Repository is not enabled for WinGet');
 		}
-		return repo.configuration.winget;
+		return state.repository.configuration.winget;
 	}
 	async releases(repo: RepositoryRecord) {
 		const policy = this.policy(repo);
@@ -428,7 +429,7 @@ export class WinGetService {
 	}
 	async automatic(repo: RepositoryRecord): Promise<void> {
 		if (
-			!repo.configuration?.winget?.automatic || repo.suspended || blocking(repo.diagnostics).length || !this.setup()
+			readiness(repo).kind !== 'ready' || !repo.configuration?.winget?.automatic || !this.setup()
 		) return;
 		await this.watch(repo);
 		const watch = z.object({ since: z.number() }).nullable().parse(

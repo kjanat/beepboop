@@ -77,7 +77,8 @@ export type StoredInventory = Omit<Inventory, 'packages' | 'diagnostics'> & {
 	diagnostics: string[];
 	findings?: Diagnostic[];
 };
-export type StoredRepository = Omit<RepositoryRecord, 'inventory' | 'diagnostics'> & {
+export type StoredRepository = Omit<RepositoryRecord, 'inventory' | 'diagnostics' | 'access'> & {
+	suspended?: boolean;
 	inventory: StoredInventory;
 	diagnostics: string[];
 	findings?: Diagnostic[];
@@ -108,9 +109,10 @@ export function identifyInventory(inventory: StoredInventory, repository?: strin
 	};
 }
 export function identifyRepository(repository: StoredRepository): RepositoryRecord {
-	const { findings: _findings, ...rest } = repository;
+	const { findings: _findings, suspended, ...rest } = repository;
 	return {
 		...rest,
+		access: suspended ? { kind: 'suspended', since: repository.updatedAt } : { kind: 'active' },
 		diagnostics: findingsOf(repository),
 		inventory: identifyInventory(repository.inventory, repository.name),
 	};
@@ -118,9 +120,10 @@ export function identifyRepository(repository: StoredRepository): RepositoryReco
 export function encodeInventory(inventory: Inventory): StoredInventory {
 	return { ...inventory, diagnostics: messages(inventory.diagnostics), findings: inventory.diagnostics };
 }
-export function encodeRepository(repository: RepositoryRecord): StoredRepository {
+export function encodeRepository({ access, ...repository }: RepositoryRecord): StoredRepository {
 	return {
 		...repository,
+		...(access.kind === 'suspended' ? { suspended: true } : {}),
 		diagnostics: messages(blocking(repository.diagnostics)),
 		findings: repository.diagnostics,
 		inventory: encodeInventory(repository.inventory),

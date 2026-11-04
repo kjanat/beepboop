@@ -6,8 +6,8 @@ import type { RepositoryRecord } from '@/automation/types';
 import Badge from '@/components/Badge.astro';
 import Field from '@/components/Field.astro';
 import Time from '@/components/Time.astro';
-import { blocking } from '@/contract/diagnostics';
 import { packageLabel } from '@/domain/package-label';
+import { readiness } from '@/domain/repository';
 import type { ViewOf } from '@/server/loaders.ts';
 import { packageDisplayName } from '@/server/package-name';
 import { repositoryStatus } from '@/server/views/tone.ts';
@@ -94,6 +94,11 @@ function wingetDestination(repository: RepositoryRecord) {
 					<a href={`https://github.com/${repository.name}`}>Open on GitHub ↗</a>
 				</Field>
 				<Field label="Inspected"><Time value={repository.updatedAt} /></Field>
+				{repository.access.kind === 'suspended' && (
+					<Field label="App access lost"><Time
+							value={repository.access.since}
+						/></Field>
+				)}
 				<Field label="Commit">
 					<a
 						href={`https://github.com/${repository.name}/commit/${repository.sha}`}
@@ -136,14 +141,13 @@ function wingetDestination(repository: RepositoryRecord) {
 						Review setup PR ↗
 					</a>
 				)}
-				{repository.configuration && !repository.suspended
-					&& !blocking(repository.diagnostics).length && (
-					 <a
-						 class="button primary"
-						 href={`/releases?repository=${repository.id}`}
-						 aria-label={`Prepare a release of ${repository.name}`}
-					 >Prepare a release</a>
-				 )}
+				{readiness(repository).kind === 'ready' && (
+					<a
+						class="button primary"
+						href={`/releases?repository=${repository.id}`}
+						aria-label={`Prepare a release of ${repository.name}`}
+					>Prepare a release</a>
+				)}
 			</div>
 			<form
 				data-action="setup"
