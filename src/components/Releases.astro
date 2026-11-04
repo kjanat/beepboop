@@ -1,6 +1,11 @@
 ---
 import { matchesPackage, packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
+import {
+	bumpedVersion,
+	recommendedVersion,
+} from '@/automation/release-version';
+import type { Package } from '@/automation/types';
 import { type Dashboard, workflowChoices } from '@/server/dashboard.ts';
 import { packageUrl } from '@/server/package-url';
 
@@ -39,6 +44,24 @@ const groups = [...new Set(packages.map(p => p.versionSource))].map((
 	id: `group-${index + 1}`,
 	packages: packages.filter(p => p.versionSource === source),
 }));
+const recommended = recommendedVersion(packages);
+const bump = (kind: 'patch' | 'minor' | 'major') => {
+	const version = bumpedVersion(packages, { bump: kind });
+	return version ? ` (${version})` : '';
+};
+function registryState(pkg: Package): string {
+	if (pkg.publicationStatus === 'published') {
+		return `Released ${pkg.published ?? ''}`.trim();
+	}
+	if (pkg.publicationStatus === 'missing') return 'Not published yet';
+	if (pkg.publicationStatus === 'failed') return 'Registry check failed';
+	return 'Registry not checked';
+}
+function manifestNote(pkg: Package): string | undefined {
+	return pkg.version && pkg.version !== pkg.published
+		? `Manifest ${pkg.version}`
+		: undefined;
+}
 const preparations = data.executions.filter(e =>
 	e.state === 'succeeded' && e.repositoryId === repository?.id
 	&& ((e.managed?.plan && 'groups' in e.managed.plan)
@@ -104,17 +127,17 @@ const preparations = data.executions.filter(e =>
 										 >{group.packages.map(p => p.name).join(', ')}</label>
 								 </legend>
 								 <p class="hint">
-									 Current:
 									 {group.packages.map(pkg => (
-										 <span
-											 class="package-line"
-										 >{packageUrl(pkg)}{pkg.version && (
-											 <span class="badge">{pkg.version}</span>
-										 )}</span>
+										 <span class="package-line">{packageUrl(pkg)}<span
+												 class="badge"
+											 >{registryState(pkg)}</span>{manifestNote(pkg) && (
+												 <span class="badge">{manifestNote(pkg)}</span>
+											 )}</span>
 									 ))}
 								 </p><label>Next version<input
 										 name={`version-${group.id}`}
 										 placeholder="1.2.3"
+										 value={recommendedVersion(group.packages)}
 									 ></label>
 							 </fieldset>
 						 ))}
@@ -136,18 +159,33 @@ const preparations = data.executions.filter(e =>
 						 ))}
 					 </>
 				 ) : (
-						<><div class="form-grid">
+						<><p class="hint">
+								{packages.map(pkg => (
+									<span class="package-line">{packageUrl(pkg)}<span
+											class="badge"
+										>{registryState(pkg)}</span>{manifestNote(pkg) && (
+											<span class="badge">{manifestNote(pkg)}</span>
+										)}</span>
+								))}
+							</p><div class="form-grid">
 								<label>Version change<select name="versionMode">
 										<option value="explicit">Set a version</option>
-										<option value="patch">Patch — bug fixes</option>
-										<option value="minor">Minor — new features</option>
-										<option value="major">Major — breaking changes</option>
+										<option value="patch">
+											Patch — bug fixes{bump('patch')}
+										</option>
+										<option value="minor">
+											Minor — new features{bump('minor')}
+										</option>
+										<option value="major">
+											Major — breaking changes{bump('major')}
+										</option>
 										<option value="prerelease">Start a prerelease</option>
 										<option value="next">Next prerelease</option>
 										<option value="stable">Promote prerelease to stable</option>
 									</select></label><label data-explicit>Version<input
 										name="version"
 										placeholder="1.2.3"
+										value={recommended}
 										required
 									></label><label data-prerelease hidden>Prerelease
 									base<select name="base">

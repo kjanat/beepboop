@@ -4,6 +4,7 @@ import type { Fetcher, ManagerRegistry, VerificationContext } from '@/automation
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage, packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
+import { releasedVersion } from '@/automation/release-version';
 import type { Inventory, ManagerName, Package, Publication, ReleasePlan, Snapshot } from '@/automation/types';
 import { nextVersion, parseVersionRequest, type VersionRequest } from '@/automation/version';
 
@@ -12,11 +13,6 @@ export { publicationOrder } from '@/automation/managers/order';
 function explicit(request: VersionRequest): string {
 	if (!('version' in request)) throw new Error('Select an explicit version for the first release');
 	return request.version;
-}
-function released(pkg: Package): string | undefined {
-	if (pkg.publicationStatus === 'published') return pkg.published;
-	if (pkg.publicationStatus === 'missing') return undefined;
-	return pkg.version;
 }
 export function discover(snapshot: Snapshot, enabled: ManagerName[] = managerRegistry.names()): Inventory {
 	return managerRegistry.discover(snapshot, enabled);
@@ -44,11 +40,11 @@ export function planRelease(
 	}
 	const current = [
 		...new Set(packages.flatMap(p => {
-			const version = released(p);
+			const version = releasedVersion(p);
 			return version === undefined ? [] : [version];
 		})),
 	];
-	if (!('version' in request) && packages.some(p => released(p) === undefined)) {
+	if (!('version' in request) && packages.some(p => releasedVersion(p) === undefined)) {
 		throw new Error('Select an explicit version for the first release');
 	}
 	if (!('version' in request) && current.length !== 1) {
