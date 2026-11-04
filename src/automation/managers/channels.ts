@@ -3,6 +3,7 @@ import { type Channel, type ChannelOutcome, tracksBranch } from '@/automation/de
 import type { Fetcher, RegistryVersion } from '@/automation/managers/registry';
 import { LookupFailure, latestText, latestVersion, unpublished } from '@/automation/managers/verification';
 import type { Snapshot } from '@/automation/types';
+import { type Diagnostic, fileProblem } from '@/contract/diagnostics';
 
 const aurInfo = z.object({
 	type: z.string(),
@@ -68,24 +69,24 @@ export async function checkChannel(
 	};
 }
 
-export function pkgbuildChannels(snapshot: Snapshot): { channels: Channel[]; diagnostics: string[] } {
+export function pkgbuildChannels(snapshot: Snapshot): { channels: Channel[]; diagnostics: Diagnostic[] } {
 	const channels: Channel[] = [];
-	const diagnostics: string[] = [];
+	const diagnostics: Diagnostic[] = [];
 	for (const [path, source] of Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b))) {
 		if (!pkgbuildFile.test(path)) continue;
 		const values = [...source.matchAll(/^pkgname=(.*)$/gm)].map(match => match[1]?.trim() ?? '');
 		const [value] = values;
 		if (values.length !== 1 || value === undefined) {
-			diagnostics.push(`${path}: expected exactly one pkgname assignment`);
+			diagnostics.push(fileProblem(path, 'invalid-manifest', `expected exactly one pkgname assignment`));
 			continue;
 		}
 		if (value.startsWith('(')) {
-			diagnostics.push(`${path}: split packages are not supported`);
+			diagnostics.push(fileProblem(path, 'invalid-manifest', `split packages are not supported`));
 			continue;
 		}
 		const name = /^(['"]?)([^'"]*)\1$/.exec(value)?.[2];
 		if (!name || !aurName.test(name)) {
-			diagnostics.push(`${path}: pkgname must be a literal package name`);
+			diagnostics.push(fileProblem(path, 'invalid-manifest', `pkgname must be a literal package name`));
 			continue;
 		}
 		channels.push({ destination: 'aur', name, manifest: path });

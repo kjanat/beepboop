@@ -4,6 +4,7 @@ import type { Adapter } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
 import { excluded, registry } from '@/automation/package-publication';
+import { fileProblem } from '@/contract/diagnostics';
 import { packageIdentity } from '@/package-url';
 export const cargoManager: Adapter<'cargo'> = {
 	name: 'cargo',
@@ -46,7 +47,7 @@ export const cargoManager: Adapter<'cargo'> = {
 				}
 			}
 		} catch {
-			inventory.diagnostics.push('Cargo.toml: invalid TOML');
+			inventory.diagnostics.push(fileProblem('Cargo.toml', 'invalid-manifest', 'invalid TOML'));
 		}
 		const members = Array.isArray(workspace.members) ? workspace.members.map(String) : [];
 		const exclude = Array.isArray(workspace.exclude) ? workspace.exclude.map(String) : [];
@@ -96,7 +97,7 @@ export const cargoManager: Adapter<'cargo'> = {
 					detected.add('cargo');
 				}
 			} catch {
-				inventory.diagnostics.push(`${path}: cannot safely discover configuration`);
+				inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', `cannot safely discover configuration`));
 			}
 		}
 

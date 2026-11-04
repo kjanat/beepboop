@@ -1,6 +1,7 @@
 import { excluded, type PackagePublication, registry } from '@/automation/package-publication';
 import type { Execution, Inventory, Package, Publication, RepositoryRecord } from '@/automation/types';
 import { identifiedManagers, legacyJsrIdentity } from '@/contract/catalog';
+import { blocking, type Diagnostic, legacyDiagnostic, messages } from '@/contract/diagnostics';
 import { type PackageIdentity, packageIdentity, purl } from '@/package-url';
 
 type PackageRecord = Pick<Package, 'manager' | 'name' | 'version' | 'identity'>;
@@ -71,8 +72,25 @@ export function matchesPublication(reference: string, publication: Publication):
 			&& matchesPackage(reference, publication));
 }
 export type StoredPackage = Omit<Package, 'publication'> & { publication?: PackagePublication; publish?: boolean };
-export type StoredInventory = Omit<Inventory, 'packages'> & { packages: StoredPackage[] };
-export type StoredRepository = Omit<RepositoryRecord, 'inventory'> & { inventory: StoredInventory };
+export type StoredInventory = Omit<Inventory, 'packages' | 'diagnostics'> & {
+	packages: StoredPackage[];
+	diagnostics: string[];
+	findings?: Diagnostic[];
+};
+export type StoredRepository = Omit<RepositoryRecord, 'inventory' | 'diagnostics'> & {
+	inventory: StoredInventory;
+	diagnostics: string[];
+	findings?: Diagnostic[];
+};
+function findingsOf(stored: { diagnostics: string[]; findings?: Diagnostic[] }): Diagnostic[] {
+	return stored.findings ?? stored.diagnostics.map(legacyDiagnostic);
+}
+function legacyInventoryFinding(message: string): Diagnostic {
+	const path = /^([^\s:]+): /.exec(message)?.[1];
+	return path === undefined
+		? legacyDiagnostic(message)
+		: { ...legacyDiagnostic(message), subject: { kind: 'file', path } };
+}
 export function normalizePublication({ publish, publication, ...pkg }: StoredPackage): Package {
 	return { ...pkg, publication: publication ?? (publish === false ? excluded('unrecorded') : registry) };
 }
@@ -81,14 +99,32 @@ export function identifyInventory(inventory: StoredInventory, repository?: strin
 		const pkg = normalizePublication(stored);
 		return { ...pkg, identity: identityOf(pkg, repository) };
 	});
+	const { findings: _findings, ...rest } = inventory;
 	return {
-		...inventory,
+		...rest,
 		packages,
+		diagnostics: inventory.findings ?? inventory.diagnostics.map(legacyInventoryFinding),
 		publicationOrder: inventory.publicationOrder.map(reference => selectorKey(reference, packages)),
 	};
 }
 export function identifyRepository(repository: StoredRepository): RepositoryRecord {
-	return { ...repository, inventory: identifyInventory(repository.inventory, repository.name) };
+	const { findings: _findings, ...rest } = repository;
+	return {
+		...rest,
+		diagnostics: findingsOf(repository),
+		inventory: identifyInventory(repository.inventory, repository.name),
+	};
+}
+export function encodeInventory(inventory: Inventory): StoredInventory {
+	return { ...inventory, diagnostics: messages(inventory.diagnostics), findings: inventory.diagnostics };
+}
+export function encodeRepository(repository: RepositoryRecord): StoredRepository {
+	return {
+		...repository,
+		diagnostics: messages(blocking(repository.diagnostics)),
+		findings: repository.diagnostics,
+		inventory: encodeInventory(repository.inventory),
+	};
 }
 export function identifyExecution(execution: Execution): Execution {
 	return {

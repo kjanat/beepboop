@@ -1,5 +1,6 @@
 import { resolveConfiguration } from '@/automation/configuration';
 import { discover } from '@/automation/managers';
+import { encodeRepository } from '@/automation/package-identity';
 import { repositoryName, repositoryReference } from '@/automation/repository-name';
 import { branchConflictBlocker, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import { sameEdits, setupEdits } from '@/automation/setup-maintenance';
@@ -17,7 +18,10 @@ function reference(input: string) {
 }
 
 export const repositoryEndpoints = {
-	repositoriesList: admin(routes.repositoriesList, (_, { service }) => service.store.repositories()),
+	repositoriesList: admin(
+		routes.repositoriesList,
+		async (_, { service }) => (await service.store.repositories()).map(encodeRepository),
+	),
 	repositoriesResolve: admin(routes.repositoriesResolve, async (input, { service }) => {
 		const wanted = reference(input.repository);
 		const name = wanted.name.toLowerCase(), owner = wanted.owner?.toLowerCase();
@@ -26,7 +30,7 @@ export const repositoryEndpoints = {
 			return candidateName === name && (owner === undefined || candidateOwner === owner);
 		});
 		const [found, ...others] = matches;
-		if (found && !others.length) return found;
+		if (found && !others.length) return encodeRepository(found);
 		if (found) {
 			throw precondition(
 				`Repository ${input.repository} matches ${
@@ -43,7 +47,7 @@ export const repositoryEndpoints = {
 	repositoriesDiscover: admin(routes.repositoriesDiscover, async (input, { service }) => {
 		reference(input.repository);
 		const name = await repositoryName(input.repository, () => service.gateway.ownerLogin());
-		return service.refresh(name, input.repositoryId ?? await service.gateway.identify(name));
+		return encodeRepository(await service.refresh(name, input.repositoryId ?? await service.gateway.identify(name)));
 	}),
 	setupPreview: admin(routes.setupPreview, async (input, context) => (await setupReview(input, context)).plan),
 	setupApply: admin(routes.setupApply, async (input, context) => {

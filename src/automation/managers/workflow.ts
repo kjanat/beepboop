@@ -2,6 +2,7 @@ import { object, yaml } from '@/automation/managers/helpers';
 import type { Adapter } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { workflowEvidence } from '@/automation/setup-workflows';
+import { fileProblem } from '@/contract/diagnostics';
 export const workflowManager: Adapter<'workflow'> = {
 	name: 'workflow',
 	discover(snapshot) {
@@ -54,7 +55,7 @@ export const workflowManager: Adapter<'workflow'> = {
 					if (/docker\/(?:build-push|metadata)-action|skopeo copy/.test(source)) detected.add('oci');
 				}
 			} catch {
-				inventory.diagnostics.push(`${path}: cannot safely discover configuration`);
+				inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', `cannot safely discover configuration`));
 			}
 		}
 

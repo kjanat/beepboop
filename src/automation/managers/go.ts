@@ -5,6 +5,7 @@ import { latestTag, majorSuffix, tagSource } from '@/automation/managers/tags';
 import { latestVersion } from '@/automation/managers/verification';
 import { excluded, registry } from '@/automation/package-publication';
 import type { Package, Publication } from '@/automation/types';
+import { fileProblem } from '@/contract/diagnostics';
 import { packageIdentity } from '@/package-url';
 
 const pseudoVersion =
@@ -144,7 +145,7 @@ export const goManager: Adapter<'go'> = {
 			if (path !== 'go.mod' && !path.endsWith('/go.mod')) continue;
 			const mod = parseGoMod(source);
 			if (mod) modules.push({ path, mod });
-			else inventory.diagnostics.push(`${path}: cannot safely discover configuration`);
+			else inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', `cannot safely discover configuration`));
 		}
 		const rootModule = modules.find(entry => entry.path === 'go.mod');
 		const vanityRoot = rootModule ? splitModulePath(rootModule.mod.module)?.prefix : undefined;

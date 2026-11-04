@@ -1,7 +1,8 @@
 import type { RepositoryRecord } from '@/automation/types.ts';
+import { blocking } from '@/contract/diagnostics';
 
 export function workflowChoices(repository: RepositoryRecord) {
-	if (!repository.configuration || repository.suspended || repository.diagnostics.length) return [];
+	if (!repository.configuration || repository.suspended || blocking(repository.diagnostics).length) return [];
 	return Object.entries(repository.configuration.streams).flatMap(([stream, configuration]) => {
 		const bindings = {
 			...configuration.workflows,

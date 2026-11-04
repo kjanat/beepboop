@@ -1,6 +1,7 @@
 import type { DeliveryState, NotificationDelivery } from '@/automation/notifications.ts';
 import type { ExecutionState, Publication, RepositoryRecord } from '@/automation/types.ts';
 import type { WinGetSubmission } from '@/automation/winget.ts';
+import { blocking } from '@/contract/diagnostics';
 import type { Status, Tone } from '@/contract/views';
 import type { ReleaseSetState, releaseSummaries } from '@/server/releases.ts';
 
@@ -66,7 +67,7 @@ export function releaseStatus(release: ReturnType<typeof releaseSummaries>[numbe
 
 export function repositoryStatus(repository: RepositoryRecord): Status {
 	if (repository.suspended) return { tone: 'warn', label: 'App access unavailable' };
-	if (repository.diagnostics.length) return { tone: 'warn', label: 'Setup needed' };
+	if (blocking(repository.diagnostics).length) return { tone: 'warn', label: 'Setup needed' };
 	if (!repository.configuration) return { tone: 'neutral', label: 'Setup needed' };
 	return { tone: 'ok', label: 'Configured' };
 }

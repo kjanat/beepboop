@@ -1,6 +1,7 @@
 import { createExecution, executionId } from '@/automation/execution';
 import type { ReleaseSetPlan } from '@/automation/planning';
 import type { Execution, ReleasePlan, RepositoryRecord } from '@/automation/types';
+import { blocking } from '@/contract/diagnostics';
 import { sha256Hex } from '@/contract/ids';
 
 export async function planIdentity(
@@ -41,7 +42,7 @@ export async function createManagedPreparation(
 	plan: ReleasePlan | ReleaseSetPlan,
 ): Promise<Execution> {
 	const configuration = repository.configuration;
-	if (!configuration?.streams[stream] || repository.diagnostics.length || repository.suspended) {
+	if (!configuration?.streams[stream] || blocking(repository.diagnostics).length || repository.suspended) {
 		throw new Error('Repository configuration is not ready');
 	}
 	if (plan.sourceSha !== repository.sha) throw new Error('Preparation source revision changed');

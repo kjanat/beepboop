@@ -7,6 +7,7 @@ import { latestTag, tagSource } from '@/automation/managers/tags';
 import { excluded, registry } from '@/automation/package-publication';
 import type { Publication, Snapshot } from '@/automation/types';
 import { goreleaserConfig } from '@/contract/catalog';
+import { type Diagnostic, fileProblem } from '@/contract/diagnostics';
 import { packageIdentity } from '@/package-url';
 
 function cargoName(snapshot: Snapshot): unknown {
@@ -41,9 +42,16 @@ function entries(config: Record<string, unknown>, key: string): Record<string, u
 }
 function channelsOf(path: string, config: Record<string, unknown>, project: string) {
 	const channels: Channel[] = [];
-	const diagnostics: string[] = [];
+	const diagnostics: Diagnostic[] = [];
 	const skip = (key: string, index: number) =>
-		diagnostics.push(`${path}: ${key}[${index}] has a templated or missing name or repository; not checked`);
+		diagnostics.push(
+			fileProblem(
+				path,
+				'unsupported',
+				`${key}[${index}] has a templated or missing name or repository; not checked`,
+				'warning',
+			),
+		);
 	for (
 		const [key, directory] of [['homebrew_casks', 'Casks'], ['brews', 'Formula'], ['scoops', '']] as const
 	) {
@@ -130,18 +138,20 @@ export const goreleaserManager: Adapter<'goreleaser'> = {
 			try {
 				config = yaml(source);
 			} catch {
-				result.diagnostics.push(`${path}: cannot safely discover configuration`);
+				result.diagnostics.push(fileProblem(path, 'invalid-manifest', `cannot safely discover configuration`));
 				continue;
 			}
 			result.managers = ['goreleaser'];
 			const name = projectName(snapshot, config);
 			if (!name) {
-				result.diagnostics.push(`${path}: project_name cannot be derived`);
+				result.diagnostics.push(fileProblem(path, 'invalid-manifest', `project_name cannot be derived`));
 				continue;
 			}
 			const disable = object(config.release).disable;
 			if (typeof disable === 'string' && disable.includes('{{')) {
-				result.diagnostics.push(`${path}: release.disable is a template; publication assumed`);
+				result.diagnostics.push(
+					fileProblem(path, 'unsupported', `release.disable is a template; publication assumed`, 'warning'),
+				);
 			}
 			const version = latestTag(snapshot.tags ?? [], 'v');
 			const { channels, diagnostics } = channelsOf(path, config, name);

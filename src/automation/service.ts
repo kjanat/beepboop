@@ -20,6 +20,7 @@ import { matchesSubscription } from '@/automation/subscriptions';
 import type { AutomationEvent, Execution, RepositoryRecord, SubscriptionDelivery } from '@/automation/types';
 import { Vault } from '@/automation/vault';
 import { type WinGetBindings, WinGetService } from '@/automation/winget';
+import { blocking } from '@/contract/diagnostics';
 import { precondition } from '@/contract/errors';
 import { setupChoicesSchema } from '@/contract/setup';
 import { array, integer, record, text } from '@/model';
@@ -153,16 +154,21 @@ export class AutomationService {
 				repository.presetShas = resolved.presetShas;
 				repository.inventory = discover(snapshot, resolved.configuration.managers);
 			} catch (error) {
-				repository.diagnostics.push(
-					error instanceof Error ? error.message : 'Configuration invalid',
-				);
+				repository.diagnostics.push({
+					code: 'invalid-configuration',
+					severity: 'blocking',
+					subject: { kind: 'file', path: '.github/beepboop.json' },
+					message: error instanceof Error ? error.message : 'Configuration invalid',
+				});
 			}
 		} else {
-			repository.diagnostics.push(
-				await this.gateway.openSetupPull(name, id)
+			repository.diagnostics.push({
+				code: 'unconfigured',
+				severity: 'blocking',
+				message: await this.gateway.openSetupPull(name, id)
 					? 'The setup pull request is open. Merge it to enable releases.'
 					: 'Not configured yet. Configure releases opens a setup pull request.',
-			);
+			});
 		}
 		repository.inventory = await resolvePublished(repository.inventory, fetch, this.gateway.verification(name, id));
 		await this.store.putRepository(repository);
@@ -222,7 +228,7 @@ export class AutomationService {
 		for (const name of names) await prepareJsrPackage(name, execution.repository, token, fetch);
 	}
 	private async releaseFromManifest(repository: RepositoryRecord): Promise<void> {
-		if (repository.diagnostics.length || repository.suspended) return;
+		if (blocking(repository.diagnostics).length || repository.suspended) return;
 		for (const [name, stream] of Object.entries(repository.configuration?.streams ?? {})) {
 			if (!stream.promote.workflow || stream.versionSource?.kind === 'tags') continue;
 			const packages = repository.inventory.packages.filter(pkg =>
@@ -297,7 +303,7 @@ export class AutomationService {
 					await this.store.putRepository({
 						...repository,
 						suspended: true,
-						diagnostics: ['App access removed or suspended'],
+						diagnostics: [{ code: 'unsupported', severity: 'blocking', message: 'App access removed or suspended' }],
 						updatedAt: Date.now(),
 					});
 				} else await this.coordinator(repository.id).wake();
@@ -375,7 +381,7 @@ export class AutomationService {
 		}
 		const deliveries: SubscriptionDelivery[] = [];
 		for (const repository of await this.store.repositories()) {
-			if (!repository.configuration || repository.diagnostics.length || repository.suspended) continue;
+			if (!repository.configuration || blocking(repository.diagnostics).length || repository.suspended) continue;
 			for (const subscription of repository.configuration.subscriptions) {
 				if (!matchesSubscription(subscription, event)) continue;
 				const execution = await createExecution(
@@ -430,7 +436,7 @@ export class AutomationService {
 					await this.event(event);
 					await this.coordinator(repository.id).acknowledgeReleaseEvent(event.id);
 				}
-				if (!refreshed.configuration || refreshed.diagnostics.length) continue;
+				if (!refreshed.configuration || blocking(refreshed.diagnostics).length) continue;
 				const now = Date.now();
 				for (const [streamName, stream] of Object.entries(refreshed.configuration.streams)) {
 					for (const [operation, binding] of Object.entries(stream.workflows)) {

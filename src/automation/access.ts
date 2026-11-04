@@ -1,11 +1,12 @@
 import type { RepositoryRecord } from '@/automation/types.ts';
 import { type Grant, parseGrant } from '@/automation/vault.ts';
+import { blocking } from '@/contract/diagnostics';
 import { record, text } from '@/model';
 
 /** Resolve permissions against stored configuration, never browser-supplied scope. */
 export function configuredGrant(repository: RepositoryRecord, input: unknown): Grant {
 	const data = record(input);
-	if (!repository.configuration || repository.suspended || repository.diagnostics.length) {
+	if (!repository.configuration || repository.suspended || blocking(repository.diagnostics).length) {
 		throw new Error('Repository is not ready; refresh its inspection first');
 	}
 	const stream = repository.configuration.streams[text(data.stream)];

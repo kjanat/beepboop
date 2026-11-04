@@ -6,6 +6,7 @@ import { latestVersion, verifyRegistry } from '@/automation/managers/verificatio
 import { excluded, registry } from '@/automation/package-publication';
 import type { Package } from '@/automation/types';
 import { npmTargets } from '@/contract/catalog';
+import { fileProblem } from '@/contract/diagnostics';
 import { packageIdentity } from '@/package-url';
 export function npmLatest(name: string, request: Fetcher): Promise<RegistryVersion> {
 	return latestVersion(
@@ -57,7 +58,9 @@ export const npmManager: Adapter<'npm'> = {
 					if (typeof object(pkg.engines).vscode === 'string') continue;
 					if (typeof pkg.name !== 'string' || !pkg.name.trim()) {
 						if (Object.hasOwn(pkg, 'name')) {
-							inventory.diagnostics.push(`${path}: package name must be a nonempty string`);
+							inventory.diagnostics.push(
+								fileProblem(path, 'invalid-manifest', `package name must be a nonempty string`),
+							);
 						}
 						continue;
 					}
@@ -78,7 +81,7 @@ export const npmManager: Adapter<'npm'> = {
 					detected.add('npm');
 				}
 			} catch {
-				inventory.diagnostics.push(`${path}: cannot safely discover configuration`);
+				inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', `cannot safely discover configuration`));
 			}
 		}
 		for (const [path, source] of Object.entries(snapshot.files)) {
@@ -89,7 +92,9 @@ export const npmManager: Adapter<'npm'> = {
 				const workspace = object(parseToml(snapshot.files['Cargo.toml'] ?? '').workspace);
 				const version = object(workspace.package).version;
 				if (typeof version !== 'string') {
-					inventory.diagnostics.push(`${path}: generated packages need workspace.package.version in Cargo.toml`);
+					inventory.diagnostics.push(
+						fileProblem(path, 'invalid-manifest', `generated packages need workspace.package.version in Cargo.toml`),
+					);
 					continue;
 				}
 				const facades: Record<string, unknown>[] = Array.isArray(descriptor.facades)
@@ -136,7 +141,7 @@ export const npmManager: Adapter<'npm'> = {
 				inventory.packages.push(...generated);
 				detected.add('npm');
 			} catch {
-				inventory.diagnostics.push(`${path}: invalid npm target descriptor`);
+				inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', `invalid npm target descriptor`));
 			}
 		}
 

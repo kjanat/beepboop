@@ -3,6 +3,7 @@ import type { RepositoryGateway } from '@/automation/github';
 import { documentRow } from '@/automation/schemas';
 import type { Store } from '@/automation/store';
 import type { RepositoryRecord } from '@/automation/types';
+import { blocking } from '@/contract/diagnostics';
 import { generateManifests, renderManifests } from '@/distribution/winget/generate';
 import { array, integer, record, sha, text } from '@/model';
 
@@ -95,7 +96,7 @@ export class WinGetService {
 		return !!this.env.WINGET_GITHUB_TOKEN && /^[\w.-]+\/[\w.-]+$/.test(this.env.WINGET_FORK ?? '');
 	}
 	private policy(repo: RepositoryRecord) {
-		if (repo.suspended || repo.diagnostics.length || !repo.configuration?.winget) {
+		if (repo.suspended || blocking(repo.diagnostics).length || !repo.configuration?.winget) {
 			throw Error('Repository is not enabled for WinGet');
 		}
 		return repo.configuration.winget;
@@ -447,7 +448,9 @@ export class WinGetService {
 		} else await this.store.db.prepare('DELETE FROM winget_watches WHERE repository_id=?').bind(repo.id).run();
 	}
 	async automatic(repo: RepositoryRecord): Promise<void> {
-		if (!repo.configuration?.winget?.automatic || repo.suspended || repo.diagnostics.length || !this.setup()) return;
+		if (
+			!repo.configuration?.winget?.automatic || repo.suspended || blocking(repo.diagnostics).length || !this.setup()
+		) return;
 		await this.watch(repo);
 		const watch = z.object({ since: z.number() }).nullable().parse(
 			await this.store.db.prepare('SELECT since FROM winget_watches WHERE repository_id=?').bind(repo.id).first(),

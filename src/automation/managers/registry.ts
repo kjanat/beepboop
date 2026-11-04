@@ -11,6 +11,7 @@ import { packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import type { Inventory, Package, Publication, Snapshot } from '@/automation/types';
 import { destinationsOf, type ManagerDestinationId, type ManagerName, managerSpec } from '@/contract/catalog';
+import type { Diagnostic } from '@/contract/diagnostics';
 import { type PackageIdentity, packageIdentity } from '@/package-url';
 
 export interface Manager {
@@ -53,6 +54,9 @@ export interface DependencyEdit {
 	packages: Package[];
 	version: string;
 	changed: Map<string, string>;
+}
+function unique(diagnostics: Diagnostic[]): Diagnostic[] {
+	return [...new Map(diagnostics.map(entry => [entry.message, entry])).values()];
 }
 export function emptyInventory(): Inventory {
 	return { packages: [], workflows: [], managers: [], diagnostics: [], publicationOrder: [] };
@@ -105,11 +109,13 @@ export class ManagerRegistry {
 				}
 				: { ...rest, publicationStatus: 'unchecked' };
 		});
-		const diagnostics: string[] = [];
+		const diagnostics: Diagnostic[] = [];
 		const channels = async (list: Channel[], label: (channel: Channel) => string): Promise<ChannelOutcome[]> =>
 			Promise.all(list.map(async channel => {
 				const { outcome, failure } = await checkChannel(channel, request);
-				if (failure) diagnostics.push(`${label(channel)}: ${failure}`);
+				if (failure) {
+					diagnostics.push({ code: 'lookup-failed', severity: 'warning', message: `${label(channel)}: ${failure}` });
+				}
 				return outcome;
 			}));
 		const lookups = (pkg: Package): { destination: ManagerDestinationId; latest: RegistryLookup }[] => {
@@ -148,7 +154,12 @@ export class ManagerRegistry {
 							outcome.destination === destination ? registryOutcome(destination, result) : outcome
 						);
 						if (result.kind === 'failed') {
-							diagnostics.push(`${pkg.manager}:${pkg.name}: ${result.reason} from ${result.url}`);
+							diagnostics.push({
+								code: 'lookup-failed',
+								severity: 'warning',
+								subject: { kind: 'package', key: packageId(pkg) },
+								message: `${pkg.manager}:${pkg.name}: ${result.reason} from ${result.url}`,
+							});
 						}
 						if (destination !== primary) continue;
 						pkg.publicationStatus = result.kind;
@@ -168,7 +179,7 @@ export class ManagerRegistry {
 			...rest,
 			...(destinations.length ? { destinations } : {}),
 			packages,
-			diagnostics: [...new Set([...inventory.diagnostics, ...diagnostics])],
+			diagnostics: unique([...inventory.diagnostics, ...diagnostics]),
 		};
 	}
 	canVerify(name: ManagerName): boolean {
@@ -202,7 +213,14 @@ export class ManagerRegistry {
 		const identities = new Set<string>();
 		for (const pkg of result.packages) {
 			const identity = packageId(pkg);
-			if (identities.has(identity)) result.diagnostics.push(`Duplicate package identity: ${identity}`);
+			if (identities.has(identity)) {
+				result.diagnostics.push({
+					code: 'duplicate-identity',
+					severity: 'blocking',
+					subject: { kind: 'package', key: identity },
+					message: `Duplicate package identity: ${identity}`,
+				});
+			}
 			identities.add(identity);
 			pkg.dependencies = pkg.dependencies.filter(name =>
 				result.packages.some(other => other.manager === pkg.manager && other.name === name)
@@ -211,10 +229,10 @@ export class ManagerRegistry {
 		try {
 			result.publicationOrder = publicationOrder(result.packages);
 		} catch (error) {
-			result.diagnostics.push(String(error));
+			result.diagnostics.push({ code: 'cycle', severity: 'blocking', message: String(error) });
 		}
 		result.managers = [...new Set(result.managers)].filter(name => enabled.includes(name)).sort();
-		result.diagnostics = [...new Set(result.diagnostics)];
+		result.diagnostics = unique(result.diagnostics);
 		return result;
 	}
 }

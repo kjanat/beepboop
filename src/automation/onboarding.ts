@@ -329,6 +329,6 @@ export function onboardingBody(snapshot: Snapshot, inventory: Inventory): string
 		} input.`,
 		...review,
 		'- Existing triggers remain active until each operation has an explicit handover.',
-		...inventory.diagnostics.map((d) => `- ${d}`),
+		...inventory.diagnostics.map((d) => `- ${d.message}`),
 	].join('\n');
 }

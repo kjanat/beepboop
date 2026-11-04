@@ -6,6 +6,7 @@ import type { RepositoryRecord } from '@/automation/types';
 import Badge from '@/components/Badge.astro';
 import Field from '@/components/Field.astro';
 import Time from '@/components/Time.astro';
+import { blocking } from '@/contract/diagnostics';
 import { packageLabel } from '@/domain/package-label';
 import type { ViewOf } from '@/server/loaders.ts';
 import { packageDisplayName } from '@/server/package-name';
@@ -101,7 +102,9 @@ function wingetDestination(repository: RepositoryRecord) {
 					</a>
 				</Field>
 			</dl>
-			{repository.diagnostics.map(message => <p class="notice">{message}</p>)}
+			{repository.diagnostics.map(entry => (
+				<p class="notice">{entry.message}</p>
+			))}
 			{publishedOutsideRequired(repository).map(gap => (
 				<div class="notice">
 					<p>
@@ -134,7 +137,7 @@ function wingetDestination(repository: RepositoryRecord) {
 					</a>
 				)}
 				{repository.configuration && !repository.suspended
-					&& !repository.diagnostics.length && (
+					&& !blocking(repository.diagnostics).length && (
 					 <a
 						 class="button primary"
 						 href={`/releases?repository=${repository.id}`}
@@ -342,8 +345,8 @@ function wingetDestination(repository: RepositoryRecord) {
 					))}
 				</details>
 			)}
-			{repository.inventory.diagnostics.map(message => (
-				<p class="notice">{message}</p>
+			{repository.inventory.diagnostics.map(entry => (
+				<p class="notice">{entry.message}</p>
 			))}
 		</details>
 	</article>

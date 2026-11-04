@@ -7,6 +7,7 @@ import {
 } from '@/automation/release-version';
 import type { Package } from '@/automation/types';
 import Badge from '@/components/Badge.astro';
+import { blocking } from '@/contract/diagnostics';
 import { formatTime } from '@/contract/time';
 import type { Status } from '@/contract/views';
 import type { ViewOf } from '@/server/loaders.ts';
@@ -19,7 +20,7 @@ interface Props {
 }
 const { data } = Astro.props;
 const available = data.repositories.filter(r =>
-	r.configuration && !r.suspended && !r.diagnostics.length
+	r.configuration && !r.suspended && !blocking(r.diagnostics).length
 );
 const repository =
 	available.find(r => String(r.id) === Astro.url.searchParams.get('repository'))

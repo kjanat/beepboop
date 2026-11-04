@@ -34,6 +34,7 @@ import { maintainSetup } from '@/automation/setup-maintenance';
 import type { SetupEdit } from '@/automation/setup-types';
 import { Store } from '@/automation/store';
 import type { Artifact, AutomationEvent, Edit, Execution, Publication, ReleaseReference } from '@/automation/types';
+import { blocking } from '@/contract/diagnostics';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
 import { array, integer, record, sha, text } from '@/model';
 import { decodeEventV1, decodeExecutionV1, decodeSetupEditV1 } from '@/persistence/codecs/v1';
@@ -1038,7 +1039,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			try {
 				const event = observation.parse(value);
 				const repository = await this.store().repository(event.repositoryId);
-				if (!repository?.configuration || repository.suspended || repository.diagnostics.length) {
+				if (!repository?.configuration || repository.suspended || blocking(repository.diagnostics).length) {
 					await this.ctx.storage.delete(key);
 					continue;
 				}
@@ -1122,7 +1123,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						}
 						const inventory = discover(snapshot, repository.configuration.managers);
 						if (
-							inventory.diagnostics.some((d) => d.includes('cannot safely') || d.includes('cycle'))
+							inventory.diagnostics.some(d =>
+								d.severity === 'blocking'
+								&& (d.code === 'invalid-manifest' || d.code === 'cycle' || d.code === 'duplicate-identity')
+							)
 						) {
 							throw new Error('Producer inventory is incomplete');
 						}

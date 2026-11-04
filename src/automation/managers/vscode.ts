@@ -4,6 +4,7 @@ import { type Adapter, emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, unpublished } from '@/automation/managers/verification';
 import { extensionParts, identityOf } from '@/automation/package-identity';
 import { excluded, registry } from '@/automation/package-publication';
+import { fileProblem } from '@/contract/diagnostics';
 
 const identifier = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
 const marketplaceQuery = z.object({
@@ -77,17 +78,21 @@ export const vscodeManager: Adapter<'vscode'> = {
 			try {
 				manifest = object(JSON.parse(source));
 			} catch {
-				inventory.diagnostics.push(`${path}: cannot safely discover configuration`);
+				inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', `cannot safely discover configuration`));
 				continue;
 			}
 			if (typeof object(manifest.engines).vscode !== 'string') continue;
 			inventory.managers = ['vscode'];
 			if (typeof manifest.publisher !== 'string' || !identifier.test(manifest.publisher)) {
-				inventory.diagnostics.push(`${path}: VS Code extension publisher is missing or invalid`);
+				inventory.diagnostics.push(
+					fileProblem(path, 'invalid-manifest', `VS Code extension publisher is missing or invalid`),
+				);
 				continue;
 			}
 			if (typeof manifest.name !== 'string' || !identifier.test(manifest.name)) {
-				inventory.diagnostics.push(`${path}: VS Code extension name is missing or invalid`);
+				inventory.diagnostics.push(
+					fileProblem(path, 'invalid-manifest', `VS Code extension name is missing or invalid`),
+				);
 				continue;
 			}
 			inventory.packages.push({

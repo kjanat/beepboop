@@ -48,7 +48,11 @@ const adapters = {
 				result.references = discoverHooks(snapshot);
 				if (result.references.length) result.managers.push('pre-commit');
 			} catch (error) {
-				result.diagnostics.push(error instanceof Error ? error.message : 'Invalid hook configuration');
+				result.diagnostics.push({
+					code: 'invalid-manifest',
+					severity: 'blocking',
+					message: error instanceof Error ? error.message : 'Invalid hook configuration',
+				});
 			}
 			return result;
 		},

@@ -5,6 +5,7 @@ import { latestVersion, unpublished } from '@/automation/managers/verification';
 import { identityOf } from '@/automation/package-identity';
 import { registry } from '@/automation/package-publication';
 import { jsrManifest } from '@/contract/catalog';
+import { fileProblem } from '@/contract/diagnostics';
 
 const packageName = /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/;
 const precedence = ['jsr.json', 'jsr.jsonc', 'deno.json', 'deno.jsonc'];
@@ -89,14 +90,16 @@ export const jsrManager: Adapter<'jsr'> = {
 			if (deno && !errors.length && manifest.name === undefined) continue;
 			inventory.managers = ['jsr'];
 			if (errors.length || typeof manifest.name !== 'string' || !packageName.test(manifest.name)) {
-				inventory.diagnostics.push(`${path}: invalid JSR manifest`);
+				inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', `invalid JSR manifest`));
 				continue;
 			}
 			if (
 				manifest.license !== undefined
 				&& (typeof manifest.license !== 'string' || !spdxLicense.test(manifest.license))
 			) {
-				inventory.diagnostics.push(`${path}: JSR requires an SPDX license expression in "license"`);
+				inventory.diagnostics.push(
+					fileProblem(path, 'license-missing', `JSR requires an SPDX license expression in "license"`),
+				);
 			}
 			inventory.packages.push({
 				manager: 'jsr',

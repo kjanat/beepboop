@@ -33,6 +33,7 @@ import type {
 } from '@/automation/types';
 import type { WinGetPolicy } from '@/automation/winget';
 import { managerDestinationIds, managerNames } from '@/contract/catalog';
+import { diagnostic } from '@/contract/diagnostics';
 import { setupChoicesSchema } from '@/contract/setup';
 import type { PackageIdentity } from '@/package-url';
 
@@ -186,6 +187,7 @@ const inventory: z.ZodType<StoredInventory> = z.object({
 	workflows: z.array(discoveredWorkflow),
 	managers: z.array(managerName),
 	diagnostics: strings,
+	findings: z.array(diagnostic).optional(),
 	publicationOrder: strings,
 });
 const repositorySchema: z.ZodType<StoredRepository> = z.object({
@@ -198,6 +200,7 @@ const repositorySchema: z.ZodType<StoredRepository> = z.object({
 	presetShas: shas,
 	inventory,
 	diagnostics: strings,
+	findings: z.array(diagnostic).optional(),
 	updatedAt: z.number(),
 });
 

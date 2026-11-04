@@ -8,7 +8,8 @@ import { planHookUpdates } from '@/automation/precommit';
 import type { AutomationService } from '@/automation/service';
 import type { RepositoryRecord, Stream } from '@/automation/types';
 import { nextVersion, parseVersionRequest } from '@/automation/version';
-import { conflict, notFound, precondition } from '@/contract/errors';
+import { blocking } from '@/contract/diagnostics';
+import { conflict, DomainError, notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import { compareVersions, semver } from '@/model';
 import { type AdminContext, admin } from '@/server/handlers/kit';
@@ -22,6 +23,8 @@ async function configured(service: AutomationService, repositoryId: number, name
 	const repository = await service.store.repository(repositoryId);
 	if (!repository) throw notFound('repository', 'Repository not configured', String(repositoryId));
 	if (!repository.configuration) throw precondition('Repository not configured');
+	const problems = blocking(repository.diagnostics);
+	if (problems.length) throw new DomainError({ code: 'precondition', diagnostics: problems });
 	const stream = repository.configuration.streams[name];
 	if (!stream) throw notFound('stream', 'Unknown stream', name);
 	return { repository, stream };
@@ -96,7 +99,9 @@ async function releasePlan(input: ReleaseInput, { service }: AdminContext) {
 
 async function setPlan(input: { repositoryId: number; stream: string; plan: unknown }, { service }: AdminContext) {
 	const repository = await service.store.repository(input.repositoryId);
-	if (!repository?.configuration || repository.diagnostics.length) throw precondition('Repository not configured');
+	if (!repository?.configuration || blocking(repository.diagnostics).length) {
+		throw precondition('Repository not configured');
+	}
 	const stream = repository.configuration.streams[input.stream];
 	if (stream?.versioning !== 'independent') throw precondition('Select an independent release stream');
 	const snapshot = await current(service, { repository, stream }, 'Refresh discovery before planning this revision');

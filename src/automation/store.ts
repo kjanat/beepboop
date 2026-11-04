@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { identifyExecution, identifyRepository } from '@/automation/package-identity';
+import { encodeRepository, identifyExecution, identifyRepository } from '@/automation/package-identity';
 import { documentRow, rowDocument } from '@/automation/schemas';
 import type {
 	ActivityEntry,
@@ -85,7 +85,7 @@ export class Store {
 			.bind(
 				repository.id,
 				repository.name,
-				JSON.stringify(identifyRepository(repository)),
+				JSON.stringify(encodeRepository(identifyRepository(encodeRepository(repository)))),
 				repository.updatedAt,
 				repository.updatedAt,
 			)

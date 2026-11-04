@@ -1,5 +1,6 @@
 import type { Inventory, Package } from '@/automation/types';
 import { nextVersion, type VersionRequest } from '@/automation/version';
+import { blocking } from '@/contract/diagnostics';
 import { compareVersions } from '@/model';
 
 export function releasedVersion(pkg: Package): string | undefined {
@@ -55,5 +56,7 @@ export function unreleasedManifestVersion(packages: Package[]): string | undefin
 }
 
 export function manifestProblems(inventory: Inventory, packages: Package[]): string[] {
-	return inventory.diagnostics.filter(diagnostic => packages.some(pkg => diagnostic.startsWith(`${pkg.manifest}:`)));
+	return blocking(inventory.diagnostics).flatMap(({ subject, message }) =>
+		subject?.kind === 'file' && packages.some(pkg => pkg.manifest === subject.path) ? [message] : []
+	);
 }

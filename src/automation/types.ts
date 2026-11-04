@@ -3,6 +3,7 @@ import type { InputDeclaration, OutputDeclaration, Platform, ResolvedInput } fro
 import type { PackagePublication } from '@/automation/package-publication';
 import type { RefPlan, RefPolicy } from '@/automation/refs';
 import type { ManagerName } from '@/contract/catalog';
+import type { Diagnostic } from '@/contract/diagnostics';
 import type { PackageIdentity } from '@/package-url';
 export interface WorkflowBinding {
 	platform?: Platform;
@@ -93,7 +94,7 @@ export interface Inventory {
 	packages: Package[];
 	workflows: DiscoveredWorkflow[];
 	managers: ManagerName[];
-	diagnostics: string[];
+	diagnostics: Diagnostic[];
 	publicationOrder: string[];
 }
 export interface Edit {
@@ -240,7 +241,7 @@ export interface RepositoryRecord {
 	configuration?: Configuration;
 	presetShas: Record<string, string>;
 	inventory: Inventory;
-	diagnostics: string[];
+	diagnostics: Diagnostic[];
 	updatedAt: number;
 }
 

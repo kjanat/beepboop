@@ -2,6 +2,7 @@
 import Badge from '@/components/Badge.astro';
 import Field from '@/components/Field.astro';
 import Time from '@/components/Time.astro';
+import { blocking } from '@/contract/diagnostics';
 import type { ViewOf } from '@/server/loaders.ts';
 import { submissionTone } from '@/server/views/tone.ts';
 import { submissionLabels } from '@/ui/destinations';
@@ -11,7 +12,8 @@ interface Props {
 }
 const { data } = Astro.props;
 const repositories = data.repositories.filter(repo =>
-	repo.configuration?.winget && !repo.suspended && !repo.diagnostics.length
+	repo.configuration?.winget && !repo.suspended
+	&& !blocking(repo.diagnostics).length
 );
 ---
 <div class="winget">

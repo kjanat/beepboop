@@ -2,6 +2,7 @@ import { outputsComplete } from '@/automation/outputs';
 import { identityOf, matchesPackage, matchesPublication, packageId } from '@/automation/package-identity';
 import type { Execution, Publication, ReleaseReference, RepositoryRecord, WorkflowBinding } from '@/automation/types';
 import { managerSpec } from '@/contract/catalog';
+import { blocking } from '@/contract/diagnostics';
 
 export async function executionId(
 	repositoryId: number,
@@ -25,7 +26,7 @@ export async function createExecution(
 	upstreamRelease?: ReleaseReference,
 	perPackage = false,
 ): Promise<Execution> {
-	if (!repository.configuration || repository.diagnostics.length) {
+	if (!repository.configuration || blocking(repository.diagnostics).length) {
 		throw new Error('Repository configuration is not ready');
 	}
 	const stream = repository.configuration.streams[streamName];
