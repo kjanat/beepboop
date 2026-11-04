@@ -578,9 +578,6 @@ export class AutomationService {
 				),
 			);
 		}
-		if (path === '/api/repositories/onboard') {
-			throw new Error('Preview release setup before applying it: /api/repositories/setup/preview');
-		}
 		if (path === '/api/repositories/setup/preview' || path === '/api/repositories/setup/apply') {
 			const name = await repositoryName(text(body.repository), () => this.gateway.ownerLogin());
 			const id = await this.gateway.identify(name);
@@ -812,27 +809,6 @@ export class AutomationService {
 			}
 			const execution = await createReleasePreparation(repository, text(body.stream), plan);
 			await this.store.audit(actor, 'release.prepare', execution.id);
-			return Response.json(await this.enqueue(repository, execution));
-		}
-		if (path === '/api/executions/start') {
-			const repository = await this.store.repository(integer(body.repositoryId));
-			if (!repository) throw new Error('Unknown repository');
-			if (text(body.operation) === 'prepare') throw new Error('Prepare releases from Prepare a release');
-			if (
-				text(body.operation) === 'promote' && body.version === undefined
-				&& repository.configuration?.streams[text(body.stream)]?.versioning !== 'none'
-			) throw new Error('A promotion needs a version; create it from Prepare a release');
-			const execution = await createExecution(
-				repository,
-				text(body.stream),
-				text(body.operation),
-				body.version === undefined
-					? text(body.requestId)
-					: `release:${semver(body.version).replace(/^v/, '')}:${sha(body.sourceSha)}`,
-				body.version === undefined ? undefined : text(body.version),
-			);
-			if (body.sourceSha !== undefined) execution.sourceSha = sha(body.sourceSha);
-			await this.store.audit(actor, 'execution.start', execution.id);
 			return Response.json(await this.enqueue(repository, execution));
 		}
 		if (path === '/api/executions/approval') {

@@ -40,8 +40,7 @@ The authenticated API exposes `POST /api/repositories/setup/preview` with
 `repository` and optional `choices`, and `POST /api/repositories/setup/apply` with
 those same choices plus the returned `planId`, `sourceSha`, and `setupHead`.
 Preview does not persist inspection or create branches. Apply recomputes the plan
-and checks those values before publishing the reviewed changes. The old
-`/api/repositories/onboard` endpoint directs clients to preview first.
+and checks those values before publishing the reviewed changes.
 
 ## Configure release streams
 
