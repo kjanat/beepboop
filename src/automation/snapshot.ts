@@ -59,5 +59,5 @@ export async function buildSnapshot(source: SnapshotSource, extraPaths: readonly
 	}
 	const prefixes = tagQueries([...new Set([...extraPaths, ...included])]);
 	const tags = prefixes.length ? [...new Set(await source.tags(prefixes))].sort() : undefined;
-	return { repository: source.repository, sha: source.sha, files, ...(tags ? { tags } : {}) };
+	return { repository: source.repository, sha: source.sha, files, paths: blobs, ...(tags ? { tags } : {}) };
 }

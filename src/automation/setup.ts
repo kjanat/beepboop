@@ -1,5 +1,6 @@
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
 import { formatJson, json } from '@/automation/json';
+import { discover } from '@/automation/managers';
 import { object } from '@/automation/managers/helpers';
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage, packageId, selectorKey } from '@/automation/package-identity';
@@ -16,10 +17,12 @@ import {
 } from '@/automation/setup-types';
 import { integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Package, RepositoryRecord, Snapshot } from '@/automation/types';
+import { blocking } from '@/contract/diagnostics';
 import { sha256Hex } from '@/contract/ids';
 import { setupChoicesSchema } from '@/contract/setup';
 import { configurationDrift } from '@/domain/configuration';
 import { packageMarkdown } from '@/domain/package-label';
+import { validateAgainst } from '@/domain/validate';
 
 function releasedPackage(pkg: Package | undefined): boolean {
 	return !!pkg && publishable(pkg) && pkg.published !== undefined
@@ -219,6 +222,14 @@ export async function previewSetup(
 		const proposal = resolved ? mergeConfiguration({ ...resolved }, configuration) : configuration;
 		const legacy = parseRepositoryConfiguration(proposal);
 		notes.push(...configurationDrift(proposal, legacy).map(entry => entry.message));
+		const proposed: Snapshot = {
+			...snapshot,
+			files: { ...snapshot.files, ...Object.fromEntries(edits.map(edit => [edit.path, edit.after])) },
+			paths: [...new Set([...snapshot.paths, ...edits.map(edit => edit.path)])],
+		};
+		blockers.push(
+			...blocking(validateAgainst(legacy, discover(proposed, legacy.managers), proposed)).map(entry => entry.message),
+		);
 	} catch (error) {
 		blockers.push(error instanceof Error ? error.message : 'Invalid configuration');
 	}

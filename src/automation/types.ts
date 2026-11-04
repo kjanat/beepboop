@@ -55,6 +55,7 @@ export interface Snapshot {
 	repository: { id: number; name: string; defaultBranch: string };
 	sha: string;
 	files: Record<string, string>;
+	paths: string[];
 	tags?: string[];
 }
 export interface Package {

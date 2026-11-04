@@ -23,6 +23,7 @@ import { type WinGetBindings, WinGetService } from '@/automation/winget';
 import { blocking } from '@/contract/diagnostics';
 import { precondition } from '@/contract/errors';
 import { setupChoicesSchema } from '@/contract/setup';
+import { validateAgainst } from '@/domain/validate';
 import { array, integer, record, text } from '@/model';
 import { CLISessionStore } from '@/persistence/d1/cli-sessions';
 import { CredentialStore } from '@/persistence/d1/credentials';
@@ -154,6 +155,7 @@ export class AutomationService {
 				repository.presetShas = resolved.presetShas;
 				repository.diagnostics.push(...resolved.drift);
 				repository.inventory = discover(snapshot, resolved.configuration.managers);
+				repository.diagnostics.push(...validateAgainst(resolved.configuration, repository.inventory, snapshot));
 			} catch (error) {
 				repository.diagnostics.push({
 					code: 'invalid-configuration',
