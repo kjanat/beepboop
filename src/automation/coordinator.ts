@@ -1460,6 +1460,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						)
 					) continue;
 				}
+				const head = await this.refHead(execution, token);
+				if (head && head.sha !== execution.sourceSha) {
+					await this.put({ ...execution, state: 'failed', reason: moved(execution, head) });
+					continue;
+				}
 				execution.resolvedInputs = resolveInputs(execution, executions);
 				const draftRelease = await this.draftRelease(execution);
 				if (draftRelease) execution.draftRelease = draftRelease;
