@@ -3,8 +3,8 @@ import { z } from 'zod';
 import { versionFileSchema } from '@/automation/editors';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { releaseIdentity } from '@/automation/package-identity';
-import { validRef } from '@/automation/policy';
-import { parsePresetReference } from '@/automation/preset';
+import { refPattern, validRef } from '@/automation/policy';
+import { presetReferencePattern } from '@/automation/preset';
 import { managerNames } from '@/contract/catalog';
 import { type Diagnostic, type DiagnosticCode, isDiagnosticCode } from '@/contract/diagnostics';
 import { purl } from '@/package-url';
@@ -30,6 +30,7 @@ export const packageReference = nonempty.transform((value, ctx) => {
 		return z.NEVER;
 	}
 }).meta({
+	id: 'packageReference',
 	description:
 		'Package URL (versionless for release selection). Legacy manager:name references are accepted for compatibility.',
 });
@@ -58,7 +59,7 @@ const refPolicy = z.strictObject({
 function bindingSchema(rules: boolean) {
 	const shape = z.strictObject({
 		file: z.string().regex(workflowFilePattern, 'Workflow must be a filename'),
-		ref: nonempty.refine(validRef, 'Invalid workflow ref').optional(),
+		ref: z.string().regex(refPattern, 'Invalid workflow ref').refine(validRef, 'Invalid workflow ref').optional(),
 		inputs: z.record(z.string(), z.union([z.string(), z.boolean(), z.number()])).optional(),
 		required: z.boolean().optional(),
 		needs: z.array(nonempty).optional(),
@@ -90,7 +91,7 @@ function bindingSchema(rules: boolean) {
 			if (new Set(ids).size !== ids.length) issue(ctx, 'duplicate-identity', 'Duplicate output', ['outputs']);
 		})
 		: shape;
-	return checked.transform(binding => ({
+	const parsed = checked.transform(binding => ({
 		...(binding.outputs ? { outputs: binding.outputs } : {}),
 		...(binding.artifactInputs ? { artifactInputs: binding.artifactInputs } : {}),
 		...(binding.platform ? { platform: binding.platform } : {}),
@@ -111,12 +112,13 @@ function bindingSchema(rules: boolean) {
 		inputs: binding.inputs ?? {},
 		required: binding.required !== false,
 	}));
+	return rules ? parsed.meta({ id: 'workflow' }) : parsed;
 }
 
 function streamSchema(rules: boolean) {
 	const binding = bindingSchema(rules);
 	const workflows = z.record(identifier, binding);
-	return z.strictObject({
+	const parsed = z.strictObject({
 		versioning: z.enum(['workspace', 'independent', 'none']).default('workspace'),
 		versionFiles: z.array(versionFileSchema).optional(),
 		versionSource: z.strictObject({ kind: z.literal('tags'), prefix: z.string().regex(tagPrefix) }).optional(),
@@ -166,6 +168,7 @@ function streamSchema(rules: boolean) {
 		credentials: stream.credentials,
 		channels: { stable: stream.channels.stable, prerelease: stream.channels.prerelease },
 	}));
+	return rules ? parsed.meta({ id: 'stream' }) : parsed;
 }
 
 const subscriptionCommon = { id: identifier, source: nonempty, stream: nonempty, operation: nonempty };
@@ -191,8 +194,8 @@ function subscriptionSchema(rules: boolean) {
 		publication: nonempty.optional(),
 		workflow: nonempty.optional(),
 	});
-	const parsed = rules ? z.discriminatedUnion('event', [release, packageChanged, workflowRun]) : loose;
-	return parsed.transform(subscription => ({
+	const checked = rules ? z.discriminatedUnion('event', [release, packageChanged, workflowRun]) : loose;
+	const parsed = checked.transform(subscription => ({
 		id: subscription.id,
 		...('sourceStream' in subscription && subscription.sourceStream !== undefined
 			? { sourceStream: subscription.sourceStream }
@@ -209,6 +212,7 @@ function subscriptionSchema(rules: boolean) {
 		operation: subscription.operation,
 		...('workflow' in subscription && subscription.workflow !== undefined ? { workflow: subscription.workflow } : {}),
 	}));
+	return rules ? parsed.meta({ id: 'subscription' }) : parsed;
 }
 
 const winget = z.strictObject({
@@ -281,15 +285,13 @@ function configurationOf(rules: boolean) {
 	const shape = z.strictObject({
 		$schema: z.string().optional(),
 		extends: z.array(
-			rules
-				? nonempty.refine(value => parsePresetReference(value) !== undefined, 'Invalid preset reference')
-				: nonempty,
+			rules ? z.string().regex(presetReferencePattern, 'Invalid preset reference') : nonempty,
 		).default([]),
 		managers: z.array(z.enum(managerNames)).default([...managerNames]),
 		streams: z.record(identifier, streamSchema(rules)).default({}),
 		subscriptions: z.array(subscriptionSchema(rules)).default([]),
 		winget: winget.optional(),
-	}).meta({ title: 'Repository release automation' });
+	});
 	const checked = rules
 		? shape.superRefine((configuration, ctx) => {
 			for (const [name, stream] of Object.entries(configuration.streams)) graph(stream, ['streams', name], ctx);
@@ -310,13 +312,14 @@ function configurationOf(rules: boolean) {
 			});
 		})
 		: shape;
-	return checked.transform(configuration => ({
+	const parsed = checked.transform(configuration => ({
 		...(configuration.winget === undefined ? {} : { winget: configuration.winget }),
 		extends: configuration.extends,
 		managers: configuration.managers,
 		streams: configuration.streams,
 		subscriptions: configuration.subscriptions,
 	}));
+	return rules ? parsed.meta({ title: 'Repository release automation' }) : parsed;
 }
 
 export const configurationSchema = configurationOf(true);

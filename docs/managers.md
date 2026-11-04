@@ -51,8 +51,8 @@ manifest patterns, marker patterns, lockfile names, destinations and version
 policy. Snapshots fetch the content of manifest paths and record marker and
 lockfile paths with empty content. To add an ecosystem, add its name and catalog
 entry, implement its adapter, and register it in `builtins.ts`. The typecheck
-fails until the catalog and `builtins.ts` cover the same names. Add the name to
-the `managers` enum in `schemas/v1.json` as well. Include fixtures for
+fails until the catalog and `builtins.ts` cover the same names. Run
+`run schema:generate` to add the name to `schemas/v1.json`. Include fixtures for
 discovery, version edits, dependency ranges, and verification failures for every
 capability the adapter provides.
 

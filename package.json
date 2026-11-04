@@ -41,6 +41,8 @@
 		"purl:fetch": "bun src/tooling/purl/fetch.ts",
 		"purl:generate": "bun src/tooling/purl/generate.ts",
 		"purl:update": "run -s purl:fetch purl:generate",
+		"schema:check": "bun src/tooling/schema/generate.ts --check",
+		"schema:generate": "bun src/tooling/schema/generate.ts",
 		"prestart": "wrangler types",
 		"start": "astro dev",
 		"sync": "astro sync",

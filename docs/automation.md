@@ -111,8 +111,8 @@ Use `extends` to share configuration:
 Publish the [preset templates](../presets/) in your chosen preset repository
 before referencing them. Presets merge in order, followed by local configuration.
 Objects merge by key; arrays replace the inherited array. Each execution saves
-the resolved preset commit SHAs. The full contract is in the
-[configuration schema](../schemas/v1.json).
+the resolved preset commit SHAs. Refresh validates configuration with the schema
+that generates [schemas/v1.json](../schemas/v1.json).
 
 ## Connect a workflow
 

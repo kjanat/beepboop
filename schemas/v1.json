@@ -3,21 +3,37 @@
 	"$id": "https://beepboop.kjanat.dev/schema/v1.json",
 	"title": "Repository release automation",
 	"type": "object",
-	"additionalProperties": false,
 	"properties": {
 		"$schema": {
 			"type": "string"
 		},
 		"extends": {
+			"default": [],
 			"type": "array",
 			"items": {
-				"type": "string"
+				"type": "string",
+				"pattern": "^github>([\\w.-]+\\/[\\w.-]+):([\\w-]+)(?:#([\\w./-]+))?$"
 			}
 		},
 		"managers": {
+			"default": [
+				"pre-commit",
+				"cargo",
+				"npm",
+				"jsr",
+				"github-release",
+				"oci",
+				"goreleaser",
+				"go",
+				"vscode",
+				"manifest",
+				"workflow"
+			],
 			"type": "array",
 			"items": {
+				"type": "string",
 				"enum": [
+					"pre-commit",
 					"cargo",
 					"npm",
 					"jsr",
@@ -27,14 +43,14 @@
 					"go",
 					"vscode",
 					"manifest",
-					"workflow",
-					"pre-commit"
+					"workflow"
 				]
 			}
 		},
 		"streams": {
 			"type": "object",
 			"propertyNames": {
+				"type": "string",
 				"pattern": "^[a-z][a-z0-9-]{0,63}$"
 			},
 			"additionalProperties": {
@@ -44,334 +60,46 @@
 		"subscriptions": {
 			"type": "array",
 			"items": {
-				"type": "object",
-				"additionalProperties": false,
-				"properties": {
-					"id": {
-						"type": "string"
-					},
-					"source": {
-						"type": "string"
-					},
-					"event": {
-						"enum": [
-							"release",
-							"workflow_run",
-							"package.version.changed"
-						]
-					},
-					"stream": {
-						"type": "string"
-					},
-					"operation": {
-						"type": "string"
-					},
-					"workflow": {
-						"type": "string"
-					},
-					"sourceStream": {
-						"type": "string",
-						"minLength": 1
-					},
-					"sourceGroup": {
-						"type": "string",
-						"minLength": 1
-					},
-					"publication": {
-						"type": "string",
-						"minLength": 1
-					}
-				},
-				"required": [
-					"id",
-					"source",
-					"event",
-					"stream",
-					"operation"
-				]
+				"$ref": "#/$defs/subscription"
 			}
 		},
 		"winget": {
 			"type": "object",
-			"additionalProperties": false,
-			"required": [
-				"config"
-			],
 			"properties": {
 				"config": {
 					"type": "string",
+					"pattern": "^[\\w./-]+\\.json$",
 					"description": "Path to WinGet package JSON in the release commit"
 				},
 				"tagPrefix": {
+					"default": "v",
 					"type": "string",
-					"default": "v"
+					"pattern": "^[\\w.-]*$"
 				},
 				"automatic": {
-					"type": "boolean",
-					"default": false
-				}
-			}
-		}
-	},
-	"$defs": {
-		"workflow": {
-			"type": "object",
-			"additionalProperties": false,
-			"properties": {
-				"file": {
-					"type": "string",
-					"pattern": "^[A-Za-z0-9_-]+\\.ya?ml$"
-				},
-				"ref": {
-					"type": "string"
-				},
-				"inputs": {
-					"type": "object",
-					"additionalProperties": {
-						"type": [
-							"string",
-							"boolean",
-							"number"
-						]
-					}
-				},
-				"required": {
+					"default": false,
 					"type": "boolean"
-				},
-				"needs": {
-					"type": "array",
-					"items": {
-						"type": "string"
-					}
-				},
-				"publications": {
-					"type": "array",
-					"items": {
-						"$ref": "#/$defs/packageReference"
-					}
-				},
-				"schedule": {
-					"type": "string"
-				},
-				"mode": {
-					"enum": [
-						"observe",
-						"dispatch"
-					]
-				},
-				"refs": {
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"phase"
-					],
-					"properties": {
-						"phase": {
-							"enum": [
-								"version",
-								"aliases"
-							]
-						},
-						"prefix": {
-							"type": "string",
-							"pattern": "^[A-Za-z0-9._-]*$"
-						},
-						"aliases": {
-							"type": "array",
-							"uniqueItems": true,
-							"items": {
-								"enum": [
-									"major",
-									"minor"
-								]
-							}
-						},
-						"signed": {
-							"type": "boolean"
-						}
-					}
-				},
-				"platform": {
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"os",
-						"arch"
-					],
-					"properties": {
-						"os": {
-							"type": "string",
-							"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
-						},
-						"arch": {
-							"type": "string",
-							"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
-						},
-						"abi": {
-							"type": "string",
-							"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
-						}
-					}
-				},
-				"outputs": {
-					"type": "array",
-					"items": {
-						"type": "object",
-						"additionalProperties": false,
-						"required": [
-							"id",
-							"kind"
-						],
-						"properties": {
-							"id": {
-								"type": "string",
-								"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
-							},
-							"kind": {
-								"enum": [
-									"archive",
-									"binary",
-									"manifest",
-									"package",
-									"checksums"
-								]
-							}
-						}
-					}
-				},
-				"artifactInputs": {
-					"type": "array",
-					"items": {
-						"type": "object",
-						"additionalProperties": false,
-						"required": [
-							"operation",
-							"output"
-						],
-						"properties": {
-							"operation": {
-								"type": "string",
-								"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
-							},
-							"output": {
-								"type": "string",
-								"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
-							}
-						}
-					}
-				},
-				"each": {
-					"enum": [
-						"package"
-					]
 				}
 			},
 			"required": [
-				"file"
-			]
-		},
+				"config"
+			],
+			"additionalProperties": false
+		}
+	},
+	"additionalProperties": false,
+	"$defs": {
 		"stream": {
 			"type": "object",
-			"additionalProperties": false,
 			"properties": {
 				"versioning": {
+					"default": "workspace",
+					"type": "string",
 					"enum": [
 						"workspace",
 						"independent",
 						"none"
 					]
-				},
-				"prepare": {
-					"type": "object",
-					"additionalProperties": false,
-					"properties": {
-						"version": {
-							"const": "manual"
-						},
-						"workflow": {
-							"$ref": "#/$defs/workflow"
-						},
-						"strategy": {
-							"enum": [
-								"managed",
-								"workflow"
-							]
-						}
-					}
-				},
-				"promote": {
-					"type": "object",
-					"additionalProperties": false,
-					"properties": {
-						"approval": {
-							"enum": ["required", "merge", "push"]
-						},
-						"workflow": {
-							"$ref": "#/$defs/workflow"
-						}
-					}
-				},
-				"workflows": {
-					"type": "object",
-					"propertyNames": {
-						"pattern": "^[a-z][a-z0-9-]{0,63}$"
-					},
-					"additionalProperties": {
-						"$ref": "#/$defs/workflow"
-					}
-				},
-				"required": {
-					"type": "array",
-					"items": {
-						"$ref": "#/$defs/packageReference"
-					}
-				},
-				"credentials": {
-					"type": "array",
-					"items": {
-						"type": "string"
-					}
-				},
-				"channels": {
-					"type": "object",
-					"additionalProperties": false,
-					"properties": {
-						"stable": {
-							"type": "string"
-						},
-						"prerelease": {
-							"type": "string"
-						}
-					}
-				},
-				"concurrency": {
-					"enum": [
-						"queue",
-						"supersede-pending"
-					]
-				},
-				"packages": {
-					"type": "array",
-					"items": {
-						"$ref": "#/$defs/packageReference"
-					}
-				},
-				"versionSource": {
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"kind",
-						"prefix"
-					],
-					"properties": {
-						"kind": {
-							"const": "tags"
-						},
-						"prefix": {
-							"type": "string",
-							"pattern": "^[A-Za-z0-9._-]*$"
-						}
-					}
 				},
 				"versionFiles": {
 					"type": "array",
@@ -416,7 +144,6 @@
 								},
 								"required": [
 									"path",
-									"template",
 									"format",
 									"key"
 								],
@@ -461,7 +188,6 @@
 								},
 								"required": [
 									"path",
-									"template",
 									"format",
 									"key"
 								],
@@ -497,7 +223,6 @@
 								},
 								"required": [
 									"path",
-									"template",
 									"format",
 									"key"
 								],
@@ -533,7 +258,6 @@
 								},
 								"required": [
 									"path",
-									"template",
 									"format",
 									"prefix",
 									"suffix"
@@ -542,13 +266,414 @@
 							}
 						]
 					}
+				},
+				"versionSource": {
+					"type": "object",
+					"properties": {
+						"kind": {
+							"type": "string",
+							"const": "tags"
+						},
+						"prefix": {
+							"type": "string",
+							"pattern": "^[A-Za-z0-9._-]*$"
+						}
+					},
+					"required": [
+						"kind",
+						"prefix"
+					],
+					"additionalProperties": false
+				},
+				"packages": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/packageReference"
+					}
+				},
+				"prepare": {
+					"type": "object",
+					"properties": {
+						"version": {
+							"type": "string",
+							"const": "manual"
+						},
+						"workflow": {
+							"$ref": "#/$defs/workflow"
+						},
+						"strategy": {
+							"type": "string",
+							"enum": [
+								"managed",
+								"workflow"
+							]
+						}
+					},
+					"additionalProperties": false
+				},
+				"promote": {
+					"type": "object",
+					"properties": {
+						"approval": {
+							"default": "required",
+							"type": "string",
+							"enum": [
+								"required",
+								"merge",
+								"push"
+							]
+						},
+						"workflow": {
+							"$ref": "#/$defs/workflow"
+						}
+					},
+					"additionalProperties": false
+				},
+				"workflows": {
+					"type": "object",
+					"propertyNames": {
+						"type": "string",
+						"pattern": "^[a-z][a-z0-9-]{0,63}$"
+					},
+					"additionalProperties": {
+						"$ref": "#/$defs/workflow"
+					}
+				},
+				"required": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/packageReference"
+					}
+				},
+				"credentials": {
+					"default": [],
+					"type": "array",
+					"items": {
+						"type": "string",
+						"minLength": 1
+					}
+				},
+				"channels": {
+					"default": {
+						"stable": "latest",
+						"prerelease": "next"
+					},
+					"type": "object",
+					"properties": {
+						"stable": {
+							"default": "latest",
+							"type": "string",
+							"minLength": 1
+						},
+						"prerelease": {
+							"default": "next",
+							"type": "string",
+							"minLength": 1
+						}
+					},
+					"additionalProperties": false
+				},
+				"concurrency": {
+					"default": "queue",
+					"type": "string",
+					"enum": [
+						"queue",
+						"supersede-pending"
+					]
 				}
-			}
+			},
+			"additionalProperties": false
 		},
 		"packageReference": {
+			"description": "Package URL (versionless for release selection). Legacy manager:name references are accepted for compatibility.",
 			"type": "string",
-			"minLength": 1,
-			"description": "Package URL (versionless for release selection). Legacy manager:name references are accepted for compatibility."
+			"minLength": 1
+		},
+		"workflow": {
+			"type": "object",
+			"properties": {
+				"file": {
+					"type": "string",
+					"pattern": "^[A-Za-z0-9_-]+\\.ya?ml$"
+				},
+				"ref": {
+					"type": "string",
+					"pattern": "^(?:refs\\/(?:heads|tags)\\/)?[A-Za-z0-9][A-Za-z0-9._/-]*\\*?$"
+				},
+				"inputs": {
+					"type": "object",
+					"propertyNames": {
+						"type": "string"
+					},
+					"additionalProperties": {
+						"type": [
+							"string",
+							"boolean",
+							"number"
+						]
+					}
+				},
+				"required": {
+					"type": "boolean"
+				},
+				"needs": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"minLength": 1
+					}
+				},
+				"schedule": {
+					"type": "string",
+					"minLength": 1
+				},
+				"publications": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/packageReference"
+					}
+				},
+				"mode": {
+					"type": "string",
+					"enum": [
+						"observe",
+						"dispatch"
+					]
+				},
+				"each": {
+					"type": "string",
+					"const": "package"
+				},
+				"refs": {
+					"type": "object",
+					"properties": {
+						"phase": {
+							"type": "string",
+							"enum": [
+								"version",
+								"aliases"
+							]
+						},
+						"prefix": {
+							"default": "v",
+							"type": "string",
+							"pattern": "^[A-Za-z0-9._-]*$"
+						},
+						"aliases": {
+							"default": [],
+							"type": "array",
+							"items": {
+								"type": "string",
+								"enum": [
+									"major",
+									"minor"
+								]
+							}
+						},
+						"signed": {
+							"type": "boolean"
+						}
+					},
+					"required": [
+						"phase"
+					],
+					"additionalProperties": false
+				},
+				"platform": {
+					"type": "object",
+					"properties": {
+						"os": {
+							"type": "string",
+							"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+						},
+						"arch": {
+							"type": "string",
+							"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+						},
+						"abi": {
+							"type": "string",
+							"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+						}
+					},
+					"required": [
+						"os",
+						"arch"
+					],
+					"additionalProperties": false
+				},
+				"outputs": {
+					"type": "array",
+					"items": {
+						"type": "object",
+						"properties": {
+							"id": {
+								"type": "string",
+								"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+							},
+							"kind": {
+								"type": "string",
+								"enum": [
+									"archive",
+									"binary",
+									"manifest",
+									"package",
+									"checksums"
+								]
+							}
+						},
+						"required": [
+							"id",
+							"kind"
+						],
+						"additionalProperties": false
+					}
+				},
+				"artifactInputs": {
+					"type": "array",
+					"items": {
+						"type": "object",
+						"properties": {
+							"operation": {
+								"type": "string",
+								"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+							},
+							"output": {
+								"type": "string",
+								"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+							}
+						},
+						"required": [
+							"operation",
+							"output"
+						],
+						"additionalProperties": false
+					}
+				}
+			},
+			"required": [
+				"file"
+			],
+			"additionalProperties": false
+		},
+		"subscription": {
+			"oneOf": [
+				{
+					"type": "object",
+					"properties": {
+						"id": {
+							"type": "string",
+							"pattern": "^[a-z][a-z0-9-]{0,63}$"
+						},
+						"source": {
+							"type": "string",
+							"minLength": 1
+						},
+						"stream": {
+							"type": "string",
+							"minLength": 1
+						},
+						"operation": {
+							"type": "string",
+							"minLength": 1
+						},
+						"event": {
+							"type": "string",
+							"const": "release"
+						},
+						"sourceStream": {
+							"type": "string",
+							"minLength": 1
+						},
+						"sourceGroup": {
+							"type": "string",
+							"minLength": 1
+						},
+						"publication": {
+							"type": "string",
+							"minLength": 1
+						}
+					},
+					"required": [
+						"id",
+						"source",
+						"stream",
+						"operation",
+						"event"
+					],
+					"additionalProperties": false
+				},
+				{
+					"type": "object",
+					"properties": {
+						"id": {
+							"type": "string",
+							"pattern": "^[a-z][a-z0-9-]{0,63}$"
+						},
+						"source": {
+							"type": "string",
+							"minLength": 1
+						},
+						"stream": {
+							"type": "string",
+							"minLength": 1
+						},
+						"operation": {
+							"type": "string",
+							"minLength": 1
+						},
+						"event": {
+							"type": "string",
+							"const": "package.version.changed"
+						}
+					},
+					"required": [
+						"id",
+						"source",
+						"stream",
+						"operation",
+						"event"
+					],
+					"additionalProperties": false
+				},
+				{
+					"type": "object",
+					"properties": {
+						"id": {
+							"type": "string",
+							"pattern": "^[a-z][a-z0-9-]{0,63}$"
+						},
+						"source": {
+							"type": "string",
+							"minLength": 1
+						},
+						"stream": {
+							"type": "string",
+							"minLength": 1
+						},
+						"operation": {
+							"type": "string",
+							"minLength": 1
+						},
+						"event": {
+							"type": "string",
+							"const": "workflow_run"
+						},
+						"workflow": {
+							"type": "string",
+							"pattern": "^[\\w-]+\\.ya?ml$"
+						}
+					},
+					"required": [
+						"id",
+						"source",
+						"stream",
+						"operation",
+						"event",
+						"workflow"
+					],
+					"additionalProperties": false
+				}
+			]
 		}
 	}
 }
