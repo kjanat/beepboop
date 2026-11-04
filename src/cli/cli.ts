@@ -345,6 +345,64 @@ const secrets = group('secrets').description('Store secret values and list workf
 				if (out.jsonMode) await emit(out, { alias: args.alias, version });
 				else out.log(`Saved ${args.alias} as version ${version}.`);
 			}),
+	)
+	.command(
+		repository('grant', 'Let a configured release workflow use a stored secret')
+			.arg('alias', arg.string({ pattern: /^[\w-]{1,64}$/ }).describe('Stored secret name'))
+			.flag('stream', flag.string().describe('Release stream; defaults to the only configured stream'))
+			.flag('operation', flag.string().default('promote').describe('prepare, promote or another configured operation'))
+			.flag(
+				'delivery',
+				flag.enum(['runtime', 'repository', 'environment']).default('runtime').describe(
+					'runtime: fetched by the credentials action; repository or environment: copied into a GitHub secret',
+				),
+			)
+			.flag('secretName', flag.string({ pattern: /^[A-Z_][A-Z0-9_]*$/ }).describe('GitHub secret name'))
+			.flag('environment', flag.string().describe('GitHub environment for environment delivery'))
+			.action(async ({ flags, args, ask, out }) => {
+				const client = new Client(flags.server);
+				const target = await enrolled(client, args.repository);
+				const [only, ...more] = target.streams;
+				const stream = flags.stream ?? (only && !more.length ? only : undefined);
+				if (!stream) {
+					throw failure(
+						`${target.name} has streams ${target.streams.join(', ') || 'none'}`,
+						'STREAM_REQUIRED',
+						'Pass --stream',
+					);
+				}
+				if (
+					process.stdin.isTTY && process.stdout.isTTY
+					&& !await ask({
+						kind: 'confirm',
+						message: `Let ${target.name} ${stream}/${flags.operation} use ${args.alias} (${flags.delivery})?`,
+						default: true,
+					})
+				) {
+					throw failure('Nothing granted', 'ABORTED');
+				}
+				await client.request('/api/credentials/grant', {
+					selection: {
+						alias: args.alias,
+						repositoryId: target.id,
+						stream,
+						operation: flags.operation,
+						delivery: flags.delivery,
+						...(flags.environment ? { environment: flags.environment } : {}),
+						...(flags.secretName ? { secretName: flags.secretName } : {}),
+					},
+				});
+				if (out.jsonMode) {
+					await emit(out, { alias: args.alias, repository: target.name, stream, operation: flags.operation });
+				} else out.log(`${target.name} ${stream}/${flags.operation} can use ${args.alias}.`);
+			}),
+	)
+	.command(
+		base('revoke', "Remove a workflow's access to a secret")
+			.arg('grantId', arg.string().describe('Grant ID from beepboop secrets list'))
+			.action(async ({ flags, args, out }) =>
+				emit(out, await new Client(flags.server).request('/api/credentials/revoke', { grantId: args.grantId }))
+			),
 	);
 function destinationRows(value: unknown) {
 	const data = record(value);

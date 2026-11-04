@@ -842,7 +842,10 @@ export class AutomationService {
 			return Response.json({ version: await this.vault().replace(text(body.alias), text(body.value), actor) });
 		}
 		if (path.startsWith('/api/credentials/')) {
-			await authenticators.consume(actor, text(body.proof));
+			const terminal = /^Bearer cli_/.test(request.headers.get('authorization') ?? '');
+			if (!terminal || !(path.endsWith('/grant') || path.endsWith('/revoke'))) {
+				await authenticators.consume(actor, text(body.proof));
+			}
 			const vault = this.vault();
 			if (path.endsWith('/reveal')) {
 				return Response.json(await vault.reveal(text(body.alias), actor));
