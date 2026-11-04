@@ -332,8 +332,10 @@ per pass and saves its position for the next pass.
 
 The Packages page lists every npm and JSR package an enrolled repository
 publishes or subscribes to, plus packages added by hand. Beepboop checks each
-one every ten minutes. The first check records the current version; later
-changes start matching subscriptions and send notifications.
+one every ten minutes. The first check of an already published package records
+its version. Later versions, and the first release of a package that was still
+unpublished at its first check, start matching subscriptions and send
+notifications.
 
 ## Notifications
 

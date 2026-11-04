@@ -15,6 +15,7 @@ const watchedRow = z.object({
 	checked_at: z.number().nullable(),
 	changed_at: z.number().nullable(),
 	error: z.string().nullable(),
+	awaiting_release: z.number(),
 });
 
 export interface PackageWatch extends WatchedPackage {
@@ -23,6 +24,7 @@ export interface PackageWatch extends WatchedPackage {
 	checkedAt?: number;
 	changedAt?: number;
 	error?: string;
+	awaitingRelease: boolean;
 }
 
 const lookups: Record<WatchedRegistry, (name: string, request: Fetcher) => Promise<RegistryVersion>> = {
@@ -53,10 +55,11 @@ export async function packageWatches(store: Store, repositories: RepositoryRecor
 			...(row.checked_at === null ? {} : { checkedAt: row.checked_at }),
 			...(row.changed_at === null ? {} : { changedAt: row.changed_at }),
 			...(row.error === null ? {} : { error: row.error }),
+			awaitingRelease: row.awaiting_release === 1,
 		});
 	}
 	for (const [id, entry] of listed) {
-		if (!watches.has(id)) watches.set(id, { ...entry, manual: false });
+		if (!watches.has(id)) watches.set(id, { ...entry, manual: false, awaitingRelease: false });
 	}
 	return [...watches.values()].sort((a, b) => key(a.registry, a.name).localeCompare(key(b.registry, b.name)));
 }
@@ -110,12 +113,21 @@ export async function pollPackages(
 		}
 		if (latest.kind !== 'published') {
 			await store.db
-				.prepare('UPDATE watched_packages SET checked_at = ?, error = ? WHERE registry = ? AND name = ?')
-				.bind(now, latest.kind === 'missing' ? 'Not published' : latest.reason, watch.registry, watch.name)
+				.prepare(
+					'UPDATE watched_packages SET checked_at = ?, error = ?, awaiting_release = CASE WHEN ? AND version IS NULL THEN 1 ELSE awaiting_release END WHERE registry = ? AND name = ?',
+				)
+				.bind(
+					now,
+					latest.kind === 'missing' ? 'Not published' : latest.reason,
+					Number(latest.kind === 'missing'),
+					watch.registry,
+					watch.name,
+				)
 				.run();
 			continue;
 		}
-		if (watch.version !== undefined && watch.version !== latest.version) {
+		const firstRelease = watch.version === undefined && watch.awaitingRelease;
+		if (firstRelease || (watch.version !== undefined && watch.version !== latest.version)) {
 			const id = packageEventId(watch.registry, watch.name, latest.version);
 			await emit({
 				id,
@@ -123,11 +135,11 @@ export async function pollPackages(
 				event: 'package.version.changed',
 				version: latest.version,
 			});
-			await notifications.stage(versionChanged(id, watch.registry, watch.name, watch.version, latest.version));
+			await notifications.stage(versionChanged(id, watch.registry, watch.name, watch.version ?? null, latest.version));
 		}
 		await store.db
 			.prepare(
-				'UPDATE watched_packages SET version = ?, checked_at = ?, error = NULL, changed_at = CASE WHEN version IS NOT ? THEN ? ELSE changed_at END WHERE registry = ? AND name = ?',
+				'UPDATE watched_packages SET version = ?, checked_at = ?, error = NULL, awaiting_release = 0, changed_at = CASE WHEN version IS NOT ? THEN ? ELSE changed_at END WHERE registry = ? AND name = ?',
 			)
 			.bind(latest.version, now, latest.version, now, watch.registry, watch.name)
 			.run();

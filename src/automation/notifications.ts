@@ -136,11 +136,11 @@ export function slackMessage(payload: VersionChangedPayload) {
 	const name = escapeSlack(payload.package.name);
 	const registry = escapeSlack(payload.package.registry);
 	const current = escapeSlack(payload.version.current);
-	const previous = payload.version.previous === null ? 'First observation' : escapeSlack(payload.version.previous);
+	const previous = payload.version.previous === null ? 'Unpublished' : escapeSlack(payload.version.previous);
 	const mrkdwn = (text: string) => ({ type: 'mrkdwn', text, verbatim: true });
 	return {
 		text: payload.version.previous === null
-			? `Beepboop: ${registry} package ${name} first observed at ${current}.`
+			? `Beepboop: ${registry} package ${name} first released at ${current}.`
 			: `Beepboop: ${registry} package ${name} changed from ${previous} to ${current}.`,
 		unfurl_links: false,
 		blocks: [
@@ -148,7 +148,7 @@ export function slackMessage(payload: VersionChangedPayload) {
 				type: 'header',
 				text: {
 					type: 'plain_text',
-					text: payload.version.previous === null ? 'Package first observed' : 'Package version changed',
+					text: payload.version.previous === null ? 'Package first released' : 'Package version changed',
 					emoji: true,
 				},
 			},
