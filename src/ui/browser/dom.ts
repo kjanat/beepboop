@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export function element<T extends Element>(selector: string, type: { new(): T }): T {
+function required<T extends Element>(selector: string, type: { new(): T }): T {
 	const found = document.querySelector(selector);
 	if (!(found instanceof type)) throw new Error(`Missing dashboard element: ${selector}`);
 	return found;
@@ -16,7 +16,7 @@ export function findAll<T extends Element>(parent: ParentNode, selector: string,
 }
 
 export function show(message: string): void {
-	const feedback = element('#feedback', HTMLOutputElement);
+	const feedback = required('#feedback', HTMLOutputElement);
 	feedback.hidden = false;
 	feedback.textContent = message;
 }
