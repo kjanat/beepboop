@@ -308,6 +308,18 @@ function activeVersion(value: unknown, alias: string): number | undefined {
 		.find(entry => text(entry.alias) === alias && integer(entry.active) === 1);
 	return row ? integer(row.version) : undefined;
 }
+function securityKey(ask: (prompt: { kind: 'password'; message: string }) => Promise<unknown>) {
+	return {
+		async pin() {
+			const value = await ask({ kind: 'password', message: 'Security key PIN' });
+			if (typeof value !== 'string' || !value) throw failure('A security key PIN is required', 'PIN_REQUIRED');
+			return value;
+		},
+		touch() {
+			process.stderr.write('Touch your security key.\n');
+		},
+	};
+}
 const secrets = group('secrets').description('Store secret values and list workflow access')
 	.command(
 		base('list', 'List secret names and workflow access')
@@ -371,17 +383,10 @@ const secrets = group('secrets').description('Store secret values and list workf
 						'Pass --stream',
 					);
 				}
-				if (
-					process.stdin.isTTY && process.stdout.isTTY
-					&& !await ask({
-						kind: 'confirm',
-						message: `Let ${target.name} ${stream}/${flags.operation} use ${args.alias} (${flags.delivery})?`,
-						default: true,
-					})
-				) {
-					throw failure('Nothing granted', 'ABORTED');
-				}
+				out.log(`Granting ${target.name} ${stream}/${flags.operation} access to ${args.alias}.`);
+				const proof = await client.elevated(securityKey(ask));
 				await client.request('/api/credentials/grant', {
+					proof,
 					selection: {
 						alias: args.alias,
 						repositoryId: target.id,
@@ -400,9 +405,11 @@ const secrets = group('secrets').description('Store secret values and list workf
 	.command(
 		base('revoke', "Remove a workflow's access to a secret")
 			.arg('grantId', arg.string().describe('Grant ID from beepboop secrets list'))
-			.action(async ({ flags, args, out }) =>
-				emit(out, await new Client(flags.server).request('/api/credentials/revoke', { grantId: args.grantId }))
-			),
+			.action(async ({ flags, args, ask, out }) => {
+				const client = new Client(flags.server);
+				const proof = await client.elevated(securityKey(ask));
+				await emit(out, await client.request('/api/credentials/revoke', { grantId: args.grantId, proof }));
+			}),
 	);
 function destinationRows(value: unknown) {
 	const data = record(value);

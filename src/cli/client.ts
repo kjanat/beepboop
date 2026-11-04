@@ -3,8 +3,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { isCLIError } from '@kjanat/dreamcli';
 import { credentialHash } from '@/automation/cli-auth';
+import { type SecurityKeyPrompts, securityKeyAssertion } from '@/cli/fido2/index';
 import { failure, signIn } from '@/cli/output';
-import { record } from '@/model';
+import { record, text } from '@/model';
 
 export interface Session {
 	token: string;
@@ -101,6 +102,11 @@ export class Client {
 			throw failure(`Beepboop request failed (${response.status}): ${reason(await response.text())}`, 'REQUEST_FAILED');
 		}
 		return response.json();
+	}
+	async elevated(prompts: SecurityKeyPrompts): Promise<string> {
+		const challenge = record(await this.request('/api/authenticators/options', { register: false }));
+		const response = await securityKeyAssertion(challenge.options, this.origin, prompts);
+		return text(record(await this.request('/api/authenticators/verify', { id: text(challenge.id), response })).proof);
 	}
 	async login(
 		show: (url: string, code: string) => void | Promise<void>,
