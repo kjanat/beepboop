@@ -76,7 +76,7 @@ export const authStatus = base('status', 'Verify your saved session with the ser
 );
 const auth = group('auth').description('Sign in, inspect your session, or revoke it')
 	.command(
-		base('login', 'Approve this terminal in your browser; session lasts eight hours', true)
+		base('login', 'Approve this terminal in your browser; the session lasts until logout', true)
 			.flag(
 				'browser',
 				flag.boolean().prompt({ kind: 'confirm', message: 'Open the login page in your browser?', default: true })

@@ -18,9 +18,9 @@ bun run beepboop secrets
 `auth login` prompts for the server URL and whether to open your browser. It also
 prints the URL and a confirmation code. Open the URL, sign in through
 OpenAuth if needed, compare the code, and approve your terminal. The command waits
-up to five minutes. Approval is exchanged once for a session lasting eight hours.
-`auth logout` revokes that session on the server and deletes the local credential.
-Expired or revoked sessions require another login; there is no refresh token.
+up to five minutes. Approval is exchanged once for a session that lasts until
+`auth logout` revokes it on the server and deletes the local credential. A
+revoked session requires another login.
 
 Credentials are separate for each server. They are written atomically with mode
 `0600` under `$XDG_STATE_HOME/beepboop` (default `~/.local/state/beepboop`), in a

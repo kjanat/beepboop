@@ -1,6 +1,8 @@
 import type { AuthBindings } from '@/automation/auth';
 import { record, string } from '@/model';
 
+const untilRevoked = Number.MAX_SAFE_INTEGER;
+
 /** Store only hashes of terminal credentials; the browser never receives them. */
 export async function credentialHash(value: string): Promise<string> {
 	return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))))
@@ -38,7 +40,7 @@ export async function cliAuthRoute(
 		const approval = record(JSON.parse(string(row.document)));
 		if (approval.subject !== env.ADMIN_SUBJECT) return json({ error: 'Access denied' }, 403);
 		const token = `cli_${crypto.randomUUID().replaceAll('-', '')}${crypto.randomUUID().replaceAll('-', '')}`;
-		const expiresAt = Date.now() + 8 * 60 * 60 * 1000;
+		const expiresAt = untilRevoked;
 		await env.DB.prepare('INSERT INTO sessions VALUES(?,?,?)')
 			.bind(`cli:${await credentialHash(token)}`, JSON.stringify({ kind: 'cli', subject: approval.subject }), expiresAt)
 			.run();
