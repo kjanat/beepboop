@@ -24,6 +24,9 @@ function releasedPackage(pkg: Package | undefined): boolean {
 	return !!pkg && publishable(pkg) && pkg.published !== undefined
 		&& !(tagPrefix(pkg.versionSource) !== undefined && pkg.version === undefined);
 }
+function requirablePackage(pkg: Package | undefined): boolean {
+	return !!pkg && publishable(pkg) && !(tagPrefix(pkg.versionSource) !== undefined && pkg.version === undefined);
+}
 export function publishedOutsideRequired(repository: RepositoryRecord): { stream: string; packages: string[] }[] {
 	return Object.entries(repository.configuration?.streams ?? {}).flatMap(([stream, configuration]) => {
 		const packages = repository.inventory.packages.filter(pkg =>
@@ -91,10 +94,10 @@ export function suggestSetup(snapshot: Snapshot, inventory: Inventory, resolved?
 				? [
 					...new Set([
 						...current.required.map(value => selectorKey(String(value), inventory.packages)),
-						...selected.filter(id => releasedPackage(inventory.packages.find(pkg => packageId(pkg) === id))),
+						...selected.filter(id => requirablePackage(inventory.packages.find(pkg => packageId(pkg) === id))),
 					]),
 				]
-				: selected.filter(id => inventory.packages.find(pkg => packageId(pkg) === id)?.publicationStatus !== 'missing'),
+				: selected.filter(id => requirablePackage(inventory.packages.find(pkg => packageId(pkg) === id))),
 			prepare: choose('prepare'),
 			promote: choose('promote'),
 		});
