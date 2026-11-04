@@ -447,6 +447,19 @@ expected old object IDs. Version tags target one commit; stable aliases exclude
 prereleases and reject downgrades. The service checks the resulting refs before
 completing the operation. `refs:` report IDs are reserved for this verification.
 
+After the version tag exists, `actions/publish-release` creates the GitHub
+release:
+
+```yaml
+- uses: kjanat/beepboop/actions/publish-release@IMPLEMENTATION_SHA
+```
+
+Beepboop requires the annotated tag `<prefix><version>` to target the approved
+commit, then creates the release with generated notes, marked as a prerelease
+for prerelease versions. An existing release is accepted when its tag, draft
+state and prerelease flag match. The release is recorded as the operation's
+`github-release` publication.
+
 ## Downstream release context
 
 Release subscriptions provide `context.upstreamRelease`, including repository

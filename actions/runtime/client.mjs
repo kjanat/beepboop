@@ -40,7 +40,7 @@ else if (mode === 'report') {
 		artifacts: JSON.parse(process.env.ARTIFACTS || '[]'),
 	};
 } else if (mode === 'credentials') body = { executionId, aliases: JSON.parse(process.env.ALIASES || '[]') };
-else if (mode === 'refs-plan' || mode === 'refs-complete') body = { executionId };
+else if (mode === 'refs-plan' || mode === 'refs-complete' || mode === 'release') body = { executionId };
 else if (mode === 'token') {
 	body = {
 		permissions: JSON.parse(process.env.PERMISSIONS || '{}'),

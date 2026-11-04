@@ -31,7 +31,7 @@ import { maintainSetup } from '@/automation/setup-maintenance';
 import type { SetupEdit } from '@/automation/setup-types';
 import { Store } from '@/automation/store';
 import type { Artifact, AutomationEvent, Edit, Execution, Publication, ReleaseReference } from '@/automation/types';
-import { array, integer, record, sha } from '@/model';
+import { array, integer, record, semver, sha } from '@/model';
 
 export interface CoordinatorBindings extends Credentials {
 	DB: D1Database;
@@ -499,6 +499,58 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			return execution.refPlan;
 		});
+	}
+	async publishRelease(id: string, identity: WorkflowIdentity): Promise<Execution> {
+		const publication = await this.serial(async (): Promise<Publication> => {
+			const execution = await this.get(id);
+			if (!execution.workflow || execution.managed) throw new Error('Operation is not a workflow');
+			if (
+				execution.state !== 'running' || execution.repositoryId !== identity.repositoryId
+				|| execution.repository !== identity.repository || execution.runId !== identity.runId
+				|| execution.runAttempt !== identity.attempt || execution.workflowSha !== identity.workflowSha
+			) throw new Error('Release operation identity mismatch');
+			if (!execution.version) throw new Error('Release operation has no version');
+			const version = semver(execution.version).replace(/^v/, '');
+			const tag = `${execution.workflow.refs?.prefix ?? 'v'}${version}`;
+			const prerelease = version.includes('-');
+			const gateway = this.gateway();
+			const read = await gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
+			const ref = await gateway.call(`/repos/${execution.repository}/git/ref/tags/${encodeURIComponent(tag)}`, read);
+			if (ref === null) throw new Error('Publish the release tag before the release');
+			const object = record(record(ref).object);
+			if (object.type !== 'tag') throw new Error('Release tag must be annotated');
+			const target = record(
+				record(await gateway.call(`/repos/${execution.repository}/git/tags/${sha(object.sha)}`, read)).object,
+			);
+			if (target.type !== 'commit' || target.sha !== execution.sourceSha) {
+				throw new Error('Release tag points to another commit');
+			}
+			const existing = await gateway.call(
+				`/repos/${execution.repository}/releases/tags/${encodeURIComponent(tag)}`,
+				read,
+			);
+			const release = record(
+				existing ?? await gateway.call(
+					`/repos/${execution.repository}/releases`,
+					await gateway.token(execution.repository, execution.repositoryId, { contents: 'write' }),
+					'POST',
+					{ tag_name: tag, target_commitish: execution.sourceSha, name: tag, generate_release_notes: true, prerelease },
+				),
+			);
+			if (release.tag_name !== tag || release.draft !== false || release.prerelease !== prerelease) {
+				throw new Error('Existing GitHub release does not match the release operation');
+			}
+			return {
+				id: `github-release:${execution.repository}`,
+				manager: 'github-release',
+				name: execution.repository,
+				version: tag,
+				outcome: 'succeeded',
+				required: true,
+				...(typeof release.html_url === 'string' ? { url: release.html_url } : {}),
+			};
+		});
+		return this.report(id, identity, [publication], []);
 	}
 	async report(
 		id: string,

@@ -843,6 +843,11 @@ export class AutomationService {
 				),
 			);
 		}
+		if (path.endsWith('/release')) {
+			return Response.json(
+				await this.coordinator(identity.repositoryId).publishRelease(text(body.executionId), identity),
+			);
+		}
 		if (path.endsWith('/begin') && !executionId) {
 			const repository = await this.store.repository(identity.repositoryId);
 			if (!repository) throw new Error('Repository not enrolled');
