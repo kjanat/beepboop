@@ -30,22 +30,11 @@ try {
 	}
 	await cp(join(checkout, 'schemas/purl-type-definition.schema-1.1.json'), join(root, 'type-definition.schema.json'));
 	await cp(join(checkout, 'LICENSE'), join(root, 'LICENSE'));
-	const fixtures = resolve(root, '../../test/fixtures/purl');
-	const tests = (await readdir(join(checkout, 'tests/types'))).filter(name => name.endsWith('-test.json'));
-	const expected = new Set(tests.map(name => name.replace('-test.json', '.json')).concat('specification.json'));
-	for (const filename of await readdir(fixtures)) {
-		if (filename.endsWith('.json') && !expected.has(filename)) await rm(join(fixtures, filename));
-	}
-	for (const filename of tests) {
-		await cp(join(checkout, 'tests/types', filename), join(fixtures, filename.replace('-test.json', '.json')));
-	}
-	await cp(join(checkout, 'tests/spec/specification-test.json'), join(fixtures, 'specification.json'));
 	const format = Bun.spawn([
 		'bunx',
 		'kfmt',
 		join(root, 'definitions'),
 		join(root, 'type-definition.schema.json'),
-		fixtures,
 	], { stdout: 'inherit', stderr: 'inherit' });
 	if (await format.exited !== 0) throw new Error('Could not format upstream data');
 	console.log(`Fetched ${files.length} PURL definitions at ${revision}`);

@@ -65,20 +65,13 @@ installer success codes are only emitted when explicitly configured.
 
 ## Development
 
-The generator is in `src/distribution/winget`. Test it locally with:
-
-```sh
-bun run test:actions
-bun test test/winget.test.ts
-```
-
-The CLI and Action run the same source. No Action bundle is built or committed.
-The Action test invokes Bun from a separate consumer directory.
+The generator is in `src/distribution/winget`. The CLI and Action run the same
+source. No Action bundle is built or committed.
 
 ## Publish the Action
 
 Run the **Publish Actions** workflow manually against `master`. It verifies the
-selected source commit, tests the Bun entrypoint, then publishes
+selected source commit, then publishes
 the complete source repository snapshot to the `actions` branch. The
 workflow summary records both the source SHA and the distribution SHA to pin in
 consumer workflows. Other Actions and their shared runtime keep their paths.

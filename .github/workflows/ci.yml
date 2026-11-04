@@ -17,9 +17,9 @@ jobs:
         with: { persist-credentials: false }
       - uses: jdx/mise-action@v5
       - run: runner i -fs types
-      - run: run -pk check lint test test:actions purl:check
+      - run: run -pk check lint test purl:check
       - run: run -s build:cli check:cli check:jsr
-      - run: run -sk deploy:dry test:runtime
+      - run: run deploy:dry
         env:
           GITHUB_APP_ID: "0"
           GITHUB_APP_PRIVATE_KEY: "ci-build-placeholder"

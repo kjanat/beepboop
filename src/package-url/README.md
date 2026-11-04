@@ -3,8 +3,7 @@
 `definitions/*-definition.json` contains all 42 separate type definitions from
 https://github.com/package-url/purl-spec at commit
 `856b0939f0a5636bb67c5bb67fec99be079bda84`, without changing the definition data. Local JSON formatting may differ.
-`definitions/index.ts` registers every file in filename order. The upstream license is in `LICENSE`. Corresponding
-upstream type tests are copied unchanged into `test/fixtures/purl`.
+`definitions/index.ts` registers every file in filename order. The upstream license is in `LICENSE`.
 
 `source.json` pins the upstream repository and revision. `type-definition.schema.json`
 contains its schema 1.1. `definition.generated.ts` is generated from that schema
@@ -33,23 +32,6 @@ ALPM vercmp is not a license to rewrite a package version.
 There are no release adapters or versionless selection rules in this module.
 Those belong to `src/automation/package-identity.ts`.
 
-The test runner executes **all required and recommended** upstream cases, including
-`tests/spec/specification-test.json`. Required cases use strict parsing;
-recommended cases use explicit normalization. Two inconsistent upstream expectations
-have executable, documented corrections rather than skipped tests:
-
-- Maven case 13 expects strict parsing to accept `repositorY_url`, while the standard
-  and required RPM/Gem cases reject uppercase keys. Assert strict rejection and
-  the expected normalized components and round-trip.
-- Recommended Git case 0 lowercases the repository path although its definition
-  declares that path case-sensitive. Assert preservation to avoid naming a different
-  repository.
-
-Original fixtures stay unchanged. Assertions pin the discrepant inputs so upstream
-updates cannot silently inherit these corrections. These are deviations from the
-fixture expectations, not claims of passing them unchanged. See
-[ECMA-427 §5.6.6](https://github.com/package-url/purl-spec/blob/856b0939f0a5636bb67c5bb67fec99be079bda84/docs/specification/standard/Clause-5-Package-URL-Specification.md#566-qualifiers).
-
 Regenerate deterministically without network access:
 
 ```sh
@@ -65,7 +47,7 @@ bun run purl:update
 
 To advance the source, change the full revision in `source.json` first. Fetching
 uses Git in a temporary checkout, verifies the revision, copies every definition,
-the schema, license and both test groups, and removes files no longer present
+the schema and license, and removes files no longer present
 upstream. `bun run purl:fetch --source /path/to/purl-spec` uses an existing checkout
 at the pinned revision. Generation reads all definition files, so a new upstream
 type automatically enters the registry and generated identity union. CI runs

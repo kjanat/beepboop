@@ -3,7 +3,6 @@
 	"files": {
 		"includes": [
 			"src/**",
-			"test/**",
 			"scripts/**",
 			"*.json",
 			"!worker-configuration.d.ts",

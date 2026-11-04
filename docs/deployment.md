@@ -81,9 +81,7 @@ mapper; `astro check` and the separate TypeScript alias are no longer used.
 
 ```sh
 bun run check
-bun run test
 bun run deploy:dry
-bun run test:runtime
 bun run deploy
 ```
 
@@ -99,8 +97,7 @@ modules; Astro resolves them during its build.
 
 `bun run deploy:dry` builds Astro and checks the generated Worker with
 `wrangler deploy --dry-run`. It never applies remote migrations or publishes a
-Worker. Runtime tests apply the migrations to an isolated local database.
-Keep schema migrations compatible with the currently running Worker because
+Worker. Keep schema migrations compatible with the currently running Worker because
 migrations run before its replacement is uploaded.
 
 Sign in to the dashboard and enroll the first physical security key. Enroll a
