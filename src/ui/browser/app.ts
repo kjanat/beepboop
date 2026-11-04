@@ -22,6 +22,7 @@ interface Plan {
 	edits: { path: string; before: string; after: string }[];
 	groups?: { id: string; version: string; packages: string[] }[];
 	diagnostics?: string[];
+	requiresPreparation: boolean;
 }
 interface Preview {
 	identity: string;
@@ -34,6 +35,7 @@ const planSchema: z.ZodType<Plan> = z.object({
 	edits: z.array(z.object({ path: z.string(), before: z.string(), after: z.string() })),
 	groups: z.array(z.object({ id: z.string(), version: z.string(), packages: z.array(z.string()) })).optional(),
 	diagnostics: z.array(z.string()).optional(),
+	requiresPreparation: z.boolean(),
 });
 const credentialDescriptor = z.looseObject({
 	id: z.string(),
@@ -202,7 +204,7 @@ function renderPlan(form: HTMLFormElement, plan: Plan) {
 	result.append(node('p', `Source commit: ${plan.sourceSha}`));
 	for (const group of plan.groups ?? []) result.append(node('p', `${group.packages.join(', ')} → ${group.version}`));
 	for (const diagnostic of plan.diagnostics ?? []) result.append(node('p', diagnostic));
-	if (!plan.edits.length) {
+	if (!plan.edits.length && plan.requiresPreparation) {
 		result.append(node('p', 'No manifest edits. Preparation follows the configured repository workflow.'));
 	}
 	for (const edit of plan.edits) {
@@ -435,9 +437,10 @@ for (const form of findAll(document, 'form[data-action]', HTMLFormElement)) {
 					);
 					previews.set(form, { identity, plan });
 					renderPlan(form, plan);
+					const ready = plan.edits.length > 0 || plan.requiresPreparation;
 					const prepare = find(form, 'button[value="prepare"]', HTMLButtonElement);
-					if (prepare) prepare.disabled = false;
-					show('Review the proposed changes below, then prepare the release.');
+					if (prepare) prepare.disabled = !ready;
+					show(ready ? 'Review the proposed changes below, then prepare the release.' : 'Nothing to prepare.');
 				} else {
 					const preview = previews.get(form);
 					if (!preview || preview.identity !== identity) {

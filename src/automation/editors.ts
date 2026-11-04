@@ -133,9 +133,14 @@ export function planVersionFiles(snapshot: Snapshot, target: unknown, rules: Ver
 	const version = semver(target).replace(/^v/, '');
 	const files = { ...snapshot.files };
 	applyVersionFiles(snapshot, files, rules, { release: version });
-	const requiresPreparation = Object.keys(files).some(path =>
-		/(?:^|\/)(Cargo.lock|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock)$/.test(path)
-	);
+	const edits = Object.entries(files).flatMap(([path, after]) => {
+		const before = snapshot.files[path];
+		return before === undefined || before === after ? [] : [{ path, before, after }];
+	});
+	const requiresPreparation = edits.length > 0
+		&& Object.keys(files).some(path =>
+			/(?:^|\/)(Cargo.lock|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock)$/.test(path)
+		);
 	return {
 		lockfiles: Object.keys(snapshot.files).filter(path =>
 			/(?:^|\/)(Cargo.lock|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock)$/.test(path)
@@ -144,10 +149,14 @@ export function planVersionFiles(snapshot: Snapshot, target: unknown, rules: Ver
 		sourceSha: snapshot.sha,
 		packages: [],
 		requiresPreparation,
-		diagnostics: requiresPreparation ? ['Preparation workflow must regenerate lockfiles before promotion'] : [],
-		edits: Object.entries(files).flatMap(([path, after]) => {
-			const before = snapshot.files[path];
-			return before === undefined || before === after ? [] : [{ path, before, after }];
-		}),
+		diagnostics: requiresPreparation
+			? ['Preparation workflow must regenerate lockfiles before promotion']
+			: edits.length
+			? []
+			: [alreadyPrepared(version, snapshot.sha)],
+		edits,
 	};
+}
+export function alreadyPrepared(version: string, commit: string): string {
+	return `Commit ${commit.slice(0, 12)} already carries ${version}. Start the promote workflow for this commit.`;
 }

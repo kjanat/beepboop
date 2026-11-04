@@ -1,4 +1,4 @@
-import { applyVersionFiles, type VersionFile } from '@/automation/editors';
+import { alreadyPrepared, applyVersionFiles, type VersionFile } from '@/automation/editors';
 import { managerRegistry } from '@/automation/managers/builtins';
 import type { Fetcher, ManagerRegistry, VerificationContext } from '@/automation/managers/registry';
 import { tagPrefix } from '@/automation/managers/tags';
@@ -12,6 +12,11 @@ export { publicationOrder } from '@/automation/managers/order';
 function explicit(request: VersionRequest): string {
 	if (!('version' in request)) throw new Error('Select an explicit version for the first release');
 	return request.version;
+}
+function released(pkg: Package): string | undefined {
+	if (pkg.publicationStatus === 'published') return pkg.published;
+	if (pkg.publicationStatus === 'missing') return undefined;
+	return pkg.version;
 }
 export function discover(snapshot: Snapshot, enabled: ManagerName[] = managerRegistry.names()): Inventory {
 	return managerRegistry.discover(snapshot, enabled);
@@ -37,8 +42,13 @@ export function planRelease(
 	if (new Set(packages.map(packageId)).size !== packages.length) {
 		throw new Error('Duplicate selected package identity');
 	}
-	const current = [...new Set(packages.flatMap(p => p.version === undefined ? [] : [p.version]))];
-	if (!('version' in request) && packages.some(p => p.version === undefined)) {
+	const current = [
+		...new Set(packages.flatMap(p => {
+			const version = released(p);
+			return version === undefined ? [] : [version];
+		})),
+	];
+	if (!('version' in request) && packages.some(p => released(p) === undefined)) {
 		throw new Error('Select an explicit version for the first release');
 	}
 	if (!('version' in request) && current.length !== 1) {
@@ -74,14 +84,23 @@ export function planRelease(
 	applyVersionFiles(snapshot, files, versionFiles, { release: version });
 	for (const [path, after] of Object.entries(files)) if (after !== snapshot.files[path]) changed.set(path, after);
 
-	const requiresPreparation = Object.keys(snapshot.files).some((p) =>
-		/(?:^|\/)(Cargo.lock|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock)$/.test(p)
-	);
+	const edits = [...changed]
+		.map(([path, after]) => {
+			const before = snapshot.files[path];
+			if (before === undefined) throw new Error('Missing planned manifest');
+			return { path, before, after };
+		})
+		.filter((e) => e.before !== e.after);
+	const requiresPreparation = edits.length > 0
+		&& Object.keys(snapshot.files).some((p) =>
+			/(?:^|\/)(Cargo.lock|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock)$/.test(p)
+		);
 	if (requiresPreparation) {
 		diagnostics.push(
 			'Preparation workflow must regenerate lockfiles and generated version carriers before promotion',
 		);
 	}
+	if (!edits.length) diagnostics.push(alreadyPrepared(version, snapshot.sha));
 	return {
 		lockfiles: Object.keys(snapshot.files).filter(path =>
 			/(?:^|\/)(Cargo.lock|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock)$/.test(path)
@@ -89,13 +108,7 @@ export function planRelease(
 		version,
 		sourceSha: snapshot.sha,
 		packages,
-		edits: [...changed]
-			.map(([path, after]) => {
-				const before = snapshot.files[path];
-				if (before === undefined) throw new Error('Missing planned manifest');
-				return { path, before, after };
-			})
-			.filter((e) => e.before !== e.after),
+		edits,
 		diagnostics,
 		requiresPreparation,
 	};

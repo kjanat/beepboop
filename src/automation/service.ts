@@ -5,7 +5,7 @@ import { configuredGrant } from '@/automation/access';
 import { type AuthBindings, Authenticators, administrator, authRoute, workflowIdentity } from '@/automation/auth';
 import { resolveConfiguration } from '@/automation/configuration';
 import type { AutomationCoordinator } from '@/automation/coordinator';
-import { planVersionFiles } from '@/automation/editors';
+import { alreadyPrepared, planVersionFiles } from '@/automation/editors';
 import { createExecution } from '@/automation/execution';
 import { type Credentials, RepositoryGateway } from '@/automation/github';
 import { createReleasePreparation, planIdentity } from '@/automation/managed';
@@ -687,6 +687,9 @@ export class AutomationService {
 			if (path.endsWith('/plan')) return Response.json({ ...plan, planId });
 			if (sha(body.sourceSha) !== plan.sourceSha || body.planId !== planId) {
 				throw new Error('Release plan changed; preview it again');
+			}
+			if (!plan.edits.length && !plan.requiresPreparation) {
+				throw new Error(alreadyPrepared(plan.version, plan.sourceSha));
 			}
 			if (stream.prepare.workflow) {
 				if (stream.prepare.strategy !== 'workflow') {
