@@ -68,6 +68,12 @@ function publishesGithubRelease(execution: Execution): boolean {
 	const key = selectorKey(`github-release:${execution.repository}`);
 	return execution.workflow?.publications?.some(id => selectorKey(id) === key) ?? false;
 }
+function moved(execution: Execution, head: { ref: string; sha: string }): string {
+	const release = execution.operation === 'prepare' || execution.operation === 'promote' || execution.releaseSet;
+	return `${head.ref} is at ${head.sha.slice(0, 12)} but this execution builds ${execution.sourceSha.slice(0, 12)}; ${
+		release ? 'prepare the release again' : 'trigger the operation again'
+	}`;
+}
 export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private pending: Promise<unknown> = Promise.resolve();
 	private serial<T>(work: () => Promise<T>): Promise<T> {
@@ -831,16 +837,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			) {
 				throw new Error('Approval does not match promotion target');
 			}
-			const ref = execution.workflow?.ref.replace(/^refs\/heads\//, '');
-			if (ref) {
-				const gateway = this.gateway();
-				const token = await gateway.token(execution.repository, execution.repositoryId);
-				const head = text(
-					record(await gateway.call(`/repos/${execution.repository}/commits/${encodeURIComponent(ref)}`, token)).sha,
-				);
-				if (head !== execution.sourceSha) {
-					throw new Error(`${ref} is at ${head.slice(0, 12)}. Approve the release for that commit.`);
-				}
+			const head = await this.refHead(
+				execution,
+				await this.gateway().token(execution.repository, execution.repositoryId),
+			);
+			if (head && head.sha !== execution.sourceSha) {
+				throw new Error(`${head.ref} is at ${head.sha.slice(0, 12)}. Approve the release for that commit.`);
 			}
 			const problems = await this.approvalProblems(execution);
 			if (problems.length && !force) throw new Error(problems.join('; '));
@@ -914,20 +916,26 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		}
 		return problems;
 	}
+	private async refHead(execution: Execution, token: string): Promise<{ ref: string; sha: string } | undefined> {
+		const ref = execution.workflow?.ref.replace(/^refs\/(heads|tags)\//, '');
+		if (!ref) return undefined;
+		const commit = record(
+			await this.gateway().call(`/repos/${execution.repository}/commits/${encodeURIComponent(ref)}`, token),
+		);
+		return { ref, sha: text(commit.sha) };
+	}
 	private async redispatch(execution: Execution, publications: Publication[]): Promise<void> {
 		const gateway = this.gateway(),
 			token = await gateway.token(execution.repository, execution.repositoryId, {
 				contents: 'read',
 				actions: 'write',
 			});
-		const ref = execution.workflow?.ref?.replace(/^refs\/(heads|tags)\//, '');
+		const head = await this.refHead(execution, token);
+		if (head && head.sha !== execution.sourceSha) throw new Error(moved(execution, head));
 		const run = execution.runId
-			? await gateway.call(`/repos/${execution.repository}/actions/runs/${execution.runId}`, token)
+			? record(await gateway.call(`/repos/${execution.repository}/actions/runs/${execution.runId}`, token))
 			: null;
-		const head = run !== null && ref
-			? await gateway.call(`/repos/${execution.repository}/commits/${encodeURIComponent(ref)}`, token)
-			: null;
-		if (run !== null && head !== null && record(run).head_sha === record(head).sha) {
+		if (run !== null && run.head_sha === execution.sourceSha) {
 			await gateway.call(
 				`/repos/${execution.repository}/actions/runs/${execution.runId}/rerun-failed-jobs`,
 				token,
@@ -936,7 +944,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			await this.put({
 				...execution,
 				state: 'uncertain',
-				runAttempt: integer(record(run).run_attempt),
+				runAttempt: integer(run.run_attempt),
 				reason: 'Retry requested; re-running the failed jobs',
 				publications,
 			});
@@ -948,7 +956,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				runId: undefined,
 				runAttempt: undefined,
 				workflowSha: undefined,
-				reason: `Retry requested; ${ref ?? 'the workflow ref'} moved, so dispatching a new run`,
+				reason: 'Retry requested; dispatching a new run',
 				publications,
 			});
 		}
