@@ -19,7 +19,6 @@ if (!actor) {
 }
 const data = await dashboard(bindings(), actor);
 const copy: Record<string, [string, string]> = {
-	winget: ['WinGet', 'Submit Windows releases and follow Microsoft’s review.'],
 	overview: [
 		'What needs to ship?',
 		'Follow releases from preparation to every required publication.',
@@ -70,7 +69,6 @@ const setup = data.repositories.filter(r =>
 );
 ---
 <Layout title={title} description={description} section={section}>
-	{section === 'winget' && <WinGet data={data} />}
 	{section === 'overview' && (
 		<>
 			<div class="release-path" aria-label="Release process">
@@ -113,6 +111,7 @@ const setup = data.repositories.filter(r =>
 	{section === 'notifications' && <Notifications data={data} />}
 	{section === 'releases' && <Releases data={data} />}
 	{section === 'runs' && <Runs executions={data.executions} />}
+	{section === 'runs' && <WinGet data={data} />}
 	{section === 'secrets' && <Secrets data={data} />}
 	{section === 'security' && <Security data={data} />}
 	{section === 'activity' && (

@@ -4,7 +4,6 @@ export const sections = [
 	'notifications',
 	'releases',
 	'runs',
-	'winget',
 	'secrets',
 	'activity',
 	'security',
