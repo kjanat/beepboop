@@ -22,9 +22,9 @@ interface Selected {
 async function configured(service: AutomationService, repositoryId: number, name: string): Promise<Selected> {
 	const repository = await service.store.repository(repositoryId);
 	if (!repository) throw notFound('repository', 'Repository not configured', String(repositoryId));
-	if (!repository.configuration) throw precondition('Repository not configured');
 	const problems = blocking(repository.diagnostics);
 	if (problems.length) throw new DomainError({ code: 'precondition', diagnostics: problems });
+	if (!repository.configuration) throw precondition('Repository not configured');
 	const stream = repository.configuration.streams[name];
 	if (!stream) throw notFound('stream', 'Unknown stream', name);
 	return { repository, stream };

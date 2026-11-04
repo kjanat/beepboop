@@ -118,7 +118,7 @@ function bindingSchema(rules: boolean) {
 function streamSchema(rules: boolean) {
 	const binding = bindingSchema(rules);
 	const workflows = z.record(identifier, binding);
-	const parsed = z.strictObject({
+	const shape = z.strictObject({
 		versioning: z.enum(['workspace', 'independent', 'none']).default('workspace'),
 		versionFiles: z.array(versionFileSchema).optional(),
 		versionSource: z.strictObject({ kind: z.literal('tags'), prefix: z.string().regex(tagPrefix) }).optional(),
@@ -148,7 +148,18 @@ function streamSchema(rules: boolean) {
 			prerelease: 'next',
 		}),
 		concurrency: z.enum(['queue', 'supersede-pending']).default('queue'),
-	}).transform(stream => ({
+	});
+	const checked = rules
+		? shape.superRefine((stream, ctx) => {
+			if (stream.prepare.strategy === 'workflow' && !stream.prepare.workflow) {
+				issue(ctx, 'binding-missing', 'The workflow preparation strategy needs prepare.workflow', [
+					'prepare',
+					'workflow',
+				]);
+			}
+		})
+		: shape;
+	const parsed = checked.transform(stream => ({
 		...(stream.versionFiles === undefined ? {} : { versionFiles: stream.versionFiles }),
 		...(stream.versionSource ? { versionSource: stream.versionSource } : {}),
 		...(stream.packages === undefined ? {} : { packages: stream.packages }),
