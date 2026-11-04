@@ -25,6 +25,11 @@ discovery. GitHub release and manifest verification currently require the
 coordinator's authenticated gateway and remain separate from public registry
 verification.
 
+The `jsr` adapter reads `jsr.json`, `jsr.jsonc`, `deno.json` and
+`deno.jsonc`. A directory contributes one manifest, preferred in that order. A
+`deno.json` or `deno.jsonc` without `name` is a Deno project and adds no
+package. Version edits keep comments and formatting.
+
 The `vscode` adapter discovers `package.json` files with a string
 `engines.vscode`. Its package name is the extension ID `publisher.name`, with
 purl type `vscode-extension`. It verifies publications against the Visual
@@ -41,14 +46,19 @@ executions have no workflow binding and cannot register or report through the
 workflow OIDC endpoints. Both single-version and independent-version plans can
 use managed preparation when no generated lockfiles need refreshing.
 
-To add an ecosystem, implement its adapter, register it in `builtins.ts`, and add
-its public name to the configuration type, validator, and schema. Include fixtures
-for discovery, version edits, dependency ranges, and verification failures for
-every capability the adapter provides.
+`src/contract/catalog.ts` declares every manager name and its purl type,
+manifest patterns, marker patterns, lockfile names, destinations and version
+policy. Snapshots fetch the content of manifest paths and record marker and
+lockfile paths with empty content. To add an ecosystem, add its name and catalog
+entry, implement its adapter, and register it in `builtins.ts`. The typecheck
+fails until the catalog and `builtins.ts` cover the same names. Add the name to
+the `managers` enum in `schemas/v1.json` as well. Include fixtures for
+discovery, version edits, dependency ranges, and verification failures for every
+capability the adapter provides.
 
 ## Destinations
 
-`src/automation/destinations.ts` lists where packages are published. Beepboop
+`src/contract/catalog.ts` lists where packages are published. Beepboop
 reads the latest version from a registry destination; the repository's own
 workflows publish there. Each inspection records one result per destination:
 `published`, `missing`, `failed`, or `unchecked`.
