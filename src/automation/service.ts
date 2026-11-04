@@ -723,6 +723,10 @@ export class AutomationService {
 			const repository = await this.store.repository(integer(body.repositoryId));
 			if (!repository) throw new Error('Unknown repository');
 			if (text(body.operation) === 'prepare') throw new Error('Prepare releases from Prepare a release');
+			if (
+				text(body.operation) === 'promote' && body.version === undefined
+				&& repository.configuration?.streams[text(body.stream)]?.versioning !== 'none'
+			) throw new Error('A promotion needs a version; create it from Prepare a release');
 			const execution = await createExecution(
 				repository,
 				text(body.stream),
