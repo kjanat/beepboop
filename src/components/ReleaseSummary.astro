@@ -1,7 +1,7 @@
 ---
 import type { Execution } from '@/automation/types.ts';
+import { packageLabel } from '@/domain/package-label';
 import { releaseSummaries } from '@/server/releases.ts';
-import { packageLabel } from '@/ui/package-label';
 
 interface Props {
 	executions: Execution[];

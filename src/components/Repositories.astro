@@ -4,6 +4,7 @@ import { exclusionLabel, publishable } from '@/automation/package-publication';
 import { publishedOutsideRequired } from '@/automation/setup';
 import type { RepositoryRecord } from '@/automation/types';
 import Field from '@/components/Field.astro';
+import { packageLabel } from '@/domain/package-label';
 import type { Dashboard } from '@/server/dashboard.ts';
 import { date, workflowChoices } from '@/server/dashboard.ts';
 import { packageDisplayName } from '@/server/package-name';
@@ -12,7 +13,6 @@ import {
 	packageDestinations,
 	repositoryChannels,
 } from '@/ui/destinations';
-import { packageLabel } from '@/ui/package-label';
 
 interface Props {
 	data: Dashboard;

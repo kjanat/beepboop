@@ -4,10 +4,10 @@ import type { UnreadableExecution } from '@/automation/store.ts';
 import type { Execution } from '@/automation/types.ts';
 import Field from '@/components/Field.astro';
 import { defaultTagPolicy, semVer, tagFor } from '@/contract/version';
+import { packageLabel } from '@/domain/package-label';
 import { date } from '@/server/dashboard.ts';
 import { packageDisplayName } from '@/server/package-name';
 import { releaseSetSummaries } from '@/server/releases';
-import { packageLabel } from '@/ui/package-label';
 
 interface Props {
 	executions: Execution[];

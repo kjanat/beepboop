@@ -5,8 +5,8 @@ import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import type { Client } from '@/cli/client';
 import { emit, failure } from '@/cli/output';
+import { packageLabel } from '@/domain/package-label';
 import { record, string } from '@/model';
-import { packageLabel } from '@/ui/package-label';
 
 function options(entries: SelectChoice[]): [SelectChoice, ...SelectChoice[]] {
 	const [first, ...rest] = entries;

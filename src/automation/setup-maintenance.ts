@@ -10,8 +10,8 @@ import type { SetupChoices } from '@/automation/setup-types';
 import type { Store } from '@/automation/store';
 import type { Edit, Snapshot } from '@/automation/types';
 import { sha256Hex } from '@/contract/ids';
+import { packageMarkdown } from '@/domain/package-label';
 import { record } from '@/model';
-import { packageMarkdown } from '@/ui/package-label';
 
 const editsSchema = z.array(z.object({ path: z.string(), before: z.string(), after: z.string() }));
 export function sameEdits(left: Edit[], right: Edit[]): boolean {

@@ -2,9 +2,9 @@ import { z } from 'zod';
 import { publishable } from '@/automation/package-publication';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
+import { packageLabel } from '@/domain/package-label';
 import { oneOf } from '@/model';
 import { api, find, show } from '@/ui/browser/dom';
-import { packageLabel } from '@/ui/package-label';
 
 const setupPlan = z.unknown().transform(parseSetupPlan);
 const sessions = new WeakMap<
