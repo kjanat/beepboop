@@ -900,7 +900,7 @@ export class AutomationService {
 		}
 		if (path === '/api/credentials/reveal' || path === '/api/credentials/sync') {
 			const alias = text(body.alias);
-			if (!await this.activeCredential(alias)) throw new Error('Credential unavailable');
+			if (!await this.activeCredential(alias)) throw new Error('No stored value under this name');
 			return path.endsWith('/reveal')
 				? () => vault.reveal(alias, actor)
 				: () => vault.synchronize(alias, this.gateway, actor);
