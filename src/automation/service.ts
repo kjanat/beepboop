@@ -5,6 +5,7 @@ import { resolveConfiguration } from '@/automation/configuration';
 import type { AutomationCoordinator } from '@/automation/coordinator';
 import { createExecution } from '@/automation/execution';
 import { type Credentials, RepositoryGateway } from '@/automation/github';
+import { type InboxEvent, inboxEvent, type SetupPullEdit } from '@/automation/inbox';
 import { discover, planRelease, resolvePublished, versionsInFiles } from '@/automation/managers';
 import { jsrTokenAlias, prepareJsrPackage } from '@/automation/managers/jsr';
 import { Notifications } from '@/automation/notifications';
@@ -25,7 +26,7 @@ import { precondition } from '@/contract/errors';
 import { setupChoicesSchema } from '@/contract/setup';
 import { configurationDiagnostics, configurationProblem } from '@/domain/configuration';
 import { validateAgainst } from '@/domain/validate';
-import { array, integer, record, text } from '@/model';
+import { array, integer, record } from '@/model';
 import { CLISessionStore } from '@/persistence/d1/cli-sessions';
 import { CredentialStore } from '@/persistence/d1/credentials';
 import { OnboardingStore } from '@/persistence/d1/onboarding';
@@ -33,23 +34,6 @@ import { ScheduleStore } from '@/persistence/d1/schedules';
 import { SessionStore } from '@/persistence/d1/sessions';
 import { readBody, verifySignature } from '@/webhook';
 
-const setupPullEdit = z.object({
-	action: z.literal('edited'),
-	changes: z.object({ body: z.object({ from: z.string().nullable() }) }),
-	sender: z.object({ id: z.number() }),
-	pull_request: z.object({
-		number: z.number().int().positive(),
-		state: z.literal('open'),
-		body: z.string().nullable(),
-		user: z.object({ id: z.number() }),
-		head: z.object({
-			ref: z.literal('automation/onboarding'),
-			sha: z.string().regex(/^[a-f0-9]{40}$/),
-			repo: z.object({ id: z.number() }),
-		}),
-		base: z.object({ repo: z.object({ id: z.number() }) }),
-	}),
-});
 export interface AutomationBindings extends AuthBindings, Credentials, WinGetBindings {
 	AUTOMATION: DurableObjectNamespace<AutomationCoordinator>;
 	OWNER_ID: string;
@@ -318,43 +302,58 @@ export class AutomationService {
 		if (!repository || repository.name !== source.full_name) {
 			return new Response(null, { status: 204 });
 		}
-		if (event === 'pull_request') {
-			await this.setupEdited(repository, payload);
-			return new Response(null, { status: 202 });
-		}
-		if (event === 'release' && payload.action === 'published') await this.winget().automatic(repository);
-		if (event === 'push' && payload.ref === `refs/heads/${repository.defaultBranch}`) {
-			await this.refresh(repository.name, repository.id);
-		} else if (event === 'workflow_run') {
-			if (payload.action === 'completed') {
-				await this.coordinator(repository.id).observeRun(
-					repository.id,
-					integer(record(payload.workflow_run).id),
-				);
-			} else await this.coordinator(repository.id).wake();
-		}
-		if (
-			event === 'workflow_run'
-			&& payload.action === 'completed'
-			&& record(payload.workflow_run).conclusion === 'success'
-			&& ['push', 'release', 'workflow_dispatch', 'schedule'].includes(
-				String(record(payload.workflow_run).event),
-			)
-			&& record(record(payload.workflow_run).head_repository).id === repository.id
-		) {
-			await this.event({
-				id: text(request.headers.get('x-github-delivery')),
-				source: repository.name,
-				event,
-				workflow: text(record(payload.workflow_run).path).replace(/^\.github\/workflows\//, ''),
-			});
-		}
+		const delivery = request.headers.get('x-github-delivery');
+		if (!delivery) return new Response('Missing delivery', { status: 400 });
+		const received = inboxEvent.safeParse(this.inbound(event, payload));
+		if (received.success) await this.coordinator(repository.id).receive(delivery, repository.id, received.data);
 		return new Response(null, { status: 202 });
 	}
-	private async setupEdited(repository: RepositoryRecord, payload: unknown): Promise<void> {
-		const parsed = setupPullEdit.safeParse(payload);
-		if (!parsed.success) return;
-		const { pull_request: pull, sender } = parsed.data;
+	private inbound(event: string | null, payload: Record<string, unknown>): unknown {
+		if (event === 'pull_request') return { kind: event, edit: payload };
+		if (event === 'push') return { kind: event, ref: payload.ref };
+		if (event === 'release') return { kind: event, action: payload.action };
+		const run = record(payload.workflow_run);
+		return {
+			kind: event,
+			action: payload.action,
+			run: {
+				id: run.id,
+				conclusion: run.conclusion ?? null,
+				event: run.event,
+				path: run.path,
+				headRepositoryId: record(run.head_repository ?? {}).id ?? null,
+			},
+		};
+	}
+	async receive(delivery: string, repositoryId: number, event: InboxEvent): Promise<void> {
+		const repository = await this.store.repository(repositoryId);
+		if (!repository) return;
+		if (event.kind === 'pull_request') return this.setupEdited(repository, event.edit);
+		if (event.kind === 'release') {
+			if (event.action === 'published') await this.winget().automatic(repository);
+			return;
+		}
+		if (event.kind === 'push') {
+			if (event.ref === `refs/heads/${repository.defaultBranch}`) await this.refresh(repository.name, repository.id);
+			return;
+		}
+		const { action, run } = event;
+		if (action !== 'completed') return this.coordinator(repository.id).wake();
+		await this.coordinator(repository.id).observeRun(repository.id, run.id);
+		if (
+			run.conclusion === 'success' && ['push', 'release', 'workflow_dispatch', 'schedule'].includes(run.event)
+			&& run.headRepositoryId === repository.id
+		) {
+			await this.event({
+				id: delivery,
+				source: repository.name,
+				event: 'workflow_run',
+				workflow: run.path.replace(/^\.github\/workflows\//, ''),
+			});
+		}
+	}
+	private async setupEdited(repository: RepositoryRecord, edit: SetupPullEdit): Promise<void> {
+		const { pull_request: pull, sender } = edit;
 		if (pull.head.repo.id !== repository.id || pull.base.repo.id !== repository.id) return;
 		const bot = await this.gateway.botIdentity();
 		if (sender.id === bot.id || pull.user.id !== bot.id) return;

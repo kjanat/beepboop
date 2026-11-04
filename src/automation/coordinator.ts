@@ -10,7 +10,8 @@ import {
 	runTitle,
 	validatePublicationIdentity,
 } from '@/automation/execution';
-import { type Credentials, RepositoryGateway } from '@/automation/github';
+import { RepositoryGateway } from '@/automation/github';
+import { type InboxEvent, inboxEntry } from '@/automation/inbox';
 import { canVerifyPublication, discover, observedVersion, verifyPublication } from '@/automation/managers';
 import { verifyManifest } from '@/automation/manifest';
 import { mergeArtifacts, resolveInputs } from '@/automation/outputs';
@@ -30,6 +31,7 @@ import { planRefs, type RefPlan } from '@/automation/refs';
 import { compileReleaseSet } from '@/automation/release-set';
 import { manifestProblems } from '@/automation/release-version';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
+import { type AutomationBindings, AutomationService } from '@/automation/service';
 import { maintainSetup } from '@/automation/setup-maintenance';
 import type { SetupEdit } from '@/automation/setup-types';
 import { decodeError, Store } from '@/automation/store';
@@ -43,7 +45,7 @@ import { ProjectionStore } from '@/persistence/d1/projection';
 import { releaseEventId } from '@/persistence/identity-keys';
 import { type Committed, earliest, Journal } from '@/persistence/journal';
 
-export interface CoordinatorBindings extends Credentials {
+export interface CoordinatorBindings extends AutomationBindings {
 	DB: SqlDatabase;
 	OWNER_ID: string;
 	RELEASE_WORKFLOW: Workflow<ReleaseWorkflowParams>;
@@ -76,6 +78,7 @@ const releaseWake = z.union([
 ]);
 type ReleaseWake = z.output<typeof releaseWake>;
 const reconcileDue = z.number().nullable();
+const inboxAttempts = 8;
 const access = z.object({ suspended: z.boolean() });
 const reconcileInterval = 60_000;
 const settleInterval = 15_000;
@@ -139,12 +142,16 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		const observations = [...(await this.ctx.storage.list({ prefix: 'observe:' })).values()].map(value =>
 			observation.safeParse(value).data?.due ?? now
 		);
+		const inbox = [...(await this.ctx.storage.list({ prefix: 'inbox:' })).values()].map(value =>
+			inboxEntry.safeParse(value).data?.due ?? now
+		);
 		return earliest([
 			(await this.journal.pending()) ? (this.projectionRetryAt ?? now) : undefined,
 			await this.reconcileAt(),
 			(await this.setupEdit())?.due,
 			...wakes,
 			...observations,
+			...inbox,
 		]);
 	}
 	private async reconcileAt(): Promise<number | undefined> {
@@ -1187,6 +1194,41 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		await this.requestReconcile(Date.now());
 		await this.journal.arm(Date.now());
 	}
+	async receive(delivery: string, repositoryId: number, event: InboxEvent): Promise<void> {
+		const key = `inbox:${delivery}`;
+		if (await this.ctx.storage.get(key)) return;
+		const now = Date.now();
+		await this.ctx.storage.put(key, { delivery, repositoryId, event, attempts: 0, due: now });
+		await this.journal.arm(now);
+	}
+	private async drainInbox(now: number): Promise<void> {
+		for (const [key, value] of await this.ctx.storage.list({ prefix: 'inbox:' })) {
+			const parsed = inboxEntry.safeParse(value);
+			if (!parsed.success) {
+				await this.ctx.storage.delete(key);
+				continue;
+			}
+			const entry = parsed.data;
+			if (entry.due > now) continue;
+			try {
+				await new AutomationService(this.env).receive(entry.delivery, entry.repositoryId, entry.event);
+				await this.ctx.storage.delete(key);
+			} catch (error) {
+				const attempts = entry.attempts + 1;
+				const failed = {
+					...entry,
+					attempts,
+					due: now + reconcileInterval * 2 ** entry.attempts,
+					error: decodeError(error),
+				};
+				if (attempts < inboxAttempts) await this.ctx.storage.put(key, failed);
+				else {
+					await this.ctx.storage.put(`inbox-dead:${entry.delivery}`, failed);
+					await this.ctx.storage.delete(key);
+				}
+			}
+		}
+	}
 	async observeRun(repositoryId: number, runId: number): Promise<void> {
 		await this.ctx.storage.put(`observe:${runId}`, { repositoryId, runId });
 		await this.wake();
@@ -1371,6 +1413,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	async alarm(): Promise<void> {
 		const now = Date.now();
+		await this.drainInbox(now);
 		await Promise.all([
 			this.serial(async () => {
 				await this.deliverReleaseEvents(now);

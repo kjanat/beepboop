@@ -51,6 +51,7 @@ test('a managed release travels from discovery to a verified publication', async
 	const merged = world.github.merge(repository, pull.number);
 	passChecks(repository, merged.sha);
 	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(1_000);
 	const promotion = await only(api, 'promote');
 	expect(promotion.state).toBe('blocked');
 	expect(promotion.sourceSha).toBe(merged.sha);
@@ -147,6 +148,7 @@ test('a promotion whose workflow branch was deleted fails with the missing ref n
 	passChecks(repository, merged.sha);
 	repository.refs.set('heads/release-line', merged.sha);
 	await world.push(repository);
+	await world.wait(1_000);
 	const promotion = await only(api, 'promote');
 	const approved = await api('/api/executions/approve', { id: promotion.id, sourceSha: merged.sha });
 	expect(text(approved.body, 'state')).toBe('ready');

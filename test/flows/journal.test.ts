@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { call, type Transport } from '@/contract/client';
 import { routes } from '@/contract/routes';
 import { runAction } from '../support/actions.ts';
-import { botId } from '../support/github.ts';
+import { botId, ownerId } from '../support/github.ts';
 import { passChecks, widget } from '../support/repositories.ts';
 import { origin, World } from '../support/world.ts';
 
@@ -90,6 +90,39 @@ test('a Beepboop-dispatched run gets a token while D1 holds no rows', async () =
 	);
 	expect(issued.outputs.token).toStartWith('ghs_');
 	expect(world.db.queries.filter(query => !query.writes)).toEqual([]);
+});
+
+test('a push during a GitHub outage waits in the inbox and dead-letters after eight attempts', async () => {
+	const repository = widget(world.github);
+	world.npm.publish('widget', '1.0.0');
+	const send = transport(await world.cliSession());
+	await call(routes.repositoriesDiscover, { repository: 'octo/widget' }, send);
+	const storage = world.coordinators.instance(String(repository.id)).storage;
+	const inbox = () => [...storage.snapshot()].filter(([key]) => key.startsWith('inbox'));
+	const github = (request: Request) => world.github.handle(request);
+	const outage = () => {
+		throw new TypeError('Connection reset by peer');
+	};
+
+	const docs = world.github.push(repository, { 'README.md': '# widget\n\nDocs.\n' }, 'Document the widget');
+	world.network.serve('api.github.com', outage);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(1_000);
+	expect(inbox().map(([, entry]) => entry)).toEqual([expect.objectContaining({ attempts: 1 })]);
+	world.network.serve('api.github.com', github);
+	await world.wait(60_000);
+	expect(inbox()).toEqual([]);
+	expect((await call(routes.repositoriesList, {}, send)).map(entry => entry.sha)).toEqual([docs.sha]);
+
+	world.network.serve('api.github.com', outage);
+	await world.webhook('push', {
+		ref: `refs/heads/${repository.defaultBranch}`,
+		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
+	}, '00000000-0000-4000-8000-00000000dead');
+	await world.wait(60_000 * 2 ** 8);
+	expect(inbox().map(([key, entry]) => [key, z.looseObject({ attempts: z.number() }).parse(entry).attempts])).toEqual([
+		['inbox-dead:00000000-0000-4000-8000-00000000dead', 8],
+	]);
 });
 
 test('a poisoned execution is quarantined while the rest of the journal advances', async () => {
