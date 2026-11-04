@@ -1281,8 +1281,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						runId: integer(record(response).workflow_run_id),
 					});
 				}
-			} catch {
-				/* Durable intent remains authoritative; no automatic redispatch after uncertainty. */
+			} catch (error) {
+				const reason = `Beepboop could not continue: ${error instanceof Error ? error.message : String(error)}`;
+				const current = await this.get(execution.id);
+				if (current.reason !== reason) await this.put({ ...current, reason });
 			}
 		}
 	}
