@@ -27,6 +27,13 @@ export class ReleaseWorkflow extends WorkflowEntrypoint<ReleaseWorkflowBindings,
 				if (!operation) throw new Error('Release dependency is missing');
 				const result = (async () => {
 					await Promise.all(operation.dependencies.map(run));
+					if (operation.paced) {
+						const wait = await step.do(
+							`${operation.operation}: reserve`,
+							() => coordinator.reservePublication(event.payload.preparationId, event.instanceId, id),
+						);
+						if (wait > 0) await step.sleep(`${operation.operation}: paced`, wait);
+					}
 					for (let attempt = 0;; attempt++) {
 						// The journal records dispatch intent before GitHub is called. Replaying this
 						// RPC reconciles that intent rather than issuing another dispatch.
@@ -35,6 +42,14 @@ export class ReleaseWorkflow extends WorkflowEntrypoint<ReleaseWorkflowBindings,
 							() => coordinator.advanceReleaseOperation(event.payload.preparationId, event.instanceId, id),
 						);
 						if (state === 'succeeded') return;
+						const delay = await step.do(
+							`${operation.operation}: delay ${attempt}`,
+							() => coordinator.operationDelay(event.payload.preparationId, event.instanceId, id),
+						);
+						if (delay > 0) {
+							await step.sleep(`${operation.operation}: deferred ${attempt}`, delay);
+							continue;
+						}
 						try {
 							// Events are hints; the journal, never the event payload, decides progress.
 							await step.waitForEvent(`${operation.operation}: wait ${attempt}`, {

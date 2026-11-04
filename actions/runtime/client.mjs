@@ -31,7 +31,12 @@ if (mode === 'begin') {
 else if (mode === 'report') {
 	body = {
 		executionId,
-		publications: JSON.parse(process.env.PUBLICATIONS || '[]'),
+		publications: JSON.parse(process.env.PUBLICATIONS || '[]').map(publication => {
+			if (publication?.outcome !== 'rate-limited') return publication;
+			const retryAfter = new Date(publication.retryAfter);
+			if (Number.isNaN(retryAfter.getTime())) throw Error('A rate-limited publication needs a retryAfter time');
+			return { ...publication, retryAfter: retryAfter.toISOString() };
+		}),
 		artifacts: JSON.parse(process.env.ARTIFACTS || '[]'),
 	};
 } else if (mode === 'credentials') body = { executionId, aliases: JSON.parse(process.env.ALIASES || '[]') };

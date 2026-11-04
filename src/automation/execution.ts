@@ -22,6 +22,7 @@ export async function createExecution(
 	version?: string,
 	observed = false,
 	upstreamRelease?: ReleaseReference,
+	perPackage = false,
 ): Promise<Execution> {
 	if (!repository.configuration || repository.diagnostics.length) {
 		throw new Error('Repository configuration is not ready');
@@ -34,6 +35,7 @@ export async function createExecution(
 		? stream.promote.workflow
 		: stream.workflows[operation];
 	if (!binding) throw new Error('Operation has no workflow binding');
+	if (binding.each === 'package' && !perPackage) throw new Error('Per-package operations run inside a release set');
 	const workflow = repository.inventory.workflows.find((w) => w.file === binding.file);
 	if (
 		!observed

@@ -940,20 +940,22 @@ export class AutomationService {
 				);
 				const outcome = oneOf(
 					text(p.outcome),
-					['pending', 'succeeded', 'failed', 'uncertain', 'skipped'],
+					['pending', 'succeeded', 'failed', 'uncertain', 'skipped', 'rate-limited'],
 					'Invalid publication',
 				);
-				return {
+				const fields = {
 					id: text(p.id),
 					manager,
 					name: text(p.name),
 					version: text(p.version),
-					outcome,
 					required: p.required !== false,
 					...(p.digest === undefined ? {} : { digest: text(p.digest) }),
 					...(p.url === undefined ? {} : { url: text(p.url) }),
 					...(p.channel === undefined ? {} : { channel: text(p.channel) }),
 				};
+				if (outcome !== 'rate-limited') return { ...fields, outcome };
+				const retryAfter = z.iso.datetime({ offset: true }).parse(p.retryAfter);
+				return { ...fields, outcome, retryAfter };
 			});
 			const artifacts = array(body.artifacts ?? []).map((raw): Artifact => {
 				const a = record(raw);

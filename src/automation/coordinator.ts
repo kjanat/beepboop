@@ -22,6 +22,7 @@ import {
 } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import { matchesRef } from '@/automation/policy';
+import type { PublishBudget } from '@/automation/publish-budget';
 import { planRefs, type RefPlan } from '@/automation/refs';
 import { compileReleaseSet } from '@/automation/release-set';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
@@ -36,6 +37,7 @@ export interface CoordinatorBindings extends Credentials {
 	DB: D1Database;
 	OWNER_ID: string;
 	RELEASE_WORKFLOW: Workflow<ReleaseWorkflowParams>;
+	PUBLISH_BUDGET: DurableObjectNamespace<PublishBudget>;
 }
 interface ReleaseSetRecord {
 	target: string;
@@ -198,8 +200,37 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		if (!release || release.workflowId !== workflowId) throw new Error('Release Workflow identity mismatch');
 		return Promise.all(release.ids.map(async id => {
 			const execution = await this.get(id);
-			return { id, operation: execution.operation, dependencies: execution.dependencies };
+			return {
+				id,
+				operation: execution.package ? `${execution.operation} ${execution.package.id}` : execution.operation,
+				paced: execution.package?.manager === 'cargo',
+				dependencies: execution.dependencies,
+			};
 		}));
+	}
+	async reservePublication(preparationId: string, workflowId: string, id: string): Promise<number> {
+		return this.serial(async () => {
+			const operations = await this.releaseOperations(preparationId, workflowId);
+			if (!operations.some(operation => operation.id === id && operation.paced)) {
+				throw new Error('Operation is not a paced publication in this release');
+			}
+			const execution = await this.get(id);
+			const target = execution.package;
+			if (!target) throw new Error('Paced operation has no package');
+			if (!execution.reservation) {
+				const repository = await this.store().repository(execution.repositoryId);
+				const status = repository?.inventory.packages.find(pkg => matchesPackage(target.id, pkg))?.publicationStatus;
+				const reservation = status === 'missing' ? 'new' : 'update';
+				const allowedAt = await this.env.PUBLISH_BUDGET.getByName('crates-io').reserve(reservation);
+				await this.put({ ...execution, reservation, notBefore: Math.max(execution.notBefore ?? 0, allowedAt) });
+			}
+			return Math.max(0, ((await this.get(id)).notBefore ?? 0) - Date.now());
+		});
+	}
+	async operationDelay(preparationId: string, workflowId: string, id: string): Promise<number> {
+		const operations = await this.releaseOperations(preparationId, workflowId);
+		if (!operations.some(operation => operation.id === id)) throw new Error('Operation is not in this release');
+		return Math.max(0, ((await this.get(id)).notBefore ?? 0) - Date.now());
 	}
 	async advanceReleaseOperation(preparationId: string, workflowId: string, id: string) {
 		return this.serial(async () => {
@@ -980,6 +1011,29 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 								);
 							}
 						}
+						const limited = execution.publications.flatMap(publication =>
+							publication.outcome === 'rate-limited' ? [Date.parse(publication.retryAfter)] : []
+						);
+						if (limited.length) {
+							const until = Math.max(Date.now(), ...limited);
+							if (execution.package?.manager === 'cargo') {
+								await this.env.PUBLISH_BUDGET.getByName('crates-io').defer(until);
+							}
+							await this.put({
+								...execution,
+								state: 'ready',
+								supersededRuns: [...(execution.supersededRuns ?? []), execution.runId],
+								runId: undefined,
+								runAttempt: undefined,
+								workflowSha: undefined,
+								notBefore: until,
+								reason: `Registry rate limit until ${new Date(until).toISOString()}`,
+								publications: execution.publications.map(publication =>
+									publication.outcome === 'rate-limited' ? { ...publication, outcome: 'pending' } : publication
+								),
+							});
+							continue;
+						}
 						const next = {
 							...execution,
 							state: completion(execution, run.conclusion === 'success'),
@@ -1009,7 +1063,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 								run.display_title === `Release operation ${execution.id}`
 								&& run.path === `.github/workflows/${execution.workflow?.file}`
 								&& run.head_branch === execution.workflow?.ref?.replace(/^refs\/(heads|tags)\//, '')
-								&& record(run.repository).id === execution.repositoryId,
+								&& record(run.repository).id === execution.repositoryId
+								&& !execution.supersededRuns?.includes(integer(run.id)),
 						);
 					const run = matches.length === 1 ? matches[0] : undefined;
 					if (run) {
@@ -1031,7 +1086,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					}
 					continue;
 				}
-				if (!dependenciesReady(execution, executions)) {
+				if (!dependenciesReady(execution, executions) || (execution.notBefore ?? 0) > Date.now()) {
 					continue;
 				}
 				if (busy.has(execution.stream)) {
@@ -1055,7 +1110,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					'POST',
 					{
 						ref: execution.workflow.ref,
-						inputs: { ...execution.workflow.inputs, beepboop_execution_id: execution.id },
+						inputs: {
+							...execution.workflow.inputs,
+							...(execution.package ? { package: execution.package.id } : {}),
+							beepboop_execution_id: execution.id,
+						},
 					},
 				);
 				if (response && record(response).workflow_run_id) {

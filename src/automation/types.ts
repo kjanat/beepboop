@@ -21,6 +21,7 @@ export interface WorkflowBinding {
 	artifactInputs?: InputDeclaration[];
 	refs?: RefPolicy;
 	mode?: 'observe' | 'dispatch';
+	each?: 'package';
 	needs?: string[];
 	publications?: string[];
 	schedule?: string;
@@ -121,17 +122,24 @@ export interface ReleasePlan {
 	requiresPreparation: boolean;
 }
 export type Outcome = 'pending' | 'succeeded' | 'failed' | 'uncertain' | 'skipped';
-export interface Publication {
+interface PublicationFields {
 	identity?: PackageIdentity;
 	id: string;
 	manager: ManagerName;
 	name: string;
 	version: string;
-	outcome: Outcome;
 	digest?: string;
 	url?: string;
 	channel?: string;
 	required: boolean;
+}
+export type Publication =
+	| (PublicationFields & { outcome: Outcome })
+	| (PublicationFields & { outcome: 'rate-limited'; retryAfter: string });
+export type PublishKind = 'new' | 'update';
+export interface PackageTarget {
+	id: string;
+	manager: ManagerName;
 }
 export interface Artifact {
 	id: number;
@@ -219,6 +227,10 @@ export interface Execution {
 	runId?: number;
 	runAttempt?: number;
 	attempts: number;
+	package?: PackageTarget;
+	reservation?: PublishKind;
+	notBefore?: number;
+	supersededRuns?: number[];
 	publications: Publication[];
 	artifacts: Artifact[];
 	createdAt: number;

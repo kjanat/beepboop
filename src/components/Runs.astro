@@ -8,6 +8,16 @@ interface Props {
 	executions: Execution[];
 }
 const { executions } = Astro.props;
+const now = Date.now();
+const waiting = (run: Execution): string | undefined =>
+	run.notBefore !== undefined && run.notBefore > now
+		&& ['pending', 'ready'].includes(run.state)
+		? date(run.notBefore)
+		: undefined;
+const progress = (run: Execution): string => {
+	const until = waiting(run);
+	return until ? `waiting until ${until}` : run.state;
+};
 ---
 {releaseSetSummaries(executions).map(release => (
 	<article class="run-card">
@@ -42,8 +52,12 @@ const { executions } = Astro.props;
 						<tr>
 							<td>{run.releaseSet?.group}</td>
 							<td>{run.version}</td>
-							<td><a href={`#${run.id}`}>{run.operation}</a></td>
-							<td>{run.state}</td>
+							<td>
+								<a href={`#${run.id}`}>{run.operation}</a>{run.package && (
+									<small><code>{run.package.id}</code></small>
+								)}
+							</td>
+							<td>{progress(run)}</td>
 						</tr>
 					))}
 				</tbody>
@@ -74,6 +88,7 @@ const { executions } = Astro.props;
 )}
 {executions.map(run => {
 	const preparation = run.managed?.result ?? run.prepared?.result;
+	const until = waiting(run);
 	const required = run.releaseSet?.required
 		?? run.configuration.streams[run.stream]?.required ?? [];
 	const missing = required.filter(id =>
@@ -87,7 +102,8 @@ const { executions } = Astro.props;
 				 <h2>
 					 {run.version ? `Version ${run.version}` : 'Workflow operation'} <span
 						 class="muted"
-					 >Operation: {run.operation}</span>
+					 >Operation:
+						 {run.operation}{run.package && ` for ${run.package.id}`}</span>
 				 </h2>
 			 </div><span
 				 class:list={['badge', run.state]}
@@ -99,6 +115,12 @@ const { executions } = Astro.props;
 			 		? 'This operation completed.'
 			 		: 'Follow the workflow and publication results below.')}
 		 </p>
+		 {until && (
+			 <p class="notice">
+				 Publishes after {until} to stay within the registry's publish rate
+				 limit.
+			 </p>
+		 )}
 		 <p class="metadata metadata-fields">
 			 <span>Commit <a
 					 href={`https://github.com/${run.repository}/commit/${run.sourceSha}`}

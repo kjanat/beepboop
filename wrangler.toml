@@ -45,6 +45,10 @@ class_name = "ReleaseWorkflow"
 name       = "AUTOMATION"
 class_name = "AutomationCoordinator"
 
+[[durable_objects.bindings]]
+name       = "PUBLISH_BUDGET"
+class_name = "PublishBudget"
+
 [[migrations]]
 tag                = "v1"
 new_sqlite_classes = ["ReleaseCoordinator"]
@@ -53,6 +57,10 @@ new_sqlite_classes = ["ReleaseCoordinator"]
 tag                = "v2"
 new_sqlite_classes = ["AutomationCoordinator"]
 deleted_classes    = ["ReleaseCoordinator"]
+
+[[migrations]]
+tag                = "v3"
+new_sqlite_classes = ["PublishBudget"]
 
 [vars]
 APPLICATION_ORIGIN = "https://beepboop.kjanat.dev"

@@ -1,8 +1,49 @@
 import { createExecution, executionId } from '@/automation/execution';
 import { discover } from '@/automation/managers';
 import { tagPrefix } from '@/automation/managers/tags';
-import { matchesPackage, selectorKey } from '@/automation/package-identity';
-import type { Execution, RepositoryRecord, Snapshot } from '@/automation/types';
+import { matchesPackage, packageId, selectorKey } from '@/automation/package-identity';
+import type { Execution, Inventory, RepositoryRecord, Snapshot } from '@/automation/types';
+
+async function expandPackages(
+	member: Execution,
+	targets: string[],
+	inventory: Inventory,
+	repositoryId: number,
+	event: string,
+): Promise<Execution[]> {
+	const workflow = member.workflow;
+	if (!workflow) throw new Error('Per-package operation needs a workflow');
+	if (!inventory.workflows.find(found => found.file === workflow.file)?.dispatchInputs.includes('package')) {
+		throw new Error(`Per-package workflow needs a package input: ${workflow.file}`);
+	}
+	if (!targets.length) throw new Error(`Per-package operation has no required packages: ${member.operation}`);
+	const order = (id: string) => {
+		const index = inventory.publicationOrder.indexOf(id);
+		return index < 0 ? inventory.publicationOrder.length : index;
+	};
+	const selected = targets.map(reference => {
+		const matches = inventory.packages.filter(pkg => matchesPackage(reference, pkg));
+		const [pkg] = matches;
+		if (matches.length !== 1 || !pkg) throw new Error(`Per-package target is ambiguous or missing: ${reference}`);
+		return { reference, pkg, id: packageId(pkg) };
+	}).sort((a, b) => order(a.id) - order(b.id) || a.id.localeCompare(b.id));
+	const identified = await Promise.all(selected.map(async target => ({
+		...target,
+		executionId: await executionId(repositoryId, member.stream, `${member.operation}#${target.id}`, event),
+	})));
+	return identified.map(target => {
+		const upstream = identified.filter(other =>
+			other.pkg.manager === target.pkg.manager && target.pkg.dependencies.includes(other.pkg.name)
+		);
+		return {
+			...structuredClone(member),
+			id: target.executionId,
+			package: { id: target.id, manager: target.pkg.manager },
+			workflow: { ...workflow, publications: [target.reference] },
+			dependencies: [...new Set([...member.dependencies, ...upstream.map(other => other.executionId)])],
+		};
+	});
+}
 
 /** Compile a frozen preparation into operations for its verified merged revision. */
 export async function compileReleaseSet(preparation: Execution, snapshot: Snapshot): Promise<Execution[]> {
@@ -49,7 +90,16 @@ export async function compileReleaseSet(preparation: Execution, snapshot: Snapsh
 	const names = new Set(plan.operations.map(op => op.id));
 	for (const operation of plan.operations) {
 		if (operation.id === 'prepare') throw new Error('Release set cannot repeat preparation');
-		const execution = await createExecution(repository, preparation.stream, operation.id, event, operation.version);
+		const execution = await createExecution(
+			repository,
+			preparation.stream,
+			operation.id,
+			event,
+			operation.version,
+			false,
+			undefined,
+			true,
+		);
 		const binding = execution.workflow;
 		if (!binding || binding.ref?.includes('*')) throw new Error('Exact workflow binding required');
 		if (
@@ -122,6 +172,25 @@ export async function compileReleaseSet(preparation: Execution, snapshot: Snapsh
 		}
 		for (const member of members) {
 			if (member.releaseSet) member.releaseSet.required = required;
+			if (member.workflow?.each === 'package') {
+				const selected = member.workflow.publications;
+				const targets = selected
+					? required.filter(id =>
+						selected.some(reference =>
+							selectorKey(reference, inventory.packages) === selectorKey(id, inventory.packages)
+						)
+					)
+					: required;
+				const expanded = await expandPackages(member, targets, inventory, repository.id, event);
+				operations.splice(operations.indexOf(member), 1, ...expanded);
+				const ids = expanded.map(execution => execution.id);
+				for (const other of operations) {
+					if (other.dependencies.includes(member.id)) {
+						other.dependencies = [...new Set(other.dependencies.flatMap(id => id === member.id ? ids : [id]))];
+					}
+				}
+				continue;
+			}
 			if (member.operation === 'publish' && member.workflow && !member.workflow.publications) {
 				member.workflow.publications = required;
 			}

@@ -3,6 +3,7 @@ import { type AutomationBindings, AutomationService } from '@/automation/service
 import { failure } from '@/failure.ts';
 
 export { AutomationCoordinator } from '@/automation/coordinator.ts';
+export { PublishBudget } from '@/automation/publish-budget.ts';
 export { ReleaseWorkflow } from '@/automation/release-workflow';
 
 export default {

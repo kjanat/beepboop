@@ -216,6 +216,67 @@ Every required publication must succeed. Missing or skipped required results
 block completion; registry outages show an uncertain result. Optional failures
 are displayed alongside required results.
 
+## Paced publishing
+
+Set `"each": "package"` on a workflow binding to run it once per package in a
+release. Beepboop dispatches one run for every required package of the release
+group, limited to the binding's `publications` when set:
+
+```json
+{
+  "workflows": {
+    "publish": { "file": "publish-crate.yml", "ref": "master", "each": "package" }
+  }
+}
+```
+
+Each run receives the package ID, such as `pkg:cargo/example-core`, as the
+`package` input next to `beepboop_execution_id`:
+
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      beepboop_execution_id: { type: string, required: true }
+      package: { type: string, required: true }
+```
+
+Runs follow the repository's publication order. A package waits for the
+packages it depends on. Per-package bindings run only inside a release set and
+cannot declare outputs, artifact inputs or refs.
+
+Crates publish within crates.io's
+[rate limits](https://github.com/rust-lang/crates.io/blob/main/src/rate_limiter.rs).
+Beepboop keeps one budget per registry account:
+
+| Publication                    | Burst | Then         |
+| ------------------------------ | ----- | ------------ |
+| A crate's first version        | 5     | 1 per 10 min |
+| A new version of a known crate | 30    | 1 per minute |
+
+A crate that Beepboop has never seen published counts as new. The Runs page
+shows when a waiting crate will publish.
+
+When the registry refuses a publish anyway, report the publication as
+`rate-limited` with the registry's `Retry-After` time. Beepboop moves the
+budget past that time and dispatches the package again afterwards; the refusal
+does not count as a failed attempt.
+
+```json
+[{
+  "id": "pkg:cargo/example-core",
+  "manager": "cargo",
+  "name": "example-core",
+  "version": "1.2.3",
+  "outcome": "rate-limited",
+  "retryAfter": "Tue, 03 Nov 2026 10:20:00 GMT",
+  "required": true
+}]
+```
+
+`actions/report` converts an HTTP date in `retryAfter` to ISO 8601. The report
+API itself accepts ISO 8601 timestamps.
+
 ## Credentials
 
 In the dashboard, create a credential alias and grant access to a repository,

@@ -70,6 +70,7 @@ const binding = {
 	platform: platformSchema.optional(),
 	refs: refPolicy.optional(),
 	mode: z.enum(['observe', 'dispatch']).optional(),
+	each: z.literal('package').optional(),
 	needs: strings.optional(),
 	publications: strings.optional(),
 	schedule: z.string().optional(),
@@ -248,18 +249,21 @@ const releaseSetPlan: z.ZodType<ReleaseSetPlan> = z.object({
 });
 const plan = z.union([releasePlan, releaseSetPlan]);
 const outcome = z.enum(['pending', 'succeeded', 'failed', 'uncertain', 'skipped']);
-const packagePublication: z.ZodType<Publication> = z.object({
+const publicationFields = z.object({
 	identity: identity.optional(),
 	id: z.string(),
 	manager: managerName,
 	name: z.string(),
 	version: z.string(),
-	outcome,
 	digest: z.string().optional(),
 	url: z.string().optional(),
 	channel: z.string().optional(),
 	required: z.boolean(),
 });
+const packagePublication: z.ZodType<Publication> = z.union([
+	publicationFields.extend({ outcome }),
+	publicationFields.extend({ outcome: z.literal('rate-limited'), retryAfter: z.iso.datetime({ offset: true }) }),
+]);
 const artifact: z.ZodType<Artifact> = z.object({
 	id: z.number(),
 	runId: z.number(),
@@ -354,6 +358,10 @@ export const executionSchema: z.ZodType<Execution> = z.object({
 	runId: z.number().optional(),
 	runAttempt: z.number().optional(),
 	attempts: z.number(),
+	package: z.object({ id: z.string(), manager: managerName }).optional(),
+	reservation: z.enum(['new', 'update']).optional(),
+	notBefore: z.number().optional(),
+	supersededRuns: z.array(z.number()).optional(),
 	publications: z.array(packagePublication),
 	artifacts: z.array(artifact),
 	createdAt: z.number(),

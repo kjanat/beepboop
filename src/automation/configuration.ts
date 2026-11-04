@@ -50,6 +50,7 @@ function binding(value: unknown): WorkflowBinding {
 			'schedule',
 			'publications',
 			'mode',
+			'each',
 			'refs',
 			'platform',
 			'outputs',
@@ -65,6 +66,10 @@ function binding(value: unknown): WorkflowBinding {
 		CronExpressionParser.parse(schedule, { tz: 'UTC' });
 	}
 	const mode = data.mode === undefined ? undefined : oneOf(data.mode, ['observe', 'dispatch'], 'Invalid workflow mode');
+	const each = data.each === undefined ? undefined : oneOf(data.each, ['package'], 'Invalid workflow each');
+	if (each && (data.outputs !== undefined || data.artifactInputs !== undefined || data.refs !== undefined)) {
+		throw new Error('Per-package workflows cannot declare outputs, artifact inputs or refs');
+	}
 	let refs: WorkflowBinding['refs'];
 	if (data.refs !== undefined) {
 		const policy = record(data.refs);
@@ -82,7 +87,7 @@ function binding(value: unknown): WorkflowBinding {
 	if (!/^[A-Za-z0-9_-]+\.ya?ml$/.test(file)) throw new Error('Workflow must be a filename');
 	const inputs = Object.fromEntries(
 		Object.entries(data.inputs === undefined ? {} : record(data.inputs)).map(([key, value]) => {
-			if (key === 'beepboop_execution_id') throw new Error('Invalid workflow input');
+			if (key === 'beepboop_execution_id' || (each && key === 'package')) throw new Error('Invalid workflow input');
 			return [key, workflowInput(value)] as const;
 		}),
 	);
@@ -100,6 +105,7 @@ function binding(value: unknown): WorkflowBinding {
 		...(data.platform === undefined ? {} : { platform: platformSchema.parse(data.platform) }),
 		...(refs ? { refs } : {}),
 		...(mode === undefined ? {} : { mode }),
+		...(each === undefined ? {} : { each }),
 		...(data.needs === undefined && !artifactInputs
 			? {}
 			: {
