@@ -3,30 +3,33 @@ import { goManager } from '@/automation/managers/go';
 import { goreleaserManager } from '@/automation/managers/goreleaser';
 import { jsrManager } from '@/automation/managers/jsr';
 import { npmManager } from '@/automation/managers/npm';
-import { emptyInventory, ManagerRegistry } from '@/automation/managers/registry';
+import { type Adapter, emptyInventory, ManagerRegistry } from '@/automation/managers/registry';
 import { vscodeManager } from '@/automation/managers/vscode';
 import { workflowManager } from '@/automation/managers/workflow';
 import { verifyImage } from '@/automation/oci';
 import { discoverHooks } from '@/automation/precommit';
+import type { Inventory, Snapshot } from '@/automation/types';
+import type { ManagerName } from '@/contract/catalog';
 
-export const managerRegistry = new ManagerRegistry([
-	cargoManager,
-	npmManager,
-	vscodeManager,
-	jsrManager,
-	workflowManager,
-	...(['github-release', 'oci'] as const).map(name => ({
-		name,
-		...(name === 'oci' ? { verifyPublication: verifyImage } : {}),
-		discover: (snapshot: import('@/automation/types').Snapshot) => {
-			const result = emptyInventory();
-			if (workflowManager.discover(snapshot).managers.includes(name)) result.managers.push(name);
-			return result;
-		},
-	})),
-	goreleaserManager,
-	goManager,
-	{
+function workflowDetected<M extends ManagerName>(name: M): (snapshot: Snapshot) => Inventory {
+	return snapshot => {
+		const result = emptyInventory();
+		if (workflowManager.discover(snapshot).managers.includes(name)) result.managers.push(name);
+		return result;
+	};
+}
+
+const adapters = {
+	cargo: cargoManager,
+	npm: npmManager,
+	vscode: vscodeManager,
+	jsr: jsrManager,
+	workflow: workflowManager,
+	'github-release': { name: 'github-release', discover: workflowDetected('github-release') },
+	oci: { name: 'oci', verifyPublication: verifyImage, discover: workflowDetected('oci') },
+	goreleaser: goreleaserManager,
+	go: goManager,
+	manifest: {
 		name: 'manifest',
 		discover(snapshot) {
 			const result = emptyInventory();
@@ -38,7 +41,7 @@ export const managerRegistry = new ManagerRegistry([
 			return result;
 		},
 	},
-	{
+	'pre-commit': {
 		name: 'pre-commit',
 		discover(snapshot) {
 			const result = emptyInventory();
@@ -51,4 +54,6 @@ export const managerRegistry = new ManagerRegistry([
 			return result;
 		},
 	},
-]);
+} satisfies { [M in ManagerName]: Adapter<M> };
+
+export const managerRegistry = new ManagerRegistry(Object.values(adapters));

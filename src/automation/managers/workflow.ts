@@ -1,12 +1,12 @@
 import { object, yaml } from '@/automation/managers/helpers';
-import type { Manager } from '@/automation/managers/registry';
+import type { Adapter } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { workflowEvidence } from '@/automation/setup-workflows';
-export const workflowManager: Manager = {
+export const workflowManager: Adapter<'workflow'> = {
 	name: 'workflow',
 	discover(snapshot) {
 		const inventory = emptyInventory();
-		const detected = new Set<import('@/automation/types').ManagerName>();
+		const detected = new Set<import('@/contract/catalog').ManagerName>();
 		for (const [path, source] of Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b))) {
 			try {
 				if (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) {

@@ -1,6 +1,6 @@
 import { parse as parseToml } from 'smol-toml';
 import { object } from '@/automation/managers/helpers';
-import type { Fetcher, Manager, RegistryVersion } from '@/automation/managers/registry';
+import type { Adapter, Fetcher, RegistryVersion } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
 import { excluded, registry } from '@/automation/package-publication';
@@ -13,7 +13,7 @@ export function npmLatest(name: string, request: Fetcher): Promise<RegistryVersi
 		body => object(object(body)['dist-tags']).latest,
 	);
 }
-export const npmManager: Manager = {
+export const npmManager: Adapter<'npm'> = {
 	name: 'npm',
 	identity(pkg) {
 		const slash = pkg.name.lastIndexOf('/');
@@ -48,7 +48,7 @@ export const npmManager: Manager = {
 
 	discover(snapshot) {
 		const inventory = emptyInventory();
-		const detected = new Set<import('@/automation/types').ManagerName>();
+		const detected = new Set<import('@/contract/catalog').ManagerName>();
 		for (const [path, source] of Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b))) {
 			try {
 				if ((path === 'package.json' || path.endsWith('/package.json'))) {

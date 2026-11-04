@@ -1,7 +1,7 @@
 import { parse as parseToml } from 'smol-toml';
 import type { Channel } from '@/automation/destinations';
 import { goreleaserConfig, object, yaml } from '@/automation/managers/helpers';
-import type { Manager, VerificationContext } from '@/automation/managers/registry';
+import type { Adapter, VerificationContext } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestTag, tagSource } from '@/automation/managers/tags';
 import { excluded, registry } from '@/automation/package-publication';
@@ -95,7 +95,7 @@ async function verifyRelease(
 	}
 }
 
-export const goreleaserManager: Manager = {
+export const goreleaserManager: Adapter<'goreleaser'> = {
 	name: 'goreleaser',
 	identity(pkg, snapshot) {
 		const slash = snapshot.repository.name.lastIndexOf('/');

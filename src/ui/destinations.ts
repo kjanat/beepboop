@@ -3,13 +3,13 @@ import {
 	channelKey,
 	isChannelOutcome,
 	type ManifestOutcome,
-	managerDestinations,
 	type RegistryOutcome,
 	type RegistryState,
 	registryDestination,
 	winget,
 } from '@/automation/destinations';
 import type { Inventory, Package } from '@/automation/types';
+import { managerSpec } from '@/contract/catalog';
 import { channelHref, registryHref } from '@/ui/templates/html';
 
 export interface DestinationEntry {
@@ -20,7 +20,7 @@ export interface DestinationEntry {
 
 function storedOutcomes(pkg: Package): RegistryOutcome[] {
 	if (pkg.destinations) return pkg.destinations;
-	const primary = managerDestinations[pkg.manager]?.primary;
+	const primary = managerSpec(pkg.manager).destinations?.primary;
 	if (!primary) return [];
 	if (pkg.published !== undefined) return [{ destination: primary, state: 'published', version: pkg.published }];
 	if (pkg.publicationStatus === 'missing') return [{ destination: primary, state: 'missing' }];

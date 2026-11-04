@@ -2,19 +2,8 @@ import type { Channel, ChannelOutcome, RegistryOutcome } from '@/automation/dest
 import type { InputDeclaration, OutputDeclaration, Platform, ResolvedInput } from '@/automation/outputs';
 import type { PackagePublication } from '@/automation/package-publication';
 import type { RefPlan, RefPolicy } from '@/automation/refs';
+import type { ManagerName } from '@/contract/catalog';
 import type { PackageIdentity } from '@/package-url';
-export type ManagerName =
-	| 'pre-commit'
-	| 'cargo'
-	| 'npm'
-	| 'jsr'
-	| 'github-release'
-	| 'oci'
-	| 'goreleaser'
-	| 'go'
-	| 'vscode'
-	| 'manifest'
-	| 'workflow';
 export interface WorkflowBinding {
 	platform?: Platform;
 	outputs?: OutputDeclaration[];

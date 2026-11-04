@@ -3,27 +3,15 @@ import { versionFileSchema } from '@/automation/editors';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { releaseIdentity } from '@/automation/package-identity';
 import { validRef } from '@/automation/policy';
-import type { Configuration, ManagerName, Stream, WorkflowBinding } from '@/automation/types';
+import type { Configuration, Stream, WorkflowBinding } from '@/automation/types';
 import { parseWinGetPolicy } from '@/automation/winget';
+import { managerNames } from '@/contract/catalog';
 import { array, oneOf, record, text } from '@/model';
 import { purl } from '@/package-url';
 
 function packageReferences(value: unknown): string[] {
 	return strings(value).map(reference => reference.startsWith('pkg:') ? purl(releaseIdentity(reference)) : reference);
 }
-export const managerNames: ManagerName[] = [
-	'pre-commit',
-	'cargo',
-	'npm',
-	'jsr',
-	'github-release',
-	'oci',
-	'goreleaser',
-	'go',
-	'vscode',
-	'manifest',
-	'workflow',
-];
 const identifier = /^[a-z][a-z0-9-]{0,63}$/;
 function keys(data: Record<string, unknown>, allowed: string[], context: string): void {
 	for (const key of Object.keys(data)) {

@@ -45,6 +45,7 @@ import type {
 import { parseGrant, Vault, validCredential } from '@/automation/vault';
 import { nextVersion, parseVersionRequest } from '@/automation/version';
 import { type WinGetBindings, WinGetService } from '@/automation/winget';
+import { managerNames } from '@/contract/catalog';
 import { array, compareVersions, integer, oneOf, record, semver, sha, text } from '@/model';
 import { renderActivityRows } from '@/ui/templates/activity';
 import { readBody, verifySignature } from '@/webhook';
@@ -1075,11 +1076,7 @@ export class AutomationService {
 		if (path.endsWith('/report')) {
 			const publications = array(body.publications ?? []).map((raw): Publication => {
 				const p = record(raw);
-				const manager = oneOf(
-					text(p.manager),
-					['cargo', 'npm', 'jsr', 'github-release', 'oci', 'goreleaser', 'go', 'vscode', 'manifest', 'workflow'],
-					'Invalid publication',
-				);
+				const manager = oneOf(text(p.manager), managerNames, 'Invalid publication');
 				const outcome = oneOf(
 					text(p.outcome),
 					['pending', 'succeeded', 'failed', 'uncertain', 'skipped', 'rate-limited'],

@@ -1,5 +1,5 @@
 import { object } from '@/automation/managers/helpers';
-import { emptyInventory, type Fetcher, type Manager, type RegistryVersion } from '@/automation/managers/registry';
+import { type Adapter, emptyInventory, type Fetcher, type RegistryVersion } from '@/automation/managers/registry';
 import { latestVersion, unpublished } from '@/automation/managers/verification';
 import { identityOf } from '@/automation/package-identity';
 import { registry } from '@/automation/package-publication';
@@ -64,7 +64,7 @@ export async function prepareJsrPackage(
 	}
 	if (token) await call(`/scopes/${scope}`, 'PATCH', { ghActionsVerifyActor: false });
 }
-export const jsrManager: Manager = {
+export const jsrManager: Adapter<'jsr'> = {
 	name: 'jsr',
 	identity: pkg => identityOf(pkg),
 	discover(snapshot) {

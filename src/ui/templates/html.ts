@@ -1,4 +1,5 @@
-import type { Channel, ManagerDestinationId } from '@/automation/destinations';
+import type { Channel } from '@/automation/destinations';
+import type { ManagerDestinationId } from '@/contract/catalog';
 
 export function htmlEscape(value: unknown): string {
 	return String(value ?? '').replace(

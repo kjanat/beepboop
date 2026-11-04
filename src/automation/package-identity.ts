@@ -1,5 +1,6 @@
 import { excluded, type PackagePublication, registry } from '@/automation/package-publication';
 import type { Execution, Inventory, Package, Publication, RepositoryRecord } from '@/automation/types';
+import { identifiedManagers } from '@/contract/catalog';
 import { type PackageIdentity, packageIdentity, purl } from '@/package-url';
 
 type PackageRecord = Pick<Package, 'manager' | 'name' | 'version' | 'identity'>;
@@ -109,9 +110,7 @@ export function selectorKey(reference: string, packages: Package[] = []): string
 	if (found) return packageId(found);
 	if (reference.startsWith('pkg:')) return packageKey(reference);
 	const colon = reference.indexOf(':');
-	const manager = (['npm', 'jsr', 'cargo', 'go', 'github-release', 'goreleaser', 'vscode'] as const).find(name =>
-		name === reference.slice(0, colon)
-	);
+	const manager = identifiedManagers.find(name => name === reference.slice(0, colon));
 	if (manager) return packageId({ manager, name: reference.slice(colon + 1) });
 	return reference;
 }

@@ -5,8 +5,9 @@ import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage, packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import { releasedVersion } from '@/automation/release-version';
-import type { Inventory, ManagerName, Package, Publication, ReleasePlan, Snapshot } from '@/automation/types';
+import type { Inventory, Package, Publication, ReleasePlan, Snapshot } from '@/automation/types';
 import { nextVersion, parseVersionRequest, type VersionRequest } from '@/automation/version';
+import type { ManagerName } from '@/contract/catalog';
 
 export { publicationOrder } from '@/automation/managers/order';
 

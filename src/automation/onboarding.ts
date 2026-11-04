@@ -2,7 +2,8 @@ import { tagPrefix } from '@/automation/managers/tags';
 import { packageId } from '@/automation/package-identity';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
 import { validRef } from '@/automation/policy';
-import type { DiscoveredWorkflow, Inventory, ManagerName, Snapshot, Stream } from '@/automation/types';
+import type { DiscoveredWorkflow, Inventory, Snapshot, Stream } from '@/automation/types';
+import type { ManagerName } from '@/contract/catalog';
 
 type Binding = { file: string; mode: 'observe'; ref?: string };
 type OnboardingStream = {

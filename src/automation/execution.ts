@@ -1,6 +1,7 @@
 import { outputsComplete } from '@/automation/outputs';
 import { identityOf, matchesPackage, matchesPublication, packageId } from '@/automation/package-identity';
 import type { Execution, Publication, ReleaseReference, RepositoryRecord, WorkflowBinding } from '@/automation/types';
+import { managerSpec } from '@/contract/catalog';
 
 export async function executionId(
 	repositoryId: number,
@@ -131,7 +132,7 @@ export function validatePublicationIdentity(execution: Execution, publication: P
 		throw new Error('Publication ID does not match its manager and package identity');
 	}
 	if (
-		execution.version && ['cargo', 'npm', 'jsr', 'vscode'].includes(publication.manager)
+		execution.version && managerSpec(publication.manager).versionPolicy === 'equals-execution'
 		&& publication.version !== execution.version
 	) {
 		throw new Error('Publication version does not match the execution');

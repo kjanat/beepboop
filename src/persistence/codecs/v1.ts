@@ -1,10 +1,5 @@
 import { z } from 'zod';
-import {
-	type Channel,
-	type ChannelOutcome,
-	managerDestinationIds,
-	type RegistryOutcome,
-} from '@/automation/destinations';
+import type { Channel, ChannelOutcome, RegistryOutcome } from '@/automation/destinations';
 import { versionFileSchema } from '@/automation/editors';
 import { inputSchema, outputSchema, platformSchema, type ResolvedInput } from '@/automation/outputs';
 import {
@@ -26,7 +21,6 @@ import type {
 	DiscoveredWorkflow,
 	Edit,
 	Execution,
-	ManagerName,
 	Package,
 	Publication,
 	ReleasePlan,
@@ -38,21 +32,10 @@ import type {
 	WorkflowBinding,
 } from '@/automation/types';
 import type { WinGetPolicy } from '@/automation/winget';
+import { managerDestinationIds, managerNames } from '@/contract/catalog';
 import type { PackageIdentity } from '@/package-url';
 
-const managerName: z.ZodType<ManagerName> = z.enum([
-	'pre-commit',
-	'cargo',
-	'npm',
-	'jsr',
-	'github-release',
-	'oci',
-	'goreleaser',
-	'go',
-	'vscode',
-	'manifest',
-	'workflow',
-]);
+const managerName = z.enum(managerNames);
 const strings = z.array(z.string());
 const shas = z.record(z.string(), z.string());
 

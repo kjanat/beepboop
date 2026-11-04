@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { object } from '@/automation/managers/helpers';
-import { emptyInventory, type Manager } from '@/automation/managers/registry';
+import { type Adapter, emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, unpublished } from '@/automation/managers/verification';
 import { extensionParts, identityOf } from '@/automation/package-identity';
 import { excluded, registry } from '@/automation/package-publication';
@@ -27,7 +27,7 @@ function marketplaceVersions(body: unknown): string[] | undefined {
 	return parsed.data.results[0]?.extensions[0]?.versions.map(entry => entry.version) ?? [];
 }
 
-export const vscodeManager: Manager = {
+export const vscodeManager: Adapter<'vscode'> = {
 	name: 'vscode',
 	identity: pkg => identityOf(pkg),
 	latest(pkg, request) {

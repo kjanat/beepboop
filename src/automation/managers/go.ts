@@ -1,5 +1,5 @@
 import { directory, object } from '@/automation/managers/helpers';
-import type { Fetcher, Manager } from '@/automation/managers/registry';
+import type { Adapter, Fetcher } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestTag, majorSuffix, tagSource } from '@/automation/managers/tags';
 import { latestVersion } from '@/automation/managers/verification';
@@ -98,7 +98,7 @@ async function verifyModule(publication: Publication, request: Fetcher): Promise
 	}
 }
 
-export const goManager: Manager = {
+export const goManager: Adapter<'go'> = {
 	name: 'go',
 	identity(pkg) {
 		const slash = pkg.name.lastIndexOf('/');

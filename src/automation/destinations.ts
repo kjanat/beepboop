@@ -1,65 +1,20 @@
-import type { ManagerName } from '@/automation/types';
 import type { WinGetSubmission } from '@/automation/winget';
+import {
+	channelDestinationIds,
+	destinationLabels,
+	type ManagerDestinationId,
+	type RegistryDestinationId,
+} from '@/contract/catalog';
 
-export const managerDestinationIds = [
-	'npm',
-	'crates-io',
-	'jsr',
-	'go-proxy',
-	'github-release',
-	'oci',
-	'vscode-marketplace',
-	'open-vsx',
-] as const;
-export const channelDestinationIds = ['homebrew', 'scoop', 'aur'] as const;
-export const registryDestinationIds = [...managerDestinationIds, ...channelDestinationIds] as const;
-export type ManagerDestinationId = (typeof managerDestinationIds)[number];
-export type RegistryDestinationId = (typeof registryDestinationIds)[number];
 export type ManifestDestinationId = 'winget';
-export type DestinationId = RegistryDestinationId | ManifestDestinationId;
 export type Destination =
 	| { kind: 'registry'; id: RegistryDestinationId; label: string }
 	| { kind: 'manifest'; id: ManifestDestinationId; label: string };
 
-const registryLabels: Record<RegistryDestinationId, string> = {
-	npm: 'npm',
-	'crates-io': 'crates.io',
-	jsr: 'JSR',
-	'go-proxy': 'Go module proxy',
-	'github-release': 'GitHub release',
-	oci: 'Container registry',
-	'vscode-marketplace': 'Visual Studio Marketplace',
-	'open-vsx': 'Open VSX',
-	homebrew: 'Homebrew',
-	scoop: 'Scoop',
-	aur: 'AUR',
-};
 export function registryDestination(id: RegistryDestinationId): Destination {
-	return { kind: 'registry', id, label: registryLabels[id] };
+	return { kind: 'registry', id, label: destinationLabels[id] };
 }
-export const winget: Destination = { kind: 'manifest', id: 'winget', label: 'WinGet' };
-
-export interface ManagerDestinations {
-	primary: ManagerDestinationId;
-	secondary: readonly ManagerDestinationId[];
-}
-export const managerDestinations: Record<ManagerName, ManagerDestinations | undefined> = {
-	npm: { primary: 'npm', secondary: [] },
-	cargo: { primary: 'crates-io', secondary: [] },
-	jsr: { primary: 'jsr', secondary: [] },
-	go: { primary: 'go-proxy', secondary: [] },
-	goreleaser: { primary: 'github-release', secondary: [] },
-	'github-release': { primary: 'github-release', secondary: [] },
-	oci: { primary: 'oci', secondary: [] },
-	vscode: { primary: 'vscode-marketplace', secondary: ['open-vsx'] },
-	manifest: undefined,
-	workflow: undefined,
-	'pre-commit': undefined,
-};
-export function destinationsOf(manager: ManagerName): ManagerDestinationId[] {
-	const mapped = managerDestinations[manager];
-	return mapped ? [mapped.primary, ...mapped.secondary] : [];
-}
+export const winget: Destination = { kind: 'manifest', id: 'winget', label: destinationLabels.winget };
 
 export type Channel =
 	| {

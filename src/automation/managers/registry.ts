@@ -2,17 +2,15 @@ import {
 	type Channel,
 	type ChannelOutcome,
 	channelKey,
-	destinationsOf,
 	isChannelOutcome,
-	type ManagerDestinationId,
-	managerDestinations,
 	type RegistryOutcome,
 } from '@/automation/destinations';
 import { checkChannel, pkgbuildChannels } from '@/automation/managers/channels';
 import { publicationOrder } from '@/automation/managers/order';
 import { packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
-import type { Inventory, ManagerName, Package, Publication, Snapshot } from '@/automation/types';
+import type { Inventory, Package, Publication, Snapshot } from '@/automation/types';
+import { destinationsOf, type ManagerDestinationId, type ManagerName, managerSpec } from '@/contract/catalog';
 import { type PackageIdentity, packageIdentity } from '@/package-url';
 
 export interface Manager {
@@ -26,6 +24,7 @@ export interface Manager {
 	latest?(pkg: Package, request: Fetcher, context?: VerificationContext): Promise<RegistryVersion>;
 	secondaryLatest?: Partial<Record<ManagerDestinationId, RegistryLookup>>;
 }
+export type Adapter<M extends ManagerName> = Manager & { readonly name: M };
 export type RegistryLookup = (
 	pkg: Package,
 	request: Fetcher,
@@ -115,7 +114,7 @@ export class ManagerRegistry {
 			}));
 		const lookups = (pkg: Package): { destination: ManagerDestinationId; latest: RegistryLookup }[] => {
 			const manager = this.managers.get(pkg.manager);
-			const mapped = managerDestinations[pkg.manager];
+			const mapped = managerSpec(pkg.manager).destinations;
 			if (!manager || !mapped || !publishable(pkg)) return [];
 			const latest = manager.latest?.bind(manager);
 			return [
@@ -130,7 +129,7 @@ export class ManagerRegistry {
 		for (let offset = 0; offset < pending.length; offset += 8) {
 			await Promise.all(
 				pending.slice(offset, offset + 8).map(async pkg => {
-					const primary = managerDestinations[pkg.manager]?.primary;
+					const primary = managerSpec(pkg.manager).destinations?.primary;
 					const [results, checked] = await Promise.all([
 						Promise.all(
 							lookups(pkg).map(async ({ destination, latest }) => ({
