@@ -572,12 +572,16 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private async draftRelease(execution: Execution): Promise<Execution['draftRelease']> {
 		const target = githubRelease(execution);
-		if (execution.draftRelease || !target || !publishesGithubRelease(execution)) return execution.draftRelease;
+		if (!target || !publishesGithubRelease(execution)) return execution.draftRelease;
 		const gateway = this.gateway();
 		const write = await gateway.token(execution.repository, execution.repositoryId, {
 			contents: 'write',
 			workflows: 'write',
 		});
+		if (execution.draftRelease) {
+			const kept = await gateway.call(`/repos/${execution.repository}/releases/${execution.draftRelease.id}`, write);
+			if (kept !== null) return execution.draftRelease;
+		}
 		const bot = await gateway.botIdentity();
 		const drafts = array(await gateway.call(`/repos/${execution.repository}/releases?per_page=100`, write))
 			.map(record)
