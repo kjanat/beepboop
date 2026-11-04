@@ -18,7 +18,7 @@ import { addWatch, pollPackages, removeManualWatch, watchInput } from '@/automat
 import { planReleaseSet } from '@/automation/planning';
 import { matchesRef } from '@/automation/policy';
 import { planHookUpdates } from '@/automation/precommit';
-import { unreleasedManifestVersion } from '@/automation/release-version';
+import { manifestProblems, unreleasedManifestVersion } from '@/automation/release-version';
 import { repositoryName } from '@/automation/repository-name';
 import { documentRow, rowDocument, setupOptionsSchema } from '@/automation/schemas';
 import {
@@ -237,7 +237,7 @@ export class AutomationService {
 				publishable(pkg) && (!stream.packages || stream.packages.some(reference => matchesPackage(reference, pkg)))
 			);
 			const version = unreleasedManifestVersion(packages);
-			if (!version) continue;
+			if (!version || manifestProblems(repository.inventory, packages).length) continue;
 			const merge = stream.promote.approval === 'merge'
 				? await this.mergedPreparation(repository, name, version, repository.sha)
 				: undefined;

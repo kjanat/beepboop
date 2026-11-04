@@ -28,6 +28,7 @@ import { matchesRef } from '@/automation/policy';
 import type { PublishBudget } from '@/automation/publish-budget';
 import { planRefs, type RefPlan } from '@/automation/refs';
 import { compileReleaseSet } from '@/automation/release-set';
+import { manifestProblems } from '@/automation/release-version';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
 import { automationEventSchema, executionSchema, setupEditSchema } from '@/automation/schemas';
 import { maintainSetup } from '@/automation/setup-maintenance';
@@ -845,6 +846,16 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			token = await gateway.token(execution.repository, execution.repositoryId);
 		const base = `/repos/${execution.repository}`;
 		const problems: string[] = [];
+		const repository = await this.store().repository(execution.repositoryId);
+		const references = execution.configuration.streams[execution.stream]?.packages;
+		if (repository) {
+			problems.push(...manifestProblems(
+				repository.inventory,
+				repository.inventory.packages.filter(pkg =>
+					!references || references.some(reference => matchesPackage(reference, pkg))
+				),
+			));
+		}
 		const commit = record(await gateway.call(`${base}/commits/${execution.sourceSha}`, token));
 		if (record(record(commit.commit).verification).verified !== true) {
 			problems.push('The commit signature is not verified');

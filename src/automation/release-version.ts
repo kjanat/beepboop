@@ -1,4 +1,4 @@
-import type { Package } from '@/automation/types';
+import type { Inventory, Package } from '@/automation/types';
 import { nextVersion, type VersionRequest } from '@/automation/version';
 import { compareVersions } from '@/model';
 
@@ -52,4 +52,8 @@ export function unreleasedManifestVersion(packages: Package[]): string | undefin
 	return released.some(version => version === undefined || compareVersions(manifest, version) > 0)
 		? manifest
 		: undefined;
+}
+
+export function manifestProblems(inventory: Inventory, packages: Package[]): string[] {
+	return inventory.diagnostics.filter(diagnostic => packages.some(pkg => diagnostic.startsWith(`${pkg.manifest}:`)));
 }

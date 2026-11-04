@@ -5,6 +5,8 @@ import { identityOf } from '@/automation/package-identity';
 import { registry } from '@/automation/package-publication';
 
 const packageName = /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/;
+const licenseTerm = String.raw`\(?(?!UNLICENSED\b)[A-Za-z0-9][A-Za-z0-9.+-]*\)?`;
+const spdxLicense = new RegExp(`^${licenseTerm}(?: (?:AND|OR|WITH) ${licenseTerm})*$`);
 export function jsrLatest(name: string, request: Fetcher): Promise<RegistryVersion> {
 	if (!packageName.test(name)) throw new Error('Invalid JSR package name');
 	return latestVersion(request, `https://jsr.io/${name}/meta.json`, body => {
@@ -72,6 +74,12 @@ export const jsrManager: Manager = {
 				const manifest = object(JSON.parse(source));
 				if (typeof manifest.name !== 'string' || !packageName.test(manifest.name)) {
 					throw new Error('Invalid package name');
+				}
+				if (
+					manifest.license !== undefined
+					&& (typeof manifest.license !== 'string' || !spdxLicense.test(manifest.license))
+				) {
+					inventory.diagnostics.push(`${path}: JSR requires an SPDX license expression in "license"`);
 				}
 				inventory.packages.push({
 					manager: 'jsr',
