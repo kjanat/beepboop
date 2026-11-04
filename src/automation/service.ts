@@ -196,12 +196,29 @@ export class AutomationService {
 		await this.winget().watch(repository);
 		return repository;
 	}
+	private async mergedPreparation(
+		repository: RepositoryRecord,
+		stream: string,
+		version: string,
+		target: string,
+	): Promise<boolean> {
+		for (const execution of await this.store.executions(repository.id)) {
+			const result = execution.prepared?.result ?? execution.managed?.result;
+			if (
+				!result || execution.stream !== stream || execution.version !== version
+				|| execution.state !== 'succeeded'
+			) continue;
+			try {
+				await this.gateway.preparedSnapshot(repository.name, repository.id, result, target);
+				return true;
+			} catch {}
+		}
+		return false;
+	}
 	private async releaseFromManifest(repository: RepositoryRecord): Promise<void> {
 		if (repository.diagnostics.length || repository.suspended) return;
 		for (const [name, stream] of Object.entries(repository.configuration?.streams ?? {})) {
-			if (stream.promote.approval !== 'push' || !stream.promote.workflow || stream.versionSource?.kind === 'tags') {
-				continue;
-			}
+			if (!stream.promote.workflow || stream.versionSource?.kind === 'tags') continue;
 			const packages = repository.inventory.packages.filter(pkg =>
 				publishable(pkg) && (!stream.packages || stream.packages.some(reference => matchesPackage(reference, pkg)))
 			);
@@ -231,6 +248,12 @@ export class AutomationService {
 			);
 			promotion.sourceSha = plan.sourceSha;
 			if (await this.store.execution(promotion.id)) continue;
+			if (
+				stream.promote.approval === 'required'
+				&& await this.mergedPreparation(repository, name, version, plan.sourceSha)
+			) {
+				promotion.approvedBy = 'merge';
+			}
 			await this.store.audit('beepboop', 'release.push', promotion.id);
 			await this.enqueue(repository, promotion);
 		}

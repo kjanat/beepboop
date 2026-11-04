@@ -1228,7 +1228,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (execution.state === 'succeeded') await this.captureReleaseEvent(execution);
 			if (!active.includes(execution) || execution.state === 'pending') continue;
 			if (execution.state === 'blocked' && execution.operation === 'promote') {
-				if (execution.configuration.streams[execution.stream]?.promote.approval !== 'push') continue;
+				if (
+					execution.configuration.streams[execution.stream]?.promote.approval !== 'push'
+					&& execution.approvedBy !== 'merge'
+				) continue;
 				try {
 					if (await this.approveFromPush(execution, executions)) {
 						await this.ctx.storage.setAlarm(Date.now() + 1000);

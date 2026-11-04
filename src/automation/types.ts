@@ -234,6 +234,7 @@ export interface Execution {
 	draftRelease?: { id: number; tag: string };
 	titled?: boolean;
 	dispatchedAt?: number;
+	approvedBy?: 'merge';
 	publications: Publication[];
 	artifacts: Artifact[];
 	createdAt: number;
