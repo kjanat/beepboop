@@ -1,10 +1,16 @@
-import { object } from '@/automation/managers/helpers';
+import { applyEdits, modify, type ParseError, parse } from 'jsonc-parser';
+import { directory, object } from '@/automation/managers/helpers';
 import { type Adapter, emptyInventory, type Fetcher, type RegistryVersion } from '@/automation/managers/registry';
 import { latestVersion, unpublished } from '@/automation/managers/verification';
 import { identityOf } from '@/automation/package-identity';
 import { registry } from '@/automation/package-publication';
+import { jsrManifest } from '@/contract/catalog';
 
 const packageName = /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/;
+const precedence = ['jsr.json', 'jsr.jsonc', 'deno.json', 'deno.jsonc'];
+function rank(path: string): number {
+	return precedence.indexOf(path.slice(path.lastIndexOf('/') + 1));
+}
 const licenseTerm = String.raw`\(?(?!UNLICENSED\b|LicenseRef-)[A-Za-z0-9][A-Za-z0-9.+-]*\)?`;
 const spdxLicense = new RegExp(`^${licenseTerm}(?: (?:AND|OR|WITH) ${licenseTerm})*$`);
 export function jsrLatest(name: string, request: Fetcher): Promise<RegistryVersion> {
@@ -69,38 +75,50 @@ export const jsrManager: Adapter<'jsr'> = {
 	identity: pkg => identityOf(pkg),
 	discover(snapshot) {
 		const inventory = emptyInventory();
-		for (const [path, source] of Object.entries(snapshot.files)) {
-			if (!/(?:^|\/)jsr\.json$/.test(path)) continue;
+		const manifests = new Map<string, string>();
+		for (const path of Object.keys(snapshot.files).filter(path => jsrManifest.test(path))) {
+			const dir = directory(path);
+			const chosen = manifests.get(dir);
+			if (!chosen || rank(path) < rank(chosen)) manifests.set(dir, path);
+		}
+		for (const path of manifests.values()) {
+			const source = snapshot.files[path] ?? '';
+			const errors: ParseError[] = [];
+			const manifest = object(parse(source, errors, { allowTrailingComma: true }));
+			const deno = /(?:^|\/)deno\.jsonc?$/.test(path);
+			if (deno && !errors.length && manifest.name === undefined) continue;
 			inventory.managers = ['jsr'];
-			try {
-				const manifest = object(JSON.parse(source));
-				if (typeof manifest.name !== 'string' || !packageName.test(manifest.name)) {
-					throw new Error('Invalid package name');
-				}
-				if (
-					manifest.license !== undefined
-					&& (typeof manifest.license !== 'string' || !spdxLicense.test(manifest.license))
-				) {
-					inventory.diagnostics.push(`${path}: JSR requires an SPDX license expression in "license"`);
-				}
-				inventory.packages.push({
-					manager: 'jsr',
-					name: manifest.name,
-					manifest: path,
-					...(typeof manifest.version === 'string' ? { version: manifest.version } : {}),
-					versionSource: `${path}#version`,
-					publication: registry,
-					dependencies: [],
-				});
-			} catch {
+			if (errors.length || typeof manifest.name !== 'string' || !packageName.test(manifest.name)) {
 				inventory.diagnostics.push(`${path}: invalid JSR manifest`);
+				continue;
 			}
+			if (
+				manifest.license !== undefined
+				&& (typeof manifest.license !== 'string' || !spdxLicense.test(manifest.license))
+			) {
+				inventory.diagnostics.push(`${path}: JSR requires an SPDX license expression in "license"`);
+			}
+			inventory.packages.push({
+				manager: 'jsr',
+				name: manifest.name,
+				manifest: path,
+				...(typeof manifest.version === 'string' ? { version: manifest.version } : {}),
+				versionSource: `${path}#version`,
+				publication: registry,
+				dependencies: [],
+			});
 		}
 		return inventory;
 	},
-	ownsVersionSource: source => /(?:^|\/)jsr\.json#version$/.test(source),
+	ownsVersionSource: source => /(?:^|\/)(?:jsr|deno)\.jsonc?#version$/.test(source),
 	editVersion({ before, version }) {
-		return `${JSON.stringify({ ...JSON.parse(before), version }, null, before.match(/\n([\t ]+)"/)?.[1] ?? '  ')}\n`;
+		const indent = before.match(/\n([\t ]+)"/)?.[1] ?? '  ';
+		return applyEdits(
+			before,
+			modify(before, ['version'], version, {
+				formattingOptions: { insertSpaces: !indent.startsWith('\t'), tabSize: indent.length },
+			}),
+		);
 	},
 	latest: (pkg, request) => jsrLatest(pkg.name, request),
 	async verifyPublication(publication, request) {

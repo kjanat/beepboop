@@ -48,6 +48,8 @@ export const destinationLabels = {
 export const goreleaserConfig = /^(?:\.config\/)?\.?goreleaser[^/]*\.ya?ml$/;
 export const hookConfig = /(?:^|\/)\.pre-commit-config\.ya?ml$/;
 const packageJson = /(?:^|\/)package\.json$/;
+export const jsrManifest = /(?:^|\/)(?:jsr|deno)\.jsonc?$/;
+export const npmTargets = /(?:^|\/)npm\/targets\.json$/;
 
 export interface ManagerDestinations {
 	primary: ManagerDestinationId;
@@ -79,7 +81,7 @@ export const managerCatalog = {
 		versionPolicy: 'equals-execution',
 	},
 	npm: {
-		manifests: [packageJson, /(?:^|\/)npm\/targets\.json$/],
+		manifests: [packageJson, npmTargets],
 		markers: [],
 		lockfiles: ['package-lock.json', 'bun.lock', 'pnpm-lock.yaml', 'yarn.lock'],
 		purlType: 'npm',
@@ -87,7 +89,7 @@ export const managerCatalog = {
 		versionPolicy: 'equals-execution',
 	},
 	jsr: {
-		manifests: [/(?:^|\/)jsr\.json$/],
+		manifests: [jsrManifest],
 		markers: [],
 		lockfiles: [],
 		purlType: 'jsr',

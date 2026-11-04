@@ -5,6 +5,7 @@ import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
 import { excluded, registry } from '@/automation/package-publication';
 import type { Package } from '@/automation/types';
+import { npmTargets } from '@/contract/catalog';
 import { packageIdentity } from '@/package-url';
 export function npmLatest(name: string, request: Fetcher): Promise<RegistryVersion> {
 	return latestVersion(
@@ -81,7 +82,7 @@ export const npmManager: Adapter<'npm'> = {
 			}
 		}
 		for (const [path, source] of Object.entries(snapshot.files)) {
-			if (!path.endsWith('/npm/targets.json')) continue;
+			if (!npmTargets.test(path)) continue;
 			try {
 				const descriptor = object(JSON.parse(source));
 				if (typeof descriptor.scope !== 'string' || !Array.isArray(descriptor.targets)) continue;

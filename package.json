@@ -61,6 +61,7 @@
 		"cron-parser": "^5.10.3",
 		"github-up": "^0.1.4",
 		"jose": "6.2.15",
+		"jsonc-parser": "^3.3.1",
 		"packageurl-js": "^2.0.1",
 		"remark": "15.0.1",
 		"remark-gfm": "4.0.1",
