@@ -539,7 +539,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (tagged.type !== 'commit' || tagged.sha !== execution.sourceSha) {
 				throw new Error('Release tag points to another commit');
 			}
-			const write = await gateway.token(execution.repository, execution.repositoryId, { contents: 'write' });
+			const write = await gateway.token(execution.repository, execution.repositoryId, {
+				contents: 'write',
+				workflows: 'write',
+			});
 			const release = execution.draftRelease
 				? await this.publishDraft(execution, execution.draftRelease, target, write)
 				: record(
@@ -571,7 +574,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		const target = githubRelease(execution);
 		if (execution.draftRelease || !target || !publishesGithubRelease(execution)) return execution.draftRelease;
 		const gateway = this.gateway();
-		const write = await gateway.token(execution.repository, execution.repositoryId, { contents: 'write' });
+		const write = await gateway.token(execution.repository, execution.repositoryId, {
+			contents: 'write',
+			workflows: 'write',
+		});
 		const bot = await gateway.botIdentity();
 		const drafts = array(await gateway.call(`/repos/${execution.repository}/releases?per_page=100`, write))
 			.map(record)
@@ -738,6 +744,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return next;
 		});
 	}
+	private async supersedeVersion(execution: Execution): Promise<void> {
+		if (execution.operation !== 'promote' || !execution.version) return;
+		for (const other of await this.journal()) {
+			if (
+				other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
+				&& other.version === execution.version && ['blocked', 'pending', 'ready'].includes(other.state)
+			) {
+				await this.put({ ...other, state: 'cancelled', reason: `Superseded by ${execution.id}` });
+			}
+		}
+	}
 	async approve(id: string, commitSha: string, actor: string): Promise<Execution> {
 		return this.serial(async () => {
 			const execution = await this.get(id);
@@ -752,6 +769,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (problems.length) throw new Error(problems.join('; '));
 			await this.store().audit(actor, 'promotion.approve', `${id}:${commitSha}`);
 			const next: Execution = { ...execution, state: 'ready' };
+			await this.supersedeVersion(next);
 			await this.put(next);
 			return next;
 		});
@@ -818,21 +836,20 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (execution.artifacts.some((a) => Date.parse(a.expiresAt) <= Date.now())) {
 					throw new Error('Artifacts expired; use the configured preparation/recovery producer');
 				}
-				const gateway = this.gateway(),
-					token = await gateway.token(execution.repository, execution.repositoryId, {
-						contents: 'read',
-						actions: 'write',
-					});
 				await this.put({
 					...execution,
-					state: 'uncertain',
-					reason: 'Retry requested; awaiting run reconciliation',
+					state: 'ready',
+					supersededRuns: [...(execution.supersededRuns ?? []), execution.runId],
+					runId: undefined,
+					runAttempt: undefined,
+					workflowSha: undefined,
+					reason: `Retry requested; dispatching a new run from ${execution.workflow?.ref ?? 'the workflow ref'}`,
+					publications: execution.publications.map(publication =>
+						publication.outcome === 'succeeded' ? publication : { ...publication, outcome: 'pending' }
+					),
 				});
-				await gateway.call(
-					`/repos/${execution.repository}/actions/runs/${execution.runId}/rerun-failed-jobs`,
-					token,
-					'POST',
-				);
+				await this.supersedeVersion(execution);
+				await this.ctx.storage.setAlarm(Date.now() + 1000);
 			} else await this.wake();
 			if (execution.releaseSet?.workflowId) {
 				const instance = await this.env.RELEASE_WORKFLOW.get(execution.releaseSet.workflowId);
