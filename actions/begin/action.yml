@@ -46,4 +46,4 @@ runs:
         STREAM: ${{ inputs.stream }}
         OPERATION: ${{ inputs.operation }}
         RELEASE_VERSION: ${{ inputs.version }}
-      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.mjs" begin
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.ts" begin

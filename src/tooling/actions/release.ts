@@ -3,7 +3,7 @@ import { appendFileSync } from 'node:fs';
 import { parse } from 'yaml';
 import type { RefChange } from '@/automation/refs';
 import { compareVersions, record } from '@/model';
-import { publishRefs } from '../../../actions/runtime/refs.mjs';
+import { publishRefs } from '../../../actions/runtime/refs.ts';
 
 type Bump = 'major' | 'minor' | 'patch';
 interface Contract {

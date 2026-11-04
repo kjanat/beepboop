@@ -26,13 +26,13 @@ runs:
       shell: bash
       env:
         SERVICE_ORIGIN: ${{ inputs.service }}
-      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.mjs" refs-plan
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.ts" refs-plan
     - shell: bash
       env:
         REF_PLAN: ${{ steps.plan.outputs.result }}
         REF_TOKEN: ${{ inputs.token }}
-      run: bun "${GITHUB_ACTION_PATH}/../runtime/refs.mjs"
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/refs.ts"
     - shell: bash
       env:
         SERVICE_ORIGIN: ${{ inputs.service }}
-      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.mjs" refs-complete
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.ts" refs-complete

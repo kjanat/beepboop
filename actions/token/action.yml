@@ -49,4 +49,4 @@ runs:
         TOKEN_PURPOSE: ${{ inputs.purpose }}
         TOKEN_IDENTITY: "true"
         PERMISSIONS: ${{ inputs.permissions }}
-      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.mjs" token
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.ts" token

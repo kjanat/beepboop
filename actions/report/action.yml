@@ -39,4 +39,4 @@ runs:
         EXECUTION_ID: ${{ inputs.execution-id }}
         PUBLICATIONS: ${{ inputs.publications }}
         ARTIFACTS: ${{ inputs.artifacts }}
-      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.mjs" report
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.ts" report

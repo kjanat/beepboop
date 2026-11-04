@@ -31,4 +31,4 @@ runs:
       env:
         SERVICE_ORIGIN: ${{ inputs.service }}
         EXECUTION_ID: ${{ inputs.execution-id }}
-      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.mjs" release
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.ts" release

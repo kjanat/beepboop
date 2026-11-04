@@ -25,6 +25,7 @@
 		".astro/types.d.ts",
 		"src/**/*.astro",
 		"src/**/*.ts",
-		"scripts/**/*.ts"
+		"scripts/**/*.ts",
+		"actions/**/*.ts"
 	]
 }
