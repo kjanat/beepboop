@@ -505,9 +505,11 @@ release:
 - uses: kjanat/beepboop/actions/publish-release@v1
 ```
 
-Beepboop requires the annotated tag `<prefix><version>` to target the approved
-commit. It then publishes the operation's draft with its uploaded assets, and
-refuses while an upload is unfinished. An operation without a draft creates
+The operation must list `github-release:<owner>/<repo>` in its `publications`
+and, like ref operations, requires promotion approval. Beepboop requires the
+annotated tag `<prefix><version>` to target the approved commit. It then
+publishes the operation's draft with its uploaded assets, and refuses while an
+upload is unfinished. An operation without a draft creates
 the release, or accepts an existing published release whose tag and prerelease
 flag match. The release is recorded as the operation's `github-release`
 publication.

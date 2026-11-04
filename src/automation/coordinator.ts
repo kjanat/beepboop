@@ -470,20 +470,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				|| execution.runAttempt !== identity.attempt || execution.workflowSha !== identity.workflowSha
 			) throw new Error('Ref operation identity mismatch');
 			if (!execution.workflow.refs || !execution.version) throw new Error('No configured ref operation');
-			if (execution.operation !== 'promote') {
-				const visited = new Set<string>();
-				const approved = async (current: Execution): Promise<boolean> => {
-					if (visited.has(current.id)) return false;
-					visited.add(current.id);
-					if (current.state !== 'succeeded' || current.sourceSha !== execution.sourceSha) return false;
-					if (current.operation === 'promote') return true;
-					for (const dependency of current.dependencies) if (await approved(await this.get(dependency))) return true;
-					return false;
-				};
-				let found = false;
-				for (const dependency of execution.dependencies) if (await approved(await this.get(dependency))) found = true;
-				if (!found) throw new Error('Ref operation requires completed promotion');
-			}
+			if (!await this.promoted(execution)) throw new Error('Ref operation requires completed promotion');
 			const gateway = this.gateway();
 			const refs = await gateway.tagRefs(execution.repository, execution.repositoryId);
 			if (!execution.refPlan) {
@@ -522,6 +509,20 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return execution.refPlan;
 		});
 	}
+	private async promoted(execution: Execution): Promise<boolean> {
+		if (execution.operation === 'promote') return true;
+		const visited = new Set<string>();
+		const approved = async (current: Execution): Promise<boolean> => {
+			if (visited.has(current.id)) return false;
+			visited.add(current.id);
+			if (current.state !== 'succeeded' || current.sourceSha !== execution.sourceSha) return false;
+			if (current.operation === 'promote') return true;
+			for (const dependency of current.dependencies) if (await approved(await this.get(dependency))) return true;
+			return false;
+		};
+		for (const dependency of execution.dependencies) if (await approved(await this.get(dependency))) return true;
+		return false;
+	}
 	async publishRelease(id: string, identity: WorkflowIdentity): Promise<Execution> {
 		const publication = await this.serial(async (): Promise<Publication> => {
 			const execution = await this.get(id);
@@ -531,6 +532,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				|| execution.repository !== identity.repository || execution.runId !== identity.runId
 				|| execution.runAttempt !== identity.attempt || execution.workflowSha !== identity.workflowSha
 			) throw new Error('Release operation identity mismatch');
+			if (!publishesGithubRelease(execution)) {
+				throw new Error(`Add github-release:${execution.repository} to this operation's publications`);
+			}
+			if (!await this.promoted(execution)) throw new Error('Release operation requires completed promotion');
 			const target = githubRelease(execution);
 			if (!target) throw new Error('Release operation has no version');
 			const { tag, prerelease } = target;
