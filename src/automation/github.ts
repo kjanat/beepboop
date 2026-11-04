@@ -596,13 +596,18 @@ export class RepositoryGateway {
 			throw new Error('Pull request labels were not confirmed');
 		}
 		const actual = record(await this.call(`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`, token));
+		let current = pull;
+		for (let attempt = 0; attempt < 5 && record(current.head).sha !== head; attempt++) {
+			await new Promise(resolve => setTimeout(resolve, 1000));
+			current = record(await this.call(`/repos/${name}/pulls/${integer(pull.number)}`, token));
+		}
 		if (
-			sha(record(actual.object).sha) !== head || record(pull.head).sha !== head
-			|| record(pull.base).ref !== snapshot.repository.defaultBranch
+			sha(record(actual.object).sha) !== head || record(current.head).sha !== head
+			|| record(current.base).ref !== snapshot.repository.defaultBranch
 		) {
 			throw new Error('Preparation pull request identity changed');
 		}
-		return { url: text(pull.html_url), head };
+		return { url: text(current.html_url), head };
 	}
 }
 
