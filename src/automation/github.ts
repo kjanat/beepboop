@@ -39,7 +39,21 @@ export class RepositoryGateway {
 			response = await send();
 		}
 		if (response.status === 404 && method === 'GET') return null;
-		if (!response.ok) throw new Error(`GitHub HTTP ${response.status} on ${method} ${path.split('?')[0]}`);
+		if (!response.ok) {
+			const detail = await response.text().then(body => {
+				try {
+					const parsed: unknown = JSON.parse(body);
+					return typeof parsed === 'object' && parsed !== null && 'message' in parsed
+						? String(parsed.message)
+						: body.slice(0, 200);
+				} catch {
+					return body.slice(0, 200);
+				}
+			}, () => '');
+			throw new Error(
+				`GitHub HTTP ${response.status} on ${method} ${path.split('?')[0]}${detail ? `: ${detail}` : ''}`,
+			);
+		}
 		if (response.status === 204) return null;
 		return response.json();
 	}
