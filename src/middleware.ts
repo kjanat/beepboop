@@ -1,5 +1,7 @@
 import { defineMiddleware } from 'astro:middleware';
 import { administrator } from '@/automation/auth.ts';
+import { DomainError } from '@/contract/errors';
+import { failure } from '@/failure';
 import { bindings } from '@/server/bindings.ts';
 import { dashboardPaths } from '@/server/sections.ts';
 
@@ -7,7 +9,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
 	if (dashboardPaths.has(context.url.pathname.replace(/\/$/, '') || '/')) {
 		try {
 			context.locals.actor = await administrator(context.request, bindings());
-		} catch {
+		} catch (error) {
+			if (!(error instanceof DomainError)) throw error;
+			if (error.problem.code !== 'unauthenticated') return failure(context.request, error);
 			return context.redirect(
 				`/auth/login?return=${encodeURIComponent(`${context.url.pathname}${context.url.search}`)}`,
 				302,

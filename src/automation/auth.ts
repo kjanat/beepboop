@@ -6,12 +6,14 @@ import {
 	verifyAuthenticationResponse,
 	verifyRegistrationResponse,
 } from '@simplewebauthn/server';
-import { createRemoteJWKSet, type JWTVerifyGetKey, jwtVerify } from 'jose';
+import { createRemoteJWKSet, errors, type JWTVerifyGetKey, jwtVerify } from 'jose';
 import { z } from 'zod';
 import { cliAuthRoute, cliSubject } from '@/automation/cli-auth';
 import { documentRow } from '@/automation/schemas';
+import { forbidden, unauthenticated } from '@/contract/errors';
 import { loginSecretPattern } from '@/contract/ids';
 import { integer, record, sha, text } from '@/model';
+import { SessionStore } from '@/persistence/d1/sessions';
 
 const clientExtensionResults = z.object({}).catch({});
 const registrationResponse: z.ZodType<RegistrationResponseJSON> = z.object({
@@ -73,6 +75,14 @@ export function base64(bytes: Uint8Array): string {
 export function bytes(value: string): Uint8Array<ArrayBuffer> {
 	return Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
 }
+async function verified<T>(verification: Promise<T>): Promise<T> {
+	try {
+		return await verification;
+	} catch (error) {
+		if (error instanceof errors.JOSEError) throw unauthenticated(error.message);
+		throw error;
+	}
+}
 export async function workflowIdentity(
 	request: Request,
 	audience: string,
@@ -80,13 +90,13 @@ export async function workflowIdentity(
 	issuerKeys: JWTVerifyGetKey = githubKeys,
 ): Promise<WorkflowIdentity> {
 	const token = request.headers.get('authorization')?.replace(/^Bearer /, '');
-	if (!token || token.length > 20000) throw new Error('Workflow authentication required');
-	const { payload } = await jwtVerify(token, issuerKeys, {
+	if (!token || token.length > 20000) throw unauthenticated('Workflow authentication required');
+	const { payload } = await verified(jwtVerify(token, issuerKeys, {
 		issuer: 'https://token.actions.githubusercontent.com',
 		audience,
 		algorithms: ['RS256'],
 		requiredClaims: ['exp', 'iat', 'sub'],
-	});
+	}));
 	const identity: WorkflowIdentity = {
 		repositoryId: integer(Number(payload.repository_id)),
 		repository: text(payload.repository),
@@ -108,7 +118,7 @@ export async function workflowIdentity(
 		identity.ownerId !== ownerId
 		|| identity.event === 'pull_request_target'
 	) {
-		throw new Error('Workflow identity is not eligible');
+		throw forbidden('Workflow identity is not eligible');
 	}
 	return identity;
 }
@@ -145,26 +155,26 @@ export async function administrator(
 ): Promise<string> {
 	if (request.headers.has('authorization')) return cliSubject(request, env);
 	const token = cookie(request, '__Host-beepboop_access');
-	if (!token || token.length > 20000) throw new Error('Administrator login required');
+	if (!token || token.length > 20000) throw unauthenticated('Administrator login required');
 	let key = keys.get(env.OPENAUTH_ISSUER);
 	if (!key) {
 		key = createRemoteJWKSet(new URL('/.well-known/jwks.json', env.OPENAUTH_ISSUER));
 		keys.set(env.OPENAUTH_ISSUER, key);
 	}
-	const { payload } = await jwtVerify(token, key, {
+	const { payload } = await verified(jwtVerify(token, key, {
 		issuer: env.OPENAUTH_ISSUER,
 		audience: env.OPENAUTH_CLIENT_ID,
 		algorithms: ['ES256', 'RS256'],
 		requiredClaims: ['exp', 'sub'],
-	});
+	}));
 	if (payload.mode !== 'access' || payload.type !== 'user') {
-		throw new Error('Administrator access token required');
+		throw unauthenticated('Administrator access token required');
 	}
 	if (!env.ADMIN_SUBJECT || payload.sub !== env.ADMIN_SUBJECT) {
-		throw new Error('Administrator access denied');
+		throw forbidden('Administrator access denied');
 	}
 	if (request.method !== 'GET' && request.headers.get('origin') !== env.APPLICATION_ORIGIN) {
-		throw new Error('Invalid request origin');
+		throw forbidden('Invalid request origin');
 	}
 	return payload.sub;
 }
@@ -262,17 +272,11 @@ export async function authRoute(
 			{ pkce: true },
 		);
 		const id = crypto.randomUUID();
-		await env.DB.prepare('INSERT INTO sessions(id,document,expires_at) VALUES(?,?,?)')
-			.bind(
-				id,
-				JSON.stringify({
-					...challenge,
-					cli: new URL(request.url).searchParams.get('cli'),
-					return: returnPath(new URL(request.url).searchParams.get('return')),
-				}),
-				Date.now() + 600000,
-			)
-			.run();
+		await new SessionStore(env.DB).open('login-flow', id, {
+			...challenge,
+			cli: new URL(request.url).searchParams.get('cli'),
+			return: returnPath(new URL(request.url).searchParams.get('return')),
+		}, 600000);
 		return new Response(null, {
 			status: 302,
 			headers: { Location: url, 'Set-Cookie': cookieHeader('__Host-beepboop_flow', id, 600) },
@@ -280,12 +284,7 @@ export async function authRoute(
 	}
 	if (path === '/auth/callback') {
 		return completeLogin(request, {
-			consumeFlow: async (id) =>
-				documentRow.nullable().parse(
-					await env.DB.prepare('DELETE FROM sessions WHERE id=? AND expires_at>? RETURNING document')
-						.bind(id, Date.now())
-						.first(),
-				)?.document ?? null,
+			consumeFlow: async (id) => (await new SessionStore(env.DB).take(id)) ?? null,
 			exchange: async (code, verifier) => {
 				const result = await client.exchange(code, `${env.APPLICATION_ORIGIN}/auth/callback`, verifier).catch(() =>
 					null
@@ -344,7 +343,10 @@ const savedCredential: z.ZodType<SavedCredential> = z.object({
 	transports: z.array(z.string()).optional(),
 });
 export class Authenticators {
-	constructor(private env: AuthBindings) {}
+	private readonly sessions: SessionStore;
+	constructor(private env: AuthBindings) {
+		this.sessions = new SessionStore(env.DB);
+	}
 	private async saved(subject: string): Promise<{ document: string; credential: SavedCredential }[]> {
 		return (
 			await this.env.DB.prepare('SELECT document FROM authenticators WHERE subject=?')
@@ -362,7 +364,7 @@ export class Authenticators {
 		subject: string,
 		register: boolean,
 		label?: string,
-	): Promise<unknown> {
+	): Promise<{ id: string; options: unknown }> {
 		const credentials = await this.credentials(subject),
 			rpID = new URL(this.env.APPLICATION_ORIGIN).hostname;
 		const refusal = enrollmentRefusal(register, credentials.length);
@@ -388,32 +390,20 @@ export class Authenticators {
 				allowCredentials: credentials.map((c) => ({ id: c.id, transports: c.transports })),
 			});
 		const id = crypto.randomUUID();
-		await this.env.DB.prepare('INSERT INTO sessions(id,document,expires_at) VALUES(?,?,?)')
-			.bind(
-				id,
-				JSON.stringify({
-					subject,
-					register,
-					first: register && credentials.length === 0,
-					label: label?.slice(0, 80),
-					challenge: options.challenge,
-				}),
-				Date.now() + 120000,
-			)
-			.run();
+		await this.sessions.open('security-challenge', id, {
+			subject,
+			register,
+			first: register && credentials.length === 0,
+			label: label?.slice(0, 80),
+			challenge: options.challenge,
+		}, 120000);
 		return { id, options };
 	}
 	async verify(subject: string, id: string, response: unknown): Promise<{ proof?: string }> {
-		const row = documentRow.nullable().parse(
-			await this.env.DB.prepare(
-				'DELETE FROM sessions WHERE id=? AND expires_at>? RETURNING document',
-			)
-				.bind(id, Date.now())
-				.first(),
-		);
-		if (!row) throw new Error('Challenge expired');
-		const challenge = record(JSON.parse(row.document));
-		if (challenge.subject !== subject) throw new Error('Challenge subject mismatch');
+		const document = await this.sessions.take(id);
+		if (document === undefined) throw forbidden('Challenge expired');
+		const challenge = record(JSON.parse(document));
+		if (challenge.subject !== subject) throw forbidden('Challenge subject mismatch');
 		const rpID = new URL(this.env.APPLICATION_ORIGIN).hostname;
 		if (challenge.register) {
 			const result = await verifyRegistrationResponse({
@@ -474,23 +464,15 @@ export class Authenticators {
 			.run();
 		if (update.meta.changes !== 1) throw new Error('Authenticator changed during verification');
 		const proof = crypto.randomUUID();
-		await this.env.DB.prepare('INSERT INTO sessions(id,document,expires_at) VALUES(?,?,?)')
-			.bind(proof, JSON.stringify({ subject, elevated: true }), Date.now() + 60000)
-			.run();
+		await this.sessions.open('elevation', proof, { subject, elevated: true }, 60000);
 		return { proof };
 	}
 	async consume(subject: string, proof: string): Promise<void> {
-		const row = documentRow.nullable().parse(
-			await this.env.DB.prepare(
-				'DELETE FROM sessions WHERE id=? AND expires_at>? RETURNING document',
-			)
-				.bind(proof, Date.now())
-				.first(),
-		);
-		if (!row) throw new Error('Fresh security-key authentication required');
-		const data = record(JSON.parse(row.document));
+		const document = await this.sessions.take(proof);
+		if (document === undefined) throw forbidden('Fresh security-key authentication required');
+		const data = record(JSON.parse(document));
 		if (data.subject !== subject || data.elevated !== true) {
-			throw new Error('Invalid authentication proof');
+			throw forbidden('Invalid authentication proof');
 		}
 	}
 	async enrolled(subject: string): Promise<number> {

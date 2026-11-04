@@ -1,6 +1,7 @@
 import { handle } from '@astrojs/cloudflare/handler';
 import { type AutomationBindings, AutomationService } from '@/automation/service.ts';
 import { failure } from '@/failure.ts';
+import { parseBindings } from '@/server/bindings.ts';
 
 export { AutomationCoordinator } from '@/automation/coordinator.ts';
 export { PublishBudget } from '@/automation/publish-budget.ts';
@@ -15,6 +16,6 @@ export default {
 		}
 	},
 	async scheduled(_event: ScheduledController, env: AutomationBindings): Promise<void> {
-		await new AutomationService(env).scheduled();
+		await new AutomationService(parseBindings(env)).scheduled();
 	},
 } satisfies ExportedHandler<Env>;

@@ -1,16 +1,17 @@
 import type { AuthBindings } from '@/automation/auth';
+import { unauthenticated } from '@/contract/errors';
 import { cliToken, cliTokenPattern, confirmationCode, loginSecretPattern, sha256Hex } from '@/contract/ids';
 import { record, string } from '@/model';
+import { CLISessionStore } from '@/persistence/d1/cli-sessions';
+import { SessionStore } from '@/persistence/d1/sessions';
 
 type CLIEnvironment = Pick<AuthBindings, 'ADMIN_SUBJECT'> & Partial<Pick<AuthBindings, 'DB'>>;
 export async function cliSubject(request: Request, env: CLIEnvironment): Promise<string> {
 	const token = request.headers.get('authorization')?.match(/^Bearer (\S+)$/)?.[1];
-	if (!token || !cliTokenPattern.test(token) || !env.DB) throw new Error('CLI login required');
-	const row = await env.DB.prepare('SELECT subject FROM cli_sessions WHERE id=?')
-		.bind(await sha256Hex(token)).first();
-	const subject = row ? string(row.subject) : undefined;
+	if (!token || !cliTokenPattern.test(token) || !env.DB) throw unauthenticated('CLI login required');
+	const subject = await new CLISessionStore(env.DB).subject(await sha256Hex(token));
 	if (!subject || !env.ADMIN_SUBJECT || subject !== env.ADMIN_SUBJECT) {
-		throw new Error('CLI session revoked; run beepboop auth login');
+		throw unauthenticated('CLI session revoked; run beepboop auth login');
 	}
 	return subject;
 }
@@ -27,16 +28,13 @@ export async function cliAuthRoute(
 	if (url.pathname === '/auth/cli/token' && request.method === 'POST') {
 		const verifier = await request.text();
 		if (!loginSecretPattern.test(verifier)) return json({ error: 'Invalid login verifier' }, 400);
-		const row = await env.DB.prepare('DELETE FROM sessions WHERE id=? AND expires_at>? RETURNING document')
-			.bind(`cli-approval:${await sha256Hex(verifier)}`, Date.now()).first();
-		if (!row) return json({ pending: true }, 202);
-		const approval = record(JSON.parse(string(row.document)));
+		const document = await new SessionStore(env.DB).take(`cli-approval:${await sha256Hex(verifier)}`);
+		if (document === undefined) return json({ pending: true }, 202);
+		const approval = record(JSON.parse(document));
 		if (approval.subject !== env.ADMIN_SUBJECT) return json({ error: 'Access denied' }, 403);
 		const token = cliToken();
 		// Store only hashes of terminal credentials; the browser never receives them.
-		await env.DB.prepare('INSERT INTO cli_sessions(id,subject,created_at) VALUES(?,?,?)')
-			.bind(await sha256Hex(token), string(approval.subject), Date.now())
-			.run();
+		await new CLISessionStore(env.DB).create(await sha256Hex(token), string(approval.subject));
 		return json({ token });
 	}
 	if (url.pathname === '/auth/cli/logout' && request.method === 'POST') {
@@ -46,7 +44,7 @@ export async function cliAuthRoute(
 			return json({ error: 'CLI session revoked' }, 401);
 		}
 		const token = request.headers.get('authorization')?.slice(7) ?? '';
-		await env.DB.prepare('DELETE FROM cli_sessions WHERE id=?').bind(await sha256Hex(token)).run();
+		await new CLISessionStore(env.DB).revoke(await sha256Hex(token));
 		return json({ ok: true });
 	}
 	if (url.pathname === '/auth/cli/status' && request.method === 'GET') {
@@ -74,8 +72,7 @@ export async function cliAuthRoute(
 	const approved = request.method === 'POST';
 	if (approved) {
 		if (request.headers.get('origin') !== env.APPLICATION_ORIGIN) return json({ error: 'Invalid origin' }, 403);
-		await env.DB.prepare('INSERT OR IGNORE INTO sessions(id,document,expires_at) VALUES(?,?,?)')
-			.bind(`cli-approval:${challenge}`, JSON.stringify({ subject }), Date.now() + 300000).run();
+		await new SessionStore(env.DB).offer('cli-approval', `cli-approval:${challenge}`, { subject }, 300000);
 	}
 	return new Response(
 		`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Beepboop CLI login</title><main><h1>${
