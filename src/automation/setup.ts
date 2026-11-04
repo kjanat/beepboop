@@ -148,16 +148,14 @@ export async function previewSetup(
 		if (new Set(selected.map(packageId)).size !== selected.length) {
 			blockers.push(`${selection.name}: duplicate package identities need distinct package configuration.`);
 		}
-		if (selection.required.some(id => !selection.packages.includes(id))) {
-			blockers.push(`${selection.name}: required publications must belong to the selected stream.`);
-		}
+		const required = selected.filter(requirablePackage).map(packageId);
 		for (const pkg of selected) managers.add(pkg.manager);
 		const current = object(streams[selection.name]);
 		const updated = {
 			...current,
 			packages: selection.packages,
 			versioning: selection.versioning,
-			required: selection.required,
+			required,
 		};
 		streams[selection.name] = updated;
 		for (const operation of ['prepare', 'promote'] as const) {
@@ -179,7 +177,7 @@ export async function previewSetup(
 				...previousBinding,
 				file: workflow.file,
 				ref: previousBinding.ref ?? inherited.ref ?? snapshot.repository.defaultBranch,
-				...(operation === 'promote' ? { publications: selection.required } : {}),
+				...(operation === 'promote' ? { publications: required } : {}),
 			};
 			if (binding.mode === 'observe' || inherited.mode === 'observe') binding.mode = 'dispatch';
 			if (typeof binding.ref === 'string' && binding.ref.includes('*')) {
@@ -199,7 +197,7 @@ export async function previewSetup(
 				workflow,
 				selected,
 				choices.actionsRevision,
-				selection.required,
+				required,
 			);
 			blockers.push(...generated.blockers);
 			notes.push(...generated.notes);
@@ -268,7 +266,6 @@ export function setupOptions(plan: SetupPlan): SetupOption[] {
 			stream: stream.name,
 			package: id,
 		})),
-		...stream.packages.map((id): SetupOption => ({ kind: 'required', stream: stream.name, package: id })),
 		...operations.flatMap(operation => {
 			const current = stream[operation];
 			const suggested = plan.workflows.flatMap(evidence => {
@@ -359,7 +356,7 @@ export function bodyChoices(body: string, options: SetupOption[], base: SetupCho
 				name: stream.name,
 				packages,
 				versioning: versions.find(value => value !== stream.versioning) ?? versions[0] ?? stream.versioning,
-				required: pick('required', stream.required).filter(id => packages.includes(id)),
+				required: packages,
 				...(prepare ? { prepare } : {}),
 				...(promote ? { promote } : {}),
 			};
@@ -386,22 +383,11 @@ export function setupBody(plan: SetupPlan): string {
 			? `\`${binding.file}\`${binding.job ? ` (job \`${binding.job}\`)` : ''}, ${triggerLabels[binding.triggers]}`
 			: 'none';
 	return `Configure releases from inspected commit [${plan.sourceSha}](https://github.com/${plan.repository}/commit/${plan.sourceSha}).\n\n`
-		+ "Tick or untick packages to change this proposal. A package's required publication counts only while the package is ticked. Beepboop rebuilds the proposal 5 seconds after the last edit.\n\n"
+		+ 'Tick or untick packages to change this proposal. Every ticked package must be published for a release to succeed. Beepboop rebuilds the proposal 5 seconds after the last edit.\n\n'
 		+ plan.choices.streams.map(stream => {
 			const packages = options.flatMap(option =>
 				option.kind === 'package' && option.stream === stream.name
-					? [
-						box('    ', option, `\`${packageLabel(option.package)}\``),
-						...(stream.packages.includes(option.package)
-							? [
-								box(
-									'      ',
-									{ kind: 'required', stream: stream.name, package: option.package },
-									'Required publication',
-								),
-							]
-							: []),
-					]
+					? [box('    ', option, `\`${packageLabel(option.package)}\``)]
 					: []
 			);
 			return [

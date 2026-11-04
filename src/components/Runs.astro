@@ -167,7 +167,7 @@ const progress = (run: Execution): string => {
 		 {!!missing.length && !(run.state === 'blocked' && run.operation === 'promote')
 		 	&& (
 				<p class="notice">
-					Still needed for this release: {missing.join(', ')}.
+					Still to publish: {missing.join(', ')}.
 				</p>
 			)}
 		 {run.state === 'blocked' && run.operation === 'promote' && (

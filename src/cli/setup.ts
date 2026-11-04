@@ -105,11 +105,7 @@ export async function chooseSetup(plan: SetupPlan, ask: Ask): Promise<SetupChoic
 				label: 'Independent package versions',
 			}, { value: 'none', label: 'No version' }],
 		});
-		stream.required = await ask({
-			kind: 'multiselect',
-			message: 'Required publications',
-			choices: options(stream.packages.map(value => ({ value, label: packageLabel(value) }))),
-		});
+		stream.required = stream.packages;
 		choices.streams.push(stream);
 		stream.prepare = await chooseWorkflow(stream.name, 'prepare', stream.prepare);
 		stream.promote = await chooseWorkflow(stream.name, 'promote', stream.promote);
@@ -126,12 +122,7 @@ export async function chooseSetup(plan: SetupPlan, ask: Ask): Promise<SetupChoic
 			message: 'Versioning',
 			choices: [{ value: 'workspace' }, { value: 'independent' }, { value: 'none' }],
 		});
-		const required = await ask({
-			kind: 'multiselect',
-			message: 'Required publications',
-			choices: options(packages.map(value => ({ value, label: packageLabel(value) }))),
-		});
-		const stream: SetupChoices['streams'][number] = { name, packages, versioning, required };
+		const stream: SetupChoices['streams'][number] = { name, packages, versioning, required: packages };
 		choices.streams.push(stream);
 		stream.prepare = await chooseWorkflow(name, 'prepare');
 		stream.promote = await chooseWorkflow(name, 'promote');

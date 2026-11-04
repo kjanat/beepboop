@@ -185,7 +185,6 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 				: []
 		);
 		const packages = checks(box, 'Packages', entries, value.packages);
-		const required = checks(box, 'Required publications', entries, value.required);
 		const prepare = workflow(box, 'prepare', plan, value.prepare),
 			promote = workflow(box, 'promote', plan, value.promote);
 		streams.append(box);
@@ -193,7 +192,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 			name: enabled.checked ? name.value : '',
 			versioning: oneOf(versioning.value, ['workspace', 'independent', 'none'], 'Invalid versioning'),
 			packages: packages(),
-			required: required(),
+			required: packages(),
 			prepare: prepare(),
 			promote: promote(),
 		}));
