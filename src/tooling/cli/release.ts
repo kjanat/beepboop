@@ -61,15 +61,18 @@ switch (process.argv[2]) {
 			const integrity = `sha512-${
 				new Bun.CryptoHasher('sha512').update(await Bun.file(tarball).arrayBuffer()).digest('base64')
 			}`;
-			await output('integrity', integrity);
 			const response = await registry(`https://registry.npmjs.org/${encodeURIComponent(npm.name)}/${npm.version}`);
 			if (response.ok) {
-				const existing = record(await response.json());
-				if (record(existing.dist ?? {}).integrity !== integrity) {
-					throw new Error('Published npm tarball differs from this approved build');
-				}
-				console.log('Identical npm tarball already published; resuming release');
+				const published = record(record(await response.json()).dist ?? {}).integrity;
+				if (typeof published !== 'string') throw new Error('npm returned no integrity for the published version');
+				await output('integrity', published);
+				console.log(
+					published === integrity
+						? `npm already has this build of ${npm.name}@${npm.version}`
+						: `npm already has ${npm.name}@${npm.version} from an earlier build; keeping it`,
+				);
 			} else {
+				await output('integrity', integrity);
 				const userconfig = join(temporary, '.npmrc');
 				if (process.env.NPM_TOKEN) {
 					await writeFile(userconfig, `//registry.npmjs.org/:_authToken=${process.env.NPM_TOKEN}\n`, { mode: 0o600 });
