@@ -33,6 +33,7 @@
 		"dev": "astro dev",
 		"discover": "./scripts/discover.ts",
 		"fmt": "kfmt",
+		"gate": "run -pk check lint test purl:check schema:check && run -s build:cli check:cli check:jsr",
 		"lint": "biome check . --error-on-warnings",
 		"prepare": "run -qs types sync",
 		"prepreview": "wrangler types",

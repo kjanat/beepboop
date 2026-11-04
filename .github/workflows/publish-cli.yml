@@ -34,12 +34,7 @@ jobs:
         with:
           ref: ${{ fromJSON(steps.release.outputs.context).sourceSha }}
           persist-credentials: false
-      - run: runner i -f
-          check
-          test
-          build:cli
-          check:cli
-          check:jsr
+      - run: runner i -f gate
       - name: Validate release version
         id: metadata
         run: bun src/tooling/cli/release.ts metadata
