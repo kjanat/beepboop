@@ -1,20 +1,17 @@
 import { createExecution, executionId } from '@/automation/execution';
 import type { ReleaseSetPlan } from '@/automation/planning';
 import type { Execution, ReleasePlan, RepositoryRecord } from '@/automation/types';
+import { sha256Hex } from '@/contract/ids';
 
 export async function planIdentity(
 	plan: ReleasePlan | ReleaseSetPlan,
 	provenance?: Pick<RepositoryRecord, 'configuration' | 'presetShas'>,
 ): Promise<string> {
-	const digest = await crypto.subtle.digest(
-		'SHA-256',
-		new TextEncoder().encode(JSON.stringify({
-			plan,
-			configuration: provenance?.configuration,
-			presetShas: provenance?.presetShas,
-		})),
-	);
-	return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+	return sha256Hex(JSON.stringify({
+		plan,
+		configuration: provenance?.configuration,
+		presetShas: provenance?.presetShas,
+	}));
 }
 
 export async function createReleasePreparation(

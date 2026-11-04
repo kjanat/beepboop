@@ -2,10 +2,9 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { isCLIError } from '@kjanat/dreamcli';
-import { credentialHash } from '@/automation/cli-auth';
 import { type SecurityKeyPrompts, securityKeyAssertion } from '@/cli/fido2/index';
 import { failure, signIn } from '@/cli/output';
-import { cliTokenPattern, confirmationCode, loginSecret } from '@/contract/ids';
+import { cliTokenPattern, confirmationCode, loginSecret, sha256Hex } from '@/contract/ids';
 import { record, text } from '@/model';
 
 export interface Session {
@@ -55,7 +54,7 @@ export class Client {
 		this.origin = serverOrigin(origin);
 	}
 	private async file(): Promise<string> {
-		return join(this.directory, `${await credentialHash(this.origin)}.json`);
+		return join(this.directory, `${await sha256Hex(this.origin)}.json`);
 	}
 	async save(session: Session): Promise<void> {
 		await mkdir(this.directory, { recursive: true, mode: 0o700 });
@@ -114,7 +113,7 @@ export class Client {
 		signal = AbortSignal.timeout(300000),
 	): Promise<void> {
 		const verifier = loginSecret();
-		const challenge = await credentialHash(verifier);
+		const challenge = await sha256Hex(verifier);
 		await show(`${this.origin}/auth/cli/authorize?challenge=${challenge}`, confirmationCode(challenge));
 		while (!signal.aborted) {
 			const response = await fetch(`${this.origin}/auth/cli/token`, {

@@ -163,7 +163,7 @@ export function integrateWorkflow(
 	const context = `\u0024{{ steps.${id}.outputs.context }}`;
 	const action = (name: string) => {
 		// A local integration is evidence, not a repository-name special case.
-		if (snapshot.files[`actions/${name}/action.yml`]) {
+		if (['action.yml', 'action.yaml'].some(file => snapshot.files[`actions/${name}/${file}`])) {
 			return `$/actions/${name}`;
 		}
 		return `kjanat/beepboop/actions/${name}@${actionsRevision ?? 'v1'}`;

@@ -1,4 +1,3 @@
-import { credentialHash } from '@/automation/cli-auth';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
 import { formatJson, json } from '@/automation/json';
 import { object } from '@/automation/managers/helpers';
@@ -18,6 +17,7 @@ import {
 } from '@/automation/setup-types';
 import { integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Package, RepositoryRecord, Snapshot } from '@/automation/types';
+import { sha256Hex } from '@/contract/ids';
 import { packageMarkdown } from '@/ui/package-label';
 
 function releasedPackage(pkg: Package | undefined): boolean {
@@ -255,7 +255,7 @@ export async function previewSetup(
 		branchConflict: baseline.branchConflict === true,
 		...(prior ? { prior } : {}),
 	};
-	const planId = await credentialHash(JSON.stringify({ ...plan, presetShas: baseline.presetShas ?? {} }));
+	const planId = await sha256Hex(JSON.stringify({ ...plan, presetShas: baseline.presetShas ?? {} }));
 	return { ...plan, planId };
 }
 type Operation = 'prepare' | 'promote';

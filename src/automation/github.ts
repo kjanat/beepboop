@@ -1,5 +1,6 @@
 import { importPKCS8, SignJWT } from 'jose';
 import type { Fetcher, VerificationContext } from '@/automation/managers/registry';
+import { parsePresetReference } from '@/automation/preset';
 import type { RefState } from '@/automation/refs';
 import { buildSnapshot } from '@/automation/snapshot';
 import type { BotIdentity } from '@/automation/token';
@@ -250,8 +251,9 @@ export class RepositoryGateway {
 		return refs.flat();
 	}
 	async preset(reference: string): Promise<{ value: unknown; sha: string }> {
-		const [, name, preset, ref] = reference.match(/^github>([\w.-]+\/[\w.-]+):([\w-]+)(?:#([\w./-]+))?$/) ?? [];
-		if (!name) throw new Error('Invalid preset');
+		const parsed = parsePresetReference(reference);
+		if (!parsed) throw new Error('Invalid preset');
+		const { repository: name, preset, ref } = parsed;
 		// Public presets need no installation grant; repository configuration cannot redirect credential-bearing requests.
 		const metadata = record(await this.call(`/repos/${name}`, ''));
 		const revision = record(

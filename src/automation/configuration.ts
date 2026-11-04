@@ -3,6 +3,7 @@ import { versionFileSchema } from '@/automation/editors';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { releaseIdentity } from '@/automation/package-identity';
 import { validRef } from '@/automation/policy';
+import { parsePresetReference } from '@/automation/preset';
 import type { Configuration, Stream, WorkflowBinding } from '@/automation/types';
 import { parseWinGetPolicy } from '@/automation/winget';
 import { managerNames } from '@/contract/catalog';
@@ -303,7 +304,7 @@ export async function resolveConfiguration(
 		const data = record(raw);
 		let resolved: Record<string, unknown> = {};
 		for (const reference of strings(data.extends ?? [])) {
-			if (!/^github>[\w.-]+\/[\w.-]+:[\w-]+(?:#[\w./-]+)?$/.test(reference)) {
+			if (!parsePresetReference(reference)) {
 				throw new Error('Invalid preset reference');
 			}
 			if (stack.includes(reference)) {

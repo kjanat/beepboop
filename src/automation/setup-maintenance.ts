@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { credentialHash } from '@/automation/cli-auth';
 import { resolveConfiguration } from '@/automation/configuration';
 import type { RepositoryGateway } from '@/automation/github';
 import { discover } from '@/automation/managers';
@@ -10,6 +9,7 @@ import { previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/aut
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Store } from '@/automation/store';
 import type { Edit, Snapshot } from '@/automation/types';
+import { sha256Hex } from '@/contract/ids';
 import { record } from '@/model';
 import { packageMarkdown } from '@/ui/package-label';
 
@@ -72,7 +72,7 @@ export async function maintainSetup(
 			presetShas: resolved.presetShas,
 			prior: { url: pull.url, content: typeof saved.content === 'string' ? saved.content : undefined },
 		}, resolved.configuration);
-		const fingerprint = await credentialHash(JSON.stringify({ plan, head: pull.head }));
+		const fingerprint = await sha256Hex(JSON.stringify({ plan, head: pull.head }));
 		if (!requested && saved.maintenanceFingerprint === fingerprint && saved.options !== undefined) return;
 		const applied = { choices: plan.choices, options: setupOptions(plan) };
 		if (plan.blockers.length || !plan.edits.length) {
