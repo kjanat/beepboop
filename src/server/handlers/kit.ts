@@ -2,7 +2,7 @@ import type { z } from 'zod';
 import { Authenticators, administrator, type WorkflowIdentity, workflowIdentity } from '@/automation/auth';
 import type { AutomationBindings, AutomationService } from '@/automation/service';
 import type { RepositoryRecord } from '@/automation/types';
-import { forbidden } from '@/contract/errors';
+import { forbidden, parseRequest } from '@/contract/errors';
 import type { AnyRoute, Known, Route } from '@/contract/routes';
 
 export interface Context {
@@ -44,7 +44,7 @@ export function admin<Q extends z.ZodType, S extends z.ZodType>(
 		route,
 		async run(context, read) {
 			const actor = await administrator(context.request, context.env);
-			return respond(route.response, await handle(route.request.parse(await read()), { ...context, actor }));
+			return respond(route.response, await handle(parseRequest(route.request, await read()), { ...context, actor }));
 		},
 	};
 }
@@ -62,7 +62,7 @@ export function elevated<Q extends z.ZodType, S extends z.ZodType>(
 			const raw = await read();
 			const proof = typeof raw === 'object' && raw !== null && 'proof' in raw ? raw.proof : undefined;
 			if (typeof proof !== 'string') throw forbidden(upgrade);
-			const effect = await precheck(route.request.parse(raw), { ...context, actor });
+			const effect = await precheck(parseRequest(route.request, raw), { ...context, actor });
 			await new Authenticators(context.env).consume(actor, proof);
 			return respond(route.response, await effect());
 		},
@@ -81,7 +81,7 @@ export function workflowToken<Q extends z.ZodType, S extends z.ZodType>(
 		route,
 		async run(context, read) {
 			const identity = await identify(context);
-			return respond(route.response, await handle(route.request.parse(await read()), { ...context, identity }));
+			return respond(route.response, await handle(parseRequest(route.request, await read()), { ...context, identity }));
 		},
 	};
 }
@@ -100,7 +100,7 @@ export function workflow<Q extends z.ZodType, S extends z.ZodType>(
 			}
 			return respond(
 				route.response,
-				await handle(route.request.parse(await read()), { ...context, identity, enrollment }),
+				await handle(parseRequest(route.request, await read()), { ...context, identity, enrollment }),
 			);
 		},
 	};

@@ -263,6 +263,46 @@ test('a deployed CLI adds a notification destination without a security-key touc
 	expect(listed.destinations.map(destination => destination.name)).toEqual(['Releases']);
 });
 
+test('outages answer as retryable upstream errors and corrupt rows as internal errors', async () => {
+	const { failureOf } = await import('../../actions/runtime/protocol.ts');
+	const repository = widget(world.github);
+	const token = await world.cliSession();
+	const send = transport(token);
+
+	world.network.serve('api.github.com', () => {
+		throw new TypeError('Connection reset by peer');
+	});
+	const github = await refused(call(routes.repositoriesDiscover, { repository: 'octo/widget' }, send));
+	expect([github.status, github.problem]).toEqual([502, { code: 'upstream', service: 'github', retryable: true }]);
+	world.network.serve(
+		'api.github.com',
+		request =>
+			request.method === 'POST'
+				? Response.json({ message: 'Unicorn' }, { status: 502 })
+				: world.github.handle(request),
+	);
+	const unicorn = await world.handle(
+		new Request(`${origin}/api/repositories/discover`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ repository: 'octo/widget' }),
+		}),
+	);
+	expect(unicorn.status).toBe(502);
+	expect(await failureOf(unicorn)).toEqual({ message: expect.stringContaining('HTTP 502 upstream'), retryable: true });
+	world.network.serve('api.github.com', request => world.github.handle(request));
+
+	world.db.failBatch = new Error('D1_ERROR: Network connection lost.');
+	const d1 = await refused(call(routes.notificationsRemove, { id: 'missing' }, send));
+	expect([d1.status, d1.problem]).toEqual([502, { code: 'upstream', service: 'd1', retryable: true }]);
+	world.db.failBatch = undefined;
+
+	await world.db.prepare('INSERT INTO grants(id,alias,repository_id,document) VALUES(?,?,?,?)')
+		.bind('broken', 'npm-token', repository.id, JSON.stringify({ id: 'broken', delivery: 'carrier-pigeon' })).run();
+	const corrupt = await refused(call(routes.credentialsList, {}, send));
+	expect([corrupt.status, corrupt.problem?.code]).toEqual([500, 'internal']);
+});
+
 test('a broken Worker configuration fails with a logged internal error', async () => {
 	runtimeEnv.OWNER_ID = 'NaN';
 	const logged: string[] = [];

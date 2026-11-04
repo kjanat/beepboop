@@ -4,7 +4,7 @@ import { matchesRef } from '@/automation/policy';
 import { issueWorkflowToken } from '@/automation/token';
 import type { Artifact, Execution, Publication } from '@/automation/types';
 import { isLockfile, reportableManagerNames } from '@/contract/catalog';
-import { forbidden, precondition } from '@/contract/errors';
+import { forbidden, parseRequest, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import { type EnrolledContext, workflow, workflowToken } from '@/server/handlers/kit';
 
@@ -22,10 +22,10 @@ const reportedFields = z.object({
 	retryAfter: z.unknown().optional(),
 });
 function publication(raw: unknown): Publication {
-	const { required, outcome, retryAfter, ...fields } = reportedFields.parse(raw);
+	const { required, outcome, retryAfter, ...fields } = parseRequest(reportedFields, raw);
 	const common = { ...fields, required: required !== false };
 	if (outcome !== 'rate-limited') return { ...common, outcome };
-	return { ...common, outcome, retryAfter: z.iso.datetime({ offset: true }).parse(retryAfter) };
+	return { ...common, outcome, retryAfter: parseRequest(z.iso.datetime({ offset: true }), retryAfter) };
 }
 const artifact: z.ZodType<Artifact> = z.object({
 	id: z.number().int().positive(),
@@ -86,9 +86,9 @@ export const workflowEndpoints = {
 	workflowBegin: workflow(routes.workflowBegin, async (input, context) => {
 		const id = input.executionId || await observed(
 			context,
-			z.string().min(1).parse(input.stream),
-			z.string().min(1).parse(input.operation),
-			input.version === undefined ? undefined : z.string().min(1).parse(input.version),
+			parseRequest(z.string().min(1), input.stream),
+			parseRequest(z.string().min(1), input.operation),
+			input.version === undefined ? undefined : parseRequest(z.string().min(1), input.version),
 		);
 		const execution = await owned(context, id);
 		if (execution.operation === 'promote') await context.service.prepareJsr(execution);
@@ -157,7 +157,7 @@ export const workflowEndpoints = {
 			input.executionId,
 			context.identity,
 			(input.publications ?? []).map(publication),
-			(input.artifacts ?? []).map(raw => artifact.parse(raw)),
+			(input.artifacts ?? []).map(raw => parseRequest(artifact, raw)),
 		);
 	}),
 	workflowCredentials: workflow(routes.workflowCredentials, async (input, context) => {

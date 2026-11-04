@@ -123,3 +123,20 @@ export function precondition(message: string): DomainError {
 export function invalid(message: string, path: (string | number)[] = []): DomainError {
 	return new DomainError({ code: 'invalid', issues: [{ path, message }] }, message);
 }
+export function upstream(service: (typeof services)[number], message: string): DomainError {
+	return new DomainError({ code: 'upstream', service, retryable: true }, message);
+}
+export function invalidRequest(error: z.ZodError): DomainError {
+	return new DomainError({
+		code: 'invalid',
+		issues: error.issues.map(entry => ({
+			path: entry.path.flatMap(part => typeof part === 'symbol' ? [] : [part]),
+			message: entry.message,
+		})),
+	});
+}
+export function parseRequest<S extends z.ZodType>(schema: S, value: unknown): z.output<S> {
+	const parsed = schema.safeParse(value);
+	if (!parsed.success) throw invalidRequest(parsed.error);
+	return parsed.data;
+}

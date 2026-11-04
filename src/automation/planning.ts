@@ -7,6 +7,7 @@ import { publishable } from '@/automation/package-publication';
 import type { Edit, Inventory, Snapshot } from '@/automation/types';
 import { parseVersionRequest } from '@/automation/version';
 import { isLockfile } from '@/contract/catalog';
+import { parseRequest } from '@/contract/errors';
 
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
 const operation = z.strictObject({
@@ -36,7 +37,7 @@ export function planReleaseSet(
 	allowed?: string[],
 	versionFiles: VersionFile[] = [],
 ) {
-	const request = releaseSetRequest.parse(input);
+	const request = parseRequest(releaseSetRequest, input);
 	const groups = new Map<string, { id: string; packages: string[]; version: string }>();
 	const selected = new Set<string>();
 	for (const group of request.groups) {

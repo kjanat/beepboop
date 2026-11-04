@@ -7,16 +7,16 @@ interface Classified {
 	message: string;
 }
 
+const d1Failure = /^D1_ERROR\b/;
+
 function classify(error: unknown, incident: string): Classified {
 	if (error instanceof DomainError) return { problem: error.problem, message: error.message };
 	if (error instanceof z.ZodError) {
-		const problem: ApiError = {
-			code: 'invalid',
-			issues: error.issues.map(entry => ({
-				path: entry.path.flatMap(part => typeof part === 'symbol' ? [] : [part]),
-				message: entry.message,
-			})),
-		};
+		const problem: ApiError = { code: 'internal', incident };
+		return { problem, message: messageOf(problem) };
+	}
+	if (error instanceof Error && d1Failure.test(error.message)) {
+		const problem: ApiError = { code: 'upstream', service: 'd1', retryable: true };
 		return { problem, message: messageOf(problem) };
 	}
 	if (error instanceof SyntaxError) {

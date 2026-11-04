@@ -10,7 +10,7 @@ import { createRemoteJWKSet, errors, type JWTVerifyGetKey, jwtVerify } from 'jos
 import { z } from 'zod';
 import { cliAuthRoute, cliSubject } from '@/automation/cli-auth';
 import { documentRow } from '@/automation/schemas';
-import { forbidden, unauthenticated } from '@/contract/errors';
+import { forbidden, parseRequest, unauthenticated } from '@/contract/errors';
 import { loginSecretPattern } from '@/contract/ids';
 import { integer, record, sha, text } from '@/model';
 import { SessionStore } from '@/persistence/d1/sessions';
@@ -407,7 +407,7 @@ export class Authenticators {
 		const rpID = new URL(this.env.APPLICATION_ORIGIN).hostname;
 		if (challenge.register) {
 			const result = await verifyRegistrationResponse({
-				response: registrationResponse.parse(response),
+				response: parseRequest(registrationResponse, response),
 				expectedChallenge: text(challenge.challenge),
 				expectedOrigin: this.env.APPLICATION_ORIGIN,
 				expectedRPID: rpID,
@@ -445,7 +445,7 @@ export class Authenticators {
 		if (!stored) throw new Error('Unknown authenticator');
 		const saved = stored.credential;
 		const result = await verifyAuthenticationResponse({
-			response: authenticationResponse.parse(response),
+			response: parseRequest(authenticationResponse, response),
 			expectedChallenge: text(challenge.challenge),
 			expectedOrigin: this.env.APPLICATION_ORIGIN,
 			expectedRPID: rpID,

@@ -5,6 +5,7 @@ import type { RefState } from '@/automation/refs';
 import { buildSnapshot } from '@/automation/snapshot';
 import type { BotIdentity } from '@/automation/token';
 import type { Edit, Snapshot } from '@/automation/types';
+import { upstream } from '@/contract/errors';
 import { array, integer, record, sha, text } from '@/model';
 
 type Permission = Record<string, 'read' | 'write'>;
@@ -33,10 +34,22 @@ export class RepositoryGateway {
 				},
 				...(body === undefined ? {} : { body: JSON.stringify(body) }),
 			});
-		let response = await send();
+		const reach = async (): Promise<Response> => {
+			try {
+				return await send();
+			} catch (error) {
+				throw upstream(
+					'github',
+					`GitHub unreachable on ${method} ${path.split('?')[0]}: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+			}
+		};
+		let response = await reach();
 		for (let attempt = 1; method === 'GET' && response.status >= 500 && attempt < 3; attempt++) {
 			await new Promise(resolve => setTimeout(resolve, attempt * 500));
-			response = await send();
+			response = await reach();
 		}
 		if (response.status === 404 && method === 'GET') return null;
 		if (!response.ok) {
@@ -50,9 +63,8 @@ export class RepositoryGateway {
 					return body.slice(0, 200);
 				}
 			}, () => '');
-			throw new Error(
-				`GitHub HTTP ${response.status} on ${method} ${path.split('?')[0]}${detail ? `: ${detail}` : ''}`,
-			);
+			const message = `GitHub HTTP ${response.status} on ${method} ${path.split('?')[0]}${detail ? `: ${detail}` : ''}`;
+			throw response.status >= 500 ? upstream('github', message) : new Error(message);
 		}
 		if (response.status === 204) return null;
 		return response.json();
@@ -72,7 +84,10 @@ export class RepositoryGateway {
 			headers: { ...headers, Accept: 'application/octet-stream' },
 			signal: AbortSignal.timeout(60_000),
 		});
-		if (!download.ok) throw new Error(`GitHub HTTP ${download.status} downloading release asset ${asset.name}`);
+		if (!download.ok) {
+			const message = `GitHub HTTP ${download.status} downloading release asset ${asset.name}`;
+			throw download.status >= 500 ? upstream('github', message) : new Error(message);
+		}
 		const upload = await this.transport(
 			`https://uploads.github.com/repos/${repository}/releases/${releaseId}/assets?name=${
 				encodeURIComponent(asset.name)
@@ -84,7 +99,10 @@ export class RepositoryGateway {
 				signal: AbortSignal.timeout(60_000),
 			},
 		);
-		if (!upload.ok) throw new Error(`GitHub HTTP ${upload.status} uploading release asset ${asset.name}`);
+		if (!upload.ok) {
+			const message = `GitHub HTTP ${upload.status} uploading release asset ${asset.name}`;
+			throw upload.status >= 500 ? upstream('github', message) : new Error(message);
+		}
 	}
 	async token(
 		name: string,

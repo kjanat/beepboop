@@ -18,6 +18,7 @@ import {
 import { integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Package, RepositoryRecord, Snapshot } from '@/automation/types';
 import { blocking } from '@/contract/diagnostics';
+import { parseRequest } from '@/contract/errors';
 import { sha256Hex } from '@/contract/ids';
 import { setupChoicesSchema } from '@/contract/setup';
 import { configurationDrift } from '@/domain/configuration';
@@ -126,7 +127,7 @@ export async function previewSetup(
 ): Promise<SetupPlan> {
 	// Empty selections are allowed in suggestions, but cannot be applied.
 	const suggested = input === undefined;
-	const choices = suggested ? suggestSetup(snapshot, inventory, resolved) : setupChoicesSchema.parse(input);
+	const choices = suggested ? suggestSetup(snapshot, inventory, resolved) : parseRequest(setupChoicesSchema, input);
 	const raw = object(JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}'));
 	const configuration = structuredClone(raw);
 	const streams = { ...object(configuration.streams) };
