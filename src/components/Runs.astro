@@ -229,7 +229,7 @@ const progress = (run: Execution): string => {
 				 <button>Check workflow outcome</button>
 			 </form>
 		 )}
-		 {!['succeeded', 'cancelled'].includes(run.state) && (
+		 {!['succeeded', 'cancelled', 'failed'].includes(run.state) && (
 			 <form data-action="cancel">
 				 <input type="hidden" name="id" value={run.id}><button>Cancel</button>
 			 </form>

@@ -1,6 +1,6 @@
 import { object } from '@/automation/managers/helpers';
 import { emptyInventory, type Fetcher, type Manager, type RegistryVersion } from '@/automation/managers/registry';
-import { latestVersion } from '@/automation/managers/verification';
+import { latestVersion, unpublished } from '@/automation/managers/verification';
 import { identityOf } from '@/automation/package-identity';
 import { registry } from '@/automation/package-publication';
 
@@ -11,6 +11,10 @@ export function jsrLatest(name: string, request: Fetcher): Promise<RegistryVersi
 		const metadata = object(body);
 		const [scope, bare] = name.slice(1).split('/');
 		const latest = metadata.latest;
+		if (
+			metadata.scope === scope && metadata.name === bare && latest === null
+			&& !Object.keys(object(metadata.versions)).length
+		) return unpublished;
 		return metadata.scope === scope && metadata.name === bare && typeof latest === 'string'
 				&& Object.hasOwn(object(metadata.versions), latest)
 				&& object(object(metadata.versions)[latest]).yanked !== true
