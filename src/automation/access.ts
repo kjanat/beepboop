@@ -1,4 +1,4 @@
-import { type Grant, parseGrant } from '@/automation/vault.ts';
+import { type Grant, requestGrant } from '@/automation/vault.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import { record, text } from '@/model';
 
@@ -20,7 +20,7 @@ export function configuredGrant(repository: ReadyRepository, input: unknown): Gr
 		throw new Error('Add this name to the selected stream’s credentials list in .github/beepboop.json first');
 	}
 	const ref = workflow.ref ?? repository.defaultBranch;
-	return parseGrant({
+	return requestGrant({
 		id: crypto.randomUUID(),
 		alias,
 		repositoryId: repository.id,

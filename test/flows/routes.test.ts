@@ -207,6 +207,23 @@ test('elevated routes check the request before they spend the security-key proof
 	);
 	expect(await world.db.prepare('SELECT id FROM sessions WHERE id=?').bind('proof').first()).toEqual({ id: 'proof' });
 
+	const unnamed = await refused(call(routes.credentialsGrant, {
+		proof: 'proof',
+		selection: {
+			alias: 'npm-token',
+			repositoryId: repository.id,
+			stream: 'main',
+			operation: 'promote',
+			delivery: 'repository',
+		},
+	}, send));
+	expect([unnamed.status, unnamed.problem]).toEqual([400, {
+		code: 'invalid',
+		issues: [{ path: ['secretName'], message: 'Secret name required' }],
+	}]);
+	expect(unnamed.message).toBe('secretName: Secret name required');
+	expect(await world.db.prepare('SELECT id FROM sessions WHERE id=?').bind('proof').first()).toEqual({ id: 'proof' });
+
 	const stale = await refused(call(
 		routes.credentialsReplace,
 		{ alias: 'npm-token', value: 'secret', proof: 'proof', expectedVersion: 3 },

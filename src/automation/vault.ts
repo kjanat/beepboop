@@ -4,7 +4,7 @@ import { base64, bytes, type WorkflowIdentity } from '@/automation/auth';
 import type { RepositoryGateway } from '@/automation/github';
 import { matchesRef } from '@/automation/policy';
 import type { Store } from '@/automation/store';
-import { forbidden, invalid, notFound } from '@/contract/errors';
+import { forbidden, invalid, notFound, parseRequest } from '@/contract/errors';
 import { credentialAliasPattern, githubSecretNamePattern } from '@/contract/ids';
 import { record, text } from '@/model';
 import type { CredentialStore } from '@/persistence/d1/credentials';
@@ -34,7 +34,7 @@ const grantFields = {
 	workflow: z.string().regex(/^[\w-]+\.ya?ml$/),
 	ref: z.string().startsWith('refs/'),
 };
-const secretName = z.string().regex(githubSecretNamePattern, 'Secret name required');
+const secretName = z.string({ error: 'Secret name required' }).regex(githubSecretNamePattern, 'Secret name required');
 const grantSchema = z.discriminatedUnion('delivery', [
 	z.object({
 		...grantFields,
@@ -52,6 +52,9 @@ const grantSchema = z.discriminatedUnion('delivery', [
 ]);
 export function parseGrant(value: unknown): Grant {
 	return grantSchema.parse(value);
+}
+export function requestGrant(value: unknown): Grant {
+	return parseRequest(grantSchema, value);
 }
 export function validCredential(alias: string, value: string): void {
 	if (!credentialAliasPattern.test(alias) || !value || value.length > 48000) throw invalid('Invalid credential');
