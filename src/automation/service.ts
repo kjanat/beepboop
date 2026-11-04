@@ -936,17 +936,15 @@ export class AutomationService {
 				return Response.json(await vault.reveal(text(body.alias), actor));
 			}
 			if (path.endsWith('/grant')) {
-				if (body.selection !== undefined) {
-					const selection = record(body.selection);
-					const repository = await this.store.repository(integer(selection.repositoryId));
-					if (!repository) throw new Error('Repository is not enrolled');
-					const grant = configuredGrant(repository, selection);
-					const saved = await this.store.db.prepare('SELECT alias FROM credentials WHERE alias=? AND active=1').bind(
-						grant.alias,
-					).first();
-					if (!saved) throw new Error('Store a value under this name before granting access');
-					await vault.grant(grant, actor);
-				} else await vault.grant(parseGrant(body.grant), actor);
+				const selection = record(body.selection);
+				const repository = await this.store.repository(integer(selection.repositoryId));
+				if (!repository) throw new Error('Repository is not enrolled');
+				const grant = configuredGrant(repository, selection);
+				const saved = await this.store.db.prepare('SELECT alias FROM credentials WHERE alias=? AND active=1').bind(
+					grant.alias,
+				).first();
+				if (!saved) throw new Error('Store a value under this name before granting access');
+				await vault.grant(grant, actor);
 				return Response.json({ granted: true });
 			}
 			if (path.endsWith('/revoke')) {
