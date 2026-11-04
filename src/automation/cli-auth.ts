@@ -3,7 +3,6 @@ import { cliToken, cliTokenPattern, confirmationCode, loginSecretPattern, sha256
 import { record, string } from '@/model';
 
 type CLIEnvironment = Pick<AuthBindings, 'ADMIN_SUBJECT'> & Partial<Pick<AuthBindings, 'DB'>>;
-/** Store only hashes of terminal credentials; the browser never receives them. */
 export async function cliSubject(request: Request, env: CLIEnvironment): Promise<string> {
 	const token = request.headers.get('authorization')?.match(/^Bearer (\S+)$/)?.[1];
 	if (!token || !cliTokenPattern.test(token) || !env.DB) throw new Error('CLI login required');
@@ -34,6 +33,7 @@ export async function cliAuthRoute(
 		const approval = record(JSON.parse(string(row.document)));
 		if (approval.subject !== env.ADMIN_SUBJECT) return json({ error: 'Access denied' }, 403);
 		const token = cliToken();
+		// Store only hashes of terminal credentials; the browser never receives them.
 		await env.DB.prepare('INSERT INTO cli_sessions(id,subject,created_at) VALUES(?,?,?)')
 			.bind(await sha256Hex(token), string(approval.subject), Date.now())
 			.run();
