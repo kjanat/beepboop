@@ -4,6 +4,8 @@ import { repositoryReference } from '@/automation/repository-name';
 import { Client } from '@/cli/client';
 import { emit, failure } from '@/cli/output';
 import { setupRepository } from '@/cli/setup';
+import { notificationKinds, watchedPackagePattern } from '@/contract/catalog';
+import { credentialAliasPattern, githubSecretNamePattern, shaPattern } from '@/contract/ids';
 import { array, boolean, integer, record, string, text } from '@/model';
 
 function repositoryRows(value: unknown) {
@@ -166,7 +168,7 @@ const runs = group('runs').description('Follow, approve and recover release oper
 		base('approve', 'Approve the exact reviewed source commit')
 			.arg('id', arg.string().prompt({ kind: 'input', message: 'Execution ID' }).required()).flag(
 				'sourceSha',
-				flag.string({ pattern: /^[a-f0-9]{40}$/ }).prompt({ kind: 'input', message: 'Reviewed source commit SHA' })
+				flag.string({ pattern: shaPattern }).prompt({ kind: 'input', message: 'Reviewed source commit SHA' })
 					.required(),
 			)
 			.flag('force', flag.boolean().default(false).describe('Approve even when the signature or checks fail'))
@@ -209,7 +211,7 @@ for (const operation of ['plan', 'prepare'] as const) {
 			)
 			.flag(
 				'sourceSha',
-				flag.string({ pattern: /^[a-f0-9]{40}$/ }).describe('Required for prepare: source SHA from plan'),
+				flag.string({ pattern: shaPattern }).describe('Required for prepare: source SHA from plan'),
 			)
 			.flag('planId', flag.string().describe('Required for prepare: plan identity from plan'))
 			.interactive(() =>
@@ -255,7 +257,7 @@ for (const operation of ['plan-set', 'prepare-set'] as const) {
 			)
 			.flag(
 				'sourceSha',
-				flag.string({ pattern: /^[a-f0-9]{40}$/ }).describe('Required for prepare-set: source SHA from plan-set'),
+				flag.string({ pattern: shaPattern }).describe('Required for prepare-set: source SHA from plan-set'),
 			)
 			.flag('planId', flag.string().describe('Required for prepare-set: plan identity from plan-set'))
 			.interactive(() =>
@@ -292,7 +294,7 @@ releases = releases.command(
 	base('start', 'Start the release operations for a completed preparation')
 		.arg('preparationId', arg.string().prompt({ kind: 'input', message: 'Preparation ID' }).required()).flag(
 			'sourceSha',
-			flag.string({ pattern: /^[a-f0-9]{40}$/ }).prompt({ kind: 'input', message: 'Reviewed source commit SHA' })
+			flag.string({ pattern: shaPattern }).prompt({ kind: 'input', message: 'Reviewed source commit SHA' })
 				.required(),
 		)
 		.action(async ({ flags, args, out }) =>
@@ -331,7 +333,9 @@ const secrets = group('secrets').description('Store secret values and list workf
 		base('set', 'Store a secret value from stdin or a hidden prompt')
 			.arg(
 				'alias',
-				arg.string({ pattern: /^[\w-]{1,64}$/ }).describe('Secret name: 1-64 letters, numbers, underscores or hyphens'),
+				arg.string({ pattern: credentialAliasPattern }).describe(
+					'Secret name: 1-64 letters, numbers, underscores or hyphens',
+				),
 			)
 			.action(async ({ flags, args, ask, out }) => {
 				const client = new Client(flags.server);
@@ -363,7 +367,7 @@ const secrets = group('secrets').description('Store secret values and list workf
 	)
 	.command(
 		repository('grant', 'Let a configured release workflow use a stored secret')
-			.arg('alias', arg.string({ pattern: /^[\w-]{1,64}$/ }).describe('Stored secret name'))
+			.arg('alias', arg.string({ pattern: credentialAliasPattern }).describe('Stored secret name'))
 			.flag('stream', flag.string().describe('Release stream; defaults to the only configured stream'))
 			.flag('operation', flag.string().default('promote').describe('prepare, promote or another configured operation'))
 			.flag(
@@ -372,7 +376,7 @@ const secrets = group('secrets').description('Store secret values and list workf
 					'runtime: fetched by the credentials action; repository or environment: copied into a GitHub secret',
 				),
 			)
-			.flag('secretName', flag.string({ pattern: /^[A-Z_][A-Z0-9_]*$/ }).describe('GitHub secret name'))
+			.flag('secretName', flag.string({ pattern: githubSecretNamePattern }).describe('GitHub secret name'))
 			.flag('environment', flag.string().describe('GitHub environment for environment delivery'))
 			.action(async ({ flags, args, ask, out }) => {
 				const client = new Client(flags.server);
@@ -456,10 +460,13 @@ const notifications = group('notifications').description('Send package releases 
 	.command(
 		base('add', 'Add a destination that posts to the URL stored in a secret')
 			.flag('name', flag.string().prompt({ kind: 'input', message: 'Destination name' }).required())
-			.flag('kind', flag.enum(['slack', 'http']).prompt({ kind: 'select', message: 'Destination type' }).required())
+			.flag('kind', flag.enum(notificationKinds).prompt({ kind: 'select', message: 'Destination type' }).required())
 			.flag(
 				'secret',
-				flag.string({ pattern: /^[\w-]{1,64}$/ }).prompt({ kind: 'input', message: 'Secret holding the webhook URL' })
+				flag.string({ pattern: credentialAliasPattern }).prompt({
+					kind: 'input',
+					message: 'Secret holding the webhook URL',
+				})
 					.required(),
 			)
 			.flag(
@@ -489,7 +496,7 @@ const notifications = group('notifications').description('Send package releases 
 			.arg('destination', arg.string().describe('Destination ID from notifications list'))
 			.arg(
 				'package',
-				arg.string({ pattern: /^(npm|jsr):.+$/ }).describe('Package as registry:name, for example npm:svgo'),
+				arg.string({ pattern: watchedPackagePattern }).describe('Package as registry:name, for example npm:svgo'),
 			)
 			.action(async ({ flags, args, out }) => {
 				const separator = args.package.indexOf(':');

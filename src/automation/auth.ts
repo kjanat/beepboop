@@ -10,6 +10,7 @@ import { createRemoteJWKSet, type JWTVerifyGetKey, jwtVerify } from 'jose';
 import { z } from 'zod';
 import { cliAuthRoute, cliSubject } from '@/automation/cli-auth';
 import { documentRow } from '@/automation/schemas';
+import { loginSecretPattern } from '@/contract/ids';
 import { integer, record, sha, text } from '@/model';
 
 const clientExtensionResults = z.object({}).catch({});
@@ -198,7 +199,7 @@ export function returnPath(value: unknown): string {
 		: '/';
 }
 function loginTarget(cli: unknown, target: unknown): string {
-	return typeof cli === 'string' && /^[a-f0-9]{64}$/.test(cli)
+	return typeof cli === 'string' && loginSecretPattern.test(cli)
 		? `/auth/cli/authorize?challenge=${cli}`
 		: returnPath(target);
 }

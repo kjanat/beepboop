@@ -5,6 +5,7 @@ import { isCLIError } from '@kjanat/dreamcli';
 import { credentialHash } from '@/automation/cli-auth';
 import { type SecurityKeyPrompts, securityKeyAssertion } from '@/cli/fido2/index';
 import { failure, signIn } from '@/cli/output';
+import { cliTokenPattern, confirmationCode, loginSecret } from '@/contract/ids';
 import { record, text } from '@/model';
 
 export interface Session {
@@ -13,7 +14,7 @@ export interface Session {
 function parseSession(value: unknown): Session | undefined {
 	if (typeof value !== 'object' || value === null || !('token' in value)) return undefined;
 	const { token } = value;
-	if (typeof token !== 'string' || !/^cli_[a-f0-9]{64}$/.test(token)) return undefined;
+	if (typeof token !== 'string' || !cliTokenPattern.test(token)) return undefined;
 	return { token };
 }
 function reason(body: string): string {
@@ -112,9 +113,9 @@ export class Client {
 		show: (url: string, code: string) => void | Promise<void>,
 		signal = AbortSignal.timeout(300000),
 	): Promise<void> {
-		const verifier = `${crypto.randomUUID().replaceAll('-', '')}${crypto.randomUUID().replaceAll('-', '')}`;
+		const verifier = loginSecret();
 		const challenge = await credentialHash(verifier);
-		await show(`${this.origin}/auth/cli/authorize?challenge=${challenge}`, challenge.slice(0, 8));
+		await show(`${this.origin}/auth/cli/authorize?challenge=${challenge}`, confirmationCode(challenge));
 		while (!signal.aborted) {
 			const response = await fetch(`${this.origin}/auth/cli/token`, {
 				method: 'POST',

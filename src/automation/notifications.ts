@@ -3,6 +3,7 @@ import type { Fetcher } from '@/automation/managers/registry';
 import type { Store } from '@/automation/store';
 import type { Vault } from '@/automation/vault';
 import { type NotificationKind, notificationKinds, type WatchedRegistry, watchedRegistries } from '@/contract/catalog';
+import { credentialAliasPattern } from '@/contract/ids';
 import { watchedPackageHref } from '@/contract/links';
 
 export const deliveryStates = ['pending', 'delivered', 'failed'] as const;
@@ -73,10 +74,10 @@ const deliveryRow = z.object({
 	updated_at: z.number(),
 });
 export const destinationInput = z.object({
-	id: z.string().regex(/^[\w-]{1,64}$/).optional(),
+	id: z.string().regex(credentialAliasPattern).optional(),
 	name: z.string().trim().min(1).max(80),
 	kind: z.enum(notificationKinds),
-	credential: z.string().regex(/^[\w-]{1,64}$/),
+	credential: z.string().regex(credentialAliasPattern),
 	subscribeNew: z.boolean(),
 	enabled: z.boolean(),
 });

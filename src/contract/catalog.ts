@@ -187,6 +187,7 @@ export function legacyJsrIdentity(identity: {
 
 export const watchedRegistries = ['npm', 'jsr'] as const satisfies readonly ManagerDestinationId[];
 export type WatchedRegistry = (typeof watchedRegistries)[number];
+export const watchedPackagePattern = new RegExp(`^(?:${watchedRegistries.join('|')}):.+$`);
 export const notificationKinds = ['slack', 'http'] as const;
 export type NotificationKind = (typeof notificationKinds)[number];
 export const notificationKindLabels = {

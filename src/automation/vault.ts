@@ -5,6 +5,7 @@ import type { RepositoryGateway } from '@/automation/github';
 import { matchesRef } from '@/automation/policy';
 import { rowDocument } from '@/automation/schemas';
 import type { Store } from '@/automation/store';
+import { credentialAliasPattern, githubSecretNamePattern } from '@/contract/ids';
 import { integer, oneOf, record, text } from '@/model';
 
 const credentialRow = z.object({ version: z.number(), key_id: z.string(), iv: z.string(), ciphertext: z.string() });
@@ -67,13 +68,13 @@ export function parseGrant(value: unknown): Grant {
 	const delivery = oneOf(fields.delivery, ['runtime', 'repository', 'environment'], 'Invalid delivery mode');
 	if (delivery === 'runtime') return { ...fields, delivery };
 	const { environment, secretName } = fields;
-	if (!secretName || !/^[A-Z_][A-Z0-9_]*$/.test(secretName)) throw new Error('Secret name required');
+	if (!secretName || !githubSecretNamePattern.test(secretName)) throw new Error('Secret name required');
 	if (delivery === 'repository') return { ...fields, delivery, secretName };
 	if (!environment) throw new Error('Environment required');
 	return { ...fields, delivery, environment, secretName };
 }
 export function validCredential(alias: string, value: string): void {
-	if (!/^[\w-]{1,64}$/.test(alias) || !value || value.length > 48000) throw new Error('Invalid credential');
+	if (!credentialAliasPattern.test(alias) || !value || value.length > 48000) throw new Error('Invalid credential');
 }
 export class Vault {
 	constructor(

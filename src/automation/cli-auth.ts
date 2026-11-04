@@ -1,4 +1,5 @@
 import type { AuthBindings } from '@/automation/auth';
+import { cliToken, cliTokenPattern, confirmationCode, loginSecretPattern } from '@/contract/ids';
 import { record, string } from '@/model';
 
 /** Store only hashes of terminal credentials; the browser never receives them. */
@@ -9,8 +10,8 @@ export async function credentialHash(value: string): Promise<string> {
 
 type CLIEnvironment = Pick<AuthBindings, 'ADMIN_SUBJECT'> & Partial<Pick<AuthBindings, 'DB'>>;
 export async function cliSubject(request: Request, env: CLIEnvironment): Promise<string> {
-	const token = request.headers.get('authorization')?.match(/^Bearer (cli_[a-f0-9]{64})$/)?.[1];
-	if (!token || !env.DB) throw new Error('CLI login required');
+	const token = request.headers.get('authorization')?.match(/^Bearer (\S+)$/)?.[1];
+	if (!token || !cliTokenPattern.test(token) || !env.DB) throw new Error('CLI login required');
 	const row = await env.DB.prepare('SELECT subject FROM cli_sessions WHERE id=?')
 		.bind(await credentialHash(token)).first();
 	const subject = row ? string(row.subject) : undefined;
@@ -31,13 +32,13 @@ export async function cliAuthRoute(
 		Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
 	if (url.pathname === '/auth/cli/token' && request.method === 'POST') {
 		const verifier = await request.text();
-		if (!/^[a-f0-9]{64}$/.test(verifier)) return json({ error: 'Invalid login verifier' }, 400);
+		if (!loginSecretPattern.test(verifier)) return json({ error: 'Invalid login verifier' }, 400);
 		const row = await env.DB.prepare('DELETE FROM sessions WHERE id=? AND expires_at>? RETURNING document')
 			.bind(`cli-approval:${await credentialHash(verifier)}`, Date.now()).first();
 		if (!row) return json({ pending: true }, 202);
 		const approval = record(JSON.parse(string(row.document)));
 		if (approval.subject !== env.ADMIN_SUBJECT) return json({ error: 'Access denied' }, 403);
-		const token = `cli_${crypto.randomUUID().replaceAll('-', '')}${crypto.randomUUID().replaceAll('-', '')}`;
+		const token = cliToken();
 		await env.DB.prepare('INSERT INTO cli_sessions(id,subject,created_at) VALUES(?,?,?)')
 			.bind(await credentialHash(token), string(approval.subject), Date.now())
 			.run();
@@ -64,7 +65,7 @@ export async function cliAuthRoute(
 		return json({ error: 'Not found' }, 404);
 	}
 	const challenge = url.searchParams.get('challenge');
-	if (!challenge || !/^[a-f0-9]{64}$/.test(challenge)) return json({ error: 'Invalid login challenge' }, 400);
+	if (!challenge || !loginSecretPattern.test(challenge)) return json({ error: 'Invalid login challenge' }, 400);
 	// Approval must come from the signed-in browser, never another terminal session.
 	if (request.headers.has('authorization')) return json({ error: 'Browser login required' }, 403);
 	let subject: string;
@@ -88,7 +89,7 @@ export async function cliAuthRoute(
 			approved
 				? '<p>Return to your terminal. You can close this page.</p>'
 				: `<p>Only approve if you just ran beepboop auth login in your own terminal. This grants administrator API access until you run beepboop auth logout. Security-key checks still apply.</p><p>Confirm this code matches your terminal: <strong>${
-					challenge.slice(0, 8)
+					confirmationCode(challenge)
 				}</strong></p><form method="post"><button>Authorize my terminal</button></form>`
 		}</main></html>`,
 		{

@@ -1,3 +1,4 @@
+import { shaPattern } from '@/contract/ids';
 import { compare, semVer, semverPattern } from '@/contract/version';
 
 export function record(value: unknown): Record<string, unknown> {
@@ -34,7 +35,7 @@ export function matches(value: unknown, pattern: RegExp): string {
 	return result;
 }
 export function sha(value: unknown): string {
-	return matches(value, /^[0-9a-f]{40}$/);
+	return matches(value, shaPattern);
 }
 export function semver(value: unknown): string {
 	return matches(value, semverPattern);
