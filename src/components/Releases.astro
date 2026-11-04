@@ -44,6 +44,7 @@ const groups = [...new Set(packages.map(p => p.versionSource))].map((
 	id: `group-${index + 1}`,
 	packages: packages.filter(p => p.versionSource === source),
 }));
+const runnable = workflows.filter(w => w.operation !== 'prepare');
 const recommended = recommendedVersion(packages);
 const bump = (kind: 'patch' | 'minor' | 'major') => {
 	const version = bumpedVersion(packages, { bump: kind });
@@ -236,7 +237,7 @@ const preparations = data.executions.filter(e =>
 			 <p>
 				 Start an operation from this release stream. Promotion creates an
 				 approval request for the chosen commit.
-			 </p>{workflows.length ? (
+			 </p>{runnable.length ? (
 				 <form data-action="start">
 					 <input type="hidden" name="repositoryId" value={repository.id}><input
 						 type="hidden"
@@ -244,7 +245,7 @@ const preparations = data.executions.filter(e =>
 						 value={streamName}
 					 ><div class="form-grid">
 						 <label>Workflow<select name="operation">
-								 {workflows.map(w => (
+								 {runnable.map(w => (
 									 <option value={w.operation}>{w.operation} ({w.file})</option>
 								 ))}
 							 </select></label><label>Version, if needed<input
