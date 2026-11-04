@@ -66,7 +66,7 @@ const { title, description } = sectionPages[section];
 		</aside>
 		<main id="main">
 			{outage && (
-				<section class="outage" role="alert">
+				<section class="outage" aria-label="GitHub status">
 					<p>
 						<strong>GitHub: {outage.description}.</strong> Beepboop's runs,
 						pushes and pull requests may fail or stall until GitHub recovers.

@@ -140,7 +140,11 @@ const subscribed = (destinationId: string, registry: string, name: string) =>
 													name="subscribed"
 													value={String(!on)}
 												>
-												<button class="toggle" aria-pressed={on}>
+												<button
+													class="toggle"
+													aria-pressed={on}
+													aria-label={`${destination.name} notifications for ${pkg.name}`}
+												>
 													{destination.name}
 												</button>
 											</form>
@@ -159,7 +163,12 @@ const subscribed = (destinationId: string, registry: string, name: string) =>
 								>
 									<input type="hidden" name="registry" value={pkg.registry}>
 									<input type="hidden" name="name" value={pkg.name}>
-									<button class="quiet">Stop watching</button>
+									<button
+										class="quiet"
+										aria-label={`Stop watching ${pkg.name}`}
+									>
+										Stop watching
+									</button>
 								</form>
 							)}
 						</td>

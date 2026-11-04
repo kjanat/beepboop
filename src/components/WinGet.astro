@@ -135,11 +135,18 @@ const repositories = data.repositories.filter(repo =>
 						 >
 						 <input type="hidden" name="releaseId" value={item.plan.releaseId}>
 						 <input type="hidden" name="digest" value={item.plan.digest}>
-						 <button disabled={!data.ready}>Retry submission</button>
+						 <button
+							 disabled={!data.ready}
+							 aria-label={`Retry submission of ${item.plan.packageIdentifier} ${item.plan.version}`}
+						 >
+							 Retry submission
+						 </button>
 					 </form>
 				 )}
 				 <details>
-					 <summary>Submitted manifests and source commit</summary>
+					 <summary aria-label={`Submitted manifests and source commit of ${item.plan.packageIdentifier} ${item.plan.version}`}>
+						 Submitted manifests and source commit
+					 </summary>
 					 <p>
 						 <a
 							 href={`https://github.com/${item.plan.repository}/commit/${item.plan.sourceSha}`}

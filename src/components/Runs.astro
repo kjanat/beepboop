@@ -95,7 +95,9 @@ const refTag = (run: Execution, version: string): string => {
 			>
 				<input type="hidden" name="id" value={release.recoveryId}>
 				<input type="hidden" name="action" value="reconcile">
-				<button>Check coordination</button>
+				<button aria-label={`Check coordination of ${release.repository} release set`}>
+					Check coordination
+				</button>
 			</form>
 		)}
 		<details>
@@ -133,6 +135,8 @@ const refTag = (run: Execution, version: string): string => {
 	const until = waiting(run);
 	const required = run.releaseSet?.required
 		?? run.configuration.streams[run.stream]?.required ?? [];
+	const runName = [run.repository, run.stream, run.operation, run.version]
+		.filter(Boolean).join(' ');
 	const approving = run.state === 'blocked' && run.operation === 'promote';
 	const automatic = approving
 		&& (run.configuration.streams[run.stream]?.promote.approval === 'push'
@@ -268,7 +272,7 @@ const refTag = (run: Execution, version: string): string => {
 				>
 					<input type="hidden" name="id" value={run.id}>
 					<input type="hidden" name="action" value="retry">
-					<button>Retry</button>
+					<button aria-label={`Retry ${runName}`}>Retry</button>
 				</form>
 			)}
 		 {run.state === 'uncertain' && (
@@ -283,17 +287,19 @@ const refTag = (run: Execution, version: string): string => {
 					 Check whether GitHub accepted the earlier request before attempting
 					 another dispatch.
 				 </p>
-				 <button>Check workflow outcome</button>
+				 <button aria-label={`Check workflow outcome of ${runName}`}>
+					 Check workflow outcome
+				 </button>
 			 </form>
 		 )}
 		 {!['succeeded', 'cancelled', 'failed'].includes(run.state) && (
 			 <form data-action="cancel" method="post" action="/api/executions/cancel">
 				 <input type="hidden" name="id" value={run.id}>
-				 <button>Cancel</button>
+				 <button aria-label={`Cancel ${runName}`}>Cancel</button>
 			 </form>
 		 )}
 		 <details>
-			 <summary>Run details</summary>
+			 <summary aria-label={`Run details for ${runName}`}>Run details</summary>
 			 <dl>
 				 <dt>Configuration commit</dt>
 				 <dd>

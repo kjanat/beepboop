@@ -4,7 +4,7 @@ import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import { packageLabel } from '@/domain/package-label';
 import { oneOf } from '@/model';
-import { api, find, show } from '@/ui/browser/dom';
+import { api, feedbackFor, find, show } from '@/ui/browser/dom';
 
 const setupPlan = z.unknown().transform(parseSetupPlan);
 const sessions = new WeakMap<
@@ -213,6 +213,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 	result.className = 'setup-result';
 	result.setAttribute('aria-live', 'polite');
 	form.append(preview, apply, takeOver, result);
+	feedbackFor(form);
 	const choices = () => ({
 		streams: readers.map(read => read()).filter(stream => stream.name),
 		...(revision.value ? { actionsRevision: revision.value } : {}),
@@ -312,7 +313,7 @@ export async function setup(form: HTMLFormElement, action: string) {
 		link.href = result.url;
 		output.replaceChildren(link);
 	}
-	show('Setup PR ready for review. Merge it yourself, then refresh inspection.');
+	show('Setup PR ready for review. Merge it yourself, then refresh inspection.', form);
 }
 
 export function canApplySetup(form: HTMLFormElement): boolean {

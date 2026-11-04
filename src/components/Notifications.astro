@@ -94,7 +94,9 @@ const destinationName = (id: string) =>
 			 <Badge {...destinationStatus(destination.enabled)} />
 		 </div>
 		 <details>
-			 <summary>Edit destination</summary>
+			 <summary aria-label={`Edit destination ${destination.name}`}>
+				 Edit destination
+			 </summary>
 			 <form
 				 data-action="notification-save"
 				 method="post"
@@ -153,7 +155,12 @@ const destinationName = (id: string) =>
 					 >
 					 Enabled
 				 </label>
-				 <button class="primary">Save destination</button>
+				 <button
+					 class="primary"
+					 aria-label={`Save destination ${destination.name}`}
+				 >
+					 Save destination
+				 </button>
 			 </form>
 		 </details>
 		 <form
@@ -162,7 +169,12 @@ const destinationName = (id: string) =>
 			 action="/api/notifications/remove"
 		 >
 			 <input type="hidden" name="id" value={destination.id}>
-			 <button class="danger">Remove destination</button>
+			 <button
+				 class="danger"
+				 aria-label={`Remove destination ${destination.name}`}
+			 >
+				 Remove destination
+			 </button>
 		 </form>
 	 </article>
  );

@@ -120,10 +120,16 @@ function wingetDestination(repository: RepositoryRecord) {
 					action="/api/repositories/discover"
 				>
 					<input type="hidden" name="repository" value={repository.name}>
-					<button>Refresh inspection</button>
+					<button aria-label={`Refresh inspection of ${repository.name}`}>
+						Refresh inspection
+					</button>
 				</form>
 				{data.onboarding.get(repository.id) && (
-					<a class="button" href={data.onboarding.get(repository.id)}>
+					<a
+						class="button"
+						href={data.onboarding.get(repository.id)}
+						aria-label={`Review setup PR of ${repository.name}`}
+					>
 						Review setup PR ↗
 					</a>
 				)}
@@ -132,6 +138,7 @@ function wingetDestination(repository: RepositoryRecord) {
 					 <a
 						 class="button primary"
 						 href={`/releases?repository=${repository.id}`}
+						 aria-label={`Prepare a release of ${repository.name}`}
 					 >Prepare a release</a>
 				 )}
 			</div>
@@ -313,7 +320,9 @@ function wingetDestination(repository: RepositoryRecord) {
 			</div>
 			{repository.configuration && (
 				<details>
-					<summary>Publications and automation</summary>
+					<summary aria-label={`Publications and automation of ${repository.name}`}>
+						Publications and automation
+					</summary>
 					<dl class="fields">
 						{Object.entries(repository.configuration.streams).map((
 							[name, stream],

@@ -49,7 +49,9 @@ const { data } = Astro.props;
 				action="/api/authenticators/remove"
 			>
 				<input type="hidden" name="id" value={key.id}>
-				<button class="danger">Remove key</button>
+				<button class="danger" aria-label={`Remove key ${key.label}`}>
+					Remove key
+				</button>
 			</form>
 		)}
 	</article>
@@ -82,7 +84,12 @@ const { data } = Astro.props;
 						action="/api/cli-sessions/revoke"
 					>
 						<input type="hidden" name="id" value={session.id}>
-						<button class="danger">Revoke</button>
+						<button
+							class="danger"
+							aria-label={`Revoke CLI login ${session.id.slice(0, 12)}`}
+						>
+							Revoke
+						</button>
 					</form>
 				</li>
 			))}

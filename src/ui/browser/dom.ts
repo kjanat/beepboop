@@ -15,14 +15,71 @@ export function findAll<T extends Element>(parent: ParentNode, selector: string,
 	return [...parent.querySelectorAll(selector)].flatMap(found => found instanceof type ? [found] : []);
 }
 
-export function show(message: string): void {
-	const feedback = required('#feedback', HTMLOutputElement);
+export class FieldError extends Error {
+	constructor(message: string, readonly fields: readonly Element[]) {
+		super(message);
+	}
+}
+
+const feedbacks = new WeakMap<HTMLFormElement, HTMLElement>();
+let feedbackCount = 0;
+
+export function feedbackFor(form: HTMLFormElement): HTMLElement {
+	const feedback = feedbacks.get(form) ?? document.createElement('p');
+	if (!feedbacks.has(form)) {
+		feedback.className = 'form-feedback';
+		feedback.id = `form-feedback-${++feedbackCount}`;
+		feedback.setAttribute('role', 'status');
+		feedback.tabIndex = -1;
+		feedback.hidden = true;
+		feedbacks.set(form, feedback);
+	}
+	if (feedback.parentElement !== form) form.append(feedback);
+	return feedback;
+}
+
+function describe(field: Element, id: string, invalid: boolean): void {
+	const ids = new Set((field.getAttribute('aria-describedby') ?? '').split(' ').filter(Boolean));
+	if (invalid) ids.add(id);
+	else ids.delete(id);
+	if (ids.size) field.setAttribute('aria-describedby', [...ids].join(' '));
+	else field.removeAttribute('aria-describedby');
+	if (invalid) field.setAttribute('aria-invalid', 'true');
+	else field.removeAttribute('aria-invalid');
+}
+
+export function watchValidity(form: HTMLFormElement): void {
+	feedbackFor(form);
+	form.addEventListener('invalid', event => {
+		const field = event.target;
+		if (!(field instanceof HTMLInputElement || field instanceof HTMLSelectElement)) return;
+		describe(field, feedbackFor(form).id, true);
+		show(field.validationMessage, form, 'error');
+	}, true);
+	const clear = (event: Event) => {
+		if (event.target instanceof Element && event.target.getAttribute('aria-invalid') === 'true') {
+			describe(event.target, feedbackFor(form).id, false);
+		}
+	};
+	form.addEventListener('input', clear);
+	form.addEventListener('change', clear);
+}
+
+export function show(message: string, form?: HTMLFormElement, tone: 'info' | 'error' = 'info'): void {
+	const feedback = form ? feedbackFor(form) : required('#feedback', HTMLOutputElement);
 	feedback.hidden = false;
+	feedback.dataset.tone = tone;
 	feedback.textContent = message;
 }
 
-export function showError(error: unknown): void {
-	show(error instanceof Error ? error.message : String(error));
+export function showError(error: unknown, form?: HTMLFormElement): void {
+	const message = error instanceof Error ? error.message : String(error);
+	const feedback = form ? feedbackFor(form) : required('#feedback', HTMLOutputElement);
+	if (form && error instanceof FieldError) {
+		for (const field of error.fields) describe(field, feedback.id, true);
+	}
+	show(message, form, 'error');
+	if (form) feedback.focus();
 }
 
 const failure = z.object({ error: z.string().optional() }).catch({});

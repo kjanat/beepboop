@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { array, integer, record, string } from '@/model';
-import { api, find, findAll, show, showError } from '@/ui/browser/dom.ts';
+import { api, FieldError, find, findAll, show, showError, watchValidity } from '@/ui/browser/dom.ts';
 import { canApplySetup, setup } from '@/ui/browser/setup';
 
 interface Choice {
@@ -96,7 +96,7 @@ function overwriteConfirmed(form: HTMLFormElement, alias: string): boolean {
 	cancel.focus();
 	return false;
 }
-const revealTimers = new Map<HTMLOutputElement, ReturnType<typeof setTimeout>>();
+const revealTimers = new Map<HTMLElement, ReturnType<typeof setTimeout>>();
 
 function input(form: HTMLFormElement, name: string): HTMLInputElement | HTMLSelectElement {
 	const field = form.elements.namedItem(name);
@@ -136,8 +136,8 @@ function fields(form: HTMLFormElement): Record<string, string> {
 		),
 	);
 }
-async function elevated(): Promise<string> {
-	show('Touch your enrolled security key to approve this action.');
+async function elevated(form: HTMLFormElement): Promise<string> {
+	show('Touch your enrolled security key to approve this action.', form);
 	const challenge = await api(
 		'/api/authenticators/options',
 		z.object({ id: z.string(), options: requestOptions }),
@@ -202,7 +202,9 @@ function inspecting(form: HTMLFormElement, name: string): () => void {
 function selectedWorkflow(form: HTMLFormElement): Choice {
 	const repository = repositoryChoices(form).find(r => String(r.id) === input(form, 'repositoryId').value);
 	const choice = repository?.workflows[Number(input(form, 'choice').value)];
-	if (!choice) throw new Error('Choose a repository and workflow.');
+	if (!choice) {
+		throw new FieldError('Choose a repository and workflow.', [input(form, 'repositoryId'), input(form, 'choice')]);
+	}
 	return choice;
 }
 function attempt(work: () => void): void {
@@ -246,7 +248,7 @@ each('form[data-action="winget-submit"]', form => {
 		} catch (error) {
 			if (revision === current) {
 				release.replaceChildren(new Option('Unable to load releases', ''));
-				showError(error);
+				showError(error, form);
 			}
 		}
 	});
@@ -364,6 +366,7 @@ attempt(() => {
 });
 
 each('form[data-action]', form => {
+	watchValidity(form);
 	form.addEventListener('submit', async event => {
 		event.preventDefault();
 		const action = form.dataset.action;
@@ -413,7 +416,7 @@ each('form[data-action]', form => {
 					const submit = find(form, 'button[value="submit"]', HTMLButtonElement);
 					if (!submit) throw Error('Missing WinGet submit button');
 					submit.disabled = submit.dataset.submitReady !== 'true';
-					show('Review the manifests, then submit. Microsoft controls acceptance and merging.');
+					show('Review the manifests, then submit. Microsoft controls acceptance and merging.', form);
 				} else {
 					const plan = wingetPlans.get(form);
 					if (!plan) throw Error('Preview the release before submitting.');
@@ -437,9 +440,18 @@ each('form[data-action]', form => {
 				}));
 				const operations = findAll(form, 'select[data-operation]', HTMLSelectElement).filter(select => select.value)
 					.map(select => ({ id: select.dataset.operation, group: select.value }));
-				if (action === 'release-set' && !groups.length) throw new Error('Select at least one package group.');
-				if (action === 'release-set' && groups.some(group => !group.version)) {
-					throw new Error('Enter a version for each selected group.');
+				if (action === 'release-set' && !groups.length) {
+					throw new FieldError(
+						'Select at least one package group.',
+						findAll(form, 'fieldset[data-group] input[type=checkbox]', HTMLInputElement),
+					);
+				}
+				const unversioned = groups.filter(group => !group.version);
+				if (action === 'release-set' && unversioned.length) {
+					throw new FieldError(
+						'Enter a version for each selected group.',
+						unversioned.map(group => input(form, `version-${group.id}`)),
+					);
 				}
 				const request = action === 'release-set' ? { ...common, plan: { groups, operations } } : { ...common, version };
 				const plan = await api(
@@ -454,6 +466,7 @@ each('form[data-action]', form => {
 				);
 				location.assign(`/runs#${encodeURIComponent(run.id)}`);
 			} else if (action === 'discover') {
+				show(`Inspecting ${data.repository ?? 'repository'}…`, form);
 				const undo = inspecting(form, data.repository ?? '');
 				try {
 					const repository = await api('/api/repositories/discover', z.object({ name: z.string() }), {
@@ -480,7 +493,7 @@ each('form[data-action]', form => {
 			} else if (action === 'secret-save') {
 				if (!overwriteConfirmed(form, data.alias ?? '')) return;
 				const value = data.value;
-				const proof = await elevated();
+				const proof = await elevated(form);
 				input(form, 'value').value = '';
 				await api('/api/credentials/replace', z.unknown(), { alias: data.alias, value, proof });
 				location.reload();
@@ -488,9 +501,9 @@ each('form[data-action]', form => {
 				clearRevealed();
 				const result = await api('/api/credentials/reveal', z.object({ value: z.string() }), {
 					alias: data.alias,
-					proof: await elevated(),
+					proof: await elevated(form),
 				});
-				const output = form.querySelector('output');
+				const output = find(form, '.revealed', HTMLElement);
 				if (output) {
 					output.textContent = result.value;
 					revealTimers.set(
@@ -501,23 +514,26 @@ each('form[data-action]', form => {
 						}, 30_000),
 					);
 				}
-				show('Value revealed for 30 seconds. It also clears when you leave this page.');
+				show('Value shown for 30 seconds. It also clears when you leave this page.', form);
 			} else if (action === 'secret-sync') {
 				const results = await api(
 					'/api/credentials/sync',
 					z.array(z.object({ id: z.string(), state: z.string() })),
-					{ alias: data.alias, proof: await elevated() },
+					{ alias: data.alias, proof: await elevated(form) },
 				);
 				const failed = results.filter(r => r.state !== 'succeeded').length;
 				show(
 					failed
 						? `${failed} destination(s) failed. Refresh to see which permissions need another copy.`
 						: `Latest value copied to ${results.length} GitHub destination(s). Refresh to update their status.`,
+					form,
 				);
 			} else if (action === 'grant-save') {
 				const selected = selectedWorkflow(form);
 				if (data.delivery === 'runtime' && !selected.credentials.includes(data.alias ?? '')) {
-					throw new Error('Add this name to the stream’s credentials list before choosing runtime delivery.');
+					throw new FieldError('Add this name to the stream’s credentials list before choosing runtime delivery.', [
+						input(form, 'delivery'),
+					]);
 				}
 				await api('/api/credentials/grant', z.unknown(), {
 					selection: {
@@ -529,7 +545,7 @@ each('form[data-action]', form => {
 						environment: data.environment,
 						secretName: data.secretName,
 					},
-					proof: await elevated(),
+					proof: await elevated(form),
 				});
 				location.reload();
 			} else if (action === 'grant-revoke') {
@@ -539,7 +555,7 @@ each('form[data-action]', form => {
 						'Remove this permission? The value already copied to GitHub will remain there. Delete that GitHub secret separately to remove it.',
 					)
 				) return;
-				await api('/api/credentials/revoke', z.unknown(), { ...data, proof: await elevated() });
+				await api('/api/credentials/revoke', z.unknown(), { ...data, proof: await elevated(form) });
 				location.reload();
 			} else if (action === 'package-add' || action === 'package-remove') {
 				await api(`/api/packages/${action === 'package-add' ? 'add' : 'remove'}`, z.unknown(), {
@@ -572,13 +588,13 @@ each('form[data-action]', form => {
 				await api('/api/notifications/remove', z.unknown(), { id: data.id });
 				location.reload();
 			} else if (action === 'key-enroll') {
-				const proof = form.dataset.first === 'true' ? undefined : await elevated();
+				const proof = form.dataset.first === 'true' ? undefined : await elevated(form);
 				const challenge = await api(
 					'/api/authenticators/options',
 					z.object({ id: z.string(), options: creationOptions }),
 					{ register: true, label: data.label, proof },
 				);
-				show('Touch the security key you want to enroll.');
+				show('Touch the security key you want to enroll.', form);
 				const credential = await navigator.credentials.create({
 					publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(challenge.options),
 				});
@@ -589,12 +605,11 @@ each('form[data-action]', form => {
 				await api(`/api/cli-sessions/${action === 'cli-revoke' ? 'revoke' : 'revoke-all'}`, z.unknown(), data);
 				location.reload();
 			} else if (action === 'key-remove') {
-				await api('/api/authenticators/remove', z.unknown(), { ...data, proof: await elevated() });
+				await api('/api/authenticators/remove', z.unknown(), { ...data, proof: await elevated(form) });
 				location.reload();
 			}
 		} catch (error) {
-			showError(error);
-			find(document, '#feedback', HTMLElement)?.focus();
+			showError(error, form);
 		} finally {
 			form.dataset.busy = 'false';
 			button.disabled = action === 'setup' && clicked === 'apply' && !canApplySetup(form);
