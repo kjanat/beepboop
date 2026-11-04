@@ -359,9 +359,37 @@ for (const form of findAll(document, 'form[data-action="approve"]', HTMLFormElem
 	});
 }
 const repositorySelection = find(document, '.selection select[name="repository"]', HTMLSelectElement);
-repositorySelection?.addEventListener('change', () => {
-	location.assign(`/releases?repository=${encodeURIComponent(repositorySelection.value)}`);
-});
+if (repositorySelection) {
+	const query = new URLSearchParams(location.search);
+	const remembered = localStorage.getItem('beepboop:release-repository');
+	if (query.has('repository')) {
+		localStorage.setItem('beepboop:release-repository', repositorySelection.value);
+		const stream = find(document, '.selection select[name="stream"]', HTMLSelectElement);
+		if (stream) localStorage.setItem(`beepboop:release-stream:${repositorySelection.value}`, stream.value);
+	} else if (
+		remembered && remembered !== repositorySelection.value
+		&& [...repositorySelection.options].some(option => option.value === remembered)
+	) {
+		const stream = localStorage.getItem(`beepboop:release-stream:${remembered}`);
+		location.replace(
+			`/releases?repository=${encodeURIComponent(remembered)}${stream ? `&stream=${encodeURIComponent(stream)}` : ''}`,
+		);
+	}
+	repositorySelection.addEventListener('change', () => {
+		location.assign(`/releases?repository=${encodeURIComponent(repositorySelection.value)}`);
+	});
+}
+
+const runsLatest = find(document, '[data-runs-latest]', HTMLElement);
+if (runsLatest) {
+	const rendered = Number(runsLatest.dataset.runsLatest);
+	setInterval(() => {
+		if (document.hidden) return;
+		api('/api/executions', z.array(z.object({ updatedAt: z.number() }).loose())).then(runs => {
+			if (Math.max(0, ...runs.map(run => run.updatedAt)) > rendered) location.reload();
+		}).catch(() => undefined);
+	}, 5000);
+}
 
 for (const form of findAll(document, 'form[data-action]', HTMLFormElement)) {
 	form.addEventListener('submit', async event => {

@@ -14,11 +14,13 @@ const waiting = (run: Execution): string | undefined =>
 		&& ['pending', 'ready'].includes(run.state)
 		? date(run.notBefore)
 		: undefined;
+const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 const progress = (run: Execution): string => {
 	const until = waiting(run);
 	return until ? `waiting until ${until}` : run.state;
 };
 ---
+<span data-runs-latest={latest} hidden></span>
 {releaseSetSummaries(executions).map(release => (
 	<article class="run-card">
 		<div class="section-heading">
