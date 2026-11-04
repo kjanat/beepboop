@@ -821,7 +821,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return false;
 		}
 		await this.store().audit('beepboop', 'promotion.approve', `${execution.id}:${execution.sourceSha}:push`);
-		const next: Execution = { ...execution, state: 'ready' };
+		const next: Execution = { ...execution, state: 'ready', approvedAt: Date.now() };
 		delete next.reason;
 		await this.supersedeVersion(next);
 		await this.put(next);
@@ -851,7 +851,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				'promotion.approve',
 				`${id}:${commitSha}${problems.length ? ` overriding: ${problems.join('; ')}` : ''}`,
 			);
-			const next: Execution = { ...execution, state: 'ready' };
+			const next: Execution = { ...execution, state: 'ready', approvedAt: Date.now() };
 			await this.supersedeVersion(next);
 			await this.put(next);
 			return next;
@@ -978,7 +978,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const publications = execution.publications.map(publication =>
 					publication.outcome === 'succeeded' ? publication : { ...publication, outcome: 'pending' as const }
 				);
-				if (execution.operation === 'promote' && execution.attempts === 0) {
+				if (execution.operation === 'promote' && execution.attempts === 0 && execution.approvedAt === undefined) {
 					const next: Execution = { ...execution, state: 'blocked', publications };
 					delete next.reason;
 					await this.put(next);

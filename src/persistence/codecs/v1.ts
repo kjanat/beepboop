@@ -347,6 +347,7 @@ const executionSchema: z.ZodType<Execution> = z.object({
 	titled: z.boolean().optional(),
 	dispatchedAt: z.number().optional(),
 	approvedBy: z.literal('merge').optional(),
+	approvedAt: z.number().optional(),
 	publications: z.array(packagePublication),
 	artifacts: z.array(artifact),
 	createdAt: z.number(),

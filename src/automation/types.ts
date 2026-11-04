@@ -224,6 +224,7 @@ export interface Execution {
 	titled?: boolean;
 	dispatchedAt?: number;
 	approvedBy?: 'merge';
+	approvedAt?: number;
 	publications: Publication[];
 	artifacts: Artifact[];
 	createdAt: number;
