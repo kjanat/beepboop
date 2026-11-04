@@ -506,6 +506,37 @@ for (const form of findAll(document, 'form[data-action]', HTMLFormElement)) {
 				) return;
 				await api('/api/credentials/revoke', z.unknown(), { ...data, proof: await elevated() });
 				location.reload();
+			} else if (action === 'package-add' || action === 'package-remove') {
+				await api(`/api/packages/${action === 'package-add' ? 'add' : 'remove'}`, z.unknown(), {
+					registry: data.registry,
+					name: data.name,
+				});
+				location.reload();
+			} else if (action === 'package-subscription') {
+				await api('/api/packages/subscription', z.unknown(), {
+					destinationId: data.destinationId,
+					registry: data.registry,
+					name: data.name,
+					subscribed: data.subscribed === 'true',
+				});
+				location.reload();
+			} else if (action === 'notification-save') {
+				await api('/api/notifications/save', z.object({ id: z.string() }), {
+					destination: {
+						...(data.id ? { id: data.id } : {}),
+						name: data.name,
+						kind: data.kind,
+						credential: data.credential,
+						subscribeNew: data.subscribeNew === 'true',
+						enabled: data.enabled === 'true',
+					},
+					proof: await elevated(),
+				});
+				location.reload();
+			} else if (action === 'notification-remove') {
+				if (!confirm('Remove this destination? Its package subscriptions are removed too.')) return;
+				await api('/api/notifications/remove', z.unknown(), { id: data.id });
+				location.reload();
 			} else if (action === 'key-enroll') {
 				const proof = form.dataset.first === 'true' ? undefined : await elevated();
 				const challenge = await api(

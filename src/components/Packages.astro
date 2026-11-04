@@ -1,0 +1,146 @@
+---
+import { packageUrl } from '@/automation/notifications.ts';
+import { type Dashboard, date } from '@/server/dashboard.ts';
+
+interface Props {
+	data: Dashboard;
+}
+const { data } = Astro.props;
+const subscribed = (destinationId: string, registry: string, name: string) =>
+	data.subscriptions.some(s =>
+		s.destinationId === destinationId && s.registry === registry
+		&& s.name === name
+	);
+const labels = { npm: 'npm', jsr: 'JSR' };
+---
+<article>
+	<h2>Watch a package</h2>
+	<p>
+		Beepboop already watches every npm and JSR package your repositories publish
+		or subscribe to. Add other packages here.
+	</p>
+	<form data-action="package-add" class="form-row">
+		<label>Registry<select name="registry">
+				<option value="npm">npm</option>
+				<option value="jsr">JSR</option>
+			</select></label><label>Package name<input
+				name="name"
+				placeholder="@scope/package"
+				maxlength="214"
+				required
+			></label><button class="primary">Watch package</button>
+	</form>
+</article>
+{!data.packages.length && (
+	<article class="empty">
+		<h2>No packages watched</h2>
+		<p>
+			Inspect a repository that publishes to npm or JSR, or add a package above.
+		</p>
+	</article>
+)}
+{data.packages.length > 0 && (
+	<div class="table-scroll">
+		<table>
+			<thead>
+				<tr>
+					<th>Package</th>
+					<th>Version</th>
+					<th>Last check</th>
+					<th>Published by</th>
+					<th>Dependency of</th>
+					<th>Notifications</th>
+					<th><span class="visually-hidden">Actions</span></th>
+				</tr>
+			</thead>
+			<tbody>
+				{data.packages.map(pkg => (
+					<tr>
+						<td>
+							<span class="badge">{labels[pkg.registry]}</span>
+							<a href={packageUrl(pkg.registry, pkg.name)}>{pkg.name}</a>
+						</td>
+						<td>{pkg.version ?? 'Not checked yet'}</td>
+						<td>
+							{pkg.checkedAt ? (
+								<time
+									datetime={new Date(pkg.checkedAt).toISOString()}
+								>{date(pkg.checkedAt)}</time>
+							) : 'Never'}{pkg.error && (
+								<span class="badge failed">{pkg.error}</span>
+							)}
+						</td>
+						<td>
+							{pkg.publishers.length
+								? pkg.publishers.map(name => (
+								 <a
+									 class="package-line"
+									 href={`/repositories?repository=${encodeURIComponent(name)}`}
+								 >{name}</a>
+							 ))
+								: '—'}
+						</td>
+						<td>
+							{pkg.dependents.length
+								? pkg.dependents.map(name => (
+								 <a
+									 class="package-line"
+									 href={`/repositories?repository=${encodeURIComponent(name)}`}
+								 >{name}</a>
+							 ))
+								: '—'}
+						</td>
+						<td>
+							{data.destinations.length
+								? (
+								 <div class="toggles">
+									 {data.destinations.map(destination => {
+									 	const on = subscribed(destination.id, pkg.registry, pkg.name);
+									 	return (
+											<form data-action="package-subscription">
+												<input
+													type="hidden"
+													name="destinationId"
+													value={destination.id}
+												>
+												<input
+													type="hidden"
+													name="registry"
+													value={pkg.registry}
+												>
+												<input type="hidden" name="name" value={pkg.name}>
+												<input
+													type="hidden"
+													name="subscribed"
+													value={String(!on)}
+												>
+												<button class="toggle" aria-pressed={on}>
+													{destination.name}
+												</button>
+											</form>
+										);
+									 })}
+								 </div>
+							 )
+								: <a href="/notifications">Add a destination</a>}
+						</td>
+						<td>
+							{pkg.manual && (
+								<form data-action="package-remove">
+									<input type="hidden" name="registry" value={pkg.registry}>
+									<input type="hidden" name="name" value={pkg.name}>
+									<button class="quiet">Stop watching</button>
+								</form>
+							)}
+						</td>
+					</tr>
+				))}
+			</tbody>
+		</table>
+	</div>
+)}
+<p class="hint">
+	Beepboop checks every package every ten minutes. A new version starts
+	subscribed repository operations and notifies the destinations switched on in
+	its row.
+</p>

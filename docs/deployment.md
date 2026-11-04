@@ -113,12 +113,8 @@ challenges after two minutes. Key enrollment accepts cross-platform, single-devi
 authenticators and rejects cloud-synced credentials; manufacturer attestation is
 not checked.
 
-## Connect Vermon
+## Notifications
 
-Add a service binding in Vermon targeting Worker `beepboop`, entrypoint
-`VermonEvents`. Pass the binding's fetch method to Vermon's HTTP webhook provider
-for this destination. Send its `package.version.changed` payload with an
-`Idempotency-Key` header equal to the event ID.
-
-Repository [subscriptions](automation.md#subscriptions) select which package
-events start operations.
+Store each Slack Incoming Webhook or HTTPS webhook URL as a secret, then add a
+destination on the Notifications page. Each delivery attempt reads the URL from
+the vault. Logs and delivery records hold only the HTTP status.

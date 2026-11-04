@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { Authenticators } from '@/automation/auth.ts';
+import { packageWatches } from '@/automation/package-watch.ts';
 import { rowDocument } from '@/automation/schemas.ts';
 import { type AutomationBindings, AutomationService } from '@/automation/service.ts';
 import type { RepositoryRecord } from '@/automation/types.ts';
@@ -55,6 +56,9 @@ export async function dashboard(env: AutomationBindings, actor: string) {
 		deliveries,
 		winget,
 		latestWinget,
+		destinations,
+		subscriptions,
+		notifications,
 	] = await Promise.all(
 		[
 			service.store.repositories(),
@@ -67,6 +71,9 @@ export async function dashboard(env: AutomationBindings, actor: string) {
 			service.store.db.prepare('SELECT grant_id,version,state,updated_at FROM secret_deliveries').all(),
 			service.winget().list(),
 			service.winget().latestByRepository(),
+			service.notifications().destinations(),
+			service.notifications().subscriptions(),
+			service.notifications().recent(),
 		],
 	);
 	return {
@@ -74,6 +81,10 @@ export async function dashboard(env: AutomationBindings, actor: string) {
 		latestWinget,
 		wingetReady: service.winget().setup(),
 		repositories,
+		packages: await packageWatches(service.store, repositories),
+		destinations,
+		subscriptions,
+		notifications,
 		executions,
 		onboarding,
 		activity,

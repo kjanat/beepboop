@@ -307,8 +307,9 @@ Start an operation when a package changes:
 }
 ```
 
-Vermon supplies package events through a [service binding](deployment.md#connect-vermon).
-The source is `<registry>:<package-name>`; event IDs deduplicate delivery.
+The source is `<registry>:<package-name>` for an npm or JSR package. Beepboop
+polls every [watched package](#watched-packages) on its schedule and fires the
+event once per new version; event IDs deduplicate delivery.
 
 A `release` subscription uses a source repository name and fires after its
 required publications succeed. A `workflow_run` subscription also specifies an
@@ -326,6 +327,39 @@ For scheduled work, add a five-field UTC cron expression to a workflow binding:
 
 Scheduling starts at enrollment. Reconciliation processes up to 100 missed ticks
 per pass and saves its position for the next pass.
+
+## Watched packages
+
+The Packages page lists every npm and JSR package an enrolled repository
+publishes or subscribes to, plus packages added by hand. Beepboop checks each
+one every ten minutes. The first check records the current version; later
+changes start matching subscriptions and send notifications.
+
+## Notifications
+
+A destination posts to a Slack Incoming Webhook or an HTTPS webhook. Its URL is
+a [credential](#credentials); choose the credential name when adding the
+destination. Saving a destination requires a security-key touch.
+
+Turn on **Notify about newly watched packages** to subscribe a destination to
+every package Beepboop starts watching. Toggle individual packages on the
+Packages page.
+
+HTTP destinations receive this JSON with an `Idempotency-Key` header equal to
+`id`:
+
+```json
+{
+  "id": "package:npm:example-tool@1.3.0",
+  "type": "package.version.changed",
+  "package": { "registry": "npm", "name": "example-tool" },
+  "version": { "previous": "1.2.0", "current": "1.3.0" },
+  "url": "https://www.npmjs.com/package/example-tool"
+}
+```
+
+Failed deliveries retry on each scheduled pass, up to five attempts. Client
+errors other than rate limits fail immediately.
 
 ## Version selection and release refs
 

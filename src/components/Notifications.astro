@@ -1,0 +1,193 @@
+---
+import { type Dashboard, date } from '@/server/dashboard.ts';
+
+interface Props {
+	data: Dashboard;
+}
+const { data } = Astro.props;
+const kinds = { slack: 'Slack', http: 'HTTP webhook' };
+const destinationName = (id: string) =>
+	data.destinations.find(d => d.id === id)?.name ?? 'Removed destination';
+---
+{!data.keys.length && (
+	<p class="notice">
+		Before adding a destination, <a href="/security"
+		>enroll your first security key</a>.
+	</p>
+)}
+{!data.secrets.length && (
+	<p class="notice">
+		Store each webhook URL as a <a href="/secrets">secret</a> first. A
+		destination sends to the URL saved under the secret you choose.
+	</p>
+)}
+<article>
+	<h2>Add a destination</h2>
+	<form data-action="notification-save">
+		<div class="form-grid">
+			<label>Name<input
+					name="name"
+					placeholder="Slack #releases"
+					maxlength="80"
+					required
+				></label><label>Type<select name="kind">
+					<option value="slack">Slack</option>
+					<option value="http">HTTP webhook</option>
+				</select></label><label>Webhook URL secret<select
+					name="credential"
+					required
+				>
+					<option value="">Choose a secret</option>
+					{data.secrets.map(secret => (
+						<option value={secret.alias}>{secret.alias}</option>
+					))}
+				</select></label>
+		</div>
+		<label class="check"><input
+				type="checkbox"
+				name="subscribeNew"
+				value="true"
+				checked
+			> Notify about newly watched packages</label>
+		<input type="hidden" name="enabled" value="true">
+		<button
+			class="primary"
+			disabled={!data.keys.length || !data.secrets.length}
+		>
+			Add destination
+		</button>
+	</form>
+</article>
+{data.destinations.map(destination => {
+	const count = data.subscriptions.filter(s =>
+		s.destinationId === destination.id
+	).length;
+	return (
+	 <article>
+		 <div class="section-heading">
+			 <div>
+				 <h2>{destination.name}</h2>
+				 <p class="metadata metadata-fields">
+					 <span>{kinds[destination.kind]}</span><span>Secret <code
+						 >{destination.credential}</code></span><span>{count}
+						 packages</span>
+				 </p>
+			 </div><span
+				 class={`badge ${destination.enabled ? 'succeeded' : 'blocked'}`}
+			 >{destination.enabled ? 'Enabled' : 'Paused'}</span>
+		 </div>
+		 <details>
+			 <summary>Edit destination</summary>
+			 <form data-action="notification-save">
+				 <input type="hidden" name="id" value={destination.id}>
+				 <div class="form-grid">
+					 <label>Name<input
+							 name="name"
+							 value={destination.name}
+							 maxlength="80"
+							 required
+						 ></label><label>Type<select name="kind">
+							 <option value="slack" selected={destination.kind === 'slack'}>
+								 Slack
+							 </option>
+							 <option value="http" selected={destination.kind === 'http'}>
+								 HTTP webhook
+							 </option>
+						 </select></label><label>Webhook URL secret<select
+							 name="credential"
+							 required
+						 >
+							 {data.secrets.map(secret => (
+								 <option
+									 value={secret.alias}
+									 selected={secret.alias === destination.credential}
+								 >
+									 {secret.alias}
+								 </option>
+							 ))}
+						 </select></label>
+				 </div>
+				 <label class="check"><input
+						 type="checkbox"
+						 name="subscribeNew"
+						 value="true"
+						 checked={destination.subscribeNew}
+					 > Notify about newly watched packages</label>
+				 <label class="check"><input
+						 type="checkbox"
+						 name="enabled"
+						 value="true"
+						 checked={destination.enabled}
+					 > Enabled</label>
+				 <button class="primary">Save destination</button>
+			 </form>
+		 </details>
+		 <form data-action="notification-remove">
+			 <input
+				 type="hidden"
+				 name="id"
+				 value={destination.id}
+			 ><button class="danger">
+				 Remove destination
+			 </button>
+		 </form>
+	 </article>
+ );
+})}
+<h2>Recent notifications</h2>
+<div class="table-scroll">
+	<table>
+		<thead>
+			<tr>
+				<th>When</th>
+				<th>Package</th>
+				<th>Version</th>
+				<th>Destination</th>
+				<th>Result</th>
+			</tr>
+		</thead>
+		<tbody>
+			{data.notifications.map(delivery => (
+				<tr>
+					<td>
+						<time
+							datetime={new Date(delivery.updatedAt).toISOString()}
+						>{date(delivery.updatedAt)}</time>
+					</td>
+					<td>
+						{delivery.payload.package.registry}:{delivery.payload.package.name}
+					</td>
+					<td>
+						{delivery.payload.version.previous ?? 'new'} →
+						{delivery.payload.version.current}
+					</td>
+					<td>{destinationName(delivery.destinationId)}</td>
+					<td>
+						<span
+							class={`badge ${
+								delivery.state === 'delivered'
+									? 'succeeded'
+									: delivery.state === 'failed'
+									? 'failed'
+									: 'running'
+							}`}
+						>{delivery.state === 'delivered'
+							? 'Delivered'
+							: delivery.state === 'failed'
+							? 'Failed'
+							: `Retrying (${delivery.attempts})`}</span>{delivery.error && (
+							<span class="hint"> {delivery.error}</span>
+						)}
+					</td>
+				</tr>
+			))}{!data.notifications.length && (
+				<tr>
+					<td colspan="5">
+						No notifications yet. They appear here when a watched package
+						releases.
+					</td>
+				</tr>
+			)}
+		</tbody>
+	</table>
+</div>

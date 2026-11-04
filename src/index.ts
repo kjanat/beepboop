@@ -4,7 +4,6 @@ import { failure } from '@/failure.ts';
 
 export { AutomationCoordinator } from '@/automation/coordinator.ts';
 export { ReleaseWorkflow } from '@/automation/release-workflow';
-export { VermonEvents } from '@/automation/vermon.ts';
 
 export default {
 	async fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response> {

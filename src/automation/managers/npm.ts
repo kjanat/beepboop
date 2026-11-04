@@ -1,11 +1,18 @@
 import { parse as parseToml } from 'smol-toml';
 import { object } from '@/automation/managers/helpers';
-import type { Manager } from '@/automation/managers/registry';
+import type { Fetcher, Manager, RegistryVersion } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
 import { excluded, registry } from '@/automation/package-publication';
 import type { Package } from '@/automation/types';
 import { packageIdentity } from '@/package-url';
+export function npmLatest(name: string, request: Fetcher): Promise<RegistryVersion> {
+	return latestVersion(
+		request,
+		`https://registry.npmjs.org/${encodeURIComponent(name)}`,
+		body => object(object(body)['dist-tags']).latest,
+	);
+}
 export const npmManager: Manager = {
 	name: 'npm',
 	identity(pkg) {
@@ -17,13 +24,7 @@ export const npmManager: Manager = {
 			version: pkg.version,
 		});
 	},
-	latest(pkg, request) {
-		return latestVersion(
-			request,
-			`https://registry.npmjs.org/${encodeURIComponent(pkg.name)}`,
-			body => object(object(body)['dist-tags']).latest,
-		);
-	},
+	latest: (pkg, request) => npmLatest(pkg.name, request),
 	verifyPublication(publication, request) {
 		const url = `https://registry.npmjs.org/${encodeURIComponent(publication.name)}/${
 			encodeURIComponent(publication.version)

@@ -54,8 +54,8 @@ Astro pages, components, and layouts live in `src/pages`, `src/components`, and
 `src/layouts`. Browser interactions live in `src/ui/browser`; styles live in
 `src/styles`. Import paths are defined in `tsconfig.json`. `bun run build`
 builds the Cloudflare Worker and browser assets into `dist/`. The custom Worker
-entrypoint also exports the release coordinator, scheduled reconciliation, and
-Vermon service binding. API routes preserve the existing GitHub Actions contracts.
+entrypoint also exports the release coordinator and scheduled reconciliation.
+API routes preserve the existing GitHub Actions contracts.
 
 Astro's checker currently needs the TypeScript 6 language-service API. `bun run check` uses Astro to check the project;
 `typescript-native` remains available as a separate dependency.

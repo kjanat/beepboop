@@ -1,10 +1,23 @@
 import { object } from '@/automation/managers/helpers';
-import { emptyInventory, type Manager } from '@/automation/managers/registry';
+import { emptyInventory, type Fetcher, type Manager, type RegistryVersion } from '@/automation/managers/registry';
 import { latestVersion } from '@/automation/managers/verification';
 import { identityOf } from '@/automation/package-identity';
 import { registry } from '@/automation/package-publication';
 
 const packageName = /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/;
+export function jsrLatest(name: string, request: Fetcher): Promise<RegistryVersion> {
+	if (!packageName.test(name)) throw new Error('Invalid JSR package name');
+	return latestVersion(request, `https://jsr.io/${name}/meta.json`, body => {
+		const metadata = object(body);
+		const [scope, bare] = name.slice(1).split('/');
+		const latest = metadata.latest;
+		return metadata.scope === scope && metadata.name === bare && typeof latest === 'string'
+				&& Object.hasOwn(object(metadata.versions), latest)
+				&& object(object(metadata.versions)[latest]).yanked !== true
+			? latest
+			: undefined;
+	});
+}
 export const jsrManager: Manager = {
 	name: 'jsr',
 	identity: pkg => identityOf(pkg),
@@ -37,19 +50,7 @@ export const jsrManager: Manager = {
 	editVersion({ before, version }) {
 		return `${JSON.stringify({ ...JSON.parse(before), version }, null, before.match(/\n([\t ]+)"/)?.[1] ?? '  ')}\n`;
 	},
-	latest(pkg, request) {
-		if (!packageName.test(pkg.name)) throw new Error('Invalid JSR package name');
-		return latestVersion(request, `https://jsr.io/${pkg.name}/meta.json`, body => {
-			const metadata = object(body);
-			const [scope, name] = pkg.name.slice(1).split('/');
-			const latest = metadata.latest;
-			return metadata.scope === scope && metadata.name === name && typeof latest === 'string'
-					&& Object.hasOwn(object(metadata.versions), latest)
-					&& object(object(metadata.versions)[latest]).yanked !== true
-				? latest
-				: undefined;
-		});
-	},
+	latest: (pkg, request) => jsrLatest(pkg.name, request),
 	async verifyPublication(publication, request) {
 		if (!packageName.test(publication.name) || !/^[0-9A-Za-z.+-]+$/.test(publication.version)) {
 			return { ...publication, outcome: 'failed' };

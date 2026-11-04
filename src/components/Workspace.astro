@@ -1,4 +1,6 @@
 ---
+import Notifications from '@/components/Notifications.astro';
+import Packages from '@/components/Packages.astro';
 import ReleaseSummary from '@/components/ReleaseSummary.astro';
 import Releases from '@/components/Releases.astro';
 import Repositories from '@/components/Repositories.astro';
@@ -21,6 +23,14 @@ const copy: Record<string, [string, string]> = {
 	repositories: [
 		'Repositories',
 		'Connect a project and review how its packages reach their users.',
+	],
+	packages: [
+		'Packages',
+		'Watch the packages you publish and the ones your repositories depend on.',
+	],
+	notifications: [
+		'Notifications',
+		'Choose where package releases are announced.',
 	],
 	releases: [
 		'Prepare a release',
@@ -95,6 +105,8 @@ const setup = data.repositories.filter(r =>
 		</>
 	)}
 	{section === 'repositories' && <Repositories data={data} />}
+	{section === 'packages' && <Packages data={data} />}
+	{section === 'notifications' && <Notifications data={data} />}
 	{section === 'releases' && <Releases data={data} />}
 	{section === 'runs' && <Runs executions={data.executions} />}
 	{section === 'secrets' && <Secrets data={data} />}

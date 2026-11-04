@@ -740,3 +740,26 @@ dd {
 	margin: 0;
 	overflow-wrap: anywhere;
 }
+.toggles {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.4rem;
+}
+.toggle {
+	padding: 0.3rem 0.65rem;
+	font-weight: 500;
+	color: var(--muted);
+}
+.toggle[aria-pressed="true"] {
+	border-color: var(--blue);
+	background: var(--badge-blue);
+	color: var(--ink);
+}
+.visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}

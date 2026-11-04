@@ -10,7 +10,9 @@ import { createExecution } from '@/automation/execution';
 import { type Credentials, RepositoryGateway } from '@/automation/github';
 import { createReleasePreparation, planIdentity } from '@/automation/managed';
 import { discover, planRelease, resolvePublished, versionsInFiles } from '@/automation/managers';
+import { destinationInput, Notifications, subscriptionInput } from '@/automation/notifications';
 import { matchesPackage } from '@/automation/package-identity';
+import { addWatch, pollPackages, removeManualWatch, watchInput } from '@/automation/package-watch';
 import { planReleaseSet } from '@/automation/planning';
 import { matchesRef } from '@/automation/policy';
 import { planHookUpdates } from '@/automation/precommit';
@@ -120,6 +122,9 @@ export class AutomationService {
 	}
 	winget() {
 		return new WinGetService(this.store, this.gateway, this.env);
+	}
+	notifications() {
+		return new Notifications(this.store, () => this.vault());
 	}
 	private vault() {
 		return new Vault(
@@ -386,6 +391,9 @@ export class AutomationService {
 				/* Next scheduled pass retries; preserve the last known configuration. */
 			}
 		}
+		const notifications = this.notifications();
+		await pollPackages(this.store, await this.store.repositories(), fetch, event => this.event(event), notifications);
+		await notifications.deliver();
 	}
 	async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url),
@@ -750,6 +758,32 @@ export class AutomationService {
 			await authenticators.remove(actor, text(body.id));
 			await this.store.audit(actor, 'authenticator.remove', text(body.id));
 			return Response.json({ removed: true });
+		}
+		if (path === '/api/packages/add' || path === '/api/packages/remove') {
+			const input = watchInput.parse(body);
+			if (path.endsWith('/add')) await addWatch(this.store, this.notifications(), input.registry, input.name, true);
+			else await removeManualWatch(this.store, input.registry, input.name);
+			await this.store.audit(
+				actor,
+				path.endsWith('/add') ? 'package.watch' : 'package.unwatch',
+				`${input.registry}:${input.name}`,
+			);
+			return Response.json({ ok: true });
+		}
+		if (path === '/api/packages/subscription') {
+			const input = subscriptionInput.parse(body);
+			await this.notifications().setSubscription(input, input.subscribed, actor);
+			return Response.json({ ok: true });
+		}
+		if (path === '/api/notifications/save') {
+			await authenticators.consume(actor, text(body.proof));
+			return Response.json({
+				id: await this.notifications().saveDestination(destinationInput.parse(body.destination), actor),
+			});
+		}
+		if (path === '/api/notifications/remove') {
+			await this.notifications().removeDestination(text(body.id), actor);
+			return Response.json({ ok: true });
 		}
 		if (path.startsWith('/api/credentials/')) {
 			await authenticators.consume(actor, text(body.proof));
