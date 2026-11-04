@@ -701,7 +701,7 @@ export class AutomationService {
 					repository,
 					text(body.stream),
 					'promote',
-					`release:${plan.version}`,
+					`release:${plan.version}:${plan.sourceSha}`,
 					plan.version,
 				);
 				promotion.sourceSha = plan.sourceSha;
@@ -741,7 +741,7 @@ export class AutomationService {
 				text(body.operation),
 				body.version === undefined
 					? text(body.requestId)
-					: `release:${semver(body.version).replace(/^v/, '')}`,
+					: `release:${semver(body.version).replace(/^v/, '')}:${sha(body.sourceSha)}`,
 				body.version === undefined ? undefined : text(body.version),
 			);
 			if (body.sourceSha !== undefined) execution.sourceSha = sha(body.sourceSha);
