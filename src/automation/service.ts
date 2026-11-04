@@ -793,11 +793,7 @@ export class AutomationService {
 				);
 				promotion.sourceSha = plan.sourceSha;
 				await this.store.audit(actor, 'release.prepare', promotion.id);
-				const queued = await this.enqueue(repository, promotion);
-				if (queued.state !== 'blocked') return Response.json(queued);
-				return Response.json(
-					await this.coordinator(repository.id).approve(queued.id, plan.sourceSha, actor, true),
-				);
+				return Response.json(await this.enqueue(repository, promotion));
 			}
 			if (stream.prepare.workflow) {
 				if (stream.prepare.strategy !== 'workflow') {
