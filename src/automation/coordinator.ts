@@ -782,7 +782,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		for (const other of await this.journal()) {
 			if (
 				other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
-				&& other.version === execution.version && ['blocked', 'pending', 'ready'].includes(other.state)
+				&& other.version === execution.version && ['blocked', 'pending', 'ready', 'failed'].includes(other.state)
 			) {
 				await this.put({ ...other, state: 'cancelled', reason: `Superseded by ${execution.id}` });
 			}

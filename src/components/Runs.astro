@@ -178,10 +178,12 @@ const progress = (run: Execution): string => {
 				 </table>
 			 </div>
 		 )}
-		 {!!missing.length && !approving
+		 {!!missing.length && !approving && run.operation !== 'prepare'
+		 	&& run.state !== 'cancelled'
 		 	&& (
 				<p class="notice">
-					Still to publish: {missing.join(', ')}.
+					Still to publish:
+					{missing.map(id => decodeURIComponent(id)).join(', ')}.
 				</p>
 			)}
 		 {approving && (
