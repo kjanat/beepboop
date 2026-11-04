@@ -1,5 +1,6 @@
 import type { JWTVerifyGetKey } from 'jose';
-import { workflowIdentity } from '@/automation/auth';
+import { type WorkflowIdentity, workflowIdentity } from '@/automation/auth';
+import type { Execution } from '@/automation/types';
 import { record } from '@/model';
 import { readBody } from '@/webhook';
 
@@ -17,10 +18,37 @@ export interface TokenIssuer {
 	botIdentity(): Promise<BotIdentity>;
 	defaultRevision(name: string, id: number): Promise<{ ref: string; sha: string }>;
 	token(name: string, id: number, permissions: TokenPermissions): Promise<string>;
+	workflowRun(name: string, id: number, runId: number): Promise<{ title: string; path: string }>;
 }
 
 export interface TokenAudit {
 	audit(actor: string, action: string, target: string): Promise<void>;
+	execution(id: string): Promise<Execution | undefined>;
+}
+
+const dispatchedStates: Execution['state'][] = ['dispatching', 'running', 'uncertain'];
+
+async function dispatchedByBeepboop(
+	identity: WorkflowIdentity,
+	executionId: unknown,
+	issuer: TokenIssuer,
+	log: TokenAudit,
+): Promise<boolean> {
+	if (typeof executionId !== 'string' || !executionId || identity.event !== 'workflow_dispatch') return false;
+	if (identity.actorId !== (await issuer.botIdentity()).id) return false;
+	const execution = await log.execution(executionId);
+	const workflow = execution?.workflow;
+	if (
+		!execution || !workflow || execution.repositoryId !== identity.repositoryId
+		|| !dispatchedStates.includes(execution.state)
+		|| (execution.runId !== undefined && execution.runId !== identity.runId)
+		|| identity.workflowRef !== `${identity.repository}/.github/workflows/${workflow.file}@${identity.ref}`
+		|| identity.ref.replace(/^refs\/(?:heads|tags)\//, '') !== workflow.ref.replace(/^refs\/(?:heads|tags)\//, '')
+	) {
+		return false;
+	}
+	const run = await issuer.workflowRun(identity.repository, identity.repositoryId, identity.runId);
+	return run.title === `Release operation ${execution.id}` && run.path === `.github/workflows/${workflow.file}`;
 }
 
 export function tokenPermissions(raw: unknown): TokenPermissions {
@@ -46,8 +74,13 @@ export async function workflowToken(
 ): Promise<Response> {
 	if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
 	const identity = await workflowIdentity(request, audience, ownerId, issuerKeys);
-	if (identity.actorId !== ownerId) throw new Error('Workflow run was not started by the owner');
 	const body = record(JSON.parse(new TextDecoder().decode(await readBody(request))));
+	if (identity.actorId !== ownerId) {
+		if (body.purpose === 'publish-actions') throw new Error('Actions publication requires an owner-started run');
+		if (!(await dispatchedByBeepboop(identity, body.executionId, issuer, log))) {
+			throw new Error('Workflow run was not started by the owner or a Beepboop operation');
+		}
+	}
 	let permissions: TokenPermissions;
 	if (body.purpose === 'publish-actions') {
 		if (

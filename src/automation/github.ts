@@ -105,6 +105,12 @@ export class RepositoryGateway {
 		const commit = record(await this.call(`/repos/${name}/commits/${encodeURIComponent(branch)}`, token));
 		return { ref: `refs/heads/${branch}`, sha: sha(commit.sha) };
 	}
+	async workflowRun(name: string, id: number, runId: number): Promise<{ title: string; path: string }> {
+		const token = await this.token(name, id, { actions: 'read' });
+		const run = record(await this.call(`/repos/${name}/actions/runs/${runId}`, token));
+		if (record(run.repository).id !== id) throw new Error('Run identity changed');
+		return { title: text(run.display_title), path: text(run.path) };
+	}
 	async tagRefs(name: string, id: number): Promise<RefState[]> {
 		const token = await this.token(name, id, { contents: 'read' });
 		const result: RefState[] = [];

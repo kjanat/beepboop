@@ -7,6 +7,9 @@ inputs:
   permissions:
     description: JSON object of GitHub App permissions, each read or write
     default: '{"contents":"write","pull_requests":"write"}'
+  execution-id:
+    description: Beepboop execution ID, required when Beepboop dispatched the run
+    default: ""
   purpose:
     description: Optional publish-actions purpose for the owner-dispatched publication workflow on the current default branch
     default: ""
@@ -42,6 +45,7 @@ runs:
       shell: bash
       env:
         SERVICE_ORIGIN: ${{ inputs.service }}
+        EXECUTION_ID: ${{ inputs.execution-id }}
         TOKEN_PURPOSE: ${{ inputs.purpose }}
         TOKEN_IDENTITY: "true"
         PERMISSIONS: ${{ inputs.permissions }}

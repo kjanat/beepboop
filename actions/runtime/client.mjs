@@ -41,6 +41,7 @@ else if (mode === 'token') {
 		permissions: JSON.parse(process.env.PERMISSIONS || '{}'),
 		...(process.env.TOKEN_PURPOSE ? { purpose: process.env.TOKEN_PURPOSE } : {}),
 		...(process.env.TOKEN_IDENTITY === 'true' ? { identity: true } : {}),
+		...(executionId ? { executionId } : {}),
 	};
 } else throw Error('Unknown integration action');
 const result = await fetch(new URL(`/api/workflow/${mode}`, origin), {

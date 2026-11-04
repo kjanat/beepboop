@@ -245,9 +245,10 @@ See [deployment](deployment.md) for encryption keys, login, and security-key enr
 `actions/token` gives a workflow a Beepboop App installation token for its own
 repository. Pushes and pull requests made with it start workflow runs, unlike
 `GITHUB_TOKEN`. The job needs `id-token: write`, and the run must have been
-started by the owner account: bots, apps and other users get no token. Push and
+started by the owner account or dispatched by a Beepboop operation. Push and
 same-repository `pull_request` runs qualify, `pull_request_target` runs do not,
-and the repository does not have to be enrolled.
+and the repository does not have to be enrolled. Other bots, apps and users get
+no token.
 
 ```yaml
 - uses: kjanat/beepboop/actions/token@IMPLEMENTATION_SHA
@@ -265,6 +266,18 @@ The action also outputs `bot-login`, `bot-id` and `bot-email`, resolved from the
 configured App and its GitHub bot user. Use those outputs for Git author and
 committer identity; use the installation token for push authentication.
 Every issued token is recorded in the audit log.
+
+A run that Beepboop dispatched passes its execution ID:
+
+```yaml
+- uses: kjanat/beepboop/actions/token@IMPLEMENTATION_SHA
+  with:
+    execution-id: ${{ inputs.beepboop_execution_id }}
+```
+
+Beepboop checks that the run is that execution's dispatch: same repository,
+workflow file and ref, and the run name `Release operation <execution ID>`.
+Dispatched runs cannot request the `publish-actions` purpose.
 
 Actions publication uses the explicit `purpose: publish-actions` with exactly
 `contents: write` and `workflows: write` because the distribution tree includes
