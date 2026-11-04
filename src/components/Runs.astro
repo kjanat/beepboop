@@ -4,7 +4,7 @@ import type { UnreadableExecution } from '@/automation/store.ts';
 import type { Execution } from '@/automation/types.ts';
 import Field from '@/components/Field.astro';
 import { date } from '@/server/dashboard.ts';
-import { packageUrl } from '@/server/package-url';
+import { packageDisplayName } from '@/server/package-name';
 import { releaseSetSummaries } from '@/server/releases';
 import { packageLabel } from '@/ui/package-label';
 
@@ -188,7 +188,7 @@ const progress = (run: Execution): string => {
 								 <td>
 									 <span>{p.id.startsWith('refs:')
 									 	? `tag ${run.workflow?.refs?.prefix ?? 'v'}${p.version}`
-									 	: packageUrl(p)}</span><small>
+									 	: packageDisplayName(p)}</span><small>
 										 {p.required ? 'required' : 'optional'}</small>
 								 </td>
 								 <td>{p.version}</td>

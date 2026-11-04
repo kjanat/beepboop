@@ -7,7 +7,7 @@ import {
 } from '@/automation/release-version';
 import type { Package } from '@/automation/types';
 import { type Dashboard, workflowChoices } from '@/server/dashboard.ts';
-import { packageUrl } from '@/server/package-url';
+import { packageDisplayName } from '@/server/package-name';
 import { primaryStatus } from '@/ui/destinations';
 
 interface Props {
@@ -128,7 +128,7 @@ const preparations = data.executions.filter(e =>
 								 </legend>
 								 <p class="hint">
 									 {group.packages.map(pkg => (
-										 <span class="package-line">{packageUrl(pkg)}<span
+										 <span class="package-line">{packageDisplayName(pkg)}<span
 												 class="badge"
 											 >{primaryStatus(pkg)}</span>{manifestNote(pkg) && (
 												 <span class="badge">{manifestNote(pkg)}</span>
@@ -161,7 +161,7 @@ const preparations = data.executions.filter(e =>
 				 ) : (
 						<><p class="hint">
 								{packages.map(pkg => (
-									<span class="package-line">{packageUrl(pkg)}<span
+									<span class="package-line">{packageDisplayName(pkg)}<span
 											class="badge"
 										>{primaryStatus(pkg)}</span>{manifestNote(pkg) && (
 											<span class="badge">{manifestNote(pkg)}</span>

@@ -6,7 +6,7 @@ import type { RepositoryRecord } from '@/automation/types';
 import Field from '@/components/Field.astro';
 import type { Dashboard } from '@/server/dashboard.ts';
 import { date, workflowChoices } from '@/server/dashboard.ts';
-import { packageUrl } from '@/server/package-url';
+import { packageDisplayName } from '@/server/package-name';
 import {
 	manifestEntry,
 	packageDestinations,
@@ -162,7 +162,7 @@ function wingetDestination(repository: RepositoryRecord) {
 									{repository.inventory.packages.filter(publishable).map(p => (
 										<tr>
 											<td>
-												<span>{packageUrl(p)}</span><small><a
+												<span>{packageDisplayName(p)}</span><small><a
 														href={`https://github.com/${repository.name}/blob/${repository.sha}/${
 															p.manifest.split('/').map(encodeURIComponent).join('/')
 														}`}

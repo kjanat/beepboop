@@ -56,14 +56,14 @@ export function publicationIdentity(pkg: PackageRecord, version: string): Packag
 export function packageId(pkg: PackageRecord): string {
 	return packageKey(identityOf(pkg));
 }
-export function packageUrl(pkg: PackageRecord): string {
+export function packagePurl(pkg: PackageRecord): string {
 	return purl(identityOf(pkg));
 }
 /** Old repository configs and frozen releases can still select their original manager:name references. */
 export function matchesPackage(reference: string, pkg: PackageRecord): boolean {
 	if (!reference.startsWith('pkg:')) return reference === `${pkg.manager}:${pkg.name}`;
 	const identity = releaseIdentity(reference);
-	return identity.version ? purl(identity) === packageUrl(pkg) : packageKey(identity) === packageId(pkg);
+	return identity.version ? purl(identity) === packagePurl(pkg) : packageKey(identity) === packageId(pkg);
 }
 export function matchesPublication(reference: string, publication: Publication): boolean {
 	return reference === publication.id
