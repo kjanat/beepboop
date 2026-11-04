@@ -1,3 +1,4 @@
+import { Data, Effect, Schedule } from 'effect';
 import { importPKCS8, SignJWT } from 'jose';
 import type { Fetcher, VerificationContext } from '@/automation/managers/registry';
 import { parsePresetReference } from '@/automation/preset';
@@ -5,22 +6,44 @@ import type { RefState } from '@/automation/refs';
 import { buildSnapshot } from '@/automation/snapshot';
 import type { BotIdentity } from '@/automation/token';
 import type { Edit, Snapshot } from '@/automation/types';
+import { legacyDiagnostic } from '@/contract/diagnostics';
 import { upstream } from '@/contract/errors';
+import { Refused, Upstream } from '@/effect/errors';
+import { run } from '@/effect/runtime';
 import { array, integer, record, sha, text } from '@/model';
 
 type Permission = Record<string, 'read' | 'write'>;
 const ownerLogins = new Map<number, string>();
 const botIdentities = new Map<string, BotIdentity>();
-export class RepositoryGateway {
-	constructor(
-		private credentials: Credentials,
-		private ownerId: number,
-		private transport: Fetcher = fetch,
-	) {}
-	async call(path: string, token: string, method = 'GET', body?: unknown): Promise<unknown> {
-		if (!path.startsWith('/')) throw new Error('Invalid API path');
-		const transport = this.transport;
-		const send = () =>
+function detailOf(body: string): string {
+	try {
+		const parsed: unknown = JSON.parse(body);
+		return typeof parsed === 'object' && parsed !== null && 'message' in parsed
+			? String(parsed.message)
+			: body.slice(0, 200);
+	} catch {
+		return body.slice(0, 200);
+	}
+}
+
+class ServerError extends Data.TaggedError('ServerError')<{ readonly response: Response }> {}
+
+export const gitHubRequest = Effect.fn('GitHub.request')(function*(
+	transport: Fetcher,
+	path: string,
+	token: string,
+	method = 'GET',
+	body?: unknown,
+) {
+	if (!path.startsWith('/')) {
+		return yield* new Refused({
+			problem: { code: 'invalid', issues: [{ path: [], message: 'Invalid API path' }] },
+			message: 'Invalid API path',
+		});
+	}
+	const route = `${method} ${path.split('?')[0]}`;
+	const reach = Effect.tryPromise({
+		try: () =>
 			transport(`https://api.github.com${path}`, {
 				method,
 				redirect: 'manual',
@@ -33,41 +56,54 @@ export class RepositoryGateway {
 					'Content-Type': 'application/json',
 				},
 				...(body === undefined ? {} : { body: JSON.stringify(body) }),
-			});
-		const reach = async (): Promise<Response> => {
-			try {
-				return await send();
-			} catch (error) {
-				throw upstream(
-					'github',
-					`GitHub unreachable on ${method} ${path.split('?')[0]}: ${
-						error instanceof Error ? error.message : String(error)
-					}`,
-				);
-			}
-		};
-		let response = await reach();
-		for (let attempt = 1; method === 'GET' && response.status >= 500 && attempt < 3; attempt++) {
-			await new Promise(resolve => setTimeout(resolve, attempt * 500));
-			response = await reach();
-		}
-		if (response.status === 404 && method === 'GET') return null;
-		if (!response.ok) {
-			const detail = await response.text().then(body => {
-				try {
-					const parsed: unknown = JSON.parse(body);
-					return typeof parsed === 'object' && parsed !== null && 'message' in parsed
-						? String(parsed.message)
-						: body.slice(0, 200);
-				} catch {
-					return body.slice(0, 200);
-				}
-			}, () => '');
-			const message = `GitHub HTTP ${response.status} on ${method} ${path.split('?')[0]}${detail ? `: ${detail}` : ''}`;
-			throw response.status >= 500 ? upstream('github', message) : new Error(message);
-		}
-		if (response.status === 204) return null;
-		return response.json();
+			}),
+		catch: error =>
+			new Upstream({
+				service: 'github',
+				message: `GitHub unreachable on ${route}: ${error instanceof Error ? error.message : String(error)}`,
+			}),
+	});
+	const failed = (response: Response) =>
+		Effect.promise(() => response.text().then(detailOf, () => '')).pipe(
+			Effect.map(detail => `GitHub HTTP ${response.status} on ${route}${detail ? `: ${detail}` : ''}`),
+		);
+	const answered = method === 'GET'
+		? reach.pipe(
+			Effect.filterOrElse(
+				response => response.status < 500,
+				response => Effect.fail(new ServerError({ response })),
+			),
+			Effect.retry({
+				schedule: Schedule.exponential('500 millis'),
+				times: 2,
+				while: failure => failure._tag === 'ServerError',
+			}),
+			Effect.catchTag('ServerError', ({ response }) => Effect.succeed(response)),
+		)
+		: reach;
+	const response = yield* answered;
+	if (response.status === 404 && method === 'GET') return null;
+	if (!response.ok) {
+		const message = yield* failed(response);
+		return yield* response.status >= 500
+			? new Upstream({ service: 'github', message })
+			: new Refused({ problem: { code: 'precondition', diagnostics: [legacyDiagnostic(message)] }, message });
+	}
+	if (response.status === 204) return null;
+	return yield* Effect.tryPromise({
+		try: (): Promise<unknown> => response.json(),
+		catch: () => new Upstream({ service: 'github', message: `GitHub sent invalid JSON on ${route}` }),
+	});
+});
+
+export class RepositoryGateway {
+	constructor(
+		private credentials: Credentials,
+		private ownerId: number,
+		private transport: Fetcher = fetch,
+	) {}
+	call(path: string, token: string, method = 'GET', body?: unknown): Promise<unknown> {
+		return run(gitHubRequest(this.transport, path, token, method, body));
 	}
 	async copyReleaseAsset(
 		repository: string,

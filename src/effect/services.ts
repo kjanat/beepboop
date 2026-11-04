@@ -1,5 +1,5 @@
 import { Context, Effect, Layer } from 'effect';
-import type { RepositoryGateway } from '@/automation/github';
+import { gitHubRequest } from '@/automation/github';
 import type { Fetcher } from '@/automation/managers/registry';
 import type { Vault } from '@/automation/vault';
 import { attempt, type Failure } from '@/effect/errors';
@@ -23,9 +23,9 @@ export class Secrets extends Context.Service<Secrets, {
 	readonly reveal: (alias: string, actor: string) => Effect.Effect<string, Failure>;
 }>()('beepboop/Secrets') {}
 
-export function gitHubLayer(gateway: Pick<RepositoryGateway, 'call'>): Layer.Layer<GitHub> {
+export function gitHubLayer(transport: Fetcher): Layer.Layer<GitHub> {
 	return Layer.succeed(GitHub, {
-		call: (path, token, method, body) => attempt(() => gateway.call(path, token, method, body)),
+		call: (path, token, method, body) => gitHubRequest(transport, path, token, method, body),
 	});
 }
 
