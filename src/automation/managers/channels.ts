@@ -11,6 +11,7 @@ const aurInfo = z.object({
 });
 const scoopManifest = z.object({ version: z.string() });
 const aurName = /^[a-z0-9@_+][a-z0-9@._+-]*$/;
+export const pkgbuildFile = /(?:^|\/)PKGBUILD$/;
 
 function raw(repository: string, directory: string, file: string): string {
 	const path = [...repository.split('/'), 'HEAD', ...directory.split('/').filter(Boolean), file];
@@ -71,7 +72,7 @@ export function pkgbuildChannels(snapshot: Snapshot): { channels: Channel[]; dia
 	const channels: Channel[] = [];
 	const diagnostics: string[] = [];
 	for (const [path, source] of Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b))) {
-		if (path !== 'PKGBUILD' && !path.endsWith('/PKGBUILD')) continue;
+		if (!pkgbuildFile.test(path)) continue;
 		const values = [...source.matchAll(/^pkgname=(.*)$/gm)].map(match => match[1]?.trim() ?? '');
 		const [value] = values;
 		if (values.length !== 1 || value === undefined) {

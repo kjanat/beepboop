@@ -3,22 +3,15 @@
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { discover, resolvePublished } from '@/automation/managers';
-import { tagQueries } from '@/automation/managers/tags';
 import { onboardingConfiguration } from '@/automation/onboarding';
+import { buildSnapshot } from '@/automation/snapshot';
 import type { Snapshot } from '@/automation/types';
-import { isLockfile } from '@/contract/catalog';
 
 function command(args: string[]): string {
 	const result = Bun.spawnSync(args);
 	if (result.exitCode !== 0) throw new Error('Could not read repository revision');
 	return new TextDecoder().decode(result.stdout);
 }
-const selected = (path: string) =>
-	!/(?:^|\/)(?:node_modules|vendor|target|testdata|fixtures|\.build)\//.test(path)
-	&& /(?:^|\/)(?:\.pre-commit-config\.ya?ml|targets.json|Cargo.toml|Cargo.lock|package.json|jsr.json|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock|go\.mod|PKGBUILD|\.?goreleaser[^/]*\.ya?ml)$|^\.github\/(?:beepboop.json|workflows\/[^/]+\.ya?ml)$/
-		.test(
-			path,
-		);
 let snapshot: Snapshot;
 if (process.argv[2] === '--github') {
 	const name = process.argv[3];
@@ -38,42 +31,41 @@ if (process.argv[2] === '--github') {
 		}),
 	);
 	if (tree.truncated) throw new Error('Truncated repository tree');
-	const files: Record<string, string> = {};
-	for (const entry of tree.tree) {
-		if (entry.type === 'blob' && entry.mode !== '120000' && selected(entry.path)) {
-			if (isLockfile(entry.path)) {
-				files[entry.path] = '';
-				continue;
-			}
-			const file = gh(
-				`repos/${name}/contents/${entry.path}?ref=${sha}`,
-				z.object({ size: z.number(), content: z.string() }),
-			);
-			if (file.size > 1048576) throw new Error('Discovery file limit exceeded');
-			files[entry.path] = Buffer.from(file.content, 'base64').toString('utf8');
-		}
-	}
-	const tags = tagQueries(Object.keys(files)).flatMap(prefix =>
-		gh(`repos/${name}/git/matching-refs/tags/${prefix}`, z.array(z.object({ ref: z.string() }))).map(row =>
-			row.ref.slice('refs/tags/'.length)
-		)
-	);
-	snapshot = {
+	snapshot = await buildSnapshot({
 		repository: { id: metadata.id, name, defaultBranch: metadata.default_branch },
 		sha,
-		files,
-		tags: [...new Set<string>(tags)].sort(),
-	};
+		entries: tree.tree,
+		read: async path => {
+			const file = gh(`repos/${name}/contents/${path}?ref=${sha}`, z.object({ size: z.number(), content: z.string() }));
+			if (file.size > 1048576) throw new Error('Discovery file limit exceeded');
+			return Buffer.from(file.content, 'base64').toString('utf8');
+		},
+		tags: async prefixes =>
+			prefixes.flatMap(prefix =>
+				gh(`repos/${name}/git/matching-refs/tags/${prefix}`, z.array(z.object({ ref: z.string() }))).map(row =>
+					row.ref.slice('refs/tags/'.length)
+				)
+			),
+	});
 } else {
 	const root = resolve(process.argv[2] ?? '.');
 	const git = (...args: string[]) => command(['git', '-C', root, ...args]);
 	const sha = git('rev-parse', 'HEAD').trim();
-	const files: Record<string, string> = {};
-	for (const path of git('ls-tree', '-r', '--name-only', sha).split('\n').filter(selected)) {
-		files[path] = isLockfile(path) ? '' : git('show', `${sha}:${path}`);
-	}
+	const remote = Bun.spawnSync(['git', '-C', root, 'remote', 'get-url', 'origin']);
+	const name = /github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?$/.exec(new TextDecoder().decode(remote.stdout).trim())?.[1]
+		?? 'local/inspection';
 	const tags = git('tag', '--list').split('\n').filter(Boolean);
-	snapshot = { repository: { id: 1, name: 'local/inspection', defaultBranch: 'HEAD' }, sha, files, tags };
+	snapshot = await buildSnapshot({
+		repository: { id: 1, name, defaultBranch: 'HEAD' },
+		sha,
+		entries: git('ls-tree', '-r', '-z', sha).split('\0').filter(Boolean).map(line => {
+			const [meta = '', path = ''] = line.split('\t');
+			const [mode = '', type = ''] = meta.split(' ');
+			return { path, type, mode };
+		}),
+		read: async path => git('show', `${sha}:${path}`),
+		tags: async prefixes => tags.filter(tag => prefixes.some(prefix => tag.startsWith(prefix))),
+	});
 }
 function githubApi(path: string): unknown {
 	const result = Bun.spawnSync(['gh', 'api', path]);

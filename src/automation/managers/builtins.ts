@@ -9,7 +9,7 @@ import { workflowManager } from '@/automation/managers/workflow';
 import { verifyImage } from '@/automation/oci';
 import { discoverHooks } from '@/automation/precommit';
 import type { Inventory, Snapshot } from '@/automation/types';
-import type { ManagerName } from '@/contract/catalog';
+import { type ManagerName, managerSpec } from '@/contract/catalog';
 
 function workflowDetected<M extends ManagerName>(name: M): (snapshot: Snapshot) => Inventory {
 	return snapshot => {
@@ -33,9 +33,8 @@ const adapters = {
 		name: 'manifest',
 		discover(snapshot) {
 			const result = emptyInventory();
-			if (
-				Object.keys(snapshot.files).some(path => /(?:^|\/)(?:Casks|Formula|bucket)\/[^/]+\.(?:rb|json)$/.test(path))
-			) {
+			const { markers } = managerSpec('manifest');
+			if (Object.keys(snapshot.files).some(path => markers.some(marker => marker.test(path)))) {
 				result.managers.push('manifest');
 			}
 			return result;

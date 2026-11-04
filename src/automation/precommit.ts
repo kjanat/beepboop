@@ -1,5 +1,6 @@
 import { isMap, isScalar, isSeq, parseDocument } from 'yaml';
 import type { Edit, ReleaseReference, Snapshot } from '@/automation/types';
+import { hookConfig } from '@/contract/catalog';
 
 export interface HookReference {
 	repository: string;
@@ -24,7 +25,7 @@ function entries(source: string) {
 	});
 }
 export function discoverHooks(snapshot: Snapshot): HookReference[] {
-	return Object.entries(snapshot.files).filter(([path]) => /(?:^|\/)\.pre-commit-config\.ya?ml$/.test(path))
+	return Object.entries(snapshot.files).filter(([path]) => hookConfig.test(path))
 		.flatMap(([path, source]) =>
 			entries(source).map(entry => ({ path, repository: entry.repository, ref: String(entry.rev.value) }))
 		);
@@ -32,7 +33,7 @@ export function discoverHooks(snapshot: Snapshot): HookReference[] {
 export function planHookUpdates(snapshot: Snapshot, release: ReleaseReference): Edit[] {
 	const edits: Edit[] = [];
 	for (const [path, before] of Object.entries(snapshot.files)) {
-		if (!/(?:^|\/)\.pre-commit-config\.ya?ml$/.test(path)) continue;
+		if (!hookConfig.test(path)) continue;
 		const updates = entries(before).filter(entry =>
 			entry.repository.toLowerCase() === release.repository.name.toLowerCase()
 		);

@@ -1,11 +1,9 @@
 import { importPKCS8, SignJWT } from 'jose';
-import { safeVersionPath } from '@/automation/editors';
 import type { Fetcher, VerificationContext } from '@/automation/managers/registry';
-import { tagQueries } from '@/automation/managers/tags';
 import type { RefState } from '@/automation/refs';
+import { buildSnapshot } from '@/automation/snapshot';
 import type { BotIdentity } from '@/automation/token';
 import type { Edit, Snapshot } from '@/automation/types';
-import { isLockfile } from '@/contract/catalog';
 import { array, integer, record, sha, text } from '@/model';
 
 type Permission = Record<string, 'read' | 'write'>;
@@ -228,47 +226,19 @@ export class RepositoryGateway {
 		if (tree.truncated) {
 			throw new Error('Repository tree truncated; discovery requires complete input');
 		}
-		if (extraPaths.some(path => !safeVersionPath(path))) throw new Error('Unsafe version file path');
-		const blobs = array(tree.tree).map(record).filter(entry => entry.type === 'blob' && entry.mode !== '120000');
-		if (extraPaths.some(path => !blobs.some(entry => entry.path === path))) {
-			throw new Error('Version file missing or not a regular file');
-		}
-		const candidates = array(tree.tree)
-			.map(record)
-			.filter((entry) => entry.type === 'blob' && entry.mode !== '120000')
-			.map((entry) => text(entry.path))
-			.filter(
-				(path) =>
-					extraPaths.includes(path)
-					|| /^actions\/(?:begin|prepare|report)\/action\.ya?ml$/.test(path)
-					|| !/(?:^|\/)(?:node_modules|vendor|target|testdata|fixtures|\.git)\//.test(path)
-						&& /(?:^|\/)(?:\.pre-commit-config\.ya?ml|targets.json|Cargo.toml|Cargo.lock|package.json|jsr.json|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock|go\.mod|PKGBUILD|\.?goreleaser[^/]*\.ya?ml)$|^\.github\/(?:beepboop.json|workflows\/[^/]+\.ya?ml)$/
-							.test(
-								path,
-							),
-			);
-		if (candidates.length > 400) throw new Error('Discovery file limit exceeded');
-		const files: Record<string, string> = {};
-		for (let offset = 0; offset < candidates.length; offset += 8) {
-			await Promise.all(
-				candidates.slice(offset, offset + 8).map(async (path) => {
-					// Lockfiles only indicate the need for repository preparation; avoid transferring large generated files.
-					if (
-						!extraPaths.includes(path) && isLockfile(path)
-					) {
-						files[path] = '';
-						return;
-					}
-					const content = await this.file(name, path, commitSha, token);
-					if (content !== null) files[path] = content;
-				}),
-			);
-		}
-		const tags = await this.tags(name, tagQueries(candidates), token);
-		return { repository: { id, name, defaultBranch }, sha: commitSha, files, ...(tags ? { tags } : {}) };
+		return buildSnapshot({
+			repository: { id, name, defaultBranch },
+			sha: commitSha,
+			entries: array(tree.tree).map(record).map(entry => ({
+				path: text(entry.path),
+				type: text(entry.type),
+				mode: text(entry.mode),
+			})),
+			read: path => this.file(name, path, commitSha, token),
+			tags: prefixes => this.tags(name, prefixes, token),
+		}, extraPaths);
 	}
-	private async tags(name: string, prefixes: string[], token: string): Promise<string[] | undefined> {
-		if (!prefixes.length) return undefined;
+	private async tags(name: string, prefixes: readonly string[], token: string): Promise<string[]> {
 		const refs = await Promise.all(prefixes.map(async prefix =>
 			array(
 				await this.call(
@@ -277,7 +247,7 @@ export class RepositoryGateway {
 				) ?? [],
 			).map(row => text(record(row).ref).slice('refs/tags/'.length))
 		));
-		return [...new Set(refs.flat())].sort();
+		return refs.flat();
 	}
 	async preset(reference: string): Promise<{ value: unknown; sha: string }> {
 		const [, name, preset, ref] = reference.match(/^github>([\w.-]+\/[\w.-]+):([\w-]+)(?:#([\w./-]+))?$/) ?? [];

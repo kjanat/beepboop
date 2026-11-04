@@ -45,63 +45,111 @@ export const destinationLabels = {
 	winget: 'WinGet',
 } as const satisfies Record<DestinationId, string>;
 
+export const goreleaserConfig = /^(?:\.config\/)?\.?goreleaser[^/]*\.ya?ml$/;
+export const hookConfig = /(?:^|\/)\.pre-commit-config\.ya?ml$/;
+const packageJson = /(?:^|\/)package\.json$/;
+
 export interface ManagerDestinations {
 	primary: ManagerDestinationId;
 	secondary: readonly ManagerDestinationId[];
 }
 export interface ManagerSpec {
 	purlType: string | undefined;
+	manifests: readonly RegExp[];
+	markers: readonly RegExp[];
 	lockfiles: readonly string[];
 	destinations: ManagerDestinations | undefined;
 	versionPolicy: 'equals-execution' | 'free';
 }
 export const managerCatalog = {
-	'pre-commit': { lockfiles: [], purlType: undefined, destinations: undefined, versionPolicy: 'free' },
+	'pre-commit': {
+		manifests: [hookConfig],
+		markers: [],
+		lockfiles: [],
+		purlType: undefined,
+		destinations: undefined,
+		versionPolicy: 'free',
+	},
 	cargo: {
+		manifests: [/(?:^|\/)Cargo\.toml$/],
+		markers: [],
 		lockfiles: ['Cargo.lock'],
 		purlType: 'cargo',
 		destinations: { primary: 'crates-io', secondary: [] },
 		versionPolicy: 'equals-execution',
 	},
 	npm: {
+		manifests: [packageJson, /(?:^|\/)npm\/targets\.json$/],
+		markers: [],
 		lockfiles: ['package-lock.json', 'bun.lock', 'pnpm-lock.yaml', 'yarn.lock'],
 		purlType: 'npm',
 		destinations: { primary: 'npm', secondary: [] },
 		versionPolicy: 'equals-execution',
 	},
 	jsr: {
+		manifests: [/(?:^|\/)jsr\.json$/],
+		markers: [],
 		lockfiles: [],
 		purlType: 'jsr',
 		destinations: { primary: 'jsr', secondary: [] },
 		versionPolicy: 'equals-execution',
 	},
 	'github-release': {
+		manifests: [],
+		markers: [],
 		lockfiles: [],
 		purlType: 'github',
 		destinations: { primary: 'github-release', secondary: [] },
 		versionPolicy: 'free',
 	},
-	oci: { lockfiles: [], purlType: undefined, destinations: { primary: 'oci', secondary: [] }, versionPolicy: 'free' },
+	oci: {
+		manifests: [],
+		markers: [],
+		lockfiles: [],
+		purlType: undefined,
+		destinations: { primary: 'oci', secondary: [] },
+		versionPolicy: 'free',
+	},
 	goreleaser: {
+		manifests: [goreleaserConfig],
+		markers: [],
 		lockfiles: [],
 		purlType: 'github',
 		destinations: { primary: 'github-release', secondary: [] },
 		versionPolicy: 'free',
 	},
 	go: {
+		manifests: [/(?:^|\/)go\.mod$/],
+		markers: [],
 		lockfiles: [],
 		purlType: 'golang',
 		destinations: { primary: 'go-proxy', secondary: [] },
 		versionPolicy: 'free',
 	},
 	vscode: {
+		manifests: [packageJson],
+		markers: [],
 		lockfiles: [],
 		purlType: 'vscode-extension',
 		destinations: { primary: 'vscode-marketplace', secondary: ['open-vsx'] },
 		versionPolicy: 'equals-execution',
 	},
-	manifest: { lockfiles: [], purlType: undefined, destinations: undefined, versionPolicy: 'free' },
-	workflow: { lockfiles: [], purlType: undefined, destinations: undefined, versionPolicy: 'free' },
+	manifest: {
+		manifests: [],
+		markers: [/(?:^|\/)(?:Casks|Formula|bucket)\/[^/]+\.(?:rb|json)$/],
+		lockfiles: [],
+		purlType: undefined,
+		destinations: undefined,
+		versionPolicy: 'free',
+	},
+	workflow: {
+		manifests: [/^\.github\/workflows\/[^/]+\.ya?ml$/],
+		markers: [],
+		lockfiles: [],
+		purlType: undefined,
+		destinations: undefined,
+		versionPolicy: 'free',
+	},
 } as const satisfies Record<ManagerName, ManagerSpec>;
 
 const lockfileNames = new Set<string>(managerNames.flatMap(name => managerSpec(name).lockfiles));

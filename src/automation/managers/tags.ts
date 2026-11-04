@@ -1,4 +1,5 @@
-import { directory, goreleaserConfig } from '@/automation/managers/helpers';
+import { directory } from '@/automation/managers/helpers';
+import { goreleaserConfig } from '@/contract/catalog';
 import { compareVersions, semver } from '@/model';
 
 export const majorSuffix = /^v(?:[2-9]|[1-9][0-9]+)$/;

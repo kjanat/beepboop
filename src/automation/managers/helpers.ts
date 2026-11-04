@@ -15,7 +15,6 @@ function glob(pattern: string, path: string): boolean {
 		.join('.*');
 	return new RegExp(`^${expression}$`).test(path);
 }
-export const goreleaserConfig = /^(?:\.config\/)?\.?goreleaser[^/]*\.ya?ml$/;
 export function directory(path: string): string {
 	return path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
 }
