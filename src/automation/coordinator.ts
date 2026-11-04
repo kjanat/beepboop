@@ -744,43 +744,63 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			) {
 				throw new Error('Approval does not match promotion target');
 			}
-			const gateway = this.gateway(),
-				token = await gateway.token(execution.repository, execution.repositoryId);
-			const commit = record(
-				await gateway.call(`/repos/${execution.repository}/commits/${commitSha}`, token),
-			);
-			if (record(record(commit.commit).verification).verified !== true) {
-				throw new Error('Target commit signature is not verified');
-			}
-			const checks = record(
-				await gateway.call(
-					`/repos/${execution.repository}/commits/${commitSha}/check-runs?per_page=100&filter=latest`,
-					token,
-				),
-			);
-			const runs = array(checks.check_runs).map(record);
-			if (
-				checks.total_count !== runs.length
-				|| !runs.length
-				|| runs.some(
-					(r) =>
-						r.status !== 'completed'
-						|| !['success', 'neutral', 'skipped'].includes(String(r.conclusion)),
-				)
-			) {
-				throw new Error('Target checks have not passed');
-			}
-			const status = record(
-				await gateway.call(`/repos/${execution.repository}/commits/${commitSha}/status`, token),
-			);
-			if (Number(status.total_count) > 0 && status.state !== 'success') {
-				throw new Error('Target status checks have not passed');
-			}
+			const problems = await this.approvalProblems(execution);
+			if (problems.length) throw new Error(problems.join('; '));
 			await this.store().audit(actor, 'promotion.approve', `${id}:${commitSha}`);
 			const next: Execution = { ...execution, state: 'ready' };
 			await this.put(next);
 			return next;
 		});
+	}
+	async approvalReadiness(id: string): Promise<{ problems: string[] }> {
+		const execution = await this.get(id);
+		if (execution.operation !== 'promote' || execution.state !== 'blocked') {
+			return { problems: ['This promotion is not waiting for approval'] };
+		}
+		return { problems: await this.approvalProblems(execution) };
+	}
+	private async approvalProblems(execution: Execution): Promise<string[]> {
+		const gateway = this.gateway(),
+			token = await gateway.token(execution.repository, execution.repositoryId);
+		const base = `/repos/${execution.repository}`;
+		const problems: string[] = [];
+		const commit = record(await gateway.call(`${base}/commits/${execution.sourceSha}`, token));
+		if (record(record(commit.commit).verification).verified !== true) {
+			problems.push('The commit signature is not verified');
+		}
+		const checks = record(
+			await gateway.call(`${base}/commits/${execution.sourceSha}/check-runs?per_page=100&filter=latest`, token),
+		);
+		const runs = array(checks.check_runs).map(record);
+		if (checks.total_count !== runs.length) problems.push('The commit has more than 100 check runs');
+		const releaseFiles = new Set(
+			Object.values(execution.configuration.streams).flatMap(stream =>
+				[stream.prepare.workflow, stream.promote.workflow, ...Object.values(stream.workflows)]
+					.flatMap(binding => binding ? [`.github/workflows/${binding.file}`] : [])
+			),
+		);
+		const paths = new Map<string, string>();
+		const gating = [];
+		for (const run of runs) {
+			const runId = /\/actions\/runs\/(\d+)\//.exec(String(run.details_url))?.[1];
+			if (runId && !paths.has(runId)) {
+				paths.set(runId, String(record(await gateway.call(`${base}/actions/runs/${runId}`, token)).path));
+			}
+			if (runId && releaseFiles.has(paths.get(runId) ?? '')) continue;
+			gating.push(run);
+		}
+		if (!gating.length) problems.push('No checks have run on this commit');
+		for (const run of gating) {
+			if (run.status !== 'completed') problems.push(`${String(run.name)} is still running`);
+			else if (!['success', 'neutral', 'skipped'].includes(String(run.conclusion))) {
+				problems.push(`${String(run.name)} ${String(run.conclusion)}`);
+			}
+		}
+		const status = record(await gateway.call(`${base}/commits/${execution.sourceSha}/status`, token));
+		if (Number(status.total_count) > 0 && status.state !== 'success') {
+			problems.push(`Commit status is ${String(status.state)}`);
+		}
+		return problems;
 	}
 	async recover(id: string, action: 'reconcile' | 'retry', actor: string): Promise<Execution> {
 		return this.serial(async () => {

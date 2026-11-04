@@ -345,6 +345,19 @@ for (
 		input(form, 'version').required = mode.value === 'explicit';
 	});
 }
+for (const form of findAll(document, 'form[data-action="approve"]', HTMLFormElement)) {
+	const status = find(form, '.approval-status', HTMLElement);
+	const approve = find(form, 'button', HTMLButtonElement);
+	const id = input(form, 'id').value;
+	api('/api/executions/approval', z.object({ problems: z.array(z.string()) }), { id }).then(({ problems }) => {
+		status?.replaceChildren(
+			...(problems.length ? problems : ['Signature verified and checks passed.']).map(text => node('li', text)),
+		);
+		if (approve) approve.disabled = problems.length > 0;
+	}).catch((error: unknown) => {
+		status?.replaceChildren(node('li', error instanceof Error ? error.message : 'Could not check this commit.'));
+	});
+}
 const repositorySelection = find(document, '.selection select[name="repository"]', HTMLSelectElement);
 repositorySelection?.addEventListener('change', () => {
 	location.assign(`/releases?repository=${encodeURIComponent(repositorySelection.value)}`);

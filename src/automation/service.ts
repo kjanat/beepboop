@@ -736,6 +736,11 @@ export class AutomationService {
 			await this.store.audit(actor, 'execution.start', execution.id);
 			return Response.json(await this.enqueue(repository, execution));
 		}
+		if (path === '/api/executions/approval') {
+			const execution = await this.store.execution(text(body.id));
+			if (!execution) throw new Error('Unknown execution');
+			return Response.json(await this.coordinator(execution.repositoryId).approvalReadiness(execution.id));
+		}
 		if (path === '/api/executions/cancel') {
 			const execution = await this.store.execution(text(body.id));
 			if (!execution) throw new Error('Unknown execution');

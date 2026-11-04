@@ -113,6 +113,8 @@ const progress = (run: Execution): string => {
 			 {run.reason
 			 	|| (run.state === 'succeeded'
 			 		? 'This operation completed.'
+			 		: run.state === 'blocked' && run.operation === 'promote'
+			 		? 'Waiting for your approval.'
 			 		: 'Follow the workflow and publication results below.')}
 		 </p>
 		 {until && (
@@ -162,11 +164,12 @@ const progress = (run: Execution): string => {
 				 </table>
 			 </div>
 		 )}
-		 {!!missing.length && (
-			 <p class="notice">
-				 Still needed for this release: {missing.join(', ')}.
-			 </p>
-		 )}
+		 {!!missing.length && !(run.state === 'blocked' && run.operation === 'promote')
+		 	&& (
+				<p class="notice">
+					Still needed for this release: {missing.join(', ')}.
+				</p>
+			)}
 		 {run.state === 'blocked' && run.operation === 'promote' && (
 			 <form data-action="approve">
 				 <input type="hidden" name="id" value={run.id}><input
@@ -176,10 +179,12 @@ const progress = (run: Execution): string => {
 				 ><p>
 					 Approve publishing from commit <a
 						 href={`https://github.com/${run.repository}/commit/${run.sourceSha}`}
-					 ><code>{run.sourceSha}</code></a>. Beepboop will verify the signature
-					 and required checks.
+					 ><code>{run.sourceSha}</code></a>.
 				 </p>
-				 <button class="primary">Approve this commit</button>
+				 <ul class="approval-status" aria-live="polite">
+					 <li>Checking the commit signature and checks…</li>
+				 </ul>
+				 <button class="primary" disabled>Approve this commit</button>
 			 </form>
 		 )}
 		 {run.workflow && ['failed', 'cancelled'].includes(run.state)
