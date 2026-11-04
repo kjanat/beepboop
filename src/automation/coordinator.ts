@@ -821,6 +821,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			) {
 				throw new Error('Approval does not match promotion target');
 			}
+			const ref = execution.workflow?.ref.replace(/^refs\/heads\//, '');
+			if (ref) {
+				const gateway = this.gateway();
+				const token = await gateway.token(execution.repository, execution.repositoryId);
+				const head = text(
+					record(await gateway.call(`/repos/${execution.repository}/commits/${encodeURIComponent(ref)}`, token)).sha,
+				);
+				if (head !== execution.sourceSha) {
+					throw new Error(`${ref} is at ${head.slice(0, 12)}. Approve the release for that commit.`);
+				}
+			}
 			const problems = await this.approvalProblems(execution);
 			if (problems.length && !force) throw new Error(problems.join('; '));
 			await this.store().audit(
