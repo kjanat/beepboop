@@ -380,7 +380,7 @@ export class RepositoryGateway {
 			await this.call(`/repos/${name}/git/commits`, token, 'POST', {
 				message: title,
 				tree: sha(tree.sha),
-				parents: setupEdits && base !== snapshot.sha ? [base, snapshot.sha] : [base],
+				parents: setupEdits ? [snapshot.sha] : [base],
 			}),
 		);
 		const head = sha(next.sha);
@@ -416,7 +416,7 @@ export class RepositoryGateway {
 				`/repos/${name}/git/refs/heads/${encodeURIComponent(branch)}`,
 				token,
 				'PATCH',
-				{ sha: head, force: false },
+				{ sha: head, force: setupEdits !== undefined },
 			);
 		} else {
 			await this.call(`/repos/${name}/git/refs`, token, 'POST', {
