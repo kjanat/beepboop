@@ -57,6 +57,35 @@ export class RepositoryGateway {
 		if (response.status === 204) return null;
 		return response.json();
 	}
+	async copyReleaseAsset(
+		repository: string,
+		asset: { id: number; name: string; contentType: string },
+		releaseId: number,
+		token: string,
+	): Promise<void> {
+		const headers = {
+			Authorization: `Bearer ${token}`,
+			'X-GitHub-Api-Version': '2026-03-10',
+			'User-Agent': 'beepboop',
+		};
+		const download = await this.transport(`https://api.github.com/repos/${repository}/releases/assets/${asset.id}`, {
+			headers: { ...headers, Accept: 'application/octet-stream' },
+			signal: AbortSignal.timeout(60_000),
+		});
+		if (!download.ok) throw new Error(`GitHub HTTP ${download.status} downloading release asset ${asset.name}`);
+		const upload = await this.transport(
+			`https://uploads.github.com/repos/${repository}/releases/${releaseId}/assets?name=${
+				encodeURIComponent(asset.name)
+			}`,
+			{
+				method: 'POST',
+				headers: { ...headers, Accept: 'application/vnd.github+json', 'Content-Type': asset.contentType },
+				body: await download.arrayBuffer(),
+				signal: AbortSignal.timeout(60_000),
+			},
+		);
+		if (!upload.ok) throw new Error(`GitHub HTTP ${upload.status} uploading release asset ${asset.name}`);
+	}
 	async token(
 		name: string,
 		id: number | undefined,

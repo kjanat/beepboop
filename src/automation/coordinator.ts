@@ -34,7 +34,7 @@ import { maintainSetup } from '@/automation/setup-maintenance';
 import type { SetupEdit } from '@/automation/setup-types';
 import { Store } from '@/automation/store';
 import type { Artifact, AutomationEvent, Edit, Execution, Publication, ReleaseReference } from '@/automation/types';
-import { array, integer, record, semver, sha } from '@/model';
+import { array, integer, record, semver, sha, text } from '@/model';
 
 export interface CoordinatorBindings extends Credentials {
 	DB: D1Database;
@@ -619,7 +619,29 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			throw new Error('Draft GitHub release does not match the release operation');
 		}
 		if (release.draft !== true) return release;
-		if (array(release.assets).map(record).some(asset => asset.state !== 'uploaded')) {
+		const bot = await gateway.botIdentity();
+		const others = array(await gateway.call(`/repos/${execution.repository}/releases?per_page=100`, token))
+			.map(record)
+			.filter(other =>
+				other.draft === true && other.tag_name === target.tag && integer(other.id) !== draft.id
+				&& record(other.author).id === bot.id
+			);
+		const names = new Set(array(release.assets).map(record).map(asset => text(asset.name)));
+		for (const other of others) {
+			for (const asset of array(other.assets).map(record)) {
+				if (asset.state !== 'uploaded' || names.has(text(asset.name))) continue;
+				await gateway.copyReleaseAsset(
+					execution.repository,
+					{ id: integer(asset.id), name: text(asset.name), contentType: text(asset.content_type) },
+					draft.id,
+					token,
+				);
+				names.add(text(asset.name));
+			}
+			await gateway.call(`/repos/${execution.repository}/releases/${integer(other.id)}`, token, 'DELETE');
+		}
+		const current = record(await gateway.call(path, token));
+		if (array(current.assets).map(record).some(asset => asset.state !== 'uploaded')) {
 			throw new Error('Draft GitHub release has unfinished asset uploads');
 		}
 		return record(await gateway.call(path, token, 'PATCH', { draft: false }));
