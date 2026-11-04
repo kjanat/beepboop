@@ -71,7 +71,9 @@ export async function verifyImage(
 				{ ...publication, version: publication.channel, channel: undefined },
 				request,
 			);
-			if (channel.outcome !== 'succeeded') return { ...publication, outcome: channel.outcome, url };
+			if (channel.outcome !== 'succeeded') {
+				return { ...channel, version: publication.version, channel: publication.channel, url };
+			}
 		}
 		return { ...publication, outcome: 'succeeded', digest, url };
 	} catch {
