@@ -1,6 +1,6 @@
 import { addWatch, removeManualWatch } from '@/automation/package-watch';
 import { routes } from '@/contract/routes';
-import { admin, elevated } from '@/server/handlers/kit';
+import { admin } from '@/server/handlers/kit';
 
 export const notificationEndpoints = {
 	notificationsList: admin(routes.notificationsList, async (_, { service }) => {
@@ -11,11 +11,12 @@ export const notificationEndpoints = {
 			deliveries: await notifications.recent(),
 		};
 	}),
-	notificationsSave: elevated(routes.notificationsSave, async (input, { service, actor }) => {
-		const notifications = service.notifications();
-		await notifications.checkDestination(input.destination);
-		return async () => ({ id: await notifications.saveDestination(input.destination, actor) });
-	}),
+	notificationsSave: admin(
+		routes.notificationsSave,
+		async (input, { service, actor }) => ({
+			id: await service.notifications().saveDestination(input.destination, actor),
+		}),
+	),
 	notificationsRemove: admin(routes.notificationsRemove, async (input, { service, actor }) => {
 		await service.notifications().removeDestination(input.id, actor);
 		return { ok: true };

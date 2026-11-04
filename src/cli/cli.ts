@@ -434,11 +434,8 @@ const notifications = group('notifications').description('Send package releases 
 				'subscribe-new',
 				flag.boolean().default(false).describe('Subscribe this destination to every newly watched package'),
 			)
-			.action(async ({ flags, ask, out }) => {
-				const client = new Client(flags.server);
-				const proof = await client.elevated(securityKey(ask));
-				const { id } = await client.call(routes.notificationsSave, {
-					proof,
+			.action(async ({ flags, out }) => {
+				const { id } = await new Client(flags.server).call(routes.notificationsSave, {
 					destination: {
 						name: flags.name,
 						kind: flags.kind,

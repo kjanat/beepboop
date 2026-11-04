@@ -575,7 +575,6 @@ each('form[data-action]', form => {
 						subscribeNew: data.subscribeNew === 'true',
 						enabled: data.enabled === 'true',
 					},
-					proof: await elevated(form),
 				});
 				location.reload();
 			} else if (action === 'notification-remove') {

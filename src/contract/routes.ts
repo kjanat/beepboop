@@ -302,9 +302,9 @@ export const routes = {
 	notificationsSave: route({
 		method: 'POST',
 		path: '/api/notifications/save',
-		auth: 'elevated',
+		auth: 'admin',
 		idempotent: false,
-		request: z.object({ destination: destinationInput, proof }),
+		request: z.object({ destination: destinationInput }),
 		response: z.looseObject({ id: z.string() }),
 	}),
 	notificationsRemove: route({

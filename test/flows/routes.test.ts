@@ -224,6 +224,45 @@ test('elevated routes check the request before they spend the security-key proof
 	});
 });
 
+test('a deployed CLI adds a notification destination without a security-key touch', async () => {
+	const token = await world.cliSession();
+	const send = transport(token);
+	await world.db.prepare('INSERT INTO sessions(id,kind,document,expires_at) VALUES(?,?,?,?)')
+		.bind(
+			'proof',
+			'elevation',
+			JSON.stringify({ subject: world.env.ADMIN_SUBJECT, elevated: true }),
+			Date.now() + 60_000,
+		)
+		.run();
+	await call(
+		routes.credentialsReplace,
+		{ alias: 'release-hook', value: 'https://hooks.example/release', proof: 'proof', expectedVersion: null },
+		send,
+	);
+
+	const saved = await reply(
+		await world.handle(
+			new Request(`${origin}/api/notifications/save`, {
+				method: 'POST',
+				headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					destination: {
+						name: 'Releases',
+						kind: 'http',
+						credential: 'release-hook',
+						subscribeNew: false,
+						enabled: true,
+					},
+				}),
+			}),
+		),
+	);
+	expect(saved.status).toBe(200);
+	const listed = await call(routes.notificationsList, {}, send);
+	expect(listed.destinations.map(destination => destination.name)).toEqual(['Releases']);
+});
+
 test('a broken Worker configuration fails with a logged internal error', async () => {
 	runtimeEnv.OWNER_ID = 'NaN';
 	const logged: string[] = [];

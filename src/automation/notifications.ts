@@ -199,7 +199,7 @@ export class Notifications {
 			updatedAt: row.updated_at,
 		}));
 	}
-	async checkDestination(input: DestinationInput): Promise<void> {
+	private async checkDestination(input: DestinationInput): Promise<void> {
 		const saved = await this.store.db.prepare('SELECT 1 FROM credentials WHERE alias=? AND active=1').bind(
 			input.credential,
 		).first();
