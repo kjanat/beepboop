@@ -1,5 +1,5 @@
 import { shaPattern } from '@/contract/ids';
-import { compare, semVer, semverPattern } from '@/contract/version';
+import { compare, semverPattern } from '@/contract/semver';
 
 export function record(value: unknown): Record<string, unknown> {
 	if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -41,7 +41,7 @@ export function semver(value: unknown): string {
 	return matches(value, semverPattern);
 }
 export function compareVersions(left: string, right: string): number {
-	return compare(semVer.parse(left), semVer.parse(right));
+	return compare(semver(left).replace(/^v/, ''), semver(right).replace(/^v/, ''));
 }
 export function oneOf<const T extends string>(value: unknown, allowed: readonly T[], message: string): T {
 	const match = allowed.find(item => item === value);
