@@ -533,10 +533,11 @@ current source. Saved stream choices are reused while their source configuration
 is unchanged. Older proposals without saved choices are rediscovered from the
 current manifests and workflow integrations.
 
-Beepboop rebuilds its generated branch as one commit on the default branch and
-force-pushes it. A changed proposal
-head or edits to generated files stop branch updates and put the conflict on the
-PR. Missing permissions and unresolved workflow choices are also shown there.
+While every commit on the setup branch is Beepboop's, Beepboop rebuilds the
+branch as one commit on the default branch and force-pushes it. Once anyone else
+commits to the branch, Beepboop stops updating that PR, its branch and its
+description. Missing permissions and unresolved workflow choices are shown on
+the PR.
 Unchanged proposals do not create commits. Closed and merged setup PRs are not
 reopened, and maintenance never approves or dispatches a release.
 

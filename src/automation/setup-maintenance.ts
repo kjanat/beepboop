@@ -41,8 +41,8 @@ export async function maintainSetup(
 	const pull = await gateway.openSetupPull(name, id);
 	if (!pull || (requested && pull.number !== requested.number)) return;
 	const generated = await gateway.generatedFiles(name, id, pull.head);
+	if (!generated && saved.head !== pull.head) return;
 	const previous = generated ?? setupEdits(saved);
-	const conflict = saved.head !== pull.head && !generated;
 	const inventory = withRegistryStatus(discover(snapshot), (await store.repository(id))?.inventory);
 	const summary = `Inspected [${snapshot.sha}](https://github.com/${name}/commit/${snapshot.sha}).\n\n`
 		+ 'Discovered packages:\n'
@@ -68,13 +68,12 @@ export async function maintainSetup(
 			?? ((snapshot.files['.github/beepboop.json'] ?? '') === original ? saved.choices : undefined);
 		const plan = await previewSetup(snapshot, inventory, choices, {
 			head: pull.head,
-			branchConflict: conflict,
 			workflowPermission: await gateway.canEditWorkflows(name, id),
 			presetShas: resolved.presetShas,
 			prior: { url: pull.url, content: typeof saved.content === 'string' ? saved.content : undefined },
 		}, resolved.configuration);
 		const fingerprint = await credentialHash(JSON.stringify({ plan, head: pull.head }));
-		const unboxed = saved.options === undefined && !conflict;
+		const unboxed = saved.options === undefined;
 		const addBoxes = async () => {
 			if (!unboxed) return {};
 			await gateway.refreshPullRequest(
