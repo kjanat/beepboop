@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { z } from 'zod';
 import { call, type Transport } from '@/contract/client';
 import { routes } from '@/contract/routes';
@@ -22,6 +22,21 @@ function transport(token: string): Transport {
 				...(request.body === undefined ? {} : { body: request.body }),
 			}),
 		);
+}
+
+function errors() {
+	const spy = spyOn(console, 'error').mockImplementation(() => {});
+	return {
+		events(): unknown[] {
+			const lines = spy.mock.calls.flatMap(([first]): unknown[] => {
+				if (typeof first !== 'string' || !first.startsWith('{')) return [];
+				const parsed: unknown = JSON.parse(first);
+				return [parsed];
+			});
+			spy.mockRestore();
+			return lines.filter(line => z.object({ event: z.string() }).safeParse(line).data?.event !== 'request.failed');
+		},
+	};
 }
 
 const changeRows = z.array(z.object({ entity: z.string(), id: z.string(), revision: z.number() }));
@@ -133,7 +148,7 @@ test('a Beepboop-dispatched run gets a token while D1 holds no rows', async () =
 	expect(world.db.queries.filter(query => !query.writes)).toEqual([]);
 });
 
-test('a push during a GitHub outage waits in the inbox and dead-letters after eight attempts', async () => {
+test('an outage retries in the inbox for eight attempts, and other failures dead-letter at once', async () => {
 	const repository = widget(world.github);
 	world.npm.publish('widget', '1.0.0');
 	const send = transport(await world.cliSession());
@@ -163,6 +178,38 @@ test('a push during a GitHub outage waits in the inbox and dead-letters after ei
 	await world.wait(60_000 * 2 ** 8);
 	expect(inbox().map(([key, entry]) => [key, z.looseObject({ attempts: z.number() }).parse(entry).attempts])).toEqual([
 		['inbox-dead:00000000-0000-4000-8000-00000000dead', 8],
+	]);
+
+	world.network.serve('api.github.com', github);
+	world.github.suspend();
+	await world.webhook('push', {
+		ref: `refs/heads/${repository.defaultBranch}`,
+		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
+	}, '00000000-0000-4000-8000-0000000000ff');
+	await world.wait(1_000);
+	const logged = errors();
+	world.db.failWrites = new Error('D1_ERROR: Network connection lost.');
+	await world.webhook('push', {
+		ref: `refs/heads/${repository.defaultBranch}`,
+		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
+	}, '00000000-0000-4000-8000-0000000000fe');
+	await world.wait(1_000);
+	world.db.failWrites = undefined;
+	expect(logged.events()).toEqual([{
+		event: 'inbox.audit-failed',
+		target: expect.stringContaining('00000000-0000-4000-8000-0000000000fe: push after 1 attempts'),
+		error: 'D1_ERROR: Network connection lost.',
+	}]);
+	expect(inbox().map(([key, entry]) => [key, z.looseObject({ attempts: z.number() }).parse(entry).attempts])).toEqual([
+		['inbox-dead:00000000-0000-4000-8000-0000000000fe', 1],
+		['inbox-dead:00000000-0000-4000-8000-0000000000ff', 1],
+		['inbox-dead:00000000-0000-4000-8000-00000000dead', 8],
+	]);
+	const dead = await world.db.prepare('SELECT target FROM audit WHERE action=? ORDER BY created_at').bind('inbox.dead')
+		.all();
+	expect(z.array(z.object({ target: z.string() })).parse(dead.results).map(row => row.target)).toEqual([
+		'00000000-0000-4000-8000-00000000dead: push after 8 attempts: GitHub unreachable on GET /repos/octo/widget/installation: Connection reset by peer',
+		'00000000-0000-4000-8000-0000000000ff: push after 1 attempts: GitHub HTTP 403 on POST /app/installations/77/access_tokens: This installation has been suspended',
 	]);
 });
 

@@ -38,6 +38,7 @@ import { decodeError, Store } from '@/automation/store';
 import type { Artifact, AutomationEvent, Edit, Execution, Publication, ReleaseReference } from '@/automation/types';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
 import { readiness } from '@/domain/repository';
+import { retryable } from '@/failure';
 import { array, integer, record, sha, text } from '@/model';
 import { decodeEventV1, decodeExecutionV1, decodeSetupEditV1 } from '@/persistence/codecs/v1';
 import type { SqlDatabase } from '@/persistence/d1/database';
@@ -182,6 +183,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private async executions(): Promise<Execution[]> {
 		return (await this.readJournal()).executions;
+	}
+	private async auditQuietly(action: string, target: string, failure: string): Promise<void> {
+		try {
+			await this.store().audit('beepboop', action, target);
+		} catch (error) {
+			console.error(JSON.stringify({ event: failure, target, error: decodeError(error) }));
+		}
 	}
 	private async quarantine(id: string, error: string): Promise<void> {
 		await this.ctx.storage.put(`quarantine:${id}`, { error, at: Date.now() });
@@ -1223,10 +1231,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					due: now + reconcileInterval * 2 ** entry.attempts,
 					error: decodeError(error),
 				};
-				if (attempts < inboxAttempts) await this.ctx.storage.put(key, failed);
+				if (retryable(error) && attempts < inboxAttempts) await this.ctx.storage.put(key, failed);
 				else {
 					await this.ctx.storage.put(`inbox-dead:${entry.delivery}`, failed);
 					await this.ctx.storage.delete(key);
+					await this.auditQuietly(
+						'inbox.dead',
+						`${entry.delivery}: ${entry.event.kind} after ${attempts} attempts: ${failed.error}`,
+						'inbox.audit-failed',
+					);
 				}
 			}
 		}

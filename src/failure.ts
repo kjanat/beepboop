@@ -33,6 +33,10 @@ function classify(error: unknown, incident: string): Classified {
 	return { problem, message: messageOf(problem) };
 }
 
+export function retryable(error: unknown): boolean {
+	return classify(error, '').problem.code === 'upstream';
+}
+
 function escapeHtml(value: string): string {
 	return value.replace(/[&<>"']/g, character => `&#${character.charCodeAt(0)};`);
 }

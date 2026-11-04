@@ -78,6 +78,7 @@ export class TestD1 implements SqlDatabase {
 	readonly sqlite = new Database(':memory:', { strict: true });
 	readonly queries: Query[] = [];
 	failBatch: Error | undefined;
+	failWrites: Error | undefined;
 	constructor(migrations: readonly string[] = migrationFiles()) {
 		this.sqlite.run('PRAGMA foreign_keys = ON');
 		for (const file of migrations) this.sqlite.run(readFileSync(join(migrationsDirectory, file), 'utf8'));
@@ -87,6 +88,7 @@ export class TestD1 implements SqlDatabase {
 		values: SQLQueryBindings[],
 	): { rows: Record<string, unknown>[]; changes: number; lastRowId: number } {
 		const writes = !/^\s*(SELECT|WITH)\b/i.test(sql);
+		if (writes && this.failWrites) throw this.failWrites;
 		this.queries.push({ sql, values, writes });
 		const statement = this.sqlite.prepare<Record<string, unknown>, SQLQueryBindings[]>(sql);
 		const rows = statement.all(...values).map(row => ({ ...row }));
