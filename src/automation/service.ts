@@ -505,9 +505,6 @@ export class AutomationService {
 			return Response.json({ error: 'Administrator authentication required' }, { status: 401 });
 		}
 		if (request.method === 'GET') {
-			if (path === '/api/authenticators') {
-				return Response.json(await new Authenticators(this.env).list(actor));
-			}
 			if (path === '/api/winget') return Response.json(await this.winget().list());
 			if (path === '/api/repositories') return Response.json(await this.store.repositories());
 			if (path === '/api/executions') return Response.json(await this.store.executions());
