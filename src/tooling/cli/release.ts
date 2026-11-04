@@ -5,10 +5,12 @@ import { z } from 'zod';
 import { packageId } from '@/automation/package-identity';
 import { record } from '@/model';
 
-const directory = resolve(import.meta.dir, '../../../packages/cli');
+const root = resolve(import.meta.dir, '../../..');
+const directory = join(root, 'packages/cli');
 const manifest = z.object({ name: z.string(), version: z.string() });
 const npm = manifest.parse(await Bun.file(join(directory, 'package.json')).json());
-const jsr = manifest.parse(await Bun.file(join(directory, 'jsr.json')).json());
+const jsr = manifest.extend({ publish: z.object({ include: z.array(z.string()) }) })
+	.parse(await Bun.file(join(directory, 'jsr.json')).json());
 const context = z.object({
 	sourceSha: z.string().optional(),
 	operation: z.string().optional(),
@@ -35,9 +37,9 @@ async function output(name: string, value: string): Promise<void> {
 	if (!process.env.GITHUB_OUTPUT) throw new Error('Missing GitHub output file');
 	await appendFile(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
 }
-async function command(args: string[], env: Record<string, string> = {}): Promise<void> {
+async function command(args: string[], env: Record<string, string> = {}, cwd = directory): Promise<void> {
 	const child = Bun.spawn(args, {
-		cwd: directory,
+		cwd,
 		stdout: 'inherit',
 		stderr: 'inherit',
 		env: { ...process.env, ...env },
@@ -48,6 +50,11 @@ async function registry(url: string): Promise<Response> {
 	const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(30_000) });
 	if (!response.ok && response.status !== 404) throw new Error(`Registry returned HTTP ${response.status}`);
 	return response;
+}
+async function checksum(path: string): Promise<string | undefined> {
+	const file = Bun.file(join(directory, path));
+	if (!await file.exists()) return undefined;
+	return `sha256-${new Bun.CryptoHasher('sha256').update(await file.arrayBuffer()).digest('hex')}`;
 }
 switch (process.argv[2]) {
 	case 'metadata':
@@ -65,12 +72,15 @@ switch (process.argv[2]) {
 			if (response.ok) {
 				const published = record(record(await response.json()).dist ?? {}).integrity;
 				if (typeof published !== 'string') throw new Error('npm returned no integrity for the published version');
-				await output('integrity', published);
-				console.log(
-					published === integrity
-						? `npm ${npm.name}@${npm.version} matches this build (${integrity}).`
-						: `::warning::npm ${npm.name}@${npm.version} has integrity ${published}. This build has integrity ${integrity}.`,
-				);
+				if (published === integrity) {
+					await output('integrity', published);
+					console.log(`npm ${npm.name}@${npm.version} matches this build (${integrity}).`);
+				} else {
+					console.log(
+						`::error::npm ${npm.name}@${npm.version} has integrity ${published}. This build has integrity ${integrity}.`,
+					);
+					process.exitCode = 1;
+				}
 			} else {
 				await output('integrity', integrity);
 				const userconfig = join(temporary, '.npmrc');
@@ -95,6 +105,30 @@ switch (process.argv[2]) {
 		}
 		break;
 	}
+	case 'jsr': {
+		const metadata = await registry(`https://jsr.io/${jsr.name}/meta.json`);
+		const published = metadata.ok ? record(record(await metadata.json()).versions ?? {})[jsr.version] : undefined;
+		if (published === undefined) {
+			await command(['bunx', 'jsr', 'publish', '--config', 'packages/cli/jsr.json'], {}, root);
+			break;
+		}
+		if (record(published).yanked === true) {
+			console.log(`::error::JSR ${jsr.name}@${jsr.version} is yanked. Release a new version.`);
+			process.exitCode = 1;
+			break;
+		}
+		const files = await registry(`https://jsr.io/${jsr.name}/${jsr.version}_meta.json`);
+		if (!files.ok) throw new Error(`JSR returned no file list for ${jsr.name}@${jsr.version}`);
+		const remote = z.record(z.string(), z.object({ checksum: z.string() })).parse(record(await files.json()).manifest);
+		const paths = new Set([...Object.keys(remote), ...jsr.publish.include.map(path => `/${path}`)]);
+		const changed: string[] = [];
+		for (const path of [...paths].sort()) if (remote[path]?.checksum !== await checksum(path)) changed.push(path);
+		if (changed.length) {
+			console.log(`::error::JSR ${jsr.name}@${jsr.version} differs from this build in ${changed.join(', ')}.`);
+			process.exitCode = 1;
+		} else console.log(`JSR ${jsr.name}@${jsr.version} matches this build.`);
+		break;
+	}
 	case 'report': {
 		const publications = [];
 		for (const manager of ['npm', 'jsr'] as const) {
@@ -115,5 +149,5 @@ switch (process.argv[2]) {
 		break;
 	}
 	default:
-		throw new Error('Expected metadata, npm or report');
+		throw new Error('Expected metadata, npm, jsr or report');
 }

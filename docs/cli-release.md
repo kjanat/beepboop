@@ -50,9 +50,11 @@ perform them. Publication is never triggered just by pushing this change.
 
 The workflow uses Bun for the CLI, build and tests. Only npm's supported
 OIDC/provenance publisher uses the npm CLI; `bun publish` does not support
-provenance. When npm already has the version, the step publishes nothing and
-reports npm's integrity. A tarball that differs from the new build produces a
-warning with both digests.
+provenance. When npm already has the version with this build's integrity, the
+step skips publication and reports that integrity. Any other integrity fails the
+npm step with both digests. When JSR already has the version, the JSR step
+compares the checksum of every published file with this build. Matching files
+skip publication; any difference fails the step and names the changed files.
 
 JSR uses `pkg:jsr/%40kjanat/beepboop`, distinct from `pkg:npm/%40kjanat/beepboop`.
 This is a provisional extension following [PURL proposal #457](https://github.com/package-url/purl-spec/issues/457),

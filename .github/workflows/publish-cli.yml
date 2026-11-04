@@ -57,7 +57,8 @@ jobs:
       - name: Publish JSR
         id: jsr
         if: ${{ !cancelled() && steps.metadata.outcome == 'success' }}
-        run: bunx jsr publish --config packages/cli/jsr.json
+        run: bun src/tooling/cli/release.ts jsr
+        env: { RELEASE_CONTEXT: "${{ steps.release.outputs.context }}" }
       - name: Publication report
         id: report
         if: ${{ !cancelled() && steps.metadata.outcome == 'success' }}
