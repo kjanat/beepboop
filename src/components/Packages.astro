@@ -19,7 +19,12 @@ const labels = { npm: 'npm', jsr: 'JSR' };
 		Beepboop already watches every npm and JSR package your repositories publish
 		or subscribe to. Add other packages here.
 	</p>
-	<form data-action="package-add" class="form-row">
+	<form
+		data-action="package-add"
+		method="post"
+		action="/api/packages/add"
+		class="form-row"
+	>
 		<label>Registry<select name="registry">
 				<option value="npm">npm</option>
 				<option value="jsr">JSR</option>
@@ -97,7 +102,11 @@ const labels = { npm: 'npm', jsr: 'JSR' };
 									 {data.destinations.map(destination => {
 									 	const on = subscribed(destination.id, pkg.registry, pkg.name);
 									 	return (
-											<form data-action="package-subscription">
+											<form
+												data-action="package-subscription"
+												method="post"
+												action="/api/packages/subscription"
+											>
 												<input
 													type="hidden"
 													name="destinationId"
@@ -126,7 +135,11 @@ const labels = { npm: 'npm', jsr: 'JSR' };
 						</td>
 						<td>
 							{pkg.manual && (
-								<form data-action="package-remove">
+								<form
+									data-action="package-remove"
+									method="post"
+									action="/api/packages/remove"
+								>
 									<input type="hidden" name="registry" value={pkg.registry}>
 									<input type="hidden" name="name" value={pkg.name}>
 									<button class="quiet">Stop watching</button>

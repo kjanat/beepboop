@@ -104,7 +104,13 @@ const preparations = data.executions.filter(e =>
 				 the new version, Beepboop opens a preparation pull request for you to
 				 merge. Otherwise the release starts right away.
 			 </p>
-			 <form data-action={stream?.versioning === 'independent' ? 'release-set' : 'release-prepare'}>
+			 <form
+				 data-action={stream?.versioning === 'independent' ? 'release-set' : 'release-prepare'}
+				 method="post"
+				 action={stream?.versioning === 'independent'
+				 ? '/api/releases/plan-set'
+				 : '/api/releases/plan'}
+			 >
 				 <input type="hidden" name="repositoryId" value={repository.id}><input
 					 type="hidden"
 					 name="stream"
@@ -212,7 +218,11 @@ const preparations = data.executions.filter(e =>
 					 merged commit SHA. Beepboop verifies that the prepared contents match
 					 that commit.
 				 </p>
-				 <form data-action="start-set">
+				 <form
+					 data-action="start-set"
+					 method="post"
+					 action="/api/releases/start-set"
+				 >
 					 <label>Preparation<select name="preparationId">
 							 {preparations.map(e => (
 								 <option value={e.id}>

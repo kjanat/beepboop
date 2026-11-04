@@ -29,7 +29,11 @@ const repositories = data.repositories.filter(repo =>
 			submissions.
 		</p>
 		{repositories.length ? (
-			<form data-action="winget-submit">
+			<form
+				data-action="winget-submit"
+				method="post"
+				action="/api/winget/preview"
+			>
 				<div class="form-grid">
 					<label>Repository<select name="repositoryId" required>
 							<option value="">
@@ -73,7 +77,11 @@ const repositories = data.repositories.filter(repo =>
 	<section aria-label="WinGet submissions">
 		<div class="section-heading">
 			<h2>Submissions</h2>
-			<form data-action="winget-refresh">
+			<form
+				data-action="winget-refresh"
+				method="post"
+				action="/api/winget/refresh"
+			>
 				<button>Refresh PR status</button>
 			</form>
 		</div>
@@ -120,7 +128,11 @@ const repositories = data.repositories.filter(repo =>
 				{item.reviews && <p>{item.reviews}</p>}
 				{item.reason && <p class="hint">{item.reason}</p>}
 				{(item.state === 'failed' || item.state === 'pending') && (
-					<form data-action="winget-retry">
+					<form
+						data-action="winget-retry"
+						method="post"
+						action="/api/winget/submit"
+					>
 						<input
 							type="hidden"
 							name="repositoryId"

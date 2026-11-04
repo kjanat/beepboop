@@ -45,7 +45,12 @@ function wingetDestination(repository: RepositoryRecord) {
 		its packages and workflows; the setup pull request lets you review its
 		release configuration.
 	</p>
-	<form data-action="discover" class="form-row">
+	<form
+		data-action="discover"
+		method="post"
+		action="/api/repositories/discover"
+		class="form-row"
+	>
 		<label>GitHub repository<input
 				name="repository"
 				placeholder="name, owner/name or GitHub URL"
@@ -89,7 +94,11 @@ function wingetDestination(repository: RepositoryRecord) {
 				</p>
 			))}
 			<div class="actions">
-				<form data-action="discover">
+				<form
+					data-action="discover"
+					method="post"
+					action="/api/repositories/discover"
+				>
 					<input
 						type="hidden"
 						name="repository"
@@ -112,6 +121,8 @@ function wingetDestination(repository: RepositoryRecord) {
 			</div>
 			<form
 				data-action="setup"
+				method="post"
+				action="/api/repositories/setup/preview"
 				data-repository={repository.name}
 				class="release-setup"
 			>

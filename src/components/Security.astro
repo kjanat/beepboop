@@ -19,6 +19,8 @@ const { data } = Astro.props;
 	</p>
 	<form
 		data-action="key-enroll"
+		method="post"
+		action="/api/authenticators/options"
 		data-first={String(!data.keys.length)}
 		class="form-row"
 	>
@@ -39,7 +41,11 @@ const { data } = Astro.props;
 					: 'Available to authorize secret and access changes.'}
 			</p>
 		</div>{data.keys.length > 1 && (
-			<form data-action="key-remove">
+			<form
+				data-action="key-remove"
+				method="post"
+				action="/api/authenticators/remove"
+			>
 				<input type="hidden" name="id" value={key.id}><button class="danger">
 					Remove key
 				</button>
@@ -51,7 +57,11 @@ const { data } = Astro.props;
 	<div class="section-heading">
 		<h2>CLI logins</h2>
 		{!!data.cliSessions.length && (
-			<form data-action="cli-revoke-all">
+			<form
+				data-action="cli-revoke-all"
+				method="post"
+				action="/api/cli-sessions/revoke-all"
+			>
 				<button class="danger">Revoke all CLI logins</button>
 			</form>
 		)}
@@ -63,7 +73,11 @@ const { data } = Astro.props;
 				<li class="section-heading">
 					<span>Signed in {date(session.created_at)} <code
 						>{session.id.slice(0, 12)}</code></span>
-					<form data-action="cli-revoke">
+					<form
+						data-action="cli-revoke"
+						method="post"
+						action="/api/cli-sessions/revoke"
+					>
 						<input
 							type="hidden"
 							name="id"

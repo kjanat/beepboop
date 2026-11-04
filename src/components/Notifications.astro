@@ -23,7 +23,11 @@ const destinationName = (id: string) =>
 )}
 <article>
 	<h2>Add a destination</h2>
-	<form data-action="notification-save">
+	<form
+		data-action="notification-save"
+		method="post"
+		action="/api/notifications/save"
+	>
 		<div class="form-grid">
 			<label>Name<input
 					name="name"
@@ -78,7 +82,11 @@ const destinationName = (id: string) =>
 		 </div>
 		 <details>
 			 <summary>Edit destination</summary>
-			 <form data-action="notification-save">
+			 <form
+				 data-action="notification-save"
+				 method="post"
+				 action="/api/notifications/save"
+			 >
 				 <input type="hidden" name="id" value={destination.id}>
 				 <div class="form-grid">
 					 <label>Name<input
@@ -122,7 +130,11 @@ const destinationName = (id: string) =>
 				 <button class="primary">Save destination</button>
 			 </form>
 		 </details>
-		 <form data-action="notification-remove">
+		 <form
+			 data-action="notification-remove"
+			 method="post"
+			 action="/api/notifications/remove"
+		 >
 			 <input
 				 type="hidden"
 				 name="id"

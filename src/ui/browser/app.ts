@@ -198,8 +198,18 @@ function selectedWorkflow(form: HTMLFormElement): Choice {
 	if (!choice) throw new Error('Choose a repository and workflow.');
 	return choice;
 }
+function attempt(work: () => void): void {
+	try {
+		work();
+	} catch (error) {
+		showError(error);
+	}
+}
+function each(selector: string, setup: (form: HTMLFormElement) => void): void {
+	for (const form of findAll(document, selector, HTMLFormElement)) attempt(() => setup(form));
+}
 const wingetPlans = new WeakMap<HTMLFormElement, { digest: string }>();
-for (const form of findAll(document, 'form[data-action="winget-submit"]', HTMLFormElement)) {
+each('form[data-action="winget-submit"]', form => {
 	const submit = find(form, 'button[value="submit"]', HTMLButtonElement);
 	if (!submit) throw Error('Missing WinGet submit button');
 	let revision = 0;
@@ -233,8 +243,8 @@ for (const form of findAll(document, 'form[data-action="winget-submit"]', HTMLFo
 			}
 		}
 	});
-}
-for (const form of findAll(document, 'form[data-action="grant-save"]', HTMLFormElement)) {
+});
+each('form[data-action="grant-save"]', form => {
 	const repositories = repositoryChoices(form);
 	const repository = input(form, 'repositoryId'), choice = selectInput(form, 'choice');
 	const updateScope = () => {
@@ -289,14 +299,8 @@ for (const form of findAll(document, 'form[data-action="grant-save"]', HTMLFormE
 		input(form, 'environment').required = delivery === 'environment';
 		updateScope();
 	});
-}
-for (
-	const form of findAll(
-		document,
-		'form[data-action="release-prepare"],form[data-action="release-set"]',
-		HTMLFormElement,
-	)
-) {
+});
+each('form[data-action="release-prepare"],form[data-action="release-set"]', form => {
 	form.addEventListener('change', () => {
 		const mode = form.elements.namedItem('versionMode');
 		if (!(mode instanceof HTMLSelectElement)) return;
@@ -308,8 +312,8 @@ for (
 		}
 		input(form, 'version').required = mode.value === 'explicit';
 	});
-}
-for (const form of findAll(document, 'form[data-action="approve"]', HTMLFormElement)) {
+});
+each('form[data-action="approve"]', form => {
 	const status = find(form, '.approval-status', HTMLElement);
 	const approve = find(form, 'button', HTMLButtonElement);
 	const id = input(form, 'id').value;
@@ -331,9 +335,10 @@ for (const form of findAll(document, 'form[data-action="approve"]', HTMLFormElem
 	}).finally(() => {
 		if (approve) approve.disabled = false;
 	});
-}
-const repositorySelection = find(document, '.selection select[name="repository"]', HTMLSelectElement);
-if (repositorySelection) {
+});
+attempt(() => {
+	const repositorySelection = find(document, '.selection select[name="repository"]', HTMLSelectElement);
+	if (!repositorySelection) return;
 	const query = new URLSearchParams(location.search);
 	const remembered = localStorage.getItem('beepboop:release-repository');
 	if (query.has('repository')) {
@@ -352,10 +357,11 @@ if (repositorySelection) {
 	repositorySelection.addEventListener('change', () => {
 		location.assign(`/releases?repository=${encodeURIComponent(repositorySelection.value)}`);
 	});
-}
+});
 
-const runsLatest = find(document, '[data-runs-latest]', HTMLElement);
-if (runsLatest) {
+attempt(() => {
+	const runsLatest = find(document, '[data-runs-latest]', HTMLElement);
+	if (!runsLatest) return;
 	const rendered = Number(runsLatest.dataset.runsLatest);
 	setInterval(() => {
 		if (document.hidden) return;
@@ -363,9 +369,9 @@ if (runsLatest) {
 			if (Math.max(0, ...runs.map(run => run.updatedAt)) > rendered) location.reload();
 		}).catch(() => undefined);
 	}, 5000);
-}
+});
 
-for (const form of findAll(document, 'form[data-action]', HTMLFormElement)) {
+each('form[data-action]', form => {
 	form.addEventListener('submit', async event => {
 		event.preventDefault();
 		const action = form.dataset.action;
@@ -602,4 +608,4 @@ for (const form of findAll(document, 'form[data-action]', HTMLFormElement)) {
 			button.disabled = action === 'setup' && clicked === 'apply' && !canApplySetup(form);
 		}
 	});
-}
+});

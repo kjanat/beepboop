@@ -70,7 +70,11 @@ const progress = (run: Execution): string => {
 		</div>
 		{release.error && <p class="notice">{release.error}</p>}
 		{release.complete !== release.total && (
-			<form data-action="recover">
+			<form
+				data-action="recover"
+				method="post"
+				action="/api/executions/recover"
+			>
 				<input type="hidden" name="id" value={release.recoveryId}>
 				<input type="hidden" name="action" value="reconcile">
 				<button>Check coordination</button>
@@ -196,6 +200,8 @@ const progress = (run: Execution): string => {
 		 {approving && (
 			 <form
 				 data-action="approve"
+				 method="post"
+				 action="/api/executions/approve"
 				 data-automatic={automatic ? 'true' : undefined}
 			 >
 				 <input type="hidden" name="id" value={run.id}><input
@@ -217,7 +223,11 @@ const progress = (run: Execution): string => {
 		 )}
 		 {run.workflow && ['failed', 'cancelled'].includes(run.state)
 		 	&& !(run.operation === 'prepare' && !run.plan && !run.managed) && (
-				<form data-action="recover">
+				<form
+					data-action="recover"
+					method="post"
+					action="/api/executions/recover"
+				>
 					<input type="hidden" name="id" value={run.id}><input
 						type="hidden"
 						name="action"
@@ -226,7 +236,11 @@ const progress = (run: Execution): string => {
 				</form>
 			)}
 		 {run.state === 'uncertain' && (
-			 <form data-action="recover">
+			 <form
+				 data-action="recover"
+				 method="post"
+				 action="/api/executions/recover"
+			 >
 				 <input type="hidden" name="id" value={run.id}><input
 					 type="hidden"
 					 name="action"
@@ -239,7 +253,7 @@ const progress = (run: Execution): string => {
 			 </form>
 		 )}
 		 {!['succeeded', 'cancelled', 'failed'].includes(run.state) && (
-			 <form data-action="cancel">
+			 <form data-action="cancel" method="post" action="/api/executions/cancel">
 				 <input type="hidden" name="id" value={run.id}><button>Cancel</button>
 			 </form>
 		 )}
