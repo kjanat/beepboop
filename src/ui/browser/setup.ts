@@ -96,7 +96,7 @@ function workflow(
 			for (const pkg of plan.inventory.packages.filter(pkg => publishable(pkg))) {
 				// The API returns canonical identities; no display-only identifier reconstruction.
 				const id = plan.inventory.packages.indexOf(pkg);
-				const purl = planPackageIds(plan)[id];
+				const purl = plan.packageIds[id];
 				if (!purl) continue;
 				mappingControls.set(
 					purl,
@@ -141,10 +141,6 @@ function workflow(
 			}
 			: undefined;
 }
-// Explicit API IDs avoid bringing server discovery adapters into the browser bundle.
-function planPackageIds(plan: SetupPlan): string[] {
-	return plan.packageIds;
-}
 function editor(form: HTMLFormElement, plan: SetupPlan) {
 	form.replaceChildren();
 	form.append(
@@ -179,8 +175,8 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 		const entries = plan.inventory.packages.flatMap((pkg, index): [string, string][] =>
 			publishable(pkg)
 				? [[
-					planPackageIds(plan)[index] ?? '',
-					`${packageLabel(planPackageIds(plan)[index] ?? '')} (${pkg.manifest})`,
+					plan.packageIds[index] ?? '',
+					`${packageLabel(plan.packageIds[index] ?? '')} (${pkg.manifest})`,
 				]]
 				: []
 		);

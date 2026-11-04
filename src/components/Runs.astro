@@ -135,9 +135,7 @@ const progress = (run: Execution): string => {
 						 <Field label="for">{packageLabel(run.package.id)}</Field>
 					 )}</Field>
 				 </h2>
-			 </div><span
-				 class:list={['badge', run.state]}
-			 >{run.state.replaceAll('-', ' ')}</span>
+			 </div><span class:list={['badge', run.state]}>{run.state}</span>
 		 </div>
 		 <p>
 			 {approving

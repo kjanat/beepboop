@@ -9,11 +9,7 @@ export { ReleaseWorkflow } from '@/automation/release-workflow';
 export default {
 	async fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response> {
 		try {
-			const response = await handle(request, env, context);
-			const headers = new Headers(response.headers);
-			headers.set('Cache-Control', 'no-store');
-			headers.set('X-Content-Type-Options', 'nosniff');
-			return new Response(response.body, { status: response.status, headers });
+			return await handle(request, env, context);
 		} catch (error) {
 			return failure(request, error);
 		}

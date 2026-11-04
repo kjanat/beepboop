@@ -350,10 +350,7 @@ export class AutomationService {
 				id: text(request.headers.get('x-github-delivery')),
 				source: repository.name,
 				event,
-
-				workflow: event === 'workflow_run'
-					? text(record(payload.workflow_run).path).replace(/^\.github\/workflows\//, '')
-					: undefined,
+				workflow: text(record(payload.workflow_run).path).replace(/^\.github\/workflows\//, ''),
 			});
 		}
 		return new Response(null, { status: 202 });
@@ -505,12 +502,7 @@ export class AutomationService {
 		try {
 			actor = await administrator(request, this.env);
 		} catch {
-			return path === '/'
-				? Response.redirect(`${this.env.APPLICATION_ORIGIN}/auth/login`, 302)
-				: Response.json({ error: 'Administrator authentication required' }, { status: 401 });
-		}
-		if (path === '/' && request.method === 'GET') {
-			return Response.redirect(`${this.env.APPLICATION_ORIGIN}/repositories`, 302);
+			return Response.json({ error: 'Administrator authentication required' }, { status: 401 });
 		}
 		if (request.method === 'GET') {
 			if (path === '/api/authenticators') {
@@ -787,22 +779,9 @@ export class AutomationService {
 				await this.store.audit(actor, 'release.prepare', promotion.id);
 				return Response.json(await this.enqueue(repository, promotion));
 			}
-			if (stream.prepare.workflow) {
-				if (stream.prepare.strategy !== 'workflow') {
-					return Response.json(
-						await this.enqueue(repository, await createReleasePreparation(repository, text(body.stream), plan)),
-					);
-				}
-				const execution = await createExecution(
-					repository,
-					text(body.stream),
-					'prepare',
-					`plan:${planId}`,
-					plan.version,
-				);
-				return Response.json(await this.enqueue(repository, execution));
-			}
-			const execution = await createReleasePreparation(repository, text(body.stream), plan);
+			const execution = stream.prepare.workflow && stream.prepare.strategy === 'workflow'
+				? await createExecution(repository, text(body.stream), 'prepare', `plan:${planId}`, plan.version)
+				: await createReleasePreparation(repository, text(body.stream), plan);
 			await this.store.audit(actor, 'release.prepare', execution.id);
 			return Response.json(await this.enqueue(repository, execution));
 		}
