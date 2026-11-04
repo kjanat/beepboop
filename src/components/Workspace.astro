@@ -13,7 +13,11 @@ import { bindings } from '@/server/bindings.ts';
 import { dashboard, date } from '@/server/dashboard.ts';
 
 const { section } = Astro.props;
-const data = await dashboard(bindings(), Astro.locals.actor);
+const { actor } = Astro.locals;
+if (!actor) {
+	throw new Error('Dashboard pages require a signed-in administrator');
+}
+const data = await dashboard(bindings(), actor);
 const copy: Record<string, [string, string]> = {
 	winget: ['WinGet', 'Submit Windows releases and follow Microsoft’s review.'],
 	overview: [

@@ -1,10 +1,10 @@
 import { defineMiddleware } from 'astro:middleware';
 import { administrator } from '@/automation/auth.ts';
 import { bindings } from '@/server/bindings.ts';
+import { dashboardPaths } from '@/server/sections.ts';
 
-const pages = new Set(['/', '/repositories', '/releases', '/runs', '/winget', '/secrets', '/activity', '/security']);
 export const onRequest = defineMiddleware(async (context, next) => {
-	if (pages.has(context.url.pathname.replace(/\/$/, '') || '/')) {
+	if (dashboardPaths.has(context.url.pathname.replace(/\/$/, '') || '/')) {
 		try {
 			context.locals.actor = await administrator(context.request, bindings());
 		} catch {
