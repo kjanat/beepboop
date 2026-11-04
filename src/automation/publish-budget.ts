@@ -5,7 +5,7 @@ import type { PublishKind } from '@/automation/types';
 
 const arrival = z.number().optional();
 
-export class PublishBudget extends DurableObject {
+export class PublishBudget extends DurableObject<unknown> {
 	private async theoretical(kind: PublishKind): Promise<number> {
 		return arrival.parse(await this.ctx.storage.get(`arrival:${kind}`)) ?? 0;
 	}

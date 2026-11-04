@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { SqlDatabase } from '@/persistence/d1/database';
 
 const documentRow = z.object({ document: z.string() });
 const versionRow = z.object({ version: z.number().nullable() });
@@ -27,7 +28,7 @@ export interface Sealed {
 }
 
 export class CredentialStore {
-	constructor(private readonly db: D1Database) {}
+	constructor(private readonly db: SqlDatabase) {}
 	async list(): Promise<ListedCredential[]> {
 		const rows = await this.db.prepare(
 			'SELECT alias,version,key_id,active,created_at FROM credentials ORDER BY alias,version DESC',

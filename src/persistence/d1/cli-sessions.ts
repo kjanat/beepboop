@@ -1,11 +1,12 @@
 import { z } from 'zod';
+import type { SqlDatabase } from '@/persistence/d1/database';
 
 const subjectRow = z.object({ subject: z.string() });
 const sessionRow = z.object({ id: z.string(), created_at: z.number() });
 export type CLISessionRow = z.output<typeof sessionRow>;
 
 export class CLISessionStore {
-	constructor(private readonly db: D1Database) {}
+	constructor(private readonly db: SqlDatabase) {}
 	async subject(hash: string): Promise<string | undefined> {
 		const row = await this.db.prepare('SELECT subject FROM cli_sessions WHERE id=?').bind(hash).first();
 		return row === null ? undefined : subjectRow.parse(row).subject;

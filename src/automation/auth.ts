@@ -13,6 +13,7 @@ import { documentRow } from '@/automation/schemas';
 import { forbidden, parseRequest, unauthenticated } from '@/contract/errors';
 import { loginSecretPattern } from '@/contract/ids';
 import { integer, record, sha, text } from '@/model';
+import type { SqlDatabase } from '@/persistence/d1/database';
 import { SessionStore } from '@/persistence/d1/sessions';
 
 const clientExtensionResults = z.object({}).catch({});
@@ -44,7 +45,7 @@ const authenticationResponse: z.ZodType<AuthenticationResponseJSON> = z.object({
 });
 
 export interface AuthBindings {
-	DB: D1Database;
+	DB: SqlDatabase;
 	APPLICATION_ORIGIN: string;
 	OPENAUTH_ISSUER: string;
 	OPENAUTH_CLIENT_ID: string;

@@ -38,10 +38,11 @@ import { blocking } from '@/contract/diagnostics';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
 import { array, integer, record, sha, text } from '@/model';
 import { decodeEventV1, decodeExecutionV1, decodeSetupEditV1 } from '@/persistence/codecs/v1';
+import type { SqlDatabase } from '@/persistence/d1/database';
 import { releaseEventId } from '@/persistence/identity-keys';
 
 export interface CoordinatorBindings extends Credentials {
-	DB: D1Database;
+	DB: SqlDatabase;
 	OWNER_ID: string;
 	RELEASE_WORKFLOW: Workflow<ReleaseWorkflowParams>;
 	PUBLISH_BUDGET: DurableObjectNamespace<PublishBudget>;

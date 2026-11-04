@@ -1,6 +1,7 @@
 import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { SqlDatabase, SqlResult, SqlStatement } from '@/persistence/d1/database';
 
 export const migrationsDirectory = join(import.meta.dir, '../../migrations');
 
@@ -22,8 +23,18 @@ function binding(value: unknown): SQLQueryBindings {
 	throw new TypeError(`D1_TYPE_ERROR: Type '${typeof value}' not supported for value '${String(value)}'`);
 }
 
-function transported(value: unknown): ReturnType<typeof JSON.parse> {
-	return JSON.parse(JSON.stringify(value));
+function transported(value: unknown): unknown {
+	const parsed: unknown = JSON.parse(JSON.stringify(value));
+	return parsed;
+}
+
+function rows(value: Record<string, unknown>[]): unknown[] {
+	return value.map(transported);
+}
+
+export interface TestResult extends SqlResult {
+	success: true;
+	meta: D1Meta & Record<string, unknown>;
 }
 
 function meta(changes: number, lastRowId: number): D1Meta & Record<string, unknown> {
@@ -38,7 +49,7 @@ function meta(changes: number, lastRowId: number): D1Meta & Record<string, unkno
 	};
 }
 
-export class TestStatement {
+export class TestStatement implements SqlStatement {
 	constructor(
 		private readonly database: TestD1,
 		readonly sql: string,
@@ -50,24 +61,20 @@ export class TestStatement {
 	execute(): { rows: Record<string, unknown>[]; changes: number; lastRowId: number } {
 		return this.database.execute(this.sql, [...this.values]);
 	}
-	async first<T>(column?: string): Promise<T | null> {
+	async first(): Promise<unknown> {
 		const [row] = this.execute().rows;
-		if (row === undefined) return null;
-		return transported(column === undefined ? row : (row[column] ?? null));
+		return row === undefined ? null : transported(row);
 	}
-	async run<T>(): Promise<D1Result<T>> {
+	async run(): Promise<TestResult> {
 		const result = this.execute();
-		return { success: true, meta: meta(result.changes, result.lastRowId), results: transported(result.rows) };
+		return { success: true, meta: meta(result.changes, result.lastRowId), results: rows(result.rows) };
 	}
-	async all<T>(): Promise<D1Result<T>> {
-		return this.run<T>();
-	}
-	async raw(): Promise<never> {
-		throw new Error('D1 raw() is not used by Beepboop');
+	async all(): Promise<TestResult> {
+		return this.run();
 	}
 }
 
-export class TestD1 {
+export class TestD1 implements SqlDatabase {
 	readonly sqlite = new Database(':memory:', { strict: true });
 	readonly queries: Query[] = [];
 	failBatch: Error | undefined;
@@ -94,31 +101,20 @@ export class TestD1 {
 	prepare(query: string): TestStatement {
 		return new TestStatement(this, query);
 	}
-	async batch<T>(statements: TestStatement[]): Promise<D1Result<T>[]> {
+	async batch(statements: SqlStatement[]): Promise<TestResult[]> {
 		if (this.failBatch) throw this.failBatch;
-		const results: D1Result<T>[] = [];
+		const results: TestResult[] = [];
+		const executed = statements.map(statement => {
+			if (!(statement instanceof TestStatement)) throw new TypeError('TestD1 batches only its own statements');
+			return statement;
+		});
 		this.sqlite.transaction(() => {
-			for (const statement of statements) {
+			for (const statement of executed) {
 				const result = statement.execute();
-				results.push({
-					success: true,
-					meta: meta(result.changes, result.lastRowId),
-					results: transported(result.rows),
-				});
+				results.push({ success: true, meta: meta(result.changes, result.lastRowId), results: rows(result.rows) });
 			}
 		})();
 		return results;
-	}
-	async exec(query: string): Promise<D1ExecResult> {
-		this.queries.push({ sql: query, values: [], writes: true });
-		this.sqlite.run(query);
-		return { count: query.split(';').filter(part => part.trim()).length, duration: 0 };
-	}
-	withSession(): never {
-		throw new Error('D1 sessions are not used by Beepboop');
-	}
-	async dump(): Promise<never> {
-		throw new Error('D1 dump() is not used by Beepboop');
 	}
 	reset(): void {
 		this.queries.length = 0;

@@ -1,9 +1,10 @@
 import { z } from 'zod';
+import type { SqlDatabase } from '@/persistence/d1/database';
 
 const cursorRow = z.object({ last_tick: z.number() });
 
 export class ScheduleStore {
-	constructor(private readonly db: D1Database) {}
+	constructor(private readonly db: SqlDatabase) {}
 	async cursor(key: string): Promise<number | undefined> {
 		const row = await this.db.prepare('SELECT last_tick FROM schedules WHERE id=?').bind(key).first();
 		return row === null ? undefined : cursorRow.parse(row).last_tick;

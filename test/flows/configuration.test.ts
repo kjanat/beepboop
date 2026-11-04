@@ -29,12 +29,13 @@ const storedDocument = z.object({
 		findings: z.array(z.object({ code: z.string(), severity: z.string(), message: z.string() })),
 	}),
 });
+const documentRow = z.object({ document: z.string() });
+async function storedRow(id: number): Promise<string> {
+	return documentRow.parse(await world.db.prepare('SELECT document FROM repositories WHERE id=?').bind(id).first())
+		.document;
+}
 async function stored(id: number): Promise<z.output<typeof storedDocument>> {
-	const row = await world.db.prepare('SELECT document FROM repositories WHERE id=?').bind(id).first<
-		{ document: string }
-	>();
-	if (!row) throw new Error(`Repository ${id} is not stored`);
-	return storedDocument.parse(JSON.parse(row.document));
+	return storedDocument.parse(JSON.parse(await storedRow(id)));
 }
 function diagnostics(reply: Reply): unknown {
 	return field(reply.body, 'diagnostics');
@@ -64,11 +65,7 @@ test('rows written before typed diagnostics still read as blocking', async () =>
 	const repository = widget(world.github);
 	const api = bearer(world, await world.cliSession());
 	await api('/api/repositories/discover', { repository: 'octo/widget' });
-	const row = await world.db.prepare('SELECT document FROM repositories WHERE id=?').bind(repository.id).first<
-		{ document: string }
-	>();
-	if (!row) throw new Error('Repository is not stored');
-	const legacy = z.looseObject({ inventory: z.looseObject({}) }).parse(JSON.parse(row.document));
+	const legacy = z.looseObject({ inventory: z.looseObject({}) }).parse(JSON.parse(await storedRow(repository.id)));
 	delete legacy.findings;
 	delete legacy.inventory.findings;
 	legacy.diagnostics = ['Configuration invalid'];
@@ -551,11 +548,8 @@ test('stored rows and journal entries with keys this version does not know still
 	world.npm.publish('widget', '1.0.0');
 	const api = bearer(world, await world.cliSession());
 	await api('/api/repositories/discover', { repository: 'octo/widget' });
-	const row = z.object({ document: z.string() }).parse(
-		await world.db.prepare('SELECT document FROM repositories WHERE id=?').bind(repository.id).first(),
-	);
 	await world.db.prepare('UPDATE repositories SET document=? WHERE id=?')
-		.bind(JSON.stringify(withRetiredKeys(JSON.parse(row.document))), repository.id).run();
+		.bind(JSON.stringify(withRetiredKeys(JSON.parse(await storedRow(repository.id)))), repository.id).run();
 	await world.db.prepare('INSERT INTO grants(id,alias,repository_id,document) VALUES(?,?,?,?)').bind(
 		'grant-1',
 		'npm-token',

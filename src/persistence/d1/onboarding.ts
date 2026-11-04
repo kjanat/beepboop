@@ -1,9 +1,10 @@
 import { z } from 'zod';
+import type { SqlDatabase } from '@/persistence/d1/database';
 
 const documentRow = z.object({ document: z.string() });
 
 export class OnboardingStore {
-	constructor(private readonly db: D1Database) {}
+	constructor(private readonly db: SqlDatabase) {}
 	async document(repositoryId: number): Promise<string | undefined> {
 		const row = await this.db.prepare('SELECT document FROM onboarding WHERE repository_id=?').bind(repositoryId)
 			.first();

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { auditActor } from '@/domain/audit';
+import type { SqlDatabase } from '@/persistence/d1/database';
 
 const activityRow = z.object({
 	id: z.string(),
@@ -17,7 +18,7 @@ export interface AuditRow {
 }
 
 export class AuditStore {
-	constructor(private readonly db: D1Database) {}
+	constructor(private readonly db: SqlDatabase) {}
 	async record(actor: string, action: string, target: string): Promise<void> {
 		await this.db.prepare('INSERT INTO audit(id,actor,actor_json,action,target,created_at) VALUES(?,?,?,?,?,?)')
 			.bind(crypto.randomUUID(), actor, JSON.stringify(auditActor(actor)), action, target, Date.now()).run();

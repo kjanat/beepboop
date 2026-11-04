@@ -11,6 +11,7 @@ import type {
 import { record } from '@/model';
 import { decodeDeliveryV1, decodeEventV1, decodeExecutionV1, decodeRepositoryV1 } from '@/persistence/codecs/v1';
 import { AuditStore } from '@/persistence/d1/audit';
+import type { SqlDatabase } from '@/persistence/d1/database';
 
 export type Readable<T> = { kind: 'readable'; value: T };
 export interface UnreadableRepository {
@@ -45,7 +46,7 @@ export function onboardingPulls(rows: { repository_id: number; document: string 
 
 export class Store {
 	private readonly auditLog: AuditStore;
-	constructor(readonly db: D1Database) {
+	constructor(readonly db: SqlDatabase) {
 		this.auditLog = new AuditStore(db);
 	}
 	async repository(id: number): Promise<RepositoryRecord | undefined> {

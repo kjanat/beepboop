@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { SqlDatabase } from '@/persistence/d1/database';
 
 export const sessionKinds = ['login-flow', 'security-challenge', 'elevation', 'cli-approval'] as const;
 export type SessionKind = (typeof sessionKinds)[number];
@@ -6,7 +7,7 @@ export type SessionKind = (typeof sessionKinds)[number];
 const documentRow = z.object({ document: z.string() });
 
 export class SessionStore {
-	constructor(private readonly db: D1Database) {}
+	constructor(private readonly db: SqlDatabase) {}
 	async open(kind: SessionKind, id: string, document: unknown, lifetime: number): Promise<void> {
 		await this.db.prepare('INSERT INTO sessions(id,kind,document,expires_at) VALUES(?,?,?,?)')
 			.bind(id, kind, JSON.stringify(document), Date.now() + lifetime).run();
