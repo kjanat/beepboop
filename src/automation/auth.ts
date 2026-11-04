@@ -301,12 +301,24 @@ export async function authRoute(
 				),
 		});
 	}
-	if (path === '/auth/logout' && request.method === 'POST') return signOut(request, env.APPLICATION_ORIGIN);
+	if (path === '/auth/logout' && request.method === 'POST') {
+		return signOut(request, env.APPLICATION_ORIGIN, refresh => client.revoke(refresh));
+	}
 	return undefined;
 }
-export function signOut(request: Request, origin: string): Response {
+export async function signOut(
+	request: Request,
+	origin: string,
+	revoke: (refresh: string) => Promise<void>,
+): Promise<Response> {
 	if (request.headers.get('origin') !== origin) {
 		return Response.json({ error: 'Invalid request origin' }, { status: 403 });
+	}
+	const refresh = cookie(request, refreshCookie);
+	if (refresh && refresh.length <= 4096) {
+		await revoke(refresh).catch(error =>
+			console.error(JSON.stringify({ event: 'auth.revoke_failed', error: String(error) }))
+		);
 	}
 	return new Response(null, { status: 303, headers: sessionHeaders(undefined, '/auth/login') });
 }

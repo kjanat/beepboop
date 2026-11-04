@@ -8,7 +8,7 @@
         "@astrojs/cloudflare": "^14.4.4",
         "@cfworker/json-schema": "^4.1.4",
         "@kjanat/dreamcli": "^5.0.0",
-        "@kjanat/openauth": "^0.5.1",
+        "@kjanat/openauth": "^0.6.0",
         "@simplewebauthn/server": "^14.0.3",
         "astro": "^7.4.5",
         "cron-parser": "^5.10.3",
@@ -289,7 +289,7 @@
 
     "@kjanat/fmt": ["@kjanat/fmt@0.60.6", "", { "dependencies": { "@kprint/kprint": "0.60.6" }, "bin": { "fmt": "fmt.cjs", "kfmt": "fmt.cjs" } }, "sha512-q0bjKO1pAFLFT35ZSs4L3tnBfzvWSjk2QU2ZrcJ0jOy/vFHH7sP7zdt15vcyIf4O3iG1jF6UGMiYGJT0eoqBgg=="],
 
-    "@kjanat/openauth": ["@kjanat/openauth@0.5.1", "", { "dependencies": { "@standard-schema/spec": "1.1.0", "aws4fetch": "1.0.20", "jose": "6.2.15" }, "peerDependencies": { "arctic": "^2.2.2", "hono": "^4.0.0" } }, "sha512-f5F7sR3JKtTMLpG2NqL4StdDxJX/D2QHx4WcJTzylFzsiIFpdxs862kJkLeZRXrLhlCdOgvoQ7tcC2DD1oLKpg=="],
+    "@kjanat/openauth": ["@kjanat/openauth@0.6.0", "", { "dependencies": { "@standard-schema/spec": "1.1.0", "aws4fetch": "1.0.20", "jose": "6.2.15" }, "peerDependencies": { "arctic": "^2.2.2", "hono": "^4.0.0" } }, "sha512-LOqfqWPT3T96sycDNiL0OFItAf6lBACg+IBF48XZia3vOKFvsw3csg1JUI/8p8MVxVNkpP7+OZqmySR9d2G7tA=="],
 
     "@kprint/kprint": ["@kprint/kprint@0.60.6", "", { "optionalDependencies": { "@kprint/kprint-android-arm64": "0.60.6", "@kprint/kprint-android-x64": "0.60.6", "@kprint/kprint-darwin-arm64": "0.60.6", "@kprint/kprint-darwin-x64": "0.60.6", "@kprint/kprint-freebsd-x64": "0.60.6", "@kprint/kprint-linux-arm64-glibc": "0.60.6", "@kprint/kprint-linux-arm64-musl": "0.60.6", "@kprint/kprint-linux-loong64-glibc": "0.60.6", "@kprint/kprint-linux-loong64-musl": "0.60.6", "@kprint/kprint-linux-ppc64-glibc": "0.60.6", "@kprint/kprint-linux-ppc64-musl": "0.60.6", "@kprint/kprint-linux-riscv64-glibc": "0.60.6", "@kprint/kprint-linux-x64-glibc": "0.60.6", "@kprint/kprint-linux-x64-musl": "0.60.6", "@kprint/kprint-win32-arm64": "0.60.6", "@kprint/kprint-win32-x64": "0.60.6" }, "hasInstallScript": true, "bin": { "dprint": "bin.cjs", "kprint": "bin.cjs" } }, "sha512-cqGQDVFzV3hbWPhzQAZl7FfIO1JIN02MjHDDeeTmQZEsGP3YXHzseSdaMlviClKnqcLeDztb1YP9tk1voMyM0g=="],
 

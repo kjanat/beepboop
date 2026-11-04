@@ -58,7 +58,7 @@
 		"@astrojs/cloudflare": "^14.4.4",
 		"@cfworker/json-schema": "^4.1.4",
 		"@kjanat/dreamcli": "^5.0.0",
-		"@kjanat/openauth": "^0.5.1",
+		"@kjanat/openauth": "^0.6.0",
 		"@simplewebauthn/server": "^14.0.3",
 		"astro": "^7.4.5",
 		"cron-parser": "^5.10.3",
