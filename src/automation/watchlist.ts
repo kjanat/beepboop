@@ -1,8 +1,7 @@
 import { publishable } from '@/automation/package-publication';
 import type { RepositoryRecord } from '@/automation/types';
+import { type WatchedRegistry, watchedRegistries } from '@/contract/catalog';
 
-export const watchedRegistries = ['npm', 'jsr'] as const;
-export type WatchedRegistry = (typeof watchedRegistries)[number];
 export interface WatchedPackage {
 	registry: WatchedRegistry;
 	name: string;

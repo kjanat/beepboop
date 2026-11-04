@@ -1,6 +1,6 @@
 import { excluded, type PackagePublication, registry } from '@/automation/package-publication';
 import type { Execution, Inventory, Package, Publication, RepositoryRecord } from '@/automation/types';
-import { identifiedManagers } from '@/contract/catalog';
+import { identifiedManagers, legacyJsrIdentity } from '@/contract/catalog';
 import { type PackageIdentity, packageIdentity, purl } from '@/package-url';
 
 type PackageRecord = Pick<Package, 'manager' | 'name' | 'version' | 'identity'>;
@@ -124,10 +124,7 @@ export function packageKey(input: PackageIdentity | string): string {
 /** Upgrade only Beepboop's historical JSR encoding; generic PURL parsing stays lossless. */
 export function releaseIdentity(input: PackageIdentity | string): PackageIdentity {
 	const identity = packageIdentity(input);
-	if (
-		identity.type !== 'generic' || !identity.namespace?.startsWith('@')
-		|| !['https://jsr.io', 'https://jsr.io/'].includes(identity.qualifiers?.repository_url ?? '')
-	) return identity;
+	if (!legacyJsrIdentity(identity)) return identity;
 	const { repository_url: _repository, ...qualifiers } = identity.qualifiers ?? {};
 	return packageIdentity({ ...identity, type: 'jsr', qualifiers });
 }

@@ -12,6 +12,9 @@ export const managerNames = [
 	'workflow',
 ] as const;
 export type ManagerName = (typeof managerNames)[number];
+export function isManagerName(value: string): value is ManagerName {
+	return managerNames.some(name => name === value);
+}
 
 export const managerDestinationIds = [
 	'npm',
@@ -166,3 +169,27 @@ export function destinationsOf(manager: ManagerName): ManagerDestinationId[] {
 	return mapped ? [mapped.primary, ...mapped.secondary] : [];
 }
 export const identifiedManagers = managerNames.filter(name => managerSpec(name).purlType !== undefined);
+export function destinationOfPurlType(type: string): ManagerDestinationId | undefined {
+	return managerNames.flatMap(name => {
+		const { purlType, destinations } = managerSpec(name);
+		return purlType === type && destinations ? [destinations.primary] : [];
+	})[0];
+}
+
+export function legacyJsrIdentity(identity: {
+	type: string;
+	namespace?: string;
+	qualifiers?: Readonly<Record<string, string>>;
+}): boolean {
+	return identity.type === 'generic' && identity.namespace?.startsWith('@') === true
+		&& ['https://jsr.io', 'https://jsr.io/'].includes(identity.qualifiers?.repository_url ?? '');
+}
+
+export const watchedRegistries = ['npm', 'jsr'] as const satisfies readonly ManagerDestinationId[];
+export type WatchedRegistry = (typeof watchedRegistries)[number];
+export const notificationKinds = ['slack', 'http'] as const;
+export type NotificationKind = (typeof notificationKinds)[number];
+export const notificationKindLabels = {
+	slack: 'Slack',
+	http: 'HTTP webhook',
+} as const satisfies Record<NotificationKind, string>;

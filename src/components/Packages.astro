@@ -1,5 +1,6 @@
 ---
-import { packageUrl } from '@/automation/notifications.ts';
+import { destinationLabels, watchedRegistries } from '@/contract/catalog';
+import { watchedPackageHref } from '@/contract/links';
 import { type Dashboard, date } from '@/server/dashboard.ts';
 
 interface Props {
@@ -11,7 +12,6 @@ const subscribed = (destinationId: string, registry: string, name: string) =>
 		s.destinationId === destinationId && s.registry === registry
 		&& s.name === name
 	);
-const labels = { npm: 'npm', jsr: 'JSR' };
 ---
 <article>
 	<h2>Watch a package</h2>
@@ -26,8 +26,9 @@ const labels = { npm: 'npm', jsr: 'JSR' };
 		class="form-row"
 	>
 		<label>Registry<select name="registry">
-				<option value="npm">npm</option>
-				<option value="jsr">JSR</option>
+				{watchedRegistries.map(registry => (
+					<option value={registry}>{destinationLabels[registry]}</option>
+				))}
 			</select></label><label>Package name<input
 				name="name"
 				placeholder="@scope/package"
@@ -62,8 +63,10 @@ const labels = { npm: 'npm', jsr: 'JSR' };
 				{data.packages.map(pkg => (
 					<tr>
 						<td>
-							<span class="badge">{labels[pkg.registry]}</span>
-							<a href={packageUrl(pkg.registry, pkg.name)}>{pkg.name}</a>
+							<span class="badge">{destinationLabels[pkg.registry]}</span>
+							<a
+								href={watchedPackageHref(pkg.registry, pkg.name)}
+							>{pkg.name}</a>
 						</td>
 						<td>{pkg.version ?? 'Not checked yet'}</td>
 						<td>

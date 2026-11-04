@@ -1,11 +1,12 @@
 ---
+import { notificationKindLabels, notificationKinds } from '@/contract/catalog';
 import { type Dashboard, date } from '@/server/dashboard.ts';
+import { registryPackageLabel } from '@/ui/package-label';
 
 interface Props {
 	data: Dashboard;
 }
 const { data } = Astro.props;
-const kinds = { slack: 'Slack', http: 'HTTP webhook' };
 const destinationName = (id: string) =>
 	data.destinations.find(d => d.id === id)?.name ?? 'Removed destination';
 ---
@@ -35,8 +36,9 @@ const destinationName = (id: string) =>
 					maxlength="80"
 					required
 				></label><label>Type<select name="kind">
-					<option value="slack">Slack</option>
-					<option value="http">HTTP webhook</option>
+					{notificationKinds.map(kind => (
+						<option value={kind}>{notificationKindLabels[kind]}</option>
+					))}
 				</select></label><label>Webhook URL secret<select
 					name="credential"
 					required
@@ -72,8 +74,8 @@ const destinationName = (id: string) =>
 			 <div>
 				 <h2>{destination.name}</h2>
 				 <p class="metadata metadata-fields">
-					 <span>{kinds[destination.kind]}</span><span>Secret <code
-						 >{destination.credential}</code></span><span>{count}
+					 <span>{notificationKindLabels[destination.kind]}</span><span>Secret
+						 <code>{destination.credential}</code></span><span>{count}
 						 packages</span>
 				 </p>
 			 </div><span
@@ -95,12 +97,11 @@ const destinationName = (id: string) =>
 							 maxlength="80"
 							 required
 						 ></label><label>Type<select name="kind">
-							 <option value="slack" selected={destination.kind === 'slack'}>
-								 Slack
-							 </option>
-							 <option value="http" selected={destination.kind === 'http'}>
-								 HTTP webhook
-							 </option>
+							 {notificationKinds.map(kind => (
+								 <option value={kind} selected={destination.kind === kind}>
+									 {notificationKindLabels[kind]}
+								 </option>
+							 ))}
 						 </select></label><label>Webhook URL secret<select
 							 name="credential"
 							 required
@@ -167,7 +168,10 @@ const destinationName = (id: string) =>
 						>{date(delivery.updatedAt)}</time>
 					</td>
 					<td>
-						{delivery.payload.package.registry}:{delivery.payload.package.name}
+						{registryPackageLabel(
+							delivery.payload.package.registry,
+							delivery.payload.package.name,
+						)}
 					</td>
 					<td>
 						{delivery.payload.version.previous ?? 'new'} →

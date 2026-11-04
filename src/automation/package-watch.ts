@@ -5,7 +5,8 @@ import type { Fetcher, RegistryVersion } from '@/automation/managers/registry';
 import { type Notifications, versionChanged } from '@/automation/notifications';
 import type { Store } from '@/automation/store';
 import type { AutomationEvent, RepositoryRecord } from '@/automation/types';
-import { type WatchedPackage, type WatchedRegistry, watchedRegistries, watchlist } from '@/automation/watchlist';
+import { type WatchedPackage, watchlist } from '@/automation/watchlist';
+import { type WatchedRegistry, watchedRegistries } from '@/contract/catalog';
 
 const watchedRow = z.object({
 	registry: z.enum(watchedRegistries),

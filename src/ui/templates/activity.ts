@@ -1,5 +1,6 @@
 import type { ActivityEntry, RepositoryRecord } from '@/automation/types';
-import { githubHref, htmlEscape, link } from '@/ui/templates/html';
+import { githubHref } from '@/contract/links';
+import { htmlEscape, link } from '@/ui/templates/html';
 
 function repositoryLink(name: string): string {
 	return link(githubHref(name), name);

@@ -8,6 +8,7 @@ import {
 import type { Package } from '@/automation/types';
 import { type Dashboard, workflowChoices } from '@/server/dashboard.ts';
 import { packageUrl } from '@/server/package-url';
+import { primaryStatus } from '@/ui/destinations';
 
 interface Props {
 	data: Dashboard;
@@ -49,14 +50,6 @@ const bump = (kind: 'patch' | 'minor' | 'major') => {
 	const version = bumpedVersion(packages, { bump: kind });
 	return version ? ` (${version})` : '';
 };
-function registryState(pkg: Package): string {
-	if (pkg.publicationStatus === 'published') {
-		return `Released ${pkg.published ?? ''}`.trim();
-	}
-	if (pkg.publicationStatus === 'missing') return 'Not published yet';
-	if (pkg.publicationStatus === 'failed') return 'Registry check failed';
-	return 'Registry not checked';
-}
 function manifestNote(pkg: Package): string | undefined {
 	return pkg.version && pkg.version !== pkg.published
 		? `Manifest ${pkg.version}`
@@ -137,7 +130,7 @@ const preparations = data.executions.filter(e =>
 									 {group.packages.map(pkg => (
 										 <span class="package-line">{packageUrl(pkg)}<span
 												 class="badge"
-											 >{registryState(pkg)}</span>{manifestNote(pkg) && (
+											 >{primaryStatus(pkg)}</span>{manifestNote(pkg) && (
 												 <span class="badge">{manifestNote(pkg)}</span>
 											 )}</span>
 									 ))}
@@ -170,7 +163,7 @@ const preparations = data.executions.filter(e =>
 								{packages.map(pkg => (
 									<span class="package-line">{packageUrl(pkg)}<span
 											class="badge"
-										>{registryState(pkg)}</span>{manifestNote(pkg) && (
+										>{primaryStatus(pkg)}</span>{manifestNote(pkg) && (
 											<span class="badge">{manifestNote(pkg)}</span>
 										)}</span>
 								))}

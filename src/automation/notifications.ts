@@ -2,10 +2,9 @@ import { z } from 'zod';
 import type { Fetcher } from '@/automation/managers/registry';
 import type { Store } from '@/automation/store';
 import type { Vault } from '@/automation/vault';
-import { type WatchedRegistry, watchedRegistries } from '@/automation/watchlist';
+import { type NotificationKind, notificationKinds, type WatchedRegistry, watchedRegistries } from '@/contract/catalog';
+import { watchedPackageHref } from '@/contract/links';
 
-export const notificationKinds = ['slack', 'http'] as const;
-export type NotificationKind = (typeof notificationKinds)[number];
 export const deliveryStates = ['pending', 'delivered', 'failed'] as const;
 export type DeliveryState = (typeof deliveryStates)[number];
 const maximumAttempts = 5;
@@ -103,10 +102,6 @@ function destination(row: z.infer<typeof destinationRow>): NotificationDestinati
 	};
 }
 
-export function packageUrl(registry: WatchedRegistry, name: string): string {
-	return registry === 'npm' ? `https://www.npmjs.com/package/${name}` : `https://jsr.io/${name}`;
-}
-
 export function versionChanged(
 	id: string,
 	registry: WatchedRegistry,
@@ -119,7 +114,7 @@ export function versionChanged(
 		type: 'package.version.changed',
 		package: { registry, name },
 		version: { previous, current },
-		url: packageUrl(registry, name),
+		url: watchedPackageHref(registry, name),
 	};
 }
 

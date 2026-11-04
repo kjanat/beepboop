@@ -1,52 +1,47 @@
+import {
+	destinationLabels,
+	destinationOfPurlType,
+	isManagerName,
+	legacyJsrIdentity,
+	type ManagerDestinationId,
+	managerSpec,
+} from '@/contract/catalog';
 import { packageIdentity } from '@/package-url';
-
-const registries: Record<string, string> = {
-	cargo: 'crates.io',
-	composer: 'Packagist',
-	docker: 'Docker Hub',
-	gem: 'RubyGems',
-	github: 'GitHub Releases',
-	'github-release': 'GitHub Releases',
-	go: 'Go',
-	golang: 'Go',
-	goreleaser: 'GitHub Releases',
-	jsr: 'JSR',
-	maven: 'Maven Central',
-	npm: 'npm',
-	nuget: 'NuGet',
-	oci: 'OCI registry',
-	pypi: 'PyPI',
-	vscode: 'VS Code Marketplace',
-};
 
 interface PackageName {
 	name: string;
-	registry?: string;
+	destination?: ManagerDestinationId;
 }
 
 function parts(value: string): PackageName {
 	if (!value.startsWith('pkg:')) {
 		const colon = value.indexOf(':');
-		return colon > 0 ? { name: value.slice(colon + 1), registry: registries[value.slice(0, colon)] } : { name: value };
+		const prefix = value.slice(0, colon);
+		const destination = isManagerName(prefix) ? managerSpec(prefix).destinations?.primary : undefined;
+		return colon > 0 ? { name: value.slice(colon + 1), ...(destination ? { destination } : {}) } : { name: value };
 	}
 	try {
 		const identity = packageIdentity(value);
-		const jsr = identity.type === 'generic' && identity.qualifiers?.repository_url?.startsWith('https://jsr.io');
+		const destination = destinationOfPurlType(legacyJsrIdentity(identity) ? 'jsr' : identity.type);
 		return {
 			name: identity.namespace ? `${identity.namespace}/${identity.name}` : identity.name,
-			registry: registries[jsr ? 'jsr' : identity.type],
+			...(destination ? { destination } : {}),
 		};
 	} catch {
 		return { name: value };
 	}
 }
 
+export function registryPackageLabel(destination: ManagerDestinationId, name: string): string {
+	return `${name} on ${destinationLabels[destination]}`;
+}
+
 export function packageLabel(value: string): string {
-	const { name, registry } = parts(value);
-	return registry ? `${name} on ${registry}` : name;
+	const { name, destination } = parts(value);
+	return destination ? registryPackageLabel(destination, name) : name;
 }
 
 export function packageMarkdown(value: string): string {
-	const { name, registry } = parts(value);
-	return registry ? `\`${name}\` on ${registry}` : `\`${name}\``;
+	const { name, destination } = parts(value);
+	return destination ? `\`${name}\` on ${destinationLabels[destination]}` : `\`${name}\``;
 }

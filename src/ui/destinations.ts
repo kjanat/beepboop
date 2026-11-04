@@ -9,8 +9,10 @@ import {
 	winget,
 } from '@/automation/destinations';
 import type { Inventory, Package } from '@/automation/types';
+import type { WinGetSubmission } from '@/automation/winget';
 import { managerSpec } from '@/contract/catalog';
-import { channelHref, registryHref } from '@/ui/templates/html';
+import { registryHref } from '@/contract/links';
+import { channelHref } from '@/ui/templates/html';
 
 export interface DestinationEntry {
 	label: string;
@@ -34,19 +36,25 @@ export function packageDestinations(pkg: Package, repository: string): Destinati
 	return storedOutcomes(pkg).map(outcome => registryEntry(outcome, pkg.name, repository));
 }
 
-const submissionStates = {
+export function primaryStatus(pkg: Package): string {
+	const primary = managerSpec(pkg.manager).destinations?.primary;
+	const outcome = storedOutcomes(pkg).find(outcome => outcome.destination === primary);
+	return outcome && !isChannelOutcome(outcome) ? stateLabel(outcome) : stateLabel({ state: 'unchecked' });
+}
+
+export const submissionLabels = {
 	pending: 'Submission pending',
 	open: 'Awaiting Microsoft review',
 	merged: 'Merged by Microsoft',
 	closed: 'Closed without merging',
 	failed: 'Submission failed',
-} as const;
+} as const satisfies Record<WinGetSubmission['state'], string>;
 
 export function manifestEntry(outcome: ManifestOutcome): DestinationEntry {
 	if (outcome.state === 'unsubmitted') return { label: winget.label, status: 'No submission yet' };
 	return {
 		label: winget.label,
-		status: `${submissionStates[outcome.state]} (${outcome.version})`,
+		status: `${submissionLabels[outcome.state]} (${outcome.version})`,
 		...(outcome.url ? { href: outcome.url } : {}),
 	};
 }
@@ -61,7 +69,7 @@ export function repositoryChannels(inventory: Inventory): { outcome: ChannelOutc
 
 function stateLabel(outcome: RegistryState): string {
 	return outcome.state === 'published'
-		? outcome.version
+		? `Released ${outcome.version}`
 		: outcome.state === 'missing'
 		? 'Not published'
 		: outcome.state === 'failed'
