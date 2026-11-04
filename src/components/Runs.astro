@@ -107,8 +107,7 @@ const progress = (run: Execution): string => {
 				 <h2>
 					 {run.version ? `Version ${run.version}` : 'Workflow operation'} <span
 						 class="muted"
-					 >Operation:
-						 {run.operation}{run.package && ` for ${run.package.id}`}</span>
+					 >{`Operation: ${run.operation}${run.package ? ` for ${run.package.id}` : ''}`}</span>
 				 </h2>
 			 </div><span
 				 class:list={['badge', run.state]}
@@ -133,8 +132,8 @@ const progress = (run: Execution): string => {
 		 <p class="metadata metadata-fields">
 			 <span>Commit <a
 					 href={`https://github.com/${run.repository}/commit/${run.sourceSha}`}
-				 ><code>{run.sourceSha.slice(0, 12)}</code></a></span><span>Updated
-				 {date(run.updatedAt)}</span> {run.runId && (
+				 ><code>{run.sourceSha.slice(0, 12)}</code></a></span><span
+			 >{`Updated ${date(run.updatedAt)}`}</span> {run.runId && (
 				 <>
 					 <a
 						 href={`https://github.com/${run.repository}/actions/runs/${run.runId}`}

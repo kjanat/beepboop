@@ -268,8 +268,8 @@ function wingetDestination(repository: RepositoryRecord) {
 						[name, stream],
 					) => (
 						<p>
-							<strong>{name}</strong>:
-							{stream.required.join(', ') || 'No publications configured'}
+							<strong
+							>{name}</strong>{`: ${stream.required.join(', ') || 'No publications configured'}`}
 						</p>
 					))}{repository.configuration.subscriptions.map(s => (
 						<p>

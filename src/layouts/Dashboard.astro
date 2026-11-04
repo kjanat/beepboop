@@ -91,9 +91,10 @@ const navigation = [
 					)}
 					{outage.components.length > 0 && (
 						<p>
-							Affected:
-							{outage.components.map(component => `${component.name} (${component.status})`)
-								.join(', ')}
+							{`Affected: ${
+								outage.components.map(component => `${component.name} (${component.status})`)
+									.join(', ')
+							}`}
 						</p>
 					)}
 					<p>

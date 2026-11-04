@@ -216,8 +216,9 @@ const preparations = data.executions.filter(e =>
 					 <label>Preparation<select name="preparationId">
 							 {preparations.map(e => (
 								 <option value={e.id}>
-									 {e.repository} ({e.stream})
-									 {new Date(e.createdAt).toISOString().slice(0, 10)}
+									 {`${e.repository} (${e.stream}) ${
+									 	new Date(e.createdAt).toISOString().slice(0, 10)
+									 }`}
 								 </option>
 							 ))}
 						 </select></label><label>Merged commit<input
