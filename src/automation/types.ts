@@ -232,6 +232,7 @@ export interface Execution {
 	notBefore?: number;
 	supersededRuns?: number[];
 	draftRelease?: { id: number; tag: string };
+	titled?: boolean;
 	publications: Publication[];
 	artifacts: Artifact[];
 	createdAt: number;

@@ -1,11 +1,15 @@
 name: Publish CLI
-run-name: Release operation ${{ inputs.beepboop_execution_id }}
+run-name: ${{ inputs.beepboop_title || github.workflow }}
 on:
   workflow_dispatch:
     inputs:
       beepboop_execution_id:
         description: Approved Beepboop promotion execution
         required: true
+        type: string
+      beepboop_title:
+        description: Beepboop run title
+        required: false
         type: string
 permissions: { contents: read, id-token: write }
 concurrency:

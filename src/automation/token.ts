@@ -1,5 +1,6 @@
 import type { JWTVerifyGetKey } from 'jose';
 import { type WorkflowIdentity, workflowIdentity } from '@/automation/auth';
+import { expectedRunTitle } from '@/automation/execution';
 import type { Execution } from '@/automation/types';
 import { record } from '@/model';
 import { readBody } from '@/webhook';
@@ -48,7 +49,8 @@ async function dispatchedByBeepboop(
 		return false;
 	}
 	const run = await issuer.workflowRun(identity.repository, identity.repositoryId, identity.runId);
-	return run.title === `Release operation ${execution.id}` && run.path === `.github/workflows/${workflow.file}`;
+	return (execution.runId === identity.runId || run.title === expectedRunTitle(execution))
+		&& run.path === `.github/workflows/${workflow.file}`;
 }
 
 export function tokenPermissions(raw: unknown): TokenPermissions {

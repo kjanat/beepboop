@@ -58,7 +58,7 @@ export function workflowEvidence(file: string, source: string): WorkflowEvidence
 }
 // GitHub expression, evaluated by Actions rather than JavaScript.
 const executionInput = '$' + '{{ inputs.beepboop_execution_id }}';
-const runName = `Release operation ${executionInput}`;
+const runName = '$' + '{{ inputs.beepboop_title || github.workflow }}';
 
 /** Patch only selected jobs and the dispatch contract; leave other YAML nodes and comments intact. */
 export function integrateWorkflow(
@@ -123,6 +123,7 @@ export function integrateWorkflow(
 			inputs: {
 				...inputs,
 				beepboop_execution_id: { description: 'Beepboop execution', required: true, type: 'string' },
+				beepboop_title: { description: 'Beepboop run title', required: false, type: 'string' },
 			},
 		},
 	});

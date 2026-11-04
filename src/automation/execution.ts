@@ -63,12 +63,26 @@ export async function createExecution(
 			(binding.needs ?? []).map((operation) => executionId(repository.id, streamName, operation, eventId)),
 		),
 		workflow: { ...binding, ref: binding.ref ?? repository.defaultBranch },
+		...(workflow?.dispatchInputs.includes('beepboop_title') ? { titled: true } : {}),
 		attempts: 0,
 		publications: [],
 		artifacts: [],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 	};
+}
+export function runTitle(execution: Execution): string {
+	const label = execution.operation === 'prepare'
+		? 'Prepare'
+		: execution.operation === 'promote'
+		? 'Release'
+		: execution.operation;
+	return [label, execution.package?.id, execution.version, `(${execution.id.slice(0, 8)})`]
+		.filter(part => part !== undefined)
+		.join(' ');
+}
+export function expectedRunTitle(execution: Execution): string {
+	return execution.titled ? runTitle(execution) : `Release operation ${execution.id}`;
 }
 export function completion(execution: Execution, runSucceeded: boolean): Execution['state'] {
 	if (!runSucceeded) return 'failed';

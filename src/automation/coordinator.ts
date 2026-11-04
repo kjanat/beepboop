@@ -5,7 +5,9 @@ import {
 	completion,
 	createExecution,
 	dependenciesReady,
+	expectedRunTitle,
 	mergePublications,
+	runTitle,
 	validatePublicationIdentity,
 } from '@/automation/execution';
 import { type Credentials, RepositoryGateway } from '@/automation/github';
@@ -433,7 +435,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				throw new Error('Run identity mismatch');
 			}
 			if (!matchesRef(execution.workflow.ref, identity.ref)) throw new Error('Workflow ref mismatch');
-			if (execution.attempts > 0 && run.display_title !== `Release operation ${id}`) {
+			if (execution.attempts > 0 && !execution.runId && run.display_title !== expectedRunTitle(execution)) {
 				throw new Error('Dispatch correlation mismatch');
 			}
 			const next: Execution = {
@@ -1168,7 +1170,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						.map(record)
 						.filter(
 							(run) =>
-								run.display_title === `Release operation ${execution.id}`
+								run.display_title === expectedRunTitle(execution)
 								&& run.path === `.github/workflows/${execution.workflow?.file}`
 								&& run.head_branch === execution.workflow?.ref?.replace(/^refs\/(heads|tags)\//, '')
 								&& record(run.repository).id === execution.repositoryId
@@ -1223,6 +1225,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						inputs: {
 							...execution.workflow.inputs,
 							...(execution.package ? { package: execution.package.id } : {}),
+							...(execution.titled ? { beepboop_title: runTitle(execution) } : {}),
 							beepboop_execution_id: execution.id,
 						},
 					},

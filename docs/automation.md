@@ -151,18 +151,26 @@ jobs:
 Replace the sample report with your publisher's version and digest.
 
 For dashboard dispatch, set the binding to `mode: "dispatch"` with an exact ref,
-add this workflow input and run name, and pass the input to `begin` as
-`execution-id`:
+add these workflow inputs and run name, and pass `beepboop_execution_id` to
+`begin` as `execution-id`:
 
 ```yaml
-run-name: Release operation ${{ inputs.beepboop_execution_id }}
+run-name: ${{ inputs.beepboop_title || github.workflow }}
 on:
   workflow_dispatch:
     inputs:
       beepboop_execution_id:
         type: string
         required: true
+      beepboop_title:
+        type: string
+        required: false
 ```
+
+Beepboop sends `beepboop_title` as the operation, package and version followed
+by the first eight characters of the execution ID, for example
+`Release 0.1.0 (f4feef47)`. A workflow without the `beepboop_title` input must
+use the run name `Release operation ${{ inputs.beepboop_execution_id }}`.
 
 `begin` outputs `execution-id` and JSON `context`, and sets
 `BEEPBOOP_EXECUTION_ID` for subsequent steps. Call it in each participating job.
@@ -351,7 +359,8 @@ A run that Beepboop dispatched passes its execution ID:
 ```
 
 Beepboop checks that the run is that execution's dispatch: same repository,
-workflow file and ref, and the run name `Release operation <execution ID>`.
+workflow file and ref, and the run ID GitHub returned for the dispatch. Without
+a recorded run ID, the run name must match the title Beepboop sent.
 Dispatched runs cannot request the `publish-actions` purpose.
 
 Actions publication uses the explicit `purpose: publish-actions` with exactly

@@ -363,6 +363,7 @@ export const executionSchema: z.ZodType<Execution> = z.object({
 	notBefore: z.number().optional(),
 	supersededRuns: z.array(z.number()).optional(),
 	draftRelease: z.object({ id: z.number(), tag: z.string() }).optional(),
+	titled: z.boolean().optional(),
 	publications: z.array(packagePublication),
 	artifacts: z.array(artifact),
 	createdAt: z.number(),
