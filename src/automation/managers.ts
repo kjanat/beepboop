@@ -52,7 +52,8 @@ export function planRelease(
 	}
 	const [first] = current;
 	const version = first === undefined || 'version' in request ? explicit(request) : nextVersion(first, request);
-	for (const previous of current) nextVersion(previous, { version });
+	const completing = packages.some(p => releasedVersion(p) !== version);
+	for (const previous of current) if (!completing || previous !== version) nextVersion(previous, { version });
 	const diagnostics: string[] = [],
 		changed = new Map<string, string>();
 	const sources = new Set(packages.map((p) => p.versionSource));
