@@ -240,7 +240,11 @@ export class RepositoryGateway {
 	async ownerLogin(): Promise<string> {
 		const cached = ownerLogins.get(this.ownerId);
 		if (cached) return cached;
-		const login = text(record(await this.call(`/user/${this.ownerId}`, '')).login);
+		const installations = array(await this.call('/app/installations?per_page=100', await this.appToken())).map(record);
+		const account = installations.map(installation => record(installation.account))
+			.find(account => account.id === this.ownerId);
+		if (!account) throw new Error('The GitHub App is not installed on the owner account');
+		const login = text(account.login);
 		ownerLogins.set(this.ownerId, login);
 		return login;
 	}
