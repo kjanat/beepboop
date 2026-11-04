@@ -67,5 +67,6 @@ export interface SetupPlan {
 	edits: { path: string; before: string; after: string }[];
 	blockers: string[];
 	notes: string[];
+	branchConflict: boolean;
 	prior?: { url: string; superseded: boolean };
 }

@@ -536,7 +536,8 @@ current manifests and workflow integrations.
 While every commit on the setup branch is Beepboop's, Beepboop rebuilds the
 branch as one commit on the default branch and force-pushes it. Once anyone else
 commits to the branch, Beepboop stops updating that PR, its branch and its
-description. Missing permissions and unresolved workflow choices are shown on
+description. **Take over setup branch** on the Repositories page force-pushes
+Beepboop's proposal and deletes those commits; maintenance then resumes. Missing permissions and unresolved workflow choices are shown on
 the PR.
 Unchanged proposals do not create commits. Closed and merged setup PRs are not
 reopened, and maintenance never approves or dispatches a release.

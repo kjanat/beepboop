@@ -18,7 +18,14 @@ import { matchesRef } from '@/automation/policy';
 import { planHookUpdates } from '@/automation/precommit';
 import { repositoryName } from '@/automation/repository-name';
 import { documentRow, rowDocument, setupOptionsSchema } from '@/automation/schemas';
-import { bodyChoices, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
+import {
+	bodyChoices,
+	branchConflictBlocker,
+	previewSetup,
+	setupBody,
+	setupOptions,
+	withRegistryStatus,
+} from '@/automation/setup';
 import { maintainSetup, sameEdits, setupEdits } from '@/automation/setup-maintenance';
 import { setupChoicesSchema } from '@/automation/setup-types';
 import { Store } from '@/automation/store';
@@ -518,12 +525,11 @@ export class AutomationService {
 			if (body.planId !== plan.planId || body.sourceSha !== plan.sourceSha || body.setupHead !== head) {
 				throw new Error('Setup source, choices or branch changed; preview again');
 			}
-			if (plan.blockers.length) throw new Error(plan.blockers.join('\n'));
+			const takeOver = body.takeOver === true && branchConflict;
+			const blockers = plan.blockers.filter(blocker => !takeOver || blocker !== branchConflictBlocker);
+			if (blockers.length) throw new Error(blockers.join('\n'));
 			if (!plan.edits.length) throw new Error('Release setup already matches the reviewed configuration');
-			if (branchConflict) {
-				throw new Error('Setup branch changed; preserve human edits and review the conflict');
-			}
-			const result = head && saved?.sourceSha === snapshot.sha
+			const result = head && !takeOver && saved?.sourceSha === snapshot.sha
 					&& sameEdits(previous, plan.edits)
 				? await this.gateway.refreshPullRequest(
 					snapshot,
@@ -541,6 +547,8 @@ export class AutomationService {
 					head ?? undefined,
 					undefined,
 					previous,
+					undefined,
+					takeOver,
 				);
 			const content = plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after
 				?? snapshot.files['.github/beepboop.json'];

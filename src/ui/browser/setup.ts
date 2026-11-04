@@ -7,7 +7,10 @@ import { api, find, show } from '@/ui/browser/dom';
 import { packageLabel } from '@/ui/package-label';
 
 const setupPlan = z.unknown().transform(parseSetupPlan);
-const sessions = new WeakMap<HTMLFormElement, { plan: SetupPlan; choices: () => SetupChoices; reviewed?: string }>();
+const sessions = new WeakMap<
+	HTMLFormElement,
+	{ plan: SetupPlan; choices: () => SetupChoices; reviewed?: string; takeOver?: string }
+>();
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = ''): HTMLElementTagNameMap[K] {
 	const node = document.createElement(tag);
 	node.textContent = text;
@@ -208,10 +211,13 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 	const apply = element('button', 'Open or refresh setup PR');
 	apply.value = 'apply';
 	apply.disabled = true;
+	const takeOver = element('button', 'Take over setup branch');
+	takeOver.value = 'takeover';
+	takeOver.hidden = true;
 	const result = element('div');
 	result.className = 'setup-result';
 	result.setAttribute('aria-live', 'polite');
-	form.append(preview, apply, result);
+	form.append(preview, apply, takeOver, result);
 	const choices = () => ({
 		streams: readers.map(read => read()).filter(stream => stream.name),
 		...(revision.value ? { actionsRevision: revision.value } : {}),
@@ -219,8 +225,12 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 	sessions.set(form, { plan, choices });
 	function invalidate() {
 		const session = sessions.get(form);
-		if (session) delete session.reviewed;
+		if (session) {
+			delete session.reviewed;
+			delete session.takeOver;
+		}
 		apply.disabled = true;
+		takeOver.hidden = true;
 	}
 	form.addEventListener('input', invalidate);
 	form.addEventListener('change', invalidate);
@@ -252,6 +262,16 @@ function review(form: HTMLFormElement, plan: SetupPlan) {
 	if (!plan.edits.length) result.append(element('p', 'No file changes needed.'));
 	const apply = find(form, 'button[value="apply"]', HTMLButtonElement);
 	if (apply) apply.disabled = !!plan.blockers.length || !plan.edits.length;
+	const takeOver = find(form, 'button[value="takeover"]', HTMLButtonElement);
+	if (takeOver) takeOver.hidden = !takeOverAllowed(plan);
+	if (plan.branchConflict) {
+		result.append(
+			element('p', 'Taking over force-pushes this proposal and deletes the other commits on the setup branch.'),
+		);
+	}
+}
+function takeOverAllowed(plan: SetupPlan): boolean {
+	return plan.branchConflict && plan.blockers.length === 1 && plan.edits.length > 0;
 }
 export async function setup(form: HTMLFormElement, action: string) {
 	const repository = form.dataset.repository;
@@ -267,15 +287,19 @@ export async function setup(form: HTMLFormElement, action: string) {
 	const session = sessions.get(form);
 	if (!session) return;
 	const choices = session.choices(), identity = JSON.stringify(choices);
-	if (action !== 'apply') {
+	if (action !== 'apply' && action !== 'takeover') {
 		delete session.reviewed;
 		const plan = await api('/api/repositories/setup/preview', setupPlan, { repository, choices });
 		session.plan = plan;
 		if (!plan.blockers.length) session.reviewed = identity;
+		if (takeOverAllowed(plan)) session.takeOver = identity;
 		review(form, plan);
 		return;
 	}
-	if (session.reviewed !== identity) throw new Error('Preview these choices again before applying.');
+	const takingOver = action === 'takeover';
+	if ((takingOver ? session.takeOver : session.reviewed) !== identity) {
+		throw new Error('Preview these choices again before applying.');
+	}
 	const { planId, sourceSha, setupHead } = session.plan;
 	const result = await api('/api/repositories/setup/apply', z.object({ url: z.string() }), {
 		repository,
@@ -283,8 +307,10 @@ export async function setup(form: HTMLFormElement, action: string) {
 		planId,
 		sourceSha,
 		setupHead,
+		...(takingOver ? { takeOver: true } : {}),
 	});
 	delete session.reviewed;
+	delete session.takeOver;
 	const output = form.querySelector('.setup-result');
 	if (output) {
 		const link = element('a', 'Review setup pull request');

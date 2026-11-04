@@ -84,6 +84,7 @@ export function parseSetupPlan(value: unknown): SetupPlan {
 		}),
 		blockers: strings(data.blockers),
 		notes: strings(data.notes),
+		branchConflict: data.branchConflict === true,
 		...(prior ? { prior: { url: string(prior.url), superseded: boolean(prior.superseded) } } : {}),
 	};
 }

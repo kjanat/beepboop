@@ -104,6 +104,8 @@ export function suggestSetup(snapshot: Snapshot, inventory: Inventory, resolved?
 	}
 	return { streams };
 }
+export const branchConflictBlocker =
+	'Someone else committed to the setup branch, so Beepboop stopped updating it. Take over to replace their commits with this proposal.';
 export interface SetupBaseline {
 	head: string | null;
 	workflowPermission?: boolean;
@@ -126,7 +128,7 @@ export async function previewSetup(
 	const streams = { ...object(configuration.streams) };
 	const edits: SetupPlan['edits'] = [], blockers: string[] = [], notes: string[] = [];
 	notes.push(...inventory.diagnostics.map(message => `Discovery: ${message}`));
-	if (baseline.branchConflict) blockers.push('Setup branch changed; preserve human edits and review the conflict.');
+	if (baseline.branchConflict) blockers.push(branchConflictBlocker);
 	const names = new Set<string>(), selectedFiles = new Set<string>();
 	const managers = new Set<string>(
 		Array.isArray(configuration.managers)
@@ -247,6 +249,7 @@ export async function previewSetup(
 		edits,
 		blockers: [...new Set(blockers)],
 		notes,
+		branchConflict: baseline.branchConflict === true,
 		...(prior ? { prior } : {}),
 	};
 	const planId = await credentialHash(JSON.stringify({ ...plan, presetShas: baseline.presetShas ?? {} }));

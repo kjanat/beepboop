@@ -324,6 +324,7 @@ export class RepositoryGateway {
 		checkpoint?: (head: string) => Promise<void>,
 		setupEdits?: Edit[],
 		existingPull?: number,
+		takeOver = false,
 	): Promise<{ url: string; head: string }> {
 		const { name, id } = snapshot.repository;
 		const token = await this.token(name, id, {
@@ -341,7 +342,7 @@ export class RepositoryGateway {
 		if (existing && (!expectedHead || expectedHead !== base)) {
 			throw new Error('Branch changed; preserve user edits and review the conflict');
 		}
-		if (existing && setupEdits) {
+		if (existing && setupEdits && !takeOver) {
 			const comparison = record(await this.call(`/repos/${name}/compare/${snapshot.sha}...${base}`, token));
 			const changed = array(comparison.files).map(record);
 			if (changed.length >= 300 || changed.some(file => !setupEdits.some(edit => edit.path === file.filename))) {
