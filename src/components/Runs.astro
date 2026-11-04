@@ -180,7 +180,7 @@ const progress = (run: Execution): string => {
 					 type="hidden"
 					 name="sourceSha"
 					 value={run.sourceSha}
-				 ><p>
+				 ><input type="hidden" name="force" value="false"><p>
 					 Approve publishing from commit <a
 						 href={`https://github.com/${run.repository}/commit/${run.sourceSha}`}
 					 ><code>{run.sourceSha}</code></a>.

@@ -98,10 +98,11 @@ const preparations = data.executions.filter(e =>
 		 <article>
 			 <h2>Choose the next version</h2>
 			 <p>
-				 Preview changes against <a
+				 Releases <a
 					 href={`https://github.com/${repository.name}/commit/${repository.sha}`}
-				 ><code>{repository.sha.slice(0, 12)}</code></a>. You will review file
-				 changes before preparing the pull request.
+				 ><code>{repository.sha.slice(0, 12)}</code></a>. If a manifest needs
+				 the new version, Beepboop opens a preparation pull request for you to
+				 merge. Otherwise the release starts right away.
 			 </p>
 			 <form data-action={stream?.versioning === 'independent' ? 'release-set' : 'release-prepare'}>
 				 <input type="hidden" name="repositoryId" value={repository.id}><input
@@ -197,14 +198,10 @@ const preparations = data.executions.filter(e =>
 							</div></>
 					)}
 				 <div class="actions">
-					 <button class="primary" name="action" value="preview">
-						 Preview changes
-					 </button>
-					 <button name="action" value="prepare" disabled>
-						 Prepare reviewed release
+					 <button class="primary" name="action" value="prepare">
+						 Release
 					 </button>
 				 </div>
-				 <div class="plan-result" aria-live="polite"></div>
 			 </form>
 		 </article>
 		 {!!preparations.length && (

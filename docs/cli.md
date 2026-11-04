@@ -59,6 +59,7 @@ beepboop releases prepare kjanat/actionlint --stream main --releaseVersion 2.1.0
 beepboop releases start PREPARATION_ID --sourceSha REVIEWED_SOURCE_SHA
 beepboop runs list
 beepboop runs approve EXECUTION_ID --sourceSha REVIEWED_SOURCE_SHA
+beepboop runs approve EXECUTION_ID --sourceSha REVIEWED_SOURCE_SHA --force
 beepboop runs recover EXECUTION_ID
 beepboop runs recover EXECUTION_ID --action retry
 ```
@@ -66,7 +67,8 @@ beepboop runs recover EXECUTION_ID --action retry
 Use the exact `sourceSha` and `planId` returned by the preview. Preparation rejects
 changed plans on the server. Start a release set after its preparation has
 completed and the repository's required review/merge steps are done. Approval is
-bound to the exact reviewed commit. Recovery defaults to reconciliation; retry
+bound to the exact reviewed commit. `--force` approves even when the signature
+or checks fail, and the audit log records the problems it overrode. Recovery defaults to reconciliation; retry
 must be selected explicitly. Existing server approval and dispatch rules apply.
 
 Independent monorepo releases use the JSON plan format documented in

@@ -804,7 +804,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		await this.put(next);
 		return true;
 	}
-	async approve(id: string, commitSha: string, actor: string): Promise<Execution> {
+	async approve(id: string, commitSha: string, actor: string, force = false): Promise<Execution> {
 		return this.serial(async () => {
 			const execution = await this.get(id);
 			if (
@@ -815,8 +815,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				throw new Error('Approval does not match promotion target');
 			}
 			const problems = await this.approvalProblems(execution);
-			if (problems.length) throw new Error(problems.join('; '));
-			await this.store().audit(actor, 'promotion.approve', `${id}:${commitSha}`);
+			if (problems.length && !force) throw new Error(problems.join('; '));
+			await this.store().audit(
+				actor,
+				'promotion.approve',
+				`${id}:${commitSha}${problems.length ? ` overriding: ${problems.join('; ')}` : ''}`,
+			);
 			const next: Execution = { ...execution, state: 'ready' };
 			await this.supersedeVersion(next);
 			await this.put(next);

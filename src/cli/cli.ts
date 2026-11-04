@@ -169,12 +169,14 @@ const runs = group('runs').description('Follow, approve and recover release oper
 				flag.string({ pattern: /^[a-f0-9]{40}$/ }).prompt({ kind: 'input', message: 'Reviewed source commit SHA' })
 					.required(),
 			)
+			.flag('force', flag.boolean().default(false).describe('Approve even when the signature or checks fail'))
 			.action(async ({ flags, args, out }) =>
 				emit(
 					out,
 					await new Client(flags.server).request('/api/executions/approve', {
 						id: args.id,
 						sourceSha: flags.sourceSha,
+						force: flags.force,
 					}),
 				)
 			),

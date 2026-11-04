@@ -181,8 +181,9 @@ observed run, stream, and operation attach to the same execution.
 
 ## Prepare and promote
 
-Choose the stream and version in the dashboard, then preview the plan.
-Preparation has two approaches:
+Choose the stream and version in the dashboard and select **Release**. When the
+manifests already carry the version, Beepboop creates the promotion approved by
+you and dispatches it. Otherwise preparation has two approaches:
 
 - **Managed:** Beepboop calculates manifest edits. A preparation workflow checks
   out `context.sourceSha`, calls `actions/prepare` with `mode: apply` and the

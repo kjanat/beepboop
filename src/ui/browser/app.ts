@@ -24,10 +24,6 @@ interface Plan {
 	diagnostics?: string[];
 	requiresPreparation: boolean;
 }
-interface Preview {
-	identity: string;
-	plan: Plan;
-}
 const planSchema: z.ZodType<Plan> = z.object({
 	sourceSha: z.string(),
 	planId: z.string(),
@@ -100,7 +96,6 @@ function overwriteConfirmed(form: HTMLFormElement, alias: string): boolean {
 	cancel.focus();
 	return false;
 }
-const previews = new WeakMap<HTMLFormElement, Preview>();
 const revealTimers = new Map<HTMLOutputElement, ReturnType<typeof setTimeout>>();
 
 function input(form: HTMLFormElement, name: string): HTMLInputElement | HTMLSelectElement {
@@ -196,31 +191,6 @@ function inspecting(form: HTMLFormElement, name: string): () => void {
 	placeholder.append(heading);
 	card.after(placeholder);
 	return () => placeholder.remove();
-}
-function renderPlan(form: HTMLFormElement, plan: Plan) {
-	const result = find(form, '.plan-result', HTMLElement);
-	if (!result) return;
-	result.replaceChildren(node('h3', plan.version ? `Review version ${plan.version}` : 'Review release set'));
-	result.append(node('p', `Source commit: ${plan.sourceSha}`));
-	for (const group of plan.groups ?? []) result.append(node('p', `${group.packages.join(', ')} → ${group.version}`));
-	for (const diagnostic of plan.diagnostics ?? []) result.append(node('p', diagnostic));
-	if (!plan.edits.length && plan.requiresPreparation) {
-		result.append(node('p', 'No manifest edits. Preparation follows the configured repository workflow.'));
-	}
-	for (const edit of plan.edits) {
-		const details = node('details', '');
-		details.append(
-			node('summary', edit.path),
-			node('h3', 'Current'),
-			node('pre', edit.before),
-			node('h3', 'Proposed'),
-			node('pre', edit.after),
-		);
-		result.append(details);
-	}
-	if (plan.edits.length) {
-		result.append(node('p', 'Review these changes before preparing. You will merge the preparation PR yourself.'));
-	}
 }
 function selectedWorkflow(form: HTMLFormElement): Choice {
 	const repository = repositoryChoices(form).find(r => String(r.id) === input(form, 'repositoryId').value);
@@ -327,12 +297,6 @@ for (
 		HTMLFormElement,
 	)
 ) {
-	const prepare = find(form, 'button[value="prepare"]', HTMLButtonElement);
-	form.addEventListener('input', () => {
-		previews.delete(form);
-		if (prepare) prepare.disabled = true;
-		form.querySelector('.plan-result')?.replaceChildren();
-	});
 	form.addEventListener('change', () => {
 		const mode = form.elements.namedItem('versionMode');
 		if (!(mode instanceof HTMLSelectElement)) return;
@@ -349,13 +313,20 @@ for (const form of findAll(document, 'form[data-action="approve"]', HTMLFormElem
 	const status = find(form, '.approval-status', HTMLElement);
 	const approve = find(form, 'button', HTMLButtonElement);
 	const id = input(form, 'id').value;
+	const override = () => {
+		input(form, 'force').value = 'true';
+		if (approve) approve.textContent = 'Approve anyway';
+	};
 	api('/api/executions/approval', z.object({ problems: z.array(z.string()) }), { id }).then(({ problems }) => {
 		status?.replaceChildren(
 			...(problems.length ? problems : ['Signature verified and checks passed.']).map(text => node('li', text)),
 		);
-		if (approve) approve.disabled = problems.length > 0;
+		if (problems.length) override();
 	}).catch((error: unknown) => {
 		status?.replaceChildren(node('li', error instanceof Error ? error.message : 'Could not check this commit.'));
+		override();
+	}).finally(() => {
+		if (approve) approve.disabled = false;
 	});
 }
 const repositorySelection = find(document, '.selection select[name="repository"]', HTMLSelectElement);
@@ -470,32 +441,17 @@ for (const form of findAll(document, 'form[data-action]', HTMLFormElement)) {
 					throw new Error('Enter a version for each selected group.');
 				}
 				const request = action === 'release-set' ? { ...common, plan: { groups, operations } } : { ...common, version };
-				const identity = JSON.stringify(request);
-				if (clicked === 'preview') {
-					previews.delete(form);
-					const plan = await api(
-						`/api/releases/${action === 'release-set' ? 'plan-set' : 'plan'}`,
-						planSchema,
-						request,
-					);
-					previews.set(form, { identity, plan });
-					renderPlan(form, plan);
-					const prepare = find(form, 'button[value="prepare"]', HTMLButtonElement);
-					if (prepare) prepare.disabled = false;
-					show('Review the proposed changes below, then prepare the release.');
-				} else {
-					const preview = previews.get(form);
-					if (!preview || preview.identity !== identity) {
-						throw new Error('Preview these choices again before preparing.');
-					}
-					const run = await api(
-						`/api/releases/${action === 'release-set' ? 'prepare-set' : 'prepare'}`,
-						z.object({ id: z.string() }),
-						{ ...request, sourceSha: preview.plan.sourceSha, planId: preview.plan.planId },
-					);
-					previews.delete(form);
-					location.assign(`/runs#${encodeURIComponent(run.id)}`);
-				}
+				const plan = await api(
+					`/api/releases/${action === 'release-set' ? 'plan-set' : 'plan'}`,
+					planSchema,
+					request,
+				);
+				const run = await api(
+					`/api/releases/${action === 'release-set' ? 'prepare-set' : 'prepare'}`,
+					z.object({ id: z.string() }),
+					{ ...request, sourceSha: plan.sourceSha, planId: plan.planId },
+				);
+				location.assign(`/runs#${encodeURIComponent(run.id)}`);
 			} else if (action === 'discover') {
 				const undo = inspecting(form, data.repository ?? '');
 				try {
@@ -511,7 +467,11 @@ for (const form of findAll(document, 'form[data-action]', HTMLFormElement)) {
 				await api('/api/executions/cancel', z.unknown(), data);
 				location.reload();
 			} else if (action === 'approve' || action === 'recover') {
-				await api(`/api/executions/${action === 'approve' ? 'approve' : 'recover'}`, z.unknown(), data);
+				await api(
+					`/api/executions/${action === 'approve' ? 'approve' : 'recover'}`,
+					z.unknown(),
+					action === 'approve' ? { ...data, force: data.force === 'true' } : data,
+				);
 				location.reload();
 			} else if (action === 'start-set') {
 				await api('/api/releases/start-set', z.unknown(), data);
@@ -635,8 +595,7 @@ for (const form of findAll(document, 'form[data-action]', HTMLFormElement)) {
 			find(document, '#feedback', HTMLElement)?.focus();
 		} finally {
 			form.dataset.busy = 'false';
-			button.disabled = (clicked === 'prepare' && !previews.has(form))
-				|| (action === 'setup' && clicked === 'apply' && !canApplySetup(form));
+			button.disabled = action === 'setup' && clicked === 'apply' && !canApplySetup(form);
 		}
 	});
 }
