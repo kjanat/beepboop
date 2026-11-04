@@ -10,6 +10,7 @@ import type {
 } from '@/automation/types';
 import { record } from '@/model';
 import { decodeDeliveryV1, decodeEventV1, decodeExecutionV1, decodeRepositoryV1 } from '@/persistence/codecs/v1';
+import { AuditStore } from '@/persistence/d1/audit';
 
 export type Readable<T> = { kind: 'readable'; value: T };
 export interface UnreadableRepository {
@@ -32,13 +33,6 @@ function decodeError(error: unknown): string {
 }
 
 const onboardingRow = z.object({ repository_id: z.number(), document: z.string() });
-const activityRow = z.object({
-	id: z.string(),
-	actor: z.string(),
-	action: z.string(),
-	target: z.string(),
-	created_at: z.number(),
-});
 
 export function onboardingPulls(rows: { repository_id: number; document: string }[]): Map<number, string> {
 	const pulls = new Map<number, string>();
@@ -50,7 +44,10 @@ export function onboardingPulls(rows: { repository_id: number; document: string 
 }
 
 export class Store {
-	constructor(readonly db: D1Database) {}
+	private readonly auditLog: AuditStore;
+	constructor(readonly db: D1Database) {
+		this.auditLog = new AuditStore(db);
+	}
 	async repository(id: number): Promise<RepositoryRecord | undefined> {
 		const row = await this.db
 			.prepare('SELECT document FROM repositories WHERE id=?')
@@ -179,19 +176,10 @@ export class Store {
 		await this.db.prepare('UPDATE subscription_deliveries SET state=?,error=?,updated_at=? WHERE id=?')
 			.bind(succeeded ? 'delivered' : 'pending', succeeded ? null : 'Delivery awaiting retry', Date.now(), id).run();
 	}
-	async activity(): Promise<ActivityEntry[]> {
-		const result = await this.db
-			.prepare('SELECT id, actor, action, target, created_at FROM audit ORDER BY created_at DESC LIMIT 200')
-			.all();
-		return z.array(activityRow).parse(result.results).map(({ created_at, ...entry }) => ({
-			...entry,
-			createdAt: created_at,
-		}));
+	activity(): Promise<ActivityEntry[]> {
+		return this.auditLog.recent();
 	}
-	async audit(actor: string, action: string, target: string): Promise<void> {
-		await this.db
-			.prepare('INSERT INTO audit(id,actor,action,target,created_at) VALUES(?,?,?,?,?)')
-			.bind(crypto.randomUUID(), actor, action, target, Date.now())
-			.run();
+	audit(actor: string, action: string, target: string): Promise<void> {
+		return this.auditLog.record(actor, action, target);
 	}
 }

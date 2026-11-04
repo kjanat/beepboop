@@ -26,3 +26,24 @@ export function actorLabel(actor: Actor): string {
 export function runRepository(target: string): string | undefined {
 	return /^(?:https:\/\/github\.com\/)?([\w.-]+\/[\w.-]+)/.exec(target)?.[1];
 }
+
+export type AuditActor =
+	| { kind: 'admin'; subject: string }
+	| { kind: 'run'; runId: number; repositoryId?: number; attempt?: number }
+	| { kind: 'system'; component: SystemComponent }
+	| { kind: 'setup'; execution: string };
+
+export function auditActor(value: string): AuditActor {
+	const run = /^run:(?:([1-9][0-9]*):)?([1-9][0-9]*)(?::([1-9][0-9]*))?$/.exec(value);
+	if (run?.[2] && (run[1] === undefined) === (run[3] === undefined)) {
+		return {
+			kind: 'run',
+			runId: Number(run[2]),
+			...(run[1] && run[3] ? { repositoryId: Number(run[1]), attempt: Number(run[3]) } : {}),
+		};
+	}
+	const setup = /^setup:(.+)$/.exec(value)?.[1];
+	if (setup) return { kind: 'setup', execution: setup };
+	const component = systemComponents.find(name => name === value);
+	return component ? { kind: 'system', component } : { kind: 'admin', subject: value };
+}
