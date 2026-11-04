@@ -68,6 +68,36 @@ const creationOptions: z.ZodType<PublicKeyCredentialCreationOptionsJSON> = z.loo
 	timeout: z.number().optional(),
 	user: z.looseObject({ displayName: z.string(), id: z.string(), name: z.string() }),
 });
+function overwriteConfirmed(form: HTMLFormElement, alias: string): boolean {
+	const versions = z.record(z.string(), z.number()).parse(JSON.parse(form.dataset.versions ?? '{}'));
+	const version = versions[alias];
+	if (version === undefined || form.dataset.confirmed === 'true') {
+		delete form.dataset.confirmed;
+		form.querySelector('[data-overwrite]')?.remove();
+		return true;
+	}
+	form.querySelector('[data-overwrite]')?.remove();
+	const panel = document.createElement('div');
+	panel.dataset.overwrite = '';
+	panel.className = 'confirm';
+	panel.setAttribute('role', 'alertdialog');
+	panel.append(node('p', `Overwrite secret ${alias} (version ${version})?`));
+	const cancel = node('button', 'Cancel');
+	cancel.type = 'button';
+	const overwrite = node('button', 'Overwrite');
+	overwrite.type = 'button';
+	overwrite.className = 'danger';
+	cancel.addEventListener('click', () => panel.remove());
+	overwrite.addEventListener('click', () => {
+		form.dataset.confirmed = 'true';
+		panel.remove();
+		form.requestSubmit();
+	});
+	panel.append(cancel, overwrite);
+	form.append(panel);
+	cancel.focus();
+	return false;
+}
 const previews = new WeakMap<HTMLFormElement, Preview>();
 const revealTimers = new Map<HTMLOutputElement, ReturnType<typeof setTimeout>>();
 
@@ -445,9 +475,10 @@ for (const form of findAll(document, 'form[data-action]', HTMLFormElement)) {
 				);
 				location.assign('/runs');
 			} else if (action === 'secret-save') {
+				if (!overwriteConfirmed(form, data.alias ?? '')) return;
 				const value = data.value;
 				input(form, 'value').value = '';
-				await api('/api/credentials/replace', z.unknown(), { alias: data.alias, value, proof: await elevated() });
+				await api('/api/credentials/replace', z.unknown(), { alias: data.alias, value });
 				location.reload();
 			} else if (action === 'secret-reveal') {
 				clearRevealed();
@@ -530,7 +561,6 @@ for (const form of findAll(document, 'form[data-action]', HTMLFormElement)) {
 						subscribeNew: data.subscribeNew === 'true',
 						enabled: data.enabled === 'true',
 					},
-					proof: await elevated(),
 				});
 				location.reload();
 			} else if (action === 'notification-remove') {

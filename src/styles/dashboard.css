@@ -763,3 +763,17 @@ dd {
 	clip-path: inset(50%);
 	white-space: nowrap;
 }
+.confirm {
+	display: flex;
+	flex-basis: 100%;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	align-items: center;
+	padding: 0.6rem 0.8rem;
+	border: 1px solid var(--red);
+	border-radius: 6px;
+}
+.confirm p {
+	margin: 0;
+	flex: 1 1 auto;
+}

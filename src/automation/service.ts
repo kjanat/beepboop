@@ -430,6 +430,14 @@ export class AutomationService {
 					html: renderActivityRows(await this.store.activity(), await this.store.repositories()),
 				});
 			}
+			if (path === '/api/notifications') {
+				const notifications = this.notifications();
+				return Response.json({
+					destinations: await notifications.destinations(),
+					subscriptions: await notifications.subscriptions(),
+					deliveries: await notifications.recent(),
+				});
+			}
 			if (path === '/api/credentials') {
 				return Response.json({
 					credentials: (
@@ -776,7 +784,6 @@ export class AutomationService {
 			return Response.json({ ok: true });
 		}
 		if (path === '/api/notifications/save') {
-			await authenticators.consume(actor, text(body.proof));
 			return Response.json({
 				id: await this.notifications().saveDestination(destinationInput.parse(body.destination), actor),
 			});
@@ -785,14 +792,12 @@ export class AutomationService {
 			await this.notifications().removeDestination(text(body.id), actor);
 			return Response.json({ ok: true });
 		}
+		if (path === '/api/credentials/replace') {
+			return Response.json({ version: await this.vault().replace(text(body.alias), text(body.value), actor) });
+		}
 		if (path.startsWith('/api/credentials/')) {
 			await authenticators.consume(actor, text(body.proof));
 			const vault = this.vault();
-			if (path.endsWith('/replace')) {
-				return Response.json({
-					version: await vault.replace(text(body.alias), text(body.value), actor),
-				});
-			}
 			if (path.endsWith('/reveal')) {
 				return Response.json(await vault.reveal(text(body.alias), actor));
 			}

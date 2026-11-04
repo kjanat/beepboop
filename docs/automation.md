@@ -279,9 +279,23 @@ API itself accepts ISO 8601 timestamps.
 
 ## Credentials
 
-In the dashboard, create a credential alias and grant access to a repository,
-operation, workflow, ref, and optional environment. Credential changes require
-a fresh touch of an enrolled security key.
+Store a value under a credential alias, then grant access to a repository,
+operation, workflow, ref, and optional environment. Setting a value needs only
+the signed-in administrator session. Overwriting an existing alias asks for
+confirmation first. Revealing a value, granting and revoking access, and copying
+values to GitHub require a fresh touch of an enrolled security key.
+
+From a terminal, pipe the value in or type it at the hidden prompt:
+
+```sh
+printf %s "$TOKEN" | beepboop secrets set npm-token
+beepboop secrets set npm-token
+```
+
+An interactive overwrite asks `Overwrite secret <alias> (version N)?` and stops
+unless you answer yes. A piped value overwrites without asking. The command
+prints the saved version. `beepboop secrets list` shows aliases, versions and
+grants.
 
 Choose a delivery method:
 
@@ -402,7 +416,16 @@ notifications.
 
 A destination posts to a Slack Incoming Webhook or an HTTPS webhook. Its URL is
 a [credential](#credentials); choose the credential name when adding the
-destination. Saving a destination requires a security-key touch.
+destination. Saving a destination needs only the signed-in administrator
+session, because the URL itself lives in the credential.
+
+From a terminal:
+
+```sh
+beepboop notifications add --name "Slack #releases" --kind slack --secret slack-releases --subscribe-new
+beepboop notifications subscribe <destination-id >npm:example-tool
+beepboop notifications list
+```
 
 Turn on **Notify about newly watched packages** to subscribe a destination to
 every package Beepboop starts watching. Toggle individual packages on the

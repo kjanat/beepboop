@@ -72,6 +72,9 @@ export function parseGrant(value: unknown): Grant {
 	if (!environment) throw new Error('Environment required');
 	return { ...fields, delivery, environment, secretName };
 }
+function validCredential(alias: string, value: string): void {
+	if (!/^[\w-]{1,64}$/.test(alias) || !value || value.length > 48000) throw new Error('Invalid credential');
+}
 export class Vault {
 	constructor(
 		private store: Store,
@@ -85,39 +88,41 @@ export class Vault {
 		if (raw.length !== 32) throw new Error('Encryption key must be 32 bytes');
 		return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
 	}
-	async replace(alias: string, value: string, actor: string): Promise<number> {
-		if (!/^[\w-]{1,64}$/.test(alias) || !value || value.length > 48000) {
-			throw new Error('Invalid credential');
-		}
+	private async seal(additional: string, value: string): Promise<{ ciphertext: string; iv: string }> {
+		const iv = crypto.getRandomValues(new Uint8Array(12));
+		const ciphertext = await crypto.subtle.encrypt(
+			{ name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(additional) },
+			await this.key(this.activeKey),
+			new TextEncoder().encode(value),
+		);
+		return { ciphertext: base64(new Uint8Array(ciphertext)), iv: base64(iv) };
+	}
+	private async open(additional: string, keyId: string, sealed: { ciphertext: string; iv: string }): Promise<string> {
+		const clear = await crypto.subtle.decrypt(
+			{ name: 'AES-GCM', iv: bytes(sealed.iv), additionalData: new TextEncoder().encode(additional) },
+			await this.key(keyId),
+			bytes(sealed.ciphertext),
+		);
+		return new TextDecoder().decode(clear);
+	}
+	private async nextVersion(alias: string): Promise<number> {
 		const latest = z.object({ version: z.number().nullable() }).nullable().parse(
 			await this.store.db
 				.prepare('SELECT MAX(version) AS version FROM credentials WHERE alias=?')
 				.bind(alias)
 				.first(),
 		);
-		const version = (latest?.version ?? 0) + 1,
-			iv = crypto.getRandomValues(new Uint8Array(12));
-		const ciphertext = await crypto.subtle.encrypt(
-			{
-				name: 'AES-GCM',
-				iv,
-				additionalData: new TextEncoder().encode(`${alias}:${version}:${this.activeKey}`),
-			},
-			await this.key(this.activeKey),
-			new TextEncoder().encode(value),
-		);
+		return (latest?.version ?? 0) + 1;
+	}
+	async replace(alias: string, value: string, actor: string): Promise<number> {
+		validCredential(alias, value);
+		const version = await this.nextVersion(alias);
+		const sealed = await this.seal(`${alias}:${version}:${this.activeKey}`, value);
 		await this.store.db.batch([
 			this.store.db.prepare('UPDATE credentials SET active=0 WHERE alias=?').bind(alias),
 			this.store.db
 				.prepare('INSERT INTO credentials VALUES(?,?,?,?,?,1,?)')
-				.bind(
-					alias,
-					version,
-					this.activeKey,
-					base64(new Uint8Array(ciphertext)),
-					base64(iv),
-					Date.now(),
-				),
+				.bind(alias, version, this.activeKey, sealed.ciphertext, sealed.iv, Date.now()),
 		]);
 		await this.store.audit(actor, 'credential.replace', alias);
 		return version;
@@ -130,17 +135,9 @@ export class Vault {
 				.first(),
 		);
 		if (!row) throw new Error('Credential unavailable');
-		const clear = await crypto.subtle.decrypt(
-			{
-				name: 'AES-GCM',
-				iv: bytes(row.iv),
-				additionalData: new TextEncoder().encode(`${alias}:${row.version}:${row.key_id}`),
-			},
-			await this.key(row.key_id),
-			bytes(row.ciphertext),
-		);
+		const value = await this.open(`${alias}:${row.version}:${row.key_id}`, row.key_id, row);
 		await this.store.audit(actor, 'credential.access', alias);
-		return { value: new TextDecoder().decode(clear), version: row.version };
+		return { value, version: row.version };
 	}
 	async grant(grant: Grant, actor: string): Promise<void> {
 		await this.store.db

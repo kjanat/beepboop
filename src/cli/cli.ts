@@ -4,7 +4,7 @@ import { repositoryReference } from '@/automation/repository-name';
 import { Client } from '@/cli/client';
 import { emit, failure } from '@/cli/output';
 import { setupRepository } from '@/cli/setup';
-import { array, integer, record, string, text } from '@/model';
+import { array, boolean, integer, record, string, text } from '@/model';
 
 function repositoryRows(value: unknown) {
 	return array(value).map(raw => {
@@ -303,12 +303,143 @@ releases = releases.command(
 			)
 		),
 );
+function activeVersion(value: unknown, alias: string): number | undefined {
+	const row = array(record(value).credentials).map(record)
+		.find(entry => text(entry.alias) === alias && integer(entry.active) === 1);
+	return row ? integer(row.version) : undefined;
+}
+const secrets = group('secrets').description('Store secret values and list workflow access')
+	.command(
+		base('list', 'List secret names and workflow access')
+			.action(async ({ flags, out }) => emit(out, await new Client(flags.server).request('/api/credentials'))),
+	)
+	.command(
+		base('set', 'Store a secret value from stdin or a hidden prompt')
+			.arg(
+				'alias',
+				arg.string({ pattern: /^[\w-]{1,64}$/ }).describe('Secret name: 1-64 letters, numbers, underscores or hyphens'),
+			)
+			.action(async ({ flags, args, ask, out }) => {
+				const client = new Client(flags.server);
+				const stored = activeVersion(await client.request('/api/credentials'), args.alias);
+				const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+				if (
+					stored !== undefined && interactive
+					&& !await ask({
+						kind: 'confirm',
+						message: `Overwrite secret ${args.alias} (version ${stored})?`,
+						default: false,
+					})
+				) {
+					throw failure('Secret left unchanged', 'ABORTED');
+				}
+				const value = process.stdin.isTTY
+					? await ask({ kind: 'password', message: `Value for ${args.alias}` })
+					: (await Bun.stdin.text()).replace(/\r?\n$/, '');
+				if (!value) {
+					throw failure('Secret value is empty', 'EMPTY_VALUE', 'Pipe the value on stdin or type it at the prompt');
+				}
+				const version = integer(
+					record(await client.request('/api/credentials/replace', { alias: args.alias, value })).version,
+				);
+				if (out.jsonMode) await emit(out, { alias: args.alias, version });
+				else out.log(`Saved ${args.alias} as version ${version}.`);
+			}),
+	);
+function destinationRows(value: unknown) {
+	const data = record(value);
+	return {
+		destinations: array(data.destinations).map(record).map(row => ({
+			id: text(row.id),
+			name: text(row.name),
+			kind: text(row.kind),
+			credential: text(row.credential),
+			subscribeNew: boolean(row.subscribeNew),
+			enabled: boolean(row.enabled),
+		})),
+		subscriptions: array(data.subscriptions).map(record).map(row => ({
+			destinationId: text(row.destinationId),
+			registry: text(row.registry),
+			name: text(row.name),
+		})),
+	};
+}
+const notifications = group('notifications').description('Send package releases to Slack and HTTPS webhooks')
+	.command(
+		base('list', 'List notification destinations and their packages').action(async ({ flags, out }) => {
+			const response = await new Client(flags.server).request('/api/notifications');
+			if (out.jsonMode) {
+				await emit(out, response);
+				return;
+			}
+			const { destinations, subscriptions } = destinationRows(response);
+			out.table(destinations.map(destination => ({
+				id: destination.id,
+				name: destination.name,
+				kind: destination.kind,
+				secret: destination.credential,
+				'new packages': destination.subscribeNew ? 'yes' : 'no',
+				enabled: destination.enabled ? 'yes' : 'no',
+				packages: subscriptions.filter(row => row.destinationId === destination.id)
+					.map(row => `${row.registry}:${row.name}`).join(', '),
+			})));
+		}),
+	)
+	.command(
+		base('add', 'Add a destination that posts to the URL stored in a secret')
+			.flag('name', flag.string().prompt({ kind: 'input', message: 'Destination name' }).required())
+			.flag('kind', flag.enum(['slack', 'http']).prompt({ kind: 'select', message: 'Destination type' }).required())
+			.flag(
+				'secret',
+				flag.string({ pattern: /^[\w-]{1,64}$/ }).prompt({ kind: 'input', message: 'Secret holding the webhook URL' })
+					.required(),
+			)
+			.flag(
+				'subscribe-new',
+				flag.boolean().default(false).describe('Subscribe this destination to every newly watched package'),
+			)
+			.action(async ({ flags, out }) => {
+				const id = text(
+					record(
+						await new Client(flags.server).request('/api/notifications/save', {
+							destination: {
+								name: flags.name,
+								kind: flags.kind,
+								credential: flags.secret,
+								subscribeNew: flags['subscribe-new'],
+								enabled: true,
+							},
+						}),
+					).id,
+				);
+				if (out.jsonMode) await emit(out, { id });
+				else out.log(`Added destination ${id}.`);
+			}),
+	)
+	.command(
+		base('subscribe', "Send a package's releases to a destination")
+			.arg('destination', arg.string().describe('Destination ID from notifications list'))
+			.arg(
+				'package',
+				arg.string({ pattern: /^(npm|jsr):.+$/ }).describe('Package as registry:name, for example npm:svgo'),
+			)
+			.action(async ({ flags, args, out }) => {
+				const separator = args.package.indexOf(':');
+				const registry = args.package.slice(0, separator),
+					name = args.package.slice(separator + 1);
+				await new Client(flags.server).request('/api/packages/subscription', {
+					destinationId: args.destination,
+					registry,
+					name,
+					subscribed: true,
+				});
+				if (out.jsonMode) await emit(out, { destination: args.destination, registry, name });
+				else out.log(`Subscribed ${args.destination} to ${registry}:${name}.`);
+			}),
+	);
 export const app = cli('beepboop')
 	.manifest({ from: import.meta.url })
 	.links()
 	.command(auth).command(repositories).command(releases).command(runs)
-	.command(
-		base('secrets', 'List secret names and workflow access')
-			.action(async ({ flags, out }) => emit(out, await new Client(flags.server).request('/api/credentials'))),
-	).completions();
+	.command(secrets).command(notifications).completions();
 if (import.meta.main) await app.run();
