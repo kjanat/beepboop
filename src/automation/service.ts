@@ -5,7 +5,7 @@ import { configuredGrant } from '@/automation/access';
 import { type AuthBindings, Authenticators, administrator, authRoute, workflowIdentity } from '@/automation/auth';
 import { resolveConfiguration } from '@/automation/configuration';
 import type { AutomationCoordinator } from '@/automation/coordinator';
-import { alreadyPrepared, planVersionFiles } from '@/automation/editors';
+import { planVersionFiles } from '@/automation/editors';
 import { createExecution } from '@/automation/execution';
 import { type Credentials, RepositoryGateway } from '@/automation/github';
 import { createReleasePreparation, planIdentity } from '@/automation/managed';
@@ -689,7 +689,16 @@ export class AutomationService {
 				throw new Error('Release plan changed; preview it again');
 			}
 			if (!plan.edits.length && !plan.requiresPreparation) {
-				throw new Error(alreadyPrepared(plan.version, plan.sourceSha));
+				const promotion = await createExecution(
+					repository,
+					text(body.stream),
+					'promote',
+					`release:${plan.version}`,
+					plan.version,
+				);
+				promotion.sourceSha = plan.sourceSha;
+				await this.store.audit(actor, 'release.prepare', promotion.id);
+				return Response.json(await this.enqueue(repository, promotion));
 			}
 			if (stream.prepare.workflow) {
 				if (stream.prepare.strategy !== 'workflow') {

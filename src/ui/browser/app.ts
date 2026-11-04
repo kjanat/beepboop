@@ -218,7 +218,9 @@ function renderPlan(form: HTMLFormElement, plan: Plan) {
 		);
 		result.append(details);
 	}
-	result.append(node('p', 'Review these changes before preparing. You will merge the preparation PR yourself.'));
+	if (plan.edits.length) {
+		result.append(node('p', 'Review these changes before preparing. You will merge the preparation PR yourself.'));
+	}
 }
 function selectedWorkflow(form: HTMLFormElement): Choice {
 	const repository = repositoryChoices(form).find(r => String(r.id) === input(form, 'repositoryId').value);
@@ -437,10 +439,9 @@ for (const form of findAll(document, 'form[data-action]', HTMLFormElement)) {
 					);
 					previews.set(form, { identity, plan });
 					renderPlan(form, plan);
-					const ready = plan.edits.length > 0 || plan.requiresPreparation;
 					const prepare = find(form, 'button[value="prepare"]', HTMLButtonElement);
-					if (prepare) prepare.disabled = !ready;
-					show(ready ? 'Review the proposed changes below, then prepare the release.' : 'Nothing to prepare.');
+					if (prepare) prepare.disabled = false;
+					show('Review the proposed changes below, then prepare the release.');
 				} else {
 					const preview = previews.get(form);
 					if (!preview || preview.identity !== identity) {

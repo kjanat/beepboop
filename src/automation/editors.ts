@@ -158,5 +158,7 @@ export function planVersionFiles(snapshot: Snapshot, target: unknown, rules: Ver
 	};
 }
 export function alreadyPrepared(version: string, commit: string): string {
-	return `Commit ${commit.slice(0, 12)} already carries ${version}. Start the promote workflow for this commit.`;
+	return `Commit ${
+		commit.slice(0, 12)
+	} already carries ${version}. Preparing creates its promotion without a pull request.`;
 }
