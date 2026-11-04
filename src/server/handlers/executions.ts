@@ -1,15 +1,13 @@
 import type { AutomationService } from '@/automation/service';
 import type { Execution } from '@/automation/types';
-import { forbidden, notFound } from '@/contract/errors';
+import { notFound } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import { admin } from '@/server/handlers/kit';
 
 async function execution(service: AutomationService, id: string, repositoryId?: number): Promise<Execution> {
-	const found = await service.store.execution(id);
+	const owner = repositoryId ?? (await service.store.execution(id))?.repositoryId;
+	const found = owner === undefined ? undefined : await service.coordinator(owner).execution(id);
 	if (!found) throw notFound('execution', 'Unknown execution', id);
-	if (repositoryId !== undefined && found.repositoryId !== repositoryId) {
-		throw forbidden('Execution belongs to another repository');
-	}
 	return found;
 }
 

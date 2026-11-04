@@ -36,7 +36,7 @@ const artifact: z.ZodType<Artifact> = z.object({
 });
 
 async function owned(context: EnrolledContext, id: string): Promise<Execution> {
-	const execution = await context.service.store.execution(id);
+	const execution = await context.service.coordinator(context.identity.repositoryId).execution(id);
 	if (!execution || execution.repositoryId !== context.identity.repositoryId) {
 		throw forbidden('Execution repository mismatch');
 	}
@@ -81,7 +81,10 @@ export const workflowEndpoints = {
 	workflowToken: workflowToken(
 		routes.workflowToken,
 		(input, { env, identity, service }) =>
-			issueWorkflowToken(identity, input, Number(env.OWNER_ID), service.gateway, service.store),
+			issueWorkflowToken(identity, input, Number(env.OWNER_ID), service.gateway, {
+				audit: (actor, action, target) => service.store.audit(actor, action, target),
+				execution: id => service.coordinator(identity.repositoryId).execution(id),
+			}),
 	),
 	workflowBegin: workflow(routes.workflowBegin, async (input, context) => {
 		const id = input.executionId || await observed(

@@ -2,7 +2,9 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { call, type Transport } from '@/contract/client';
 import { routes } from '@/contract/routes';
-import { widget } from '../support/repositories.ts';
+import { runAction } from '../support/actions.ts';
+import { botId } from '../support/github.ts';
+import { passChecks, widget } from '../support/repositories.ts';
 import { origin, World } from '../support/world.ts';
 
 let world: World;
@@ -52,6 +54,42 @@ test('a D1 outage keeps the outbox, and the next alarm projects it', async () =>
 		(await world.db.prepare('SELECT entity, id, revision FROM changes ORDER BY seq').all()).results,
 	);
 	expect(changes).toEqual([{ entity: 'execution', id: prepared.id, revision: 1 }]);
+});
+
+test('a Beepboop-dispatched run gets a token while D1 holds no rows', async () => {
+	const repository = widget(world.github);
+	world.npm.publish('widget', '1.0.0');
+	const send = transport(await world.cliSession());
+	await call(routes.repositoriesDiscover, { repository: 'octo/widget' }, send);
+	const request = { repositoryId: repository.id, stream: 'main', version: '1.1.0' };
+	const plan = await call(routes.releasesPlan, request, send);
+	await call(routes.releasesPrepare, { ...request, sourceSha: plan.sourceSha, planId: plan.planId }, send);
+	await world.wait(20_000);
+	const [pull] = repository.pulls;
+	if (!pull) throw new Error('No preparation pull request');
+	const merged = world.github.merge(repository, pull.number);
+	passChecks(repository, merged.sha);
+	await world.push(repository);
+	await world.wait(1_000);
+	const [promotion] = (await call(routes.executionsList, {}, send)).filter(entry => entry.operation === 'promote');
+	if (!promotion) throw new Error('No promotion');
+	await call(routes.executionsApprove, { id: promotion.id, repositoryId: repository.id, sourceSha: merged.sha }, send);
+	await world.wait(16_000);
+	const run = repository.runs.at(-1);
+	if (!run) throw new Error('No dispatched run');
+
+	for (const table of ['executions', 'repositories', 'release_events', 'changes']) {
+		await world.db.prepare(`DELETE FROM ${table}`).run();
+	}
+	world.db.reset();
+	const issued = await runAction(
+		world,
+		'token',
+		{ repository, runId: run.id, sha: run.headSha, file: 'publish.yml', actorId: botId },
+		{ EXECUTION_ID: promotion.id, PERMISSIONS: '{"contents":"write"}' },
+	);
+	expect(issued.outputs.token).toStartWith('ghs_');
+	expect(world.db.queries.filter(query => !query.writes)).toEqual([]);
 });
 
 test('a poisoned execution is quarantined while the rest of the journal advances', async () => {

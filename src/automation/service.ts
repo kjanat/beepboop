@@ -79,7 +79,7 @@ export class AutomationService {
 	}
 	async enqueue(repository: RepositoryRecord, execution: Execution): Promise<Execution> {
 		if (execution.managed) return this.coordinator(repository.id).enqueue(execution);
-		const existing = await this.store.execution(execution.id);
+		const existing = await this.coordinator(repository.id).execution(execution.id);
 		if (existing) return this.coordinator(repository.id).enqueue(existing);
 		if (
 			execution.operation === 'prepare'
@@ -175,6 +175,7 @@ export class AutomationService {
 		}
 		repository.inventory = await resolvePublished(repository.inventory, fetch, this.gateway.verification(name, id));
 		await this.store.putRepository(repository);
+		await this.coordinator(id).setAccess(repository.suspended === true);
 		try {
 			await this.releaseFromManifest(repository);
 		} catch (error) {
@@ -202,12 +203,7 @@ export class AutomationService {
 		version: string,
 		target: string,
 	): Promise<string | undefined> {
-		for (const execution of await this.store.executions(repository.id)) {
-			const result = execution.prepared?.result ?? execution.managed?.result;
-			if (
-				!result || execution.stream !== stream || execution.version !== version
-				|| execution.state !== 'succeeded'
-			) continue;
+		for (const result of await this.coordinator(repository.id).preparationResults(stream, version)) {
 			try {
 				const merge = await this.gateway.preparationMerge(repository.name, repository.id, result, target);
 				if (merge) return merge;
@@ -265,7 +261,7 @@ export class AutomationService {
 				version,
 			);
 			promotion.sourceSha = plan.sourceSha;
-			if (await this.store.execution(promotion.id)) continue;
+			if (await this.coordinator(repository.id).execution(promotion.id)) continue;
 			if (merge) promotion.approvedBy = 'merge';
 			await this.store.audit('beepboop', 'release.push', promotion.id);
 			await this.enqueue(repository, promotion);
@@ -309,6 +305,7 @@ export class AutomationService {
 						diagnostics: [{ code: 'unsupported', severity: 'blocking', message: 'App access removed or suspended' }],
 						updatedAt: Date.now(),
 					});
+					await this.coordinator(repository.id).setAccess(true);
 				} else await this.coordinator(repository.id).wake();
 			}
 			return new Response(null, { status: 202 });

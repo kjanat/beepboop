@@ -76,6 +76,7 @@ const releaseWake = z.union([
 ]);
 type ReleaseWake = z.output<typeof releaseWake>;
 const reconcileDue = z.number().nullable();
+const access = z.object({ suspended: z.boolean() });
 const reconcileInterval = 60_000;
 const settleInterval = 15_000;
 const projectionRetry = 10_000;
@@ -278,6 +279,30 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			[`release-emitted:${id}`]: true,
 		});
 	}
+	async execution(id: string): Promise<Execution | undefined> {
+		return this.stored(id);
+	}
+	async preparationResults(stream: string, version: string): Promise<{ url: string; head: string }[]> {
+		return (await this.executions()).flatMap(execution => {
+			const result = execution.prepared?.result ?? execution.managed?.result;
+			return result && execution.stream === stream && execution.version === version
+					&& execution.state === 'succeeded'
+				? [result]
+				: [];
+		});
+	}
+	async setAccess(suspended: boolean): Promise<void> {
+		const prior = access.safeParse(await this.ctx.storage.get('access'));
+		await this.ctx.storage.put('access', { suspended });
+		if (prior.success && prior.data.suspended && !suspended) await this.wake();
+	}
+	private async suspended(repositoryId: number): Promise<boolean> {
+		const copy = access.safeParse(await this.ctx.storage.get('access'));
+		if (copy.success) return copy.data.suspended;
+		const suspended = (await this.store().repository(repositoryId))?.suspended === true;
+		await this.ctx.storage.put('access', { suspended });
+		return suspended;
+	}
 	async exportJournal(): Promise<{ key: string; value: unknown }[]> {
 		return [...(await this.ctx.storage.list())].map(([key, value]) => ({ key, value }));
 	}
@@ -427,7 +452,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	async startReleaseSet(preparationId: string, target: string): Promise<Execution[]> {
 		return this.serial(async () => {
 			const preparation = await this.get(preparationId);
-			if ((await this.store().repository(preparation.repositoryId))?.suspended) {
+			if (await this.suspended(preparation.repositoryId)) {
 				throw new Error('Repository is suspended');
 			}
 			const key = `release-set:${preparationId}`;
@@ -1418,7 +1443,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		const executions = journal.executions.filter(execution => !quarantined.has(execution.id)).sort((a, b) =>
 			a.createdAt - b.createdAt
 		);
-		if (executions[0] && (await this.store().repository(executions[0].repositoryId))?.suspended) {
+		if (executions[0] && await this.suspended(executions[0].repositoryId)) {
 			return;
 		}
 		const active = executions.filter(
