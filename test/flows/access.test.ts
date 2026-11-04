@@ -3,13 +3,14 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { experimental_AstroContainer } from 'astro/container';
 import { z } from 'zod';
+import { AutomationService } from '@/automation/service';
 import { Store } from '@/automation/store';
 import { errorEnvelope } from '@/contract/errors';
 import { readiness } from '@/domain/repository';
 import { loaders } from '@/server/loaders';
 import { migrationFiles, migrationsDirectory, TestD1 } from '../support/d1.ts';
 import { ownerId, type Repository } from '../support/github.ts';
-import { bearer, field, type Reply, reply } from '../support/http.ts';
+import { bearer, field, type Reply, reply, text } from '../support/http.ts';
 import { widget } from '../support/repositories.ts';
 import { adminSubject, origin, World } from '../support/world.ts';
 
@@ -133,6 +134,54 @@ test('a suspended repository refuses releases, survives refresh, and returns on 
 			repositories_added: [{ id: repository.id }],
 		})).status,
 	).toBe(202);
+	expect(readiness(await stored(repository)).kind).toBe('ready');
+
+	const legacy = z.record(z.string(), z.unknown()).parse(JSON.parse(
+		z.object({ document: z.string() }).parse(
+			await world.db.prepare('SELECT document FROM repositories WHERE id=?').bind(repository.id).first(),
+		).document,
+	));
+	const finding = { code: 'unsupported', severity: 'blocking', message: 'App access removed or suspended' };
+	world.advance(60_000);
+	await world.db.prepare(
+		'INSERT INTO repositories(id,name,document,updated_at,added_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,document=excluded.document,updated_at=excluded.updated_at',
+	).bind(
+		repository.id,
+		repository.name,
+		JSON.stringify({
+			...legacy,
+			suspended: true,
+			diagnostics: [finding.message],
+			findings: [finding],
+			updatedAt: Date.now(),
+		}),
+		Date.now(),
+		Date.now(),
+	).run();
+	expect(readiness(await stored(repository))).toEqual({ kind: 'suspended', since: Date.now() });
+	expect(await badge()).toBe('warn App access unavailable');
+	expect((await installation('unsuspend')).status).toBe(202);
+	expect(readiness(await stored(repository)).kind).toBe('ready');
+	expect(await badge()).toBe('ok Configured +prepare');
+	expect(world.network.unrouted).toEqual([]);
+});
+
+test('discover and the cron refresh rewrite a repository row that no longer decodes', async () => {
+	const repository = widget(world.github);
+	world.npm.publish('widget', '1.0.0');
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: 'octo/widget' })).status).toBe(200);
+	const corrupt = () =>
+		world.db.prepare('UPDATE repositories SET document=? WHERE id=?').bind('{"broken":true}', repository.id).run();
+
+	await corrupt();
+	expect((await api('/api/repositories/resolve', { repository: 'widget' })).status).toBe(500);
+	expect((await api('/api/repositories/discover', { repository: 'octo/widget' })).status).toBe(200);
+	expect(readiness(await stored(repository)).kind).toBe('ready');
+	expect(text((await api('/api/repositories/resolve', { repository: 'widget' })).body, 'name')).toBe('octo/widget');
+
+	await corrupt();
+	await new AutomationService(world.env).scheduled();
 	expect(readiness(await stored(repository)).kind).toBe('ready');
 	expect(world.network.unrouted).toEqual([]);
 });

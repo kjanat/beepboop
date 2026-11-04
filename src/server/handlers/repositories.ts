@@ -27,19 +27,20 @@ export const repositoryEndpoints = {
 	repositoriesResolve: admin(routes.repositoriesResolve, async (input, { service }) => {
 		const wanted = reference(input.repository);
 		const name = wanted.name.toLowerCase(), owner = wanted.owner?.toLowerCase();
-		const matches = (await service.store.repositories()).filter(repository => {
+		const matches = (await service.store.enrollments()).filter(repository => {
 			const [candidateOwner = '', candidateName = ''] = repository.name.toLowerCase().split('/');
 			return candidateName === name && (owner === undefined || candidateOwner === owner);
 		});
 		const [found, ...others] = matches;
-		if (found && !others.length) return encodeRepository(found);
-		if (found) {
+		if (others.length) {
 			throw precondition(
 				`Repository ${input.repository} matches ${
 					matches.map(repository => repository.name).join(', ')
 				}; name the owner`,
 			);
 		}
+		const record = found && await service.store.repository(found.id);
+		if (record) return encodeRepository(record);
 		throw notFound(
 			'repository',
 			`Repository ${input.repository} is not enrolled; run beepboop repositories discover ${input.repository}`,

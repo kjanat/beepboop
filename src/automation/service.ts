@@ -126,7 +126,7 @@ export class AutomationService {
 	}
 	async refresh(name: string, id: number): Promise<RepositoryRecord> {
 		const snapshot = await this.gateway.snapshot(name, id);
-		const prior = await this.store.repository(id);
+		const prior = await this.store.enrollment(id);
 		const repository: RepositoryRecord = {
 			...snapshot.repository,
 			access: prior?.access ?? { kind: 'active' },
@@ -286,7 +286,7 @@ export class AutomationService {
 			const added = ids(payload.action === 'created' ? payload.repositories : payload.repositories_added);
 			const all = payload.action === 'unsuspend'
 				|| (payload.action === 'created' && payload.repository_selection === 'all');
-			for (const repository of await this.store.repositories()) {
+			for (const repository of await this.store.enrollments()) {
 				const access: Access | undefined =
 					payload.action === 'deleted' || payload.action === 'suspend' || removed.has(repository.id)
 						? { kind: 'suspended', since: Date.now() }
@@ -385,7 +385,7 @@ export class AutomationService {
 			throw new Error('Release event requires its upstream identity');
 		}
 		const deliveries: SubscriptionDelivery[] = [];
-		for (const stored of await this.store.repositories()) {
+		for (const stored of await this.store.readableRepositories()) {
 			const state = readiness(stored);
 			if (state.kind !== 'ready') continue;
 			const repository = state.repository;
@@ -422,7 +422,7 @@ export class AutomationService {
 		await this.changes.prune(Date.now() - changeRetention);
 		await this.deliverEvents();
 		await this.winget().reconcile();
-		for (const repository of await this.store.repositories()) {
+		for (const repository of await this.store.enrollments()) {
 			try {
 				const refreshed = await this.refresh(repository.name, repository.id);
 				try {
@@ -477,7 +477,13 @@ export class AutomationService {
 			}
 		}
 		const notifications = this.notifications();
-		await pollPackages(this.store, await this.store.repositories(), fetch, event => this.event(event), notifications);
+		await pollPackages(
+			this.store,
+			await this.store.readableRepositories(),
+			fetch,
+			event => this.event(event),
+			notifications,
+		);
 		await notifications.deliver();
 	}
 }

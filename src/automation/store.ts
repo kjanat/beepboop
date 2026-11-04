@@ -11,8 +11,12 @@ import type {
 import type { Access } from '@/domain/repository';
 import { record } from '@/model';
 import {
+	decodeEnrollment,
 	decodeRepository,
+	type Enrollment,
 	encodeAccess,
+	enrollmentColumns,
+	enrollmentRow,
 	type RepositoryRow,
 	repositoryColumns,
 	repositoryRow,
@@ -73,6 +77,19 @@ export class Store {
 	}
 	async repositories(): Promise<RepositoryRecord[]> {
 		return (await this.repositoryRows()).map(decodeRepository);
+	}
+	async enrollment(id: number): Promise<Enrollment | undefined> {
+		const row = await this.db.prepare(`SELECT ${enrollmentColumns} FROM repositories WHERE id=?`).bind(id).first();
+		return row ? decodeEnrollment(enrollmentRow.parse(row)) : undefined;
+	}
+	async enrollments(): Promise<Enrollment[]> {
+		const result = await this.db
+			.prepare(`SELECT ${enrollmentColumns} FROM repositories ORDER BY COALESCE(added_at, updated_at) DESC, name`)
+			.all();
+		return z.array(enrollmentRow).parse(result.results).map(decodeEnrollment);
+	}
+	async readableRepositories(): Promise<RepositoryRecord[]> {
+		return (await this.readRepositories()).flatMap(entry => entry.kind === 'readable' ? [entry.value] : []);
 	}
 	async readRepositories(): Promise<(Readable<RepositoryRecord> | UnreadableRepository)[]> {
 		return (await this.repositoryRows()).map(row => {
