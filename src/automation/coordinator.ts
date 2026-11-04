@@ -165,6 +165,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		};
 		await this.ctx.storage.put({ [`release-event:${id}`]: event, [`release-emitted:${id}`]: true });
 	}
+	async exportJournal(): Promise<{ key: string; value: unknown }[]> {
+		return [...(await this.ctx.storage.list())].map(([key, value]) => ({ key, value }));
+	}
 	async releaseEvents(): Promise<AutomationEvent[]> {
 		return [...(await this.ctx.storage.list({ prefix: 'release-event:', limit: 100 })).values()].map(decodeEventV1);
 	}
