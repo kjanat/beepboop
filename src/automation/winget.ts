@@ -4,7 +4,7 @@ import { documentRow } from '@/automation/schemas';
 import type { Store } from '@/automation/store';
 import type { RepositoryRecord } from '@/automation/types';
 import { generateManifests, renderManifests } from '@/distribution/winget/generate';
-import { array, record, sha, text } from '@/model';
+import { array, integer, record, sha, text } from '@/model';
 
 export interface WinGetPolicy {
 	config: string;
@@ -302,9 +302,15 @@ export class WinGetService {
 							})),
 						}),
 					);
+					const bot = await this.gateway.botIdentity();
+					const submitter = record(await call('/user'));
+					const login = text(submitter.login);
 					const created = record(
 						await call(`/repos/${fork}/git/commits`, 'POST', {
-							message: `New version: ${plan.packageIdentifier} ${plan.version}`,
+							message: `New version: ${plan.packageIdentifier} ${plan.version}\n\nCo-authored-by: ${login} <${
+								integer(submitter.id)
+							}+${login}@users.noreply.github.com>`,
+							author: { name: bot.login, email: bot.email },
 							tree: sha(tree.sha),
 							parents: [parent],
 						}),
