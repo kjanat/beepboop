@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { parseDocument } from 'yaml';
 import { object, yaml } from '@/automation/managers/helpers';
 import { packageId } from '@/automation/package-identity';
@@ -115,6 +116,7 @@ export function integrateWorkflow(
 	if (events.some(event => event !== 'workflow_dispatch') && choice.triggers === 'dispatchOnly') {
 		notes.push(`${choice.file}: replaces ${events.join(', ')} triggers with approved dispatches.`);
 	}
+	const existingId = object(inputs.beepboop_execution_id), existingTitle = object(inputs.beepboop_title);
 	document.set('run-name', runName);
 	document.set('on', {
 		...trigger,
@@ -122,8 +124,12 @@ export function integrateWorkflow(
 			...dispatch,
 			inputs: {
 				...inputs,
-				beepboop_execution_id: { description: 'Beepboop execution', required: true, type: 'string' },
-				beepboop_title: { description: 'Beepboop run title', required: false, type: 'string' },
+				beepboop_execution_id: existingId.type === 'string' && existingId.required === true
+					? existingId
+					: { description: 'Beepboop execution', required: true, type: 'string' },
+				beepboop_title: existingTitle.type === 'string' && existingTitle.required !== true
+					? existingTitle
+					: { description: 'Beepboop run title', required: false, type: 'string' },
 			},
 		},
 	});
@@ -131,11 +137,14 @@ export function integrateWorkflow(
 	if (typeof permissions === 'string') {
 		fail('expand permissions to an explicit mapping before integration');
 	}
-	document.setIn(['jobs', jobName, 'permissions'], {
-		...object(permissions),
-		contents: object(permissions).contents ?? 'read',
-		'id-token': 'write',
-	});
+	const granted = object(permissions);
+	if (granted['id-token'] !== 'write' || granted.contents === undefined) {
+		document.setIn(['jobs', jobName, 'permissions'], {
+			...granted,
+			contents: granted.contents ?? 'read',
+			'id-token': 'write',
+		});
+	}
 	if (!original) document.setIn(['jobs', jobName, 'runs-on'], 'ubuntu-latest');
 	let steps = Array.isArray(job.steps) ? job.steps.map(object) : [];
 	if (steps.filter(step => actionRole(step.uses) === 'begin').length > 1) {
@@ -255,5 +264,7 @@ export function integrateWorkflow(
 		!existingBegin || (operation === 'prepare' && !Array.isArray(job.steps))
 		|| steps.length !== (Array.isArray(job.steps) ? job.steps.length : 0)
 	) document.setIn(['jobs', jobName, 'steps'], steps);
-	return { content: document.toString(), blockers, notes };
+	const unchanged = original !== undefined
+		&& isDeepStrictEqual(parseDocument(original).toJS({ maxAliasCount: 100 }), document.toJS({ maxAliasCount: 100 }));
+	return { content: unchanged ? original : document.toString(), blockers, notes };
 }
