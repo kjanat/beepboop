@@ -3,8 +3,9 @@ import type { Fetcher } from '@/automation/managers/registry';
 import type { Store } from '@/automation/store';
 import type { Vault } from '@/automation/vault';
 import { type NotificationKind, notificationKinds, type WatchedRegistry, watchedRegistries } from '@/contract/catalog';
-import { credentialAliasPattern } from '@/contract/ids';
+import { precondition } from '@/contract/errors';
 import { watchedPackageHref } from '@/contract/links';
+import type { DestinationInput } from '@/contract/notifications';
 
 export const deliveryStates = ['pending', 'delivered', 'failed'] as const;
 export type DeliveryState = (typeof deliveryStates)[number];
@@ -72,21 +73,6 @@ const deliveryRow = z.object({
 	attempts: z.number(),
 	error: z.string().nullable(),
 	updated_at: z.number(),
-});
-export const destinationInput = z.object({
-	id: z.string().regex(credentialAliasPattern).optional(),
-	name: z.string().trim().min(1).max(80),
-	kind: z.enum(notificationKinds),
-	credential: z.string().regex(credentialAliasPattern),
-	subscribeNew: z.boolean(),
-	enabled: z.boolean(),
-});
-export type DestinationInput = z.infer<typeof destinationInput>;
-export const subscriptionInput = z.object({
-	destinationId: z.string().min(1),
-	registry: z.enum(watchedRegistries),
-	name: z.string().min(1),
-	subscribed: z.boolean(),
 });
 
 type Outcome = { state: DeliveryState; error?: string };
@@ -213,11 +199,14 @@ export class Notifications {
 			updatedAt: row.updated_at,
 		}));
 	}
-	async saveDestination(input: DestinationInput, actor: string): Promise<string> {
+	async checkDestination(input: DestinationInput): Promise<void> {
 		const saved = await this.store.db.prepare('SELECT 1 FROM credentials WHERE alias=? AND active=1').bind(
 			input.credential,
 		).first();
-		if (!saved) throw new Error('Store the webhook URL as a secret before using it');
+		if (!saved) throw precondition('Store the webhook URL as a secret before using it');
+	}
+	async saveDestination(input: DestinationInput, actor: string): Promise<string> {
+		await this.checkDestination(input);
 		const id = input.id ?? crypto.randomUUID();
 		await this.store.db
 			.prepare(

@@ -1,9 +1,8 @@
-import type { JWTVerifyGetKey } from 'jose';
-import { type WorkflowIdentity, workflowIdentity } from '@/automation/auth';
+import type { WorkflowIdentity } from '@/automation/auth';
 import { expectedRunTitle } from '@/automation/execution';
 import type { Execution } from '@/automation/types';
+import { forbidden, invalid } from '@/contract/errors';
 import { record } from '@/model';
-import { readBody } from '@/webhook';
 
 export type TokenPermissions = Record<string, 'read' | 'write'>;
 
@@ -55,32 +54,35 @@ async function dispatchedByBeepboop(
 
 export function tokenPermissions(raw: unknown): TokenPermissions {
 	const entries = Object.entries(record(raw));
-	if (!entries.length) throw new Error('Token permissions required');
+	if (!entries.length) throw invalid('Token permissions required', ['permissions']);
 	const permissions: TokenPermissions = {};
 	for (const [name, level] of entries) {
 		if (!issuable.has(name) || (level !== 'read' && level !== 'write')) {
-			throw new Error('Invalid token permission');
+			throw invalid('Invalid token permission', ['permissions', name]);
 		}
 		permissions[name] = level;
 	}
 	return permissions;
 }
 
-export async function workflowToken(
-	request: Request,
-	audience: string,
+export interface TokenRequest {
+	permissions?: unknown;
+	purpose?: string;
+	identity?: boolean;
+	executionId?: string;
+}
+
+export async function issueWorkflowToken(
+	identity: WorkflowIdentity,
+	body: TokenRequest,
 	ownerId: number,
 	issuer: TokenIssuer,
 	log: TokenAudit,
-	issuerKeys?: JWTVerifyGetKey,
-): Promise<Response> {
-	if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
-	const identity = await workflowIdentity(request, audience, ownerId, issuerKeys);
-	const body = record(JSON.parse(new TextDecoder().decode(await readBody(request))));
+): Promise<{ token: string; bot?: BotIdentity }> {
 	if (identity.actorId !== ownerId) {
-		if (body.purpose === 'publish-actions') throw new Error('Actions publication requires an owner-started run');
+		if (body.purpose === 'publish-actions') throw forbidden('Actions publication requires an owner-started run');
 		if (!(await dispatchedByBeepboop(identity, body.executionId, issuer, log))) {
-			throw new Error('Workflow run was not started by the owner or a Beepboop operation');
+			throw forbidden('Workflow run was not started by the owner or a Beepboop operation');
 		}
 	}
 	let permissions: TokenPermissions;
@@ -90,24 +92,24 @@ export async function workflowToken(
 			|| identity.workflowSha !== identity.sha
 			|| identity.workflowRef !== `${identity.repository}/.github/workflows/publish-actions.yml@${identity.ref}`
 		) {
-			throw new Error('Actions publication requires its own workflow on the default branch');
+			throw forbidden('Actions publication requires its own workflow on the default branch');
 		}
 		const requested = record(body.permissions);
 		if (Object.keys(requested).length !== 2 || requested.contents !== 'write' || requested.workflows !== 'write') {
-			throw new Error('Actions publication requires only contents:write and workflows:write');
+			throw forbidden('Actions publication requires only contents:write and workflows:write');
 		}
 		const source = await issuer.defaultRevision(identity.repository, identity.repositoryId);
 		if (source.ref !== identity.ref || source.sha !== identity.sha) {
-			throw new Error('Actions publication requires the current default branch revision');
+			throw forbidden('Actions publication requires the current default branch revision');
 		}
 		permissions = { contents: 'write', workflows: 'write' };
 	} else {
-		if (body.purpose !== undefined && body.purpose !== '') throw new Error('Unknown token purpose');
+		if (body.purpose !== undefined && body.purpose !== '') throw invalid('Unknown token purpose', ['purpose']);
 		permissions = tokenPermissions(body.permissions);
 	}
 	const bot = body.identity === true ? await issuer.botIdentity() : undefined;
 	const token = await issuer.token(identity.repository, identity.repositoryId, permissions);
 	const granted = Object.entries(permissions).map(([name, level]) => `${name}:${level}`).join(',');
 	await log.audit(`run:${identity.runId}`, 'token.issued', `${identity.repository} ${granted}`);
-	return Response.json({ token, ...(bot ? { bot } : {}) });
+	return { token, ...(bot ? { bot } : {}) };
 }

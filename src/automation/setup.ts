@@ -9,7 +9,6 @@ import {
 	type SetupOption,
 	type SetupPlan,
 	type SetupWorkflow,
-	setupChoicesSchema,
 	type TriggerHandover,
 	triggerHandovers,
 	type Versioning,
@@ -18,6 +17,7 @@ import {
 import { integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Package, RepositoryRecord, Snapshot } from '@/automation/types';
 import { sha256Hex } from '@/contract/ids';
+import { setupChoicesSchema } from '@/contract/setup';
 import { packageMarkdown } from '@/domain/package-label';
 
 function releasedPackage(pkg: Package | undefined): boolean {

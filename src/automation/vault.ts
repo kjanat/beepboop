@@ -3,12 +3,11 @@ import { z } from 'zod';
 import { base64, bytes, type WorkflowIdentity } from '@/automation/auth';
 import type { RepositoryGateway } from '@/automation/github';
 import { matchesRef } from '@/automation/policy';
-import { rowDocument } from '@/automation/schemas';
 import type { Store } from '@/automation/store';
+import { forbidden, invalid, notFound } from '@/contract/errors';
 import { credentialAliasPattern, githubSecretNamePattern } from '@/contract/ids';
-import { integer, oneOf, record, text } from '@/model';
-
-const credentialRow = z.object({ version: z.number(), key_id: z.string(), iv: z.string(), ciphertext: z.string() });
+import { record, text } from '@/model';
+import type { CredentialStore } from '@/persistence/d1/credentials';
 
 interface GrantFields {
 	id: string;
@@ -25,60 +24,42 @@ export type Grant =
 	| (GrantFields & { delivery: 'runtime' })
 	| (GrantFields & { delivery: 'repository'; secretName: string })
 	| (GrantFields & { delivery: 'environment'; environment: string; secretName: string });
+const nonempty = z.string().min(1);
+const grantFields = {
+	id: nonempty,
+	alias: z.string().regex(/^[\w-]+$/),
+	repositoryId: z.number().int().positive(),
+	repository: z.string().regex(/^[\w.-]+\/[\w.-]+$/),
+	operation: nonempty,
+	workflow: z.string().regex(/^[\w-]+\.ya?ml$/),
+	ref: z.string().startsWith('refs/'),
+};
+const secretName = z.string().regex(githubSecretNamePattern, 'Secret name required');
+const grantSchema = z.discriminatedUnion('delivery', [
+	z.strictObject({
+		...grantFields,
+		delivery: z.literal('runtime'),
+		environment: nonempty.optional(),
+		secretName: nonempty.optional(),
+	}),
+	z.strictObject({ ...grantFields, delivery: z.literal('repository'), environment: nonempty.optional(), secretName }),
+	z.strictObject({
+		...grantFields,
+		delivery: z.literal('environment'),
+		environment: z.string().min(1, 'Environment required'),
+		secretName,
+	}),
+]);
 export function parseGrant(value: unknown): Grant {
-	const data = record(value);
-	for (const key of Object.keys(data)) {
-		if (
-			![
-				'id',
-				'alias',
-				'repositoryId',
-				'repository',
-				'operation',
-				'workflow',
-				'ref',
-				'environment',
-				'delivery',
-				'secretName',
-			].includes(key)
-		) {
-			throw new Error('Unknown grant field');
-		}
-	}
-	const fields = {
-		id: text(data.id),
-		alias: text(data.alias),
-		repositoryId: integer(data.repositoryId),
-		repository: text(data.repository),
-		operation: text(data.operation),
-		workflow: text(data.workflow),
-		ref: text(data.ref),
-		delivery: text(data.delivery),
-		...(data.environment === undefined ? {} : { environment: text(data.environment) }),
-		...(data.secretName === undefined ? {} : { secretName: text(data.secretName) }),
-	};
-	if (
-		!/^[\w-]+$/.test(fields.alias)
-		|| !/^[\w.-]+\/[\w.-]+$/.test(fields.repository)
-		|| !/^[\w-]+\.ya?ml$/.test(fields.workflow)
-		|| !fields.ref.startsWith('refs/')
-	) {
-		throw new Error('Invalid grant');
-	}
-	const delivery = oneOf(fields.delivery, ['runtime', 'repository', 'environment'], 'Invalid delivery mode');
-	if (delivery === 'runtime') return { ...fields, delivery };
-	const { environment, secretName } = fields;
-	if (!secretName || !githubSecretNamePattern.test(secretName)) throw new Error('Secret name required');
-	if (delivery === 'repository') return { ...fields, delivery, secretName };
-	if (!environment) throw new Error('Environment required');
-	return { ...fields, delivery, environment, secretName };
+	return grantSchema.parse(value);
 }
 export function validCredential(alias: string, value: string): void {
-	if (!credentialAliasPattern.test(alias) || !value || value.length > 48000) throw new Error('Invalid credential');
+	if (!credentialAliasPattern.test(alias) || !value || value.length > 48000) throw invalid('Invalid credential');
 }
 export class Vault {
 	constructor(
 		private store: Store,
+		private credentials: CredentialStore,
 		private keyring: Record<string, string>,
 		private activeKey: string,
 	) {}
@@ -106,60 +87,32 @@ export class Vault {
 		);
 		return new TextDecoder().decode(clear);
 	}
-	private async nextVersion(alias: string): Promise<number> {
-		const latest = z.object({ version: z.number().nullable() }).nullable().parse(
-			await this.store.db
-				.prepare('SELECT MAX(version) AS version FROM credentials WHERE alias=?')
-				.bind(alias)
-				.first(),
-		);
-		return (latest?.version ?? 0) + 1;
-	}
 	async replace(alias: string, value: string, actor: string): Promise<number> {
 		validCredential(alias, value);
-		const version = await this.nextVersion(alias);
+		const version = await this.credentials.nextVersion(alias);
 		const sealed = await this.seal(`${alias}:${version}:${this.activeKey}`, value);
-		await this.store.db.batch([
-			this.store.db.prepare('UPDATE credentials SET active=0 WHERE alias=?').bind(alias),
-			this.store.db
-				.prepare('INSERT INTO credentials(alias,version,key_id,ciphertext,iv,active,created_at) VALUES(?,?,?,?,?,1,?)')
-				.bind(alias, version, this.activeKey, sealed.ciphertext, sealed.iv, Date.now()),
-		]);
+		await this.credentials.store({ alias, version, keyId: this.activeKey, ...sealed });
 		await this.store.audit(actor, 'credential.replace', alias);
 		return version;
 	}
 	async reveal(alias: string, actor: string): Promise<{ value: string; version: number }> {
-		const row = credentialRow.nullable().parse(
-			await this.store.db
-				.prepare('SELECT * FROM credentials WHERE alias=? AND active=1')
-				.bind(alias)
-				.first(),
-		);
-		if (!row) throw new Error('Credential unavailable');
+		const row = await this.credentials.sealed(alias);
+		if (!row) throw notFound('credential', 'No stored value under this name', alias);
 		const value = await this.open(`${alias}:${row.version}:${row.key_id}`, row.key_id, row);
 		await this.store.audit(actor, 'credential.access', alias);
 		return { value, version: row.version };
 	}
 	async grant(grant: Grant, actor: string): Promise<void> {
-		await this.store.db
-			.prepare(
-				'INSERT INTO grants(id,alias,repository_id,document) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET alias=excluded.alias,repository_id=excluded.repository_id,document=excluded.document',
-			)
-			.bind(grant.id, grant.alias, grant.repositoryId, JSON.stringify(grant))
-			.run();
+		await this.credentials.putGrant(grant);
 		await this.store.audit(actor, 'credential.grant', grant.id);
 	}
 	async revoke(id: string, actor: string): Promise<void> {
-		await this.store.db.prepare('DELETE FROM grants WHERE id=?').bind(id).run();
+		await this.credentials.deleteGrant(id);
 		await this.store.audit(actor, 'credential.revoke', id);
 	}
 	async runtime(alias: string, operation: string, identity: WorkflowIdentity): Promise<string> {
-		const rows = await this.store.db
-			.prepare('SELECT document FROM grants WHERE alias=? AND repository_id=?')
-			.bind(alias, identity.repositoryId)
-			.all();
-		const allowed = rows.results
-			.map((r) => parseGrant(rowDocument(r)))
+		const allowed = (await this.credentials.grantDocuments({ alias, repositoryId: identity.repositoryId }))
+			.map(parseGrant)
 			.some(
 				(g) =>
 					g.delivery === 'runtime'
@@ -170,7 +123,7 @@ export class Vault {
 					&& identity.workflowRef
 						=== `${identity.repository}/.github/workflows/${g.workflow}@${identity.ref}`,
 			);
-		if (!allowed) throw new Error('Credential grant denied');
+		if (!allowed) throw forbidden('Credential grant denied');
 		return (
 			await this.reveal(alias, `run:${identity.repositoryId}:${identity.runId}:${identity.attempt}`)
 		).value;
@@ -180,16 +133,11 @@ export class Vault {
 		gateway: RepositoryGateway,
 		actor: string,
 	): Promise<{ id: string; state: string }[]> {
-		const rows = await this.store.db
-			.prepare('SELECT document FROM grants WHERE alias=?')
-			.bind(alias)
-			.all();
+		const grants = (await this.credentials.grantDocuments({ alias })).map(parseGrant);
 		const secret = await this.reveal(alias, actor),
 			outcomes: { id: string; state: string }[] = [];
 		for (
-			const grant of rows.results
-				.map((row) => parseGrant(rowDocument(row)))
-				.filter((g) => g.delivery !== 'runtime')
+			const grant of grants.filter((g) => g.delivery !== 'runtime')
 		) {
 			let state = 'failed';
 			try {
@@ -214,12 +162,7 @@ export class Vault {
 			} catch {
 				/* Record only the destination outcome; API responses can contain sensitive details. */
 			}
-			await this.store.db
-				.prepare(
-					'INSERT INTO secret_deliveries(grant_id,version,state,updated_at) VALUES(?,?,?,?) ON CONFLICT(grant_id,version) DO UPDATE SET state=excluded.state,updated_at=excluded.updated_at',
-				)
-				.bind(grant.id, secret.version, state, Date.now())
-				.run();
+			await this.credentials.recordDelivery(grant.id, secret.version, state);
 			outcomes.push({ id: grant.id, state });
 		}
 		return outcomes;

@@ -1,11 +1,11 @@
-import { z } from 'zod';
 import { Authenticators } from '@/automation/auth.ts';
 import { packageWatches } from '@/automation/package-watch.ts';
-import { rowDocument } from '@/automation/schemas.ts';
 import { type AutomationBindings, AutomationService } from '@/automation/service.ts';
 import type { Readable, UnreadableExecution, UnreadableRepository } from '@/automation/store.ts';
 import type { Execution, RepositoryRecord } from '@/automation/types.ts';
 import { parseGrant } from '@/automation/vault.ts';
+import type { CLISessionRow } from '@/persistence/d1/cli-sessions.ts';
+import type { ActiveCredential, DeliveryRow } from '@/persistence/d1/credentials.ts';
 import type { Section } from '@/server/sections.ts';
 
 export interface LoaderContext {
@@ -24,28 +24,9 @@ export async function panel<T>(name: string, work: () => Promise<T>): Promise<Pa
 	}
 }
 
-export interface SecretSummary {
-	alias: string;
-	version: number;
-	created_at: number;
-}
-export interface DeliverySummary {
-	grant_id: string;
-	version: number;
-	state: string;
-	updated_at: number;
-}
-export interface CLISession {
-	id: string;
-	created_at: number;
-}
-const secretSummaries: z.ZodType<SecretSummary[]> = z.array(
-	z.object({ alias: z.string(), version: z.number(), created_at: z.number() }),
-);
-const cliSessionSummaries: z.ZodType<CLISession[]> = z.array(z.object({ id: z.string(), created_at: z.number() }));
-const deliverySummaries: z.ZodType<DeliverySummary[]> = z.array(
-	z.object({ grant_id: z.string(), version: z.number(), state: z.string(), updated_at: z.number() }),
-);
+export type SecretSummary = ActiveCredential;
+export type DeliverySummary = DeliveryRow;
+export type CLISession = CLISessionRow;
 
 interface Rows<T, U> {
 	readable: T[];
@@ -64,23 +45,17 @@ async function repositories(service: AutomationService): Promise<Rows<Repository
 async function executions(service: AutomationService): Promise<Rows<Execution, UnreadableExecution>> {
 	return split(await service.store.readExecutions());
 }
-async function secrets(service: AutomationService): Promise<SecretSummary[]> {
-	const rows = await service.store.db
-		.prepare('SELECT alias,version,created_at FROM credentials WHERE active=1 ORDER BY alias')
-		.all();
-	return secretSummaries.parse(rows.results);
+function secrets(service: AutomationService): Promise<SecretSummary[]> {
+	return service.credentials.active();
 }
 async function grants(service: AutomationService) {
-	const rows = await service.store.db.prepare('SELECT document FROM grants').all();
-	return rows.results.map(row => parseGrant(rowDocument(row)));
+	return (await service.credentials.grantDocuments()).map(parseGrant);
 }
-async function deliveries(service: AutomationService): Promise<DeliverySummary[]> {
-	const rows = await service.store.db.prepare('SELECT grant_id,version,state,updated_at FROM secret_deliveries').all();
-	return deliverySummaries.parse(rows.results);
+function deliveries(service: AutomationService): Promise<DeliverySummary[]> {
+	return service.credentials.deliveries();
 }
-async function cliSessions(service: AutomationService): Promise<CLISession[]> {
-	const rows = await service.store.db.prepare('SELECT id,created_at FROM cli_sessions ORDER BY created_at DESC').all();
-	return cliSessionSummaries.parse(rows.results);
+function cliSessions(service: AutomationService): Promise<CLISession[]> {
+	return service.cliSessions.list();
 }
 
 export const loaders = {

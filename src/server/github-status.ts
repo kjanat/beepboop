@@ -12,12 +12,25 @@ const page = 'https://github-up.kjanat.dev';
 const source = 'https://www.githubstatus.com';
 
 let latest: { at: number; outage: GitHubOutage | undefined } | undefined;
+let pending: Promise<void> | undefined;
+
+export function knownOutage(): GitHubOutage | undefined {
+	return latest?.outage;
+}
 
 export async function githubOutage(): Promise<GitHubOutage | undefined> {
-	if (latest && Date.now() - latest.at < 60_000) return latest.outage;
-	const outage = await check();
-	latest = { at: Date.now(), outage };
-	return outage;
+	await refreshOutage();
+	return knownOutage();
+}
+
+export function refreshOutage(): Promise<void> {
+	if (latest && Date.now() - latest.at < 60_000) return Promise.resolve();
+	pending ??= check().then(outage => {
+		latest = { at: Date.now(), outage };
+	}).finally(() => {
+		pending = undefined;
+	});
+	return pending;
 }
 
 async function check(): Promise<GitHubOutage | undefined> {

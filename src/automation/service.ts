@@ -1,52 +1,33 @@
-import schema from '@root/schemas/v1.json' with { type: 'json' };
 import { CronExpressionParser } from 'cron-parser';
 import { z } from 'zod';
-import { configuredGrant } from '@/automation/access';
-import { type AuthBindings, Authenticators, administrator, authRoute, workflowIdentity } from '@/automation/auth';
+import type { AuthBindings } from '@/automation/auth';
 import { resolveConfiguration } from '@/automation/configuration';
 import type { AutomationCoordinator } from '@/automation/coordinator';
-import { planVersionFiles } from '@/automation/editors';
 import { createExecution } from '@/automation/execution';
 import { type Credentials, RepositoryGateway } from '@/automation/github';
-import { createReleasePreparation, planIdentity } from '@/automation/managed';
 import { discover, planRelease, resolvePublished, versionsInFiles } from '@/automation/managers';
 import { jsrTokenAlias, prepareJsrPackage } from '@/automation/managers/jsr';
-import { destinationInput, Notifications, subscriptionInput } from '@/automation/notifications';
+import { Notifications } from '@/automation/notifications';
 import { matchesPackage } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
-import { addWatch, pollPackages, removeManualWatch, watchInput } from '@/automation/package-watch';
-import { planReleaseSet } from '@/automation/planning';
-import { matchesRef } from '@/automation/policy';
-import { planHookUpdates } from '@/automation/precommit';
+import { pollPackages } from '@/automation/package-watch';
 import { manifestProblems, unreleasedManifestVersion } from '@/automation/release-version';
-import { repositoryName } from '@/automation/repository-name';
-import { documentRow, rowDocument, setupOptionsSchema } from '@/automation/schemas';
-import {
-	bodyChoices,
-	branchConflictBlocker,
-	previewSetup,
-	setupBody,
-	setupOptions,
-	withRegistryStatus,
-} from '@/automation/setup';
-import { maintainSetup, sameEdits, setupEdits } from '@/automation/setup-maintenance';
-import { setupChoicesSchema } from '@/automation/setup-types';
+import { setupOptionsSchema } from '@/automation/schemas';
+import { bodyChoices } from '@/automation/setup';
+import { maintainSetup } from '@/automation/setup-maintenance';
 import { Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
-import { workflowToken } from '@/automation/token';
-import type {
-	Artifact,
-	AutomationEvent,
-	Execution,
-	Publication,
-	RepositoryRecord,
-	SubscriptionDelivery,
-} from '@/automation/types';
-import { parseGrant, Vault, validCredential } from '@/automation/vault';
-import { nextVersion, parseVersionRequest } from '@/automation/version';
+import type { AutomationEvent, Execution, RepositoryRecord, SubscriptionDelivery } from '@/automation/types';
+import { Vault } from '@/automation/vault';
 import { type WinGetBindings, WinGetService } from '@/automation/winget';
-import { isLockfile, reportableManagerNames } from '@/contract/catalog';
-import { array, compareVersions, integer, oneOf, record, semver, sha, text } from '@/model';
+import { precondition } from '@/contract/errors';
+import { setupChoicesSchema } from '@/contract/setup';
+import { array, integer, record, text } from '@/model';
+import { CLISessionStore } from '@/persistence/d1/cli-sessions';
+import { CredentialStore } from '@/persistence/d1/credentials';
+import { OnboardingStore } from '@/persistence/d1/onboarding';
+import { ScheduleStore } from '@/persistence/d1/schedules';
+import { SessionStore } from '@/persistence/d1/sessions';
 import { readBody, verifySignature } from '@/webhook';
 
 const setupPullEdit = z.object({
@@ -76,14 +57,24 @@ export interface AutomationBindings extends AuthBindings, Credentials, WinGetBin
 export class AutomationService {
 	readonly store: Store;
 	readonly gateway: RepositoryGateway;
+	readonly credentials: CredentialStore;
+	readonly sessions: SessionStore;
+	readonly cliSessions: CLISessionStore;
+	readonly schedules: ScheduleStore;
+	readonly onboarding: OnboardingStore;
 	constructor(readonly env: AutomationBindings) {
 		this.store = new Store(env.DB);
 		this.gateway = new RepositoryGateway(env, Number(env.OWNER_ID));
+		this.credentials = new CredentialStore(env.DB);
+		this.sessions = new SessionStore(env.DB);
+		this.cliSessions = new CLISessionStore(env.DB);
+		this.schedules = new ScheduleStore(env.DB);
+		this.onboarding = new OnboardingStore(env.DB);
 	}
-	private coordinator(id: number) {
+	coordinator(id: number) {
 		return this.env.AUTOMATION.getByName(String(id));
 	}
-	private async enqueue(repository: RepositoryRecord, execution: Execution): Promise<Execution> {
+	async enqueue(repository: RepositoryRecord, execution: Execution): Promise<Execution> {
 		if (execution.managed) return this.coordinator(repository.id).enqueue(execution);
 		const existing = await this.store.execution(execution.id);
 		if (existing) return this.coordinator(repository.id).enqueue(existing);
@@ -124,9 +115,7 @@ export class AutomationService {
 			await this.enqueue(repository, dependency);
 		}
 		if (execution.workflow?.ref?.includes('*')) {
-			throw new Error(
-				'Dispatch requires an exact workflow ref; wildcard bindings support observation only',
-			);
+			throw precondition('Dispatch requires an exact workflow ref; wildcard bindings support observation only');
 		}
 		return this.coordinator(repository.id).enqueue(execution);
 	}
@@ -136,9 +125,10 @@ export class AutomationService {
 	notifications() {
 		return new Notifications(this.store, () => this.vault());
 	}
-	private vault() {
+	vault() {
 		return new Vault(
 			this.store,
+			this.credentials,
 			z.record(z.string(), z.string()).parse(JSON.parse(this.env.VAULT_KEYS)),
 			this.env.VAULT_ACTIVE_KEY,
 		);
@@ -216,7 +206,7 @@ export class AutomationService {
 		}
 		return undefined;
 	}
-	private async prepareJsr(execution: Execution): Promise<void> {
+	async prepareJsr(execution: Execution): Promise<void> {
 		const ids = new Set([
 			...(execution.workflow?.publications ?? []),
 			...(execution.releaseSet?.required ?? execution.configuration.streams[execution.stream]?.required ?? []),
@@ -226,7 +216,7 @@ export class AutomationService {
 		const token = await this.vault().reveal(jsrTokenAlias, `setup:${execution.id}`).then(
 			credential => credential.value,
 			() => {
-				throw new Error(`Store a JSR access token as ${jsrTokenAlias} so Beepboop can set up ${names.join(', ')}`);
+				throw precondition(`Store a JSR access token as ${jsrTokenAlias} so Beepboop can set up ${names.join(', ')}`);
 			},
 		);
 		for (const name of names) await prepareJsrPackage(name, execution.repository, token, fetch);
@@ -362,11 +352,9 @@ export class AutomationService {
 		if (pull.head.repo.id !== repository.id || pull.base.repo.id !== repository.id) return;
 		const bot = await this.gateway.botIdentity();
 		if (sender.id === bot.id || pull.user.id !== bot.id) return;
-		const row = documentRow.nullable().parse(
-			await this.store.db.prepare('SELECT document FROM onboarding WHERE repository_id=?').bind(repository.id).first(),
-		);
-		if (!row) return;
-		const saved = record(JSON.parse(row.document));
+		const document = await this.onboarding.document(repository.id);
+		if (document === undefined) return;
+		const saved = record(JSON.parse(document));
 		if (saved.url !== `https://github.com/${repository.name}/pull/${pull.number}`) return;
 		const options = setupOptionsSchema.optional().parse(saved.options);
 		const base = setupChoicesSchema.optional().parse(saved.choices);
@@ -422,6 +410,7 @@ export class AutomationService {
 		}
 	}
 	async scheduled(): Promise<void> {
+		await this.sessions.sweep();
 		await this.deliverEvents();
 		await this.winget().reconcile();
 		for (const repository of await this.store.repositories()) {
@@ -447,21 +436,13 @@ export class AutomationService {
 					for (const [operation, binding] of Object.entries(stream.workflows)) {
 						if (!binding.schedule) continue;
 						const key = `${repository.id}:${streamName}:${operation}:${binding.schedule}`;
-						const cursor = z.object({ last_tick: z.number() }).nullable().parse(
-							await this.store.db
-								.prepare('SELECT last_tick FROM schedules WHERE id=?')
-								.bind(key)
-								.first(),
-						);
-						if (!cursor) {
-							await this.store.db
-								.prepare('INSERT OR IGNORE INTO schedules(id,last_tick) VALUES(?,?)')
-								.bind(key, now)
-								.run();
+						const cursor = await this.schedules.cursor(key);
+						if (cursor === undefined) {
+							await this.schedules.start(key, now);
 							continue;
 						}
 						const schedule = CronExpressionParser.parse(binding.schedule, {
-							currentDate: cursor.last_tick,
+							currentDate: cursor,
 							tz: 'UTC',
 						});
 						for (let n = 0; n < 100; n++) {
@@ -471,10 +452,7 @@ export class AutomationService {
 								refreshed,
 								await createExecution(refreshed, streamName, operation, `schedule:${tick}`),
 							);
-							await this.store.db
-								.prepare('UPDATE schedules SET last_tick=? WHERE id=?')
-								.bind(tick, key)
-								.run();
+							await this.schedules.advance(key, tick);
 						}
 					}
 				}
@@ -485,615 +463,5 @@ export class AutomationService {
 		const notifications = this.notifications();
 		await pollPackages(this.store, await this.store.repositories(), fetch, event => this.event(event), notifications);
 		await notifications.deliver();
-	}
-	async fetch(request: Request): Promise<Response> {
-		const url = new URL(request.url),
-			path = url.pathname;
-		if (path === '/health') return Response.json({ service: 'beepboop', mode: 'automation' });
-		if (path === '/schema/v1.json') return Response.json(schema);
-		if (path === '/webhooks/github' && request.method === 'POST') return this.webhook(request);
-		const auth = await authRoute(request, this.env);
-		if (auth) return auth;
-		if (path === '/api/workflow/token') {
-			return workflowToken(request, this.env.APPLICATION_ORIGIN, Number(this.env.OWNER_ID), this.gateway, this.store);
-		}
-		if (path.startsWith('/api/workflow/')) return this.workflow(request);
-		let actor: string;
-		try {
-			actor = await administrator(request, this.env);
-		} catch {
-			return Response.json({ error: 'Administrator authentication required' }, { status: 401 });
-		}
-		if (request.method === 'GET') {
-			if (path === '/api/winget') return Response.json(await this.winget().list());
-			if (path === '/api/repositories') return Response.json(await this.store.repositories());
-			if (path === '/api/executions') return Response.json(await this.store.executions());
-			if (path === '/api/notifications') {
-				const notifications = this.notifications();
-				return Response.json({
-					destinations: await notifications.destinations(),
-					subscriptions: await notifications.subscriptions(),
-					deliveries: await notifications.recent(),
-				});
-			}
-			if (path === '/api/credentials') {
-				return Response.json({
-					credentials: (
-						await this.store.db
-							.prepare(
-								'SELECT alias,version,key_id,active,created_at FROM credentials ORDER BY alias,version DESC',
-							)
-							.all()
-					).results,
-					grants: (
-						await this.store.db.prepare('SELECT document FROM grants').all()
-					).results.map((r) => parseGrant(rowDocument(r))),
-					deliveries: (await this.store.db.prepare('SELECT * FROM secret_deliveries').all())
-						.results,
-				});
-			}
-			return new Response('Not found', { status: 404 });
-		}
-		if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
-		const body = record(JSON.parse(new TextDecoder().decode(await readBody(request))));
-		if (path.startsWith('/api/winget/')) {
-			if (path === '/api/winget/refresh') {
-				await this.winget().reconcile();
-				return Response.json({ ok: true });
-			}
-			const repository = await this.store.repository(integer(body.repositoryId));
-			if (!repository) throw new Error('Repository not enrolled');
-			if (path === '/api/winget/releases') return Response.json(await this.winget().releases(repository));
-			const releaseId = integer(body.releaseId);
-			if (path === '/api/winget/preview') return Response.json(await this.winget().plan(repository, releaseId));
-			if (path === '/api/winget/submit') {
-				const result = await this.winget().submit(repository, releaseId, text(body.digest));
-				await this.store.audit(actor, 'winget.request', result.plan.id);
-				return Response.json(result);
-			}
-			return new Response('Not found', { status: 404 });
-		}
-		if (path === '/api/repositories/discover') {
-			const name = await repositoryName(text(body.repository), () => this.gateway.ownerLogin());
-			return Response.json(
-				await this.refresh(
-					name,
-					body.repositoryId === undefined ? await this.gateway.identify(name) : integer(body.repositoryId),
-				),
-			);
-		}
-		if (path === '/api/repositories/setup/preview' || path === '/api/repositories/setup/apply') {
-			const name = await repositoryName(text(body.repository), () => this.gateway.ownerLogin());
-			const id = await this.gateway.identify(name);
-			const snapshot = await this.gateway.snapshot(name, id);
-			const raw = JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}');
-			const resolved = await resolveConfiguration(raw, ref => this.gateway.preset(ref));
-			const inventory = withRegistryStatus(discover(snapshot), (await this.store.repository(id))?.inventory);
-			const row = documentRow.nullable().parse(
-				await this.store.db.prepare('SELECT document FROM onboarding WHERE repository_id=?').bind(id).first(),
-			);
-			const saved = row ? record(JSON.parse(row.document)) : undefined;
-			const head = await this.gateway.setupHead(name, id);
-			const branchFiles = head ? await this.gateway.generatedFiles(name, id, head) : undefined;
-			const branchConflict = !!head && saved?.head !== head && !branchFiles;
-			const previous = branchFiles ?? setupEdits(saved);
-			const priorConfiguration = previous.find(edit => edit.path === '.github/beepboop.json')?.before ?? '';
-			const choices = body.choices
-				?? ((snapshot.files['.github/beepboop.json'] ?? '') === priorConfiguration ? saved?.choices : undefined);
-			const plan = await previewSetup(snapshot, inventory, choices, {
-				head,
-				workflowPermission: await this.gateway.canEditWorkflows(name, id),
-				branchConflict,
-				presetShas: resolved.presetShas,
-				...(typeof saved?.url === 'string'
-					? { prior: { url: saved.url, content: typeof saved.content === 'string' ? saved.content : undefined } }
-					: {}),
-			}, resolved.configuration);
-			if (path.endsWith('/preview')) return Response.json(plan);
-			if (body.planId !== plan.planId || body.sourceSha !== plan.sourceSha || body.setupHead !== head) {
-				throw new Error('Setup source, choices or branch changed; preview again');
-			}
-			const takeOver = body.takeOver === true && branchConflict;
-			const blockers = plan.blockers.filter(blocker => !takeOver || blocker !== branchConflictBlocker);
-			if (blockers.length) throw new Error(blockers.join('\n'));
-			if (!plan.edits.length) throw new Error('Release setup already matches the reviewed configuration');
-			const result = head && !takeOver && saved?.sourceSha === snapshot.sha
-					&& sameEdits(previous, plan.edits)
-				? await this.gateway.refreshPullRequest(
-					snapshot,
-					'automation/onboarding',
-					'chore: configure release automation',
-					setupBody(plan),
-					head,
-				)
-				: await this.gateway.pullRequest(
-					snapshot,
-					'automation/onboarding',
-					'chore: configure release automation',
-					setupBody(plan),
-					plan.edits,
-					head ?? undefined,
-					undefined,
-					previous,
-					undefined,
-					takeOver,
-				);
-			const content = plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after
-				?? snapshot.files['.github/beepboop.json'];
-			// Keep the complete set of generated files for safe later refreshes, including unchanged ones.
-			const generated = new Map(
-				previous.flatMap(edit => {
-					const after = snapshot.files[edit.path];
-					return after === undefined ? [] : [[edit.path, { ...edit, after }] as const];
-				}),
-			);
-			for (const edit of plan.edits) generated.set(edit.path, edit);
-			await this.store.db.prepare(
-				'INSERT INTO onboarding(repository_id,document) VALUES(?,?) ON CONFLICT(repository_id) DO UPDATE SET document=excluded.document',
-			)
-				.bind(
-					id,
-					JSON.stringify({
-						...result,
-						content,
-						sourceSha: snapshot.sha,
-						choices: plan.choices,
-						options: setupOptions(plan),
-						edits: [...generated.values()],
-					}),
-				).run();
-			await this.store.audit(actor, 'repository.setup', String(id));
-			return Response.json(result);
-		}
-		if (path === '/api/releases/update-references') {
-			const repository = await this.store.repository(integer(body.repositoryId));
-			if (
-				!repository?.configuration || repository.suspended || !repository.configuration.managers.includes('pre-commit')
-			) throw new Error('Hook manager is not enabled');
-			const event = await this.store.event(text(body.releaseEventId));
-			if (event?.event !== 'release' || !event.release) throw new Error('Verified upstream release event required');
-			const snapshot = await this.gateway.snapshot(repository.name, repository.id);
-			const edits = planHookUpdates(snapshot, event.release);
-			if (body.preview !== false || !edits.length) {
-				return Response.json({ sourceSha: snapshot.sha, upstreamRelease: event.release, edits });
-			}
-			const result = await this.gateway.pullRequest(
-				snapshot,
-				`release/hooks/${event.release.repository.id}/${event.release.commit}`,
-				`chore: update hooks to ${event.release.version}`,
-				`Upstream: ${event.source}\nCommit: ${event.release.commit}`,
-				edits,
-			);
-			await this.store.audit(actor, 'hooks.prepare', result.url);
-			return Response.json(result);
-		}
-		if (path === '/api/releases/start-set') {
-			const preparation = await this.store.execution(text(body.preparationId));
-			if (!preparation) throw new Error('Unknown preparation');
-			const executions = await this.coordinator(preparation.repositoryId).startReleaseSet(
-				preparation.id,
-				sha(body.sourceSha),
-			);
-			await this.store.audit(actor, 'release.start-set', preparation.id);
-			return Response.json(executions);
-		}
-		if (path === '/api/releases/plan-set' || path === '/api/releases/prepare-set') {
-			const repository = await this.store.repository(integer(body.repositoryId));
-			if (!repository?.configuration || repository.diagnostics.length) throw new Error('Repository not configured');
-			const stream = repository.configuration.streams[text(body.stream)];
-			if (stream?.versioning !== 'independent') throw new Error('Select an independent release stream');
-			const snapshot = await this.gateway.snapshot(
-				repository.name,
-				repository.id,
-				undefined,
-				(stream.versionFiles ?? []).map(rule => rule.path),
-			);
-			if (snapshot.sha !== repository.sha) throw new Error('Refresh discovery before planning this revision');
-			const plan = planReleaseSet(snapshot, repository.inventory, body.plan, stream.packages, stream.versionFiles);
-			const planId = await planIdentity(plan, repository);
-			if (path.endsWith('/plan-set')) return Response.json({ ...plan, planId });
-			if (sha(body.sourceSha) !== plan.sourceSha) throw new Error('Preview source revision changed');
-			if (body.planId !== planId) throw new Error('Release plan changed; preview it again');
-			const execution = await createReleasePreparation(repository, text(body.stream), plan);
-			await this.store.audit(actor, 'release.prepare-set', execution.id);
-			return Response.json(await this.enqueue(repository, execution));
-		}
-		if (path === '/api/releases/plan' || path === '/api/releases/prepare') {
-			const repository = await this.store.repository(integer(body.repositoryId));
-			if (!repository?.configuration) throw new Error('Repository not configured');
-			const stream = repository.configuration.streams[text(body.stream)];
-			if (!stream) throw new Error('Unknown stream');
-			const snapshot = await this.gateway.snapshot(
-				repository.name,
-				repository.id,
-				undefined,
-				(stream.versionFiles ?? []).map(rule => rule.path),
-			);
-			if (snapshot.sha !== repository.sha) {
-				throw new Error('Refresh discovery before preparing this revision');
-			}
-			if (
-				stream.versioning === 'independent'
-				&& !stream.packages
-				&& !Array.isArray(body.packages)
-			) {
-				throw new Error('Select packages for an independent release');
-			}
-			const selected = body.packages === undefined ? stream.packages : array(body.packages).map(text);
-			if (
-				stream.packages
-				&& selected?.some((name) =>
-					!repository.inventory.packages.some(pkg =>
-						matchesPackage(name, pkg) && stream.packages?.some(reference => matchesPackage(reference, pkg))
-					)
-				)
-			) {
-				throw new Error('Package is outside this release stream');
-			}
-			let target: unknown = body.version;
-			if (stream.versionSource?.kind === 'tags') {
-				const prefix = stream.versionSource.prefix;
-				const versions = (await this.gateway.tagRefs(repository.name, repository.id)).flatMap(ref => {
-					if (!ref.name.startsWith(prefix)) return [];
-					try {
-						return [semver(ref.name.slice(prefix.length)).replace(/^v/, '')];
-					} catch {
-						return [];
-					}
-				}).sort(compareVersions);
-				const request = parseVersionRequest(body.version);
-				const current = versions.at(-1);
-				if (!current && !('version' in request)) throw new Error('Select an explicit version for the first release');
-				target = current ? nextVersion(current, request) : ('version' in request ? request.version : undefined);
-			}
-			const plan = stream.prepare.strategy !== 'workflow'
-					&& versionsInFiles(repository.inventory)
-				? planRelease(snapshot, repository.inventory, target, selected, undefined, stream.versionFiles)
-				: stream.prepare.strategy !== 'workflow' && stream.versionFiles?.length
-				? planVersionFiles(snapshot, target, stream.versionFiles)
-				: {
-					version: semver(target).replace(/^v/, ''),
-					sourceSha: snapshot.sha,
-					packages: [],
-					edits: [],
-					diagnostics: ['Preparation is delegated to the configured repository workflow'],
-					requiresPreparation: true,
-				};
-			const planId = await planIdentity(plan, repository);
-			if (path.endsWith('/plan')) return Response.json({ ...plan, planId });
-			if (sha(body.sourceSha) !== plan.sourceSha || body.planId !== planId) {
-				throw new Error('Release plan changed; preview it again');
-			}
-			if (!plan.edits.length && !plan.requiresPreparation) {
-				const promotion = await createExecution(
-					repository,
-					text(body.stream),
-					'promote',
-					`release:${plan.version}:${plan.sourceSha}`,
-					plan.version,
-				);
-				promotion.sourceSha = plan.sourceSha;
-				await this.store.audit(actor, 'release.prepare', promotion.id);
-				return Response.json(await this.enqueue(repository, promotion));
-			}
-			const execution = stream.prepare.workflow && stream.prepare.strategy === 'workflow'
-				? await createExecution(repository, text(body.stream), 'prepare', `plan:${planId}`, plan.version)
-				: await createReleasePreparation(repository, text(body.stream), plan);
-			await this.store.audit(actor, 'release.prepare', execution.id);
-			return Response.json(await this.enqueue(repository, execution));
-		}
-		if (path === '/api/executions/approval') {
-			const execution = await this.store.execution(text(body.id));
-			if (!execution) throw new Error('Unknown execution');
-			return Response.json(await this.coordinator(execution.repositoryId).approvalReadiness(execution.id));
-		}
-		if (path === '/api/cli-sessions/revoke') {
-			const id = text(body.id);
-			await this.store.db.prepare('DELETE FROM cli_sessions WHERE id=?').bind(id).run();
-			await this.store.audit(actor, 'cli.revoke', id.slice(0, 12));
-			return Response.json({ ok: true });
-		}
-		if (path === '/api/cli-sessions/revoke-all') {
-			await this.store.db.prepare('DELETE FROM cli_sessions').run();
-			await this.store.audit(actor, 'cli.revoke-all', 'all');
-			return Response.json({ ok: true });
-		}
-		if (path === '/api/executions/cancel') {
-			const execution = await this.store.execution(text(body.id));
-			if (!execution) throw new Error('Unknown execution');
-			return Response.json(await this.coordinator(execution.repositoryId).cancel(execution.id, actor));
-		}
-		if (path === '/api/executions/approve' || path === '/api/executions/recover') {
-			const execution = await this.store.execution(text(body.id));
-			if (!execution) throw new Error('Unknown execution');
-			if (path.endsWith('/approve')) {
-				return Response.json(
-					await this.coordinator(execution.repositoryId).approve(
-						execution.id,
-						sha(body.sourceSha),
-						actor,
-						body.force === true,
-					),
-				);
-			}
-			const action = oneOf(text(body.action), ['retry', 'reconcile'], 'Unknown recovery');
-			return Response.json(
-				await this.coordinator(execution.repositoryId).recover(
-					execution.id,
-					action,
-					actor,
-				),
-			);
-		}
-		const authenticators = new Authenticators(this.env);
-		if (path === '/api/authenticators/options') {
-			const register = body.register === true;
-			const label = body.label === undefined ? undefined : text(body.label);
-			if (register && (await authenticators.enrolled(actor)) > 0) {
-				await authenticators.consume(actor, text(body.proof));
-			}
-			return Response.json(await authenticators.options(actor, register, label));
-		}
-		if (path === '/api/authenticators/verify') {
-			return Response.json(await authenticators.verify(actor, text(body.id), body.response));
-		}
-		if (path === '/api/authenticators/remove') {
-			const id = text(body.id);
-			const keys = await authenticators.list(actor);
-			if (!keys.some(key => key.id === id)) throw new Error('Unknown security key');
-			if (keys.length < 2) throw new Error('Cannot remove the last enrolled key');
-			await authenticators.consume(actor, text(body.proof));
-			await authenticators.remove(actor, id);
-			await this.store.audit(actor, 'authenticator.remove', id);
-			return Response.json({ removed: true });
-		}
-		if (path === '/api/packages/add' || path === '/api/packages/remove') {
-			const input = watchInput.parse(body);
-			if (path.endsWith('/add')) await addWatch(this.store, this.notifications(), input.registry, input.name, true);
-			else await removeManualWatch(this.store, input.registry, input.name);
-			await this.store.audit(
-				actor,
-				path.endsWith('/add') ? 'package.watch' : 'package.unwatch',
-				`${input.registry}:${input.name}`,
-			);
-			return Response.json({ ok: true });
-		}
-		if (path === '/api/packages/subscription') {
-			const input = subscriptionInput.parse(body);
-			await this.notifications().setSubscription(input, input.subscribed, actor);
-			return Response.json({ ok: true });
-		}
-		if (path === '/api/notifications/save') {
-			return Response.json({
-				id: await this.notifications().saveDestination(destinationInput.parse(body.destination), actor),
-			});
-		}
-		if (path === '/api/notifications/remove') {
-			await this.notifications().removeDestination(text(body.id), actor);
-			return Response.json({ ok: true });
-		}
-		if (path.startsWith('/api/credentials/')) {
-			const action = await this.credentialAction(path, body, actor);
-			if (!action) return new Response('Not found', { status: 404 });
-			await authenticators.consume(actor, text(body.proof));
-			return Response.json(await action());
-		}
-		return new Response('Not found', { status: 404 });
-	}
-	private async activeCredential(alias: string): Promise<boolean> {
-		return await this.store.db.prepare('SELECT alias FROM credentials WHERE alias=? AND active=1').bind(alias)
-			.first() !== null;
-	}
-	private async credentialAction(
-		path: string,
-		body: Record<string, unknown>,
-		actor: string,
-	): Promise<(() => Promise<unknown>) | undefined> {
-		const vault = this.vault();
-		if (path === '/api/credentials/replace') {
-			if (body.proof === undefined) {
-				throw new Error('Storing a value needs a security-key touch; upgrade the beepboop CLI');
-			}
-			const alias = text(body.alias), value = text(body.value);
-			validCredential(alias, value);
-			return async () => ({ version: await vault.replace(alias, value, actor) });
-		}
-		if (path === '/api/credentials/reveal' || path === '/api/credentials/sync') {
-			const alias = text(body.alias);
-			if (!await this.activeCredential(alias)) throw new Error('No stored value under this name');
-			return path.endsWith('/reveal')
-				? () => vault.reveal(alias, actor)
-				: () => vault.synchronize(alias, this.gateway, actor);
-		}
-		if (path === '/api/credentials/grant') {
-			const selection = record(body.selection);
-			const repository = await this.store.repository(integer(selection.repositoryId));
-			if (!repository) throw new Error('Repository is not enrolled');
-			const grant = configuredGrant(repository, selection);
-			if (!await this.activeCredential(grant.alias)) {
-				throw new Error('Store a value under this name before granting access');
-			}
-			return async () => {
-				await vault.grant(grant, actor);
-				return { granted: true };
-			};
-		}
-		if (path === '/api/credentials/revoke') {
-			const id = text(body.grantId);
-			if (await this.store.db.prepare('SELECT id FROM grants WHERE id=?').bind(id).first() === null) {
-				throw new Error('Unknown grant');
-			}
-			return async () => {
-				await vault.revoke(id, actor);
-				return { revoked: true };
-			};
-		}
-		return undefined;
-	}
-	private async workflow(request: Request): Promise<Response> {
-		if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
-		const identity = await workflowIdentity(
-			request,
-			this.env.APPLICATION_ORIGIN,
-			Number(this.env.OWNER_ID),
-		);
-		const enrollment = await this.store.repository(identity.repositoryId);
-		if (!enrollment || enrollment.suspended) {
-			throw new Error('Repository is not enrolled or has been suspended');
-		}
-		const body = record(JSON.parse(new TextDecoder().decode(await readBody(request))));
-		const path = new URL(request.url).pathname;
-		let executionId = typeof body.executionId === 'string' ? body.executionId : undefined;
-		if (path.endsWith('/refs-plan') || path.endsWith('/refs-complete')) {
-			return Response.json(
-				await this.coordinator(identity.repositoryId).refs(
-					text(body.executionId),
-					identity,
-					path.endsWith('/refs-complete'),
-				),
-			);
-		}
-		if (path.endsWith('/release')) {
-			return Response.json(
-				await this.coordinator(identity.repositoryId).publishRelease(text(body.executionId), identity),
-			);
-		}
-		if (path.endsWith('/begin') && !executionId) {
-			const repository = await this.store.repository(identity.repositoryId);
-			if (!repository) throw new Error('Repository not enrolled');
-			const execution = await createExecution(
-				repository,
-				text(body.stream),
-				text(body.operation),
-				`observed:${identity.runId}`,
-				body.version === undefined ? undefined : text(body.version),
-				true,
-			);
-			execution.sourceSha = identity.sha;
-			execution.state = 'pending';
-			if (execution.operation === 'promote') {
-				throw new Error('Promotion must be approved before registration');
-			}
-			if (!execution.workflow) throw new Error('Operation is not a workflow');
-			if (!matchesRef(execution.workflow.ref, identity.ref)) {
-				throw new Error('Observed run does not match configured ref');
-			}
-			await this.coordinator(identity.repositoryId).enqueue(execution);
-			executionId = execution.id;
-		}
-		if (!executionId) throw new Error('Execution ID required');
-		const execution = await this.store.execution(executionId);
-		if (!execution || execution.repositoryId !== identity.repositoryId) {
-			throw new Error('Execution repository mismatch');
-		}
-		if (path.endsWith('/begin')) {
-			if (execution.operation === 'promote') await this.prepareJsr(execution);
-			return Response.json(
-				await this.coordinator(identity.repositoryId).register(executionId, identity),
-			);
-		}
-		if (
-			execution.runId !== identity.runId
-			|| execution.runAttempt !== identity.attempt
-			|| execution.workflowSha !== identity.workflowSha
-		) {
-			throw new Error('Execution run mismatch');
-		}
-		if (path.endsWith('/prepared')) {
-			if (execution.operation !== 'prepare' || !execution.plan) {
-				throw new Error('Execution has no preparation plan');
-			}
-			const source = await this.gateway.snapshot(
-				execution.repository,
-				execution.repositoryId,
-				execution.sourceSha,
-				execution.plan.edits.map(edit => edit.path),
-			);
-			const proposed = array(body.files).map((raw) => {
-				const file = record(raw);
-				return { path: text(file.path), after: text(file.content) };
-			});
-			if (new Set(proposed.map((f) => f.path)).size !== proposed.length) {
-				throw new Error('Duplicate prepared path');
-			}
-			const allowedLocks = new Set(Object.keys(source.files).filter(isLockfile));
-			if ([...allowedLocks].some(path => !proposed.some(file => file.path === path))) {
-				throw new Error('Prepared release is missing a lockfile');
-			}
-			const token = await this.gateway.token(execution.repository, execution.repositoryId);
-			const edits = [];
-			for (const file of proposed) {
-				const planned = execution.plan.edits.find((edit) => edit.path === file.path);
-				if (!planned && !allowedLocks.has(file.path)) {
-					throw new Error('Prepared file is outside the release plan');
-				}
-				if (planned && file.after !== planned.after) {
-					throw new Error('Prepared manifest differs from the approved plan');
-				}
-				const before = (await this.gateway.file(execution.repository, file.path, execution.sourceSha, token))
-					?? '';
-				edits.push({ path: file.path, before, after: file.after });
-			}
-			if (execution.plan.edits.some((edit) => !proposed.some((file) => file.path === edit.path))) {
-				throw new Error('Prepared release is missing a planned edit');
-			}
-			if (!edits.length) return Response.json({ unchanged: true });
-			const result = await this.coordinator(execution.repositoryId).prepared(execution.id, identity, edits);
-			await this.store.audit(`run:${identity.runId}`, 'release.prepared', result.url);
-			return Response.json(result);
-		}
-		if (path.endsWith('/report')) {
-			const publications = array(body.publications ?? []).map((raw): Publication => {
-				const p = record(raw);
-				const manager = oneOf(text(p.manager), reportableManagerNames, 'Invalid publication');
-				const outcome = oneOf(
-					text(p.outcome),
-					['pending', 'succeeded', 'failed', 'uncertain', 'skipped', 'rate-limited'],
-					'Invalid publication',
-				);
-				const fields = {
-					id: text(p.id),
-					manager,
-					name: text(p.name),
-					version: text(p.version),
-					required: p.required !== false,
-					...(p.digest === undefined ? {} : { digest: text(p.digest) }),
-					...(p.url === undefined ? {} : { url: text(p.url) }),
-					...(p.channel === undefined ? {} : { channel: text(p.channel) }),
-				};
-				if (outcome !== 'rate-limited') return { ...fields, outcome };
-				const retryAfter = z.iso.datetime({ offset: true }).parse(p.retryAfter);
-				return { ...fields, outcome, retryAfter };
-			});
-			const artifacts = array(body.artifacts ?? []).map((raw): Artifact => {
-				const a = record(raw);
-				return {
-					id: integer(a.id),
-					runId: integer(a.runId),
-					name: text(a.name),
-					digest: text(a.digest),
-					expiresAt: text(a.expiresAt),
-				};
-			});
-			return Response.json(
-				await this.coordinator(identity.repositoryId).report(
-					executionId,
-					identity,
-					publications,
-					artifacts,
-				),
-			);
-		}
-		if (path.endsWith('/credentials')) {
-			const aliases = array(body.aliases).map(text),
-				allowed = execution.configuration.streams[execution.stream]?.credentials ?? [];
-			const values: Record<string, string> = {};
-			for (const alias of aliases) {
-				if (!allowed.includes(alias)) throw new Error('Alias not requested by the stream');
-				values[alias] = await this.vault().runtime(alias, execution.operation, identity);
-			}
-			return Response.json(values);
-		}
-		return new Response('Not found', { status: 404 });
 	}
 }

@@ -13,7 +13,7 @@ import {
 import { exclusionReasons, type PackagePublication } from '@/automation/package-publication';
 import type { ReleaseSetPlan } from '@/automation/planning';
 import type { RefPlan, RefPolicy } from '@/automation/refs';
-import { type SetupEdit, setupChoicesSchema } from '@/automation/setup-types';
+import type { SetupEdit } from '@/automation/setup-types';
 import type {
 	Artifact,
 	AutomationEvent,
@@ -33,6 +33,7 @@ import type {
 } from '@/automation/types';
 import type { WinGetPolicy } from '@/automation/winget';
 import { managerDestinationIds, managerNames } from '@/contract/catalog';
+import { setupChoicesSchema } from '@/contract/setup';
 import type { PackageIdentity } from '@/package-url';
 
 const managerName = z.enum(managerNames);
