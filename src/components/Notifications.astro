@@ -5,14 +5,14 @@ import Time from '@/components/Time.astro';
 import { notificationKindLabels, notificationKinds } from '@/contract/catalog';
 import { registryPackageLabel } from '@/domain/package-label';
 import type { ViewOf } from '@/server/loaders.ts';
+import { notificationsPage } from '@/server/views/notifications.ts';
 import { deliveryStatus, destinationStatus } from '@/server/views/tone.ts';
 
 interface Props {
 	data: ViewOf<'notifications'>;
 }
 const { data } = Astro.props;
-const destinationName = (id: string) =>
-	data.destinations.find(d => d.id === id)?.name ?? 'Removed destination';
+const { destinations, deliveries } = notificationsPage(data);
 ---
 {!data.keys.length && (
 	<p class="notice">
@@ -74,111 +74,104 @@ const destinationName = (id: string) =>
 		</button>
 	</form>
 </article>
-{data.destinations.map(destination => {
-	const count = data.subscriptions.filter(s =>
-		s.destinationId === destination.id
-	).length;
-	return (
-	 <article>
-		 <div class="section-heading">
-			 <div>
-				 <h2>{destination.name}</h2>
-				 <dl class="fields metadata">
-					 <Field
-						 label="Type"
-					 >{notificationKindLabels[destination.kind]}</Field>
-					 <Field label="Secret"><code>{destination.credential}</code></Field>
-					 <Field label="Packages">{count}</Field>
-				 </dl>
-			 </div>
-			 <Badge {...destinationStatus(destination.enabled)} />
-		 </div>
-		 <details>
-			 <summary aria-label={`Edit destination ${destination.name}`}>
-				 Edit destination
-			 </summary>
-			 <form
-				 data-action="notification-save"
-				 method="post"
-				 action="/api/notifications/save"
-			 >
-				 <input type="hidden" name="id" value={destination.id}>
-				 <div class="form-grid">
-					 <label>
-						 Name
-						 <input
-							 name="name"
-							 value={destination.name}
-							 maxlength="80"
-							 required
-						 >
-					 </label>
-					 <label>
-						 Type
-						 <select name="kind">
-							 {notificationKinds.map(kind => (
-								 <option value={kind} selected={destination.kind === kind}>
-									 {notificationKindLabels[kind]}
-								 </option>
-							 ))}
-						 </select>
-					 </label>
-					 <label>
-						 Webhook URL secret
-						 <select name="credential" required>
-							 {data.secrets.map(secret => (
-								 <option
-									 value={secret.alias}
-									 selected={secret.alias === destination.credential}
-								 >
-									 {secret.alias}
-								 </option>
-							 ))}
-						 </select>
-					 </label>
-				 </div>
-				 <label class="check">
-					 <input
-						 type="checkbox"
-						 name="subscribeNew"
-						 value="true"
-						 checked={destination.subscribeNew}
-					 >
-					 Notify about newly watched packages
-				 </label>
-				 <label class="check">
-					 <input
-						 type="checkbox"
-						 name="enabled"
-						 value="true"
-						 checked={destination.enabled}
-					 >
-					 Enabled
-				 </label>
-				 <button
-					 class="primary"
-					 aria-label={`Save destination ${destination.name}`}
-				 >
-					 Save destination
-				 </button>
-			 </form>
-		 </details>
-		 <form
-			 data-action="notification-remove"
-			 method="post"
-			 action="/api/notifications/remove"
-		 >
-			 <input type="hidden" name="id" value={destination.id}>
-			 <button
-				 class="danger"
-				 aria-label={`Remove destination ${destination.name}`}
-			 >
-				 Remove destination
-			 </button>
-		 </form>
-	 </article>
- );
-})}
+{destinations.map(destination => (
+	<article>
+		<div class="section-heading">
+			<div>
+				<h2>{destination.name}</h2>
+				<dl class="fields metadata">
+					<Field label="Type">{notificationKindLabels[destination.kind]}</Field>
+					<Field label="Secret"><code>{destination.credential}</code></Field>
+					<Field label="Packages">{destination.packages}</Field>
+				</dl>
+			</div>
+			<Badge {...destinationStatus(destination.enabled)} />
+		</div>
+		<details>
+			<summary aria-label={`Edit destination ${destination.name}`}>
+				Edit destination
+			</summary>
+			<form
+				data-action="notification-save"
+				method="post"
+				action="/api/notifications/save"
+			>
+				<input type="hidden" name="id" value={destination.id}>
+				<div class="form-grid">
+					<label>
+						Name
+						<input
+							name="name"
+							value={destination.name}
+							maxlength="80"
+							required
+						>
+					</label>
+					<label>
+						Type
+						<select name="kind">
+							{notificationKinds.map(kind => (
+								<option value={kind} selected={destination.kind === kind}>
+									{notificationKindLabels[kind]}
+								</option>
+							))}
+						</select>
+					</label>
+					<label>
+						Webhook URL secret
+						<select name="credential" required>
+							{data.secrets.map(secret => (
+								<option
+									value={secret.alias}
+									selected={secret.alias === destination.credential}
+								>
+									{secret.alias}
+								</option>
+							))}
+						</select>
+					</label>
+				</div>
+				<label class="check">
+					<input
+						type="checkbox"
+						name="subscribeNew"
+						value="true"
+						checked={destination.subscribeNew}
+					>
+					Notify about newly watched packages
+				</label>
+				<label class="check">
+					<input
+						type="checkbox"
+						name="enabled"
+						value="true"
+						checked={destination.enabled}
+					>
+					Enabled
+				</label>
+				<button
+					class="primary"
+					aria-label={`Save destination ${destination.name}`}
+				>
+					Save destination
+				</button>
+			</form>
+		</details>
+		<form
+			data-action="notification-remove"
+			method="post"
+			action="/api/notifications/remove"
+		>
+			<input type="hidden" name="id" value={destination.id}>
+			<button
+				class="danger"
+				aria-label={`Remove destination ${destination.name}`}
+			>
+				Remove destination
+			</button>
+		</form>
+	</article>
+))}
 <h2>Recent notifications</h2>
 <div class="table-scroll">
 	<table>
@@ -192,7 +185,7 @@ const destinationName = (id: string) =>
 			</tr>
 		</thead>
 		<tbody>
-			{data.notifications.map(delivery => (
+			{deliveries.map(delivery => (
 				<tr>
 					<td>
 						<Time value={delivery.updatedAt} />
@@ -207,14 +200,14 @@ const destinationName = (id: string) =>
 						{delivery.payload.version.previous ?? 'new'} →
 						{delivery.payload.version.current}
 					</td>
-					<td>{destinationName(delivery.destinationId)}</td>
+					<td>{delivery.destination}</td>
 					<td>
 						<Badge {...deliveryStatus(delivery)} />
 						{delivery.error && <small>{delivery.error}</small>}
 					</td>
 				</tr>
 			))}
-			{!data.notifications.length && (
+			{!deliveries.length && (
 				<tr>
 					<td colspan="5">
 						No notifications yet. They appear here when a watched package

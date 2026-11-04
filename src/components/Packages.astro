@@ -4,16 +4,13 @@ import Time from '@/components/Time.astro';
 import { destinationLabels, watchedRegistries } from '@/contract/catalog';
 import { watchedPackageHref } from '@/contract/links';
 import type { ViewOf } from '@/server/loaders.ts';
+import { packagesPage } from '@/server/views/packages.ts';
 
 interface Props {
 	data: ViewOf<'packages'>;
 }
 const { data } = Astro.props;
-const subscribed = (destinationId: string, registry: string, name: string) =>
-	data.subscriptions.some(s =>
-		s.destinationId === destinationId && s.registry === registry
-		&& s.name === name
-	);
+const packages = packagesPage(data);
 ---
 <article>
 	<h2>Watch a package</h2>
@@ -70,7 +67,7 @@ const subscribed = (destinationId: string, registry: string, name: string) =>
 				</tr>
 			</thead>
 			<tbody>
-				{data.packages.map(pkg => (
+				{packages.map(pkg => (
 					<tr>
 						<td>
 							<Badge tone="neutral" label={destinationLabels[pkg.registry]} />
@@ -113,46 +110,37 @@ const subscribed = (destinationId: string, registry: string, name: string) =>
 							) : '—'}
 						</td>
 						<td>
-							{data.destinations.length
-								? (
-								 <div class="toggles">
-									 {data.destinations.map(destination => {
-									 	const on = subscribed(destination.id, pkg.registry, pkg.name);
-									 	return (
-											<form
-												data-action="package-subscription"
-												method="post"
-												action="/api/packages/subscription"
+							{pkg.notifications.length ? (
+								<div class="toggles">
+									{pkg.notifications.map(({ destination, subscribed }) => (
+										<form
+											data-action="package-subscription"
+											method="post"
+											action="/api/packages/subscription"
+										>
+											<input
+												type="hidden"
+												name="destinationId"
+												value={destination.id}
 											>
-												<input
-													type="hidden"
-													name="destinationId"
-													value={destination.id}
-												>
-												<input
-													type="hidden"
-													name="registry"
-													value={pkg.registry}
-												>
-												<input type="hidden" name="name" value={pkg.name}>
-												<input
-													type="hidden"
-													name="subscribed"
-													value={String(!on)}
-												>
-												<button
-													class="toggle"
-													aria-pressed={on}
-													aria-label={`${destination.name} notifications for ${pkg.name}`}
-												>
-													{destination.name}
-												</button>
-											</form>
-										);
-									 })}
-								 </div>
-							 )
-								: <a href="/notifications">Add a destination</a>}
+											<input type="hidden" name="registry" value={pkg.registry}>
+											<input type="hidden" name="name" value={pkg.name}>
+											<input
+												type="hidden"
+												name="subscribed"
+												value={String(!subscribed)}
+											>
+											<button
+												class="toggle"
+												aria-pressed={subscribed}
+												aria-label={`${destination.name} notifications for ${pkg.name}`}
+											>
+												{destination.name}
+											</button>
+										</form>
+									))}
+								</div>
+							) : <a href="/notifications">Add a destination</a>}
 						</td>
 						<td>
 							{pkg.manual && (

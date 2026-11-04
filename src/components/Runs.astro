@@ -1,15 +1,11 @@
 ---
-import { matchesPublication } from '@/automation/package-identity.ts';
-import type { Execution } from '@/automation/types.ts';
 import Badge from '@/components/Badge.astro';
 import Field from '@/components/Field.astro';
 import Time from '@/components/Time.astro';
-import { formatTime } from '@/contract/time';
-import { defaultTagPolicy, semVer, tagFor } from '@/contract/version';
 import { packageLabel } from '@/domain/package-label';
 import type { ViewOf } from '@/server/loaders.ts';
-import { packageDisplayName } from '@/server/package-name';
 import { releaseSetSummaries } from '@/server/releases';
+import { progress, runCard } from '@/server/views/runs.ts';
 import {
 	executionTone,
 	publicationTone,
@@ -21,22 +17,7 @@ interface Props {
 }
 const { readable: executions, unreadable } = Astro.props.data.executions;
 const now = Date.now();
-const waiting = (run: Execution): string | undefined =>
-	run.notBefore !== undefined && run.notBefore > now
-		&& ['pending', 'ready'].includes(run.state)
-		? formatTime(run.notBefore)
-		: undefined;
 const latest = Math.max(0, ...executions.map(run => run.updatedAt));
-const progress = (run: Execution): string => {
-	const until = waiting(run);
-	return until ? `waiting until ${until}` : run.state;
-};
-const refTag = (run: Execution, version: string): string => {
-	const parsed = semVer.safeParse(version);
-	return parsed.success
-		? tagFor(run.workflow?.refs ?? defaultTagPolicy, parsed.data)
-		: version;
-};
 ---
 <span data-runs-latest={latest} hidden></span>
 {releaseSetSummaries(executions).map(release => (
@@ -80,7 +61,7 @@ const refTag = (run: Execution, version: string): string => {
 								<a href={`#${run.id}`}>{run.operation}</a>
 								{run.package && <small><code>{run.package.id}</code></small>}
 							</td>
-							<td>{progress(run)}</td>
+							<td>{progress(run, now)}</td>
 						</tr>
 					))}
 				</tbody>
@@ -131,21 +112,7 @@ const refTag = (run: Execution, version: string): string => {
 	</article>
 )}
 {executions.map(run => {
-	const preparation = run.managed?.result ?? run.prepared?.result;
-	const until = waiting(run);
-	const required = run.releaseSet?.required
-		?? run.configuration.streams[run.stream]?.required ?? [];
-	const runName = [run.repository, run.stream, run.operation, run.version]
-		.filter(Boolean).join(' ');
-	const approving = run.state === 'blocked' && run.operation === 'promote';
-	const automatic = approving
-		&& (run.configuration.streams[run.stream]?.promote.approval === 'push'
-			|| run.approvedBy === 'merge');
-	const missing = required.filter(id =>
-		!run.publications.some(p =>
-			matchesPublication(id, p) && p.outcome === 'succeeded'
-		)
-	);
+	const card = runCard(run, now);
 	return (
 	 <article class="run-card" id={run.id}>
 		 <div class="section-heading">
@@ -158,8 +125,8 @@ const refTag = (run: Execution, version: string): string => {
 			 <Badge tone={executionTone[run.state]} label={run.state} />
 		 </div>
 		 <p>
-			 {approving
-			 	? automatic
+			 {card.approving
+			 	? card.automatic
 			 		? `${
 			 			run.approvedBy === 'merge' ? 'You merged the preparation PR. ' : ''
 			 		}Beepboop releases this commit once it is verified and its checks pass.`
@@ -169,9 +136,9 @@ const refTag = (run: Execution, version: string): string => {
 			 			? 'This operation completed.'
 			 			: 'Follow the workflow and publication results below.')}
 		 </p>
-		 {until && (
+		 {card.until && (
 			 <p class="notice">
-				 Publishes after {until} to stay within the registry's publish rate
+				 Publishes after {card.until} to stay within the registry's publish rate
 				 limit.
 			 </p>
 		 )}
@@ -196,10 +163,10 @@ const refTag = (run: Execution, version: string): string => {
 				 </Field>
 			 )}
 		 </dl>
-		 {preparation?.url.startsWith('https://github.com/') && (
-			 <a class="button" href={preparation.url}>Review preparation PR ↗</a>
+		 {card.preparationUrl && (
+			 <a class="button" href={card.preparationUrl}>Review preparation PR ↗</a>
 		 )}
-		 {!!run.publications.length && (
+		 {!!card.publications.length && (
 			 <div class="table-scroll">
 				 <table>
 					 <thead>
@@ -210,12 +177,10 @@ const refTag = (run: Execution, version: string): string => {
 						 </tr>
 					 </thead>
 					 <tbody>
-						 {run.publications.map(p => (
+						 {card.publications.map(p => (
 							 <tr>
 								 <td>
-									 {p.id.startsWith('refs:')
-									 	? `tag ${refTag(run, p.version)}`
-									 	: packageDisplayName(p)}
+									 {p.label}
 									 <small>{p.required ? 'required' : 'optional'}</small>
 								 </td>
 								 <td>{p.version}</td>
@@ -228,27 +193,28 @@ const refTag = (run: Execution, version: string): string => {
 				 </table>
 			 </div>
 		 )}
-		 {!!missing.length && !approving && run.operation !== 'prepare'
-		 	&& run.state !== 'cancelled' && (
-				<div class="notice">
-					<p>Still to publish</p>
-					<ul class="inline-list">
-						{missing.map(id => <li>{packageLabel(id)}</li>)}
-					</ul>
-				</div>
-			)}
-		 {approving && (
+		 {!!card.missing.length && (
+			 <div class="notice">
+				 <p>Still to publish</p>
+				 <ul class="inline-list">
+					 {card.missing.map(id => <li>{packageLabel(id)}</li>)}
+				 </ul>
+			 </div>
+		 )}
+		 {card.approving && (
 			 <form
 				 data-action="approve"
 				 method="post"
 				 action="/api/executions/approve"
-				 data-automatic={automatic ? 'true' : undefined}
+				 data-automatic={card.automatic ? 'true' : undefined}
 			 >
 				 <input type="hidden" name="id" value={run.id}>
 				 <input type="hidden" name="sourceSha" value={run.sourceSha}>
 				 <input type="hidden" name="force" value="false">
 				 <p>
-					 {automatic ? 'Checks on commit' : 'Approve publishing from commit'}
+					 {card.automatic
+					 	? 'Checks on commit'
+					 	: 'Approve publishing from commit'}
 					 <a
 						 href={`https://github.com/${run.repository}/commit/${run.sourceSha}`}
 					 >
@@ -258,24 +224,23 @@ const refTag = (run: Execution, version: string): string => {
 				 <ul class="approval-status" aria-live="polite">
 					 <li>Checking the commit signature and checks…</li>
 				 </ul>
-				 <button class="primary" disabled hidden={automatic}>
+				 <button class="primary" disabled hidden={card.automatic}>
 					 Approve this commit
 				 </button>
 			 </form>
 		 )}
-		 {run.workflow && ['failed', 'cancelled'].includes(run.state)
-		 	&& !(run.operation === 'prepare' && !run.plan && !run.managed) && (
-				<form
-					data-action="recover"
-					method="post"
-					action="/api/executions/recover"
-				>
-					<input type="hidden" name="id" value={run.id}>
-					<input type="hidden" name="action" value="retry">
-					<button aria-label={`Retry ${runName}`}>Retry</button>
-				</form>
-			)}
-		 {run.state === 'uncertain' && (
+		 {card.retryable && (
+			 <form
+				 data-action="recover"
+				 method="post"
+				 action="/api/executions/recover"
+			 >
+				 <input type="hidden" name="id" value={run.id}>
+				 <input type="hidden" name="action" value="retry">
+				 <button aria-label={`Retry ${card.name}`}>Retry</button>
+			 </form>
+		 )}
+		 {card.reconcilable && (
 			 <form
 				 data-action="recover"
 				 method="post"
@@ -287,19 +252,21 @@ const refTag = (run: Execution, version: string): string => {
 					 Check whether GitHub accepted the earlier request before attempting
 					 another dispatch.
 				 </p>
-				 <button aria-label={`Check workflow outcome of ${runName}`}>
+				 <button aria-label={`Check workflow outcome of ${card.name}`}>
 					 Check workflow outcome
 				 </button>
 			 </form>
 		 )}
-		 {!['succeeded', 'cancelled', 'failed'].includes(run.state) && (
+		 {card.cancellable && (
 			 <form data-action="cancel" method="post" action="/api/executions/cancel">
 				 <input type="hidden" name="id" value={run.id}>
-				 <button aria-label={`Cancel ${runName}`}>Cancel</button>
+				 <button aria-label={`Cancel ${card.name}`}>Cancel</button>
 			 </form>
 		 )}
 		 <details>
-			 <summary aria-label={`Run details for ${runName}`}>Run details</summary>
+			 <summary aria-label={`Run details for ${card.name}`}>
+				 Run details
+			 </summary>
 			 <dl>
 				 <dt>Configuration commit</dt>
 				 <dd>
