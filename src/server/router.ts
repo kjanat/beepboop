@@ -36,7 +36,7 @@ function methodNotAllowed(allowed: readonly Method[]): DomainError {
 }
 
 async function input(request: Request, method: Method): Promise<unknown> {
-	if (method === 'GET') return {};
+	if (method === 'GET') return Object.fromEntries(new URL(request.url).searchParams);
 	return JSON.parse(new TextDecoder().decode(await readBody(request)));
 }
 

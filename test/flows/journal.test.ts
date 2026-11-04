@@ -56,6 +56,47 @@ test('a D1 outage keeps the outbox, and the next alarm projects it', async () =>
 	expect(changes).toEqual([{ entity: 'execution', id: prepared.id, revision: 1 }]);
 });
 
+test('the change feed stays empty until something changes, and reindex rebuilds a lost projection', async () => {
+	const repository = widget(world.github);
+	world.npm.publish('widget', '1.0.0');
+	const send = transport(await world.cliSession());
+	await call(routes.repositoriesDiscover, { repository: 'octo/widget' }, send);
+	expect(await call(routes.changes, { since: 0 }, send)).toEqual({ cursor: 0, changes: [] });
+
+	const plan = await call(routes.releasesPlan, { repositoryId: repository.id, stream: 'main', version: '1.1.0' }, send);
+	const prepared = await call(
+		routes.releasesPrepare,
+		{ repositoryId: repository.id, stream: 'main', version: '1.1.0', sourceSha: plan.sourceSha, planId: plan.planId },
+		send,
+	);
+	const first = await call(routes.changes, { since: 0, repositoryId: repository.id }, send);
+	expect(first.changes.map(entry => [entry.entity, entry.id])).toEqual([['execution', prepared.id]]);
+	world.db.reset();
+	expect(await call(routes.changes, { since: first.cursor }, send)).toEqual({ cursor: first.cursor, changes: [] });
+	expect(world.db.queries.filter(query => query.sql.includes('FROM changes')).length).toBe(1);
+	expect(await call(routes.changes, { since: 0, repositoryId: repository.id + 1 }, send)).toEqual({
+		cursor: 0,
+		changes: [],
+	});
+
+	await world.db.prepare('DELETE FROM executions').run();
+	expect(await call(routes.executionsList, {}, send)).toEqual([]);
+	await world.db.prepare('INSERT INTO sessions(id,kind,document,expires_at) VALUES(?,?,?,?)')
+		.bind(
+			'proof',
+			'elevation',
+			JSON.stringify({ subject: world.env.ADMIN_SUBJECT, elevated: true }),
+			Date.now() + 60_000,
+		)
+		.run();
+	expect(await call(routes.adminReindex, { proof: 'proof' }, send)).toEqual({ queued: 1 });
+	expect((await call(routes.executionsList, {}, send)).map(entry => entry.id)).toEqual([prepared.id]);
+	const rebuilt = await call(routes.changes, { since: first.cursor }, send);
+	expect(rebuilt.changes.map(entry => [entry.entity, entry.id, entry.revision])).toEqual([
+		['execution', prepared.id, 2],
+	]);
+});
+
 test('a Beepboop-dispatched run gets a token while D1 holds no rows', async () => {
 	const repository = widget(world.github);
 	world.npm.publish('widget', '1.0.0');

@@ -298,6 +298,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				: [];
 		});
 	}
+	async reindex(repositoryId: number): Promise<number> {
+		return this.serial(() => this.journal.reindex(repositoryId));
+	}
 	async setAccess(suspended: boolean): Promise<void> {
 		const prior = access.safeParse(await this.ctx.storage.get('access'));
 		await this.ctx.storage.put('access', { suspended });

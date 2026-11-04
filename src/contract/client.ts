@@ -29,12 +29,21 @@ export async function failureOf(response: Response): Promise<ApiFailure> {
 		: new ApiFailure(response.status, undefined, fallback);
 }
 
+function query(input: unknown): string {
+	if (typeof input !== 'object' || input === null) return '';
+	const parameters = new URLSearchParams();
+	for (const [name, value] of Object.entries(input)) {
+		if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+			parameters.set(name, String(value));
+		}
+	}
+	const encoded = parameters.toString();
+	return encoded ? `?${encoded}` : '';
+}
+
 export function outgoing<Q extends z.ZodType, S extends z.ZodType>(route: Route<Q, S>, input: z.input<Q>): Outgoing {
-	return {
-		method: route.method,
-		path: route.path,
-		body: route.method === 'GET' ? undefined : JSON.stringify(input),
-	};
+	if (route.method === 'GET') return { method: route.method, path: `${route.path}${query(input)}`, body: undefined };
+	return { method: route.method, path: route.path, body: JSON.stringify(input) };
 }
 
 export async function call<Q extends z.ZodType, S extends z.ZodType>(

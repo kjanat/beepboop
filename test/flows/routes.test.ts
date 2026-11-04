@@ -91,7 +91,11 @@ test('the route table answers every path the old router answered, and nothing el
 		...routeIds.map(id => `${routes[id].method} ${routes[id].path}`),
 		...[...rawRoutes].flatMap(([path, raw]) => raw.methods.map(method => `${method} ${path}`)),
 	]);
-	expect([...served].filter(entry => !legacy.some(old => old === entry))).toEqual(['POST /api/repositories/resolve']);
+	expect([...served].filter(entry => !legacy.some(old => old === entry))).toEqual([
+		'POST /api/repositories/resolve',
+		'GET /api/v1/changes',
+		'POST /api/v1/admin/reindex',
+	]);
 	expect(legacy.filter(entry => !served.has(entry))).toEqual([]);
 	for (const entry of legacy) {
 		const [method = '', path = ''] = entry.split(' ');

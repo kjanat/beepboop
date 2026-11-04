@@ -1,4 +1,5 @@
 import type { RouteId, Routes } from '@/contract/routes';
+import { changeEndpoints } from '@/server/handlers/changes';
 import { credentialEndpoints } from '@/server/handlers/credentials';
 import { executionEndpoints } from '@/server/handlers/executions';
 import type { Endpoint } from '@/server/handlers/kit';
@@ -10,6 +11,7 @@ import { wingetEndpoints } from '@/server/handlers/winget';
 import { workflowEndpoints } from '@/server/handlers/workflow';
 
 export const endpoints = {
+	...changeEndpoints,
 	...credentialEndpoints,
 	...executionEndpoints,
 	...notificationEndpoints,

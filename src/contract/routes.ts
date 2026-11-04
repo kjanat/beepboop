@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { changesResponse } from '@/contract/changes';
 import { shaPattern } from '@/contract/ids';
 import { destinationInput, subscriptionInput, watchInput } from '@/contract/notifications';
 import {
@@ -354,6 +355,25 @@ export const routes = {
 		idempotent: false,
 		request: z.object({ grantId: text, proof }),
 		response: z.looseObject({ revoked: z.boolean() }),
+	}),
+	changes: route({
+		method: 'GET',
+		path: '/api/v1/changes',
+		auth: 'admin',
+		idempotent: true,
+		request: z.object({
+			since: z.coerce.number().int().nonnegative(),
+			repositoryId: z.coerce.number().pipe(id).optional(),
+		}),
+		response: changesResponse,
+	}),
+	adminReindex: route({
+		method: 'POST',
+		path: '/api/v1/admin/reindex',
+		auth: 'elevated',
+		idempotent: true,
+		request: z.object({ repositoryId: id.optional(), proof }),
+		response: z.object({ queued: z.number().int().nonnegative() }),
 	}),
 	workflowToken: route({
 		method: 'POST',

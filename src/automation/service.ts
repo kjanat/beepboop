@@ -27,6 +27,7 @@ import { setupChoicesSchema } from '@/contract/setup';
 import { configurationDiagnostics, configurationProblem } from '@/domain/configuration';
 import { validateAgainst } from '@/domain/validate';
 import { array, integer, record } from '@/model';
+import { ChangeLog } from '@/persistence/d1/changes';
 import { CLISessionStore } from '@/persistence/d1/cli-sessions';
 import { CredentialStore } from '@/persistence/d1/credentials';
 import { OnboardingStore } from '@/persistence/d1/onboarding';
@@ -34,6 +35,7 @@ import { ScheduleStore } from '@/persistence/d1/schedules';
 import { SessionStore } from '@/persistence/d1/sessions';
 import { readBody, verifySignature } from '@/webhook';
 
+const changeRetention = 7 * 24 * 60 * 60 * 1000;
 export interface AutomationBindings extends AuthBindings, Credentials, WinGetBindings {
 	AUTOMATION: DurableObjectNamespace<AutomationCoordinator>;
 	OWNER_ID: string;
@@ -49,6 +51,7 @@ export class AutomationService {
 	readonly cliSessions: CLISessionStore;
 	readonly schedules: ScheduleStore;
 	readonly onboarding: OnboardingStore;
+	readonly changes: ChangeLog;
 	constructor(readonly env: AutomationBindings) {
 		this.store = new Store(env.DB);
 		this.gateway = new RepositoryGateway(env, Number(env.OWNER_ID));
@@ -57,6 +60,7 @@ export class AutomationService {
 		this.cliSessions = new CLISessionStore(env.DB);
 		this.schedules = new ScheduleStore(env.DB);
 		this.onboarding = new OnboardingStore(env.DB);
+		this.changes = new ChangeLog(env.DB);
 	}
 	coordinator(id: number) {
 		return this.env.AUTOMATION.getByName(String(id));
@@ -416,6 +420,7 @@ export class AutomationService {
 	}
 	async scheduled(): Promise<void> {
 		await this.sessions.sweep();
+		await this.changes.prune(Date.now() - changeRetention);
 		await this.deliverEvents();
 		await this.winget().reconcile();
 		for (const repository of await this.store.repositories()) {
