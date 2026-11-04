@@ -288,8 +288,9 @@ does not count as a failed attempt.
 }]
 ```
 
-`actions/report` converts an HTTP date in `retryAfter` to ISO 8601. The report
-API itself accepts ISO 8601 timestamps.
+`actions/report` converts a `Retry-After` value in `retryAfter`, either delay
+seconds or an HTTP date, to ISO 8601. The report API itself accepts ISO 8601
+timestamps.
 
 ## Credentials
 

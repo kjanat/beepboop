@@ -1,4 +1,5 @@
 import { appendFileSync, readFileSync } from 'node:fs';
+import { parseRetryAfter } from '../../src/domain/http-date.ts';
 import { array, record, text } from '../../src/model.ts';
 
 type Mode =
@@ -46,9 +47,11 @@ function output(name: string, value: string): void {
 function publication(value: unknown): unknown {
 	const entry = record(value);
 	if (entry.outcome !== 'rate-limited') return value;
-	const retryAfter = new Date(text(entry.retryAfter));
-	if (Number.isNaN(retryAfter.getTime())) throw Error('A rate-limited publication needs a retryAfter time');
-	return { ...entry, retryAfter: retryAfter.toISOString() };
+	const field = text(entry.retryAfter);
+	const retryAfter = parseRetryAfter(field, Date.now())
+		?? (/^\d{4}-\d{2}-\d{2}T/.test(field) ? Date.parse(field) : Number.NaN);
+	if (Number.isNaN(retryAfter)) throw Error('A rate-limited publication needs a Retry-After value');
+	return { ...entry, retryAfter: new Date(retryAfter).toISOString() };
 }
 
 function requestBody(mode: Mode, executionId: string | undefined): unknown {
