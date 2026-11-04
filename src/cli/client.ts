@@ -8,13 +8,12 @@ import { record } from '@/model';
 
 export interface Session {
 	token: string;
-	expiresAt: number;
 }
 function parseSession(value: unknown): Session | undefined {
-	if (typeof value !== 'object' || value === null || !('token' in value) || !('expiresAt' in value)) return undefined;
-	const { token, expiresAt } = value;
-	if (typeof token !== 'string' || !/^cli_[a-f0-9]{64}$/.test(token) || typeof expiresAt !== 'number') return undefined;
-	return { token, expiresAt };
+	if (typeof value !== 'object' || value === null || !('token' in value)) return undefined;
+	const { token } = value;
+	if (typeof token !== 'string' || !/^cli_[a-f0-9]{64}$/.test(token)) return undefined;
+	return { token };
 }
 function reason(body: string): string {
 	try {
@@ -69,14 +68,14 @@ export class Client {
 			throw failure('Not signed in', 'NOT_SIGNED_IN', signIn);
 		}
 		const session = parseSession(saved);
-		if (!session || session.expiresAt <= Date.now()) throw failure('Session expired', 'SESSION_EXPIRED', signIn);
+		if (!session) throw failure('Not signed in', 'NOT_SIGNED_IN', signIn);
 		return session;
 	}
 	async logout(): Promise<void> {
 		try {
 			await this.request('/auth/cli/logout', {});
 		} catch (error) {
-			if (!isCLIError(error) || !['NOT_SIGNED_IN', 'SESSION_EXPIRED'].includes(error.code)) throw error;
+			if (!isCLIError(error) || !['NOT_SIGNED_IN', 'SESSION_REVOKED'].includes(error.code)) throw error;
 		}
 		await rm(await this.file(), { force: true });
 	}
@@ -89,7 +88,7 @@ export class Client {
 			redirect: 'error',
 			signal: AbortSignal.timeout(30000),
 		});
-		if (response.status === 401) throw failure('Session expired or revoked', 'SESSION_EXPIRED', signIn);
+		if (response.status === 401) throw failure('Session revoked', 'SESSION_REVOKED', signIn);
 		if (!response.ok) {
 			throw failure(`Beepboop request failed (${response.status}): ${reason(await response.text())}`, 'REQUEST_FAILED');
 		}
@@ -124,7 +123,7 @@ export class Client {
 				throw failure(`Login failed (${response.status}): ${reason(await response.text())}`, 'LOGIN_FAILED');
 			}
 			const session = parseSession(await response.json());
-			if (!session || !(session.expiresAt > Date.now())) throw new Error('Invalid login response');
+			if (!session) throw new Error('Invalid login response');
 			await this.save(session);
 			return;
 		}

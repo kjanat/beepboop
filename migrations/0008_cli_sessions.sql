@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS cli_sessions (
+ id TEXT PRIMARY KEY, subject TEXT NOT NULL, created_at INTEGER NOT NULL
+);

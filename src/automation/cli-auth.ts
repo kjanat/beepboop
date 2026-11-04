@@ -1,8 +1,6 @@
 import type { AuthBindings } from '@/automation/auth';
 import { record, string } from '@/model';
 
-const untilRevoked = Number.MAX_SAFE_INTEGER;
-
 /** Store only hashes of terminal credentials; the browser never receives them. */
 export async function credentialHash(value: string): Promise<string> {
 	return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))))
@@ -13,13 +11,13 @@ type CLIEnvironment = Pick<AuthBindings, 'ADMIN_SUBJECT'> & Partial<Pick<AuthBin
 export async function cliSubject(request: Request, env: CLIEnvironment): Promise<string> {
 	const token = request.headers.get('authorization')?.match(/^Bearer (cli_[a-f0-9]{64})$/)?.[1];
 	if (!token || !env.DB) throw new Error('CLI login required');
-	const row = await env.DB.prepare('SELECT document FROM sessions WHERE id=? AND expires_at>?')
-		.bind(`cli:${await credentialHash(token)}`, Date.now()).first();
-	const session = row ? record(JSON.parse(string(row.document))) : null;
-	if (session?.kind !== 'cli' || !env.ADMIN_SUBJECT || session.subject !== env.ADMIN_SUBJECT) {
-		throw new Error('CLI session expired or revoked; run beepboop auth login');
+	const row = await env.DB.prepare('SELECT subject FROM cli_sessions WHERE id=?')
+		.bind(await credentialHash(token)).first();
+	const subject = row ? string(row.subject) : undefined;
+	if (!subject || !env.ADMIN_SUBJECT || subject !== env.ADMIN_SUBJECT) {
+		throw new Error('CLI session revoked; run beepboop auth login');
 	}
-	return string(session.subject);
+	return subject;
 }
 
 /** Browser approval and a one-time, verifier-bound exchange, using the existing OAuth login. */
@@ -40,27 +38,26 @@ export async function cliAuthRoute(
 		const approval = record(JSON.parse(string(row.document)));
 		if (approval.subject !== env.ADMIN_SUBJECT) return json({ error: 'Access denied' }, 403);
 		const token = `cli_${crypto.randomUUID().replaceAll('-', '')}${crypto.randomUUID().replaceAll('-', '')}`;
-		const expiresAt = untilRevoked;
-		await env.DB.prepare('INSERT INTO sessions VALUES(?,?,?)')
-			.bind(`cli:${await credentialHash(token)}`, JSON.stringify({ kind: 'cli', subject: approval.subject }), expiresAt)
+		await env.DB.prepare('INSERT INTO cli_sessions VALUES(?,?,?)')
+			.bind(await credentialHash(token), string(approval.subject), Date.now())
 			.run();
-		return json({ token, expiresAt });
+		return json({ token });
 	}
 	if (url.pathname === '/auth/cli/logout' && request.method === 'POST') {
 		try {
 			await cliSubject(request, env);
 		} catch {
-			return json({ error: 'CLI session expired or revoked' }, 401);
+			return json({ error: 'CLI session revoked' }, 401);
 		}
 		const token = request.headers.get('authorization')?.slice(7) ?? '';
-		await env.DB.prepare('DELETE FROM sessions WHERE id=?').bind(`cli:${await credentialHash(token)}`).run();
+		await env.DB.prepare('DELETE FROM cli_sessions WHERE id=?').bind(await credentialHash(token)).run();
 		return json({ ok: true });
 	}
 	if (url.pathname === '/auth/cli/status' && request.method === 'GET') {
 		try {
 			return json({ subject: await cliSubject(request, env) });
 		} catch {
-			return json({ error: 'CLI session expired or revoked' }, 401);
+			return json({ error: 'CLI session revoked' }, 401);
 		}
 	}
 	if (url.pathname !== '/auth/cli/authorize' || !['GET', 'POST'].includes(request.method)) {
@@ -90,7 +87,7 @@ export async function cliAuthRoute(
 		}</h1>${
 			approved
 				? '<p>Return to your terminal. You can close this page.</p>'
-				: `<p>Only approve if you just ran beepboop auth login in your own terminal. This grants administrator API access for eight hours. Security-key checks still apply.</p><p>Confirm this code matches your terminal: <strong>${
+				: `<p>Only approve if you just ran beepboop auth login in your own terminal. This grants administrator API access until you run beepboop auth logout. Security-key checks still apply.</p><p>Confirm this code matches your terminal: <strong>${
 					challenge.slice(0, 8)
 				}</strong></p><form method="post"><button>Authorize my terminal</button></form>`
 		}</main></html>`,
