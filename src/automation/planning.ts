@@ -6,6 +6,7 @@ import { matchesPackage, selectorKey } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import type { Edit, Inventory, Snapshot } from '@/automation/types';
 import { parseVersionRequest } from '@/automation/version';
+import { isLockfile } from '@/contract/catalog';
 
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
 const operation = z.strictObject({
@@ -106,9 +107,7 @@ export function planReleaseSet(
 		return before === after ? [] : [{ path, before, after }];
 	});
 	return {
-		lockfiles: Object.keys(snapshot.files).filter(path =>
-			/(?:^|\/)(Cargo.lock|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock)$/.test(path)
-		),
+		lockfiles: Object.keys(snapshot.files).filter(isLockfile),
 		sourceSha: snapshot.sha,
 		groups: [...groups.values()].sort((a, b) => a.id.localeCompare(b.id)),
 		operations: order,

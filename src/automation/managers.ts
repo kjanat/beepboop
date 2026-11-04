@@ -7,7 +7,7 @@ import { publishable } from '@/automation/package-publication';
 import { releasedVersion } from '@/automation/release-version';
 import type { Inventory, Package, Publication, ReleasePlan, Snapshot } from '@/automation/types';
 import { nextVersion, parseVersionRequest, type VersionRequest } from '@/automation/version';
-import type { ManagerName } from '@/contract/catalog';
+import { isLockfile, type ManagerName } from '@/contract/catalog';
 
 export { publicationOrder } from '@/automation/managers/order';
 
@@ -90,9 +90,7 @@ export function planRelease(
 		})
 		.filter((e) => e.before !== e.after);
 	const requiresPreparation = edits.length > 0
-		&& Object.keys(snapshot.files).some((p) =>
-			/(?:^|\/)(Cargo.lock|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock)$/.test(p)
-		);
+		&& Object.keys(snapshot.files).some(isLockfile);
 	if (requiresPreparation) {
 		diagnostics.push(
 			'Preparation workflow must regenerate lockfiles and generated version carriers before promotion',
@@ -100,9 +98,7 @@ export function planRelease(
 	}
 	if (!edits.length) diagnostics.push(alreadyPrepared(version, snapshot.sha));
 	return {
-		lockfiles: Object.keys(snapshot.files).filter(path =>
-			/(?:^|\/)(Cargo.lock|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock)$/.test(path)
-		),
+		lockfiles: Object.keys(snapshot.files).filter(isLockfile),
 		version,
 		sourceSha: snapshot.sha,
 		packages,

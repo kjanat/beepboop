@@ -45,7 +45,7 @@ import type {
 import { parseGrant, Vault, validCredential } from '@/automation/vault';
 import { nextVersion, parseVersionRequest } from '@/automation/version';
 import { type WinGetBindings, WinGetService } from '@/automation/winget';
-import { managerNames } from '@/contract/catalog';
+import { isLockfile, managerNames } from '@/contract/catalog';
 import { array, compareVersions, integer, oneOf, record, semver, sha, text } from '@/model';
 import { renderActivityRows } from '@/ui/templates/activity';
 import { readBody, verifySignature } from '@/webhook';
@@ -1043,11 +1043,7 @@ export class AutomationService {
 			if (new Set(proposed.map((f) => f.path)).size !== proposed.length) {
 				throw new Error('Duplicate prepared path');
 			}
-			const allowedLocks = new Set(
-				Object.keys(source.files).filter((path) =>
-					/(?:^|\/)(Cargo.lock|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock)$/.test(path)
-				),
-			);
+			const allowedLocks = new Set(Object.keys(source.files).filter(isLockfile));
 			if ([...allowedLocks].some(path => !proposed.some(file => file.path === path))) {
 				throw new Error('Prepared release is missing a lockfile');
 			}

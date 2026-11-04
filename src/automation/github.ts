@@ -5,6 +5,7 @@ import { tagQueries } from '@/automation/managers/tags';
 import type { RefState } from '@/automation/refs';
 import type { BotIdentity } from '@/automation/token';
 import type { Edit, Snapshot } from '@/automation/types';
+import { isLockfile } from '@/contract/catalog';
 import { array, integer, record, sha, text } from '@/model';
 
 type Permission = Record<string, 'read' | 'write'>;
@@ -253,8 +254,7 @@ export class RepositoryGateway {
 				candidates.slice(offset, offset + 8).map(async (path) => {
 					// Lockfiles only indicate the need for repository preparation; avoid transferring large generated files.
 					if (
-						!extraPaths.includes(path)
-						&& /(?:Cargo.lock|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock)$/.test(path)
+						!extraPaths.includes(path) && isLockfile(path)
 					) {
 						files[path] = '';
 						return;

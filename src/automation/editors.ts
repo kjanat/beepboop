@@ -2,6 +2,7 @@ import { parse as parseToml } from 'smol-toml';
 import { isScalar, parseDocument } from 'yaml';
 import { z } from 'zod';
 import type { ReleasePlan, Snapshot } from '@/automation/types';
+import { isLockfile } from '@/contract/catalog';
 import { semver } from '@/model';
 
 export function safeVersionPath(path: string): boolean {
@@ -138,13 +139,9 @@ export function planVersionFiles(snapshot: Snapshot, target: unknown, rules: Ver
 		return before === undefined || before === after ? [] : [{ path, before, after }];
 	});
 	const requiresPreparation = edits.length > 0
-		&& Object.keys(files).some(path =>
-			/(?:^|\/)(Cargo.lock|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock)$/.test(path)
-		);
+		&& Object.keys(files).some(isLockfile);
 	return {
-		lockfiles: Object.keys(snapshot.files).filter(path =>
-			/(?:^|\/)(Cargo.lock|package-lock.json|bun.lock|pnpm-lock.yaml|yarn.lock)$/.test(path)
-		),
+		lockfiles: Object.keys(snapshot.files).filter(isLockfile),
 		version,
 		sourceSha: snapshot.sha,
 		packages: [],
