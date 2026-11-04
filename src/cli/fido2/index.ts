@@ -1,16 +1,19 @@
-import { z } from 'zod';
 import { hidAuthenticator } from '@/cli/fido2/ctap';
 import { linuxTransport } from '@/cli/fido2/linux';
 import { macosTransport } from '@/cli/fido2/macos';
 import { sha256 } from '@/cli/fido2/pin';
 import type { Authenticator } from '@/cli/fido2/types';
 import { windowsAuthenticator } from '@/cli/fido2/windows';
+import { array, record, text } from '@/model';
 
-const requestOptions = z.object({
-	challenge: z.string(),
-	rpId: z.string().optional(),
-	allowCredentials: z.array(z.object({ id: z.string() })).default([]),
-});
+function requestOptions(value: unknown) {
+	const options = record(value);
+	return {
+		challenge: text(options.challenge),
+		rpId: options.rpId === undefined ? undefined : text(options.rpId),
+		allowCredentials: array(options.allowCredentials ?? []).map(credential => ({ id: text(record(credential).id) })),
+	};
+}
 
 export interface SecurityKeyPrompts {
 	pin(): Promise<string>;
@@ -27,7 +30,7 @@ function authenticator(): Authenticator {
 const base64url = (data: Uint8Array): string => Buffer.from(data).toString('base64url');
 
 export async function securityKeyAssertion(options: unknown, origin: string, prompts: SecurityKeyPrompts) {
-	const request = requestOptions.parse(options);
+	const request = requestOptions(options);
 	const clientDataJSON = new TextEncoder().encode(
 		JSON.stringify({ type: 'webauthn.get', challenge: request.challenge, origin, crossOrigin: false }),
 	);
