@@ -7,6 +7,8 @@ import { parsePresetReference } from '@/automation/preset';
 import type { Configuration, Stream, WorkflowBinding } from '@/automation/types';
 import { parseWinGetPolicy } from '@/automation/winget';
 import { managerNames } from '@/contract/catalog';
+import type { Diagnostic } from '@/contract/diagnostics';
+import { configurationDrift } from '@/domain/configuration';
 import { array, oneOf, record, text } from '@/model';
 import { purl } from '@/package-url';
 
@@ -296,7 +298,7 @@ export type PresetLoader = (reference: string) => Promise<{ value: unknown; sha:
 export async function resolveConfiguration(
 	value: unknown,
 	load: PresetLoader,
-): Promise<{ configuration: Configuration; presetShas: Record<string, string> }> {
+): Promise<{ configuration: Configuration; presetShas: Record<string, string>; drift: Diagnostic[] }> {
 	const presetShas: Record<string, string> = {};
 	const cache = new Map<string, { value: unknown; sha: string }>();
 	async function visit(raw: unknown, stack: string[]): Promise<Record<string, unknown>> {
@@ -321,5 +323,7 @@ export async function resolveConfiguration(
 		}
 		return mergeConfiguration(resolved, data);
 	}
-	return { configuration: parseRepositoryConfiguration(await visit(value, [])), presetShas };
+	const merged = await visit(value, []);
+	const configuration = parseRepositoryConfiguration(merged);
+	return { configuration, presetShas, drift: configurationDrift(merged, configuration) };
 }

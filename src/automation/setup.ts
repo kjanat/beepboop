@@ -18,6 +18,7 @@ import { integrateWorkflow, workflowEvidence } from '@/automation/setup-workflow
 import type { Configuration, Inventory, Package, RepositoryRecord, Snapshot } from '@/automation/types';
 import { sha256Hex } from '@/contract/ids';
 import { setupChoicesSchema } from '@/contract/setup';
+import { configurationDrift } from '@/domain/configuration';
 import { packageMarkdown } from '@/domain/package-label';
 
 function releasedPackage(pkg: Package | undefined): boolean {
@@ -215,7 +216,9 @@ export async function previewSetup(
 	configuration.streams = streams;
 	configuration.managers = [...managers].sort();
 	try {
-		parseRepositoryConfiguration(resolved ? mergeConfiguration({ ...resolved }, configuration) : configuration);
+		const proposal = resolved ? mergeConfiguration({ ...resolved }, configuration) : configuration;
+		const legacy = parseRepositoryConfiguration(proposal);
+		notes.push(...configurationDrift(proposal, legacy).map(entry => entry.message));
 	} catch (error) {
 		blockers.push(error instanceof Error ? error.message : 'Invalid configuration');
 	}
