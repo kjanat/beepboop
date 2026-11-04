@@ -38,7 +38,7 @@ export async function cliAuthRoute(
 		const approval = record(JSON.parse(string(row.document)));
 		if (approval.subject !== env.ADMIN_SUBJECT) return json({ error: 'Access denied' }, 403);
 		const token = `cli_${crypto.randomUUID().replaceAll('-', '')}${crypto.randomUUID().replaceAll('-', '')}`;
-		await env.DB.prepare('INSERT INTO cli_sessions VALUES(?,?,?)')
+		await env.DB.prepare('INSERT INTO cli_sessions(id,subject,created_at) VALUES(?,?,?)')
 			.bind(await credentialHash(token), string(approval.subject), Date.now())
 			.run();
 		return json({ token });
@@ -78,7 +78,7 @@ export async function cliAuthRoute(
 	const approved = request.method === 'POST';
 	if (approved) {
 		if (request.headers.get('origin') !== env.APPLICATION_ORIGIN) return json({ error: 'Invalid origin' }, 403);
-		await env.DB.prepare('INSERT OR IGNORE INTO sessions VALUES(?,?,?)')
+		await env.DB.prepare('INSERT OR IGNORE INTO sessions(id,document,expires_at) VALUES(?,?,?)')
 			.bind(`cli-approval:${challenge}`, JSON.stringify({ subject }), Date.now() + 300000).run();
 	}
 	return new Response(

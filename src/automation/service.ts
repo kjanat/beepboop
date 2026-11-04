@@ -458,7 +458,7 @@ export class AutomationService {
 						);
 						if (!cursor) {
 							await this.store.db
-								.prepare('INSERT OR IGNORE INTO schedules VALUES(?,?)')
+								.prepare('INSERT OR IGNORE INTO schedules(id,last_tick) VALUES(?,?)')
 								.bind(key, now)
 								.run();
 							continue;
@@ -648,7 +648,7 @@ export class AutomationService {
 			);
 			for (const edit of plan.edits) generated.set(edit.path, edit);
 			await this.store.db.prepare(
-				'INSERT INTO onboarding VALUES(?,?) ON CONFLICT(repository_id) DO UPDATE SET document=excluded.document',
+				'INSERT INTO onboarding(repository_id,document) VALUES(?,?) ON CONFLICT(repository_id) DO UPDATE SET document=excluded.document',
 			)
 				.bind(
 					id,

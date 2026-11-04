@@ -121,7 +121,7 @@ export class Vault {
 		await this.store.db.batch([
 			this.store.db.prepare('UPDATE credentials SET active=0 WHERE alias=?').bind(alias),
 			this.store.db
-				.prepare('INSERT INTO credentials VALUES(?,?,?,?,?,1,?)')
+				.prepare('INSERT INTO credentials(alias,version,key_id,ciphertext,iv,active,created_at) VALUES(?,?,?,?,?,1,?)')
 				.bind(alias, version, this.activeKey, sealed.ciphertext, sealed.iv, Date.now()),
 		]);
 		await this.store.audit(actor, 'credential.replace', alias);
@@ -142,7 +142,7 @@ export class Vault {
 	async grant(grant: Grant, actor: string): Promise<void> {
 		await this.store.db
 			.prepare(
-				'INSERT INTO grants VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET alias=excluded.alias,repository_id=excluded.repository_id,document=excluded.document',
+				'INSERT INTO grants(id,alias,repository_id,document) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET alias=excluded.alias,repository_id=excluded.repository_id,document=excluded.document',
 			)
 			.bind(grant.id, grant.alias, grant.repositoryId, JSON.stringify(grant))
 			.run();
@@ -215,7 +215,7 @@ export class Vault {
 			}
 			await this.store.db
 				.prepare(
-					'INSERT INTO secret_deliveries VALUES(?,?,?,?) ON CONFLICT(grant_id,version) DO UPDATE SET state=excluded.state,updated_at=excluded.updated_at',
+					'INSERT INTO secret_deliveries(grant_id,version,state,updated_at) VALUES(?,?,?,?) ON CONFLICT(grant_id,version) DO UPDATE SET state=excluded.state,updated_at=excluded.updated_at',
 				)
 				.bind(grant.id, secret.version, state, Date.now())
 				.run();

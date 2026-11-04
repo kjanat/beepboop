@@ -261,7 +261,7 @@ export async function authRoute(
 			{ pkce: true },
 		);
 		const id = crypto.randomUUID();
-		await env.DB.prepare('INSERT INTO sessions VALUES(?,?,?)')
+		await env.DB.prepare('INSERT INTO sessions(id,document,expires_at) VALUES(?,?,?)')
 			.bind(
 				id,
 				JSON.stringify({
@@ -387,7 +387,7 @@ export class Authenticators {
 				allowCredentials: credentials.map((c) => ({ id: c.id, transports: c.transports })),
 			});
 		const id = crypto.randomUUID();
-		await this.env.DB.prepare('INSERT INTO sessions VALUES(?,?,?)')
+		await this.env.DB.prepare('INSERT INTO sessions(id,document,expires_at) VALUES(?,?,?)')
 			.bind(
 				id,
 				JSON.stringify({
@@ -438,9 +438,9 @@ export class Authenticators {
 			});
 			const insert = challenge.first === true
 				? this.env.DB.prepare(
-					'INSERT INTO authenticators SELECT ?,?,? WHERE NOT EXISTS (SELECT 1 FROM authenticators WHERE subject=?)',
+					'INSERT INTO authenticators(id,subject,document) SELECT ?,?,? WHERE NOT EXISTS (SELECT 1 FROM authenticators WHERE subject=?)',
 				).bind(c.id, subject, document, subject)
-				: this.env.DB.prepare('INSERT INTO authenticators VALUES(?,?,?)').bind(
+				: this.env.DB.prepare('INSERT INTO authenticators(id,subject,document) VALUES(?,?,?)').bind(
 					c.id,
 					subject,
 					document,
@@ -473,7 +473,7 @@ export class Authenticators {
 			.run();
 		if (update.meta.changes !== 1) throw new Error('Authenticator changed during verification');
 		const proof = crypto.randomUUID();
-		await this.env.DB.prepare('INSERT INTO sessions VALUES(?,?,?)')
+		await this.env.DB.prepare('INSERT INTO sessions(id,document,expires_at) VALUES(?,?,?)')
 			.bind(proof, JSON.stringify({ subject, elevated: true }), Date.now() + 60000)
 			.run();
 		return { proof };

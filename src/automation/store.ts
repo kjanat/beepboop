@@ -106,7 +106,11 @@ export class Store {
 	async queueEvent(event: AutomationEvent, deliveries: SubscriptionDelivery[]): Promise<void> {
 		const serialized = JSON.stringify(event);
 		await this.db.batch([
-			this.db.prepare('INSERT OR IGNORE INTO release_events VALUES(?,?,?)').bind(event.id, serialized, Date.now()),
+			this.db.prepare('INSERT OR IGNORE INTO release_events(id,document,created_at) VALUES(?,?,?)').bind(
+				event.id,
+				serialized,
+				Date.now(),
+			),
 			...deliveries.map(delivery =>
 				this.db.prepare(
 					"INSERT OR IGNORE INTO subscription_deliveries(id,event_id,repository_id,document,state,updated_at) SELECT ?,?,?,?,'pending',? WHERE EXISTS (SELECT 1 FROM release_events WHERE id=? AND document=?)",
@@ -148,7 +152,7 @@ export class Store {
 	}
 	async audit(actor: string, action: string, target: string): Promise<void> {
 		await this.db
-			.prepare('INSERT INTO audit VALUES(?,?,?,?,?)')
+			.prepare('INSERT INTO audit(id,actor,action,target,created_at) VALUES(?,?,?,?,?)')
 			.bind(crypto.randomUUID(), actor, action, target, Date.now())
 			.run();
 	}
