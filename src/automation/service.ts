@@ -225,7 +225,9 @@ export class AutomationService {
 		if (!names.length) return;
 		const token = await this.vault().reveal(jsrTokenAlias, `setup:${execution.id}`).then(
 			credential => credential.value,
-			() => undefined,
+			() => {
+				throw new Error(`Store a JSR access token as ${jsrTokenAlias} so Beepboop can set up ${names.join(', ')}`);
+			},
 		);
 		for (const name of names) await prepareJsrPackage(name, execution.repository, token, fetch);
 	}
