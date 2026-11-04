@@ -157,8 +157,7 @@ export function integrateWorkflow(
 		if (snapshot.files[`actions/${name}/action.yml`]) {
 			return `$/actions/${name}`;
 		}
-		if (!actionsRevision) fail('select the full commit SHA of a published Beepboop Actions distribution');
-		return `kjanat/beepboop/actions/${name}@${actionsRevision ?? ''}`;
+		return `kjanat/beepboop/actions/${name}@${actionsRevision ?? 'v1'}`;
 	};
 	if (existingBegin) {
 		if (object(existingBegin.with).stream !== stream || object(existingBegin.with).operation !== operation) {

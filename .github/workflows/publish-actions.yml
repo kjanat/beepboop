@@ -1,5 +1,5 @@
 name: Publish Actions
-on: { workflow_dispatch: null }
+on: { push: { branches: [master] }, workflow_dispatch: null }
 permissions: { contents: read }
 concurrency: { group: publish-actions, cancel-in-progress: false }
 jobs:
@@ -28,6 +28,7 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.bot.outputs.token }}
       - name: Publish distribution commit
+        id: publish
         shell: bash -euo pipefail {0}
         env:
           repository_url: ${{ github.server_url }}/${{ github.repository }}
@@ -58,14 +59,22 @@ jobs:
             previous_tree=$(git rev-parse "${previous}^{tree}")
             if [[ "${previous_source}" == "${GITHUB_SHA}" && "${previous_tree}" == "${tree}" ]]; then
               echo "Actions already published at [\`${previous}\`](${repository_url}/commit/${previous})." >> "${GITHUB_STEP_SUMMARY}"
+              echo "commit=${previous}" >> "${GITHUB_OUTPUT}"
               exit 0
             fi
           fi
           commit=$(git commit-tree "${tree}" "${parents[@]}" -m "Publish Actions from ${GITHUB_SHA}")
           git push origin "${commit}:refs/heads/actions"
+          echo "commit=${commit}" >> "${GITHUB_OUTPUT}"
           {
             echo "Source commit: [\`${GITHUB_SHA}\`](${repository_url}/commit/${GITHUB_SHA})"
             echo "Published Actions commit: [\`${commit}\`](${repository_url}/commit/${commit})"
             echo
             echo "Pin consumers to \`kjanat/beepboop/actions/generate-winget@${commit}\`."
           } >> "${GITHUB_STEP_SUMMARY}"
+      - name: Tag Actions release
+        env:
+          DISTRIBUTION_COMMIT: ${{ steps.publish.outputs.commit }}
+          GIT_COMMITTER_NAME: ${{ steps.bot.outputs.bot-login }}
+          GIT_COMMITTER_EMAIL: ${{ steps.bot.outputs.bot-email }}
+        run: bun src/tooling/actions/release.ts

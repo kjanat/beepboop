@@ -86,11 +86,11 @@ export async function workflowToken(
 	let permissions: TokenPermissions;
 	if (body.purpose === 'publish-actions') {
 		if (
-			identity.event !== 'workflow_dispatch' || identity.helperSha
+			!['workflow_dispatch', 'push'].includes(identity.event) || identity.helperSha
 			|| identity.workflowSha !== identity.sha
 			|| identity.workflowRef !== `${identity.repository}/.github/workflows/publish-actions.yml@${identity.ref}`
 		) {
-			throw new Error('Actions publication requires its own manually dispatched workflow');
+			throw new Error('Actions publication requires its own workflow on the default branch');
 		}
 		const requested = record(body.permissions);
 		if (Object.keys(requested).length !== 2 || requested.contents !== 'write' || requested.workflows !== 'write') {

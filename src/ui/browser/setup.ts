@@ -150,7 +150,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 	);
 	const revision = text(
 		form,
-		'Published Beepboop Actions commit (external actions only)',
+		'Beepboop Actions version or commit (default v1)',
 		plan.choices.actionsRevision ?? '',
 	);
 	const streams = element('div');

@@ -22,7 +22,7 @@ export const setupChoicesSchema = z.object({
 		}).strict(),
 	),
 	/** Full commit of the published Actions distribution, required for external actions. */
-	actionsRevision: z.string().regex(/^[a-f0-9]{40}$/).optional(),
+	actionsRevision: z.string().regex(/^(?:[a-f0-9]{40}|v\d+(?:\.\d+){0,2})$/).optional(),
 }).strict();
 export type SetupChoices = z.infer<typeof setupChoicesSchema>;
 export type SetupWorkflow = NonNullable<SetupChoices['streams'][number]['prepare']>;

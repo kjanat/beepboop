@@ -114,8 +114,9 @@ the resolved preset commit SHAs. The full contract is in the
 ## Connect a workflow
 
 Use `actions/begin` to register the operation and `actions/report` to submit its
-publication results. Replace `IMPLEMENTATION_SHA` with the reviewed Beepboop
-commit. This example observes tag-triggered publishing:
+publication results. `v1` follows the latest compatible Actions release; pin
+`vX.Y.Z` or a distribution commit for a fixed version. This example observes
+tag-triggered publishing:
 
 ```yaml
 name: Release
@@ -132,14 +133,14 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: kjanat/beepboop/actions/begin@IMPLEMENTATION_SHA
+      - uses: kjanat/beepboop/actions/begin@v1
         id: release
         with:
           stream: main
           operation: publish
           version: ${{ github.ref_name }}
       # Build and publish here. Generate the report JSON from those results.
-      - uses: kjanat/beepboop/actions/report@IMPLEMENTATION_SHA
+      - uses: kjanat/beepboop/actions/report@v1
         with:
           publications: >-
             [{"id":"pkg:npm/example-package","manager":"npm",
@@ -334,7 +335,7 @@ and the repository does not have to be enrolled. Other bots, apps and users get
 no token.
 
 ```yaml
-- uses: kjanat/beepboop/actions/token@IMPLEMENTATION_SHA
+- uses: kjanat/beepboop/actions/token@v1
   id: beepboop
   with:
     permissions: '{"contents":"write","pull_requests":"write"}'
@@ -353,7 +354,7 @@ Every issued token is recorded in the audit log.
 A run that Beepboop dispatched passes its execution ID:
 
 ```yaml
-- uses: kjanat/beepboop/actions/token@IMPLEMENTATION_SHA
+- uses: kjanat/beepboop/actions/token@v1
   with:
     execution-id: ${{ inputs.beepboop_execution_id }}
 ```
@@ -496,7 +497,7 @@ After the version tag exists, `actions/publish-release` publishes the GitHub
 release:
 
 ```yaml
-- uses: kjanat/beepboop/actions/publish-release@IMPLEMENTATION_SHA
+- uses: kjanat/beepboop/actions/publish-release@v1
 ```
 
 Beepboop requires the annotated tag `<prefix><version>` to target the approved

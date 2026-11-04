@@ -140,7 +140,8 @@ export async function chooseSetup(plan: SetupPlan, ask: Ask): Promise<SetupChoic
 		kind: 'input',
 		message: 'Published Beepboop Actions commit (blank for local actions)',
 		empty: 'accept',
-		validate: value => !value || /^[a-f0-9]{40}$/.test(value) || 'Use a full commit SHA',
+		validate: value =>
+			!value || /^(?:[a-f0-9]{40}|v\d+(?:\.\d+){0,2})$/.test(value) || 'Use a version tag or a full commit SHA',
 	});
 	if (revision) choices.actionsRevision = revision;
 	return choices;
