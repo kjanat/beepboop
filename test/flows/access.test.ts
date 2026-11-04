@@ -28,6 +28,18 @@ function installation(action: string, extra: Record<string, unknown> = {}): Prom
 	return world.webhook('installation', { action, installation: { id: 77, account: { id: ownerId } }, ...extra });
 }
 
+function repositories(action: string, extra: Record<string, unknown>): Promise<Response> {
+	return world.webhook('installation_repositories', {
+		action,
+		installation: { id: 77, account: { id: ownerId } },
+		...extra,
+	});
+}
+
+async function journalAccess(repository: Repository): Promise<unknown> {
+	return (await world.coordinator(repository).exportJournal()).find(entry => entry.key === 'access')?.value;
+}
+
 function refusal(response: Reply): { status: number; error: string } {
 	return { status: response.status, error: errorEnvelope.parse(response.body).error };
 }
@@ -50,7 +62,7 @@ async function stored(repository: Repository) {
 	return record;
 }
 
-test('a suspended repository refuses releases, survives refresh, and returns on unsuspend', async () => {
+test('a suspended repository refuses releases and returns only where GitHub restored access', async () => {
 	const repository = widget(world.github);
 	world.npm.publish('widget', '1.0.0');
 	const api = bearer(world, await world.cliSession());
@@ -59,6 +71,7 @@ test('a suspended repository refuses releases, survives refresh, and returns on 
 	expect((await api('/api/releases/plan', request)).status).toBe(200);
 	expect(await badge()).toBe('ok Configured +prepare');
 
+	world.github.suspend();
 	expect((await installation('suspend')).status).toBe(202);
 	const suspendedAt = Date.now();
 	const refused = { status: 422, error: 'GitHub App access to octo/widget is suspended or removed' };
@@ -87,53 +100,42 @@ test('a suspended repository refuses releases, survives refresh, and returns on 
 	expect(readiness(await stored(repository))).toEqual({ kind: 'suspended', since: suspendedAt });
 	expect(await badge()).toBe('warn App access unavailable');
 
-	world.advance(60_000);
-	expect((await world.push(repository)).status).toBe(202);
-	await world.wait(1_000);
 	expect((await api('/api/repositories/discover', { repository: 'octo/widget' })).status).toBe(200);
-	const refreshed = await stored(repository);
-	expect(refreshed.updatedAt).toBeGreaterThan(suspendedAt);
-	expect(readiness(refreshed)).toEqual({ kind: 'suspended', since: suspendedAt });
-	expect(refreshed.diagnostics).toEqual([]);
-	expect((await world.coordinator(repository).exportJournal()).find(entry => entry.key === 'access')?.value)
-		.toEqual({ suspended: true });
+	expect(readiness(await stored(repository))).toEqual({ kind: 'suspended', since: suspendedAt });
+	expect(await journalAccess(repository)).toEqual({ suspended: true });
 	expect(field((await api('/api/repositories')).body, '0')).toMatchObject({ suspended: true });
 	expect(refusal(await api('/api/releases/plan', request))).toEqual(refused);
 	expect(world.github.dispatches).toEqual([]);
 	expect(await badge()).toBe('warn App access unavailable');
+	const gadget = world.github.create('octo/gadget', { 'README.md': '# gadget\n' });
+	expect(refusal(await api('/api/repositories/discover', { repository: 'octo/gadget' }))).toEqual({
+		status: 422,
+		error: 'GitHub App access to octo/gadget is suspended',
+	});
 
-	const document = z.object({ document: z.string() }).parse(
-		await world.db.prepare('SELECT document FROM repositories WHERE id=?').bind(repository.id).first(),
-	).document;
-	const deployed = new TestD1(migrationFiles().filter(file => file < '0012'));
-	await deployed.prepare(
-		'INSERT INTO repositories(id,name,document,updated_at,added_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,document=excluded.document,updated_at=excluded.updated_at',
-	).bind(repository.id, repository.name, document, refreshed.updatedAt, refreshed.updatedAt).run();
-	deployed.sqlite.run(readFileSync(join(migrationsDirectory, '0012_repository_access.sql'), 'utf8'));
-	const migrated = await new Store(deployed).repository(repository.id);
-	expect(migrated && readiness(migrated)).toEqual({ kind: 'suspended', since: refreshed.updatedAt });
-
+	world.github.unsuspend();
 	expect((await installation('unsuspend')).status).toBe(202);
 	expect(readiness(await stored(repository)).kind).toBe('ready');
 	expect(field((await api('/api/repositories')).body, '0')).not.toHaveProperty('suspended');
 	expect((await api('/api/releases/plan', request)).status).toBe(200);
 	expect(await badge()).toBe('ok Configured +prepare');
 
-	expect(
-		(await world.webhook('installation_repositories', {
-			action: 'removed',
-			installation: { id: 77, account: { id: ownerId } },
-			repositories_removed: [{ id: repository.id }],
-		})).status,
-	).toBe(202);
+	world.github.uninstall(repository);
+	expect((await repositories('removed', { repositories_removed: [{ id: repository.id }] })).status).toBe(202);
 	expect(readiness(await stored(repository)).kind).toBe('suspended');
-	expect(
-		(await world.webhook('installation_repositories', {
-			action: 'added',
-			installation: { id: 77, account: { id: ownerId } },
-			repositories_added: [{ id: repository.id }],
-		})).status,
-	).toBe(202);
+	world.github.suspend();
+	expect((await installation('suspend')).status).toBe(202);
+	world.github.unsuspend();
+	expect((await installation('unsuspend')).status).toBe(202);
+	expect(readiness(await stored(repository)).kind).toBe('suspended');
+	expect(await badge()).toBe('warn App access unavailable');
+	world.github.uninstall(gadget);
+	expect(refusal(await api('/api/repositories/discover', { repository: 'octo/gadget' }))).toEqual({
+		status: 404,
+		error: 'The GitHub App is not installed on octo/gadget',
+	});
+	world.github.install(repository);
+	expect((await repositories('added', { repositories_added: [{ id: repository.id }] })).status).toBe(202);
 	expect(readiness(await stored(repository)).kind).toBe('ready');
 
 	const legacy = z.record(z.string(), z.unknown()).parse(JSON.parse(
@@ -163,6 +165,44 @@ test('a suspended repository refuses releases, survives refresh, and returns on 
 	expect((await installation('unsuspend')).status).toBe(202);
 	expect(readiness(await stored(repository)).kind).toBe('ready');
 	expect(await badge()).toBe('ok Configured +prepare');
+	expect(world.network.unrouted).toEqual([]);
+});
+
+test('a lost unsuspend webhook leaves refresh suspended until discover asks GitHub', async () => {
+	const repository = widget(world.github);
+	world.npm.publish('widget', '1.0.0');
+	const api = bearer(world, await world.cliSession());
+	await api('/api/repositories/discover', { repository: 'octo/widget' });
+	world.github.suspend();
+	expect((await installation('suspend')).status).toBe(202);
+	const suspendedAt = Date.now();
+	world.github.unsuspend();
+
+	world.advance(60_000);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(1_000);
+	const refreshed = await stored(repository);
+	expect(refreshed.updatedAt).toBeGreaterThan(suspendedAt);
+	expect(readiness(refreshed)).toEqual({ kind: 'suspended', since: suspendedAt });
+	expect(refreshed.diagnostics).toEqual([]);
+	expect(await journalAccess(repository)).toEqual({ suspended: true });
+
+	const document = z.object({ document: z.string() }).parse(
+		await world.db.prepare('SELECT document FROM repositories WHERE id=?').bind(repository.id).first(),
+	).document;
+	const deployed = new TestD1(migrationFiles().filter(file => file < '0012'));
+	await deployed.prepare(
+		'INSERT INTO repositories(id,name,document,updated_at,added_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,document=excluded.document,updated_at=excluded.updated_at',
+	).bind(repository.id, repository.name, document, refreshed.updatedAt, refreshed.updatedAt).run();
+	deployed.sqlite.run(readFileSync(join(migrationsDirectory, '0012_repository_access.sql'), 'utf8'));
+	const migrated = await new Store(deployed).repository(repository.id);
+	expect(migrated && readiness(migrated)).toEqual({ kind: 'suspended', since: refreshed.updatedAt });
+
+	expect((await api('/api/repositories/discover', { repository: 'octo/widget' })).status).toBe(200);
+	expect(readiness(await stored(repository)).kind).toBe('ready');
+	expect(await journalAccess(repository)).toEqual({ suspended: false });
+	expect((await api('/api/releases/plan', { repositoryId: repository.id, stream: 'main', version: '1.1.0' })).status)
+		.toBe(200);
 	expect(world.network.unrouted).toEqual([]);
 });
 

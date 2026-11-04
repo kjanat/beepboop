@@ -206,6 +206,14 @@ export class RepositoryGateway {
 		};
 		return { repository: name, github: async path => this.call(path, await installation()) };
 	}
+	async installation(name: string): Promise<'active' | 'suspended' | 'uninstalled'> {
+		if (!/^[\w.-]+\/[\w.-]+$/.test(name)) throw new Error('Invalid repository');
+		const found = await this.call(`/repos/${name}/installation`, await this.appToken());
+		if (found === null) return 'uninstalled';
+		const installation = record(found);
+		if (integer(record(installation.account).id) !== this.ownerId) throw new Error('Owner mismatch');
+		return installation.suspended_at ? 'suspended' : 'active';
+	}
 	async identify(name: string): Promise<number> {
 		const token = await this.token(name, undefined);
 		return integer(record(await this.call(`/repos/${name}`, token)).id);

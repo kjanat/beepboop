@@ -21,7 +21,7 @@ import { matchesSubscription } from '@/automation/subscriptions';
 import type { AutomationEvent, Execution, RepositoryRecord, SubscriptionDelivery } from '@/automation/types';
 import { Vault } from '@/automation/vault';
 import { type WinGetBindings, WinGetService } from '@/automation/winget';
-import { precondition } from '@/contract/errors';
+import { notFound, precondition } from '@/contract/errors';
 import { setupChoicesSchema } from '@/contract/setup';
 import { configurationDiagnostics, configurationProblem } from '@/domain/configuration';
 import { type Access, type ReadyRepository, readiness, requireReady } from '@/domain/repository';
@@ -123,6 +123,35 @@ export class AutomationService {
 			z.record(z.string(), z.string()).parse(JSON.parse(this.env.VAULT_KEYS)),
 			this.env.VAULT_ACTIVE_KEY,
 		);
+	}
+	async setAccess(id: number, access: Access): Promise<void> {
+		await this.store.setAccess(id, access);
+		await this.coordinator(id).setAccess(access.kind === 'suspended');
+	}
+	private async access(name: string): Promise<Access> {
+		return await this.gateway.installation(name) === 'active'
+			? { kind: 'active' }
+			: { kind: 'suspended', since: Date.now() };
+	}
+	async discover(name: string, id: number | undefined): Promise<RepositoryRecord> {
+		const installation = await this.gateway.installation(name);
+		if (installation === 'active') {
+			const repositoryId = id ?? await this.gateway.identify(name);
+			await this.setAccess(repositoryId, { kind: 'active' });
+			return this.refresh(name, repositoryId);
+		}
+		const enrolled = (await this.store.enrollments()).find(entry => entry.id === id || entry.name === name);
+		const stored = enrolled && await this.store.repository(enrolled.id);
+		if (!stored) {
+			throw installation === 'suspended'
+				? precondition(`GitHub App access to ${name} is suspended`)
+				: notFound('repository', `The GitHub App is not installed on ${name}`, name);
+		}
+		const access: Access = stored.access.kind === 'suspended'
+			? stored.access
+			: { kind: 'suspended', since: Date.now() };
+		await this.setAccess(stored.id, access);
+		return { ...stored, access };
 	}
 	async refresh(name: string, id: number): Promise<RepositoryRecord> {
 		const snapshot = await this.gateway.snapshot(name, id);
@@ -284,19 +313,18 @@ export class AutomationService {
 			const ids = (items: unknown) => new Set(array(items ?? []).map((item) => integer(record(item).id)));
 			const removed = ids(payload.repositories_removed);
 			const added = ids(payload.action === 'created' ? payload.repositories : payload.repositories_added);
-			const all = payload.action === 'unsuspend'
-				|| (payload.action === 'created' && payload.repository_selection === 'all');
+			const all = payload.action === 'created' && payload.repository_selection === 'all';
 			for (const repository of await this.store.enrollments()) {
 				const access: Access | undefined =
 					payload.action === 'deleted' || payload.action === 'suspend' || removed.has(repository.id)
 						? { kind: 'suspended', since: Date.now() }
 						: all || added.has(repository.id)
 						? { kind: 'active' }
+						: payload.action === 'unsuspend' && repository.access.kind === 'suspended'
+						? await this.access(repository.name)
 						: undefined;
-				if (access) {
-					await this.store.setAccess(repository.id, access);
-					await this.coordinator(repository.id).setAccess(access.kind === 'suspended');
-				} else await this.coordinator(repository.id).wake();
+				if (access) await this.setAccess(repository.id, access);
+				else await this.coordinator(repository.id).wake();
 			}
 			return new Response(null, { status: 202 });
 		}

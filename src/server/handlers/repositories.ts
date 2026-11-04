@@ -50,7 +50,7 @@ export const repositoryEndpoints = {
 	repositoriesDiscover: admin(routes.repositoriesDiscover, async (input, { service }) => {
 		reference(input.repository);
 		const name = await repositoryName(input.repository, () => service.gateway.ownerLogin());
-		return encodeRepository(await service.refresh(name, input.repositoryId ?? await service.gateway.identify(name)));
+		return encodeRepository(await service.discover(name, input.repositoryId));
 	}),
 	setupPreview: admin(routes.setupPreview, async (input, context) => (await setupReview(input, context)).plan),
 	setupApply: admin(routes.setupApply, async (input, context) => {

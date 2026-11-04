@@ -103,6 +103,8 @@ export class FakeGitHub {
 	readonly dispatches: { repository: string; file: string; ref: string; inputs: Record<string, string> }[] = [];
 	private nextId = 1000;
 	private readonly routes: [string, RegExp, Route][] = [];
+	private suspendedAt: string | null = null;
+	private readonly uninstalled = new Set<string>();
 
 	constructor() {
 		const repo = '/repos/([^/]+/[^/]+)';
@@ -115,15 +117,32 @@ export class FakeGitHub {
 		this.route(
 			'POST',
 			/^\/app\/installations\/(\d+)\/access_tokens$/,
-			() => json({ token: `ghs_${this.id()}`, expires_at: new Date(Date.now() + 3600_000).toISOString() }, 201),
+			(_, __, body) => {
+				if (this.suspendedAt) throw new HttpError(403, 'This installation has been suspended');
+				const ids = Array.isArray(body.repository_ids) ? body.repository_ids : [];
+				const names = Array.isArray(body.repositories) ? body.repositories : [];
+				const missing = [...this.repositories.values()].some(repository =>
+					this.uninstalled.has(repository.name)
+					&& (ids.includes(repository.id) || names.includes(repository.name.split('/')[1]))
+				);
+				if (missing) {
+					throw new HttpError(422, 'There is at least one repository that does not exist or is not accessible');
+				}
+				return json({ token: `ghs_${this.id()}`, expires_at: new Date(Date.now() + 3600_000).toISOString() }, 201);
+			},
 		);
 		this.route('GET', /^\/users\/([^/]+)$/, match => {
 			if (decodeURIComponent(match[1] ?? '') !== botLogin) throw new HttpError(404, 'Not Found');
 			return json({ login: botLogin, id: botId, type: 'Bot' });
 		});
 		this.route('GET', new RegExp(`^${repo}/installation$`), match => {
-			this.repository(match[1]);
-			return json({ id: installationId, account: { id: ownerId, login: ownerLogin } });
+			const repository = this.repository(match[1]);
+			if (this.uninstalled.has(repository.name)) throw new HttpError(404, 'Not Found');
+			return json({
+				id: installationId,
+				account: { id: ownerId, login: ownerLogin },
+				suspended_at: this.suspendedAt,
+			});
 		});
 		this.route('GET', new RegExp(`^${repo}$`), match => {
 			const repository = this.repository(match[1]);
@@ -429,6 +448,18 @@ export class FakeGitHub {
 		return json({ message: 'Not handled by the fake GitHub' }, 501);
 	}
 
+	suspend(): void {
+		this.suspendedAt = new Date().toISOString();
+	}
+	unsuspend(): void {
+		this.suspendedAt = null;
+	}
+	uninstall(repository: Repository): void {
+		this.uninstalled.add(repository.name);
+	}
+	install(repository: Repository): void {
+		this.uninstalled.delete(repository.name);
+	}
 	repository(name: string | undefined): Repository {
 		const repository = this.repositories.get(decodeURIComponent(name ?? ''));
 		if (!repository) throw new HttpError(404, 'Not Found');
