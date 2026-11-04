@@ -339,21 +339,6 @@ each('form[data-action="approve"]', form => {
 attempt(() => {
 	const repositorySelection = find(document, '.selection select[name="repository"]', HTMLSelectElement);
 	if (!repositorySelection) return;
-	const query = new URLSearchParams(location.search);
-	const remembered = localStorage.getItem('beepboop:release-repository');
-	if (query.has('repository')) {
-		localStorage.setItem('beepboop:release-repository', repositorySelection.value);
-		const stream = find(document, '.selection select[name="stream"]', HTMLSelectElement);
-		if (stream) localStorage.setItem(`beepboop:release-stream:${repositorySelection.value}`, stream.value);
-	} else if (
-		remembered && remembered !== repositorySelection.value
-		&& [...repositorySelection.options].some(option => option.value === remembered)
-	) {
-		const stream = localStorage.getItem(`beepboop:release-stream:${remembered}`);
-		location.replace(
-			`/releases?repository=${encodeURIComponent(remembered)}${stream ? `&stream=${encodeURIComponent(stream)}` : ''}`,
-		);
-	}
 	repositorySelection.addEventListener('change', () => {
 		location.assign(`/releases?repository=${encodeURIComponent(repositorySelection.value)}`);
 	});
