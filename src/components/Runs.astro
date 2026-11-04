@@ -1,4 +1,5 @@
 ---
+import { matchesPublication } from '@/automation/package-identity.ts';
 import type { Execution } from '@/automation/types.ts';
 import { date } from '@/server/dashboard.ts';
 import { packageUrl } from '@/server/package-url';
@@ -94,7 +95,9 @@ const progress = (run: Execution): string => {
 	const required = run.releaseSet?.required
 		?? run.configuration.streams[run.stream]?.required ?? [];
 	const missing = required.filter(id =>
-		!run.publications.some(p => p.id === id && p.outcome === 'succeeded')
+		!run.publications.some(p =>
+			matchesPublication(id, p) && p.outcome === 'succeeded'
+		)
 	);
 	return (
 	 <article class="run-card" id={run.id}>
@@ -112,7 +115,7 @@ const progress = (run: Execution): string => {
 			 >{run.state.replaceAll('-', ' ')}</span>
 		 </div>
 		 <p>
-			 {run.reason
+			 {(run.state !== 'succeeded' && run.reason)
 			 	|| (run.state === 'succeeded'
 			 		? 'This operation completed.'
 			 		: run.state === 'blocked' && run.operation === 'promote'
@@ -155,7 +158,9 @@ const progress = (run: Execution): string => {
 						 {run.publications.map(p => (
 							 <tr>
 								 <td>
-									 <code>{packageUrl(p)}</code><small>
+									 <code>{p.id.startsWith('refs:')
+									 	? `tag ${run.workflow?.refs?.prefix ?? 'v'}${p.version}`
+									 	: packageUrl(p)}</code><small>
 										 {p.required ? 'required' : 'optional'}</small>
 								 </td>
 								 <td>{p.version}</td>

@@ -93,6 +93,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private async put(execution: Execution): Promise<void> {
 		Object.assign(execution, identifyExecution(execution));
 		const previous = executionSchema.optional().parse(await this.ctx.storage.get(`execution:${execution.id}`));
+		if (
+			previous && previous.state !== execution.state && ['running', 'succeeded'].includes(execution.state)
+			&& execution.reason === previous.reason
+		) {
+			delete execution.reason;
+		}
 		execution.updatedAt = Date.now();
 		// The journal is authoritative. D1 is an asynchronously repairable dashboard index.
 		await this.ctx.storage.put(`execution:${execution.id}`, execution);

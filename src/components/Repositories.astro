@@ -99,7 +99,7 @@ function wingetDestination(repository: RepositoryRecord) {
 				</form>
 				{data.onboarding.get(repository.id) && (
 					<a class="button" href={data.onboarding.get(repository.id)}
-					>Review previous setup PR ↗</a>
+					>Review setup PR ↗</a>
 				)}
 				{repository.configuration && !repository.suspended
 					&& !repository.diagnostics.length && (
