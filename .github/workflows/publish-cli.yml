@@ -53,7 +53,7 @@ jobs:
         run: bun src/tooling/cli/release.ts npm
         env:
           RELEASE_CONTEXT: ${{ steps.release.outputs.context }}
-          NPM_TOKEN: ${{ fromJSON(steps.credentials.outputs.values)['npm-token'] }}
+          NPM_TOKEN: ${{ fromJSON(steps.credentials.outputs.values || '{}')['npm-token'] }}
       - name: Publish JSR
         id: jsr
         if: ${{ !cancelled() && steps.metadata.outcome == 'success' }}
