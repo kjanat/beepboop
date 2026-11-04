@@ -3,6 +3,7 @@ import { defineConfig } from 'astro/config';
 
 export default defineConfig({
 	output: 'server',
+	compressHTML: true,
 	devToolbar: { enabled: false },
 	session: false,
 	server: { host: 'localhost', port: 4321 },

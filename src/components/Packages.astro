@@ -27,16 +27,24 @@ const subscribed = (destinationId: string, registry: string, name: string) =>
 		action="/api/packages/add"
 		class="form-row"
 	>
-		<label>Registry<select name="registry">
+		<label>
+			Registry
+			<select name="registry">
 				{watchedRegistries.map(registry => (
 					<option value={registry}>{destinationLabels[registry]}</option>
 				))}
-			</select></label><label>Package name<input
+			</select>
+		</label>
+		<label>
+			Package name
+			<input
 				name="name"
 				placeholder="@scope/package"
 				maxlength="214"
 				required
-			></label><button class="primary">Watch package</button>
+			>
+		</label>
+		<button class="primary">Watch package</button>
 	</form>
 </article>
 {!data.packages.length && (

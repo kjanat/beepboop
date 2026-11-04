@@ -61,11 +61,15 @@ function wingetDestination(repository: RepositoryRecord) {
 		action="/api/repositories/discover"
 		class="form-row"
 	>
-		<label>GitHub repository<input
+		<label>
+			GitHub repository
+			<input
 				name="repository"
 				placeholder="name, owner/name or GitHub URL"
 				required
-			></label><button class="primary">Inspect repository</button>
+			>
+		</label>
+		<button class="primary">Inspect repository</button>
 	</form>
 </article>
 {data.repositories.unreadable.map(row => (
@@ -81,27 +85,33 @@ function wingetDestination(repository: RepositoryRecord) {
 	<article id={`repository-${repository.id}`}>
 		<details open={repository.name === selected || repositories.length === 1}>
 			<summary class="section-heading">
-				<div>
-					<h2>
-						<a href={`https://github.com/${repository.name}`}>{repository.name}
-							↗</a>
-					</h2>
-					<p class="metadata metadata-fields">
-						<span>Inspected <Time value={repository.updatedAt} /></span><span
-						>Commit <a
-								href={`https://github.com/${repository.name}/commit/${repository.sha}`}
-							><code>{repository.sha.slice(0, 12)}</code></a></span>
-					</p>
-				</div>
+				<h2>{repository.name}</h2>
 				<Badge {...repositoryStatus(repository)} />
 			</summary>
+			<dl class="fields metadata">
+				<Field label="Repository">
+					<a href={`https://github.com/${repository.name}`}>Open on GitHub ↗</a>
+				</Field>
+				<Field label="Inspected"><Time value={repository.updatedAt} /></Field>
+				<Field label="Commit">
+					<a
+						href={`https://github.com/${repository.name}/commit/${repository.sha}`}
+					>
+						<code>{repository.sha.slice(0, 12)}</code>
+					</a>
+				</Field>
+			</dl>
 			{repository.diagnostics.map(message => <p class="notice">{message}</p>)}
 			{publishedOutsideRequired(repository).map(gap => (
-				<p class="notice">
-					Published but not required in <strong>{gap.stream}</strong>:{' '}
-					{gap.packages.map(packageLabel).join(', ')}. Edit release setup
-					proposes adding them.
-				</p>
+				<div class="notice">
+					<p>
+						Published but not required in <strong>{gap.stream}</strong>. Edit
+						release setup proposes adding them.
+					</p>
+					<ul class="inline-list">
+						{gap.packages.map(id => <li>{packageLabel(id)}</li>)}
+					</ul>
+				</div>
 			))}
 			<div class="actions">
 				<form
@@ -109,17 +119,13 @@ function wingetDestination(repository: RepositoryRecord) {
 					method="post"
 					action="/api/repositories/discover"
 				>
-					<input
-						type="hidden"
-						name="repository"
-						value={repository.name}
-					><button>
-						Refresh inspection
-					</button>
+					<input type="hidden" name="repository" value={repository.name}>
+					<button>Refresh inspection</button>
 				</form>
 				{data.onboarding.get(repository.id) && (
-					<a class="button" href={data.onboarding.get(repository.id)}
-					>Review setup PR ↗</a>
+					<a class="button" href={data.onboarding.get(repository.id)}>
+						Review setup PR ↗
+					</a>
 				)}
 				{repository.configuration && !repository.suspended
 					&& !repository.diagnostics.length && (
@@ -146,155 +152,182 @@ function wingetDestination(repository: RepositoryRecord) {
 			</form>
 			<div class="repository-grid">
 				<div>
-					<h3>
-						Release packages
-					</h3>{listsPackages(repository) ? (
-						<>
-							<table>
-								<thead>
+					<h3>Release packages</h3>
+					{listsPackages(repository) ? (
+						<table>
+							<thead>
+								<tr>
+									<th>Package</th>
+									<th>Destinations</th>
+									<th>In repository</th>
+								</tr>
+							</thead>
+							<tbody>
+								{repository.inventory.packages.filter(publishable).map(p => (
 									<tr>
-										<th>Package</th>
-										<th>Destinations</th>
-										<th>In repository</th>
-									</tr>
-								</thead>
-								<tbody>
-									{repository.inventory.packages.filter(publishable).map(p => (
-										<tr>
-											<td>
-												<span>{packageDisplayName(p)}</span><small><a
-														href={`https://github.com/${repository.name}/blob/${repository.sha}/${
-															p.manifest.split('/').map(encodeURIComponent).join('/')
-														}`}
-													>{p.manifest}</a></small>{p.previousModule && (
-													<small>Earlier module: {p.previousModule.name} —
-														{p.previousModule.version}</small>
-												)}
-											</td>
-											<td>
+										<td>
+											{packageDisplayName(p)}
+											<small>
+												<a
+													href={`https://github.com/${repository.name}/blob/${repository.sha}/${
+														p.manifest.split('/').map(encodeURIComponent).join('/')
+													}`}
+												>{p.manifest}</a>
+											</small>
+											{p.previousModule && (
+												<small>
+													Earlier module: {p.previousModule.name}
+													{p.previousModule.version}
+												</small>
+											)}
+										</td>
+										<td>
+											<ul class="destination-list">
 												{packageDestinations(p, repository.name).map(entry => (
-													<div>
+													<li>
 														{entry.href ? (
 															<a href={entry.href}>{entry.label}</a>
 														) : entry.label}: {entry.status}
-													</div>
+													</li>
 												))}
-											</td>
-											<td>
-												{p.version
-													?? (p.versionSource.startsWith('tags:')
-														? 'No matching release tag'
-														: 'No version found')}
-											</td>
-										</tr>
-									))}
-									{[wingetDestination(repository)].map(winget => winget && (
-										<tr>
-											<td>
-												<code
-												>{winget.packageIdentifier ?? 'WinGet manifest'}</code><small
-												><a
-														href={`https://github.com/${repository.name}/blob/${repository.sha}/${
-															winget.policy.config.split('/').map(encodeURIComponent).join('/')
-														}`}
-													>{winget.policy.config}</a></small>
-											</td>
-											<td>
-												<div>
-													{winget.entry.href ? (
-														<a href={winget.entry.href}>{winget.entry.label}</a>
-													) : winget.entry.label}: {winget.entry.status}
-												</div>
-											</td>
-											<td>
-												Release tags starting with <code
-												>{winget.policy.tagPrefix}</code>
-											</td>
-										</tr>
-									))}
-									{repositoryChannels(repository.inventory).map((
-										{ outcome, entry },
-									) => (
-										<tr>
-											<td>
-												<code>{outcome.name}</code><small><a
-														href={`https://github.com/${repository.name}/blob/${repository.sha}/${
-															outcome.manifest.split('/').map(encodeURIComponent).join('/')
-														}`}
-													>{outcome.manifest}</a></small>
-											</td>
-											<td>
-												<div>
-													<a href={entry.href}>{entry.label}</a>: {entry.status}
-												</div>
-											</td>
-											<td>
-												{outcome.state === 'tracking' ? 'Default branch' : 'Not linked to a package'}
-											</td>
-										</tr>
-									))}
-								</tbody>
-							</table>
-						</>
-					) : (
-						 <p>No publishable packages discovered.</p>
-					 )}{repository.inventory.packages.some(p => !publishable(p)) && (
-						<p class="metadata">
-							Excluded:{repository.inventory.packages.filter(p => !publishable(p)).map((
-								p,
-								index,
-							) => (
-								<span>{index ? ', ' : ' '}<a
-										href={`https://github.com/${repository.name}/blob/${repository.sha}/${
-											p.manifest.split('/').map(encodeURIComponent).join('/')
-										}`}
-									>{p.name}</a> ({exclusionLabel(p.publication)})</span>
-							))}
-						</p>
+											</ul>
+										</td>
+										<td>
+											{p.version
+												?? (p.versionSource.startsWith('tags:')
+													? 'No matching release tag'
+													: 'No version found')}
+										</td>
+									</tr>
+								))}
+								{[wingetDestination(repository)].map(winget => winget && (
+									<tr>
+										<td>
+											<code
+											>{winget.packageIdentifier ?? 'WinGet manifest'}</code>
+											<small>
+												<a
+													href={`https://github.com/${repository.name}/blob/${repository.sha}/${
+														winget.policy.config.split('/').map(encodeURIComponent).join('/')
+													}`}
+												>{winget.policy.config}</a>
+											</small>
+										</td>
+										<td>
+											{winget.entry.href ? (
+												<a href={winget.entry.href}>{winget.entry.label}</a>
+											) : winget.entry.label}: {winget.entry.status}
+										</td>
+										<td>
+											Release tags starting with <code
+											>{winget.policy.tagPrefix}</code>
+										</td>
+									</tr>
+								))}
+								{repositoryChannels(repository.inventory).map((
+									{ outcome, entry },
+								) => (
+									<tr>
+										<td>
+											<code>{outcome.name}</code>
+											<small>
+												<a
+													href={`https://github.com/${repository.name}/blob/${repository.sha}/${
+														outcome.manifest.split('/').map(encodeURIComponent).join('/')
+													}`}
+												>{outcome.manifest}</a>
+											</small>
+										</td>
+										<td>
+											<a href={entry.href}>{entry.label}</a>: {entry.status}
+										</td>
+										<td>
+											{outcome.state === 'tracking' ? 'Default branch' : 'Not linked to a package'}
+										</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					) : <p>No publishable packages discovered.</p>}
+					{repository.inventory.packages.some(p => !publishable(p)) && (
+						<div class="metadata">
+							<p>Excluded</p>
+							<ul class="inline-list">
+								{repository.inventory.packages.filter(p => !publishable(p)).map(p => (
+									<li>
+										<a
+											href={`https://github.com/${repository.name}/blob/${repository.sha}/${
+												p.manifest.split('/').map(encodeURIComponent).join('/')
+											}`}
+										>{p.name}</a>
+										({exclusionLabel(p.publication)})
+									</li>
+								))}
+							</ul>
+						</div>
 					)}
 				</div>
 				<div>
-					<h3>Release workflows</h3>{workflowChoices(repository).map(w => (
-						<p>
-							<strong>{w.stream} / {w.operation}</strong><small><a
-									href={`https://github.com/${repository.name}/blob/${repository.sha}/.github/workflows/${w.file}`}
-								>{w.file}</a></small><small>Ref: <code
-								>{w.ref}</code></small><small>
-								{w.mode === 'observe' ? 'Tracks existing triggers' : 'Can be dispatched'}</small>
-						</p>
-					))}{!workflowChoices(repository).length && (
-						<>
-							{repository.configuration && (
-								<p class="notice">No release workflows configured.</p>
-							)}
-							{repository.inventory.workflows.map(workflow => (
-								<p>
-									<strong><a
-											href={`https://github.com/${repository.name}/blob/${repository.sha}/.github/workflows/${workflow.file}`}
-										>{workflow.name || workflow.file}</a></strong><small
-									>{workflow.events.join(', ') || 'No supported triggers'}</small>
-								</p>
+					<h3>Release workflows</h3>
+					{workflowChoices(repository).length ? (
+						<ul class="workflow-list">
+							{workflowChoices(repository).map(w => (
+								<li>
+									<strong>{w.stream} / {w.operation}</strong>
+									<small>
+										<a
+											href={`https://github.com/${repository.name}/blob/${repository.sha}/.github/workflows/${w.file}`}
+										>{w.file}</a>
+									</small>
+									<small>Ref: <code>{w.ref}</code></small>
+									<small>
+										{w.mode === 'observe' ? 'Tracks existing triggers' : 'Can be dispatched'}
+									</small>
+								</li>
 							))}
-							{!repository.inventory.workflows.length && (
-								<p>No workflows discovered.</p>
-							)}
-						</>
-					)}
+						</ul>
+					) : (
+						 <>
+							 {repository.configuration && (
+								 <p class="notice">No release workflows configured.</p>
+							 )}
+							 {repository.inventory.workflows.length ? (
+								 <ul class="workflow-list">
+									 {repository.inventory.workflows.map(workflow => (
+										 <li>
+											 <strong>
+												 <a
+													 href={`https://github.com/${repository.name}/blob/${repository.sha}/.github/workflows/${workflow.file}`}
+												 >{workflow.name || workflow.file}</a>
+											 </strong>
+											 <small>
+												 {workflow.events.join(', ') || 'No supported triggers'}
+											 </small>
+										 </li>
+									 ))}
+								 </ul>
+							 ) : <p>No workflows discovered.</p>}
+						 </>
+					 )}
 				</div>
 			</div>
 			{repository.configuration && (
 				<details>
-					<summary>
-						Publications and automation
-					</summary>{Object.entries(repository.configuration.streams).map((
-						[name, stream],
-					) => (
-						<p>
-							<Field
-								label={name}
-							>{stream.required.map(packageLabel).join(', ') || 'No publications configured'}</Field>
-						</p>
-					))}{repository.configuration.subscriptions.map(s => (
+					<summary>Publications and automation</summary>
+					<dl class="fields">
+						{Object.entries(repository.configuration.streams).map((
+							[name, stream],
+						) => (
+							<Field label={name}>
+								{stream.required.length ? (
+									<ul class="inline-list">
+										{stream.required.map(id => <li>{packageLabel(id)}</li>)}
+									</ul>
+								) : 'No publications configured'}
+							</Field>
+						))}
+					</dl>
+					{repository.configuration.subscriptions.map(s => (
 						<p>
 							When {s.source} emits {s.event}, start {s.stream} / {s.operation}.
 						</p>

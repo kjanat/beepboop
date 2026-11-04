@@ -248,23 +248,25 @@ h3 {
 }
 .release-path {
 	display: flex;
+	list-style: none;
+	padding: 0;
 	border: 1px solid var(--line);
 	border-radius: 8px;
 	overflow: hidden;
 	background: var(--panel);
 	margin-bottom: 24px;
 }
-.release-path span {
+.release-path li {
 	flex: 1;
 	padding: 18px 20px;
 	position: relative;
 	font-size: 13px;
 	font-weight: 600;
 }
-.release-path :where(span + span) {
+.release-path :where(li + li) {
 	border-left: 1px solid var(--line);
 }
-.release-path span + span:before {
+.release-path li + li:before {
 	content: "→";
 	position: absolute;
 	left: -7px;
@@ -364,6 +366,12 @@ article {
 	font-size: 14px;
 	margin: 16px 0;
 }
+.notice > p {
+	margin-bottom: 0.5rem;
+}
+.notice > :last-child {
+	margin-bottom: 0;
+}
 .form-row, .selection {
 	display: flex;
 	align-items: end;
@@ -411,6 +419,7 @@ legend {
 	display: flex;
 	flex-direction: row;
 	align-items: center;
+	gap: 0.5rem;
 	margin-bottom: 0;
 }
 .actions {
@@ -593,7 +602,7 @@ dd {
 		flex-direction: column;
 		gap: 10px;
 	}
-	.release-path span {
+	.release-path li {
 		padding: 16px 12px;
 		font-size: 12px;
 	}
@@ -653,7 +662,7 @@ dd {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
 	}
-	.release-path span + span:before {
+	.release-path li + li:before {
 		display: none;
 	}
 	article {
@@ -709,11 +718,56 @@ dd {
 	overflow: auto;
 }
 
-.metadata-fields {
+.fields {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 0.35rem 1.25rem;
 	align-items: baseline;
+	margin: 0 0 16px;
+}
+.field {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.35em;
+	align-items: baseline;
+}
+.field dt {
+	color: var(--muted);
+}
+.field dd {
+	margin: 0;
+}
+.metadata-grid > .field {
+	display: block;
+}
+.inline-list {
+	list-style: none;
+	padding: 0;
+	margin: 0;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.25rem 0.75rem;
+}
+.destination-list, .workflow-list, .artifact-list, .session-list {
+	list-style: none;
+	padding: 0;
+	margin: 0;
+	display: grid;
+	gap: 0.75rem;
+}
+.artifact-list li {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	align-items: baseline;
+}
+.run-links {
+	list-style: none;
+	padding: 0;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+	margin: 18px 0;
 }
 .package-list, .publication-list {
 	list-style: none;
@@ -793,20 +847,8 @@ dd {
 .outage p, .outage ul {
 	margin: 4px 0;
 }
-.outage small {
-	margin-left: 8px;
-	color: var(--muted);
-}
-
-.field {
-	display: inline-flex;
+.outage-links {
+	display: flex;
 	flex-wrap: wrap;
-	gap: 0.35em;
-	align-items: baseline;
-}
-.field-label {
-	color: var(--muted);
-}
-h2 > .field {
-	margin-inline-start: 0.5em;
+	gap: 1rem;
 }

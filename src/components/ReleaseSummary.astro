@@ -1,5 +1,6 @@
 ---
 import Badge from '@/components/Badge.astro';
+import Field from '@/components/Field.astro';
 import { packageLabel } from '@/domain/package-label';
 import type { releaseSummaries } from '@/server/releases.ts';
 import {
@@ -24,13 +25,18 @@ const { releases } = Astro.props;
 			</div>
 			<Badge {...releaseStatus(release)} />
 		</div>
-		<p class="metadata">
-			Commit <a
-				href={`https://github.com/${release.repository}/commit/${release.commit}`}
-			><code>{release.commit.slice(0, 12)}</code></a>
-		</p>
+		<dl class="fields metadata">
+			<Field label="Commit">
+				<a
+					href={`https://github.com/${release.repository}/commit/${release.commit}`}
+				>
+					<code>{release.commit.slice(0, 12)}</code>
+				</a>
+			</Field>
+		</dl>
 		{release.publications.length ? (
-			<><p>
+			<>
+				<p>
 					<strong>{release.verified} of {release.publications.length}</strong>
 					required publications verified.
 				</p>
@@ -41,20 +47,23 @@ const { releases } = Astro.props;
 							<Badge tone={publicationTone[p.outcome]} label={p.outcome} />
 						</li>
 					))}
-				</ul></>
+				</ul>
+			</>
 		) : (
 			 <p class="hint">
 				 No required publications are configured for this stream. Workflow
 				 success alone does not establish release completeness.
 			 </p>
 		 )}
-		<div class="actions">
+		<ul class="run-links">
 			{release.runs.map(run => (
-				<a class="run-link" href={`/runs#${run.id}`}>
-					{run.operation}
-					<Badge tone={executionTone[run.state]} label={run.state} />
-				</a>
+				<li>
+					<a class="run-link" href={`/runs#${run.id}`}>
+						{run.operation}
+						<Badge tone={executionTone[run.state]} label={run.state} />
+					</a>
+				</li>
 			))}
-		</div>
+		</ul>
 	</article>
 ))}

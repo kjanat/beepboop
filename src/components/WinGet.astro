@@ -1,5 +1,6 @@
 ---
 import Badge from '@/components/Badge.astro';
+import Field from '@/components/Field.astro';
 import Time from '@/components/Time.astro';
 import type { ViewOf } from '@/server/loaders.ts';
 import { submissionTone } from '@/server/views/tone.ts';
@@ -38,16 +39,21 @@ const repositories = data.repositories.filter(repo =>
 				action="/api/winget/preview"
 			>
 				<div class="form-grid">
-					<label>Repository<select name="repositoryId" required>
-							<option value="">
-								Choose a repository
-							</option>{repositories.map(repo => (
+					<label>
+						Repository
+						<select name="repositoryId" required>
+							<option value="">Choose a repository</option>
+							{repositories.map(repo => (
 								<option value={repo.id}>{repo.name}</option>
 							))}
-						</select></label>
-					<label>Release<select name="releaseId" required disabled>
+						</select>
+					</label>
+					<label>
+						Release
+						<select name="releaseId" required disabled>
 							<option value="">Choose a repository first</option>
-						</select></label>
+						</select>
+					</label>
 				</div>
 				<button type="submit" value="preview">Preview manifests</button>
 				<button
@@ -62,9 +68,9 @@ const repositories = data.repositories.filter(repo =>
 			</form>
 		) : (
 			 <p>
-				 Add a <code>winget</code> section to your repository’s <code
-				 >.github/beepboop.json</code>, merge it, and refresh the repository to
-				 enable submissions.
+				 Add a <code>winget</code> section to your repository’s
+				 <code>.github/beepboop.json</code>, merge it, and refresh the
+				 repository to enable submissions.
 			 </p>
 		 )}
 		<details>
@@ -98,37 +104,21 @@ const repositories = data.repositories.filter(repo =>
 			 <article class="panel">
 				 <h3>{item.plan.packageIdentifier} {item.plan.version}</h3>
 				 <dl class="metadata-grid">
-					 <div>
-						 <dt>Repository</dt>
-						 <dd>{item.plan.repository}</dd>
-					 </div>
-					 <div>
-						 <dt>Tag</dt>
-						 <dd><code>{item.plan.tag}</code></dd>
-					 </div>
-					 <div>
-						 <dt>Status</dt>
-						 <dd>
-							 <Badge
-								 tone={submissionTone[item.state]}
-								 label={submissionLabels[item.state]}
-							 />
-						 </dd>
-					 </div>
-					 <div>
-						 <dt>Updated</dt>
-						 <dd><Time value={item.updatedAt} /></dd>
-					 </div>
-					 {item.checks && (
-						 <div>
-							 <dt>Validation</dt>
-							 <dd>{item.checks}</dd>
-						 </div>
-					 )}
+					 <Field label="Repository">{item.plan.repository}</Field>
+					 <Field label="Tag"><code>{item.plan.tag}</code></Field>
+					 <Field label="Status">
+						 <Badge
+							 tone={submissionTone[item.state]}
+							 label={submissionLabels[item.state]}
+						 />
+					 </Field>
+					 <Field label="Updated"><Time value={item.updatedAt} /></Field>
+					 {item.checks && <Field label="Validation">{item.checks}</Field>}
 				 </dl>
 				 {item.url && (
-					 <a href={item.url} target="_blank" rel="noreferrer">Open submission
-						 #{item.number}</a>
+					 <a href={item.url} target="_blank" rel="noreferrer">
+						 Open submission #{item.number}
+					 </a>
 				 )}
 				 {item.reviews && <p>{item.reviews}</p>}
 				 {item.reason && <p class="hint">{item.reason}</p>}
@@ -142,15 +132,10 @@ const repositories = data.repositories.filter(repo =>
 							 type="hidden"
 							 name="repositoryId"
 							 value={item.plan.repositoryId}
-						 ><input
-							 type="hidden"
-							 name="releaseId"
-							 value={item.plan.releaseId}
-						 ><input
-							 type="hidden"
-							 name="digest"
-							 value={item.plan.digest}
-						 ><button disabled={!data.ready}>Retry submission</button>
+						 >
+						 <input type="hidden" name="releaseId" value={item.plan.releaseId}>
+						 <input type="hidden" name="digest" value={item.plan.digest}>
+						 <button disabled={!data.ready}>Retry submission</button>
 					 </form>
 				 )}
 				 <details>
@@ -158,8 +143,11 @@ const repositories = data.repositories.filter(repo =>
 					 <p>
 						 <a
 							 href={`https://github.com/${item.plan.repository}/commit/${item.plan.sourceSha}`}
-						 ><code>{item.plan.sourceSha}</code></a>
-					 </p>{Object.entries(item.plan.files).map(([path, content]) => (
+						 >
+							 <code>{item.plan.sourceSha}</code>
+						 </a>
+					 </p>
+					 {Object.entries(item.plan.files).map(([path, content]) => (
 						 <details>
 							 <summary>{path}</summary>
 							 <pre>{content}</pre>

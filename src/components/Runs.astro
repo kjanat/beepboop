@@ -52,11 +52,15 @@ const refTag = (run: Execution, version: string): string => {
 			{release.complete} of {release.total} operations complete. Each package
 			group keeps its own version.
 		</p>
-		<p>
-			Source <a
-				href={`https://github.com/${release.repository}/commit/${release.sourceSha}`}
-			><code>{release.sourceSha.slice(0, 12)}</code></a>
-		</p>
+		<dl class="fields metadata">
+			<Field label="Source">
+				<a
+					href={`https://github.com/${release.repository}/commit/${release.sourceSha}`}
+				>
+					<code>{release.sourceSha.slice(0, 12)}</code>
+				</a>
+			</Field>
+		</dl>
 		<div class="table-scroll">
 			<table>
 				<thead>
@@ -73,9 +77,8 @@ const refTag = (run: Execution, version: string): string => {
 							<td>{run.releaseSet?.group}</td>
 							<td>{run.version}</td>
 							<td>
-								<a href={`#${run.id}`}>{run.operation}</a>{run.package && (
-									<small><code>{run.package.id}</code></small>
-								)}
+								<a href={`#${run.id}`}>{run.operation}</a>
+								{run.package && <small><code>{run.package.id}</code></small>}
 							</td>
 							<td>{progress(run)}</td>
 						</tr>
@@ -97,7 +100,9 @@ const refTag = (run: Execution, version: string): string => {
 		)}
 		<details>
 			<summary>Coordination details</summary>
-			<p>Cloudflare Workflow: <code>{release.id}</code></p>
+			<dl class="fields">
+				<Field label="Cloudflare Workflow"><code>{release.id}</code></Field>
+			</dl>
 		</details>
 	</article>
 ))}
@@ -119,7 +124,8 @@ const refTag = (run: Execution, version: string): string => {
 		<p>
 			Prepare a release or connect an existing publishing workflow to start
 			tracking its results.
-		</p><a href="/releases">Prepare a release →</a>
+		</p>
+		<a href="/releases">Prepare a release →</a>
 	</article>
 )}
 {executions.map(run => {
@@ -142,12 +148,7 @@ const refTag = (run: Execution, version: string): string => {
 			 <div>
 				 <p class="eyebrow">{run.repository} / {run.stream}</p>
 				 <h2>
-					 {run.version ? `Version ${run.version}` : 'Workflow operation'}<Field
-						 class="muted"
-						 label="Operation"
-					 >{run.operation}{run.package && (
-						 <Field label="for">{packageLabel(run.package.id)}</Field>
-					 )}</Field>
+					 {run.version ? `Version ${run.version}` : 'Workflow operation'}
 				 </h2>
 			 </div>
 			 <Badge tone={executionTone[run.state]} label={run.state} />
@@ -170,18 +171,27 @@ const refTag = (run: Execution, version: string): string => {
 				 limit.
 			 </p>
 		 )}
-		 <p class="metadata metadata-fields">
-			 <Field label="Commit"><a
+		 <dl class="fields metadata">
+			 <Field label="Operation">{run.operation}</Field>
+			 {run.package && (
+				 <Field label="Package">{packageLabel(run.package.id)}</Field>
+			 )}
+			 <Field label="Commit">
+				 <a
 					 href={`https://github.com/${run.repository}/commit/${run.sourceSha}`}
-				 ><code>{run.sourceSha.slice(0, 12)}</code></a></Field><Field
-				 label="Updated"
-			 ><Time value={run.updatedAt} /></Field> {run.runId && (
-				 <>
+				 >
+					 <code>{run.sourceSha.slice(0, 12)}</code>
+				 </a>
+			 </Field>
+			 <Field label="Updated"><Time value={run.updatedAt} /></Field>
+			 {run.runId && (
+				 <Field label="Workflow run">
 					 <a
 						 href={`https://github.com/${run.repository}/actions/runs/${run.runId}`}
-					 >Open GitHub run ↗</a></>
+					 >Open on GitHub ↗</a>
+				 </Field>
 			 )}
-		 </p>
+		 </dl>
 		 {preparation?.url.startsWith('https://github.com/') && (
 			 <a class="button" href={preparation.url}>Review preparation PR ↗</a>
 		 )}
@@ -199,10 +209,10 @@ const refTag = (run: Execution, version: string): string => {
 						 {run.publications.map(p => (
 							 <tr>
 								 <td>
-									 <span>{p.id.startsWith('refs:')
+									 {p.id.startsWith('refs:')
 									 	? `tag ${refTag(run, p.version)}`
-									 	: packageDisplayName(p)}</span><small>
-										 {p.required ? 'required' : 'optional'}</small>
+									 	: packageDisplayName(p)}
+									 <small>{p.required ? 'required' : 'optional'}</small>
 								 </td>
 								 <td>{p.version}</td>
 								 <td>
@@ -215,13 +225,13 @@ const refTag = (run: Execution, version: string): string => {
 			 </div>
 		 )}
 		 {!!missing.length && !approving && run.operation !== 'prepare'
-		 	&& run.state !== 'cancelled'
-		 	&& (
-				<p class="notice">
-					<Field
-						label="Still to publish"
-					>{missing.map(packageLabel).join(', ')}</Field>
-				</p>
+		 	&& run.state !== 'cancelled' && (
+				<div class="notice">
+					<p>Still to publish</p>
+					<ul class="inline-list">
+						{missing.map(id => <li>{packageLabel(id)}</li>)}
+					</ul>
+				</div>
 			)}
 		 {approving && (
 			 <form
@@ -230,14 +240,16 @@ const refTag = (run: Execution, version: string): string => {
 				 action="/api/executions/approve"
 				 data-automatic={automatic ? 'true' : undefined}
 			 >
-				 <input type="hidden" name="id" value={run.id}><input
-					 type="hidden"
-					 name="sourceSha"
-					 value={run.sourceSha}
-				 ><input type="hidden" name="force" value="false"><p>
-					 {automatic ? 'Checks on commit ' : 'Approve publishing from commit '}<a
+				 <input type="hidden" name="id" value={run.id}>
+				 <input type="hidden" name="sourceSha" value={run.sourceSha}>
+				 <input type="hidden" name="force" value="false">
+				 <p>
+					 {automatic ? 'Checks on commit' : 'Approve publishing from commit'}
+					 <a
 						 href={`https://github.com/${run.repository}/commit/${run.sourceSha}`}
-					 ><code>{run.sourceSha}</code></a>
+					 >
+						 <code>{run.sourceSha}</code>
+					 </a>
 				 </p>
 				 <ul class="approval-status" aria-live="polite">
 					 <li>Checking the commit signature and checks…</li>
@@ -254,11 +266,9 @@ const refTag = (run: Execution, version: string): string => {
 					method="post"
 					action="/api/executions/recover"
 				>
-					<input type="hidden" name="id" value={run.id}><input
-						type="hidden"
-						name="action"
-						value="retry"
-					><button>Retry</button>
+					<input type="hidden" name="id" value={run.id}>
+					<input type="hidden" name="action" value="retry">
+					<button>Retry</button>
 				</form>
 			)}
 		 {run.state === 'uncertain' && (
@@ -267,11 +277,9 @@ const refTag = (run: Execution, version: string): string => {
 				 method="post"
 				 action="/api/executions/recover"
 			 >
-				 <input type="hidden" name="id" value={run.id}><input
-					 type="hidden"
-					 name="action"
-					 value="reconcile"
-				 ><p>
+				 <input type="hidden" name="id" value={run.id}>
+				 <input type="hidden" name="action" value="reconcile">
+				 <p>
 					 Check whether GitHub accepted the earlier request before attempting
 					 another dispatch.
 				 </p>
@@ -280,7 +288,8 @@ const refTag = (run: Execution, version: string): string => {
 		 )}
 		 {!['succeeded', 'cancelled', 'failed'].includes(run.state) && (
 			 <form data-action="cancel" method="post" action="/api/executions/cancel">
-				 <input type="hidden" name="id" value={run.id}><button>Cancel</button>
+				 <input type="hidden" name="id" value={run.id}>
+				 <button>Cancel</button>
 			 </form>
 		 )}
 		 <details>
@@ -290,7 +299,9 @@ const refTag = (run: Execution, version: string): string => {
 				 <dd>
 					 <a
 						 href={`https://github.com/${run.repository}/commit/${run.configurationSha}`}
-					 ><code>{run.configurationSha}</code></a>
+					 >
+						 <code>{run.configurationSha}</code>
+					 </a>
 				 </dd>
 				 <dt>Workflow commit</dt>
 				 <dd>
@@ -298,13 +309,25 @@ const refTag = (run: Execution, version: string): string => {
 					 	? (
 							<a
 								href={`https://github.com/${run.repository}/commit/${run.workflowSha}`}
-							><code>{run.workflowSha}</code></a>
+							>
+								<code>{run.workflowSha}</code>
+							</a>
 						)
 					 	: 'Not dispatched yet'}
 				 </dd>
 				 <dt>Run attempt</dt>
 				 <dd>{run.runAttempt ?? 'Not started'}</dd>
-			 </dl>{run.artifacts.map(a => <p>{a.name} <code>{a.digest}</code></p>)}
+			 </dl>
+			 {!!run.artifacts.length && (
+				 <ul class="artifact-list">
+					 {run.artifacts.map(a => (
+						 <li>
+							 {a.name}
+							 <code>{a.digest}</code>
+						 </li>
+					 ))}
+				 </ul>
+			 )}
 		 </details>
 	 </article>
  );

@@ -10,17 +10,25 @@ const { attention, running, setup, unconnected, releases } = overview(
 	Astro.props.data,
 );
 ---
-<div class="release-path" aria-label="Release process">
-	<span>Prepare changes</span><span>Review & merge</span><span>Approve
-		commit</span><span>Verify publications</span>
-</div>
+<ol class="release-path" aria-label="Release process">
+	<li>Prepare changes</li>
+	<li>Review & merge</li>
+	<li>Approve commit</li>
+	<li>Verify publications</li>
+</ol>
 <div class="overview-grid">
-	<a class="metric" href="/runs"><strong>{attention}</strong><span>runs need
-			attention</span></a>
-	<a class="metric" href="/runs"><strong>{running}</strong><span>runs in
-			progress</span></a>
-	<a class="metric" href="/repositories"><strong>{setup}</strong><span
-		>repositories need setup</span></a>
+	<a class="metric" href="/runs">
+		<strong>{attention}</strong>
+		<span>runs need attention</span>
+	</a>
+	<a class="metric" href="/runs">
+		<strong>{running}</strong>
+		<span>runs in progress</span>
+	</a>
+	<a class="metric" href="/repositories">
+		<strong>{setup}</strong>
+		<span>repositories need setup</span>
+	</a>
 </div>
 {unconnected ? (
 	<article class="empty">
@@ -29,15 +37,14 @@ const { attention, running, setup, unconnected, releases } = overview(
 			Install the Beepboop GitHub App on your repository, then inspect it. You
 			will review the packages and release workflows before opening its setup
 			pull request.
-		</p><a class="button primary" href="/repositories">Connect a repository</a>
+		</p>
+		<a class="button primary" href="/repositories">Connect a repository</a>
 	</article>
 ) : (
 	 <>
 		 <div class="section-heading">
-			 <h2>{attention ? 'Needs your attention' : 'Recent releases'}</h2><a
-				 class="button primary"
-				 href="/releases"
-			 >Prepare a release</a>
+			 <h2>{attention ? 'Needs your attention' : 'Recent releases'}</h2>
+			 <a class="button primary" href="/releases">Prepare a release</a>
 		 </div>
 		 <ReleaseSummary releases={releases} />
 	 </>

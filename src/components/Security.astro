@@ -25,11 +25,11 @@ const { data } = Astro.props;
 		data-first={String(!data.keys.length)}
 		class="form-row"
 	>
-		<label>Key name<input
-				name="label"
-				placeholder="Primary YubiKey"
-				required
-			></label><button class="primary">Enroll security key</button>
+		<label>
+			Key name
+			<input name="label" placeholder="Primary YubiKey" required>
+		</label>
+		<button class="primary">Enroll security key</button>
 	</form>
 </article>
 {data.keys.map(key => (
@@ -41,15 +41,15 @@ const { data } = Astro.props;
 					? 'Keep this key: at least one must remain enrolled.'
 					: 'Available to authorize secret and access changes.'}
 			</p>
-		</div>{data.keys.length > 1 && (
+		</div>
+		{data.keys.length > 1 && (
 			<form
 				data-action="key-remove"
 				method="post"
 				action="/api/authenticators/remove"
 			>
-				<input type="hidden" name="id" value={key.id}><button class="danger">
-					Remove key
-				</button>
+				<input type="hidden" name="id" value={key.id}>
+				<button class="danger">Remove key</button>
 			</form>
 		)}
 	</article>
@@ -69,21 +69,20 @@ const { data } = Astro.props;
 	</div>
 	<p>Each login lasts until it is revoked here or with beepboop auth logout.</p>
 	{data.cliSessions.length ? (
-		<ul>
+		<ul class="session-list">
 			{data.cliSessions.map(session => (
 				<li class="section-heading">
-					<span>Signed in <Time value={session.created_at} /> <code
-						>{session.id.slice(0, 12)}</code></span>
+					<span>
+						Signed in <Time value={session.created_at} />
+						<code>{session.id.slice(0, 12)}</code>
+					</span>
 					<form
 						data-action="cli-revoke"
 						method="post"
 						action="/api/cli-sessions/revoke"
 					>
-						<input
-							type="hidden"
-							name="id"
-							value={session.id}
-						><button class="danger">Revoke</button>
+						<input type="hidden" name="id" value={session.id}>
+						<button class="danger">Revoke</button>
 					</form>
 				</li>
 			))}

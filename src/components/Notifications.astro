@@ -1,5 +1,6 @@
 ---
 import Badge from '@/components/Badge.astro';
+import Field from '@/components/Field.astro';
 import Time from '@/components/Time.astro';
 import { notificationKindLabels, notificationKinds } from '@/contract/catalog';
 import { registryPackageLabel } from '@/domain/package-label';
@@ -15,8 +16,8 @@ const destinationName = (id: string) =>
 ---
 {!data.keys.length && (
 	<p class="notice">
-		Before adding a destination, <a href="/security"
-		>enroll your first security key</a>.
+		Before adding a destination,
+		<a href="/security">enroll your first security key</a>.
 	</p>
 )}
 {!data.secrets.length && (
@@ -33,31 +34,37 @@ const destinationName = (id: string) =>
 		action="/api/notifications/save"
 	>
 		<div class="form-grid">
-			<label>Name<input
+			<label>
+				Name
+				<input
 					name="name"
 					placeholder="Slack #releases"
 					maxlength="80"
 					required
-				></label><label>Type<select name="kind">
+				>
+			</label>
+			<label>
+				Type
+				<select name="kind">
 					{notificationKinds.map(kind => (
 						<option value={kind}>{notificationKindLabels[kind]}</option>
 					))}
-				</select></label><label>Webhook URL secret<select
-					name="credential"
-					required
-				>
+				</select>
+			</label>
+			<label>
+				Webhook URL secret
+				<select name="credential" required>
 					<option value="">Choose a secret</option>
 					{data.secrets.map(secret => (
 						<option value={secret.alias}>{secret.alias}</option>
 					))}
-				</select></label>
+				</select>
+			</label>
 		</div>
-		<label class="check"><input
-				type="checkbox"
-				name="subscribeNew"
-				value="true"
-				checked
-			> Notify about newly watched packages</label>
+		<label class="check">
+			<input type="checkbox" name="subscribeNew" value="true" checked>
+			Notify about newly watched packages
+		</label>
 		<input type="hidden" name="enabled" value="true">
 		<button
 			class="primary"
@@ -76,11 +83,13 @@ const destinationName = (id: string) =>
 		 <div class="section-heading">
 			 <div>
 				 <h2>{destination.name}</h2>
-				 <p class="metadata metadata-fields">
-					 <span>{notificationKindLabels[destination.kind]}</span><span>Secret
-						 <code>{destination.credential}</code></span><span>{count}
-						 packages</span>
-				 </p>
+				 <dl class="fields metadata">
+					 <Field
+						 label="Type"
+					 >{notificationKindLabels[destination.kind]}</Field>
+					 <Field label="Secret"><code>{destination.credential}</code></Field>
+					 <Field label="Packages">{count}</Field>
+				 </dl>
 			 </div>
 			 <Badge {...destinationStatus(destination.enabled)} />
 		 </div>
@@ -93,21 +102,28 @@ const destinationName = (id: string) =>
 			 >
 				 <input type="hidden" name="id" value={destination.id}>
 				 <div class="form-grid">
-					 <label>Name<input
+					 <label>
+						 Name
+						 <input
 							 name="name"
 							 value={destination.name}
 							 maxlength="80"
 							 required
-						 ></label><label>Type<select name="kind">
+						 >
+					 </label>
+					 <label>
+						 Type
+						 <select name="kind">
 							 {notificationKinds.map(kind => (
 								 <option value={kind} selected={destination.kind === kind}>
 									 {notificationKindLabels[kind]}
 								 </option>
 							 ))}
-						 </select></label><label>Webhook URL secret<select
-							 name="credential"
-							 required
-						 >
+						 </select>
+					 </label>
+					 <label>
+						 Webhook URL secret
+						 <select name="credential" required>
 							 {data.secrets.map(secret => (
 								 <option
 									 value={secret.alias}
@@ -116,20 +132,27 @@ const destinationName = (id: string) =>
 									 {secret.alias}
 								 </option>
 							 ))}
-						 </select></label>
+						 </select>
+					 </label>
 				 </div>
-				 <label class="check"><input
+				 <label class="check">
+					 <input
 						 type="checkbox"
 						 name="subscribeNew"
 						 value="true"
 						 checked={destination.subscribeNew}
-					 > Notify about newly watched packages</label>
-				 <label class="check"><input
+					 >
+					 Notify about newly watched packages
+				 </label>
+				 <label class="check">
+					 <input
 						 type="checkbox"
 						 name="enabled"
 						 value="true"
 						 checked={destination.enabled}
-					 > Enabled</label>
+					 >
+					 Enabled
+				 </label>
 				 <button class="primary">Save destination</button>
 			 </form>
 		 </details>
@@ -138,13 +161,8 @@ const destinationName = (id: string) =>
 			 method="post"
 			 action="/api/notifications/remove"
 		 >
-			 <input
-				 type="hidden"
-				 name="id"
-				 value={destination.id}
-			 ><button class="danger">
-				 Remove destination
-			 </button>
+			 <input type="hidden" name="id" value={destination.id}>
+			 <button class="danger">Remove destination</button>
 		 </form>
 	 </article>
  );
@@ -179,12 +197,12 @@ const destinationName = (id: string) =>
 					</td>
 					<td>{destinationName(delivery.destinationId)}</td>
 					<td>
-						<Badge {...deliveryStatus(delivery)} />{delivery.error && (
-							<span class="hint"> {delivery.error}</span>
-						)}
+						<Badge {...deliveryStatus(delivery)} />
+						{delivery.error && <small>{delivery.error}</small>}
 					</td>
 				</tr>
-			))}{!data.notifications.length && (
+			))}
+			{!data.notifications.length && (
 				<tr>
 					<td colspan="5">
 						No notifications yet. They appear here when a watched package

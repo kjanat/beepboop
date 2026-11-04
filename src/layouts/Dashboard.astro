@@ -57,7 +57,8 @@ const { title, description } = sectionPages[section];
 				))}
 			</nav>
 			<div class="sidebar-bottom">
-				<p>Repository-owned releases.<br>One place to follow them.</p>
+				<p>Repository-owned releases.</p>
+				<p>One place to follow them.</p>
 				<form action="/auth/logout" method="post">
 					<button class="quiet">Sign out</button>
 				</form>
@@ -80,16 +81,19 @@ const { title, description } = sectionPages[section];
 						</ul>
 					)}
 					{outage.components.length > 0 && (
-						<p>
-							<Field
-								label="Affected"
-							>{outage.components.map(component => `${component.name} (${component.status})`)
-								.join(', ')}</Field>
-						</p>
+						<dl class="fields">
+							<Field label="Affected">
+								<ul class="inline-list">
+									{outage.components.map(component => (
+										<li>{component.name} ({component.status})</li>
+									))}
+								</ul>
+							</Field>
+						</dl>
 					)}
-					<p>
-						<a href={outage.page}>Live status</a> <small><a href={outage.source}
-							>githubstatus.com</a></small>
+					<p class="outage-links">
+						<a href={outage.page}>Live status</a>
+						<a href={outage.source}>githubstatus.com</a>
 					</p>
 				</section>
 			)}
@@ -98,7 +102,8 @@ const { title, description } = sectionPages[section];
 					<p class="eyebrow">Release automation</p>
 					<h1>{title}</h1>
 					<p class="lede">{description}</p>
-				</div><a class="quiet button" href={Astro.url.pathname}>Refresh</a>
+				</div>
+				<a class="quiet button" href={Astro.url.pathname}>Refresh</a>
 			</header>
 			<output
 				id="feedback"
