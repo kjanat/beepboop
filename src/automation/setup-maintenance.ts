@@ -73,19 +73,8 @@ export async function maintainSetup(
 			prior: { url: pull.url, content: typeof saved.content === 'string' ? saved.content : undefined },
 		}, resolved.configuration);
 		const fingerprint = await credentialHash(JSON.stringify({ plan, head: pull.head }));
-		const unboxed = saved.options === undefined;
-		const addBoxes = async () => {
-			if (!unboxed) return {};
-			await gateway.refreshPullRequest(
-				snapshot,
-				'automation/onboarding',
-				'chore: configure release automation',
-				setupBody(plan),
-				pull.head,
-			);
-			return { options: setupOptions(plan) };
-		};
-		if (saved.maintenanceFingerprint === fingerprint && !unboxed) return;
+		if (!requested && saved.maintenanceFingerprint === fingerprint && saved.options !== undefined) return;
+		const applied = { choices: plan.choices, options: setupOptions(plan) };
 		if (plan.blockers.length || !plan.edits.length) {
 			await gateway.setupStatus(
 				name,
@@ -96,15 +85,15 @@ export async function maintainSetup(
 						? `Automatic update needs attention:\n${plan.blockers.map(message => `- ${message}`).join('\n')}`
 						: 'The default branch already matches the proposed setup.'
 				}`,
+				setupBody(plan),
 			);
-			await save({ ...saved, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha, ...await addBoxes() });
+			await save({ ...saved, ...applied, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha });
 			return;
 		}
 		// Even an unchanged source may need a newer generator's output. An identical proposal needs no commit.
 		if (saved.sourceSha === snapshot.sha && sameEdits(previous, plan.edits)) {
-			const boxes = await addBoxes();
-			await gateway.setupStatus(name, id, pull.number, `${summary}\n\nThe proposal is up to date.`);
-			await save({ ...saved, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha, ...boxes });
+			await gateway.setupStatus(name, id, pull.number, `${summary}\n\nThe proposal is up to date.`, setupBody(plan));
+			await save({ ...saved, ...applied, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha });
 			return;
 		}
 		const result = await gateway.pullRequest(

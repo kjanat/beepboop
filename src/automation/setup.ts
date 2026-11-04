@@ -379,45 +379,40 @@ const triggerLabels: Record<TriggerHandover, string> = {
 };
 export function setupBody(plan: SetupPlan): string {
 	const options = setupOptions(plan);
-	const box = (option: SetupOption, label: string) =>
-		`    - [${selected(option, plan.choices) ? 'x' : ' '}] <!-- beepboop:choice:${optionId(option)} --> ${label}`;
-	const group = (title: string, rows: string[]) => rows.length ? [`  - ${title}`, ...rows] : [];
+	const box = (indent: string, option: SetupOption, label: string) =>
+		`${indent}- [${selected(option, plan.choices) ? 'x' : ' '}] <!-- beepboop:choice:${optionId(option)} --> ${label}`;
+	const workflow = (binding: SetupWorkflow | undefined) =>
+		binding
+			? `\`${binding.file}\`${binding.job ? ` (job \`${binding.job}\`)` : ''}, ${triggerLabels[binding.triggers]}`
+			: 'none';
 	return `Configure releases from inspected commit [${plan.sourceSha}](https://github.com/${plan.repository}/commit/${plan.sourceSha}).\n\n`
-		+ 'Tick or untick the boxes to change this proposal. Beepboop rebuilds it 5 seconds after the last edit.\n\n'
+		+ "Tick or untick packages to change this proposal. A package's required publication counts only while the package is ticked. Beepboop rebuilds the proposal 5 seconds after the last edit.\n\n"
 		+ plan.choices.streams.map(stream => {
-			const own = options.filter(option => option.stream === stream.name);
-			const packages = (kind: 'package' | 'required') =>
-				own.flatMap(option =>
-					option.kind === kind && (option.kind === 'package' || option.kind === 'required')
-						? [box(option, `\`${packageLabel(option.package)}\``)]
-						: []
-				);
-			const workflows = (operation: Operation) =>
-				own.flatMap(option =>
-					option.kind === 'workflow' && option.operation === operation
-						? [box(option, `\`${option.file}\`${option.job ? ` (job \`${option.job}\`)` : ''}`)]
-						: []
-				);
-			const handovers = (operation: Operation) =>
-				own.flatMap(option =>
-					option.kind === 'triggers' && option.operation === operation
-						? [box(option, triggerLabels[option.value])]
-						: []
-				);
+			const packages = options.flatMap(option =>
+				option.kind === 'package' && option.stream === stream.name
+					? [
+						box('    ', option, `\`${packageLabel(option.package)}\``),
+						...(stream.packages.includes(option.package)
+							? [
+								box(
+									'      ',
+									{ kind: 'required', stream: stream.name, package: option.package },
+									'Required publication',
+								),
+							]
+							: []),
+					]
+					: []
+			);
 			return [
-				`- **${stream.name}** (${stream.versioning}); approval required.`,
-				...group('Packages', packages('package')),
-				...group('Required publications', packages('required')),
-				...group('Preparation workflow', workflows('prepare')),
-				...group('Publication workflow', workflows('promote')),
-				...group(
-					'Versioning',
-					own.flatMap(option => option.kind === 'versioning' ? [box(option, versioningLabels[option.value])] : []),
-				),
-				...group('Preparation triggers', handovers('prepare')),
-				...group('Publication triggers', handovers('promote')),
+				`- **${stream.name}**; approval required.`,
+				...(packages.length ? ['  - Packages', ...packages] : []),
+				`  - Versioning: ${versioningLabels[stream.versioning]}`,
+				`  - Preparation: ${workflow(stream.prepare)}`,
+				`  - Publication: ${workflow(stream.promote)}`,
 			].join('\n');
 		}).join('\n')
-		+ '\n\n' + plan.notes.map(note => `- ${note}`).join('\n')
+		+ '\n\nChange versioning, workflows and triggers in Beepboop under Repositories, Edit release setup.'
+		+ (plan.notes.length ? `\n\n${plan.notes.map(note => `- ${note}`).join('\n')}` : '')
 		+ '\n\nBeepboop keeps this proposal current when the default branch changes. Review all file changes before merging. Preparation and publication remain separate explicit operations.\n';
 }

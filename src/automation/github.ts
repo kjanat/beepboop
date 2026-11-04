@@ -523,7 +523,7 @@ export class RepositoryGateway {
 		};
 	}
 	/** Update only the bot's status section, including when a human changed the proposal branch. */
-	async setupStatus(name: string, id: number, number: number, status: string): Promise<void> {
+	async setupStatus(name: string, id: number, number: number, status: string, proposal?: string): Promise<void> {
 		const token = await this.token(name, id, { pull_requests: 'write' });
 		const pull = record(await this.call(`/repos/${name}/pulls/${number}`, token));
 		if (
@@ -534,7 +534,9 @@ export class RepositoryGateway {
 		const current = typeof pull.body === 'string' ? pull.body : '';
 		const section = `${start}\n${status}\n${end}`;
 		const from = current.indexOf(start), to = current.indexOf(end, from);
-		const body = from >= 0 && to >= from
+		const body = proposal !== undefined
+			? `${proposal}\n\n${section}`
+			: from >= 0 && to >= from
 			? current.slice(0, from) + section + current.slice(to + end.length)
 			: `${current}\n\n${section}`;
 		if (body !== current) await this.call(`/repos/${name}/pulls/${number}`, token, 'PATCH', { body });
