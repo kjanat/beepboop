@@ -1,7 +1,7 @@
 {
 	"name": "@kjanat/beepboop",
 	"version": "0.0.0",
-	"license": "UNLICENSED",
+	"license": "LicenseRef-Proprietary",
 	"exports": "./mod.ts",
 	"publish": {
 		"include": [
