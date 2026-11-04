@@ -91,7 +91,7 @@ const stream: z.ZodType<Stream> = z.object({
 		version: z.literal('manual'),
 		workflow: workflowBinding.optional(),
 	}),
-	promote: z.object({ approval: z.literal('required'), workflow: workflowBinding.optional() }),
+	promote: z.object({ approval: z.enum(['required', 'push']), workflow: workflowBinding.optional() }),
 	workflows: z.record(z.string(), workflowBinding),
 	required: strings,
 	credentials: strings,

@@ -116,7 +116,9 @@ const progress = (run: Execution): string => {
 			 	|| (run.state === 'succeeded'
 			 		? 'This operation completed.'
 			 		: run.state === 'blocked' && run.operation === 'promote'
-			 		? 'Waiting for your approval.'
+			 		? run.configuration.streams[run.stream]?.promote.approval === 'push'
+			 			? 'Releases when the commit is verified and its checks pass.'
+			 			: 'Waiting for your approval.'
 			 		: 'Follow the workflow and publication results below.')}
 		 </p>
 		 {until && (

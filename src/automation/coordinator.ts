@@ -759,6 +759,29 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 		}
 	}
+	private async approveFromPush(execution: Execution, executions: Execution[]): Promise<boolean> {
+		const newer = executions.find(other =>
+			other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
+			&& other.version === execution.version && other.createdAt > execution.createdAt
+			&& !['succeeded', 'cancelled', 'failed'].includes(other.state)
+		);
+		if (newer) {
+			await this.put({ ...execution, state: 'cancelled', reason: `Superseded by ${newer.id}` });
+			return true;
+		}
+		const problems = await this.approvalProblems(execution);
+		if (problems.length) {
+			const reason = `Releases when the commit is verified and its checks pass: ${problems.join('; ')}`;
+			if (execution.reason !== reason) await this.put({ ...execution, reason });
+			return false;
+		}
+		await this.store().audit('beepboop', 'promotion.approve', `${execution.id}:${execution.sourceSha}:push`);
+		const next: Execution = { ...execution, state: 'ready' };
+		delete next.reason;
+		await this.supersedeVersion(next);
+		await this.put(next);
+		return true;
+	}
 	async approve(id: string, commitSha: string, actor: string): Promise<Execution> {
 		return this.serial(async () => {
 			const execution = await this.get(id);
@@ -840,18 +863,46 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (execution.artifacts.some((a) => Date.parse(a.expiresAt) <= Date.now())) {
 					throw new Error('Artifacts expired; use the configured preparation/recovery producer');
 				}
-				await this.put({
-					...execution,
-					state: 'ready',
-					supersededRuns: [...(execution.supersededRuns ?? []), ...(execution.runId ? [execution.runId] : [])],
-					runId: undefined,
-					runAttempt: undefined,
-					workflowSha: undefined,
-					reason: `Retry requested; dispatching a new run from ${execution.workflow?.ref ?? 'the workflow ref'}`,
-					publications: execution.publications.map(publication =>
-						publication.outcome === 'succeeded' ? publication : { ...publication, outcome: 'pending' }
-					),
-				});
+				const publications = execution.publications.map(publication =>
+					publication.outcome === 'succeeded' ? publication : { ...publication, outcome: 'pending' as const }
+				);
+				const gateway = this.gateway(),
+					token = await gateway.token(execution.repository, execution.repositoryId, {
+						contents: 'read',
+						actions: 'write',
+					});
+				const ref = execution.workflow?.ref?.replace(/^refs\/(heads|tags)\//, '');
+				const run = execution.runId
+					? await gateway.call(`/repos/${execution.repository}/actions/runs/${execution.runId}`, token)
+					: null;
+				const head = run !== null && ref
+					? await gateway.call(`/repos/${execution.repository}/commits/${encodeURIComponent(ref)}`, token)
+					: null;
+				if (run !== null && head !== null && record(run).head_sha === record(head).sha) {
+					await gateway.call(
+						`/repos/${execution.repository}/actions/runs/${execution.runId}/rerun-failed-jobs`,
+						token,
+						'POST',
+					);
+					await this.put({
+						...execution,
+						state: 'uncertain',
+						runAttempt: integer(record(run).run_attempt),
+						reason: 'Retry requested; re-running the failed jobs',
+						publications,
+					});
+				} else {
+					await this.put({
+						...execution,
+						state: 'ready',
+						supersededRuns: [...(execution.supersededRuns ?? []), ...(execution.runId ? [execution.runId] : [])],
+						runId: undefined,
+						runAttempt: undefined,
+						workflowSha: undefined,
+						reason: `Retry requested; ${ref ?? 'the workflow ref'} moved, so dispatching a new run`,
+						publications,
+					});
+				}
 				await this.supersedeVersion(execution);
 				await this.ctx.storage.setAlarm(Date.now() + 1000);
 			} else await this.wake();
@@ -1143,11 +1194,20 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (onlyExecution ? execution.id !== onlyExecution : Boolean(execution.releaseSet?.workflowId)) continue;
 			await this.store().putExecution(execution);
 			if (execution.state === 'succeeded') await this.captureReleaseEvent(execution);
-			if (
-				!active.includes(execution)
-				|| execution.state === 'pending'
-				|| (execution.state === 'blocked' && execution.operation === 'promote')
-			) {
+			if (!active.includes(execution) || execution.state === 'pending') continue;
+			if (execution.state === 'blocked' && execution.operation === 'promote') {
+				if (execution.configuration.streams[execution.stream]?.promote.approval !== 'push') continue;
+				try {
+					if (await this.approveFromPush(execution, executions)) {
+						await this.ctx.storage.setAlarm(Date.now() + 1000);
+						return;
+					}
+				} catch (error) {
+					const reason = `Beepboop could not check this commit: ${
+						error instanceof Error ? error.message : String(error)
+					}`;
+					if (execution.reason !== reason) await this.put({ ...execution, reason });
+				}
 				continue;
 			}
 			if (execution.managed) {
@@ -1173,6 +1233,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						|| run.path !== `.github/workflows/${execution.workflow.file}`
 					) {
 						throw new Error('Run identity changed');
+					}
+					if (
+						run.status === 'completed' && execution.state === 'uncertain'
+						&& integer(run.run_attempt) <= (execution.runAttempt ?? 0)
+					) {
+						continue;
 					}
 					if (run.status === 'completed') {
 						for (let i = 0; i < execution.publications.length; i++) {

@@ -39,3 +39,17 @@ export function recommendedVersion(packages: Package[]): string | undefined {
 	}
 	return bumpedVersion(packages, { bump: 'patch' });
 }
+
+export function unreleasedManifestVersion(packages: Package[]): string | undefined {
+	const manifests = unique(packages.map(pkg => pkg.version));
+	const [manifest] = manifests;
+	if (manifests.length !== 1 || manifest === undefined || !packages.length) return undefined;
+	if (packages.some(pkg => pkg.publicationStatus !== 'published' && pkg.publicationStatus !== 'missing')) {
+		return undefined;
+	}
+	const released = packages.map(releasedVersion);
+	if (released.some(version => version !== undefined && compareVersions(manifest, version) < 0)) return undefined;
+	return released.some(version => version === undefined || compareVersions(manifest, version) > 0)
+		? manifest
+		: undefined;
+}

@@ -158,9 +158,6 @@ export function parseRepositoryConfiguration(value: unknown): Configuration {
 		if (prepare.version !== undefined && prepare.version !== 'manual') {
 			throw new Error('Only manual version selection is supported');
 		}
-		if (promote.approval !== undefined && promote.approval !== 'required') {
-			throw new Error('Promotion requires approval');
-		}
 		const versioning = oneOf(row.versioning ?? 'workspace', ['workspace', 'independent', 'none'], 'Invalid versioning'),
 			concurrency = oneOf(row.concurrency ?? 'queue', ['queue', 'supersede-pending'], 'Invalid concurrency');
 		const workflows: Record<string, WorkflowBinding> = {};
@@ -191,7 +188,7 @@ export function parseRepositoryConfiguration(value: unknown): Configuration {
 				...(prepare.workflow ? { workflow: binding(prepare.workflow) } : {}),
 			},
 			promote: {
-				approval: 'required',
+				approval: oneOf(promote.approval ?? 'required', ['required', 'push'], 'Invalid promotion approval'),
 				...(promote.workflow ? { workflow: binding(promote.workflow) } : {}),
 			},
 			workflows,

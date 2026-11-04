@@ -75,16 +75,17 @@ and promotes through branch workflows and observes publication from a tag:
 }
 ```
 
-| Setting            | Use                                                                                                                                                        |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `versioning`       | `workspace`, `independent`, or `none` for maintenance operations.                                                                                          |
-| `packages`         | Select package IDs, such as `pkg:cargo/example-core` or `pkg:npm/%40example/cli`. Independent streams can also select packages in the preparation request. |
-| `prepare.strategy` | `managed` for Beepboop's version edits; `workflow` for your own preparation script.                                                                        |
-| `needs`            | Operation names that must complete before this workflow starts.                                                                                            |
-| `publications`     | Report IDs required to complete this operation.                                                                                                            |
-| `required`         | Publication IDs required for the stream's release gate. Also the default for an operation called `publish`.                                                |
-| `credentials`      | Credential aliases requested by the stream; access also needs an administrator grant.                                                                      |
-| `concurrency`      | `queue` or `supersede-pending`, which cancels older undispatched operations.                                                                               |
+| Setting            | Use                                                                                                                                                                     |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `versioning`       | `workspace`, `independent`, or `none` for maintenance operations.                                                                                                       |
+| `packages`         | Select package IDs, such as `pkg:cargo/example-core` or `pkg:npm/%40example/cli`. Independent streams can also select packages in the preparation request.              |
+| `prepare.strategy` | `managed` for Beepboop's version edits; `workflow` for your own preparation script.                                                                                     |
+| `needs`            | Operation names that must complete before this workflow starts.                                                                                                         |
+| `publications`     | Report IDs required to complete this operation.                                                                                                                         |
+| `required`         | Publication IDs required for the stream's release gate. Also the default for an operation called `publish`.                                                             |
+| `credentials`      | Credential aliases requested by the stream; access also needs an administrator grant.                                                                                   |
+| `concurrency`      | `queue` or `supersede-pending`, which cancels older undispatched operations.                                                                                            |
+| `promote.approval` | `required` waits for your approval. `push` releases a default-branch push whose manifest version is not yet published, once the commit is verified and its checks pass. |
 
 Versions are selected manually and use SemVer. Packages sharing a version source
 must be selected together. Dependencies use operation names within the same

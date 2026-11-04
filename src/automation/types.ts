@@ -36,7 +36,7 @@ export interface Stream {
 	packages?: string[];
 	versioning: 'workspace' | 'independent' | 'none';
 	prepare: { version: 'manual'; workflow?: WorkflowBinding; strategy?: 'managed' | 'workflow' };
-	promote: { approval: 'required'; workflow?: WorkflowBinding };
+	promote: { approval: 'required' | 'push'; workflow?: WorkflowBinding };
 	workflows: Record<string, WorkflowBinding>;
 	required: string[];
 	credentials: string[];

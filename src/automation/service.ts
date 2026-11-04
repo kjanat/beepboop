@@ -12,10 +12,12 @@ import { createReleasePreparation, planIdentity } from '@/automation/managed';
 import { discover, planRelease, resolvePublished, versionsInFiles } from '@/automation/managers';
 import { destinationInput, Notifications, subscriptionInput } from '@/automation/notifications';
 import { matchesPackage } from '@/automation/package-identity';
+import { publishable } from '@/automation/package-publication';
 import { addWatch, pollPackages, removeManualWatch, watchInput } from '@/automation/package-watch';
 import { planReleaseSet } from '@/automation/planning';
 import { matchesRef } from '@/automation/policy';
 import { planHookUpdates } from '@/automation/precommit';
+import { unreleasedManifestVersion } from '@/automation/release-version';
 import { repositoryName } from '@/automation/repository-name';
 import { documentRow, rowDocument, setupOptionsSchema } from '@/automation/schemas';
 import {
@@ -174,6 +176,15 @@ export class AutomationService {
 		repository.inventory = await resolvePublished(repository.inventory, fetch, this.gateway.verification(name, id));
 		await this.store.putRepository(repository);
 		try {
+			await this.releaseFromManifest(repository);
+		} catch (error) {
+			await this.store.audit(
+				'beepboop',
+				'release.push.failed',
+				`${name}: ${error instanceof Error ? error.message : 'Release from push failed'}`,
+			);
+		}
+		try {
 			await maintainSetup(this.store, this.gateway, snapshot);
 		} catch (error) {
 			await this.store.audit(
@@ -184,6 +195,45 @@ export class AutomationService {
 		}
 		await this.winget().watch(repository);
 		return repository;
+	}
+	private async releaseFromManifest(repository: RepositoryRecord): Promise<void> {
+		if (repository.diagnostics.length || repository.suspended) return;
+		for (const [name, stream] of Object.entries(repository.configuration?.streams ?? {})) {
+			if (stream.promote.approval !== 'push' || !stream.promote.workflow || stream.versionSource?.kind === 'tags') {
+				continue;
+			}
+			const packages = repository.inventory.packages.filter(pkg =>
+				publishable(pkg) && (!stream.packages || stream.packages.some(reference => matchesPackage(reference, pkg)))
+			);
+			const version = unreleasedManifestVersion(packages);
+			if (!version) continue;
+			const snapshot = await this.gateway.snapshot(
+				repository.name,
+				repository.id,
+				repository.sha,
+				(stream.versionFiles ?? []).map(rule => rule.path),
+			);
+			const plan = planRelease(
+				snapshot,
+				repository.inventory,
+				version,
+				stream.packages,
+				undefined,
+				stream.versionFiles,
+			);
+			if (plan.edits.length || plan.requiresPreparation) continue;
+			const promotion = await createExecution(
+				repository,
+				name,
+				'promote',
+				`release:${version}:${plan.sourceSha}`,
+				version,
+			);
+			promotion.sourceSha = plan.sourceSha;
+			if (await this.store.execution(promotion.id)) continue;
+			await this.store.audit('beepboop', 'release.push', promotion.id);
+			await this.enqueue(repository, promotion);
+		}
 	}
 	async webhook(request: Request): Promise<Response> {
 		const bytes = await readBody(request);
