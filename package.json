@@ -81,6 +81,7 @@
 		"libsodium-wrappers": "^0.8.4",
 		"miniflare": "5.20261019.0-beta",
 		"runner-run": "^0.28.0",
+		"tsdown": "^0.23.5",
 		"typescript": "^7.1.0-beta",
 		"wrangler": "4.157.0"
 	},
