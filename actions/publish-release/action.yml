@@ -1,5 +1,5 @@
 name: Publish GitHub release
-description: Create or confirm the GitHub release for the execution's annotated version tag and report it
+description: Publish the execution's GitHub release for its annotated version tag and report it
 inputs:
   service:
     description: Beepboop service origin

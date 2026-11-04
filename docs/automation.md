@@ -470,7 +470,20 @@ expected old object IDs. Version tags target one commit; stable aliases exclude
 prereleases and reject downgrades. The service checks the resulting refs before
 completing the operation. `refs:` report IDs are reserved for this verification.
 
-After the version tag exists, `actions/publish-release` creates the GitHub
+When a dispatched operation lists `github-release:<owner>/<repo>` in its
+`publications`, Beepboop creates a draft release before dispatching the run.
+The draft has the tag `<prefix><version>`, targets the approved commit, carries
+generated notes, and is marked as a prerelease for prerelease versions. The
+run's `context.draftRelease` holds the draft's `id` and `tag`. Upload release
+assets to the draft during the run:
+
+```sh
+gh release upload "$TAG" target/package/*.crate
+```
+
+Repositories with immutable releases accept assets only before publication.
+
+After the version tag exists, `actions/publish-release` publishes the GitHub
 release:
 
 ```yaml
@@ -478,10 +491,11 @@ release:
 ```
 
 Beepboop requires the annotated tag `<prefix><version>` to target the approved
-commit, then creates the release with generated notes, marked as a prerelease
-for prerelease versions. An existing release is accepted when its tag, draft
-state and prerelease flag match. The release is recorded as the operation's
-`github-release` publication.
+commit. It then publishes the operation's draft with its uploaded assets, and
+refuses while an upload is unfinished. An operation without a draft creates
+the release, or accepts an existing published release whose tag and prerelease
+flag match. The release is recorded as the operation's `github-release`
+publication.
 
 ## Downstream release context
 

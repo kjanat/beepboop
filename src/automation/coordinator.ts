@@ -19,6 +19,7 @@ import {
 	matchesPublication,
 	packageId,
 	publicationIdentity,
+	selectorKey,
 } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import { matchesRef } from '@/automation/policy';
@@ -54,6 +55,18 @@ const releaseSetRecord: z.ZodType<ReleaseSetRecord> = z.object({
 	completed: z.boolean().optional(),
 });
 const observation = z.object({ repositoryId: z.number(), runId: z.number() });
+function githubRelease(execution: Execution): { tag: string; prerelease: boolean } | undefined {
+	if (!execution.version) return undefined;
+	const version = semver(execution.version).replace(/^v/, '');
+	return {
+		tag: `${execution.workflow?.refs?.prefix ?? 'v'}${version}`,
+		prerelease: version.split('+')[0]?.includes('-') ?? false,
+	};
+}
+function publishesGithubRelease(execution: Execution): boolean {
+	const key = selectorKey(`github-release:${execution.repository}`);
+	return execution.workflow?.publications?.some(id => selectorKey(id) === key) ?? false;
+}
 export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private pending: Promise<unknown> = Promise.resolve();
 	private serial<T>(work: () => Promise<T>): Promise<T> {
@@ -509,34 +522,34 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				|| execution.repository !== identity.repository || execution.runId !== identity.runId
 				|| execution.runAttempt !== identity.attempt || execution.workflowSha !== identity.workflowSha
 			) throw new Error('Release operation identity mismatch');
-			if (!execution.version) throw new Error('Release operation has no version');
-			const version = semver(execution.version).replace(/^v/, '');
-			const tag = `${execution.workflow.refs?.prefix ?? 'v'}${version}`;
-			const prerelease = version.includes('-');
+			const target = githubRelease(execution);
+			if (!target) throw new Error('Release operation has no version');
+			const { tag, prerelease } = target;
 			const gateway = this.gateway();
 			const read = await gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
 			const ref = await gateway.call(`/repos/${execution.repository}/git/ref/tags/${encodeURIComponent(tag)}`, read);
 			if (ref === null) throw new Error('Publish the release tag before the release');
 			const object = record(record(ref).object);
 			if (object.type !== 'tag') throw new Error('Release tag must be annotated');
-			const target = record(
+			const tagged = record(
 				record(await gateway.call(`/repos/${execution.repository}/git/tags/${sha(object.sha)}`, read)).object,
 			);
-			if (target.type !== 'commit' || target.sha !== execution.sourceSha) {
+			if (tagged.type !== 'commit' || tagged.sha !== execution.sourceSha) {
 				throw new Error('Release tag points to another commit');
 			}
-			const existing = await gateway.call(
-				`/repos/${execution.repository}/releases/tags/${encodeURIComponent(tag)}`,
-				read,
-			);
-			const release = record(
-				existing ?? await gateway.call(
-					`/repos/${execution.repository}/releases`,
-					await gateway.token(execution.repository, execution.repositoryId, { contents: 'write' }),
-					'POST',
-					{ tag_name: tag, target_commitish: execution.sourceSha, name: tag, generate_release_notes: true, prerelease },
-				),
-			);
+			const write = await gateway.token(execution.repository, execution.repositoryId, { contents: 'write' });
+			const release = execution.draftRelease
+				? await this.publishDraft(execution, execution.draftRelease, target, write)
+				: record(
+					await gateway.call(`/repos/${execution.repository}/releases/tags/${encodeURIComponent(tag)}`, read)
+						?? await gateway.call(`/repos/${execution.repository}/releases`, write, 'POST', {
+							tag_name: tag,
+							target_commitish: execution.sourceSha,
+							name: tag,
+							generate_release_notes: true,
+							prerelease,
+						}),
+				);
 			if (release.tag_name !== tag || release.draft !== false || release.prerelease !== prerelease) {
 				throw new Error('Existing GitHub release does not match the release operation');
 			}
@@ -551,6 +564,49 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			};
 		});
 		return this.report(id, identity, [publication], []);
+	}
+	private async draftRelease(execution: Execution): Promise<Execution['draftRelease']> {
+		const target = githubRelease(execution);
+		if (execution.draftRelease || !target || !publishesGithubRelease(execution)) return execution.draftRelease;
+		const gateway = this.gateway();
+		const write = await gateway.token(execution.repository, execution.repositoryId, { contents: 'write' });
+		const existing = array(await gateway.call(`/repos/${execution.repository}/releases?per_page=100`, write))
+			.map(record)
+			.find(release =>
+				release.draft === true && release.tag_name === target.tag
+				&& release.target_commitish === execution.sourceSha && release.prerelease === target.prerelease
+			);
+		const release = existing ?? record(
+			await gateway.call(`/repos/${execution.repository}/releases`, write, 'POST', {
+				tag_name: target.tag,
+				target_commitish: execution.sourceSha,
+				name: target.tag,
+				generate_release_notes: true,
+				prerelease: target.prerelease,
+				draft: true,
+			}),
+		);
+		return { id: integer(release.id), tag: target.tag };
+	}
+	private async publishDraft(
+		execution: Execution,
+		draft: { id: number; tag: string },
+		target: { tag: string; prerelease: boolean },
+		token: string,
+	): Promise<Record<string, unknown>> {
+		const gateway = this.gateway();
+		const path = `/repos/${execution.repository}/releases/${draft.id}`;
+		const found = await gateway.call(path, token);
+		if (found === null) throw new Error('Draft GitHub release no longer exists');
+		const release = record(found);
+		if (draft.tag !== target.tag || release.tag_name !== target.tag || release.prerelease !== target.prerelease) {
+			throw new Error('Draft GitHub release does not match the release operation');
+		}
+		if (release.draft !== true) return release;
+		if (array(release.assets).map(record).some(asset => asset.state !== 'uploaded')) {
+			throw new Error('Draft GitHub release has unfinished asset uploads');
+		}
+		return record(await gateway.call(path, token, 'PATCH', { draft: false }));
 	}
 	async report(
 		id: string,
@@ -1154,6 +1210,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					) continue;
 				}
 				execution.resolvedInputs = resolveInputs(execution, executions);
+				const draftRelease = await this.draftRelease(execution);
+				if (draftRelease) execution.draftRelease = draftRelease;
 				busy.add(execution.stream);
 				await this.put({ ...execution, state: 'dispatching', attempts: execution.attempts + 1 });
 				const response = await gateway.call(
