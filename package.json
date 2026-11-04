@@ -44,7 +44,7 @@
 		"prestart": "wrangler types",
 		"start": "astro dev",
 		"sync": "astro sync",
-		"test": "sh -c '[ -z \"$(fd \"test.ts\"| head -n 1)\" ]'",
+		"test": "sh -c '[ -z \"$(find . \\( -name .git -o -name node_modules \\) -prune -o \\( -name \"*.test.ts\" -o -name \"*.test.tsx\" -o -name \"*.spec.ts\" -o -name \"*.spec.tsx\" \\) -print)\" ]'",
 		"types": "wrangler types >/dev/null",
 		"winget": "bun src/distribution/winget/cli.ts"
 	},
