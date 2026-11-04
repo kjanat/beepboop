@@ -11,7 +11,7 @@ import type { SetupChoices } from '@/automation/setup-types';
 import type { Store } from '@/automation/store';
 import type { Edit, Snapshot } from '@/automation/types';
 import { record } from '@/model';
-import { packageLabel } from '@/ui/package-label';
+import { packageMarkdown } from '@/ui/package-label';
 
 const editsSchema = z.array(z.object({ path: z.string(), before: z.string(), after: z.string() }));
 export function sameEdits(left: Edit[], right: Edit[]): boolean {
@@ -47,7 +47,7 @@ export async function maintainSetup(
 	const summary = `Inspected [${snapshot.sha}](https://github.com/${name}/commit/${snapshot.sha}).\n\n`
 		+ 'Discovered packages:\n'
 		+ inventory.packages.map(pkg =>
-			`- ${publishable(pkg) ? packageLabel(packageId(pkg)) : pkg.name} (${
+			`- ${publishable(pkg) ? packageMarkdown(packageId(pkg)) : `\`${pkg.name}\``} (${
 				[pkg.manifest, exclusionLabel(pkg.publication)].filter(Boolean).join(', ')
 			})`
 		).join(

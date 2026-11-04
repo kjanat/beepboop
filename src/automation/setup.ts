@@ -18,7 +18,7 @@ import {
 } from '@/automation/setup-types';
 import { integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Package, RepositoryRecord, Snapshot } from '@/automation/types';
-import { packageLabel } from '@/ui/package-label';
+import { packageMarkdown } from '@/ui/package-label';
 
 function releasedPackage(pkg: Package | undefined): boolean {
 	return !!pkg && publishable(pkg) && pkg.published !== undefined
@@ -392,7 +392,7 @@ export function setupBody(plan: SetupPlan): string {
 		+ plan.choices.streams.map(stream => {
 			const packages = options.flatMap(option =>
 				option.kind === 'package' && option.stream === stream.name
-					? [box('    ', option, packageLabel(option.package))]
+					? [box('    ', option, packageMarkdown(option.package))]
 					: []
 			);
 			return [
