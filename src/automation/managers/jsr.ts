@@ -5,7 +5,7 @@ import { identityOf } from '@/automation/package-identity';
 import { registry } from '@/automation/package-publication';
 
 const packageName = /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/;
-const licenseTerm = String.raw`\(?(?!UNLICENSED\b)[A-Za-z0-9][A-Za-z0-9.+-]*\)?`;
+const licenseTerm = String.raw`\(?(?!UNLICENSED\b|LicenseRef-)[A-Za-z0-9][A-Za-z0-9.+-]*\)?`;
 const spdxLicense = new RegExp(`^${licenseTerm}(?: (?:AND|OR|WITH) ${licenseTerm})*$`);
 export function jsrLatest(name: string, request: Fetcher): Promise<RegistryVersion> {
 	if (!packageName.test(name)) throw new Error('Invalid JSR package name');
@@ -57,8 +57,10 @@ export async function prepareJsrPackage(
 	const existing = await call(`/scopes/${scope}/packages/${bare}`);
 	if (existing.status === 404) await call(`/scopes/${scope}/packages`, 'POST', { package: bare });
 	const linked = existing.ok ? object(object(await existing.json()).githubRepository) : {};
-	if (linked.owner !== owner || linked.name !== repo) {
+	if (linked.owner === undefined) {
 		await call(`/scopes/${scope}/packages/${bare}`, 'PATCH', { githubRepository: { owner, name: repo } });
+	} else if (linked.owner !== owner || linked.name !== repo) {
+		throw new Error(`${name} is linked to ${String(linked.owner)}/${String(linked.name)}, not ${repository}`);
 	}
 	if (token) await call(`/scopes/${scope}`, 'PATCH', { ghActionsVerifyActor: false });
 }
