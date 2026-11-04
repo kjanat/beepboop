@@ -295,10 +295,10 @@ API itself accepts ISO 8601 timestamps.
 ## Credentials
 
 Store a value under a credential alias, then grant access to a repository,
-operation, workflow, ref, and optional environment. Setting a value needs only
-the signed-in administrator session. Overwriting an existing alias asks for
-confirmation first. Revealing a value, granting and revoking access, and copying
-values to GitHub require a fresh touch of an enrolled security key.
+operation, workflow, ref, and optional environment. Overwriting an existing
+alias asks for confirmation first. Setting and revealing a value, granting and
+revoking access, and copying values to GitHub require a fresh touch of an
+enrolled security key.
 
 From a terminal, pipe the value in or type it at the hidden prompt:
 

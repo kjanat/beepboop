@@ -482,8 +482,9 @@ for (const form of findAll(document, 'form[data-action]', HTMLFormElement)) {
 			} else if (action === 'secret-save') {
 				if (!overwriteConfirmed(form, data.alias ?? '')) return;
 				const value = data.value;
+				const proof = await elevated();
 				input(form, 'value').value = '';
-				await api('/api/credentials/replace', z.unknown(), { alias: data.alias, value });
+				await api('/api/credentials/replace', z.unknown(), { alias: data.alias, value, proof });
 				location.reload();
 			} else if (action === 'secret-reveal') {
 				clearRevealed();

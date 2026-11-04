@@ -104,8 +104,8 @@ Sign in to the dashboard and enroll the first physical security key. Enroll a
 second key with a touch of the first.
 
 The login uses authorization code with PKCE and a secure HttpOnly cookie. An
-expired session requires login again. Revealing, granting, revoking and
-synchronizing credentials require a fresh security-key assertion. Authentication proofs expire after one minute and
+expired session requires login again. Storing, revealing, granting, revoking
+and synchronizing credentials require a fresh security-key assertion. Authentication proofs expire after one minute and
 challenges after two minutes. Key enrollment accepts cross-platform, single-device
 authenticators and rejects cloud-synced credentials; manufacturer attestation is
 not checked.

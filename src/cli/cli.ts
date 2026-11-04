@@ -353,8 +353,9 @@ const secrets = group('secrets').description('Store secret values and list workf
 				if (!value) {
 					throw failure('Secret value is empty', 'EMPTY_VALUE', 'Pipe the value on stdin or type it at the prompt');
 				}
+				const proof = await client.elevated(securityKey(ask));
 				const version = integer(
-					record(await client.request('/api/credentials/replace', { alias: args.alias, value })).version,
+					record(await client.request('/api/credentials/replace', { alias: args.alias, value, proof })).version,
 				);
 				if (out.jsonMode) await emit(out, { alias: args.alias, version });
 				else out.log(`Saved ${args.alias} as version ${version}.`);

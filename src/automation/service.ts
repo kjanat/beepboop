@@ -42,7 +42,7 @@ import type {
 	RepositoryRecord,
 	SubscriptionDelivery,
 } from '@/automation/types';
-import { parseGrant, Vault } from '@/automation/vault';
+import { parseGrant, Vault, validCredential } from '@/automation/vault';
 import { nextVersion, parseVersionRequest } from '@/automation/version';
 import { type WinGetBindings, WinGetService } from '@/automation/winget';
 import { array, compareVersions, integer, oneOf, record, semver, sha, text } from '@/model';
@@ -881,24 +881,23 @@ export class AutomationService {
 		const authenticators = new Authenticators(this.env);
 		if (path === '/api/authenticators/options') {
 			const register = body.register === true;
+			const label = body.label === undefined ? undefined : text(body.label);
 			if (register && (await authenticators.enrolled(actor)) > 0) {
 				await authenticators.consume(actor, text(body.proof));
 			}
-			return Response.json(
-				await authenticators.options(
-					actor,
-					register,
-					body.label === undefined ? undefined : text(body.label),
-				),
-			);
+			return Response.json(await authenticators.options(actor, register, label));
 		}
 		if (path === '/api/authenticators/verify') {
 			return Response.json(await authenticators.verify(actor, text(body.id), body.response));
 		}
 		if (path === '/api/authenticators/remove') {
+			const id = text(body.id);
+			const keys = await authenticators.list(actor);
+			if (!keys.some(key => key.id === id)) throw new Error('Unknown security key');
+			if (keys.length < 2) throw new Error('Cannot remove the last enrolled key');
 			await authenticators.consume(actor, text(body.proof));
-			await authenticators.remove(actor, text(body.id));
-			await this.store.audit(actor, 'authenticator.remove', text(body.id));
+			await authenticators.remove(actor, id);
+			await this.store.audit(actor, 'authenticator.remove', id);
 			return Response.json({ removed: true });
 		}
 		if (path === '/api/packages/add' || path === '/api/packages/remove') {
@@ -926,36 +925,60 @@ export class AutomationService {
 			await this.notifications().removeDestination(text(body.id), actor);
 			return Response.json({ ok: true });
 		}
-		if (path === '/api/credentials/replace') {
-			return Response.json({ version: await this.vault().replace(text(body.alias), text(body.value), actor) });
-		}
 		if (path.startsWith('/api/credentials/')) {
+			const action = await this.credentialAction(path, body, actor);
+			if (!action) return new Response('Not found', { status: 404 });
 			await authenticators.consume(actor, text(body.proof));
-			const vault = this.vault();
-			if (path.endsWith('/reveal')) {
-				return Response.json(await vault.reveal(text(body.alias), actor));
-			}
-			if (path.endsWith('/grant')) {
-				const selection = record(body.selection);
-				const repository = await this.store.repository(integer(selection.repositoryId));
-				if (!repository) throw new Error('Repository is not enrolled');
-				const grant = configuredGrant(repository, selection);
-				const saved = await this.store.db.prepare('SELECT alias FROM credentials WHERE alias=? AND active=1').bind(
-					grant.alias,
-				).first();
-				if (!saved) throw new Error('Store a value under this name before granting access');
-				await vault.grant(grant, actor);
-				return Response.json({ granted: true });
-			}
-			if (path.endsWith('/revoke')) {
-				await vault.revoke(text(body.grantId), actor);
-				return Response.json({ revoked: true });
-			}
-			if (path.endsWith('/sync')) {
-				return Response.json(await vault.synchronize(text(body.alias), this.gateway, actor));
-			}
+			return Response.json(await action());
 		}
 		return new Response('Not found', { status: 404 });
+	}
+	private async activeCredential(alias: string): Promise<boolean> {
+		return await this.store.db.prepare('SELECT alias FROM credentials WHERE alias=? AND active=1').bind(alias)
+			.first() !== null;
+	}
+	private async credentialAction(
+		path: string,
+		body: Record<string, unknown>,
+		actor: string,
+	): Promise<(() => Promise<unknown>) | undefined> {
+		const vault = this.vault();
+		if (path === '/api/credentials/replace') {
+			const alias = text(body.alias), value = text(body.value);
+			validCredential(alias, value);
+			return async () => ({ version: await vault.replace(alias, value, actor) });
+		}
+		if (path === '/api/credentials/reveal' || path === '/api/credentials/sync') {
+			const alias = text(body.alias);
+			if (!await this.activeCredential(alias)) throw new Error('Credential unavailable');
+			return path.endsWith('/reveal')
+				? () => vault.reveal(alias, actor)
+				: () => vault.synchronize(alias, this.gateway, actor);
+		}
+		if (path === '/api/credentials/grant') {
+			const selection = record(body.selection);
+			const repository = await this.store.repository(integer(selection.repositoryId));
+			if (!repository) throw new Error('Repository is not enrolled');
+			const grant = configuredGrant(repository, selection);
+			if (!await this.activeCredential(grant.alias)) {
+				throw new Error('Store a value under this name before granting access');
+			}
+			return async () => {
+				await vault.grant(grant, actor);
+				return { granted: true };
+			};
+		}
+		if (path === '/api/credentials/revoke') {
+			const id = text(body.grantId);
+			if (await this.store.db.prepare('SELECT id FROM grants WHERE id=?').bind(id).first() === null) {
+				throw new Error('Unknown grant');
+			}
+			return async () => {
+				await vault.revoke(id, actor);
+				return { revoked: true };
+			};
+		}
+		return undefined;
 	}
 	private async workflow(request: Request): Promise<Response> {
 		if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });

@@ -72,7 +72,7 @@ export function parseGrant(value: unknown): Grant {
 	if (!environment) throw new Error('Environment required');
 	return { ...fields, delivery, environment, secretName };
 }
-function validCredential(alias: string, value: string): void {
+export function validCredential(alias: string, value: string): void {
 	if (!/^[\w-]{1,64}$/.test(alias) || !value || value.length > 48000) throw new Error('Invalid credential');
 }
 export class Vault {
