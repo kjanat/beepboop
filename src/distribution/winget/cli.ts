@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { cli, command, flag } from '@kjanat/dreamcli';
 import { generateManifests, renderManifests } from '@/distribution/winget/generate';
+import { outputEntry } from '@/tooling/github-output';
 
 export const generate = command('generate')
 	.description('Write WinGet version, installer, and locale manifests for a published release')
@@ -50,8 +51,7 @@ export const generate = command('generate')
 			files.push(path);
 			out.log(path);
 		}
-		const delimiter = `output_${crypto.randomUUID()}`;
-		const output = `directory<<${delimiter}\n${directory}\n${delimiter}\nfiles=${JSON.stringify(files)}\n`;
+		const output = outputEntry('directory', directory) + outputEntry('files', JSON.stringify(files));
 		if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, output);
 		else process.stderr.write(output);
 	});

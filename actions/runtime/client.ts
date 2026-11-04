@@ -1,6 +1,7 @@
 import { appendFileSync, readFileSync } from 'node:fs';
 import { parseRetryAfter } from '../../src/domain/http-date.ts';
 import { array, record, text } from '../../src/model.ts';
+import { writeOutput } from '../../src/tooling/github-output.ts';
 
 type Mode =
 	| 'begin'
@@ -36,12 +37,6 @@ function required(name: string): string {
 
 function mask(value: string): void {
 	console.log(`::add-mask::${value.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A')}`);
-}
-
-function output(name: string, value: string): void {
-	if (!/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(name)) throw Error('Invalid output name');
-	const marker = `value_${crypto.randomUUID()}`;
-	appendFileSync(required('GITHUB_OUTPUT'), `${name}<<${marker}\n${value}\n${marker}\n`);
 }
 
 function publication(value: unknown): unknown {
@@ -90,16 +85,16 @@ function requestBody(mode: Mode, executionId: string | undefined): unknown {
 function writeResult(mode: Mode, data: Record<string, unknown>): void {
 	if (mode === 'begin') {
 		const id = text(data.id);
-		output('execution-id', id);
-		output('context', JSON.stringify(data));
+		writeOutput('execution-id', id);
+		writeOutput('context', JSON.stringify(data));
 		appendFileSync(required('GITHUB_ENV'), `BEEPBOOP_EXECUTION_ID=${id}\n`);
 	} else if (mode === 'credentials') {
 		for (const [alias, value] of Object.entries(data)) {
 			if (typeof value !== 'string') throw Error('Invalid credential response');
 			mask(value);
-			output(alias, value);
+			writeOutput(alias, value);
 		}
-		output('values', JSON.stringify(data));
+		writeOutput('values', JSON.stringify(data));
 	} else if (mode === 'token') {
 		if (typeof data.token !== 'string') throw Error('Invalid token response');
 		if (process.env.TOKEN_IDENTITY === 'true') {
@@ -110,13 +105,13 @@ function writeResult(mode: Mode, data: Record<string, unknown>): void {
 				|| typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0
 				|| email !== `${id}+${login}@users.noreply.github.com`
 			) throw Error('Invalid bot identity response');
-			output('bot-login', login);
-			output('bot-id', String(id));
-			output('bot-email', email);
+			writeOutput('bot-login', login);
+			writeOutput('bot-id', String(id));
+			writeOutput('bot-email', email);
 		}
 		mask(data.token);
-		output('token', data.token);
-	} else output('result', JSON.stringify(data));
+		writeOutput('token', data.token);
+	} else writeOutput('result', JSON.stringify(data));
 }
 
 const mode = parseMode(process.argv[2]);

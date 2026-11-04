@@ -1,9 +1,10 @@
-import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { packageId } from '@/automation/package-identity';
 import { record } from '@/model';
+import { writeOutput } from '@/tooling/github-output';
 
 const root = resolve(import.meta.dir, '../../..');
 const directory = join(root, 'packages/cli');
@@ -33,10 +34,6 @@ if (process.env.GITHUB_SHA !== context.sourceSha) {
 	);
 }
 const channel = npm.version.includes('-') ? 'next' : 'latest';
-async function output(name: string, value: string): Promise<void> {
-	if (!process.env.GITHUB_OUTPUT) throw new Error('Missing GitHub output file');
-	await appendFile(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
-}
 async function command(args: string[], env: Record<string, string> = {}, cwd = directory): Promise<void> {
 	const child = Bun.spawn(args, {
 		cwd,
@@ -58,7 +55,7 @@ async function checksum(path: string): Promise<string | undefined> {
 }
 switch (process.argv[2]) {
 	case 'metadata':
-		await output('version', npm.version);
+		writeOutput('version', npm.version);
 		break;
 	case 'npm': {
 		const temporary = await mkdtemp(join(tmpdir(), 'beepboop-publish-'));
@@ -73,7 +70,7 @@ switch (process.argv[2]) {
 				const published = record(record(await response.json()).dist ?? {}).integrity;
 				if (typeof published !== 'string') throw new Error('npm returned no integrity for the published version');
 				if (published === integrity) {
-					await output('integrity', published);
+					writeOutput('integrity', published);
 					console.log(`npm ${npm.name}@${npm.version} matches this build (${integrity}).`);
 				} else {
 					console.log(
@@ -82,7 +79,7 @@ switch (process.argv[2]) {
 					process.exitCode = 1;
 				}
 			} else {
-				await output('integrity', integrity);
+				writeOutput('integrity', integrity);
 				const userconfig = join(temporary, '.npmrc');
 				if (process.env.NPM_TOKEN) {
 					await writeFile(userconfig, `//registry.npmjs.org/:_authToken=${process.env.NPM_TOKEN}\n`, { mode: 0o600 });
@@ -145,7 +142,7 @@ switch (process.argv[2]) {
 					: {}),
 			});
 		}
-		await output('publications', JSON.stringify(publications));
+		writeOutput('publications', JSON.stringify(publications));
 		break;
 	}
 	default:
