@@ -68,8 +68,8 @@ switch (process.argv[2]) {
 				await output('integrity', published);
 				console.log(
 					published === integrity
-						? `npm already has this build of ${npm.name}@${npm.version}`
-						: `npm already has ${npm.name}@${npm.version} from an earlier build; keeping it`,
+						? `npm ${npm.name}@${npm.version} matches this build (${integrity}).`
+						: `::warning::npm ${npm.name}@${npm.version} has integrity ${published}. This build has integrity ${integrity}.`,
 				);
 			} else {
 				await output('integrity', integrity);
