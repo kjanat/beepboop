@@ -2,10 +2,25 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { isCLIError } from '@kjanat/dreamcli';
+import type { z } from 'zod';
 import { type SecurityKeyPrompts, securityKeyAssertion } from '@/cli/fido2/index';
 import { failure, signIn } from '@/cli/output';
+import { ApiFailure, call, failureOf, type Transport } from '@/contract/client';
+import type { ErrorCode } from '@/contract/errors';
 import { cliTokenPattern, confirmationCode, loginSecret, sha256Hex } from '@/contract/ids';
-import { record, text } from '@/model';
+import { type Route, routes } from '@/contract/routes';
+
+const codes = {
+	unauthenticated: 'SESSION_REVOKED',
+	forbidden: 'FORBIDDEN',
+	'not-found': 'NOT_FOUND',
+	'method-not-allowed': 'UNSUPPORTED',
+	invalid: 'INVALID_REQUEST',
+	conflict: 'CONFLICT',
+	precondition: 'PRECONDITION',
+	upstream: 'UPSTREAM_UNAVAILABLE',
+	internal: 'SERVER_ERROR',
+} as const satisfies Record<ErrorCode, string>;
 
 export interface Session {
 	token: string;
@@ -15,14 +30,6 @@ function parseSession(value: unknown): Session | undefined {
 	const { token } = value;
 	if (typeof token !== 'string' || !cliTokenPattern.test(token)) return undefined;
 	return { token };
-}
-function reason(body: string): string {
-	try {
-		const error = record(JSON.parse(body)).error;
-		return typeof error === 'string' ? error : body;
-	} catch {
-		return body;
-	}
 }
 let warned = false;
 function warnOutage(response: Response): void {
@@ -81,32 +88,58 @@ export class Client {
 	}
 	async logout(): Promise<void> {
 		try {
-			await this.request('/auth/cli/logout', {});
+			const response = await this.transport(await this.session())({
+				method: 'POST',
+				path: '/auth/cli/logout',
+				body: '{}',
+			});
+			if (response.status !== 401 && !response.ok) {
+				throw failure((await failureOf(response)).message, `HTTP_${response.status}`);
+			}
 		} catch (error) {
-			if (!isCLIError(error) || !['NOT_SIGNED_IN', 'SESSION_REVOKED'].includes(error.code)) throw error;
+			if (!isCLIError(error) || error.code !== 'NOT_SIGNED_IN') throw error;
 		}
 		await rm(await this.file(), { force: true });
 	}
-	async request(path: string, body?: unknown): Promise<unknown> {
-		const session = await this.session();
-		const response = await fetch(`${this.origin}${path}`, {
-			method: body === undefined ? 'GET' : 'POST',
-			headers: { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' },
-			...(body === undefined ? {} : { body: JSON.stringify(body) }),
-			redirect: 'error',
-			signal: AbortSignal.timeout(30000),
-		});
-		warnOutage(response);
-		if (response.status === 401) throw failure('Session revoked', 'SESSION_REVOKED', signIn);
-		if (!response.ok) {
-			throw failure(`Beepboop request failed (${response.status}): ${reason(await response.text())}`, 'REQUEST_FAILED');
+	private transport(session: Session): Transport {
+		return async request => {
+			const response = await fetch(`${this.origin}${request.path}`, {
+				method: request.method,
+				headers: { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' },
+				...(request.body === undefined ? {} : { body: request.body }),
+				redirect: 'error',
+				signal: AbortSignal.timeout(30000),
+			});
+			warnOutage(response);
+			return response;
+		};
+	}
+	async call<Q extends z.ZodType, S extends z.ZodType>(route: Route<Q, S>, input: z.input<Q>): Promise<z.output<S>> {
+		const transport = this.transport(await this.session());
+		try {
+			return await call(route, input, transport);
+		} catch (error) {
+			if (!(error instanceof ApiFailure)) throw error;
+			if (error.status === 401) throw failure('Session revoked', 'SESSION_REVOKED', signIn);
+			throw failure(error.message, error.problem ? codes[error.problem.code] : `HTTP_${error.status}`);
 		}
+	}
+	async status(): Promise<unknown> {
+		const response = await this.transport(await this.session())({
+			method: 'GET',
+			path: '/auth/cli/status',
+			body: undefined,
+		});
+		if (response.status === 401) throw failure('Session revoked', 'SESSION_REVOKED', signIn);
+		if (!response.ok) throw failure((await failureOf(response)).message, `HTTP_${response.status}`);
 		return response.json();
 	}
 	async elevated(prompts: SecurityKeyPrompts): Promise<string> {
-		const challenge = record(await this.request('/api/authenticators/options', { register: false }));
+		const challenge = await this.call(routes.authenticatorsOptions, { register: false });
 		const response = await securityKeyAssertion(challenge.options, this.origin, prompts);
-		return text(record(await this.request('/api/authenticators/verify', { id: text(challenge.id), response })).proof);
+		const { proof } = await this.call(routes.authenticatorsVerify, { id: challenge.id, response });
+		if (!proof) throw failure('The server returned no security-key proof', 'NO_PROOF');
+		return proof;
 	}
 	async login(
 		show: (url: string, code: string) => void | Promise<void>,
@@ -135,7 +168,7 @@ export class Client {
 				);
 			}
 			if (!response.ok) {
-				throw failure(`Login failed (${response.status}): ${reason(await response.text())}`, 'LOGIN_FAILED');
+				throw failure(`Login failed (${response.status}): ${(await failureOf(response)).message}`, 'LOGIN_FAILED');
 			}
 			const session = parseSession(await response.json());
 			if (!session) throw new Error('Invalid login response');

@@ -1,5 +1,3 @@
-import { z } from 'zod';
-
 function required<T extends Element>(selector: string, type: { new(): T }): T {
 	const found = document.querySelector(selector);
 	if (!(found instanceof type)) throw new Error(`Missing dashboard element: ${selector}`);
@@ -80,29 +78,4 @@ export function showError(error: unknown, form?: HTMLFormElement): void {
 	}
 	show(message, form, 'error');
 	if (form) feedback.focus();
-}
-
-const failure = z.object({ error: z.string().optional() }).catch({});
-
-export async function api<T>(path: string, schema: z.ZodType<T>, body?: unknown): Promise<T> {
-	const send = () =>
-		fetch(
-			path,
-			body === undefined ? {} : {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(body),
-			},
-		);
-	let response = await send();
-	if (response.status === 401 && (await fetch('/auth/renew', { method: 'POST' })).ok) response = await send();
-	if (response.status === 401) {
-		location.assign(`/auth/login?return=${encodeURIComponent(`${location.pathname}${location.search}`)}`);
-		throw new Error('Session expired. Signing in again.');
-	}
-	if (!response.ok) {
-		const data = failure.parse(await response.json());
-		throw new Error(data.error || 'Request failed');
-	}
-	return schema.parse(await response.json());
 }

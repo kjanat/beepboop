@@ -1,39 +1,11 @@
 #!/usr/bin/env bun
 import { arg, cli, command, flag, group } from '@kjanat/dreamcli';
-import { repositoryReference } from '@/automation/repository-name';
 import { Client } from '@/cli/client';
 import { emit, failure } from '@/cli/output';
 import { setupRepository } from '@/cli/setup';
-import { notificationKinds, watchedPackagePattern } from '@/contract/catalog';
+import { notificationKinds, watchedPackagePattern, watchedRegistries } from '@/contract/catalog';
 import { credentialAliasPattern, githubSecretNamePattern, shaPattern } from '@/contract/ids';
-import { array, boolean, integer, record, string, text } from '@/model';
-
-function repositoryRows(value: unknown) {
-	return array(value).map(raw => {
-		const row = record(raw);
-		return {
-			raw: row,
-			id: integer(row.id),
-			name: text(row.name),
-			defaultBranch: text(row.defaultBranch),
-			streams: Object.keys(row.configuration === undefined ? {} : record(record(row.configuration).streams)),
-			diagnostics: array(row.diagnostics).map(string),
-		};
-	});
-}
-function executionRows(value: unknown) {
-	return array(value).map(raw => {
-		const row = record(raw);
-		return {
-			id: text(row.id),
-			repository: text(row.repository),
-			stream: text(row.stream),
-			operation: text(row.operation),
-			version: row.version === undefined ? '' : text(row.version),
-			state: text(row.state),
-		};
-	});
-}
+import { routes } from '@/contract/routes';
 
 const base = (name: string, description: string, promptServer = false) =>
 	command(name).description(description)
@@ -58,23 +30,11 @@ const repository = (name: string, description: string) =>
 					'Repository: name, owner/name or GitHub URL',
 				),
 		);
-async function enrolled(client: Client, input: string) {
-	const reference = repositoryReference(input);
-	const rows = repositoryRows(await client.request('/api/repositories'));
-	const matches = rows.filter(row =>
-		reference.owner ? row.name === `${reference.owner}/${reference.name}` : row.name.endsWith(`/${reference.name}`)
-	);
-	const [found, ...others] = matches;
-	if (found && !others.length) return found;
-	throw others.length
-		? failure(`Repository ${input} matches ${matches.map(row => row.name).join(', ')}`, 'AMBIGUOUS', 'Name the owner')
-		: failure(`Repository ${input} is not enrolled`, 'NOT_ENROLLED', `Run beepboop repositories discover ${input}`);
-}
-async function repositoryId(client: Client, input: string): Promise<number> {
-	return (await enrolled(client, input)).id;
+function enrolled(client: Client, repository: string) {
+	return client.call(routes.repositoriesResolve, { repository });
 }
 export const authStatus = base('status', 'Verify your saved session with the server').action(async ({ flags, out }) =>
-	emit(out, await new Client(flags.server).request('/auth/cli/status'))
+	emit(out, await new Client(flags.server).status())
 );
 const auth = group('auth').description('Sign in, inspect your session, or revoke it')
 	.command(
@@ -127,22 +87,21 @@ const repositories = group('repositories').description('Inspect and configure re
 	)
 	.command(
 		base('list', 'List enrolled repositories').action(async ({ flags, out }) => {
-			const response = await new Client(flags.server).request('/api/repositories');
-			const rows = repositoryRows(response);
-			if (out.jsonMode) await emit(out, response);
-			else {out.table(
-					rows.map(row => ({
-						repository: row.name,
-						branch: row.defaultBranch,
-						streams: row.streams.join(', '),
-						problems: row.diagnostics.join('; '),
-					})),
-				);}
+			const rows = await new Client(flags.server).call(routes.repositoriesList, {});
+			if (out.jsonMode) await emit(out, rows);
+			else {
+				out.table(rows.map(row => ({
+					repository: row.name,
+					branch: row.defaultBranch,
+					streams: Object.keys(row.configuration?.streams ?? {}).join(', '),
+					problems: row.diagnostics.join('; '),
+				})));
+			}
 		}),
 	)
 	.command(
 		repository('show', 'Show repository configuration, packages and workflows').action(async ({ flags, args, out }) => {
-			await emit(out, (await enrolled(new Client(flags.server), args.repository)).raw);
+			await emit(out, await enrolled(new Client(flags.server), args.repository));
 		}),
 	)
 	.command(
@@ -150,7 +109,7 @@ const repositories = group('repositories').description('Inspect and configure re
 			async ({ flags, args, out }) => {
 				await emit(
 					out,
-					await new Client(flags.server).request('/api/repositories/discover', { repository: args.repository }),
+					await new Client(flags.server).call(routes.repositoriesDiscover, { repository: args.repository }),
 				);
 			},
 		),
@@ -158,10 +117,18 @@ const repositories = group('repositories').description('Inspect and configure re
 const runs = group('runs').description('Follow, approve and recover release operations')
 	.command(
 		base('list', 'List release operations').action(async ({ flags, out }) => {
-			const response = await new Client(flags.server).request('/api/executions');
-			const rows = executionRows(response);
-			if (out.jsonMode) await emit(out, response);
-			else out.table(rows);
+			const rows = await new Client(flags.server).call(routes.executionsList, {});
+			if (out.jsonMode) await emit(out, rows);
+			else {
+				out.table(rows.map(row => ({
+					id: row.id,
+					repository: row.repository,
+					stream: row.stream,
+					operation: row.operation,
+					version: row.version ?? '',
+					state: row.state,
+				})));
+			}
 		}),
 	)
 	.command(
@@ -175,7 +142,7 @@ const runs = group('runs').description('Follow, approve and recover release oper
 			.action(async ({ flags, args, out }) =>
 				emit(
 					out,
-					await new Client(flags.server).request('/api/executions/approve', {
+					await new Client(flags.server).call(routes.executionsApprove, {
 						id: args.id,
 						sourceSha: flags.sourceSha,
 						force: flags.force,
@@ -192,7 +159,7 @@ const runs = group('runs').description('Follow, approve and recover release oper
 			.action(async ({ flags, args, out }) =>
 				emit(
 					out,
-					await new Client(flags.server).request('/api/executions/recover', { id: args.id, action: flags.action }),
+					await new Client(flags.server).call(routes.executionsRecover, { id: args.id, action: flags.action }),
 				)
 			),
 	);
@@ -227,16 +194,22 @@ for (const operation of ['plan', 'prepare'] as const) {
 					throw failure('Prepare needs --sourceSha and --planId', 'PLAN_REQUIRED', 'Run beepboop releases plan first');
 				}
 				const client = new Client(flags.server);
-				await emit(
-					out,
-					await client.request(`/api/releases/${operation}`, {
-						repositoryId: await repositoryId(client, args.repository),
-						stream: flags.stream,
-						version: flags.releaseVersion,
-						sourceSha: flags.sourceSha,
-						planId: flags.planId,
-					}),
-				);
+				const request = {
+					repositoryId: (await enrolled(client, args.repository)).id,
+					stream: flags.stream,
+					version: flags.releaseVersion,
+				};
+				if (operation === 'plan') await emit(out, await client.call(routes.releasesPlan, request));
+				else if (flags.sourceSha && flags.planId) {
+					await emit(
+						out,
+						await client.call(routes.releasesPrepare, {
+							...request,
+							sourceSha: flags.sourceSha,
+							planId: flags.planId,
+						}),
+					);
+				}
 			}),
 	);
 }
@@ -277,16 +250,22 @@ for (const operation of ['plan-set', 'prepare-set'] as const) {
 					);
 				}
 				const client = new Client(flags.server);
-				await emit(
-					out,
-					await client.request(`/api/releases/${operation}`, {
-						repositoryId: await repositoryId(client, args.repository),
-						stream: flags.stream,
-						plan: await Bun.file(flags.plan).json(),
-						sourceSha: flags.sourceSha,
-						planId: flags.planId,
-					}),
-				);
+				const request = {
+					repositoryId: (await enrolled(client, args.repository)).id,
+					stream: flags.stream,
+					plan: await Bun.file(flags.plan).json(),
+				};
+				if (operation === 'plan-set') await emit(out, await client.call(routes.releasesPlanSet, request));
+				else if (flags.sourceSha && flags.planId) {
+					await emit(
+						out,
+						await client.call(routes.releasesPrepareSet, {
+							...request,
+							sourceSha: flags.sourceSha,
+							planId: flags.planId,
+						}),
+					);
+				}
 			}),
 	);
 }
@@ -300,18 +279,13 @@ releases = releases.command(
 		.action(async ({ flags, args, out }) =>
 			emit(
 				out,
-				await new Client(flags.server).request('/api/releases/start-set', {
+				await new Client(flags.server).call(routes.releasesStartSet, {
 					preparationId: args.preparationId,
 					sourceSha: flags.sourceSha,
 				}),
 			)
 		),
 );
-function activeVersion(value: unknown, alias: string): number | undefined {
-	const row = array(record(value).credentials).map(record)
-		.find(entry => text(entry.alias) === alias && integer(entry.active) === 1);
-	return row ? integer(row.version) : undefined;
-}
 function securityKey(ask: (prompt: { kind: 'password'; message: string }) => Promise<unknown>) {
 	return {
 		async pin() {
@@ -327,7 +301,7 @@ function securityKey(ask: (prompt: { kind: 'password'; message: string }) => Pro
 const secrets = group('secrets').description('Store secret values and list workflow access')
 	.command(
 		base('list', 'List secret names and workflow access')
-			.action(async ({ flags, out }) => emit(out, await new Client(flags.server).request('/api/credentials'))),
+			.action(async ({ flags, out }) => emit(out, await new Client(flags.server).call(routes.credentialsList, {}))),
 	)
 	.command(
 		base('set', 'Store a secret value from stdin or a hidden prompt')
@@ -339,7 +313,8 @@ const secrets = group('secrets').description('Store secret values and list workf
 			)
 			.action(async ({ flags, args, ask, out }) => {
 				const client = new Client(flags.server);
-				const stored = activeVersion(await client.request('/api/credentials'), args.alias);
+				const stored = (await client.call(routes.credentialsList, {})).credentials
+					.find(row => row.alias === args.alias && row.active === 1)?.version;
 				const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 				if (
 					stored !== undefined && interactive
@@ -358,9 +333,12 @@ const secrets = group('secrets').description('Store secret values and list workf
 					throw failure('Secret value is empty', 'EMPTY_VALUE', 'Pipe the value on stdin or type it at the prompt');
 				}
 				const proof = await client.elevated(securityKey(ask));
-				const version = integer(
-					record(await client.request('/api/credentials/replace', { alias: args.alias, value, proof })).version,
-				);
+				const { version } = await client.call(routes.credentialsReplace, {
+					alias: args.alias,
+					value,
+					proof,
+					expectedVersion: stored ?? null,
+				});
 				if (out.jsonMode) await emit(out, { alias: args.alias, version });
 				else out.log(`Saved ${args.alias} as version ${version}.`);
 			}),
@@ -381,18 +359,19 @@ const secrets = group('secrets').description('Store secret values and list workf
 			.action(async ({ flags, args, ask, out }) => {
 				const client = new Client(flags.server);
 				const target = await enrolled(client, args.repository);
-				const [only, ...more] = target.streams;
+				const streams = Object.keys(target.configuration?.streams ?? {});
+				const [only, ...more] = streams;
 				const stream = flags.stream ?? (only && !more.length ? only : undefined);
 				if (!stream) {
 					throw failure(
-						`${target.name} has streams ${target.streams.join(', ') || 'none'}`,
+						`${target.name} has streams ${streams.join(', ') || 'none'}`,
 						'STREAM_REQUIRED',
 						'Pass --stream',
 					);
 				}
 				out.log(`Granting ${target.name} ${stream}/${flags.operation} access to ${args.alias}.`);
 				const proof = await client.elevated(securityKey(ask));
-				await client.request('/api/credentials/grant', {
+				await client.call(routes.credentialsGrant, {
 					proof,
 					selection: {
 						alias: args.alias,
@@ -415,36 +394,18 @@ const secrets = group('secrets').description('Store secret values and list workf
 			.action(async ({ flags, args, ask, out }) => {
 				const client = new Client(flags.server);
 				const proof = await client.elevated(securityKey(ask));
-				await emit(out, await client.request('/api/credentials/revoke', { grantId: args.grantId, proof }));
+				await emit(out, await client.call(routes.credentialsRevoke, { grantId: args.grantId, proof }));
 			}),
 	);
-function destinationRows(value: unknown) {
-	const data = record(value);
-	return {
-		destinations: array(data.destinations).map(record).map(row => ({
-			id: text(row.id),
-			name: text(row.name),
-			kind: text(row.kind),
-			credential: text(row.credential),
-			subscribeNew: boolean(row.subscribeNew),
-			enabled: boolean(row.enabled),
-		})),
-		subscriptions: array(data.subscriptions).map(record).map(row => ({
-			destinationId: text(row.destinationId),
-			registry: text(row.registry),
-			name: text(row.name),
-		})),
-	};
-}
 const notifications = group('notifications').description('Send package releases to Slack and HTTPS webhooks')
 	.command(
 		base('list', 'List notification destinations and their packages').action(async ({ flags, out }) => {
-			const response = await new Client(flags.server).request('/api/notifications');
+			const response = await new Client(flags.server).call(routes.notificationsList, {});
 			if (out.jsonMode) {
 				await emit(out, response);
 				return;
 			}
-			const { destinations, subscriptions } = destinationRows(response);
+			const { destinations, subscriptions } = response;
 			out.table(destinations.map(destination => ({
 				id: destination.id,
 				name: destination.name,
@@ -473,20 +434,19 @@ const notifications = group('notifications').description('Send package releases 
 				'subscribe-new',
 				flag.boolean().default(false).describe('Subscribe this destination to every newly watched package'),
 			)
-			.action(async ({ flags, out }) => {
-				const id = text(
-					record(
-						await new Client(flags.server).request('/api/notifications/save', {
-							destination: {
-								name: flags.name,
-								kind: flags.kind,
-								credential: flags.secret,
-								subscribeNew: flags['subscribe-new'],
-								enabled: true,
-							},
-						}),
-					).id,
-				);
+			.action(async ({ flags, ask, out }) => {
+				const client = new Client(flags.server);
+				const proof = await client.elevated(securityKey(ask));
+				const { id } = await client.call(routes.notificationsSave, {
+					proof,
+					destination: {
+						name: flags.name,
+						kind: flags.kind,
+						credential: flags.secret,
+						subscribeNew: flags['subscribe-new'],
+						enabled: true,
+					},
+				});
 				if (out.jsonMode) await emit(out, { id });
 				else out.log(`Added destination ${id}.`);
 			}),
@@ -500,9 +460,10 @@ const notifications = group('notifications').description('Send package releases 
 			)
 			.action(async ({ flags, args, out }) => {
 				const separator = args.package.indexOf(':');
-				const registry = args.package.slice(0, separator),
-					name = args.package.slice(separator + 1);
-				await new Client(flags.server).request('/api/packages/subscription', {
+				const registry = watchedRegistries.find(candidate => candidate === args.package.slice(0, separator));
+				const name = args.package.slice(separator + 1);
+				if (!registry) throw failure('Name the package as npm:name or jsr:@scope/name', 'INVALID_PACKAGE');
+				await new Client(flags.server).call(routes.packagesSubscription, {
 					destinationId: args.destination,
 					registry,
 					name,

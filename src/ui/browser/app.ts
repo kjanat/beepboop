@@ -1,6 +1,9 @@
 import { z } from 'zod';
+import { type NotificationKind, notificationKinds, type WatchedRegistry, watchedRegistries } from '@/contract/catalog';
+import { routes } from '@/contract/routes';
 import { array, integer, record, string } from '@/model';
-import { api, FieldError, find, findAll, show, showError, watchValidity } from '@/ui/browser/dom.ts';
+import { api } from '@/ui/browser/api';
+import { FieldError, find, findAll, show, showError, watchValidity } from '@/ui/browser/dom.ts';
 import { canApplySetup, setup } from '@/ui/browser/setup';
 
 interface Choice {
@@ -15,24 +18,6 @@ interface RepositoryChoice {
 	name: string;
 	workflows: Choice[];
 }
-interface Plan {
-	sourceSha: string;
-	planId: string;
-	version?: string;
-	edits: { path: string; before: string; after: string }[];
-	groups?: { id: string; version: string; packages: string[] }[];
-	diagnostics?: string[];
-	requiresPreparation: boolean;
-}
-const planSchema: z.ZodType<Plan> = z.object({
-	sourceSha: z.string(),
-	planId: z.string(),
-	version: z.string().optional(),
-	edits: z.array(z.object({ path: z.string(), before: z.string(), after: z.string() })),
-	groups: z.array(z.object({ id: z.string(), version: z.string(), packages: z.array(z.string()) })).optional(),
-	diagnostics: z.array(z.string()).optional(),
-	requiresPreparation: z.boolean(),
-});
 const credentialDescriptor = z.looseObject({
 	id: z.string(),
 	type: z.string(),
@@ -66,6 +51,22 @@ const creationOptions: z.ZodType<PublicKeyCredentialCreationOptionsJSON> = z.loo
 	timeout: z.number().optional(),
 	user: z.looseObject({ displayName: z.string(), id: z.string(), name: z.string() }),
 });
+function recovery(value: string | undefined): 'retry' | 'reconcile' {
+	return value === 'retry' ? 'retry' : 'reconcile';
+}
+function registry(value: string | undefined): WatchedRegistry {
+	const found = watchedRegistries.find(name => name === value);
+	if (!found) throw new Error('Choose npm or JSR.');
+	return found;
+}
+function notificationKind(value: string | undefined): NotificationKind {
+	const found = notificationKinds.find(kind => kind === value);
+	if (!found) throw new Error('Choose a destination type.');
+	return found;
+}
+function storedVersion(form: HTMLFormElement, alias: string): number | undefined {
+	return z.record(z.string(), z.number()).parse(JSON.parse(form.dataset.versions ?? '{}'))[alias];
+}
 function overwriteConfirmed(form: HTMLFormElement, alias: string): boolean {
 	const versions = z.record(z.string(), z.number()).parse(JSON.parse(form.dataset.versions ?? '{}'));
 	const version = versions[alias];
@@ -138,19 +139,14 @@ function fields(form: HTMLFormElement): Record<string, string> {
 }
 async function elevated(form: HTMLFormElement): Promise<string> {
 	show('Touch your enrolled security key to approve this action.', form);
-	const challenge = await api(
-		'/api/authenticators/options',
-		z.object({ id: z.string(), options: requestOptions }),
-		{ register: false },
-	);
+	const challenge = await api(routes.authenticatorsOptions, { register: false });
 	const credential = await navigator.credentials.get({
-		publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(challenge.options),
+		publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(requestOptions.parse(challenge.options)),
 	});
 	if (!(credential instanceof PublicKeyCredential)) throw new Error('Security key authentication cancelled.');
-	return (await api('/api/authenticators/verify', z.object({ proof: z.string() }), {
-		id: challenge.id,
-		response: credential.toJSON(),
-	})).proof;
+	const { proof } = await api(routes.authenticatorsVerify, { id: challenge.id, response: credential.toJSON() });
+	if (!proof) throw new Error('The server returned no security-key proof.');
+	return proof;
 }
 function clearRevealed() {
 	for (const [output, timer] of revealTimers) {
@@ -236,11 +232,7 @@ each('form[data-action="winget-submit"]', form => {
 			return;
 		}
 		try {
-			const rows = await api(
-				'/api/winget/releases',
-				z.array(z.object({ id: z.number(), tag: z.string(), name: z.string() })),
-				{ repositoryId: Number(input(form, 'repositoryId').value) },
-			);
+			const rows = await api(routes.wingetReleases, { repositoryId: Number(input(form, 'repositoryId').value) });
 			if (revision !== current) return;
 			release.replaceChildren(new Option(rows.length ? 'Choose a release' : 'No eligible stable releases', ''));
 			for (const row of rows) release.add(new Option(`${row.name} (${row.tag})`, String(row.id)));
@@ -333,7 +325,7 @@ each('form[data-action="approve"]', form => {
 		approve.textContent = automatic ? 'Release now anyway' : 'Approve anyway';
 		approve.hidden = false;
 	};
-	api('/api/executions/approval', z.object({ problems: z.array(z.string()) }), { id }).then(({ problems }) => {
+	api(routes.executionsApproval, { id }).then(({ problems }) => {
 		status?.replaceChildren(
 			...(problems.length ? problems : ['Signature verified and checks passed.']).map(text => node('li', text)),
 		);
@@ -359,7 +351,7 @@ attempt(() => {
 	const rendered = Number(runsLatest.dataset.runsLatest);
 	setInterval(() => {
 		if (document.hidden) return;
-		api('/api/executions', z.array(z.object({ updatedAt: z.number() }).loose())).then(runs => {
+		api(routes.executionsList, {}).then(runs => {
 			if (Math.max(0, ...runs.map(run => run.updatedAt)) > rendered) location.reload();
 		}).catch(() => undefined);
 	}, 5000);
@@ -381,23 +373,19 @@ each('form[data-action]', form => {
 			if (action === 'setup') {
 				await setup(form, clicked);
 			} else if (action === 'winget-refresh') {
-				await api('/api/winget/refresh', z.unknown(), {});
+				await api(routes.wingetRefresh, {});
 				location.reload();
 			} else if (action === 'winget-retry') {
-				await api('/api/winget/submit', z.unknown(), {
-					...data,
+				await api(routes.wingetSubmit, {
 					repositoryId: Number(data.repositoryId),
 					releaseId: Number(data.releaseId),
+					digest: data.digest ?? '',
 				});
 				location.reload();
 			} else if (action === 'winget-submit') {
 				const selection = { repositoryId: Number(data.repositoryId), releaseId: Number(data.releaseId) };
 				if (clicked === 'preview') {
-					const plan = await api(
-						'/api/winget/preview',
-						z.object({ digest: z.string(), sourceSha: z.string(), files: z.record(z.string(), z.string()) }),
-						selection,
-					);
+					const plan = await api(routes.wingetPreview, selection);
 					if (
 						input(form, 'repositoryId').value !== data.repositoryId || input(form, 'releaseId').value !== data.releaseId
 					) throw Error('Selection changed; preview again.');
@@ -420,11 +408,11 @@ each('form[data-action]', form => {
 				} else {
 					const plan = wingetPlans.get(form);
 					if (!plan) throw Error('Preview the release before submitting.');
-					await api('/api/winget/submit', z.unknown(), { ...selection, digest: plan.digest });
+					await api(routes.wingetSubmit, { ...selection, digest: plan.digest });
 					location.reload();
 				}
 			} else if (action === 'release-prepare' || action === 'release-set') {
-				const common = { repositoryId: Number(data.repositoryId), stream: data.stream };
+				const common = { repositoryId: Number(data.repositoryId), stream: data.stream ?? '' };
 				const version = data.versionMode === 'explicit'
 					? data.version
 					: data.versionMode === 'prerelease'
@@ -453,56 +441,68 @@ each('form[data-action]', form => {
 						unversioned.map(group => input(form, `version-${group.id}`)),
 					);
 				}
-				const request = action === 'release-set' ? { ...common, plan: { groups, operations } } : { ...common, version };
-				const plan = await api(
-					`/api/releases/${action === 'release-set' ? 'plan-set' : 'plan'}`,
-					planSchema,
-					request,
-				);
-				const run = await api(
-					`/api/releases/${action === 'release-set' ? 'prepare-set' : 'prepare'}`,
-					z.object({ id: z.string() }),
-					{ ...request, sourceSha: plan.sourceSha, planId: plan.planId },
-				);
+				let run: { id: string };
+				if (action === 'release-set') {
+					const request = { ...common, plan: { groups, operations } };
+					const reviewed = await api(routes.releasesPlanSet, request);
+					run = await api(routes.releasesPrepareSet, {
+						...request,
+						sourceSha: reviewed.sourceSha,
+						planId: reviewed.planId,
+					});
+				} else {
+					const request = { ...common, version };
+					const reviewed = await api(routes.releasesPlan, request);
+					run = await api(routes.releasesPrepare, {
+						...request,
+						sourceSha: reviewed.sourceSha,
+						planId: reviewed.planId,
+					});
+				}
 				location.assign(`/runs#${encodeURIComponent(run.id)}`);
 			} else if (action === 'discover') {
 				show(`Inspecting ${data.repository ?? 'repository'}…`, form);
 				const undo = inspecting(form, data.repository ?? '');
 				try {
-					const repository = await api('/api/repositories/discover', z.object({ name: z.string() }), {
-						repository: data.repository,
-					});
+					const repository = await api(routes.repositoriesDiscover, { repository: data.repository ?? '' });
 					location.assign(`/repositories?repository=${encodeURIComponent(repository.name)}`);
 				} catch (error) {
 					undo();
 					throw error;
 				}
 			} else if (action === 'cancel') {
-				await api('/api/executions/cancel', z.unknown(), data);
+				await api(routes.executionsCancel, { id: data.id ?? '' });
 				location.reload();
 			} else if (action === 'approve' || action === 'recover') {
-				await api(
-					`/api/executions/${action === 'approve' ? 'approve' : 'recover'}`,
-					z.unknown(),
-					action === 'approve' ? { ...data, force: data.force === 'true' } : data,
-				);
+				if (action === 'approve') {
+					await api(routes.executionsApprove, {
+						id: data.id ?? '',
+						sourceSha: data.sourceSha ?? '',
+						force: data.force === 'true',
+					});
+				} else await api(routes.executionsRecover, { id: data.id ?? '', action: recovery(data.action) });
 				location.reload();
 			} else if (action === 'start-set') {
-				await api('/api/releases/start-set', z.unknown(), data);
+				await api(routes.releasesStartSet, {
+					preparationId: data.preparationId ?? '',
+					sourceSha: data.sourceSha ?? '',
+				});
 				location.assign('/runs');
 			} else if (action === 'secret-save') {
 				if (!overwriteConfirmed(form, data.alias ?? '')) return;
 				const value = data.value;
 				const proof = await elevated(form);
 				input(form, 'value').value = '';
-				await api('/api/credentials/replace', z.unknown(), { alias: data.alias, value, proof });
+				await api(routes.credentialsReplace, {
+					alias: data.alias ?? '',
+					value: value ?? '',
+					proof,
+					expectedVersion: storedVersion(form, data.alias ?? '') ?? null,
+				});
 				location.reload();
 			} else if (action === 'secret-reveal') {
 				clearRevealed();
-				const result = await api('/api/credentials/reveal', z.object({ value: z.string() }), {
-					alias: data.alias,
-					proof: await elevated(form),
-				});
+				const result = await api(routes.credentialsReveal, { alias: data.alias ?? '', proof: await elevated(form) });
 				const output = find(form, '.revealed', HTMLElement);
 				if (output) {
 					output.textContent = result.value;
@@ -516,11 +516,7 @@ each('form[data-action]', form => {
 				}
 				show('Value shown for 30 seconds. It also clears when you leave this page.', form);
 			} else if (action === 'secret-sync') {
-				const results = await api(
-					'/api/credentials/sync',
-					z.array(z.object({ id: z.string(), state: z.string() })),
-					{ alias: data.alias, proof: await elevated(form) },
-				);
+				const results = await api(routes.credentialsSync, { alias: data.alias ?? '', proof: await elevated(form) });
 				const failed = results.filter(r => r.state !== 'succeeded').length;
 				show(
 					failed
@@ -535,7 +531,7 @@ each('form[data-action]', form => {
 						input(form, 'delivery'),
 					]);
 				}
-				await api('/api/credentials/grant', z.unknown(), {
+				await api(routes.credentialsGrant, {
 					selection: {
 						alias: data.alias,
 						repositoryId: Number(data.repositoryId),
@@ -555,57 +551,53 @@ each('form[data-action]', form => {
 						'Remove this permission? The value already copied to GitHub will remain there. Delete that GitHub secret separately to remove it.',
 					)
 				) return;
-				await api('/api/credentials/revoke', z.unknown(), { ...data, proof: await elevated(form) });
+				await api(routes.credentialsRevoke, { grantId: data.grantId ?? '', proof: await elevated(form) });
 				location.reload();
 			} else if (action === 'package-add' || action === 'package-remove') {
-				await api(`/api/packages/${action === 'package-add' ? 'add' : 'remove'}`, z.unknown(), {
-					registry: data.registry,
-					name: data.name,
-				});
+				const watch = { registry: registry(data.registry), name: data.name ?? '' };
+				await api(action === 'package-add' ? routes.packagesAdd : routes.packagesRemove, watch);
 				location.reload();
 			} else if (action === 'package-subscription') {
-				await api('/api/packages/subscription', z.unknown(), {
-					destinationId: data.destinationId,
-					registry: data.registry,
-					name: data.name,
+				await api(routes.packagesSubscription, {
+					destinationId: data.destinationId ?? '',
+					registry: registry(data.registry),
+					name: data.name ?? '',
 					subscribed: data.subscribed === 'true',
 				});
 				location.reload();
 			} else if (action === 'notification-save') {
-				await api('/api/notifications/save', z.object({ id: z.string() }), {
+				await api(routes.notificationsSave, {
 					destination: {
 						...(data.id ? { id: data.id } : {}),
-						name: data.name,
-						kind: data.kind,
-						credential: data.credential,
+						name: data.name ?? '',
+						kind: notificationKind(data.kind),
+						credential: data.credential ?? '',
 						subscribeNew: data.subscribeNew === 'true',
 						enabled: data.enabled === 'true',
 					},
+					proof: await elevated(form),
 				});
 				location.reload();
 			} else if (action === 'notification-remove') {
 				if (!confirm('Remove this destination? Its package subscriptions are removed too.')) return;
-				await api('/api/notifications/remove', z.unknown(), { id: data.id });
+				await api(routes.notificationsRemove, { id: data.id ?? '' });
 				location.reload();
 			} else if (action === 'key-enroll') {
 				const proof = form.dataset.first === 'true' ? undefined : await elevated(form);
-				const challenge = await api(
-					'/api/authenticators/options',
-					z.object({ id: z.string(), options: creationOptions }),
-					{ register: true, label: data.label, proof },
-				);
+				const challenge = await api(routes.authenticatorsOptions, { register: true, label: data.label, proof });
 				show('Touch the security key you want to enroll.', form);
 				const credential = await navigator.credentials.create({
-					publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(challenge.options),
+					publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(creationOptions.parse(challenge.options)),
 				});
 				if (!(credential instanceof PublicKeyCredential)) throw new Error('Security key enrollment cancelled.');
-				await api('/api/authenticators/verify', z.unknown(), { id: challenge.id, response: credential.toJSON() });
+				await api(routes.authenticatorsVerify, { id: challenge.id, response: credential.toJSON() });
 				location.reload();
 			} else if (action === 'cli-revoke' || action === 'cli-revoke-all') {
-				await api(`/api/cli-sessions/${action === 'cli-revoke' ? 'revoke' : 'revoke-all'}`, z.unknown(), data);
+				if (action === 'cli-revoke') await api(routes.cliSessionsRevoke, { id: data.id ?? '' });
+				else await api(routes.cliSessionsRevokeAll, {});
 				location.reload();
 			} else if (action === 'key-remove') {
-				await api('/api/authenticators/remove', z.unknown(), { ...data, proof: await elevated(form) });
+				await api(routes.authenticatorsRemove, { id: data.id ?? '', proof: await elevated(form) });
 				location.reload();
 			}
 		} catch (error) {

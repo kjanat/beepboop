@@ -5,8 +5,8 @@ import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import type { Client } from '@/cli/client';
 import { emit, failure } from '@/cli/output';
+import { routes } from '@/contract/routes';
 import { packageLabel } from '@/domain/package-label';
-import { record, string } from '@/model';
 
 function options(entries: SelectChoice[]): [SelectChoice, ...SelectChoice[]] {
 	const [first, ...rest] = entries;
@@ -160,7 +160,7 @@ export async function setupRepository(
 		}
 		await emit(
 			out,
-			await client.request('/api/repositories/setup/apply', {
+			await client.call(routes.setupApply, {
 				repository,
 				choices: reviewed.choices,
 				planId: reviewed.planId,
@@ -171,11 +171,11 @@ export async function setupRepository(
 		return;
 	}
 	if (flags.apply) throw failure('--apply needs --plan pointing to a reviewed preview', 'PLAN_REQUIRED');
-	const initial = parseSetupPlan(await client.request('/api/repositories/setup/preview', { repository }));
+	const initial = parseSetupPlan(await client.call(routes.setupPreview, { repository }));
 	const choices: unknown = flags.choices
 		? await Bun.file(flags.choices).json()
 		: await chooseSetup(initial, ask);
-	const preview = await client.request('/api/repositories/setup/preview', { repository, choices });
+	const preview = await client.call(routes.setupPreview, { repository, choices });
 	const plan = parseSetupPlan(preview);
 	if (flags.output) await Bun.write(flags.output, `${JSON.stringify(preview, null, 2)}\n`);
 	if (out.jsonMode) {
@@ -197,15 +197,13 @@ export async function setupRepository(
 		!flags.choices
 		&& await ask({ kind: 'confirm', message: 'Open or refresh the setup PR with these exact changes?', default: false })
 	) {
-		const result = record(
-			await client.request('/api/repositories/setup/apply', {
-				repository,
-				choices,
-				planId: plan.planId,
-				sourceSha: plan.sourceSha,
-				setupHead: plan.setupHead,
-			}),
-		);
-		out.log(string(result.url));
+		const result = await client.call(routes.setupApply, {
+			repository,
+			choices,
+			planId: plan.planId,
+			sourceSha: plan.sourceSha,
+			setupHead: plan.setupHead,
+		});
+		out.log(result.url);
 	}
 }

@@ -1,12 +1,12 @@
-import { z } from 'zod';
 import { publishable } from '@/automation/package-publication';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
+import { routes } from '@/contract/routes';
 import { packageLabel } from '@/domain/package-label';
 import { oneOf } from '@/model';
-import { api, feedbackFor, find, show } from '@/ui/browser/dom';
+import { api } from '@/ui/browser/api';
+import { feedbackFor, find, show } from '@/ui/browser/dom';
 
-const setupPlan = z.unknown().transform(parseSetupPlan);
 const sessions = new WeakMap<
 	HTMLFormElement,
 	{ plan: SetupPlan; choices: () => SetupChoices; reviewed?: string; takeOver?: string }
@@ -273,7 +273,7 @@ export async function setup(form: HTMLFormElement, action: string) {
 	const repository = form.dataset.repository;
 	if (!repository) throw new Error('Repository missing');
 	if (!sessions.has(form)) {
-		const plan = await api('/api/repositories/setup/preview', setupPlan, { repository });
+		const plan = parseSetupPlan(await api(routes.setupPreview, { repository }));
 		editor(form, plan);
 		review(form, plan);
 		const apply = find(form, 'button[value="apply"]', HTMLButtonElement);
@@ -285,7 +285,7 @@ export async function setup(form: HTMLFormElement, action: string) {
 	const choices = session.choices(), identity = JSON.stringify(choices);
 	if (action !== 'apply' && action !== 'takeover') {
 		delete session.reviewed;
-		const plan = await api('/api/repositories/setup/preview', setupPlan, { repository, choices });
+		const plan = parseSetupPlan(await api(routes.setupPreview, { repository, choices }));
 		session.plan = plan;
 		if (!plan.blockers.length) session.reviewed = identity;
 		if (takeOverAllowed(plan)) session.takeOver = identity;
@@ -297,7 +297,7 @@ export async function setup(form: HTMLFormElement, action: string) {
 		throw new Error('Preview these choices again before applying.');
 	}
 	const { planId, sourceSha, setupHead } = session.plan;
-	const result = await api('/api/repositories/setup/apply', z.object({ url: z.string() }), {
+	const result = await api(routes.setupApply, {
 		repository,
 		choices,
 		planId,
