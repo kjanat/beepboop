@@ -311,7 +311,8 @@ export class Notifications {
 		}
 		let response: Response;
 		try {
-			response = await this.request(url, {
+			const request = this.request;
+			response = await request(url, {
 				method: 'POST',
 				redirect: 'manual',
 				signal: AbortSignal.timeout(10_000),
