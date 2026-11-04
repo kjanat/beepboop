@@ -1,13 +1,6 @@
 import { z } from 'zod';
 import { identifyExecution, identifyRepository } from '@/automation/package-identity';
-import {
-	automationEventSchema,
-	deliverySchema,
-	documentRow,
-	executionSchema,
-	repositorySchema,
-	rowDocument,
-} from '@/automation/schemas';
+import { documentRow, rowDocument } from '@/automation/schemas';
 import type {
 	ActivityEntry,
 	AutomationEvent,
@@ -16,6 +9,27 @@ import type {
 	SubscriptionDelivery,
 } from '@/automation/types';
 import { record } from '@/model';
+import { decodeDeliveryV1, decodeEventV1, decodeExecutionV1, decodeRepositoryV1 } from '@/persistence/codecs/v1';
+
+export type Readable<T> = { kind: 'readable'; value: T };
+export interface UnreadableRepository {
+	kind: 'unreadable';
+	id: number;
+	name: string;
+	error: string;
+}
+export interface UnreadableExecution {
+	kind: 'unreadable';
+	id: string;
+	repositoryId: number;
+	error: string;
+}
+const repositoryRow = z.object({ id: z.number(), name: z.string(), document: z.string() });
+const executionRow = z.object({ id: z.string(), repository_id: z.number(), document: z.string() });
+function decodeError(error: unknown): string {
+	if (error instanceof z.ZodError) return z.prettifyError(error);
+	return error instanceof Error ? error.message : 'Unreadable document';
+}
 
 const onboardingRow = z.object({ repository_id: z.number(), document: z.string() });
 const activityRow = z.object({
@@ -42,13 +56,25 @@ export class Store {
 			.prepare('SELECT document FROM repositories WHERE id=?')
 			.bind(id)
 			.first();
-		return row ? identifyRepository(repositorySchema.parse(rowDocument(row))) : undefined;
+		return row ? decodeRepositoryV1(rowDocument(row)) : undefined;
+	}
+	private async repositoryRows(): Promise<z.output<typeof repositoryRow>[]> {
+		const result = await this.db
+			.prepare('SELECT id, name, document FROM repositories ORDER BY COALESCE(added_at, updated_at) DESC, name')
+			.all();
+		return z.array(repositoryRow).parse(result.results);
 	}
 	async repositories(): Promise<RepositoryRecord[]> {
-		const result = await this.db
-			.prepare('SELECT document FROM repositories ORDER BY COALESCE(added_at, updated_at) DESC, name')
-			.all();
-		return result.results.map((row) => identifyRepository(repositorySchema.parse(rowDocument(row))));
+		return (await this.repositoryRows()).map(row => decodeRepositoryV1(JSON.parse(row.document)));
+	}
+	async readRepositories(): Promise<(Readable<RepositoryRecord> | UnreadableRepository)[]> {
+		return (await this.repositoryRows()).map(row => {
+			try {
+				return { kind: 'readable', value: decodeRepositoryV1(JSON.parse(row.document)) };
+			} catch (error) {
+				return { kind: 'unreadable', id: row.id, name: row.name, error: decodeError(error) };
+			}
+		});
 	}
 	async onboardingPulls(): Promise<Map<number, string>> {
 		const result = await this.db.prepare('SELECT repository_id, document FROM onboarding').all();
@@ -73,17 +99,29 @@ export class Store {
 			.prepare('SELECT document FROM executions WHERE id=?')
 			.bind(id)
 			.first();
-		return row ? identifyExecution(executionSchema.parse(rowDocument(row))) : undefined;
+		return row ? decodeExecutionV1(rowDocument(row)) : undefined;
 	}
-	async executions(repositoryId?: number): Promise<Execution[]> {
+	private async executionRows(repositoryId?: number): Promise<z.output<typeof executionRow>[]> {
 		const query = repositoryId === undefined
-			? this.db.prepare('SELECT document FROM executions ORDER BY updated_at DESC LIMIT 200')
+			? this.db.prepare('SELECT id, repository_id, document FROM executions ORDER BY updated_at DESC LIMIT 200')
 			: this.db
 				.prepare(
-					'SELECT document FROM executions WHERE repository_id=? ORDER BY updated_at DESC LIMIT 200',
+					'SELECT id, repository_id, document FROM executions WHERE repository_id=? ORDER BY updated_at DESC LIMIT 200',
 				)
 				.bind(repositoryId);
-		return (await query.all()).results.map((row) => identifyExecution(executionSchema.parse(rowDocument(row))));
+		return z.array(executionRow).parse((await query.all()).results);
+	}
+	async executions(repositoryId?: number): Promise<Execution[]> {
+		return (await this.executionRows(repositoryId)).map(row => decodeExecutionV1(JSON.parse(row.document)));
+	}
+	async readExecutions(): Promise<(Readable<Execution> | UnreadableExecution)[]> {
+		return (await this.executionRows()).map(row => {
+			try {
+				return { kind: 'readable', value: decodeExecutionV1(JSON.parse(row.document)) };
+			} catch (error) {
+				return { kind: 'unreadable', id: row.id, repositoryId: row.repository_id, error: decodeError(error) };
+			}
+		});
 	}
 	async putExecution(execution: Execution): Promise<void> {
 		await this.db
@@ -101,7 +139,7 @@ export class Store {
 	}
 	async event(id: string): Promise<AutomationEvent | undefined> {
 		const row = await this.db.prepare('SELECT document FROM release_events WHERE id=?').bind(id).first();
-		return row ? automationEventSchema.parse(rowDocument(row)) : undefined;
+		return row ? decodeEventV1(rowDocument(row)) : undefined;
 	}
 	async queueEvent(event: AutomationEvent, deliveries: SubscriptionDelivery[]): Promise<void> {
 		const serialized = JSON.stringify(event);
@@ -135,7 +173,7 @@ export class Store {
 		const rows = await this.db.prepare(
 			"SELECT document FROM subscription_deliveries WHERE state='pending' ORDER BY updated_at,id LIMIT 100",
 		).all();
-		return rows.results.map(row => deliverySchema.parse(rowDocument(row)));
+		return rows.results.map(row => decodeDeliveryV1(rowDocument(row)));
 	}
 	async deliveryResult(id: string, succeeded: boolean): Promise<void> {
 		await this.db.prepare('UPDATE subscription_deliveries SET state=?,error=?,updated_at=? WHERE id=?')

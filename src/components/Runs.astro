@@ -1,5 +1,6 @@
 ---
 import { matchesPublication } from '@/automation/package-identity.ts';
+import type { UnreadableExecution } from '@/automation/store.ts';
 import type { Execution } from '@/automation/types.ts';
 import Field from '@/components/Field.astro';
 import { date } from '@/server/dashboard.ts';
@@ -9,8 +10,9 @@ import { packageLabel } from '@/ui/package-label';
 
 interface Props {
 	executions: Execution[];
+	unreadable: UnreadableExecution[];
 }
-const { executions } = Astro.props;
+const { executions, unreadable } = Astro.props;
 const now = Date.now();
 const waiting = (run: Execution): string | undefined =>
 	run.notBefore !== undefined && run.notBefore > now
@@ -86,7 +88,18 @@ const progress = (run: Execution): string => {
 		</details>
 	</article>
 ))}
-{!executions.length && (
+{unreadable.map(row => (
+	<article class="run-card" id={row.id}>
+		<div class="section-heading">
+			<div>
+				<p class="eyebrow">Repository {row.repositoryId}</p>
+				<h2>Execution <code>{row.id.slice(0, 12)}</code></h2>
+			</div><span class="badge failed">record unreadable</span>
+		</div>
+		<pre>{row.error}</pre>
+	</article>
+))}
+{!executions.length && !unreadable.length && (
 	<article class="empty">
 		<h2>No release runs yet</h2>
 		<p>

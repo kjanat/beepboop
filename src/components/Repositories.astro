@@ -58,6 +58,16 @@ function wingetDestination(repository: RepositoryRecord) {
 			></label><button class="primary">Inspect repository</button>
 	</form>
 </article>
+{data.unreadable.repositories.map(row => (
+	<article id={`repository-${row.id}`}>
+		<div class="section-heading">
+			<h2><a href={`https://github.com/${row.name}`}>{row.name} ↗</a></h2><span
+				class="badge failed"
+			>Record unreadable</span>
+		</div>
+		<pre>{row.error}</pre>
+	</article>
+))}
 {repositories.map(repository => (
 	<article id={`repository-${repository.id}`}>
 		<details open={repository.name === selected || repositories.length === 1}>

@@ -30,12 +30,12 @@ import { planRefs, type RefPlan } from '@/automation/refs';
 import { compileReleaseSet } from '@/automation/release-set';
 import { manifestProblems } from '@/automation/release-version';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
-import { automationEventSchema, executionSchema, setupEditSchema } from '@/automation/schemas';
 import { maintainSetup } from '@/automation/setup-maintenance';
 import type { SetupEdit } from '@/automation/setup-types';
 import { Store } from '@/automation/store';
 import type { Artifact, AutomationEvent, Edit, Execution, Publication, ReleaseReference } from '@/automation/types';
 import { array, integer, record, semver, sha, text } from '@/model';
+import { decodeEventV1, decodeExecutionV1, decodeSetupEditV1 } from '@/persistence/codecs/v1';
 
 export interface CoordinatorBindings extends Credentials {
 	DB: D1Database;
@@ -84,16 +84,18 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return new RepositoryGateway(this.env, Number(this.env.OWNER_ID));
 	}
 	private async journal(): Promise<Execution[]> {
-		return [...(await this.ctx.storage.list({ prefix: 'execution:' })).values()].map(value =>
-			executionSchema.parse(value)
-		);
+		return [...(await this.ctx.storage.list({ prefix: 'execution:' })).values()].map(decodeExecutionV1);
+	}
+	private async stored(id: string): Promise<Execution | undefined> {
+		const value = await this.ctx.storage.get(`execution:${id}`);
+		return value === undefined ? undefined : decodeExecutionV1(value);
 	}
 	private async releaseSet(key: string): Promise<ReleaseSetRecord | undefined> {
 		return releaseSetRecord.optional().parse(await this.ctx.storage.get(key));
 	}
 	private async put(execution: Execution): Promise<void> {
 		Object.assign(execution, identifyExecution(execution));
-		const previous = executionSchema.optional().parse(await this.ctx.storage.get(`execution:${execution.id}`));
+		const previous = await this.stored(execution.id);
 		if (
 			previous && previous.state !== execution.state && ['running', 'succeeded'].includes(execution.state)
 			&& execution.reason === previous.reason
@@ -159,9 +161,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		await this.ctx.storage.put({ [`release-event:${id}`]: event, [`release-emitted:${id}`]: true });
 	}
 	async releaseEvents(): Promise<AutomationEvent[]> {
-		return [...(await this.ctx.storage.list({ prefix: 'release-event:', limit: 100 })).values()].map(value =>
-			automationEventSchema.parse(value)
-		);
+		return [...(await this.ctx.storage.list({ prefix: 'release-event:', limit: 100 })).values()].map(decodeEventV1);
 	}
 	async acknowledgeReleaseEvent(id: string): Promise<void> {
 		await this.ctx.storage.delete(`release-event:${id}`);
@@ -343,8 +343,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (Boolean(execution.workflow) === Boolean(execution.managed)) {
 				throw new Error('Execution needs exactly one runner');
 			}
-			const prior = executionSchema.optional().parse(await this.ctx.storage.get(`execution:${execution.id}`));
-			if (prior) return identifyExecution(prior);
+			const prior = await this.stored(execution.id);
+			if (prior) return prior;
 			if (execution.configuration.streams[execution.stream]?.concurrency === 'supersede-pending') {
 				for (const old of await this.journal()) {
 					if (
@@ -361,9 +361,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		});
 	}
 	private async get(id: string): Promise<Execution> {
-		const execution = executionSchema.optional().parse(await this.ctx.storage.get(`execution:${id}`));
+		const execution = await this.stored(id);
 		if (!execution) throw new Error('Unknown execution');
-		return identifyExecution(execution);
+		return execution;
 	}
 	async prepared(id: string, identity: WorkflowIdentity, edits: Edit[]): Promise<{ url: string; head: string }> {
 		return this.serial(async () => {
@@ -1157,8 +1157,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 		}
 	}
+	private async setupEdit(): Promise<SetupEdit | undefined> {
+		const value = await this.ctx.storage.get('setup-edit');
+		return value === undefined ? undefined : decodeSetupEditV1(value);
+	}
 	async setupEdited(edit: Omit<SetupEdit, 'due'>, changed: boolean): Promise<void> {
-		const previous = setupEditSchema.optional().parse(await this.ctx.storage.get('setup-edit'));
+		const previous = await this.setupEdit();
 		if (previous ? previous.number === edit.number && previous.body === edit.body : !changed) return;
 		const due = Date.now() + 5000;
 		await this.ctx.storage.put('setup-edit', { ...edit, due });
@@ -1169,7 +1173,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		if (current === null || current > at || current <= Date.now()) await this.ctx.storage.setAlarm(at);
 	}
 	private async rebuildSetup(): Promise<void> {
-		const edit = setupEditSchema.optional().parse(await this.ctx.storage.get('setup-edit'));
+		const edit = await this.setupEdit();
 		if (!edit) return;
 		if (edit.due > Date.now()) return this.arm(edit.due);
 		const store = this.store();
@@ -1189,7 +1193,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				`${edit.repositoryId} ${edit.head}: ${error instanceof Error ? error.message : 'Setup edit failed'}`,
 			);
 		}
-		const current = setupEditSchema.optional().parse(await this.ctx.storage.get('setup-edit'));
+		const current = await this.setupEdit();
 		if (current?.due === edit.due) await this.ctx.storage.delete('setup-edit');
 	}
 	async alarm(): Promise<void> {

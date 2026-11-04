@@ -58,15 +58,19 @@ const copy: Record<string, [string, string]> = {
 };
 const [title, description] = copy[section]
 	?? ['Overview', 'Follow your releases.'];
-const attention = data.executions.filter(e =>
-	['blocked', 'failed', 'uncertain', 'cancelled'].includes(e.state)
-);
+const attention =
+	data.executions.filter(e =>
+		['blocked', 'failed', 'uncertain', 'cancelled'].includes(e.state)
+	).length + data.unreadable.executions.length;
 const running = data.executions.filter(e =>
 	['running', 'ready', 'dispatching'].includes(e.state)
 );
-const setup = data.repositories.filter(r =>
-	!r.configuration || r.diagnostics.length || r.suspended
-);
+const setup =
+	data.repositories.filter(r =>
+		!r.configuration || r.diagnostics.length || r.suspended
+	).length + data.unreadable.repositories.length;
+const unconnected = !data.repositories.length
+	&& !data.unreadable.repositories.length;
 ---
 <Layout title={title} description={description} section={section}>
 	{section === 'overview' && (
@@ -76,14 +80,14 @@ const setup = data.repositories.filter(r =>
 					commit</span><span>Verify publications</span>
 			</div>
 			<div class="overview-grid">
-				<a class="metric" href="/runs"><strong>{attention.length}</strong><span
-					>runs need attention</span></a>
+				<a class="metric" href="/runs"><strong>{attention}</strong><span>runs
+						need attention</span></a>
 				<a class="metric" href="/runs"><strong>{running.length}</strong><span
 					>runs in progress</span></a>
-				<a class="metric" href="/repositories"><strong
-					>{setup.length}</strong><span>repositories need setup</span></a>
+				<a class="metric" href="/repositories"><strong>{setup}</strong><span
+					>repositories need setup</span></a>
 			</div>
-			{data.repositories.length === 0 ? (
+			{unconnected ? (
 				<article class="empty">
 					<h2>Start with a repository</h2>
 					<p>
@@ -97,7 +101,7 @@ const setup = data.repositories.filter(r =>
 				 <>
 					 <div class="section-heading">
 						 <h2>
-							 {attention.length ? 'Needs your attention' : 'Recent releases'}
+							 {attention ? 'Needs your attention' : 'Recent releases'}
 						 </h2><a class="button primary" href="/releases"
 						 >Prepare a release</a>
 					 </div>
@@ -110,7 +114,12 @@ const setup = data.repositories.filter(r =>
 	{section === 'packages' && <Packages data={data} />}
 	{section === 'notifications' && <Notifications data={data} />}
 	{section === 'releases' && <Releases data={data} />}
-	{section === 'runs' && <Runs executions={data.executions} />}
+	{section === 'runs' && (
+		<Runs
+			executions={data.executions}
+			unreadable={data.unreadable.executions}
+		/>
+	)}
 	{section === 'runs' && <WinGet data={data} />}
 	{section === 'secrets' && <Secrets data={data} />}
 	{section === 'security' && <Security data={data} />}

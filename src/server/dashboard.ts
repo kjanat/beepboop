@@ -3,6 +3,7 @@ import { Authenticators } from '@/automation/auth.ts';
 import { packageWatches } from '@/automation/package-watch.ts';
 import { rowDocument } from '@/automation/schemas.ts';
 import { type AutomationBindings, AutomationService } from '@/automation/service.ts';
+import type { Readable } from '@/automation/store.ts';
 import type { RepositoryRecord } from '@/automation/types.ts';
 import { parseGrant } from '@/automation/vault.ts';
 
@@ -29,6 +30,13 @@ const deliverySummaries: z.ZodType<DeliverySummary[]> = z.array(
 	z.object({ grant_id: z.string(), version: z.number(), state: z.string(), updated_at: z.number() }),
 );
 
+function readable<T>(rows: (Readable<T> | { kind: 'unreadable' })[]): T[] {
+	return rows.flatMap(row => row.kind === 'readable' ? [row.value] : []);
+}
+function unreadable<T, U extends { kind: 'unreadable' }>(rows: (Readable<T> | U)[]): U[] {
+	return rows.flatMap(row => row.kind === 'unreadable' ? [row] : []);
+}
+
 export function workflowChoices(repository: RepositoryRecord) {
 	if (!repository.configuration || repository.suspended || repository.diagnostics.length) return [];
 	return Object.entries(repository.configuration.streams).flatMap(([stream, configuration]) => {
@@ -51,8 +59,8 @@ export function workflowChoices(repository: RepositoryRecord) {
 export async function dashboard(env: AutomationBindings, actor: string) {
 	const service = new AutomationService(env);
 	const [
-		repositories,
-		executions,
+		repositoryRows,
+		executionRows,
 		onboarding,
 		activity,
 		keys,
@@ -67,8 +75,8 @@ export async function dashboard(env: AutomationBindings, actor: string) {
 		cliSessions,
 	] = await Promise.all(
 		[
-			service.store.repositories(),
-			service.store.executions(),
+			service.store.readRepositories(),
+			service.store.readExecutions(),
 			service.store.onboardingPulls(),
 			service.store.activity(),
 			new Authenticators(env).list(actor),
@@ -83,6 +91,8 @@ export async function dashboard(env: AutomationBindings, actor: string) {
 			service.store.db.prepare('SELECT id,created_at FROM cli_sessions ORDER BY created_at DESC').all(),
 		],
 	);
+	const repositories = readable(repositoryRows);
+	const executions = readable(executionRows);
 	return {
 		winget,
 		latestWinget,
@@ -93,6 +103,7 @@ export async function dashboard(env: AutomationBindings, actor: string) {
 		subscriptions,
 		notifications,
 		executions,
+		unreadable: { repositories: unreadable(repositoryRows), executions: unreadable(executionRows) },
 		onboarding,
 		activity,
 		keys,
