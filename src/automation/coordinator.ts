@@ -572,12 +572,16 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		if (execution.draftRelease || !target || !publishesGithubRelease(execution)) return execution.draftRelease;
 		const gateway = this.gateway();
 		const write = await gateway.token(execution.repository, execution.repositoryId, { contents: 'write' });
-		const existing = array(await gateway.call(`/repos/${execution.repository}/releases?per_page=100`, write))
+		const bot = await gateway.botIdentity();
+		const drafts = array(await gateway.call(`/repos/${execution.repository}/releases?per_page=100`, write))
 			.map(record)
-			.find(release =>
-				release.draft === true && release.tag_name === target.tag
-				&& release.target_commitish === execution.sourceSha && release.prerelease === target.prerelease
-			);
+			.filter(release => release.draft === true && release.tag_name === target.tag);
+		const matches = (release: Record<string, unknown>) =>
+			release.target_commitish === execution.sourceSha && release.prerelease === target.prerelease;
+		for (const stale of drafts.filter(release => !matches(release) && record(release.author).id === bot.id)) {
+			await gateway.call(`/repos/${execution.repository}/releases/${integer(stale.id)}`, write, 'DELETE');
+		}
+		const existing = drafts.find(matches);
 		const release = existing ?? record(
 			await gateway.call(`/repos/${execution.repository}/releases`, write, 'POST', {
 				tag_name: target.tag,
