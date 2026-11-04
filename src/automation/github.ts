@@ -19,21 +19,27 @@ export class RepositoryGateway {
 	async call(path: string, token: string, method = 'GET', body?: unknown): Promise<unknown> {
 		if (!path.startsWith('/')) throw new Error('Invalid API path');
 		const transport = this.transport;
-		const response = await transport(`https://api.github.com${path}`, {
-			method,
-			redirect: 'manual',
-			signal: AbortSignal.timeout(20_000),
-			headers: {
-				...(token ? { Authorization: `Bearer ${token}` } : {}),
-				Accept: 'application/vnd.github+json',
-				'X-GitHub-Api-Version': '2026-03-10',
-				'User-Agent': 'beepboop',
-				'Content-Type': 'application/json',
-			},
-			...(body === undefined ? {} : { body: JSON.stringify(body) }),
-		});
+		const send = () =>
+			transport(`https://api.github.com${path}`, {
+				method,
+				redirect: 'manual',
+				signal: AbortSignal.timeout(20_000),
+				headers: {
+					...(token ? { Authorization: `Bearer ${token}` } : {}),
+					Accept: 'application/vnd.github+json',
+					'X-GitHub-Api-Version': '2026-03-10',
+					'User-Agent': 'beepboop',
+					'Content-Type': 'application/json',
+				},
+				...(body === undefined ? {} : { body: JSON.stringify(body) }),
+			});
+		let response = await send();
+		for (let attempt = 1; method === 'GET' && response.status >= 500 && attempt < 3; attempt++) {
+			await new Promise(resolve => setTimeout(resolve, attempt * 500));
+			response = await send();
+		}
 		if (response.status === 404 && method === 'GET') return null;
-		if (!response.ok) throw new Error(`GitHub HTTP ${response.status}`);
+		if (!response.ok) throw new Error(`GitHub HTTP ${response.status} on ${method} ${path.split('?')[0]}`);
 		if (response.status === 204) return null;
 		return response.json();
 	}
@@ -252,7 +258,7 @@ export class RepositoryGateway {
 			await this.token(name, id, { contents: 'read', workflows: 'write' });
 			return true;
 		} catch (error) {
-			if (error instanceof Error && /^GitHub HTTP (403|422)$/.test(error.message)) return false;
+			if (error instanceof Error && /^GitHub HTTP (403|422) /.test(error.message)) return false;
 			throw error;
 		}
 	}

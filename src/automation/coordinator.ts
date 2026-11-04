@@ -779,16 +779,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					.flatMap(binding => binding ? [`.github/workflows/${binding.file}`] : [])
 			),
 		);
-		const paths = new Map<string, string>();
-		const gating = [];
-		for (const run of runs) {
+		const workflowRuns = array(
+			record(await gateway.call(`${base}/actions/runs?head_sha=${execution.sourceSha}&per_page=100`, token))
+				.workflow_runs,
+		).map(record);
+		const paths = new Map(workflowRuns.map(run => [String(run.id), String(run.path)]));
+		const gating = runs.filter(run => {
 			const runId = /\/actions\/runs\/(\d+)\//.exec(String(run.details_url))?.[1];
-			if (runId && !paths.has(runId)) {
-				paths.set(runId, String(record(await gateway.call(`${base}/actions/runs/${runId}`, token)).path));
-			}
-			if (runId && releaseFiles.has(paths.get(runId) ?? '')) continue;
-			gating.push(run);
-		}
+			return !(runId && releaseFiles.has(paths.get(runId) ?? ''));
+		});
 		if (!gating.length) problems.push('No checks have run on this commit');
 		for (const run of gating) {
 			if (run.status !== 'completed') problems.push(`${String(run.name)} is still running`);
