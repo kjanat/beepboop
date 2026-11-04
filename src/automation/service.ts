@@ -16,7 +16,7 @@ import { manifestProblems, unreleasedManifestVersion } from '@/automation/releas
 import { setupOptionsSchema } from '@/automation/schemas';
 import { bodyChoices } from '@/automation/setup';
 import { maintainSetup } from '@/automation/setup-maintenance';
-import { Store } from '@/automation/store';
+import { decodeError, Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
 import type { AutomationEvent, Execution, RepositoryRecord, SubscriptionDelivery } from '@/automation/types';
 import { Vault } from '@/automation/vault';
@@ -226,7 +226,14 @@ export class AutomationService {
 			try {
 				const merge = await this.gateway.preparationMerge(repository.name, repository.id, result, target);
 				if (merge) return merge;
-			} catch {}
+			} catch (error) {
+				console.error(JSON.stringify({
+					event: 'preparation-merge.failed',
+					repository: repository.name,
+					pull: result.url,
+					error: decodeError(error),
+				}));
+			}
 		}
 		return undefined;
 	}

@@ -49,6 +49,7 @@ test('a D1 outage keeps the outbox, and the next alarm projects it', async () =>
 	const plan = await call(routes.releasesPlan, { repositoryId: repository.id, stream: 'main', version: '1.1.0' }, send);
 
 	world.db.failBatch = new Error('D1_ERROR: Network connection lost.');
+	const logged = errors();
 	const prepared = await call(
 		routes.releasesPrepare,
 		{ repositoryId: repository.id, stream: 'main', version: '1.1.0', sourceSha: plan.sourceSha, planId: plan.planId },
@@ -60,6 +61,7 @@ test('a D1 outage keeps the outbox, and the next alarm projects it', async () =>
 	const outbox = [...journal.snapshot().keys()].filter(key => key.startsWith('outbox:'));
 	expect(outbox.length).toBe(1);
 	expect(journal.alarm).toBe(Date.now() + 10_000);
+	expect(logged.events()).toEqual([{ event: 'projection.failed', error: 'D1_ERROR: Network connection lost.' }]);
 
 	world.db.failBatch = undefined;
 	await world.wait(10_000);
@@ -239,4 +241,17 @@ test('a poisoned execution is quarantined while the rest of the journal advances
 	expect(z.array(z.object({ target: z.string() })).parse(audit.results).map(row => row.target.split(':')[0])).toEqual([
 		'poisoned',
 	]);
+
+	await journal.put('execution:unaudited', { id: 'unaudited', repositoryId: repository.id, state: 'exploded' });
+	const logged = errors();
+	world.db.failWrites = new Error('D1_ERROR: Network connection lost.');
+	await world.coordinator(repository).wake();
+	await world.wait(1_000);
+	world.db.failWrites = undefined;
+	expect(journal.snapshot().has('quarantine:unaudited')).toBe(true);
+	expect(logged.events()).toEqual([{
+		event: 'quarantine.audit-failed',
+		target: expect.stringMatching(/^unaudited: /),
+		error: 'D1_ERROR: Network connection lost.',
+	}]);
 });

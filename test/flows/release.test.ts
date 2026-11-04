@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { z } from 'zod';
 import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
@@ -159,4 +159,50 @@ test('a promotion whose workflow branch was deleted fails with the missing ref n
 	expect((await only(api, 'promote')).reason).toBe(
 		'Beepboop could not continue: Workflow ref release-line no longer exists',
 	);
+});
+
+test('a merge-approved release whose merge cannot be confirmed waits for approval and logs why', async () => {
+	const repository = widget(world.github, { approval: 'merge' });
+	world.npm.publish('widget', '1.0.0');
+	const api = bearer(world, await world.cliSession());
+	await api('/api/repositories/discover', { repository: 'octo/widget' });
+	const request = { repositoryId: repository.id, stream: 'main', version: '1.1.0' };
+	const plan = await api('/api/releases/plan', request);
+	await api('/api/releases/prepare', {
+		...request,
+		sourceSha: text(plan.body, 'sourceSha'),
+		planId: text(plan.body, 'planId'),
+	});
+	await world.wait(20_000);
+	const [pull] = repository.pulls;
+	if (!pull) throw new Error('No preparation pull request');
+	const merged = world.github.merge(repository, pull.number);
+	passChecks(repository, merged.sha);
+
+	world.network.serve(
+		'api.github.com',
+		request =>
+			new URL(request.url).pathname.includes('/compare/')
+				? Response.json({ message: 'Resource not accessible by integration' }, { status: 403 })
+				: world.github.handle(request),
+	);
+	const logged = spyOn(console, 'error').mockImplementation(() => {});
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(1_000);
+	const events = logged.mock.calls.flatMap(([line]): unknown[] => {
+		if (typeof line !== 'string') return [];
+		const parsed: unknown = JSON.parse(line);
+		return [parsed];
+	});
+	logged.mockRestore();
+	expect(events).toEqual([{
+		event: 'preparation-merge.failed',
+		repository: 'octo/widget',
+		pull: `https://github.com/octo/widget/pull/${pull.number}`,
+		error:
+			`GitHub HTTP 403 on GET /repos/octo/widget/compare/${merged.sha}...${merged.sha}: Resource not accessible by integration`,
+	}]);
+	const promotion = await only(api, 'promote');
+	expect(promotion.state).toBe('blocked');
+	expect(promotion.approvedBy).toBeUndefined();
 });

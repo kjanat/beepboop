@@ -130,8 +130,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		try {
 			await this.journal.drain(rows => new ProjectionStore(this.env.DB).apply(rows));
 			this.projectionRetryAt = undefined;
-		} catch {
+		} catch (error) {
 			this.projectionRetryAt = Date.now() + projectionRetry;
+			console.error(JSON.stringify({ event: 'projection.failed', error: decodeError(error) }));
 		}
 	}
 	private async nextAlarm(): Promise<number | undefined> {
@@ -193,9 +194,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private async quarantine(id: string, error: string): Promise<void> {
 		await this.ctx.storage.put(`quarantine:${id}`, { error, at: Date.now() });
-		try {
-			await this.store().audit('beepboop', 'execution.quarantined', `${id}: ${error}`);
-		} catch {}
+		await this.auditQuietly('execution.quarantined', `${id}: ${error}`, 'quarantine.audit-failed');
 	}
 	private async isolate(id: string, error: unknown): Promise<void> {
 		const reason = `Beepboop could not continue: ${decodeError(error)}`;
@@ -388,8 +387,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					}
 				}
 				await this.ctx.storage.delete(key);
-			} catch {
+			} catch (error) {
 				await this.ctx.storage.put(key, { ...(wake === true ? {} : wake), due: now + reconcileInterval });
+				console.error(JSON.stringify({ event: 'release-wake.failed', preparationId, error: decodeError(error) }));
 			}
 		}
 	}

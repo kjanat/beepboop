@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { RepositoryGateway } from '@/automation/github';
 import { documentRow } from '@/automation/schemas';
-import type { Store } from '@/automation/store';
+import { decodeError, type Store } from '@/automation/store';
 import type { RepositoryRecord } from '@/automation/types';
 import { generateManifests, renderManifests } from '@/distribution/winget/generate';
 import { readiness } from '@/domain/repository';
@@ -416,7 +416,9 @@ export class WinGetService {
 					'UPDATE winget_submissions SET document=?,updated_at=? WHERE id=? AND lease_until<?',
 				)
 					.bind(JSON.stringify(next), next.updatedAt, saved.plan.id, Date.now()).run();
-			} catch { /* Preserve the last known status; retry on the next scheduled pass. */ }
+			} catch (error) {
+				console.error(JSON.stringify({ event: 'winget.status-failed', id: saved.plan.id, error: decodeError(error) }));
+			}
 		}
 	}
 	async watch(repo: RepositoryRecord): Promise<void> {
