@@ -12,6 +12,9 @@ export const managerNames = [
 	'workflow',
 ] as const;
 export type ManagerName = (typeof managerNames)[number];
+export const reportableManagerNames = managerNames.filter((name): name is Exclude<ManagerName, 'pre-commit'> =>
+	name !== 'pre-commit'
+);
 export function isManagerName(value: string): value is ManagerName {
 	return managerNames.some(name => name === value);
 }
