@@ -1,4 +1,5 @@
 import type { ManagerDestinationId, WatchedRegistry } from '@/contract/catalog';
+import { defaultTagPolicy, semVer, tagFor } from '@/contract/version';
 
 function encodePath(...parts: string[]): string {
 	return parts.flatMap(part => part.split('/')).filter(Boolean).map(encodeURIComponent).join('/');
@@ -31,8 +32,9 @@ export function registryHref(
 		return `https://pkg.go.dev/${encodePath(name)}${version ? `@v${encodeURIComponent(version)}` : ''}`;
 	}
 	if (destination === 'github-release') {
-		return version
-			? githubHref(repository, 'releases', 'tag', `v${version.replace(/^v/, '')}`)
+		const parsed = semVer.safeParse(version);
+		return parsed.success
+			? githubHref(repository, 'releases', 'tag', tagFor(defaultTagPolicy, parsed.data))
 			: githubHref(repository, 'releases');
 	}
 	if (destination === 'vscode-marketplace') {

@@ -3,6 +3,7 @@ import { matchesPublication } from '@/automation/package-identity.ts';
 import type { UnreadableExecution } from '@/automation/store.ts';
 import type { Execution } from '@/automation/types.ts';
 import Field from '@/components/Field.astro';
+import { defaultTagPolicy, semVer, tagFor } from '@/contract/version';
 import { date } from '@/server/dashboard.ts';
 import { packageDisplayName } from '@/server/package-name';
 import { releaseSetSummaries } from '@/server/releases';
@@ -23,6 +24,12 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 const progress = (run: Execution): string => {
 	const until = waiting(run);
 	return until ? `waiting until ${until}` : run.state;
+};
+const refTag = (run: Execution, version: string): string => {
+	const parsed = semVer.safeParse(version);
+	return parsed.success
+		? tagFor(run.workflow?.refs ?? defaultTagPolicy, parsed.data)
+		: version;
 };
 ---
 <span data-runs-latest={latest} hidden></span>
@@ -185,7 +192,7 @@ const progress = (run: Execution): string => {
 							 <tr>
 								 <td>
 									 <span>{p.id.startsWith('refs:')
-									 	? `tag ${run.workflow?.refs?.prefix ?? 'v'}${p.version}`
+									 	? `tag ${refTag(run, p.version)}`
 									 	: packageDisplayName(p)}</span><small>
 										 {p.required ? 'required' : 'optional'}</small>
 								 </td>

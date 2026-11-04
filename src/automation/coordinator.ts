@@ -34,7 +34,8 @@ import { maintainSetup } from '@/automation/setup-maintenance';
 import type { SetupEdit } from '@/automation/setup-types';
 import { Store } from '@/automation/store';
 import type { Artifact, AutomationEvent, Edit, Execution, Publication, ReleaseReference } from '@/automation/types';
-import { array, integer, record, semver, sha, text } from '@/model';
+import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
+import { array, integer, record, sha, text } from '@/model';
 import { decodeEventV1, decodeExecutionV1, decodeSetupEditV1 } from '@/persistence/codecs/v1';
 
 export interface CoordinatorBindings extends Credentials {
@@ -60,11 +61,8 @@ const releaseSetRecord: z.ZodType<ReleaseSetRecord> = z.object({
 const observation = z.object({ repositoryId: z.number(), runId: z.number() });
 function githubRelease(execution: Execution): { tag: string; prerelease: boolean } | undefined {
 	if (!execution.version) return undefined;
-	const version = semver(execution.version).replace(/^v/, '');
-	return {
-		tag: `${execution.workflow?.refs?.prefix ?? 'v'}${version}`,
-		prerelease: version.split('+')[0]?.includes('-') ?? false,
-	};
+	const version = semVer.parse(execution.version);
+	return { tag: tagFor(execution.workflow?.refs ?? defaultTagPolicy, version), prerelease: isPrerelease(version) };
 }
 function publishesGithubRelease(execution: Execution): boolean {
 	const key = selectorKey(`github-release:${execution.repository}`);

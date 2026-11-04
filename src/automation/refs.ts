@@ -1,4 +1,4 @@
-import { compareVersions, semver } from '@/model';
+import { compare, isPrerelease, parseTag, semVer, tagFor } from '@/contract/version';
 
 export interface RefPolicy {
 	phase: 'version' | 'aliases';
@@ -25,15 +25,15 @@ export interface RefPlan {
 	changes: RefChange[];
 }
 export function planRefs(policy: RefPolicy, version: string, commit: string, refs: RefState[]): RefChange[] {
-	const normalized = semver(version).replace(/^v/, '');
-	const tag = `${policy.prefix}${normalized}`;
+	const normalized = semVer.parse(version);
+	const tag = tagFor(policy, normalized);
 	const full = refs.find(ref => ref.name === tag);
 	if (full && full.commit !== commit) throw new Error('Version tag already targets another commit');
 	if (policy.phase === 'version') {
 		return [{ name: tag, expected: full?.oid ?? null, commit, annotated: true, signed: policy.signed }];
 	}
 	if (!full) throw new Error('Publish the version tag before aliases');
-	if (normalized.split('+')[0]?.includes('-')) return [];
+	if (isPrerelease(normalized)) return [];
 	const [major, minor] = normalized.split('.');
 	return policy.aliases.flatMap(alias => {
 		const name = `${policy.prefix}${major}${alias === 'minor' ? `.${minor}` : ''}`;
@@ -42,16 +42,10 @@ export function planRefs(policy: RefPolicy, version: string, commit: string, ref
 			return parts[0] === major && (alias === 'major' || parts[1] === minor);
 		};
 		const versions = refs.flatMap(ref => {
-			if (!ref.name.startsWith(policy.prefix)) return [];
-			const candidate = ref.name.slice(policy.prefix.length);
-			try {
-				semver(candidate);
-			} catch {
-				return [];
-			}
-			return !candidate.split('+')[0]?.includes('-') && inSeries(candidate) ? [{ ...ref, version: candidate }] : [];
+			const candidate = parseTag(policy, ref.name);
+			return candidate && !isPrerelease(candidate) && inSeries(candidate) ? [{ ...ref, version: candidate }] : [];
 		});
-		if (versions.some(ref => compareVersions(ref.version, normalized) > 0)) {
+		if (versions.some(ref => compare(ref.version, normalized) > 0)) {
 			throw new Error('Alias update would downgrade its release series');
 		}
 		const old = refs.find(ref => ref.name === name);
