@@ -3,6 +3,7 @@ export const exclusionReasons = [
 	'vscode-extension',
 	'publish-disabled',
 	'other-registry',
+	'upstream-patch',
 	'unlocated-module',
 	'unrecorded',
 ] as const;
@@ -20,6 +21,7 @@ const reasons: Record<ExclusionReason, string> = {
 	'vscode-extension': 'VS Code extension',
 	'publish-disabled': 'publishing disabled',
 	'other-registry': 'other registry',
+	'upstream-patch': 'local patch of an upstream crate',
 	'unlocated-module': 'module path outside this repository',
 	unrecorded: 'reason unknown until the next inspection',
 };

@@ -35,8 +35,16 @@ export const cargoManager: Manager = {
 		const inventory = emptyInventory();
 		const detected = new Set<import('@/automation/types').ManagerName>();
 		let workspace: Record<string, unknown> = {};
+		const patched = new Set<string>();
 		try {
-			workspace = object(parseToml(snapshot.files['Cargo.toml'] ?? '').workspace);
+			const root = object(parseToml(snapshot.files['Cargo.toml'] ?? ''));
+			workspace = object(root.workspace);
+			for (const source of Object.values(object(root.patch))) {
+				for (const entry of Object.values(object(source))) {
+					const location = object(entry).path;
+					if (typeof location === 'string') patched.add(location.replace(/^\.\//, '').replace(/\/+$/, ''));
+				}
+			}
 		} catch {
 			inventory.diagnostics.push('Cargo.toml: invalid TOML');
 		}
@@ -72,7 +80,9 @@ export const cargoManager: Manager = {
 						versionSource: inherited
 							? 'Cargo.toml#workspace.package.version'
 							: `${path}#package.version`,
-						publication: pkg.publish === false
+						publication: patched.has(directory(path))
+							? excluded('upstream-patch')
+							: pkg.publish === false
 							? excluded('publish-disabled')
 							: Array.isArray(pkg.publish) && !pkg.publish.includes('crates-io')
 							? excluded('other-registry')
