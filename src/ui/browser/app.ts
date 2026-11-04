@@ -466,6 +466,9 @@ for (const form of findAll(document, 'form[data-action]', HTMLFormElement)) {
 					undo();
 					throw error;
 				}
+			} else if (action === 'cancel') {
+				await api('/api/executions/cancel', z.unknown(), data);
+				location.reload();
 			} else if (action === 'approve' || action === 'recover') {
 				await api(`/api/executions/${action === 'approve' ? 'approve' : 'recover'}`, z.unknown(), data);
 				location.reload();

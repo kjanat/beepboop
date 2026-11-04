@@ -182,15 +182,16 @@ const progress = (run: Execution): string => {
 				 <button class="primary">Approve this commit</button>
 			 </form>
 		 )}
-		 {run.workflow && ['failed', 'cancelled'].includes(run.state) && (
-			 <form data-action="recover">
-				 <input type="hidden" name="id" value={run.id}><input
-					 type="hidden"
-					 name="action"
-					 value="retry"
-				 ><button>Retry failed jobs</button>
-			 </form>
-		 )}
+		 {run.workflow && ['failed', 'cancelled'].includes(run.state)
+		 	&& !(run.operation === 'prepare' && !run.plan && !run.managed) && (
+				<form data-action="recover">
+					<input type="hidden" name="id" value={run.id}><input
+						type="hidden"
+						name="action"
+						value="retry"
+					><button>Retry failed jobs</button>
+				</form>
+			)}
 		 {run.state === 'uncertain' && (
 			 <form data-action="recover">
 				 <input type="hidden" name="id" value={run.id}><input
@@ -202,6 +203,11 @@ const progress = (run: Execution): string => {
 					 another dispatch.
 				 </p>
 				 <button>Check workflow outcome</button>
+			 </form>
+		 )}
+		 {!['succeeded', 'cancelled'].includes(run.state) && (
+			 <form data-action="cancel">
+				 <input type="hidden" name="id" value={run.id}><button>Cancel</button>
 			 </form>
 		 )}
 		 <details>

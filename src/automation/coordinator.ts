@@ -789,6 +789,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (!['failed', 'cancelled'].includes(execution.state) || !execution.runId) {
 					throw new Error('Only confirmed failed runs can be retried');
 				}
+				if (execution.operation === 'prepare' && !execution.plan && !execution.managed) {
+					throw new Error('This preparation has no plan; prepare the release from Prepare a release');
+				}
 				if (execution.artifacts.some((a) => Date.parse(a.expiresAt) <= Date.now())) {
 					throw new Error('Artifacts expired; use the configured preparation/recovery producer');
 				}
@@ -822,6 +825,27 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			await this.store().audit(actor, `execution.${action}`, id);
 			return this.get(id);
+		});
+	}
+	async cancel(id: string, actor: string): Promise<Execution> {
+		return this.serial(async () => {
+			const execution = await this.get(id);
+			if (['succeeded', 'cancelled'].includes(execution.state)) throw new Error('Execution has already finished');
+			if (execution.runId && ['dispatching', 'running', 'uncertain'].includes(execution.state)) {
+				const gateway = this.gateway(),
+					token = await gateway.token(execution.repository, execution.repositoryId, {
+						contents: 'read',
+						actions: 'write',
+					});
+				const path = `/repos/${execution.repository}/actions/runs/${execution.runId}`;
+				if (record(await gateway.call(path, token)).status !== 'completed') {
+					await gateway.call(`${path}/cancel`, token, 'POST');
+				}
+			}
+			const next: Execution = { ...execution, state: 'cancelled', reason: 'Cancelled from the dashboard' };
+			await this.put(next);
+			await this.store().audit(actor, 'execution.cancel', id);
+			return next;
 		});
 	}
 	async wake(): Promise<void> {
