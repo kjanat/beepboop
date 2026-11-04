@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Validator } from '@cfworker/json-schema';
 import { z } from 'zod';
-import { planIdentity } from '@/automation/managed';
+import { executionId, planIdentity, releaseEventId } from '@/persistence/identity-keys';
 import { parseRepositoryConfiguration } from '@/automation/configuration';
 import { configurationDrift, configurationSchema } from '@/domain/configuration';
 import { storedConfiguration } from '@/persistence/codecs/configuration';
@@ -255,7 +255,21 @@ test('stored repositories keep their plan identity and decode under the configur
 		diagnostics: [],
 		requiresPreparation: true,
 	};
-	expect(await planIdentity(plan, repository)).toBe('4e4698a1d2eeabb327fb101c304d1bae874a2636ac09a4e43ce0071925e9fa25');
+	const planId = await planIdentity(plan, repository);
+	expect(planId).toBe('4e4698a1d2eeabb327fb101c304d1bae874a2636ac09a4e43ce0071925e9fa25');
+	expect(await executionId(repository.id, 'main', 'promote', `plan:${planId}`)).toBe(
+		'f9274d828597fbfa4356186d1739f66ed39439b301b9e632e6705f83bd7de9c1',
+	);
+	expect(releaseEventId({
+		repositoryId: repository.id,
+		stream: 'main',
+		configurationSha: repository.sha,
+		sourceSha: '89abcdef0123456789abcdef0123456789abcdef',
+		version: '1.1.0',
+		releaseSet: { preparationId: 'p1', group: 'g1', required: [] },
+	})).toBe(
+		'release:42:main:0123456789abcdef0123456789abcdef01234567:89abcdef0123456789abcdef0123456789abcdef:1.1.0:p1:g1',
+	);
 
 	const { configuration } = storedRepository;
 	const legacy = {

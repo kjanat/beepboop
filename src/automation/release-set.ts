@@ -1,8 +1,9 @@
-import { createExecution, executionId } from '@/automation/execution';
+import { createExecution } from '@/automation/execution';
 import { discover } from '@/automation/managers';
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage, packageId, selectorKey } from '@/automation/package-identity';
 import type { Execution, Inventory, RepositoryRecord, Snapshot } from '@/automation/types';
+import { executionId } from '@/persistence/identity-keys';
 
 async function expandPackages(
 	member: Execution,

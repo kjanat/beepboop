@@ -38,6 +38,7 @@ import { blocking } from '@/contract/diagnostics';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
 import { array, integer, record, sha, text } from '@/model';
 import { decodeEventV1, decodeExecutionV1, decodeSetupEditV1 } from '@/persistence/codecs/v1';
+import { releaseEventId } from '@/persistence/identity-keys';
 
 export interface CoordinatorBindings extends Credentials {
 	DB: D1Database;
@@ -122,10 +123,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		const required = execution.releaseSet?.required ?? execution.configuration.streams[execution.stream]?.required
 			?? [];
 		if (!required.length) return;
-		const id =
-			`release:${execution.repositoryId}:${execution.stream}:${execution.configurationSha}:${execution.sourceSha}:${execution.version}${
-				execution.releaseSet ? `:${execution.releaseSet.preparationId}:${execution.releaseSet.group}` : ''
-			}`;
+		const id = releaseEventId({ ...execution, version: execution.version });
 		if (await this.ctx.storage.get(`release-emitted:${id}`)) return;
 		const group = (await this.journal())
 			.filter(e =>

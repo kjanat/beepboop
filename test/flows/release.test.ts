@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { z } from 'zod';
 import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
+import { executionId, releaseEventId } from '@/persistence/identity-keys';
 import { runAction } from '../support/actions.ts';
 import { botId, ownerId } from '../support/github.ts';
 import { bearer, type Reply, text } from '../support/http.ts';
@@ -99,7 +100,21 @@ test('a managed release travels from discovery to a verified publication', async
 	await world.wait(2_000);
 	expect((await only(api, 'promote')).state).toBe('succeeded');
 	const journal = await world.coordinator(repository).exportJournal();
-	expect(journal.some(entry => entry.key.startsWith('release-event:'))).toBe(true);
+	const executions = journal.filter(entry => entry.key.startsWith('execution:')).map(entry =>
+		decodeExecutionV1(entry.value)
+	);
+	expect(executions.map(execution => execution.operation).sort()).toEqual(['prepare', 'promote']);
+	for (const execution of executions) {
+		expect(execution.id).toBe(
+			await executionId(execution.repositoryId, execution.stream, execution.operation, execution.eventId),
+		);
+	}
+	const preparation = executions.find(execution => execution.operation === 'prepare');
+	expect(preparation?.eventId).toBe(`plan:${text(plan.body, 'planId')}`);
+	const succeeded = await only(api, 'promote');
+	expect(journal.filter(entry => entry.key.startsWith('release-event:')).map(entry => entry.key)).toEqual([
+		`release-event:${releaseEventId({ ...succeeded, version: '1.1.0' })}`,
+	]);
 	expect(world.github.unhandled).toEqual([]);
 	expect(world.network.unrouted).toEqual([]);
 });

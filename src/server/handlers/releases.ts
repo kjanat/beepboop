@@ -1,6 +1,6 @@
 import { planVersionFiles } from '@/automation/editors';
 import { createExecution } from '@/automation/execution';
-import { createReleasePreparation, planIdentity } from '@/automation/managed';
+import { createReleasePreparation } from '@/automation/managed';
 import { planRelease, versionsInFiles } from '@/automation/managers';
 import { matchesPackage } from '@/automation/package-identity';
 import { planReleaseSet } from '@/automation/planning';
@@ -12,6 +12,7 @@ import { blocking } from '@/contract/diagnostics';
 import { conflict, DomainError, notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import { compareVersions, semver } from '@/model';
+import { planIdentity } from '@/persistence/identity-keys';
 import { type AdminContext, admin } from '@/server/handlers/kit';
 
 interface Selected {

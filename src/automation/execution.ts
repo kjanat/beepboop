@@ -3,19 +3,8 @@ import { identityOf, matchesPackage, matchesPublication, packageId } from '@/aut
 import type { Execution, Publication, ReleaseReference, RepositoryRecord, WorkflowBinding } from '@/automation/types';
 import { managerSpec } from '@/contract/catalog';
 import { blocking } from '@/contract/diagnostics';
+import { executionId } from '@/persistence/identity-keys';
 
-export async function executionId(
-	repositoryId: number,
-	stream: string,
-	operation: string,
-	eventId: string,
-): Promise<string> {
-	const digest = await crypto.subtle.digest(
-		'SHA-256',
-		new TextEncoder().encode(JSON.stringify([repositoryId, stream, operation, eventId])),
-	);
-	return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
 export async function createExecution(
 	repository: RepositoryRecord,
 	streamName: string,

@@ -1,20 +1,8 @@
-import { createExecution, executionId } from '@/automation/execution';
+import { createExecution } from '@/automation/execution';
 import type { ReleaseSetPlan } from '@/automation/planning';
 import type { Execution, ReleasePlan, RepositoryRecord } from '@/automation/types';
 import { blocking } from '@/contract/diagnostics';
-import { sha256Hex } from '@/contract/ids';
-import { encodeConfigurationV1 } from '@/persistence/codecs/configuration';
-
-export async function planIdentity(
-	plan: ReleasePlan | ReleaseSetPlan,
-	provenance?: Pick<RepositoryRecord, 'configuration' | 'presetShas'>,
-): Promise<string> {
-	return sha256Hex(JSON.stringify({
-		plan,
-		configuration: provenance?.configuration && encodeConfigurationV1(provenance.configuration),
-		presetShas: provenance?.presetShas,
-	}));
-}
+import { executionId, planIdentity } from '@/persistence/identity-keys';
 
 export async function createReleasePreparation(
 	repository: RepositoryRecord,
