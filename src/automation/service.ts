@@ -891,6 +891,9 @@ export class AutomationService {
 	): Promise<(() => Promise<unknown>) | undefined> {
 		const vault = this.vault();
 		if (path === '/api/credentials/replace') {
+			if (body.proof === undefined) {
+				throw new Error('Storing a value needs a security-key touch; upgrade the beepboop CLI');
+			}
 			const alias = text(body.alias), value = text(body.value);
 			validCredential(alias, value);
 			return async () => ({ version: await vault.replace(alias, value, actor) });
