@@ -496,18 +496,16 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 			}
 			const record: ReleaseSetRecord = { target, ids: executions.map(execution => execution.id), workflowId };
-			const committed: Committed[] = [
+			const members = executions.map((execution): Committed => ({
+				entity: 'execution',
+				id: execution.id,
+				repositoryId: execution.repositoryId,
+				value: execution,
+			}));
+			await this.journal.commit([
 				{ entity: 'release-set', id: preparationId, repositoryId: preparation.repositoryId, value: record },
-			];
-			for (const execution of executions) {
-				committed.push({
-					entity: 'execution',
-					id: execution.id,
-					repositoryId: execution.repositoryId,
-					value: execution,
-				});
-			}
-			await this.journal.commit(committed, { [`release-wake:${preparationId}`]: { due: Date.now() } });
+				...members,
+			], { [`release-wake:${preparationId}`]: { due: Date.now() } });
 			return executions;
 		});
 	}

@@ -61,7 +61,7 @@ export class Journal {
 		});
 		return next;
 	}
-	async commit(entries: readonly Committed[], extra: Record<string, unknown> = {}): Promise<void> {
+	async commit(entries: readonly [Committed, ...Committed[]], extra: Record<string, unknown> = {}): Promise<void> {
 		const writes: Record<string, unknown>[] = [];
 		let revision = 0;
 		for (const { value, ...ref } of entries) {
