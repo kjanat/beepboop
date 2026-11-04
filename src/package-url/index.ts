@@ -84,6 +84,8 @@ export function packageIdentity(input: PackageIdentity | string): PackageIdentit
 	// Use its core syntax validation/encoding and apply current type rules here.
 	// Textual name normalization from the pinned definitions. Case-sensitive Hackage
 	// names keep their case; pub names use lowercase ASCII words separated by underscores.
+	// See https://github.com/package-url/packageurl-js/issues/95
+	// and https://github.com/package-url/packageurl-js/pull/98
 	const nativeName = type === 'hackage'
 		? raw.name.replace(/[_\s]+/g, '-')
 		: type === 'pub'
