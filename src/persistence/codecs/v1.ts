@@ -27,7 +27,7 @@ import type {
 	SubscriptionDelivery,
 } from '@/automation/types';
 import { managerDestinationIds, managerNames } from '@/contract/catalog';
-import { diagnostic } from '@/contract/diagnostics';
+import { diagnostic, isDiagnosticCode } from '@/contract/diagnostics';
 import { setupChoicesSchema } from '@/contract/setup';
 import type { PackageIdentity } from '@/package-url';
 import { storedBinding, storedConfiguration } from '@/persistence/codecs/configuration';
@@ -35,6 +35,9 @@ import { storedBinding, storedConfiguration } from '@/persistence/codecs/configu
 const managerName = z.enum(managerNames);
 const strings = z.array(z.string());
 const shas = z.record(z.string(), z.string());
+const storedDiagnostic = diagnostic.extend({
+	code: z.string().transform(code => isDiagnosticCode(code) ? code : 'legacy'),
+});
 
 const identity: z.ZodType<PackageIdentity> = z.object({
 	type: z.string(),
@@ -119,7 +122,7 @@ const inventory: z.ZodType<StoredInventory> = z.object({
 	workflows: z.array(discoveredWorkflow),
 	managers: z.array(managerName),
 	diagnostics: strings,
-	findings: z.array(diagnostic).optional(),
+	findings: z.array(storedDiagnostic).optional(),
 	publicationOrder: strings,
 });
 const repositorySchema: z.ZodType<StoredRepository> = z.object({
@@ -132,7 +135,7 @@ const repositorySchema: z.ZodType<StoredRepository> = z.object({
 	presetShas: shas,
 	inventory,
 	diagnostics: strings,
-	findings: z.array(diagnostic).optional(),
+	findings: z.array(storedDiagnostic).optional(),
 	updatedAt: z.number(),
 });
 

@@ -528,6 +528,7 @@ function withRetiredKeys(document: unknown): z.output<typeof retiredKeys> {
 	parsed.configuration.retired = true;
 	parsed.configuration.streams.main.retired = true;
 	parsed.configuration.streams.main.promote.workflow.retired = true;
+	parsed.findings = [{ code: 'retired-check', severity: 'warning', message: 'A check this version removed' }];
 	return parsed;
 }
 
