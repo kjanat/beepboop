@@ -38,7 +38,7 @@ export async function prepareJsrPackage(
 		}
 		const response = await request(`https://api.jsr.io${path}`, {
 			method,
-			redirect: 'error',
+			redirect: 'manual',
 			signal: AbortSignal.timeout(15_000),
 			headers: {
 				'User-Agent': 'beepboop release setup',
