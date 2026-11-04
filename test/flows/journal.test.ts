@@ -53,3 +53,31 @@ test('a D1 outage keeps the outbox, and the next alarm projects it', async () =>
 	);
 	expect(changes).toEqual([{ entity: 'execution', id: prepared.id, revision: 1 }]);
 });
+
+test('a poisoned execution is quarantined while the rest of the journal advances', async () => {
+	const repository = widget(world.github);
+	world.npm.publish('widget', '1.0.0');
+	const send = transport(await world.cliSession());
+	await call(routes.repositoriesDiscover, { repository: 'octo/widget' }, send);
+	const plan = await call(routes.releasesPlan, { repositoryId: repository.id, stream: 'main', version: '1.1.0' }, send);
+	const prepared = await call(
+		routes.releasesPrepare,
+		{ repositoryId: repository.id, stream: 'main', version: '1.1.0', sourceSha: plan.sourceSha, planId: plan.planId },
+		send,
+	);
+	const journal = world.coordinators.instance(String(repository.id)).storage;
+	await journal.put('execution:poisoned', { id: 'poisoned', repositoryId: repository.id, state: 'exploded' });
+
+	await world.wait(20_000);
+	expect(repository.pulls.length).toBe(1);
+	const listed = await call(routes.executionsList, {}, send);
+	expect(listed.map(execution => [execution.id, execution.state])).toEqual([[prepared.id, 'succeeded']]);
+	expect(journal.snapshot().get('quarantine:poisoned')).toEqual({
+		error: expect.stringContaining('expected'),
+		at: Date.parse('2026-11-04T09:00:15.000Z'),
+	});
+	const audit = await world.db.prepare('SELECT target FROM audit WHERE action=?').bind('execution.quarantined').all();
+	expect(z.array(z.object({ target: z.string() })).parse(audit.results).map(row => row.target.split(':')[0])).toEqual([
+		'poisoned',
+	]);
+});

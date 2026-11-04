@@ -28,7 +28,7 @@ export interface UnreadableExecution {
 }
 const repositoryRow = z.object({ id: z.number(), name: z.string(), document: z.string() });
 const executionRow = z.object({ id: z.string(), repository_id: z.number(), document: z.string() });
-function decodeError(error: unknown): string {
+export function decodeError(error: unknown): string {
 	if (error instanceof z.ZodError) return z.prettifyError(error);
 	return error instanceof Error ? error.message : 'Unreadable document';
 }

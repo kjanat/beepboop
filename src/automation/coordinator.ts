@@ -32,7 +32,7 @@ import { manifestProblems } from '@/automation/release-version';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
 import { maintainSetup } from '@/automation/setup-maintenance';
 import type { SetupEdit } from '@/automation/setup-types';
-import { Store } from '@/automation/store';
+import { decodeError, Store } from '@/automation/store';
 import type { Artifact, AutomationEvent, Edit, Execution, Publication, ReleaseReference } from '@/automation/types';
 import { blocking } from '@/contract/diagnostics';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
@@ -63,7 +63,13 @@ const releaseSetRecord: z.ZodType<ReleaseSetRecord> = z.object({
 	started: z.boolean().optional(),
 	completed: z.boolean().optional(),
 });
-const observation = z.object({ repositoryId: z.number(), runId: z.number(), due: z.number().optional() });
+const observation = z.object({
+	repositoryId: z.number(),
+	runId: z.number(),
+	due: z.number().optional(),
+	attempts: z.number().int().nonnegative().optional(),
+	error: z.string().optional(),
+});
 const releaseWake = z.union([
 	z.literal(true),
 	z.object({ members: z.array(z.string()).optional(), due: z.number() }),
@@ -154,8 +160,35 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	protected gateway(): RepositoryGateway {
 		return new RepositoryGateway(this.env, Number(this.env.OWNER_ID));
 	}
+	private async readJournal(): Promise<{ executions: Execution[]; unreadable: { id: string; error: string }[] }> {
+		const executions: Execution[] = [];
+		const unreadable: { id: string; error: string }[] = [];
+		for (const [key, value] of await this.ctx.storage.list({ prefix: 'execution:' })) {
+			try {
+				executions.push(decodeExecutionV1(value));
+			} catch (error) {
+				unreadable.push({ id: key.slice('execution:'.length), error: decodeError(error) });
+			}
+		}
+		return { executions, unreadable };
+	}
 	private async executions(): Promise<Execution[]> {
-		return [...(await this.ctx.storage.list({ prefix: 'execution:' })).values()].map(decodeExecutionV1);
+		return (await this.readJournal()).executions;
+	}
+	private async quarantine(id: string, error: string): Promise<void> {
+		await this.ctx.storage.put(`quarantine:${id}`, { error, at: Date.now() });
+		try {
+			await this.store().audit('beepboop', 'execution.quarantined', `${id}: ${error}`);
+		} catch {}
+	}
+	private async isolate(id: string, error: unknown): Promise<void> {
+		const reason = `Beepboop could not continue: ${decodeError(error)}`;
+		try {
+			const current = await this.get(id);
+			if (current.reason !== reason) await this.put({ ...current, reason });
+		} catch (failure) {
+			await this.quarantine(id, decodeError(failure));
+		}
 	}
 	private async stored(id: string): Promise<Execution | undefined> {
 		const value = await this.ctx.storage.get(`execution:${id}`);
@@ -1066,6 +1099,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	async recover(id: string, action: 'reconcile' | 'retry', actor: string): Promise<Execution> {
 		return this.serial(async () => {
+			if (action === 'reconcile') await this.ctx.storage.delete(`quarantine:${id}`);
 			const execution = await this.get(id);
 			if (action === 'retry') {
 				if (!['failed', 'cancelled'].includes(execution.state)) {
@@ -1266,8 +1300,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					}
 				}
 				await this.ctx.storage.delete(key);
-			} catch {
-				await this.ctx.storage.put(key, { ...event, due: now + reconcileInterval });
+			} catch (error) {
+				await this.ctx.storage.put(key, {
+					...event,
+					due: now + reconcileInterval,
+					attempts: (event.attempts ?? 0) + 1,
+					error: decodeError(error),
+				});
 			}
 		}
 	}
@@ -1369,7 +1408,16 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private async reconcile(onlyExecution?: string): Promise<void> {
 		const started = Date.now();
 		if (!onlyExecution) await this.ctx.storage.put('reconcile-at', null);
-		const executions = (await this.executions()).sort((a, b) => a.createdAt - b.createdAt);
+		const journal = await this.readJournal();
+		const quarantined = new Set(
+			[...(await this.ctx.storage.list({ prefix: 'quarantine:' })).keys()].map(key => key.slice('quarantine:'.length)),
+		);
+		for (const entry of journal.unreadable) {
+			if (!quarantined.has(entry.id)) await this.quarantine(entry.id, entry.error);
+		}
+		const executions = journal.executions.filter(execution => !quarantined.has(execution.id)).sort((a, b) =>
+			a.createdAt - b.createdAt
+		);
 		if (executions[0] && (await this.store().repository(executions[0].repositoryId))?.suspended) {
 			return;
 		}
@@ -1391,225 +1439,229 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		}
 		for (const execution of executions) {
 			if (onlyExecution ? execution.id !== onlyExecution : Boolean(execution.releaseSet?.workflowId)) continue;
-			if (unresolved(execution)) {
-				const publications = await Promise.all(
-					execution.publications.map(publication =>
-						canVerifyPublication(publication.manager) && ['pending', 'uncertain'].includes(publication.outcome)
-							? verifyPublication(
-								publication,
-								fetch,
-								this.gateway().verification(execution.repository, execution.repositoryId),
-							)
-							: publication
-					),
-				);
-				if (publications.some((publication, i) => publication.outcome !== execution.publications[i]?.outcome)) {
-					await this.put({ ...execution, publications });
-					continue;
-				}
-			}
-			if (execution.state === 'succeeded') await this.captureReleaseEvent(execution);
-			if (!active.includes(execution) || execution.state === 'pending') continue;
-			if (execution.state === 'blocked' && execution.operation === 'promote') {
-				if (
-					execution.configuration.streams[execution.stream]?.promote.approval !== 'push'
-					&& execution.approvedBy !== 'merge'
-				) continue;
-				try {
-					if (await this.approveFromPush(execution, executions)) {
-						await this.requestReconcile(Date.now());
-						return;
-					}
-				} catch (error) {
-					const reason = `Beepboop could not check this commit: ${
-						error instanceof Error ? error.message : String(error)
-					}`;
-					if (execution.reason !== reason) await this.put({ ...execution, reason });
-				}
-				continue;
-			}
-			if (execution.managed) {
-				await this.runManaged(execution);
-				continue;
-			}
-			if (!execution.workflow) throw new Error('Execution has no runner');
 			try {
-				const gateway = this.gateway();
-				const token = await gateway.token(execution.repository, execution.repositoryId, {
-					contents: 'read',
-					actions: 'write',
-				});
-				if (execution.runId) {
-					const run = record(
-						await gateway.call(
-							`/repos/${execution.repository}/actions/runs/${execution.runId}`,
-							token,
-						),
-					);
-					if (
-						record(run.repository).id !== execution.repositoryId
-						|| run.path !== `.github/workflows/${execution.workflow.file}`
-					) {
-						throw new Error('Run identity changed');
-					}
-					if (
-						run.status === 'completed' && execution.state === 'uncertain'
-						&& integer(run.run_attempt) <= (execution.runAttempt ?? 0)
-					) {
-						continue;
-					}
-					if (run.status === 'completed') {
-						for (let i = 0; i < execution.publications.length; i++) {
-							const publication = execution.publications[i];
-							if (
-								publication
-								&& canVerifyPublication(publication.manager)
-								&& ['pending', 'uncertain'].includes(publication.outcome)
-							) {
-								execution.publications[i] = await verifyPublication(
+				if (unresolved(execution)) {
+					const publications = await Promise.all(
+						execution.publications.map(publication =>
+							canVerifyPublication(publication.manager) && ['pending', 'uncertain'].includes(publication.outcome)
+								? verifyPublication(
 									publication,
 									fetch,
 									this.gateway().verification(execution.repository, execution.repositoryId),
-								);
-							}
+								)
+								: publication
+						),
+					);
+					if (publications.some((publication, i) => publication.outcome !== execution.publications[i]?.outcome)) {
+						await this.put({ ...execution, publications });
+						continue;
+					}
+				}
+				if (execution.state === 'succeeded') await this.captureReleaseEvent(execution);
+				if (!active.includes(execution) || execution.state === 'pending') continue;
+				if (execution.state === 'blocked' && execution.operation === 'promote') {
+					if (
+						execution.configuration.streams[execution.stream]?.promote.approval !== 'push'
+						&& execution.approvedBy !== 'merge'
+					) continue;
+					try {
+						if (await this.approveFromPush(execution, executions)) {
+							await this.requestReconcile(Date.now());
+							return;
 						}
-						const limited = execution.publications.flatMap(publication =>
-							publication.outcome === 'rate-limited' ? [Date.parse(publication.retryAfter)] : []
+					} catch (error) {
+						const reason = `Beepboop could not check this commit: ${
+							error instanceof Error ? error.message : String(error)
+						}`;
+						if (execution.reason !== reason) await this.put({ ...execution, reason });
+					}
+					continue;
+				}
+				if (execution.managed) {
+					await this.runManaged(execution);
+					continue;
+				}
+				if (!execution.workflow) throw new Error('Execution has no runner');
+				try {
+					const gateway = this.gateway();
+					const token = await gateway.token(execution.repository, execution.repositoryId, {
+						contents: 'read',
+						actions: 'write',
+					});
+					if (execution.runId) {
+						const run = record(
+							await gateway.call(
+								`/repos/${execution.repository}/actions/runs/${execution.runId}`,
+								token,
+							),
 						);
-						if (limited.length) {
-							const until = Math.max(Date.now(), ...limited);
-							if (execution.package?.manager === 'cargo') {
-								await this.env.PUBLISH_BUDGET.getByName('crates-io').defer(until);
+						if (
+							record(run.repository).id !== execution.repositoryId
+							|| run.path !== `.github/workflows/${execution.workflow.file}`
+						) {
+							throw new Error('Run identity changed');
+						}
+						if (
+							run.status === 'completed' && execution.state === 'uncertain'
+							&& integer(run.run_attempt) <= (execution.runAttempt ?? 0)
+						) {
+							continue;
+						}
+						if (run.status === 'completed') {
+							for (let i = 0; i < execution.publications.length; i++) {
+								const publication = execution.publications[i];
+								if (
+									publication
+									&& canVerifyPublication(publication.manager)
+									&& ['pending', 'uncertain'].includes(publication.outcome)
+								) {
+									execution.publications[i] = await verifyPublication(
+										publication,
+										fetch,
+										this.gateway().verification(execution.repository, execution.repositoryId),
+									);
+								}
 							}
+							const limited = execution.publications.flatMap(publication =>
+								publication.outcome === 'rate-limited' ? [Date.parse(publication.retryAfter)] : []
+							);
+							if (limited.length) {
+								const until = Math.max(Date.now(), ...limited);
+								if (execution.package?.manager === 'cargo') {
+									await this.env.PUBLISH_BUDGET.getByName('crates-io').defer(until);
+								}
+								await this.put({
+									...execution,
+									state: 'ready',
+									supersededRuns: [...(execution.supersededRuns ?? []), execution.runId],
+									runId: undefined,
+									runAttempt: undefined,
+									workflowSha: undefined,
+									notBefore: until,
+									reason: `Registry rate limit until ${new Date(until).toISOString()}`,
+									publications: execution.publications.map(publication =>
+										publication.outcome === 'rate-limited' ? { ...publication, outcome: 'pending' } : publication
+									),
+								});
+								continue;
+							}
+							const next = {
+								...execution,
+								state: completion(execution, run.conclusion === 'success'),
+								runAttempt: integer(run.run_attempt),
+							};
+							await this.put(next);
+						} else if (execution.state === 'uncertain') {
+							await this.put({
+								...execution,
+								state: 'running',
+								runAttempt: integer(run.run_attempt),
+							});
+						}
+						continue;
+					}
+					if (['dispatching', 'uncertain'].includes(execution.state)) {
+						const data = record(
+							await gateway.call(
+								`/repos/${execution.repository}/actions/workflows/${execution.workflow.file}/runs?event=workflow_dispatch&per_page=100`,
+								token,
+							),
+						);
+						const matches = array(data.workflow_runs)
+							.map(record)
+							.filter(
+								(run) =>
+									run.display_title === expectedRunTitle(execution)
+									&& run.path === `.github/workflows/${execution.workflow?.file}`
+									&& run.head_branch === execution.workflow?.ref?.replace(/^refs\/(heads|tags)\//, '')
+									&& record(run.repository).id === execution.repositoryId
+									&& !execution.supersededRuns?.includes(integer(run.id)),
+							);
+						const run = matches.length === 1 ? matches[0] : undefined;
+						if (run) {
+							await this.put({
+								...execution,
+								state: 'running',
+								runId: integer(run.id),
+								runAttempt: integer(run.run_attempt),
+								workflowSha: undefined,
+							});
+						} else if (!matches.length && Date.now() - (execution.dispatchedAt ?? 0) > 120_000) {
 							await this.put({
 								...execution,
 								state: 'ready',
-								supersededRuns: [...(execution.supersededRuns ?? []), execution.runId],
-								runId: undefined,
-								runAttempt: undefined,
-								workflowSha: undefined,
-								notBefore: until,
-								reason: `Registry rate limit until ${new Date(until).toISOString()}`,
-								publications: execution.publications.map(publication =>
-									publication.outcome === 'rate-limited' ? { ...publication, outcome: 'pending' } : publication
-								),
+								reason: 'GitHub started no run for the last dispatch; dispatching again',
 							});
-							continue;
+						} else {
+							await this.put({
+								...execution,
+								state: 'uncertain',
+								reason: matches.length
+									? 'Multiple matching runs require review'
+									: 'Dispatch outcome awaiting reconciliation',
+							});
 						}
-						const next = {
-							...execution,
-							state: completion(execution, run.conclusion === 'success'),
-							runAttempt: integer(run.run_attempt),
-						};
-						await this.put(next);
-					} else if (execution.state === 'uncertain') {
-						await this.put({
-							...execution,
-							state: 'running',
-							runAttempt: integer(run.run_attempt),
-						});
+						continue;
 					}
-					continue;
-				}
-				if (['dispatching', 'uncertain'].includes(execution.state)) {
-					const data = record(
-						await gateway.call(
-							`/repos/${execution.repository}/actions/workflows/${execution.workflow.file}/runs?event=workflow_dispatch&per_page=100`,
-							token,
-						),
-					);
-					const matches = array(data.workflow_runs)
-						.map(record)
-						.filter(
-							(run) =>
-								run.display_title === expectedRunTitle(execution)
-								&& run.path === `.github/workflows/${execution.workflow?.file}`
-								&& run.head_branch === execution.workflow?.ref?.replace(/^refs\/(heads|tags)\//, '')
-								&& record(run.repository).id === execution.repositoryId
-								&& !execution.supersededRuns?.includes(integer(run.id)),
-						);
-					const run = matches.length === 1 ? matches[0] : undefined;
-					if (run) {
-						await this.put({
-							...execution,
-							state: 'running',
-							runId: integer(run.id),
-							runAttempt: integer(run.run_attempt),
-							workflowSha: undefined,
-						});
-					} else if (!matches.length && Date.now() - (execution.dispatchedAt ?? 0) > 120_000) {
-						await this.put({
-							...execution,
-							state: 'ready',
-							reason: 'GitHub started no run for the last dispatch; dispatching again',
-						});
-					} else {
-						await this.put({
-							...execution,
-							state: 'uncertain',
-							reason: matches.length
-								? 'Multiple matching runs require review'
-								: 'Dispatch outcome awaiting reconciliation',
-						});
+					if (!dependenciesReady(execution, executions) || (execution.notBefore ?? 0) > Date.now()) {
+						continue;
 					}
-					continue;
-				}
-				if (!dependenciesReady(execution, executions) || (execution.notBefore ?? 0) > Date.now()) {
-					continue;
-				}
-				if (busy.has(execution.stream)) {
-					const releaseId = execution.releaseSet?.workflowId;
-					// Independent operations within one frozen release may run together.
-					// Other releases and legacy executions still own the stream exclusively.
-					if (
-						!releaseId || active.some(other =>
-							other.stream === execution.stream
-							&& ['dispatching', 'running', 'uncertain'].includes(other.state)
-							&& other.releaseSet?.workflowId !== releaseId
-						)
-					) continue;
-				}
-				const head = await this.refHead(execution, token);
-				if (head && head.sha !== execution.sourceSha) {
-					await this.put({ ...execution, state: 'failed', reason: moved(execution, head) });
-					continue;
-				}
-				execution.resolvedInputs = resolveInputs(execution, executions);
-				const draftRelease = await this.draftRelease(execution);
-				if (draftRelease) execution.draftRelease = draftRelease;
-				busy.add(execution.stream);
-				await this.put({
-					...execution,
-					state: 'dispatching',
-					attempts: execution.attempts + 1,
-					dispatchedAt: Date.now(),
-				});
-				const response = await gateway.call(
-					`/repos/${execution.repository}/actions/workflows/${execution.workflow.file}/dispatches`,
-					token,
-					'POST',
-					{
-						ref: execution.workflow.ref,
-						inputs: {
-							...execution.workflow.inputs,
-							...(execution.package ? { package: execution.package.id } : {}),
-							...(execution.titled ? { beepboop_title: runTitle(execution) } : {}),
-							beepboop_execution_id: execution.id,
-						},
-					},
-				);
-				if (response && record(response).workflow_run_id) {
+					if (busy.has(execution.stream)) {
+						const releaseId = execution.releaseSet?.workflowId;
+						// Independent operations within one frozen release may run together.
+						// Other releases and legacy executions still own the stream exclusively.
+						if (
+							!releaseId || active.some(other =>
+								other.stream === execution.stream
+								&& ['dispatching', 'running', 'uncertain'].includes(other.state)
+								&& other.releaseSet?.workflowId !== releaseId
+							)
+						) continue;
+					}
+					const head = await this.refHead(execution, token);
+					if (head && head.sha !== execution.sourceSha) {
+						await this.put({ ...execution, state: 'failed', reason: moved(execution, head) });
+						continue;
+					}
+					execution.resolvedInputs = resolveInputs(execution, executions);
+					const draftRelease = await this.draftRelease(execution);
+					if (draftRelease) execution.draftRelease = draftRelease;
+					busy.add(execution.stream);
 					await this.put({
 						...execution,
-						state: 'running',
+						state: 'dispatching',
 						attempts: execution.attempts + 1,
-						runId: integer(record(response).workflow_run_id),
+						dispatchedAt: Date.now(),
 					});
+					const response = await gateway.call(
+						`/repos/${execution.repository}/actions/workflows/${execution.workflow.file}/dispatches`,
+						token,
+						'POST',
+						{
+							ref: execution.workflow.ref,
+							inputs: {
+								...execution.workflow.inputs,
+								...(execution.package ? { package: execution.package.id } : {}),
+								...(execution.titled ? { beepboop_title: runTitle(execution) } : {}),
+								beepboop_execution_id: execution.id,
+							},
+						},
+					);
+					if (response && record(response).workflow_run_id) {
+						await this.put({
+							...execution,
+							state: 'running',
+							attempts: execution.attempts + 1,
+							runId: integer(record(response).workflow_run_id),
+						});
+					}
+				} catch (error) {
+					const reason = `Beepboop could not continue: ${error instanceof Error ? error.message : String(error)}`;
+					const current = await this.get(execution.id);
+					if (current.reason !== reason) await this.put({ ...current, reason });
 				}
 			} catch (error) {
-				const reason = `Beepboop could not continue: ${error instanceof Error ? error.message : String(error)}`;
-				const current = await this.get(execution.id);
-				if (current.reason !== reason) await this.put({ ...current, reason });
+				await this.isolate(execution.id, error);
 			}
 		}
 	}
