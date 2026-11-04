@@ -441,6 +441,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			) {
 				throw new Error('Run identity mismatch');
 			}
+			if (run.head_sha !== execution.sourceSha) {
+				throw new Error(
+					`The run is at ${String(run.head_sha).slice(0, 12)} but this execution releases ${
+						execution.sourceSha.slice(0, 12)
+					}`,
+				);
+			}
 			if (!matchesRef(execution.workflow.ref, identity.ref)) throw new Error('Workflow ref mismatch');
 			if (execution.attempts > 0 && !execution.runId && run.display_title !== expectedRunTitle(execution)) {
 				throw new Error('Dispatch correlation mismatch');
