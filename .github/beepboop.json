@@ -1,0 +1,29 @@
+{
+  "$schema": "https://beepboop.kjanat.dev/schema/v1.json",
+  "streams": {
+    "cli": {
+      "packages": ["pkg:npm/%40kjanat/beepboop", "pkg:jsr/%40kjanat/beepboop"],
+      "versioning": "workspace",
+      "required": ["pkg:npm/%40kjanat/beepboop", "pkg:jsr/%40kjanat/beepboop"],
+      "prepare": {
+        "strategy": "managed",
+        "workflow": {
+          "file": "prepare-cli.yml",
+          "ref": "master"
+        }
+      },
+      "promote": {
+        "approval": "required",
+        "workflow": {
+          "file": "publish-cli.yml",
+          "ref": "master",
+          "publications": [
+            "pkg:npm/%40kjanat/beepboop",
+            "pkg:jsr/%40kjanat/beepboop"
+          ]
+        }
+      }
+    }
+  },
+  "managers": ["jsr", "npm", "workflow"]
+}
