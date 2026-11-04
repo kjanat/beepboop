@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { Validator } from '@cfworker/json-schema';
 import { z } from 'zod';
 import { planIdentity } from '@/automation/managed';
-import { configurationSchema } from '@/domain/configuration';
+import { parseRepositoryConfiguration } from '@/automation/configuration';
+import { configurationDrift, configurationSchema } from '@/domain/configuration';
 import { storedConfiguration } from '@/persistence/codecs/configuration';
 import { record } from '@/model';
 import { decodeRepositoryV1 } from '@/persistence/codecs/v1';
@@ -108,21 +109,18 @@ async function shippedConfigurations(): Promise<unknown[]> {
 	const presets = await Promise.all(
 		['default', 'github-action', 'maintenance', 'npm', 'rust-workspace'].map(name => read(`presets/${name}.json`)),
 	);
-	return [
-		await read('.github/beepboop.json'),
-		...presets,
-		...jsonBlocks(await Bun.file(new URL('docs/automation.md', root)).text()),
-		JSON.parse(widgetConfiguration('merge')),
-		{},
-	];
+	return [await read('.github/beepboop.json'), ...presets, JSON.parse(widgetConfiguration('merge')), {}];
+}
+async function documentedFragments(): Promise<unknown[]> {
+	return jsonBlocks(await Bun.file(new URL('docs/automation.md', root)).text());
 }
 
 test('parsing a parsed configuration returns it unchanged, and stored copies decode to the same value', async () => {
 	for (const value of await shippedConfigurations()) {
-		const parsed = configurationSchema.safeParse(value);
-		if (!parsed.success) continue;
-		const encoded = JSON.stringify(parsed.data);
-		expect(JSON.stringify(configurationSchema.parse(parsed.data))).toBe(encoded);
+		const parsed = configurationSchema.parse(value);
+		expect(configurationDrift(value, parseRepositoryConfiguration(value))).toEqual([]);
+		const encoded = JSON.stringify(parsed);
+		expect(JSON.stringify(configurationSchema.parse(parsed))).toBe(encoded);
 		expect(JSON.stringify(storedConfiguration.parse(JSON.parse(encoded)))).toBe(encoded);
 	}
 });
@@ -305,7 +303,8 @@ test('refresh records schema drift as a warning while the current parser keeps r
 
 test('editors validate with the published schema and refuse what refresh refuses', async () => {
 	const published = new Validator(record(await Bun.file(schemaPath).json()), '2020-12', false);
-	for (const value of await shippedConfigurations()) {
+	for (const value of await shippedConfigurations()) expect(published.validate(value).errors).toEqual([]);
+	for (const value of await documentedFragments()) {
 		if (configurationSchema.safeParse(value).success) expect(published.validate(value).errors).toEqual([]);
 	}
 	for (
