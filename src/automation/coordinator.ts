@@ -648,7 +648,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					|| actual.digest !== artifact.digest
 					|| actual.expires_at !== artifact.expiresAt
 				) {
-					throw new Error('Artifact evidence mismatch');
+					throw new Error('Reported artifact does not match GitHub');
 				}
 			}
 			const verified: Publication[] = [];

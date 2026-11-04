@@ -88,7 +88,7 @@ export const npmManager: Manager = {
 				const workspace = object(parseToml(snapshot.files['Cargo.toml'] ?? '').workspace);
 				const version = object(workspace.package).version;
 				if (typeof version !== 'string') {
-					inventory.diagnostics.push(`${path}: generated package versions require producer evidence`);
+					inventory.diagnostics.push(`${path}: generated packages need workspace.package.version in Cargo.toml`);
 					continue;
 				}
 				const facades: Record<string, unknown>[] = Array.isArray(descriptor.facades)
