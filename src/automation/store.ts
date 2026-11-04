@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { encodeRepository, identifyExecution, identifyRepository } from '@/automation/package-identity';
+import { encodeRepository, identifyRepository } from '@/automation/package-identity';
 import { documentRow, rowDocument } from '@/automation/schemas';
 import type {
 	ActivityEntry,
@@ -120,20 +120,6 @@ export class Store {
 				return { kind: 'unreadable', id: row.id, repositoryId: row.repository_id, error: decodeError(error) };
 			}
 		});
-	}
-	async putExecution(execution: Execution): Promise<void> {
-		await this.db
-			.prepare(
-				'INSERT INTO executions(id,repository_id,state,document,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,document=excluded.document,updated_at=excluded.updated_at WHERE excluded.updated_at>=executions.updated_at',
-			)
-			.bind(
-				execution.id,
-				execution.repositoryId,
-				execution.state,
-				JSON.stringify(identifyExecution(execution)),
-				execution.updatedAt,
-			)
-			.run();
 	}
 	async event(id: string): Promise<AutomationEvent | undefined> {
 		const row = await this.db.prepare('SELECT document FROM release_events WHERE id=?').bind(id).first();

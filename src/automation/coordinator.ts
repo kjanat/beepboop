@@ -39,7 +39,9 @@ import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/versi
 import { array, integer, record, sha, text } from '@/model';
 import { decodeEventV1, decodeExecutionV1, decodeSetupEditV1 } from '@/persistence/codecs/v1';
 import type { SqlDatabase } from '@/persistence/d1/database';
+import { ProjectionStore } from '@/persistence/d1/projection';
 import { releaseEventId } from '@/persistence/identity-keys';
+import { type Committed, earliest, Journal } from '@/persistence/journal';
 
 export interface CoordinatorBindings extends Credentials {
 	DB: SqlDatabase;
@@ -61,7 +63,24 @@ const releaseSetRecord: z.ZodType<ReleaseSetRecord> = z.object({
 	started: z.boolean().optional(),
 	completed: z.boolean().optional(),
 });
-const observation = z.object({ repositoryId: z.number(), runId: z.number() });
+const observation = z.object({ repositoryId: z.number(), runId: z.number(), due: z.number().optional() });
+const releaseWake = z.union([
+	z.literal(true),
+	z.object({ members: z.array(z.string()).optional(), due: z.number() }),
+]);
+type ReleaseWake = z.output<typeof releaseWake>;
+const reconcileDue = z.number().nullable();
+const reconcileInterval = 60_000;
+const settleInterval = 15_000;
+const projectionRetry = 10_000;
+function wakeDue(wake: ReleaseWake): number {
+	return wake === true ? 0 : wake.due;
+}
+function wakeMembers(wake: ReleaseWake | undefined, member: string): string[] | undefined {
+	if (wake === undefined) return [member];
+	if (wake === true || wake.members === undefined) return undefined;
+	return [...new Set([...wake.members, member])];
+}
 function githubRelease(execution: Execution): { tag: string; prerelease: boolean } | undefined {
 	if (!execution.version) return undefined;
 	const version = semVer.parse(execution.version);
@@ -79,10 +98,55 @@ function moved(execution: Execution, head: { ref: string; sha: string }): string
 }
 export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private pending: Promise<unknown> = Promise.resolve();
+	private readonly journal = new Journal(this.ctx.storage);
+	private projectionRetryAt: number | undefined;
 	private serial<T>(work: () => Promise<T>): Promise<T> {
-		const result = this.pending.then(work);
+		const result = this.pending.then(async () => {
+			try {
+				return await work();
+			} finally {
+				await this.settle();
+			}
+		});
 		this.pending = result.catch(() => {});
 		return result;
+	}
+	private async settle(): Promise<void> {
+		await this.project();
+		await this.journal.arm(await this.nextAlarm());
+	}
+	private async project(): Promise<void> {
+		try {
+			await this.journal.drain(rows => new ProjectionStore(this.env.DB).apply(rows));
+			this.projectionRetryAt = undefined;
+		} catch {
+			this.projectionRetryAt = Date.now() + projectionRetry;
+		}
+	}
+	private async nextAlarm(): Promise<number | undefined> {
+		const now = Date.now();
+		const wakes = [...(await this.ctx.storage.list({ prefix: 'release-wake:' })).values()].map(value => {
+			const wake = releaseWake.safeParse(value);
+			return wake.success ? wakeDue(wake.data) : now;
+		});
+		const observations = [...(await this.ctx.storage.list({ prefix: 'observe:' })).values()].map(value =>
+			observation.safeParse(value).data?.due ?? now
+		);
+		return earliest([
+			(await this.journal.pending()) ? (this.projectionRetryAt ?? now) : undefined,
+			await this.reconcileAt(),
+			(await this.setupEdit())?.due,
+			...wakes,
+			...observations,
+		]);
+	}
+	private async reconcileAt(): Promise<number | undefined> {
+		const parsed = reconcileDue.safeParse(await this.ctx.storage.get('reconcile-at'));
+		return parsed.success ? (parsed.data ?? undefined) : undefined;
+	}
+	private async requestReconcile(at: number): Promise<void> {
+		const current = await this.reconcileAt();
+		if (current === undefined || current > at) await this.ctx.storage.put('reconcile-at', at);
 	}
 	private store(): Store {
 		return new Store(this.env.DB);
@@ -90,7 +154,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	protected gateway(): RepositoryGateway {
 		return new RepositoryGateway(this.env, Number(this.env.OWNER_ID));
 	}
-	private async journal(): Promise<Execution[]> {
+	private async executions(): Promise<Execution[]> {
 		return [...(await this.ctx.storage.list({ prefix: 'execution:' })).values()].map(decodeExecutionV1);
 	}
 	private async stored(id: string): Promise<Execution | undefined> {
@@ -109,15 +173,29 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		) {
 			delete execution.reason;
 		}
-		execution.updatedAt = Date.now();
-		// The journal is authoritative. D1 is an asynchronously repairable dashboard index.
-		await this.ctx.storage.put(`execution:${execution.id}`, execution);
-		if (!execution.releaseSet?.workflowId) await this.ctx.storage.setAlarm(Date.now() + 15000);
-		if (JSON.stringify({ ...previous, updatedAt: 0 }) !== JSON.stringify({ ...execution, updatedAt: 0 })) {
-			await this.wakeReleaseWorkflows();
+		const now = Date.now();
+		execution.updatedAt = now;
+		const extra: Record<string, unknown> = {};
+		const set = execution.releaseSet;
+		if (!set?.workflowId) {
+			const current = await this.reconcileAt();
+			extra['reconcile-at'] = Math.min(current ?? Number.POSITIVE_INFINITY, now + settleInterval);
+		} else if (JSON.stringify({ ...previous, updatedAt: 0 }) !== JSON.stringify({ ...execution, updatedAt: 0 })) {
+			const key = `release-wake:${set.preparationId}`;
+			const members = wakeMembers(releaseWake.safeParse(await this.ctx.storage.get(key)).data, execution.id);
+			extra[key] = { ...(members ? { members } : {}), due: now };
 		}
-		await this.store().putExecution(execution);
+		await this.journal.commit(
+			[{ entity: 'execution', id: execution.id, repositoryId: execution.repositoryId, value: execution }],
+			extra,
+		);
 		if (execution.state === 'succeeded') await this.captureReleaseEvent(execution);
+	}
+	private async putReleaseSet(preparationId: string, record: ReleaseSetRecord): Promise<void> {
+		const preparation = await this.get(preparationId);
+		await this.journal.commit([
+			{ entity: 'release-set', id: preparationId, repositoryId: preparation.repositoryId, value: record },
+		]);
 	}
 	private async captureReleaseEvent(execution: Execution): Promise<void> {
 		if (!execution.version) return;
@@ -126,7 +204,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		if (!required.length) return;
 		const id = releaseEventId({ ...execution, version: execution.version });
 		if (await this.ctx.storage.get(`release-emitted:${id}`)) return;
-		const group = (await this.journal())
+		const group = (await this.executions())
 			.filter(e =>
 				e.state === 'succeeded' && e.stream === execution.stream && e.version === execution.version
 				&& e.sourceSha === execution.sourceSha && e.configurationSha === execution.configurationSha
@@ -162,7 +240,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			version: execution.version,
 			release,
 		};
-		await this.ctx.storage.put({ [`release-event:${id}`]: event, [`release-emitted:${id}`]: true });
+		await this.journal.commit([{ entity: 'release', id, repositoryId: execution.repositoryId, value: event }], {
+			[`release-event:${id}`]: event,
+			[`release-emitted:${id}`]: true,
+		});
 	}
 	async exportJournal(): Promise<{ key: string; value: unknown }[]> {
 		return [...(await this.ctx.storage.list())].map(([key, value]) => ({ key, value }));
@@ -175,15 +256,23 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	/** Persist wake-ups separately so failed delivery survives Worker restarts. */
 	private async wakeReleaseWorkflows(): Promise<void> {
+		const wakes: Record<string, unknown> = {};
 		for (const [key, value] of await this.ctx.storage.list({ prefix: 'release-set:' })) {
 			const release = releaseSetRecord.parse(value);
 			if (!release.workflowId || release.completed) continue;
-			await this.ctx.storage.put(`release-wake:${key.slice('release-set:'.length)}`, true);
-			await this.ctx.storage.setAlarm(Date.now() + 1000);
+			wakes[`release-wake:${key.slice('release-set:'.length)}`] = { due: Date.now() };
 		}
+		if (Object.keys(wakes).length) await this.ctx.storage.put(wakes);
 	}
-	private async deliverReleaseEvents(): Promise<void> {
-		for (const key of (await this.ctx.storage.list({ prefix: 'release-wake:' })).keys()) {
+	private async deliverReleaseEvents(now: number): Promise<void> {
+		for (const [key, value] of await this.ctx.storage.list({ prefix: 'release-wake:' })) {
+			const parsed = releaseWake.safeParse(value);
+			if (!parsed.success) {
+				await this.ctx.storage.delete(key);
+				continue;
+			}
+			const wake = parsed.data;
+			if (wakeDue(wake) > now) continue;
 			const preparationId = key.slice('release-wake:'.length);
 			const release = await this.releaseSet(`release-set:${preparationId}`);
 			if (!release?.workflowId || release.completed) {
@@ -208,7 +297,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						}
 					}
 					release.started = true;
-					await this.ctx.storage.put(`release-set:${preparationId}`, release);
+					await this.putReleaseSet(preparationId, release);
 				}
 				const instance = await binding.get(release.workflowId);
 				const status = await instance.status();
@@ -216,11 +305,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					await this.recordReleaseWorkflowInterruption(preparationId, release.workflowId);
 				}
 				if (!['complete', 'errored', 'terminated'].includes(status.status)) {
-					for (const id of release.ids) await instance.sendEvent({ type: id, payload: {} });
+					const members = wake === true ? undefined : wake.members;
+					for (const id of release.ids.filter(id => !members || members.includes(id))) {
+						await instance.sendEvent({ type: id, payload: {} });
+					}
 				}
 				await this.ctx.storage.delete(key);
 			} catch {
-				await this.ctx.storage.setAlarm(Date.now() + 60000);
+				await this.ctx.storage.put(key, { ...(wake === true ? {} : wake), due: now + reconcileInterval });
 			}
 		}
 	}
@@ -283,8 +375,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			execution.releaseSet.workflowError = interrupted
 				? 'Release coordination interrupted. Check coordination to resume.'
 				: undefined;
-			await this.ctx.storage.put(`execution:${execution.id}`, execution);
-			await this.store().putExecution(execution);
+			await this.journal.commit([
+				{ entity: 'execution', id: execution.id, repositoryId: execution.repositoryId, value: execution },
+			]);
 		}
 	}
 	async completeReleaseWorkflow(preparationId: string, workflowId: string): Promise<void> {
@@ -293,9 +386,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			for (const operation of operations) {
 				if ((await this.get(operation.id)).state !== 'succeeded') throw new Error('Release is incomplete');
 			}
-			const key = `release-set:${preparationId}`;
-			const release = await this.releaseSet(key);
-			await this.ctx.storage.put(key, { ...release, completed: true });
+			const release = await this.releaseSet(`release-set:${preparationId}`);
+			if (!release) throw new Error('Release set is missing');
+			await this.putReleaseSet(preparationId, { ...release, completed: true });
 		});
 	}
 	async startReleaseSet(preparationId: string, target: string): Promise<Execution[]> {
@@ -333,15 +426,19 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					execution.releaseSet.operationCount = executions.length;
 				}
 			}
-			await this.ctx.storage.transaction(async storage => {
-				await storage.put({
-					[key]: { target, ids: executions.map(execution => execution.id), workflowId },
-					[`release-wake:${preparationId}`]: true,
-					...Object.fromEntries(executions.map(execution => [`execution:${execution.id}`, execution])),
+			const record: ReleaseSetRecord = { target, ids: executions.map(execution => execution.id), workflowId };
+			const committed: Committed[] = [
+				{ entity: 'release-set', id: preparationId, repositoryId: preparation.repositoryId, value: record },
+			];
+			for (const execution of executions) {
+				committed.push({
+					entity: 'execution',
+					id: execution.id,
+					repositoryId: execution.repositoryId,
+					value: execution,
 				});
-				await storage.setAlarm(Date.now() + 1000);
-			});
-			for (const execution of executions) await this.store().putExecution(execution);
+			}
+			await this.journal.commit(committed, { [`release-wake:${preparationId}`]: { due: Date.now() } });
 			return executions;
 		});
 	}
@@ -353,7 +450,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const prior = await this.stored(execution.id);
 			if (prior) return prior;
 			if (execution.configuration.streams[execution.stream]?.concurrency === 'supersede-pending') {
-				for (const old of await this.journal()) {
+				for (const old of await this.executions()) {
 					if (
 						old.stream === execution.stream
 						&& old.operation === execution.operation
@@ -798,7 +895,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private async supersedeVersion(execution: Execution): Promise<void> {
 		if (execution.operation !== 'promote' || !execution.version) return;
-		for (const other of await this.journal()) {
+		for (const other of await this.executions()) {
 			if (
 				other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
 				&& other.version === execution.version && ['blocked', 'pending', 'ready', 'failed'].includes(other.state)
@@ -965,7 +1062,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				publications,
 			});
 		}
-		await this.ctx.storage.setAlarm(Date.now() + 1000);
+		await this.requestReconcile(Date.now());
 	}
 	async recover(id: string, action: 'reconcile' | 'retry', actor: string): Promise<Execution> {
 		return this.serial(async () => {
@@ -1028,20 +1125,23 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	async wake(): Promise<void> {
 		await this.wakeReleaseWorkflows();
-		await this.ctx.storage.setAlarm(Date.now() + 1000);
+		await this.requestReconcile(Date.now());
+		await this.journal.arm(Date.now());
 	}
 	async observeRun(repositoryId: number, runId: number): Promise<void> {
 		await this.ctx.storage.put(`observe:${runId}`, { repositoryId, runId });
 		await this.wake();
 	}
-	private async observations(): Promise<void> {
-		const pending = await this.ctx.storage.list({
-			prefix: 'observe:',
-		});
-		if (pending.size) await this.ctx.storage.setAlarm(Date.now() + 60000);
-		for (const [key, value] of pending) {
+	private async observations(now: number): Promise<void> {
+		for (const [key, value] of await this.ctx.storage.list({ prefix: 'observe:' })) {
+			const parsed = observation.safeParse(value);
+			if (!parsed.success) {
+				await this.ctx.storage.delete(key);
+				continue;
+			}
+			const event = parsed.data;
+			if ((event.due ?? 0) > now) continue;
 			try {
-				const event = observation.parse(value);
 				const repository = await this.store().repository(event.repositoryId);
 				if (!repository?.configuration || repository.suspended || blocking(repository.diagnostics).length) {
 					await this.ctx.storage.delete(key);
@@ -1167,7 +1267,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 				await this.ctx.storage.delete(key);
 			} catch {
-				/* Persist the observation until its producer can be verified. */
+				await this.ctx.storage.put(key, { ...event, due: now + reconcileInterval });
 			}
 		}
 	}
@@ -1180,16 +1280,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		if (previous ? previous.number === edit.number && previous.body === edit.body : !changed) return;
 		const due = Date.now() + 5000;
 		await this.ctx.storage.put('setup-edit', { ...edit, due });
-		await this.arm(due);
-	}
-	private async arm(at: number): Promise<void> {
-		const current = await this.ctx.storage.getAlarm();
-		if (current === null || current > at || current <= Date.now()) await this.ctx.storage.setAlarm(at);
+		await this.journal.arm(due);
 	}
 	private async rebuildSetup(): Promise<void> {
 		const edit = await this.setupEdit();
-		if (!edit) return;
-		if (edit.due > Date.now()) return this.arm(edit.due);
+		if (!edit || edit.due > Date.now()) return;
 		const store = this.store();
 		try {
 			const repository = await store.repository(edit.repositoryId);
@@ -1211,13 +1306,19 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		if (current?.due === edit.due) await this.ctx.storage.delete('setup-edit');
 	}
 	async alarm(): Promise<void> {
+		const now = Date.now();
 		await Promise.all([
 			this.serial(async () => {
-				await this.deliverReleaseEvents();
-				await this.reconcile();
+				await this.deliverReleaseEvents(now);
+				await this.observations(now);
+				const due = await this.ctx.storage.get('reconcile-at');
+				if (due === undefined || ((await this.reconcileAt()) ?? Number.POSITIVE_INFINITY) <= now) {
+					await this.reconcile();
+				}
 			}),
 			this.serial(() => this.rebuildSetup()),
 		]);
+		await this.journal.schedule(await this.nextAlarm());
 	}
 	private async runManaged(execution: Execution): Promise<void> {
 		const operation = execution.managed;
@@ -1266,8 +1367,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		}
 	}
 	private async reconcile(onlyExecution?: string): Promise<void> {
-		if (!onlyExecution) await this.observations();
-		const executions = (await this.journal()).sort((a, b) => a.createdAt - b.createdAt);
+		const started = Date.now();
+		if (!onlyExecution) await this.ctx.storage.put('reconcile-at', null);
+		const executions = (await this.executions()).sort((a, b) => a.createdAt - b.createdAt);
 		if (executions[0] && (await this.store().repository(executions[0].repositoryId))?.suspended) {
 			return;
 		}
@@ -1285,7 +1387,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				canVerifyPublication(p.manager) && ['pending', 'uncertain'].includes(p.outcome)
 			);
 		if (active.some(e => !e.releaseSet?.workflowId) || executions.some(unresolved)) {
-			await this.ctx.storage.setAlarm(Date.now() + 60000);
+			await this.requestReconcile(started + reconcileInterval);
 		}
 		for (const execution of executions) {
 			if (onlyExecution ? execution.id !== onlyExecution : Boolean(execution.releaseSet?.workflowId)) continue;
@@ -1306,7 +1408,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					continue;
 				}
 			}
-			await this.store().putExecution(execution);
 			if (execution.state === 'succeeded') await this.captureReleaseEvent(execution);
 			if (!active.includes(execution) || execution.state === 'pending') continue;
 			if (execution.state === 'blocked' && execution.operation === 'promote') {
@@ -1316,7 +1417,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				) continue;
 				try {
 					if (await this.approveFromPush(execution, executions)) {
-						await this.ctx.storage.setAlarm(Date.now() + 1000);
+						await this.requestReconcile(Date.now());
 						return;
 					}
 				} catch (error) {
