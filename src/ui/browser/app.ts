@@ -601,6 +601,9 @@ for (const form of findAll(document, 'form[data-action]', HTMLFormElement)) {
 				if (!(credential instanceof PublicKeyCredential)) throw new Error('Security key enrollment cancelled.');
 				await api('/api/authenticators/verify', z.unknown(), { id: challenge.id, response: credential.toJSON() });
 				location.reload();
+			} else if (action === 'cli-revoke' || action === 'cli-revoke-all') {
+				await api(`/api/cli-sessions/${action === 'cli-revoke' ? 'revoke' : 'revoke-all'}`, z.unknown(), data);
+				location.reload();
 			} else if (action === 'key-remove') {
 				await api('/api/authenticators/remove', z.unknown(), { ...data, proof: await elevated() });
 				location.reload();

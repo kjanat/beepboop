@@ -1,5 +1,5 @@
 ---
-import type { Dashboard } from '@/server/dashboard.ts';
+import { type Dashboard, date } from '@/server/dashboard.ts';
 
 interface Props {
 	data: Dashboard;
@@ -47,3 +47,31 @@ const { data } = Astro.props;
 		)}
 	</article>
 ))}
+<article>
+	<div class="section-heading">
+		<h2>CLI logins</h2>
+		{!!data.cliSessions.length && (
+			<form data-action="cli-revoke-all">
+				<button class="danger">Revoke all CLI logins</button>
+			</form>
+		)}
+	</div>
+	<p>Each login lasts until it is revoked here or with beepboop auth logout.</p>
+	{data.cliSessions.length ? (
+		<ul>
+			{data.cliSessions.map(session => (
+				<li class="section-heading">
+					<span>Signed in {date(session.created_at)} <code
+						>{session.id.slice(0, 12)}</code></span>
+					<form data-action="cli-revoke">
+						<input
+							type="hidden"
+							name="id"
+							value={session.id}
+						><button class="danger">Revoke</button>
+					</form>
+				</li>
+			))}
+		</ul>
+	) : <p>No CLI logins.</p>}
+</article>

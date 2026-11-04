@@ -753,6 +753,17 @@ export class AutomationService {
 			if (!execution) throw new Error('Unknown execution');
 			return Response.json(await this.coordinator(execution.repositoryId).approvalReadiness(execution.id));
 		}
+		if (path === '/api/cli-sessions/revoke') {
+			const id = text(body.id);
+			await this.store.db.prepare('DELETE FROM cli_sessions WHERE id=?').bind(id).run();
+			await this.store.audit(actor, 'cli.revoke', id.slice(0, 12));
+			return Response.json({ ok: true });
+		}
+		if (path === '/api/cli-sessions/revoke-all') {
+			await this.store.db.prepare('DELETE FROM cli_sessions').run();
+			await this.store.audit(actor, 'cli.revoke-all', 'all');
+			return Response.json({ ok: true });
+		}
 		if (path === '/api/executions/cancel') {
 			const execution = await this.store.execution(text(body.id));
 			if (!execution) throw new Error('Unknown execution');

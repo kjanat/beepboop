@@ -20,6 +20,11 @@ export interface DeliverySummary {
 const secretSummaries: z.ZodType<SecretSummary[]> = z.array(
 	z.object({ alias: z.string(), version: z.number(), created_at: z.number() }),
 );
+export interface CLISession {
+	id: string;
+	created_at: number;
+}
+const cliSessionSummaries: z.ZodType<CLISession[]> = z.array(z.object({ id: z.string(), created_at: z.number() }));
 const deliverySummaries: z.ZodType<DeliverySummary[]> = z.array(
 	z.object({ grant_id: z.string(), version: z.number(), state: z.string(), updated_at: z.number() }),
 );
@@ -59,6 +64,7 @@ export async function dashboard(env: AutomationBindings, actor: string) {
 		destinations,
 		subscriptions,
 		notifications,
+		cliSessions,
 	] = await Promise.all(
 		[
 			service.store.repositories(),
@@ -74,6 +80,7 @@ export async function dashboard(env: AutomationBindings, actor: string) {
 			service.notifications().destinations(),
 			service.notifications().subscriptions(),
 			service.notifications().recent(),
+			service.store.db.prepare('SELECT id,created_at FROM cli_sessions ORDER BY created_at DESC').all(),
 		],
 	);
 	return {
@@ -92,6 +99,7 @@ export async function dashboard(env: AutomationBindings, actor: string) {
 		secrets: secretSummaries.parse(secrets.results),
 		grants: grants.results.map(row => parseGrant(rowDocument(row))),
 		deliveries: deliverySummaries.parse(deliveries.results),
+		cliSessions: cliSessionSummaries.parse(cliSessions.results),
 	};
 }
 export type Dashboard = Awaited<ReturnType<typeof dashboard>>;
