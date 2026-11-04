@@ -471,6 +471,27 @@ export class RepositoryGateway {
 		return this.finishPullRequest(snapshot, branch, title, body, head, token);
 	}
 	/** Bind release execution to the merged preparation pull request. */
+	private async mergedPreparationPull(
+		repository: string,
+		repositoryId: number,
+		result: { url: string; head: string },
+		token: string,
+	): Promise<{ mergeSha: string; base: string; defaultBranch: string }> {
+		const url = new URL(result.url);
+		const prefix = `/${repository}/pull/`;
+		if (
+			url.origin !== 'https://github.com' || !url.pathname.startsWith(prefix)
+			|| !/^[1-9][0-9]*$/.test(url.pathname.slice(prefix.length))
+		) throw new Error('Invalid preparation PR identity');
+		const number = url.pathname.slice(prefix.length);
+		const pull = record(await this.call(`/repos/${repository}/pulls/${number}`, token));
+		const base = record(pull.base);
+		const mergeSha = pull.merged === true ? await this.mergeCommit(repository, number, token) : undefined;
+		if (!mergeSha || record(pull.head).sha !== result.head || record(base.repo).id !== repositoryId) {
+			throw new Error('The preparation PR is not merged');
+		}
+		return { mergeSha, base: text(base.ref), defaultBranch: text(record(base.repo).default_branch) };
+	}
 	async preparedSnapshot(
 		repository: string,
 		repositoryId: number,
@@ -478,26 +499,26 @@ export class RepositoryGateway {
 		target: string,
 		extraPaths: string[] = [],
 	): Promise<Snapshot> {
-		const url = new URL(result.url);
-		const prefix = `/${repository}/pull/`;
-		if (
-			url.origin !== 'https://github.com' || !url.pathname.startsWith(prefix)
-			|| !/^[1-9][0-9]*$/.test(url.pathname.slice(prefix.length))
-		) throw new Error('Invalid preparation PR identity');
 		const token = await this.token(repository, repositoryId, { contents: 'read', pull_requests: 'read' });
-		const number = url.pathname.slice(prefix.length);
-		const pull = record(await this.call(`/repos/${repository}/pulls/${number}`, token));
-		if (
-			pull.merged !== true || (await this.mergeCommit(repository, number, token)) !== sha(target)
-			|| record(pull.head).sha !== result.head || record(record(pull.base).repo).id !== repositoryId
-		) {
-			throw new Error('Target is not the merged preparation revision');
-		}
+		const pull = await this.mergedPreparationPull(repository, repositoryId, result, token);
+		if (pull.mergeSha !== sha(target)) throw new Error('Target is not the merged preparation revision');
 		const snapshot = await this.snapshot(repository, repositoryId, target, extraPaths);
-		if (record(pull.base).ref !== snapshot.repository.defaultBranch) {
+		if (pull.base !== snapshot.repository.defaultBranch) {
 			throw new Error('Preparation was merged into a different branch');
 		}
 		return snapshot;
+	}
+	async preparationMerge(
+		repository: string,
+		repositoryId: number,
+		result: { url: string; head: string },
+		target: string,
+	): Promise<string | undefined> {
+		const token = await this.token(repository, repositoryId, { contents: 'read', pull_requests: 'read' });
+		const pull = await this.mergedPreparationPull(repository, repositoryId, result, token);
+		if (pull.base !== pull.defaultBranch) return undefined;
+		const comparison = record(await this.call(`/repos/${repository}/compare/${pull.mergeSha}...${sha(target)}`, token));
+		return comparison.status === 'identical' || comparison.status === 'ahead' ? pull.mergeSha : undefined;
 	}
 	private async mergeCommit(repository: string, number: string, token: string): Promise<string | undefined> {
 		for (let page = 1; page <= 10; page++) {

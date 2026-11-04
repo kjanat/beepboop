@@ -201,7 +201,7 @@ export class AutomationService {
 		stream: string,
 		version: string,
 		target: string,
-	): Promise<boolean> {
+	): Promise<string | undefined> {
 		for (const execution of await this.store.executions(repository.id)) {
 			const result = execution.prepared?.result ?? execution.managed?.result;
 			if (
@@ -209,11 +209,11 @@ export class AutomationService {
 				|| execution.state !== 'succeeded'
 			) continue;
 			try {
-				await this.gateway.preparedSnapshot(repository.name, repository.id, result, target);
-				return true;
+				const merge = await this.gateway.preparationMerge(repository.name, repository.id, result, target);
+				if (merge) return merge;
 			} catch {}
 		}
-		return false;
+		return undefined;
 	}
 	private async releaseFromManifest(repository: RepositoryRecord): Promise<void> {
 		if (repository.diagnostics.length || repository.suspended) return;
@@ -224,10 +224,13 @@ export class AutomationService {
 			);
 			const version = unreleasedManifestVersion(packages);
 			if (!version) continue;
+			const merge = stream.promote.approval === 'merge'
+				? await this.mergedPreparation(repository, name, version, repository.sha)
+				: undefined;
 			const snapshot = await this.gateway.snapshot(
 				repository.name,
 				repository.id,
-				repository.sha,
+				merge ?? repository.sha,
 				(stream.versionFiles ?? []).map(rule => rule.path),
 			);
 			const plan = planRelease(
@@ -248,12 +251,7 @@ export class AutomationService {
 			);
 			promotion.sourceSha = plan.sourceSha;
 			if (await this.store.execution(promotion.id)) continue;
-			if (
-				stream.promote.approval === 'required'
-				&& await this.mergedPreparation(repository, name, version, plan.sourceSha)
-			) {
-				promotion.approvedBy = 'merge';
-			}
+			if (merge) promotion.approvedBy = 'merge';
 			await this.store.audit('beepboop', 'release.push', promotion.id);
 			await this.enqueue(repository, promotion);
 		}

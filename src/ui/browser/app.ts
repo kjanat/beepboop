@@ -313,9 +313,12 @@ for (const form of findAll(document, 'form[data-action="approve"]', HTMLFormElem
 	const status = find(form, '.approval-status', HTMLElement);
 	const approve = find(form, 'button', HTMLButtonElement);
 	const id = input(form, 'id').value;
+	const automatic = form.dataset.automatic === 'true';
 	const override = () => {
 		input(form, 'force').value = 'true';
-		if (approve) approve.textContent = 'Approve anyway';
+		if (!approve) return;
+		approve.textContent = automatic ? 'Release now anyway' : 'Approve anyway';
+		approve.hidden = false;
 	};
 	api('/api/executions/approval', z.object({ problems: z.array(z.string()) }), { id }).then(({ problems }) => {
 		status?.replaceChildren(

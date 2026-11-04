@@ -304,7 +304,7 @@
 					"additionalProperties": false,
 					"properties": {
 						"approval": {
-							"enum": ["required", "push"]
+							"enum": ["required", "merge", "push"]
 						},
 						"workflow": {
 							"$ref": "#/$defs/workflow"

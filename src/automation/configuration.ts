@@ -188,7 +188,7 @@ export function parseRepositoryConfiguration(value: unknown): Configuration {
 				...(prepare.workflow ? { workflow: binding(prepare.workflow) } : {}),
 			},
 			promote: {
-				approval: oneOf(promote.approval ?? 'required', ['required', 'push'], 'Invalid promotion approval'),
+				approval: oneOf(promote.approval ?? 'required', ['required', 'merge', 'push'], 'Invalid promotion approval'),
 				...(promote.workflow ? { workflow: binding(promote.workflow) } : {}),
 			},
 			workflows,
