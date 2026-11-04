@@ -104,7 +104,7 @@ if (latestCommit === distribution) {
 	if (process.env.GITHUB_STEP_SUMMARY) {
 		appendFileSync(
 			process.env.GITHUB_STEP_SUMMARY,
-			`Released \`v${version}\`. Pin consumers to \`${repository}/actions/<name>@v${major}\`.\n`,
+			`\nReleased \`v${version}\`. Pin consumers to \`${repository}/actions/<name>@v${major}\`.\n`,
 		);
 	}
 }
