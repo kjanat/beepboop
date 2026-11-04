@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { versionFileSchema } from '@/automation/editors';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { managerNames } from '@/contract/catalog';
-import { type Configuration, configurationShape, workflowBindingShape } from '@/domain/configuration';
+import type { Configuration } from '@/domain/configuration';
 
 const managerName = z.enum(managerNames);
 const strings = z.array(z.string());
@@ -25,8 +25,8 @@ const binding = {
 	schedule: z.string().optional(),
 	file: z.string(),
 	ref: z.string().optional(),
-	inputs: z.record(z.string(), z.union([z.string(), z.boolean(), z.number()])).optional(),
-	required: z.boolean().optional(),
+	inputs: z.record(z.string(), z.union([z.string(), z.boolean(), z.number()])).default({}),
+	required: z.boolean().default(true),
 };
 const workflowBinding = z.object(binding);
 const stream = z.object({
@@ -70,8 +70,8 @@ const configurationV1 = z.object({
 	subscriptions: z.array(subscription),
 });
 
-export const storedConfiguration = configurationShape;
-export const storedBinding = workflowBindingShape;
+export const storedConfiguration: z.ZodType<Configuration> = configurationV1;
+export const storedBinding = workflowBinding;
 
 export function encodeConfigurationV1(configuration: Configuration): z.output<typeof configurationV1> {
 	return configurationV1.parse(configuration);

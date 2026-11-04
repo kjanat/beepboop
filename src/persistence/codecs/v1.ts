@@ -271,7 +271,7 @@ const executionSchema: z.ZodType<Execution> = z.object({
 		'uncertain',
 	]),
 	dependencies: strings,
-	workflow: z.intersection(storedBinding, z.object({ ref: z.string() })).optional(),
+	workflow: storedBinding.extend({ ref: z.string() }).optional(),
 	runId: z.number().optional(),
 	runAttempt: z.number().optional(),
 	attempts: z.number(),

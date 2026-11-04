@@ -471,3 +471,70 @@ test('setup preview names each schema problem in an invalid configuration', asyn
 	]);
 	expect(field(preview.body, 'error')).toContain('streams.main.promote.approval');
 });
+
+const retiredKeys = z.looseObject({
+	configuration: z.looseObject({
+		streams: z.looseObject({
+			main: z.looseObject({ promote: z.looseObject({ workflow: z.looseObject({}) }) }),
+		}),
+	}),
+});
+function withRetiredKeys(document: unknown): z.output<typeof retiredKeys> {
+	const parsed = retiredKeys.parse(document);
+	parsed.configuration.retired = true;
+	parsed.configuration.streams.main.retired = true;
+	parsed.configuration.streams.main.promote.workflow.retired = true;
+	return parsed;
+}
+
+test('stored rows and journal entries with keys this version does not know still read and release', async () => {
+	const repository = widget(world.github);
+	world.npm.publish('widget', '1.0.0');
+	const api = bearer(world, await world.cliSession());
+	await api('/api/repositories/discover', { repository: 'octo/widget' });
+	const row = z.object({ document: z.string() }).parse(
+		await world.db.prepare('SELECT document FROM repositories WHERE id=?').bind(repository.id).first(),
+	);
+	await world.db.prepare('UPDATE repositories SET document=? WHERE id=?')
+		.bind(JSON.stringify(withRetiredKeys(JSON.parse(row.document))), repository.id).run();
+	await world.db.prepare('INSERT INTO grants(id,alias,repository_id,document) VALUES(?,?,?,?)').bind(
+		'grant-1',
+		'npm-token',
+		repository.id,
+		JSON.stringify({
+			id: 'grant-1',
+			alias: 'npm-token',
+			repositoryId: repository.id,
+			repository: repository.name,
+			operation: 'promote',
+			workflow: 'publish.yml',
+			ref: 'refs/heads/main',
+			delivery: 'runtime',
+			retired: true,
+		}),
+	).run();
+
+	const listed = await api('/api/repositories');
+	expect(listed.status).toBe(200);
+	expect(Array.isArray(listed.body) ? listed.body.map(entry => typeof field(entry, 'configuration')) : []).toEqual([
+		'object',
+	]);
+	const credentials = await api('/api/credentials');
+	expect(credentials.status).toBe(200);
+	expect(field(credentials.body, 'grants')).toEqual([expect.objectContaining({ id: 'grant-1' })]);
+
+	const request = { repositoryId: repository.id, stream: 'main', version: '1.1.0' };
+	const plan = await api('/api/releases/plan', request);
+	expect(plan.status).toBe(200);
+	const prepared = await api('/api/releases/prepare', {
+		...request,
+		sourceSha: field(plan.body, 'sourceSha'),
+		planId: field(plan.body, 'planId'),
+	});
+	expect(prepared.status).toBe(200);
+	const storage = world.coordinators.instance(String(repository.id)).storage;
+	const key = `execution:${String(field(prepared.body, 'id'))}`;
+	await storage.put(key, withRetiredKeys(await storage.get(key)));
+	await world.wait(20_000);
+	expect(repository.pulls.length).toBe(1);
+});

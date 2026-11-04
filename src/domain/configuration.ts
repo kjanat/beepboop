@@ -56,7 +56,7 @@ const refPolicy = z.strictObject({
 	signed: z.boolean().optional(),
 }).transform(({ phase, prefix, aliases, signed }) => ({ phase, prefix, aliases, signed: signed === true }));
 
-function bindingSchema(rules: boolean) {
+function bindingSchema() {
 	const shape = z.strictObject({
 		file: z.string().regex(workflowFilePattern, 'Workflow must be a filename'),
 		ref: z.string().regex(refPattern, 'Invalid workflow ref').refine(validRef, 'Invalid workflow ref').optional(),
@@ -72,26 +72,24 @@ function bindingSchema(rules: boolean) {
 		outputs: z.array(outputSchema).optional(),
 		artifactInputs: z.array(inputSchema).optional(),
 	});
-	const checked = rules
-		? shape.superRefine((binding, ctx) => {
-			if (
-				binding.each
-				&& (binding.outputs !== undefined || binding.artifactInputs !== undefined || binding.refs !== undefined)
-			) {
-				issue(ctx, 'each-package-input', 'Per-package workflows cannot declare outputs, artifact inputs or refs', [
-					'each',
-				]);
+	const checked = shape.superRefine((binding, ctx) => {
+		if (
+			binding.each
+			&& (binding.outputs !== undefined || binding.artifactInputs !== undefined || binding.refs !== undefined)
+		) {
+			issue(ctx, 'each-package-input', 'Per-package workflows cannot declare outputs, artifact inputs or refs', [
+				'each',
+			]);
+		}
+		for (const key of Object.keys(binding.inputs ?? {})) {
+			if (key === 'beepboop_execution_id' || (binding.each && key === 'package')) {
+				issue(ctx, 'reserved-operation', `Input ${key} is set by Beepboop`, ['inputs', key]);
 			}
-			for (const key of Object.keys(binding.inputs ?? {})) {
-				if (key === 'beepboop_execution_id' || (binding.each && key === 'package')) {
-					issue(ctx, 'reserved-operation', `Input ${key} is set by Beepboop`, ['inputs', key]);
-				}
-			}
-			const ids = (binding.outputs ?? []).map(output => output.id);
-			if (new Set(ids).size !== ids.length) issue(ctx, 'duplicate-identity', 'Duplicate output', ['outputs']);
-		})
-		: shape;
-	const parsed = checked.transform(binding => ({
+		}
+		const ids = (binding.outputs ?? []).map(output => output.id);
+		if (new Set(ids).size !== ids.length) issue(ctx, 'duplicate-identity', 'Duplicate output', ['outputs']);
+	});
+	return checked.transform(binding => ({
 		...(binding.outputs ? { outputs: binding.outputs } : {}),
 		...(binding.artifactInputs ? { artifactInputs: binding.artifactInputs } : {}),
 		...(binding.platform ? { platform: binding.platform } : {}),
@@ -111,12 +109,11 @@ function bindingSchema(rules: boolean) {
 		...(binding.ref === undefined ? {} : { ref: binding.ref }),
 		inputs: binding.inputs ?? {},
 		required: binding.required !== false,
-	}));
-	return rules ? parsed.meta({ id: 'workflow' }) : parsed;
+	})).meta({ id: 'workflow' });
 }
 
-function streamSchema(rules: boolean) {
-	const binding = bindingSchema(rules);
+function streamSchema() {
+	const binding = bindingSchema();
 	const workflows = z.record(identifier, binding);
 	const shape = z.strictObject({
 		versioning: z.enum(['workspace', 'independent', 'none']).default('workspace'),
@@ -132,15 +129,13 @@ function streamSchema(rules: boolean) {
 			approval: z.enum(['required', 'merge', 'push']).default('required'),
 			workflow: binding.optional(),
 		}).default({ approval: 'required' }),
-		workflows: (rules
-			? workflows.superRefine((value, ctx) => {
-				for (const name of reservedOperations) {
-					if (Object.hasOwn(value, name)) {
-						issue(ctx, 'reserved-operation', `${name} is configured under ${name}.workflow`, [name]);
-					}
+		workflows: workflows.superRefine((value, ctx) => {
+			for (const name of reservedOperations) {
+				if (Object.hasOwn(value, name)) {
+					issue(ctx, 'reserved-operation', `${name} is configured under ${name}.workflow`, [name]);
 				}
-			})
-			: workflows).default({}),
+			}
+		}).default({}),
 		required: packageReferences.default([]),
 		credentials: z.array(nonempty).default([]),
 		channels: z.strictObject({ stable: nonempty.default('latest'), prerelease: nonempty.default('next') }).default({
@@ -149,17 +144,15 @@ function streamSchema(rules: boolean) {
 		}),
 		concurrency: z.enum(['queue', 'supersede-pending']).default('queue'),
 	});
-	const checked = rules
-		? shape.superRefine((stream, ctx) => {
-			if (stream.prepare.strategy === 'workflow' && !stream.prepare.workflow) {
-				issue(ctx, 'binding-missing', 'The workflow preparation strategy needs prepare.workflow', [
-					'prepare',
-					'workflow',
-				]);
-			}
-		})
-		: shape;
-	const parsed = checked.transform(stream => ({
+	const checked = shape.superRefine((stream, ctx) => {
+		if (stream.prepare.strategy === 'workflow' && !stream.prepare.workflow) {
+			issue(ctx, 'binding-missing', 'The workflow preparation strategy needs prepare.workflow', [
+				'prepare',
+				'workflow',
+			]);
+		}
+	});
+	return checked.transform(stream => ({
 		...(stream.versionFiles === undefined ? {} : { versionFiles: stream.versionFiles }),
 		...(stream.versionSource ? { versionSource: stream.versionSource } : {}),
 		...(stream.packages === undefined ? {} : { packages: stream.packages }),
@@ -178,12 +171,11 @@ function streamSchema(rules: boolean) {
 		required: stream.required,
 		credentials: stream.credentials,
 		channels: { stable: stream.channels.stable, prerelease: stream.channels.prerelease },
-	}));
-	return rules ? parsed.meta({ id: 'stream' }) : parsed;
+	})).meta({ id: 'stream' });
 }
 
 const subscriptionCommon = { id: identifier, source: nonempty, stream: nonempty, operation: nonempty };
-function subscriptionSchema(rules: boolean) {
+function subscriptionSchema() {
 	const release = z.strictObject({
 		...subscriptionCommon,
 		event: z.literal('release'),
@@ -197,16 +189,7 @@ function subscriptionSchema(rules: boolean) {
 		event: z.literal('workflow_run'),
 		workflow: z.string().regex(/^[\w-]+\.ya?ml$/, 'Workflow subscription requires an exact filename'),
 	});
-	const loose = z.strictObject({
-		...subscriptionCommon,
-		event: z.enum(['release', 'package.version.changed', 'workflow_run']),
-		sourceStream: nonempty.optional(),
-		sourceGroup: nonempty.optional(),
-		publication: nonempty.optional(),
-		workflow: nonempty.optional(),
-	});
-	const checked = rules ? z.discriminatedUnion('event', [release, packageChanged, workflowRun]) : loose;
-	const parsed = checked.transform(subscription => ({
+	return z.discriminatedUnion('event', [release, packageChanged, workflowRun]).transform(subscription => ({
 		id: subscription.id,
 		...('sourceStream' in subscription && subscription.sourceStream !== undefined
 			? { sourceStream: subscription.sourceStream }
@@ -222,8 +205,7 @@ function subscriptionSchema(rules: boolean) {
 		stream: subscription.stream,
 		operation: subscription.operation,
 		...('workflow' in subscription && subscription.workflow !== undefined ? { workflow: subscription.workflow } : {}),
-	}));
-	return rules ? parsed.meta({ id: 'subscription' }) : parsed;
+	})).meta({ id: 'subscription' });
 }
 
 const winget = z.strictObject({
@@ -293,50 +275,37 @@ function graph(stream: Stream, path: (string | number)[], ctx: z.RefinementCtx):
 	}
 }
 
-function configurationOf(rules: boolean) {
-	const shape = z.strictObject({
-		$schema: z.string().optional(),
-		extends: z.array(
-			rules ? z.string().regex(presetReferencePattern, 'Invalid preset reference') : nonempty,
-		).default([]),
-		managers: z.array(z.enum(managerNames)).default([...managerNames]),
-		streams: z.record(identifier, streamSchema(rules)).default({}),
-		subscriptions: z.array(subscriptionSchema(rules)).default([]),
-		winget: winget.optional(),
+export const configurationSchema = z.strictObject({
+	$schema: z.string().optional(),
+	extends: z.array(z.string().regex(presetReferencePattern, 'Invalid preset reference')).default([]),
+	managers: z.array(z.enum(managerNames)).default([...managerNames]),
+	streams: z.record(identifier, streamSchema()).default({}),
+	subscriptions: z.array(subscriptionSchema()).default([]),
+	winget: winget.optional(),
+}).superRefine((configuration, ctx) => {
+	for (const [name, stream] of Object.entries(configuration.streams)) graph(stream, ['streams', name], ctx);
+	const ids = new Set<string>();
+	configuration.subscriptions.forEach((subscription, index) => {
+		if (ids.has(subscription.id)) {
+			issue(ctx, 'duplicate-identity', 'Duplicate subscription', ['subscriptions', index, 'id']);
+		}
+		ids.add(subscription.id);
+		const stream = configuration.streams[subscription.stream];
+		if (!stream || !Object.hasOwn(stream.workflows, subscription.operation)) {
+			issue(ctx, 'unknown-reference', 'Subscription references an unknown operation', [
+				'subscriptions',
+				index,
+				'operation',
+			]);
+		}
 	});
-	const checked = rules
-		? shape.superRefine((configuration, ctx) => {
-			for (const [name, stream] of Object.entries(configuration.streams)) graph(stream, ['streams', name], ctx);
-			const ids = new Set<string>();
-			configuration.subscriptions.forEach((subscription, index) => {
-				if (ids.has(subscription.id)) {
-					issue(ctx, 'duplicate-identity', 'Duplicate subscription', ['subscriptions', index, 'id']);
-				}
-				ids.add(subscription.id);
-				const stream = configuration.streams[subscription.stream];
-				if (!stream || !Object.hasOwn(stream.workflows, subscription.operation)) {
-					issue(ctx, 'unknown-reference', 'Subscription references an unknown operation', [
-						'subscriptions',
-						index,
-						'operation',
-					]);
-				}
-			});
-		})
-		: shape;
-	const parsed = checked.transform(configuration => ({
-		...(configuration.winget === undefined ? {} : { winget: configuration.winget }),
-		extends: configuration.extends,
-		managers: configuration.managers,
-		streams: configuration.streams,
-		subscriptions: configuration.subscriptions,
-	}));
-	return rules ? parsed.meta({ title: 'Repository release automation' }) : parsed;
-}
-
-export const configurationSchema = configurationOf(true);
-export const configurationShape = configurationOf(false);
-export const workflowBindingShape = bindingSchema(false);
+}).transform(configuration => ({
+	...(configuration.winget === undefined ? {} : { winget: configuration.winget }),
+	extends: configuration.extends,
+	managers: configuration.managers,
+	streams: configuration.streams,
+	subscriptions: configuration.subscriptions,
+})).meta({ title: 'Repository release automation' });
 export type ConfigurationInput = z.input<typeof configurationSchema>;
 export type Configuration = z.output<typeof configurationSchema>;
 

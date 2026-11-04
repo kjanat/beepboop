@@ -36,14 +36,14 @@ const grantFields = {
 };
 const secretName = z.string().regex(githubSecretNamePattern, 'Secret name required');
 const grantSchema = z.discriminatedUnion('delivery', [
-	z.strictObject({
+	z.object({
 		...grantFields,
 		delivery: z.literal('runtime'),
 		environment: nonempty.optional(),
 		secretName: nonempty.optional(),
 	}),
-	z.strictObject({ ...grantFields, delivery: z.literal('repository'), environment: nonempty.optional(), secretName }),
-	z.strictObject({
+	z.object({ ...grantFields, delivery: z.literal('repository'), environment: nonempty.optional(), secretName }),
+	z.object({
 		...grantFields,
 		delivery: z.literal('environment'),
 		environment: z.string().min(1, 'Environment required'),
