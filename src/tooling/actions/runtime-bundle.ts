@@ -19,9 +19,7 @@ export function bundleRuntime(output: string): Effect.Effect<void, ToolFailure> 
 				})
 			);
 			const [artifact] = result.outputs;
-			if (!result.success || !artifact) {
-				return yield* refuse(`Cannot bundle actions/runtime/${entry}.ts: ${result.logs.join('\n')}`);
-			}
+			if (!artifact) return yield* refuse(`Bundling actions/runtime/${entry}.ts produced no output`);
 			yield* attemptPromise(async () => Bun.write(join(output, `${entry}.ts`), await artifact.text()));
 		}
 	});

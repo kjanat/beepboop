@@ -9,6 +9,7 @@ export class ToolFailure
 {}
 
 function message(cause: unknown): string {
+	if (cause instanceof AggregateError) return [cause.message, ...cause.errors.map(message)].join('\n');
 	return cause instanceof Error ? cause.message : String(cause);
 }
 
