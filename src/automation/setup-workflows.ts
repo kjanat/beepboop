@@ -232,6 +232,12 @@ function integrate(
 		)
 	) {
 		const checkouts = steps.filter(step => typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@'));
+		if (steps.slice(0, beginIndex).some(step => !checkouts.includes(step))) {
+			fail(
+				'steps before begin need explicit integration; prepare dependencies and build output after the approved checkout',
+			);
+			return { content: original ?? '', blockers, notes };
+		}
 		if (
 			checkouts.length <= 1 && checkouts.every(step => {
 				const inputs = object(step.with);

@@ -1,7 +1,7 @@
 import { Effect, Result } from 'effect';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
 import { formatJson, json } from '@/automation/json';
-import { discover } from '@/automation/managers';
+import { discover, versionsInFiles } from '@/automation/managers';
 import { object } from '@/automation/managers/helpers';
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage, packageId, selectorKey } from '@/automation/package-identity';
@@ -233,8 +233,20 @@ function drafted(
 						operation === 'prepare' && !resolved?.streams[selection.name]?.prepare.workflow
 						&& !object(object(current.prepare).workflow).file
 					) {
-						if (selection.versioning !== 'none' && snapshot.paths.some(isLockfile)) {
+						if (snapshot.paths.some(isLockfile)) {
 							blockers.push(`${selection.name}: select a preparation workflow to regenerate lockfiles.`);
+						}
+						const versionFiles = Array.isArray(current.versionFiles)
+							? current.versionFiles
+							: resolved?.streams[selection.name]?.versionFiles ?? [];
+						const strategy = object(current.prepare).strategy ?? resolved?.streams[selection.name]?.prepare.strategy;
+						if (strategy === 'workflow') {
+							blockers.push(`${selection.name}: select a preparation workflow for the configured workflow strategy.`);
+						}
+						if (selected.length && !versionsInFiles({ ...inventory, packages: selected }) && !versionFiles.length) {
+							blockers.push(
+								`${selection.name}: select a preparation workflow; managed preparation needs a version stored in a file.`,
+							);
 						}
 						continue;
 					}

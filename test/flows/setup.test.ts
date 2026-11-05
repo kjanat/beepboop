@@ -4,8 +4,8 @@ import { parse } from 'yaml';
 import { z } from 'zod';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices } from '@/automation/setup-types';
-import { bearer } from '@root/test/support/http.ts';
-import { publishWorkflow, widget } from '@root/test/support/repositories.ts';
+import { bearer, field } from '@root/test/support/http.ts';
+import { publishWorkflow, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
 import { World } from '@root/test/support/world.ts';
 
 let world: World;
@@ -134,7 +134,7 @@ for (const configured of [false, true]) {
 	});
 }
 
-test('adoption keeps the existing checkout before commands that need its files', async () => {
+test('adoption preserves an ordinary checkout immediately before begin', async () => {
 	const repository = widget(world.github, { configured: false });
 	world.github.push(repository, {
 		'.github/workflows/publish.yml': publishWorkflow.replace(
@@ -144,7 +144,6 @@ test('adoption keeps the existing checkout before commands that need its files',
         id: source
         with:
           fetch-depth: 0
-      - run: npm install
 `,
 		),
 	}, 'Use a root checkout before setup');
@@ -159,9 +158,140 @@ test('adoption keeps the existing checkout before commands that need its files',
 		id: 'source',
 		with: { 'fetch-depth': 0, 'persist-credentials': false },
 	});
-	expect(steps[1]?.run).toBe('npm install');
-	expect(steps[2]?.uses).toBe('kjanat/beepboop/actions/begin@actions');
-	expect(steps[3]?.with?.ref).toBe('${{ fromJSON(steps.release.outputs.context).sourceSha }}');
+	expect(steps[1]?.uses).toBe('kjanat/beepboop/actions/begin@actions');
+	expect(steps[2]?.with?.ref).toBe('${{ fromJSON(steps.release.outputs.context).sourceSha }}');
+});
+
+for (const preparation of ['run: npm install', 'uses: octo/build-artifacts@v1']) {
+	test(`adoption refuses to clean workspace preparation before begin (${preparation})`, async () => {
+		const repository = widget(world.github, { configured: false });
+		world.github.push(repository, {
+			'.github/workflows/publish.yml': publishWorkflow.replace(
+				'    steps:\n',
+				`    steps:
+      - uses: actions/checkout@v7
+      - ${preparation}
+`,
+			),
+		}, 'Prepare workspace before begin');
+		const api = bearer(world, await world.cliSession());
+		const preview = await api('/api/repositories/setup/preview', { repository: repository.name });
+		const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+		expect(plan.blockers).toContain(
+			'publish.yml: steps before begin need explicit integration; prepare dependencies and build output after the approved checkout',
+		);
+		expect(plan.edits.find(edit => edit.path === '.github/workflows/publish.yml')).toBeUndefined();
+		const applied = await api('/api/repositories/setup/apply', {
+			repository: repository.name,
+			choices: plan.choices,
+			planId: plan.planId,
+			sourceSha: plan.sourceSha,
+			setupHead: plan.setupHead,
+		});
+		expect(applied.status).toBe(422);
+		expect(repository.pulls).toHaveLength(0);
+	});
+}
+
+for (const versioning of ['workspace', 'independent', 'none'] as const) {
+	test(`tag-only packages need a preparation workflow (versioning=${versioning})`, async () => {
+		const repository = world.github.create('octo/tagged', { 'go.mod': 'module github.com/octo/tagged\n\ngo 1.26\n' });
+		const api = bearer(world, await world.cliSession());
+		const choices: SetupChoices = {
+			streams: [{
+				name: 'main',
+				packages: ['pkg:golang/github.com/octo/tagged'],
+				required: [],
+				versioning,
+				promote: {
+					file: 'publish.yml',
+					job: 'publish',
+					triggers: 'review',
+					commands: 'goreleaser release',
+					publicationSteps: {},
+				},
+			}],
+		};
+		const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
+		const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+		expect(plan.blockers).toEqual([
+			'main: select a preparation workflow; managed preparation needs a version stored in a file.',
+		]);
+		const applied = await api('/api/repositories/setup/apply', {
+			repository: repository.name,
+			choices: plan.choices,
+			planId: plan.planId,
+			sourceSha: plan.sourceSha,
+			setupHead: plan.setupHead,
+		});
+		expect(applied.status).toBe(422);
+		expect(repository.pulls).toHaveLength(0);
+	});
+}
+
+test('tag-only packages with a version file can use managed preparation', async () => {
+	const repository = world.github.create('octo/tagged', {
+		'go.mod': 'module github.com/octo/tagged\n\ngo 1.26\n',
+		'VERSION': 'version=1.0.0\n',
+		'.github/beepboop.json': JSON.stringify({
+			managers: ['go', 'workflow'],
+			streams: {
+				main: {
+					packages: ['pkg:golang/github.com/octo/tagged'],
+					versionFiles: [{ path: 'VERSION', format: 'text', prefix: 'version=', suffix: '\n' }],
+				},
+			},
+		}),
+	});
+	const api = bearer(world, await world.cliSession());
+	const preview = await api('/api/repositories/setup/preview', {
+		repository: repository.name,
+		choices: {
+			streams: [{
+				name: 'main',
+				packages: ['pkg:golang/github.com/octo/tagged'],
+				required: [],
+				versioning: 'workspace',
+				promote: {
+					file: 'publish.yml',
+					job: 'publish',
+					triggers: 'review',
+					commands: 'goreleaser release',
+					publicationSteps: {},
+				},
+			}],
+		},
+	});
+	const setup = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(setup.blockers).toEqual([]);
+	expect(
+		(await api('/api/repositories/setup/apply', {
+			repository: repository.name,
+			choices: setup.choices,
+			planId: setup.planId,
+			sourceSha: setup.sourceSha,
+			setupHead: setup.setupHead,
+		})).status,
+	).toBe(200);
+	world.github.merge(repository, 1);
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const release = await api('/api/releases/plan', { repositoryId: repository.id, stream: 'main', version: '1.1.0' });
+	expect(release.status).toBe(200);
+	expect(field(release.body, 'requiresPreparation')).toBe(false);
+	expect(field(release.body, 'edits')).toEqual([{
+		path: 'VERSION',
+		before: 'version=1.0.0\n',
+		after: 'version=1.1.0\n',
+	}]);
+	expect(
+		(await api('/api/releases/prepare', {
+			repositoryId: repository.id,
+			stream: 'main',
+			version: '1.1.0',
+			planId: field(release.body, 'planId'),
+			sourceSha: field(release.body, 'sourceSha'),
+		})).status,
+	).toBe(200);
 });
 
 test('managed setup still requires a workflow to regenerate lockfiles', async () => {
@@ -180,6 +310,17 @@ test('managed setup still requires a workflow to regenerate lockfiles', async ()
 	});
 	expect(applied.status).toBe(422);
 	expect(repository.pulls).toHaveLength(0);
+});
+
+test('setup preserves a configured workflow preparation strategy', async () => {
+	const repository = widget(world.github);
+	world.github.push(repository, {
+		'.github/beepboop.json': widgetConfiguration().replace('"strategy": "managed"', '"strategy": "workflow"'),
+	}, 'Delegate preparation to a workflow');
+	const api = bearer(world, await world.cliSession());
+	const preview = await api('/api/repositories/setup/preview', { repository: repository.name });
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toContain('main: select a preparation workflow for the configured workflow strategy.');
 });
 
 test('adoption leaves custom checkout refs for explicit integration', async () => {

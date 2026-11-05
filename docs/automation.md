@@ -11,10 +11,15 @@ required publications, and preparation and publication jobs. Beepboop recognizes
 existing integration steps; workflow names alone never establish a release role.
 
 Select **Beepboop prepares the PR (no workflow)** when preparation only edits
-version files. Version updates in repositories with lockfiles need a preparation
-workflow to regenerate them. When adopting an existing integration, setup adds the approved-commit checkout
-to a job with no checkout or one ordinary root checkout. Custom refs, other
-repositories, and multiple checkouts still need explicit integration.
+versions stored in manifests or configured `versionFiles`. Repositories with
+lockfiles need a preparation workflow to regenerate them. Tag-only packages
+without a version file also need a preparation workflow.
+
+When adopting an existing integration, setup adds the approved-commit checkout
+to a job with no checkout or one ordinary root checkout. Jobs with other steps
+before `begin` need explicit integration: install dependencies and build artifacts
+after checking out the approved commit, since checkout cleans the workspace.
+Custom refs, other repositories, and multiple checkouts still need explicit integration.
 
 Preview shows the inspected commit, configuration and workflow changes, and any
 unresolved requirements. You must explicitly choose dispatch-only triggers before
