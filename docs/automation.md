@@ -10,6 +10,17 @@ configuration). Choose the packages in each release stream, their versioning,
 required publications, and preparation and publication jobs. Beepboop recognizes
 existing integration steps; workflow names alone never establish a release role.
 
+Select **Beepboop prepares the PR (no workflow)** when preparation only edits
+versions stored in manifests or configured `versionFiles`. Repositories with
+lockfiles need a preparation workflow to regenerate them. Tag-only packages
+without a version file also need a preparation workflow.
+
+When adopting an existing integration, setup adds the approved-commit checkout
+to a job with no checkout or one ordinary root checkout. Jobs with other steps
+before `begin` need explicit integration: install dependencies and build artifacts
+after checking out the approved commit, since checkout cleans the workspace.
+Custom refs, other repositories, and multiple checkouts still need explicit integration.
+
 Preview shows the inspected commit, configuration and workflow changes, and any
 unresolved requirements. You must explicitly choose dispatch-only triggers before
 an automatically triggered publishing workflow can move under Beepboop approval.
@@ -20,7 +31,8 @@ conditional and container jobs need explicit integration in a dedicated workflow
 The GitHub App needs **Workflows: write** in addition to contents and pull request
 permissions to propose workflow changes. The app manifest includes it; existing
 installations must approve the permission update. Preview blocks apply until it
-is available. This does not change the live app automatically.
+is available. Configuration-only setup PRs do not request Workflows: write.
+This does not change the live app automatically.
 
 External integration actions require the full commit SHA of a published Beepboop
 Actions distribution. Local actions use `$/actions/...` when their definitions
@@ -344,14 +356,18 @@ no token.
 - uses: kjanat/beepboop/actions/token@v1
   id: beepboop
   with:
-    permissions: '{"contents":"write","pull_requests":"write"}'
+    permission-contents: write
+    permission-pull-requests: write
 - run: gh pr comment "$PR" --body "Done."
   env:
     GH_TOKEN: ${{ steps.beepboop.outputs.token }}
 ```
 
-The route issues `contents`, `pull_requests`, `issues`, `checks`, `statuses`
-and `metadata`, each `read` or `write`, and refuses other permissions by default.
+The action takes `permission-contents`, `permission-pull-requests`,
+`permission-issues`, `permission-checks`, `permission-statuses` and
+`permission-metadata`, each `read` or `write`. Without any of them, the token
+gets contents and pull requests write. The route refuses other permissions by
+default.
 The action also outputs `bot-login`, `bot-id` and `bot-email`, resolved from the
 configured App and its GitHub bot user. Use those outputs for Git author and
 committer identity; use the installation token for push authentication.

@@ -66,7 +66,7 @@ function workflow(
 	const box = element('fieldset');
 	box.append(element('legend', role === 'prepare' ? 'Preparation workflow' : 'Publication workflow'));
 	const file = select(box, 'Workflow', [
-		['', 'Select a workflow'],
+		['', role === 'prepare' ? 'Beepboop prepares the PR (no workflow)' : 'Select a workflow'],
 		...plan.workflows.map((w): [string, string] => [w.file, `${w.file} (${w.events.join(', ')})`]),
 		['new', 'Create a workflow'],
 	], choice?.file ?? '');

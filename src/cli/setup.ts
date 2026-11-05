@@ -44,9 +44,10 @@ export function chooseSetup(plan: SetupPlan, ask: Ask): Effect.Effect<SetupChoic
 			stream: string,
 			operation: 'prepare' | 'promote',
 			previous?: SetupWorkflow,
-		): Effect.Effect<SetupWorkflow, CLIError> =>
+		): Effect.Effect<SetupWorkflow | undefined, CLIError> =>
 			Effect.gen(function*() {
 				const workflowChoices = yield* options([
+					...(operation === 'prepare' ? [{ value: 'managed', label: 'Beepboop prepares the PR (no workflow)' }] : []),
 					...plan.workflows.map(w => ({ value: w.file, label: `${w.file} (${w.events.join(', ')})` })),
 					{ value: 'new', label: 'Create a workflow' },
 				]);
@@ -57,6 +58,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask): Effect.Effect<SetupChoic
 						choices: workflowChoices,
 					})
 				);
+				if (selected === 'managed') return undefined;
 				const file = selected === 'new'
 					? yield* Effect.promise(() =>
 						ask({

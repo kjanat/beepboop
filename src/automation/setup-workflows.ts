@@ -223,9 +223,49 @@ function integrate(
 		);
 	}
 	const beginIndex = steps.findIndex(step => actionRole(step.uses) === 'begin');
+	const sourceRef = `\u0024{{ fromJSON(steps.${id}.outputs.context).sourceSha }}`;
+	if (
+		existingBegin
+		&& !steps.some((step, index) =>
+			index > beginIndex && typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@')
+			&& object(step.with).ref === sourceRef
+		)
+	) {
+		const checkouts = steps.filter(step => typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@'));
+		if (steps.slice(0, beginIndex).some(step => !checkouts.includes(step))) {
+			fail(
+				'steps before begin need explicit integration; prepare dependencies and build output after the approved checkout',
+			);
+			return { content: original ?? '', blockers, notes };
+		}
+		if (
+			checkouts.length <= 1 && checkouts.every(step => {
+				const inputs = object(step.with);
+				return !inputs.path && !inputs.repository && !inputs.ref;
+			})
+		) {
+			const checkout = checkouts[0] ?? { uses: 'actions/checkout@v7' };
+			const bootstrap = {
+				...checkout,
+				with: { ...object(checkout.with), 'persist-credentials': false },
+			};
+			const checkoutIndex = steps.indexOf(checkout);
+			if (checkoutIndex >= 0 && checkoutIndex < beginIndex) steps[checkoutIndex] = bootstrap;
+			else {
+				steps = steps.filter(step => step !== checkout);
+				steps.splice(steps.indexOf(existingBegin), 0, bootstrap);
+			}
+			steps.splice(steps.indexOf(existingBegin) + 1, 0, {
+				uses: checkout.uses,
+				with: { ...object(checkout.with), ref: sourceRef, 'persist-credentials': false },
+			});
+			notes.push(`${choice.file}: checks out the approved execution commit after the existing begin step.`);
+		}
+	}
+	const integratedBeginIndex = steps.findIndex(step => actionRole(step.uses) === 'begin');
 	const approvedIndex = steps.findIndex((step, index) =>
-		index > beginIndex && typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@')
-		&& object(step.with).ref === `\u0024{{ fromJSON(steps.${id}.outputs.context).sourceSha }}`
+		index > integratedBeginIndex && typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@')
+		&& object(step.with).ref === sourceRef
 	);
 	if (approvedIndex < 0) fail('checkout the execution sourceSha after begin');
 	if (operation === 'prepare') {

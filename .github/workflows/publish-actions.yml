@@ -10,23 +10,18 @@ jobs:
     timeout-minutes: 10
     permissions: { contents: read, id-token: write }
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v7
-        with: { ref: "${{ github.sha }}", fetch-depth: 0, persist-credentials: false }
-      - uses: jdx/mise-action@v5
-      - run: runner i -f
       - name: Authenticate as Beepboop
         id: bot
         uses: $/actions/token
         with:
           purpose: publish-actions
-          permissions: '{"contents":"write","workflows":"write"}'
-      - name: Configure checkout with Beepboop credentials
+          permission-contents: write
+          permission-workflows: write
+      - name: Checkout source
         uses: actions/checkout@v7
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-          token: ${{ steps.bot.outputs.token }}
+        with: { ref: "${{ github.sha }}", fetch-depth: 0, token: "${{ steps.bot.outputs.token }}" }
+      - uses: jdx/mise-action@v5
+      - run: runner i -f
       - name: Publish distribution commit
         id: publish
         shell: bash -euo pipefail {0}

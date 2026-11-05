@@ -401,3 +401,24 @@ test('the Actions request builders produce bodies the server parses', async () =
 		await Bun.file(prepared).delete();
 	}
 });
+
+test('the token action reads permission-* inputs, the permissions JSON, or neither', async () => {
+	const { requestBody } = await import('@root/actions/runtime/protocol.ts');
+	const permissions = (environment: Record<string, string>) =>
+		Result.map(requestBody('token', environment), body => routes.workflowToken.request.parse(body).permissions);
+	const inputs = JSON.stringify({
+		service: 'https://beepboop.kjanat.dev',
+		'permission-contents': 'write',
+		'permission-pull-requests': 'read',
+		'permission-issues': '',
+		permissions: '',
+	});
+	expect(Result.getOrThrow(permissions({ INPUTS: inputs }))).toEqual({ contents: 'write', pull_requests: 'read' });
+	expect(Result.getOrThrow(permissions({ PERMISSIONS: '{"issues":"write"}' }))).toEqual({ issues: 'write' });
+	expect(Result.getOrThrow(permissions({ INPUTS: '{"permission-checks":""}' }))).toEqual({
+		contents: 'write',
+		pull_requests: 'write',
+	});
+	const both = permissions({ INPUTS: inputs, PERMISSIONS: '{"issues":"write"}' });
+	expect(Result.isFailure(both) && both.failure.message).toBe('Set either permissions or the permission-* inputs');
+});
