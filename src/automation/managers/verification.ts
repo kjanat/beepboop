@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 import type { Fetcher, RegistryVersion } from '@/automation/managers/registry';
 import type { Publication } from '@/automation/types';
 import { fromPromise } from '@/failure';
@@ -91,9 +91,9 @@ function lookup(
 		if (version instanceof LookupFailure) {
 			return { kind: 'failed', url, reason: version.reason } satisfies RegistryVersion;
 		}
-		return yield* Effect.try({
-			try: (): RegistryVersion => ({ kind: 'published', version: semver(version).replace(/^v/, '') }),
-			catch: () => 'invalid',
-		}).pipe(Effect.orElseSucceed((): RegistryVersion => ({ kind: 'failed', url, reason: 'no valid version' })));
+		return Result.match(semver(version), {
+			onSuccess: (value): RegistryVersion => ({ kind: 'published', version: value.replace(/^v/, '') }),
+			onFailure: (): RegistryVersion => ({ kind: 'failed', url, reason: 'no valid version' }),
+		});
 	}).pipe(Effect.catchCause(() => Effect.succeed<RegistryVersion>({ kind: 'failed', url, reason: 'request failed' })));
 }

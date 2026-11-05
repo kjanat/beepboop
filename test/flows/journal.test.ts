@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { z } from 'zod';
 import { routes } from '@/contract/routes';
 import { runAction } from '@root/test/support/actions.ts';
+import { packedRelease } from '@root/test/support/packed-release.ts';
 import { call, cliTransport } from '@root/test/support/client.ts';
 import { botId, ownerId } from '@root/test/support/github.ts';
 import { passChecks, widget } from '@root/test/support/repositories.ts';
@@ -247,4 +248,24 @@ test('a poisoned execution is quarantined while the rest of the journal advances
 		target: expect.stringMatching(/^unaudited: /),
 		error: 'D1_ERROR: Network connection lost.',
 	}]);
+});
+
+test('packed refs complete from the journal after the execution row is gone', async () => {
+	let seen = -1;
+	const { promotionId } = await packedRelease(world, async () => {
+		await world.db.prepare('DELETE FROM executions').run();
+		seen = z.object({ n: z.number() }).parse(
+			(await world.db.prepare('SELECT COUNT(*) AS n FROM executions').all()).results[0],
+		).n;
+	});
+	expect(seen).toBe(0);
+	const restored = z.object({ document: z.string() }).parse(
+		await world.db.prepare('SELECT document FROM executions WHERE id=?').bind(promotionId).first(),
+	);
+	const publication = z.object({
+		publications: z.array(z.object({ id: z.string(), outcome: z.string() })),
+	}).parse(JSON.parse(restored.document));
+	expect(publication.publications.some(entry => entry.id === 'refs:promote' && entry.outcome === 'succeeded')).toBe(
+		true,
+	);
 });

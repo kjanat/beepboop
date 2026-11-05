@@ -3,9 +3,19 @@ import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { Effect } from 'effect';
 import { compile } from 'json-schema-to-typescript';
-import { record } from '@/model';
+import { z } from 'zod';
 import { parseTypeDefinition } from '@/package-url/definition';
-import { attempt, attemptPromise, format, main, readJson, readText, refuse, ToolFailure } from '@/tooling/runtime';
+import {
+	attempt,
+	attemptPromise,
+	format,
+	main,
+	parse,
+	readJson,
+	readText,
+	refuse,
+	ToolFailure,
+} from '@/tooling/runtime';
 
 const root = resolve(import.meta.dir, '../../package-url');
 const banner =
@@ -27,7 +37,10 @@ await main(Effect.gen(function*() {
 			if (!check) return yield* attemptPromise(() => Bun.write(path, output));
 			if ((yield* readText(path)) !== output) return yield* refuse(`Generated PURL types are stale: ${path}`);
 		});
-	const schema = record(yield* readJson(`${root}/type-definition.schema.json`));
+	const schema = yield* parse(
+		z.record(z.string(), z.unknown()),
+		yield* readJson(`${root}/type-definition.schema.json`),
+	);
 	const definitionTypes = yield* attemptPromise(() =>
 		compile(schema, 'TypeDefinition', { bannerComment: banner, style: { singleQuote: true, useTabs: true } })
 	);

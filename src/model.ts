@@ -1,50 +1,68 @@
+import { Result } from 'effect';
+import { z } from 'zod';
+import { type DomainError, precondition } from '@/contract/errors';
 import { shaPattern } from '@/contract/ids';
 import { compare, semverPattern } from '@/contract/semver';
 
-export function record(value: unknown): Record<string, unknown> {
-	if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-		throw new Error('Expected object');
-	}
-	return Object.fromEntries(Object.entries(value));
+export type Parsed<A> = Result.Result<A, DomainError>;
+
+function invalid(message: string): Parsed<never> {
+	return Result.fail(precondition(message));
 }
-export function string(value: unknown): string {
-	if (typeof value !== 'string') throw new Error('Expected string');
-	return value;
+
+export const textSchema = z.string().min(1);
+export const countSchema = z.int().positive();
+export const shaSchema = z.string().regex(shaPattern);
+export const looseSchema = z.unknown().optional();
+
+export function decode<S extends z.ZodType>(schema: S, value: unknown): Parsed<z.output<S>> {
+	const parsed = schema.safeParse(value);
+	return parsed.success ? Result.succeed(parsed.data) : invalid(z.prettifyError(parsed.error));
 }
-export function text(value: unknown): string {
-	if (typeof value !== 'string' || value.length === 0) throw new Error('Expected nonempty string');
-	return value;
+
+export function record(value: unknown): Parsed<Record<string, unknown>> {
+	return typeof value !== 'object' || value === null || Array.isArray(value)
+		? invalid('Expected object')
+		: Result.succeed(Object.fromEntries(Object.entries(value)));
 }
-export function integer(value: unknown): number {
-	if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
-		throw new Error('Expected positive integer');
-	}
-	return value;
+export function string(value: unknown): Parsed<string> {
+	return typeof value === 'string' ? Result.succeed(value) : invalid('Expected string');
 }
-export function array(value: unknown): unknown[] {
-	if (!Array.isArray(value)) throw new Error('Expected array');
-	return value;
+export function text(value: unknown): Parsed<string> {
+	return typeof value === 'string' && value.length > 0 ? Result.succeed(value) : invalid('Expected nonempty string');
 }
-export function boolean(value: unknown): boolean {
-	if (typeof value !== 'boolean') throw new Error('Expected boolean');
-	return value;
+export function integer(value: unknown): Parsed<number> {
+	return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1
+		? Result.succeed(value)
+		: invalid('Expected positive integer');
 }
-export function matches(value: unknown, pattern: RegExp): string {
-	const result = text(value);
-	if (!pattern.test(result)) throw new Error('Invalid value format');
-	return result;
+export function array(value: unknown): Parsed<unknown[]> {
+	return Array.isArray(value) ? Result.succeed(value) : invalid('Expected array');
 }
-export function sha(value: unknown): string {
+export function boolean(value: unknown): Parsed<boolean> {
+	return typeof value === 'boolean' ? Result.succeed(value) : invalid('Expected boolean');
+}
+export function strings(value: unknown): Parsed<string[]> {
+	return array(value).pipe(Result.flatMap(items => Result.all(items.map(text))));
+}
+export function matches(value: unknown, pattern: RegExp): Parsed<string> {
+	return text(value).pipe(
+		Result.flatMap(result => pattern.test(result) ? Result.succeed(result) : invalid('Invalid value format')),
+	);
+}
+export function sha(value: unknown): Parsed<string> {
 	return matches(value, shaPattern);
 }
-export function semver(value: unknown): string {
+export function semver(value: unknown): Parsed<string> {
 	return matches(value, semverPattern);
 }
+/** Versions that are not semver order before every valid version. */
 export function compareVersions(left: string, right: string): number {
-	return compare(semver(left).replace(/^v/, ''), semver(right).replace(/^v/, ''));
+	const a = semverPattern.test(left), b = semverPattern.test(right);
+	if (!a || !b) return a === b ? 0 : a ? 1 : -1;
+	return compare(left.replace(/^v/, ''), right.replace(/^v/, ''));
 }
-export function oneOf<const T extends string>(value: unknown, allowed: readonly T[], message: string): T {
+export function oneOf<const T extends string>(value: unknown, allowed: readonly T[], message: string): Parsed<T> {
 	const match = allowed.find(item => item === value);
-	if (match === undefined) throw new Error(message);
-	return match;
+	return match === undefined ? invalid(message) : Result.succeed(match);
 }

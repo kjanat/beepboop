@@ -64,6 +64,7 @@ export interface Repository {
 	labels: Set<string>;
 	releases: Release[];
 	signatures: boolean;
+	tagObjects: Map<string, { name: string; commit: string }>;
 }
 
 function hash(value: unknown): string {
@@ -190,7 +191,18 @@ export class FakeGitHub {
 			const name = `${match[2]}/${decodeURIComponent(match[3] ?? '')}`;
 			const sha = repository.refs.get(name);
 			if (!sha) throw new HttpError(404, 'Not Found');
-			return json({ ref: `refs/${name}`, object: { sha, type: 'commit' } });
+			const tag = repository.tagObjects.get(sha);
+			return json({ ref: `refs/${name}`, object: { sha, type: tag ? 'tag' : 'commit' } });
+		});
+		this.route('GET', new RegExp(`^${repo}/git/tags/([0-9a-f]{40})$`), match => {
+			const repository = this.repository(match[1]);
+			const tag = repository.tagObjects.get(match[2] ?? '');
+			if (!tag) throw new HttpError(404, 'Not Found');
+			return json({
+				tag: tag.name,
+				object: { sha: tag.commit, type: 'commit' },
+				verification: { verified: true },
+			});
 		});
 		this.route('GET', new RegExp(`^${repo}/git/commits/([0-9a-f]{40})$`), match => {
 			const repository = this.repository(match[1]);
@@ -479,6 +491,7 @@ export class FakeGitHub {
 			labels: new Set(['release']),
 			releases: [],
 			signatures: false,
+			tagObjects: new Map(),
 		};
 		this.repositories.set(name, repository);
 		const tree = this.tree(repository, new Map(Object.entries(files)));
@@ -528,6 +541,28 @@ export class FakeGitHub {
 	}
 	head(repository: Repository): string {
 		return this.resolve(repository, repository.defaultBranch).sha;
+	}
+	relabel(repository: Repository, from: string, to: string): void {
+		const commit = repository.commits.get(from);
+		if (!commit || repository.commits.has(to)) throw new Error('Cannot relabel commit');
+		repository.commits.delete(from);
+		commit.sha = to;
+		repository.commits.set(to, commit);
+		for (const [ref, sha] of repository.refs) if (sha === from) repository.refs.set(ref, to);
+		const checks = repository.checks.get(from);
+		if (checks) {
+			repository.checks.delete(from);
+			repository.checks.set(to, checks);
+		}
+		for (const pull of repository.pulls) {
+			if (pull.head.sha === from) pull.head.sha = to;
+			if (pull.mergeSha === from) pull.mergeSha = to;
+		}
+		for (const run of repository.runs) if (run.headSha === from) run.headSha = to;
+	}
+	recordTag(repository: Repository, name: string, oid: string, commit: string): void {
+		repository.refs.set(`tags/${name}`, oid);
+		repository.tagObjects.set(oid, { name, commit });
 	}
 	file(repository: Repository, path: string, ref = repository.defaultBranch): string | undefined {
 		return this.files(repository, this.resolve(repository, ref)).get(path);

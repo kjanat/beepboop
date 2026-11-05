@@ -153,7 +153,7 @@ export function planVersionFiles(
 	rules: VersionFile[],
 ): Effect.Effect<ReleasePlan, DomainError> {
 	return Effect.gen(function*() {
-		const version = yield* fromSync(() => semver(target).replace(/^v/, ''));
+		const version = (yield* Effect.fromResult(semver(target))).replace(/^v/, '');
 		const files = { ...snapshot.files };
 		yield* applyVersionFiles(snapshot, files, rules, { release: version });
 		const edits = Object.entries(files).flatMap(([path, after]) => {

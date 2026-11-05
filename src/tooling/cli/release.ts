@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 import { Effect } from 'effect';
 import { z } from 'zod';
 import { packageId } from '@/automation/package-identity';
-import { record } from '@/model';
+import { looseSchema } from '@/model';
 import { writeOutput } from '@/tooling/github-output';
 import {
 	attempt,
@@ -13,16 +13,22 @@ import {
 	readJson,
 	refuse,
 	run,
-	type ToolFailure,
+	ToolFailure,
 	temporaryDirectory,
 } from '@/tooling/runtime';
 
 const root = resolve(import.meta.dir, '../../..');
 const directory = join(root, 'packages/cli');
 const manifest = z.object({ name: z.string(), version: z.string() });
+const npmVersion = z.object({ dist: z.object({ integrity: looseSchema }).nullish() });
+const jsrPackage = z.object({ versions: z.record(z.string(), z.unknown()).nullish() });
+const jsrVersion = z.object({ yanked: looseSchema });
+const jsrFiles = z.object({ manifest: z.record(z.string(), z.object({ checksum: z.string() })) });
 
 function output(name: string, value: string): Effect.Effect<void, ToolFailure> {
-	return attempt(() => writeOutput(name, value));
+	return writeOutput(name, value).pipe(
+		Effect.mapError(error => new ToolFailure({ message: error.message, cause: error })),
+	);
 }
 function registry(url: string): Effect.Effect<Response, ToolFailure> {
 	return attemptPromise(() => fetch(url, { redirect: 'error', signal: AbortSignal.timeout(30_000) })).pipe(
@@ -91,7 +97,7 @@ await main(Effect.gen(function*() {
 					`https://registry.npmjs.org/${encodeURIComponent(npm.name)}/${npm.version}`,
 				);
 				if (response.ok) {
-					const published = record(record(yield* body(response)).dist ?? {}).integrity;
+					const published = (yield* parse(npmVersion, yield* body(response))).dist?.integrity;
 					if (typeof published !== 'string') {
 						return yield* refuse('npm returned no integrity for the published version');
 					}
@@ -122,21 +128,20 @@ await main(Effect.gen(function*() {
 			}));
 		case 'jsr': {
 			const metadata = yield* registry(`https://jsr.io/${jsr.name}/meta.json`);
-			const published = metadata.ok ? record(record(yield* body(metadata)).versions ?? {})[jsr.version] : undefined;
+			const published = metadata.ok
+				? (yield* parse(jsrPackage, yield* body(metadata))).versions?.[jsr.version]
+				: undefined;
 			if (published === undefined) {
 				return yield* run(['bunx', 'jsr', 'publish', '--config', 'packages/cli/jsr.json'], { cwd: root });
 			}
-			if (record(published).yanked === true) {
+			if ((yield* parse(jsrVersion, published)).yanked === true) {
 				console.log(`::error::JSR ${jsr.name}@${jsr.version} is yanked. Release a new version.`);
 				process.exitCode = 1;
 				return;
 			}
 			const files = yield* registry(`https://jsr.io/${jsr.name}/${jsr.version}_meta.json`);
 			if (!files.ok) return yield* refuse(`JSR returned no file list for ${jsr.name}@${jsr.version}`);
-			const remote = yield* parse(
-				z.record(z.string(), z.object({ checksum: z.string() })),
-				record(yield* body(files)).manifest,
-			);
+			const { manifest: remote } = yield* parse(jsrFiles, yield* body(files));
 			const paths = new Set([...Object.keys(remote), ...jsr.publish.include.map(path => `/${path}`)]);
 			const changed: string[] = [];
 			for (const path of [...paths].sort()) {

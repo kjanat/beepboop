@@ -11,7 +11,9 @@ import {
 	writeFileSync,
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { array, record, string, text } from '@/model.ts';
+import { type ActionFailure, attempt, type Invalid, refuse, required } from '@root/actions/runtime/protocol.ts';
+import { Effect, Result } from 'effect';
+import { array, record, string, strings, text } from '@/model.ts';
 
 interface PlannedEdit {
 	path: string;
@@ -19,61 +21,105 @@ interface PlannedEdit {
 	after: string;
 }
 
-function required(name: string): string {
-	const value = process.env[name];
-	if (!value) throw Error(`${name} is required`);
-	return value;
+interface Preparation {
+	id: string;
+	sourceSha: unknown;
+	edits: PlannedEdit[];
+	lockfiles: string[];
 }
 
-const context = record(JSON.parse(required('RELEASE_CONTEXT')));
-if (context.operation !== 'prepare' || !context.plan || !context.id) throw Error('Expected a preparation execution');
-const id = text(context.id);
-const plan = record(context.plan);
-const edits: PlannedEdit[] = array(plan.edits).map(value => {
-	const edit = record(value);
-	return { path: text(edit.path), before: string(edit.before), after: string(edit.after) };
-});
-const lockfiles = plan.lockfiles === undefined ? [] : array(plan.lockfiles).map(text);
-const root = realpathSync(required('GITHUB_WORKSPACE'));
+function plannedEdit(value: unknown): Result.Result<PlannedEdit, Invalid> {
+	return Result.gen(function*() {
+		const edit = yield* record(value);
+		return { path: yield* text(edit.path), before: yield* string(edit.before), after: yield* string(edit.after) };
+	});
+}
 
-function safe(path: string): string {
+function preparation(source: string): Result.Result<Preparation, Invalid> {
+	return Result.gen(function*() {
+		const context = yield* record(yield* attempt((): unknown => JSON.parse(source)));
+		if (context.operation !== 'prepare' || !context.plan || !context.id) {
+			return yield* refuse('Expected a preparation execution');
+		}
+		const plan = yield* record(context.plan);
+		return {
+			id: yield* text(context.id),
+			sourceSha: context.sourceSha,
+			edits: yield* Result.all((yield* array(plan.edits)).map(plannedEdit)),
+			lockfiles: plan.lockfiles === undefined ? [] : yield* strings(plan.lockfiles),
+		};
+	});
+}
+
+function safe(root: string, path: string): Result.Result<string, ActionFailure> {
 	if (isAbsolute(path) || path.split(/[\\/]/).some(part => part === '..' || part === '.git')) {
-		throw Error('Unsafe release edit path');
+		return refuse('Unsafe release edit path');
 	}
-	const target = resolve(root, path), parent = realpathSync(dirname(target));
-	const part = relative(root, parent);
-	if (
-		part === '..' || part.startsWith('../') || isAbsolute(part)
-		|| existsSync(target) && lstatSync(target).isSymbolicLink()
-	) throw Error('Release edit escapes the checkout');
-	return target;
+	return attempt(() => {
+		const target = resolve(root, path), parent = realpathSync(dirname(target));
+		const part = relative(root, parent);
+		return {
+			target,
+			escapes: part === '..' || part.startsWith('../') || isAbsolute(part)
+				|| existsSync(target) && lstatSync(target).isSymbolicLink(),
+		};
+	}).pipe(
+		Result.flatMap(({ target, escapes }) =>
+			escapes ? refuse('Release edit escapes the checkout') : Result.succeed(target)
+		),
+	);
 }
 
-const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });
-if (revision.status !== 0 || revision.stdout.trim() !== context.sourceSha) {
-	throw Error('Checkout must match the planned source commit');
-}
-if (process.env.PREPARATION_MODE === 'apply') {
-	for (const edit of edits) {
-		if (readFileSync(safe(edit.path), 'utf8') !== edit.before) throw Error('Manifest changed since planning');
-	}
-	for (const edit of edits) {
-		const descriptor = openSync(safe(edit.path), constants.O_WRONLY | constants.O_TRUNC | constants.O_NOFOLLOW);
+function overwrite(target: string, content: string): Result.Result<void, ActionFailure> {
+	return attempt(() => {
+		const descriptor = openSync(target, constants.O_WRONLY | constants.O_TRUNC | constants.O_NOFOLLOW);
 		try {
-			writeFileSync(descriptor, edit.after);
+			writeFileSync(descriptor, content);
 		} finally {
 			closeSync(descriptor);
 		}
-	}
-	console.log(
-		`Applied ${edits.length} planned manifest edits. Run the repository generators and checks before submitting.`,
-	);
-} else if (process.env.PREPARATION_MODE === 'submit') {
-	const result = spawnSync('git', ['diff', '--name-only', '-z', 'HEAD'], { cwd: root, encoding: 'utf8' });
-	if (result.status !== 0) throw Error('Cannot inspect prepared changes');
-	const paths = new Set([...edits.map(edit => edit.path), ...lockfiles, ...result.stdout.split('\0').filter(Boolean)]);
-	const files = [...paths].map(path => ({ path, content: readFileSync(safe(path), 'utf8') }));
-	const target = join(required('RUNNER_TEMP'), `release-prepared-${id}.json`);
-	writeFileSync(target, JSON.stringify({ executionId: id, files }), { mode: 0o600 });
-	appendFileSync(required('GITHUB_ENV'), `PREPARED_FILE=${target}\n`);
-} else throw Error('Preparation mode must be apply or submit');
+	});
+}
+
+function prepare(environment: NodeJS.ProcessEnv): Result.Result<void, Invalid> {
+	return Result.gen(function*() {
+		const { id, sourceSha, edits, lockfiles } = yield* preparation(yield* required(environment, 'RELEASE_CONTEXT'));
+		const workspace = yield* required(environment, 'GITHUB_WORKSPACE');
+		const root = yield* attempt(() => realpathSync(workspace));
+		const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });
+		if (revision.status !== 0 || revision.stdout.trim() !== sourceSha) {
+			return yield* refuse('Checkout must match the planned source commit');
+		}
+		if (environment.PREPARATION_MODE === 'apply') {
+			for (const edit of edits) {
+				const target = yield* safe(root, edit.path);
+				if ((yield* attempt(() => readFileSync(target, 'utf8'))) !== edit.before) {
+					return yield* refuse('Manifest changed since planning');
+				}
+			}
+			for (const edit of edits) yield* overwrite(yield* safe(root, edit.path), edit.after);
+			console.log(
+				`Applied ${edits.length} planned manifest edits. Run the repository generators and checks before submitting.`,
+			);
+		} else if (environment.PREPARATION_MODE === 'submit') {
+			const result = spawnSync('git', ['diff', '--name-only', '-z', 'HEAD'], { cwd: root, encoding: 'utf8' });
+			if (result.status !== 0) return yield* refuse('Cannot inspect prepared changes');
+			const paths = new Set([
+				...edits.map(edit => edit.path),
+				...lockfiles,
+				...result.stdout.split('\0').filter(Boolean),
+			]);
+			const files: { path: string; content: string }[] = [];
+			for (const path of paths) {
+				const target = yield* safe(root, path);
+				files.push({ path, content: yield* attempt(() => readFileSync(target, 'utf8')) });
+			}
+			const target = join(yield* required(environment, 'RUNNER_TEMP'), `release-prepared-${id}.json`);
+			const variables = yield* required(environment, 'GITHUB_ENV');
+			yield* attempt(() => writeFileSync(target, JSON.stringify({ executionId: id, files }), { mode: 0o600 }));
+			yield* attempt(() => appendFileSync(variables, `PREPARED_FILE=${target}\n`));
+		} else return yield* refuse('Preparation mode must be apply or submit');
+	});
+}
+
+await Effect.runPromise(Effect.fromResult(prepare(process.env)));

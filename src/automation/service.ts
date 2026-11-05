@@ -1,5 +1,5 @@
 import { CronExpressionParser } from 'cron-parser';
-import { Cause, Effect, Layer } from 'effect';
+import { Cause, Effect, Layer, Result } from 'effect';
 import { z } from 'zod';
 import type { AuthBindings } from '@/automation/auth';
 import { resolveConfiguration } from '@/automation/configuration';
@@ -28,8 +28,8 @@ import { setupChoicesSchema } from '@/contract/setup';
 import { configurationDiagnostics, configurationProblem } from '@/domain/configuration';
 import { type Access, type ReadyRepository, readiness, requireReady } from '@/domain/repository';
 import { validateAgainst } from '@/domain/validate';
-import { fromPromise, fromSync, recover } from '@/failure';
-import { array, integer, record } from '@/model';
+import { fromJson, fromPromise, fromSync, recover } from '@/failure';
+import { countSchema, decode, integer, looseSchema, type Parsed, record } from '@/model';
 import { ChangeLog } from '@/persistence/d1/changes';
 import { CLISessionStore } from '@/persistence/d1/cli-sessions';
 import { CredentialStore } from '@/persistence/d1/credentials';
@@ -37,6 +37,14 @@ import { OnboardingStore } from '@/persistence/d1/onboarding';
 import { ScheduleStore } from '@/persistence/d1/schedules';
 import { SessionStore } from '@/persistence/d1/sessions';
 import { readBody, verifySignature } from '@/webhook';
+
+const webhookInstallation = z.object({ account: z.object({ id: looseSchema }) });
+const webhookRepositoryIds = z.array(z.object({ id: countSchema })).nullish();
+const webhookRepository = z.object({
+	id: looseSchema,
+	full_name: looseSchema,
+	owner: z.object({ id: looseSchema }),
+});
 
 const changeRetention = 7 * 24 * 60 * 60 * 1000;
 export interface AutomationBindings extends AuthBindings, Credentials, WinGetBindings {
@@ -335,13 +343,15 @@ export class AutomationService {
 			) {
 				return new Response(null, { status: 204 });
 			}
-			const payload = yield* fromSync(() => record(JSON.parse(new TextDecoder().decode(bytes))));
+			const payload = yield* Effect.fromResult(record(yield* fromJson(new TextDecoder().decode(bytes))));
 			if (event === 'installation' || event === 'installation_repositories') {
-				const account = record(record(payload.installation).account);
+				const { account } = yield* Effect.fromResult(decode(webhookInstallation, payload.installation));
 				if (account.id !== Number(this.env.OWNER_ID)) return new Response(null, { status: 204 });
 				// Enrollment is explicit. Lifecycle events reconcile only repositories already enrolled.
 				const ids = (items: unknown) =>
-					fromSync(() => new Set(array(items ?? []).map((item) => integer(record(item).id))));
+					Effect.fromResult(decode(webhookRepositoryIds, items)).pipe(
+						Effect.map(rows => new Set((rows ?? []).map(row => row.id))),
+					);
 				const removed = yield* ids(payload.repositories_removed);
 				const added = yield* ids(payload.action === 'created' ? payload.repositories : payload.repositories_added);
 				const all = payload.action === 'created' && payload.repository_selection === 'all';
@@ -359,18 +369,18 @@ export class AutomationService {
 				}
 				return new Response(null, { status: 202 });
 			}
-			const source = record(payload.repository);
-			if (record(source.owner).id !== Number(this.env.OWNER_ID)) {
+			const source = yield* Effect.fromResult(decode(webhookRepository, payload.repository));
+			if (source.owner.id !== Number(this.env.OWNER_ID)) {
 				return new Response(null, { status: 204 });
 			}
-			const sourceId = yield* fromSync(() => integer(source.id));
+			const sourceId = yield* Effect.fromResult(integer(source.id));
 			const repository = yield* this.store.repository(sourceId);
 			if (!repository || repository.name !== source.full_name) {
 				return new Response(null, { status: 204 });
 			}
 			const delivery = request.headers.get('x-github-delivery');
 			if (!delivery) return new Response('Missing delivery', { status: 400 });
-			const received = inboxEvent.safeParse(this.inbound(event, payload));
+			const received = inboxEvent.safeParse(yield* Effect.fromResult(this.inbound(event, payload)));
 			if (received.success) {
 				const data = received.data;
 				yield* fromPromise(() => this.coordinator(repository.id).receive(delivery, repository.id, data));
@@ -378,22 +388,25 @@ export class AutomationService {
 			return new Response(null, { status: 202 });
 		});
 	}
-	private inbound(event: string | null, payload: Record<string, unknown>): unknown {
-		if (event === 'pull_request') return { kind: event, edit: payload };
-		if (event === 'push') return { kind: event, ref: payload.ref };
-		if (event === 'release') return { kind: event, action: payload.action };
-		const run = record(payload.workflow_run);
-		return {
-			kind: event,
-			action: payload.action,
-			run: {
-				id: run.id,
-				conclusion: run.conclusion ?? null,
-				event: run.event,
-				path: run.path,
-				headRepositoryId: record(run.head_repository ?? {}).id ?? null,
-			},
-		};
+	private inbound(event: string | null, payload: Record<string, unknown>): Parsed<unknown> {
+		if (event === 'pull_request') return Result.succeed({ kind: event, edit: payload });
+		if (event === 'push') return Result.succeed({ kind: event, ref: payload.ref });
+		if (event === 'release') return Result.succeed({ kind: event, action: payload.action });
+		return Result.gen(function*() {
+			const run = yield* record(payload.workflow_run);
+			const headRepository = yield* record(run.head_repository ?? {});
+			return {
+				kind: event,
+				action: payload.action,
+				run: {
+					id: run.id,
+					conclusion: run.conclusion ?? null,
+					event: run.event,
+					path: run.path,
+					headRepositoryId: headRepository.id ?? null,
+				},
+			};
+		});
 	}
 	receive(delivery: string, repositoryId: number, event: InboxEvent): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
@@ -433,7 +446,7 @@ export class AutomationService {
 			if (sender.id === bot.id || pull.user.id !== bot.id) return;
 			const document = yield* this.onboarding.document(repository.id);
 			if (document === undefined) return;
-			const saved = yield* fromSync(() => record(JSON.parse(document)));
+			const saved = yield* Effect.fromResult(record(yield* fromJson(document)));
 			if (saved.url !== `https://github.com/${repository.name}/pull/${pull.number}`) return;
 			const options = yield* fromSync(() => setupOptionsSchema.optional().parse(saved.options));
 			const base = yield* fromSync(() => setupChoicesSchema.optional().parse(saved.choices));

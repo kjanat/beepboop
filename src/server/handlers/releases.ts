@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 import { planVersionFiles } from '@/automation/editors';
 import { createExecution } from '@/automation/execution';
 import { createReleasePreparation } from '@/automation/managed';
@@ -12,7 +12,7 @@ import { nextVersion, parseVersionRequest } from '@/automation/version';
 import { conflict, type DomainError, notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import { type ReadyRepository, requireReady } from '@/domain/repository';
-import { fromPromise, fromSync } from '@/failure';
+import { fromPromise } from '@/failure';
 import { compareVersions, semver } from '@/model';
 import { planIdentity } from '@/persistence/identity-keys';
 import { type AdminContext, admin } from '@/server/handlers/kit';
@@ -72,11 +72,8 @@ function tagVersions(service: AutomationService, repository: ReadyRepository, pr
 		Effect.map(refs =>
 			refs.flatMap(ref => {
 				if (!ref.name.startsWith(prefix)) return [];
-				try {
-					return [semver(ref.name.slice(prefix.length)).replace(/^v/, '')];
-				} catch {
-					return [];
-				}
+				const version = semver(ref.name.slice(prefix.length));
+				return Result.isSuccess(version) ? [version.success.replace(/^v/, '')] : [];
 			}).sort(compareVersions)
 		),
 	);
@@ -118,7 +115,7 @@ function releasePlan(input: ReleaseInput, { service }: AdminContext) {
 			: stream.prepare.strategy !== 'workflow' && stream.versionFiles?.length
 			? yield* planVersionFiles(snapshot, target, stream.versionFiles)
 			: {
-				version: yield* fromSync(() => semver(target).replace(/^v/, '')),
+				version: (yield* Effect.fromResult(semver(target))).replace(/^v/, ''),
 				sourceSha: snapshot.sha,
 				packages: [],
 				edits: [],

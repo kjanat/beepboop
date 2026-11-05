@@ -6,7 +6,7 @@ import {
 	verifyAuthenticationResponse,
 	verifyRegistrationResponse,
 } from '@simplewebauthn/server';
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 import { createRemoteJWKSet, errors, type JWTVerifyGetKey, jwtVerify } from 'jose';
 import { z } from 'zod';
 import { cliAuthRoute, cliSubject } from '@/automation/cli-auth';
@@ -14,7 +14,7 @@ import { documentRow } from '@/automation/schemas';
 import { decodeError } from '@/automation/store';
 import { type DomainError, decodeRequest, forbidden, precondition, unauthenticated } from '@/contract/errors';
 import { loginSecretPattern } from '@/contract/ids';
-import { fromPromise, fromSync, recover, toDomainError } from '@/failure';
+import { fromJson, fromPromise, fromSync, recover, toDomainError } from '@/failure';
 import { integer, record, sha, text } from '@/model';
 import { type Sql, type SqlDatabase, sql } from '@/persistence/d1/database';
 import { SessionStore } from '@/persistence/d1/sessions';
@@ -102,22 +102,24 @@ export function workflowIdentity(
 				requiredClaims: ['exp', 'iat', 'sub'],
 			})
 		);
-		const identity: WorkflowIdentity = yield* fromSync(() => ({
-			repositoryId: integer(Number(payload.repository_id)),
-			repository: text(payload.repository),
-			ownerId: integer(Number(payload.repository_owner_id)),
-			actorId: integer(Number(payload.actor_id)),
-			runId: integer(Number(payload.run_id)),
-			attempt: integer(Number(payload.run_attempt)),
-			sha: sha(payload.sha),
-			workflowSha: sha(payload.workflow_sha),
-			...(payload.job_workflow_sha === undefined || payload.job_workflow_ref === payload.workflow_ref
-				? {}
-				: { helperSha: sha(payload.job_workflow_sha) }),
-			workflowRef: text(payload.workflow_ref),
-			ref: text(payload.ref),
-			event: text(payload.event_name),
-			...(typeof payload.environment === 'string' ? { environment: payload.environment } : {}),
+		const identity: WorkflowIdentity = yield* Effect.fromResult(Result.gen(function*() {
+			return {
+				repositoryId: yield* integer(Number(payload.repository_id)),
+				repository: yield* text(payload.repository),
+				ownerId: yield* integer(Number(payload.repository_owner_id)),
+				actorId: yield* integer(Number(payload.actor_id)),
+				runId: yield* integer(Number(payload.run_id)),
+				attempt: yield* integer(Number(payload.run_attempt)),
+				sha: yield* sha(payload.sha),
+				workflowSha: yield* sha(payload.workflow_sha),
+				...(payload.job_workflow_sha === undefined || payload.job_workflow_ref === payload.workflow_ref
+					? {}
+					: { helperSha: yield* sha(payload.job_workflow_sha) }),
+				workflowRef: yield* text(payload.workflow_ref),
+				ref: yield* text(payload.ref),
+				event: yield* text(payload.event_name),
+				...(typeof payload.environment === 'string' ? { environment: payload.environment } : {}),
+			};
 		}));
 		if (identity.ownerId !== ownerId || identity.event === 'pull_request_target') {
 			return yield* forbidden('Workflow identity is not eligible');
@@ -228,13 +230,13 @@ export function completeLogin(request: Request, steps: LoginCompletion): Effect.
 		const document = yield* steps.consumeFlow(id);
 		if (!document) return new Response(null, { status: 302, headers: { Location: '/auth/login' } });
 		return yield* Effect.gen(function*() {
-			const flow = yield* fromSync(() => record(JSON.parse(document)));
+			const flow = yield* Effect.fromResult(record(yield* fromJson(document)));
 			const url = new URL(request.url);
 			if (url.searchParams.get('state') !== flow.state) {
 				return new Response(null, { status: 302, headers: { Location: '/auth/login' } });
 			}
-			const code = yield* fromSync(() => text(url.searchParams.get('code')));
-			const verifier = yield* fromSync(() => text(flow.verifier));
+			const code = yield* Effect.fromResult(text(url.searchParams.get('code')));
+			const verifier = yield* Effect.fromResult(text(flow.verifier));
 			const tokens = yield* steps.exchange(code, verifier);
 			yield* steps.verify(tokens.access);
 			return new Response(null, { status: 302, headers: sessionHeaders(tokens, loginTarget(flow.cli, flow.return)) });
@@ -429,7 +431,7 @@ export class Authenticators {
 	): Effect.Effect<{ proof?: string }, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const parsed = yield* decodeRequest(registrationResponse, response);
-			const expectedChallenge = yield* fromSync(() => text(challenge.challenge));
+			const expectedChallenge = yield* Effect.fromResult(text(challenge.challenge));
 			const result = yield* fromPromise(() =>
 				verifyRegistrationResponse({
 					response: parsed,
@@ -468,16 +470,16 @@ export class Authenticators {
 		return Effect.gen({ self: this }, function*() {
 			const document = yield* this.sessions.take(id);
 			if (document === undefined) return yield* forbidden('Challenge expired');
-			const challenge = yield* fromSync(() => record(JSON.parse(document)));
+			const challenge = yield* Effect.fromResult(record(yield* fromJson(document)));
 			if (challenge.subject !== subject) return yield* forbidden('Challenge subject mismatch');
 			const rpID = new URL(this.env.APPLICATION_ORIGIN).hostname;
 			if (challenge.register) return yield* this.register(subject, challenge, response, rpID);
-			const responseId = yield* fromSync(() => record(response).id);
+			const responseId = (yield* Effect.fromResult(record(response))).id;
 			const stored = (yield* this.saved(subject)).find((entry) => entry.credential.id === responseId);
 			if (!stored) return yield* precondition('Unknown authenticator');
 			const saved = stored.credential;
 			const parsed = yield* decodeRequest(authenticationResponse, response);
-			const expectedChallenge = yield* fromSync(() => text(challenge.challenge));
+			const expectedChallenge = yield* Effect.fromResult(text(challenge.challenge));
 			const publicKey = yield* fromSync(() => bytes(saved.publicKey));
 			const result = yield* fromPromise(() =>
 				verifyAuthenticationResponse({
@@ -506,7 +508,7 @@ export class Authenticators {
 		return Effect.gen({ self: this }, function*() {
 			const document = yield* this.sessions.take(proof);
 			if (document === undefined) return yield* forbidden('Fresh security-key authentication required');
-			const data = yield* fromSync(() => record(JSON.parse(document)));
+			const data = yield* Effect.fromResult(record(yield* fromJson(document)));
 			if (data.subject !== subject || data.elevated !== true) {
 				return yield* forbidden('Invalid authentication proof');
 			}

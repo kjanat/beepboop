@@ -9,7 +9,7 @@ import { sameEdits, setupEdits } from '@/automation/setup-maintenance';
 import { conflict, type DomainError, domainError, invalid, notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import { configurationDiagnostics } from '@/domain/configuration';
-import { fromSync } from '@/failure';
+import { fromJson } from '@/failure';
 import { record } from '@/model';
 import { admin, type Context } from '@/server/handlers/kit';
 
@@ -120,7 +120,7 @@ function setupReview(input: { repository: string; choices?: unknown }, context: 
 		const name = yield* ownerName(context, input.repository);
 		const id = yield* service.gateway.identify(name);
 		const snapshot = yield* service.gateway.snapshot(name, id);
-		const raw = yield* fromSync(() => JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}'));
+		const raw = yield* fromJson(snapshot.files['.github/beepboop.json'] ?? '{}');
 		const resolved = yield* resolveConfiguration(raw, ref => service.gateway.preset(ref)).pipe(
 			Effect.mapError(error =>
 				error instanceof z.ZodError
@@ -131,7 +131,7 @@ function setupReview(input: { repository: string; choices?: unknown }, context: 
 		const stored = yield* service.store.repository(id);
 		const inventory = withRegistryStatus(discover(snapshot), stored?.inventory);
 		const document = yield* service.onboarding.document(id);
-		const saved = document === undefined ? undefined : yield* fromSync(() => record(JSON.parse(document)));
+		const saved = document === undefined ? undefined : yield* Effect.fromResult(record(yield* fromJson(document)));
 		const head = yield* service.gateway.setupHead(name, id);
 		const branchFiles = head ? yield* service.gateway.generatedFiles(name, id, head) : undefined;
 		const branchConflict = !!head && saved?.head !== head && !branchFiles;

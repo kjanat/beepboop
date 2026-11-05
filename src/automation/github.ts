@@ -1,5 +1,27 @@
 import { Context, Data, Effect, Layer, Schedule } from 'effect';
 import { importPKCS8, SignJWT } from 'jose';
+import { z } from 'zod';
+import {
+	accessTokenSchema,
+	appSchema,
+	commitSchema,
+	comparisonSchema,
+	contentSchema,
+	createdSchema,
+	gitCommitSchema,
+	gitRefSchema,
+	gitTagSchema,
+	installationSchema,
+	issueEventSchema,
+	matchingRefSchema,
+	namedSchema,
+	pullSchema,
+	repositorySchema,
+	ruleSchema,
+	treeSchema,
+	userSchema,
+	workflowRunSchema,
+} from '@/automation/github-resources';
 import type { Fetcher, VerificationContext } from '@/automation/managers/registry';
 import { parsePresetReference } from '@/automation/preset';
 import type { RefState } from '@/automation/refs';
@@ -9,7 +31,7 @@ import type { Edit, Snapshot } from '@/automation/types';
 import { legacyDiagnostic } from '@/contract/diagnostics';
 import { type DomainError, domainError, invalid, precondition, upstream } from '@/contract/errors';
 import { fromPromise, fromSync } from '@/failure';
-import { array, integer, record, sha, text } from '@/model';
+import { decode, sha, textSchema } from '@/model';
 
 type Permission = Record<string, 'read' | 'write'>;
 const ownerLogins = new Map<number, string>();
@@ -98,6 +120,15 @@ export class RepositoryGateway {
 	call(path: string, token: string, method = 'GET', body?: unknown): Effect.Effect<unknown, DomainError> {
 		return gitHubRequest(this.transport, path, token, method, body);
 	}
+	read<S extends z.ZodType>(
+		schema: S,
+		path: string,
+		token: string,
+		method = 'GET',
+		body?: unknown,
+	): Effect.Effect<z.output<S>, DomainError> {
+		return this.call(path, token, method, body).pipe(Effect.flatMap(value => Effect.fromResult(decode(schema, value))));
+	}
 	copyReleaseAsset(
 		repository: string,
 		asset: { id: number; name: string; contentType: string },
@@ -150,22 +181,25 @@ export class RepositoryGateway {
 		return Effect.gen(function*() {
 			if (!/^[\w.-]+\/[\w.-]+$/.test(name)) return yield* precondition('Invalid repository');
 			const jwt = yield* self.appToken();
-			const installation = record(yield* self.call(`/repos/${name}/installation`, jwt));
-			if (integer(record(installation.account).id) !== self.ownerId) {
+			const installation = yield* self.read(installationSchema, `/repos/${name}/installation`, jwt);
+			if (installation.account.id !== self.ownerId) {
 				return yield* precondition('Owner mismatch');
 			}
-			const response = record(
-				yield* self.call(`/app/installations/${integer(installation.id)}/access_tokens`, jwt, 'POST', {
+			const { token } = yield* self.read(
+				accessTokenSchema,
+				`/app/installations/${installation.id}/access_tokens`,
+				jwt,
+				'POST',
+				{
 					...(id === undefined ? { repositories: [name.split('/')[1]] } : { repository_ids: [id] }),
 					permissions,
-				}),
+				},
 			);
-			const token = text(response.token),
-				repository = record(yield* self.call(`/repos/${name}`, token));
+			const repository = yield* self.read(repositorySchema, `/repos/${name}`, token);
 			if (
 				(id !== undefined && repository.id !== id)
 				|| repository.full_name !== name
-				|| record(repository.owner).id !== self.ownerId
+				|| repository.owner.id !== self.ownerId
 			) {
 				return yield* precondition('Repository mismatch');
 			}
@@ -191,21 +225,20 @@ export class RepositoryGateway {
 		const cached = botIdentities.get(this.credentials.GITHUB_APP_ID);
 		if (cached) return cached;
 		const jwt = yield* this.appToken();
-		const app = record(yield* this.call('/app', jwt));
-		const slug = text(app.slug);
+		const { slug } = yield* this.read(appSchema, '/app', jwt);
 		if (!/^[a-z0-9-]+$/.test(slug)) return yield* precondition('Invalid App slug');
 		const login = `${slug}[bot]`;
 		const installation = yield* this.ownerInstallation(jwt);
-		const token = text(
-			record(
-				yield* this.call(`/app/installations/${integer(installation.id)}/access_tokens`, jwt, 'POST', {
-					permissions: { metadata: 'read' },
-				}),
-			).token,
+		const { token } = yield* this.read(
+			accessTokenSchema,
+			`/app/installations/${installation.id}/access_tokens`,
+			jwt,
+			'POST',
+			{ permissions: { metadata: 'read' } },
 		);
-		const user = record(yield* this.call(`/users/${encodeURIComponent(login)}`, token));
+		const user = yield* this.read(userSchema, `/users/${encodeURIComponent(login)}`, token);
 		if (user.login !== login || user.type !== 'Bot') return yield* precondition('App bot identity mismatch');
-		const id = integer(user.id);
+		const id = user.id;
 		const identity = { login, id, email: `${id}+${login}@users.noreply.github.com` };
 		botIdentities.set(this.credentials.GITHUB_APP_ID, identity);
 		return identity;
@@ -214,19 +247,18 @@ export class RepositoryGateway {
 		const self = this;
 		return Effect.gen(function*() {
 			const token = yield* self.token(name, id, { contents: 'read' });
-			const repository = record(yield* self.call(`/repos/${name}`, token));
-			const branch = text(repository.default_branch);
-			const commit = record(yield* self.call(`/repos/${name}/commits/${encodeURIComponent(branch)}`, token));
-			return { ref: `refs/heads/${branch}`, sha: sha(commit.sha) };
+			const { default_branch: branch } = yield* self.read(repositorySchema, `/repos/${name}`, token);
+			const commit = yield* self.read(commitSchema, `/repos/${name}/commits/${encodeURIComponent(branch)}`, token);
+			return { ref: `refs/heads/${branch}`, sha: commit.sha };
 		});
 	}
 	workflowRun(name: string, id: number, runId: number): Effect.Effect<{ title: string; path: string }, DomainError> {
 		const self = this;
 		return Effect.gen(function*() {
 			const token = yield* self.token(name, id, { actions: 'read' });
-			const run = record(yield* self.call(`/repos/${name}/actions/runs/${runId}`, token));
-			if (record(run.repository).id !== id) return yield* precondition('Run identity changed');
-			return { title: text(run.display_title), path: text(run.path) };
+			const run = yield* self.read(workflowRunSchema, `/repos/${name}/actions/runs/${runId}`, token);
+			if (run.repository.id !== id) return yield* precondition('Run identity changed');
+			return { title: run.display_title, path: run.path };
 		});
 	}
 	tagRefs(name: string, id: number): Effect.Effect<RefState[], DomainError> {
@@ -235,17 +267,24 @@ export class RepositoryGateway {
 			const token = yield* self.token(name, id, { contents: 'read' });
 			const result: RefState[] = [];
 			for (let page = 1; page <= 100; page++) {
-				const rows = array(yield* self.call(`/repos/${name}/tags?per_page=100&page=${page}`, token)).map(record);
-				for (const row of rows) {
-					const tag = text(row.name);
-					const reference = record(yield* self.call(`/repos/${name}/git/ref/tags/${encodeURIComponent(tag)}`, token));
-					const oid = sha(record(reference.object).sha);
-					let target = record(reference.object);
+				const rows = yield* self.read(
+					z.array(namedSchema),
+					`/repos/${name}/tags?per_page=100&page=${page}`,
+					token,
+				);
+				for (const { name: tag } of rows) {
+					const reference = yield* self.read(
+						gitRefSchema,
+						`/repos/${name}/git/ref/tags/${encodeURIComponent(tag)}`,
+						token,
+					);
+					const oid = reference.object.sha;
+					let target = reference.object;
 					for (let depth = 0; target.type === 'tag' && depth < 8; depth++) {
-						target = record(record(yield* self.call(`/repos/${name}/git/tags/${sha(target.sha)}`, token)).object);
+						target = (yield* self.read(gitTagSchema, `/repos/${name}/git/tags/${target.sha}`, token)).object;
 					}
 					if (target.type !== 'commit') return yield* precondition('Tag does not resolve to a commit');
-					result.push({ name: tag, oid, commit: sha(target.sha) });
+					result.push({ name: tag, oid, commit: target.sha });
 				}
 				if (rows.length < 100) return result;
 			}
@@ -274,8 +313,8 @@ export class RepositoryGateway {
 			if (!/^[\w.-]+\/[\w.-]+$/.test(name)) return yield* precondition('Invalid repository');
 			const found = yield* self.call(`/repos/${name}/installation`, yield* self.appToken());
 			if (found === null) return 'uninstalled';
-			const installation = record(found);
-			if (integer(record(installation.account).id) !== self.ownerId) return yield* precondition('Owner mismatch');
+			const installation = yield* Effect.fromResult(decode(installationSchema, found));
+			if (installation.account.id !== self.ownerId) return yield* precondition('Owner mismatch');
 			return installation.suspended_at ? 'suspended' : 'active';
 		});
 	}
@@ -283,7 +322,7 @@ export class RepositoryGateway {
 		const self = this;
 		return Effect.gen(function*() {
 			const token = yield* self.token(name, undefined);
-			return integer(record(yield* self.call(`/repos/${name}`, token)).id);
+			return (yield* self.read(repositorySchema, `/repos/${name}`, token)).id;
 		});
 	}
 	file(name: string, path: string, ref: string, token: string): Effect.Effect<string | null, DomainError> {
@@ -294,16 +333,15 @@ export class RepositoryGateway {
 				token,
 			);
 			if (result === null) return null;
-			const data = record(result);
-			if (
-				data.encoding !== 'base64'
-				|| typeof data.content !== 'string'
-				|| Number(data.size) > 1_048_576
-			) {
+			const data = yield* Effect.fromResult(decode(contentSchema, result));
+			const content = data.content;
+			if (data.encoding !== 'base64' || typeof content !== 'string' || Number(data.size) > 1_048_576) {
 				return yield* precondition('Unsupported file');
 			}
-			return new TextDecoder('utf-8', { fatal: true }).decode(
-				Uint8Array.from(atob(data.content.replace(/\s/g, '')), (c) => c.charCodeAt(0)),
+			return yield* fromSync(() =>
+				new TextDecoder('utf-8', { fatal: true }).decode(
+					Uint8Array.from(atob(content.replace(/\s/g, '')), (c) => c.charCodeAt(0)),
+				)
 			);
 		});
 	}
@@ -316,32 +354,20 @@ export class RepositoryGateway {
 		const self = this;
 		return Effect.gen(function*() {
 			const token = yield* self.token(name, id);
-			const repository = record(yield* self.call(`/repos/${name}`, token));
-			const defaultBranch = text(repository.default_branch);
-			const commit = record(
-				yield* self.call(
-					`/repos/${name}/commits/${encodeURIComponent(revision ?? defaultBranch)}`,
-					token,
-				),
+			const { default_branch: defaultBranch } = yield* self.read(repositorySchema, `/repos/${name}`, token);
+			const { sha: commitSha } = yield* self.read(
+				commitSchema,
+				`/repos/${name}/commits/${encodeURIComponent(revision ?? defaultBranch)}`,
+				token,
 			);
-			const commitSha = sha(commit.sha);
-			const tree = record(
-				yield* self.call(`/repos/${name}/git/trees/${commitSha}?recursive=1`, token),
-			);
+			const tree = yield* self.read(treeSchema, `/repos/${name}/git/trees/${commitSha}?recursive=1`, token);
 			if (tree.truncated) {
 				return yield* precondition('Repository tree truncated; discovery requires complete input');
 			}
-			const entries = yield* fromSync(() =>
-				array(tree.tree).map(record).map(entry => ({
-					path: text(entry.path),
-					type: text(entry.type),
-					mode: text(entry.mode),
-				}))
-			);
 			return yield* buildSnapshot({
 				repository: { id, name, defaultBranch },
 				sha: commitSha,
-				entries,
+				entries: tree.tree,
 				read: path => self.file(name, path, commitSha, token),
 				tags: prefixes => self.tags(name, prefixes, token),
 			}, extraPaths);
@@ -351,10 +377,11 @@ export class RepositoryGateway {
 		const self = this;
 		return Effect.gen(function*() {
 			const refs = yield* Effect.forEach(prefixes, prefix =>
-				self.call(
+				self.read(
+					z.array(matchingRefSchema).nullable(),
 					`/repos/${name}/git/matching-refs/tags/${prefix.split('/').map(encodeURIComponent).join('/')}`,
 					token,
-				).pipe(Effect.map(rows => array(rows ?? []).map(row => text(record(row).ref).slice('refs/tags/'.length)))), {
+				).pipe(Effect.map(rows => (rows ?? []).map(row => row.ref.slice('refs/tags/'.length)))), {
 				concurrency: 'unbounded',
 			});
 			return refs.flat();
@@ -367,17 +394,15 @@ export class RepositoryGateway {
 			if (!parsed) return yield* precondition('Invalid preset');
 			const { repository: name, preset, ref } = parsed;
 			// Public presets need no installation grant; repository configuration cannot redirect credential-bearing requests.
-			const metadata = record(yield* self.call(`/repos/${name}`, ''));
-			const revision = record(
-				yield* self.call(
-					`/repos/${name}/commits/${encodeURIComponent(ref ?? text(metadata.default_branch))}`,
-					'',
-				),
+			const metadata = yield* self.read(repositorySchema, `/repos/${name}`, '');
+			const { sha: commitSha } = yield* self.read(
+				commitSchema,
+				`/repos/${name}/commits/${encodeURIComponent(ref ?? metadata.default_branch)}`,
+				'',
 			);
-			const commitSha = sha(revision.sha);
 			const content = yield* self.file(name, `${preset}.json`, commitSha, '');
 			if (content === null) return yield* precondition('Preset missing');
-			return { value: JSON.parse(content), sha: commitSha };
+			return { value: yield* fromSync((): unknown => JSON.parse(content)), sha: commitSha };
 		});
 	}
 	/** Check an already-granted installation permission without changing repository contents. */
@@ -388,11 +413,11 @@ export class RepositoryGateway {
 		);
 	}
 	/** Read the proposal head without modifying or creating a branch. */
-	private ownerInstallation(jwt: string): Effect.Effect<Record<string, unknown>, DomainError> {
+	private ownerInstallation(jwt: string): Effect.Effect<z.output<typeof installationSchema>, DomainError> {
 		const self = this;
 		return Effect.gen(function*() {
-			const installation = array(yield* self.call('/app/installations?per_page=100', jwt)).map(record)
-				.find(installation => record(installation.account).id === self.ownerId);
+			const installation = (yield* self.read(z.array(installationSchema), '/app/installations?per_page=100', jwt))
+				.find(installation => installation.account.id === self.ownerId);
 			if (!installation) return yield* precondition('The GitHub App is not installed on the owner account');
 			return installation;
 		});
@@ -402,7 +427,7 @@ export class RepositoryGateway {
 		return Effect.gen(function*() {
 			const cached = ownerLogins.get(self.ownerId);
 			if (cached) return cached;
-			const login = text(record((yield* self.ownerInstallation(yield* self.appToken())).account).login);
+			const login = (yield* self.ownerInstallation(yield* self.appToken())).account.login;
 			ownerLogins.set(self.ownerId, login);
 			return login;
 		});
@@ -410,17 +435,19 @@ export class RepositoryGateway {
 	private generatedComparison(name: string, head: string, token: string) {
 		const self = this;
 		return Effect.gen(function*() {
-			const base = text(record(yield* self.call(`/repos/${name}`, token)).default_branch);
-			const comparison = record(
-				yield* self.call(`/repos/${name}/compare/${encodeURIComponent(base)}...${head}`, token),
+			const base = (yield* self.read(repositorySchema, `/repos/${name}`, token)).default_branch;
+			const comparison = yield* self.read(
+				comparisonSchema,
+				`/repos/${name}/compare/${encodeURIComponent(base)}...${head}`,
+				token,
 			);
-			const commits = array(comparison.commits).map(record);
+			const commits = comparison.commits;
 			if (!commits.length || commits.length !== Number(comparison.ahead_by) || commits.at(-1)?.sha !== head) {
 				return undefined;
 			}
 			const bot = yield* self.botIdentity;
 			const generated = commits.every(commit =>
-				record(commit.author).id === bot.id && record(record(commit.commit).verification).verified === true
+				commit.author.id === bot.id && commit.commit.verification.verified === true
 			);
 			return generated ? comparison : undefined;
 		});
@@ -438,11 +465,11 @@ export class RepositoryGateway {
 			const token = yield* self.token(name, id, { contents: 'read' });
 			const comparison = yield* self.generatedComparison(name, head, token);
 			if (!comparison) return undefined;
-			const files = array(comparison.files).map(record);
+			const files = comparison.files;
 			if (files.length >= 300) return undefined;
-			const mergeBase = sha(record(comparison.merge_base_commit).sha);
-			return yield* Effect.forEach(files, file => {
-				const path = text(file.filename);
+			const mergeBase = comparison.merge_base_commit.sha;
+			const paths = yield* Effect.fromResult(decode(z.array(textSchema), files.map(file => file.filename)));
+			return yield* Effect.forEach(paths, path => {
 				return Effect.all({
 					path: Effect.succeed(path),
 					before: self.file(name, path, mergeBase, token).pipe(Effect.map(content => content ?? '')),
@@ -455,8 +482,12 @@ export class RepositoryGateway {
 		const self = this;
 		return Effect.gen(function*() {
 			const token = yield* self.token(name, id);
-			const ref = yield* self.call(`/repos/${name}/git/ref/heads/automation/onboarding`, token);
-			return ref ? sha(record(record(ref).object).sha) : null;
+			const ref = yield* self.read(
+				gitRefSchema.nullable(),
+				`/repos/${name}/git/ref/heads/automation/onboarding`,
+				token,
+			);
+			return ref ? ref.object.sha : null;
 		});
 	}
 	pullRequest(
@@ -481,17 +512,18 @@ export class RepositoryGateway {
 					? { workflows: 'write' as const }
 					: {}),
 			});
-			const existing = yield* self.call(
+			const existing = yield* self.read(
+				gitRefSchema.nullable(),
 				`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`,
 				token,
 			);
-			const base = existing ? sha(record(record(existing).object).sha) : snapshot.sha;
+			const base = existing ? existing.object.sha : snapshot.sha;
 			if (existing && (!expectedHead || expectedHead !== base)) {
 				return yield* precondition('Branch changed; preserve user edits and review the conflict');
 			}
 			if (existing && setupEdits && !takeOver) {
-				const comparison = record(yield* self.call(`/repos/${name}/compare/${snapshot.sha}...${base}`, token));
-				const changed = array(comparison.files).map(record);
+				const changed = (yield* self.read(comparisonSchema, `/repos/${name}/compare/${snapshot.sha}...${base}`, token))
+					.files;
 				if (changed.length >= 300 || changed.some(file => !setupEdits.some(edit => edit.path === file.filename))) {
 					return yield* precondition('Setup branch contains unrelated changes; review it before refreshing');
 				}
@@ -502,7 +534,7 @@ export class RepositoryGateway {
 				}
 			}
 			const treeBase = setupEdits ? snapshot.sha : base;
-			const commit = record(yield* self.call(`/repos/${name}/git/commits/${treeBase}`, token));
+			const commit = yield* self.read(gitCommitSchema, `/repos/${name}/git/commits/${treeBase}`, token);
 			for (const edit of edits) {
 				const current = yield* self.file(name, edit.path, treeBase, token);
 				if ((current ?? '') !== edit.before) return yield* precondition(`File changed: ${edit.path}`);
@@ -513,49 +545,38 @@ export class RepositoryGateway {
 					return yield* precondition('Unsafe edit path');
 				}
 			}
-			const tree = record(
-				yield* self.call(`/repos/${name}/git/trees`, token, 'POST', {
-					base_tree: sha(record(commit.tree).sha),
-					tree: edits.map((edit) => ({
-						path: edit.path,
-						mode: '100644',
-						type: 'blob',
-						content: edit.after,
-					})),
-				}),
-			);
-			const next = record(
-				yield* self.call(`/repos/${name}/git/commits`, token, 'POST', {
-					message: title,
-					tree: sha(tree.sha),
-					parents: setupEdits ? [snapshot.sha] : [base],
-				}),
-			);
-			const head = sha(next.sha);
-			const rules = yield* self.call(
+			const tree = yield* self.read(createdSchema, `/repos/${name}/git/trees`, token, 'POST', {
+				base_tree: commit.tree.sha,
+				tree: edits.map((edit) => ({
+					path: edit.path,
+					mode: '100644',
+					type: 'blob',
+					content: edit.after,
+				})),
+			});
+			const { sha: head } = yield* self.read(createdSchema, `/repos/${name}/git/commits`, token, 'POST', {
+				message: title,
+				tree: tree.sha,
+				parents: setupEdits ? [snapshot.sha] : [base],
+			});
+			const rules = yield* self.read(
+				z.array(ruleSchema).nullable(),
 				`/repos/${name}/rules/branches/${encodeURIComponent(branch)}`,
 				token,
 			);
 			if (rules === null) {
 				return yield* precondition('Branch rules unavailable; publication of the preparation branch stopped');
 			}
-			if (
-				array(rules)
-					.map(record)
-					.some((rule) => rule.type === 'required_signatures')
-			) {
-				const verification = record(
-					record(yield* self.call(`/repos/${name}/git/commits/${head}`, token)).verification,
-				);
+			if (rules.some((rule) => rule.type === 'required_signatures')) {
+				const { verification } = yield* self.read(gitCommitSchema, `/repos/${name}/git/commits/${head}`, token);
 				if (verification.verified !== true) {
 					return yield* precondition('Preparation commit does not satisfy the branch signature requirement');
 				}
 			}
 			if (existingPull !== undefined) {
-				const pull = record(yield* self.call(`/repos/${name}/pulls/${existingPull}`, token));
+				const pull = yield* self.read(pullSchema, `/repos/${name}/pulls/${existingPull}`, token);
 				if (
-					pull.state !== 'open' || record(pull.head).sha !== base || record(pull.head).ref !== branch
-					|| record(record(pull.head).repo).id !== id
+					pull.state !== 'open' || pull.head.sha !== base || pull.head.ref !== branch || pull.head.repo.id !== id
 				) return yield* precondition('Setup pull request changed during refresh');
 			}
 			if (checkpoint) yield* checkpoint(head);
@@ -591,13 +612,13 @@ export class RepositoryGateway {
 				|| !/^[1-9][0-9]*$/.test(url.pathname.slice(prefix.length))
 			) return yield* precondition('Invalid preparation PR identity');
 			const number = url.pathname.slice(prefix.length);
-			const pull = record(yield* self.call(`/repos/${repository}/pulls/${number}`, token));
-			const base = record(pull.base);
+			const pull = yield* self.read(pullSchema, `/repos/${repository}/pulls/${number}`, token);
+			const base = pull.base;
 			const mergeSha = pull.merged === true ? yield* self.mergeCommit(repository, number, token) : undefined;
-			if (!mergeSha || record(pull.head).sha !== result.head || record(base.repo).id !== repositoryId) {
+			if (!mergeSha || pull.head.sha !== result.head || base.repo.id !== repositoryId) {
 				return yield* precondition('The preparation PR is not merged');
 			}
-			return { mergeSha, base: text(base.ref), defaultBranch: text(record(base.repo).default_branch) };
+			return { mergeSha, base: base.ref, defaultBranch: base.repo.default_branch };
 		});
 	}
 	preparedSnapshot(
@@ -611,7 +632,9 @@ export class RepositoryGateway {
 		return Effect.gen(function*() {
 			const token = yield* self.token(repository, repositoryId, { contents: 'read', pull_requests: 'read' });
 			const pull = yield* self.mergedPreparationPull(repository, repositoryId, result, token);
-			if (pull.mergeSha !== sha(target)) return yield* precondition('Target is not the merged preparation revision');
+			if (pull.mergeSha !== (yield* Effect.fromResult(sha(target)))) {
+				return yield* precondition('Target is not the merged preparation revision');
+			}
 			const snapshot = yield* self.snapshot(repository, repositoryId, target, extraPaths);
 			if (pull.base !== snapshot.repository.defaultBranch) {
 				return yield* precondition('Preparation was merged into a different branch');
@@ -630,8 +653,10 @@ export class RepositoryGateway {
 			const token = yield* self.token(repository, repositoryId, { contents: 'read', pull_requests: 'read' });
 			const pull = yield* self.mergedPreparationPull(repository, repositoryId, result, token);
 			if (pull.base !== pull.defaultBranch) return undefined;
-			const comparison = record(
-				yield* self.call(`/repos/${repository}/compare/${pull.mergeSha}...${sha(target)}`, token),
+			const comparison = yield* self.read(
+				comparisonSchema,
+				`/repos/${repository}/compare/${pull.mergeSha}...${yield* Effect.fromResult(sha(target))}`,
+				token,
 			);
 			return comparison.status === 'identical' || comparison.status === 'ahead' ? pull.mergeSha : undefined;
 		});
@@ -644,9 +669,11 @@ export class RepositoryGateway {
 		const self = this;
 		return Effect.gen(function*() {
 			for (let page = 1; page <= 10; page++) {
-				const events = array(
-					yield* self.call(`/repos/${repository}/issues/${number}/events?per_page=100&page=${page}`, token),
-				).map(record);
+				const events = yield* self.read(
+					z.array(issueEventSchema),
+					`/repos/${repository}/issues/${number}/events?per_page=100&page=${page}`,
+					token,
+				);
 				const merged = events.find((event) => event.event === 'merged');
 				if (merged) return typeof merged.commit_id === 'string' ? merged.commit_id : undefined;
 				if (events.length < 100) return undefined;
@@ -666,21 +693,30 @@ export class RepositoryGateway {
 		return Effect.gen(function*() {
 			const { name, id } = snapshot.repository;
 			const token = yield* self.token(name, id, { contents: 'write', pull_requests: 'write' });
-			const commit = record(yield* self.call(`/repos/${name}/git/commits/${sha(head)}`, token));
-			const parents = array(commit.parents).map(record);
+			const commit = yield* self.read(
+				gitCommitSchema,
+				`/repos/${name}/git/commits/${yield* Effect.fromResult(sha(head))}`,
+				token,
+			);
+			const parents = commit.parents;
 			if (parents.length !== 1 || parents[0]?.sha !== snapshot.sha) {
 				return yield* precondition('Preparation commit ancestry changed');
 			}
-			const rules = yield* self.call(`/repos/${name}/rules/branches/${encodeURIComponent(branch)}`, token);
+			const rules = yield* self.read(
+				z.array(ruleSchema).nullable(),
+				`/repos/${name}/rules/branches/${encodeURIComponent(branch)}`,
+				token,
+			);
 			if (rules === null) return yield* precondition('Branch rules unavailable');
-			if (
-				array(rules).map(record).some(rule => rule.type === 'required_signatures')
-				&& record(commit.verification).verified !== true
-			) {
+			if (rules.some(rule => rule.type === 'required_signatures') && commit.verification.verified !== true) {
 				return yield* precondition('Preparation commit signature is not verified');
 			}
-			const existing = yield* self.call(`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`, token);
-			if (existing && sha(record(record(existing).object).sha) !== head) {
+			const existing = yield* self.read(
+				gitRefSchema.nullable(),
+				`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`,
+				token,
+			);
+			if (existing && existing.object.sha !== head) {
 				return yield* precondition('Preparation branch changed');
 			}
 			if (!existing) {
@@ -697,22 +733,21 @@ export class RepositoryGateway {
 		const self = this;
 		return Effect.gen(function*() {
 			const token = yield* self.token(name, id, { contents: 'read', pull_requests: 'read' });
-			const rows = array(
-				yield* self.call(
-					`/repos/${name}/pulls?state=open&head=${encodeURIComponent(`${name.split('/')[0]}:automation/onboarding`)}`,
-					token,
-				),
-			).map(record);
+			const rows = yield* self.read(
+				z.array(pullSchema),
+				`/repos/${name}/pulls?state=open&head=${encodeURIComponent(`${name.split('/')[0]}:automation/onboarding`)}`,
+				token,
+			);
 			if (rows.length > 1) return yield* precondition('Multiple open setup pull requests');
 			const pull = rows[0];
 			if (!pull) return;
-			if (record(record(pull.head).repo).id !== id || record(pull.head).ref !== 'automation/onboarding') {
+			if (pull.head.repo.id !== id || pull.head.ref !== 'automation/onboarding') {
 				return yield* precondition('Setup pull request repository mismatch');
 			}
 			return {
-				number: integer(pull.number),
-				head: sha(record(pull.head).sha),
-				url: text(pull.html_url),
+				number: pull.number,
+				head: pull.head.sha,
+				url: pull.html_url,
 				body: typeof pull.body === 'string' ? pull.body : '',
 			};
 		});
@@ -728,11 +763,8 @@ export class RepositoryGateway {
 		const self = this;
 		return Effect.gen(function*() {
 			const token = yield* self.token(name, id, { pull_requests: 'write' });
-			const pull = record(yield* self.call(`/repos/${name}/pulls/${number}`, token));
-			if (
-				pull.state !== 'open' || record(pull.head).ref !== 'automation/onboarding'
-				|| record(record(pull.head).repo).id !== id
-			) return;
+			const pull = yield* self.read(pullSchema, `/repos/${name}/pulls/${number}`, token);
+			if (pull.state !== 'open' || pull.head.ref !== 'automation/onboarding' || pull.head.repo.id !== id) return;
 			const start = '<!-- beepboop:setup-status -->', end = '<!-- /beepboop:setup-status -->';
 			const current = typeof pull.body === 'string' ? pull.body : '';
 			const section = `${start}\n${status}\n${end}`;
@@ -759,11 +791,12 @@ export class RepositoryGateway {
 				contents: 'read',
 				pull_requests: 'write',
 			});
-			const current = yield* self.call(
+			const current = yield* self.read(
+				gitRefSchema.nullable(),
 				`/repos/${snapshot.repository.name}/git/ref/heads/${encodeURIComponent(branch)}`,
 				token,
 			);
-			if (!current || sha(record(record(current).object).sha) !== expectedHead) {
+			if (!current || current.object.sha !== expectedHead) {
 				return yield* precondition('Branch changed; preserve user edits and review the conflict');
 			}
 			return yield* self.finishPullRequest(snapshot, branch, title, body, expectedHead, token);
@@ -781,38 +814,26 @@ export class RepositoryGateway {
 		return Effect.gen(function*() {
 			const { name } = snapshot.repository;
 			const owner = name.split('/')[0];
-			const pulls = array(
-				yield* self.call(
-					`/repos/${name}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`,
-					token,
-				),
+			const pulls = yield* self.read(
+				z.array(pullSchema),
+				`/repos/${name}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`,
+				token,
 			);
 			if (pulls.length > 1) return yield* precondition('Multiple matching pull requests');
-			if (pulls[0] && record(pulls[0]).state !== 'open') {
+			if (pulls[0] && pulls[0].state !== 'open') {
 				return yield* precondition('Preparation pull request was closed');
 			}
 			const pull = pulls[0]
-				? record(
-					yield* self.call(
-						`/repos/${name}/pulls/${integer(record(pulls[0]).number)}`,
-						token,
-						'PATCH',
-						{ title, body },
-					),
-				)
-				: record(
-					yield* self.call(`/repos/${name}/pulls`, token, 'POST', {
-						title,
-						body,
-						head: branch,
-						base: snapshot.repository.defaultBranch,
-					}),
-				);
-			const available = array(yield* self.call(`/repos/${name}/labels?per_page=100`, token)).map(
-				record,
-			);
+				? yield* self.read(pullSchema, `/repos/${name}/pulls/${pulls[0].number}`, token, 'PATCH', { title, body })
+				: yield* self.read(pullSchema, `/repos/${name}/pulls`, token, 'POST', {
+					title,
+					body,
+					head: branch,
+					base: snapshot.repository.defaultBranch,
+				});
+			const available = yield* self.read(z.array(namedSchema), `/repos/${name}/labels?per_page=100`, token);
 			let labels = available
-				.map((label) => text(label.name))
+				.map((label) => label.name)
 				.filter((name) =>
 					['maintenance', 'type:maintenance', 'area:release', 'release', 'dependencies'].includes(
 						name,
@@ -827,29 +848,33 @@ export class RepositoryGateway {
 				});
 				labels = ['maintenance'];
 			}
-			const applied = array(
-				yield* self.call(`/repos/${name}/issues/${integer(pull.number)}/labels`, token, 'POST', {
-					labels,
-				}),
-			)
-				.map(record)
-				.map((label) => text(label.name));
+			const applied = (yield* self.read(
+				z.array(namedSchema),
+				`/repos/${name}/issues/${pull.number}/labels`,
+				token,
+				'POST',
+				{ labels },
+			)).map((label) => label.name);
 			if (labels.some((name) => !applied.includes(name))) {
 				return yield* precondition('Pull request labels were not confirmed');
 			}
-			const actual = record(yield* self.call(`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`, token));
+			const actual = yield* self.read(
+				gitRefSchema,
+				`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`,
+				token,
+			);
 			let current = pull;
-			for (let attempt = 0; attempt < 5 && record(current.head).sha !== head; attempt++) {
+			for (let attempt = 0; attempt < 5 && current.head.sha !== head; attempt++) {
 				yield* Effect.sleep('1 second');
-				current = record(yield* self.call(`/repos/${name}/pulls/${integer(pull.number)}`, token));
+				current = yield* self.read(pullSchema, `/repos/${name}/pulls/${pull.number}`, token);
 			}
 			if (
-				sha(record(actual.object).sha) !== head || record(current.head).sha !== head
-				|| record(current.base).ref !== snapshot.repository.defaultBranch
+				actual.object.sha !== head || current.head.sha !== head
+				|| current.base.ref !== snapshot.repository.defaultBranch
 			) {
 				return yield* precondition('Preparation pull request identity changed');
 			}
-			return { url: text(current.html_url), head };
+			return { url: current.html_url, head };
 		});
 	}
 }

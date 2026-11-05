@@ -4,7 +4,7 @@ import { type DomainError, precondition } from '@/contract/errors';
 import { toDomainError } from '@/failure';
 import { record } from '@/model';
 export function object(value: unknown): Record<string, unknown> {
-	return value !== null && typeof value === 'object' && !Array.isArray(value) ? record(value) : {};
+	return Result.getOrElse(record(value), () => ({}));
 }
 function glob(pattern: string, path: string): boolean {
 	const expression = pattern

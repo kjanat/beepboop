@@ -2,7 +2,7 @@ import { Effect } from 'effect';
 import type { AuthBindings } from '@/automation/auth';
 import { type DomainError, unauthenticated } from '@/contract/errors';
 import { cliToken, cliTokenPattern, confirmationCode, loginSecretPattern, sha256Hex } from '@/contract/ids';
-import { fromPromise, fromSync } from '@/failure';
+import { fromJson, fromPromise } from '@/failure';
 import { record, string } from '@/model';
 import { CLISessionStore } from '@/persistence/d1/cli-sessions';
 import { SessionStore } from '@/persistence/d1/sessions';
@@ -38,10 +38,10 @@ export function cliAuthRoute(
 			const hash = yield* fromPromise(() => sha256Hex(verifier));
 			const document = yield* new SessionStore(env.DB).take(`cli-approval:${hash}`);
 			if (document === undefined) return json({ pending: true }, 202);
-			const approval = yield* fromSync(() => record(JSON.parse(document)));
+			const approval = yield* Effect.fromResult(record(yield* fromJson(document)));
 			if (approval.subject !== env.ADMIN_SUBJECT) return json({ error: 'Access denied' }, 403);
 			const token = cliToken();
-			const subject = yield* fromSync(() => string(approval.subject));
+			const subject = yield* Effect.fromResult(string(approval.subject));
 			// Store only hashes of terminal credentials; the browser never receives them.
 			yield* new CLISessionStore(env.DB).create(yield* fromPromise(() => sha256Hex(token)), subject);
 			return json({ token });

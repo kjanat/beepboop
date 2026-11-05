@@ -3,9 +3,15 @@ import { appendFileSync } from 'node:fs';
 import { publishRefs } from '@root/actions/runtime/refs.ts';
 import { Effect } from 'effect';
 import { parse } from 'yaml';
+import { z } from 'zod';
 import type { RefChange } from '@/automation/refs';
-import { compareVersions, record } from '@/model';
-import { attempt, main, refuse, type ToolFailure } from '@/tooling/runtime';
+import { compareVersions, looseSchema } from '@/model';
+import { attempt, parse as decode, main, refuse, ToolFailure } from '@/tooling/runtime';
+
+const actionSchema = z.object({
+	inputs: z.record(z.string(), z.object({ required: looseSchema, default: looseSchema })).nullish(),
+	outputs: z.record(z.string(), z.unknown()).nullish(),
+});
 
 type Bump = 'major' | 'minor' | 'patch';
 interface Contract {
@@ -30,14 +36,14 @@ function contracts(revision: string): Effect.Effect<Map<string, Contract>, ToolF
 		const entries = yield* Effect.forEach(files, path =>
 			Effect.gen(function*() {
 				const source = yield* git('show', `${revision}:${path}`);
-				const action = record(yield* attempt((): unknown => parse(source)));
-				const inputs = Object.entries(record(action.inputs ?? {})).map(([name, value]): [string, boolean] => {
-					const input = record(value);
-					return [name, input.required === true && input.default === undefined];
-				});
+				const action = yield* decode(actionSchema, yield* attempt((): unknown => parse(source)));
+				const inputs = Object.entries(action.inputs ?? {}).map(([name, input]): [string, boolean] => [
+					name,
+					input.required === true && input.default === undefined,
+				]);
 				const contract: Contract = {
 					inputs: new Map(inputs),
-					outputs: new Set(Object.keys(record(action.outputs ?? {}))),
+					outputs: new Set(Object.keys(action.outputs ?? {})),
 				};
 				return [path.split('/')[1] ?? path, contract] as const;
 			}));
@@ -107,18 +113,16 @@ await main(Effect.gen(function*() {
 		annotated,
 		signed: false,
 	});
-	yield* attempt(() =>
-		publishRefs(
-			{
-				repository,
-				executionId: `publish-actions:${process.env.GITHUB_RUN_ID ?? ''}`,
-				version,
-				changes: [change(`v${version}`, true), change(`v${major}`, false), change(`v${major}.${minor}`, false)],
-			},
-			process.cwd(),
-			'origin',
-		)
-	);
+	yield* publishRefs(
+		{
+			repository,
+			executionId: `publish-actions:${process.env.GITHUB_RUN_ID ?? ''}`,
+			version,
+			changes: [change(`v${version}`, true), change(`v${major}`, false), change(`v${major}.${minor}`, false)],
+		},
+		process.cwd(),
+		'origin',
+	).pipe(Effect.mapError(error => new ToolFailure({ message: error.message, cause: error })));
 	console.log(`Tagged v${version}; moved v${major} and v${major}.${minor}`);
 	const summary = process.env.GITHUB_STEP_SUMMARY;
 	if (summary) {

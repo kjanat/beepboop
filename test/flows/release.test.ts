@@ -5,6 +5,7 @@ import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
 import { runAction } from '@root/test/support/actions.ts';
+import { packedRelease } from '@root/test/support/packed-release.ts';
 import { botId, ownerId } from '@root/test/support/github.ts';
 import { bearer, type Reply, text } from '@root/test/support/http.ts';
 import { passChecks, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
@@ -208,4 +209,23 @@ test('a merge-approved release whose merge cannot be confirmed waits for approva
 	const promotion = await only(api, 'promote');
 	expect(promotion.state).toBe('blocked');
 	expect(promotion.approvedBy).toBeUndefined();
+});
+
+test('packed prepare and refs runtimes publish the planned tag', async () => {
+	const { repository, promotionId } = await packedRelease(world);
+	const api = bearer(world, await world.cliSession());
+	const promotion = await only(api, 'promote');
+	expect(promotion.id).toBe(promotionId);
+	expect(promotion.state).toBe('succeeded');
+	expect(promotion.publications.some(entry => entry.id === 'refs:promote' && entry.outcome === 'succeeded')).toBe(
+		true,
+	);
+	expect(world.github.file(repository, 'package.json', promotion.sourceSha)).toContain('"version": "1.1.0"');
+	const journal = await world.coordinator(repository).exportJournal();
+	expect(
+		journal.filter(entry => entry.key.startsWith('execution:')).map(entry => decodeExecutionV1(entry.value).operation)
+			.sort(),
+	).toEqual(['prepare', 'promote']);
+	expect(world.github.unhandled).toEqual([]);
+	expect(world.network.unrouted).toEqual([]);
 });

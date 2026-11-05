@@ -1,6 +1,5 @@
 import { Effect } from 'effect';
 import { type DomainError, precondition } from '@/contract/errors';
-import { fromSync } from '@/failure';
 import { compareVersions, record, semver, text } from '@/model';
 
 export type VersionRequest =
@@ -10,13 +9,13 @@ export type VersionRequest =
 	| { bump: 'next' | 'stable' };
 
 function release(value: unknown): Effect.Effect<string, DomainError> {
-	return fromSync(() => semver(value).replace(/^v/, ''));
+	return Effect.fromResult(semver(value)).pipe(Effect.map(version => version.replace(/^v/, '')));
 }
 
 export function parseVersionRequest(value: unknown): Effect.Effect<VersionRequest, DomainError> {
 	return Effect.gen(function*() {
 		if (typeof value === 'string') return { version: yield* release(value) };
-		const input = yield* fromSync(() => record(value));
+		const input = yield* Effect.fromResult(record(value));
 		const allowed = input.version !== undefined
 			? ['version']
 			: input.bump === 'prerelease'
@@ -28,7 +27,7 @@ export function parseVersionRequest(value: unknown): Effect.Effect<VersionReques
 		if (bump) return { bump };
 		const base = (['patch', 'minor', 'major'] as const).find(kind => kind === input.base);
 		if (input.bump === 'prerelease' && base) {
-			const identifier = yield* fromSync(() => text(input.identifier));
+			const identifier = yield* Effect.fromResult(text(input.identifier));
 			if (!/^[A-Za-z][A-Za-z0-9-]*$/.test(identifier)) return yield* precondition('Invalid prerelease identifier');
 			return { bump: 'prerelease', base, identifier };
 		}

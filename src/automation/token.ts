@@ -3,7 +3,6 @@ import type { WorkflowIdentity } from '@/automation/auth';
 import { expectedRunTitle } from '@/automation/execution';
 import type { Execution } from '@/automation/types';
 import { type DomainError, forbidden, invalid } from '@/contract/errors';
-import { fromSync } from '@/failure';
 import { record } from '@/model';
 
 export type TokenPermissions = Record<string, 'read' | 'write'>;
@@ -58,7 +57,7 @@ function dispatchedByBeepboop(
 
 export function tokenPermissions(raw: unknown): Effect.Effect<TokenPermissions, DomainError> {
 	return Effect.gen(function*() {
-		const entries = Object.entries(yield* fromSync(() => record(raw)));
+		const entries = Object.entries(yield* Effect.fromResult(record(raw)));
 		if (!entries.length) return yield* invalid('Token permissions required', ['permissions']);
 		const permissions: TokenPermissions = {};
 		for (const [name, level] of entries) {
@@ -103,7 +102,7 @@ export function issueWorkflowToken(
 			) {
 				return yield* forbidden('Actions publication requires its own workflow on the default branch');
 			}
-			const requested = record(body.permissions);
+			const requested = yield* Effect.fromResult(record(body.permissions));
 			if (Object.keys(requested).length !== 2 || requested.contents !== 'write' || requested.workflows !== 'write') {
 				return yield* forbidden('Actions publication requires only contents:write and workflows:write');
 			}

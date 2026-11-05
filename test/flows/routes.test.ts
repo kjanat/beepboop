@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { Effect, Result } from 'effect';
 import { ApiFailure } from '@/contract/client';
 import { errorEnvelope } from '@/contract/errors';
 import { routeIds, routes } from '@/contract/routes';
@@ -304,7 +305,10 @@ test('outages answer as retryable upstream errors and corrupt rows as internal e
 		}),
 	);
 	expect(unicorn.status).toBe(502);
-	expect(await failureOf(unicorn)).toEqual({ message: expect.stringContaining('HTTP 502 upstream'), retryable: true });
+	expect(await Effect.runPromise(failureOf(unicorn))).toEqual({
+		message: expect.stringContaining('HTTP 502 upstream'),
+		retryable: true,
+	});
 	world.network.serve('api.github.com', request => world.github.handle(request));
 
 	world.db.failBatch = new Error('D1_ERROR: Network connection lost.');
@@ -375,11 +379,13 @@ test('the Actions request builders produce bodies the server parses', async () =
 			const route = routes[ids[mode]];
 			const mirrored: { path: string; idempotent: boolean } = endpoints[mode];
 			expect({ mode, ...mirrored }).toEqual({ mode, path: route.path, idempotent: route.idempotent });
-			const parsed = route.request.safeParse(requestBody(mode, environment, Date.parse('2026-11-04T09:00:00Z')));
+			const parsed = route.request.safeParse(
+				Result.getOrThrow(requestBody(mode, environment, Date.parse('2026-11-04T09:00:00Z'))),
+			);
 			expect({ mode, issues: parsed.error?.issues ?? [] }).toEqual({ mode, issues: [] });
 		}
 		const report = routes.workflowReport.request.parse(
-			requestBody('report', environment, Date.parse('2026-11-04T09:00:00Z')),
+			Result.getOrThrow(requestBody('report', environment, Date.parse('2026-11-04T09:00:00Z'))),
 		);
 		expect(report.publications).toEqual([
 			{

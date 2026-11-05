@@ -13,7 +13,7 @@ import type { Edit, Snapshot } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
 import { sha256Hex } from '@/contract/ids';
 import { packageMarkdown } from '@/domain/package-label';
-import { fromPromise, fromSync, toDomainError } from '@/failure';
+import { fromJson, fromPromise, fromSync, toDomainError } from '@/failure';
 import { record } from '@/model';
 import { parse, sql } from '@/persistence/d1/database';
 
@@ -44,7 +44,7 @@ export function maintainSetup(
 			yield* db.first('SELECT document FROM onboarding WHERE repository_id=?', id),
 		);
 		if (!row) return;
-		const saved = yield* fromSync(() => record(JSON.parse(row.document)));
+		const saved = yield* Effect.fromResult(record(yield* fromJson(row.document)));
 		const pull = yield* gateway.openSetupPull(name, id);
 		if (!pull || (requested && pull.number !== requested.number)) return;
 		const generatedFiles = yield* gateway.generatedFiles(name, id, pull.head);

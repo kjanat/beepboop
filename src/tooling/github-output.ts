@@ -1,13 +1,24 @@
 import { appendFileSync } from 'node:fs';
+import { Data, Effect, Result } from 'effect';
 
-export function outputEntry(name: string, value: string): string {
-	if (!/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(name)) throw new Error(`Invalid output name: ${name}`);
+export class OutputFailure extends Data.TaggedError('OutputFailure')<{ readonly message: string }> {}
+
+export function outputEntry(name: string, value: string): Result.Result<string, OutputFailure> {
+	if (!/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(name)) {
+		return Result.fail(new OutputFailure({ message: `Invalid output name: ${name}` }));
+	}
 	const marker = `value_${crypto.randomUUID()}`;
-	return `${name}<<${marker}\n${value}\n${marker}\n`;
+	return Result.succeed(`${name}<<${marker}\n${value}\n${marker}\n`);
 }
 
-export function writeOutput(name: string, value: string): void {
-	const file = process.env.GITHUB_OUTPUT;
-	if (!file) throw new Error('GITHUB_OUTPUT is required');
-	appendFileSync(file, outputEntry(name, value));
+export function writeOutput(name: string, value: string): Effect.Effect<void, OutputFailure> {
+	return Effect.gen(function*() {
+		const file = process.env.GITHUB_OUTPUT;
+		if (!file) return yield* new OutputFailure({ message: 'GITHUB_OUTPUT is required' });
+		const entry = yield* Effect.fromResult(outputEntry(name, value));
+		yield* Effect.try({
+			try: () => appendFileSync(file, entry),
+			catch: error => new OutputFailure({ message: error instanceof Error ? error.message : String(error) }),
+		});
+	});
 }

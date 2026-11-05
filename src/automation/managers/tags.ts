@@ -19,7 +19,7 @@ export function latestTag(
 	return tags.flatMap(tag => {
 		if (!tag.startsWith(prefix)) return [];
 		const version = tag.slice(prefix.length);
-		if (Result.isFailure(Result.try(() => semver(version)))) return [];
+		if (Result.isFailure(semver(version))) return [];
 		return accept(version) ? [version.replace(/^v/, '')] : [];
 	}).sort(compareVersions).at(-1);
 }

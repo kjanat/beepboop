@@ -1,15 +1,60 @@
 import { Effect } from 'effect';
 import { z } from 'zod';
 import type { RepositoryGateway } from '@/automation/github';
+import {
+	checkRunsSchema,
+	commitStatusSchema,
+	createdSchema,
+	gitCommitSchema,
+	gitRefSchema,
+} from '@/automation/github-resources';
 import { documentRow } from '@/automation/schemas';
 import { decodeError, type Store } from '@/automation/store';
 import type { RepositoryRecord } from '@/automation/types';
 import { type DomainError, precondition } from '@/contract/errors';
-import { generateManifests, renderManifests } from '@/distribution/winget/generate';
+import { generateManifests, renderManifests, wingetConfiguration } from '@/distribution/winget/generate';
 import { readiness } from '@/domain/repository';
 import { fromPromise, fromSync, recover } from '@/failure';
-import { array, integer, record, sha, text } from '@/model';
+import { countSchema, decode, looseSchema, record, shaSchema, text, textSchema } from '@/model';
 import { parse, type Sql, sql } from '@/persistence/d1/database';
+
+const releaseListing = z.array(
+	z.object({
+		id: looseSchema,
+		tag_name: looseSchema,
+		name: looseSchema,
+		draft: looseSchema,
+		prerelease: looseSchema,
+		published_at: looseSchema,
+	}),
+);
+const publicRepository = z.object({ private: looseSchema });
+const stableRelease = z.object({
+	id: looseSchema,
+	draft: looseSchema,
+	prerelease: looseSchema,
+	published_at: z.string().nullish(),
+	tag_name: textSchema,
+	html_url: textSchema,
+	body: looseSchema,
+});
+const releaseAssets = z.array(
+	z.object({ name: textSchema, digest: looseSchema, state: looseSchema, browser_download_url: looseSchema }),
+);
+const forkRepository = z.object({ fork: looseSchema, parent: z.object({ full_name: looseSchema }).optional() });
+const upstreamRepository = z.object({ default_branch: textSchema });
+const winGetPull = z.object({
+	number: z.number(),
+	html_url: textSchema,
+	head: z.object({ sha: shaSchema }),
+	merged_at: looseSchema,
+	state: looseSchema,
+});
+type WinGetPull = z.output<typeof winGetPull>;
+const submitter = z.object({ login: textSchema, id: countSchema });
+const branchComparison = z.object({ files: z.array(z.object({ status: looseSchema, filename: looseSchema })) });
+const fileContent = z.object({ content: textSchema });
+const reviewList = z.array(z.object({ state: looseSchema, user: looseSchema }));
 
 export interface WinGetPlan {
 	id: string;
@@ -103,21 +148,19 @@ export class WinGetService {
 		return Effect.gen(function*() {
 			const policy = yield* self.policy(repo);
 			const token = yield* self.gateway.token(repo.name, repo.id, { contents: 'read' });
-			const releases = yield* self.gateway.call(`/repos/${repo.name}/releases?per_page=30`, token);
-			return yield* fromSync(() =>
-				array(releases).map(record)
-					.filter(release =>
-						!release.draft && !release.prerelease && typeof release.tag_name === 'string'
-						&& release.tag_name.startsWith(policy.tagPrefix)
-						&& /^\d+\.\d+\.\d+$/.test(release.tag_name.slice(policy.tagPrefix.length))
-					)
-					.map(release => ({
+			const releases = yield* self.gateway.read(releaseListing, `/repos/${repo.name}/releases?per_page=30`, token);
+			return releases.flatMap(release => {
+				const tag = release.tag_name;
+				return !release.draft && !release.prerelease && typeof tag === 'string' && tag.startsWith(policy.tagPrefix)
+						&& /^\d+\.\d+\.\d+$/.test(tag.slice(policy.tagPrefix.length))
+					? [{
 						id: Number(release.id),
-						tag: text(release.tag_name),
-						name: String(release.name || release.tag_name),
+						tag,
+						name: String(release.name || tag),
 						publishedAt: Date.parse(String(release.published_at)),
-					}))
-			);
+					}]
+					: [];
+			});
 		});
 	}
 	plan(repo: RepositoryRecord, releaseId: number): Effect.Effect<WinGetPlan, DomainError> {
@@ -125,30 +168,37 @@ export class WinGetService {
 		return Effect.gen(function*() {
 			const policy = yield* self.policy(repo);
 			const token = yield* self.gateway.token(repo.name, repo.id, { contents: 'read' });
-			const metadata = record(yield* self.gateway.call(`/repos/${repo.name}`, token));
+			const metadata = yield* self.gateway.read(publicRepository, `/repos/${repo.name}`, token);
 			if (metadata.private !== false) {
 				return yield* precondition('WinGet installers must come from a public repository');
 			}
-			const release = record(yield* self.gateway.call(`/repos/${repo.name}/releases/${releaseId}`, token));
-			if (release.id !== releaseId || release.draft || release.prerelease || !release.published_at) {
+			const release = yield* self.gateway.read(stableRelease, `/repos/${repo.name}/releases/${releaseId}`, token);
+			const publishedAt = release.published_at;
+			if (release.id !== releaseId || release.draft || release.prerelease || !publishedAt) {
 				return yield* precondition('Select a published stable release');
 			}
-			const tag = yield* fromSync(() => text(release.tag_name));
+			const tag = release.tag_name;
 			if (!tag.startsWith(policy.tagPrefix)) {
 				return yield* precondition('Release tag does not match the configured prefix');
 			}
 			const version = tag.slice(policy.tagPrefix.length);
 			const snapshot = yield* self.gateway.snapshot(repo.name, repo.id, tag, [policy.config]);
-			const configuration = yield* fromSync(() => JSON.parse(text(snapshot.files[policy.config])));
-			const assets = array(
-				yield* self.gateway.call(`/repos/${repo.name}/releases/${releaseId}/assets?per_page=100`, token),
-			).map(record);
+			const source = yield* Effect.fromResult(text(snapshot.files[policy.config]));
+			const configuration = yield* Effect.fromResult(
+				decode(wingetConfiguration, yield* fromSync((): unknown => JSON.parse(source))),
+			);
+			const assets = yield* self.gateway.read(
+				releaseAssets,
+				`/repos/${repo.name}/releases/${releaseId}/assets?per_page=100`,
+				token,
+			);
 			if (assets.length === 100) return yield* precondition('Release asset limit exceeded');
-			const checksums = assets.filter(asset =>
+			const checksums = assets.flatMap(asset =>
 				typeof asset.digest === 'string' && /^sha256:[a-f0-9]{64}$/i.test(asset.digest)
-			)
-				.map(asset => `${String(asset.digest).slice(7)}  ${text(asset.name)}`).join('\n');
-			const releaseDate = yield* fromSync(() => text(release.published_at).slice(0, 10));
+					? [`${asset.digest.slice(7)}  ${asset.name}`]
+					: []
+			).join('\n');
+			const releaseDate = publishedAt.slice(0, 10);
 			const manifests = yield* generateManifests({
 				configuration,
 				version,
@@ -187,7 +237,7 @@ export class WinGetService {
 				sourceSha: snapshot.sha,
 				configurationSha: yield* planDigest(policy),
 				files,
-				releaseUrl: yield* fromSync(() => text(release.html_url)),
+				releaseUrl: release.html_url,
 			};
 			return { ...base, digest: yield* planDigest(base) };
 		});
@@ -234,21 +284,18 @@ export class WinGetService {
 			if (saved.state !== 'failed' || saved.number || saved.url || saved.head) {
 				return yield* precondition('The previous plan is already submitted or in progress; it cannot be replaced');
 			}
-			const token = yield* fromSync(() => text(self.env.WINGET_GITHUB_TOKEN));
-			const fork = yield* fromSync(() => text(self.env.WINGET_FORK));
-			const forkInfo = record(yield* self.gateway.call(`/repos/${fork}`, token));
-			if (!forkInfo.fork || record(forkInfo.parent).full_name !== upstream) {
+			const token = yield* Effect.fromResult(text(self.env.WINGET_GITHUB_TOKEN));
+			const fork = yield* Effect.fromResult(text(self.env.WINGET_FORK));
+			const forkInfo = yield* self.gateway.read(forkRepository, `/repos/${fork}`, token);
+			if (!forkInfo.fork || forkInfo.parent?.full_name !== upstream) {
 				return yield* precondition('Cannot verify the previous submission fork');
 			}
 			const old = saved.plan;
 			const branch = `winget/${old.packageIdentifier}/${old.version}/${old.digest.slice(0, 16)}`;
-			const pulls = array(
-				yield* self.gateway.call(
-					`/repos/${upstream}/pulls?state=all&head=${
-						encodeURIComponent(`${fork.split('/')[0]}:${branch}`)
-					}&per_page=100`,
-					token,
-				),
+			const pulls = yield* self.gateway.read(
+				z.array(z.unknown()),
+				`/repos/${upstream}/pulls?state=all&head=${encodeURIComponent(`${fork.split('/')[0]}:${branch}`)}&per_page=100`,
+				token,
 			);
 			const ref = yield* self.gateway.call(`/repos/${fork}/git/ref/heads/${branch}`, token);
 			if (pulls.length || ref) {
@@ -311,35 +358,34 @@ export class WinGetService {
 				}
 				if (saved.state === 'merged' || saved.state === 'closed') return saved;
 				attempted = saved;
-				const token = yield* fromSync(() => text(self.env.WINGET_GITHUB_TOKEN));
-				const fork = yield* fromSync(() => text(self.env.WINGET_FORK));
-				const call = (path: string, method = 'GET', body?: unknown) =>
-					self.gateway.call(path, token, method, body).pipe(Effect.map(record));
-				const forkInfo = yield* call(`/repos/${fork}`);
-				if (!forkInfo.fork || record(forkInfo.parent).full_name !== upstream) {
+				const token = yield* Effect.fromResult(text(self.env.WINGET_GITHUB_TOKEN));
+				const fork = yield* Effect.fromResult(text(self.env.WINGET_FORK));
+				const forkInfo = yield* self.gateway.read(forkRepository, `/repos/${fork}`, token);
+				if (!forkInfo.fork || forkInfo.parent?.full_name !== upstream) {
 					return yield* precondition('Configured repository must be a fork of microsoft/winget-pkgs');
 				}
-				const target = yield* call(`/repos/${upstream}`);
-				const baseBranch = yield* fromSync(() => text(target.default_branch));
+				const baseBranch = (yield* self.gateway.read(upstreamRepository, `/repos/${upstream}`, token)).default_branch;
 				const branch = `winget/${plan.packageIdentifier}/${plan.version}/${plan.digest.slice(0, 16)}`;
 				const head = `${fork.split('/')[0]}:${branch}`;
-				const pulls = array(
-					yield* self.gateway.call(
-						`/repos/${upstream}/pulls?state=all&head=${encodeURIComponent(head)}&per_page=100`,
-						token,
-					),
-				).map(record);
+				const pulls = yield* self.gateway.read(
+					z.array(winGetPull),
+					`/repos/${upstream}/pulls?state=all&head=${encodeURIComponent(head)}&per_page=100`,
+					token,
+				);
 				if (pulls.length > 1) return yield* precondition('Multiple matching WinGet pull requests');
 				let pull = pulls[0];
 				if (!pull) {
-					let ref = yield* self.gateway.call(`/repos/${fork}/git/ref/heads/${branch}`, token);
+					let ref = yield* self.gateway.read(gitRefSchema.nullable(), `/repos/${fork}/git/ref/heads/${branch}`, token);
 					if (!ref) {
-						const base = yield* call(`/repos/${upstream}/git/ref/heads/${encodeURIComponent(baseBranch)}`);
-						const parent = yield* fromSync(() => sha(record(base.object).sha));
-						const commit = yield* call(`/repos/${upstream}/git/commits/${parent}`);
-						const baseTree = yield* fromSync(() => sha(record(commit.tree).sha));
-						const tree = yield* call(`/repos/${fork}/git/trees`, 'POST', {
-							base_tree: baseTree,
+						const base = yield* self.gateway.read(
+							gitRefSchema,
+							`/repos/${upstream}/git/ref/heads/${encodeURIComponent(baseBranch)}`,
+							token,
+						);
+						const parent = base.object.sha;
+						const commit = yield* self.gateway.read(gitCommitSchema, `/repos/${upstream}/git/commits/${parent}`, token);
+						const tree = yield* self.gateway.read(createdSchema, `/repos/${fork}/git/trees`, token, 'POST', {
+							base_tree: commit.tree.sha,
 							tree: Object.entries(plan.files).map(([path, content]) => ({
 								path,
 								mode: '100644',
@@ -348,41 +394,41 @@ export class WinGetService {
 							})),
 						});
 						const bot = yield* self.gateway.botIdentity;
-						const submitter = yield* call('/user');
-						const login = yield* fromSync(() => text(submitter.login));
-						const submitterId = yield* fromSync(() => integer(submitter.id));
-						const treeSha = yield* fromSync(() => sha(tree.sha));
-						const created = yield* call(`/repos/${fork}/git/commits`, 'POST', {
+						const { login, id: submitterId } = yield* self.gateway.read(submitter, '/user', token);
+						const created = yield* self.gateway.read(createdSchema, `/repos/${fork}/git/commits`, token, 'POST', {
 							message:
 								`New version: ${plan.packageIdentifier} ${plan.version}\n\nCo-authored-by: ${login} <${submitterId}+${login}@users.noreply.github.com>`,
 							author: { name: bot.login, email: bot.email },
-							tree: treeSha,
+							tree: tree.sha,
 							parents: [parent],
 						});
-						const createdSha = yield* fromSync(() => sha(created.sha));
-						ref = yield* call(`/repos/${fork}/git/refs`, 'POST', { ref: `refs/heads/${branch}`, sha: createdSha });
+						ref = yield* self.gateway.read(gitRefSchema, `/repos/${fork}/git/refs`, token, 'POST', {
+							ref: `refs/heads/${branch}`,
+							sha: created.sha,
+						});
 					}
 					// Verify a recovered branch before opening a PR after an interrupted attempt.
-					const recovered = ref;
-					const headSha = yield* fromSync(() => sha(record(record(recovered).object).sha));
-					const comparison = yield* call(
+					const headSha = ref.object.sha;
+					const comparison = yield* self.gateway.read(
+						branchComparison,
 						`/repos/${upstream}/compare/${encodeURIComponent(baseBranch)}...${encodeURIComponent(head)}`,
+						token,
 					);
-					const changed = array(comparison.files).map(record);
+					const changed = comparison.files;
 					if (
 						changed.length !== Object.keys(plan.files).length
 						|| changed.some(file => file.status !== 'added' || !Object.hasOwn(plan.files, String(file.filename)))
 					) return yield* precondition('Submission branch contains unexpected changes');
 					for (const [path, content] of Object.entries(plan.files)) {
-						const file = yield* call(`/repos/${fork}/contents/${path}?ref=${headSha}`);
+						const file = yield* self.gateway.read(fileContent, `/repos/${fork}/contents/${path}?ref=${headSha}`, token);
 						const decoded = yield* fromSync(() =>
 							new TextDecoder().decode(
-								Uint8Array.from(atob(text(file.content).replaceAll('\n', '')), c => c.charCodeAt(0)),
+								Uint8Array.from(atob(file.content.replaceAll('\n', '')), c => c.charCodeAt(0)),
 							)
 						);
 						if (decoded !== content) return yield* precondition('Submission branch content changed');
 					}
-					pull = yield* call(`/repos/${upstream}/pulls`, 'POST', {
+					pull = yield* self.gateway.read(winGetPull, `/repos/${upstream}/pulls`, token, 'POST', {
 						title: `New version: ${plan.packageIdentifier} ${plan.version}`,
 						base: baseBranch,
 						head,
@@ -391,8 +437,7 @@ export class WinGetService {
 							`Release: ${plan.releaseUrl}\nSource commit: ${plan.sourceSha}\n\nInstaller SHA-256 values verified against GitHub release assets.`,
 					});
 				}
-				const opened = pull;
-				const result = yield* fromSync(() => self.pullState(plan, opened));
+				const result = self.pullState(plan, pull);
 				yield* self.save(result, lease);
 				yield* self.store.audit('winget', 'winget.submit', result.url ?? plan.id);
 				return result;
@@ -410,12 +455,12 @@ export class WinGetService {
 			);
 		});
 	}
-	private pullState(plan: WinGetPlan, pull: Record<string, unknown>): WinGetSubmission {
+	private pullState(plan: WinGetPlan, pull: WinGetPull): WinGetSubmission {
 		return {
 			plan,
-			number: Number(pull.number),
-			url: text(pull.html_url),
-			head: sha(record(pull.head).sha),
+			number: pull.number,
+			url: pull.html_url,
+			head: pull.head.sha,
 			state: pull.merged_at ? 'merged' : pull.state === 'closed' ? 'closed' : 'open',
 			updatedAt: Date.now(),
 		};
@@ -431,18 +476,30 @@ export class WinGetService {
 		const self = this;
 		return Effect.gen(function*() {
 			if (!saved.number || saved.state !== 'open') return;
-			const token = yield* fromSync(() => text(self.env.WINGET_GITHUB_TOKEN));
-			const call = (path: string) => self.gateway.call(path, token);
-			const pull = record(yield* call(`/repos/${upstream}/pulls/${saved.number}`));
-			const next = yield* fromSync(() => self.pullState(saved.plan, pull));
-			const checks = record(yield* call(`/repos/${upstream}/commits/${next.head}/check-runs?per_page=100`));
-			const runs = array(checks.check_runs).map(record);
-			const statuses = record(yield* call(`/repos/${upstream}/commits/${next.head}/status`));
-			const reviews = array(yield* call(`/repos/${upstream}/pulls/${saved.number}/reviews?per_page=100`)).map(record);
+			const token = yield* Effect.fromResult(text(self.env.WINGET_GITHUB_TOKEN));
+			const pull = yield* self.gateway.read(winGetPull, `/repos/${upstream}/pulls/${saved.number}`, token);
+			const next = self.pullState(saved.plan, pull);
+			const checks = yield* self.gateway.read(
+				checkRunsSchema,
+				`/repos/${upstream}/commits/${next.head}/check-runs?per_page=100`,
+				token,
+			);
+			const runs = checks.check_runs;
+			const statuses = yield* self.gateway.read(
+				commitStatusSchema,
+				`/repos/${upstream}/commits/${next.head}/status`,
+				token,
+			);
+			const reviews = yield* self.gateway.read(
+				reviewList,
+				`/repos/${upstream}/pulls/${saved.number}/reviews?per_page=100`,
+				token,
+			);
 			const latestReviews = new Map<string, string>();
 			for (const review of reviews) {
 				if (['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(String(review.state))) {
-					latestReviews.set(String(record(review.user).login), String(review.state));
+					const user = yield* Effect.fromResult(record(review.user));
+					latestReviews.set(String(user.login), String(review.state));
 				}
 			}
 			next.reviews = [...latestReviews.values()].includes('CHANGES_REQUESTED')

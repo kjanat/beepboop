@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
 import { outputsComplete } from '@/automation/outputs';
-import { identityOf, matchesPackage, matchesPublication, packageId } from '@/automation/package-identity';
+import { matchesPackage, matchesPublication, packageId, parseIdentity } from '@/automation/package-identity';
 import type {
 	Configuration,
 	DiscoveredWorkflow,
@@ -13,7 +13,7 @@ import type {
 import { managerSpec } from '@/contract/catalog';
 import { type DomainError, precondition } from '@/contract/errors';
 import type { ReadyRepository } from '@/domain/repository';
-import { fromSync } from '@/failure';
+import { toDomainError } from '@/failure';
 import { executionId } from '@/persistence/identity-keys';
 
 export interface ExecutionRequest {
@@ -189,7 +189,9 @@ export function validatePublicationIdentity(
 	publication: Publication,
 ): Effect.Effect<void, DomainError> {
 	return Effect.gen(function*() {
-		const identity = yield* fromSync(() => identityOf(publication, execution.repository));
+		const identity = yield* Effect.fromResult(parseIdentity(publication, execution.repository)).pipe(
+			Effect.mapError(toDomainError),
+		);
 		if (!matchesPackage(publication.id, { ...publication, identity })) {
 			return yield* precondition('Publication ID does not match its manager and package identity');
 		}

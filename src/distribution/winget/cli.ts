@@ -3,10 +3,10 @@ import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { cli, command, flag } from '@kjanat/dreamcli';
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 import { generateManifests, renderManifests, wingetConfiguration } from '@/distribution/winget/generate';
 import { outputEntry } from '@/tooling/github-output';
-import { attempt, attemptPromise, parse, readJson, ToolFailure } from '@/tooling/runtime';
+import { attemptPromise, parse, readJson, ToolFailure } from '@/tooling/runtime';
 
 export const generate = command('generate')
 	.description('Write WinGet version, installer, and locale manifests for a published release')
@@ -57,8 +57,11 @@ export const generate = command('generate')
 				files.push(path);
 				out.log(path);
 			}
-			const output = yield* attempt(() =>
-				outputEntry('directory', directory) + outputEntry('files', JSON.stringify(files))
+			const output = yield* Effect.fromResult(
+				Result.all([outputEntry('directory', directory), outputEntry('files', JSON.stringify(files))]),
+			).pipe(
+				Effect.map(entries => entries.join('')),
+				Effect.mapError(error => new ToolFailure({ message: error.message, cause: error })),
 			);
 			const target = process.env.GITHUB_OUTPUT;
 			if (target) yield* attemptPromise(() => appendFile(target, output));

@@ -1,77 +1,106 @@
 import { appendFileSync } from 'node:fs';
-import { endpoints, exchange, type Mode, parseMode, requestBody } from '@root/actions/runtime/protocol.ts';
+import {
+	ActionFailure,
+	attempt,
+	endpoints,
+	exchange,
+	type Mode,
+	parseMode,
+	requestBody,
+	required,
+} from '@root/actions/runtime/protocol.ts';
+import { Effect } from 'effect';
 import { record, text } from '@/model.ts';
 import { writeOutput } from '@/tooling/github-output.ts';
 
-function required(name: string): string {
-	const value = process.env[name];
-	if (!value) throw Error(`${name} is required`);
-	return value;
+function fail(message: string): Effect.Effect<never, ActionFailure> {
+	return Effect.fail(new ActionFailure({ message }));
 }
 
-function mask(value: string): void {
-	console.log(`::add-mask::${value.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A')}`);
+function mask(value: string): Effect.Effect<void> {
+	return Effect.sync(() =>
+		console.log(`::add-mask::${value.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A')}`)
+	);
 }
 
-function writeResult(mode: Mode, data: Record<string, unknown>): void {
-	if (mode === 'begin') {
-		const id = text(data.id);
-		writeOutput('execution-id', id);
-		writeOutput('context', JSON.stringify(data));
-		appendFileSync(required('GITHUB_ENV'), `BEEPBOOP_EXECUTION_ID=${id}\n`);
-	} else if (mode === 'credentials') {
-		for (const [alias, value] of Object.entries(data)) {
-			if (typeof value !== 'string') throw Error('Invalid credential response');
-			mask(value);
-			writeOutput(alias, value);
-		}
-		writeOutput('values', JSON.stringify(data));
-	} else if (mode === 'token') {
-		if (typeof data.token !== 'string') throw Error('Invalid token response');
-		if (process.env.TOKEN_IDENTITY === 'true') {
-			const bot = record(data.bot);
-			const login = bot.login, id = bot.id, email = bot.email;
-			if (
-				typeof login !== 'string' || !/^[a-z0-9-]+\[bot\]$/.test(login)
-				|| typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0
-				|| email !== `${id}+${login}@users.noreply.github.com`
-			) throw Error('Invalid bot identity response');
-			writeOutput('bot-login', login);
-			writeOutput('bot-id', String(id));
-			writeOutput('bot-email', email);
-		}
-		mask(data.token);
-		writeOutput('token', data.token);
-	} else writeOutput('result', JSON.stringify(data));
+function writeResult(mode: Mode, data: Record<string, unknown>) {
+	return Effect.gen(function*() {
+		if (mode === 'begin') {
+			const id = yield* Effect.fromResult(text(data.id));
+			yield* writeOutput('execution-id', id);
+			yield* writeOutput('context', JSON.stringify(data));
+			const environment = yield* Effect.fromResult(required(process.env, 'GITHUB_ENV'));
+			yield* Effect.fromResult(attempt(() => appendFileSync(environment, `BEEPBOOP_EXECUTION_ID=${id}\n`)));
+		} else if (mode === 'credentials') {
+			for (const [alias, value] of Object.entries(data)) {
+				if (typeof value !== 'string') return yield* fail('Invalid credential response');
+				yield* mask(value);
+				yield* writeOutput(alias, value);
+			}
+			yield* writeOutput('values', JSON.stringify(data));
+		} else if (mode === 'token') {
+			if (typeof data.token !== 'string') return yield* fail('Invalid token response');
+			if (process.env.TOKEN_IDENTITY === 'true') {
+				const bot = yield* Effect.fromResult(record(data.bot));
+				const login = bot.login, id = bot.id, email = bot.email;
+				if (
+					typeof login !== 'string' || !/^[a-z0-9-]+\[bot\]$/.test(login)
+					|| typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0
+					|| email !== `${id}+${login}@users.noreply.github.com`
+				) return yield* fail('Invalid bot identity response');
+				yield* writeOutput('bot-login', login);
+				yield* writeOutput('bot-id', String(id));
+				yield* writeOutput('bot-email', email);
+			}
+			yield* mask(data.token);
+			yield* writeOutput('token', data.token);
+		} else yield* writeOutput('result', JSON.stringify(data));
+	});
 }
 
-const mode = parseMode(process.argv[2]);
-const origin = new URL(process.env.SERVICE_ORIGIN || 'https://beepboop.kjanat.dev');
-if (
-	origin.protocol !== 'https:' || origin.pathname !== '/' || origin.search || origin.hash || origin.username
-	|| origin.password
-) throw Error('Expected an HTTPS service origin');
-const endpoint = new URL(required('ACTIONS_ID_TOKEN_REQUEST_URL'));
-endpoint.searchParams.set('audience', origin.origin);
-const identity = await fetch(endpoint, {
-	headers: { Authorization: `Bearer ${required('ACTIONS_ID_TOKEN_REQUEST_TOKEN')}` },
-	redirect: 'error',
-	signal: AbortSignal.timeout(20000),
-});
-if (!identity.ok) throw Error('Could not obtain workflow identity');
-const token = record(await identity.json()).value;
-if (typeof token !== 'string') throw Error('Missing workflow identity');
-mask(token);
-const result = await exchange(
-	mode,
-	() =>
-		fetch(new URL(endpoints[mode].path, origin), {
-			method: 'POST',
-			headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-			body: JSON.stringify(requestBody(mode, process.env)),
-			redirect: 'error',
-			signal: AbortSignal.timeout(30000),
-		}),
-	milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
-);
-writeResult(mode, result);
+function post(url: URL | string, init: RequestInit): Effect.Effect<Response, ActionFailure> {
+	return Effect.tryPromise({
+		try: () => fetch(url, { ...init, redirect: 'error' }),
+		catch: error => new ActionFailure({ message: error instanceof Error ? error.message : String(error) }),
+	});
+}
+
+await Effect.runPromise(Effect.gen(function*() {
+	const mode = yield* Effect.fromResult(parseMode(process.argv[2]));
+	const origin = yield* Effect.fromResult(
+		attempt(() => new URL(process.env.SERVICE_ORIGIN || 'https://beepboop.kjanat.dev')),
+	);
+	if (
+		origin.protocol !== 'https:' || origin.pathname !== '/' || origin.search || origin.hash || origin.username
+		|| origin.password
+	) return yield* fail('Expected an HTTPS service origin');
+	const requestUrl = yield* Effect.fromResult(required(process.env, 'ACTIONS_ID_TOKEN_REQUEST_URL'));
+	const requestToken = yield* Effect.fromResult(required(process.env, 'ACTIONS_ID_TOKEN_REQUEST_TOKEN'));
+	const endpoint = yield* Effect.fromResult(attempt(() => new URL(requestUrl)));
+	endpoint.searchParams.set('audience', origin.origin);
+	const identity = yield* post(endpoint, {
+		headers: { Authorization: `Bearer ${requestToken}` },
+		signal: AbortSignal.timeout(20000),
+	});
+	if (!identity.ok) return yield* fail('Could not obtain workflow identity');
+	const issued = yield* Effect.tryPromise({
+		try: (): Promise<unknown> => identity.json(),
+		catch: () => new ActionFailure({ message: 'Could not obtain workflow identity' }),
+	});
+	const token = (yield* Effect.fromResult(record(issued))).value;
+	if (typeof token !== 'string') return yield* fail('Missing workflow identity');
+	yield* mask(token);
+	const body = JSON.stringify(yield* Effect.fromResult(requestBody(mode, process.env)));
+	const result = yield* exchange(
+		mode,
+		Effect.suspend(() =>
+			post(new URL(endpoints[mode].path, origin), {
+				method: 'POST',
+				headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+				body,
+				signal: AbortSignal.timeout(30000),
+			})
+		),
+	);
+	yield* writeResult(mode, result);
+}));

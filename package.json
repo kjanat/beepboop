@@ -13,6 +13,7 @@
 		"winget": "src/distribution/winget/cli.ts"
 	},
 	"scripts": {
+		"actions:check": "bun src/tooling/actions/bundle.ts --check",
 		"app:manifest": "./scripts/app-manifest.ts",
 		"astro": "astro",
 		"beepboop": "bun src/cli/cli.ts",
@@ -33,7 +34,7 @@
 		"dev": "astro dev",
 		"discover": "./scripts/discover.ts",
 		"fmt": "kfmt",
-		"gate": "run -pk check lint test purl:check schema:check && run -s build:cli check:cli check:jsr",
+		"gate": "run -pk check lint test purl:check schema:check actions:check && run -s build:cli check:cli check:jsr",
 		"lint": "biome check . --error-on-warnings",
 		"prepare": "run -qs types sync && effect-tsgo patch --typescript --oxlint",
 		"prepreview": "wrangler types",

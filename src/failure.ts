@@ -95,6 +95,10 @@ export function fromSync<A>(run: () => A): Effect.Effect<A, DomainError> {
 	return Effect.try({ try: run, catch: toDomainError });
 }
 
+export function fromJson(source: string): Effect.Effect<unknown, DomainError> {
+	return fromSync((): unknown => JSON.parse(source));
+}
+
 export function recover<B, E>(handler: (error: DomainError) => Effect.Effect<B, E>) {
 	return <A>(effect: Effect.Effect<A, DomainError>): Effect.Effect<A | B, E> =>
 		effect.pipe(Effect.catchCause(cause => handler(toDomainError(Cause.squash(cause)))));

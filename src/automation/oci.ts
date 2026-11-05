@@ -34,7 +34,7 @@ export function verifyImage(publication: Publication, request: Fetcher = fetch):
 				request(tokenUrl, { redirect: 'manual', signal: AbortSignal.timeout(15000) })
 			);
 			if (!auth.ok) return result('uncertain');
-			const data = record(yield* fromPromise((): Promise<unknown> => auth.json()));
+			const data = yield* Effect.fromResult(record(yield* fromPromise((): Promise<unknown> => auth.json())));
 			const token = data.token ?? data.access_token;
 			if (typeof token !== 'string') return result('uncertain');
 			headers.Authorization = `Bearer ${token}`;

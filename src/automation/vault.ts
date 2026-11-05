@@ -8,7 +8,7 @@ import type { Store } from '@/automation/store';
 import { type DomainError, decodeRequest, forbidden, invalid, notFound, precondition } from '@/contract/errors';
 import { credentialAliasPattern, githubSecretNamePattern } from '@/contract/ids';
 import { fromPromise, fromSync } from '@/failure';
-import { record, text } from '@/model';
+import { textSchema } from '@/model';
 import type { CredentialStore } from '@/persistence/d1/credentials';
 
 interface GrantFields {
@@ -27,6 +27,7 @@ export type Grant =
 	| (GrantFields & { delivery: 'repository'; secretName: string })
 	| (GrantFields & { delivery: 'environment'; environment: string; secretName: string });
 const nonempty = z.string().min(1);
+const secretPublicKey = z.object({ key: textSchema, key_id: textSchema });
 const grantFields = {
 	id: nonempty,
 	alias: z.string().regex(/^[\w-]+$/),
@@ -175,14 +176,11 @@ export class Vault {
 					: `/repos/${grant.repository}/actions/secrets`;
 				return Effect.gen(function*() {
 					const token = yield* gateway.token(grant.repository, grant.repositoryId, permissions);
-					const response = yield* gateway.call(`${path}/public-key`, token);
-					const publicKey = yield* fromSync(() => record(response));
-					const encrypted = yield* fromSync(() =>
-						seal(new TextEncoder().encode(secret.value), bytes(text(publicKey.key)))
-					);
+					const publicKey = yield* gateway.read(secretPublicKey, `${path}/public-key`, token);
+					const encrypted = yield* fromSync(() => seal(new TextEncoder().encode(secret.value), bytes(publicKey.key)));
 					yield* gateway.call(`${path}/${grant.secretName}`, token, 'PUT', {
 						encrypted_value: base64(encrypted),
-						key_id: yield* fromSync(() => text(publicKey.key_id)),
+						key_id: publicKey.key_id,
 					});
 					return 'succeeded';
 				}).pipe(

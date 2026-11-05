@@ -3,7 +3,7 @@ import { Effect, Result } from 'effect';
 import { z } from 'zod';
 import { versionFileSchema } from '@/automation/editors';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
-import { releaseIdentity } from '@/automation/package-identity';
+import { parseReleaseIdentity } from '@/automation/package-identity';
 import { validRef } from '@/automation/policy';
 import { parsePresetReference } from '@/automation/preset';
 import type { Configuration, Stream, WorkflowBinding } from '@/automation/types';
@@ -11,8 +11,8 @@ import { managerNames } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
 import { type DomainError, precondition } from '@/contract/errors';
 import { configurationDrift, configurationSchema } from '@/domain/configuration';
-import { fromSync, toDomainError } from '@/failure';
-import { array, oneOf, record, text } from '@/model';
+import { toDomainError } from '@/failure';
+import { array, oneOf, record, strings, text } from '@/model';
 import { purl } from '@/package-url';
 
 type Invalid = DomainError | z.ZodError;
@@ -25,25 +25,33 @@ function reject(message: string): Parsed<never> {
 	return Result.fail(precondition(message));
 }
 function packageReferences(value: unknown): Parsed<string[]> {
-	return lift(() =>
-		array(value).map(text).map(reference => reference.startsWith('pkg:') ? purl(releaseIdentity(reference)) : reference)
-	);
+	return Result.gen(function*() {
+		const references = yield* strings(value);
+		return yield* Result.all(references.map(reference =>
+			reference.startsWith('pkg:')
+				? parseReleaseIdentity(reference).pipe(Result.map(purl), Result.mapError(toDomainError))
+				: Result.succeed(reference)
+		));
+	});
 }
 const identifier = /^[a-z][a-z0-9-]{0,63}$/;
 function keys(data: Record<string, unknown>, allowed: string[], context: string): Parsed<void> {
 	const unknown = Object.keys(data).find(key => !allowed.includes(key));
 	return unknown === undefined ? Result.void : reject(`${context}: unknown field ${unknown}`);
 }
-function strings(value: unknown): Parsed<string[]> {
-	return lift(() => array(value).map(text));
+function parsedItems<A>(value: unknown, schema: z.ZodType<A>): Parsed<A[]> {
+	return Result.gen(function*() {
+		const items = yield* array(value);
+		return yield* lift(() => items.map(item => schema.parse(item)));
+	});
 }
 function winGetPolicy(value: unknown): Parsed<NonNullable<Configuration['winget']>> {
 	return Result.gen(function*() {
-		const row = yield* lift(() => record(value));
+		const row = yield* record(value);
 		if (Object.keys(row).some(key => !['config', 'tagPrefix', 'automatic'].includes(key))) {
 			return yield* reject('Unknown WinGet setting');
 		}
-		const config = yield* lift(() => text(row.config));
+		const config = yield* text(row.config);
 		if (!/^[\w./-]+\.json$/.test(config) || config.startsWith('/') || config.split('/').includes('..')) {
 			return yield* reject('Invalid WinGet configuration path');
 		}
@@ -62,7 +70,7 @@ function workflowInput(value: unknown): Parsed<string | boolean | number> {
 }
 function binding(value: unknown): Parsed<WorkflowBinding> {
 	return Result.gen(function*() {
-		const data = yield* lift(() => record(value));
+		const data = yield* record(value);
 		yield* keys(
 			data,
 			[
@@ -82,29 +90,27 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 			],
 			'workflow',
 		);
-		const schedule = data.schedule === undefined ? undefined : yield* lift(() => text(data.schedule));
+		const schedule = data.schedule === undefined ? undefined : yield* text(data.schedule);
 		if (schedule !== undefined) {
 			if (schedule.trim().split(/\s+/).length !== 5) return yield* reject('Schedules use five-field UTC cron');
 			yield* lift(() => CronExpressionParser.parse(schedule, { tz: 'UTC' }));
 		}
 		const mode = data.mode === undefined
 			? undefined
-			: yield* lift(() => oneOf(data.mode, ['observe', 'dispatch'], 'Invalid workflow mode'));
-		const each = data.each === undefined
-			? undefined
-			: yield* lift(() => oneOf(data.each, ['package'], 'Invalid workflow each'));
+			: yield* oneOf(data.mode, ['observe', 'dispatch'], 'Invalid workflow mode');
+		const each = data.each === undefined ? undefined : yield* oneOf(data.each, ['package'], 'Invalid workflow each');
 		if (each && (data.outputs !== undefined || data.artifactInputs !== undefined || data.refs !== undefined)) {
 			return yield* reject('Per-package workflows cannot declare outputs, artifact inputs or refs');
 		}
 		let refs: WorkflowBinding['refs'];
 		if (data.refs !== undefined) {
-			const policy = yield* lift(() => record(data.refs));
+			const policy = yield* record(data.refs);
 			yield* keys(policy, ['phase', 'prefix', 'aliases', 'signed'], 'refs');
-			const phase = yield* lift(() => oneOf(policy.phase, ['version', 'aliases'], 'Invalid ref phase'));
+			const phase = yield* oneOf(policy.phase, ['version', 'aliases'], 'Invalid ref phase');
 			const prefix = policy.prefix === undefined ? 'v' : String(policy.prefix);
 			if (!/^[A-Za-z0-9._-]*$/.test(prefix) || prefix.includes('..')) return yield* reject('Invalid tag prefix');
-			const aliases = yield* lift(() =>
-				array(policy.aliases ?? []).map(text).map(alias => oneOf(alias, ['major', 'minor'], 'Invalid aliases'))
+			const aliases = yield* Result.all(
+				(yield* strings(policy.aliases ?? [])).map(alias => oneOf(alias, ['major', 'minor'], 'Invalid aliases')),
 			);
 			if (new Set(aliases).size !== aliases.length) return yield* reject('Invalid aliases');
 			if (policy.signed !== undefined && typeof policy.signed !== 'boolean') {
@@ -112,13 +118,13 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 			}
 			refs = { phase, prefix, aliases, signed: policy.signed === true };
 		}
-		const file = yield* lift(() => text(data.file));
-		const ref = data.ref === undefined ? undefined : yield* lift(() => text(data.ref));
+		const file = yield* text(data.file);
+		const ref = data.ref === undefined ? undefined : yield* text(data.ref);
 		if (ref !== undefined && !validRef(ref)) return yield* reject('Invalid workflow ref');
 		if (!/^[A-Za-z0-9_-]+\.ya?ml$/.test(file)) return yield* reject('Workflow must be a filename');
 		const inputs: Record<string, string | boolean | number> = {};
 		for (
-			const [key, input] of Object.entries(data.inputs === undefined ? {} : yield* lift(() => record(data.inputs)))
+			const [key, input] of Object.entries(data.inputs === undefined ? {} : yield* record(data.inputs))
 		) {
 			if (key === 'beepboop_execution_id' || (each && key === 'package')) {
 				return yield* reject('Invalid workflow input');
@@ -128,15 +134,13 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 		if (data.required !== undefined && typeof data.required !== 'boolean') {
 			return yield* reject('Invalid required flag');
 		}
-		const outputs = data.outputs === undefined
-			? undefined
-			: yield* lift(() => array(data.outputs).map(output => outputSchema.parse(output)));
+		const outputs = data.outputs === undefined ? undefined : yield* parsedItems(data.outputs, outputSchema);
 		if (outputs && new Set(outputs.map(output => output.id)).size !== outputs.length) {
 			return yield* reject('Duplicate output');
 		}
 		const artifactInputs = data.artifactInputs === undefined
 			? undefined
-			: yield* lift(() => array(data.artifactInputs).map(input => inputSchema.parse(input)));
+			: yield* parsedItems(data.artifactInputs, inputSchema);
 		const platform = data.platform === undefined ? undefined : yield* lift(() => platformSchema.parse(data.platform));
 		const needs = data.needs === undefined && !artifactInputs ? undefined : yield* strings(data.needs ?? []);
 		const publications = data.publications === undefined ? undefined : yield* packageReferences(data.publications);
@@ -162,7 +166,7 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 function stream(name: string, raw: unknown): Parsed<Stream> {
 	return Result.gen(function*() {
 		if (!identifier.test(name)) return yield* reject('Invalid stream name');
-		const row = yield* lift(() => record(raw));
+		const row = yield* record(raw);
 		yield* keys(
 			row,
 			[
@@ -180,32 +184,32 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 			],
 			`stream ${name}`,
 		);
-		const prepare = yield* lift(() => record(row.prepare ?? {})),
-			promote = yield* lift(() => record(row.promote ?? {})),
-			channels = yield* lift(() => record(row.channels ?? {}));
+		const prepare = yield* record(row.prepare ?? {}),
+			promote = yield* record(row.promote ?? {}),
+			channels = yield* record(row.channels ?? {});
 		yield* keys(prepare, ['version', 'workflow', 'strategy'], 'prepare');
 		const strategy = prepare.strategy === undefined
 			? undefined
-			: yield* lift(() => oneOf(prepare.strategy, ['managed', 'workflow'], 'Invalid preparation strategy'));
+			: yield* oneOf(prepare.strategy, ['managed', 'workflow'], 'Invalid preparation strategy');
 		yield* keys(promote, ['approval', 'workflow'], 'promote');
 		yield* keys(channels, ['stable', 'prerelease'], 'channels');
 		if (prepare.version !== undefined && prepare.version !== 'manual') {
 			return yield* reject('Only manual version selection is supported');
 		}
-		const versioning = yield* lift(() =>
-			oneOf(row.versioning ?? 'workspace', ['workspace', 'independent', 'none'], 'Invalid versioning')
+		const versioning = yield* oneOf(
+			row.versioning ?? 'workspace',
+			['workspace', 'independent', 'none'],
+			'Invalid versioning',
 		);
-		const concurrency = yield* lift(() =>
-			oneOf(row.concurrency ?? 'queue', ['queue', 'supersede-pending'], 'Invalid concurrency')
-		);
+		const concurrency = yield* oneOf(row.concurrency ?? 'queue', ['queue', 'supersede-pending'], 'Invalid concurrency');
 		const workflows: Record<string, WorkflowBinding> = {};
-		for (const [operation, value] of Object.entries(yield* lift(() => record(row.workflows ?? {})))) {
+		for (const [operation, value] of Object.entries(yield* record(row.workflows ?? {}))) {
 			if (!identifier.test(operation)) return yield* reject('Invalid operation name');
 			workflows[operation] = yield* binding(value);
 		}
 		let versionSource: Stream['versionSource'];
 		if (row.versionSource !== undefined) {
-			const source = yield* lift(() => record(row.versionSource));
+			const source = yield* record(row.versionSource);
 			yield* keys(source, ['kind', 'prefix'], 'versionSource');
 			if (source.kind !== 'tags' || typeof source.prefix !== 'string' || !/^[A-Za-z0-9._-]*$/.test(source.prefix)) {
 				return yield* reject('Invalid tag version source');
@@ -214,7 +218,7 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 		}
 		const versionFiles = row.versionFiles === undefined
 			? undefined
-			: yield* lift(() => array(row.versionFiles).map(file => versionFileSchema.parse(file)));
+			: yield* parsedItems(row.versionFiles, versionFileSchema);
 		const packages = row.packages === undefined ? undefined : yield* packageReferences(row.packages);
 		return {
 			...(versionFiles === undefined ? {} : { versionFiles }),
@@ -228,8 +232,10 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 				...(prepare.workflow ? { workflow: yield* binding(prepare.workflow) } : {}),
 			},
 			promote: {
-				approval: yield* lift(() =>
-					oneOf(promote.approval ?? 'required', ['required', 'merge', 'push'], 'Invalid promotion approval')
+				approval: yield* oneOf(
+					promote.approval ?? 'required',
+					['required', 'merge', 'push'],
+					'Invalid promotion approval',
 				),
 				...(promote.workflow ? { workflow: yield* binding(promote.workflow) } : {}),
 			},
@@ -237,8 +243,8 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 			required: yield* packageReferences(row.required ?? []),
 			credentials: yield* strings(row.credentials ?? []),
 			channels: {
-				stable: yield* lift(() => text(channels.stable ?? 'latest')),
-				prerelease: yield* lift(() => text(channels.prerelease ?? 'next')),
+				stable: yield* text(channels.stable ?? 'latest'),
+				prerelease: yield* text(channels.prerelease ?? 'next'),
 			},
 		};
 	});
@@ -279,7 +285,7 @@ function operationGraph(stream: Stream): Parsed<void> {
 }
 function subscription(raw: unknown, streams: Record<string, Stream>): Parsed<Configuration['subscriptions'][number]> {
 	return Result.gen(function*() {
-		const row = yield* lift(() => record(raw));
+		const row = yield* record(raw);
 		yield* keys(row, [
 			'id',
 			'source',
@@ -291,46 +297,43 @@ function subscription(raw: unknown, streams: Record<string, Stream>): Parsed<Con
 			'sourceGroup',
 			'publication',
 		], 'subscription');
-		const field = (value: unknown) => lift(() => text(value));
-		const id = yield* field(row.id),
-			kind = yield* field(row.event),
-			stream = yield* field(row.stream),
-			operation = yield* field(row.operation);
+		const id = yield* text(row.id),
+			kind = yield* text(row.event),
+			stream = yield* text(row.stream),
+			operation = yield* text(row.operation);
 		if (!identifier.test(id)) return yield* reject('Invalid subscription');
-		const event = yield* lift(() =>
-			oneOf(kind, ['release', 'package.version.changed', 'workflow_run'], 'Invalid subscription')
-		);
+		const event = yield* oneOf(kind, ['release', 'package.version.changed', 'workflow_run'], 'Invalid subscription');
 		if (!streams[stream]?.workflows[operation]) return yield* reject('Subscription references an unknown operation');
 		if (event === 'workflow_run' && (typeof row.workflow !== 'string' || !/^[\w-]+\.ya?ml$/.test(row.workflow))) {
 			return yield* reject('Workflow subscription requires an exact filename');
 		}
 		return {
 			id,
-			...(row.sourceStream === undefined ? {} : { sourceStream: yield* field(row.sourceStream) }),
-			...(row.sourceGroup === undefined ? {} : { sourceGroup: yield* field(row.sourceGroup) }),
-			...(row.publication === undefined ? {} : { publication: yield* field(row.publication) }),
-			source: yield* field(row.source),
+			...(row.sourceStream === undefined ? {} : { sourceStream: yield* text(row.sourceStream) }),
+			...(row.sourceGroup === undefined ? {} : { sourceGroup: yield* text(row.sourceGroup) }),
+			...(row.publication === undefined ? {} : { publication: yield* text(row.publication) }),
+			source: yield* text(row.source),
 			event,
 			stream,
 			operation,
-			...(row.workflow === undefined ? {} : { workflow: yield* field(row.workflow) }),
+			...(row.workflow === undefined ? {} : { workflow: yield* text(row.workflow) }),
 		};
 	});
 }
 export function parseRepositoryConfiguration(value: unknown): Parsed<Configuration> {
 	return Result.gen(function*() {
-		const data = yield* lift(() => record(value));
+		const data = yield* record(value);
 		yield* keys(data, ['$schema', 'extends', 'managers', 'streams', 'subscriptions', 'winget'], 'configuration');
 		const managers = data.managers === undefined
 			? [...managerNames]
-			: yield* lift(() => array(data.managers).map(text).map(name => oneOf(name, managerNames, 'Unknown manager')));
+			: yield* Result.all((yield* strings(data.managers)).map(name => oneOf(name, managerNames, 'Unknown manager')));
 		const streams: Record<string, Stream> = {};
-		for (const [name, raw] of Object.entries(yield* lift(() => record(data.streams ?? {})))) {
+		for (const [name, raw] of Object.entries(yield* record(data.streams ?? {}))) {
 			streams[name] = yield* stream(name, raw);
 		}
 		for (const parsed of Object.values(streams)) yield* operationGraph(parsed);
 		const subscriptions: Configuration['subscriptions'] = [];
-		for (const raw of yield* lift(() => array(data.subscriptions ?? []))) {
+		for (const raw of yield* array(data.subscriptions ?? [])) {
 			subscriptions.push(yield* subscription(raw, streams));
 		}
 		if (new Set(subscriptions.map((s) => s.id)).size !== subscriptions.length) {
@@ -386,9 +389,9 @@ export function resolveConfiguration(
 	const visit = (raw: unknown, stack: string[]): Effect.Effect<Record<string, unknown>, DomainError> =>
 		Effect.gen(function*() {
 			if (stack.length > 16) return yield* precondition('Preset nesting limit exceeded');
-			const data = yield* fromSync(() => record(raw));
+			const data = yield* Effect.fromResult(record(raw));
 			let resolved: Record<string, unknown> = {};
-			for (const reference of yield* fromSync(() => array(data.extends ?? []).map(text))) {
+			for (const reference of yield* Effect.fromResult(strings(data.extends ?? []))) {
 				if (!parsePresetReference(reference)) return yield* precondition('Invalid preset reference');
 				if (stack.includes(reference)) {
 					return yield* precondition(`Preset cycle: ${[...stack, reference].join(' -> ')}`);

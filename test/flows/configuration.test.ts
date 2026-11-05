@@ -7,7 +7,10 @@ import { Validator } from '@cfworker/json-schema';
 import { z } from 'zod';
 import { executionId, planIdentity, releaseEventId } from '@/persistence/identity-keys';
 import { parseRepositoryConfiguration } from '@/automation/configuration';
+import { identityOf, parseIdentity, parseReleaseIdentity, releaseIdentity } from '@/automation/package-identity';
 import { configurationDrift, configurationSchema } from '@/domain/configuration';
+import { validateAgainst } from '@/domain/validate';
+import { packageIdentity, parsePackageIdentity, purlDefinitions } from '@/package-url';
 import { storedConfiguration } from '@/persistence/codecs/configuration';
 import { record } from '@/model';
 import { decodeRepositoryV1 } from '@/persistence/codecs/v1';
@@ -316,7 +319,7 @@ test('refresh records schema drift as a warning while the current parser keeps r
 });
 
 test('editors validate with the published schema and refuse what refresh refuses', async () => {
-	const published = new Validator(record(await Bun.file(schemaPath).json()), '2020-12', false);
+	const published = new Validator(Result.getOrThrow(record(await Bun.file(schemaPath).json())), '2020-12', false);
 	for (const value of await shippedConfigurations()) expect(published.validate(value).errors).toEqual([]);
 	for (const value of await documentedFragments()) {
 		if (configurationSchema.safeParse(value).success) expect(published.validate(value).errors).toEqual([]);
@@ -593,4 +596,42 @@ test('stored rows and journal entries with keys this version does not know still
 	await storage.put(key, withRetiredKeys(await storage.get(key)));
 	await world.wait(20_000);
 	expect(repository.pulls.length).toBe(1);
+});
+
+test('stored identities crash and outside package input stays a Result', () => {
+	const broken = { type: 'npm', name: '' };
+	expect(identityOf({ manager: 'npm', name: 'widget', version: '1.0.0' }).name).toBe('widget');
+	expect(releaseIdentity('pkg:npm/widget@1.0.0').version).toBe('1.0.0');
+	expect(packageIdentity('pkg:npm/widget@1.0.0').name).toBe('widget');
+	expect(purlDefinitions.get('npm')?.type).toBe('npm');
+	expect(() => identityOf({ manager: 'npm', name: 'widget', identity: broken })).toThrow();
+	expect(() => releaseIdentity(broken)).toThrow();
+	expect(() => packageIdentity(broken)).toThrow();
+	expect(Result.isFailure(parseIdentity({ manager: 'jsr', name: 'widget', version: '1.0.0' }))).toBe(true);
+	expect(Result.isFailure(parseReleaseIdentity('pkg:npm/'))).toBe(true);
+	expect(Result.isFailure(parsePackageIdentity(broken))).toBe(true);
+
+	const raw: unknown = JSON.parse(widgetConfiguration());
+	const edited = z.looseObject({
+		streams: z.looseObject({ main: z.looseObject({ packages: z.array(z.string()) }) }),
+	}).parse(raw);
+	edited.streams.main.packages = ['pkg:npm/'];
+	expect(configurationSchema.safeParse(edited).success).toBe(false);
+	expect(Result.isFailure(parseRepositoryConfiguration(edited))).toBe(true);
+
+	const configuration = configurationSchema.parse(JSON.parse(widgetConfiguration()));
+	const main = configuration.streams.main;
+	if (main === undefined) throw new Error('Missing main stream');
+	main.packages = ['pkg:npm/', 'pkg:npm/widget@1.2.3'];
+	const diagnostics = validateAgainst(configuration, {
+		packages: [],
+		workflows: [],
+		managers: [],
+		diagnostics: [],
+		publicationOrder: [],
+	}, { paths: ['.github/workflows/publish.yml', '.github/workflows/ci.yml'] });
+	expect(
+		diagnostics.some(entry => entry.code === 'versioned-reference' && entry.message.includes('pkg:npm/widget@1.2.3')),
+	)
+		.toBe(true);
 });

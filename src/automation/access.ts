@@ -2,14 +2,13 @@ import { Effect } from 'effect';
 import { type Grant, requestGrant } from '@/automation/vault.ts';
 import { type DomainError, precondition } from '@/contract/errors';
 import type { ReadyRepository } from '@/domain/repository';
-import { fromSync } from '@/failure';
 import { record, text } from '@/model';
 
 /** Resolve permissions against stored configuration, never browser-supplied scope. */
 export function configuredGrant(repository: ReadyRepository, input: unknown): Effect.Effect<Grant, DomainError> {
 	return Effect.gen(function*() {
-		const data = yield* fromSync(() => record(input));
-		const field = (value: unknown) => fromSync(() => text(value));
+		const data = yield* Effect.fromResult(record(input));
+		const field = (value: unknown) => Effect.fromResult(text(value));
 		const stream = repository.configuration.streams[yield* field(data.stream)];
 		if (!stream) return yield* precondition('Choose a configured release stream');
 		const operation = yield* field(data.operation);

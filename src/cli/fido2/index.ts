@@ -1,19 +1,33 @@
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 import { hidAuthenticator } from '@/cli/fido2/ctap';
 import { linuxTransport } from '@/cli/fido2/linux';
 import { macosTransport } from '@/cli/fido2/macos';
 import { sha256 } from '@/cli/fido2/pin';
 import { type Authenticator, SecurityKeyError } from '@/cli/fido2/types';
 import { windowsAuthenticator } from '@/cli/fido2/windows';
-import { array, record, text } from '@/model';
+import { array, type Parsed, record, text } from '@/model';
 
-function requestOptions(value: unknown) {
-	const options = record(value);
-	return {
-		challenge: text(options.challenge),
-		rpId: options.rpId === undefined ? undefined : text(options.rpId),
-		allowCredentials: array(options.allowCredentials ?? []).map(credential => ({ id: text(record(credential).id) })),
-	};
+interface RequestOptions {
+	challenge: string;
+	rpId: string | undefined;
+	allowCredentials: { id: string }[];
+}
+
+function credentialId(value: unknown): Parsed<{ id: string }> {
+	return Result.gen(function*() {
+		return { id: yield* text((yield* record(value)).id) };
+	});
+}
+
+function requestOptions(value: unknown): Parsed<RequestOptions> {
+	return Result.gen(function*() {
+		const options = yield* record(value);
+		return {
+			challenge: yield* text(options.challenge),
+			rpId: options.rpId === undefined ? undefined : yield* text(options.rpId),
+			allowCredentials: yield* Result.all((yield* array(options.allowCredentials ?? [])).map(credentialId)),
+		};
+	});
 }
 
 export interface SecurityKeyPrompts<E = never> {
@@ -35,7 +49,9 @@ export const securityKeyAssertion = Effect.fn('securityKeyAssertion')(function*<
 	origin: string,
 	prompts: SecurityKeyPrompts<E>,
 ) {
-	const request = requestOptions(options);
+	const request = yield* Effect.fromResult(requestOptions(options)).pipe(
+		Effect.mapError(error => new SecurityKeyError({ message: `Invalid security key request: ${error.message}` })),
+	);
 	const clientDataJSON = new TextEncoder().encode(
 		JSON.stringify({ type: 'webauthn.get', challenge: request.challenge, origin, crossOrigin: false }),
 	);

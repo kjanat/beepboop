@@ -12,16 +12,29 @@ import {
 	validatePublicationIdentity,
 } from '@/automation/execution';
 import { RepositoryGateway } from '@/automation/github';
+import {
+	artifactSchema,
+	checkRunsSchema,
+	commitSchema,
+	commitStatusSchema,
+	dispatchSchema,
+	type GitHubRelease,
+	gitRefSchema,
+	gitTagSchema,
+	releaseSchema,
+	workflowRunSchema,
+	workflowRunsSchema,
+} from '@/automation/github-resources';
 import { type InboxEvent, inboxEntry } from '@/automation/inbox';
 import { canVerifyPublication, discover, observedVersion, verifyPublication } from '@/automation/managers';
 import { verifyManifest } from '@/automation/manifest';
 import { mergeArtifacts, resolveInputs } from '@/automation/outputs';
 import {
 	identifyExecution,
-	identityOf,
 	matchesPackage,
 	matchesPublication,
 	packageId,
+	parseIdentity,
 	publicationIdentity,
 	selectorKey,
 } from '@/automation/package-identity';
@@ -40,8 +53,8 @@ import type { Artifact, AutomationEvent, Edit, Execution, Publication, ReleaseRe
 import { type DomainError, precondition } from '@/contract/errors';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
 import { readiness } from '@/domain/repository';
-import { fromPromise, fromSync, recover, retryable } from '@/failure';
-import { array, integer, record, sha, text } from '@/model';
+import { fromPromise, fromSync, recover, retryable, toDomainError } from '@/failure';
+import { sha } from '@/model';
 import { decodeEventV1, decodeExecutionV1, decodeSetupEditV1 } from '@/persistence/codecs/v1';
 import type { SqlDatabase } from '@/persistence/d1/database';
 import { ProjectionStore } from '@/persistence/d1/projection';
@@ -593,7 +606,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const result = preparation.managed?.result ?? preparation.prepared?.result;
 			const plan = preparation.managed?.plan ?? preparation.plan;
 			if (!result || !plan) return yield* precondition('Preparation result unavailable');
-			const revision = yield* fromSync(() => sha(target));
+			const revision = yield* Effect.fromResult(sha(target));
 			const snapshot = yield* this.gateway().preparedSnapshot(
 				preparation.repository,
 				preparation.repositoryId,
@@ -728,11 +741,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			const gateway = this.gateway();
 			const token = yield* gateway.token(execution.repository, execution.repositoryId);
-			const run = record(
-				yield* gateway.call(`/repos/${execution.repository}/actions/runs/${identity.runId}`, token),
+			const run = yield* gateway.read(
+				workflowRunSchema,
+				`/repos/${execution.repository}/actions/runs/${identity.runId}`,
+				token,
 			);
 			if (
-				record(run.repository).id !== execution.repositoryId
+				run.repository.id !== execution.repositoryId
 				|| run.head_sha !== identity.sha
 				|| run.path !== `.github/workflows/${workflow.file}`
 				|| run.run_attempt !== identity.attempt
@@ -741,9 +756,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			if (run.head_sha !== execution.sourceSha) {
 				return yield* precondition(
-					`The run is at ${String(run.head_sha).slice(0, 12)} but this execution releases ${
-						execution.sourceSha.slice(0, 12)
-					}`,
+					`The run is at ${run.head_sha.slice(0, 12)} but this execution releases ${execution.sourceSha.slice(0, 12)}`,
 				);
 			}
 			if (!matchesRef(workflow.ref, identity.ref)) return yield* precondition('Workflow ref mismatch');
@@ -795,10 +808,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					if (actual?.commit !== change.commit) return yield* precondition('Published ref does not match the plan');
 					if (change.annotated) {
 						const token = yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
-						const tag = record(yield* gateway.call(`/repos/${execution.repository}/git/tags/${actual.oid}`, token));
+						const tag = yield* gateway.read(
+							gitTagSchema,
+							`/repos/${execution.repository}/git/tags/${actual.oid}`,
+							token,
+						);
 						if (
-							record(tag.object).sha !== change.commit || tag.tag !== change.name
-							|| (change.signed && record(tag.verification).verified !== true)
+							tag.object.sha !== change.commit || tag.tag !== change.name
+							|| (change.signed && tag.verification?.verified !== true)
 						) return yield* precondition('Version tag verification failed');
 					}
 				}
@@ -859,12 +876,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const gateway = this.gateway();
 			const repository = `/repos/${execution.repository}`;
 			const read = yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
-			const ref = yield* gateway.call(`${repository}/git/ref/tags/${encodeURIComponent(tag)}`, read);
+			const ref = yield* gateway.read(
+				gitRefSchema.nullable(),
+				`${repository}/git/ref/tags/${encodeURIComponent(tag)}`,
+				read,
+			);
 			if (ref === null) return yield* precondition('Publish the release tag before the release');
-			const object = record(record(ref).object);
+			const object = ref.object;
 			if (object.type !== 'tag') return yield* precondition('Release tag must be annotated');
-			const objectSha = yield* fromSync(() => sha(object.sha));
-			const tagged = record(record(yield* gateway.call(`${repository}/git/tags/${objectSha}`, read)).object);
+			const tagged = (yield* gateway.read(gitTagSchema, `${repository}/git/tags/${object.sha}`, read)).object;
 			if (tagged.type !== 'commit' || tagged.sha !== execution.sourceSha) {
 				return yield* precondition('Release tag points to another commit');
 			}
@@ -874,16 +894,18 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			});
 			const release = execution.draftRelease
 				? yield* this.publishDraft(execution, execution.draftRelease, target, write)
-				: record(
-					(yield* gateway.call(`${repository}/releases/tags/${encodeURIComponent(tag)}`, read))
-						?? (yield* gateway.call(`${repository}/releases`, write, 'POST', {
-							tag_name: tag,
-							target_commitish: execution.sourceSha,
-							name: tag,
-							generate_release_notes: true,
-							prerelease,
-						})),
-				);
+				: (yield* gateway.read(
+					releaseSchema.nullable(),
+					`${repository}/releases/tags/${encodeURIComponent(tag)}`,
+					read,
+				))
+					?? (yield* gateway.read(releaseSchema, `${repository}/releases`, write, 'POST', {
+						tag_name: tag,
+						target_commitish: execution.sourceSha,
+						name: tag,
+						generate_release_notes: true,
+						prerelease,
+					}));
 			if (release.tag_name !== tag || release.draft !== false || release.prerelease !== prerelease) {
 				return yield* precondition('Existing GitHub release does not match the release operation');
 			}
@@ -912,27 +934,32 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (kept !== null) return execution.draftRelease;
 			}
 			const bot = yield* gateway.botIdentity;
-			const drafts = array(yield* gateway.call(`/repos/${execution.repository}/releases?per_page=100`, write))
-				.map(record)
-				.filter(release => release.draft === true && release.tag_name === target.tag);
-			const matches = (release: Record<string, unknown>) =>
+			const drafts = (yield* gateway.read(
+				z.array(releaseSchema),
+				`/repos/${execution.repository}/releases?per_page=100`,
+				write,
+			)).filter(release => release.draft === true && release.tag_name === target.tag);
+			const matches = (release: GitHubRelease) =>
 				release.target_commitish === execution.sourceSha && release.prerelease === target.prerelease;
-			for (const stale of drafts.filter(release => !matches(release) && record(release.author).id === bot.id)) {
-				const staleId = yield* fromSync(() => integer(stale.id));
-				yield* gateway.call(`/repos/${execution.repository}/releases/${staleId}`, write, 'DELETE');
+			for (const stale of drafts.filter(release => !matches(release) && release.author.id === bot.id)) {
+				yield* gateway.call(`/repos/${execution.repository}/releases/${stale.id}`, write, 'DELETE');
 			}
 			const existing = drafts.find(matches);
-			const release = existing ?? record(
-				yield* gateway.call(`/repos/${execution.repository}/releases`, write, 'POST', {
+			const release = existing ?? (yield* gateway.read(
+				releaseSchema,
+				`/repos/${execution.repository}/releases`,
+				write,
+				'POST',
+				{
 					tag_name: target.tag,
 					target_commitish: execution.sourceSha,
 					name: target.tag,
 					generate_release_notes: true,
 					prerelease: target.prerelease,
 					draft: true,
-				}),
-			);
-			return { id: yield* fromSync(() => integer(release.id)), tag: target.tag };
+				},
+			));
+			return { id: release.id, tag: target.tag };
 		});
 	}
 	private publishDraft(
@@ -940,48 +967,44 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		draft: { id: number; tag: string },
 		target: { tag: string; prerelease: boolean },
 		token: string,
-	): Effect.Effect<Record<string, unknown>, DomainError> {
+	): Effect.Effect<GitHubRelease, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const gateway = this.gateway();
 			const path = `/repos/${execution.repository}/releases/${draft.id}`;
-			const found = yield* gateway.call(path, token);
-			if (found === null) return yield* precondition('Draft GitHub release no longer exists');
-			const release = record(found);
+			const release = yield* gateway.read(releaseSchema.nullable(), path, token);
+			if (release === null) return yield* precondition('Draft GitHub release no longer exists');
 			if (draft.tag !== target.tag || release.tag_name !== target.tag || release.prerelease !== target.prerelease) {
 				return yield* precondition('Draft GitHub release does not match the release operation');
 			}
 			if (release.draft !== true) return release;
 			const bot = yield* gateway.botIdentity;
-			const listed = array(yield* gateway.call(`/repos/${execution.repository}/releases?per_page=100`, token))
-				.map(record);
-			const siblings = yield* fromSync(() =>
-				listed.filter(other =>
-					other.draft === true && other.tag_name === target.tag && integer(other.id) !== draft.id
-					&& record(other.author).id === bot.id
-				)
+			const listed = yield* gateway.read(
+				z.array(releaseSchema),
+				`/repos/${execution.repository}/releases?per_page=100`,
+				token,
 			);
-			const names = yield* fromSync(() => new Set(array(release.assets).map(record).map(asset => text(asset.name))));
+			const siblings = listed.filter(other =>
+				other.draft === true && other.tag_name === target.tag && other.id !== draft.id && other.author.id === bot.id
+			);
+			const names = new Set(release.assets.map(asset => asset.name));
 			for (const other of siblings) {
-				for (const asset of array(other.assets).map(record)) {
-					if (asset.state !== 'uploaded') continue;
-					const name = yield* fromSync(() => text(asset.name));
-					if (names.has(name)) continue;
-					const source = yield* fromSync(() => ({
-						id: integer(asset.id),
-						name,
-						contentType: text(asset.content_type),
-					}));
-					yield* gateway.copyReleaseAsset(execution.repository, source, draft.id, token);
-					names.add(name);
+				for (const asset of other.assets) {
+					if (asset.state !== 'uploaded' || names.has(asset.name)) continue;
+					yield* gateway.copyReleaseAsset(
+						execution.repository,
+						{ id: asset.id, name: asset.name, contentType: asset.content_type },
+						draft.id,
+						token,
+					);
+					names.add(asset.name);
 				}
-				const otherId = yield* fromSync(() => integer(other.id));
-				yield* gateway.call(`/repos/${execution.repository}/releases/${otherId}`, token, 'DELETE');
+				yield* gateway.call(`/repos/${execution.repository}/releases/${other.id}`, token, 'DELETE');
 			}
-			const current = record(yield* gateway.call(path, token));
-			if (array(current.assets).map(record).some(asset => asset.state !== 'uploaded')) {
+			const current = yield* gateway.read(releaseSchema, path, token);
+			if (current.assets.some(asset => asset.state !== 'uploaded')) {
 				return yield* precondition('Draft GitHub release has unfinished asset uploads');
 			}
-			return record(yield* gateway.call(path, token, 'PATCH', { draft: false }));
+			return yield* gateway.read(releaseSchema, path, token, 'PATCH', { draft: false });
 		});
 	}
 	report(
@@ -1003,21 +1026,26 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const gateway = this.gateway();
 			const token = yield* gateway.token(execution.repository, execution.repositoryId);
 			const base = `/repos/${execution.repository}`;
-			const release = record(
-				yield* gateway.call(`${base}/releases/tags/${encodeURIComponent(publication.version)}`, token),
+			const release = yield* gateway.read(
+				releaseSchema,
+				`${base}/releases/tags/${encodeURIComponent(publication.version)}`,
+				token,
 			);
-			const tag = record(yield* gateway.call(`${base}/git/ref/tags/${encodeURIComponent(publication.version)}`, token));
-			let target = record(tag.object);
+			const tag = yield* gateway.read(
+				gitRefSchema,
+				`${base}/git/ref/tags/${encodeURIComponent(publication.version)}`,
+				token,
+			);
+			let target = tag.object;
 			if (target.type === 'tag') {
-				const tagSha = yield* fromSync(() => sha(target.sha));
-				target = record(record(yield* gateway.call(`${base}/git/tags/${tagSha}`, token)).object);
+				target = (yield* gateway.read(gitTagSchema, `${base}/git/tags/${target.sha}`, token)).object;
 			}
 			const valid = release.draft === false
 				&& release.tag_name === publication.version
 				&& target.type === 'commit'
 				&& target.sha === execution.sourceSha;
 			if (valid) {
-				const releaseId = yield* fromSync(() => integer(release.id));
+				const releaseId = release.id;
 				const reference: ReleaseReference = {
 					id: `github:${execution.repositoryId}:${releaseId}`,
 					repository: { id: execution.repositoryId, name: execution.repository },
@@ -1064,11 +1092,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 				const gateway = this.gateway();
 				const token = yield* gateway.token(execution.repository, execution.repositoryId);
-				const actual = record(
-					yield* gateway.call(`/repos/${execution.repository}/actions/artifacts/${artifact.id}`, token),
+				const actual = yield* gateway.read(
+					artifactSchema,
+					`/repos/${execution.repository}/actions/artifacts/${artifact.id}`,
+					token,
 				);
 				if (
-					record(actual.workflow_run).id !== identity.runId
+					actual.workflow_run.id !== identity.runId
 					|| actual.expired
 					|| actual.name !== artifact.name
 					|| actual.digest !== artifact.digest
@@ -1079,7 +1109,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			const verified: Publication[] = [];
 			for (const reported of publications) {
-				const publication = { ...reported, identity: identityOf(reported, execution.repository) };
+				const identity = yield* Effect.fromResult(parseIdentity(reported, execution.repository)).pipe(
+					Effect.mapError(toDomainError),
+				);
+				const publication = { ...reported, identity };
 				if (publication.id.startsWith('refs:')) {
 					return yield* precondition('Ref results are verified by the ref completion endpoint');
 				}
@@ -1144,7 +1177,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	approve(id: string, commitSha: string, actor: string, force = false): Promise<Execution> {
 		return this.serial(Effect.gen({ self: this }, function*() {
 			const execution = yield* this.get(id);
-			const commit = yield* fromSync(() => sha(commitSha));
+			const commit = yield* Effect.fromResult(sha(commitSha));
 			if (
 				execution.operation !== 'promote'
 				|| execution.state !== 'blocked'
@@ -1195,14 +1228,16 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					),
 				));
 			}
-			const commit = record(yield* gateway.call(`${base}/commits/${execution.sourceSha}`, token));
-			if (record(record(commit.commit).verification).verified !== true) {
+			const commit = yield* gateway.read(commitSchema, `${base}/commits/${execution.sourceSha}`, token);
+			if (commit.commit.verification.verified !== true) {
 				problems.push('The commit signature is not verified');
 			}
-			const checks = record(
-				yield* gateway.call(`${base}/commits/${execution.sourceSha}/check-runs?per_page=100&filter=latest`, token),
+			const checks = yield* gateway.read(
+				checkRunsSchema,
+				`${base}/commits/${execution.sourceSha}/check-runs?per_page=100&filter=latest`,
+				token,
 			);
-			const runs = array(checks.check_runs).map(record);
+			const runs = checks.check_runs;
 			if (checks.total_count !== runs.length) problems.push('The commit has more than 100 check runs');
 			const releaseFiles = new Set(
 				Object.values(execution.configuration.streams).flatMap(stream =>
@@ -1210,11 +1245,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						.flatMap(binding => binding ? [`.github/workflows/${binding.file}`] : [])
 				),
 			);
-			const workflowRuns = array(
-				record(yield* gateway.call(`${base}/actions/runs?head_sha=${execution.sourceSha}&per_page=100`, token))
-					.workflow_runs,
-			).map(record);
-			const paths = new Map(workflowRuns.map(run => [String(run.id), String(run.path)]));
+			const { workflow_runs: workflowRuns } = yield* gateway.read(
+				workflowRunsSchema,
+				`${base}/actions/runs?head_sha=${execution.sourceSha}&per_page=100`,
+				token,
+			);
+			const paths = new Map(workflowRuns.map(run => [String(run.id), run.path]));
 			const gating = runs.filter(run => {
 				const runId = /\/actions\/runs\/(\d+)\//.exec(String(run.details_url))?.[1];
 				return !(runId && releaseFiles.has(paths.get(runId) ?? ''));
@@ -1226,7 +1262,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					problems.push(`${String(run.name)} ${String(run.conclusion)}`);
 				}
 			}
-			const status = record(yield* gateway.call(`${base}/commits/${execution.sourceSha}/status`, token));
+			const status = yield* gateway.read(commitStatusSchema, `${base}/commits/${execution.sourceSha}/status`, token);
 			if (Number(status.total_count) > 0 && status.state !== 'success') {
 				problems.push(`Commit status is ${String(status.state)}`);
 			}
@@ -1240,12 +1276,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Effect.gen({ self: this }, function*() {
 			const ref = execution.workflow?.ref.replace(/^refs\/(heads|tags)\//, '');
 			if (!ref) return undefined;
-			const commit = yield* this.gateway().call(
+			const commit = yield* this.gateway().read(
+				commitSchema.nullable(),
 				`/repos/${execution.repository}/commits/${encodeURIComponent(ref)}`,
 				token,
 			);
 			if (commit === null) return yield* precondition(`Workflow ref ${ref} no longer exists`);
-			return { ref, sha: yield* fromSync(() => text(record(commit).sha)) };
+			return { ref, sha: commit.sha };
 		});
 	}
 	private redispatch(execution: Execution, publications: Publication[]): Effect.Effect<void, DomainError> {
@@ -1258,7 +1295,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const head = yield* this.refHead(execution, token);
 			if (head && head.sha !== execution.sourceSha) return yield* precondition(moved(execution, head));
 			const run = execution.runId
-				? record(yield* gateway.call(`/repos/${execution.repository}/actions/runs/${execution.runId}`, token))
+				? yield* gateway.read(
+					workflowRunSchema,
+					`/repos/${execution.repository}/actions/runs/${execution.runId}`,
+					token,
+				)
 				: null;
 			if (run !== null && run.head_sha === execution.sourceSha) {
 				yield* gateway.call(
@@ -1266,11 +1307,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					token,
 					'POST',
 				);
-				const runAttempt = yield* fromSync(() => integer(run.run_attempt));
 				yield* this.put({
 					...execution,
 					state: 'uncertain',
-					runAttempt,
+					runAttempt: run.run_attempt,
 					reason: 'Retry requested; re-running the failed jobs',
 					publications,
 				});
@@ -1339,7 +1379,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					actions: 'write',
 				});
 				const path = `/repos/${execution.repository}/actions/runs/${execution.runId}`;
-				if (record(yield* gateway.call(path, token)).status !== 'completed') {
+				if ((yield* gateway.read(workflowRunSchema, path, token)).status !== 'completed') {
 					yield* gateway.call(`${path}/cancel`, token, 'POST');
 				}
 			}
@@ -1419,9 +1459,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const repository = state.repository;
 			const gateway = this.gateway();
 			const token = yield* gateway.token(repository.name, repository.id);
-			const run = record(yield* gateway.call(`/repos/${repository.name}/actions/runs/${event.runId}`, token));
+			const run = yield* gateway.read(
+				workflowRunSchema,
+				`/repos/${repository.name}/actions/runs/${event.runId}`,
+				token,
+			);
 			if (
-				record(run.repository).id !== repository.id
+				run.repository.id !== repository.id
 				|| !['push', 'release', 'workflow_dispatch', 'schedule'].includes(String(run.event))
 			) {
 				return;
@@ -1443,8 +1487,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					const eventId = `observed:${event.runId}`;
 					const id = yield* executionId(repository.id, streamName, operation, eventId);
 					if (yield* this.read(`execution:${id}`)) continue;
-					const headSha = yield* fromSync(() => sha(run.head_sha));
-					const snapshot = yield* gateway.snapshot(repository.name, repository.id, headSha);
+					const snapshot = yield* gateway.snapshot(repository.name, repository.id, run.head_sha);
 					const execution = yield* (
 						createExecution(repository, {
 							stream: streamName,
@@ -1456,22 +1499,29 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						})
 					);
 					execution.runId = event.runId;
-					execution.runAttempt = yield* fromSync(() => integer(run.run_attempt));
+					execution.runAttempt = run.run_attempt;
 					execution.state = 'running';
 					if (version) {
-						const commit = record(yield* gateway.call(`/repos/${repository.name}/commits/${snapshot.sha}`, token));
-						const tag = record(
-							yield* gateway.call(`/repos/${repository.name}/git/ref/tags/${encodeURIComponent(branch)}`, token),
+						const commit = yield* gateway.read(
+							commitSchema,
+							`/repos/${repository.name}/commits/${snapshot.sha}`,
+							token,
 						);
-						let target = record(tag.object);
+						const tag = yield* gateway.read(
+							gitRefSchema,
+							`/repos/${repository.name}/git/ref/tags/${encodeURIComponent(branch)}`,
+							token,
+						);
+						let target = tag.object;
 						if (target.type === 'tag') {
-							const tagSha = yield* fromSync(() => sha(target.sha));
-							target = record(
-								record(yield* gateway.call(`/repos/${repository.name}/git/tags/${tagSha}`, token)).object,
-							);
+							target = (yield* gateway.read(
+								gitTagSchema,
+								`/repos/${repository.name}/git/tags/${target.sha}`,
+								token,
+							)).object;
 						}
 						if (
-							record(record(commit.commit).verification).verified !== true
+							commit.commit.verification.verified !== true
 							|| target.type !== 'commit'
 							|| target.sha !== snapshot.sha
 						) {
@@ -1662,14 +1712,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			});
 			if (execution.runId) {
 				const runId = execution.runId;
-				const run = record(yield* gateway.call(`/repos/${execution.repository}/actions/runs/${runId}`, token));
-				if (
-					record(run.repository).id !== execution.repositoryId
-					|| run.path !== `.github/workflows/${workflow.file}`
-				) {
+				const run = yield* gateway.read(
+					workflowRunSchema,
+					`/repos/${execution.repository}/actions/runs/${runId}`,
+					token,
+				);
+				if (run.repository.id !== execution.repositoryId || run.path !== `.github/workflows/${workflow.file}`) {
 					return yield* precondition('Run identity changed');
 				}
-				const runAttempt = yield* fromSync(() => integer(run.run_attempt));
+				const runAttempt = run.run_attempt;
 				if (
 					run.status === 'completed' && execution.state === 'uncertain' && runAttempt <= (execution.runAttempt ?? 0)
 				) {
@@ -1717,28 +1768,28 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				return;
 			}
 			if (['dispatching', 'uncertain'].includes(execution.state)) {
-				const data = record(
-					yield* gateway.call(
-						`/repos/${execution.repository}/actions/workflows/${workflow.file}/runs?event=workflow_dispatch&per_page=100`,
-						token,
-					),
+				const data = yield* gateway.read(
+					workflowRunsSchema,
+					`/repos/${execution.repository}/actions/workflows/${workflow.file}/runs?event=workflow_dispatch&per_page=100`,
+					token,
 				);
-				const matches = yield* fromSync(() =>
-					array(data.workflow_runs)
-						.map(record)
-						.filter(
-							(run) =>
-								run.display_title === expectedRunTitle(execution)
-								&& run.path === `.github/workflows/${workflow.file}`
-								&& run.head_branch === workflow.ref?.replace(/^refs\/(heads|tags)\//, '')
-								&& record(run.repository).id === execution.repositoryId
-								&& !execution.supersededRuns?.includes(integer(run.id)),
-						)
+				const matches = data.workflow_runs.filter(
+					(run) =>
+						run.display_title === expectedRunTitle(execution)
+						&& run.path === `.github/workflows/${workflow.file}`
+						&& run.head_branch === workflow.ref?.replace(/^refs\/(heads|tags)\//, '')
+						&& run.repository.id === execution.repositoryId
+						&& !execution.supersededRuns?.includes(run.id),
 				);
 				const run = matches.length === 1 ? matches[0] : undefined;
 				if (run) {
-					const identity = yield* fromSync(() => ({ runId: integer(run.id), runAttempt: integer(run.run_attempt) }));
-					yield* this.put({ ...execution, state: 'running', ...identity, workflowSha: undefined });
+					yield* this.put({
+						...execution,
+						state: 'running',
+						runId: run.id,
+						runAttempt: run.run_attempt,
+						workflowSha: undefined,
+					});
 				} else if (!matches.length && Date.now() - (execution.dispatchedAt ?? 0) > 120_000) {
 					yield* this.put({
 						...execution,
@@ -1786,7 +1837,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				attempts: execution.attempts + 1,
 				dispatchedAt: Date.now(),
 			});
-			const response = yield* gateway.call(
+			const response = yield* gateway.read(
+				dispatchSchema,
 				`/repos/${execution.repository}/actions/workflows/${workflow.file}/dispatches`,
 				token,
 				'POST',
@@ -1800,8 +1852,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					},
 				},
 			);
-			if (response && record(response).workflow_run_id) {
-				const runId = yield* fromSync(() => integer(record(response).workflow_run_id));
+			const runId = response?.workflow_run_id;
+			if (runId) {
 				yield* this.put({ ...execution, state: 'running', attempts: execution.attempts + 1, runId });
 			}
 		}).pipe(

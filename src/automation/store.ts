@@ -11,7 +11,7 @@ import type {
 } from '@/automation/types';
 import { DomainError, precondition } from '@/contract/errors';
 import type { Access } from '@/domain/repository';
-import { fromSync } from '@/failure';
+import { fromJson, fromSync } from '@/failure';
 import { record } from '@/model';
 import {
 	decodeEnrollment,
@@ -50,13 +50,17 @@ export function decodeError(error: unknown): string {
 
 const onboardingRow = z.object({ repository_id: z.number(), document: z.string() });
 
-export function onboardingPulls(rows: { repository_id: number; document: string }[]): Map<number, string> {
-	const pulls = new Map<number, string>();
-	for (const row of rows) {
-		const url = record(JSON.parse(row.document)).url;
-		if (typeof url === 'string') pulls.set(row.repository_id, url);
-	}
-	return pulls;
+export function onboardingPulls(
+	rows: { repository_id: number; document: string }[],
+): Effect.Effect<Map<number, string>, DomainError> {
+	return Effect.gen(function*() {
+		const pulls = new Map<number, string>();
+		for (const row of rows) {
+			const { url } = yield* Effect.fromResult(record(yield* fromJson(row.document)));
+			if (typeof url === 'string') pulls.set(row.repository_id, url);
+		}
+		return pulls;
+	});
 }
 
 export class Store {
@@ -109,7 +113,8 @@ export class Store {
 	}
 	onboardingPulls(): Effect.Effect<Map<number, string>, DomainError> {
 		return this.sql.all('SELECT repository_id, document FROM onboarding').pipe(
-			Effect.flatMap(rows => fromSync(() => onboardingPulls(z.array(onboardingRow).parse(rows)))),
+			Effect.flatMap(rows => fromSync(() => z.array(onboardingRow).parse(rows))),
+			Effect.flatMap(onboardingPulls),
 		);
 	}
 	putRepository(repository: RepositoryRecord): Effect.Effect<void, DomainError> {
