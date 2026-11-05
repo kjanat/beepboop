@@ -6,14 +6,31 @@ Install the GitHub App, then open the dashboard and select **Inspect**. Beepboop
 reads the default branch and displays its packages and release workflows.
 
 Select **Configure releases** (or **Edit release setup** for an existing
-configuration). Choose the packages in each release stream, their versioning,
-required publications, and preparation and publication jobs. Beepboop recognizes
-existing integration steps; workflow names alone never establish a release role.
+configuration). Select the packages and either create a publishing workflow or
+use an existing one. New workflows get an editable filename based on the package
+or repository name, a publishing job, and the required dispatch trigger. Existing
+workflows with a single job or a recognized integration select that job automatically.
+You only need to choose a job when its purpose is ambiguous.
 
-Select **Beepboop prepares the PR (no workflow)** when preparation only edits
+Command boxes contain **Bash shell commands**, not GitHub Actions YAML. Suggested
+Cargo and npm commands are editable. For an existing publishing job, you can select
+its publishing steps instead of adding commands. Trigger replacement choices only
+appear for existing workflows with automatic triggers.
+
+Select **Beepboop opens the version PR (no preparation job)** when preparation only edits
 versions stored in manifests or configured `versionFiles`. Repositories with
 lockfiles need a preparation workflow to regenerate them. Tag-only packages
 without a version file also need a preparation workflow.
+
+For a new release workflow, preparation can run as a second job in the **same file**.
+The dispatcher selects preparation or publication, and job conditions keep the
+other job from running. Preparation runs before the release PR is merged, and
+publication runs after approval. You can still choose a separate preparation
+workflow when needed. Selecting managed PR preparation hides the unused job fields.
+
+Versioning and release group settings are under **Versioning and group settings**.
+Most repositories need one group. The Actions revision override is under
+**Advanced settings**; leave it empty to use the current compatible `v1` release.
 
 When adopting an existing integration, setup adds the approved-commit checkout
 to a job with no checkout or one ordinary root checkout. Jobs with other steps
@@ -34,15 +51,16 @@ installations must approve the permission update. Preview blocks apply until it
 is available. Configuration-only setup PRs do not request Workflows: write.
 This does not change the live app automatically.
 
-External integration actions require the full commit SHA of a published Beepboop
-Actions distribution. Local actions use `$/actions/...` when their definitions
+External integration actions use the compatible `v1` Actions release by default.
+Advanced setups can override this with a release tag or full distribution commit SHA.
+Local actions use `$/actions/...` when their definitions
 exist in the repository. npm trusted-publisher setup remains separate; a setup PR
 does not publish anything. When a promotion starts, Beepboop creates each JSR
 package it publishes, links it to the repository and lets GitHub Actions runs
 started by Beepboop publish to the scope, using the credential stored as
 `jsr-token`.
 
-Select **Open or refresh setup PR** after reviewing the preview. A changed source
+Select **Open setup PR** after reviewing the preview. A changed source
 commit or setup branch invalidates it. Refreshing a proposal incorporates current
 default-branch files and refuses human changes on the setup branch. The dashboard
 also links earlier proposals, including proposals superseded by configuration now
@@ -560,7 +578,7 @@ current manifests and workflow integrations.
 While every commit on the setup branch is Beepboop's, Beepboop rebuilds the
 branch as one commit on the default branch and force-pushes it. Once anyone else
 commits to the branch, Beepboop stops updating that PR, its branch and its
-description. **Take over setup branch** on the Repositories page force-pushes
+description. **Replace edited setup branch** on the Repositories page force-pushes
 Beepboop's proposal and deletes those commits; maintenance then resumes. Missing permissions and unresolved workflow choices are shown on
 the PR.
 Unchanged proposals do not create commits. Closed and merged setup PRs are not

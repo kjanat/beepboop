@@ -102,7 +102,9 @@ export function watchValidity(form: HTMLFormElement): void {
 	feedbackFor(form);
 	form.addEventListener('invalid', event => {
 		const field = event.target;
-		if (!(field instanceof HTMLInputElement || field instanceof HTMLSelectElement)) return;
+		if (
+			!(field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement)
+		) return;
 		describe(field, feedbackFor(form).id, true);
 		show(field.validationMessage, form, 'error');
 	}, true);

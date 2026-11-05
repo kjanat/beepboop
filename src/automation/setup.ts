@@ -17,7 +17,7 @@ import {
 	versionings,
 	type WorkflowEvidence,
 } from '@/automation/setup-types';
-import { integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
+import { integrateReleaseWorkflow, integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Package, RepositoryRecord, Snapshot } from '@/automation/types';
 import { isLockfile } from '@/contract/catalog';
 import { blocking } from '@/contract/diagnostics';
@@ -226,6 +226,7 @@ function drafted(
 				required,
 			};
 			streams[selection.name] = updated;
+			const shared = selection.prepare && selection.promote && selection.prepare.file === selection.promote.file;
 			for (const operation of ['prepare', 'promote'] as const) {
 				const workflow = selection[operation];
 				if (!workflow) {
@@ -255,7 +256,7 @@ function drafted(
 					);
 					continue;
 				}
-				if (selectedFiles.has(workflow.file)) {
+				if (selectedFiles.has(workflow.file) && !(shared && operation === 'promote')) {
 					blockers.push(`${workflow.file}: one workflow cannot be assigned to multiple release roles or streams.`);
 				}
 				selectedFiles.add(workflow.file);
@@ -268,6 +269,11 @@ function drafted(
 					ref: previousBinding.ref ?? inherited.ref ?? snapshot.repository.defaultBranch,
 					...(operation === 'promote' ? { publications: required } : {}),
 				};
+				const inputs = { ...object(inherited.inputs), ...object(previousBinding.inputs) };
+				if (shared) inputs.beepboop_operation = operation === 'promote' ? 'publish' : 'prepare';
+				else delete inputs.beepboop_operation;
+				if (Object.keys(inputs).length) binding.inputs = inputs;
+				else delete binding.inputs;
 				if (binding.mode === 'observe' || inherited.mode === 'observe') binding.mode = 'dispatch';
 				if (typeof binding.ref === 'string' && binding.ref.includes('*')) {
 					blockers.push(`${selection.name}: ${operation} needs an exact dispatch ref in the existing configuration.`);
@@ -279,6 +285,7 @@ function drafted(
 						workflow: binding,
 					},
 				});
+				if (shared) continue;
 				const generated = yield* Effect.fromResult(integrateWorkflow(
 					snapshot,
 					selection.name,
@@ -291,6 +298,21 @@ function drafted(
 				blockers.push(...generated.blockers);
 				notes.push(...generated.notes);
 				const path = `.github/workflows/${workflow.file}`, before = snapshot.files[path] ?? '';
+				if (generated.content !== before) edits.push({ path, before, after: generated.content });
+			}
+			if (shared && selection.prepare && selection.promote) {
+				const generated = yield* Effect.fromResult(integrateReleaseWorkflow(
+					snapshot,
+					selection.name,
+					selection.prepare,
+					selection.promote,
+					selected,
+					choices.actionsRevision,
+					required,
+				));
+				blockers.push(...generated.blockers);
+				notes.push(...generated.notes);
+				const path = `.github/workflows/${selection.promote.file}`, before = snapshot.files[path] ?? '';
 				if (generated.content !== before) edits.push({ path, before, after: generated.content });
 			}
 		}
@@ -349,6 +371,16 @@ function drafted(
 			setupHead: baseline.head,
 			choices,
 			inventory,
+			preparation: {
+				lockfiles: snapshot.paths.filter(isLockfile),
+				versionFileStreams: Object.entries(resolved?.streams ?? object(raw.streams)).filter(([, value]) => {
+					const files = object(value).versionFiles;
+					return Array.isArray(files) && files.length > 0;
+				}).map(([name]) => name),
+				workflowStreams: Object.entries(resolved?.streams ?? object(raw.streams)).filter(([, value]) =>
+					object(object(value).prepare).strategy === 'workflow'
+				).map(([name]) => name),
+			},
 			packageIds: inventory.packages.map(packageId),
 			workflows,
 			edits,

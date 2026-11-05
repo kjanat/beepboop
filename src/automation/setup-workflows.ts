@@ -78,7 +78,9 @@ export function integrateWorkflow(
 	required: string[] = packages.map(packageId),
 ): Result.Result<Integration, DomainError> {
 	const path = `.github/workflows/${choice.file}`, original = snapshot.files[path];
-	const document = parseDocument(original ?? 'name: Prepare release\non: {}\njobs: {}\n');
+	const document = parseDocument(
+		original ?? `name: ${operation === 'prepare' ? 'Prepare release' : 'Publish packages'}\non: {}\njobs: {}\n`,
+	);
 	if (document.errors.length) return Result.fail(precondition(`${choice.file}: invalid YAML`));
 	return Result.try({
 		try: () => integrate(document, snapshot, original, stream, operation, choice, packages, actionsRevision, required),
@@ -89,6 +91,75 @@ interface Integration {
 	content: string;
 	blockers: string[];
 	notes: string[];
+}
+
+/** One workflow file, dispatched separately for preparation and publication. */
+export function integrateReleaseWorkflow(
+	snapshot: Snapshot,
+	stream: string,
+	prepare: SetupWorkflow,
+	promote: SetupWorkflow,
+	packages: Package[],
+	actionsRevision?: string,
+	required: string[] = packages.map(packageId),
+): Result.Result<Integration, DomainError> {
+	return Result.gen(function*() {
+		const path = `.github/workflows/${promote.file}`;
+		const prepareJob = prepare.job ?? 'prepare', publishJob = promote.job ?? 'publish';
+		const fail = (message: string): Integration => ({
+			content: snapshot.files[path] ?? '',
+			blockers: [`${promote.file}: ${message}`],
+			notes: [],
+		});
+		if (prepare.file !== promote.file || prepareJob === publishJob) {
+			return fail('preparation and publication need different jobs');
+		}
+		const gate = (operation: 'prepare' | 'promote') =>
+			`\u0024{{ inputs.beepboop_operation == '${operation === 'promote' ? 'publish' : operation}' }}`;
+		const document = parseDocument(snapshot.files[path] ?? 'name: Release\non: {}\njobs: {}\n');
+		if (document.errors.length) return fail('invalid YAML');
+		const existing = snapshot.files[path] !== undefined;
+		const raw = yield* Result.try({ try: () => object(document.toJS({ maxAliasCount: 100 })), catch: toDomainError });
+		const jobs = object(raw.jobs);
+		if (
+			existing && (Object.keys(jobs).length !== 2
+				|| object(jobs[prepareJob]).if !== gate('prepare') || object(jobs[publishJob]).if !== gate('promote')
+				|| Object.keys(object(raw.on)).some(event => event !== 'workflow_dispatch'))
+		) {
+			return fail('shared workflows need separate preparation and publication jobs guarded by beepboop_operation');
+		}
+		for (const job of [prepareJob, publishJob]) {
+			if (!existing) document.setIn(['jobs', job], document.createNode({ 'runs-on': 'ubuntu-latest', steps: [] }));
+			else document.deleteIn(['jobs', job, 'if']);
+		}
+		let source = document.toString();
+		const blockers: string[] = [], notes: string[] = [];
+		for (const [operation, choice] of [['prepare', prepare], ['promote', promote]] as const) {
+			const result = yield* integrateWorkflow(
+				{ ...snapshot, files: { ...snapshot.files, [path]: source } },
+				stream,
+				operation,
+				{ ...choice, job: operation === 'prepare' ? prepareJob : publishJob, triggers: 'review' },
+				packages,
+				actionsRevision,
+				required,
+			);
+			source = result.content;
+			blockers.push(...result.blockers);
+			notes.push(...result.notes);
+		}
+		const combined = parseDocument(source);
+		combined.setIn(['on', 'workflow_dispatch', 'inputs', 'beepboop_operation'], {
+			description: 'Release step',
+			type: 'choice',
+			options: ['prepare', 'publish'],
+			default: 'publish',
+			required: true,
+		});
+		combined.setIn(['jobs', prepareJob, 'if'], gate('prepare'));
+		combined.setIn(['jobs', publishJob, 'if'], gate('promote'));
+		return { content: combined.toString(), blockers, notes };
+	});
 }
 function integrate(
 	document: Document.Parsed,

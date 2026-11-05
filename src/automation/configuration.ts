@@ -354,6 +354,15 @@ export function mergeConfiguration(
 ): Result.Result<Record<string, unknown>, DomainError> {
 	return Result.gen(function*() {
 		const result = { ...base };
+		if (typeof base.file === 'string' && typeof override.file === 'string' && base.file !== override.file) {
+			// Generated phase inputs belong to the old shared workflow, including when inherited from a preset.
+			// Keep other inherited inputs and allow an explicitly supplied phase input to override this cleanup.
+			const inputs = record(base.inputs);
+			if (Result.isSuccess(inputs) && Object.hasOwn(inputs.success, 'beepboop_operation')) {
+				const { beepboop_operation: _phase, ...userInputs } = inputs.success;
+				result.inputs = userInputs;
+			}
+		}
 		for (const [key, value] of Object.entries(override)) {
 			if (['__proto__', 'constructor', 'prototype'].includes(key)) {
 				return yield* Result.fail(precondition('Invalid configuration key'));
