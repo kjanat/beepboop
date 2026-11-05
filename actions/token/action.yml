@@ -4,9 +4,22 @@ inputs:
   service:
     description: Beepboop service origin
     default: https://beepboop.kjanat.dev
+  permission-contents:
+    description: Contents permission, read or write
+  permission-pull-requests:
+    description: Pull requests permission, read or write
+  permission-issues:
+    description: Issues permission, read or write
+  permission-checks:
+    description: Checks permission, read or write
+  permission-statuses:
+    description: Commit statuses permission, read or write
+  permission-metadata:
+    description: Metadata permission, read or write
+  permission-workflows:
+    description: Workflows permission, write, for the publish-actions purpose only
   permissions:
-    description: JSON object of GitHub App permissions, each read or write
-    default: '{"contents":"write","pull_requests":"write"}'
+    description: JSON object of GitHub App permissions, each read or write; the permission-* inputs replace it. Without either, the token gets contents and pull requests write.
   execution-id:
     description: Beepboop execution ID, required when Beepboop dispatched the run
     default: ""
@@ -49,4 +62,5 @@ runs:
         TOKEN_PURPOSE: ${{ inputs.purpose }}
         TOKEN_IDENTITY: "true"
         PERMISSIONS: ${{ inputs.permissions }}
+        INPUTS: ${{ toJSON(inputs) }}
       run: bun "${GITHUB_ACTION_PATH}/../runtime/client.ts" token

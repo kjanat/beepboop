@@ -57,6 +57,23 @@ function json(source: string): Result.Result<unknown, ActionFailure> {
 	return attempt((): unknown => JSON.parse(source));
 }
 
+const permissionInput = /^permission-([a-z]+(?:-[a-z]+)*)$/;
+
+function tokenPermissions(environment: Environment): Result.Result<Record<string, unknown>, Invalid> {
+	return Result.gen(function*() {
+		const inputs = yield* record(yield* json(environment.INPUTS || '{}'));
+		const separate = Object.entries(inputs).flatMap(([input, level]) => {
+			const name = permissionInput.exec(input)?.[1];
+			return name && level ? [[name.replaceAll('-', '_'), level] as const] : [];
+		});
+		if (separate.length && environment.PERMISSIONS) {
+			return yield* refuse('Set either permissions or the permission-* inputs');
+		}
+		if (separate.length) return Object.fromEntries(separate);
+		return yield* record(yield* json(environment.PERMISSIONS || '{"contents":"write","pull_requests":"write"}'));
+	});
+}
+
 function publication(value: unknown, now: number): Result.Result<unknown, Invalid> {
 	return Result.gen(function*() {
 		const entry = yield* record(value);
@@ -99,7 +116,7 @@ export function requestBody(mode: Mode, environment: Environment, now = Date.now
 				return { executionId };
 			case 'token':
 				return {
-					permissions: yield* record(yield* json(environment.PERMISSIONS || '{}')),
+					permissions: yield* tokenPermissions(environment),
 					...(environment.TOKEN_PURPOSE ? { purpose: environment.TOKEN_PURPOSE } : {}),
 					...(environment.TOKEN_IDENTITY === 'true' ? { identity: true } : {}),
 					...(executionId ? { executionId } : {}),

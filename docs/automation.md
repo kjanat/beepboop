@@ -356,14 +356,18 @@ no token.
 - uses: kjanat/beepboop/actions/token@v1
   id: beepboop
   with:
-    permissions: '{"contents":"write","pull_requests":"write"}'
+    permission-contents: write
+    permission-pull-requests: write
 - run: gh pr comment "$PR" --body "Done."
   env:
     GH_TOKEN: ${{ steps.beepboop.outputs.token }}
 ```
 
-The route issues `contents`, `pull_requests`, `issues`, `checks`, `statuses`
-and `metadata`, each `read` or `write`, and refuses other permissions by default.
+The action takes `permission-contents`, `permission-pull-requests`,
+`permission-issues`, `permission-checks`, `permission-statuses` and
+`permission-metadata`, each `read` or `write`. Without any of them, the token
+gets contents and pull requests write. The route refuses other permissions by
+default.
 The action also outputs `bot-login`, `bot-id` and `bot-email`, resolved from the
 configured App and its GitHub bot user. Use those outputs for Git author and
 committer identity; use the installation token for push authentication.
