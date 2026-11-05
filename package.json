@@ -83,6 +83,7 @@
 		"@kjanat/fmt": "^0.60.6",
 		"@types/bun": "1.4.4",
 		"@types/mdast": "4.0.4",
+		"happy-dom": "21.0.4",
 		"json-schema-to-typescript": "^16.0.0",
 		"jsr": "^0.14.3",
 		"libsodium-wrappers": "^0.8.4",

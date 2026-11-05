@@ -46,8 +46,12 @@ const setupPlan: z.ZodType<SetupPlan> = z.object({
 		actionsRevision: z.string().optional(),
 	}),
 	inventory: z.object({
-		packages: z.array(z.object({ name: z.string(), manifest: z.string(), publication })),
+		packages: z.array(
+			z.object({ name: z.string(), manifest: z.string(), publication, versionSource: z.string().optional() }),
+		),
+		publicationOrder: strings.optional(),
 	}),
+	preparation: z.object({ lockfiles: strings, versionFileStreams: strings, workflowStreams: strings }).optional(),
 	packageIds: strings,
 	workflows: z.array(evidence),
 	edits: z.array(z.object({ path: z.string(), before: z.string(), after: z.string() })),

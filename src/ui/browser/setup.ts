@@ -1,232 +1,136 @@
 import { Effect, Result } from 'effect';
 import { publishable } from '@/automation/package-publication';
 import { parseSetupPlan } from '@/automation/setup-plan';
-import {
-	type SetupChoices,
-	type SetupPlan,
-	type SetupWorkflow,
-	triggerHandovers,
-	versionings,
-} from '@/automation/setup-types';
+import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
 import { routes } from '@/contract/routes';
-import { packageLabel } from '@/domain/package-label';
 import { api } from '@/ui/browser/api';
 import { feedbackFor, find, Refused, refuse, show } from '@/ui/browser/dom';
+
+import { element, hint, label, select, text, workflow } from '@/ui/browser/setup-fields';
 
 const sessions = new WeakMap<
 	HTMLFormElement,
 	{ plan: SetupPlan; choices: () => Result.Result<SetupChoices, Refused>; reviewed?: string; takeOver?: string }
 >();
-function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = ''): HTMLElementTagNameMap[K] {
-	const node = document.createElement(tag);
-	node.textContent = text;
-	return node;
-}
-function label(parent: HTMLElement, title: string, control: HTMLElement) {
-	const wrapper = element('label', title);
-	if (control instanceof HTMLInputElement && control.type === 'checkbox') {
-		wrapper.className = 'check';
-		wrapper.prepend(control);
-	} else wrapper.append(control);
-	parent.append(wrapper);
-}
-function text(parent: HTMLElement, title: string, value = '', multiline = false) {
-	const control = multiline ? element('textarea') : element('input');
-	control.value = value;
-	label(parent, title, control);
-	return control;
-}
-function select(parent: HTMLElement, title: string, entries: [string, string][], value: string) {
-	const control = element('select');
-	for (const [key, title] of entries) control.add(new Option(title, key));
-	control.value = value;
-	label(parent, title, control);
-	return control;
-}
-function checks(parent: HTMLElement, title: string, entries: [string, string][], selected: string[]) {
-	const fieldset = element('fieldset');
-	fieldset.append(element('legend', title));
-	const controls = entries.map(([value, title]) => {
-		const control = element('input');
-		control.type = 'checkbox';
-		control.value = value;
-		control.checked = selected.includes(value);
-		label(fieldset, title, control);
-		return control;
-	});
-	parent.append(fieldset);
-	return () => controls.filter(control => control.checked).map(control => control.value);
-}
-function workflow(
-	parent: HTMLElement,
-	role: 'prepare' | 'promote',
-	plan: SetupPlan,
-	choice?: SetupWorkflow,
-): () => Result.Result<SetupWorkflow | undefined, Refused> {
-	const box = element('fieldset');
-	box.append(element('legend', role === 'prepare' ? 'Preparation workflow' : 'Publication workflow'));
-	const file = select(box, 'Workflow', [
-		['', role === 'prepare' ? 'Beepboop prepares the PR (no workflow)' : 'Select a workflow'],
-		...plan.workflows.map((w): [string, string] => [w.file, `${w.file} (${w.events.join(', ')})`]),
-		['new', 'Create a workflow'],
-	], choice?.file ?? '');
-	const newFile = text(box, 'New workflow filename', '');
-	if (newFile.parentElement) newFile.parentElement.hidden = file.value !== 'new';
-	newFile.required = file.value === 'new';
-	const job = select(box, 'Job', [['', 'Select a job']], '');
-	const mappings = element('div');
-	const mappingControls = new Map<string, HTMLSelectElement>();
-	const refresh = () => {
-		if (newFile.parentElement) newFile.parentElement.hidden = file.value !== 'new';
-		newFile.required = file.value === 'new';
-		const evidence = plan.workflows.find(w => w.file === file.value);
-		job.replaceChildren(new Option(file.value === 'new' ? role : 'Select a job', file.value === 'new' ? role : ''));
-		for (const name of evidence?.jobs ?? []) job.add(new Option(name, name));
-		job.value = choice?.file === file.value && choice.job
-			? choice.job
-			: evidence?.jobs.length === 1
-			? evidence.jobs[0] ?? ''
-			: file.value === 'new'
-			? role
-			: '';
-		refreshMappings();
-	};
-	const refreshMappings = () => {
-		const evidence = plan.workflows.find(w => w.file === file.value);
-		mappings.replaceChildren();
-		mappingControls.clear();
-		if (role === 'promote' && !evidence?.reportingJobs.includes(job.value)) {
-			mappings.append(
-				element('p', 'Select the command step publishing each package. For new commands below, leave this empty.'),
-			);
-			for (const pkg of plan.inventory.packages.filter(pkg => publishable(pkg))) {
-				// The API returns canonical identities; no display-only identifier reconstruction.
-				const id = plan.inventory.packages.indexOf(pkg);
-				const purl = plan.packageIds[id];
-				if (!purl) continue;
-				mappingControls.set(
-					purl,
-					select(mappings, pkg.name, [
-						['', 'New publication commands'],
-						...(evidence?.steps ?? []).filter(step => step.job === job.value).map((step): [string, string] => [
-							step.id,
-							`${step.job} / ${step.label}`,
-						]),
-					], choice?.publicationSteps[purl] ?? ''),
-				);
-			}
-		}
-	};
-	job.addEventListener('change', refreshMappings);
-	file.addEventListener('change', refresh);
-	refresh();
-	const triggers = select(box, 'Trigger handover', [['review', 'Keep unchanged; flag conflicts for review'], [
-		'dispatchOnly',
-		'Use Beepboop dispatch only (replace existing triggers)',
-	], ['preserve', 'Preserve existing triggers (requires compatible integration)']], choice?.triggers ?? 'review');
-	const commands = text(
-		box,
-		role === 'prepare'
-			? 'Preparation commands, if integration must be added (install, lockfile updates, build, tests)'
-			: 'Publication commands, if a new publishing step is needed',
-		choice?.commands ?? '',
-		true,
-	);
-	box.append(mappings);
-	parent.append(box);
-	return () =>
-		file.value
-			? choose(triggers.value, triggerHandovers, 'Invalid trigger handover').pipe(Result.map(handover => ({
-				file: file.value === 'new' ? newFile.value : file.value,
-				job: job.value || undefined,
-				triggers: handover,
-				commands: commands.value,
-				publicationSteps: Object.fromEntries(
-					[...mappingControls].filter(([, control]) => control.value).map(([id, control]) => [id, control.value]),
-				),
-			})))
-			: Result.succeed(undefined);
-}
-function choose<const T extends string>(
-	value: string,
-	allowed: readonly T[],
-	message: string,
-): Result.Result<T, Refused> {
-	const match = allowed.find(item => item === value);
-	return match === undefined ? Result.fail(new Refused({ message })) : Result.succeed(match);
-}
 function editor(form: HTMLFormElement, plan: SetupPlan) {
 	form.replaceChildren();
 	form.append(
-		element('h3', 'Configure release streams'),
-		element('p', 'Choose packages and workflows. Preview the exact changes before opening or refreshing the setup PR.'),
-	);
-	const revision = text(
-		form,
-		'Beepboop Actions version or commit (default v1)',
-		plan.choices.actionsRevision ?? '',
+		element('h3', 'Set up releases'),
+		element(
+			'p',
+			'Select the packages, review how they are published, then preview the PR. Nothing is published during setup.',
+		),
 	);
 	const streams = element('div');
 	form.append(streams);
-	const readers: (() => Result.Result<SetupChoices['streams'][number], Refused>)[] = [];
+	const readers: (() => Result.Result<SetupChoices['streams'][number] | undefined, Refused>)[] = [];
+	const advanced = element('details');
+	advanced.append(element('summary', 'Advanced settings'));
+	const revision = text(advanced, 'Actions revision override (optional)', plan.choices.actionsRevision ?? '');
+	hint(
+		advanced,
+		'Normally leave this empty. Generated workflows use the current compatible v1 Actions release. Override it only when deliberately testing another revision.',
+	);
 	const add = (value: SetupChoices['streams'][number]) => {
 		const box = element('fieldset');
-		box.append(element('legend', 'Release stream'));
+		box.append(
+			element(
+				'legend',
+				value.name === 'main' && plan.choices.streams.length === 1
+					? 'Packages to release'
+					: `Release group: ${value.name}`,
+			),
+		);
 		const enabled = element('input');
 		enabled.type = 'checkbox';
 		enabled.checked = true;
-		label(box, 'Include this stream in the proposal', enabled);
-		const name = text(box, 'Stream name', value.name);
-		name.required = true;
-		if (name instanceof HTMLInputElement) name.pattern = '[a-z][a-z0-9-]{0,63}';
-		enabled.addEventListener('change', () => {
-			name.required = enabled.checked;
+		if (plan.choices.streams.length > 1) label(box, 'Include this release group', enabled);
+		const body = element('fieldset');
+		body.className = 'setup-group-body';
+		box.append(body);
+		const selected = plan.inventory.packages.flatMap((pkg, index) => {
+			const id = plan.packageIds[index];
+			if (!id || !publishable(pkg)) return [];
+			const input = element('input');
+			input.type = 'checkbox';
+			input.checked = value.packages.includes(id);
+			label(body, `${pkg.name} (${pkg.manifest})`, input);
+			return [{ input, pkg: { ...pkg, id } }];
 		});
-		const versioning = select(box, 'Versioning', [['workspace', 'One version for the stream'], [
-			'independent',
-			'Independent package versions',
-		], ['none', 'No version']], value.versioning);
-		const entries = plan.inventory.packages.flatMap((pkg, index): [string, string][] =>
-			publishable(pkg)
-				? [[
-					plan.packageIds[index] ?? '',
-					`${packageLabel(plan.packageIds[index] ?? '')} (${pkg.manifest})`,
-				]]
-				: []
-		);
-		const packages = checks(box, 'Packages', entries, value.packages);
-		const prepare = workflow(box, 'prepare', plan, value.prepare),
-			promote = workflow(box, 'promote', plan, value.promote);
+		const groupAdvanced = element('details');
+		groupAdvanced.append(element('summary', 'Versioning and group settings'));
+		const name = text(groupAdvanced, 'Release group name', value.name);
+		name.required = true;
+		name.pattern = '[a-z][a-z0-9\\-]{0,63}';
+		hint(groupAdvanced, 'A release group is a set of packages released together. Most repositories only need one.');
+		const versioning = select(groupAdvanced, 'How package versions change', [
+			['workspace', 'Give the selected packages the same version'],
+			['independent', 'Version each package separately'],
+			...(value.versioning === 'none'
+				? [['none', 'Keep the configured custom version policy']] as [string, string][]
+				: []),
+		], value.versioning);
+		hint(groupAdvanced, 'Choose the actual version when preparing a release. Setup does not change package versions.');
+		const selection = () => ({
+			name: name.value,
+			packages: selected.filter(entry => entry.input.checked).map(entry => entry.pkg),
+		});
+		const publishing = workflow(body, 'promote', plan, selection, value.promote);
+		const preparing = workflow(body, 'prepare', plan, selection, value.prepare, publishing);
+		publishing.onChange = () => preparing.refresh();
+		for (const { input } of selected) {
+			input.addEventListener('change', () => {
+				publishing.refresh();
+				preparing.refresh();
+			});
+		}
+		name.addEventListener('input', () => {
+			publishing.refresh();
+			preparing.refresh();
+		});
+		body.append(groupAdvanced);
+		enabled.addEventListener('change', () => {
+			body.disabled = !enabled.checked;
+		});
 		streams.append(box);
 		readers.push(() =>
 			Result.gen(function*() {
-				const prepared = yield* prepare();
-				const promoted = yield* promote();
+				if (!enabled.checked) return undefined;
+				const packages = selection().packages.map(pkg => pkg.id);
+				if (!packages.length) {
+					return yield* Result.fail(new Refused({ message: 'Select at least one package to release.' }));
+				}
+				const prepare = yield* preparing.read(), promote = yield* publishing.read();
 				return {
-					name: enabled.checked ? name.value : '',
-					versioning: yield* choose(versioning.value, versionings, 'Invalid versioning'),
-					packages: packages(),
-					required: packages(),
-					...(prepared ? { prepare: prepared } : {}),
-					...(promoted ? { promote: promoted } : {}),
+					name: name.value,
+					packages,
+					required: packages,
+					versioning: versioning.value === 'independent'
+						? 'independent' as const
+						: versioning.value === 'none'
+						? 'none' as const
+						: 'workspace' as const,
+					...(prepare ? { prepare } : {}),
+					...(promote ? { promote } : {}),
 				};
 			})
 		);
 	};
 	plan.choices.streams.forEach(add);
-	const addButton = element('button', 'Add stream');
+	const addButton = element('button', 'Add another release group');
 	addButton.type = 'button';
 	addButton.addEventListener('click', () => {
-		add({ name: '', versioning: 'workspace', packages: [], required: [] });
+		add({ name: `release-${readers.length + 1}`, versioning: 'workspace', packages: [], required: [] });
 		invalidate();
 	});
-	form.append(addButton);
-	const preview = element('button', 'Preview setup changes');
+	advanced.append(addButton);
+	form.append(advanced);
+	const preview = element('button', 'Preview release setup');
 	preview.value = 'preview';
-	const apply = element('button', 'Open or refresh setup PR');
+	const apply = element('button', 'Open setup PR');
 	apply.value = 'apply';
 	apply.disabled = true;
-	const takeOver = element('button', 'Take over setup branch');
+	const takeOver = element('button', 'Replace edited setup branch');
 	takeOver.value = 'takeover';
 	takeOver.hidden = true;
 	const result = element('div');
@@ -236,7 +140,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 	feedbackFor(form);
 	const choices = (): Result.Result<SetupChoices, Refused> =>
 		Result.all(readers.map(read => read())).pipe(Result.map(streams => ({
-			streams: streams.filter(stream => stream.name),
+			streams: streams.filter((stream): stream is NonNullable<typeof stream> => stream !== undefined),
 			...(revision.value ? { actionsRevision: revision.value } : {}),
 		})));
 	sessions.set(form, { plan, choices });
@@ -248,6 +152,9 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 		}
 		apply.disabled = true;
 		takeOver.hidden = true;
+		if (result.childNodes.length) {
+			result.replaceChildren(element('p', 'Your choices changed. Preview again to review the updated workflow.'));
+		}
 	}
 	form.addEventListener('input', invalidate);
 	form.addEventListener('change', invalidate);
@@ -301,7 +208,6 @@ export function setup(form: HTMLFormElement, action: string) {
 		if (!session) {
 			const plan = yield* parsePlan(yield* api(routes.setupPreview, { repository }));
 			editor(form, plan);
-			review(form, plan);
 			const apply = find(form, 'button[value="apply"]', HTMLButtonElement);
 			if (apply) apply.disabled = true;
 			return;

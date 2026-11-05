@@ -12,7 +12,7 @@ share defaults through presets, and manage releases from one dashboard.
 
 1. Install the [GitHub App](https://github.com/apps/beepboop-by-kjanat) on the repository.
 2. Open the dashboard and select **Inspect** to discover its packages and workflows.
-3. Open and review the onboarding PR. Assign packages to release streams and choose the publications required for each release.
+3. Select **Configure releases**, choose the packages and publishing workflow, then preview and open the setup PR. Workflow names and jobs are filled in for new workflows.
 4. Connect preparation and promotion workflows using the [Actions integration](docs/automation.md#connect-a-workflow).
 5. Choose a version, review the preparation PR, and merge it.
 6. Approve promotion of the chosen commit. Follow builds and publications in the dashboard; retry failed jobs from the execution page.
