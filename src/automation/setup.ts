@@ -1,7 +1,7 @@
 import { Effect, Result } from 'effect';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
 import { formatJson, json } from '@/automation/json';
-import { discover } from '@/automation/managers';
+import { discover, versionsInFiles } from '@/automation/managers';
 import { object } from '@/automation/managers/helpers';
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage, packageId, selectorKey } from '@/automation/package-identity';
@@ -19,6 +19,7 @@ import {
 } from '@/automation/setup-types';
 import { integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Package, RepositoryRecord, Snapshot } from '@/automation/types';
+import { isLockfile } from '@/contract/catalog';
 import { blocking } from '@/contract/diagnostics';
 import { type DomainError, decodeRequest, precondition } from '@/contract/errors';
 import { sha256Hex } from '@/contract/ids';
@@ -228,6 +229,27 @@ function drafted(
 			for (const operation of ['prepare', 'promote'] as const) {
 				const workflow = selection[operation];
 				if (!workflow) {
+					if (
+						operation === 'prepare' && !resolved?.streams[selection.name]?.prepare.workflow
+						&& !object(object(current.prepare).workflow).file
+					) {
+						if (snapshot.paths.some(isLockfile)) {
+							blockers.push(`${selection.name}: select a preparation workflow to regenerate lockfiles.`);
+						}
+						const versionFiles = Array.isArray(current.versionFiles)
+							? current.versionFiles
+							: resolved?.streams[selection.name]?.versionFiles ?? [];
+						const strategy = object(current.prepare).strategy ?? resolved?.streams[selection.name]?.prepare.strategy;
+						if (strategy === 'workflow') {
+							blockers.push(`${selection.name}: select a preparation workflow for the configured workflow strategy.`);
+						}
+						if (selected.length && !versionsInFiles({ ...inventory, packages: selected }) && !versionFiles.length) {
+							blockers.push(
+								`${selection.name}: select a preparation workflow; managed preparation needs a version stored in a file.`,
+							);
+						}
+						continue;
+					}
 					blockers.push(
 						`${selection.name}: select a ${operation === 'prepare' ? 'preparation' : 'publication'} workflow.`,
 					);
