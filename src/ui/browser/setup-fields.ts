@@ -248,7 +248,6 @@ export function workflow(
 			: 'Use the same commands you would run locally to prepare or publish this project.';
 	}
 	function refreshMappings() {
-		for (const [id, control] of mappingControls) mappingValues.set(id, control.value);
 		mappingControls = new Map();
 		mappings.replaceChildren();
 		const evidence = plan.workflows.find(w => w.file === file.value);
@@ -267,10 +266,15 @@ export function workflow(
 						...steps.map((step): [string, string] => [step.id, step.label]),
 					],
 					mappingValues.get(pkg.id)
-						?? (steps.length === 1 && /publish/i.test(steps[0]?.label ?? '') ? steps[0]?.id ?? '' : ''),
+						?? (selection().packages.length === 1 && steps.length === 1 && /publish/i.test(steps[0]?.label ?? '')
+							? steps[0]?.id ?? ''
+							: ''),
 				);
 				mappingControls.set(pkg.id, control);
-				control.addEventListener('change', refreshCommands);
+				control.addEventListener('change', () => {
+					mappingValues.set(pkg.id, control.value);
+					refreshCommands();
+				});
 			}
 		}
 		refreshCommands();

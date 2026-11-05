@@ -163,6 +163,53 @@ jobs:
 	expect(publishing.textContent).toContain('Using the publish job');
 });
 
+test('mapping one existing publishing step to multiple packages requires explicit choices', async () => {
+	const repository = world.github.create('octo/packages', {
+		'packages/a/package.json': '{"name":"package-a","version":"1.0.0"}',
+		'packages/b/package.json': '{"name":"package-b","version":"1.0.0"}',
+		'.github/workflows/publish.yml': `name: Publish
+on: workflow_dispatch
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - id: publish_a
+        name: Publish A
+        run: ./scripts/publish-a.sh
+`,
+	});
+	const form = await open(repository.name);
+	const publishing = role(form, 'promote');
+	change(control(publishing, 'Publishing workflow', window.HTMLSelectElement), 'publish.yml');
+	const mapping = (name: string) => control(publishing, `Publishing step for ${name}`, window.HTMLSelectElement);
+	const commands = control(publishing, 'Shell commands that publish the selected packages', window.HTMLTextAreaElement);
+	expect(mapping('package-a').value).toBe('');
+	expect(mapping('package-b').value).toBe('');
+	expect(commands.required).toBe(true);
+	expect(commands.disabled).toBe(false);
+
+	// A single-package suggestion must not become an explicit mapping after adding packages again.
+	const packageB = control(form, 'package-b (packages/b/package.json)', window.HTMLInputElement);
+	packageB.checked = false;
+	packageB.dispatchEvent(new window.Event('change', { bubbles: true }));
+	expect(mapping('package-a').value).toBe('publish_a');
+	packageB.checked = true;
+	packageB.dispatchEvent(new window.Event('change', { bubbles: true }));
+	expect(mapping('package-a').value).toBe('');
+	expect(mapping('package-b').value).toBe('');
+
+	change(mapping('package-a'), 'publish_a');
+	expect(commands.required).toBe(true);
+	change(mapping('package-b'), 'publish_a');
+	expect(commands.disabled).toBe(true);
+	const group = control(form, 'Release group name', window.HTMLInputElement);
+	group.dispatchEvent(new window.Event('input', { bubbles: true }));
+	expect(mapping('package-a').value).toBe('publish_a');
+	expect(mapping('package-b').value).toBe('publish_a');
+	await act(form, 'preview');
+	expect(form.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(false);
+});
+
 test('Cargo setup creates one workflow with preparation and publishing jobs', async () => {
 	const repository = world.github.create('octo/crates', {
 		'Cargo.toml': '[package]\nname = "my-crate"\nversion = "1.0.0"\nedition = "2024"\n',
