@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { Ask, CLIError, Out, SelectChoice } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 import { publishable } from '@/automation/package-publication';
@@ -66,6 +67,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 			stream: SetupChoices['streams'][number],
 			role: 'prepare' | 'promote',
 			previous?: SetupWorkflow,
+			previousPackages: readonly string[] = [],
 		): Effect.Effect<SetupWorkflow | undefined, CLIError> =>
 			Effect.gen(function*() {
 				const preparing = role === 'prepare', selectedPackages = selection(stream);
@@ -122,12 +124,22 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 					? 'prepare'
 					: 'publish');
 				out.log(`${stream.name}: ${file}, ${job} job${selected === 'new' ? ' (generated)' : ''}.`);
-				const triggers = evidence?.events.some(event => event !== 'workflow_dispatch')
-					? yield* select(ask, `${file}: who starts this workflow?`, [
-						{ value: 'dispatchOnly', label: 'Beepboop only (replace current automatic triggers)' },
+				let triggers: SetupWorkflow['triggers'] = 'review';
+				if (selected !== 'same' && evidence?.events.some(event => event !== 'workflow_dispatch')) {
+					const prior = previous?.file === file ? previous.triggers : 'review';
+					const entries = [
 						{ value: 'review', label: 'Keep current triggers and check compatibility in preview' },
-					])
-					: 'review';
+						{ value: 'dispatchOnly', label: 'Beepboop only (replace current automatic triggers)' },
+						...(prior === 'preserve'
+							? [{ value: 'preserve', label: 'Preserve current triggers and check compatibility in preview' }]
+							: []),
+					];
+					const trigger = yield* select(ask, `${file}: who starts this workflow?`, [
+						...entries.filter(entry => entry.value === prior),
+						...entries.filter(entry => entry.value !== prior),
+					]);
+					triggers = trigger === 'dispatchOnly' ? 'dispatchOnly' : trigger === 'preserve' ? 'preserve' : 'review';
+				}
 				const integrated = preparing ? evidence?.preparationJobs.includes(job) : evidence?.reportingJobs.includes(job);
 				const publicationSteps: Record<string, string> = {};
 				const steps = evidence?.steps.filter(step => step.job === job) ?? [];
@@ -152,7 +164,10 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 					}
 				}
 				const remaining = selectedPackages.packages.filter(pkg => !publicationSteps[pkg.id]);
-				const suggested = previous?.file === file && previous.commands
+				const unchanged = previous?.file === file && previous.job === job
+					&& isDeepStrictEqual([...previousPackages].sort(), [...stream.packages].sort())
+					&& isDeepStrictEqual(previous.publicationSteps, publicationSteps);
+				const suggested = unchanged && previous.commands
 					? previous.commands
 					: suggestedCommands(role, {
 						...selectedPackages,
@@ -172,7 +187,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				const choice: SetupWorkflow = {
 					file,
 					job,
-					triggers: triggers === 'dispatchOnly' ? 'dispatchOnly' : 'review',
+					triggers,
 					commands,
 					publicationSteps,
 				};
@@ -181,11 +196,12 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 			});
 		const configure = (stream: SetupChoices['streams'][number]) =>
 			Effect.gen(function*() {
+				const previousPackages = [...stream.packages];
 				stream.packages = yield* packages(stream.name, stream.packages);
 				stream.required = [...stream.packages];
 				choices.streams.push(stream);
-				stream.promote = yield* chooseWorkflow(stream, 'promote', stream.promote);
-				stream.prepare = yield* chooseWorkflow(stream, 'prepare', stream.prepare);
+				stream.promote = yield* chooseWorkflow(stream, 'promote', stream.promote, previousPackages);
+				stream.prepare = yield* chooseWorkflow(stream, 'prepare', stream.prepare, previousPackages);
 			});
 		for (const proposed of plan.choices.streams) {
 			if (

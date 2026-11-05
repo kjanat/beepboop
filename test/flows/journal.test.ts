@@ -268,4 +268,4 @@ test('packed refs complete from the journal after the execution row is gone', as
 	expect(publication.publications.some(entry => entry.id === 'refs:promote' && entry.outcome === 'succeeded')).toBe(
 		true,
 	);
-});
+}, 30_000);

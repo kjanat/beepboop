@@ -55,7 +55,12 @@ export function setupRepository(
 		if (flags.apply) {
 			return yield* Effect.fail(failure('--apply needs --plan pointing to a reviewed preview', 'PLAN_REQUIRED'));
 		}
-		yield* client.call(routes.repositoriesDiscover, { repository });
+		yield* client.call(routes.repositoriesResolve, { repository }).pipe(
+			Effect.catchIf(
+				error => error.code === 'NOT_FOUND',
+				() => client.call(routes.repositoriesDiscover, { repository }),
+			),
+		);
 		const initial = yield* parsePlan(yield* client.call(routes.setupPreview, { repository }));
 		const choices: unknown = flags.choices
 			? yield* readJson(flags.choices)

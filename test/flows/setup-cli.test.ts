@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
+import type { PromptEngine, ResolvedPromptConfig } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 import { parse } from 'yaml';
 import { z } from 'zod';
@@ -28,6 +29,30 @@ afterEach(async () => {
 });
 const run = (args: string[], answers?: unknown[]) =>
 	app.execute(['repositories', ...args], { answers, isTTY: true, env: {} });
+
+function defaults(overrides: Record<string, string> = {}) {
+	const prompts: ResolvedPromptConfig[] = [];
+	const prompter: PromptEngine = {
+		async promptOne(config) {
+			prompts.push(config);
+			if (config.kind === 'select') {
+				return { answered: true, value: overrides[config.message] ?? config.choices[0].value };
+			}
+			if (config.kind === 'confirm') return { answered: true, value: config.default ?? true };
+			if (config.kind === 'input') return { answered: true, value: '' };
+			throw new Error(`Unexpected prompt: ${config.message}`);
+		},
+	};
+	return { prompts, prompter };
+}
+
+async function propose(repository: string, choices: unknown) {
+	const file = join(directory, 'choices.json'), output = join(directory, 'review.json');
+	await Bun.write(file, JSON.stringify(choices));
+	expect((await run(['adopt', repository, '--choices', file, '--output', output, '--json'])).exitCode).toBe(0);
+	expect((await run(['adopt', repository, '--plan', output, '--apply', '--json'])).exitCode).toBe(0);
+	return file;
+}
 
 test('adopt enrolls a repository, reviews generated files and only opens a PR after confirmation', async () => {
 	const repository = widget(world.github, { configured: false });
@@ -220,4 +245,153 @@ test('JSON adoption previews without prompting and help exposes adopt and the se
 		expect(help.stdout.join('')).toContain('--choices');
 		expect(help.stdout.join('')).toContain('--plan');
 	}
+});
+
+for (const scripted of [true, false]) {
+	test(`preview does not refresh an existing setup PR after the source changes (scripted=${scripted})`, async () => {
+		const repository = widget(world.github, { configured: false });
+		const file = await propose(repository.name, {
+			streams: [{
+				name: 'main',
+				packages: ['pkg:npm/widget'],
+				required: ['pkg:npm/widget'],
+				versioning: 'workspace',
+				promote: { file: 'release.yml', job: 'publish', commands: 'npm publish' },
+			}],
+		});
+		const before = structuredClone(repository.pulls);
+		const head = world.github.resolve(repository, 'automation/onboarding').sha;
+		world.github.push(repository, { 'README.md': '# Updated default branch\n' }, 'Change source after opening setup');
+		const result = scripted
+			? await run(['adopt', repository.name, '--choices', file, '--json'])
+			: await run(['adopt', repository.name], ['new', '', 'managed', false, false]);
+		expect(result.exitCode).toBe(0);
+		expect(world.github.resolve(repository, 'automation/onboarding').sha).toBe(head);
+		expect(repository.pulls).toEqual(before);
+	});
+}
+
+test('saved Cargo commands are kept for the same packages and regenerated after changing packages', async () => {
+	const repository = world.github.create('octo/crates', {
+		'Cargo.toml': '[workspace]\nmembers = ["a", "b"]\n[workspace.package]\nversion = "1.0.0"\n',
+		'a/Cargo.toml': '[package]\nname = "crate-a"\nversion.workspace = true\n',
+		'b/Cargo.toml': '[package]\nname = "crate-b"\nversion.workspace = true\n',
+	});
+	await propose(repository.name, {
+		streams: [{
+			name: 'main',
+			packages: ['pkg:cargo/crate-a'],
+			required: ['pkg:cargo/crate-a'],
+			versioning: 'workspace',
+			promote: { file: 'release.yml', job: 'publish', commands: "cargo publish --package 'crate-a' --locked" },
+		}],
+	});
+	const unchanged = await run(['adopt', repository.name], [true, 'new', '', 'managed', false, false]);
+	expect(unchanged.exitCode).toBe(0);
+	expect(unchanged.stdout.join('')).toContain("cargo publish --package 'crate-a' --locked");
+	const changed = await run(['adopt', repository.name], [
+		false,
+		['pkg:cargo/crate-b'],
+		'new',
+		'',
+		'managed',
+		false,
+		true,
+	]);
+	expect(changed.exitCode).toBe(0);
+	const source = world.github.file(repository, '.github/workflows/release.yml', 'automation/onboarding') ?? '';
+	expect(source).toContain("cargo publish --package 'crate-b'");
+	expect(source).not.toContain("cargo publish --package 'crate-a'");
+});
+
+test('changing publishing-step mappings regenerates commands for the newly unmapped packages', async () => {
+	const repository = world.github.create('octo/packages', {
+		'packages/a/package.json': '{"name":"package-a","version":"1.0.0"}',
+		'packages/b/package.json': '{"name":"package-b","version":"1.0.0"}',
+		'.github/workflows/ship.yml':
+			'on: workflow_dispatch\njobs:\n  ship:\n    runs-on: ubuntu-latest\n    steps:\n      - id: publish_existing\n        name: Publish existing package\n        run: ./scripts/publish.sh\n',
+	});
+	await propose(repository.name, {
+		streams: [{
+			name: 'main',
+			packages: ['pkg:npm/package-a', 'pkg:npm/package-b'],
+			required: ['pkg:npm/package-a', 'pkg:npm/package-b'],
+			versioning: 'workspace',
+			promote: {
+				file: 'ship.yml',
+				job: 'ship',
+				commands: '(cd packages/b && npm publish --access public)',
+				publicationSteps: { 'pkg:npm/package-a': 'publish_existing' },
+			},
+		}],
+	});
+	const changed = await run(['adopt', repository.name], [
+		true,
+		'ship.yml',
+		'',
+		'publish_existing',
+		'',
+		'managed',
+		false,
+		true,
+	]);
+	expect(changed.exitCode).toBe(0);
+	const source = world.github.file(repository, '.github/workflows/ship.yml', 'automation/onboarding') ?? '';
+	expect(source).toContain("cd 'packages/a'");
+	expect(source).not.toContain('cd packages/b');
+});
+
+test('automatic triggers default to review and retain an explicit saved handover', async () => {
+	const repository = world.github.create('octo/widget', {
+		'package.json': '{"name":"widget","version":"1.0.0"}',
+		'.github/workflows/ship.yml':
+			'on: push\njobs:\n  ship:\n    runs-on: ubuntu-latest\n    steps:\n      - id: publish_existing\n        name: Publish\n        run: npm publish\n',
+	});
+	const initial = defaults({ 'main: publish packages': 'ship.yml' });
+	const blocked = await app.execute(['repositories', 'adopt', repository.name], {
+		prompter: initial.prompter,
+		isTTY: true,
+		env: {},
+	});
+	expect(blocked.exitCode).toBe(1);
+	const trigger = initial.prompts.find(prompt => prompt.message.includes('who starts this workflow'));
+	expect(trigger?.kind === 'select' && trigger.choices[0].value).toBe('review');
+	expect(repository.pulls).toHaveLength(0);
+	expect(
+		(await run(['adopt', repository.name], ['ship.yml', 'dispatchOnly', 'publish_existing', 'managed', false, true]))
+			.exitCode,
+	).toBe(0);
+	const saved = defaults();
+	const reviewed = await app.execute(['repositories', 'adopt', repository.name], {
+		prompter: saved.prompter,
+		isTTY: true,
+		env: {},
+	});
+	expect(reviewed.exitCode).toBe(0);
+	const handover = saved.prompts.find(prompt => prompt.message.includes('who starts this workflow'));
+	expect(handover?.kind === 'select' && handover.choices[0].value).toBe('dispatchOnly');
+});
+
+test('shared preparation does not ask for a second trigger handover', async () => {
+	const repository = world.github.create('octo/crates', {
+		'Cargo.toml': '[package]\nname = "my-crate"\nversion = "1.0.0"\n',
+		'Cargo.lock': '# Lockfile\n',
+	});
+	expect((await run(['adopt', repository.name], ['new', '', 'same', '', false, true])).exitCode).toBe(0);
+	world.github.merge(repository, 1);
+	const source = world.github.file(repository, '.github/workflows/release-my-crate.yml') ?? '';
+	world.github.push(
+		repository,
+		{ '.github/workflows/release-my-crate.yml': source.replace('on:\n', 'on:\n  push:\n') },
+		'Add an incompatible automatic trigger',
+	);
+	const session = defaults();
+	const result = await app.execute(['repositories', 'adopt', repository.name], {
+		prompter: session.prompter,
+		isTTY: true,
+		env: {},
+	});
+	expect(result.exitCode).toBe(1);
+	expect(session.prompts.filter(prompt => prompt.message.includes('who starts this workflow'))).toHaveLength(1);
+	expect(result.stdout.join('')).toContain('shared workflows need separate preparation and publication jobs');
 });
