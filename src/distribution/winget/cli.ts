@@ -3,8 +3,10 @@ import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { cli, command, flag } from '@kjanat/dreamcli';
-import { generateManifests, renderManifests } from '@/distribution/winget/generate';
+import { Effect } from 'effect';
+import { generateManifests, renderManifests, wingetConfiguration } from '@/distribution/winget/generate';
 import { outputEntry } from '@/tooling/github-output';
+import { attempt, attemptPromise, parse, readJson } from '@/tooling/runtime';
 
 export const generate = command('generate')
 	.description('Write WinGet version, installer, and locale manifests for a published release')
@@ -34,27 +36,37 @@ export const generate = command('generate')
 			'Directory for the three generated manifests',
 		),
 	)
-	.action(async ({ flags, out }) => {
-		const manifests = generateManifests({
-			configuration: JSON.parse(await readFile(flags.config, 'utf8')),
-			version: flags.version,
-			tag: flags.tag || undefined,
-			releaseDate: flags.releaseDate.toISOString().slice(0, 10),
-			checksums: await readFile(flags.checksums, 'utf8'),
-			releaseNotes: await readFile(flags.releaseNotes, 'utf8'),
-		});
-		const directory = resolve(flags.out);
-		const files: string[] = [];
-		for (const [name, content] of Object.entries(renderManifests(manifests))) {
-			const path = join(directory, name);
-			await writeFile(path, content, { flag: 'wx' });
-			files.push(path);
-			out.log(path);
-		}
-		const output = outputEntry('directory', directory) + outputEntry('files', JSON.stringify(files));
-		if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, output);
-		else process.stderr.write(output);
-	});
+	.action(({ flags, out }) =>
+		Effect.runPromise(Effect.gen(function*() {
+			const configuration = yield* parse(wingetConfiguration, yield* readJson(flags.config));
+			const checksums = yield* attemptPromise(() => readFile(flags.checksums, 'utf8'));
+			const releaseNotes = yield* attemptPromise(() => readFile(flags.releaseNotes, 'utf8'));
+			const manifests = yield* attempt(() =>
+				generateManifests({
+					configuration,
+					version: flags.version,
+					tag: flags.tag || undefined,
+					releaseDate: flags.releaseDate.toISOString().slice(0, 10),
+					checksums,
+					releaseNotes,
+				})
+			);
+			const directory = resolve(flags.out);
+			const files: string[] = [];
+			for (const [name, content] of Object.entries(renderManifests(manifests))) {
+				const path = join(directory, name);
+				yield* attemptPromise(() => writeFile(path, content, { flag: 'wx' }));
+				files.push(path);
+				out.log(path);
+			}
+			const output = yield* attempt(() =>
+				outputEntry('directory', directory) + outputEntry('files', JSON.stringify(files))
+			);
+			const target = process.env.GITHUB_OUTPUT;
+			if (target) yield* attemptPromise(() => appendFile(target, output));
+			else process.stderr.write(output);
+		}))
+	);
 
 export const app = cli('beepboop-winget')
 	.envPrefix('WINGET_')

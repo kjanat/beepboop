@@ -1,36 +1,42 @@
+import { Effect } from 'effect';
 import type { AutomationService } from '@/automation/service';
 import type { RepositoryRecord } from '@/automation/types';
-import { notFound } from '@/contract/errors';
+import { type DomainError, notFound } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import { admin } from '@/server/handlers/kit';
 
-async function enrolled(service: AutomationService, id: number): Promise<RepositoryRecord> {
-	const repository = await service.store.repository(id);
-	if (!repository) throw notFound('repository', 'Repository not enrolled', String(id));
-	return repository;
+function enrolled(service: AutomationService, id: number): Effect.Effect<RepositoryRecord, DomainError> {
+	return service.store.repository(id).pipe(
+		Effect.filterOrFail(
+			(repository): repository is RepositoryRecord => repository !== undefined,
+			() => notFound('repository', 'Repository not enrolled', String(id)),
+		),
+	);
 }
 
 export const wingetEndpoints = {
 	wingetList: admin(routes.wingetList, (_, { service }) => service.winget().list()),
-	wingetRefresh: admin(routes.wingetRefresh, async (_, { service }) => {
-		await service.winget().reconcile();
-		return { ok: true };
-	}),
+	wingetRefresh: admin(
+		routes.wingetRefresh,
+		(_, { service }) => service.winget().reconcile().pipe(Effect.as({ ok: true })),
+	),
 	wingetReleases: admin(
 		routes.wingetReleases,
-		async (input, { service }) => service.winget().releases(await enrolled(service, input.repositoryId)),
+		(input, { service }) =>
+			enrolled(service, input.repositoryId).pipe(Effect.flatMap(repository => service.winget().releases(repository))),
 	),
 	wingetPreview: admin(
 		routes.wingetPreview,
-		async (input, { service }) => service.winget().plan(await enrolled(service, input.repositoryId), input.releaseId),
+		(input, { service }) =>
+			enrolled(service, input.repositoryId).pipe(
+				Effect.flatMap(repository => service.winget().plan(repository, input.releaseId)),
+			),
 	),
-	wingetSubmit: admin(routes.wingetSubmit, async (input, { service, actor }) => {
-		const result = await service.winget().submit(
-			await enrolled(service, input.repositoryId),
-			input.releaseId,
-			input.digest,
-		);
-		await service.store.audit(actor, 'winget.request', result.plan.id);
-		return result;
-	}),
+	wingetSubmit: admin(routes.wingetSubmit, (input, { service, actor }) =>
+		Effect.gen(function*() {
+			const repository = yield* enrolled(service, input.repositoryId);
+			const result = yield* service.winget().submit(repository, input.releaseId, input.digest);
+			yield* service.store.audit(actor, 'winget.request', result.plan.id);
+			return result;
+		})),
 } as const;

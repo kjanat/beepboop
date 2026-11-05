@@ -11,7 +11,7 @@ import {
 	writeFileSync,
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { array, record, string, text } from '../../src/model.ts';
+import { array, record, string, text } from '@/model.ts';
 
 interface PlannedEdit {
 	path: string;

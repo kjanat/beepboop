@@ -1,9 +1,20 @@
+import { Cause, Effect } from 'effect';
 import { z } from 'zod';
 import { type NotificationKind, notificationKinds, type WatchedRegistry, watchedRegistries } from '@/contract/catalog';
 import { routes } from '@/contract/routes';
 import { array, integer, record, string } from '@/model';
 import { api } from '@/ui/browser/api';
-import { FieldError, find, findAll, show, showError, watchValidity } from '@/ui/browser/dom.ts';
+import {
+	FieldError,
+	find,
+	findAll,
+	Refused,
+	refuse,
+	report,
+	show,
+	showError,
+	watchValidity,
+} from '@/ui/browser/dom.ts';
 import { canApplySetup, setup } from '@/ui/browser/setup';
 
 interface Choice {
@@ -54,15 +65,13 @@ const creationOptions: z.ZodType<PublicKeyCredentialCreationOptionsJSON> = z.loo
 function recovery(value: string | undefined): 'retry' | 'reconcile' {
 	return value === 'retry' ? 'retry' : 'reconcile';
 }
-function registry(value: string | undefined): WatchedRegistry {
+function registry(value: string | undefined): Effect.Effect<WatchedRegistry, Refused> {
 	const found = watchedRegistries.find(name => name === value);
-	if (!found) throw new Error('Choose npm or JSR.');
-	return found;
+	return found ? Effect.succeed(found) : refuse('Choose npm or JSR.');
 }
-function notificationKind(value: string | undefined): NotificationKind {
+function notificationKind(value: string | undefined): Effect.Effect<NotificationKind, Refused> {
 	const found = notificationKinds.find(kind => kind === value);
-	if (!found) throw new Error('Choose a destination type.');
-	return found;
+	return found ? Effect.succeed(found) : refuse('Choose a destination type.');
 }
 function storedVersion(form: HTMLFormElement, alias: string): number | undefined {
 	return z.record(z.string(), z.number()).parse(JSON.parse(form.dataset.versions ?? '{}'))[alias];
@@ -137,16 +146,26 @@ function fields(form: HTMLFormElement): Record<string, string> {
 		),
 	);
 }
-async function elevated(form: HTMLFormElement): Promise<string> {
-	show('Touch your enrolled security key to approve this action.', form);
-	const challenge = await api(routes.authenticatorsOptions, { register: false });
-	const credential = await navigator.credentials.get({
-		publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(requestOptions.parse(challenge.options)),
+function browser<A>(run: () => Promise<A>): Effect.Effect<A, Refused> {
+	return Effect.tryPromise({
+		try: run,
+		catch: error => new Refused({ message: error instanceof Error ? error.message : String(error) }),
 	});
-	if (!(credential instanceof PublicKeyCredential)) throw new Error('Security key authentication cancelled.');
-	const { proof } = await api(routes.authenticatorsVerify, { id: challenge.id, response: credential.toJSON() });
-	if (!proof) throw new Error('The server returned no security-key proof.');
-	return proof;
+}
+function elevated(form: HTMLFormElement) {
+	return Effect.gen(function*() {
+		show('Touch your enrolled security key to approve this action.', form);
+		const challenge = yield* api(routes.authenticatorsOptions, { register: false });
+		const credential = yield* browser(() =>
+			navigator.credentials.get({
+				publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(requestOptions.parse(challenge.options)),
+			})
+		);
+		if (!(credential instanceof PublicKeyCredential)) return yield* refuse('Security key authentication cancelled.');
+		const { proof } = yield* api(routes.authenticatorsVerify, { id: challenge.id, response: credential.toJSON() });
+		if (!proof) return yield* refuse('The server returned no security-key proof.');
+		return proof;
+	});
 }
 function clearRevealed() {
 	for (const [output, timer] of revealTimers) {
@@ -195,20 +214,20 @@ function inspecting(form: HTMLFormElement, name: string): () => void {
 	card.after(placeholder);
 	return () => placeholder.remove();
 }
-function selectedWorkflow(form: HTMLFormElement): Choice {
+function selectedWorkflow(form: HTMLFormElement): Effect.Effect<Choice, FieldError> {
 	const repository = repositoryChoices(form).find(r => String(r.id) === input(form, 'repositoryId').value);
 	const choice = repository?.workflows[Number(input(form, 'choice').value)];
-	if (!choice) {
-		throw new FieldError('Choose a repository and workflow.', [input(form, 'repositoryId'), input(form, 'choice')]);
-	}
-	return choice;
+	return choice
+		? Effect.succeed(choice)
+		: Effect.fail(
+			new FieldError({
+				message: 'Choose a repository and workflow.',
+				fields: [input(form, 'repositoryId'), input(form, 'choice')],
+			}),
+		);
 }
 function attempt(work: () => void): void {
-	try {
-		work();
-	} catch (error) {
-		showError(error);
-	}
+	Effect.runSync(report(Effect.sync(work)));
 }
 function each(selector: string, setup: (form: HTMLFormElement) => void): void {
 	for (const form of findAll(document, selector, HTMLFormElement)) attempt(() => setup(form));
@@ -218,7 +237,7 @@ each('form[data-action="winget-submit"]', form => {
 	const submit = find(form, 'button[value="submit"]', HTMLButtonElement);
 	if (!submit) throw Error('Missing WinGet submit button');
 	let revision = 0;
-	form.addEventListener('change', async event => {
+	form.addEventListener('change', event => {
 		wingetPlans.delete(form);
 		submit.disabled = true;
 		form.querySelector('.plan-result')?.replaceChildren();
@@ -231,18 +250,23 @@ each('form[data-action="winget-submit"]', form => {
 			release.replaceChildren(new Option('Choose a repository first', ''));
 			return;
 		}
-		try {
-			const rows = await api(routes.wingetReleases, { repositoryId: Number(input(form, 'repositoryId').value) });
-			if (revision !== current) return;
-			release.replaceChildren(new Option(rows.length ? 'Choose a release' : 'No eligible stable releases', ''));
-			for (const row of rows) release.add(new Option(`${row.name} (${row.tag})`, String(row.id)));
-			release.disabled = !rows.length;
-		} catch (error) {
-			if (revision === current) {
-				release.replaceChildren(new Option('Unable to load releases', ''));
-				showError(error, form);
-			}
-		}
+		Effect.runFork(
+			api(routes.wingetReleases, { repositoryId: Number(input(form, 'repositoryId').value) }).pipe(
+				Effect.matchCause({
+					onSuccess: rows => {
+						if (revision !== current) return;
+						release.replaceChildren(new Option(rows.length ? 'Choose a release' : 'No eligible stable releases', ''));
+						for (const row of rows) release.add(new Option(`${row.name} (${row.tag})`, String(row.id)));
+						release.disabled = !rows.length;
+					},
+					onFailure: cause => {
+						if (revision !== current) return;
+						release.replaceChildren(new Option('Unable to load releases', ''));
+						showError(Cause.squash(cause), form);
+					},
+				}),
+			),
+		);
 	});
 });
 each('form[data-action="grant-save"]', form => {
@@ -325,17 +349,26 @@ each('form[data-action="approve"]', form => {
 		approve.textContent = automatic ? 'Release now anyway' : 'Approve anyway';
 		approve.hidden = false;
 	};
-	api(routes.executionsApproval, { id }).then(({ problems }) => {
-		status?.replaceChildren(
-			...(problems.length ? problems : ['Signature verified and checks passed.']).map(text => node('li', text)),
-		);
-		if (problems.length) override();
-	}).catch((error: unknown) => {
-		status?.replaceChildren(node('li', error instanceof Error ? error.message : 'Could not check this commit.'));
-		override();
-	}).finally(() => {
-		if (approve) approve.disabled = false;
-	});
+	Effect.runFork(
+		api(routes.executionsApproval, { id }).pipe(
+			Effect.matchCause({
+				onSuccess: ({ problems }) => {
+					status?.replaceChildren(
+						...(problems.length ? problems : ['Signature verified and checks passed.']).map(text => node('li', text)),
+					);
+					if (problems.length) override();
+				},
+				onFailure: cause => {
+					const error = Cause.squash(cause);
+					status?.replaceChildren(node('li', error instanceof Error ? error.message : 'Could not check this commit.'));
+					override();
+				},
+			}),
+			Effect.ensuring(Effect.sync(() => {
+				if (approve) approve.disabled = false;
+			})),
+		),
+	);
 });
 attempt(() => {
 	const repositorySelection = find(document, '.selection select[name="repository"]', HTMLSelectElement);
@@ -351,15 +384,261 @@ attempt(() => {
 	const rendered = Number(runsLatest.dataset.runsLatest);
 	setInterval(() => {
 		if (document.hidden) return;
-		api(routes.executionsList, {}).then(runs => {
-			if (Math.max(0, ...runs.map(run => run.updatedAt)) > rendered) location.reload();
-		}).catch(() => undefined);
+		Effect.runFork(
+			api(routes.executionsList, {}).pipe(
+				Effect.tap(runs =>
+					Effect.sync(() => {
+						if (Math.max(0, ...runs.map(run => run.updatedAt)) > rendered) location.reload();
+					})
+				),
+				Effect.ignoreCause,
+			),
+		);
 	}, 5000);
 });
 
+const reload = Effect.sync(() => location.reload());
+function navigate(url: string) {
+	return Effect.sync(() => location.assign(url));
+}
+
+function submitted(form: HTMLFormElement, action: string | undefined, clicked: string, data: Record<string, string>) {
+	return Effect.gen(function*() {
+		if (action === 'setup') {
+			yield* setup(form, clicked);
+		} else if (action === 'winget-refresh') {
+			yield* api(routes.wingetRefresh, {});
+			yield* reload;
+		} else if (action === 'winget-retry') {
+			yield* api(routes.wingetSubmit, {
+				repositoryId: Number(data.repositoryId),
+				releaseId: Number(data.releaseId),
+				digest: data.digest ?? '',
+			});
+			yield* reload;
+		} else if (action === 'winget-submit') {
+			const selection = { repositoryId: Number(data.repositoryId), releaseId: Number(data.releaseId) };
+			if (clicked === 'preview') {
+				const plan = yield* api(routes.wingetPreview, selection);
+				if (
+					input(form, 'repositoryId').value !== data.repositoryId || input(form, 'releaseId').value !== data.releaseId
+				) return yield* refuse('Selection changed; preview again.');
+				wingetPlans.set(form, plan);
+				const result = form.querySelector('.plan-result');
+				if (!result) return yield* refuse('Missing WinGet preview');
+				result.replaceChildren(
+					node('h3', 'Review the WinGet submission'),
+					node('p', `Source commit: ${plan.sourceSha}`),
+				);
+				for (const [path, content] of Object.entries(plan.files)) {
+					const detail = node('details', '');
+					detail.append(node('summary', path), node('pre', content));
+					result.append(detail);
+				}
+				const submit = find(form, 'button[value="submit"]', HTMLButtonElement);
+				if (!submit) return yield* refuse('Missing WinGet submit button');
+				submit.disabled = submit.dataset.submitReady !== 'true';
+				show('Review the manifests, then submit. Microsoft controls acceptance and merging.', form);
+			} else {
+				const plan = wingetPlans.get(form);
+				if (!plan) return yield* refuse('Preview the release before submitting.');
+				yield* api(routes.wingetSubmit, { ...selection, digest: plan.digest });
+				yield* reload;
+			}
+		} else if (action === 'release-prepare' || action === 'release-set') {
+			const common = { repositoryId: Number(data.repositoryId), stream: data.stream ?? '' };
+			const version = data.versionMode === 'explicit'
+				? data.version
+				: data.versionMode === 'prerelease'
+				? { bump: 'prerelease', base: data.base, identifier: data.identifier }
+				: { bump: data.versionMode };
+			const groups = findAll(form, 'fieldset[data-group]', HTMLFieldSetElement).filter(group => {
+				const selected = group.querySelector('input[type=checkbox]');
+				return selected instanceof HTMLInputElement && selected.checked;
+			}).map(group => ({
+				id: group.dataset.group,
+				packages: array(JSON.parse(group.dataset.packages ?? '[]')).map(string),
+				version: input(form, `version-${group.dataset.group}`).value,
+			}));
+			const operations = findAll(form, 'select[data-operation]', HTMLSelectElement).filter(select => select.value)
+				.map(select => ({ id: select.dataset.operation, group: select.value }));
+			if (action === 'release-set' && !groups.length) {
+				return yield* new FieldError({
+					message: 'Select at least one package group.',
+					fields: findAll(form, 'fieldset[data-group] input[type=checkbox]', HTMLInputElement),
+				});
+			}
+			const unversioned = groups.filter(group => !group.version);
+			if (action === 'release-set' && unversioned.length) {
+				return yield* new FieldError({
+					message: 'Enter a version for each selected group.',
+					fields: unversioned.map(group => input(form, `version-${group.id}`)),
+				});
+			}
+			let run: { id: string };
+			if (action === 'release-set') {
+				const request = { ...common, plan: { groups, operations } };
+				const reviewed = yield* api(routes.releasesPlanSet, request);
+				run = yield* api(routes.releasesPrepareSet, {
+					...request,
+					sourceSha: reviewed.sourceSha,
+					planId: reviewed.planId,
+				});
+			} else {
+				const request = { ...common, version };
+				const reviewed = yield* api(routes.releasesPlan, request);
+				run = yield* api(routes.releasesPrepare, {
+					...request,
+					sourceSha: reviewed.sourceSha,
+					planId: reviewed.planId,
+				});
+			}
+			yield* navigate(`/runs#${encodeURIComponent(run.id)}`);
+		} else if (action === 'discover') {
+			show(`Inspecting ${data.repository ?? 'repository'}…`, form);
+			const undo = inspecting(form, data.repository ?? '');
+			const repository = yield* api(routes.repositoriesDiscover, { repository: data.repository ?? '' }).pipe(
+				Effect.onError(() => Effect.sync(undo)),
+			);
+			yield* navigate(`/repositories?repository=${encodeURIComponent(repository.name)}`);
+		} else if (action === 'cancel') {
+			yield* api(routes.executionsCancel, { id: data.id ?? '' });
+			yield* reload;
+		} else if (action === 'approve' || action === 'recover') {
+			if (action === 'approve') {
+				yield* api(routes.executionsApprove, {
+					id: data.id ?? '',
+					sourceSha: data.sourceSha ?? '',
+					force: data.force === 'true',
+				});
+			} else yield* api(routes.executionsRecover, { id: data.id ?? '', action: recovery(data.action) });
+			yield* reload;
+		} else if (action === 'start-set') {
+			yield* api(routes.releasesStartSet, {
+				preparationId: data.preparationId ?? '',
+				sourceSha: data.sourceSha ?? '',
+			});
+			yield* navigate('/runs');
+		} else if (action === 'secret-save') {
+			if (!overwriteConfirmed(form, data.alias ?? '')) return;
+			const value = data.value;
+			const proof = yield* elevated(form);
+			input(form, 'value').value = '';
+			yield* api(routes.credentialsReplace, {
+				alias: data.alias ?? '',
+				value: value ?? '',
+				proof,
+				expectedVersion: storedVersion(form, data.alias ?? '') ?? null,
+			});
+			yield* reload;
+		} else if (action === 'secret-reveal') {
+			clearRevealed();
+			const result = yield* api(routes.credentialsReveal, { alias: data.alias ?? '', proof: yield* elevated(form) });
+			const output = find(form, '.revealed', HTMLElement);
+			if (output) {
+				output.textContent = result.value;
+				revealTimers.set(
+					output,
+					setTimeout(() => {
+						output.textContent = '';
+						revealTimers.delete(output);
+					}, 30_000),
+				);
+			}
+			show('Value shown for 30 seconds. It also clears when you leave this page.', form);
+		} else if (action === 'secret-sync') {
+			const results = yield* api(routes.credentialsSync, { alias: data.alias ?? '', proof: yield* elevated(form) });
+			const failed = results.filter(r => r.state !== 'succeeded').length;
+			show(
+				failed
+					? `${failed} destination(s) failed. Refresh to see which permissions need another copy.`
+					: `Latest value copied to ${results.length} GitHub destination(s). Refresh to update their status.`,
+				form,
+			);
+		} else if (action === 'grant-save') {
+			const selected = yield* selectedWorkflow(form);
+			if (data.delivery === 'runtime' && !selected.credentials.includes(data.alias ?? '')) {
+				return yield* new FieldError({
+					message: 'Add this name to the stream’s credentials list before choosing runtime delivery.',
+					fields: [input(form, 'delivery')],
+				});
+			}
+			yield* api(routes.credentialsGrant, {
+				selection: {
+					alias: data.alias,
+					repositoryId: Number(data.repositoryId),
+					stream: selected.stream,
+					operation: selected.operation,
+					delivery: data.delivery,
+					environment: data.environment,
+					secretName: data.secretName,
+				},
+				proof: yield* elevated(form),
+			});
+			yield* reload;
+		} else if (action === 'grant-revoke') {
+			if (
+				form.dataset.delivery !== 'runtime'
+				&& !confirm(
+					'Remove this permission? The value already copied to GitHub will remain there. Delete that GitHub secret separately to remove it.',
+				)
+			) return;
+			yield* api(routes.credentialsRevoke, { grantId: data.grantId ?? '', proof: yield* elevated(form) });
+			yield* reload;
+		} else if (action === 'package-add' || action === 'package-remove') {
+			const watch = { registry: yield* registry(data.registry), name: data.name ?? '' };
+			yield* api(action === 'package-add' ? routes.packagesAdd : routes.packagesRemove, watch);
+			yield* reload;
+		} else if (action === 'package-subscription') {
+			yield* api(routes.packagesSubscription, {
+				destinationId: data.destinationId ?? '',
+				registry: yield* registry(data.registry),
+				name: data.name ?? '',
+				subscribed: data.subscribed === 'true',
+			});
+			yield* reload;
+		} else if (action === 'notification-save') {
+			yield* api(routes.notificationsSave, {
+				destination: {
+					...(data.id ? { id: data.id } : {}),
+					name: data.name ?? '',
+					kind: yield* notificationKind(data.kind),
+					credential: data.credential ?? '',
+					subscribeNew: data.subscribeNew === 'true',
+					enabled: data.enabled === 'true',
+				},
+			});
+			yield* reload;
+		} else if (action === 'notification-remove') {
+			if (!confirm('Remove this destination? Its package subscriptions are removed too.')) return;
+			yield* api(routes.notificationsRemove, { id: data.id ?? '' });
+			yield* reload;
+		} else if (action === 'key-enroll') {
+			const proof = form.dataset.first === 'true' ? undefined : yield* elevated(form);
+			const challenge = yield* api(routes.authenticatorsOptions, { register: true, label: data.label, proof });
+			show('Touch the security key you want to enroll.', form);
+			const credential = yield* browser(() =>
+				navigator.credentials.create({
+					publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(creationOptions.parse(challenge.options)),
+				})
+			);
+			if (!(credential instanceof PublicKeyCredential)) return yield* refuse('Security key enrollment cancelled.');
+			yield* api(routes.authenticatorsVerify, { id: challenge.id, response: credential.toJSON() });
+			yield* reload;
+		} else if (action === 'cli-revoke' || action === 'cli-revoke-all') {
+			if (action === 'cli-revoke') yield* api(routes.cliSessionsRevoke, { id: data.id ?? '' });
+			else yield* api(routes.cliSessionsRevokeAll, {});
+			yield* reload;
+		} else if (action === 'key-remove') {
+			yield* api(routes.authenticatorsRemove, { id: data.id ?? '', proof: yield* elevated(form) });
+			yield* reload;
+		}
+	});
+}
+
 each('form[data-action]', form => {
 	watchValidity(form);
-	form.addEventListener('submit', async event => {
+	form.addEventListener('submit', event => {
 		event.preventDefault();
 		const action = form.dataset.action;
 		const data = fields(form);
@@ -369,241 +648,13 @@ each('form[data-action]', form => {
 		const clicked = button.value;
 		form.dataset.busy = 'true';
 		button.disabled = true;
-		try {
-			if (action === 'setup') {
-				await setup(form, clicked);
-			} else if (action === 'winget-refresh') {
-				await api(routes.wingetRefresh, {});
-				location.reload();
-			} else if (action === 'winget-retry') {
-				await api(routes.wingetSubmit, {
-					repositoryId: Number(data.repositoryId),
-					releaseId: Number(data.releaseId),
-					digest: data.digest ?? '',
-				});
-				location.reload();
-			} else if (action === 'winget-submit') {
-				const selection = { repositoryId: Number(data.repositoryId), releaseId: Number(data.releaseId) };
-				if (clicked === 'preview') {
-					const plan = await api(routes.wingetPreview, selection);
-					if (
-						input(form, 'repositoryId').value !== data.repositoryId || input(form, 'releaseId').value !== data.releaseId
-					) throw Error('Selection changed; preview again.');
-					wingetPlans.set(form, plan);
-					const result = form.querySelector('.plan-result');
-					if (!result) throw Error('Missing WinGet preview');
-					result.replaceChildren(
-						node('h3', 'Review the WinGet submission'),
-						node('p', `Source commit: ${plan.sourceSha}`),
-					);
-					for (const [path, content] of Object.entries(plan.files)) {
-						const detail = node('details', '');
-						detail.append(node('summary', path), node('pre', content));
-						result.append(detail);
-					}
-					const submit = find(form, 'button[value="submit"]', HTMLButtonElement);
-					if (!submit) throw Error('Missing WinGet submit button');
-					submit.disabled = submit.dataset.submitReady !== 'true';
-					show('Review the manifests, then submit. Microsoft controls acceptance and merging.', form);
-				} else {
-					const plan = wingetPlans.get(form);
-					if (!plan) throw Error('Preview the release before submitting.');
-					await api(routes.wingetSubmit, { ...selection, digest: plan.digest });
-					location.reload();
-				}
-			} else if (action === 'release-prepare' || action === 'release-set') {
-				const common = { repositoryId: Number(data.repositoryId), stream: data.stream ?? '' };
-				const version = data.versionMode === 'explicit'
-					? data.version
-					: data.versionMode === 'prerelease'
-					? { bump: 'prerelease', base: data.base, identifier: data.identifier }
-					: { bump: data.versionMode };
-				const groups = findAll(form, 'fieldset[data-group]', HTMLFieldSetElement).filter(group => {
-					const selected = group.querySelector('input[type=checkbox]');
-					return selected instanceof HTMLInputElement && selected.checked;
-				}).map(group => ({
-					id: group.dataset.group,
-					packages: array(JSON.parse(group.dataset.packages ?? '[]')).map(string),
-					version: input(form, `version-${group.dataset.group}`).value,
-				}));
-				const operations = findAll(form, 'select[data-operation]', HTMLSelectElement).filter(select => select.value)
-					.map(select => ({ id: select.dataset.operation, group: select.value }));
-				if (action === 'release-set' && !groups.length) {
-					throw new FieldError(
-						'Select at least one package group.',
-						findAll(form, 'fieldset[data-group] input[type=checkbox]', HTMLInputElement),
-					);
-				}
-				const unversioned = groups.filter(group => !group.version);
-				if (action === 'release-set' && unversioned.length) {
-					throw new FieldError(
-						'Enter a version for each selected group.',
-						unversioned.map(group => input(form, `version-${group.id}`)),
-					);
-				}
-				let run: { id: string };
-				if (action === 'release-set') {
-					const request = { ...common, plan: { groups, operations } };
-					const reviewed = await api(routes.releasesPlanSet, request);
-					run = await api(routes.releasesPrepareSet, {
-						...request,
-						sourceSha: reviewed.sourceSha,
-						planId: reviewed.planId,
-					});
-				} else {
-					const request = { ...common, version };
-					const reviewed = await api(routes.releasesPlan, request);
-					run = await api(routes.releasesPrepare, {
-						...request,
-						sourceSha: reviewed.sourceSha,
-						planId: reviewed.planId,
-					});
-				}
-				location.assign(`/runs#${encodeURIComponent(run.id)}`);
-			} else if (action === 'discover') {
-				show(`Inspecting ${data.repository ?? 'repository'}…`, form);
-				const undo = inspecting(form, data.repository ?? '');
-				try {
-					const repository = await api(routes.repositoriesDiscover, { repository: data.repository ?? '' });
-					location.assign(`/repositories?repository=${encodeURIComponent(repository.name)}`);
-				} catch (error) {
-					undo();
-					throw error;
-				}
-			} else if (action === 'cancel') {
-				await api(routes.executionsCancel, { id: data.id ?? '' });
-				location.reload();
-			} else if (action === 'approve' || action === 'recover') {
-				if (action === 'approve') {
-					await api(routes.executionsApprove, {
-						id: data.id ?? '',
-						sourceSha: data.sourceSha ?? '',
-						force: data.force === 'true',
-					});
-				} else await api(routes.executionsRecover, { id: data.id ?? '', action: recovery(data.action) });
-				location.reload();
-			} else if (action === 'start-set') {
-				await api(routes.releasesStartSet, {
-					preparationId: data.preparationId ?? '',
-					sourceSha: data.sourceSha ?? '',
-				});
-				location.assign('/runs');
-			} else if (action === 'secret-save') {
-				if (!overwriteConfirmed(form, data.alias ?? '')) return;
-				const value = data.value;
-				const proof = await elevated(form);
-				input(form, 'value').value = '';
-				await api(routes.credentialsReplace, {
-					alias: data.alias ?? '',
-					value: value ?? '',
-					proof,
-					expectedVersion: storedVersion(form, data.alias ?? '') ?? null,
-				});
-				location.reload();
-			} else if (action === 'secret-reveal') {
-				clearRevealed();
-				const result = await api(routes.credentialsReveal, { alias: data.alias ?? '', proof: await elevated(form) });
-				const output = find(form, '.revealed', HTMLElement);
-				if (output) {
-					output.textContent = result.value;
-					revealTimers.set(
-						output,
-						setTimeout(() => {
-							output.textContent = '';
-							revealTimers.delete(output);
-						}, 30_000),
-					);
-				}
-				show('Value shown for 30 seconds. It also clears when you leave this page.', form);
-			} else if (action === 'secret-sync') {
-				const results = await api(routes.credentialsSync, { alias: data.alias ?? '', proof: await elevated(form) });
-				const failed = results.filter(r => r.state !== 'succeeded').length;
-				show(
-					failed
-						? `${failed} destination(s) failed. Refresh to see which permissions need another copy.`
-						: `Latest value copied to ${results.length} GitHub destination(s). Refresh to update their status.`,
-					form,
-				);
-			} else if (action === 'grant-save') {
-				const selected = selectedWorkflow(form);
-				if (data.delivery === 'runtime' && !selected.credentials.includes(data.alias ?? '')) {
-					throw new FieldError('Add this name to the stream’s credentials list before choosing runtime delivery.', [
-						input(form, 'delivery'),
-					]);
-				}
-				await api(routes.credentialsGrant, {
-					selection: {
-						alias: data.alias,
-						repositoryId: Number(data.repositoryId),
-						stream: selected.stream,
-						operation: selected.operation,
-						delivery: data.delivery,
-						environment: data.environment,
-						secretName: data.secretName,
-					},
-					proof: await elevated(form),
-				});
-				location.reload();
-			} else if (action === 'grant-revoke') {
-				if (
-					form.dataset.delivery !== 'runtime'
-					&& !confirm(
-						'Remove this permission? The value already copied to GitHub will remain there. Delete that GitHub secret separately to remove it.',
-					)
-				) return;
-				await api(routes.credentialsRevoke, { grantId: data.grantId ?? '', proof: await elevated(form) });
-				location.reload();
-			} else if (action === 'package-add' || action === 'package-remove') {
-				const watch = { registry: registry(data.registry), name: data.name ?? '' };
-				await api(action === 'package-add' ? routes.packagesAdd : routes.packagesRemove, watch);
-				location.reload();
-			} else if (action === 'package-subscription') {
-				await api(routes.packagesSubscription, {
-					destinationId: data.destinationId ?? '',
-					registry: registry(data.registry),
-					name: data.name ?? '',
-					subscribed: data.subscribed === 'true',
-				});
-				location.reload();
-			} else if (action === 'notification-save') {
-				await api(routes.notificationsSave, {
-					destination: {
-						...(data.id ? { id: data.id } : {}),
-						name: data.name ?? '',
-						kind: notificationKind(data.kind),
-						credential: data.credential ?? '',
-						subscribeNew: data.subscribeNew === 'true',
-						enabled: data.enabled === 'true',
-					},
-				});
-				location.reload();
-			} else if (action === 'notification-remove') {
-				if (!confirm('Remove this destination? Its package subscriptions are removed too.')) return;
-				await api(routes.notificationsRemove, { id: data.id ?? '' });
-				location.reload();
-			} else if (action === 'key-enroll') {
-				const proof = form.dataset.first === 'true' ? undefined : await elevated(form);
-				const challenge = await api(routes.authenticatorsOptions, { register: true, label: data.label, proof });
-				show('Touch the security key you want to enroll.', form);
-				const credential = await navigator.credentials.create({
-					publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(creationOptions.parse(challenge.options)),
-				});
-				if (!(credential instanceof PublicKeyCredential)) throw new Error('Security key enrollment cancelled.');
-				await api(routes.authenticatorsVerify, { id: challenge.id, response: credential.toJSON() });
-				location.reload();
-			} else if (action === 'cli-revoke' || action === 'cli-revoke-all') {
-				if (action === 'cli-revoke') await api(routes.cliSessionsRevoke, { id: data.id ?? '' });
-				else await api(routes.cliSessionsRevokeAll, {});
-				location.reload();
-			} else if (action === 'key-remove') {
-				await api(routes.authenticatorsRemove, { id: data.id ?? '', proof: await elevated(form) });
-				location.reload();
-			}
-		} catch (error) {
-			showError(error, form);
-		} finally {
-			form.dataset.busy = 'false';
-			button.disabled = action === 'setup' && clicked === 'apply' && !canApplySetup(form);
-		}
+		Effect.runFork(
+			report(submitted(form, action, clicked, data), form).pipe(
+				Effect.ensuring(Effect.sync(() => {
+					form.dataset.busy = 'false';
+					button.disabled = action === 'setup' && clicked === 'apply' && !canApplySetup(form);
+				})),
+			),
+		);
 	});
 });

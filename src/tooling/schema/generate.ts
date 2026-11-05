@@ -1,10 +1,13 @@
 import { parseArgs } from 'node:util';
-import { assertCurrent, renderConfigurationSchema, schemaPath } from '@/tooling/schema/render';
+import { Effect } from 'effect';
+import { attempt, attemptPromise, main } from '@/tooling/runtime';
+import { assertCurrent, renderedConfigurationSchema, schemaPath } from '@/tooling/schema/render';
 
-const { values: { check } } = parseArgs({
-	args: Bun.argv.slice(2),
-	options: { check: { type: 'boolean' } },
-	strict: true,
-});
-if (check) await assertCurrent(schemaPath);
-else await Bun.write(schemaPath, await renderConfigurationSchema());
+await main(Effect.gen(function*() {
+	const { values: { check } } = yield* attempt(() =>
+		parseArgs({ args: Bun.argv.slice(2), options: { check: { type: 'boolean' } }, strict: true })
+	);
+	if (check) return yield* assertCurrent(schemaPath);
+	const schema = yield* renderedConfigurationSchema;
+	yield* attemptPromise(() => Bun.write(schemaPath, schema));
+}));

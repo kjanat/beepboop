@@ -1,3 +1,4 @@
+import { Effect } from 'effect';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
 import { formatJson, json } from '@/automation/json';
 import { discover } from '@/automation/managers';
@@ -18,12 +19,13 @@ import {
 import { integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Package, RepositoryRecord, Snapshot } from '@/automation/types';
 import { blocking } from '@/contract/diagnostics';
-import { parseRequest } from '@/contract/errors';
+import { type DomainError, parseRequest } from '@/contract/errors';
 import { sha256Hex } from '@/contract/ids';
 import { setupChoicesSchema } from '@/contract/setup';
 import { configurationDrift } from '@/domain/configuration';
 import { packageMarkdown } from '@/domain/package-label';
 import { validateAgainst } from '@/domain/validate';
+import { fromPromise, fromSync } from '@/failure';
 
 function releasedPackage(pkg: Package | undefined): boolean {
 	return !!pkg && publishable(pkg) && pkg.published !== undefined
@@ -118,13 +120,28 @@ export interface SetupBaseline {
 	prior?: { url: string; content?: string; sourceSha?: string };
 	presetShas?: Record<string, string>;
 }
-export async function previewSetup(
+export function previewSetup(
 	snapshot: Snapshot,
 	inventory: Inventory,
 	input: unknown,
 	baseline: SetupBaseline,
 	resolved?: Configuration,
-): Promise<SetupPlan> {
+): Effect.Effect<SetupPlan, DomainError> {
+	return Effect.gen(function*() {
+		const plan = yield* fromSync(() => draftSetup(snapshot, inventory, input, baseline, resolved));
+		const planId = yield* fromPromise(() =>
+			sha256Hex(JSON.stringify({ ...plan, presetShas: baseline.presetShas ?? {} }))
+		);
+		return { ...plan, planId };
+	});
+}
+function draftSetup(
+	snapshot: Snapshot,
+	inventory: Inventory,
+	input: unknown,
+	baseline: SetupBaseline,
+	resolved?: Configuration,
+): Omit<SetupPlan, 'planId'> {
 	// Empty selections are allowed in suggestions, but cannot be applied.
 	const suggested = input === undefined;
 	const choices = suggested ? suggestSetup(snapshot, inventory, resolved) : parseRequest(setupChoicesSchema, input);
@@ -253,7 +270,7 @@ export async function previewSetup(
 			'The GitHub App installation needs Workflows: write permission before this proposal can edit workflows. Update the app permission and approve the installation update, then preview again.',
 		);
 	}
-	const plan = {
+	return {
 		repository: snapshot.repository.name,
 		sourceSha: snapshot.sha,
 		setupHead: baseline.head,
@@ -269,8 +286,6 @@ export async function previewSetup(
 		branchConflict: baseline.branchConflict === true,
 		...(prior ? { prior } : {}),
 	};
-	const planId = await sha256Hex(JSON.stringify({ ...plan, presetShas: baseline.presetShas ?? {} }));
-	return { ...plan, planId };
 }
 type Operation = 'prepare' | 'promote';
 const operations: Operation[] = ['prepare', 'promote'];

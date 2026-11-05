@@ -1,4 +1,6 @@
 import { CronExpressionParser } from 'cron-parser';
+import { Effect } from 'effect';
+import { z } from 'zod';
 import { versionFileSchema } from '@/automation/editors';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { releaseIdentity } from '@/automation/package-identity';
@@ -7,7 +9,9 @@ import { parsePresetReference } from '@/automation/preset';
 import type { Configuration, Stream, WorkflowBinding } from '@/automation/types';
 import { managerNames } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
+import { type DomainError, precondition } from '@/contract/errors';
 import { configurationDrift, configurationSchema } from '@/domain/configuration';
+import { fromSync, toDomainError } from '@/failure';
 import { array, oneOf, record, text } from '@/model';
 import { purl } from '@/package-url';
 
@@ -309,42 +313,47 @@ export function mergeConfiguration(
 	}
 	return result;
 }
-export type PresetLoader = (reference: string) => Promise<{ value: unknown; sha: string }>;
-export async function resolveConfiguration(
+export type PresetLoader = (reference: string) => Effect.Effect<{ value: unknown; sha: string }, DomainError>;
+export interface ResolvedConfiguration {
+	configuration: Configuration;
+	presetShas: Record<string, string>;
+	drift: Diagnostic[];
+}
+export function resolveConfiguration(
 	value: unknown,
 	load: PresetLoader,
-): Promise<{ configuration: Configuration; presetShas: Record<string, string>; drift: Diagnostic[] }> {
+): Effect.Effect<ResolvedConfiguration, DomainError | z.ZodError> {
 	const presetShas: Record<string, string> = {};
 	const cache = new Map<string, { value: unknown; sha: string }>();
-	async function visit(raw: unknown, stack: string[]): Promise<Record<string, unknown>> {
-		if (stack.length > 16) throw new Error('Preset nesting limit exceeded');
-		const data = record(raw);
-		let resolved: Record<string, unknown> = {};
-		for (const reference of strings(data.extends ?? [])) {
-			if (!parsePresetReference(reference)) {
-				throw new Error('Invalid preset reference');
-			}
-			if (stack.includes(reference)) {
-				throw new Error(`Preset cycle: ${[...stack, reference].join(' -> ')}`);
-			}
-			let loaded = cache.get(reference);
-			if (!loaded) {
-				loaded = await load(reference);
+	const visit = (raw: unknown, stack: string[]): Effect.Effect<Record<string, unknown>, DomainError> =>
+		Effect.gen(function*() {
+			if (stack.length > 16) return yield* precondition('Preset nesting limit exceeded');
+			const data = yield* fromSync(() => record(raw));
+			let resolved: Record<string, unknown> = {};
+			for (const reference of yield* fromSync(() => strings(data.extends ?? []))) {
+				if (!parsePresetReference(reference)) return yield* precondition('Invalid preset reference');
+				if (stack.includes(reference)) {
+					return yield* precondition(`Preset cycle: ${[...stack, reference].join(' -> ')}`);
+				}
+				const loaded = cache.get(reference) ?? (yield* load(reference));
 				cache.set(reference, loaded);
+				if (!/^[a-f0-9]{40}$/.test(loaded.sha)) return yield* precondition('Preset must resolve to a commit');
+				presetShas[reference] = loaded.sha;
+				const nested = yield* visit(loaded.value, [...stack, reference]);
+				resolved = yield* fromSync(() => mergeConfiguration(resolved, nested));
 			}
-			if (!/^[a-f0-9]{40}$/.test(loaded.sha)) throw new Error('Preset must resolve to a commit');
-			presetShas[reference] = loaded.sha;
-			resolved = mergeConfiguration(resolved, await visit(loaded.value, [...stack, reference]));
-		}
-		return mergeConfiguration(resolved, data);
-	}
-	const merged = await visit(value, []);
-	let configuration: Configuration;
-	try {
-		configuration = parseRepositoryConfiguration(merged);
-	} catch (error) {
-		const schema = configurationSchema.safeParse(merged);
-		throw schema.success ? error : schema.error;
-	}
-	return { configuration, presetShas, drift: configurationDrift(merged, configuration) };
+			return yield* fromSync(() => mergeConfiguration(resolved, data));
+		});
+	return Effect.gen(function*() {
+		const merged = yield* visit(value, []);
+		const configuration = yield* Effect.try({
+			try: () => parseRepositoryConfiguration(merged),
+			catch: (error): DomainError | z.ZodError => {
+				const schema = configurationSchema.safeParse(merged);
+				if (!schema.success) return schema.error;
+				return error instanceof z.ZodError ? error : toDomainError(error);
+			},
+		});
+		return { configuration, presetShas, drift: configurationDrift(merged, configuration) };
+	});
 }

@@ -1,3 +1,4 @@
+import { Effect } from 'effect';
 import { z } from 'zod';
 import { type Channel, type ChannelOutcome, tracksBranch } from '@/automation/destinations';
 import type { Fetcher, RegistryVersion } from '@/automation/managers/registry';
@@ -38,7 +39,7 @@ function formulaVersion(source: string): unknown {
 	return (url && /\/v?(\d+\.\d+\.\d+)(?:\/|\.tar|\.tgz|\.zip)/.exec(url)?.[1])
 		?? new LookupFailure('no literal version or versioned url');
 }
-function latest(channel: Channel, request: Fetcher): Promise<RegistryVersion> {
+function latest(channel: Channel, request: Fetcher): Effect.Effect<RegistryVersion> {
 	if (channel.destination === 'aur') {
 		return latestVersion(
 			request,
@@ -55,18 +56,19 @@ function latest(channel: Channel, request: Fetcher): Promise<RegistryVersion> {
 	}
 	return latestText(request, raw(channel.repository, channel.directory, `${channel.name}.rb`), formulaVersion);
 }
-export async function checkChannel(
+export function checkChannel(
 	channel: Channel,
 	request: Fetcher,
-): Promise<{ outcome: ChannelOutcome; failure?: string }> {
-	if (tracksBranch(channel)) return { outcome: { ...channel, state: 'tracking' } };
-	const result = await latest(channel, request);
-	if (result.kind === 'published') return { outcome: { ...channel, state: 'published', version: result.version } };
-	if (result.kind === 'missing') return { outcome: { ...channel, state: 'missing' } };
-	return {
-		outcome: { ...channel, state: 'failed', reason: result.reason },
-		failure: `${result.reason} from ${result.url}`,
-	};
+): Effect.Effect<{ outcome: ChannelOutcome; failure?: string }> {
+	if (tracksBranch(channel)) return Effect.succeed({ outcome: { ...channel, state: 'tracking' } });
+	return latest(channel, request).pipe(Effect.map((result): { outcome: ChannelOutcome; failure?: string } => {
+		if (result.kind === 'published') return { outcome: { ...channel, state: 'published', version: result.version } };
+		if (result.kind === 'missing') return { outcome: { ...channel, state: 'missing' } };
+		return {
+			outcome: { ...channel, state: 'failed', reason: result.reason },
+			failure: `${result.reason} from ${result.url}`,
+		};
+	}));
 }
 
 export function pkgbuildChannels(snapshot: Snapshot): { channels: Channel[]; diagnostics: Diagnostic[] } {

@@ -1,10 +1,12 @@
+import { Effect } from 'effect';
 import type { z } from 'zod';
 import { Authenticators, administrator, type WorkflowIdentity, workflowIdentity } from '@/automation/auth';
 import type { AutomationBindings, AutomationService } from '@/automation/service';
 import type { RepositoryRecord } from '@/automation/types';
-import { forbidden, parseRequest } from '@/contract/errors';
+import { type DomainError, decodeRequest, forbidden } from '@/contract/errors';
 import type { AnyRoute, Known, Route } from '@/contract/routes';
 import { readiness } from '@/domain/repository';
+import { fromSync } from '@/failure';
 
 export interface Context {
 	request: Request;
@@ -23,18 +25,23 @@ export interface EnrolledContext extends WorkflowContext {
 
 export interface Endpoint<R extends AnyRoute> {
 	route: R;
-	run(context: Context, read: () => Promise<unknown>): Promise<unknown>;
+	run(context: Context, read: Effect.Effect<unknown, DomainError>): Effect.Effect<unknown, DomainError>;
 }
 
-type Effect<T> = () => Promise<T>;
-type Handle<Q extends z.ZodType, S extends z.ZodType, C> = (
-	input: z.output<Q>,
-	context: C,
-) => Promise<Known<z.input<S>>>;
+type Reply<S extends z.ZodType> = Effect.Effect<Known<z.input<S>>, DomainError>;
+type Handle<Q extends z.ZodType, S extends z.ZodType, C> = (input: z.output<Q>, context: C) => Reply<S>;
+interface Elevated<S extends z.ZodType> {
+	readonly commit: Reply<S>;
+}
 
-function respond<S extends z.ZodType>(schema: S, result: Known<z.input<S>>): Known<z.input<S>> {
-	schema.parse(result);
-	return result;
+function respond<S extends z.ZodType>(schema: S, reply: Reply<S>): Reply<S> {
+	return reply.pipe(Effect.tap(result => fromSync(() => schema.parse(result))));
+}
+
+function parsed<Q extends z.ZodType>(route: Route<Q, z.ZodType>, read: Effect.Effect<unknown, DomainError>) {
+	return read.pipe(
+		Effect.flatMap(raw => decodeRequest(route.request, raw).pipe(Effect.map(input => ({ raw, input })))),
+	);
 }
 
 export function admin<Q extends z.ZodType, S extends z.ZodType>(
@@ -43,10 +50,12 @@ export function admin<Q extends z.ZodType, S extends z.ZodType>(
 ): Endpoint<Route<Q, S>> {
 	return {
 		route,
-		async run(context, read) {
-			const actor = await administrator(context.request, context.env);
-			return respond(route.response, await handle(parseRequest(route.request, await read()), { ...context, actor }));
-		},
+		run: (context, read) =>
+			Effect.gen(function*() {
+				const actor = yield* administrator(context.request, context.env);
+				const { input } = yield* parsed(route, read);
+				return yield* respond(route.response, handle(input, { ...context, actor }));
+			}),
 	};
 }
 
@@ -54,23 +63,24 @@ const upgrade = 'This action needs a security-key touch; upgrade the beepboop CL
 
 export function elevated<Q extends z.ZodType, S extends z.ZodType>(
 	route: Route<Q, S>,
-	precheck: (input: z.output<Q>, context: AdminContext) => Promise<Effect<Known<z.input<S>>>>,
+	precheck: (input: z.output<Q>, context: AdminContext) => Effect.Effect<Elevated<S>, DomainError>,
 ): Endpoint<Route<Q, S>> {
 	return {
 		route,
-		async run(context, read) {
-			const actor = await administrator(context.request, context.env);
-			const raw = await read();
-			const proof = typeof raw === 'object' && raw !== null && 'proof' in raw ? raw.proof : undefined;
-			if (typeof proof !== 'string') throw forbidden(upgrade);
-			const effect = await precheck(parseRequest(route.request, raw), { ...context, actor });
-			await new Authenticators(context.env).consume(actor, proof);
-			return respond(route.response, await effect());
-		},
+		run: (context, read) =>
+			Effect.gen(function*() {
+				const actor = yield* administrator(context.request, context.env);
+				const { raw, input } = yield* parsed(route, read);
+				const proof = typeof raw === 'object' && raw !== null && 'proof' in raw ? raw.proof : undefined;
+				if (typeof proof !== 'string') return yield* forbidden(upgrade);
+				const { commit } = yield* precheck(input, { ...context, actor });
+				yield* new Authenticators(context.env).consume(actor, proof);
+				return yield* respond(route.response, commit);
+			}),
 	};
 }
 
-async function identify(context: Context): Promise<WorkflowIdentity> {
+function identify(context: Context): Effect.Effect<WorkflowIdentity, DomainError> {
 	return workflowIdentity(context.request, context.env.APPLICATION_ORIGIN, Number(context.env.OWNER_ID));
 }
 
@@ -80,10 +90,12 @@ export function workflowToken<Q extends z.ZodType, S extends z.ZodType>(
 ): Endpoint<Route<Q, S>> {
 	return {
 		route,
-		async run(context, read) {
-			const identity = await identify(context);
-			return respond(route.response, await handle(parseRequest(route.request, await read()), { ...context, identity }));
-		},
+		run: (context, read) =>
+			Effect.gen(function*() {
+				const identity = yield* identify(context);
+				const { input } = yield* parsed(route, read);
+				return yield* respond(route.response, handle(input, { ...context, identity }));
+			}),
 	};
 }
 
@@ -93,16 +105,15 @@ export function workflow<Q extends z.ZodType, S extends z.ZodType>(
 ): Endpoint<Route<Q, S>> {
 	return {
 		route,
-		async run(context, read) {
-			const identity = await identify(context);
-			const enrollment = await context.service.store.repository(identity.repositoryId);
-			if (!enrollment || readiness(enrollment).kind === 'suspended') {
-				throw forbidden('Repository is not enrolled or has been suspended');
-			}
-			return respond(
-				route.response,
-				await handle(parseRequest(route.request, await read()), { ...context, identity, enrollment }),
-			);
-		},
+		run: (context, read) =>
+			Effect.gen(function*() {
+				const identity = yield* identify(context);
+				const enrollment = yield* context.service.store.repository(identity.repositoryId);
+				if (!enrollment || readiness(enrollment).kind === 'suspended') {
+					return yield* forbidden('Repository is not enrolled or has been suspended');
+				}
+				const { input } = yield* parsed(route, read);
+				return yield* respond(route.response, handle(input, { ...context, identity, enrollment }));
+			}),
 	};
 }

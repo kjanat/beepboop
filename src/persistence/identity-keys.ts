@@ -1,21 +1,31 @@
+import type { Effect } from 'effect';
 import type { ReleaseSetPlan } from '@/automation/planning';
 import type { Execution, ReleasePlan, RepositoryRecord } from '@/automation/types';
+import type { DomainError } from '@/contract/errors';
 import { sha256Hex } from '@/contract/ids';
+import { fromPromise } from '@/failure';
 import { encodeConfigurationV1 } from '@/persistence/codecs/configuration';
 
-export function executionId(repositoryId: number, stream: string, operation: string, eventId: string): Promise<string> {
-	return sha256Hex(JSON.stringify([repositoryId, stream, operation, eventId]));
+export function executionId(
+	repositoryId: number,
+	stream: string,
+	operation: string,
+	eventId: string,
+): Effect.Effect<string, DomainError> {
+	return fromPromise(() => sha256Hex(JSON.stringify([repositoryId, stream, operation, eventId])));
 }
 
 export function planIdentity(
 	plan: ReleasePlan | ReleaseSetPlan,
 	provenance?: Pick<RepositoryRecord, 'configuration' | 'presetShas'>,
-): Promise<string> {
-	return sha256Hex(JSON.stringify({
-		plan,
-		configuration: provenance?.configuration && encodeConfigurationV1(provenance.configuration),
-		presetShas: provenance?.presetShas,
-	}));
+): Effect.Effect<string, DomainError> {
+	return fromPromise(() =>
+		sha256Hex(JSON.stringify({
+			plan,
+			configuration: provenance?.configuration && encodeConfigurationV1(provenance.configuration),
+			presetShas: provenance?.presetShas,
+		}))
+	);
 }
 
 export function releaseEventId(

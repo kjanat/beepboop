@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { parseRetryAfter } from '../../src/domain/http-date.ts';
-import { array, record, text } from '../../src/model.ts';
+import { parseRetryAfter } from '@/domain/http-date.ts';
+import { array, record, text } from '@/model.ts';
 
 export const modes = [
 	'begin',

@@ -1,3 +1,4 @@
+import { Effect } from 'effect';
 import { publishable } from '@/automation/package-publication';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
@@ -5,7 +6,7 @@ import { routes } from '@/contract/routes';
 import { packageLabel } from '@/domain/package-label';
 import { oneOf } from '@/model';
 import { api } from '@/ui/browser/api';
-import { feedbackFor, find, show } from '@/ui/browser/dom';
+import { feedbackFor, find, Refused, refuse, show } from '@/ui/browser/dom';
 
 const sessions = new WeakMap<
 	HTMLFormElement,
@@ -269,51 +270,58 @@ function review(form: HTMLFormElement, plan: SetupPlan) {
 function takeOverAllowed(plan: SetupPlan): boolean {
 	return plan.branchConflict && plan.blockers.length === 1 && plan.edits.length > 0;
 }
-export async function setup(form: HTMLFormElement, action: string) {
-	const repository = form.dataset.repository;
-	if (!repository) throw new Error('Repository missing');
-	if (!sessions.has(form)) {
-		const plan = parseSetupPlan(await api(routes.setupPreview, { repository }));
-		editor(form, plan);
-		review(form, plan);
-		const apply = find(form, 'button[value="apply"]', HTMLButtonElement);
-		if (apply) apply.disabled = true;
-		return;
-	}
-	const session = sessions.get(form);
-	if (!session) return;
-	const choices = session.choices(), identity = JSON.stringify(choices);
-	if (action !== 'apply' && action !== 'takeover') {
-		delete session.reviewed;
-		const plan = parseSetupPlan(await api(routes.setupPreview, { repository, choices }));
-		session.plan = plan;
-		if (!plan.blockers.length) session.reviewed = identity;
-		if (takeOverAllowed(plan)) session.takeOver = identity;
-		review(form, plan);
-		return;
-	}
-	const takingOver = action === 'takeover';
-	if ((takingOver ? session.takeOver : session.reviewed) !== identity) {
-		throw new Error('Preview these choices again before applying.');
-	}
-	const { planId, sourceSha, setupHead } = session.plan;
-	const result = await api(routes.setupApply, {
-		repository,
-		choices,
-		planId,
-		sourceSha,
-		setupHead,
-		...(takingOver ? { takeOver: true } : {}),
+function parsePlan(value: unknown): Effect.Effect<SetupPlan, Refused> {
+	return Effect.try({
+		try: () => parseSetupPlan(value),
+		catch: error => new Refused({ message: error instanceof Error ? error.message : String(error) }),
 	});
-	delete session.reviewed;
-	delete session.takeOver;
-	const output = form.querySelector('.setup-result');
-	if (output) {
-		const link = element('a', 'Review setup pull request');
-		link.href = result.url;
-		output.replaceChildren(link);
-	}
-	show('Setup PR ready for review. Merge it yourself, then refresh inspection.', form);
+}
+export function setup(form: HTMLFormElement, action: string) {
+	return Effect.gen(function*() {
+		const repository = form.dataset.repository;
+		if (!repository) return yield* refuse('Repository missing');
+		const session = sessions.get(form);
+		if (!session) {
+			const plan = yield* parsePlan(yield* api(routes.setupPreview, { repository }));
+			editor(form, plan);
+			review(form, plan);
+			const apply = find(form, 'button[value="apply"]', HTMLButtonElement);
+			if (apply) apply.disabled = true;
+			return;
+		}
+		const choices = session.choices(), identity = JSON.stringify(choices);
+		if (action !== 'apply' && action !== 'takeover') {
+			delete session.reviewed;
+			const plan = yield* parsePlan(yield* api(routes.setupPreview, { repository, choices }));
+			session.plan = plan;
+			if (!plan.blockers.length) session.reviewed = identity;
+			if (takeOverAllowed(plan)) session.takeOver = identity;
+			review(form, plan);
+			return;
+		}
+		const takingOver = action === 'takeover';
+		if ((takingOver ? session.takeOver : session.reviewed) !== identity) {
+			return yield* refuse('Preview these choices again before applying.');
+		}
+		const { planId, sourceSha, setupHead } = session.plan;
+		const result = yield* api(routes.setupApply, {
+			repository,
+			choices,
+			planId,
+			sourceSha,
+			setupHead,
+			...(takingOver ? { takeOver: true } : {}),
+		});
+		delete session.reviewed;
+		delete session.takeOver;
+		const output = form.querySelector('.setup-result');
+		if (output) {
+			const link = element('a', 'Review setup pull request');
+			link.href = result.url;
+			output.replaceChildren(link);
+		}
+		show('Setup PR ready for review. Merge it yourself, then refresh inspection.', form);
+	});
 }
 
 export function canApplySetup(form: HTMLFormElement): boolean {

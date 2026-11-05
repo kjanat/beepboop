@@ -1,3 +1,4 @@
+import { Data, Effect } from 'effect';
 import type { z } from 'zod';
 import { type ApiError, errorEnvelope } from '@/contract/errors';
 import type { Route } from '@/contract/routes';
@@ -7,26 +8,46 @@ export interface Outgoing {
 	path: string;
 	body: string | undefined;
 }
-export type Transport = (request: Outgoing) => Promise<Response>;
 
-export class ApiFailure extends Error {
-	constructor(readonly status: number, readonly problem: ApiError | undefined, message: string) {
-		super(message);
-		this.name = 'ApiFailure';
-	}
+export class ApiFailure extends Data.TaggedError('ApiFailure')<{
+	readonly status: number;
+	readonly problem: ApiError | undefined;
+	readonly message: string;
+}> {}
+
+export class Unreachable extends Data.TaggedError('Unreachable')<{
+	readonly message: string;
+	readonly cause: unknown;
+}> {}
+
+export type Transport = (request: Outgoing) => Effect.Effect<Response, Unreachable>;
+
+export function send(run: () => Promise<Response>): Effect.Effect<Response, Unreachable> {
+	return Effect.tryPromise({
+		try: run,
+		catch: cause => new Unreachable({ message: cause instanceof Error ? cause.message : String(cause), cause }),
+	});
 }
 
 function json(response: Response): boolean {
 	return (response.headers.get('content-type') ?? '').split(';')[0]?.trim() === 'application/json';
 }
 
-export async function failureOf(response: Response): Promise<ApiFailure> {
-	const fallback = `Beepboop request failed (${response.status})`;
-	if (!json(response)) return new ApiFailure(response.status, undefined, fallback);
-	const parsed = errorEnvelope.safeParse(await response.json().catch(() => undefined));
-	return parsed.success
-		? new ApiFailure(response.status, parsed.data.problem, parsed.data.error)
-		: new ApiFailure(response.status, undefined, fallback);
+export function failureOf(response: Response): Effect.Effect<ApiFailure> {
+	const fallback = new ApiFailure({
+		status: response.status,
+		problem: undefined,
+		message: `Beepboop request failed (${response.status})`,
+	});
+	if (!json(response)) return Effect.succeed(fallback);
+	return Effect.promise((): Promise<unknown> => response.json().catch(() => undefined)).pipe(
+		Effect.map(body => {
+			const parsed = errorEnvelope.safeParse(body);
+			return parsed.success
+				? new ApiFailure({ status: response.status, problem: parsed.data.problem, message: parsed.data.error })
+				: fallback;
+		}),
+	);
 }
 
 function query(input: unknown): string {
@@ -46,13 +67,22 @@ export function outgoing<Q extends z.ZodType, S extends z.ZodType>(route: Route<
 	return { method: route.method, path: route.path, body: JSON.stringify(input) };
 }
 
-export async function call<Q extends z.ZodType, S extends z.ZodType>(
+export function call<Q extends z.ZodType, S extends z.ZodType>(
 	route: Route<Q, S>,
 	input: z.input<Q>,
 	transport: Transport,
-): Promise<z.output<S>> {
-	const response = await transport(outgoing(route, input));
-	if (!response.ok) throw await failureOf(response);
-	if (!json(response)) throw new ApiFailure(response.status, undefined, 'Beepboop answered without JSON');
-	return route.response.parse(await response.json());
+): Effect.Effect<z.output<S>, ApiFailure | Unreachable> {
+	return Effect.gen(function*() {
+		const response = yield* transport(outgoing(route, input));
+		if (!response.ok) return yield* yield* failureOf(response);
+		if (!json(response)) {
+			return yield* new ApiFailure({
+				status: response.status,
+				problem: undefined,
+				message: 'Beepboop answered without JSON',
+			});
+		}
+		const body = yield* Effect.promise((): Promise<unknown> => response.json());
+		return route.response.parse(body);
+	});
 }

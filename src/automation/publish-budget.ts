@@ -1,23 +1,33 @@
 import { DurableObject } from 'cloudflare:workers';
+import { Effect } from 'effect';
 import { z } from 'zod';
 import { deferSlot, reserveSlot } from '@/automation/publish-pace';
 import type { PublishKind } from '@/automation/types';
+import type { DomainError } from '@/contract/errors';
+import { fromPromise, fromSync } from '@/failure';
 
 const arrival = z.number().optional();
 
 export class PublishBudget extends DurableObject<unknown> {
-	private async theoretical(kind: PublishKind): Promise<number> {
-		return arrival.parse(await this.ctx.storage.get(`arrival:${kind}`)) ?? 0;
+	private theoretical(kind: PublishKind): Effect.Effect<number, DomainError> {
+		return fromPromise(() => this.ctx.storage.get(`arrival:${kind}`)).pipe(
+			Effect.flatMap(value => fromSync(() => arrival.parse(value) ?? 0)),
+		);
 	}
-	async reserve(kind: PublishKind): Promise<number> {
-		const slot = reserveSlot(await this.theoretical(kind), Date.now(), kind);
-		await this.ctx.storage.put(`arrival:${kind}`, slot.theoretical);
-		return slot.allowedAt;
+	reserve(kind: PublishKind): Promise<number> {
+		return Effect.runPromise(Effect.gen({ self: this }, function*() {
+			const slot = reserveSlot(yield* this.theoretical(kind), Date.now(), kind);
+			yield* fromPromise(() => this.ctx.storage.put(`arrival:${kind}`, slot.theoretical));
+			return slot.allowedAt;
+		}));
 	}
-	async defer(until: number): Promise<void> {
-		await this.ctx.storage.put({
-			'arrival:new': deferSlot(await this.theoretical('new'), until, 'new'),
-			'arrival:update': deferSlot(await this.theoretical('update'), until, 'update'),
-		});
+	defer(until: number): Promise<void> {
+		return Effect.runPromise(Effect.gen({ self: this }, function*() {
+			const entries = {
+				'arrival:new': deferSlot(yield* this.theoretical('new'), until, 'new'),
+				'arrival:update': deferSlot(yield* this.theoretical('update'), until, 'update'),
+			};
+			yield* fromPromise(() => this.ctx.storage.put(entries));
+		}));
 	}
 }

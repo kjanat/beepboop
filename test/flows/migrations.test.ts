@@ -1,7 +1,8 @@
 import { expect, test } from 'bun:test';
+import { Effect } from 'effect';
 import { AuditStore } from '@/persistence/d1/audit';
 import { SessionStore } from '@/persistence/d1/sessions';
-import { TestD1 } from '../support/d1.ts';
+import { TestD1 } from '@root/test/support/d1.ts';
 
 const now = Date.now();
 const later = now + 600_000;
@@ -102,9 +103,9 @@ test('the deployed Worker keeps writing after every migration, and this version 
 	}
 
 	const sessions = new SessionStore(db);
-	expect(await sessions.take('flow-1')).toBe('{}');
-	expect(await sessions.take('cli-approval:1')).toBe('{}');
-	expect(await new AuditStore(db).recent()).toEqual([
+	expect(await Effect.runPromise(sessions.take('flow-1'))).toBe('{}');
+	expect(await Effect.runPromise(sessions.take('cli-approval:1'))).toBe('{}');
+	expect(await Effect.runPromise(new AuditStore(db).recent())).toEqual([
 		{ id: 'audit-1', actor: 'admin', action: 'release.prepare', target: 'execution-1', createdAt: now },
 	]);
 });

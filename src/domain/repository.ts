@@ -1,6 +1,7 @@
+import { Effect } from 'effect';
 import type { Configuration, RepositoryRecord } from '@/automation/types';
 import { blocking, type Diagnostic } from '@/contract/diagnostics';
-import { DomainError, precondition } from '@/contract/errors';
+import { type DomainError, domainError, precondition } from '@/contract/errors';
 
 export type Access = { kind: 'active' } | { kind: 'suspended'; since: number };
 
@@ -32,16 +33,16 @@ export function readiness(repository: RepositoryRecord): Readiness {
 	return { kind: 'invalid', diagnostics: problems };
 }
 
-export function requireReady(repository: RepositoryRecord): ReadyRepository {
+export function requireReady(repository: RepositoryRecord): Effect.Effect<ReadyRepository, DomainError> {
 	const state = readiness(repository);
 	switch (state.kind) {
 		case 'ready':
-			return state.repository;
+			return Effect.succeed(state.repository);
 		case 'suspended':
-			throw precondition(`GitHub App access to ${repository.name} is suspended or removed`);
+			return Effect.fail(precondition(`GitHub App access to ${repository.name} is suspended or removed`));
 		case 'unconfigured':
-			throw precondition('Repository not configured');
+			return Effect.fail(precondition('Repository not configured'));
 		case 'invalid':
-			throw new DomainError({ code: 'precondition', diagnostics: state.diagnostics });
+			return Effect.fail(domainError({ code: 'precondition', diagnostics: state.diagnostics }));
 	}
 }

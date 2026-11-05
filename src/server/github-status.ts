@@ -1,4 +1,7 @@
+import { Effect, Option, Semaphore } from 'effect';
 import { checkGitHub } from 'github-up/browser';
+import type { DomainError } from '@/contract/errors';
+import { fromPromise } from '@/failure';
 
 export interface GitHubOutage {
 	description: string;
@@ -12,32 +15,34 @@ const page = 'https://github-up.kjanat.dev';
 const source = 'https://www.githubstatus.com';
 
 let latest: { at: number; outage: GitHubOutage | undefined } | undefined;
-let pending: Promise<void> | undefined;
+const refreshing = Semaphore.makeUnsafe(1);
 
 export function knownOutage(): GitHubOutage | undefined {
 	return latest?.outage;
 }
 
-export async function githubOutage(): Promise<GitHubOutage | undefined> {
-	await refreshOutage();
-	return knownOutage();
-}
+export const refreshOutage: Effect.Effect<void, DomainError> = Semaphore.withPermit(
+	refreshing,
+	Effect.suspend(() =>
+		latest && Date.now() - latest.at < 60_000
+			? Effect.void
+			: check.pipe(Effect.flatMap(outage =>
+				Effect.sync(() => {
+					latest = { at: Date.now(), outage };
+				})
+			))
+	),
+);
 
-export function refreshOutage(): Promise<void> {
-	if (latest && Date.now() - latest.at < 60_000) return Promise.resolve();
-	pending ??= check().then(outage => {
-		latest = { at: Date.now(), outage };
-	}).finally(() => {
-		pending = undefined;
-	});
-	return pending;
-}
+export const githubOutage: Effect.Effect<GitHubOutage | undefined, DomainError> = refreshOutage.pipe(
+	Effect.map(knownOutage),
+);
 
-async function check(): Promise<GitHubOutage | undefined> {
-	const result = await Promise.race([
-		checkGitHub(),
-		new Promise<undefined>(resolve => setTimeout(resolve, 3000)),
-	]);
+const check: Effect.Effect<GitHubOutage | undefined, DomainError> = Effect.gen(function*() {
+	const result = yield* fromPromise(() => checkGitHub()).pipe(
+		Effect.timeoutOption('3 seconds'),
+		Effect.map(Option.getOrUndefined),
+	);
 	if (result?.kind !== 'ok') return undefined;
 	const { summary } = result;
 	const components = summary.components
@@ -50,7 +55,7 @@ async function check(): Promise<GitHubOutage | undefined> {
 	}));
 	if (!components.length && !incidents.length) return undefined;
 	return { description: summary.status.description, incidents, components, page, source };
-}
+});
 
 export function outageLine(outage: GitHubOutage): string {
 	const parts = [

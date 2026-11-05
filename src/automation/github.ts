@@ -1,4 +1,4 @@
-import { Data, Effect, Schedule } from 'effect';
+import { Context, Data, Effect, Layer, Schedule } from 'effect';
 import { importPKCS8, SignJWT } from 'jose';
 import type { Fetcher, VerificationContext } from '@/automation/managers/registry';
 import { parsePresetReference } from '@/automation/preset';
@@ -7,9 +7,8 @@ import { buildSnapshot } from '@/automation/snapshot';
 import type { BotIdentity } from '@/automation/token';
 import type { Edit, Snapshot } from '@/automation/types';
 import { legacyDiagnostic } from '@/contract/diagnostics';
-import { upstream } from '@/contract/errors';
-import { Refused, Upstream } from '@/effect/errors';
-import { run } from '@/effect/runtime';
+import { type DomainError, domainError, invalid, precondition, upstream } from '@/contract/errors';
+import { fromPromise, fromSync } from '@/failure';
 import { array, integer, record, sha, text } from '@/model';
 
 type Permission = Record<string, 'read' | 'write'>;
@@ -36,10 +35,7 @@ export const gitHubRequest = Effect.fn('GitHub.request')(function*(
 	body?: unknown,
 ) {
 	if (!path.startsWith('/')) {
-		return yield* new Refused({
-			problem: { code: 'invalid', issues: [{ path: [], message: 'Invalid API path' }] },
-			message: 'Invalid API path',
-		});
+		return yield* invalid('Invalid API path');
 	}
 	const route = `${method} ${path.split('?')[0]}`;
 	const reach = Effect.tryPromise({
@@ -58,10 +54,7 @@ export const gitHubRequest = Effect.fn('GitHub.request')(function*(
 				...(body === undefined ? {} : { body: JSON.stringify(body) }),
 			}),
 		catch: error =>
-			new Upstream({
-				service: 'github',
-				message: `GitHub unreachable on ${route}: ${error instanceof Error ? error.message : String(error)}`,
-			}),
+			upstream('github', `GitHub unreachable on ${route}: ${error instanceof Error ? error.message : String(error)}`),
 	});
 	const failed = (response: Response) =>
 		Effect.promise(() => response.text().then(detailOf, () => '')).pipe(
@@ -86,13 +79,13 @@ export const gitHubRequest = Effect.fn('GitHub.request')(function*(
 	if (!response.ok) {
 		const message = yield* failed(response);
 		return yield* response.status >= 500
-			? new Upstream({ service: 'github', message })
-			: new Refused({ problem: { code: 'precondition', diagnostics: [legacyDiagnostic(message)] }, message });
+			? upstream('github', message)
+			: domainError({ code: 'precondition', diagnostics: [legacyDiagnostic(message)] }, message);
 	}
 	if (response.status === 204) return null;
 	return yield* Effect.tryPromise({
 		try: (): Promise<unknown> => response.json(),
-		catch: () => new Upstream({ service: 'github', message: `GitHub sent invalid JSON on ${route}` }),
+		catch: () => upstream('github', `GitHub sent invalid JSON on ${route}`),
 	});
 });
 
@@ -102,645 +95,776 @@ export class RepositoryGateway {
 		private ownerId: number,
 		private transport: Fetcher = fetch,
 	) {}
-	call(path: string, token: string, method = 'GET', body?: unknown): Promise<unknown> {
-		return run(gitHubRequest(this.transport, path, token, method, body));
+	call(path: string, token: string, method = 'GET', body?: unknown): Effect.Effect<unknown, DomainError> {
+		return gitHubRequest(this.transport, path, token, method, body);
 	}
-	async copyReleaseAsset(
+	copyReleaseAsset(
 		repository: string,
 		asset: { id: number; name: string; contentType: string },
 		releaseId: number,
 		token: string,
-	): Promise<void> {
-		const headers = {
-			Authorization: `Bearer ${token}`,
-			'X-GitHub-Api-Version': '2026-03-10',
-			'User-Agent': 'beepboop',
-		};
-		const download = await this.transport(`https://api.github.com/repos/${repository}/releases/assets/${asset.id}`, {
-			headers: { ...headers, Accept: 'application/octet-stream' },
-			signal: AbortSignal.timeout(60_000),
+	): Effect.Effect<void, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const headers = {
+				Authorization: `Bearer ${token}`,
+				'X-GitHub-Api-Version': '2026-03-10',
+				'User-Agent': 'beepboop',
+			};
+			const download = yield* fromPromise(() =>
+				self.transport(`https://api.github.com/repos/${repository}/releases/assets/${asset.id}`, {
+					headers: { ...headers, Accept: 'application/octet-stream' },
+					signal: AbortSignal.timeout(60_000),
+				})
+			);
+			if (!download.ok) {
+				const message = `GitHub HTTP ${download.status} downloading release asset ${asset.name}`;
+				return yield* (download.status >= 500 ? upstream('github', message) : precondition(message));
+			}
+			const content = yield* fromPromise(() => download.arrayBuffer());
+			const upload = yield* fromPromise(() =>
+				self.transport(
+					`https://uploads.github.com/repos/${repository}/releases/${releaseId}/assets?name=${
+						encodeURIComponent(asset.name)
+					}`,
+					{
+						method: 'POST',
+						headers: { ...headers, Accept: 'application/vnd.github+json', 'Content-Type': asset.contentType },
+						body: content,
+						signal: AbortSignal.timeout(60_000),
+					},
+				)
+			);
+			if (!upload.ok) {
+				const message = `GitHub HTTP ${upload.status} uploading release asset ${asset.name}`;
+				return yield* (upload.status >= 500 ? upstream('github', message) : precondition(message));
+			}
 		});
-		if (!download.ok) {
-			const message = `GitHub HTTP ${download.status} downloading release asset ${asset.name}`;
-			throw download.status >= 500 ? upstream('github', message) : new Error(message);
-		}
-		const upload = await this.transport(
-			`https://uploads.github.com/repos/${repository}/releases/${releaseId}/assets?name=${
-				encodeURIComponent(asset.name)
-			}`,
-			{
-				method: 'POST',
-				headers: { ...headers, Accept: 'application/vnd.github+json', 'Content-Type': asset.contentType },
-				body: await download.arrayBuffer(),
-				signal: AbortSignal.timeout(60_000),
-			},
-		);
-		if (!upload.ok) {
-			const message = `GitHub HTTP ${upload.status} uploading release asset ${asset.name}`;
-			throw upload.status >= 500 ? upstream('github', message) : new Error(message);
-		}
 	}
-	async token(
+	token(
 		name: string,
 		id: number | undefined,
 		permissions: Permission = { contents: 'read', actions: 'read' },
-	): Promise<string> {
-		if (!/^[\w.-]+\/[\w.-]+$/.test(name)) throw new Error('Invalid repository');
-		const jwt = await this.appToken();
-		const installation = record(await this.call(`/repos/${name}/installation`, jwt));
-		if (integer(record(installation.account).id) !== this.ownerId) {
-			throw new Error('Owner mismatch');
-		}
-		const response = record(
-			await this.call(`/app/installations/${integer(installation.id)}/access_tokens`, jwt, 'POST', {
-				...(id === undefined ? { repositories: [name.split('/')[1]] } : { repository_ids: [id] }),
-				permissions,
-			}),
-		);
-		const token = text(response.token),
-			repository = record(await this.call(`/repos/${name}`, token));
-		if (
-			(id !== undefined && repository.id !== id)
-			|| repository.full_name !== name
-			|| record(repository.owner).id !== this.ownerId
-		) {
-			throw new Error('Repository mismatch');
-		}
-		return token;
+	): Effect.Effect<string, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			if (!/^[\w.-]+\/[\w.-]+$/.test(name)) return yield* precondition('Invalid repository');
+			const jwt = yield* self.appToken();
+			const installation = record(yield* self.call(`/repos/${name}/installation`, jwt));
+			if (integer(record(installation.account).id) !== self.ownerId) {
+				return yield* precondition('Owner mismatch');
+			}
+			const response = record(
+				yield* self.call(`/app/installations/${integer(installation.id)}/access_tokens`, jwt, 'POST', {
+					...(id === undefined ? { repositories: [name.split('/')[1]] } : { repository_ids: [id] }),
+					permissions,
+				}),
+			);
+			const token = text(response.token),
+				repository = record(yield* self.call(`/repos/${name}`, token));
+			if (
+				(id !== undefined && repository.id !== id)
+				|| repository.full_name !== name
+				|| record(repository.owner).id !== self.ownerId
+			) {
+				return yield* precondition('Repository mismatch');
+			}
+			return token;
+		});
 	}
 	/** JWT for the configured App, never the workflow's GITHUB_TOKEN. */
-	private async appToken(): Promise<string> {
-		const key = await importPKCS8(this.credentials.GITHUB_APP_PRIVATE_KEY, 'RS256');
-		return new SignJWT({})
-			.setProtectedHeader({ alg: 'RS256' })
-			.setIssuer(this.credentials.GITHUB_APP_ID)
-			.setIssuedAt(Math.floor(Date.now() / 1000) - 60)
-			.setExpirationTime('9m')
-			.sign(key);
+	private appToken(): Effect.Effect<string, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const key = yield* fromPromise(() => importPKCS8(self.credentials.GITHUB_APP_PRIVATE_KEY, 'RS256'));
+			return yield* fromPromise(() =>
+				new SignJWT({})
+					.setProtectedHeader({ alg: 'RS256' })
+					.setIssuer(self.credentials.GITHUB_APP_ID)
+					.setIssuedAt(Math.floor(Date.now() / 1000) - 60)
+					.setExpirationTime('9m')
+					.sign(key)
+			);
+		});
 	}
-	async botIdentity(): Promise<BotIdentity> {
+	readonly botIdentity: Effect.Effect<BotIdentity, DomainError> = Effect.gen({ self: this }, function*() {
 		const cached = botIdentities.get(this.credentials.GITHUB_APP_ID);
 		if (cached) return cached;
-		const jwt = await this.appToken();
-		const app = record(await this.call('/app', jwt));
+		const jwt = yield* this.appToken();
+		const app = record(yield* this.call('/app', jwt));
 		const slug = text(app.slug);
-		if (!/^[a-z0-9-]+$/.test(slug)) throw new Error('Invalid App slug');
+		if (!/^[a-z0-9-]+$/.test(slug)) return yield* precondition('Invalid App slug');
 		const login = `${slug}[bot]`;
-		const installation = await this.ownerInstallation(jwt);
+		const installation = yield* this.ownerInstallation(jwt);
 		const token = text(
 			record(
-				await this.call(`/app/installations/${integer(installation.id)}/access_tokens`, jwt, 'POST', {
+				yield* this.call(`/app/installations/${integer(installation.id)}/access_tokens`, jwt, 'POST', {
 					permissions: { metadata: 'read' },
 				}),
 			).token,
 		);
-		const user = record(await this.call(`/users/${encodeURIComponent(login)}`, token));
-		if (user.login !== login || user.type !== 'Bot') throw new Error('App bot identity mismatch');
+		const user = record(yield* this.call(`/users/${encodeURIComponent(login)}`, token));
+		if (user.login !== login || user.type !== 'Bot') return yield* precondition('App bot identity mismatch');
 		const id = integer(user.id);
 		const identity = { login, id, email: `${id}+${login}@users.noreply.github.com` };
 		botIdentities.set(this.credentials.GITHUB_APP_ID, identity);
 		return identity;
+	});
+	defaultRevision(name: string, id: number): Effect.Effect<{ ref: string; sha: string }, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const token = yield* self.token(name, id, { contents: 'read' });
+			const repository = record(yield* self.call(`/repos/${name}`, token));
+			const branch = text(repository.default_branch);
+			const commit = record(yield* self.call(`/repos/${name}/commits/${encodeURIComponent(branch)}`, token));
+			return { ref: `refs/heads/${branch}`, sha: sha(commit.sha) };
+		});
 	}
-	async defaultRevision(name: string, id: number): Promise<{ ref: string; sha: string }> {
-		const token = await this.token(name, id, { contents: 'read' });
-		const repository = record(await this.call(`/repos/${name}`, token));
-		const branch = text(repository.default_branch);
-		const commit = record(await this.call(`/repos/${name}/commits/${encodeURIComponent(branch)}`, token));
-		return { ref: `refs/heads/${branch}`, sha: sha(commit.sha) };
+	workflowRun(name: string, id: number, runId: number): Effect.Effect<{ title: string; path: string }, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const token = yield* self.token(name, id, { actions: 'read' });
+			const run = record(yield* self.call(`/repos/${name}/actions/runs/${runId}`, token));
+			if (record(run.repository).id !== id) return yield* precondition('Run identity changed');
+			return { title: text(run.display_title), path: text(run.path) };
+		});
 	}
-	async workflowRun(name: string, id: number, runId: number): Promise<{ title: string; path: string }> {
-		const token = await this.token(name, id, { actions: 'read' });
-		const run = record(await this.call(`/repos/${name}/actions/runs/${runId}`, token));
-		if (record(run.repository).id !== id) throw new Error('Run identity changed');
-		return { title: text(run.display_title), path: text(run.path) };
-	}
-	async tagRefs(name: string, id: number): Promise<RefState[]> {
-		const token = await this.token(name, id, { contents: 'read' });
-		const result: RefState[] = [];
-		for (let page = 1; page <= 100; page++) {
-			const rows = array(await this.call(`/repos/${name}/tags?per_page=100&page=${page}`, token)).map(record);
-			for (const row of rows) {
-				const tag = text(row.name);
-				const reference = record(await this.call(`/repos/${name}/git/ref/tags/${encodeURIComponent(tag)}`, token));
-				const oid = sha(record(reference.object).sha);
-				let target = record(reference.object);
-				for (let depth = 0; target.type === 'tag' && depth < 8; depth++) {
-					target = record(record(await this.call(`/repos/${name}/git/tags/${sha(target.sha)}`, token)).object);
+	tagRefs(name: string, id: number): Effect.Effect<RefState[], DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const token = yield* self.token(name, id, { contents: 'read' });
+			const result: RefState[] = [];
+			for (let page = 1; page <= 100; page++) {
+				const rows = array(yield* self.call(`/repos/${name}/tags?per_page=100&page=${page}`, token)).map(record);
+				for (const row of rows) {
+					const tag = text(row.name);
+					const reference = record(yield* self.call(`/repos/${name}/git/ref/tags/${encodeURIComponent(tag)}`, token));
+					const oid = sha(record(reference.object).sha);
+					let target = record(reference.object);
+					for (let depth = 0; target.type === 'tag' && depth < 8; depth++) {
+						target = record(record(yield* self.call(`/repos/${name}/git/tags/${sha(target.sha)}`, token)).object);
+					}
+					if (target.type !== 'commit') return yield* precondition('Tag does not resolve to a commit');
+					result.push({ name: tag, oid, commit: sha(target.sha) });
 				}
-				if (target.type !== 'commit') throw new Error('Tag does not resolve to a commit');
-				result.push({ name: tag, oid, commit: sha(target.sha) });
+				if (rows.length < 100) return result;
 			}
-			if (rows.length < 100) return result;
-		}
-		throw new Error('Tag discovery limit exceeded');
+			return yield* precondition('Tag discovery limit exceeded');
+		});
 	}
 	verification(name: string, id: number): VerificationContext {
-		let token: Promise<string> | undefined;
-		const installation = () => {
-			token ??= this.token(name, id);
-			return token;
+		let token: string | undefined;
+		const installation = Effect.suspend(() =>
+			token === undefined
+				? this.token(name, id).pipe(Effect.tap(issued =>
+					Effect.sync(() => {
+						token = issued;
+					})
+				))
+				: Effect.succeed(token)
+		);
+		return {
+			repository: name,
+			github: path => installation.pipe(Effect.flatMap(issued => this.call(path, issued))),
 		};
-		return { repository: name, github: async path => this.call(path, await installation()) };
 	}
-	async installation(name: string): Promise<'active' | 'suspended' | 'uninstalled'> {
-		if (!/^[\w.-]+\/[\w.-]+$/.test(name)) throw new Error('Invalid repository');
-		const found = await this.call(`/repos/${name}/installation`, await this.appToken());
-		if (found === null) return 'uninstalled';
-		const installation = record(found);
-		if (integer(record(installation.account).id) !== this.ownerId) throw new Error('Owner mismatch');
-		return installation.suspended_at ? 'suspended' : 'active';
+	installation(name: string): Effect.Effect<'active' | 'suspended' | 'uninstalled', DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			if (!/^[\w.-]+\/[\w.-]+$/.test(name)) return yield* precondition('Invalid repository');
+			const found = yield* self.call(`/repos/${name}/installation`, yield* self.appToken());
+			if (found === null) return 'uninstalled';
+			const installation = record(found);
+			if (integer(record(installation.account).id) !== self.ownerId) return yield* precondition('Owner mismatch');
+			return installation.suspended_at ? 'suspended' : 'active';
+		});
 	}
-	async identify(name: string): Promise<number> {
-		const token = await this.token(name, undefined);
-		return integer(record(await this.call(`/repos/${name}`, token)).id);
+	identify(name: string): Effect.Effect<number, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const token = yield* self.token(name, undefined);
+			return integer(record(yield* self.call(`/repos/${name}`, token)).id);
+		});
 	}
-	async file(name: string, path: string, ref: string, token: string): Promise<string | null> {
-		const result = await this.call(
-			`/repos/${name}/contents/${path}?ref=${encodeURIComponent(ref)}`,
-			token,
-		);
-		if (result === null) return null;
-		const data = record(result);
-		if (
-			data.encoding !== 'base64'
-			|| typeof data.content !== 'string'
-			|| Number(data.size) > 1_048_576
-		) {
-			throw new Error('Unsupported file');
-		}
-		return new TextDecoder('utf-8', { fatal: true }).decode(
-			Uint8Array.from(atob(data.content.replace(/\s/g, '')), (c) => c.charCodeAt(0)),
-		);
-	}
-	async snapshot(name: string, id: number, revision?: string, extraPaths: string[] = []): Promise<Snapshot> {
-		const token = await this.token(name, id);
-		const repository = record(await this.call(`/repos/${name}`, token));
-		const defaultBranch = text(repository.default_branch);
-		const commit = record(
-			await this.call(
-				`/repos/${name}/commits/${encodeURIComponent(revision ?? defaultBranch)}`,
+	file(name: string, path: string, ref: string, token: string): Effect.Effect<string | null, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const result = yield* self.call(
+				`/repos/${name}/contents/${path}?ref=${encodeURIComponent(ref)}`,
 				token,
-			),
-		);
-		const commitSha = sha(commit.sha);
-		const tree = record(
-			await this.call(`/repos/${name}/git/trees/${commitSha}?recursive=1`, token),
-		);
-		if (tree.truncated) {
-			throw new Error('Repository tree truncated; discovery requires complete input');
-		}
-		return buildSnapshot({
-			repository: { id, name, defaultBranch },
-			sha: commitSha,
-			entries: array(tree.tree).map(record).map(entry => ({
-				path: text(entry.path),
-				type: text(entry.type),
-				mode: text(entry.mode),
-			})),
-			read: path => this.file(name, path, commitSha, token),
-			tags: prefixes => this.tags(name, prefixes, token),
-		}, extraPaths);
+			);
+			if (result === null) return null;
+			const data = record(result);
+			if (
+				data.encoding !== 'base64'
+				|| typeof data.content !== 'string'
+				|| Number(data.size) > 1_048_576
+			) {
+				return yield* precondition('Unsupported file');
+			}
+			return new TextDecoder('utf-8', { fatal: true }).decode(
+				Uint8Array.from(atob(data.content.replace(/\s/g, '')), (c) => c.charCodeAt(0)),
+			);
+		});
 	}
-	private async tags(name: string, prefixes: readonly string[], token: string): Promise<string[]> {
-		const refs = await Promise.all(prefixes.map(async prefix =>
-			array(
-				await this.call(
+	snapshot(
+		name: string,
+		id: number,
+		revision?: string,
+		extraPaths: string[] = [],
+	): Effect.Effect<Snapshot, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const token = yield* self.token(name, id);
+			const repository = record(yield* self.call(`/repos/${name}`, token));
+			const defaultBranch = text(repository.default_branch);
+			const commit = record(
+				yield* self.call(
+					`/repos/${name}/commits/${encodeURIComponent(revision ?? defaultBranch)}`,
+					token,
+				),
+			);
+			const commitSha = sha(commit.sha);
+			const tree = record(
+				yield* self.call(`/repos/${name}/git/trees/${commitSha}?recursive=1`, token),
+			);
+			if (tree.truncated) {
+				return yield* precondition('Repository tree truncated; discovery requires complete input');
+			}
+			const entries = yield* fromSync(() =>
+				array(tree.tree).map(record).map(entry => ({
+					path: text(entry.path),
+					type: text(entry.type),
+					mode: text(entry.mode),
+				}))
+			);
+			return yield* buildSnapshot({
+				repository: { id, name, defaultBranch },
+				sha: commitSha,
+				entries,
+				read: path => self.file(name, path, commitSha, token),
+				tags: prefixes => self.tags(name, prefixes, token),
+			}, extraPaths);
+		});
+	}
+	private tags(name: string, prefixes: readonly string[], token: string): Effect.Effect<string[], DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const refs = yield* Effect.forEach(prefixes, prefix =>
+				self.call(
 					`/repos/${name}/git/matching-refs/tags/${prefix.split('/').map(encodeURIComponent).join('/')}`,
 					token,
-				) ?? [],
-			).map(row => text(record(row).ref).slice('refs/tags/'.length))
-		));
-		return refs.flat();
+				).pipe(Effect.map(rows => array(rows ?? []).map(row => text(record(row).ref).slice('refs/tags/'.length)))), {
+				concurrency: 'unbounded',
+			});
+			return refs.flat();
+		});
 	}
-	async preset(reference: string): Promise<{ value: unknown; sha: string }> {
-		const parsed = parsePresetReference(reference);
-		if (!parsed) throw new Error('Invalid preset');
-		const { repository: name, preset, ref } = parsed;
-		// Public presets need no installation grant; repository configuration cannot redirect credential-bearing requests.
-		const metadata = record(await this.call(`/repos/${name}`, ''));
-		const revision = record(
-			await this.call(
-				`/repos/${name}/commits/${encodeURIComponent(ref ?? text(metadata.default_branch))}`,
-				'',
-			),
-		);
-		const commitSha = sha(revision.sha);
-		const content = await this.file(name, `${preset}.json`, commitSha, '');
-		if (content === null) throw new Error('Preset missing');
-		return { value: JSON.parse(content), sha: commitSha };
+	preset(reference: string): Effect.Effect<{ value: unknown; sha: string }, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const parsed = parsePresetReference(reference);
+			if (!parsed) return yield* precondition('Invalid preset');
+			const { repository: name, preset, ref } = parsed;
+			// Public presets need no installation grant; repository configuration cannot redirect credential-bearing requests.
+			const metadata = record(yield* self.call(`/repos/${name}`, ''));
+			const revision = record(
+				yield* self.call(
+					`/repos/${name}/commits/${encodeURIComponent(ref ?? text(metadata.default_branch))}`,
+					'',
+				),
+			);
+			const commitSha = sha(revision.sha);
+			const content = yield* self.file(name, `${preset}.json`, commitSha, '');
+			if (content === null) return yield* precondition('Preset missing');
+			return { value: JSON.parse(content), sha: commitSha };
+		});
 	}
 	/** Check an already-granted installation permission without changing repository contents. */
-	async canEditWorkflows(name: string, id: number): Promise<boolean> {
-		try {
-			await this.token(name, id, { contents: 'read', workflows: 'write' });
-			return true;
-		} catch (error) {
-			if (error instanceof Error && /^GitHub HTTP (403|422) /.test(error.message)) return false;
-			throw error;
-		}
+	canEditWorkflows(name: string, id: number): Effect.Effect<boolean, DomainError> {
+		return this.token(name, id, { contents: 'read', workflows: 'write' }).pipe(
+			Effect.as(true),
+			Effect.catchIf(error => /^GitHub HTTP (403|422) /.test(error.message), () => Effect.succeed(false)),
+		);
 	}
 	/** Read the proposal head without modifying or creating a branch. */
-	private async ownerInstallation(jwt: string): Promise<Record<string, unknown>> {
-		const installation = array(await this.call('/app/installations?per_page=100', jwt)).map(record)
-			.find(installation => record(installation.account).id === this.ownerId);
-		if (!installation) throw new Error('The GitHub App is not installed on the owner account');
-		return installation;
+	private ownerInstallation(jwt: string): Effect.Effect<Record<string, unknown>, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const installation = array(yield* self.call('/app/installations?per_page=100', jwt)).map(record)
+				.find(installation => record(installation.account).id === self.ownerId);
+			if (!installation) return yield* precondition('The GitHub App is not installed on the owner account');
+			return installation;
+		});
 	}
-	async ownerLogin(): Promise<string> {
-		const cached = ownerLogins.get(this.ownerId);
-		if (cached) return cached;
-		const login = text(record((await this.ownerInstallation(await this.appToken())).account).login);
-		ownerLogins.set(this.ownerId, login);
-		return login;
+	ownerLogin(): Effect.Effect<string, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const cached = ownerLogins.get(self.ownerId);
+			if (cached) return cached;
+			const login = text(record((yield* self.ownerInstallation(yield* self.appToken())).account).login);
+			ownerLogins.set(self.ownerId, login);
+			return login;
+		});
 	}
-	private async generatedComparison(name: string, head: string, token: string) {
-		const base = text(record(await this.call(`/repos/${name}`, token)).default_branch);
-		const comparison = record(await this.call(`/repos/${name}/compare/${encodeURIComponent(base)}...${head}`, token));
-		const commits = array(comparison.commits).map(record);
-		if (!commits.length || commits.length !== Number(comparison.ahead_by) || commits.at(-1)?.sha !== head) {
-			return undefined;
-		}
-		const bot = await this.botIdentity();
-		const generated = commits.every(commit =>
-			record(commit.author).id === bot.id && record(record(commit.commit).verification).verified === true
-		);
-		return generated ? comparison : undefined;
+	private generatedComparison(name: string, head: string, token: string) {
+		const self = this;
+		return Effect.gen(function*() {
+			const base = text(record(yield* self.call(`/repos/${name}`, token)).default_branch);
+			const comparison = record(
+				yield* self.call(`/repos/${name}/compare/${encodeURIComponent(base)}...${head}`, token),
+			);
+			const commits = array(comparison.commits).map(record);
+			if (!commits.length || commits.length !== Number(comparison.ahead_by) || commits.at(-1)?.sha !== head) {
+				return undefined;
+			}
+			const bot = yield* self.botIdentity;
+			const generated = commits.every(commit =>
+				record(commit.author).id === bot.id && record(record(commit.commit).verification).verified === true
+			);
+			return generated ? comparison : undefined;
+		});
 	}
-	async generatedHead(name: string, id: number, head: string): Promise<boolean> {
-		const token = await this.token(name, id, { contents: 'read' });
-		return (await this.generatedComparison(name, head, token)) !== undefined;
+	generatedHead(name: string, id: number, head: string): Effect.Effect<boolean, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const token = yield* self.token(name, id, { contents: 'read' });
+			return (yield* self.generatedComparison(name, head, token)) !== undefined;
+		});
 	}
-	async generatedFiles(name: string, id: number, head: string): Promise<Edit[] | undefined> {
-		const token = await this.token(name, id, { contents: 'read' });
-		const comparison = await this.generatedComparison(name, head, token);
-		if (!comparison) return undefined;
-		const files = array(comparison.files).map(record);
-		if (files.length >= 300) return undefined;
-		const mergeBase = sha(record(comparison.merge_base_commit).sha);
-		return Promise.all(files.map(async file => {
-			const path = text(file.filename);
-			return {
-				path,
-				before: (await this.file(name, path, mergeBase, token)) ?? '',
-				after: (await this.file(name, path, head, token)) ?? '',
-			};
-		}));
+	generatedFiles(name: string, id: number, head: string): Effect.Effect<Edit[] | undefined, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const token = yield* self.token(name, id, { contents: 'read' });
+			const comparison = yield* self.generatedComparison(name, head, token);
+			if (!comparison) return undefined;
+			const files = array(comparison.files).map(record);
+			if (files.length >= 300) return undefined;
+			const mergeBase = sha(record(comparison.merge_base_commit).sha);
+			return yield* Effect.forEach(files, file => {
+				const path = text(file.filename);
+				return Effect.all({
+					path: Effect.succeed(path),
+					before: self.file(name, path, mergeBase, token).pipe(Effect.map(content => content ?? '')),
+					after: self.file(name, path, head, token).pipe(Effect.map(content => content ?? '')),
+				});
+			}, { concurrency: 'unbounded' });
+		});
 	}
-	async setupHead(name: string, id: number): Promise<string | null> {
-		const token = await this.token(name, id);
-		const ref = await this.call(`/repos/${name}/git/ref/heads/automation/onboarding`, token);
-		return ref ? sha(record(record(ref).object).sha) : null;
+	setupHead(name: string, id: number): Effect.Effect<string | null, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const token = yield* self.token(name, id);
+			const ref = yield* self.call(`/repos/${name}/git/ref/heads/automation/onboarding`, token);
+			return ref ? sha(record(record(ref).object).sha) : null;
+		});
 	}
-	async pullRequest(
+	pullRequest(
 		snapshot: Snapshot,
 		branch: string,
 		title: string,
 		body: string,
 		edits: Edit[],
 		expectedHead?: string,
-		checkpoint?: (head: string) => Promise<void>,
+		checkpoint?: (head: string) => Effect.Effect<void, DomainError>,
 		setupEdits?: Edit[],
 		existingPull?: number,
 		takeOver = false,
-	): Promise<{ url: string; head: string }> {
-		const { name, id } = snapshot.repository;
-		const token = await this.token(name, id, {
-			contents: 'write',
-			pull_requests: 'write',
-			...(setupEdits !== undefined || edits.some(edit => edit.path.startsWith('.github/workflows/'))
-				? { workflows: 'write' as const }
-				: {}),
-		});
-		const existing = await this.call(
-			`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`,
-			token,
-		);
-		const base = existing ? sha(record(record(existing).object).sha) : snapshot.sha;
-		if (existing && (!expectedHead || expectedHead !== base)) {
-			throw new Error('Branch changed; preserve user edits and review the conflict');
-		}
-		if (existing && setupEdits && !takeOver) {
-			const comparison = record(await this.call(`/repos/${name}/compare/${snapshot.sha}...${base}`, token));
-			const changed = array(comparison.files).map(record);
-			if (changed.length >= 300 || changed.some(file => !setupEdits.some(edit => edit.path === file.filename))) {
-				throw new Error('Setup branch contains unrelated changes; review it before refreshing');
+	): Effect.Effect<{ url: string; head: string }, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const { name, id } = snapshot.repository;
+			const token = yield* self.token(name, id, {
+				contents: 'write',
+				pull_requests: 'write',
+				...(setupEdits !== undefined || edits.some(edit => edit.path.startsWith('.github/workflows/'))
+					? { workflows: 'write' as const }
+					: {}),
+			});
+			const existing = yield* self.call(
+				`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`,
+				token,
+			);
+			const base = existing ? sha(record(record(existing).object).sha) : snapshot.sha;
+			if (existing && (!expectedHead || expectedHead !== base)) {
+				return yield* precondition('Branch changed; preserve user edits and review the conflict');
 			}
-			for (const edit of setupEdits) {
-				if (await this.file(name, edit.path, base, token) !== edit.after) {
-					throw new Error(`Setup branch was edited: ${edit.path}`);
+			if (existing && setupEdits && !takeOver) {
+				const comparison = record(yield* self.call(`/repos/${name}/compare/${snapshot.sha}...${base}`, token));
+				const changed = array(comparison.files).map(record);
+				if (changed.length >= 300 || changed.some(file => !setupEdits.some(edit => edit.path === file.filename))) {
+					return yield* precondition('Setup branch contains unrelated changes; review it before refreshing');
+				}
+				for (const edit of setupEdits) {
+					if ((yield* self.file(name, edit.path, base, token)) !== edit.after) {
+						return yield* precondition(`Setup branch was edited: ${edit.path}`);
+					}
 				}
 			}
-		}
-		const treeBase = setupEdits ? snapshot.sha : base;
-		const commit = record(await this.call(`/repos/${name}/git/commits/${treeBase}`, token));
-		for (const edit of edits) {
-			const current = await this.file(name, edit.path, treeBase, token);
-			if ((current ?? '') !== edit.before) throw new Error(`File changed: ${edit.path}`);
-			if (
-				edit.path.startsWith('/')
-				|| edit.path.split('/').some((p) => p === '..' || p === '.git')
-			) {
-				throw new Error('Unsafe edit path');
+			const treeBase = setupEdits ? snapshot.sha : base;
+			const commit = record(yield* self.call(`/repos/${name}/git/commits/${treeBase}`, token));
+			for (const edit of edits) {
+				const current = yield* self.file(name, edit.path, treeBase, token);
+				if ((current ?? '') !== edit.before) return yield* precondition(`File changed: ${edit.path}`);
+				if (
+					edit.path.startsWith('/')
+					|| edit.path.split('/').some((p) => p === '..' || p === '.git')
+				) {
+					return yield* precondition('Unsafe edit path');
+				}
 			}
-		}
-		const tree = record(
-			await this.call(`/repos/${name}/git/trees`, token, 'POST', {
-				base_tree: sha(record(commit.tree).sha),
-				tree: edits.map((edit) => ({
-					path: edit.path,
-					mode: '100644',
-					type: 'blob',
-					content: edit.after,
-				})),
-			}),
-		);
-		const next = record(
-			await this.call(`/repos/${name}/git/commits`, token, 'POST', {
-				message: title,
-				tree: sha(tree.sha),
-				parents: setupEdits ? [snapshot.sha] : [base],
-			}),
-		);
-		const head = sha(next.sha);
-		const rules = await this.call(
-			`/repos/${name}/rules/branches/${encodeURIComponent(branch)}`,
-			token,
-		);
-		if (rules === null) {
-			throw new Error('Branch rules unavailable; publication of the preparation branch stopped');
-		}
-		if (
-			array(rules)
-				.map(record)
-				.some((rule) => rule.type === 'required_signatures')
-		) {
-			const verification = record(
-				record(await this.call(`/repos/${name}/git/commits/${head}`, token)).verification,
+			const tree = record(
+				yield* self.call(`/repos/${name}/git/trees`, token, 'POST', {
+					base_tree: sha(record(commit.tree).sha),
+					tree: edits.map((edit) => ({
+						path: edit.path,
+						mode: '100644',
+						type: 'blob',
+						content: edit.after,
+					})),
+				}),
 			);
-			if (verification.verified !== true) {
-				throw new Error('Preparation commit does not satisfy the branch signature requirement');
-			}
-		}
-		if (existingPull !== undefined) {
-			const pull = record(await this.call(`/repos/${name}/pulls/${existingPull}`, token));
-			if (
-				pull.state !== 'open' || record(pull.head).sha !== base || record(pull.head).ref !== branch
-				|| record(record(pull.head).repo).id !== id
-			) throw new Error('Setup pull request changed during refresh');
-		}
-		if (checkpoint) await checkpoint(head);
-		if (existing) {
-			await this.call(
-				`/repos/${name}/git/refs/heads/${encodeURIComponent(branch)}`,
+			const next = record(
+				yield* self.call(`/repos/${name}/git/commits`, token, 'POST', {
+					message: title,
+					tree: sha(tree.sha),
+					parents: setupEdits ? [snapshot.sha] : [base],
+				}),
+			);
+			const head = sha(next.sha);
+			const rules = yield* self.call(
+				`/repos/${name}/rules/branches/${encodeURIComponent(branch)}`,
 				token,
-				'PATCH',
-				{ sha: head, force: setupEdits !== undefined },
 			);
-		} else {
-			await this.call(`/repos/${name}/git/refs`, token, 'POST', {
-				ref: `refs/heads/${branch}`,
-				sha: head,
-			});
-		}
-		return this.finishPullRequest(snapshot, branch, title, body, head, token);
+			if (rules === null) {
+				return yield* precondition('Branch rules unavailable; publication of the preparation branch stopped');
+			}
+			if (
+				array(rules)
+					.map(record)
+					.some((rule) => rule.type === 'required_signatures')
+			) {
+				const verification = record(
+					record(yield* self.call(`/repos/${name}/git/commits/${head}`, token)).verification,
+				);
+				if (verification.verified !== true) {
+					return yield* precondition('Preparation commit does not satisfy the branch signature requirement');
+				}
+			}
+			if (existingPull !== undefined) {
+				const pull = record(yield* self.call(`/repos/${name}/pulls/${existingPull}`, token));
+				if (
+					pull.state !== 'open' || record(pull.head).sha !== base || record(pull.head).ref !== branch
+					|| record(record(pull.head).repo).id !== id
+				) return yield* precondition('Setup pull request changed during refresh');
+			}
+			if (checkpoint) yield* checkpoint(head);
+			if (existing) {
+				yield* self.call(
+					`/repos/${name}/git/refs/heads/${encodeURIComponent(branch)}`,
+					token,
+					'PATCH',
+					{ sha: head, force: setupEdits !== undefined },
+				);
+			} else {
+				yield* self.call(`/repos/${name}/git/refs`, token, 'POST', {
+					ref: `refs/heads/${branch}`,
+					sha: head,
+				});
+			}
+			return yield* self.finishPullRequest(snapshot, branch, title, body, head, token);
+		});
 	}
 	/** Bind release execution to the merged preparation pull request. */
-	private async mergedPreparationPull(
+	private mergedPreparationPull(
 		repository: string,
 		repositoryId: number,
 		result: { url: string; head: string },
 		token: string,
-	): Promise<{ mergeSha: string; base: string; defaultBranch: string }> {
-		const url = new URL(result.url);
-		const prefix = `/${repository}/pull/`;
-		if (
-			url.origin !== 'https://github.com' || !url.pathname.startsWith(prefix)
-			|| !/^[1-9][0-9]*$/.test(url.pathname.slice(prefix.length))
-		) throw new Error('Invalid preparation PR identity');
-		const number = url.pathname.slice(prefix.length);
-		const pull = record(await this.call(`/repos/${repository}/pulls/${number}`, token));
-		const base = record(pull.base);
-		const mergeSha = pull.merged === true ? await this.mergeCommit(repository, number, token) : undefined;
-		if (!mergeSha || record(pull.head).sha !== result.head || record(base.repo).id !== repositoryId) {
-			throw new Error('The preparation PR is not merged');
-		}
-		return { mergeSha, base: text(base.ref), defaultBranch: text(record(base.repo).default_branch) };
+	): Effect.Effect<{ mergeSha: string; base: string; defaultBranch: string }, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const url = new URL(result.url);
+			const prefix = `/${repository}/pull/`;
+			if (
+				url.origin !== 'https://github.com' || !url.pathname.startsWith(prefix)
+				|| !/^[1-9][0-9]*$/.test(url.pathname.slice(prefix.length))
+			) return yield* precondition('Invalid preparation PR identity');
+			const number = url.pathname.slice(prefix.length);
+			const pull = record(yield* self.call(`/repos/${repository}/pulls/${number}`, token));
+			const base = record(pull.base);
+			const mergeSha = pull.merged === true ? yield* self.mergeCommit(repository, number, token) : undefined;
+			if (!mergeSha || record(pull.head).sha !== result.head || record(base.repo).id !== repositoryId) {
+				return yield* precondition('The preparation PR is not merged');
+			}
+			return { mergeSha, base: text(base.ref), defaultBranch: text(record(base.repo).default_branch) };
+		});
 	}
-	async preparedSnapshot(
+	preparedSnapshot(
 		repository: string,
 		repositoryId: number,
 		result: { url: string; head: string },
 		target: string,
 		extraPaths: string[] = [],
-	): Promise<Snapshot> {
-		const token = await this.token(repository, repositoryId, { contents: 'read', pull_requests: 'read' });
-		const pull = await this.mergedPreparationPull(repository, repositoryId, result, token);
-		if (pull.mergeSha !== sha(target)) throw new Error('Target is not the merged preparation revision');
-		const snapshot = await this.snapshot(repository, repositoryId, target, extraPaths);
-		if (pull.base !== snapshot.repository.defaultBranch) {
-			throw new Error('Preparation was merged into a different branch');
-		}
-		return snapshot;
+	): Effect.Effect<Snapshot, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const token = yield* self.token(repository, repositoryId, { contents: 'read', pull_requests: 'read' });
+			const pull = yield* self.mergedPreparationPull(repository, repositoryId, result, token);
+			if (pull.mergeSha !== sha(target)) return yield* precondition('Target is not the merged preparation revision');
+			const snapshot = yield* self.snapshot(repository, repositoryId, target, extraPaths);
+			if (pull.base !== snapshot.repository.defaultBranch) {
+				return yield* precondition('Preparation was merged into a different branch');
+			}
+			return snapshot;
+		});
 	}
-	async preparationMerge(
+	preparationMerge(
 		repository: string,
 		repositoryId: number,
 		result: { url: string; head: string },
 		target: string,
-	): Promise<string | undefined> {
-		const token = await this.token(repository, repositoryId, { contents: 'read', pull_requests: 'read' });
-		const pull = await this.mergedPreparationPull(repository, repositoryId, result, token);
-		if (pull.base !== pull.defaultBranch) return undefined;
-		const comparison = record(await this.call(`/repos/${repository}/compare/${pull.mergeSha}...${sha(target)}`, token));
-		return comparison.status === 'identical' || comparison.status === 'ahead' ? pull.mergeSha : undefined;
+	): Effect.Effect<string | undefined, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const token = yield* self.token(repository, repositoryId, { contents: 'read', pull_requests: 'read' });
+			const pull = yield* self.mergedPreparationPull(repository, repositoryId, result, token);
+			if (pull.base !== pull.defaultBranch) return undefined;
+			const comparison = record(
+				yield* self.call(`/repos/${repository}/compare/${pull.mergeSha}...${sha(target)}`, token),
+			);
+			return comparison.status === 'identical' || comparison.status === 'ahead' ? pull.mergeSha : undefined;
+		});
 	}
-	private async mergeCommit(repository: string, number: string, token: string): Promise<string | undefined> {
-		for (let page = 1; page <= 10; page++) {
-			const events = array(
-				await this.call(`/repos/${repository}/issues/${number}/events?per_page=100&page=${page}`, token),
-			).map(record);
-			const merged = events.find((event) => event.event === 'merged');
-			if (merged) return typeof merged.commit_id === 'string' ? merged.commit_id : undefined;
-			if (events.length < 100) return undefined;
-		}
-		return undefined;
+	private mergeCommit(
+		repository: string,
+		number: string,
+		token: string,
+	): Effect.Effect<string | undefined, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			for (let page = 1; page <= 10; page++) {
+				const events = array(
+					yield* self.call(`/repos/${repository}/issues/${number}/events?per_page=100&page=${page}`, token),
+				).map(record);
+				const merged = events.find((event) => event.event === 'merged');
+				if (merged) return typeof merged.commit_id === 'string' ? merged.commit_id : undefined;
+				if (events.length < 100) return undefined;
+			}
+			return undefined;
+		});
 	}
 	/** Resume only the exact commit checkpointed before branch publication. */
-	async resumePreparation(
+	resumePreparation(
 		snapshot: Snapshot,
 		branch: string,
 		title: string,
 		body: string,
 		head: string,
-	): Promise<{ url: string; head: string }> {
-		const { name, id } = snapshot.repository;
-		const token = await this.token(name, id, { contents: 'write', pull_requests: 'write' });
-		const commit = record(await this.call(`/repos/${name}/git/commits/${sha(head)}`, token));
-		const parents = array(commit.parents).map(record);
-		if (parents.length !== 1 || parents[0]?.sha !== snapshot.sha) {
-			throw new Error('Preparation commit ancestry changed');
-		}
-		const rules = await this.call(`/repos/${name}/rules/branches/${encodeURIComponent(branch)}`, token);
-		if (rules === null) throw new Error('Branch rules unavailable');
-		if (
-			array(rules).map(record).some(rule => rule.type === 'required_signatures')
-			&& record(commit.verification).verified !== true
-		) {
-			throw new Error('Preparation commit signature is not verified');
-		}
-		const existing = await this.call(`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`, token);
-		if (existing && sha(record(record(existing).object).sha) !== head) throw new Error('Preparation branch changed');
-		if (!existing) {
-			await this.call(`/repos/${name}/git/refs`, token, 'POST', { ref: `refs/heads/${branch}`, sha: head });
-		}
-		return this.finishPullRequest(snapshot, branch, title, body, head, token);
+	): Effect.Effect<{ url: string; head: string }, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const { name, id } = snapshot.repository;
+			const token = yield* self.token(name, id, { contents: 'write', pull_requests: 'write' });
+			const commit = record(yield* self.call(`/repos/${name}/git/commits/${sha(head)}`, token));
+			const parents = array(commit.parents).map(record);
+			if (parents.length !== 1 || parents[0]?.sha !== snapshot.sha) {
+				return yield* precondition('Preparation commit ancestry changed');
+			}
+			const rules = yield* self.call(`/repos/${name}/rules/branches/${encodeURIComponent(branch)}`, token);
+			if (rules === null) return yield* precondition('Branch rules unavailable');
+			if (
+				array(rules).map(record).some(rule => rule.type === 'required_signatures')
+				&& record(commit.verification).verified !== true
+			) {
+				return yield* precondition('Preparation commit signature is not verified');
+			}
+			const existing = yield* self.call(`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`, token);
+			if (existing && sha(record(record(existing).object).sha) !== head) {
+				return yield* precondition('Preparation branch changed');
+			}
+			if (!existing) {
+				yield* self.call(`/repos/${name}/git/refs`, token, 'POST', { ref: `refs/heads/${branch}`, sha: head });
+			}
+			return yield* self.finishPullRequest(snapshot, branch, title, body, head, token);
+		});
 	}
 	/** Inspect the existing setup proposal; automatic maintenance never opens a replacement PR. */
-	async openSetupPull(
+	openSetupPull(
 		name: string,
 		id: number,
-	): Promise<{ number: number; head: string; url: string; body: string } | undefined> {
-		const token = await this.token(name, id, { contents: 'read', pull_requests: 'read' });
-		const rows = array(
-			await this.call(
-				`/repos/${name}/pulls?state=open&head=${encodeURIComponent(`${name.split('/')[0]}:automation/onboarding`)}`,
-				token,
-			),
-		).map(record);
-		if (rows.length > 1) throw new Error('Multiple open setup pull requests');
-		const pull = rows[0];
-		if (!pull) return;
-		if (record(record(pull.head).repo).id !== id || record(pull.head).ref !== 'automation/onboarding') {
-			throw new Error('Setup pull request repository mismatch');
-		}
-		return {
-			number: integer(pull.number),
-			head: sha(record(pull.head).sha),
-			url: text(pull.html_url),
-			body: typeof pull.body === 'string' ? pull.body : '',
-		};
+	): Effect.Effect<{ number: number; head: string; url: string; body: string } | undefined, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const token = yield* self.token(name, id, { contents: 'read', pull_requests: 'read' });
+			const rows = array(
+				yield* self.call(
+					`/repos/${name}/pulls?state=open&head=${encodeURIComponent(`${name.split('/')[0]}:automation/onboarding`)}`,
+					token,
+				),
+			).map(record);
+			if (rows.length > 1) return yield* precondition('Multiple open setup pull requests');
+			const pull = rows[0];
+			if (!pull) return;
+			if (record(record(pull.head).repo).id !== id || record(pull.head).ref !== 'automation/onboarding') {
+				return yield* precondition('Setup pull request repository mismatch');
+			}
+			return {
+				number: integer(pull.number),
+				head: sha(record(pull.head).sha),
+				url: text(pull.html_url),
+				body: typeof pull.body === 'string' ? pull.body : '',
+			};
+		});
 	}
 	/** Update only the bot's status section, including when a human changed the proposal branch. */
-	async setupStatus(name: string, id: number, number: number, status: string, proposal?: string): Promise<void> {
-		const token = await this.token(name, id, { pull_requests: 'write' });
-		const pull = record(await this.call(`/repos/${name}/pulls/${number}`, token));
-		if (
-			pull.state !== 'open' || record(pull.head).ref !== 'automation/onboarding'
-			|| record(record(pull.head).repo).id !== id
-		) return;
-		const start = '<!-- beepboop:setup-status -->', end = '<!-- /beepboop:setup-status -->';
-		const current = typeof pull.body === 'string' ? pull.body : '';
-		const section = `${start}\n${status}\n${end}`;
-		const from = current.indexOf(start), to = current.indexOf(end, from);
-		const body = proposal !== undefined
-			? `${proposal}\n\n${section}`
-			: from >= 0 && to >= from
-			? current.slice(0, from) + section + current.slice(to + end.length)
-			: `${current}\n\n${section}`;
-		if (body !== current) await this.call(`/repos/${name}/pulls/${number}`, token, 'PATCH', { body });
+	setupStatus(
+		name: string,
+		id: number,
+		number: number,
+		status: string,
+		proposal?: string,
+	): Effect.Effect<void, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const token = yield* self.token(name, id, { pull_requests: 'write' });
+			const pull = record(yield* self.call(`/repos/${name}/pulls/${number}`, token));
+			if (
+				pull.state !== 'open' || record(pull.head).ref !== 'automation/onboarding'
+				|| record(record(pull.head).repo).id !== id
+			) return;
+			const start = '<!-- beepboop:setup-status -->', end = '<!-- /beepboop:setup-status -->';
+			const current = typeof pull.body === 'string' ? pull.body : '';
+			const section = `${start}\n${status}\n${end}`;
+			const from = current.indexOf(start), to = current.indexOf(end, from);
+			const body = proposal !== undefined
+				? `${proposal}\n\n${section}`
+				: from >= 0 && to >= from
+				? current.slice(0, from) + section + current.slice(to + end.length)
+				: `${current}\n\n${section}`;
+			if (body !== current) yield* self.call(`/repos/${name}/pulls/${number}`, token, 'PATCH', { body });
+		});
 	}
 	/** Refresh setup documentation without creating an empty commit or overwriting branch edits. */
-	async refreshPullRequest(
+	refreshPullRequest(
 		snapshot: Snapshot,
 		branch: string,
 		title: string,
 		body: string,
 		expectedHead: string,
-	): Promise<{ url: string; head: string }> {
-		const token = await this.token(snapshot.repository.name, snapshot.repository.id, {
-			contents: 'read',
-			pull_requests: 'write',
+	): Effect.Effect<{ url: string; head: string }, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const token = yield* self.token(snapshot.repository.name, snapshot.repository.id, {
+				contents: 'read',
+				pull_requests: 'write',
+			});
+			const current = yield* self.call(
+				`/repos/${snapshot.repository.name}/git/ref/heads/${encodeURIComponent(branch)}`,
+				token,
+			);
+			if (!current || sha(record(record(current).object).sha) !== expectedHead) {
+				return yield* precondition('Branch changed; preserve user edits and review the conflict');
+			}
+			return yield* self.finishPullRequest(snapshot, branch, title, body, expectedHead, token);
 		});
-		const current = await this.call(
-			`/repos/${snapshot.repository.name}/git/ref/heads/${encodeURIComponent(branch)}`,
-			token,
-		);
-		if (!current || sha(record(record(current).object).sha) !== expectedHead) {
-			throw new Error('Branch changed; preserve user edits and review the conflict');
-		}
-		return this.finishPullRequest(snapshot, branch, title, body, expectedHead, token);
 	}
-	private async finishPullRequest(
+	private finishPullRequest(
 		snapshot: Snapshot,
 		branch: string,
 		title: string,
 		body: string,
 		head: string,
 		token: string,
-	): Promise<{ url: string; head: string }> {
-		const { name } = snapshot.repository;
-		const owner = name.split('/')[0];
-		const pulls = array(
-			await this.call(
-				`/repos/${name}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`,
-				token,
-			),
-		);
-		if (pulls.length > 1) throw new Error('Multiple matching pull requests');
-		if (pulls[0] && record(pulls[0]).state !== 'open') throw new Error('Preparation pull request was closed');
-		const pull = pulls[0]
-			? record(
-				await this.call(
-					`/repos/${name}/pulls/${integer(record(pulls[0]).number)}`,
+	): Effect.Effect<{ url: string; head: string }, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const { name } = snapshot.repository;
+			const owner = name.split('/')[0];
+			const pulls = array(
+				yield* self.call(
+					`/repos/${name}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`,
 					token,
-					'PATCH',
-					{ title, body },
 				),
-			)
-			: record(
-				await this.call(`/repos/${name}/pulls`, token, 'POST', {
-					title,
-					body,
-					head: branch,
-					base: snapshot.repository.defaultBranch,
-				}),
 			);
-		const available = array(await this.call(`/repos/${name}/labels?per_page=100`, token)).map(
-			record,
-		);
-		let labels = available
-			.map((label) => text(label.name))
-			.filter((name) =>
-				['maintenance', 'type:maintenance', 'area:release', 'release', 'dependencies'].includes(
-					name,
+			if (pulls.length > 1) return yield* precondition('Multiple matching pull requests');
+			if (pulls[0] && record(pulls[0]).state !== 'open') {
+				return yield* precondition('Preparation pull request was closed');
+			}
+			const pull = pulls[0]
+				? record(
+					yield* self.call(
+						`/repos/${name}/pulls/${integer(record(pulls[0]).number)}`,
+						token,
+						'PATCH',
+						{ title, body },
+					),
 				)
+				: record(
+					yield* self.call(`/repos/${name}/pulls`, token, 'POST', {
+						title,
+						body,
+						head: branch,
+						base: snapshot.repository.defaultBranch,
+					}),
+				);
+			const available = array(yield* self.call(`/repos/${name}/labels?per_page=100`, token)).map(
+				record,
 			);
-		labels = labels.filter((name) => name !== 'dependencies');
-		if (!labels.length) {
-			await this.call(`/repos/${name}/labels`, token, 'POST', {
-				name: 'maintenance',
-				color: '527a67',
-				description: 'Repository maintenance and release automation',
-			});
-			labels = ['maintenance'];
-		}
-		const applied = array(
-			await this.call(`/repos/${name}/issues/${integer(pull.number)}/labels`, token, 'POST', {
-				labels,
-			}),
-		)
-			.map(record)
-			.map((label) => text(label.name));
-		if (labels.some((name) => !applied.includes(name))) {
-			throw new Error('Pull request labels were not confirmed');
-		}
-		const actual = record(await this.call(`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`, token));
-		let current = pull;
-		for (let attempt = 0; attempt < 5 && record(current.head).sha !== head; attempt++) {
-			await new Promise(resolve => setTimeout(resolve, 1000));
-			current = record(await this.call(`/repos/${name}/pulls/${integer(pull.number)}`, token));
-		}
-		if (
-			sha(record(actual.object).sha) !== head || record(current.head).sha !== head
-			|| record(current.base).ref !== snapshot.repository.defaultBranch
-		) {
-			throw new Error('Preparation pull request identity changed');
-		}
-		return { url: text(current.html_url), head };
+			let labels = available
+				.map((label) => text(label.name))
+				.filter((name) =>
+					['maintenance', 'type:maintenance', 'area:release', 'release', 'dependencies'].includes(
+						name,
+					)
+				);
+			labels = labels.filter((name) => name !== 'dependencies');
+			if (!labels.length) {
+				yield* self.call(`/repos/${name}/labels`, token, 'POST', {
+					name: 'maintenance',
+					color: '527a67',
+					description: 'Repository maintenance and release automation',
+				});
+				labels = ['maintenance'];
+			}
+			const applied = array(
+				yield* self.call(`/repos/${name}/issues/${integer(pull.number)}/labels`, token, 'POST', {
+					labels,
+				}),
+			)
+				.map(record)
+				.map((label) => text(label.name));
+			if (labels.some((name) => !applied.includes(name))) {
+				return yield* precondition('Pull request labels were not confirmed');
+			}
+			const actual = record(yield* self.call(`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`, token));
+			let current = pull;
+			for (let attempt = 0; attempt < 5 && record(current.head).sha !== head; attempt++) {
+				yield* Effect.sleep('1 second');
+				current = record(yield* self.call(`/repos/${name}/pulls/${integer(pull.number)}`, token));
+			}
+			if (
+				sha(record(actual.object).sha) !== head || record(current.head).sha !== head
+				|| record(current.base).ref !== snapshot.repository.defaultBranch
+			) {
+				return yield* precondition('Preparation pull request identity changed');
+			}
+			return { url: text(current.html_url), head };
+		});
 	}
 }
 
 export interface Credentials {
 	GITHUB_APP_ID: string;
 	GITHUB_APP_PRIVATE_KEY: string;
+}
+
+export class GitHub extends Context.Service<GitHub, {
+	readonly call: (path: string, token: string, method?: string, body?: unknown) => Effect.Effect<unknown, DomainError>;
+}>()('beepboop/GitHub') {}
+
+export function gitHubLayer(transport: Fetcher): Layer.Layer<GitHub> {
+	return Layer.succeed(GitHub, {
+		call: (path, token, method, body) => gitHubRequest(transport, path, token, method, body),
+	});
 }

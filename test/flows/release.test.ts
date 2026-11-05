@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
+import { Effect } from 'effect';
 import { z } from 'zod';
 import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
-import { runAction } from '../support/actions.ts';
-import { botId, ownerId } from '../support/github.ts';
-import { bearer, type Reply, text } from '../support/http.ts';
-import { passChecks, widget, widgetConfiguration } from '../support/repositories.ts';
-import { World } from '../support/world.ts';
+import { runAction } from '@root/test/support/actions.ts';
+import { botId, ownerId } from '@root/test/support/github.ts';
+import { bearer, type Reply, text } from '@root/test/support/http.ts';
+import { passChecks, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
+import { World } from '@root/test/support/world.ts';
 
 let world: World;
 async function only(api: (path: string) => Promise<Reply>, operation: string): Promise<Execution> {
@@ -107,7 +108,9 @@ test('a managed release travels from discovery to a verified publication', async
 	expect(executions.map(execution => execution.operation).sort()).toEqual(['prepare', 'promote']);
 	for (const execution of executions) {
 		expect(execution.id).toBe(
-			await executionId(execution.repositoryId, execution.stream, execution.operation, execution.eventId),
+			await Effect.runPromise(
+				executionId(execution.repositoryId, execution.stream, execution.operation, execution.eventId),
+			),
 		);
 	}
 	const preparation = executions.find(execution => execution.operation === 'prepare');

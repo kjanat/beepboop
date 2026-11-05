@@ -1,3 +1,4 @@
+import { Context, Effect, Layer } from 'effect';
 import {
 	type Channel,
 	type ChannelOutcome,
@@ -12,6 +13,8 @@ import { publishable } from '@/automation/package-publication';
 import type { Inventory, Package, Publication, Snapshot } from '@/automation/types';
 import { destinationsOf, type ManagerDestinationId, type ManagerName, managerSpec } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
+import { type DomainError, precondition } from '@/contract/errors';
+import { fromPromise } from '@/failure';
 import { type PackageIdentity, packageIdentity } from '@/package-url';
 
 export interface Manager {
@@ -19,10 +22,14 @@ export interface Manager {
 	discover(snapshot: Snapshot): Inventory;
 	identity?(pkg: Package, snapshot: Snapshot): PackageIdentity;
 	ownsVersionSource?(source: string): boolean;
-	editVersion?(context: VersionEdit): string;
-	updateDependencies?(context: DependencyEdit): void;
-	verifyPublication?(publication: Publication, request: Fetcher, context?: VerificationContext): Promise<Publication>;
-	latest?(pkg: Package, request: Fetcher, context?: VerificationContext): Promise<RegistryVersion>;
+	editVersion?(context: VersionEdit): Effect.Effect<string, DomainError>;
+	updateDependencies?(context: DependencyEdit): Effect.Effect<void, DomainError>;
+	verifyPublication?(
+		publication: Publication,
+		request: Fetcher,
+		context?: VerificationContext,
+	): Effect.Effect<Publication>;
+	latest?(pkg: Package, request: Fetcher, context?: VerificationContext): Effect.Effect<RegistryVersion>;
 	secondaryLatest?: Partial<Record<ManagerDestinationId, RegistryLookup>>;
 }
 export type Adapter<M extends ManagerName> = Manager & { readonly name: M };
@@ -30,11 +37,11 @@ export type RegistryLookup = (
 	pkg: Package,
 	request: Fetcher,
 	context?: VerificationContext,
-) => Promise<RegistryVersion>;
+) => Effect.Effect<RegistryVersion>;
 export type Fetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 export interface VerificationContext {
 	repository: string;
-	github(path: string): Promise<unknown>;
+	github(path: string): Effect.Effect<unknown, DomainError>;
 }
 export type RegistryVersion =
 	& (
@@ -72,30 +79,32 @@ export class ManagerRegistry {
 	names(): ManagerName[] {
 		return [...this.managers.keys()];
 	}
-	editVersion(context: VersionEdit): string {
+	editVersion(context: VersionEdit): Effect.Effect<string, DomainError> {
 		const managers = [...this.managers.values()].filter(manager => manager.ownsVersionSource?.(context.source));
-		if (managers.length !== 1 || !managers[0]?.editVersion) {
-			throw new Error(`Expected exactly one version editor for ${context.source}`);
-		}
-		return managers[0].editVersion(context);
+		const [manager] = managers;
+		return managers.length === 1 && manager?.editVersion
+			? manager.editVersion(context)
+			: Effect.fail(precondition(`Expected exactly one version editor for ${context.source}`));
 	}
-	updateDependencies(context: DependencyEdit): void {
-		for (const manager of this.managers.values()) {
+	updateDependencies(context: DependencyEdit): Effect.Effect<void, DomainError> {
+		return Effect.forEach(this.managers.values(), manager => {
 			const packages = context.packages.filter(pkg => pkg.manager === manager.name);
-			if (packages.length) manager.updateDependencies?.({ ...context, packages });
-		}
+			return packages.length && manager.updateDependencies
+				? manager.updateDependencies({ ...context, packages })
+				: Effect.void;
+		}, { discard: true });
 	}
-	async verifyPublication(
+	verifyPublication(
 		publication: Publication,
 		request: Fetcher,
 		context?: VerificationContext,
-	): Promise<Publication> {
+	): Effect.Effect<Publication> {
 		const manager = this.managers.get(publication.manager);
 		return manager?.verifyPublication
 			? manager.verifyPublication(publication, request, context)
-			: { ...publication, outcome: 'uncertain' };
+			: Effect.succeed({ ...publication, outcome: 'uncertain' });
 	}
-	async resolvePublished(inventory: Inventory, request: Fetcher, context?: VerificationContext): Promise<Inventory> {
+	resolvePublished(inventory: Inventory, request: Fetcher, context?: VerificationContext): Effect.Effect<Inventory> {
 		const packages: Package[] = inventory.packages.map(pkg => {
 			const { published: _published, previousModule: _previous, destinations: _destinations, ...rest } = pkg;
 			return publishable(pkg)
@@ -110,14 +119,14 @@ export class ManagerRegistry {
 				: { ...rest, publicationStatus: 'unchecked' };
 		});
 		const diagnostics: Diagnostic[] = [];
-		const channels = async (list: Channel[], label: (channel: Channel) => string): Promise<ChannelOutcome[]> =>
-			Promise.all(list.map(async channel => {
-				const { outcome, failure } = await checkChannel(channel, request);
-				if (failure) {
-					diagnostics.push({ code: 'lookup-failed', severity: 'warning', message: `${label(channel)}: ${failure}` });
-				}
-				return outcome;
-			}));
+		const channels = (list: Channel[], label: (channel: Channel) => string): Effect.Effect<ChannelOutcome[]> =>
+			Effect.forEach(list, channel =>
+				checkChannel(channel, request).pipe(Effect.map(({ outcome, failure }) => {
+					if (failure) {
+						diagnostics.push({ code: 'lookup-failed', severity: 'warning', message: `${label(channel)}: ${failure}` });
+					}
+					return outcome;
+				})), { concurrency: 'unbounded' });
 		const lookups = (pkg: Package): { destination: ManagerDestinationId; latest: RegistryLookup }[] => {
 			const manager = this.managers.get(pkg.manager);
 			const mapped = managerSpec(pkg.manager).destinations;
@@ -132,19 +141,18 @@ export class ManagerRegistry {
 			];
 		};
 		const pending = packages.filter(pkg => lookups(pkg).length || (publishable(pkg) && pkg.channels?.length));
-		for (let offset = 0; offset < pending.length; offset += 8) {
-			await Promise.all(
-				pending.slice(offset, offset + 8).map(async pkg => {
+		const resolve = (pkg: Package) =>
+			Effect.all([
+				Effect.forEach(
+					lookups(pkg),
+					({ destination, latest }) =>
+						latest(pkg, request, context).pipe(Effect.map(result => ({ destination, result }))),
+					{ concurrency: 'unbounded' },
+				),
+				channels(pkg.channels ?? [], () => `${pkg.manager}:${pkg.name}`),
+			], { concurrency: 'unbounded' }).pipe(Effect.flatMap(([results, checked]) =>
+				Effect.sync(() => {
 					const primary = managerSpec(pkg.manager).destinations?.primary;
-					const [results, checked] = await Promise.all([
-						Promise.all(
-							lookups(pkg).map(async ({ destination, latest }) => ({
-								destination,
-								result: await latest(pkg, request, context),
-							})),
-						),
-						channels(pkg.channels ?? [], () => `${pkg.manager}:${pkg.name}`),
-					]);
 					pkg.destinations = [
 						...(pkg.destinations ?? []).filter(outcome => !isChannelOutcome(outcome)),
 						...checked,
@@ -166,21 +174,25 @@ export class ManagerRegistry {
 						if (result.previousModule) pkg.previousModule = result.previousModule;
 						if (result.kind === 'published') pkg.published = result.version;
 					}
-				}),
-			);
-		}
-		const { destinations: _destinations, ...rest } = inventory;
-		const repositoryChannels = inventory.channels ?? [];
-		const destinations: ChannelOutcome[] = [];
-		for (let offset = 0; offset < repositoryChannels.length; offset += 8) {
-			destinations.push(...await channels(repositoryChannels.slice(offset, offset + 8), channel => channel.manifest));
-		}
-		return {
-			...rest,
-			...(destinations.length ? { destinations } : {}),
-			packages,
-			diagnostics: unique([...inventory.diagnostics, ...diagnostics]),
-		};
+				})
+			));
+		return Effect.gen(function*() {
+			yield* Effect.forEach(pending, resolve, { concurrency: 8, discard: true });
+			const { destinations: _destinations, ...rest } = inventory;
+			const repositoryChannels = inventory.channels ?? [];
+			const destinations: ChannelOutcome[] = [];
+			for (let offset = 0; offset < repositoryChannels.length; offset += 8) {
+				destinations.push(
+					...yield* channels(repositoryChannels.slice(offset, offset + 8), channel => channel.manifest),
+				);
+			}
+			return {
+				...rest,
+				...(destinations.length ? { destinations } : {}),
+				packages,
+				diagnostics: unique([...inventory.diagnostics, ...diagnostics]),
+			};
+		});
 	}
 	canVerify(name: ManagerName): boolean {
 		return Boolean(this.managers.get(name)?.verifyPublication);
@@ -226,11 +238,9 @@ export class ManagerRegistry {
 				result.packages.some(other => other.manager === pkg.manager && other.name === name)
 			);
 		}
-		try {
-			result.publicationOrder = publicationOrder(result.packages);
-		} catch (error) {
-			result.diagnostics.push({ code: 'cycle', severity: 'blocking', message: String(error) });
-		}
+		const ordering = publicationOrder(result.packages);
+		if (ordering.kind === 'ordered') result.publicationOrder = ordering.order;
+		else result.diagnostics.push({ code: 'cycle', severity: 'blocking', message: `Error: ${ordering.message}` });
 		result.managers = [...new Set(result.managers)].filter(name => enabled.includes(name)).sort();
 		result.diagnostics = unique(result.diagnostics);
 		return result;
@@ -243,4 +253,12 @@ function registryOutcome(destination: ManagerDestinationId, result: RegistryVers
 	if (result.kind === 'published') return { destination, state: 'published', version: result.version };
 	if (result.kind === 'failed') return { destination, state: 'failed', reason: result.reason };
 	return { destination, state: 'missing' };
+}
+
+export class Registry extends Context.Service<Registry, {
+	readonly fetch: (url: string, init?: RequestInit) => Effect.Effect<Response, DomainError>;
+}>()('beepboop/Registry') {}
+
+export function registryLayer(transport: Fetcher): Layer.Layer<Registry> {
+	return Layer.succeed(Registry, { fetch: (url, init) => fromPromise(() => transport(url, init ?? {})) });
 }

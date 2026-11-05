@@ -1,11 +1,12 @@
+import { Effect } from 'effect';
 import { parse as parseToml } from 'smol-toml';
 import type { Channel } from '@/automation/destinations';
 import { object, yaml } from '@/automation/managers/helpers';
-import type { Adapter, VerificationContext } from '@/automation/managers/registry';
+import type { Adapter, RegistryVersion, VerificationContext } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestTag, tagSource } from '@/automation/managers/tags';
 import { excluded, registry } from '@/automation/package-publication';
-import type { Publication, Snapshot } from '@/automation/types';
+import type { Outcome, Publication, Snapshot } from '@/automation/types';
 import { goreleaserConfig } from '@/contract/catalog';
 import { type Diagnostic, fileProblem } from '@/contract/diagnostics';
 import { packageIdentity } from '@/package-url';
@@ -82,26 +83,27 @@ function channelsOf(path: string, config: Record<string, unknown>, project: stri
 	}
 	return { channels, diagnostics };
 }
-async function verifyRelease(
+function verifyRelease(
 	publication: Publication,
 	context: VerificationContext | undefined,
-): Promise<Publication> {
-	if (!context) return { ...publication, outcome: 'uncertain' };
+): Effect.Effect<Publication> {
+	if (!context) return Effect.succeed({ ...publication, outcome: 'uncertain' });
 	const tag = `v${publication.version.replace(/^v/, '')}`;
 	const url = `https://github.com/${context.repository}/releases/tag/${encodeURIComponent(tag)}`;
-	try {
-		const found = await context.github(`/repos/${context.repository}/releases/tags/${encodeURIComponent(tag)}`);
-		if (found === null) return { ...publication, outcome: 'pending', url };
-		const release = object(found);
-		if (release.tag_name !== tag) return { ...publication, outcome: 'failed', url };
-		const assets = Array.isArray(release.assets) ? release.assets.map(object) : [];
-		if (release.draft !== false || !assets.length || assets.some(asset => asset.state !== 'uploaded')) {
-			return { ...publication, outcome: 'pending', url };
-		}
-		return { ...publication, outcome: 'succeeded', url };
-	} catch {
-		return { ...publication, outcome: 'uncertain', url };
-	}
+	const result = (outcome: Outcome): Publication => ({ ...publication, outcome, url });
+	return context.github(`/repos/${context.repository}/releases/tags/${encodeURIComponent(tag)}`).pipe(
+		Effect.map(found => {
+			if (found === null) return result('pending');
+			const release = object(found);
+			if (release.tag_name !== tag) return result('failed');
+			const assets = Array.isArray(release.assets) ? release.assets.map(object) : [];
+			if (release.draft !== false || !assets.length || assets.some(asset => asset.state !== 'uploaded')) {
+				return result('pending');
+			}
+			return result('succeeded');
+		}),
+		Effect.catchCause(() => Effect.succeed(result('uncertain'))),
+	);
 }
 
 export const goreleaserManager: Adapter<'goreleaser'> = {
@@ -116,19 +118,21 @@ export const goreleaserManager: Adapter<'goreleaser'> = {
 		});
 	},
 	verifyPublication: (publication, _request, context) => verifyRelease(publication, context),
-	async latest(_pkg, _request, context) {
-		if (!context) return { kind: 'failed', url: 'https://api.github.com', reason: 'GitHub access unavailable' };
-		const url = `https://github.com/${context.repository}/releases/latest`;
-		try {
-			const found = await context.github(`/repos/${context.repository}/releases/latest`);
-			if (found === null) return { kind: 'missing', url };
-			const tag = object(found).tag_name;
-			return typeof tag === 'string' && /^v?\d+\.\d+\.\d+/.test(tag)
-				? { kind: 'published', version: tag.replace(/^v/, '') }
-				: { kind: 'failed', url, reason: 'no valid version' };
-		} catch {
-			return { kind: 'failed', url, reason: 'request failed' };
+	latest(_pkg, _request, context) {
+		if (!context) {
+			return Effect.succeed({ kind: 'failed', url: 'https://api.github.com', reason: 'GitHub access unavailable' });
 		}
+		const url = `https://github.com/${context.repository}/releases/latest`;
+		return context.github(`/repos/${context.repository}/releases/latest`).pipe(
+			Effect.map((found): RegistryVersion => {
+				if (found === null) return { kind: 'missing', url };
+				const tag = object(found).tag_name;
+				return typeof tag === 'string' && /^v?\d+\.\d+\.\d+/.test(tag)
+					? { kind: 'published', version: tag.replace(/^v/, '') }
+					: { kind: 'failed', url, reason: 'no valid version' };
+			}),
+			Effect.catchCause(() => Effect.succeed<RegistryVersion>({ kind: 'failed', url, reason: 'request failed' })),
+		);
 	},
 	discover(snapshot) {
 		const result = emptyInventory();

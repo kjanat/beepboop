@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import type { RefChange, RefPlan } from '../../src/automation/refs.ts';
-import { array, boolean, record, text } from '../../src/model.ts';
+import type { RefChange, RefPlan } from '@/automation/refs.ts';
+import { array, boolean, record, text } from '@/model.ts';
 
 interface Git {
 	read(...args: string[]): string;

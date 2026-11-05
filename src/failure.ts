@@ -1,3 +1,4 @@
+import { Cause, Effect } from 'effect';
 import { z } from 'zod';
 import { legacyDiagnostic } from '@/contract/diagnostics';
 import { type ApiError, DomainError, envelope, messageOf, statusOf } from '@/contract/errors';
@@ -72,4 +73,28 @@ export function failure(request: Request, error: unknown): Response {
 		);
 	}
 	return Response.json(envelope(problem, message), { status, headers });
+}
+
+export function toDomainError(error: unknown): DomainError {
+	if (error instanceof DomainError) return error;
+	const { problem, message } = classify(error, crypto.randomUUID());
+	const detail = error instanceof z.ZodError
+		? z.prettifyError(error)
+		: error instanceof Error
+		? error.message
+		: String(error);
+	return new DomainError({ problem, message, detail });
+}
+
+export function fromPromise<A>(run: () => Promise<A>): Effect.Effect<A, DomainError> {
+	return Effect.tryPromise({ try: run, catch: toDomainError });
+}
+
+export function fromSync<A>(run: () => A): Effect.Effect<A, DomainError> {
+	return Effect.try({ try: run, catch: toDomainError });
+}
+
+export function recover<B, E>(handler: (error: DomainError) => Effect.Effect<B, E>) {
+	return <A>(effect: Effect.Effect<A, DomainError>): Effect.Effect<A | B, E> =>
+		effect.pipe(Effect.catchCause(cause => handler(toDomainError(Cause.squash(cause)))));
 }

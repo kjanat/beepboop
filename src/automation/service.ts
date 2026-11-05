@@ -1,5 +1,5 @@
 import { CronExpressionParser } from 'cron-parser';
-import { Effect, Layer } from 'effect';
+import { Cause, Effect, Layer } from 'effect';
 import { z } from 'zod';
 import type { AuthBindings } from '@/automation/auth';
 import { resolveConfiguration } from '@/automation/configuration';
@@ -9,6 +9,7 @@ import { type Credentials, RepositoryGateway } from '@/automation/github';
 import { type InboxEvent, inboxEvent, type SetupPullEdit } from '@/automation/inbox';
 import { discover, planRelease, resolvePublished, versionsInFiles } from '@/automation/managers';
 import { jsrTokenAlias, jsrTokenRefused, setUpJsrPackage } from '@/automation/managers/jsr';
+import { registryLayer } from '@/automation/managers/registry';
 import { Notifications } from '@/automation/notifications';
 import { matchesPackage } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
@@ -20,15 +21,14 @@ import { maintainSetup } from '@/automation/setup-maintenance';
 import { decodeError, Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
 import type { AutomationEvent, Execution, RepositoryRecord, SubscriptionDelivery } from '@/automation/types';
-import { Vault } from '@/automation/vault';
+import { Secrets, secretsLayer, Vault } from '@/automation/vault';
 import { type WinGetBindings, WinGetService } from '@/automation/winget';
-import { notFound, precondition } from '@/contract/errors';
+import { type DomainError, notFound, precondition } from '@/contract/errors';
 import { setupChoicesSchema } from '@/contract/setup';
 import { configurationDiagnostics, configurationProblem } from '@/domain/configuration';
 import { type Access, type ReadyRepository, readiness, requireReady } from '@/domain/repository';
 import { validateAgainst } from '@/domain/validate';
-import { run } from '@/effect/runtime';
-import { registryLayer, Secrets, secretsLayer } from '@/effect/services';
+import { fromPromise, fromSync, recover } from '@/failure';
 import { array, integer, record } from '@/model';
 import { ChangeLog } from '@/persistence/d1/changes';
 import { CLISessionStore } from '@/persistence/d1/cli-sessions';
@@ -68,50 +68,59 @@ export class AutomationService {
 	coordinator(id: number) {
 		return this.env.AUTOMATION.getByName(String(id));
 	}
-	async enqueue(repository: ReadyRepository, execution: Execution): Promise<Execution> {
-		if (execution.repositoryId !== repository.id) throw new Error('Execution belongs to another repository');
-		if (execution.managed) return this.coordinator(repository.id).enqueue(execution);
-		const existing = await this.coordinator(repository.id).execution(execution.id);
-		if (existing) return this.coordinator(repository.id).enqueue(existing);
-		const stream = execution.configuration.streams[execution.stream];
-		if (
-			execution.operation === 'prepare'
-			&& !execution.plan
-			&& execution.version
-			&& stream?.prepare.strategy !== 'workflow'
-		) {
-			const snapshot = await this.gateway.snapshot(
-				repository.name,
-				repository.id,
-				execution.sourceSha,
-				(stream?.versionFiles ?? []).map(rule => rule.path),
-			);
-			if (versionsInFiles(repository.inventory)) {
-				execution.plan = planRelease(
-					snapshot,
-					repository.inventory,
-					execution.version,
-					stream?.packages,
-					undefined,
-					stream?.versionFiles,
+	enqueue(repository: ReadyRepository, execution: Execution): Effect.Effect<Execution, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			if (execution.repositoryId !== repository.id) {
+				return yield* precondition('Execution belongs to another repository');
+			}
+			const coordinator = this.coordinator(repository.id);
+			if (execution.managed) return yield* fromPromise(() => coordinator.enqueue(execution));
+			const existing = yield* fromPromise(() => coordinator.execution(execution.id));
+			if (existing) return yield* fromPromise(() => coordinator.enqueue(existing));
+			const stream = execution.configuration.streams[execution.stream];
+			if (
+				execution.operation === 'prepare'
+				&& !execution.plan
+				&& execution.version
+				&& stream?.prepare.strategy !== 'workflow'
+			) {
+				const snapshot = yield* this.gateway.snapshot(
+					repository.name,
+					repository.id,
+					execution.sourceSha,
+					(stream?.versionFiles ?? []).map(rule => rule.path),
+				);
+				if (versionsInFiles(repository.inventory)) {
+					execution.plan = yield* planRelease(
+						snapshot,
+						repository.inventory,
+						execution.version,
+						stream?.packages,
+						undefined,
+						stream?.versionFiles,
+					);
+				}
+			}
+			for (const operation of execution.workflow?.needs ?? []) {
+				const dependency = yield* (
+					deriveExecution(execution, repository, {
+						stream: execution.stream,
+						operation,
+						eventId: execution.eventId,
+						sourceSha: execution.sourceSha,
+						version: execution.version,
+						upstreamRelease: execution.upstreamRelease,
+					})
+				);
+				yield* this.enqueue(repository, dependency);
+			}
+			if (execution.workflow?.ref?.includes('*')) {
+				return yield* precondition(
+					'Dispatch requires an exact workflow ref; wildcard bindings support observation only',
 				);
 			}
-		}
-		for (const operation of execution.workflow?.needs ?? []) {
-			const dependency = await deriveExecution(execution, repository, {
-				stream: execution.stream,
-				operation,
-				eventId: execution.eventId,
-				sourceSha: execution.sourceSha,
-				version: execution.version,
-				upstreamRelease: execution.upstreamRelease,
-			});
-			await this.enqueue(repository, dependency);
-		}
-		if (execution.workflow?.ref?.includes('*')) {
-			throw precondition('Dispatch requires an exact workflow ref; wildcard bindings support observation only');
-		}
-		return this.coordinator(repository.id).enqueue(execution);
+			return yield* fromPromise(() => coordinator.enqueue(execution));
+		});
 	}
 	winget() {
 		return new WinGetService(this.store, this.gateway, this.env);
@@ -127,233 +136,247 @@ export class AutomationService {
 			this.env.VAULT_ACTIVE_KEY,
 		);
 	}
-	async setAccess(id: number, access: Access): Promise<void> {
-		await this.store.setAccess(id, access);
-		await this.coordinator(id).setAccess(access.kind === 'suspended');
+	setAccess(id: number, access: Access): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			yield* this.store.setAccess(id, access);
+			yield* fromPromise(() => this.coordinator(id).setAccess(access.kind === 'suspended'));
+		});
 	}
-	private async access(name: string): Promise<Access> {
-		return await this.gateway.installation(name) === 'active'
-			? { kind: 'active' }
-			: { kind: 'suspended', since: Date.now() };
+	private access(name: string): Effect.Effect<Access, DomainError> {
+		return this.gateway.installation(name).pipe(
+			Effect.map((installation): Access =>
+				installation === 'active' ? { kind: 'active' } : { kind: 'suspended', since: Date.now() }
+			),
+		);
 	}
-	async discover(name: string, id: number | undefined): Promise<RepositoryRecord> {
-		const installation = await this.gateway.installation(name);
-		if (installation === 'active') {
-			const repositoryId = id ?? await this.gateway.identify(name);
-			await this.setAccess(repositoryId, { kind: 'active' });
-			return this.refresh(name, repositoryId);
-		}
-		const enrolled = (await this.store.enrollments()).find(entry => entry.id === id || entry.name === name);
-		const stored = enrolled && await this.store.repository(enrolled.id);
-		if (!stored) {
-			throw installation === 'suspended'
-				? precondition(`GitHub App access to ${name} is suspended`)
-				: notFound('repository', `The GitHub App is not installed on ${name}`, name);
-		}
-		const access: Access = stored.access.kind === 'suspended'
-			? stored.access
-			: { kind: 'suspended', since: Date.now() };
-		await this.setAccess(stored.id, access);
-		return { ...stored, access };
-	}
-	async refresh(name: string, id: number): Promise<RepositoryRecord> {
-		const snapshot = await this.gateway.snapshot(name, id);
-		const prior = await this.store.enrollment(id);
-		const repository: RepositoryRecord = {
-			...snapshot.repository,
-			access: prior?.access ?? { kind: 'active' },
-			sha: snapshot.sha,
-			inventory: discover(snapshot),
-			presetShas: {},
-			diagnostics: [],
-			updatedAt: Date.now(),
-		};
-		if (snapshot.files['.github/beepboop.json']) {
-			try {
-				const resolved = await resolveConfiguration(
-					JSON.parse(snapshot.files['.github/beepboop.json']),
-					(ref) => this.gateway.preset(ref),
-				);
-				repository.configuration = resolved.configuration;
-				repository.presetShas = resolved.presetShas;
-				repository.diagnostics.push(...resolved.drift);
-				repository.inventory = discover(snapshot, resolved.configuration.managers);
-				repository.diagnostics.push(...validateAgainst(resolved.configuration, repository.inventory, snapshot));
-			} catch (error) {
-				repository.diagnostics.push(
-					...(error instanceof z.ZodError
-						? configurationDiagnostics(error)
-						: [configurationProblem(error instanceof Error ? error.message : 'Configuration invalid')]),
-				);
+	discover(name: string, id: number | undefined): Effect.Effect<RepositoryRecord, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const installation = yield* this.gateway.installation(name);
+			if (installation === 'active') {
+				const repositoryId = id ?? (yield* this.gateway.identify(name));
+				yield* this.setAccess(repositoryId, { kind: 'active' });
+				return yield* this.refresh(name, repositoryId);
 			}
-		} else {
-			repository.diagnostics.push({
-				code: 'unconfigured',
-				severity: 'blocking',
-				message: await this.gateway.openSetupPull(name, id)
-					? 'The setup pull request is open. Merge it to enable releases.'
-					: 'Not configured yet. Configure releases opens a setup pull request.',
-			});
-		}
-		repository.inventory = await resolvePublished(repository.inventory, fetch, this.gateway.verification(name, id));
-		await this.store.putRepository(repository);
-		await this.coordinator(id).setAccess(repository.access.kind === 'suspended');
-		try {
-			await this.releaseFromManifest(repository);
-		} catch (error) {
-			await this.store.audit(
-				'beepboop',
-				'release.push.failed',
-				`${name}: ${error instanceof Error ? error.message : 'Release from push failed'}`,
-			);
-		}
-		try {
-			await maintainSetup(this.store, this.gateway, snapshot);
-		} catch (error) {
-			await this.store.audit(
-				'beepboop',
-				'repository.setup.failed',
-				`${name}: ${error instanceof Error ? error.message : 'Setup maintenance failed'}`,
-			);
-		}
-		await this.winget().watch(repository);
-		return repository;
+			const enrolled = (yield* this.store.enrollments())
+				.find(entry => entry.id === id || entry.name === name);
+			const stored = enrolled && (yield* this.store.repository(enrolled.id));
+			if (!stored) {
+				return yield* installation === 'suspended'
+					? precondition(`GitHub App access to ${name} is suspended`)
+					: notFound('repository', `The GitHub App is not installed on ${name}`, name);
+			}
+			const access: Access = stored.access.kind === 'suspended'
+				? stored.access
+				: { kind: 'suspended', since: Date.now() };
+			yield* this.setAccess(stored.id, access);
+			return { ...stored, access };
+		});
 	}
-	private async mergedPreparation(
+	refresh(name: string, id: number): Effect.Effect<RepositoryRecord, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const snapshot = yield* this.gateway.snapshot(name, id);
+			const prior = yield* this.store.enrollment(id);
+			const repository: RepositoryRecord = {
+				...snapshot.repository,
+				access: prior?.access ?? { kind: 'active' },
+				sha: snapshot.sha,
+				inventory: discover(snapshot),
+				presetShas: {},
+				diagnostics: [],
+				updatedAt: Date.now(),
+			};
+			const document = snapshot.files['.github/beepboop.json'];
+			if (document) {
+				yield* Effect.gen({ self: this }, function*() {
+					const raw = yield* fromSync((): unknown => JSON.parse(document));
+					const resolved = yield* resolveConfiguration(raw, ref => this.gateway.preset(ref));
+					repository.configuration = resolved.configuration;
+					repository.presetShas = resolved.presetShas;
+					repository.diagnostics.push(...resolved.drift);
+					repository.inventory = discover(snapshot, resolved.configuration.managers);
+					repository.diagnostics.push(...validateAgainst(resolved.configuration, repository.inventory, snapshot));
+				}).pipe(
+					Effect.catchCause(cause =>
+						Effect.sync(() => {
+							const error = Cause.squash(cause);
+							repository.diagnostics.push(
+								...(error instanceof z.ZodError
+									? configurationDiagnostics(error)
+									: [configurationProblem(decodeError(error))]),
+							);
+						})
+					),
+				);
+			} else {
+				repository.diagnostics.push({
+					code: 'unconfigured',
+					severity: 'blocking',
+					message: (yield* this.gateway.openSetupPull(name, id))
+						? 'The setup pull request is open. Merge it to enable releases.'
+						: 'Not configured yet. Configure releases opens a setup pull request.',
+				});
+			}
+			const verification = this.gateway.verification(name, id);
+			repository.inventory = yield* resolvePublished(repository.inventory, fetch, verification);
+			yield* this.store.putRepository(repository);
+			yield* fromPromise(() => this.coordinator(id).setAccess(repository.access.kind === 'suspended'));
+			yield* this.releaseFromManifest(repository).pipe(
+				recover(error => this.store.audit('beepboop', 'release.push.failed', `${name}: ${decodeError(error)}`)),
+			);
+			yield* maintainSetup(this.store, this.gateway, snapshot).pipe(
+				recover(error => this.store.audit('beepboop', 'repository.setup.failed', `${name}: ${decodeError(error)}`)),
+			);
+			yield* this.winget().watch(repository);
+			return repository;
+		});
+	}
+	private mergedPreparation(
 		repository: RepositoryRecord,
 		stream: string,
 		version: string,
 		target: string,
-	): Promise<string | undefined> {
-		for (const result of await this.coordinator(repository.id).preparationResults(stream, version)) {
-			try {
-				const merge = await this.gateway.preparationMerge(repository.name, repository.id, result, target);
+	): Effect.Effect<string | undefined, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const results = yield* fromPromise(() => this.coordinator(repository.id).preparationResults(stream, version));
+			for (const result of results) {
+				const merge = yield* this.gateway.preparationMerge(repository.name, repository.id, result, target).pipe(
+					recover(error =>
+						Effect.sync(() => {
+							console.error(JSON.stringify({
+								event: 'preparation-merge.failed',
+								repository: repository.name,
+								pull: result.url,
+								error: decodeError(error),
+							}));
+							return undefined;
+						})
+					),
+				);
 				if (merge) return merge;
-			} catch (error) {
-				console.error(JSON.stringify({
-					event: 'preparation-merge.failed',
-					repository: repository.name,
-					pull: result.url,
-					error: decodeError(error),
-				}));
 			}
-		}
-		return undefined;
+			return undefined;
+		});
 	}
-	async prepareJsr(execution: Execution): Promise<void> {
+	prepareJsr(execution: Execution): Effect.Effect<void, DomainError> {
 		const ids = new Set([
 			...(execution.workflow?.publications ?? []),
 			...(execution.releaseSet?.required ?? execution.configuration.streams[execution.stream]?.required ?? []),
 		]);
 		const names = [...ids].flatMap(id => id.startsWith('pkg:jsr/') ? [decodeURIComponent(id.slice(8))] : []);
-		if (!names.length) return;
+		if (!names.length) return Effect.void;
 		const repository = execution.repository;
-		await run(
-			Effect.gen(function*() {
-				const secrets = yield* Secrets;
-				const token = yield* secrets.reveal(jsrTokenAlias, `setup:${execution.id}`).pipe(
-					Effect.catchTag('Refused', () => Effect.fail(jsrTokenRefused(names))),
+		return Effect.gen(function*() {
+			const secrets = yield* Secrets;
+			const token = yield* secrets.reveal(jsrTokenAlias, `setup:${execution.id}`).pipe(
+				Effect.catchIf(error => error.problem.code !== 'upstream', () => Effect.fail(jsrTokenRefused(names))),
+			);
+			for (const name of names) yield* setUpJsrPackage(name, repository, token);
+		}).pipe(Effect.provide(Layer.mergeAll(registryLayer(fetch), secretsLayer(this.vault()))));
+	}
+	private releaseFromManifest(stored: RepositoryRecord): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const state = readiness(stored);
+			if (state.kind !== 'ready') return;
+			const repository = state.repository;
+			for (const [name, stream] of Object.entries(repository.configuration.streams)) {
+				if (!stream.promote.workflow || stream.versionSource?.kind === 'tags') continue;
+				const packages = repository.inventory.packages.filter(pkg =>
+					publishable(pkg) && (!stream.packages || stream.packages.some(reference => matchesPackage(reference, pkg)))
 				);
-				for (const name of names) yield* setUpJsrPackage(name, repository, token);
-			}).pipe(Effect.provide(Layer.mergeAll(registryLayer(fetch), secretsLayer(this.vault())))),
-		);
+				const version = unreleasedManifestVersion(packages);
+				if (!version || manifestProblems(repository.inventory, packages).length) continue;
+				const merge = stream.promote.approval === 'merge'
+					? yield* this.mergedPreparation(repository, name, version, repository.sha)
+					: undefined;
+				const snapshot = yield* this.gateway.snapshot(
+					repository.name,
+					repository.id,
+					merge ?? repository.sha,
+					(stream.versionFiles ?? []).map(rule => rule.path),
+				);
+				const plan = yield* planRelease(
+					snapshot,
+					repository.inventory,
+					version,
+					stream.packages,
+					undefined,
+					stream.versionFiles,
+				);
+				if (plan.edits.length || plan.requiresPreparation) continue;
+				const promotion = yield* (
+					createExecution(repository, {
+						stream: name,
+						operation: 'promote',
+						eventId: `release:${version}:${plan.sourceSha}`,
+						sourceSha: plan.sourceSha,
+						version,
+					})
+				);
+				if (yield* fromPromise(() => this.coordinator(repository.id).execution(promotion.id))) continue;
+				if (merge) promotion.approvedBy = 'merge';
+				yield* this.store.audit('beepboop', 'release.push', promotion.id);
+				yield* this.enqueue(repository, promotion);
+			}
+		});
 	}
-	private async releaseFromManifest(stored: RepositoryRecord): Promise<void> {
-		const state = readiness(stored);
-		if (state.kind !== 'ready') return;
-		const repository = state.repository;
-		for (const [name, stream] of Object.entries(repository.configuration.streams)) {
-			if (!stream.promote.workflow || stream.versionSource?.kind === 'tags') continue;
-			const packages = repository.inventory.packages.filter(pkg =>
-				publishable(pkg) && (!stream.packages || stream.packages.some(reference => matchesPackage(reference, pkg)))
-			);
-			const version = unreleasedManifestVersion(packages);
-			if (!version || manifestProblems(repository.inventory, packages).length) continue;
-			const merge = stream.promote.approval === 'merge'
-				? await this.mergedPreparation(repository, name, version, repository.sha)
-				: undefined;
-			const snapshot = await this.gateway.snapshot(
-				repository.name,
-				repository.id,
-				merge ?? repository.sha,
-				(stream.versionFiles ?? []).map(rule => rule.path),
-			);
-			const plan = planRelease(
-				snapshot,
-				repository.inventory,
-				version,
-				stream.packages,
-				undefined,
-				stream.versionFiles,
-			);
-			if (plan.edits.length || plan.requiresPreparation) continue;
-			const promotion = await createExecution(repository, {
-				stream: name,
-				operation: 'promote',
-				eventId: `release:${version}:${plan.sourceSha}`,
-				sourceSha: plan.sourceSha,
-				version,
-			});
-			if (await this.coordinator(repository.id).execution(promotion.id)) continue;
-			if (merge) promotion.approvedBy = 'merge';
-			await this.store.audit('beepboop', 'release.push', promotion.id);
-			await this.enqueue(repository, promotion);
-		}
-	}
-	async webhook(request: Request): Promise<Response> {
-		const bytes = await readBody(request);
-		if (
-			!(await verifySignature(
+	webhook(request: Request): Effect.Effect<Response, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const bytes = yield* readBody(request);
+			const verified = yield* verifySignature(
 				bytes,
 				request.headers.get('x-hub-signature-256'),
 				this.env.GITHUB_WEBHOOK_SECRET,
-			))
-		) {
-			return new Response('Invalid signature', { status: 401 });
-		}
-		const event = request.headers.get('x-github-event');
-		if (
-			!['push', 'release', 'workflow_run', 'pull_request', 'installation', 'installation_repositories']
-				.includes(event ?? '')
-		) {
-			return new Response(null, { status: 204 });
-		}
-		const payload = record(JSON.parse(new TextDecoder().decode(bytes)));
-		if (event === 'installation' || event === 'installation_repositories') {
-			const account = record(record(payload.installation).account);
-			if (account.id !== Number(this.env.OWNER_ID)) return new Response(null, { status: 204 });
-			// Enrollment is explicit. Lifecycle events reconcile only repositories already enrolled.
-			const ids = (items: unknown) => new Set(array(items ?? []).map((item) => integer(record(item).id)));
-			const removed = ids(payload.repositories_removed);
-			const added = ids(payload.action === 'created' ? payload.repositories : payload.repositories_added);
-			const all = payload.action === 'created' && payload.repository_selection === 'all';
-			for (const repository of await this.store.enrollments()) {
-				const access: Access | undefined =
-					payload.action === 'deleted' || payload.action === 'suspend' || removed.has(repository.id)
-						? { kind: 'suspended', since: Date.now() }
-						: all || added.has(repository.id)
-						? { kind: 'active' }
-						: payload.action === 'unsuspend' && repository.access.kind === 'suspended'
-						? await this.access(repository.name)
-						: undefined;
-				if (access) await this.setAccess(repository.id, access);
-				else await this.coordinator(repository.id).wake();
+			);
+			if (!verified) return new Response('Invalid signature', { status: 401 });
+			const event = request.headers.get('x-github-event');
+			if (
+				!['push', 'release', 'workflow_run', 'pull_request', 'installation', 'installation_repositories']
+					.includes(event ?? '')
+			) {
+				return new Response(null, { status: 204 });
+			}
+			const payload = yield* fromSync(() => record(JSON.parse(new TextDecoder().decode(bytes))));
+			if (event === 'installation' || event === 'installation_repositories') {
+				const account = record(record(payload.installation).account);
+				if (account.id !== Number(this.env.OWNER_ID)) return new Response(null, { status: 204 });
+				// Enrollment is explicit. Lifecycle events reconcile only repositories already enrolled.
+				const ids = (items: unknown) =>
+					fromSync(() => new Set(array(items ?? []).map((item) => integer(record(item).id))));
+				const removed = yield* ids(payload.repositories_removed);
+				const added = yield* ids(payload.action === 'created' ? payload.repositories : payload.repositories_added);
+				const all = payload.action === 'created' && payload.repository_selection === 'all';
+				for (const repository of yield* this.store.enrollments()) {
+					const access: Access | undefined =
+						payload.action === 'deleted' || payload.action === 'suspend' || removed.has(repository.id)
+							? { kind: 'suspended', since: Date.now() }
+							: all || added.has(repository.id)
+							? { kind: 'active' }
+							: payload.action === 'unsuspend' && repository.access.kind === 'suspended'
+							? yield* this.access(repository.name)
+							: undefined;
+					if (access) yield* this.setAccess(repository.id, access);
+					else yield* fromPromise(() => this.coordinator(repository.id).wake());
+				}
+				return new Response(null, { status: 202 });
+			}
+			const source = record(payload.repository);
+			if (record(source.owner).id !== Number(this.env.OWNER_ID)) {
+				return new Response(null, { status: 204 });
+			}
+			const sourceId = yield* fromSync(() => integer(source.id));
+			const repository = yield* this.store.repository(sourceId);
+			if (!repository || repository.name !== source.full_name) {
+				return new Response(null, { status: 204 });
+			}
+			const delivery = request.headers.get('x-github-delivery');
+			if (!delivery) return new Response('Missing delivery', { status: 400 });
+			const received = inboxEvent.safeParse(this.inbound(event, payload));
+			if (received.success) {
+				const data = received.data;
+				yield* fromPromise(() => this.coordinator(repository.id).receive(delivery, repository.id, data));
 			}
 			return new Response(null, { status: 202 });
-		}
-		const source = record(payload.repository);
-		if (record(source.owner).id !== Number(this.env.OWNER_ID)) {
-			return new Response(null, { status: 204 });
-		}
-		const repository = await this.store.repository(integer(source.id));
-		if (!repository || repository.name !== source.full_name) {
-			return new Response(null, { status: 204 });
-		}
-		const delivery = request.headers.get('x-github-delivery');
-		if (!delivery) return new Response('Missing delivery', { status: 400 });
-		const received = inboxEvent.safeParse(this.inbound(event, payload));
-		if (received.success) await this.coordinator(repository.id).receive(delivery, repository.id, received.data);
-		return new Response(null, { status: 202 });
+		});
 	}
 	private inbound(event: string | null, payload: Record<string, unknown>): unknown {
 		if (event === 'pull_request') return { kind: event, edit: payload };
@@ -372,159 +395,169 @@ export class AutomationService {
 			},
 		};
 	}
-	async receive(delivery: string, repositoryId: number, event: InboxEvent): Promise<void> {
-		const repository = await this.store.repository(repositoryId);
-		if (!repository) return;
-		if (event.kind === 'pull_request') return this.setupEdited(repository, event.edit);
-		if (event.kind === 'release') {
-			if (event.action === 'published') await this.winget().automatic(repository);
-			return;
-		}
-		if (event.kind === 'push') {
-			if (event.ref === `refs/heads/${repository.defaultBranch}`) await this.refresh(repository.name, repository.id);
-			return;
-		}
-		const { action, run } = event;
-		if (action !== 'completed') return this.coordinator(repository.id).wake();
-		await this.coordinator(repository.id).observeRun(repository.id, run.id);
-		if (
-			run.conclusion === 'success' && ['push', 'release', 'workflow_dispatch', 'schedule'].includes(run.event)
-			&& run.headRepositoryId === repository.id
-		) {
-			await this.event({
-				id: delivery,
-				source: repository.name,
-				event: 'workflow_run',
-				workflow: run.path.replace(/^\.github\/workflows\//, ''),
-			});
-		}
-	}
-	private async setupEdited(repository: RepositoryRecord, edit: SetupPullEdit): Promise<void> {
-		const { pull_request: pull, sender } = edit;
-		if (pull.head.repo.id !== repository.id || pull.base.repo.id !== repository.id) return;
-		const bot = await this.gateway.botIdentity();
-		if (sender.id === bot.id || pull.user.id !== bot.id) return;
-		const document = await this.onboarding.document(repository.id);
-		if (document === undefined) return;
-		const saved = record(JSON.parse(document));
-		if (saved.url !== `https://github.com/${repository.name}/pull/${pull.number}`) return;
-		const options = setupOptionsSchema.optional().parse(saved.options);
-		const base = setupChoicesSchema.optional().parse(saved.choices);
-		if (!options || !base) return;
-		const body = pull.body ?? '';
-		const choices = setupChoicesSchema.parse(bodyChoices(body, options, base));
-		await this.coordinator(repository.id).setupEdited(
-			{ repositoryId: repository.id, number: pull.number, head: pull.head.sha, body, choices },
-			JSON.stringify(choices) !== JSON.stringify(base),
-		);
-	}
-	async event(event: AutomationEvent): Promise<void> {
-		if (
-			event.event === 'release'
-			&& (!event.release || event.release.repository.name !== event.source || event.release.version !== event.version)
-		) {
-			throw new Error('Release event requires its upstream identity');
-		}
-		const deliveries: SubscriptionDelivery[] = [];
-		for (const stored of await this.store.readableRepositories()) {
-			const state = readiness(stored);
-			if (state.kind !== 'ready') continue;
-			const repository = state.repository;
-			for (const subscription of repository.configuration.subscriptions) {
-				if (!matchesSubscription(subscription, event)) continue;
-				const execution = await createExecution(repository, {
-					stream: subscription.stream,
-					operation: subscription.operation,
-					eventId: `${subscription.id}:${event.id}`,
-					sourceSha: repository.sha,
-					version: event.version,
-					upstreamRelease: event.release,
+	receive(delivery: string, repositoryId: number, event: InboxEvent): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const repository = yield* this.store.repository(repositoryId);
+			if (!repository) return;
+			if (event.kind === 'pull_request') return yield* this.setupEdited(repository, event.edit);
+			if (event.kind === 'release') {
+				if (event.action === 'published') yield* this.winget().automatic(repository);
+				return;
+			}
+			if (event.kind === 'push') {
+				if (event.ref === `refs/heads/${repository.defaultBranch}`) yield* this.refresh(repository.name, repository.id);
+				return;
+			}
+			const { action, run } = event;
+			const coordinator = this.coordinator(repository.id);
+			if (action !== 'completed') return yield* fromPromise(() => coordinator.wake());
+			yield* fromPromise(() => coordinator.observeRun(repository.id, run.id));
+			if (
+				run.conclusion === 'success' && ['push', 'release', 'workflow_dispatch', 'schedule'].includes(run.event)
+				&& run.headRepositoryId === repository.id
+			) {
+				yield* this.event({
+					id: delivery,
+					source: repository.name,
+					event: 'workflow_run',
+					workflow: run.path.replace(/^\.github\/workflows\//, ''),
 				});
-				deliveries.push({ id: execution.id, eventId: event.id, repositoryId: repository.id, execution });
 			}
-		}
-		await this.store.queueEvent(event, deliveries);
-		await this.deliverEvents();
+		});
 	}
-	private async deliverEvents(): Promise<void> {
-		for (const delivery of await this.store.pendingDeliveries()) {
-			try {
-				const repository = await this.store.repository(delivery.repositoryId);
-				if (!repository) throw new Error('Destination unavailable');
-				await this.enqueue(requireReady(repository), delivery.execution);
-				await this.store.deliveryResult(delivery.id, true);
-			} catch {
-				await this.store.deliveryResult(delivery.id, false);
+	private setupEdited(repository: RepositoryRecord, edit: SetupPullEdit): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const { pull_request: pull, sender } = edit;
+			if (pull.head.repo.id !== repository.id || pull.base.repo.id !== repository.id) return;
+			const bot = yield* this.gateway.botIdentity;
+			if (sender.id === bot.id || pull.user.id !== bot.id) return;
+			const document = yield* this.onboarding.document(repository.id);
+			if (document === undefined) return;
+			const saved = yield* fromSync(() => record(JSON.parse(document)));
+			if (saved.url !== `https://github.com/${repository.name}/pull/${pull.number}`) return;
+			const options = yield* fromSync(() => setupOptionsSchema.optional().parse(saved.options));
+			const base = yield* fromSync(() => setupChoicesSchema.optional().parse(saved.choices));
+			if (!options || !base) return;
+			const body = pull.body ?? '';
+			const choices = yield* fromSync(() => setupChoicesSchema.parse(bodyChoices(body, options, base)));
+			yield* fromPromise(() =>
+				this.coordinator(repository.id).setupEdited(
+					{ repositoryId: repository.id, number: pull.number, head: pull.head.sha, body, choices },
+					JSON.stringify(choices) !== JSON.stringify(base),
+				)
+			);
+		});
+	}
+	event(event: AutomationEvent): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			if (
+				event.event === 'release'
+				&& (!event.release || event.release.repository.name !== event.source
+					|| event.release.version !== event.version)
+			) {
+				return yield* precondition('Release event requires its upstream identity');
 			}
-		}
-	}
-	async scheduled(): Promise<void> {
-		await this.sessions.sweep();
-		await this.changes.prune(Date.now() - changeRetention);
-		await this.deliverEvents();
-		await this.winget().reconcile();
-		for (const repository of await this.store.enrollments()) {
-			try {
-				const refreshed = await this.refresh(repository.name, repository.id);
-				try {
-					await this.winget().automatic(refreshed);
-				} catch (error) {
-					await this.store.audit(
-						'winget',
-						'winget.failed',
-						`${repository.name}: ${error instanceof Error ? error.message : 'Polling failed'}`,
-					);
-				}
-				await this.coordinator(repository.id).wake();
-				for (const event of await this.coordinator(repository.id).releaseEvents()) {
-					await this.event(event);
-					await this.coordinator(repository.id).acknowledgeReleaseEvent(event.id);
-				}
-				const state = readiness(refreshed);
+			const deliveries: SubscriptionDelivery[] = [];
+			for (const stored of yield* this.store.readableRepositories()) {
+				const state = readiness(stored);
 				if (state.kind !== 'ready') continue;
-				const ready = state.repository;
-				const now = Date.now();
-				for (const [streamName, stream] of Object.entries(ready.configuration.streams)) {
-					for (const [operation, binding] of Object.entries(stream.workflows)) {
-						if (!binding.schedule) continue;
-						const key = `${repository.id}:${streamName}:${operation}:${binding.schedule}`;
-						const cursor = await this.schedules.cursor(key);
-						if (cursor === undefined) {
-							await this.schedules.start(key, now);
-							continue;
-						}
-						const schedule = CronExpressionParser.parse(binding.schedule, {
-							currentDate: cursor,
-							tz: 'UTC',
-						});
-						for (let n = 0; n < 100; n++) {
-							const tick = schedule.next().getTime();
-							if (tick > now) break;
-							await this.enqueue(
-								ready,
-								await createExecution(ready, {
-									stream: streamName,
-									operation,
-									eventId: `schedule:${tick}`,
-									sourceSha: ready.sha,
-								}),
-							);
-							await this.schedules.advance(key, tick);
-						}
+				const repository = state.repository;
+				for (const subscription of repository.configuration.subscriptions) {
+					if (!matchesSubscription(subscription, event)) continue;
+					const execution = yield* (
+						createExecution(repository, {
+							stream: subscription.stream,
+							operation: subscription.operation,
+							eventId: `${subscription.id}:${event.id}`,
+							sourceSha: repository.sha,
+							version: event.version,
+							upstreamRelease: event.release,
+						})
+					);
+					deliveries.push({ id: execution.id, eventId: event.id, repositoryId: repository.id, execution });
+				}
+			}
+			yield* this.store.queueEvent(event, deliveries);
+			yield* this.deliverEvents();
+		});
+	}
+	private deliverEvents(): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			for (const delivery of yield* this.store.pendingDeliveries()) {
+				const delivered = yield* Effect.gen({ self: this }, function*() {
+					const repository = yield* this.store.repository(delivery.repositoryId);
+					if (!repository) return yield* precondition('Destination unavailable');
+					const ready = yield* requireReady(repository);
+					yield* this.enqueue(ready, delivery.execution);
+				}).pipe(Effect.as(true), Effect.catchCause(() => Effect.succeed(false)));
+				yield* this.store.deliveryResult(delivery.id, delivered);
+			}
+		});
+	}
+	private scheduleStreams(ready: ReadyRepository, now: number): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			for (const [streamName, stream] of Object.entries(ready.configuration.streams)) {
+				for (const [operation, binding] of Object.entries(stream.workflows)) {
+					if (!binding.schedule) continue;
+					const expression = binding.schedule;
+					const key = `${ready.id}:${streamName}:${operation}:${expression}`;
+					const cursor = yield* this.schedules.cursor(key);
+					if (cursor === undefined) {
+						yield* this.schedules.start(key, now);
+						continue;
+					}
+					const schedule = yield* fromSync(() =>
+						CronExpressionParser.parse(expression, { currentDate: cursor, tz: 'UTC' })
+					);
+					for (let n = 0; n < 100; n++) {
+						const tick = schedule.next().getTime();
+						if (tick > now) break;
+						const execution = yield* (
+							createExecution(ready, {
+								stream: streamName,
+								operation,
+								eventId: `schedule:${tick}`,
+								sourceSha: ready.sha,
+							})
+						);
+						yield* this.enqueue(ready, execution);
+						yield* this.schedules.advance(key, tick);
 					}
 				}
-			} catch {
-				/* Next scheduled pass retries; preserve the last known configuration. */
 			}
-		}
-		const notifications = this.notifications();
-		await pollPackages(
-			this.store,
-			await this.store.readableRepositories(),
-			fetch,
-			event => this.event(event),
-			notifications,
-		);
-		await notifications.deliver();
+		});
+	}
+	private scheduledRepository(repository: { name: string; id: number }): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const refreshed = yield* this.refresh(repository.name, repository.id);
+			yield* this.winget().automatic(refreshed).pipe(
+				recover(error => this.store.audit('winget', 'winget.failed', `${repository.name}: ${decodeError(error)}`)),
+			);
+			const coordinator = this.coordinator(repository.id);
+			yield* fromPromise(() => coordinator.wake());
+			for (const event of yield* fromPromise(() => coordinator.releaseEvents())) {
+				yield* this.event(event);
+				yield* fromPromise(() => coordinator.acknowledgeReleaseEvent(event.id));
+			}
+			const state = readiness(refreshed);
+			if (state.kind !== 'ready') return;
+			yield* this.scheduleStreams(state.repository, Date.now());
+		});
+	}
+	scheduled(): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			yield* this.sessions.sweep();
+			yield* this.changes.prune(Date.now() - changeRetention);
+			yield* this.deliverEvents();
+			yield* this.winget().reconcile();
+			for (const repository of yield* this.store.enrollments()) {
+				// Next scheduled pass retries; preserve the last known configuration.
+				yield* this.scheduledRepository(repository).pipe(Effect.ignoreCause);
+			}
+			const notifications = this.notifications();
+			const readable = yield* this.store.readableRepositories();
+			yield* pollPackages(this.store, readable, fetch, event => this.event(event), notifications);
+			yield* notifications.deliver();
+		});
 	}
 }

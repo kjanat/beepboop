@@ -1,14 +1,21 @@
 import { Effect } from 'effect';
 import { applyEdits, modify, type ParseError, parse } from 'jsonc-parser';
 import { directory, object } from '@/automation/managers/helpers';
-import { type Adapter, emptyInventory, type Fetcher, type RegistryVersion } from '@/automation/managers/registry';
+import {
+	type Adapter,
+	emptyInventory,
+	type Fetcher,
+	Registry,
+	type RegistryVersion,
+} from '@/automation/managers/registry';
 import { latestVersion, unpublished } from '@/automation/managers/verification';
 import { identityOf } from '@/automation/package-identity';
 import { registry } from '@/automation/package-publication';
+import type { Outcome, Publication } from '@/automation/types';
 import { jsrManifest } from '@/contract/catalog';
 import { fileProblem } from '@/contract/diagnostics';
-import { attempt, type Failure, Refused, Upstream } from '@/effect/errors';
-import { Registry } from '@/effect/services';
+import { type DomainError, domainError, upstream } from '@/contract/errors';
+import { fromPromise, fromSync } from '@/failure';
 
 const packageName = /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/;
 const precedence = ['jsr.json', 'jsr.jsonc', 'deno.json', 'deno.jsonc'];
@@ -17,8 +24,8 @@ function rank(path: string): number {
 }
 const licenseTerm = String.raw`\(?(?!UNLICENSED\b|LicenseRef-)[A-Za-z0-9][A-Za-z0-9.+-]*\)?`;
 const spdxLicense = new RegExp(`^${licenseTerm}(?: (?:AND|OR|WITH) ${licenseTerm})*$`);
-export function jsrLatest(name: string, request: Fetcher): Promise<RegistryVersion> {
-	if (!packageName.test(name)) throw new Error('Invalid JSR package name');
+export function jsrLatest(name: string, request: Fetcher): Effect.Effect<RegistryVersion> {
+	if (!packageName.test(name)) return Effect.die(new Error('Invalid JSR package name'));
 	return latestVersion(request, `https://jsr.io/${name}/meta.json`, body => {
 		const metadata = object(body);
 		const [scope, bare] = name.slice(1).split('/');
@@ -35,17 +42,17 @@ export function jsrLatest(name: string, request: Fetcher): Promise<RegistryVersi
 	});
 }
 export const jsrTokenAlias = 'jsr-token';
-function setupRefused(message: string): Refused {
-	return new Refused({
-		problem: { code: 'precondition', diagnostics: [{ code: 'registry-setup', severity: 'blocking', message }] },
+function setupRefused(message: string): DomainError {
+	return domainError(
+		{ code: 'precondition', diagnostics: [{ code: 'registry-setup', severity: 'blocking', message }] },
 		message,
-	});
+	);
 }
 export function setUpJsrPackage(
 	name: string,
 	repository: string,
 	token: string,
-): Effect.Effect<void, Failure, Registry> {
+): Effect.Effect<void, DomainError, Registry> {
 	return Effect.gen(function*() {
 		if (!packageName.test(name)) return yield* setupRefused(`Invalid JSR package name ${name}`);
 		const registry = yield* Registry;
@@ -65,17 +72,17 @@ export function setUpJsrPackage(
 			}).pipe(Effect.flatMap(response => {
 				if (response.ok || (method === 'GET' && response.status === 404)) return Effect.succeed(response);
 				const failed = `JSR ${method} ${path} failed with HTTP ${response.status}`;
-				return attempt(() => response.text()).pipe(Effect.flatMap(detail =>
+				return fromPromise(() => response.text()).pipe(Effect.flatMap(detail =>
 					Effect.fail(
 						response.status >= 500 || response.status === 429
-							? new Upstream({ service: 'registry', message: `${failed}: ${detail}` })
+							? upstream('registry', `${failed}: ${detail}`)
 							: setupRefused(`${failed}: ${detail}`),
 					)
 				));
 			}));
 		const existing = yield* call(`/scopes/${scope}/packages/${bare}`);
 		if (existing.status === 404) yield* call(`/scopes/${scope}/packages`, 'POST', { package: bare });
-		const linked = existing.ok ? object(object(yield* attempt(() => existing.json())).githubRepository) : {};
+		const linked = existing.ok ? object(object(yield* fromPromise(() => existing.json())).githubRepository) : {};
 		if (linked.owner === undefined) {
 			yield* call(`/scopes/${scope}/packages/${bare}`, 'PATCH', { githubRepository: { owner, name: repo } });
 		} else if (linked.owner !== owner || linked.name !== repo) {
@@ -86,7 +93,7 @@ export function setUpJsrPackage(
 		yield* call(`/scopes/${scope}`, 'PATCH', { ghActionsVerifyActor: false });
 	});
 }
-export function jsrTokenRefused(names: string[]): Refused {
+export function jsrTokenRefused(names: string[]): DomainError {
 	return setupRefused(`Store a JSR access token as ${jsrTokenAlias} so Beepboop can set up ${names.join(', ')}`);
 }
 export const jsrManager: Adapter<'jsr'> = {
@@ -134,17 +141,19 @@ export const jsrManager: Adapter<'jsr'> = {
 	ownsVersionSource: source => /(?:^|\/)(?:jsr|deno)\.jsonc?#version$/.test(source),
 	editVersion({ before, version }) {
 		const indent = before.match(/\n([\t ]+)"/)?.[1] ?? '  ';
-		return applyEdits(
-			before,
-			modify(before, ['version'], version, {
-				formattingOptions: { insertSpaces: !indent.startsWith('\t'), tabSize: indent.length },
-			}),
+		return fromSync(() =>
+			applyEdits(
+				before,
+				modify(before, ['version'], version, {
+					formattingOptions: { insertSpaces: !indent.startsWith('\t'), tabSize: indent.length },
+				}),
+			)
 		);
 	},
 	latest: (pkg, request) => jsrLatest(pkg.name, request),
-	async verifyPublication(publication, request) {
+	verifyPublication(publication, request) {
 		if (!packageName.test(publication.name) || !/^[0-9A-Za-z.+-]+$/.test(publication.version)) {
-			return { ...publication, outcome: 'failed' };
+			return Effect.succeed({ ...publication, outcome: 'failed' });
 		}
 		const url = `https://jsr.io/${publication.name}/${publication.version}_meta.json`;
 		const options = {
@@ -152,43 +161,36 @@ export const jsrManager: Adapter<'jsr'> = {
 			signal: AbortSignal.timeout(15_000),
 			headers: { Accept: 'application/json' },
 		};
-		try {
-			const metadata = await request(`https://jsr.io/${publication.name}/meta.json`, options);
-			if (metadata.status === 404) return { ...publication, outcome: 'pending', url };
-			if (!metadata.ok) return { ...publication, outcome: 'uncertain', url };
-			const body = object(await metadata.json());
+		const result = (outcome: Outcome, digest?: string): Publication => ({
+			...publication,
+			outcome,
+			url,
+			...(digest === undefined ? {} : { digest }),
+		});
+		return Effect.gen(function*() {
+			const metadata = yield* fromPromise(() => request(`https://jsr.io/${publication.name}/meta.json`, options));
+			if (metadata.status === 404) return result('pending');
+			if (!metadata.ok) return result('uncertain');
+			const body = object(yield* fromPromise((): Promise<unknown> => metadata.json()));
 			const [scope, name] = publication.name.slice(1).split('/');
-			if (body.scope !== scope || body.name !== name) return { ...publication, outcome: 'failed', url };
-			if (!Object.hasOwn(object(body.versions), publication.version)) {
-				return { ...publication, outcome: 'pending', url };
-			}
-			if (object(object(body.versions)[publication.version]).yanked === true) {
-				return { ...publication, outcome: 'failed', url };
-			}
-			const response = await request(url, options);
-			if (response.status === 404) return { ...publication, outcome: 'pending', url };
-			if (!response.ok) return { ...publication, outcome: 'uncertain', url };
-			const bytes = await response.arrayBuffer();
+			if (body.scope !== scope || body.name !== name) return result('failed');
+			if (!Object.hasOwn(object(body.versions), publication.version)) return result('pending');
+			if (object(object(body.versions)[publication.version]).yanked === true) return result('failed');
+			const response = yield* fromPromise(() => request(url, options));
+			if (response.status === 404) return result('pending');
+			if (!response.ok) return result('uncertain');
+			const bytes = yield* fromPromise(() => response.arrayBuffer());
 			const version = object(JSON.parse(new TextDecoder().decode(bytes)));
 			const files = Object.values(object(version.manifest));
 			if (
 				!files.length || !Object.keys(object(version.exports)).length
 				|| files.some(file => !/^sha256-[a-f0-9]{64}$/.test(String(object(file).checksum)))
 			) {
-				return { ...publication, outcome: 'failed', url };
+				return result('failed');
 			}
-			const digest = `sha256-${
-				Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte =>
-					byte.toString(16).padStart(2, '0')).join('')
-			}`;
-			return {
-				...publication,
-				digest,
-				url,
-				outcome: publication.digest && publication.digest !== digest ? 'failed' : 'succeeded',
-			};
-		} catch {
-			return { ...publication, outcome: 'uncertain', url };
-		}
+			const hash = yield* fromPromise(() => crypto.subtle.digest('SHA-256', bytes));
+			const digest = `sha256-${Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('')}`;
+			return result(publication.digest && publication.digest !== digest ? 'failed' : 'succeeded', digest);
+		}).pipe(Effect.catchCause(() => Effect.succeed(result('uncertain'))));
 	},
 };

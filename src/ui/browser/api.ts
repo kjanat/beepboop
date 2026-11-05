@@ -1,30 +1,38 @@
+import { Data, Effect } from 'effect';
 import type { z } from 'zod';
-import { ApiFailure, call, type Transport } from '@/contract/client';
+import { type ApiFailure, call, send, type Transport, type Unreachable } from '@/contract/client';
 import type { Route } from '@/contract/routes';
 
-const send: Transport = request =>
-	fetch(
-		request.path,
-		request.body === undefined
-			? {}
-			: { method: request.method, headers: { 'Content-Type': 'application/json' }, body: request.body },
+export class SessionExpired extends Data.TaggedError('SessionExpired')<{ readonly message: string }> {}
+
+const request: Transport = outgoing =>
+	send(() =>
+		fetch(
+			outgoing.path,
+			outgoing.body === undefined
+				? {}
+				: { method: outgoing.method, headers: { 'Content-Type': 'application/json' }, body: outgoing.body },
+		)
 	);
 
-const browser: Transport = async request => {
-	const response = await send(request);
-	if (response.status !== 401 || !(await fetch('/auth/renew', { method: 'POST' })).ok) return response;
-	return send(request);
-};
+const browser: Transport = outgoing =>
+	Effect.gen(function*() {
+		const response = yield* request(outgoing);
+		if (response.status !== 401) return response;
+		const renewed = yield* send(() => fetch('/auth/renew', { method: 'POST' }));
+		return renewed.ok ? yield* request(outgoing) : response;
+	});
 
-export async function api<Q extends z.ZodType, S extends z.ZodType>(
+export function api<Q extends z.ZodType, S extends z.ZodType>(
 	route: Route<Q, S>,
 	input: z.input<Q>,
-): Promise<z.output<S>> {
-	try {
-		return await call(route, input, browser);
-	} catch (error) {
-		if (!(error instanceof ApiFailure) || error.status !== 401) throw error;
-		location.assign(`/auth/login?return=${encodeURIComponent(`${location.pathname}${location.search}`)}`);
-		throw new Error('Session expired. Signing in again.');
-	}
+): Effect.Effect<z.output<S>, ApiFailure | Unreachable | SessionExpired> {
+	return call(route, input, browser).pipe(
+		Effect.catchTag('ApiFailure', (failure): Effect.Effect<never, ApiFailure | SessionExpired> =>
+			failure.status === 401
+				? Effect.sync(() =>
+					location.assign(`/auth/login?return=${encodeURIComponent(`${location.pathname}${location.search}`)}`)
+				).pipe(Effect.andThen(Effect.fail(new SessionExpired({ message: 'Session expired. Signing in again.' }))))
+				: Effect.fail(failure)),
+	);
 }

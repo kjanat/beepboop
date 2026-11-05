@@ -1,6 +1,8 @@
+import { Effect } from 'effect';
 import { z } from 'zod';
+import type { DomainError } from '@/contract/errors';
 import { auditActor } from '@/domain/audit';
-import type { SqlDatabase } from '@/persistence/d1/database';
+import { parse, type Sql, type SqlDatabase, sql } from '@/persistence/d1/database';
 
 const activityRow = z.object({
 	id: z.string(),
@@ -18,18 +20,26 @@ export interface AuditRow {
 }
 
 export class AuditStore {
-	constructor(private readonly db: SqlDatabase) {}
-	async record(actor: string, action: string, target: string): Promise<void> {
-		await this.db.prepare('INSERT INTO audit(id,actor,actor_json,action,target,created_at) VALUES(?,?,?,?,?,?)')
-			.bind(crypto.randomUUID(), actor, JSON.stringify(auditActor(actor)), action, target, Date.now()).run();
+	private readonly sql: Sql;
+	constructor(db: SqlDatabase) {
+		this.sql = sql(db);
 	}
-	async recent(): Promise<AuditRow[]> {
-		const result = await this.db
-			.prepare('SELECT id, actor, action, target, created_at FROM audit ORDER BY created_at DESC LIMIT 200')
-			.all();
-		return z.array(activityRow).parse(result.results).map(({ created_at, ...entry }) => ({
-			...entry,
-			createdAt: created_at,
-		}));
+	record(actor: string, action: string, target: string): Effect.Effect<void, DomainError> {
+		return this.sql.run(
+			'INSERT INTO audit(id,actor,actor_json,action,target,created_at) VALUES(?,?,?,?,?,?)',
+			crypto.randomUUID(),
+			actor,
+			JSON.stringify(auditActor(actor)),
+			action,
+			target,
+			Date.now(),
+		).pipe(Effect.asVoid);
+	}
+	recent(): Effect.Effect<AuditRow[], DomainError> {
+		return this.sql.all('SELECT id, actor, action, target, created_at FROM audit ORDER BY created_at DESC LIMIT 200')
+			.pipe(
+				Effect.flatMap(rows => parse(z.array(activityRow), rows)),
+				Effect.map(rows => rows.map(({ created_at, ...entry }) => ({ ...entry, createdAt: created_at }))),
+			);
 	}
 }

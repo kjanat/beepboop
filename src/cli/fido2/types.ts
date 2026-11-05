@@ -1,20 +1,37 @@
+import { Data, Effect } from 'effect';
+
+export class SecurityKeyError extends Data.TaggedError('SecurityKeyError')<{
+	readonly message: string;
+	readonly code?: number;
+}> {}
+
+export function securityKeyFailure(error: unknown): SecurityKeyError {
+	return new SecurityKeyError({ message: error instanceof Error ? error.message : String(error) });
+}
+
 export interface HidDevice {
 	readonly path: string;
-	write(report: Uint8Array): Promise<void>;
-	read(timeoutMs: number): Promise<Uint8Array>;
+	write(report: Uint8Array): Effect.Effect<void, SecurityKeyError>;
+	read(timeoutMs: number): Effect.Effect<Uint8Array, SecurityKeyError>;
 	close(): void;
 }
 
-export interface HidTransport {
-	devices(): Promise<HidDevice[]>;
+export function closeAll(devices: readonly HidDevice[]): Effect.Effect<void> {
+	return Effect.sync(() => {
+		for (const device of devices) device.close();
+	});
 }
 
-export interface AssertionRequest {
+export interface HidTransport {
+	readonly devices: Effect.Effect<HidDevice[], SecurityKeyError>;
+}
+
+export interface AssertionRequest<E = never> {
 	rpId: string;
 	clientDataJSON: Uint8Array;
 	clientDataHash: Uint8Array;
 	allowCredentials: Uint8Array[];
-	pin(): Promise<string>;
+	pin: Effect.Effect<string, E>;
 	touch(): void;
 }
 
@@ -26,5 +43,5 @@ export interface Assertion {
 }
 
 export interface Authenticator {
-	getAssertion(request: AssertionRequest): Promise<Assertion>;
+	getAssertion<E>(request: AssertionRequest<E>): Effect.Effect<Assertion, SecurityKeyError | E>;
 }

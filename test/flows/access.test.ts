@@ -2,17 +2,18 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { experimental_AstroContainer } from 'astro/container';
+import { Effect } from 'effect';
 import { z } from 'zod';
 import { AutomationService } from '@/automation/service';
 import { Store } from '@/automation/store';
 import { errorEnvelope } from '@/contract/errors';
 import { readiness } from '@/domain/repository';
 import { loaders } from '@/server/loaders';
-import { migrationFiles, migrationsDirectory, TestD1 } from '../support/d1.ts';
-import { ownerId, type Repository } from '../support/github.ts';
-import { bearer, field, type Reply, reply, text } from '../support/http.ts';
-import { widget } from '../support/repositories.ts';
-import { adminSubject, origin, World } from '../support/world.ts';
+import { migrationFiles, migrationsDirectory, TestD1 } from '@root/test/support/d1.ts';
+import { ownerId, type Repository } from '@root/test/support/github.ts';
+import { bearer, field, type Reply, reply, text } from '@root/test/support/http.ts';
+import { widget } from '@root/test/support/repositories.ts';
+import { adminSubject, origin, World } from '@root/test/support/world.ts';
 
 type Component = Parameters<experimental_AstroContainer['renderToString']>[0];
 const componentModule = z.object({ default: z.custom<Component>(value => typeof value === 'function') });
@@ -45,7 +46,7 @@ function refusal(response: Reply): { status: number; error: string } {
 }
 
 async function badge(): Promise<string> {
-	const data = await loaders.repositories({ env: world.env, actor: adminSubject });
+	const data = await Effect.runPromise(loaders.repositories({ env: world.env, actor: adminSubject }));
 	const loaded: unknown = await import(repositoriesComponent);
 	const container = await experimental_AstroContainer.create();
 	const html = await container.renderToString(componentModule.parse(loaded).default, {
@@ -57,7 +58,7 @@ async function badge(): Promise<string> {
 }
 
 async function stored(repository: Repository) {
-	const record = await new Store(world.db).repository(repository.id);
+	const record = await Effect.runPromise(new Store(world.db).repository(repository.id));
 	if (!record) throw new Error('Repository is not enrolled');
 	return record;
 }
@@ -195,7 +196,7 @@ test('a lost unsuspend webhook leaves refresh suspended until discover asks GitH
 		'INSERT INTO repositories(id,name,document,updated_at,added_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,document=excluded.document,updated_at=excluded.updated_at',
 	).bind(repository.id, repository.name, document, refreshed.updatedAt, refreshed.updatedAt).run();
 	deployed.sqlite.run(readFileSync(join(migrationsDirectory, '0012_repository_access.sql'), 'utf8'));
-	const migrated = await new Store(deployed).repository(repository.id);
+	const migrated = await Effect.runPromise(new Store(deployed).repository(repository.id));
 	expect(migrated && readiness(migrated)).toEqual({ kind: 'suspended', since: refreshed.updatedAt });
 
 	expect((await api('/api/repositories/discover', { repository: 'octo/widget' })).status).toBe(200);
@@ -221,7 +222,7 @@ test('discover and the cron refresh rewrite a repository row that no longer deco
 	expect(text((await api('/api/repositories/resolve', { repository: 'widget' })).body, 'name')).toBe('octo/widget');
 
 	await corrupt();
-	await new AutomationService(world.env).scheduled();
+	await Effect.runPromise(new AutomationService(world.env).scheduled());
 	expect(readiness(await stored(repository)).kind).toBe('ready');
 	expect(world.network.unrouted).toEqual([]);
 });

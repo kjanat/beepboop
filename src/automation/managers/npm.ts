@@ -1,3 +1,4 @@
+import { Effect } from 'effect';
 import { parse as parseToml } from 'smol-toml';
 import { object } from '@/automation/managers/helpers';
 import type { Adapter, Fetcher, RegistryVersion } from '@/automation/managers/registry';
@@ -7,8 +8,10 @@ import { excluded, registry } from '@/automation/package-publication';
 import type { Package } from '@/automation/types';
 import { npmTargets } from '@/contract/catalog';
 import { fileProblem } from '@/contract/diagnostics';
+import { precondition } from '@/contract/errors';
+import { fromSync } from '@/failure';
 import { packageIdentity } from '@/package-url';
-export function npmLatest(name: string, request: Fetcher): Promise<RegistryVersion> {
+export function npmLatest(name: string, request: Fetcher): Effect.Effect<RegistryVersion> {
 	return latestVersion(
 		request,
 		`https://registry.npmjs.org/${encodeURIComponent(name)}`,
@@ -153,65 +156,64 @@ export const npmManager: Adapter<'npm'> = {
 		return path === 'package.json' || path.endsWith('/package.json');
 	},
 	editVersion({ source, before, version, packages }) {
-		const [path, key] = source.split('#');
-		if (!path || !key) throw new Error('Invalid version source');
-		const changed = new Map<string, string>();
-		const data = object(JSON.parse(before));
-		data.version = version;
-		for (const section of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
-			if (data[section] === undefined) continue;
-			const deps = object(data[section]);
-			for (const pkg of packages.filter((p) => p.manager === 'npm')) {
-				const old = deps[pkg.name];
-				if (typeof old === 'string' && /^[~^]?\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(old)) {
-					deps[pkg.name] = `${old.match(/^[~^]/)?.[0] ?? ''}${version}`;
-				}
-			}
-			data[section] = deps;
-		}
-		const indent = before.match(/\n([\t ]+)"/)?.[1] ?? '  ';
-		changed.set(path, `${JSON.stringify(data, null, indent)}\n`);
-		const result = changed.get(path);
-		if (result === undefined) throw new Error('Missing version edit');
-		return result;
-	},
-	updateDependencies({ snapshot, packages, version, changed }) {
-		for (
-			const [path, original] of Object.entries(snapshot.files).filter(
-				([path]) => path === 'package.json' || path.endsWith('/package.json'),
-			)
-		) {
-			const before = changed.get(path) ?? original;
-			const data = object(JSON.parse(before));
-			let altered = false;
-			for (
-				const section of [
-					'dependencies',
-					'devDependencies',
-					'optionalDependencies',
-					'peerDependencies',
-				]
-			) {
+		return Effect.gen(function*() {
+			const [path, key] = source.split('#');
+			if (!path || !key) return yield* precondition('Invalid version source');
+			const data = yield* fromSync(() => object(JSON.parse(before)));
+			data.version = version;
+			for (const section of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
 				if (data[section] === undefined) continue;
-				const dependencies = object(data[section]);
+				const deps = yield* fromSync(() => object(data[section]));
 				for (const pkg of packages.filter((p) => p.manager === 'npm')) {
-					const value = dependencies[pkg.name];
-					if (typeof value === 'string' && /^[~^]?\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(value)) {
-						const next = `${value.match(/^[~^]/)?.[0] ?? ''}${version}`;
-						if (next !== value) {
-							dependencies[pkg.name] = next;
-							altered = true;
-						}
+					const old = deps[pkg.name];
+					if (typeof old === 'string' && /^[~^]?\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(old)) {
+						deps[pkg.name] = `${old.match(/^[~^]/)?.[0] ?? ''}${version}`;
 					}
 				}
-				data[section] = dependencies;
+				data[section] = deps;
 			}
-			if (altered) {
-				changed.set(
-					path,
-					`${JSON.stringify(data, null, before.match(/\n([\t ]+)"/)?.[1] ?? '  ')}\n`,
-				);
-			}
-		}
+			const indent = before.match(/\n([\t ]+)"/)?.[1] ?? '  ';
+			return `${JSON.stringify(data, null, indent)}\n`;
+		});
 	},
+	updateDependencies: ({ snapshot, packages, version, changed }) =>
+		fromSync(() => {
+			for (
+				const [path, original] of Object.entries(snapshot.files).filter(
+					([path]) => path === 'package.json' || path.endsWith('/package.json'),
+				)
+			) {
+				const before = changed.get(path) ?? original;
+				const data = object(JSON.parse(before));
+				let altered = false;
+				for (
+					const section of [
+						'dependencies',
+						'devDependencies',
+						'optionalDependencies',
+						'peerDependencies',
+					]
+				) {
+					if (data[section] === undefined) continue;
+					const dependencies = object(data[section]);
+					for (const pkg of packages.filter((p) => p.manager === 'npm')) {
+						const value = dependencies[pkg.name];
+						if (typeof value === 'string' && /^[~^]?\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(value)) {
+							const next = `${value.match(/^[~^]/)?.[0] ?? ''}${version}`;
+							if (next !== value) {
+								dependencies[pkg.name] = next;
+								altered = true;
+							}
+						}
+					}
+					data[section] = dependencies;
+				}
+				if (altered) {
+					changed.set(
+						path,
+						`${JSON.stringify(data, null, before.match(/\n([\t ]+)"/)?.[1] ?? '  ')}\n`,
+					);
+				}
+			}
+		}),
 };

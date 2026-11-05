@@ -1,11 +1,14 @@
+import { Effect } from 'effect';
 import { z } from 'zod';
 import type { Fetcher } from '@/automation/managers/registry';
 import type { Store } from '@/automation/store';
 import type { Vault } from '@/automation/vault';
 import { type NotificationKind, notificationKinds, type WatchedRegistry, watchedRegistries } from '@/contract/catalog';
-import { precondition } from '@/contract/errors';
+import { type DomainError, precondition } from '@/contract/errors';
 import { watchedPackageHref } from '@/contract/links';
 import type { DestinationInput } from '@/contract/notifications';
+import { fromPromise, fromSync } from '@/failure';
+import { parse, type Sql, sql } from '@/persistence/d1/database';
 
 export const deliveryStates = ['pending', 'delivered', 'failed'] as const;
 export type DeliveryState = (typeof deliveryStates)[number];
@@ -165,154 +168,179 @@ function retryable(status: number): boolean {
 }
 
 export class Notifications {
+	private readonly sql: Sql;
 	constructor(
 		private store: Store,
 		private vault: () => Vault,
 		private request: Fetcher = fetch,
-	) {}
-	async destinations(): Promise<NotificationDestination[]> {
-		const rows = await this.store.db.prepare('SELECT * FROM notification_destinations ORDER BY name, id').all();
-		return z.array(destinationRow).parse(rows.results).map(destination);
+	) {
+		this.sql = sql(store.db);
 	}
-	async subscriptions(): Promise<NotificationSubscription[]> {
-		const rows = await this.store.db
-			.prepare('SELECT destination_id, registry, name FROM notification_subscriptions ORDER BY registry, name')
-			.all();
-		return z.array(subscriptionRow).parse(rows.results).map(row => ({
-			destinationId: row.destination_id,
-			registry: row.registry,
-			name: row.name,
-		}));
+	destinations(): Effect.Effect<NotificationDestination[], DomainError> {
+		return this.sql.all('SELECT * FROM notification_destinations ORDER BY name, id').pipe(
+			Effect.flatMap(rows => parse(z.array(destinationRow), rows)),
+			Effect.map(rows => rows.map(destination)),
+		);
 	}
-	async recent(): Promise<NotificationDelivery[]> {
-		const rows = await this.store.db
-			.prepare('SELECT * FROM notification_deliveries ORDER BY updated_at DESC LIMIT 50')
-			.all();
-		return z.array(deliveryRow).parse(rows.results).map(row => ({
-			id: row.id,
-			eventId: row.event_id,
-			destinationId: row.destination_id,
-			payload: payloadSchema.parse(JSON.parse(row.document)),
-			state: row.state,
-			attempts: row.attempts,
-			...(row.error === null ? {} : { error: row.error }),
-			updatedAt: row.updated_at,
-		}));
+	subscriptions(): Effect.Effect<NotificationSubscription[], DomainError> {
+		return this.sql.all('SELECT destination_id, registry, name FROM notification_subscriptions ORDER BY registry, name')
+			.pipe(
+				Effect.flatMap(rows => parse(z.array(subscriptionRow), rows)),
+				Effect.map(rows =>
+					rows.map(row => ({ destinationId: row.destination_id, registry: row.registry, name: row.name }))
+				),
+			);
 	}
-	private async checkDestination(input: DestinationInput): Promise<void> {
-		const saved = await this.store.db.prepare('SELECT 1 FROM credentials WHERE alias=? AND active=1').bind(
-			input.credential,
-		).first();
-		if (!saved) throw precondition('Store the webhook URL as a secret before using it');
+	recent(): Effect.Effect<NotificationDelivery[], DomainError> {
+		return this.sql.all('SELECT * FROM notification_deliveries ORDER BY updated_at DESC LIMIT 50').pipe(
+			Effect.flatMap(rows =>
+				fromSync(() =>
+					z.array(deliveryRow).parse(rows).map(row => ({
+						id: row.id,
+						eventId: row.event_id,
+						destinationId: row.destination_id,
+						payload: payloadSchema.parse(JSON.parse(row.document)),
+						state: row.state,
+						attempts: row.attempts,
+						...(row.error === null ? {} : { error: row.error }),
+						updatedAt: row.updated_at,
+					}))
+				)
+			),
+		);
 	}
-	async saveDestination(input: DestinationInput, actor: string): Promise<string> {
-		await this.checkDestination(input);
-		const id = input.id ?? crypto.randomUUID();
-		await this.store.db
-			.prepare(
+	private checkDestination(input: DestinationInput): Effect.Effect<void, DomainError> {
+		return this.sql.first('SELECT 1 FROM credentials WHERE alias=? AND active=1', input.credential).pipe(
+			Effect.filterOrFail(
+				saved => !!saved,
+				() => precondition('Store the webhook URL as a secret before using it'),
+			),
+			Effect.asVoid,
+		);
+	}
+	saveDestination(input: DestinationInput, actor: string): Effect.Effect<string, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			yield* this.checkDestination(input);
+			const id = input.id ?? crypto.randomUUID();
+			yield* this.sql.run(
 				'INSERT INTO notification_destinations (id, name, kind, credential, subscribe_new, enabled, created_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, kind=excluded.kind, credential=excluded.credential, subscribe_new=excluded.subscribe_new, enabled=excluded.enabled',
-			)
-			.bind(id, input.name, input.kind, input.credential, Number(input.subscribeNew), Number(input.enabled), Date.now())
-			.run();
-		await this.store.audit(actor, 'notification.save', id);
-		return id;
+				id,
+				input.name,
+				input.kind,
+				input.credential,
+				Number(input.subscribeNew),
+				Number(input.enabled),
+				Date.now(),
+			);
+			yield* this.store.audit(actor, 'notification.save', id);
+			return id;
+		});
 	}
-	async removeDestination(id: string, actor: string): Promise<void> {
-		await this.store.db.batch([
-			this.store.db.prepare('DELETE FROM notification_subscriptions WHERE destination_id=?').bind(id),
-			this.store.db.prepare(
+	removeDestination(id: string, actor: string): Effect.Effect<void, DomainError> {
+		return this.sql.batch([
+			this.sql.statement('DELETE FROM notification_subscriptions WHERE destination_id=?', id),
+			this.sql.statement(
 				"UPDATE notification_deliveries SET state='failed', error='Destination removed', updated_at=? WHERE destination_id=? AND state='pending'",
-			).bind(Date.now(), id),
-			this.store.db.prepare('DELETE FROM notification_destinations WHERE id=?').bind(id),
-		]);
-		await this.store.audit(actor, 'notification.remove', id);
+				Date.now(),
+				id,
+			),
+			this.sql.statement('DELETE FROM notification_destinations WHERE id=?', id),
+		]).pipe(Effect.andThen(this.store.audit(actor, 'notification.remove', id)));
 	}
-	async setSubscription(subscription: NotificationSubscription, subscribed: boolean, actor: string): Promise<void> {
-		await this.store.db
-			.prepare(
-				subscribed
-					? 'INSERT OR IGNORE INTO notification_subscriptions (destination_id, registry, name) SELECT id, ?, ? FROM notification_destinations WHERE id=?'
-					: 'DELETE FROM notification_subscriptions WHERE registry=? AND name=? AND destination_id=?',
-			)
-			.bind(subscription.registry, subscription.name, subscription.destinationId)
-			.run();
-		await this.store.audit(
+	setSubscription(
+		subscription: NotificationSubscription,
+		subscribed: boolean,
+		actor: string,
+	): Effect.Effect<void, DomainError> {
+		return this.sql.run(
+			subscribed
+				? 'INSERT OR IGNORE INTO notification_subscriptions (destination_id, registry, name) SELECT id, ?, ? FROM notification_destinations WHERE id=?'
+				: 'DELETE FROM notification_subscriptions WHERE registry=? AND name=? AND destination_id=?',
+			subscription.registry,
+			subscription.name,
+			subscription.destinationId,
+		).pipe(Effect.andThen(this.store.audit(
 			actor,
 			subscribed ? 'notification.subscribe' : 'notification.unsubscribe',
 			`${subscription.registry}:${subscription.name} ${subscription.destinationId}`,
-		);
+		)));
 	}
-	async subscribeNew(registry: WatchedRegistry, name: string): Promise<void> {
-		await this.store.db
-			.prepare(
-				'INSERT OR IGNORE INTO notification_subscriptions (destination_id, registry, name) SELECT id, ?, ? FROM notification_destinations WHERE enabled=1 AND subscribe_new=1',
-			)
-			.bind(registry, name)
-			.run();
+	subscribeNew(registry: WatchedRegistry, name: string): Effect.Effect<void, DomainError> {
+		return this.sql.run(
+			'INSERT OR IGNORE INTO notification_subscriptions (destination_id, registry, name) SELECT id, ?, ? FROM notification_destinations WHERE enabled=1 AND subscribe_new=1',
+			registry,
+			name,
+		).pipe(Effect.asVoid);
 	}
-	async stage(payload: VersionChangedPayload): Promise<void> {
-		await this.store.db
-			.prepare(
-				"INSERT OR IGNORE INTO notification_deliveries (id, event_id, destination_id, document, state, attempts, updated_at) SELECT ? || ':' || d.id, ?, d.id, ?, 'pending', 0, ? FROM notification_destinations d JOIN notification_subscriptions s ON s.destination_id = d.id WHERE d.enabled=1 AND s.registry=? AND s.name=?",
-			)
-			.bind(payload.id, payload.id, JSON.stringify(payload), Date.now(), payload.package.registry, payload.package.name)
-			.run();
+	stage(payload: VersionChangedPayload): Effect.Effect<void, DomainError> {
+		return this.sql.run(
+			"INSERT OR IGNORE INTO notification_deliveries (id, event_id, destination_id, document, state, attempts, updated_at) SELECT ? || ':' || d.id, ?, d.id, ?, 'pending', 0, ? FROM notification_destinations d JOIN notification_subscriptions s ON s.destination_id = d.id WHERE d.enabled=1 AND s.registry=? AND s.name=?",
+			payload.id,
+			payload.id,
+			JSON.stringify(payload),
+			Date.now(),
+			payload.package.registry,
+			payload.package.name,
+		).pipe(Effect.asVoid);
 	}
-	async deliver(): Promise<void> {
-		const rows = await this.store.db
-			.prepare("SELECT * FROM notification_deliveries WHERE state='pending' ORDER BY updated_at LIMIT 50")
-			.all();
-		const destinations = new Map((await this.destinations()).map(entry => [entry.id, entry]));
-		for (const row of z.array(deliveryRow).parse(rows.results)) {
-			const attempts = row.attempts + 1;
-			const outcome = await this.send(
-				destinations.get(row.destination_id),
-				payloadSchema.parse(JSON.parse(row.document)),
+	deliver(): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const rows = yield* this.sql.all(
+				"SELECT * FROM notification_deliveries WHERE state='pending' ORDER BY updated_at LIMIT 50",
 			);
-			const state = outcome.state === 'pending' && attempts >= maximumAttempts ? 'failed' : outcome.state;
-			await this.store.db
-				.prepare('UPDATE notification_deliveries SET state=?, attempts=?, error=?, updated_at=? WHERE id=?')
-				.bind(state, attempts, outcome.error ?? null, Date.now(), row.id)
-				.run();
-		}
+			const destinations = new Map((yield* this.destinations()).map(entry => [entry.id, entry]));
+			for (const row of yield* parse(z.array(deliveryRow), rows)) {
+				const attempts = row.attempts + 1;
+				const payload = yield* fromSync(() => payloadSchema.parse(JSON.parse(row.document)));
+				const outcome = yield* this.send(destinations.get(row.destination_id), payload);
+				const state = outcome.state === 'pending' && attempts >= maximumAttempts ? 'failed' : outcome.state;
+				yield* this.sql.run(
+					'UPDATE notification_deliveries SET state=?, attempts=?, error=?, updated_at=? WHERE id=?',
+					state,
+					attempts,
+					outcome.error ?? null,
+					Date.now(),
+					row.id,
+				);
+			}
+		});
 	}
-	private async send(
+	private send(
 		destination: NotificationDestination | undefined,
 		payload: VersionChangedPayload,
-	): Promise<Outcome> {
-		if (!destination?.enabled) return { state: 'failed', error: 'Destination unavailable' };
-		let secret: string;
-		try {
-			secret = (await this.vault().reveal(destination.credential, `notify:${destination.id}`)).value;
-		} catch {
-			return { state: 'pending', error: 'Webhook secret unavailable' };
-		}
-		const url = target(destination.kind, secret);
-		if (!url) {
-			return {
-				state: 'failed',
-				error: destination.kind === 'slack' ? 'Secret is not a Slack webhook URL' : 'Secret is not an HTTPS URL',
-			};
-		}
-		let response: Response;
-		try {
+	): Effect.Effect<Outcome> {
+		return Effect.gen({ self: this }, function*() {
+			if (!destination?.enabled) return { state: 'failed', error: 'Destination unavailable' };
+			const secret = yield* this.vault().reveal(destination.credential, `notify:${destination.id}`).pipe(
+				Effect.map(credential => credential.value),
+				Effect.catchCause(() => Effect.undefined),
+			);
+			if (secret === undefined) return { state: 'pending', error: 'Webhook secret unavailable' };
+			const url = target(destination.kind, secret);
+			if (!url) {
+				return {
+					state: 'failed',
+					error: destination.kind === 'slack' ? 'Secret is not a Slack webhook URL' : 'Secret is not an HTTPS URL',
+				};
+			}
 			const request = this.request;
-			response = await request(url, {
-				method: 'POST',
-				redirect: 'manual',
-				signal: AbortSignal.timeout(10_000),
-				headers: {
-					'Content-Type': 'application/json',
-					'Idempotency-Key': payload.id,
-					'User-Agent': 'beepboop notifications',
-				},
-				body: JSON.stringify(destination.kind === 'slack' ? slackMessage(payload) : payload),
-			});
-		} catch {
-			return { state: 'pending', error: 'Request failed' };
-		}
-		await response.body?.cancel().catch(() => undefined);
-		if (response.ok) return { state: 'delivered' };
-		return { state: retryable(response.status) ? 'pending' : 'failed', error: `HTTP ${response.status}` };
+			const response = yield* fromPromise(() =>
+				request(url, {
+					method: 'POST',
+					redirect: 'manual',
+					signal: AbortSignal.timeout(10_000),
+					headers: {
+						'Content-Type': 'application/json',
+						'Idempotency-Key': payload.id,
+						'User-Agent': 'beepboop notifications',
+					},
+					body: JSON.stringify(destination.kind === 'slack' ? slackMessage(payload) : payload),
+				})
+			).pipe(Effect.catchCause(() => Effect.undefined));
+			if (!response) return { state: 'pending', error: 'Request failed' };
+			yield* Effect.promise(() => response.body?.cancel().catch(() => undefined) ?? Promise.resolve());
+			if (response.ok) return { state: 'delivered' };
+			return { state: retryable(response.status) ? 'pending' : 'failed', error: `HTTP ${response.status}` };
+		});
 	}
 }

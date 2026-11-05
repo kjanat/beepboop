@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { Effect, Semaphore } from 'effect';
 import { z } from 'zod';
 import type { WorkflowIdentity } from '@/automation/auth';
 import {
@@ -36,9 +37,10 @@ import { maintainSetup } from '@/automation/setup-maintenance';
 import type { SetupEdit } from '@/automation/setup-types';
 import { decodeError, Store } from '@/automation/store';
 import type { Artifact, AutomationEvent, Edit, Execution, Publication, ReleaseReference } from '@/automation/types';
+import { type DomainError, precondition } from '@/contract/errors';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
 import { readiness } from '@/domain/repository';
-import { retryable } from '@/failure';
+import { fromPromise, fromSync, recover, retryable } from '@/failure';
 import { array, integer, record, sha, text } from '@/model';
 import { decodeEventV1, decodeExecutionV1, decodeSetupEditV1 } from '@/persistence/codecs/v1';
 import type { SqlDatabase } from '@/persistence/d1/database';
@@ -58,6 +60,12 @@ interface ReleaseSetRecord {
 	workflowId?: string;
 	started?: boolean;
 	completed?: boolean;
+}
+interface ReleaseOperation {
+	id: string;
+	operation: string;
+	paced: boolean;
+	dependencies: string[];
 }
 const releaseSetRecord: z.ZodType<ReleaseSetRecord> = z.object({
 	target: z.string(),
@@ -107,62 +115,106 @@ function moved(execution: Execution, head: { ref: string; sha: string }): string
 		release ? 'prepare the release again' : 'trigger the operation again'
 	}`;
 }
+function verifying(publication: Publication): boolean {
+	return canVerifyPublication(publication.manager) && ['pending', 'uncertain'].includes(publication.outcome);
+}
 export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
-	private pending: Promise<unknown> = Promise.resolve();
+	private readonly lock = Semaphore.makeUnsafe(1);
 	private readonly journal = new Journal(this.ctx.storage);
 	private projectionRetryAt: number | undefined;
-	private serial<T>(work: () => Promise<T>): Promise<T> {
-		const result = this.pending.then(async () => {
-			try {
-				return await work();
-			} finally {
-				await this.settle();
-			}
-		});
-		this.pending = result.catch(() => {});
-		return result;
-	}
-	private async settle(): Promise<void> {
-		await this.project();
-		await this.journal.arm(await this.nextAlarm());
-	}
-	private async project(): Promise<void> {
-		try {
-			await this.journal.drain(rows => new ProjectionStore(this.env.DB).apply(rows));
-			this.projectionRetryAt = undefined;
-		} catch (error) {
-			this.projectionRetryAt = Date.now() + projectionRetry;
-			console.error(JSON.stringify({ event: 'projection.failed', error: decodeError(error) }));
-		}
-	}
-	private async nextAlarm(): Promise<number | undefined> {
-		const now = Date.now();
-		const wakes = [...(await this.ctx.storage.list({ prefix: 'release-wake:' })).values()].map(value => {
-			const wake = releaseWake.safeParse(value);
-			return wake.success ? wakeDue(wake.data) : now;
-		});
-		const observations = [...(await this.ctx.storage.list({ prefix: 'observe:' })).values()].map(value =>
-			observation.safeParse(value).data?.due ?? now
+	private serialized<A>(work: Effect.Effect<A, DomainError>): Effect.Effect<A, DomainError> {
+		return Semaphore.withPermit(
+			this.lock,
+			Effect.exit(work).pipe(Effect.flatMap(exit => this.settle().pipe(Effect.andThen(exit)))),
 		);
-		const inbox = [...(await this.ctx.storage.list({ prefix: 'inbox:' })).values()].map(value =>
-			inboxEntry.safeParse(value).data?.due ?? now
+	}
+	private serial<A>(work: Effect.Effect<A, DomainError>): Promise<A> {
+		return Effect.runPromise(this.serialized(work));
+	}
+	private read(key: string): Effect.Effect<unknown, DomainError> {
+		return fromPromise(() => this.ctx.storage.get(key));
+	}
+	private list(options: DurableObjectListOptions): Effect.Effect<Map<string, unknown>, DomainError> {
+		return fromPromise(() => this.ctx.storage.list(options));
+	}
+	private write(key: string, value: unknown): Effect.Effect<void, DomainError> {
+		return fromPromise(() => this.ctx.storage.put(key, value));
+	}
+	private writeAll(entries: Record<string, unknown>): Effect.Effect<void, DomainError> {
+		return fromPromise(() => this.ctx.storage.put(entries));
+	}
+	private remove(key: string): Effect.Effect<void, DomainError> {
+		return fromPromise(() => this.ctx.storage.delete(key)).pipe(Effect.asVoid);
+	}
+	private commit(
+		entries: readonly [Committed, ...Committed[]],
+		extra?: Record<string, unknown>,
+	): Effect.Effect<void, DomainError> {
+		return this.journal.commit(entries, extra);
+	}
+	private arm(at: number | undefined): Effect.Effect<void, DomainError> {
+		return this.journal.arm(at);
+	}
+	private settle(): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			yield* this.project();
+			yield* this.arm(yield* this.nextAlarm());
+		});
+	}
+	private project(): Effect.Effect<void> {
+		return this.journal.drain(rows => new ProjectionStore(this.env.DB).apply(rows)).pipe(
+			Effect.tap(() =>
+				Effect.sync(() => {
+					this.projectionRetryAt = undefined;
+				})
+			),
+			recover(error =>
+				Effect.sync(() => {
+					this.projectionRetryAt = Date.now() + projectionRetry;
+					console.error(JSON.stringify({ event: 'projection.failed', error: decodeError(error) }));
+				})
+			),
 		);
-		return earliest([
-			(await this.journal.pending()) ? (this.projectionRetryAt ?? now) : undefined,
-			await this.reconcileAt(),
-			(await this.setupEdit())?.due,
-			...wakes,
-			...observations,
-			...inbox,
-		]);
 	}
-	private async reconcileAt(): Promise<number | undefined> {
-		const parsed = reconcileDue.safeParse(await this.ctx.storage.get('reconcile-at'));
-		return parsed.success ? (parsed.data ?? undefined) : undefined;
+	private nextAlarm(): Effect.Effect<number | undefined, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const now = Date.now();
+			const wakes = [...(yield* this.list({ prefix: 'release-wake:' })).values()].map(value => {
+				const wake = releaseWake.safeParse(value);
+				return wake.success ? wakeDue(wake.data) : now;
+			});
+			const observations = [...(yield* this.list({ prefix: 'observe:' })).values()].map(value =>
+				observation.safeParse(value).data?.due ?? now
+			);
+			const inbox = [...(yield* this.list({ prefix: 'inbox:' })).values()].map(value =>
+				inboxEntry.safeParse(value).data?.due ?? now
+			);
+			const pending = yield* this.journal.pending();
+			const reconcileAt = yield* this.reconcileAt();
+			const setupEdit = yield* this.setupEdit();
+			return earliest([
+				pending ? (this.projectionRetryAt ?? now) : undefined,
+				reconcileAt,
+				setupEdit?.due,
+				...wakes,
+				...observations,
+				...inbox,
+			]);
+		});
 	}
-	private async requestReconcile(at: number): Promise<void> {
-		const current = await this.reconcileAt();
-		if (current === undefined || current > at) await this.ctx.storage.put('reconcile-at', at);
+	private reconcileAt(): Effect.Effect<number | undefined, DomainError> {
+		return this.read('reconcile-at').pipe(
+			Effect.map(value => {
+				const parsed = reconcileDue.safeParse(value);
+				return parsed.success ? (parsed.data ?? undefined) : undefined;
+			}),
+		);
+	}
+	private requestReconcile(at: number): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const current = yield* this.reconcileAt();
+			if (current === undefined || current > at) yield* this.write('reconcile-at', at);
+		});
 	}
 	private store(): Store {
 		return new Store(this.env.DB);
@@ -170,332 +222,391 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	protected gateway(): RepositoryGateway {
 		return new RepositoryGateway(this.env, Number(this.env.OWNER_ID));
 	}
-	private async readJournal(): Promise<{ executions: Execution[]; unreadable: { id: string; error: string }[] }> {
-		const executions: Execution[] = [];
-		const unreadable: { id: string; error: string }[] = [];
-		for (const [key, value] of await this.ctx.storage.list({ prefix: 'execution:' })) {
-			try {
-				executions.push(decodeExecutionV1(value));
-			} catch (error) {
-				unreadable.push({ id: key.slice('execution:'.length), error: decodeError(error) });
-			}
-		}
-		return { executions, unreadable };
-	}
-	private async executions(): Promise<Execution[]> {
-		return (await this.readJournal()).executions;
-	}
-	private async auditQuietly(action: string, target: string, failure: string): Promise<void> {
-		try {
-			await this.store().audit('beepboop', action, target);
-		} catch (error) {
-			console.error(JSON.stringify({ event: failure, target, error: decodeError(error) }));
-		}
-	}
-	private async quarantine(id: string, error: string): Promise<void> {
-		await this.ctx.storage.put(`quarantine:${id}`, { error, at: Date.now() });
-		await this.auditQuietly('execution.quarantined', `${id}: ${error}`, 'quarantine.audit-failed');
-	}
-	private async isolate(id: string, error: unknown): Promise<void> {
-		const reason = `Beepboop could not continue: ${decodeError(error)}`;
-		try {
-			const current = await this.get(id);
-			if (current.reason !== reason) await this.put({ ...current, reason });
-		} catch (failure) {
-			await this.quarantine(id, decodeError(failure));
-		}
-	}
-	private async stored(id: string): Promise<Execution | undefined> {
-		const value = await this.ctx.storage.get(`execution:${id}`);
-		return value === undefined ? undefined : decodeExecutionV1(value);
-	}
-	private async releaseSet(key: string): Promise<ReleaseSetRecord | undefined> {
-		return releaseSetRecord.optional().parse(await this.ctx.storage.get(key));
-	}
-	private async put(execution: Execution): Promise<void> {
-		Object.assign(execution, identifyExecution(execution));
-		const previous = await this.stored(execution.id);
-		if (
-			previous && previous.state !== execution.state && ['running', 'succeeded'].includes(execution.state)
-			&& execution.reason === previous.reason
-		) {
-			delete execution.reason;
-		}
-		const now = Date.now();
-		execution.updatedAt = now;
-		const extra: Record<string, unknown> = {};
-		const set = execution.releaseSet;
-		if (!set?.workflowId) {
-			const current = await this.reconcileAt();
-			extra['reconcile-at'] = Math.min(current ?? Number.POSITIVE_INFINITY, now + settleInterval);
-		} else if (JSON.stringify({ ...previous, updatedAt: 0 }) !== JSON.stringify({ ...execution, updatedAt: 0 })) {
-			const key = `release-wake:${set.preparationId}`;
-			const members = wakeMembers(releaseWake.safeParse(await this.ctx.storage.get(key)).data, execution.id);
-			extra[key] = { ...(members ? { members } : {}), due: now };
-		}
-		await this.journal.commit(
-			[{ entity: 'execution', id: execution.id, repositoryId: execution.repositoryId, value: execution }],
-			extra,
-		);
-		if (execution.state === 'succeeded') await this.captureReleaseEvent(execution);
-	}
-	private async putReleaseSet(preparationId: string, record: ReleaseSetRecord): Promise<void> {
-		const preparation = await this.get(preparationId);
-		await this.journal.commit([
-			{ entity: 'release-set', id: preparationId, repositoryId: preparation.repositoryId, value: record },
-		]);
-	}
-	private async captureReleaseEvent(execution: Execution): Promise<void> {
-		if (!execution.version) return;
-		const required = execution.releaseSet?.required ?? execution.configuration.streams[execution.stream]?.required
-			?? [];
-		if (!required.length) return;
-		const id = releaseEventId({ ...execution, version: execution.version });
-		if (await this.ctx.storage.get(`release-emitted:${id}`)) return;
-		const group = (await this.executions())
-			.filter(e =>
-				e.state === 'succeeded' && e.stream === execution.stream && e.version === execution.version
-				&& e.sourceSha === execution.sourceSha && e.configurationSha === execution.configurationSha
-				&& e.releaseSet?.preparationId === execution.releaseSet?.preparationId
-				&& e.releaseSet?.group === execution.releaseSet?.group
-			);
-		if (
-			!required.every(key =>
-				group.some(e => e.publications.some(p => matchesPublication(key, p) && p.outcome === 'succeeded'))
-			)
-		) {
-			return;
-		}
-		const references = group.flatMap(e => e.release ? [e.release] : []);
-		if (references.some(r => r.tag !== references[0]?.tag || r.releaseId !== references[0]?.releaseId)) {
-			throw new Error('Conflicting release identities');
-		}
-		const release: ReleaseReference = {
-			id,
-			...(execution.releaseSet ? { group: execution.releaseSet.group } : {}),
-			repository: { id: execution.repositoryId, name: execution.repository },
-			stream: execution.stream,
-			commit: execution.sourceSha,
-			version: execution.version,
-			...(references[0]?.tag ? { tag: references[0].tag, releaseId: references[0].releaseId } : {}),
-			publications: mergePublications([], group.flatMap(e => e.publications)),
-			artifacts: [...new Map(group.flatMap(e => e.artifacts).map(a => [a.id, a])).values()],
-		};
-		const event: AutomationEvent = {
-			id,
-			source: execution.repository,
-			event: 'release',
-			version: execution.version,
-			release,
-		};
-		await this.journal.commit([{ entity: 'release', id, repositoryId: execution.repositoryId, value: event }], {
-			[`release-event:${id}`]: event,
-			[`release-emitted:${id}`]: true,
-		});
-	}
-	async execution(id: string): Promise<Execution | undefined> {
-		return this.stored(id);
-	}
-	async preparationResults(stream: string, version: string): Promise<{ url: string; head: string }[]> {
-		return (await this.executions()).flatMap(execution => {
-			const result = execution.prepared?.result ?? execution.managed?.result;
-			return result && execution.stream === stream && execution.version === version
-					&& execution.state === 'succeeded'
-				? [result]
-				: [];
-		});
-	}
-	async reindex(repositoryId: number): Promise<number> {
-		return this.serial(() => this.journal.reindex(repositoryId));
-	}
-	async setAccess(suspended: boolean): Promise<void> {
-		const prior = access.safeParse(await this.ctx.storage.get('access'));
-		await this.ctx.storage.put('access', { suspended });
-		if (prior.success && prior.data.suspended && !suspended) await this.wake();
-	}
-	private async suspended(repositoryId: number): Promise<boolean> {
-		const copy = access.safeParse(await this.ctx.storage.get('access'));
-		if (copy.success) return copy.data.suspended;
-		const stored = await this.store().repository(repositoryId);
-		const suspended = stored !== undefined && readiness(stored).kind === 'suspended';
-		await this.ctx.storage.put('access', { suspended });
-		return suspended;
-	}
-	async exportJournal(): Promise<{ key: string; value: unknown }[]> {
-		return [...(await this.ctx.storage.list())].map(([key, value]) => ({ key, value }));
-	}
-	async releaseEvents(): Promise<AutomationEvent[]> {
-		return [...(await this.ctx.storage.list({ prefix: 'release-event:', limit: 100 })).values()].map(decodeEventV1);
-	}
-	async acknowledgeReleaseEvent(id: string): Promise<void> {
-		await this.ctx.storage.delete(`release-event:${id}`);
-	}
-	/** Persist wake-ups separately so failed delivery survives Worker restarts. */
-	private async wakeReleaseWorkflows(): Promise<void> {
-		const wakes: Record<string, unknown> = {};
-		for (const [key, value] of await this.ctx.storage.list({ prefix: 'release-set:' })) {
-			const release = releaseSetRecord.parse(value);
-			if (!release.workflowId || release.completed) continue;
-			wakes[`release-wake:${key.slice('release-set:'.length)}`] = { due: Date.now() };
-		}
-		if (Object.keys(wakes).length) await this.ctx.storage.put(wakes);
-	}
-	private async deliverReleaseEvents(now: number): Promise<void> {
-		for (const [key, value] of await this.ctx.storage.list({ prefix: 'release-wake:' })) {
-			const parsed = releaseWake.safeParse(value);
-			if (!parsed.success) {
-				await this.ctx.storage.delete(key);
-				continue;
-			}
-			const wake = parsed.data;
-			if (wakeDue(wake) > now) continue;
-			const preparationId = key.slice('release-wake:'.length);
-			const release = await this.releaseSet(`release-set:${preparationId}`);
-			if (!release?.workflowId || release.completed) {
-				await this.ctx.storage.delete(key);
-				continue;
-			}
-			try {
-				const binding = this.env.RELEASE_WORKFLOW;
-				if (!release.started) {
-					const preparation = await this.get(preparationId);
-					try {
-						await binding.create({
-							id: release.workflowId,
-							params: { repositoryId: preparation.repositoryId, preparationId },
-						});
-					} catch (error) {
-						// A create response can be lost after Cloudflare accepts the instance.
-						try {
-							await (await binding.get(release.workflowId)).status();
-						} catch {
-							throw error;
-						}
-					}
-					release.started = true;
-					await this.putReleaseSet(preparationId, release);
+	private readJournal(): Effect.Effect<
+		{ executions: Execution[]; unreadable: { id: string; error: string }[] },
+		DomainError
+	> {
+		return this.list({ prefix: 'execution:' }).pipe(Effect.map(entries => {
+			const executions: Execution[] = [];
+			const unreadable: { id: string; error: string }[] = [];
+			for (const [key, value] of entries) {
+				try {
+					executions.push(decodeExecutionV1(value));
+				} catch (error) {
+					unreadable.push({ id: key.slice('execution:'.length), error: decodeError(error) });
 				}
-				const instance = await binding.get(release.workflowId);
-				const status = await instance.status();
-				if (['errored', 'terminated'].includes(status.status)) {
-					await this.recordReleaseWorkflowInterruption(preparationId, release.workflowId);
-				}
-				if (!['complete', 'errored', 'terminated'].includes(status.status)) {
-					const members = wake === true ? undefined : wake.members;
-					for (const id of release.ids.filter(id => !members || members.includes(id))) {
-						await instance.sendEvent({ type: id, payload: {} });
-					}
-				}
-				await this.ctx.storage.delete(key);
-			} catch (error) {
-				await this.ctx.storage.put(key, { ...(wake === true ? {} : wake), due: now + reconcileInterval });
-				console.error(JSON.stringify({ event: 'release-wake.failed', preparationId, error: decodeError(error) }));
 			}
-		}
-	}
-	async releaseOperations(preparationId: string, workflowId: string) {
-		const release = await this.releaseSet(`release-set:${preparationId}`);
-		if (!release || release.workflowId !== workflowId) throw new Error('Release Workflow identity mismatch');
-		return Promise.all(release.ids.map(async id => {
-			const execution = await this.get(id);
-			return {
-				id,
-				operation: execution.package ? `${execution.operation} ${execution.package.id}` : execution.operation,
-				paced: execution.package?.manager === 'cargo',
-				dependencies: execution.dependencies,
-			};
+			return { executions, unreadable };
 		}));
 	}
-	async reservePublication(preparationId: string, workflowId: string, id: string): Promise<number> {
-		return this.serial(async () => {
-			const operations = await this.releaseOperations(preparationId, workflowId);
-			if (!operations.some(operation => operation.id === id && operation.paced)) {
-				throw new Error('Operation is not a paced publication in this release');
+	private executions(): Effect.Effect<Execution[], DomainError> {
+		return this.readJournal().pipe(Effect.map(journal => journal.executions));
+	}
+	private auditQuietly(action: string, target: string, failure: string): Effect.Effect<void> {
+		return this.store().audit('beepboop', action, target).pipe(
+			recover(error =>
+				Effect.sync(() => console.error(JSON.stringify({ event: failure, target, error: decodeError(error) })))
+			),
+		);
+	}
+	private quarantine(id: string, error: string): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			yield* this.write(`quarantine:${id}`, { error, at: Date.now() });
+			yield* this.auditQuietly('execution.quarantined', `${id}: ${error}`, 'quarantine.audit-failed');
+		});
+	}
+	private isolate(id: string, error: DomainError): Effect.Effect<void, DomainError> {
+		const reason = `Beepboop could not continue: ${decodeError(error)}`;
+		return Effect.gen({ self: this }, function*() {
+			const current = yield* this.get(id);
+			if (current.reason !== reason) yield* this.put({ ...current, reason });
+		}).pipe(recover(failure => this.quarantine(id, decodeError(failure))));
+	}
+	private stored(id: string): Effect.Effect<Execution | undefined, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const value = yield* this.read(`execution:${id}`);
+			return value === undefined ? undefined : yield* fromSync(() => decodeExecutionV1(value));
+		});
+	}
+	private releaseSet(key: string): Effect.Effect<ReleaseSetRecord | undefined, DomainError> {
+		return this.read(key).pipe(Effect.flatMap(value => fromSync(() => releaseSetRecord.optional().parse(value))));
+	}
+	private put(execution: Execution): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			Object.assign(execution, identifyExecution(execution));
+			const previous = yield* this.stored(execution.id);
+			if (
+				previous && previous.state !== execution.state && ['running', 'succeeded'].includes(execution.state)
+				&& execution.reason === previous.reason
+			) {
+				delete execution.reason;
 			}
-			const execution = await this.get(id);
+			const now = Date.now();
+			execution.updatedAt = now;
+			const extra: Record<string, unknown> = {};
+			const set = execution.releaseSet;
+			if (!set?.workflowId) {
+				const current = yield* this.reconcileAt();
+				extra['reconcile-at'] = Math.min(current ?? Number.POSITIVE_INFINITY, now + settleInterval);
+			} else if (JSON.stringify({ ...previous, updatedAt: 0 }) !== JSON.stringify({ ...execution, updatedAt: 0 })) {
+				const key = `release-wake:${set.preparationId}`;
+				const members = wakeMembers(releaseWake.safeParse(yield* this.read(key)).data, execution.id);
+				extra[key] = { ...(members ? { members } : {}), due: now };
+			}
+			yield* this.commit(
+				[{ entity: 'execution', id: execution.id, repositoryId: execution.repositoryId, value: execution }],
+				extra,
+			);
+			if (execution.state === 'succeeded') yield* this.captureReleaseEvent(execution);
+		});
+	}
+	private putReleaseSet(preparationId: string, record: ReleaseSetRecord): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const preparation = yield* this.get(preparationId);
+			yield* this.commit([
+				{ entity: 'release-set', id: preparationId, repositoryId: preparation.repositoryId, value: record },
+			]);
+		});
+	}
+	private captureReleaseEvent(execution: Execution): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			if (!execution.version) return;
+			const required = execution.releaseSet?.required ?? execution.configuration.streams[execution.stream]?.required
+				?? [];
+			if (!required.length) return;
+			const id = releaseEventId({ ...execution, version: execution.version });
+			if (yield* this.read(`release-emitted:${id}`)) return;
+			const group = (yield* this.executions())
+				.filter(e =>
+					e.state === 'succeeded' && e.stream === execution.stream && e.version === execution.version
+					&& e.sourceSha === execution.sourceSha && e.configurationSha === execution.configurationSha
+					&& e.releaseSet?.preparationId === execution.releaseSet?.preparationId
+					&& e.releaseSet?.group === execution.releaseSet?.group
+				);
+			if (
+				!required.every(key =>
+					group.some(e => e.publications.some(p => matchesPublication(key, p) && p.outcome === 'succeeded'))
+				)
+			) {
+				return;
+			}
+			const references = group.flatMap(e => e.release ? [e.release] : []);
+			if (references.some(r => r.tag !== references[0]?.tag || r.releaseId !== references[0]?.releaseId)) {
+				return yield* precondition('Conflicting release identities');
+			}
+			const release: ReleaseReference = {
+				id,
+				...(execution.releaseSet ? { group: execution.releaseSet.group } : {}),
+				repository: { id: execution.repositoryId, name: execution.repository },
+				stream: execution.stream,
+				commit: execution.sourceSha,
+				version: execution.version,
+				...(references[0]?.tag ? { tag: references[0].tag, releaseId: references[0].releaseId } : {}),
+				publications: yield* mergePublications([], group.flatMap(e => e.publications)),
+				artifacts: [...new Map(group.flatMap(e => e.artifacts).map(a => [a.id, a])).values()],
+			};
+			const event: AutomationEvent = {
+				id,
+				source: execution.repository,
+				event: 'release',
+				version: execution.version,
+				release,
+			};
+			yield* this.commit([{ entity: 'release', id, repositoryId: execution.repositoryId, value: event }], {
+				[`release-event:${id}`]: event,
+				[`release-emitted:${id}`]: true,
+			});
+		});
+	}
+	execution(id: string): Promise<Execution | undefined> {
+		return Effect.runPromise(this.stored(id));
+	}
+	preparationResults(stream: string, version: string): Promise<{ url: string; head: string }[]> {
+		return Effect.runPromise(
+			this.executions().pipe(Effect.map(executions =>
+				executions.flatMap(execution => {
+					const result = execution.prepared?.result ?? execution.managed?.result;
+					return result && execution.stream === stream && execution.version === version
+							&& execution.state === 'succeeded'
+						? [result]
+						: [];
+				})
+			)),
+		);
+	}
+	reindex(repositoryId: number): Promise<number> {
+		return this.serial(this.journal.reindex(repositoryId));
+	}
+	setAccess(suspended: boolean): Promise<void> {
+		return Effect.runPromise(Effect.gen({ self: this }, function*() {
+			const prior = access.safeParse(yield* this.read('access'));
+			yield* this.write('access', { suspended });
+			if (prior.success && prior.data.suspended && !suspended) yield* this.wakeUp();
+		}));
+	}
+	private suspended(repositoryId: number): Effect.Effect<boolean, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const copy = access.safeParse(yield* this.read('access'));
+			if (copy.success) return copy.data.suspended;
+			const stored = yield* this.store().repository(repositoryId);
+			const suspended = stored !== undefined && readiness(stored).kind === 'suspended';
+			yield* this.write('access', { suspended });
+			return suspended;
+		});
+	}
+	exportJournal(): Promise<{ key: string; value: unknown }[]> {
+		return Effect.runPromise(
+			this.list({}).pipe(Effect.map(entries => [...entries].map(([key, value]) => ({ key, value })))),
+		);
+	}
+	releaseEvents(): Promise<AutomationEvent[]> {
+		return Effect.runPromise(
+			this.list({ prefix: 'release-event:', limit: 100 }).pipe(
+				Effect.flatMap(entries => fromSync(() => [...entries.values()].map(decodeEventV1))),
+			),
+		);
+	}
+	acknowledgeReleaseEvent(id: string): Promise<void> {
+		return Effect.runPromise(this.remove(`release-event:${id}`));
+	}
+	/** Persist wake-ups separately so failed delivery survives Worker restarts. */
+	private wakeReleaseWorkflows(): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const wakes: Record<string, unknown> = {};
+			for (const [key, value] of yield* this.list({ prefix: 'release-set:' })) {
+				const release = yield* fromSync(() => releaseSetRecord.parse(value));
+				if (!release.workflowId || release.completed) continue;
+				wakes[`release-wake:${key.slice('release-set:'.length)}`] = { due: Date.now() };
+			}
+			if (Object.keys(wakes).length) yield* this.writeAll(wakes);
+		});
+	}
+	private deliverReleaseWake(
+		preparationId: string,
+		release: ReleaseSetRecord & { workflowId: string },
+		wake: ReleaseWake,
+	): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const binding = this.env.RELEASE_WORKFLOW;
+			const workflowId = release.workflowId;
+			if (!release.started) {
+				const preparation = yield* this.get(preparationId);
+				yield* fromPromise(() =>
+					binding.create({
+						id: workflowId,
+						params: { repositoryId: preparation.repositoryId, preparationId },
+					})
+				).pipe(
+					// A create response can be lost after Cloudflare accepts the instance.
+					Effect.catch(error =>
+						fromPromise(() => binding.get(workflowId)).pipe(
+							Effect.flatMap(instance => fromPromise(() => instance.status())),
+							Effect.mapError(() => error),
+						)
+					),
+				);
+				release.started = true;
+				yield* this.putReleaseSet(preparationId, release);
+			}
+			const instance = yield* fromPromise(() => binding.get(workflowId));
+			const status = yield* fromPromise(() => instance.status());
+			if (['errored', 'terminated'].includes(status.status)) {
+				yield* this.recordReleaseWorkflowInterruption(preparationId, workflowId);
+			}
+			if (!['complete', 'errored', 'terminated'].includes(status.status)) {
+				const members = wake === true ? undefined : wake.members;
+				for (const id of release.ids.filter(id => !members || members.includes(id))) {
+					yield* fromPromise(() => instance.sendEvent({ type: id, payload: {} }));
+				}
+			}
+		});
+	}
+	private deliverReleaseEvents(now: number): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			for (const [key, value] of yield* this.list({ prefix: 'release-wake:' })) {
+				const parsed = releaseWake.safeParse(value);
+				if (!parsed.success) {
+					yield* this.remove(key);
+					continue;
+				}
+				const wake = parsed.data;
+				if (wakeDue(wake) > now) continue;
+				const preparationId = key.slice('release-wake:'.length);
+				const release = yield* this.releaseSet(`release-set:${preparationId}`);
+				const workflowId = release?.workflowId;
+				if (!release || !workflowId || release.completed) {
+					yield* this.remove(key);
+					continue;
+				}
+				yield* this.deliverReleaseWake(preparationId, { ...release, workflowId }, wake).pipe(
+					Effect.andThen(this.remove(key)),
+					recover(error =>
+						Effect.gen({ self: this }, function*() {
+							yield* this.write(key, { ...(wake === true ? {} : wake), due: now + reconcileInterval });
+							console.error(JSON.stringify({ event: 'release-wake.failed', preparationId, error: decodeError(error) }));
+						})
+					),
+				);
+			}
+		});
+	}
+	private operations(preparationId: string, workflowId: string): Effect.Effect<ReleaseOperation[], DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const release = yield* this.releaseSet(`release-set:${preparationId}`);
+			if (!release || release.workflowId !== workflowId) {
+				return yield* precondition('Release Workflow identity mismatch');
+			}
+			return yield* Effect.forEach(release.ids, id =>
+				this.get(id).pipe(Effect.map(execution => ({
+					id,
+					operation: execution.package ? `${execution.operation} ${execution.package.id}` : execution.operation,
+					paced: execution.package?.manager === 'cargo',
+					dependencies: execution.dependencies,
+				}))), { concurrency: 'unbounded' });
+		});
+	}
+	releaseOperations(preparationId: string, workflowId: string): Promise<ReleaseOperation[]> {
+		return Effect.runPromise(this.operations(preparationId, workflowId));
+	}
+	reservePublication(preparationId: string, workflowId: string, id: string): Promise<number> {
+		return this.serial(Effect.gen({ self: this }, function*() {
+			const operations = yield* this.operations(preparationId, workflowId);
+			if (!operations.some(operation => operation.id === id && operation.paced)) {
+				return yield* precondition('Operation is not a paced publication in this release');
+			}
+			const execution = yield* this.get(id);
 			const target = execution.package;
-			if (!target) throw new Error('Paced operation has no package');
+			if (!target) return yield* precondition('Paced operation has no package');
 			if (!execution.reservation) {
-				const repository = await this.store().repository(execution.repositoryId);
+				const repository = yield* this.store().repository(execution.repositoryId);
 				const status = repository?.inventory.packages.find(pkg => matchesPackage(target.id, pkg))?.publicationStatus;
 				const reservation = status === 'missing' ? 'new' : 'update';
-				const allowedAt = await this.env.PUBLISH_BUDGET.getByName('crates-io').reserve(reservation);
-				await this.put({ ...execution, reservation, notBefore: Math.max(execution.notBefore ?? 0, allowedAt) });
+				const allowedAt = yield* fromPromise(() => this.env.PUBLISH_BUDGET.getByName('crates-io').reserve(reservation));
+				yield* this.put({ ...execution, reservation, notBefore: Math.max(execution.notBefore ?? 0, allowedAt) });
 			}
-			return Math.max(0, ((await this.get(id)).notBefore ?? 0) - Date.now());
-		});
+			return Math.max(0, ((yield* this.get(id)).notBefore ?? 0) - Date.now());
+		}));
 	}
-	async operationDelay(preparationId: string, workflowId: string, id: string): Promise<number> {
-		const operations = await this.releaseOperations(preparationId, workflowId);
-		if (!operations.some(operation => operation.id === id)) throw new Error('Operation is not in this release');
-		return Math.max(0, ((await this.get(id)).notBefore ?? 0) - Date.now());
+	operationDelay(preparationId: string, workflowId: string, id: string): Promise<number> {
+		return Effect.runPromise(Effect.gen({ self: this }, function*() {
+			const operations = yield* this.operations(preparationId, workflowId);
+			if (!operations.some(operation => operation.id === id)) {
+				return yield* precondition('Operation is not in this release');
+			}
+			return Math.max(0, ((yield* this.get(id)).notBefore ?? 0) - Date.now());
+		}));
 	}
-	async advanceReleaseOperation(preparationId: string, workflowId: string, id: string) {
-		return this.serial(async () => {
-			const operations = await this.releaseOperations(preparationId, workflowId);
-			if (!operations.some(operation => operation.id === id)) throw new Error('Operation is not in this release');
-			await this.reconcile(id);
-			return (await this.get(id)).state;
-		});
+	advanceReleaseOperation(preparationId: string, workflowId: string, id: string): Promise<Execution['state']> {
+		return this.serial(Effect.gen({ self: this }, function*() {
+			const operations = yield* this.operations(preparationId, workflowId);
+			if (!operations.some(operation => operation.id === id)) {
+				return yield* precondition('Operation is not in this release');
+			}
+			yield* this.reconcile(id);
+			return (yield* this.get(id)).state;
+		}));
 	}
-	async releaseWorkflowInterrupted(preparationId: string, workflowId: string): Promise<void> {
-		return this.serial(() => this.recordReleaseWorkflowInterruption(preparationId, workflowId));
+	releaseWorkflowInterrupted(preparationId: string, workflowId: string): Promise<void> {
+		return this.serial(this.recordReleaseWorkflowInterruption(preparationId, workflowId));
 	}
-	private async recordReleaseWorkflowInterruption(
+	private recordReleaseWorkflowInterruption(
 		preparationId: string,
 		workflowId: string,
 		interrupted = true,
-	): Promise<void> {
-		for (const operation of await this.releaseOperations(preparationId, workflowId)) {
-			const execution = await this.get(operation.id);
-			if (!execution.releaseSet) continue;
-			execution.releaseSet.workflowError = interrupted
-				? 'Release coordination interrupted. Check coordination to resume.'
-				: undefined;
-			await this.journal.commit([
-				{ entity: 'execution', id: execution.id, repositoryId: execution.repositoryId, value: execution },
-			]);
-		}
-	}
-	async completeReleaseWorkflow(preparationId: string, workflowId: string): Promise<void> {
-		return this.serial(async () => {
-			const operations = await this.releaseOperations(preparationId, workflowId);
-			for (const operation of operations) {
-				if ((await this.get(operation.id)).state !== 'succeeded') throw new Error('Release is incomplete');
+	): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			for (const operation of yield* this.operations(preparationId, workflowId)) {
+				const execution = yield* this.get(operation.id);
+				if (!execution.releaseSet) continue;
+				execution.releaseSet.workflowError = interrupted
+					? 'Release coordination interrupted. Check coordination to resume.'
+					: undefined;
+				yield* this.commit([
+					{ entity: 'execution', id: execution.id, repositoryId: execution.repositoryId, value: execution },
+				]);
 			}
-			const release = await this.releaseSet(`release-set:${preparationId}`);
-			if (!release) throw new Error('Release set is missing');
-			await this.putReleaseSet(preparationId, { ...release, completed: true });
 		});
 	}
-	async startReleaseSet(preparationId: string, target: string): Promise<Execution[]> {
-		return this.serial(async () => {
-			const preparation = await this.get(preparationId);
-			if (await this.suspended(preparation.repositoryId)) {
-				throw new Error('Repository is suspended');
+	completeReleaseWorkflow(preparationId: string, workflowId: string): Promise<void> {
+		return this.serial(Effect.gen({ self: this }, function*() {
+			const operations = yield* this.operations(preparationId, workflowId);
+			for (const operation of operations) {
+				if ((yield* this.get(operation.id)).state !== 'succeeded') return yield* precondition('Release is incomplete');
+			}
+			const release = yield* this.releaseSet(`release-set:${preparationId}`);
+			if (!release) return yield* precondition('Release set is missing');
+			yield* this.putReleaseSet(preparationId, { ...release, completed: true });
+		}));
+	}
+	startReleaseSet(preparationId: string, target: string): Promise<Execution[]> {
+		return this.serial(Effect.gen({ self: this }, function*() {
+			const preparation = yield* this.get(preparationId);
+			if (yield* this.suspended(preparation.repositoryId)) {
+				return yield* precondition('Repository is suspended');
 			}
 			const key = `release-set:${preparationId}`;
-			const prior = await this.releaseSet(key);
+			const prior = yield* this.releaseSet(key);
 			if (prior) {
-				if (prior.target !== target) throw new Error('Release set already targets another revision');
-				return Promise.all(prior.ids.map(id => this.get(id)));
+				if (prior.target !== target) return yield* precondition('Release set already targets another revision');
+				return yield* Effect.forEach(prior.ids, id => this.get(id), { concurrency: 'unbounded' });
 			}
 			const result = preparation.managed?.result ?? preparation.prepared?.result;
 			const plan = preparation.managed?.plan ?? preparation.plan;
-			if (!result || !plan) throw new Error('Preparation result unavailable');
-			const snapshot = await this.gateway().preparedSnapshot(
+			if (!result || !plan) return yield* precondition('Preparation result unavailable');
+			const revision = yield* fromSync(() => sha(target));
+			const snapshot = yield* this.gateway().preparedSnapshot(
 				preparation.repository,
 				preparation.repositoryId,
 				result,
-				sha(target),
+				revision,
 				(preparation.prepared?.edits ?? plan.edits).map(edit => edit.path),
 			);
 			for (const edit of preparation.prepared?.edits ?? []) {
 				if (snapshot.files[edit.path] !== edit.after) {
-					throw new Error(`Generated preparation file changed: ${edit.path}`);
+					return yield* precondition(`Generated preparation file changed: ${edit.path}`);
 				}
 			}
-			const executions = await compileReleaseSet(preparation, snapshot);
+			const executions = yield* compileReleaseSet(preparation, snapshot);
 			const workflowId = `release-${preparationId}`;
 			for (const execution of executions) {
 				if (execution.releaseSet) {
@@ -510,58 +621,62 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				repositoryId: execution.repositoryId,
 				value: execution,
 			}));
-			await this.journal.commit([
+			yield* this.commit([
 				{ entity: 'release-set', id: preparationId, repositoryId: preparation.repositoryId, value: record },
 				...members,
 			], { [`release-wake:${preparationId}`]: { due: Date.now() } });
 			return executions;
-		});
+		}));
 	}
-	async enqueue(execution: Execution): Promise<Execution> {
-		return this.serial(async () => {
+	enqueue(execution: Execution): Promise<Execution> {
+		return this.serial(Effect.gen({ self: this }, function*() {
 			if (Boolean(execution.workflow) === Boolean(execution.managed)) {
-				throw new Error('Execution needs exactly one runner');
+				return yield* precondition('Execution needs exactly one runner');
 			}
-			const prior = await this.stored(execution.id);
+			const prior = yield* this.stored(execution.id);
 			if (prior) return prior;
 			if (execution.configuration.streams[execution.stream]?.concurrency === 'supersede-pending') {
-				for (const old of await this.executions()) {
+				for (const old of yield* this.executions()) {
 					if (
 						old.stream === execution.stream
 						&& old.operation === execution.operation
 						&& ['pending', 'ready'].includes(old.state)
 					) {
-						await this.put({ ...old, state: 'cancelled', reason: 'Superseded before dispatch' });
+						yield* this.put({ ...old, state: 'cancelled', reason: 'Superseded before dispatch' });
 					}
 				}
 			}
-			await this.put(execution);
+			yield* this.put(execution);
 			return execution;
-		});
+		}));
 	}
-	private async get(id: string): Promise<Execution> {
-		const execution = await this.stored(id);
-		if (!execution) throw new Error('Unknown execution');
-		return execution;
+	private get(id: string): Effect.Effect<Execution, DomainError> {
+		return this.stored(id).pipe(
+			Effect.filterOrFail(
+				(execution): execution is Execution => execution !== undefined,
+				() => precondition('Unknown execution'),
+			),
+		);
 	}
-	async prepared(id: string, identity: WorkflowIdentity, edits: Edit[]): Promise<{ url: string; head: string }> {
-		return this.serial(async () => {
-			const execution = await this.get(id);
+	prepared(id: string, identity: WorkflowIdentity, edits: Edit[]): Promise<{ url: string; head: string }> {
+		return this.serial(Effect.gen({ self: this }, function*() {
+			const execution = yield* this.get(id);
 			if (
 				!execution.workflow || execution.managed || execution.operation !== 'prepare' || !execution.plan
 				|| execution.state !== 'running' || execution.repositoryId !== identity.repositoryId
 				|| execution.runId !== identity.runId || execution.runAttempt !== identity.attempt
 				|| execution.workflowSha !== identity.workflowSha
-			) throw new Error('Preparation run identity mismatch');
+			) return yield* precondition('Preparation run identity mismatch');
 			const ordered = [...edits].sort((a, b) => a.path.localeCompare(b.path));
 			if (execution.prepared && JSON.stringify(execution.prepared.edits) !== JSON.stringify(ordered)) {
-				throw new Error('Submitted preparation changed; create a new preparation');
+				return yield* precondition('Submitted preparation changed; create a new preparation');
 			}
 			if (execution.prepared?.result) return execution.prepared.result;
-			execution.prepared ??= { edits: ordered };
-			await this.put(execution);
+			const prepared = execution.prepared ?? { edits: ordered };
+			execution.prepared = prepared;
+			yield* this.put(execution);
 			const gateway = this.gateway();
-			const source = await gateway.snapshot(
+			const source = yield* gateway.snapshot(
 				execution.repository,
 				execution.repositoryId,
 				execution.sourceSha,
@@ -571,69 +686,74 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const title = `chore(release): prepare ${execution.version ?? 'release set'}`;
 			const body =
 				`Source: ${execution.sourceSha}\nPreparation execution: ${execution.id}\n\nPromotion requires approval.`;
-			const result = execution.prepared.head
-				? await gateway.resumePreparation(source, branch, title, body, execution.prepared.head)
-				: await gateway.pullRequest(source, branch, title, body, ordered, undefined, async head => {
-					if (!execution.prepared) throw new Error('Missing preparation checkpoint');
-					execution.prepared.head = head;
-					await this.put(execution);
+			const result = prepared.head
+				? yield* gateway.resumePreparation(source, branch, title, body, prepared.head)
+				: yield* gateway.pullRequest(source, branch, title, body, ordered, undefined, head => {
+					prepared.head = head;
+					return this.put(execution);
 				});
-			execution.prepared.result = result;
-			await this.put(execution);
+			prepared.result = result;
+			yield* this.put(execution);
 			return result;
-		});
+		}));
 	}
-	async register(id: string, identity: WorkflowIdentity): Promise<Execution> {
-		return this.serial(async () => {
-			const execution = await this.get(id);
-			if (!execution.workflow || execution.managed) throw new Error('Operation is not a workflow');
-			const dependencies = await Promise.all(execution.dependencies.map(id => this.get(id)));
-			if (!dependenciesReady(execution, dependencies)) throw new Error('Execution dependencies have not succeeded');
+	register(id: string, identity: WorkflowIdentity): Promise<Execution> {
+		return this.serial(Effect.gen({ self: this }, function*() {
+			const execution = yield* this.get(id);
+			const workflow = execution.workflow;
+			if (!workflow || execution.managed) return yield* precondition('Operation is not a workflow');
+			const dependencies = yield* Effect.forEach(execution.dependencies, id => this.get(id), {
+				concurrency: 'unbounded',
+			});
+			if (!dependenciesReady(execution, dependencies)) {
+				return yield* precondition('Execution dependencies have not succeeded');
+			}
 			if (execution.attempts === 0 && execution.eventId !== `observed:${identity.runId}`) {
-				throw new Error('Execution has not been dispatched');
+				return yield* precondition('Execution has not been dispatched');
 			}
 			if (
 				execution.repositoryId !== identity.repositoryId
 				|| execution.repository !== identity.repository
 				|| !['pending', 'ready', 'dispatching', 'uncertain', 'running'].includes(execution.state)
 			) {
-				throw new Error('Execution cannot register this run');
+				return yield* precondition('Execution cannot register this run');
 			}
-			const expected = `${identity.repository}/.github/workflows/${execution.workflow.file}@`;
-			if (!identity.workflowRef.startsWith(expected)) throw new Error('Workflow binding mismatch');
+			const expected = `${identity.repository}/.github/workflows/${workflow.file}@`;
+			if (!identity.workflowRef.startsWith(expected)) return yield* precondition('Workflow binding mismatch');
 			if (execution.runId && execution.runId !== identity.runId) {
-				throw new Error('Execution is already bound to a run');
+				return yield* precondition('Execution is already bound to a run');
 			}
 			if (execution.runAttempt && identity.attempt < execution.runAttempt) {
-				throw new Error('Stale run attempt');
+				return yield* precondition('Stale run attempt');
 			}
-			const gateway = this.gateway(),
-				token = await gateway.token(execution.repository, execution.repositoryId);
+			const gateway = this.gateway();
+			const token = yield* gateway.token(execution.repository, execution.repositoryId);
 			const run = record(
-				await gateway.call(`/repos/${execution.repository}/actions/runs/${identity.runId}`, token),
+				yield* gateway.call(`/repos/${execution.repository}/actions/runs/${identity.runId}`, token),
 			);
 			if (
 				record(run.repository).id !== execution.repositoryId
 				|| run.head_sha !== identity.sha
-				|| run.path !== `.github/workflows/${execution.workflow.file}`
+				|| run.path !== `.github/workflows/${workflow.file}`
 				|| run.run_attempt !== identity.attempt
 			) {
-				throw new Error('Run identity mismatch');
+				return yield* precondition('Run identity mismatch');
 			}
 			if (run.head_sha !== execution.sourceSha) {
-				throw new Error(
+				return yield* precondition(
 					`The run is at ${String(run.head_sha).slice(0, 12)} but this execution releases ${
 						execution.sourceSha.slice(0, 12)
 					}`,
 				);
 			}
-			if (!matchesRef(execution.workflow.ref, identity.ref)) throw new Error('Workflow ref mismatch');
+			if (!matchesRef(workflow.ref, identity.ref)) return yield* precondition('Workflow ref mismatch');
 			if (execution.attempts > 0 && !execution.runId && run.display_title !== expectedRunTitle(execution)) {
-				throw new Error('Dispatch correlation mismatch');
+				return yield* precondition('Dispatch correlation mismatch');
 			}
+			const resolvedInputs = yield* resolveInputs(execution, dependencies);
 			const next: Execution = {
 				...execution,
-				resolvedInputs: resolveInputs(execution, dependencies),
+				resolvedInputs,
 				state: 'running',
 				runId: identity.runId,
 				runAttempt: identity.attempt,
@@ -642,119 +762,130 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					...new Set([...(execution.helperShas ?? []), identity.helperSha ?? identity.workflowSha]),
 				],
 			};
-			await this.put(next);
+			yield* this.put(next);
 			return next;
-		});
+		}));
 	}
-	async refs(id: string, identity: WorkflowIdentity, complete = false): Promise<RefPlan> {
-		return this.serial(async () => {
-			const execution = await this.get(id);
-			if (!execution.workflow || execution.managed) throw new Error('Operation is not a workflow');
+	refs(id: string, identity: WorkflowIdentity, complete = false): Promise<RefPlan> {
+		return this.serial(Effect.gen({ self: this }, function*() {
+			const execution = yield* this.get(id);
+			const workflow = execution.workflow;
+			if (!workflow || execution.managed) return yield* precondition('Operation is not a workflow');
 			if (
 				execution.state !== 'running' || execution.repositoryId !== identity.repositoryId
 				|| execution.repository !== identity.repository || execution.runId !== identity.runId
 				|| execution.runAttempt !== identity.attempt || execution.workflowSha !== identity.workflowSha
-			) throw new Error('Ref operation identity mismatch');
-			if (!execution.workflow.refs || !execution.version) throw new Error('No configured ref operation');
-			if (!await this.promoted(execution)) throw new Error('Ref operation requires completed promotion');
+			) return yield* precondition('Ref operation identity mismatch');
+			const policy = workflow.refs;
+			const version = execution.version;
+			if (!policy || !version) return yield* precondition('No configured ref operation');
+			if (!(yield* this.promoted(execution))) return yield* precondition('Ref operation requires completed promotion');
 			const gateway = this.gateway();
-			const refs = await gateway.tagRefs(execution.repository, execution.repositoryId);
+			const refs = yield* gateway.tagRefs(execution.repository, execution.repositoryId);
 			if (!execution.refPlan) {
-				if (complete) throw new Error('Ref plan has not been authorized');
-				execution.refPlan = {
-					repository: execution.repository,
-					executionId: id,
-					version: execution.version,
-					changes: planRefs(execution.workflow.refs, execution.version, execution.sourceSha, refs),
-				};
-				await this.put(execution);
+				if (complete) return yield* precondition('Ref plan has not been authorized');
+				const changes = yield* planRefs(policy, version, execution.sourceSha, refs);
+				execution.refPlan = { repository: execution.repository, executionId: id, version, changes };
+				yield* this.put(execution);
 			}
+			const plan = execution.refPlan;
 			if (complete) {
-				for (const change of execution.refPlan.changes) {
+				for (const change of plan.changes) {
 					const actual = refs.find(ref => ref.name === change.name);
-					if (actual?.commit !== change.commit) throw new Error('Published ref does not match the plan');
+					if (actual?.commit !== change.commit) return yield* precondition('Published ref does not match the plan');
 					if (change.annotated) {
-						const token = await gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
-						const tag = record(await gateway.call(`/repos/${execution.repository}/git/tags/${actual.oid}`, token));
+						const token = yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
+						const tag = record(yield* gateway.call(`/repos/${execution.repository}/git/tags/${actual.oid}`, token));
 						if (
 							record(tag.object).sha !== change.commit || tag.tag !== change.name
 							|| (change.signed && record(tag.verification).verified !== true)
-						) throw new Error('Version tag verification failed');
+						) return yield* precondition('Version tag verification failed');
 					}
 				}
-				execution.publications = mergePublications(execution.publications, [{
+				execution.publications = yield* mergePublications(execution.publications, [{
 					id: `refs:${execution.operation}`,
 					manager: 'workflow',
 					name: execution.repository,
-					version: execution.version,
+					version,
 					outcome: 'succeeded',
 					required: true,
 				}]);
-				await this.put(execution);
+				yield* this.put(execution);
 			}
-			return execution.refPlan;
+			return plan;
+		}));
+	}
+	private promoted(execution: Execution): Effect.Effect<boolean, DomainError> {
+		if (execution.operation === 'promote') return Effect.succeed(true);
+		const visited = new Set<string>();
+		const approved = (current: Execution): Effect.Effect<boolean, DomainError> =>
+			Effect.gen({ self: this }, function*() {
+				if (visited.has(current.id)) return false;
+				visited.add(current.id);
+				if (current.state !== 'succeeded' || current.sourceSha !== execution.sourceSha) return false;
+				if (current.operation === 'promote') return true;
+				for (const dependency of current.dependencies) if (yield* approved(yield* this.get(dependency))) return true;
+				return false;
+			});
+		return Effect.gen({ self: this }, function*() {
+			for (const dependency of execution.dependencies) if (yield* approved(yield* this.get(dependency))) return true;
+			return false;
 		});
 	}
-	private async promoted(execution: Execution): Promise<boolean> {
-		if (execution.operation === 'promote') return true;
-		const visited = new Set<string>();
-		const approved = async (current: Execution): Promise<boolean> => {
-			if (visited.has(current.id)) return false;
-			visited.add(current.id);
-			if (current.state !== 'succeeded' || current.sourceSha !== execution.sourceSha) return false;
-			if (current.operation === 'promote') return true;
-			for (const dependency of current.dependencies) if (await approved(await this.get(dependency))) return true;
-			return false;
-		};
-		for (const dependency of execution.dependencies) if (await approved(await this.get(dependency))) return true;
-		return false;
+	publishRelease(id: string, identity: WorkflowIdentity): Promise<Execution> {
+		return Effect.runPromise(Effect.gen({ self: this }, function*() {
+			const publication = yield* this.serialized(this.releasePublication(id, identity));
+			return yield* this.serialized(this.recordReport(id, identity, [publication], []));
+		}));
 	}
-	async publishRelease(id: string, identity: WorkflowIdentity): Promise<Execution> {
-		const publication = await this.serial(async (): Promise<Publication> => {
-			const execution = await this.get(id);
-			if (!execution.workflow || execution.managed) throw new Error('Operation is not a workflow');
+	private releasePublication(id: string, identity: WorkflowIdentity): Effect.Effect<Publication, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const execution = yield* this.get(id);
+			if (!execution.workflow || execution.managed) return yield* precondition('Operation is not a workflow');
 			if (
 				execution.state !== 'running' || execution.repositoryId !== identity.repositoryId
 				|| execution.repository !== identity.repository || execution.runId !== identity.runId
 				|| execution.runAttempt !== identity.attempt || execution.workflowSha !== identity.workflowSha
-			) throw new Error('Release operation identity mismatch');
+			) return yield* precondition('Release operation identity mismatch');
 			if (!publishesGithubRelease(execution)) {
-				throw new Error(`Add github-release:${execution.repository} to this operation's publications`);
+				return yield* precondition(`Add github-release:${execution.repository} to this operation's publications`);
 			}
-			if (!await this.promoted(execution)) throw new Error('Release operation requires completed promotion');
-			const target = githubRelease(execution);
-			if (!target) throw new Error('Release operation has no version');
+			if (!(yield* this.promoted(execution))) {
+				return yield* precondition('Release operation requires completed promotion');
+			}
+			const target = yield* fromSync(() => githubRelease(execution));
+			if (!target) return yield* precondition('Release operation has no version');
 			const { tag, prerelease } = target;
 			const gateway = this.gateway();
-			const read = await gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
-			const ref = await gateway.call(`/repos/${execution.repository}/git/ref/tags/${encodeURIComponent(tag)}`, read);
-			if (ref === null) throw new Error('Publish the release tag before the release');
+			const repository = `/repos/${execution.repository}`;
+			const read = yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
+			const ref = yield* gateway.call(`${repository}/git/ref/tags/${encodeURIComponent(tag)}`, read);
+			if (ref === null) return yield* precondition('Publish the release tag before the release');
 			const object = record(record(ref).object);
-			if (object.type !== 'tag') throw new Error('Release tag must be annotated');
-			const tagged = record(
-				record(await gateway.call(`/repos/${execution.repository}/git/tags/${sha(object.sha)}`, read)).object,
-			);
+			if (object.type !== 'tag') return yield* precondition('Release tag must be annotated');
+			const objectSha = yield* fromSync(() => sha(object.sha));
+			const tagged = record(record(yield* gateway.call(`${repository}/git/tags/${objectSha}`, read)).object);
 			if (tagged.type !== 'commit' || tagged.sha !== execution.sourceSha) {
-				throw new Error('Release tag points to another commit');
+				return yield* precondition('Release tag points to another commit');
 			}
-			const write = await gateway.token(execution.repository, execution.repositoryId, {
+			const write = yield* gateway.token(execution.repository, execution.repositoryId, {
 				contents: 'write',
 				workflows: 'write',
 			});
 			const release = execution.draftRelease
-				? await this.publishDraft(execution, execution.draftRelease, target, write)
+				? yield* this.publishDraft(execution, execution.draftRelease, target, write)
 				: record(
-					await gateway.call(`/repos/${execution.repository}/releases/tags/${encodeURIComponent(tag)}`, read)
-						?? await gateway.call(`/repos/${execution.repository}/releases`, write, 'POST', {
+					(yield* gateway.call(`${repository}/releases/tags/${encodeURIComponent(tag)}`, read))
+						?? (yield* gateway.call(`${repository}/releases`, write, 'POST', {
 							tag_name: tag,
 							target_commitish: execution.sourceSha,
 							name: tag,
 							generate_release_notes: true,
 							prerelease,
-						}),
+						})),
 				);
 			if (release.tag_name !== tag || release.draft !== false || release.prerelease !== prerelease) {
-				throw new Error('Existing GitHub release does not match the release operation');
+				return yield* precondition('Existing GitHub release does not match the release operation');
 			}
 			return {
 				id: `github-release:${execution.repository}`,
@@ -766,93 +897,157 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				...(typeof release.html_url === 'string' ? { url: release.html_url } : {}),
 			};
 		});
-		return this.report(id, identity, [publication], []);
 	}
-	private async draftRelease(execution: Execution): Promise<Execution['draftRelease']> {
-		const target = githubRelease(execution);
-		if (!target || !publishesGithubRelease(execution)) return execution.draftRelease;
-		const gateway = this.gateway();
-		const write = await gateway.token(execution.repository, execution.repositoryId, {
-			contents: 'write',
-			workflows: 'write',
+	private draftRelease(execution: Execution): Effect.Effect<Execution['draftRelease'], DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const target = yield* fromSync(() => githubRelease(execution));
+			if (!target || !publishesGithubRelease(execution)) return execution.draftRelease;
+			const gateway = this.gateway();
+			const write = yield* gateway.token(execution.repository, execution.repositoryId, {
+				contents: 'write',
+				workflows: 'write',
+			});
+			if (execution.draftRelease) {
+				const kept = yield* gateway.call(`/repos/${execution.repository}/releases/${execution.draftRelease.id}`, write);
+				if (kept !== null) return execution.draftRelease;
+			}
+			const bot = yield* gateway.botIdentity;
+			const drafts = array(yield* gateway.call(`/repos/${execution.repository}/releases?per_page=100`, write))
+				.map(record)
+				.filter(release => release.draft === true && release.tag_name === target.tag);
+			const matches = (release: Record<string, unknown>) =>
+				release.target_commitish === execution.sourceSha && release.prerelease === target.prerelease;
+			for (const stale of drafts.filter(release => !matches(release) && record(release.author).id === bot.id)) {
+				const staleId = yield* fromSync(() => integer(stale.id));
+				yield* gateway.call(`/repos/${execution.repository}/releases/${staleId}`, write, 'DELETE');
+			}
+			const existing = drafts.find(matches);
+			const release = existing ?? record(
+				yield* gateway.call(`/repos/${execution.repository}/releases`, write, 'POST', {
+					tag_name: target.tag,
+					target_commitish: execution.sourceSha,
+					name: target.tag,
+					generate_release_notes: true,
+					prerelease: target.prerelease,
+					draft: true,
+				}),
+			);
+			return { id: yield* fromSync(() => integer(release.id)), tag: target.tag };
 		});
-		if (execution.draftRelease) {
-			const kept = await gateway.call(`/repos/${execution.repository}/releases/${execution.draftRelease.id}`, write);
-			if (kept !== null) return execution.draftRelease;
-		}
-		const bot = await gateway.botIdentity();
-		const drafts = array(await gateway.call(`/repos/${execution.repository}/releases?per_page=100`, write))
-			.map(record)
-			.filter(release => release.draft === true && release.tag_name === target.tag);
-		const matches = (release: Record<string, unknown>) =>
-			release.target_commitish === execution.sourceSha && release.prerelease === target.prerelease;
-		for (const stale of drafts.filter(release => !matches(release) && record(release.author).id === bot.id)) {
-			await gateway.call(`/repos/${execution.repository}/releases/${integer(stale.id)}`, write, 'DELETE');
-		}
-		const existing = drafts.find(matches);
-		const release = existing ?? record(
-			await gateway.call(`/repos/${execution.repository}/releases`, write, 'POST', {
-				tag_name: target.tag,
-				target_commitish: execution.sourceSha,
-				name: target.tag,
-				generate_release_notes: true,
-				prerelease: target.prerelease,
-				draft: true,
-			}),
-		);
-		return { id: integer(release.id), tag: target.tag };
 	}
-	private async publishDraft(
+	private publishDraft(
 		execution: Execution,
 		draft: { id: number; tag: string },
 		target: { tag: string; prerelease: boolean },
 		token: string,
-	): Promise<Record<string, unknown>> {
-		const gateway = this.gateway();
-		const path = `/repos/${execution.repository}/releases/${draft.id}`;
-		const found = await gateway.call(path, token);
-		if (found === null) throw new Error('Draft GitHub release no longer exists');
-		const release = record(found);
-		if (draft.tag !== target.tag || release.tag_name !== target.tag || release.prerelease !== target.prerelease) {
-			throw new Error('Draft GitHub release does not match the release operation');
-		}
-		if (release.draft !== true) return release;
-		const bot = await gateway.botIdentity();
-		const others = array(await gateway.call(`/repos/${execution.repository}/releases?per_page=100`, token))
-			.map(record)
-			.filter(other =>
-				other.draft === true && other.tag_name === target.tag && integer(other.id) !== draft.id
-				&& record(other.author).id === bot.id
-			);
-		const names = new Set(array(release.assets).map(record).map(asset => text(asset.name)));
-		for (const other of others) {
-			for (const asset of array(other.assets).map(record)) {
-				if (asset.state !== 'uploaded' || names.has(text(asset.name))) continue;
-				await gateway.copyReleaseAsset(
-					execution.repository,
-					{ id: integer(asset.id), name: text(asset.name), contentType: text(asset.content_type) },
-					draft.id,
-					token,
-				);
-				names.add(text(asset.name));
+	): Effect.Effect<Record<string, unknown>, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const gateway = this.gateway();
+			const path = `/repos/${execution.repository}/releases/${draft.id}`;
+			const found = yield* gateway.call(path, token);
+			if (found === null) return yield* precondition('Draft GitHub release no longer exists');
+			const release = record(found);
+			if (draft.tag !== target.tag || release.tag_name !== target.tag || release.prerelease !== target.prerelease) {
+				return yield* precondition('Draft GitHub release does not match the release operation');
 			}
-			await gateway.call(`/repos/${execution.repository}/releases/${integer(other.id)}`, token, 'DELETE');
-		}
-		const current = record(await gateway.call(path, token));
-		if (array(current.assets).map(record).some(asset => asset.state !== 'uploaded')) {
-			throw new Error('Draft GitHub release has unfinished asset uploads');
-		}
-		return record(await gateway.call(path, token, 'PATCH', { draft: false }));
+			if (release.draft !== true) return release;
+			const bot = yield* gateway.botIdentity;
+			const listed = array(yield* gateway.call(`/repos/${execution.repository}/releases?per_page=100`, token))
+				.map(record);
+			const siblings = yield* fromSync(() =>
+				listed.filter(other =>
+					other.draft === true && other.tag_name === target.tag && integer(other.id) !== draft.id
+					&& record(other.author).id === bot.id
+				)
+			);
+			const names = yield* fromSync(() => new Set(array(release.assets).map(record).map(asset => text(asset.name))));
+			for (const other of siblings) {
+				for (const asset of array(other.assets).map(record)) {
+					if (asset.state !== 'uploaded') continue;
+					const name = yield* fromSync(() => text(asset.name));
+					if (names.has(name)) continue;
+					const source = yield* fromSync(() => ({
+						id: integer(asset.id),
+						name,
+						contentType: text(asset.content_type),
+					}));
+					yield* gateway.copyReleaseAsset(execution.repository, source, draft.id, token);
+					names.add(name);
+				}
+				const otherId = yield* fromSync(() => integer(other.id));
+				yield* gateway.call(`/repos/${execution.repository}/releases/${otherId}`, token, 'DELETE');
+			}
+			const current = record(yield* gateway.call(path, token));
+			if (array(current.assets).map(record).some(asset => asset.state !== 'uploaded')) {
+				return yield* precondition('Draft GitHub release has unfinished asset uploads');
+			}
+			return record(yield* gateway.call(path, token, 'PATCH', { draft: false }));
+		});
 	}
-	async report(
+	report(
 		id: string,
 		identity: WorkflowIdentity,
 		publications: Publication[],
 		artifacts: Artifact[],
 	): Promise<Execution> {
-		return this.serial(async () => {
-			const execution = await this.get(id);
-			if (!execution.workflow || execution.managed) throw new Error('Operation is not a workflow');
+		return this.serial(this.recordReport(id, identity, publications, artifacts));
+	}
+	private releaseIdentity(
+		execution: Execution,
+		publication: Publication,
+	): Effect.Effect<Publication, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			if (publication.name !== execution.repository) {
+				return yield* precondition('Release repository mismatch');
+			}
+			const gateway = this.gateway();
+			const token = yield* gateway.token(execution.repository, execution.repositoryId);
+			const base = `/repos/${execution.repository}`;
+			const release = record(
+				yield* gateway.call(`${base}/releases/tags/${encodeURIComponent(publication.version)}`, token),
+			);
+			const tag = record(yield* gateway.call(`${base}/git/ref/tags/${encodeURIComponent(publication.version)}`, token));
+			let target = record(tag.object);
+			if (target.type === 'tag') {
+				const tagSha = yield* fromSync(() => sha(target.sha));
+				target = record(record(yield* gateway.call(`${base}/git/tags/${tagSha}`, token)).object);
+			}
+			const valid = release.draft === false
+				&& release.tag_name === publication.version
+				&& target.type === 'commit'
+				&& target.sha === execution.sourceSha;
+			if (valid) {
+				const releaseId = yield* fromSync(() => integer(release.id));
+				const reference: ReleaseReference = {
+					id: `github:${execution.repositoryId}:${releaseId}`,
+					repository: { id: execution.repositoryId, name: execution.repository },
+					stream: execution.stream,
+					commit: execution.sourceSha,
+					version: execution.version ?? publication.version.replace(/^v/, ''),
+					tag: publication.version,
+					releaseId,
+					artifacts: [],
+					publications: [],
+				};
+				if (
+					execution.release
+					&& (execution.release.tag !== reference.tag || execution.release.releaseId !== reference.releaseId)
+				) return yield* precondition('Release identity changed');
+				execution.release = reference;
+			}
+			return { ...publication, outcome: valid ? 'succeeded' : 'failed' };
+		});
+	}
+	private recordReport(
+		id: string,
+		identity: WorkflowIdentity,
+		publications: Publication[],
+		artifacts: Artifact[],
+	): Effect.Effect<Execution, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const execution = yield* this.get(id);
+			const workflow = execution.workflow;
+			if (!workflow || execution.managed) return yield* precondition('Operation is not a workflow');
 			if (
 				execution.repositoryId !== identity.repositoryId
 				|| execution.runId !== identity.runId
@@ -860,20 +1055,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				|| execution.workflowSha !== identity.workflowSha
 				|| execution.state !== 'running'
 			) {
-				throw new Error('Report identity mismatch');
+				return yield* precondition('Report identity mismatch');
 			}
 			for (const artifact of artifacts) {
-				if (artifact.runId !== identity.runId) throw new Error('Artifact producer mismatch');
+				if (artifact.runId !== identity.runId) return yield* precondition('Artifact producer mismatch');
 				if (!/^sha256:[a-f0-9]{64}$/.test(artifact.digest) || !(Date.parse(artifact.expiresAt) > Date.now())) {
-					throw new Error('Artifact has no usable digest or has expired');
+					return yield* precondition('Artifact has no usable digest or has expired');
 				}
-				const gateway = this.gateway(),
-					token = await gateway.token(execution.repository, execution.repositoryId);
+				const gateway = this.gateway();
+				const token = yield* gateway.token(execution.repository, execution.repositoryId);
 				const actual = record(
-					await gateway.call(
-						`/repos/${execution.repository}/actions/artifacts/${artifact.id}`,
-						token,
-					),
+					yield* gateway.call(`/repos/${execution.repository}/actions/artifacts/${artifact.id}`, token),
 				);
 				if (
 					record(actual.workflow_run).id !== identity.runId
@@ -882,276 +1074,234 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					|| actual.digest !== artifact.digest
 					|| actual.expires_at !== artifact.expiresAt
 				) {
-					throw new Error('Reported artifact does not match GitHub');
+					return yield* precondition('Reported artifact does not match GitHub');
 				}
 			}
 			const verified: Publication[] = [];
 			for (const reported of publications) {
 				const publication = { ...reported, identity: identityOf(reported, execution.repository) };
 				if (publication.id.startsWith('refs:')) {
-					throw new Error('Ref results are verified by the ref completion endpoint');
+					return yield* precondition('Ref results are verified by the ref completion endpoint');
 				}
-				validatePublicationIdentity(execution, publication);
+				yield* validatePublicationIdentity(execution, publication);
 				if (canVerifyPublication(publication.manager) && publication.outcome === 'succeeded') {
-					verified.push(
-						await verifyPublication(
-							publication,
-							fetch,
-							this.gateway().verification(execution.repository, execution.repositoryId),
-						),
-					);
+					const context = this.gateway().verification(execution.repository, execution.repositoryId);
+					verified.push(yield* verifyPublication(publication, fetch, context));
 				} else if (publication.manager === 'manifest' && publication.outcome === 'succeeded') {
-					verified.push(await verifyManifest(publication, this.gateway()));
-				} else if (
-					publication.manager === 'github-release'
-					&& publication.outcome === 'succeeded'
-				) {
-					if (publication.name !== execution.repository) {
-						throw new Error('Release repository mismatch');
-					}
-					const gateway = this.gateway(),
-						token = await gateway.token(execution.repository, execution.repositoryId);
-					const release = record(
-						await gateway.call(
-							`/repos/${execution.repository}/releases/tags/${encodeURIComponent(publication.version)}`,
-							token,
-						),
-					);
-					const tag = record(
-						await gateway.call(
-							`/repos/${execution.repository}/git/ref/tags/${encodeURIComponent(publication.version)}`,
-							token,
-						),
-					);
-					let target = record(tag.object);
-					if (target.type === 'tag') {
-						target = record(
-							record(
-								await gateway.call(
-									`/repos/${execution.repository}/git/tags/${sha(target.sha)}`,
-									token,
-								),
-							).object,
-						);
-					}
-					const valid = release.draft === false
-						&& release.tag_name === publication.version
-						&& target.type === 'commit'
-						&& target.sha === execution.sourceSha;
-					if (valid) {
-						const reference: ReleaseReference = {
-							id: `github:${execution.repositoryId}:${integer(release.id)}`,
-							repository: { id: execution.repositoryId, name: execution.repository },
-							stream: execution.stream,
-							commit: execution.sourceSha,
-							version: execution.version ?? publication.version.replace(/^v/, ''),
-							tag: publication.version,
-							releaseId: integer(release.id),
-							artifacts: [],
-							publications: [],
-						};
-						if (
-							execution.release
-							&& (execution.release.tag !== reference.tag || execution.release.releaseId !== reference.releaseId)
-						) throw new Error('Release identity changed');
-						execution.release = reference;
-					}
-					verified.push({ ...publication, outcome: valid ? 'succeeded' : 'failed' });
+					verified.push(yield* verifyManifest(publication, this.gateway()));
+				} else if (publication.manager === 'github-release' && publication.outcome === 'succeeded') {
+					verified.push(yield* this.releaseIdentity(execution, publication));
 				} else verified.push(publication);
 			}
+			const merged = yield* mergeArtifacts(execution.artifacts, artifacts, workflow.outputs);
 			const next = {
 				...execution,
-				publications: mergePublications(execution.publications, verified),
-				artifacts: mergeArtifacts(execution.artifacts, artifacts, execution.workflow.outputs),
+				publications: yield* mergePublications(execution.publications, verified),
+				artifacts: merged,
 			};
-			await this.put(next);
+			yield* this.put(next);
 			return next;
 		});
 	}
-	private async supersedeVersion(execution: Execution): Promise<void> {
-		if (execution.operation !== 'promote' || !execution.version) return;
-		for (const other of await this.executions()) {
-			if (
-				other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
-				&& other.version === execution.version && ['blocked', 'pending', 'ready', 'failed'].includes(other.state)
-			) {
-				await this.put({ ...other, state: 'cancelled', reason: `Superseded by ${execution.id}` });
+	private supersedeVersion(execution: Execution): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			if (execution.operation !== 'promote' || !execution.version) return;
+			for (const other of yield* this.executions()) {
+				if (
+					other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
+					&& other.version === execution.version && ['blocked', 'pending', 'ready', 'failed'].includes(other.state)
+				) {
+					yield* this.put({ ...other, state: 'cancelled', reason: `Superseded by ${execution.id}` });
+				}
 			}
-		}
+		});
 	}
-	private async approveFromPush(execution: Execution, executions: Execution[]): Promise<boolean> {
-		const newer = executions.find(other =>
-			other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
-			&& other.version === execution.version && other.createdAt > execution.createdAt
-			&& !['succeeded', 'cancelled', 'failed'].includes(other.state)
-		);
-		if (newer) {
-			await this.put({ ...execution, state: 'cancelled', reason: `Superseded by ${newer.id}` });
+	private approveFromPush(execution: Execution, executions: Execution[]): Effect.Effect<boolean, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const newer = executions.find(other =>
+				other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
+				&& other.version === execution.version && other.createdAt > execution.createdAt
+				&& !['succeeded', 'cancelled', 'failed'].includes(other.state)
+			);
+			if (newer) {
+				yield* this.put({ ...execution, state: 'cancelled', reason: `Superseded by ${newer.id}` });
+				return true;
+			}
+			const problems = yield* this.approvalProblems(execution);
+			if (problems.length) {
+				const reason = `Releases when the commit is verified and its checks pass: ${problems.join('; ')}`;
+				if (execution.reason !== reason) yield* this.put({ ...execution, reason });
+				return false;
+			}
+			yield* this.store().audit('beepboop', 'promotion.approve', `${execution.id}:${execution.sourceSha}:push`);
+			const next: Execution = { ...execution, state: 'ready', approvedAt: Date.now() };
+			delete next.reason;
+			yield* this.supersedeVersion(next);
+			yield* this.put(next);
 			return true;
-		}
-		const problems = await this.approvalProblems(execution);
-		if (problems.length) {
-			const reason = `Releases when the commit is verified and its checks pass: ${problems.join('; ')}`;
-			if (execution.reason !== reason) await this.put({ ...execution, reason });
-			return false;
-		}
-		await this.store().audit('beepboop', 'promotion.approve', `${execution.id}:${execution.sourceSha}:push`);
-		const next: Execution = { ...execution, state: 'ready', approvedAt: Date.now() };
-		delete next.reason;
-		await this.supersedeVersion(next);
-		await this.put(next);
-		return true;
+		});
 	}
-	async approve(id: string, commitSha: string, actor: string, force = false): Promise<Execution> {
-		return this.serial(async () => {
-			const execution = await this.get(id);
+	approve(id: string, commitSha: string, actor: string, force = false): Promise<Execution> {
+		return this.serial(Effect.gen({ self: this }, function*() {
+			const execution = yield* this.get(id);
+			const commit = yield* fromSync(() => sha(commitSha));
 			if (
 				execution.operation !== 'promote'
 				|| execution.state !== 'blocked'
-				|| execution.sourceSha !== sha(commitSha)
+				|| execution.sourceSha !== commit
 			) {
-				throw new Error('Approval does not match promotion target');
+				return yield* precondition('Approval does not match promotion target');
 			}
-			const head = await this.refHead(
-				execution,
-				await this.gateway().token(execution.repository, execution.repositoryId),
-			);
+			const token = yield* this.gateway().token(execution.repository, execution.repositoryId);
+			const head = yield* this.refHead(execution, token);
 			if (head && head.sha !== execution.sourceSha) {
-				throw new Error(`${head.ref} is at ${head.sha.slice(0, 12)}. Approve the release for that commit.`);
+				return yield* precondition(`${head.ref} is at ${head.sha.slice(0, 12)}. Approve the release for that commit.`);
 			}
-			const problems = await this.approvalProblems(execution);
-			if (problems.length && !force) throw new Error(problems.join('; '));
-			await this.store().audit(
+			const problems = yield* this.approvalProblems(execution);
+			if (problems.length && !force) return yield* precondition(problems.join('; '));
+			yield* this.store().audit(
 				actor,
 				'promotion.approve',
 				`${id}:${commitSha}${problems.length ? ` overriding: ${problems.join('; ')}` : ''}`,
 			);
 			const next: Execution = { ...execution, state: 'ready', approvedAt: Date.now() };
-			await this.supersedeVersion(next);
-			await this.put(next);
+			yield* this.supersedeVersion(next);
+			yield* this.put(next);
 			return next;
-		});
+		}));
 	}
-	async approvalReadiness(id: string): Promise<{ problems: string[] }> {
-		const execution = await this.get(id);
-		if (execution.operation !== 'promote' || execution.state !== 'blocked') {
-			return { problems: ['This promotion is not waiting for approval'] };
-		}
-		return { problems: await this.approvalProblems(execution) };
-	}
-	private async approvalProblems(execution: Execution): Promise<string[]> {
-		const gateway = this.gateway(),
-			token = await gateway.token(execution.repository, execution.repositoryId);
-		const base = `/repos/${execution.repository}`;
-		const problems: string[] = [];
-		const repository = await this.store().repository(execution.repositoryId);
-		const references = execution.configuration.streams[execution.stream]?.packages;
-		if (repository) {
-			problems.push(...manifestProblems(
-				repository.inventory,
-				repository.inventory.packages.filter(pkg =>
-					!references || references.some(reference => matchesPackage(reference, pkg))
-				),
-			));
-		}
-		const commit = record(await gateway.call(`${base}/commits/${execution.sourceSha}`, token));
-		if (record(record(commit.commit).verification).verified !== true) {
-			problems.push('The commit signature is not verified');
-		}
-		const checks = record(
-			await gateway.call(`${base}/commits/${execution.sourceSha}/check-runs?per_page=100&filter=latest`, token),
-		);
-		const runs = array(checks.check_runs).map(record);
-		if (checks.total_count !== runs.length) problems.push('The commit has more than 100 check runs');
-		const releaseFiles = new Set(
-			Object.values(execution.configuration.streams).flatMap(stream =>
-				[stream.prepare.workflow, stream.promote.workflow, ...Object.values(stream.workflows)]
-					.flatMap(binding => binding ? [`.github/workflows/${binding.file}`] : [])
-			),
-		);
-		const workflowRuns = array(
-			record(await gateway.call(`${base}/actions/runs?head_sha=${execution.sourceSha}&per_page=100`, token))
-				.workflow_runs,
-		).map(record);
-		const paths = new Map(workflowRuns.map(run => [String(run.id), String(run.path)]));
-		const gating = runs.filter(run => {
-			const runId = /\/actions\/runs\/(\d+)\//.exec(String(run.details_url))?.[1];
-			return !(runId && releaseFiles.has(paths.get(runId) ?? ''));
-		});
-		if (!gating.length) problems.push('No checks have run on this commit');
-		for (const run of gating) {
-			if (run.status !== 'completed') problems.push(`${String(run.name)} is still running`);
-			else if (!['success', 'neutral', 'skipped'].includes(String(run.conclusion))) {
-				problems.push(`${String(run.name)} ${String(run.conclusion)}`);
+	approvalReadiness(id: string): Promise<{ problems: string[] }> {
+		return Effect.runPromise(Effect.gen({ self: this }, function*() {
+			const execution = yield* this.get(id);
+			if (execution.operation !== 'promote' || execution.state !== 'blocked') {
+				return { problems: ['This promotion is not waiting for approval'] };
 			}
-		}
-		const status = record(await gateway.call(`${base}/commits/${execution.sourceSha}/status`, token));
-		if (Number(status.total_count) > 0 && status.state !== 'success') {
-			problems.push(`Commit status is ${String(status.state)}`);
-		}
-		return problems;
+			return { problems: yield* this.approvalProblems(execution) };
+		}));
 	}
-	private async refHead(execution: Execution, token: string): Promise<{ ref: string; sha: string } | undefined> {
-		const ref = execution.workflow?.ref.replace(/^refs\/(heads|tags)\//, '');
-		if (!ref) return undefined;
-		const commit = await this.gateway().call(
-			`/repos/${execution.repository}/commits/${encodeURIComponent(ref)}`,
-			token,
-		);
-		if (commit === null) throw new Error(`Workflow ref ${ref} no longer exists`);
-		return { ref, sha: text(record(commit).sha) };
+	private approvalProblems(execution: Execution): Effect.Effect<string[], DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const gateway = this.gateway();
+			const token = yield* gateway.token(execution.repository, execution.repositoryId);
+			const base = `/repos/${execution.repository}`;
+			const problems: string[] = [];
+			const repository = yield* this.store().repository(execution.repositoryId);
+			const references = execution.configuration.streams[execution.stream]?.packages;
+			if (repository) {
+				problems.push(...manifestProblems(
+					repository.inventory,
+					repository.inventory.packages.filter(pkg =>
+						!references || references.some(reference => matchesPackage(reference, pkg))
+					),
+				));
+			}
+			const commit = record(yield* gateway.call(`${base}/commits/${execution.sourceSha}`, token));
+			if (record(record(commit.commit).verification).verified !== true) {
+				problems.push('The commit signature is not verified');
+			}
+			const checks = record(
+				yield* gateway.call(`${base}/commits/${execution.sourceSha}/check-runs?per_page=100&filter=latest`, token),
+			);
+			const runs = array(checks.check_runs).map(record);
+			if (checks.total_count !== runs.length) problems.push('The commit has more than 100 check runs');
+			const releaseFiles = new Set(
+				Object.values(execution.configuration.streams).flatMap(stream =>
+					[stream.prepare.workflow, stream.promote.workflow, ...Object.values(stream.workflows)]
+						.flatMap(binding => binding ? [`.github/workflows/${binding.file}`] : [])
+				),
+			);
+			const workflowRuns = array(
+				record(yield* gateway.call(`${base}/actions/runs?head_sha=${execution.sourceSha}&per_page=100`, token))
+					.workflow_runs,
+			).map(record);
+			const paths = new Map(workflowRuns.map(run => [String(run.id), String(run.path)]));
+			const gating = runs.filter(run => {
+				const runId = /\/actions\/runs\/(\d+)\//.exec(String(run.details_url))?.[1];
+				return !(runId && releaseFiles.has(paths.get(runId) ?? ''));
+			});
+			if (!gating.length) problems.push('No checks have run on this commit');
+			for (const run of gating) {
+				if (run.status !== 'completed') problems.push(`${String(run.name)} is still running`);
+				else if (!['success', 'neutral', 'skipped'].includes(String(run.conclusion))) {
+					problems.push(`${String(run.name)} ${String(run.conclusion)}`);
+				}
+			}
+			const status = record(yield* gateway.call(`${base}/commits/${execution.sourceSha}/status`, token));
+			if (Number(status.total_count) > 0 && status.state !== 'success') {
+				problems.push(`Commit status is ${String(status.state)}`);
+			}
+			return problems;
+		});
 	}
-	private async redispatch(execution: Execution, publications: Publication[]): Promise<void> {
-		const gateway = this.gateway(),
-			token = await gateway.token(execution.repository, execution.repositoryId, {
+	private refHead(
+		execution: Execution,
+		token: string,
+	): Effect.Effect<{ ref: string; sha: string } | undefined, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const ref = execution.workflow?.ref.replace(/^refs\/(heads|tags)\//, '');
+			if (!ref) return undefined;
+			const commit = yield* this.gateway().call(
+				`/repos/${execution.repository}/commits/${encodeURIComponent(ref)}`,
+				token,
+			);
+			if (commit === null) return yield* precondition(`Workflow ref ${ref} no longer exists`);
+			return { ref, sha: yield* fromSync(() => text(record(commit).sha)) };
+		});
+	}
+	private redispatch(execution: Execution, publications: Publication[]): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const gateway = this.gateway();
+			const token = yield* gateway.token(execution.repository, execution.repositoryId, {
 				contents: 'read',
 				actions: 'write',
 			});
-		const head = await this.refHead(execution, token);
-		if (head && head.sha !== execution.sourceSha) throw new Error(moved(execution, head));
-		const run = execution.runId
-			? record(await gateway.call(`/repos/${execution.repository}/actions/runs/${execution.runId}`, token))
-			: null;
-		if (run !== null && run.head_sha === execution.sourceSha) {
-			await gateway.call(
-				`/repos/${execution.repository}/actions/runs/${execution.runId}/rerun-failed-jobs`,
-				token,
-				'POST',
-			);
-			await this.put({
-				...execution,
-				state: 'uncertain',
-				runAttempt: integer(run.run_attempt),
-				reason: 'Retry requested; re-running the failed jobs',
-				publications,
-			});
-		} else {
-			await this.put({
-				...execution,
-				state: 'ready',
-				supersededRuns: [...(execution.supersededRuns ?? []), ...(execution.runId ? [execution.runId] : [])],
-				runId: undefined,
-				runAttempt: undefined,
-				workflowSha: undefined,
-				reason: 'Retry requested; dispatching a new run',
-				publications,
-			});
-		}
-		await this.requestReconcile(Date.now());
+			const head = yield* this.refHead(execution, token);
+			if (head && head.sha !== execution.sourceSha) return yield* precondition(moved(execution, head));
+			const run = execution.runId
+				? record(yield* gateway.call(`/repos/${execution.repository}/actions/runs/${execution.runId}`, token))
+				: null;
+			if (run !== null && run.head_sha === execution.sourceSha) {
+				yield* gateway.call(
+					`/repos/${execution.repository}/actions/runs/${execution.runId}/rerun-failed-jobs`,
+					token,
+					'POST',
+				);
+				const runAttempt = yield* fromSync(() => integer(run.run_attempt));
+				yield* this.put({
+					...execution,
+					state: 'uncertain',
+					runAttempt,
+					reason: 'Retry requested; re-running the failed jobs',
+					publications,
+				});
+			} else {
+				yield* this.put({
+					...execution,
+					state: 'ready',
+					supersededRuns: [...(execution.supersededRuns ?? []), ...(execution.runId ? [execution.runId] : [])],
+					runId: undefined,
+					runAttempt: undefined,
+					workflowSha: undefined,
+					reason: 'Retry requested; dispatching a new run',
+					publications,
+				});
+			}
+			yield* this.requestReconcile(Date.now());
+		});
 	}
-	async recover(id: string, action: 'reconcile' | 'retry', actor: string): Promise<Execution> {
-		return this.serial(async () => {
-			if (action === 'reconcile') await this.ctx.storage.delete(`quarantine:${id}`);
-			const execution = await this.get(id);
+	recover(id: string, action: 'reconcile' | 'retry', actor: string): Promise<Execution> {
+		return this.serial(Effect.gen({ self: this }, function*() {
+			if (action === 'reconcile') yield* this.remove(`quarantine:${id}`);
+			const execution = yield* this.get(id);
 			if (action === 'retry') {
 				if (!['failed', 'cancelled'].includes(execution.state)) {
-					throw new Error('Only failed or cancelled operations can be retried');
+					return yield* precondition('Only failed or cancelled operations can be retried');
 				}
 				if (execution.operation === 'prepare' && !execution.plan && !execution.managed) {
-					throw new Error('This preparation has no plan; prepare the release from Prepare a release');
+					return yield* precondition('This preparation has no plan; prepare the release from Prepare a release');
 				}
 				if (execution.artifacts.some((a) => Date.parse(a.expiresAt) <= Date.now())) {
-					throw new Error('Artifacts expired; use the configured preparation/recovery producer');
+					return yield* precondition('Artifacts expired; use the configured preparation/recovery producer');
 				}
 				const publications = execution.publications.map(publication =>
 					publication.outcome === 'succeeded' ? publication : { ...publication, outcome: 'pending' as const }
@@ -1159,596 +1309,601 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (execution.operation === 'promote' && execution.attempts === 0 && execution.approvedAt === undefined) {
 					const next: Execution = { ...execution, state: 'blocked', publications };
 					delete next.reason;
-					await this.put(next);
-				} else await this.redispatch(execution, publications);
-			} else await this.wake();
-			if (execution.releaseSet?.workflowId) {
-				const instance = await this.env.RELEASE_WORKFLOW.get(execution.releaseSet.workflowId);
-				const status = await instance.status();
+					yield* this.put(next);
+				} else yield* this.redispatch(execution, publications);
+			} else yield* this.wakeUp();
+			const releaseSet = execution.releaseSet;
+			const workflowId = releaseSet?.workflowId;
+			if (releaseSet && workflowId) {
+				const instance = yield* fromPromise(() => this.env.RELEASE_WORKFLOW.get(workflowId));
+				const status = yield* fromPromise(() => instance.status());
 				if (['errored', 'terminated'].includes(status.status)) {
-					await instance.restart();
-					await this.recordReleaseWorkflowInterruption(
-						execution.releaseSet.preparationId,
-						execution.releaseSet.workflowId,
-						false,
-					);
+					yield* fromPromise(() => instance.restart());
+					yield* this.recordReleaseWorkflowInterruption(releaseSet.preparationId, workflowId, false);
 				}
 			}
-			await this.store().audit(actor, `execution.${action}`, id);
-			return this.get(id);
-		});
+			yield* this.store().audit(actor, `execution.${action}`, id);
+			return yield* this.get(id);
+		}));
 	}
-	async cancel(id: string, actor: string): Promise<Execution> {
-		return this.serial(async () => {
-			const execution = await this.get(id);
-			if (['succeeded', 'cancelled'].includes(execution.state)) throw new Error('Execution has already finished');
+	cancel(id: string, actor: string): Promise<Execution> {
+		return this.serial(Effect.gen({ self: this }, function*() {
+			const execution = yield* this.get(id);
+			if (['succeeded', 'cancelled'].includes(execution.state)) {
+				return yield* precondition('Execution has already finished');
+			}
 			if (execution.runId && ['dispatching', 'running', 'uncertain'].includes(execution.state)) {
-				const gateway = this.gateway(),
-					token = await gateway.token(execution.repository, execution.repositoryId, {
-						contents: 'read',
-						actions: 'write',
-					});
+				const gateway = this.gateway();
+				const token = yield* gateway.token(execution.repository, execution.repositoryId, {
+					contents: 'read',
+					actions: 'write',
+				});
 				const path = `/repos/${execution.repository}/actions/runs/${execution.runId}`;
-				if (record(await gateway.call(path, token)).status !== 'completed') {
-					await gateway.call(`${path}/cancel`, token, 'POST');
+				if (record(yield* gateway.call(path, token)).status !== 'completed') {
+					yield* gateway.call(`${path}/cancel`, token, 'POST');
 				}
 			}
 			const next: Execution = { ...execution, state: 'cancelled', reason: 'Cancelled from the dashboard' };
-			await this.put(next);
-			await this.store().audit(actor, 'execution.cancel', id);
+			yield* this.put(next);
+			yield* this.store().audit(actor, 'execution.cancel', id);
 			return next;
+		}));
+	}
+	private wakeUp(): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			yield* this.wakeReleaseWorkflows();
+			yield* this.requestReconcile(Date.now());
+			yield* this.arm(Date.now());
 		});
 	}
-	async wake(): Promise<void> {
-		await this.wakeReleaseWorkflows();
-		await this.requestReconcile(Date.now());
-		await this.journal.arm(Date.now());
+	wake(): Promise<void> {
+		return Effect.runPromise(this.wakeUp());
 	}
-	async receive(delivery: string, repositoryId: number, event: InboxEvent): Promise<void> {
-		const key = `inbox:${delivery}`;
-		if (await this.ctx.storage.get(key)) return;
-		const now = Date.now();
-		await this.ctx.storage.put(key, { delivery, repositoryId, event, attempts: 0, due: now });
-		await this.journal.arm(now);
+	receive(delivery: string, repositoryId: number, event: InboxEvent): Promise<void> {
+		return Effect.runPromise(Effect.gen({ self: this }, function*() {
+			const key = `inbox:${delivery}`;
+			if (yield* this.read(key)) return;
+			const now = Date.now();
+			yield* this.write(key, { delivery, repositoryId, event, attempts: 0, due: now });
+			yield* this.arm(now);
+		}));
 	}
-	private async drainInbox(now: number): Promise<void> {
-		for (const [key, value] of await this.ctx.storage.list({ prefix: 'inbox:' })) {
-			const parsed = inboxEntry.safeParse(value);
-			if (!parsed.success) {
-				await this.ctx.storage.delete(key);
-				continue;
-			}
-			const entry = parsed.data;
-			if (entry.due > now) continue;
-			try {
-				await new AutomationService(this.env).receive(entry.delivery, entry.repositoryId, entry.event);
-				await this.ctx.storage.delete(key);
-			} catch (error) {
-				const attempts = entry.attempts + 1;
-				const failed = {
-					...entry,
-					attempts,
-					due: now + reconcileInterval * 2 ** entry.attempts,
-					error: decodeError(error),
-				};
-				if (retryable(error) && attempts < inboxAttempts) await this.ctx.storage.put(key, failed);
-				else {
-					await this.ctx.storage.put(`inbox-dead:${entry.delivery}`, failed);
-					await this.ctx.storage.delete(key);
-					await this.auditQuietly(
-						'inbox.dead',
-						`${entry.delivery}: ${entry.event.kind} after ${attempts} attempts: ${failed.error}`,
-						'inbox.audit-failed',
-					);
-				}
-			}
-		}
-	}
-	async observeRun(repositoryId: number, runId: number): Promise<void> {
-		await this.ctx.storage.put(`observe:${runId}`, { repositoryId, runId });
-		await this.wake();
-	}
-	private async observations(now: number): Promise<void> {
-		for (const [key, value] of await this.ctx.storage.list({ prefix: 'observe:' })) {
-			const parsed = observation.safeParse(value);
-			if (!parsed.success) {
-				await this.ctx.storage.delete(key);
-				continue;
-			}
-			const event = parsed.data;
-			if ((event.due ?? 0) > now) continue;
-			try {
-				const stored = await this.store().repository(event.repositoryId);
-				const state = stored && readiness(stored);
-				if (state?.kind !== 'ready') {
-					await this.ctx.storage.delete(key);
+	private drainInbox(now: number): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			for (const [key, value] of yield* this.list({ prefix: 'inbox:' })) {
+				const parsed = inboxEntry.safeParse(value);
+				if (!parsed.success) {
+					yield* this.remove(key);
 					continue;
 				}
-				const repository = state.repository;
-				const gateway = this.gateway(),
-					token = await gateway.token(repository.name, repository.id);
-				const run = record(
-					await gateway.call(`/repos/${repository.name}/actions/runs/${event.runId}`, token),
+				const entry = parsed.data;
+				if (entry.due > now) continue;
+				yield* new AutomationService(this.env).receive(entry.delivery, entry.repositoryId, entry.event).pipe(
+					Effect.andThen(this.remove(key)),
+					recover(error =>
+						Effect.gen({ self: this }, function*() {
+							const attempts = entry.attempts + 1;
+							const failed = {
+								...entry,
+								attempts,
+								due: now + reconcileInterval * 2 ** entry.attempts,
+								error: decodeError(error),
+							};
+							if (retryable(error) && attempts < inboxAttempts) yield* this.write(key, failed);
+							else {
+								yield* this.write(`inbox-dead:${entry.delivery}`, failed);
+								yield* this.remove(key);
+								yield* this.auditQuietly(
+									'inbox.dead',
+									`${entry.delivery}: ${entry.event.kind} after ${attempts} attempts: ${failed.error}`,
+									'inbox.audit-failed',
+								);
+							}
+						})
+					),
 				);
-				if (
-					record(run.repository).id !== repository.id
-					|| !['push', 'release', 'workflow_dispatch', 'schedule'].includes(String(run.event))
-				) {
-					await this.ctx.storage.delete(key);
-					continue;
-				}
-				const branch = String(run.head_branch),
-					ref = run.event === 'release' || /^v?\d+\.\d+\.\d+/.test(branch)
-						? `refs/tags/${branch}`
-						: `refs/heads/${branch}`;
-				for (const [streamName, stream] of Object.entries(repository.configuration.streams)) {
-					for (const [operation, binding] of Object.entries(stream.workflows)) {
-						if (
-							binding.mode !== 'observe'
-							|| run.path !== `.github/workflows/${binding.file}`
-							|| !matchesRef(binding.ref ?? repository.defaultBranch, ref)
-						) {
-							continue;
-						}
-						const version = ref.startsWith('refs/tags/') ? branch.replace(/^v/, '') : undefined;
-						const eventId = `observed:${event.runId}`;
-						const id = await executionId(repository.id, streamName, operation, eventId);
-						if (await this.ctx.storage.get(`execution:${id}`)) continue;
-						const snapshot = await gateway.snapshot(
-							repository.name,
-							repository.id,
-							sha(run.head_sha),
-						);
-						const execution = await createExecution(repository, {
+			}
+		});
+	}
+	observeRun(repositoryId: number, runId: number): Promise<void> {
+		return Effect.runPromise(Effect.gen({ self: this }, function*() {
+			yield* this.write(`observe:${runId}`, { repositoryId, runId });
+			yield* this.wakeUp();
+		}));
+	}
+	private observe(event: z.output<typeof observation>): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const stored = yield* this.store().repository(event.repositoryId);
+			const state = stored && readiness(stored);
+			if (state?.kind !== 'ready') return;
+			const repository = state.repository;
+			const gateway = this.gateway();
+			const token = yield* gateway.token(repository.name, repository.id);
+			const run = record(yield* gateway.call(`/repos/${repository.name}/actions/runs/${event.runId}`, token));
+			if (
+				record(run.repository).id !== repository.id
+				|| !['push', 'release', 'workflow_dispatch', 'schedule'].includes(String(run.event))
+			) {
+				return;
+			}
+			const branch = String(run.head_branch),
+				ref = run.event === 'release' || /^v?\d+\.\d+\.\d+/.test(branch)
+					? `refs/tags/${branch}`
+					: `refs/heads/${branch}`;
+			for (const [streamName, stream] of Object.entries(repository.configuration.streams)) {
+				for (const [operation, binding] of Object.entries(stream.workflows)) {
+					if (
+						binding.mode !== 'observe'
+						|| run.path !== `.github/workflows/${binding.file}`
+						|| !matchesRef(binding.ref ?? repository.defaultBranch, ref)
+					) {
+						continue;
+					}
+					const version = ref.startsWith('refs/tags/') ? branch.replace(/^v/, '') : undefined;
+					const eventId = `observed:${event.runId}`;
+					const id = yield* executionId(repository.id, streamName, operation, eventId);
+					if (yield* this.read(`execution:${id}`)) continue;
+					const headSha = yield* fromSync(() => sha(run.head_sha));
+					const snapshot = yield* gateway.snapshot(repository.name, repository.id, headSha);
+					const execution = yield* (
+						createExecution(repository, {
 							stream: streamName,
 							operation,
 							eventId,
 							sourceSha: snapshot.sha,
 							version,
 							observed: true,
-						});
-						execution.runId = event.runId;
-						execution.runAttempt = integer(run.run_attempt);
-						execution.state = 'running';
-						if (version) {
-							const commit = record(
-								await gateway.call(`/repos/${repository.name}/commits/${snapshot.sha}`, token),
-							);
-							const tag = record(
-								await gateway.call(
-									`/repos/${repository.name}/git/ref/tags/${encodeURIComponent(branch)}`,
-									token,
-								),
-							);
-							let target = record(tag.object);
-							if (target.type === 'tag') {
-								target = record(
-									record(
-										await gateway.call(
-											`/repos/${repository.name}/git/tags/${sha(target.sha)}`,
-											token,
-										),
-									).object,
-								);
-							}
-							if (
-								record(record(commit.commit).verification).verified !== true
-								|| target.type !== 'commit'
-								|| target.sha !== snapshot.sha
-							) {
-								await this.put({
-									...execution,
-									state: 'failed',
-									reason: 'Source commit signature or release tag identity is invalid',
-								});
-								continue;
-							}
-						}
-						const inventory = discover(snapshot, repository.configuration.managers);
-						if (
-							inventory.diagnostics.some(d =>
-								d.severity === 'blocking'
-								&& (d.code === 'invalid-manifest' || d.code === 'cycle' || d.code === 'duplicate-identity')
-							)
-						) {
-							throw new Error('Producer inventory is incomplete');
-						}
-						for (
-							const pkg of inventory.packages.filter(
-								(p) =>
-									Boolean(version)
-									&& publishable(p)
-									&& (!stream.packages || stream.packages.some(reference => matchesPackage(reference, p))),
-							)
-						) {
-							if (!canVerifyPublication(pkg.manager)) continue;
-							const released = observedVersion(pkg, branch);
-							if (released === undefined) continue;
-							const publication: Publication = {
-								id: packageId(pkg),
-								identity: publicationIdentity(pkg, released),
-								manager: pkg.manager,
-								name: pkg.name,
-								version: released,
-								outcome: 'pending',
-								required: !pkg.optional,
-							};
-							execution.publications.push(
-								await verifyPublication(
-									publication,
-									fetch,
-									this.gateway().verification(repository.name, repository.id),
-								),
-							);
-						}
-						await this.put(execution);
-					}
-				}
-				await this.ctx.storage.delete(key);
-			} catch (error) {
-				await this.ctx.storage.put(key, {
-					...event,
-					due: now + reconcileInterval,
-					attempts: (event.attempts ?? 0) + 1,
-					error: decodeError(error),
-				});
-			}
-		}
-	}
-	private async setupEdit(): Promise<SetupEdit | undefined> {
-		const value = await this.ctx.storage.get('setup-edit');
-		return value === undefined ? undefined : decodeSetupEditV1(value);
-	}
-	async setupEdited(edit: Omit<SetupEdit, 'due'>, changed: boolean): Promise<void> {
-		const previous = await this.setupEdit();
-		if (previous ? previous.number === edit.number && previous.body === edit.body : !changed) return;
-		const due = Date.now() + 5000;
-		await this.ctx.storage.put('setup-edit', { ...edit, due });
-		await this.journal.arm(due);
-	}
-	private async rebuildSetup(): Promise<void> {
-		const edit = await this.setupEdit();
-		if (!edit || edit.due > Date.now()) return;
-		const store = this.store();
-		try {
-			const repository = await store.repository(edit.repositoryId);
-			if (repository && readiness(repository).kind !== 'suspended') {
-				const gateway = this.gateway();
-				await maintainSetup(store, gateway, await gateway.snapshot(repository.name, repository.id), {
-					number: edit.number,
-					choices: edit.choices,
-				});
-			}
-		} catch (error) {
-			await store.audit(
-				'beepboop',
-				'repository.setup.failed',
-				`${edit.repositoryId} ${edit.head}: ${error instanceof Error ? error.message : 'Setup edit failed'}`,
-			);
-		}
-		const current = await this.setupEdit();
-		if (current?.due === edit.due) await this.ctx.storage.delete('setup-edit');
-	}
-	async alarm(): Promise<void> {
-		const now = Date.now();
-		await this.drainInbox(now);
-		await Promise.all([
-			this.serial(async () => {
-				await this.deliverReleaseEvents(now);
-				await this.observations(now);
-				const due = await this.ctx.storage.get('reconcile-at');
-				if (due === undefined || ((await this.reconcileAt()) ?? Number.POSITIVE_INFINITY) <= now) {
-					await this.reconcile();
-				}
-			}),
-			this.serial(() => this.rebuildSetup()),
-		]);
-		await this.journal.schedule(await this.nextAlarm());
-	}
-	private async runManaged(execution: Execution): Promise<void> {
-		const operation = execution.managed;
-		if (!operation || execution.workflow) throw new Error('Invalid managed operation');
-		try {
-			if (operation.result) {
-				await this.put({ ...execution, state: 'succeeded' });
-				return;
-			}
-			if (operation.plan.requiresPreparation || operation.plan.sourceSha !== execution.sourceSha) {
-				throw new Error('Managed preparation plan is not executable');
-			}
-			const gateway = this.gateway();
-			const snapshot = await gateway.snapshot(
-				execution.repository,
-				execution.repositoryId,
-				execution.sourceSha,
-				operation.plan.edits.map(edit => edit.path),
-			);
-			execution.state = 'running';
-			execution.attempts++;
-			await this.put(execution);
-			operation.result = operation.head
-				? await gateway.resumePreparation(snapshot, operation.branch, operation.title, operation.body, operation.head)
-				: await gateway.pullRequest(
-					snapshot,
-					operation.branch,
-					operation.title,
-					operation.body,
-					operation.plan.edits,
-					undefined,
-					async head => {
-						operation.head = head;
-						await this.put(execution);
-					},
-				);
-			execution.state = 'succeeded';
-			delete execution.reason;
-			await this.put(execution);
-		} catch (error) {
-			await this.put({
-				...execution,
-				state: 'uncertain',
-				reason: error instanceof Error ? error.message : 'Managed preparation interrupted',
-			});
-		}
-	}
-	private async reconcile(onlyExecution?: string): Promise<void> {
-		const started = Date.now();
-		if (!onlyExecution) await this.ctx.storage.put('reconcile-at', null);
-		const journal = await this.readJournal();
-		const quarantined = new Set(
-			[...(await this.ctx.storage.list({ prefix: 'quarantine:' })).keys()].map(key => key.slice('quarantine:'.length)),
-		);
-		for (const entry of journal.unreadable) {
-			if (!quarantined.has(entry.id)) await this.quarantine(entry.id, entry.error);
-		}
-		const executions = journal.executions.filter(execution => !quarantined.has(execution.id)).sort((a, b) =>
-			a.createdAt - b.createdAt
-		);
-		if (executions[0] && await this.suspended(executions[0].repositoryId)) {
-			return;
-		}
-		const active = executions.filter(
-			(e) => !['succeeded', 'cancelled', 'failed'].includes(e.state),
-		);
-		const busy = new Set(
-			active
-				.filter((e) => ['dispatching', 'running', 'uncertain'].includes(e.state))
-				.map((e) => e.stream),
-		);
-		const unresolved = (execution: Execution) =>
-			['succeeded', 'failed'].includes(execution.state)
-			&& execution.publications.some(p =>
-				canVerifyPublication(p.manager) && ['pending', 'uncertain'].includes(p.outcome)
-			);
-		if (active.some(e => !e.releaseSet?.workflowId) || executions.some(unresolved)) {
-			await this.requestReconcile(started + reconcileInterval);
-		}
-		for (const execution of executions) {
-			if (onlyExecution ? execution.id !== onlyExecution : Boolean(execution.releaseSet?.workflowId)) continue;
-			try {
-				if (unresolved(execution)) {
-					const publications = await Promise.all(
-						execution.publications.map(publication =>
-							canVerifyPublication(publication.manager) && ['pending', 'uncertain'].includes(publication.outcome)
-								? verifyPublication(
-									publication,
-									fetch,
-									this.gateway().verification(execution.repository, execution.repositoryId),
-								)
-								: publication
-						),
+						})
 					);
-					if (publications.some((publication, i) => publication.outcome !== execution.publications[i]?.outcome)) {
-						await this.put({ ...execution, publications });
-						continue;
-					}
-				}
-				if (execution.state === 'succeeded') await this.captureReleaseEvent(execution);
-				if (!active.includes(execution) || execution.state === 'pending') continue;
-				if (execution.state === 'blocked' && execution.operation === 'promote') {
-					if (
-						execution.configuration.streams[execution.stream]?.promote.approval !== 'push'
-						&& execution.approvedBy !== 'merge'
-					) continue;
-					try {
-						if (await this.approveFromPush(execution, executions)) {
-							await this.requestReconcile(Date.now());
-							return;
-						}
-					} catch (error) {
-						const reason = `Beepboop could not check this commit: ${
-							error instanceof Error ? error.message : String(error)
-						}`;
-						if (execution.reason !== reason) await this.put({ ...execution, reason });
-					}
-					continue;
-				}
-				if (execution.managed) {
-					await this.runManaged(execution);
-					continue;
-				}
-				if (!execution.workflow) throw new Error('Execution has no runner');
-				try {
-					const gateway = this.gateway();
-					const token = await gateway.token(execution.repository, execution.repositoryId, {
-						contents: 'read',
-						actions: 'write',
-					});
-					if (execution.runId) {
-						const run = record(
-							await gateway.call(
-								`/repos/${execution.repository}/actions/runs/${execution.runId}`,
-								token,
-							),
+					execution.runId = event.runId;
+					execution.runAttempt = yield* fromSync(() => integer(run.run_attempt));
+					execution.state = 'running';
+					if (version) {
+						const commit = record(yield* gateway.call(`/repos/${repository.name}/commits/${snapshot.sha}`, token));
+						const tag = record(
+							yield* gateway.call(`/repos/${repository.name}/git/ref/tags/${encodeURIComponent(branch)}`, token),
 						);
-						if (
-							record(run.repository).id !== execution.repositoryId
-							|| run.path !== `.github/workflows/${execution.workflow.file}`
-						) {
-							throw new Error('Run identity changed');
+						let target = record(tag.object);
+						if (target.type === 'tag') {
+							const tagSha = yield* fromSync(() => sha(target.sha));
+							target = record(
+								record(yield* gateway.call(`/repos/${repository.name}/git/tags/${tagSha}`, token)).object,
+							);
 						}
 						if (
-							run.status === 'completed' && execution.state === 'uncertain'
-							&& integer(run.run_attempt) <= (execution.runAttempt ?? 0)
+							record(record(commit.commit).verification).verified !== true
+							|| target.type !== 'commit'
+							|| target.sha !== snapshot.sha
 						) {
+							yield* this.put({
+								...execution,
+								state: 'failed',
+								reason: 'Source commit signature or release tag identity is invalid',
+							});
 							continue;
 						}
-						if (run.status === 'completed') {
-							for (let i = 0; i < execution.publications.length; i++) {
-								const publication = execution.publications[i];
-								if (
-									publication
-									&& canVerifyPublication(publication.manager)
-									&& ['pending', 'uncertain'].includes(publication.outcome)
-								) {
-									execution.publications[i] = await verifyPublication(
-										publication,
-										fetch,
-										this.gateway().verification(execution.repository, execution.repositoryId),
-									);
-								}
-							}
-							const limited = execution.publications.flatMap(publication =>
-								publication.outcome === 'rate-limited' ? [Date.parse(publication.retryAfter)] : []
-							);
-							if (limited.length) {
-								const until = Math.max(Date.now(), ...limited);
-								if (execution.package?.manager === 'cargo') {
-									await this.env.PUBLISH_BUDGET.getByName('crates-io').defer(until);
-								}
-								await this.put({
-									...execution,
-									state: 'ready',
-									supersededRuns: [...(execution.supersededRuns ?? []), execution.runId],
-									runId: undefined,
-									runAttempt: undefined,
-									workflowSha: undefined,
-									notBefore: until,
-									reason: `Registry rate limit until ${new Date(until).toISOString()}`,
-									publications: execution.publications.map(publication =>
-										publication.outcome === 'rate-limited' ? { ...publication, outcome: 'pending' } : publication
-									),
-								});
-								continue;
-							}
-							const next = {
-								...execution,
-								state: completion(execution, run.conclusion === 'success'),
-								runAttempt: integer(run.run_attempt),
-							};
-							await this.put(next);
-						} else if (execution.state === 'uncertain') {
-							await this.put({
-								...execution,
-								state: 'running',
-								runAttempt: integer(run.run_attempt),
-							});
-						}
-						continue;
 					}
-					if (['dispatching', 'uncertain'].includes(execution.state)) {
-						const data = record(
-							await gateway.call(
-								`/repos/${execution.repository}/actions/workflows/${execution.workflow.file}/runs?event=workflow_dispatch&per_page=100`,
-								token,
-							),
-						);
-						const matches = array(data.workflow_runs)
-							.map(record)
-							.filter(
-								(run) =>
-									run.display_title === expectedRunTitle(execution)
-									&& run.path === `.github/workflows/${execution.workflow?.file}`
-									&& run.head_branch === execution.workflow?.ref?.replace(/^refs\/(heads|tags)\//, '')
-									&& record(run.repository).id === execution.repositoryId
-									&& !execution.supersededRuns?.includes(integer(run.id)),
-							);
-						const run = matches.length === 1 ? matches[0] : undefined;
-						if (run) {
-							await this.put({
-								...execution,
-								state: 'running',
-								runId: integer(run.id),
-								runAttempt: integer(run.run_attempt),
-								workflowSha: undefined,
-							});
-						} else if (!matches.length && Date.now() - (execution.dispatchedAt ?? 0) > 120_000) {
-							await this.put({
-								...execution,
-								state: 'ready',
-								reason: 'GitHub started no run for the last dispatch; dispatching again',
-							});
-						} else {
-							await this.put({
-								...execution,
-								state: 'uncertain',
-								reason: matches.length
-									? 'Multiple matching runs require review'
-									: 'Dispatch outcome awaiting reconciliation',
-							});
-						}
-						continue;
+					const inventory = discover(snapshot, repository.configuration.managers);
+					if (
+						inventory.diagnostics.some(d =>
+							d.severity === 'blocking'
+							&& (d.code === 'invalid-manifest' || d.code === 'cycle' || d.code === 'duplicate-identity')
+						)
+					) {
+						return yield* precondition('Producer inventory is incomplete');
 					}
-					if (!dependenciesReady(execution, executions) || (execution.notBefore ?? 0) > Date.now()) {
-						continue;
+					for (
+						const pkg of inventory.packages.filter(
+							(p) =>
+								Boolean(version)
+								&& publishable(p)
+								&& (!stream.packages || stream.packages.some(reference => matchesPackage(reference, p))),
+						)
+					) {
+						if (!canVerifyPublication(pkg.manager)) continue;
+						const released = observedVersion(pkg, branch);
+						if (released === undefined) continue;
+						const publication: Publication = {
+							id: packageId(pkg),
+							identity: publicationIdentity(pkg, released),
+							manager: pkg.manager,
+							name: pkg.name,
+							version: released,
+							outcome: 'pending',
+							required: !pkg.optional,
+						};
+						const context = this.gateway().verification(repository.name, repository.id);
+						execution.publications.push(yield* verifyPublication(publication, fetch, context));
 					}
-					if (busy.has(execution.stream)) {
-						const releaseId = execution.releaseSet?.workflowId;
-						// Independent operations within one frozen release may run together.
-						// Other releases and legacy executions still own the stream exclusively.
-						if (
-							!releaseId || active.some(other =>
-								other.stream === execution.stream
-								&& ['dispatching', 'running', 'uncertain'].includes(other.state)
-								&& other.releaseSet?.workflowId !== releaseId
-							)
-						) continue;
+					yield* this.put(execution);
+				}
+			}
+		});
+	}
+	private observations(now: number): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			for (const [key, value] of yield* this.list({ prefix: 'observe:' })) {
+				const parsed = observation.safeParse(value);
+				if (!parsed.success) {
+					yield* this.remove(key);
+					continue;
+				}
+				const event = parsed.data;
+				if ((event.due ?? 0) > now) continue;
+				yield* this.observe(event).pipe(
+					Effect.andThen(this.remove(key)),
+					recover(error =>
+						this.write(key, {
+							...event,
+							due: now + reconcileInterval,
+							attempts: (event.attempts ?? 0) + 1,
+							error: decodeError(error),
+						})
+					),
+				);
+			}
+		});
+	}
+	private setupEdit(): Effect.Effect<SetupEdit | undefined, DomainError> {
+		return this.read('setup-edit').pipe(
+			Effect.flatMap(value => value === undefined ? Effect.undefined : fromSync(() => decodeSetupEditV1(value))),
+		);
+	}
+	setupEdited(edit: Omit<SetupEdit, 'due'>, changed: boolean): Promise<void> {
+		return Effect.runPromise(Effect.gen({ self: this }, function*() {
+			const previous = yield* this.setupEdit();
+			if (previous ? previous.number === edit.number && previous.body === edit.body : !changed) return;
+			const due = Date.now() + 5000;
+			yield* this.write('setup-edit', { ...edit, due });
+			yield* this.arm(due);
+		}));
+	}
+	private rebuildSetup(): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const edit = yield* this.setupEdit();
+			if (!edit || edit.due > Date.now()) return;
+			const store = this.store();
+			yield* Effect.gen({ self: this }, function*() {
+				const repository = yield* store.repository(edit.repositoryId);
+				if (repository && readiness(repository).kind !== 'suspended') {
+					const gateway = this.gateway();
+					const snapshot = yield* gateway.snapshot(repository.name, repository.id);
+					yield* maintainSetup(store, gateway, snapshot, { number: edit.number, choices: edit.choices });
+				}
+			}).pipe(
+				recover(error =>
+					store.audit('beepboop', 'repository.setup.failed', `${edit.repositoryId} ${edit.head}: ${decodeError(error)}`)
+				),
+			);
+			const current = yield* this.setupEdit();
+			if (current?.due === edit.due) yield* this.remove('setup-edit');
+		});
+	}
+	alarm(): Promise<void> {
+		return Effect.runPromise(Effect.gen({ self: this }, function*() {
+			const now = Date.now();
+			yield* this.drainInbox(now);
+			yield* Effect.all([
+				this.serialized(Effect.gen({ self: this }, function*() {
+					yield* this.deliverReleaseEvents(now);
+					yield* this.observations(now);
+					const due = yield* this.read('reconcile-at');
+					if (due === undefined || ((yield* this.reconcileAt()) ?? Number.POSITIVE_INFINITY) <= now) {
+						yield* this.reconcile();
 					}
-					const head = await this.refHead(execution, token);
-					if (head && head.sha !== execution.sourceSha) {
-						await this.put({ ...execution, state: 'failed', reason: moved(execution, head) });
-						continue;
-					}
-					execution.resolvedInputs = resolveInputs(execution, executions);
-					const draftRelease = await this.draftRelease(execution);
-					if (draftRelease) execution.draftRelease = draftRelease;
-					busy.add(execution.stream);
-					await this.put({
-						...execution,
-						state: 'dispatching',
-						attempts: execution.attempts + 1,
-						dispatchedAt: Date.now(),
-					});
-					const response = await gateway.call(
-						`/repos/${execution.repository}/actions/workflows/${execution.workflow.file}/dispatches`,
-						token,
-						'POST',
-						{
-							ref: execution.workflow.ref,
-							inputs: {
-								...execution.workflow.inputs,
-								...(execution.package ? { package: execution.package.id } : {}),
-								...(execution.titled ? { beepboop_title: runTitle(execution) } : {}),
-								beepboop_execution_id: execution.id,
-							},
+				})),
+				this.serialized(this.rebuildSetup()),
+			], { concurrency: 'unbounded' });
+			const next = yield* this.nextAlarm();
+			yield* this.journal.schedule(next);
+		}));
+	}
+	private runManaged(execution: Execution): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const operation = execution.managed;
+			if (!operation || execution.workflow) return yield* precondition('Invalid managed operation');
+			yield* Effect.gen({ self: this }, function*() {
+				if (operation.result) {
+					yield* this.put({ ...execution, state: 'succeeded' });
+					return;
+				}
+				if (operation.plan.requiresPreparation || operation.plan.sourceSha !== execution.sourceSha) {
+					return yield* precondition('Managed preparation plan is not executable');
+				}
+				const gateway = this.gateway();
+				const snapshot = yield* gateway.snapshot(
+					execution.repository,
+					execution.repositoryId,
+					execution.sourceSha,
+					operation.plan.edits.map(edit => edit.path),
+				);
+				execution.state = 'running';
+				execution.attempts++;
+				yield* this.put(execution);
+				operation.result = operation.head
+					? yield* gateway.resumePreparation(
+						snapshot,
+						operation.branch,
+						operation.title,
+						operation.body,
+						operation.head,
+					)
+					: yield* gateway.pullRequest(
+						snapshot,
+						operation.branch,
+						operation.title,
+						operation.body,
+						operation.plan.edits,
+						undefined,
+						head => {
+							operation.head = head;
+							return this.put(execution);
 						},
 					);
-					if (response && record(response).workflow_run_id) {
-						await this.put({
-							...execution,
-							state: 'running',
-							attempts: execution.attempts + 1,
-							runId: integer(record(response).workflow_run_id),
-						});
-					}
-				} catch (error) {
-					const reason = `Beepboop could not continue: ${error instanceof Error ? error.message : String(error)}`;
-					const current = await this.get(execution.id);
-					if (current.reason !== reason) await this.put({ ...current, reason });
+				execution.state = 'succeeded';
+				delete execution.reason;
+				yield* this.put(execution);
+			}).pipe(recover(error => this.put({ ...execution, state: 'uncertain', reason: decodeError(error) })));
+		});
+	}
+	private dispatch(
+		execution: Execution,
+		executions: Execution[],
+		active: Execution[],
+		busy: Set<string>,
+	): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const workflow = execution.workflow;
+			if (!workflow) return yield* precondition('Execution has no runner');
+			const gateway = this.gateway();
+			const token = yield* gateway.token(execution.repository, execution.repositoryId, {
+				contents: 'read',
+				actions: 'write',
+			});
+			if (execution.runId) {
+				const runId = execution.runId;
+				const run = record(yield* gateway.call(`/repos/${execution.repository}/actions/runs/${runId}`, token));
+				if (
+					record(run.repository).id !== execution.repositoryId
+					|| run.path !== `.github/workflows/${workflow.file}`
+				) {
+					return yield* precondition('Run identity changed');
 				}
-			} catch (error) {
-				await this.isolate(execution.id, error);
+				const runAttempt = yield* fromSync(() => integer(run.run_attempt));
+				if (
+					run.status === 'completed' && execution.state === 'uncertain' && runAttempt <= (execution.runAttempt ?? 0)
+				) {
+					return;
+				}
+				if (run.status === 'completed') {
+					for (let i = 0; i < execution.publications.length; i++) {
+						const publication = execution.publications[i];
+						if (publication && verifying(publication)) {
+							const context = this.gateway().verification(execution.repository, execution.repositoryId);
+							execution.publications[i] = yield* verifyPublication(publication, fetch, context);
+						}
+					}
+					const limited = execution.publications.flatMap(publication =>
+						publication.outcome === 'rate-limited' ? [Date.parse(publication.retryAfter)] : []
+					);
+					if (limited.length) {
+						const until = Math.max(Date.now(), ...limited);
+						if (execution.package?.manager === 'cargo') {
+							yield* fromPromise(() => this.env.PUBLISH_BUDGET.getByName('crates-io').defer(until));
+						}
+						yield* this.put({
+							...execution,
+							state: 'ready',
+							supersededRuns: [...(execution.supersededRuns ?? []), runId],
+							runId: undefined,
+							runAttempt: undefined,
+							workflowSha: undefined,
+							notBefore: until,
+							reason: `Registry rate limit until ${new Date(until).toISOString()}`,
+							publications: execution.publications.map(publication =>
+								publication.outcome === 'rate-limited' ? { ...publication, outcome: 'pending' } : publication
+							),
+						});
+						return;
+					}
+					yield* this.put({
+						...execution,
+						state: completion(execution, run.conclusion === 'success'),
+						runAttempt,
+					});
+				} else if (execution.state === 'uncertain') {
+					yield* this.put({ ...execution, state: 'running', runAttempt });
+				}
+				return;
 			}
-		}
+			if (['dispatching', 'uncertain'].includes(execution.state)) {
+				const data = record(
+					yield* gateway.call(
+						`/repos/${execution.repository}/actions/workflows/${workflow.file}/runs?event=workflow_dispatch&per_page=100`,
+						token,
+					),
+				);
+				const matches = yield* fromSync(() =>
+					array(data.workflow_runs)
+						.map(record)
+						.filter(
+							(run) =>
+								run.display_title === expectedRunTitle(execution)
+								&& run.path === `.github/workflows/${workflow.file}`
+								&& run.head_branch === workflow.ref?.replace(/^refs\/(heads|tags)\//, '')
+								&& record(run.repository).id === execution.repositoryId
+								&& !execution.supersededRuns?.includes(integer(run.id)),
+						)
+				);
+				const run = matches.length === 1 ? matches[0] : undefined;
+				if (run) {
+					const identity = yield* fromSync(() => ({ runId: integer(run.id), runAttempt: integer(run.run_attempt) }));
+					yield* this.put({ ...execution, state: 'running', ...identity, workflowSha: undefined });
+				} else if (!matches.length && Date.now() - (execution.dispatchedAt ?? 0) > 120_000) {
+					yield* this.put({
+						...execution,
+						state: 'ready',
+						reason: 'GitHub started no run for the last dispatch; dispatching again',
+					});
+				} else {
+					yield* this.put({
+						...execution,
+						state: 'uncertain',
+						reason: matches.length
+							? 'Multiple matching runs require review'
+							: 'Dispatch outcome awaiting reconciliation',
+					});
+				}
+				return;
+			}
+			if (!dependenciesReady(execution, executions) || (execution.notBefore ?? 0) > Date.now()) {
+				return;
+			}
+			if (busy.has(execution.stream)) {
+				const releaseId = execution.releaseSet?.workflowId;
+				// Independent operations within one frozen release may run together.
+				// Other releases and legacy executions still own the stream exclusively.
+				if (
+					!releaseId || active.some(other =>
+						other.stream === execution.stream
+						&& ['dispatching', 'running', 'uncertain'].includes(other.state)
+						&& other.releaseSet?.workflowId !== releaseId
+					)
+				) return;
+			}
+			const head = yield* this.refHead(execution, token);
+			if (head && head.sha !== execution.sourceSha) {
+				yield* this.put({ ...execution, state: 'failed', reason: moved(execution, head) });
+				return;
+			}
+			execution.resolvedInputs = yield* resolveInputs(execution, executions);
+			const draftRelease = yield* this.draftRelease(execution);
+			if (draftRelease) execution.draftRelease = draftRelease;
+			busy.add(execution.stream);
+			yield* this.put({
+				...execution,
+				state: 'dispatching',
+				attempts: execution.attempts + 1,
+				dispatchedAt: Date.now(),
+			});
+			const response = yield* gateway.call(
+				`/repos/${execution.repository}/actions/workflows/${workflow.file}/dispatches`,
+				token,
+				'POST',
+				{
+					ref: workflow.ref,
+					inputs: {
+						...workflow.inputs,
+						...(execution.package ? { package: execution.package.id } : {}),
+						...(execution.titled ? { beepboop_title: runTitle(execution) } : {}),
+						beepboop_execution_id: execution.id,
+					},
+				},
+			);
+			if (response && record(response).workflow_run_id) {
+				const runId = yield* fromSync(() => integer(record(response).workflow_run_id));
+				yield* this.put({ ...execution, state: 'running', attempts: execution.attempts + 1, runId });
+			}
+		}).pipe(
+			recover(error =>
+				Effect.gen({ self: this }, function*() {
+					const reason = `Beepboop could not continue: ${decodeError(error)}`;
+					const current = yield* this.get(execution.id);
+					if (current.reason !== reason) yield* this.put({ ...current, reason });
+				})
+			),
+		);
+	}
+	private advance(
+		execution: Execution,
+		executions: Execution[],
+		active: Execution[],
+		busy: Set<string>,
+		unresolved: (execution: Execution) => boolean,
+	): Effect.Effect<'continue' | 'stop', DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			if (unresolved(execution)) {
+				const context = this.gateway().verification(execution.repository, execution.repositoryId);
+				const publications = yield* Effect.forEach(
+					execution.publications,
+					publication =>
+						verifying(publication)
+							? verifyPublication(publication, fetch, context)
+							: Effect.succeed(publication),
+					{ concurrency: 'unbounded' },
+				);
+				if (publications.some((publication, i) => publication.outcome !== execution.publications[i]?.outcome)) {
+					yield* this.put({ ...execution, publications });
+					return 'continue' as const;
+				}
+			}
+			if (execution.state === 'succeeded') yield* this.captureReleaseEvent(execution);
+			if (!active.includes(execution) || execution.state === 'pending') return 'continue' as const;
+			if (execution.state === 'blocked' && execution.operation === 'promote') {
+				if (
+					execution.configuration.streams[execution.stream]?.promote.approval !== 'push'
+					&& execution.approvedBy !== 'merge'
+				) return 'continue' as const;
+				return yield* this.approveFromPush(execution, executions).pipe(
+					Effect.flatMap(approved =>
+						approved
+							? this.requestReconcile(Date.now()).pipe(Effect.as('stop' as const))
+							: Effect.succeed('continue' as const)
+					),
+					recover(error =>
+						Effect.gen({ self: this }, function*() {
+							const reason = `Beepboop could not check this commit: ${decodeError(error)}`;
+							if (execution.reason !== reason) yield* this.put({ ...execution, reason });
+							return 'continue' as const;
+						})
+					),
+				);
+			}
+			if (execution.managed) {
+				yield* this.runManaged(execution);
+				return 'continue' as const;
+			}
+			yield* this.dispatch(execution, executions, active, busy);
+			return 'continue' as const;
+		});
+	}
+	private reconcile(onlyExecution?: string): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const started = Date.now();
+			if (!onlyExecution) yield* this.write('reconcile-at', null);
+			const journal = yield* this.readJournal();
+			const quarantined = new Set(
+				[...(yield* this.list({ prefix: 'quarantine:' })).keys()].map(key => key.slice('quarantine:'.length)),
+			);
+			for (const entry of journal.unreadable) {
+				if (!quarantined.has(entry.id)) yield* this.quarantine(entry.id, entry.error);
+			}
+			const executions = journal.executions.filter(execution => !quarantined.has(execution.id)).sort((a, b) =>
+				a.createdAt - b.createdAt
+			);
+			if (executions[0] && (yield* this.suspended(executions[0].repositoryId))) {
+				return;
+			}
+			const active = executions.filter(
+				(e) => !['succeeded', 'cancelled', 'failed'].includes(e.state),
+			);
+			const busy = new Set(
+				active
+					.filter((e) => ['dispatching', 'running', 'uncertain'].includes(e.state))
+					.map((e) => e.stream),
+			);
+			const unresolved = (execution: Execution) =>
+				['succeeded', 'failed'].includes(execution.state) && execution.publications.some(verifying);
+			if (active.some(e => !e.releaseSet?.workflowId) || executions.some(unresolved)) {
+				yield* this.requestReconcile(started + reconcileInterval);
+			}
+			for (const execution of executions) {
+				if (onlyExecution ? execution.id !== onlyExecution : Boolean(execution.releaseSet?.workflowId)) continue;
+				const outcome = yield* this.advance(execution, executions, active, busy, unresolved).pipe(
+					recover(error => this.isolate(execution.id, error).pipe(Effect.as('continue' as const))),
+				);
+				if (outcome === 'stop') return;
+			}
+		});
 	}
 }

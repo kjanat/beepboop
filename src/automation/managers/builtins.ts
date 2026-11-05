@@ -1,3 +1,4 @@
+import { Result } from 'effect';
 import { cargoManager } from '@/automation/managers/cargo';
 import { goManager } from '@/automation/managers/go';
 import { goreleaserManager } from '@/automation/managers/goreleaser';
@@ -44,15 +45,12 @@ const adapters = {
 		name: 'pre-commit',
 		discover(snapshot) {
 			const result = emptyInventory();
-			try {
-				result.references = discoverHooks(snapshot);
+			const hooks = discoverHooks(snapshot);
+			if (Result.isSuccess(hooks)) {
+				result.references = hooks.success;
 				if (result.references.length) result.managers.push('pre-commit');
-			} catch (error) {
-				result.diagnostics.push({
-					code: 'invalid-manifest',
-					severity: 'blocking',
-					message: error instanceof Error ? error.message : 'Invalid hook configuration',
-				});
+			} else {
+				result.diagnostics.push({ code: 'invalid-manifest', severity: 'blocking', message: hooks.failure.message });
 			}
 			return result;
 		},

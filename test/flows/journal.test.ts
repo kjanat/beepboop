@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { z } from 'zod';
-import { call, type Transport } from '@/contract/client';
 import { routes } from '@/contract/routes';
-import { runAction } from '../support/actions.ts';
-import { botId, ownerId } from '../support/github.ts';
-import { passChecks, widget } from '../support/repositories.ts';
-import { origin, World } from '../support/world.ts';
+import { runAction } from '@root/test/support/actions.ts';
+import { call, cliTransport } from '@root/test/support/client.ts';
+import { botId, ownerId } from '@root/test/support/github.ts';
+import { passChecks, widget } from '@root/test/support/repositories.ts';
+import { origin, World } from '@root/test/support/world.ts';
 
 let world: World;
 beforeEach(async () => {
@@ -13,15 +13,8 @@ beforeEach(async () => {
 });
 afterEach(() => world.dispose());
 
-function transport(token: string): Transport {
-	return request =>
-		world.handle(
-			new Request(`${origin}${request.path}`, {
-				method: request.method,
-				headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-				...(request.body === undefined ? {} : { body: request.body }),
-			}),
-		);
+function transport(token: string) {
+	return cliTransport(world, token);
 }
 
 function errors() {

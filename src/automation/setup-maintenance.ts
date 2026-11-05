@@ -1,3 +1,4 @@
+import { Effect } from 'effect';
 import { z } from 'zod';
 import { resolveConfiguration } from '@/automation/configuration';
 import type { RepositoryGateway } from '@/automation/github';
@@ -7,11 +8,14 @@ import { exclusionLabel, publishable } from '@/automation/package-publication';
 import { documentRow } from '@/automation/schemas';
 import { previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import type { SetupChoices } from '@/automation/setup-types';
-import type { Store } from '@/automation/store';
+import { decodeError, type Store } from '@/automation/store';
 import type { Edit, Snapshot } from '@/automation/types';
+import type { DomainError } from '@/contract/errors';
 import { sha256Hex } from '@/contract/ids';
 import { packageMarkdown } from '@/domain/package-label';
+import { fromPromise, fromSync, toDomainError } from '@/failure';
 import { record } from '@/model';
+import { parse, sql } from '@/persistence/d1/database';
 
 const editsSchema = z.array(z.object({ path: z.string(), before: z.string(), after: z.string() }));
 export function sameEdits(left: Edit[], right: Edit[]): boolean {
@@ -26,119 +30,130 @@ export function setupEdits(saved: Record<string, unknown> | undefined): Edit[] {
 }
 
 /** Reconcile an already-open proposal after discovery, without starting a release or changing human edits. */
-export async function maintainSetup(
+export function maintainSetup(
 	store: Store,
 	gateway: RepositoryGateway,
 	snapshot: Snapshot,
 	requested?: { number: number; choices: SetupChoices },
-): Promise<void> {
-	const { name, id } = snapshot.repository;
-	const row = documentRow.nullable().parse(
-		await store.db.prepare('SELECT document FROM onboarding WHERE repository_id=?').bind(id).first(),
-	);
-	if (!row) return;
-	const saved = record(JSON.parse(row.document));
-	const pull = await gateway.openSetupPull(name, id);
-	if (!pull || (requested && pull.number !== requested.number)) return;
-	const generated = await gateway.generatedFiles(name, id, pull.head);
-	if (!generated && saved.head !== pull.head) return;
-	const previous = generated ?? setupEdits(saved);
-	const inventory = withRegistryStatus(discover(snapshot), (await store.repository(id))?.inventory);
-	const summary = `Inspected [${snapshot.sha}](https://github.com/${name}/commit/${snapshot.sha}).\n\n`
-		+ 'Discovered packages:\n'
-		+ inventory.packages.map(pkg =>
-			`- ${publishable(pkg) ? packageMarkdown(packageId(pkg)) : `\`${pkg.name}\``} (${
-				[pkg.manifest, exclusionLabel(pkg.publication)].filter(Boolean).join(', ')
-			})`
-		).join(
-			'\n',
+): Effect.Effect<void, DomainError> {
+	return Effect.gen(function*() {
+		const { name, id } = snapshot.repository;
+		const db = sql(store.db);
+		const row = yield* parse(
+			documentRow.nullable(),
+			yield* db.first('SELECT document FROM onboarding WHERE repository_id=?', id),
 		);
-	const save = async (next: Record<string, unknown>) => {
-		// Do not overwrite a newer explicit setup operation or another reconciliation's journal.
-		await store.db.prepare('UPDATE onboarding SET document=? WHERE repository_id=? AND document=?')
-			.bind(JSON.stringify(next), id, row.document).run();
-	};
-	try {
-		const resolved = await resolveConfiguration(
-			JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}'),
-			ref => gateway.preset(ref),
-		);
-		const original = previous.find(edit => edit.path === '.github/beepboop.json')?.before ?? '';
-		const choices = requested?.choices
-			?? ((snapshot.files['.github/beepboop.json'] ?? '') === original ? saved.choices : undefined);
-		const plan = await previewSetup(snapshot, inventory, choices, {
-			head: pull.head,
-			workflowPermission: await gateway.canEditWorkflows(name, id),
-			presetShas: resolved.presetShas,
-			prior: { url: pull.url, content: typeof saved.content === 'string' ? saved.content : undefined },
-		}, resolved.configuration);
-		const fingerprint = await sha256Hex(JSON.stringify({ plan, head: pull.head }));
-		if (!requested && saved.maintenanceFingerprint === fingerprint && saved.options !== undefined) return;
-		const applied = { choices: plan.choices, options: setupOptions(plan) };
-		if (plan.blockers.length || !plan.edits.length) {
-			await gateway.setupStatus(
-				name,
-				id,
-				pull.number,
-				`${summary}\n\n${
-					plan.blockers.length
-						? `Automatic update needs attention:\n${plan.blockers.map(message => `- ${message}`).join('\n')}`
-						: 'The default branch already matches the proposed setup.'
-				}`,
-				setupBody(plan),
+		if (!row) return;
+		const saved = yield* fromSync(() => record(JSON.parse(row.document)));
+		const pull = yield* gateway.openSetupPull(name, id);
+		if (!pull || (requested && pull.number !== requested.number)) return;
+		const generatedFiles = yield* gateway.generatedFiles(name, id, pull.head);
+		if (!generatedFiles && saved.head !== pull.head) return;
+		const previous = generatedFiles ?? (yield* fromSync(() => setupEdits(saved)));
+		const stored = yield* store.repository(id);
+		const inventory = withRegistryStatus(discover(snapshot), stored?.inventory);
+		const summary = `Inspected [${snapshot.sha}](https://github.com/${name}/commit/${snapshot.sha}).\n\n`
+			+ 'Discovered packages:\n'
+			+ inventory.packages.map(pkg =>
+				`- ${publishable(pkg) ? packageMarkdown(packageId(pkg)) : `\`${pkg.name}\``} (${
+					[pkg.manifest, exclusionLabel(pkg.publication)].filter(Boolean).join(', ')
+				})`
+			).join(
+				'\n',
 			);
-			await save({ ...saved, ...applied, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha });
-			return;
-		}
-		// Even an unchanged source may need a newer generator's output. An identical proposal needs no commit.
-		if (saved.sourceSha === snapshot.sha && sameEdits(previous, plan.edits)) {
-			await gateway.setupStatus(name, id, pull.number, `${summary}\n\nThe proposal is up to date.`, setupBody(plan));
-			await save({ ...saved, ...applied, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha });
-			return;
-		}
-		const result = await gateway.pullRequest(
-			snapshot,
-			'automation/onboarding',
-			'chore: configure release automation',
-			setupBody(plan),
-			plan.edits,
-			pull.head,
-			undefined,
-			previous,
-			pull.number,
+		const save = (next: Record<string, unknown>) =>
+			// Do not overwrite a newer explicit setup operation or another reconciliation's journal.
+			db.run(
+				'UPDATE onboarding SET document=? WHERE repository_id=? AND document=?',
+				JSON.stringify(next),
+				id,
+				row.document,
+			);
+		yield* Effect.gen(function*() {
+			const raw = yield* fromSync((): unknown => JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}'));
+			const resolved = yield* resolveConfiguration(raw, ref => gateway.preset(ref)).pipe(
+				Effect.mapError(error => error instanceof z.ZodError ? toDomainError(error) : error),
+			);
+			const original = previous.find(edit => edit.path === '.github/beepboop.json')?.before ?? '';
+			const choices = requested?.choices
+				?? ((snapshot.files['.github/beepboop.json'] ?? '') === original ? saved.choices : undefined);
+			const workflowPermission = yield* gateway.canEditWorkflows(name, id);
+			const plan = yield* previewSetup(snapshot, inventory, choices, {
+				head: pull.head,
+				workflowPermission,
+				presetShas: resolved.presetShas,
+				prior: { url: pull.url, content: typeof saved.content === 'string' ? saved.content : undefined },
+			}, resolved.configuration);
+			const fingerprint = yield* fromPromise(() => sha256Hex(JSON.stringify({ plan, head: pull.head })));
+			if (!requested && saved.maintenanceFingerprint === fingerprint && saved.options !== undefined) return;
+			const applied = { choices: plan.choices, options: setupOptions(plan) };
+			if (plan.blockers.length || !plan.edits.length) {
+				yield* gateway.setupStatus(
+					name,
+					id,
+					pull.number,
+					`${summary}\n\n${
+						plan.blockers.length
+							? `Automatic update needs attention:\n${plan.blockers.map(message => `- ${message}`).join('\n')}`
+							: 'The default branch already matches the proposed setup.'
+					}`,
+					setupBody(plan),
+				);
+				yield* save({ ...saved, ...applied, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha });
+				return;
+			}
+			// Even an unchanged source may need a newer generator's output. An identical proposal needs no commit.
+			if (saved.sourceSha === snapshot.sha && sameEdits(previous, plan.edits)) {
+				yield* gateway.setupStatus(name, id, pull.number, `${summary}\n\nThe proposal is up to date.`, setupBody(plan));
+				yield* save({ ...saved, ...applied, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha });
+				return;
+			}
+			const result = yield* gateway.pullRequest(
+				snapshot,
+				'automation/onboarding',
+				'chore: configure release automation',
+				setupBody(plan),
+				plan.edits,
+				pull.head,
+				undefined,
+				previous,
+				pull.number,
+			);
+			const generated = new Map(
+				previous.flatMap(edit => {
+					const after = snapshot.files[edit.path];
+					return after === undefined ? [] : [[edit.path, { ...edit, after }] as const];
+				}),
+			);
+			for (const edit of plan.edits) generated.set(edit.path, edit);
+			yield* save({
+				...saved,
+				...result,
+				sourceSha: snapshot.sha,
+				checkedSha: snapshot.sha,
+				content: plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after
+					?? snapshot.files['.github/beepboop.json'],
+				choices: plan.choices,
+				options: setupOptions(plan),
+				edits: [...generated.values()],
+				maintenanceFingerprint: undefined,
+			});
+			yield* store.audit(
+				'beepboop',
+				requested ? 'repository.setup.edited' : 'repository.setup.refreshed',
+				`${name} ${snapshot.sha} ${result.url}`,
+			);
+		}).pipe(
+			Effect.tapError(error =>
+				gateway.setupStatus(
+					name,
+					id,
+					pull.number,
+					`${summary}\n\nAutomatic update stopped: ${
+						decodeError(error)
+					}\n\nReview the reported conflict or permissions. Beepboop will recheck this proposal on the next repository refresh.`,
+				)
+			),
 		);
-		const generated = new Map(
-			previous.flatMap(edit => {
-				const after = snapshot.files[edit.path];
-				return after === undefined ? [] : [[edit.path, { ...edit, after }] as const];
-			}),
-		);
-		for (const edit of plan.edits) generated.set(edit.path, edit);
-		await save({
-			...saved,
-			...result,
-			sourceSha: snapshot.sha,
-			checkedSha: snapshot.sha,
-			content: plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after
-				?? snapshot.files['.github/beepboop.json'],
-			choices: plan.choices,
-			options: setupOptions(plan),
-			edits: [...generated.values()],
-			maintenanceFingerprint: undefined,
-		});
-		await store.audit(
-			'beepboop',
-			requested ? 'repository.setup.edited' : 'repository.setup.refreshed',
-			`${name} ${snapshot.sha} ${result.url}`,
-		);
-	} catch (error) {
-		const message = error instanceof Error ? error.message : 'Setup refresh failed';
-		await gateway.setupStatus(
-			name,
-			id,
-			pull.number,
-			`${summary}\n\nAutomatic update stopped: ${message}\n\nReview the reported conflict or permissions. Beepboop will recheck this proposal on the next repository refresh.`,
-		);
-		throw error;
-	}
+	});
 }

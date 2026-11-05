@@ -1,3 +1,7 @@
+import { Effect } from 'effect';
+import type { DomainError } from '@/contract/errors';
+import { fromSync } from '@/failure';
+
 const fullName = /^[\w.-]+\/[\w.-]+$/;
 
 export function repositoryReference(input: string): { owner?: string; name: string } {
@@ -13,7 +17,12 @@ export function repositoryReference(input: string): { owner?: string; name: stri
 	}
 	throw new Error('Enter a repository as name, owner/name or a GitHub URL');
 }
-export async function repositoryName(input: string, defaultOwner: () => Promise<string>): Promise<string> {
-	const reference = repositoryReference(input);
-	return `${reference.owner ?? await defaultOwner()}/${reference.name}`;
+export function repositoryName(
+	input: string,
+	defaultOwner: Effect.Effect<string, DomainError>,
+): Effect.Effect<string, DomainError> {
+	return Effect.gen(function*() {
+		const reference = yield* fromSync(() => repositoryReference(input));
+		return `${reference.owner ?? (yield* defaultOwner)}/${reference.name}`;
+	});
 }

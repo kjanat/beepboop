@@ -1,5 +1,7 @@
+import { Effect } from 'effect';
 import { z } from 'zod';
-import type { SqlDatabase } from '@/persistence/d1/database';
+import type { DomainError } from '@/contract/errors';
+import { parse, type Sql, type SqlDatabase, sql } from '@/persistence/d1/database';
 
 export const sessionKinds = ['login-flow', 'security-challenge', 'elevation', 'cli-approval'] as const;
 export type SessionKind = (typeof sessionKinds)[number];
@@ -7,21 +9,38 @@ export type SessionKind = (typeof sessionKinds)[number];
 const documentRow = z.object({ document: z.string() });
 
 export class SessionStore {
-	constructor(private readonly db: SqlDatabase) {}
-	async open(kind: SessionKind, id: string, document: unknown, lifetime: number): Promise<void> {
-		await this.db.prepare('INSERT INTO sessions(id,kind,document,expires_at) VALUES(?,?,?,?)')
-			.bind(id, kind, JSON.stringify(document), Date.now() + lifetime).run();
+	private readonly sql: Sql;
+	constructor(db: SqlDatabase) {
+		this.sql = sql(db);
 	}
-	async offer(kind: SessionKind, id: string, document: unknown, lifetime: number): Promise<void> {
-		await this.db.prepare('INSERT OR IGNORE INTO sessions(id,kind,document,expires_at) VALUES(?,?,?,?)')
-			.bind(id, kind, JSON.stringify(document), Date.now() + lifetime).run();
+	open(kind: SessionKind, id: string, document: unknown, lifetime: number): Effect.Effect<void, DomainError> {
+		return this.sql.run(
+			'INSERT INTO sessions(id,kind,document,expires_at) VALUES(?,?,?,?)',
+			id,
+			kind,
+			JSON.stringify(document),
+			Date.now() + lifetime,
+		).pipe(Effect.asVoid);
 	}
-	async take(id: string): Promise<string | undefined> {
-		const row = await this.db.prepare('DELETE FROM sessions WHERE id=? AND expires_at>? RETURNING document')
-			.bind(id, Date.now()).first();
-		return row === null ? undefined : documentRow.parse(row).document;
+	offer(kind: SessionKind, id: string, document: unknown, lifetime: number): Effect.Effect<void, DomainError> {
+		return this.sql.run(
+			'INSERT OR IGNORE INTO sessions(id,kind,document,expires_at) VALUES(?,?,?,?)',
+			id,
+			kind,
+			JSON.stringify(document),
+			Date.now() + lifetime,
+		).pipe(Effect.asVoid);
 	}
-	async sweep(): Promise<number> {
-		return (await this.db.prepare('DELETE FROM sessions WHERE expires_at<=?').bind(Date.now()).run()).meta.changes;
+	take(id: string): Effect.Effect<string | undefined, DomainError> {
+		return this.sql.first('DELETE FROM sessions WHERE id=? AND expires_at>? RETURNING document', id, Date.now()).pipe(
+			Effect.flatMap(row =>
+				row === null ? Effect.undefined : parse(documentRow, row).pipe(Effect.map(parsed => parsed.document))
+			),
+		);
+	}
+	sweep(): Effect.Effect<number, DomainError> {
+		return this.sql.run('DELETE FROM sessions WHERE expires_at<=?', Date.now()).pipe(
+			Effect.map(result => result.meta.changes),
+		);
 	}
 }

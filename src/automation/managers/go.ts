@@ -1,11 +1,13 @@
+import { Effect } from 'effect';
 import { directory, object } from '@/automation/managers/helpers';
 import type { Adapter, Fetcher } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestTag, majorSuffix, tagSource } from '@/automation/managers/tags';
 import { latestVersion } from '@/automation/managers/verification';
 import { excluded, registry } from '@/automation/package-publication';
-import type { Package, Publication } from '@/automation/types';
+import type { Outcome, Package, Publication } from '@/automation/types';
 import { fileProblem } from '@/contract/diagnostics';
+import { fromPromise } from '@/failure';
 import { packageIdentity } from '@/package-url';
 
 const pseudoVersion =
@@ -74,29 +76,33 @@ function codeRoot(split: ModulePath, dir: string, repository: string, vanity: st
 export function escapeModule(value: string): string {
 	return value.replace(/[A-Z]/g, letter => `!${letter.toLowerCase()}`);
 }
-async function verifyModule(publication: Publication, request: Fetcher): Promise<Publication> {
+function verifyModule(publication: Publication, request: Fetcher): Effect.Effect<Publication> {
 	const version = `v${publication.version.replace(/^v/, '')}`;
 	const url = `https://proxy.golang.org/${escapeModule(publication.name)}/@v/${escapeModule(version)}.info`;
-	try {
-		const response = await request(url, {
-			redirect: 'manual',
-			signal: AbortSignal.timeout(15_000),
-			headers: { 'User-Agent': 'beepboop release verification' },
-		});
-		if (response.status === 404 || response.status === 410) return { ...publication, outcome: 'pending', url };
-		if (!response.ok) return { ...publication, outcome: 'uncertain', url };
-		const info = object(await response.json());
+	const result = (outcome: Outcome, digest?: string): Publication => ({
+		...publication,
+		outcome,
+		url,
+		...(digest === undefined ? {} : { digest }),
+	});
+	return Effect.gen(function*() {
+		const response = yield* fromPromise(() =>
+			request(url, {
+				redirect: 'manual',
+				signal: AbortSignal.timeout(15_000),
+				headers: { 'User-Agent': 'beepboop release verification' },
+			})
+		);
+		if (response.status === 404 || response.status === 410) return result('pending');
+		if (!response.ok) return result('uncertain');
+		const info = object(yield* fromPromise((): Promise<unknown> => response.json()));
 		const hash = object(info.Origin).Hash;
 		if (info.Version !== version || (publication.digest && typeof hash === 'string' && hash !== publication.digest)) {
-			return { ...publication, outcome: 'failed', url };
+			return result('failed');
 		}
-		if (typeof hash !== 'string') {
-			return { ...publication, outcome: publication.digest ? 'uncertain' : 'succeeded', url };
-		}
-		return { ...publication, outcome: 'succeeded', digest: hash, url };
-	} catch {
-		return { ...publication, outcome: 'uncertain', url };
-	}
+		if (typeof hash !== 'string') return result(publication.digest ? 'uncertain' : 'succeeded');
+		return result('succeeded', hash);
+	}).pipe(Effect.catchCause(() => Effect.succeed(result('uncertain'))));
 }
 
 export const goManager: Adapter<'go'> = {
@@ -114,7 +120,7 @@ export const goManager: Adapter<'go'> = {
 				},
 		);
 	},
-	async latest(pkg, request) {
+	latest(pkg, request) {
 		const split = splitModulePath(pkg.name);
 		const lookup = (name: string) =>
 			latestVersion(
@@ -129,13 +135,13 @@ export const goManager: Adapter<'go'> = {
 						: undefined;
 				},
 			);
-		const [current, previous] = await Promise.all([
-			lookup(pkg.name),
-			split?.suffix ? lookup(split.prefix) : undefined,
-		]);
-		return previous?.kind === 'published' && split
-			? { ...current, previousModule: { name: split.prefix, version: previous.version } }
-			: current;
+		return Effect.all([lookup(pkg.name), split?.suffix ? lookup(split.prefix) : Effect.undefined], {
+			concurrency: 'unbounded',
+		}).pipe(Effect.map(([current, previous]) =>
+			previous?.kind === 'published' && split
+				? { ...current, previousModule: { name: split.prefix, version: previous.version } }
+				: current
+		));
 	},
 	verifyPublication: verifyModule,
 	discover(snapshot) {

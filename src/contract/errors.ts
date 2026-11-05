@@ -1,3 +1,4 @@
+import { Data, Effect } from 'effect';
 import { z } from 'zod';
 import { diagnostic } from '@/contract/diagnostics';
 
@@ -94,11 +95,14 @@ export function messageOf(problem: ApiError): string {
 	}
 }
 
-export class DomainError extends Error {
-	constructor(readonly problem: ApiError, message = messageOf(problem)) {
-		super(message);
-		this.name = 'DomainError';
-	}
+export class DomainError extends Data.TaggedError('DomainError')<{
+	readonly problem: ApiError;
+	readonly message: string;
+	readonly detail?: string;
+}> {}
+
+export function domainError(problem: ApiError, message = messageOf(problem)): DomainError {
+	return new DomainError({ problem, message });
 }
 
 export function envelope(problem: ApiError, message = messageOf(problem)): ErrorEnvelope {
@@ -106,34 +110,38 @@ export function envelope(problem: ApiError, message = messageOf(problem)): Error
 }
 
 export function notFound(resource: Resource, message?: string, id?: string): DomainError {
-	return new DomainError({ code: 'not-found', resource, ...(id === undefined ? {} : { id }) }, message);
+	return domainError({ code: 'not-found', resource, ...(id === undefined ? {} : { id }) }, message);
 }
 export function forbidden(reason: string): DomainError {
-	return new DomainError({ code: 'forbidden', reason });
+	return domainError({ code: 'forbidden', reason });
 }
 export function unauthenticated(message?: string): DomainError {
-	return new DomainError({ code: 'unauthenticated' }, message);
+	return domainError({ code: 'unauthenticated' }, message);
 }
 export function conflict(kind: (typeof conflictKinds)[number], message: string): DomainError {
-	return new DomainError({ code: 'conflict', kind }, message);
+	return domainError({ code: 'conflict', kind }, message);
 }
 export function precondition(message: string): DomainError {
-	return new DomainError({ code: 'precondition', diagnostics: [{ code: 'legacy', severity: 'blocking', message }] });
+	return domainError({ code: 'precondition', diagnostics: [{ code: 'legacy', severity: 'blocking', message }] });
 }
 export function invalid(message: string, path: (string | number)[] = []): DomainError {
-	return new DomainError({ code: 'invalid', issues: [{ path, message }] }, message);
+	return domainError({ code: 'invalid', issues: [{ path, message }] }, message);
 }
 export function upstream(service: (typeof services)[number], message: string): DomainError {
-	return new DomainError({ code: 'upstream', service, retryable: true }, message);
+	return domainError({ code: 'upstream', service, retryable: true }, message);
 }
 export function invalidRequest(error: z.ZodError): DomainError {
-	return new DomainError({
+	return domainError({
 		code: 'invalid',
 		issues: error.issues.map(entry => ({
 			path: entry.path.flatMap(part => typeof part === 'symbol' ? [] : [part]),
 			message: entry.message,
 		})),
 	});
+}
+export function decodeRequest<S extends z.ZodType>(schema: S, value: unknown): Effect.Effect<z.output<S>, DomainError> {
+	const parsed = schema.safeParse(value);
+	return parsed.success ? Effect.succeed(parsed.data) : Effect.fail(invalidRequest(parsed.error));
 }
 export function parseRequest<S extends z.ZodType>(schema: S, value: unknown): z.output<S> {
 	const parsed = schema.safeParse(value);

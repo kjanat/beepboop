@@ -1,11 +1,13 @@
+import { Context, Effect, Layer } from 'effect';
 import { seal } from 'tweetnacl-sealedbox-js';
 import { z } from 'zod';
 import { base64, bytes, type WorkflowIdentity } from '@/automation/auth';
 import type { RepositoryGateway } from '@/automation/github';
 import { matchesRef } from '@/automation/policy';
 import type { Store } from '@/automation/store';
-import { forbidden, invalid, notFound, parseRequest } from '@/contract/errors';
+import { type DomainError, decodeRequest, forbidden, invalid, notFound, precondition } from '@/contract/errors';
 import { credentialAliasPattern, githubSecretNamePattern } from '@/contract/ids';
+import { fromPromise, fromSync } from '@/failure';
 import { record, text } from '@/model';
 import type { CredentialStore } from '@/persistence/d1/credentials';
 
@@ -50,14 +52,16 @@ const grantSchema = z.discriminatedUnion('delivery', [
 		secretName,
 	}),
 ]);
-export function parseGrant(value: unknown): Grant {
-	return grantSchema.parse(value);
+export function parseGrant(value: unknown): Effect.Effect<Grant, DomainError> {
+	return fromSync(() => grantSchema.parse(value));
 }
-export function requestGrant(value: unknown): Grant {
-	return parseRequest(grantSchema, value);
+export function requestGrant(value: unknown): Effect.Effect<Grant, DomainError> {
+	return decodeRequest(grantSchema, value);
 }
-export function validCredential(alias: string, value: string): void {
-	if (!credentialAliasPattern.test(alias) || !value || value.length > 48000) throw invalid('Invalid credential');
+export function validCredential(alias: string, value: string): Effect.Effect<void, DomainError> {
+	return !credentialAliasPattern.test(alias) || !value || value.length > 48000
+		? Effect.fail(invalid('Invalid credential'))
+		: Effect.void;
 }
 export class Vault {
 	constructor(
@@ -66,57 +70,81 @@ export class Vault {
 		private keyring: Record<string, string>,
 		private activeKey: string,
 	) {}
-	private async key(id: string): Promise<CryptoKey> {
-		const value = this.keyring[id];
-		if (!value) throw new Error('Encryption key unavailable');
-		const raw = bytes(value);
-		if (raw.length !== 32) throw new Error('Encryption key must be 32 bytes');
-		return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
+	private key(id: string): Effect.Effect<CryptoKey, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const value = this.keyring[id];
+			if (!value) return yield* precondition('Encryption key unavailable');
+			const raw = yield* fromSync(() => bytes(value));
+			if (raw.length !== 32) return yield* precondition('Encryption key must be 32 bytes');
+			return yield* fromPromise(() => crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']));
+		});
 	}
-	private async seal(additional: string, value: string): Promise<{ ciphertext: string; iv: string }> {
-		const iv = crypto.getRandomValues(new Uint8Array(12));
-		const ciphertext = await crypto.subtle.encrypt(
-			{ name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(additional) },
-			await this.key(this.activeKey),
-			new TextEncoder().encode(value),
+	private seal(additional: string, value: string): Effect.Effect<{ ciphertext: string; iv: string }, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const iv = crypto.getRandomValues(new Uint8Array(12));
+			const key = yield* this.key(this.activeKey);
+			const ciphertext = yield* fromPromise(() =>
+				crypto.subtle.encrypt(
+					{ name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(additional) },
+					key,
+					new TextEncoder().encode(value),
+				)
+			);
+			return { ciphertext: base64(new Uint8Array(ciphertext)), iv: base64(iv) };
+		});
+	}
+	private open(
+		additional: string,
+		keyId: string,
+		sealed: { ciphertext: string; iv: string },
+	): Effect.Effect<string, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const key = yield* this.key(keyId);
+			const clear = yield* fromPromise(() =>
+				crypto.subtle.decrypt(
+					{ name: 'AES-GCM', iv: bytes(sealed.iv), additionalData: new TextEncoder().encode(additional) },
+					key,
+					bytes(sealed.ciphertext),
+				)
+			);
+			return new TextDecoder().decode(clear);
+		});
+	}
+	replace(alias: string, value: string, actor: string): Effect.Effect<number, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			yield* validCredential(alias, value);
+			const version = yield* this.credentials.nextVersion(alias);
+			const sealed = yield* this.seal(`${alias}:${version}:${this.activeKey}`, value);
+			yield* this.credentials.store({ alias, version, keyId: this.activeKey, ...sealed });
+			yield* this.store.audit(actor, 'credential.replace', alias);
+			return version;
+		});
+	}
+	reveal(alias: string, actor: string): Effect.Effect<{ value: string; version: number }, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const row = yield* this.credentials.sealed(alias);
+			if (!row) return yield* notFound('credential', 'No stored value under this name', alias);
+			const value = yield* this.open(`${alias}:${row.version}:${row.key_id}`, row.key_id, row);
+			yield* this.store.audit(actor, 'credential.access', alias);
+			return { value, version: row.version };
+		});
+	}
+	grant(grant: Grant, actor: string): Effect.Effect<void, DomainError> {
+		return this.credentials.putGrant(grant).pipe(
+			Effect.andThen(this.store.audit(actor, 'credential.grant', grant.id)),
 		);
-		return { ciphertext: base64(new Uint8Array(ciphertext)), iv: base64(iv) };
 	}
-	private async open(additional: string, keyId: string, sealed: { ciphertext: string; iv: string }): Promise<string> {
-		const clear = await crypto.subtle.decrypt(
-			{ name: 'AES-GCM', iv: bytes(sealed.iv), additionalData: new TextEncoder().encode(additional) },
-			await this.key(keyId),
-			bytes(sealed.ciphertext),
+	revoke(id: string, actor: string): Effect.Effect<void, DomainError> {
+		return this.credentials.deleteGrant(id).pipe(Effect.andThen(this.store.audit(actor, 'credential.revoke', id)));
+	}
+	private grants(filter: { alias: string; repositoryId?: number }): Effect.Effect<Grant[], DomainError> {
+		return this.credentials.grantDocuments(filter).pipe(
+			Effect.flatMap(documents => Effect.forEach(documents, parseGrant)),
 		);
-		return new TextDecoder().decode(clear);
 	}
-	async replace(alias: string, value: string, actor: string): Promise<number> {
-		validCredential(alias, value);
-		const version = await this.credentials.nextVersion(alias);
-		const sealed = await this.seal(`${alias}:${version}:${this.activeKey}`, value);
-		await this.credentials.store({ alias, version, keyId: this.activeKey, ...sealed });
-		await this.store.audit(actor, 'credential.replace', alias);
-		return version;
-	}
-	async reveal(alias: string, actor: string): Promise<{ value: string; version: number }> {
-		const row = await this.credentials.sealed(alias);
-		if (!row) throw notFound('credential', 'No stored value under this name', alias);
-		const value = await this.open(`${alias}:${row.version}:${row.key_id}`, row.key_id, row);
-		await this.store.audit(actor, 'credential.access', alias);
-		return { value, version: row.version };
-	}
-	async grant(grant: Grant, actor: string): Promise<void> {
-		await this.credentials.putGrant(grant);
-		await this.store.audit(actor, 'credential.grant', grant.id);
-	}
-	async revoke(id: string, actor: string): Promise<void> {
-		await this.credentials.deleteGrant(id);
-		await this.store.audit(actor, 'credential.revoke', id);
-	}
-	async runtime(alias: string, operation: string, identity: WorkflowIdentity): Promise<string> {
-		const allowed = (await this.credentials.grantDocuments({ alias, repositoryId: identity.repositoryId }))
-			.map(parseGrant)
-			.some(
+	runtime(alias: string, operation: string, identity: WorkflowIdentity): Effect.Effect<string, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const allowed = (yield* this.grants({ alias, repositoryId: identity.repositoryId })).some(
 				(g) =>
 					g.delivery === 'runtime'
 					&& g.operation === operation
@@ -126,48 +154,53 @@ export class Vault {
 					&& identity.workflowRef
 						=== `${identity.repository}/.github/workflows/${g.workflow}@${identity.ref}`,
 			);
-		if (!allowed) throw forbidden('Credential grant denied');
-		return (
-			await this.reveal(alias, `run:${identity.repositoryId}:${identity.runId}:${identity.attempt}`)
-		).value;
+			if (!allowed) return yield* forbidden('Credential grant denied');
+			return (yield* this.reveal(alias, `run:${identity.repositoryId}:${identity.runId}:${identity.attempt}`)).value;
+		});
 	}
-	async synchronize(
+	synchronize(
 		alias: string,
 		gateway: RepositoryGateway,
 		actor: string,
-	): Promise<{ id: string; state: string }[]> {
-		const grants = (await this.credentials.grantDocuments({ alias })).map(parseGrant);
-		const secret = await this.reveal(alias, actor),
-			outcomes: { id: string; state: string }[] = [];
-		for (
-			const grant of grants.filter((g) => g.delivery !== 'runtime')
-		) {
-			let state = 'failed';
-			try {
+	): Effect.Effect<{ id: string; state: string }[], DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const grants = yield* this.grants({ alias });
+			const secret = yield* this.reveal(alias, actor);
+			return yield* Effect.forEach(grants.filter((g) => g.delivery !== 'runtime'), grant => {
 				const permissions: Record<string, 'read' | 'write'> = grant.delivery === 'environment'
 					? { environments: 'write', contents: 'read' }
 					: { secrets: 'write', contents: 'read' };
-				const token = await gateway.token(grant.repository, grant.repositoryId, permissions);
 				const path = grant.delivery === 'environment'
-					? `/repositories/${grant.repositoryId}/environments/${
-						encodeURIComponent(
-							grant.environment,
-						)
-					}/secrets`
+					? `/repositories/${grant.repositoryId}/environments/${encodeURIComponent(grant.environment)}/secrets`
 					: `/repos/${grant.repository}/actions/secrets`;
-				const publicKey = record(await gateway.call(`${path}/public-key`, token));
-				const encrypted = seal(new TextEncoder().encode(secret.value), bytes(text(publicKey.key)));
-				await gateway.call(`${path}/${grant.secretName}`, token, 'PUT', {
-					encrypted_value: base64(encrypted),
-					key_id: text(publicKey.key_id),
-				});
-				state = 'succeeded';
-			} catch {
-				/* Record only the destination outcome; API responses can contain sensitive details. */
-			}
-			await this.credentials.recordDelivery(grant.id, secret.version, state);
-			outcomes.push({ id: grant.id, state });
-		}
-		return outcomes;
+				return Effect.gen(function*() {
+					const token = yield* gateway.token(grant.repository, grant.repositoryId, permissions);
+					const response = yield* gateway.call(`${path}/public-key`, token);
+					const publicKey = yield* fromSync(() => record(response));
+					const encrypted = yield* fromSync(() =>
+						seal(new TextEncoder().encode(secret.value), bytes(text(publicKey.key)))
+					);
+					yield* gateway.call(`${path}/${grant.secretName}`, token, 'PUT', {
+						encrypted_value: base64(encrypted),
+						key_id: yield* fromSync(() => text(publicKey.key_id)),
+					});
+					return 'succeeded';
+				}).pipe(
+					Effect.catchCause(() => Effect.succeed('failed')),
+					Effect.tap(state => this.credentials.recordDelivery(grant.id, secret.version, state)),
+					Effect.map(state => ({ id: grant.id, state })),
+				);
+			});
+		});
 	}
+}
+
+export class Secrets extends Context.Service<Secrets, {
+	readonly reveal: (alias: string, actor: string) => Effect.Effect<string, DomainError>;
+}>()('beepboop/Secrets') {}
+
+export function secretsLayer(vault: Pick<Vault, 'reveal'>): Layer.Layer<Secrets> {
+	return Layer.succeed(Secrets, {
+		reveal: (alias, actor) => vault.reveal(alias, actor).pipe(Effect.map(credential => credential.value)),
+	});
 }

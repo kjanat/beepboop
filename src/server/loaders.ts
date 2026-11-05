@@ -1,9 +1,12 @@
+import { Effect } from 'effect';
 import { Authenticators } from '@/automation/auth.ts';
 import { packageWatches } from '@/automation/package-watch.ts';
 import { type AutomationBindings, AutomationService } from '@/automation/service.ts';
 import type { Readable, UnreadableExecution, UnreadableRepository } from '@/automation/store.ts';
 import type { Execution, RepositoryRecord } from '@/automation/types.ts';
 import { parseGrant } from '@/automation/vault.ts';
+import type { DomainError } from '@/contract/errors';
+import { recover } from '@/failure';
 import type { CLISessionRow } from '@/persistence/d1/cli-sessions.ts';
 import type { ActiveCredential, DeliveryRow } from '@/persistence/d1/credentials.ts';
 import type { Section } from '@/server/sections.ts';
@@ -15,13 +18,16 @@ export interface LoaderContext {
 
 export type Panel<T> = { kind: 'loaded'; value: T } | { kind: 'failed' };
 
-export async function panel<T>(name: string, work: () => Promise<T>): Promise<Panel<T>> {
-	try {
-		return { kind: 'loaded', value: await work() };
-	} catch (error) {
-		console.error('dashboard panel failed', name, error);
-		return { kind: 'failed' };
-	}
+export function panel<T>(name: string, work: Effect.Effect<T, DomainError>): Effect.Effect<Panel<T>> {
+	return work.pipe(
+		Effect.map((value): Panel<T> => ({ kind: 'loaded', value })),
+		recover(error =>
+			Effect.sync((): Panel<T> => {
+				console.error('dashboard panel failed', name, error);
+				return { kind: 'failed' };
+			})
+		),
+	);
 }
 
 export type SecretSummary = ActiveCredential;
@@ -39,119 +45,142 @@ function split<T, U extends { kind: 'unreadable' }>(rows: (Readable<T> | U)[]): 
 	};
 }
 
-async function repositories(service: AutomationService): Promise<Rows<RepositoryRecord, UnreadableRepository>> {
-	return split(await service.store.readRepositories());
+function repositories(
+	service: AutomationService,
+): Effect.Effect<Rows<RepositoryRecord, UnreadableRepository>, DomainError> {
+	return service.store.readRepositories().pipe(Effect.map(split));
 }
-async function executions(service: AutomationService): Promise<Rows<Execution, UnreadableExecution>> {
-	return split(await service.store.readExecutions());
+function executions(service: AutomationService): Effect.Effect<Rows<Execution, UnreadableExecution>, DomainError> {
+	return service.store.readExecutions().pipe(Effect.map(split));
 }
-function secrets(service: AutomationService): Promise<SecretSummary[]> {
-	return service.credentials.active();
+function grants(service: AutomationService) {
+	return service.credentials.grantDocuments().pipe(
+		Effect.flatMap(documents => Effect.forEach(documents, parseGrant)),
+	);
 }
-async function grants(service: AutomationService) {
-	return (await service.credentials.grantDocuments()).map(parseGrant);
-}
-function deliveries(service: AutomationService): Promise<DeliverySummary[]> {
-	return service.credentials.deliveries();
-}
-function cliSessions(service: AutomationService): Promise<CLISession[]> {
-	return service.cliSessions.list();
-}
+const concurrent = { concurrency: 'unbounded' } as const;
 
 export const loaders = {
-	overview: async ({ env }) => {
+	overview: ({ env }) => {
 		const service = new AutomationService(env);
-		const [repositoryRows, executionRows] = await Promise.all([repositories(service), executions(service)]);
-		return { section: 'overview', repositories: repositoryRows, executions: executionRows };
+		return Effect.all([repositories(service), executions(service)], concurrent).pipe(
+			Effect.map(([repositoryRows, executionRows]) => ({
+				section: 'overview' as const,
+				repositories: repositoryRows,
+				executions: executionRows,
+			})),
+		);
 	},
-	repositories: async ({ env }) => {
+	repositories: ({ env }) => {
 		const service = new AutomationService(env);
-		const [repositoryRows, onboarding, latestWinget] = await Promise.all([
+		return Effect.all([
 			repositories(service),
 			service.store.onboardingPulls(),
-			panel('winget-latest', () => service.winget().latestByRepository()),
-		]);
-		return { section: 'repositories', repositories: repositoryRows, onboarding, latestWinget };
+			panel('winget-latest', service.winget().latestByRepository()),
+		], concurrent).pipe(
+			Effect.map(([repositoryRows, onboarding, latestWinget]) => ({
+				section: 'repositories' as const,
+				repositories: repositoryRows,
+				onboarding,
+				latestWinget,
+			})),
+		);
 	},
-	packages: async ({ env }) => {
+	packages: ({ env }) =>
+		Effect.gen(function*() {
+			const service = new AutomationService(env);
+			const notifications = service.notifications();
+			const [repositoryRows, destinations, subscriptions] = yield* Effect.all([
+				repositories(service),
+				notifications.destinations(),
+				notifications.subscriptions(),
+			], concurrent);
+			return {
+				section: 'packages' as const,
+				packages: yield* packageWatches(service.store, repositoryRows.readable),
+				destinations,
+				subscriptions,
+			};
+		}),
+	notifications: ({ env, actor }) => {
 		const service = new AutomationService(env);
-		const [repositoryRows, destinations, subscriptions] = await Promise.all([
-			repositories(service),
-			service.notifications().destinations(),
-			service.notifications().subscriptions(),
-		]);
-		return {
-			section: 'packages',
-			packages: await packageWatches(service.store, repositoryRows.readable),
-			destinations,
-			subscriptions,
-		};
-	},
-	notifications: async ({ env, actor }) => {
-		const service = new AutomationService(env);
-		const [keys, secretRows, destinations, subscriptions, notifications] = await Promise.all([
+		const notifications = service.notifications();
+		return Effect.all([
 			new Authenticators(env).list(actor),
-			secrets(service),
-			service.notifications().destinations(),
-			service.notifications().subscriptions(),
-			service.notifications().recent(),
-		]);
-		return { section: 'notifications', keys, secrets: secretRows, destinations, subscriptions, notifications };
+			service.credentials.active(),
+			notifications.destinations(),
+			notifications.subscriptions(),
+			notifications.recent(),
+		], concurrent).pipe(
+			Effect.map(([keys, secretRows, destinations, subscriptions, deliveries]) => ({
+				section: 'notifications' as const,
+				keys,
+				secrets: secretRows,
+				destinations,
+				subscriptions,
+				notifications: deliveries,
+			})),
+		);
 	},
-	releases: async ({ env }) => {
+	releases: ({ env }) => {
 		const service = new AutomationService(env);
-		const [repositoryRows, executionRows] = await Promise.all([repositories(service), executions(service)]);
-		return { section: 'releases', repositories: repositoryRows.readable, executions: executionRows.readable };
+		return Effect.all([repositories(service), executions(service)], concurrent).pipe(
+			Effect.map(([repositoryRows, executionRows]) => ({
+				section: 'releases' as const,
+				repositories: repositoryRows.readable,
+				executions: executionRows.readable,
+			})),
+		);
 	},
-	runs: async ({ env }) => {
+	runs: ({ env }) =>
+		executions(new AutomationService(env)).pipe(
+			Effect.map(executionRows => ({ section: 'runs' as const, executions: executionRows })),
+		),
+	winget: ({ env }) => {
 		const service = new AutomationService(env);
-		return { section: 'runs', executions: await executions(service) };
+		return Effect.all([repositories(service), panel('winget-submissions', service.winget().list())], concurrent).pipe(
+			Effect.map(([repositoryRows, submissions]) => ({
+				section: 'winget' as const,
+				repositories: repositoryRows.readable,
+				submissions,
+				ready: service.winget().setup(),
+			})),
+		);
 	},
-	winget: async ({ env }) => {
+	secrets: ({ env, actor }) => {
 		const service = new AutomationService(env);
-		const [repositoryRows, submissions] = await Promise.all([
-			repositories(service),
-			panel('winget-submissions', () => service.winget().list()),
-		]);
-		return {
-			section: 'winget',
-			repositories: repositoryRows.readable,
-			submissions,
-			ready: service.winget().setup(),
-		};
-	},
-	secrets: async ({ env, actor }) => {
-		const service = new AutomationService(env);
-		const [keys, secretRows, grantRows, deliveryRows, repositoryRows] = await Promise.all([
+		return Effect.all([
 			new Authenticators(env).list(actor),
-			secrets(service),
+			service.credentials.active(),
 			grants(service),
-			deliveries(service),
+			service.credentials.deliveries(),
 			repositories(service),
-		]);
-		return {
-			section: 'secrets',
-			keys,
-			secrets: secretRows,
-			grants: grantRows,
-			deliveries: deliveryRows,
-			repositories: repositoryRows.readable,
-		};
+		], concurrent).pipe(
+			Effect.map(([keys, secretRows, grantRows, deliveryRows, repositoryRows]) => ({
+				section: 'secrets' as const,
+				keys,
+				secrets: secretRows,
+				grants: grantRows,
+				deliveries: deliveryRows,
+				repositories: repositoryRows.readable,
+			})),
+		);
 	},
-	activity: async ({ env }) => {
+	activity: ({ env }) =>
+		new AutomationService(env).store.activity().pipe(
+			Effect.map(activity => ({ section: 'activity' as const, activity })),
+		),
+	security: ({ env, actor }) => {
 		const service = new AutomationService(env);
-		return { section: 'activity', activity: await service.store.activity() };
+		return Effect.all([new Authenticators(env).list(actor), service.cliSessions.list()], concurrent).pipe(
+			Effect.map(([keys, sessions]) => ({ section: 'security' as const, keys, cliSessions: sessions })),
+		);
 	},
-	security: async ({ env, actor }) => {
-		const service = new AutomationService(env);
-		const [keys, sessions] = await Promise.all([new Authenticators(env).list(actor), cliSessions(service)]);
-		return { section: 'security', keys, cliSessions: sessions };
-	},
-} satisfies { [S in Section]: (context: LoaderContext) => Promise<{ section: S }> };
+} satisfies { [S in Section]: (context: LoaderContext) => Effect.Effect<{ section: S }, DomainError> };
 
-export type SectionView = Awaited<ReturnType<(typeof loaders)[Section]>>;
+export type SectionView = Effect.Success<ReturnType<(typeof loaders)[Section]>>;
 export type ViewOf<S extends Section> = Extract<SectionView, { section: S }>;
 
-export function load(section: Section, context: LoaderContext): Promise<SectionView> {
+export function load(section: Section, context: LoaderContext): Effect.Effect<SectionView, DomainError> {
 	return loaders[section](context);
 }

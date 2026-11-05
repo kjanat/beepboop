@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { ApiFailure, call, type Transport } from '@/contract/client';
+import { ApiFailure } from '@/contract/client';
 import { errorEnvelope } from '@/contract/errors';
 import { routeIds, routes } from '@/contract/routes';
 import { rawRoutes, resolve } from '@/server/router';
-import { env as runtimeEnv } from '../support/cloudflare-workers.ts';
-import { reply } from '../support/http.ts';
-import { widget } from '../support/repositories.ts';
-import { origin, World } from '../support/world.ts';
+import { call, cliTransport } from '@root/test/support/client.ts';
+import { env as runtimeEnv } from '@root/test/support/cloudflare-workers.ts';
+import { reply } from '@root/test/support/http.ts';
+import { widget } from '@root/test/support/repositories.ts';
+import { origin, World } from '@root/test/support/world.ts';
 
 const legacy = [
 	'GET /health',
@@ -65,15 +66,8 @@ beforeEach(async () => {
 });
 afterEach(() => world.dispose());
 
-function transport(token: string): Transport {
-	return request =>
-		world.handle(
-			new Request(`${origin}${request.path}`, {
-				method: request.method,
-				headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-				...(request.body === undefined ? {} : { body: request.body }),
-			}),
-		);
+function transport(token: string) {
+	return cliTransport(world, token);
 }
 
 async function refused(work: Promise<unknown>): Promise<ApiFailure> {
@@ -285,7 +279,7 @@ test('a deployed CLI adds a notification destination without a security-key touc
 });
 
 test('outages answer as retryable upstream errors and corrupt rows as internal errors', async () => {
-	const { failureOf } = await import('../../actions/runtime/protocol.ts');
+	const { failureOf } = await import('@root/actions/runtime/protocol.ts');
 	const repository = widget(world.github);
 	const token = await world.cliSession();
 	const send = transport(token);
@@ -342,7 +336,7 @@ test('a broken Worker configuration fails with a logged internal error', async (
 });
 
 test('the Actions request builders produce bodies the server parses', async () => {
-	const { endpoints, modes, requestBody } = await import('../../actions/runtime/protocol.ts');
+	const { endpoints, modes, requestBody } = await import('@root/actions/runtime/protocol.ts');
 	const ids = {
 		begin: 'workflowBegin',
 		prepared: 'workflowPrepared',

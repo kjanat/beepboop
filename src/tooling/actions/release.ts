@@ -1,9 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
+import { publishRefs } from '@root/actions/runtime/refs.ts';
+import { Effect } from 'effect';
 import { parse } from 'yaml';
 import type { RefChange } from '@/automation/refs';
 import { compareVersions, record } from '@/model';
-import { publishRefs } from '../../../actions/runtime/refs.ts';
+import { attempt, main, refuse, type ToolFailure } from '@/tooling/runtime';
 
 type Bump = 'major' | 'minor' | 'patch';
 interface Contract {
@@ -11,26 +13,36 @@ interface Contract {
 	outputs: Set<string>;
 }
 
-function git(...args: string[]): string {
-	const result = spawnSync('git', args, { encoding: 'utf8' });
-	if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${result.stderr.trim()}`);
-	return result.stdout.trim();
+function git(...args: string[]): Effect.Effect<string, ToolFailure> {
+	return attempt(() => spawnSync('git', args, { encoding: 'utf8' })).pipe(
+		Effect.flatMap(result =>
+			result.status === 0
+				? Effect.succeed(result.stdout.trim())
+				: refuse(`git ${args.join(' ')} failed: ${result.stderr.trim()}`)
+		),
+	);
 }
 
-function contracts(revision: string): Map<string, Contract> {
-	const files = git('ls-tree', '-r', '--name-only', revision, '--', 'actions').split('\n')
-		.filter(path => /^actions\/[^/]+\/action\.ya?ml$/.test(path));
-	return new Map(files.map(path => {
-		const action = record(parse(git('show', `${revision}:${path}`)));
-		const inputs = Object.entries(record(action.inputs ?? {})).map(([name, value]): [string, boolean] => {
-			const input = record(value);
-			return [name, input.required === true && input.default === undefined];
-		});
-		return [path.split('/')[1] ?? path, {
-			inputs: new Map(inputs),
-			outputs: new Set(Object.keys(record(action.outputs ?? {}))),
-		}];
-	}));
+function contracts(revision: string): Effect.Effect<Map<string, Contract>, ToolFailure> {
+	return Effect.gen(function*() {
+		const files = (yield* git('ls-tree', '-r', '--name-only', revision, '--', 'actions')).split('\n')
+			.filter(path => /^actions\/[^/]+\/action\.ya?ml$/.test(path));
+		const entries = yield* Effect.forEach(files, path =>
+			Effect.gen(function*() {
+				const source = yield* git('show', `${revision}:${path}`);
+				const action = record(yield* attempt((): unknown => parse(source)));
+				const inputs = Object.entries(record(action.inputs ?? {})).map(([name, value]): [string, boolean] => {
+					const input = record(value);
+					return [name, input.required === true && input.default === undefined];
+				});
+				const contract: Contract = {
+					inputs: new Map(inputs),
+					outputs: new Set(Object.keys(record(action.outputs ?? {}))),
+				};
+				return [path.split('/')[1] ?? path, contract] as const;
+			}));
+		return new Map(entries);
+	});
 }
 
 function bump(previous: Map<string, Contract>, next: Map<string, Contract>): Bump {
@@ -51,29 +63,34 @@ function bump(previous: Map<string, Contract>, next: Map<string, Contract>): Bum
 	return level;
 }
 
-const distribution = process.env.DISTRIBUTION_COMMIT ?? '';
-const repository = process.env.GITHUB_REPOSITORY ?? '';
-if (!/^[a-f0-9]{40}$/.test(distribution)) throw new Error('DISTRIBUTION_COMMIT must be a full commit SHA');
-if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw new Error('GITHUB_REPOSITORY is required');
+await main(Effect.gen(function*() {
+	const distribution = process.env.DISTRIBUTION_COMMIT ?? '';
+	const repository = process.env.GITHUB_REPOSITORY ?? '';
+	if (!/^[a-f0-9]{40}$/.test(distribution)) return yield* refuse('DISTRIBUTION_COMMIT must be a full commit SHA');
+	if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) return yield* refuse('GITHUB_REPOSITORY is required');
 
-const tags = new Map<string, { oid: string; commit: string }>();
-for (const line of git('ls-remote', '--tags', 'origin', 'refs/tags/v*').split('\n').filter(Boolean)) {
-	const [oid = '', ref = ''] = line.split('\t');
-	const name = ref.replace(/^refs\/tags\//, '').replace(/\^\{\}$/, '');
-	const known = tags.get(name);
-	tags.set(name, ref.endsWith('^{}') ? { oid: known?.oid ?? oid, commit: oid } : { oid, commit: known?.commit ?? oid });
-}
-const latest = [...tags.keys()].filter(name => /^v\d+\.\d+\.\d+$/.test(name))
-	.sort((a, b) => compareVersions(a.slice(1), b.slice(1))).at(-1);
-const latestCommit = latest ? tags.get(latest)?.commit : undefined;
+	const tags = new Map<string, { oid: string; commit: string }>();
+	for (const line of (yield* git('ls-remote', '--tags', 'origin', 'refs/tags/v*')).split('\n').filter(Boolean)) {
+		const [oid = '', ref = ''] = line.split('\t');
+		const name = ref.replace(/^refs\/tags\//, '').replace(/\^\{\}$/, '');
+		const known = tags.get(name);
+		tags.set(
+			name,
+			ref.endsWith('^{}') ? { oid: known?.oid ?? oid, commit: oid } : { oid, commit: known?.commit ?? oid },
+		);
+	}
+	const latest = [...tags.keys()].filter(name => /^v\d+\.\d+\.\d+$/.test(name))
+		.sort((a, b) => compareVersions(a.slice(1), b.slice(1))).at(-1);
+	const latestCommit = latest ? tags.get(latest)?.commit : undefined;
 
-if (latestCommit === distribution) {
-	console.log(`${latest} already points at ${distribution}`);
-} else {
+	if (latestCommit === distribution) {
+		console.log(`${latest} already points at ${distribution}`);
+		return;
+	}
 	let version = '1.0.0';
 	if (latest && latestCommit) {
-		git('fetch', '--no-tags', 'origin', latestCommit);
-		const level = bump(contracts(`${latestCommit}^1`), contracts(`${distribution}^1`));
+		yield* git('fetch', '--no-tags', 'origin', latestCommit);
+		const level = bump(yield* contracts(`${latestCommit}^1`), yield* contracts(`${distribution}^1`));
 		const [major = 0, minor = 0, patch = 0] = latest.slice(1).split('.').map(Number);
 		version = level === 'major'
 			? `${major + 1}.0.0`
@@ -90,21 +107,26 @@ if (latestCommit === distribution) {
 		annotated,
 		signed: false,
 	});
-	publishRefs(
-		{
-			repository,
-			executionId: `publish-actions:${process.env.GITHUB_RUN_ID ?? ''}`,
-			version,
-			changes: [change(`v${version}`, true), change(`v${major}`, false), change(`v${major}.${minor}`, false)],
-		},
-		process.cwd(),
-		'origin',
+	yield* attempt(() =>
+		publishRefs(
+			{
+				repository,
+				executionId: `publish-actions:${process.env.GITHUB_RUN_ID ?? ''}`,
+				version,
+				changes: [change(`v${version}`, true), change(`v${major}`, false), change(`v${major}.${minor}`, false)],
+			},
+			process.cwd(),
+			'origin',
+		)
 	);
 	console.log(`Tagged v${version}; moved v${major} and v${major}.${minor}`);
-	if (process.env.GITHUB_STEP_SUMMARY) {
-		appendFileSync(
-			process.env.GITHUB_STEP_SUMMARY,
-			`\nReleased \`v${version}\`. Pin consumers to \`${repository}/actions/<name>@v${major}\`.\n`,
+	const summary = process.env.GITHUB_STEP_SUMMARY;
+	if (summary) {
+		yield* attempt(() =>
+			appendFileSync(
+				summary,
+				`\nReleased \`v${version}\`. Pin consumers to \`${repository}/actions/<name>@v${major}\`.\n`,
+			)
 		);
 	}
-}
+}));

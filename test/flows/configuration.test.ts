@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { Effect } from 'effect';
 import { join } from 'node:path';
 import { Validator } from '@cfworker/json-schema';
 import { z } from 'zod';
@@ -11,9 +12,9 @@ import { storedConfiguration } from '@/persistence/codecs/configuration';
 import { record } from '@/model';
 import { decodeRepositoryV1 } from '@/persistence/codecs/v1';
 import { assertCurrent, schemaPath } from '@/tooling/schema/render';
-import { bearer, field, type Reply } from '../support/http.ts';
-import { passChecks, widget, widgetConfiguration } from '../support/repositories.ts';
-import { World } from '../support/world.ts';
+import { bearer, field, type Reply } from '@root/test/support/http.ts';
+import { passChecks, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
+import { World } from '@root/test/support/world.ts';
 
 let world: World;
 beforeEach(async () => {
@@ -252,9 +253,9 @@ test('stored repositories keep their plan identity and decode under the configur
 		diagnostics: [],
 		requiresPreparation: true,
 	};
-	const planId = await planIdentity(plan, repository);
+	const planId = await Effect.runPromise(planIdentity(plan, repository));
 	expect(planId).toBe('4e4698a1d2eeabb327fb101c304d1bae874a2636ac09a4e43ce0071925e9fa25');
-	expect(await executionId(repository.id, 'main', 'promote', `plan:${planId}`)).toBe(
+	expect(await Effect.runPromise(executionId(repository.id, 'main', 'promote', `plan:${planId}`))).toBe(
 		'f9274d828597fbfa4356186d1739f66ed39439b301b9e632e6705f83bd7de9c1',
 	);
 	expect(releaseEventId({
@@ -332,7 +333,7 @@ test('editors validate with the published schema and refuse what refresh refuses
 });
 
 test('schema:check refuses a hand-edited schema file', async () => {
-	await assertCurrent(schemaPath);
+	await Effect.runPromise(assertCurrent(schemaPath));
 	const edited = join(tmpdir(), `beepboop-schema-${crypto.randomUUID()}.json`);
 	const published = z.looseObject({
 		properties: z.looseObject({
@@ -342,7 +343,7 @@ test('schema:check refuses a hand-edited schema file', async () => {
 	published.properties.managers.items.enum.push('homebrew');
 	await Bun.write(edited, `${JSON.stringify(published, null, '\t')}\n`);
 	try {
-		await expect(assertCurrent(edited)).rejects.toThrow('The configuration schema is stale');
+		await expect(Effect.runPromise(assertCurrent(edited))).rejects.toThrow('The configuration schema is stale');
 	} finally {
 		await rm(edited);
 	}

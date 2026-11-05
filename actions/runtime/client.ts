@@ -1,7 +1,7 @@
 import { appendFileSync } from 'node:fs';
-import { record, text } from '../../src/model.ts';
-import { writeOutput } from '../../src/tooling/github-output.ts';
-import { endpoints, exchange, type Mode, parseMode, requestBody } from './protocol.ts';
+import { endpoints, exchange, type Mode, parseMode, requestBody } from '@root/actions/runtime/protocol.ts';
+import { record, text } from '@/model.ts';
+import { writeOutput } from '@/tooling/github-output.ts';
 
 function required(name: string): string {
 	const value = process.env[name];

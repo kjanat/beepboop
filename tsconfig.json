@@ -32,6 +32,7 @@
 		"src/**/*.astro",
 		"src/**/*.ts",
 		"scripts/**/*.ts",
-		"actions/**/*.ts"
+		"actions/**/*.ts",
+		"test/**/*.ts"
 	]
 }

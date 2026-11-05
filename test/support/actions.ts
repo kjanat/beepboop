@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { RunIdentity, World } from './world.ts';
+import type { RunIdentity, World } from '@root/test/support/world.ts';
 
 const client = join(import.meta.dir, '../../actions/runtime/client.ts');
 const tokenHost = 'pipelines.actions.githubusercontent.com';

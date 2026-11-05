@@ -1,4 +1,5 @@
 ---
+import { Effect } from 'effect';
 import { matchesPackage, packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import {
@@ -44,16 +45,27 @@ const packages = repository?.inventory.packages.filter(p =>
 	&& (!stream?.packages
 		|| stream.packages.some(reference => matchesPackage(reference, p)))
 ) ?? [];
-const groups = [...new Set(packages.map(p => p.versionSource))].map((
-	source,
-	index,
-) => ({
-	id: `group-${index + 1}`,
-	packages: packages.filter(p => p.versionSource === source),
-}));
-const recommended = recommendedVersion(packages);
+const [groups, recommended, bumps] = await Effect.runPromise(Effect.all([
+	Effect.forEach(
+		[...new Set(packages.map(p => p.versionSource))],
+		(source, index) => {
+			const members = packages.filter(p => p.versionSource === source);
+			return recommendedVersion(members).pipe(Effect.map(version => ({
+				id: `group-${index + 1}`,
+				packages: members,
+				recommended: version,
+			})));
+		},
+	),
+	recommendedVersion(packages),
+	Effect.all({
+		patch: bumpedVersion(packages, { bump: 'patch' }),
+		minor: bumpedVersion(packages, { bump: 'minor' }),
+		major: bumpedVersion(packages, { bump: 'major' }),
+	}),
+]));
 const bump = (kind: 'patch' | 'minor' | 'major') => {
-	const version = bumpedVersion(packages, { bump: kind });
+	const version = bumps[kind];
 	return version ? ` (${version})` : '';
 };
 function packageStatuses(pkg: Package): Status[] {
@@ -154,7 +166,7 @@ const preparations = data.executions.filter(e =>
 									 <input
 										 name={`version-${group.id}`}
 										 placeholder="1.2.3"
-										 value={recommendedVersion(group.packages)}
+										 value={group.recommended}
 									 >
 								 </label>
 							 </fieldset>

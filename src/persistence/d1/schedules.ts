@@ -1,18 +1,26 @@
+import { Effect } from 'effect';
 import { z } from 'zod';
-import type { SqlDatabase } from '@/persistence/d1/database';
+import type { DomainError } from '@/contract/errors';
+import { parse, type Sql, type SqlDatabase, sql } from '@/persistence/d1/database';
 
 const cursorRow = z.object({ last_tick: z.number() });
 
 export class ScheduleStore {
-	constructor(private readonly db: SqlDatabase) {}
-	async cursor(key: string): Promise<number | undefined> {
-		const row = await this.db.prepare('SELECT last_tick FROM schedules WHERE id=?').bind(key).first();
-		return row === null ? undefined : cursorRow.parse(row).last_tick;
+	private readonly sql: Sql;
+	constructor(db: SqlDatabase) {
+		this.sql = sql(db);
 	}
-	async start(key: string, tick: number): Promise<void> {
-		await this.db.prepare('INSERT OR IGNORE INTO schedules(id,last_tick) VALUES(?,?)').bind(key, tick).run();
+	cursor(key: string): Effect.Effect<number | undefined, DomainError> {
+		return this.sql.first('SELECT last_tick FROM schedules WHERE id=?', key).pipe(
+			Effect.flatMap(row =>
+				row === null ? Effect.undefined : parse(cursorRow, row).pipe(Effect.map(parsed => parsed.last_tick))
+			),
+		);
 	}
-	async advance(key: string, tick: number): Promise<void> {
-		await this.db.prepare('UPDATE schedules SET last_tick=? WHERE id=?').bind(tick, key).run();
+	start(key: string, tick: number): Effect.Effect<void, DomainError> {
+		return this.sql.run('INSERT OR IGNORE INTO schedules(id,last_tick) VALUES(?,?)', key, tick).pipe(Effect.asVoid);
+	}
+	advance(key: string, tick: number): Effect.Effect<void, DomainError> {
+		return this.sql.run('UPDATE schedules SET last_tick=? WHERE id=?', tick, key).pipe(Effect.asVoid);
 	}
 }

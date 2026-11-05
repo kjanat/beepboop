@@ -1,5 +1,8 @@
+import { Effect, Semaphore } from 'effect';
 import { z } from 'zod';
 import { type ProjectedEntity, projectedEntities } from '@/contract/changes';
+import type { DomainError } from '@/contract/errors';
+import { fromPromise, fromSync } from '@/failure';
 import type { Projection } from '@/persistence/d1/projection';
 
 export interface EntityRef {
@@ -49,89 +52,105 @@ function projection(entry: OutboxEntry, value: unknown, now: number): Projection
 }
 
 export class Journal {
-	private sequence: Promise<number> | undefined;
-	private draining: Promise<void> | undefined;
+	private revision: number | undefined;
+	private readonly sequence = Semaphore.makeUnsafe(1);
+	private readonly draining = Semaphore.makeUnsafe(1);
 	constructor(private readonly storage: DurableObjectStorage) {}
-	private next(): Promise<number> {
-		const next = (this.sequence ?? this.storage.get('journal:seq').then(value => counter.parse(value ?? 0)))
-			.then(revision => revision + 1);
-		this.sequence = next.catch(error => {
-			this.sequence = undefined;
-			throw error;
+	private next(): Effect.Effect<number, DomainError> {
+		return Semaphore.withPermit(
+			this.sequence,
+			Effect.gen({ self: this }, function*() {
+				const current = this.revision
+					?? (yield* fromPromise(() => this.storage.get('journal:seq')).pipe(
+						Effect.flatMap(value => fromSync(() => counter.parse(value ?? 0))),
+					));
+				this.revision = current + 1;
+				return this.revision;
+			}),
+		);
+	}
+	commit(
+		entries: readonly [Committed, ...Committed[]],
+		extra: Record<string, unknown> = {},
+	): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const writes: Record<string, unknown>[] = [];
+			let revision = 0;
+			for (const { value, ...ref } of entries) {
+				revision = yield* this.next();
+				writes.push({ [keyOf(ref)]: value, [outboxKey(revision)]: { ...ref, revision } });
+			}
+			const chunks: Record<string, unknown>[] = [{ ...extra, 'journal:seq': revision }];
+			for (const write of writes) {
+				const last = chunks.at(-1);
+				if (last && Object.keys(last).length + 2 <= 128) Object.assign(last, write);
+				else chunks.push({ ...write });
+			}
+			const [only] = chunks;
+			if (chunks.length === 1 && only) yield* fromPromise(() => this.storage.put(only));
+			else {
+				yield* fromPromise(() =>
+					this.storage.transaction(async transaction => {
+						for (const chunk of chunks) await transaction.put(chunk);
+					})
+				);
+			}
 		});
-		return next;
 	}
-	async commit(entries: readonly [Committed, ...Committed[]], extra: Record<string, unknown> = {}): Promise<void> {
-		const writes: Record<string, unknown>[] = [];
-		let revision = 0;
-		for (const { value, ...ref } of entries) {
-			revision = await this.next();
-			writes.push({ [keyOf(ref)]: value, [outboxKey(revision)]: { ...ref, revision } });
-		}
-		const chunks: Record<string, unknown>[] = [{ ...extra, 'journal:seq': revision }];
-		for (const write of writes) {
-			const last = chunks.at(-1);
-			if (last && Object.keys(last).length + 2 <= 128) Object.assign(last, write);
-			else chunks.push({ ...write });
-		}
-		if (chunks.length === 1 && chunks[0]) await this.storage.put(chunks[0]);
-		else {
-			await this.storage.transaction(async transaction => {
-				for (const chunk of chunks) await transaction.put(chunk);
-			});
-		}
-	}
-	async reindex(repositoryId: number): Promise<number> {
-		let queued = 0;
-		for (const entity of projectedEntities) {
-			const keys = [...(await this.storage.list({ prefix: prefixes[entity] })).keys()];
-			for (let i = 0; i < keys.length; i += batch) {
-				const writes: Record<string, unknown> = {};
-				for (const key of keys.slice(i, i + batch)) {
-					const revision = await this.next();
-					writes[outboxKey(revision)] = { entity, id: key.slice(prefixes[entity].length), repositoryId, revision };
-					writes['journal:seq'] = revision;
+	reindex(repositoryId: number): Effect.Effect<number, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			let queued = 0;
+			for (const entity of projectedEntities) {
+				const keys = [...(yield* fromPromise(() => this.storage.list({ prefix: prefixes[entity] }))).keys()];
+				for (let i = 0; i < keys.length; i += batch) {
+					const writes: Record<string, unknown> = {};
+					for (const key of keys.slice(i, i + batch)) {
+						const revision = yield* this.next();
+						writes[outboxKey(revision)] = { entity, id: key.slice(prefixes[entity].length), repositoryId, revision };
+						writes['journal:seq'] = revision;
+					}
+					yield* fromPromise(() => this.storage.put(writes));
+					queued += keys.slice(i, i + batch).length;
 				}
-				await this.storage.put(writes);
-				queued += keys.slice(i, i + batch).length;
 			}
-		}
-		return queued;
-	}
-	async pending(): Promise<boolean> {
-		return (await this.storage.list({ prefix: 'outbox:', limit: 1 })).size > 0;
-	}
-	drain(project: (rows: Projection[]) => Promise<void>): Promise<void> {
-		this.draining ??= this.flush(project).finally(() => {
-			this.draining = undefined;
+			return queued;
 		});
-		return this.draining;
 	}
-	private async flush(project: (rows: Projection[]) => Promise<void>): Promise<void> {
-		for (;;) {
-			const entries = await this.storage.list({ prefix: 'outbox:', limit: batch });
-			if (!entries.size) return;
-			const latest = new Map<string, OutboxEntry>();
-			for (const value of entries.values()) {
-				const parsed = outboxEntry.safeParse(value);
-				if (!parsed.success) continue;
-				const key = keyOf(parsed.data);
-				if ((latest.get(key)?.revision ?? 0) < parsed.data.revision) latest.set(key, parsed.data);
+	pending(): Effect.Effect<boolean, DomainError> {
+		return fromPromise(() => this.storage.list({ prefix: 'outbox:', limit: 1 })).pipe(
+			Effect.map(entries => entries.size > 0),
+		);
+	}
+	drain(project: (rows: Projection[]) => Effect.Effect<void, DomainError>): Effect.Effect<void, DomainError> {
+		return Semaphore.withPermit(this.draining, this.flush(project));
+	}
+	private flush(project: (rows: Projection[]) => Effect.Effect<void, DomainError>): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			for (;;) {
+				const entries = yield* fromPromise(() => this.storage.list({ prefix: 'outbox:', limit: batch }));
+				if (!entries.size) return;
+				const latest = new Map<string, OutboxEntry>();
+				for (const value of entries.values()) {
+					const parsed = outboxEntry.safeParse(value);
+					if (!parsed.success) continue;
+					const key = keyOf(parsed.data);
+					if ((latest.get(key)?.revision ?? 0) < parsed.data.revision) latest.set(key, parsed.data);
+				}
+				const values = yield* fromPromise(() => this.storage.get([...latest.keys()]));
+				const now = Date.now();
+				yield* project([...latest].flatMap(([key, entry]) => projection(entry, values.get(key), now) ?? []));
+				yield* fromPromise(() => this.storage.delete([...entries.keys()]));
 			}
-			const values = await this.storage.get([...latest.keys()]);
-			const now = Date.now();
-			await project(
-				[...latest].flatMap(([key, entry]) => projection(entry, values.get(key), now) ?? []),
-			);
-			await this.storage.delete([...entries.keys()]);
-		}
+		});
 	}
-	async arm(at: number | undefined): Promise<void> {
-		if (at === undefined) return;
-		const current = await this.storage.getAlarm();
-		if (current === null || current > at) await this.storage.setAlarm(at);
+	arm(at: number | undefined): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			if (at === undefined) return;
+			const current = yield* fromPromise(() => this.storage.getAlarm());
+			if (current === null || current > at) yield* fromPromise(() => this.storage.setAlarm(at));
+		});
 	}
-	async schedule(at: number | undefined): Promise<void> {
-		if (at !== undefined) await this.storage.setAlarm(at);
+	schedule(at: number | undefined): Effect.Effect<void, DomainError> {
+		return at === undefined ? Effect.void : fromPromise(() => this.storage.setAlarm(at));
 	}
 }

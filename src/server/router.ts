@@ -1,21 +1,26 @@
 import schema from '@root/schemas/v1.json' with { type: 'json' };
+import { Effect } from 'effect';
 import { authRoute } from '@/automation/auth';
 import type { AutomationBindings } from '@/automation/service';
 import { AutomationService } from '@/automation/service';
-import { DomainError, notFound } from '@/contract/errors';
+import { type DomainError, domainError, notFound } from '@/contract/errors';
 import { type Method, type RouteId, routeIds, routes } from '@/contract/routes';
+import { fromSync } from '@/failure';
 import { endpoints } from '@/server/handlers/index';
-import type { Context } from '@/server/handlers/kit';
+import type { Endpoint } from '@/server/handlers/kit';
 import { readBody } from '@/webhook';
 
 interface RawRoute {
 	methods: readonly Method[];
-	serve(request: Request, service: AutomationService): Promise<Response>;
+	serve(request: Request, service: AutomationService): Effect.Effect<Response, DomainError>;
 }
 
 export const rawRoutes: ReadonlyMap<string, RawRoute> = new Map<string, RawRoute>([
-	['/health', { methods: ['GET'], serve: async () => Response.json({ service: 'beepboop', mode: 'automation' }) }],
-	['/schema/v1.json', { methods: ['GET'], serve: async () => Response.json(schema) }],
+	['/health', {
+		methods: ['GET'],
+		serve: () => Effect.sync(() => Response.json({ service: 'beepboop', mode: 'automation' })),
+	}],
+	['/schema/v1.json', { methods: ['GET'], serve: () => Effect.sync(() => Response.json(schema)) }],
 	['/webhooks/github', { methods: ['POST'], serve: (request, service) => service.webhook(request) }],
 ]);
 
@@ -31,33 +36,37 @@ export function resolve(method: string, path: string): RouteId | undefined {
 	return [...(table.get(path) ?? [])].find(([candidate]) => candidate === method)?.[1];
 }
 
-function methodNotAllowed(allowed: readonly Method[]): DomainError {
-	return new DomainError({ code: 'method-not-allowed', allowed: [...allowed] });
+function methodNotAllowed(allowed: readonly Method[]) {
+	return domainError({ code: 'method-not-allowed', allowed: [...allowed] });
 }
 
-async function input(request: Request, method: Method): Promise<unknown> {
-	if (method === 'GET') return Object.fromEntries(new URL(request.url).searchParams);
-	return JSON.parse(new TextDecoder().decode(await readBody(request)));
+function input(request: Request, method: Method): Effect.Effect<unknown, DomainError> {
+	if (method === 'GET') return Effect.sync(() => Object.fromEntries(new URL(request.url).searchParams));
+	return readBody(request).pipe(
+		Effect.flatMap(bytes => fromSync((): unknown => JSON.parse(new TextDecoder().decode(bytes)))),
+	);
 }
 
-export async function dispatch(request: Request, env: AutomationBindings): Promise<Response> {
-	const path = new URL(request.url).pathname;
-	const service = new AutomationService(env);
-	const raw = rawRoutes.get(path);
-	if (raw) {
-		if (!raw.methods.some(method => method === request.method)) throw methodNotAllowed(raw.methods);
-		return raw.serve(request, service);
-	}
-	if (path.startsWith('/auth/')) {
-		const response = await authRoute(request, env);
-		if (response) return response;
-		throw notFound('route', 'Not found');
-	}
-	const methods = table.get(path);
-	if (!methods) throw notFound('route', 'Not found');
-	const id = resolve(request.method, path);
-	if (!id) throw methodNotAllowed([...methods.keys()]);
-	const method = routes[id].method;
-	const endpoint: { run(context: Context, read: () => Promise<unknown>): Promise<unknown> } = endpoints[id];
-	return Response.json(await endpoint.run({ request, env, service }, () => input(request, method)));
+export function dispatch(request: Request, env: AutomationBindings): Effect.Effect<Response, DomainError> {
+	return Effect.gen(function*() {
+		const path = new URL(request.url).pathname;
+		const service = new AutomationService(env);
+		const raw = rawRoutes.get(path);
+		if (raw) {
+			if (!raw.methods.some(method => method === request.method)) return yield* methodNotAllowed(raw.methods);
+			return yield* raw.serve(request, service);
+		}
+		if (path.startsWith('/auth/')) {
+			const response = yield* authRoute(request, env);
+			if (response) return response;
+			return yield* notFound('route', 'Not found');
+		}
+		const methods = table.get(path);
+		if (!methods) return yield* notFound('route', 'Not found');
+		const id = resolve(request.method, path);
+		if (!id) return yield* methodNotAllowed([...methods.keys()]);
+		const method = routes[id].method;
+		const endpoint: Pick<Endpoint<never>, 'run'> = endpoints[id];
+		return Response.json(yield* endpoint.run({ request, env, service }, input(request, method)));
+	});
 }

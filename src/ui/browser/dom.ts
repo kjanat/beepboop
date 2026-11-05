@@ -1,3 +1,5 @@
+import { Cause, Data, Effect } from 'effect';
+
 function required<T extends Element>(selector: string, type: { new(): T }): T {
 	const found = document.querySelector(selector);
 	if (!(found instanceof type)) throw new Error(`Missing dashboard element: ${selector}`);
@@ -13,10 +15,19 @@ export function findAll<T extends Element>(parent: ParentNode, selector: string,
 	return [...parent.querySelectorAll(selector)].flatMap(found => found instanceof type ? [found] : []);
 }
 
-export class FieldError extends Error {
-	constructor(message: string, readonly fields: readonly Element[]) {
-		super(message);
-	}
+export class FieldError extends Data.TaggedError('FieldError')<{
+	readonly message: string;
+	readonly fields: readonly Element[];
+}> {}
+
+export class Refused extends Data.TaggedError('Refused')<{ readonly message: string }> {}
+
+export function refuse(message: string): Effect.Effect<never, Refused> {
+	return Effect.fail(new Refused({ message }));
+}
+
+export function report<E>(program: Effect.Effect<void, E>, form?: HTMLFormElement): Effect.Effect<void> {
+	return program.pipe(Effect.catchCause(cause => Effect.sync(() => showError(Cause.squash(cause), form))));
 }
 
 const feedbacks = new WeakMap<HTMLFormElement, HTMLElement>();

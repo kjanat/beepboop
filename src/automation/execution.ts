@@ -1,3 +1,4 @@
+import { Effect } from 'effect';
 import { outputsComplete } from '@/automation/outputs';
 import { identityOf, matchesPackage, matchesPublication, packageId } from '@/automation/package-identity';
 import type {
@@ -10,7 +11,9 @@ import type {
 	WorkflowBinding,
 } from '@/automation/types';
 import { managerSpec } from '@/contract/catalog';
+import { type DomainError, precondition } from '@/contract/errors';
 import type { ReadyRepository } from '@/domain/repository';
+import { fromSync } from '@/failure';
 import { executionId } from '@/persistence/identity-keys';
 
 export interface ExecutionRequest {
@@ -34,7 +37,10 @@ interface ExecutionSource {
 	workflows: readonly DiscoveredWorkflow[];
 }
 
-export function createExecution(repository: ReadyRepository, request: ExecutionRequest): Promise<Execution> {
+export function createExecution(
+	repository: ReadyRepository,
+	request: ExecutionRequest,
+): Effect.Effect<Execution, DomainError> {
 	return executionFrom({
 		repositoryId: repository.id,
 		repository: repository.name,
@@ -50,7 +56,7 @@ export function deriveExecution(
 	parent: Execution,
 	revision: Pick<RepositoryRecord, 'defaultBranch' | 'inventory'>,
 	request: ExecutionRequest,
-): Promise<Execution> {
+): Effect.Effect<Execution, DomainError> {
 	return executionFrom({
 		repositoryId: parent.repositoryId,
 		repository: parent.repository,
@@ -62,54 +68,61 @@ export function deriveExecution(
 	}, request);
 }
 
-async function executionFrom(source: ExecutionSource, request: ExecutionRequest): Promise<Execution> {
-	const { stream: streamName, operation, eventId, version, upstreamRelease } = request;
-	const observed = request.observed === true;
-	const stream = source.configuration.streams[streamName];
-	if (!stream) throw new Error('Unknown stream');
-	const binding: WorkflowBinding | undefined = operation === 'prepare'
-		? stream.prepare.workflow
-		: operation === 'promote'
-		? stream.promote.workflow
-		: stream.workflows[operation];
-	if (!binding) throw new Error('Operation has no workflow binding');
-	if (binding.each === 'package' && request.perPackage !== true) {
-		throw new Error('Per-package operations run inside a release set');
-	}
-	const workflow = source.workflows.find((w) => w.file === binding.file);
-	if (
-		!observed
-		&& (!workflow?.events.includes('workflow_dispatch')
-			|| !workflow.dispatchInputs.includes('beepboop_execution_id')
-			|| binding.mode === 'observe')
-	) {
-		throw new Error('Workflow needs workflow_dispatch and beepboop_execution_id');
-	}
-	return {
-		id: await executionId(source.repositoryId, streamName, operation, eventId),
-		repositoryId: source.repositoryId,
-		...(upstreamRelease ? { upstreamRelease: structuredClone(upstreamRelease) } : {}),
-		repository: source.repository,
-		stream: streamName,
-		operation,
-		eventId,
-		configuration: structuredClone(source.configuration),
-		configurationSha: source.configurationSha,
-		presetShas: { ...source.presetShas },
-		sourceSha: request.sourceSha,
-		...(version ? { version } : {}),
-		state: observed ? 'pending' : operation === 'promote' ? 'blocked' : 'ready',
-		dependencies: await Promise.all(
-			(binding.needs ?? []).map((operation) => executionId(source.repositoryId, streamName, operation, eventId)),
-		),
-		workflow: { ...binding, ref: binding.ref ?? source.defaultBranch },
-		...(workflow?.dispatchInputs.includes('beepboop_title') ? { titled: true } : {}),
-		attempts: 0,
-		publications: [],
-		artifacts: [],
-		createdAt: Date.now(),
-		updatedAt: Date.now(),
-	};
+function executionFrom(source: ExecutionSource, request: ExecutionRequest): Effect.Effect<Execution, DomainError> {
+	return Effect.gen(function*() {
+		const { stream: streamName, operation, eventId, version, upstreamRelease } = request;
+		const observed = request.observed === true;
+		const stream = source.configuration.streams[streamName];
+		if (!stream) return yield* precondition('Unknown stream');
+		const binding: WorkflowBinding | undefined = operation === 'prepare'
+			? stream.prepare.workflow
+			: operation === 'promote'
+			? stream.promote.workflow
+			: stream.workflows[operation];
+		if (!binding) return yield* precondition('Operation has no workflow binding');
+		if (binding.each === 'package' && request.perPackage !== true) {
+			return yield* precondition('Per-package operations run inside a release set');
+		}
+		const workflow = source.workflows.find((w) => w.file === binding.file);
+		if (
+			!observed
+			&& (!workflow?.events.includes('workflow_dispatch')
+				|| !workflow.dispatchInputs.includes('beepboop_execution_id')
+				|| binding.mode === 'observe')
+		) {
+			return yield* precondition('Workflow needs workflow_dispatch and beepboop_execution_id');
+		}
+		const id = yield* executionId(source.repositoryId, streamName, operation, eventId);
+		const dependencies = yield* Effect.forEach(
+			binding.needs ?? [],
+			need => executionId(source.repositoryId, streamName, need, eventId),
+			{ concurrency: 'unbounded' },
+		);
+		const execution: Execution = {
+			id,
+			repositoryId: source.repositoryId,
+			...(upstreamRelease ? { upstreamRelease: structuredClone(upstreamRelease) } : {}),
+			repository: source.repository,
+			stream: streamName,
+			operation,
+			eventId,
+			configuration: structuredClone(source.configuration),
+			configurationSha: source.configurationSha,
+			presetShas: { ...source.presetShas },
+			sourceSha: request.sourceSha,
+			...(version ? { version } : {}),
+			state: observed ? 'pending' : operation === 'promote' ? 'blocked' : 'ready',
+			dependencies,
+			workflow: { ...binding, ref: binding.ref ?? source.defaultBranch },
+			...(workflow?.dispatchInputs.includes('beepboop_title') ? { titled: true } : {}),
+			attempts: 0,
+			publications: [],
+			artifacts: [],
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+		};
+		return execution;
+	});
 }
 export function runTitle(execution: Execution): string {
 	const label = execution.operation === 'prepare'
@@ -146,36 +159,47 @@ export function completion(execution: Execution, runSucceeded: boolean): Executi
 	if (publications.some((p) => p.outcome !== 'succeeded')) return 'blocked';
 	return 'succeeded';
 }
-export function mergePublications(prior: Publication[], incoming: Publication[]): Publication[] {
-	const key = (p: Publication) => p.id.startsWith('pkg:') || p.id === `${p.manager}:${p.name}` ? packageId(p) : p.id;
-	const result = new Map(prior.map((p) => [key(p), p]));
-	for (const publication of incoming) {
-		const old = result.get(key(publication));
-		if (
-			old
-			&& (old.manager !== publication.manager
-				|| old.name !== publication.name
-				|| old.version !== publication.version
-				|| (old.digest && publication.digest && old.digest !== publication.digest))
-		) {
-			throw new Error('Publication identity changed');
+export function mergePublications(
+	prior: Publication[],
+	incoming: Publication[],
+): Effect.Effect<Publication[], DomainError> {
+	return Effect.gen(function*() {
+		const key = (p: Publication) => p.id.startsWith('pkg:') || p.id === `${p.manager}:${p.name}` ? packageId(p) : p.id;
+		const result = new Map(prior.map((p) => [key(p), p]));
+		for (const publication of incoming) {
+			const old = result.get(key(publication));
+			if (
+				old
+				&& (old.manager !== publication.manager
+					|| old.name !== publication.name
+					|| old.version !== publication.version
+					|| (old.digest && publication.digest && old.digest !== publication.digest))
+			) {
+				return yield* precondition('Publication identity changed');
+			}
+			if (old?.outcome === 'succeeded' && publication.outcome !== 'succeeded') continue;
+			result.set(key(publication), { ...publication, required: old?.required || publication.required });
 		}
-		if (old?.outcome === 'succeeded' && publication.outcome !== 'succeeded') continue;
-		result.set(key(publication), { ...publication, required: old?.required || publication.required });
-	}
-	return [...result.values()];
+		return [...result.values()];
+	});
 }
 
-export function validatePublicationIdentity(execution: Execution, publication: Publication): void {
-	if (!matchesPackage(publication.id, { ...publication, identity: identityOf(publication, execution.repository) })) {
-		throw new Error('Publication ID does not match its manager and package identity');
-	}
-	if (
-		execution.version && managerSpec(publication.manager).versionPolicy === 'equals-execution'
-		&& publication.version !== execution.version
-	) {
-		throw new Error('Publication version does not match the execution');
-	}
+export function validatePublicationIdentity(
+	execution: Execution,
+	publication: Publication,
+): Effect.Effect<void, DomainError> {
+	return Effect.gen(function*() {
+		const identity = yield* fromSync(() => identityOf(publication, execution.repository));
+		if (!matchesPackage(publication.id, { ...publication, identity })) {
+			return yield* precondition('Publication ID does not match its manager and package identity');
+		}
+		if (
+			execution.version && managerSpec(publication.manager).versionPolicy === 'equals-execution'
+			&& publication.version !== execution.version
+		) {
+			return yield* precondition('Publication version does not match the execution');
+		}
+	});
 }
 
 export function dependenciesReady(execution: Execution, candidates: Execution[]): boolean {

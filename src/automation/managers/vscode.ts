@@ -1,10 +1,13 @@
+import { Effect } from 'effect';
 import { z } from 'zod';
 import { object } from '@/automation/managers/helpers';
 import { type Adapter, emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, unpublished } from '@/automation/managers/verification';
 import { extensionParts, identityOf } from '@/automation/package-identity';
 import { excluded, registry } from '@/automation/package-publication';
+import type { Outcome, Publication } from '@/automation/types';
 import { fileProblem } from '@/contract/diagnostics';
+import { fromPromise } from '@/failure';
 
 const identifier = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
 const marketplaceQuery = z.object({
@@ -42,23 +45,24 @@ export const vscodeManager: Adapter<'vscode'> = {
 			{ method: 'POST', headers: galleryHeaders, body: galleryQuery(pkg.name, true) },
 		);
 	},
-	async verifyPublication(publication, request) {
+	verifyPublication(publication, request) {
 		const url = `https://marketplace.visualstudio.com/items?itemName=${encodeURIComponent(publication.name)}`;
-		try {
-			const response = await request(gallery, {
-				method: 'POST',
-				redirect: 'manual',
-				signal: AbortSignal.timeout(15_000),
-				headers: { 'User-Agent': 'beepboop release verification', ...galleryHeaders },
-				body: galleryQuery(publication.name, false),
-			});
-			if (!response.ok) return { ...publication, outcome: 'uncertain', url };
-			const versions = marketplaceVersions(await response.json());
-			if (!versions) return { ...publication, outcome: 'uncertain', url };
-			return { ...publication, outcome: versions.includes(publication.version) ? 'succeeded' : 'pending', url };
-		} catch {
-			return { ...publication, outcome: 'uncertain', url };
-		}
+		const result = (outcome: Outcome): Publication => ({ ...publication, outcome, url });
+		return Effect.gen(function*() {
+			const response = yield* fromPromise(() =>
+				request(gallery, {
+					method: 'POST',
+					redirect: 'manual',
+					signal: AbortSignal.timeout(15_000),
+					headers: { 'User-Agent': 'beepboop release verification', ...galleryHeaders },
+					body: galleryQuery(publication.name, false),
+				})
+			);
+			if (!response.ok) return result('uncertain');
+			const versions = marketplaceVersions(yield* fromPromise((): Promise<unknown> => response.json()));
+			if (!versions) return result('uncertain');
+			return result(versions.includes(publication.version) ? 'succeeded' : 'pending');
+		}).pipe(Effect.catchCause(() => Effect.succeed(result('uncertain'))));
 	},
 	secondaryLatest: {
 		'open-vsx'(pkg, request) {

@@ -1,3 +1,4 @@
+import { Effect } from 'effect';
 import type { Inventory, Package } from '@/automation/types';
 import { nextVersion, type VersionRequest } from '@/automation/version';
 import { blocking } from '@/contract/diagnostics';
@@ -18,17 +19,14 @@ export function currentRelease(packages: Package[]): string | undefined {
 	return released.length === 1 ? released[0] : undefined;
 }
 
-export function bumpedVersion(packages: Package[], request: VersionRequest): string | undefined {
+export function bumpedVersion(packages: Package[], request: VersionRequest): Effect.Effect<string | undefined> {
 	const current = currentRelease(packages);
-	if (current === undefined) return undefined;
-	try {
-		return nextVersion(current, request);
-	} catch {
-		return undefined;
-	}
+	return current === undefined
+		? Effect.undefined
+		: nextVersion(current, request).pipe(Effect.orElseSucceed(() => undefined));
 }
 
-export function recommendedVersion(packages: Package[]): string | undefined {
+export function recommendedVersion(packages: Package[]): Effect.Effect<string | undefined> {
 	const manifests = unique(packages.map(pkg => pkg.version));
 	const [manifest] = manifests;
 	const released = unique(packages.map(releasedVersion));
@@ -36,7 +34,7 @@ export function recommendedVersion(packages: Package[]): string | undefined {
 		manifests.length === 1 && manifest !== undefined
 		&& released.every(version => compareVersions(manifest, version) > 0)
 	) {
-		return manifest;
+		return Effect.succeed(manifest);
 	}
 	return bumpedVersion(packages, { bump: 'patch' });
 }

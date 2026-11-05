@@ -1,4 +1,5 @@
 import { defineMiddleware } from 'astro:middleware';
+import { Effect } from 'effect';
 import { administrator } from '@/automation/auth.ts';
 import { DomainError } from '@/contract/errors';
 import { failure } from '@/failure';
@@ -8,7 +9,7 @@ import { dashboardPaths } from '@/server/sections.ts';
 export const onRequest = defineMiddleware(async (context, next) => {
 	if (dashboardPaths.has(context.url.pathname.replace(/\/$/, '') || '/')) {
 		try {
-			context.locals.actor = await administrator(context.request, bindings());
+			context.locals.actor = await Effect.runPromise(administrator(context.request, bindings()));
 		} catch (error) {
 			if (!(error instanceof DomainError)) throw error;
 			if (error.problem.code !== 'unauthenticated') return failure(context.request, error);

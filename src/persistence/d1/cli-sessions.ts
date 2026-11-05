@@ -1,28 +1,37 @@
+import { Effect } from 'effect';
 import { z } from 'zod';
-import type { SqlDatabase } from '@/persistence/d1/database';
+import type { DomainError } from '@/contract/errors';
+import { parse, type Sql, type SqlDatabase, sql } from '@/persistence/d1/database';
 
 const subjectRow = z.object({ subject: z.string() });
 const sessionRow = z.object({ id: z.string(), created_at: z.number() });
 export type CLISessionRow = z.output<typeof sessionRow>;
 
 export class CLISessionStore {
-	constructor(private readonly db: SqlDatabase) {}
-	async subject(hash: string): Promise<string | undefined> {
-		const row = await this.db.prepare('SELECT subject FROM cli_sessions WHERE id=?').bind(hash).first();
-		return row === null ? undefined : subjectRow.parse(row).subject;
+	private readonly sql: Sql;
+	constructor(db: SqlDatabase) {
+		this.sql = sql(db);
 	}
-	async create(hash: string, subject: string): Promise<void> {
-		await this.db.prepare('INSERT INTO cli_sessions(id,subject,created_at) VALUES(?,?,?)')
-			.bind(hash, subject, Date.now()).run();
+	subject(hash: string): Effect.Effect<string | undefined, DomainError> {
+		return this.sql.first('SELECT subject FROM cli_sessions WHERE id=?', hash).pipe(
+			Effect.flatMap(row =>
+				row === null ? Effect.undefined : parse(subjectRow, row).pipe(Effect.map(parsed => parsed.subject))
+			),
+		);
 	}
-	async revoke(hash: string): Promise<void> {
-		await this.db.prepare('DELETE FROM cli_sessions WHERE id=?').bind(hash).run();
+	create(hash: string, subject: string): Effect.Effect<void, DomainError> {
+		return this.sql.run('INSERT INTO cli_sessions(id,subject,created_at) VALUES(?,?,?)', hash, subject, Date.now())
+			.pipe(Effect.asVoid);
 	}
-	async revokeAll(): Promise<void> {
-		await this.db.prepare('DELETE FROM cli_sessions').run();
+	revoke(hash: string): Effect.Effect<void, DomainError> {
+		return this.sql.run('DELETE FROM cli_sessions WHERE id=?', hash).pipe(Effect.asVoid);
 	}
-	async list(): Promise<CLISessionRow[]> {
-		const rows = await this.db.prepare('SELECT id,created_at FROM cli_sessions ORDER BY created_at DESC').all();
-		return z.array(sessionRow).parse(rows.results);
+	revokeAll(): Effect.Effect<void, DomainError> {
+		return this.sql.run('DELETE FROM cli_sessions').pipe(Effect.asVoid);
+	}
+	list(): Effect.Effect<CLISessionRow[], DomainError> {
+		return this.sql.all('SELECT id,created_at FROM cli_sessions ORDER BY created_at DESC').pipe(
+			Effect.flatMap(rows => parse(z.array(sessionRow), rows)),
+		);
 	}
 }

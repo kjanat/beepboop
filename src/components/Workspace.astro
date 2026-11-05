@@ -1,4 +1,5 @@
 ---
+import { Effect } from 'effect';
 import Activity from '@/components/Activity.astro';
 import Notifications from '@/components/Notifications.astro';
 import Overview from '@/components/Overview.astro';
@@ -23,10 +24,10 @@ const { actor } = Astro.locals;
 if (!actor) {
 	throw new Error('Dashboard pages require a signed-in administrator');
 }
-const [view, outage] = await Promise.all([
+const [view, outage] = await Effect.runPromise(Effect.all([
 	load(section, { env: bindings(), actor }),
 	panel('github-status', githubOutage),
-]);
+], { concurrency: 'unbounded' }));
 ---
 <Layout
 	section={section}

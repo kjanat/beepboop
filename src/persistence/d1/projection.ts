@@ -1,5 +1,7 @@
+import { Effect } from 'effect';
 import type { ProjectedEntity } from '@/contract/changes';
-import type { SqlDatabase, SqlStatement } from '@/persistence/d1/database';
+import type { DomainError } from '@/contract/errors';
+import { type SqlDatabase, type SqlStatement, sql } from '@/persistence/d1/database';
 
 interface Common {
 	id: string;
@@ -38,9 +40,9 @@ export class ProjectionStore {
 			} WHERE id=? AND revision=?)`,
 		).bind(row.repositoryId, row.entity, row.id, row.revision, at, row.id, row.revision);
 	}
-	async apply(rows: readonly Projection[]): Promise<void> {
-		if (!rows.length) return;
+	apply(rows: readonly Projection[]): Effect.Effect<void, DomainError> {
+		if (!rows.length) return Effect.void;
 		const at = Date.now();
-		await this.db.batch(rows.flatMap(row => [this.upsert(row), this.change(row, at)]));
+		return sql(this.db).batch(rows.flatMap(row => [this.upsert(row), this.change(row, at)])).pipe(Effect.asVoid);
 	}
 }

@@ -1,5 +1,6 @@
 import { dlopen, FFIType, JSCallback, type Pointer, ptr, toArrayBuffer } from 'bun:ffi';
-import type { HidDevice, HidTransport } from '@/cli/fido2/types.ts';
+import { Effect } from 'effect';
+import { type HidDevice, type HidTransport, SecurityKeyError, securityKeyFailure } from '@/cli/fido2/types';
 
 const IOKIT_PATH = '/System/Library/Frameworks/IOKit.framework/IOKit';
 const CORE_FOUNDATION_PATH = '/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation';
@@ -208,25 +209,33 @@ function createDevice(lib: Api, handle: Ref, index: number): HidDevice {
 
 	return {
 		path: `macos-hid-${index}`,
-		async write(report) {
-			if (closed) throw new Error('Security key closed');
-			if (report.length !== REPORT_SIZE) throw new Error(`HID report must be ${REPORT_SIZE} bytes`);
-			ioReturn(
-				lib.iokit.IOHIDDeviceSetReport(handle, K_IOHID_REPORT_TYPE_OUTPUT, 0, ptr(report), report.length),
-				'IOHIDDeviceSetReport',
-			);
-		},
-		async read(timeoutMs) {
-			const deadline = performance.now() + timeoutMs;
-			for (;;) {
-				if (closed) throw new Error('Security key closed');
-				const next = queue.shift();
-				if (next) return next;
-				if (performance.now() >= deadline) throw new Error('Security key timed out');
-				pump(lib, PUMP_SECONDS);
-				await Bun.sleep(0);
-			}
-		},
+		write: report =>
+			Effect.gen(function*() {
+				if (closed) return yield* new SecurityKeyError({ message: 'Security key closed' });
+				if (report.length !== REPORT_SIZE) {
+					return yield* new SecurityKeyError({ message: `HID report must be ${REPORT_SIZE} bytes` });
+				}
+				yield* Effect.try({
+					try: () =>
+						ioReturn(
+							lib.iokit.IOHIDDeviceSetReport(handle, K_IOHID_REPORT_TYPE_OUTPUT, 0, ptr(report), report.length),
+							'IOHIDDeviceSetReport',
+						),
+					catch: securityKeyFailure,
+				});
+			}),
+		read: timeoutMs =>
+			Effect.gen(function*() {
+				const deadline = performance.now() + timeoutMs;
+				for (;;) {
+					if (closed) return yield* new SecurityKeyError({ message: 'Security key closed' });
+					const next = queue.shift();
+					if (next) return next;
+					if (performance.now() >= deadline) return yield* new SecurityKeyError({ message: 'Security key timed out' });
+					pump(lib, PUMP_SECONDS);
+					yield* Effect.yieldNow;
+				}
+			}),
 		close() {
 			if (closed) return;
 			closed = true;
@@ -240,7 +249,7 @@ function createDevice(lib: Api, handle: Ref, index: number): HidDevice {
 	};
 }
 
-async function enumerate(): Promise<HidDevice[]> {
+function enumerate(): HidDevice[] {
 	const lib = api();
 	const runLoop = ref(lib.cf.CFRunLoopGetCurrent(), 'CFRunLoopGetCurrent');
 	const manager = ref(lib.iokit.IOHIDManagerCreate(null, K_IOHID_OPTIONS_TYPE_NONE), 'IOHIDManagerCreate');
@@ -248,10 +257,7 @@ async function enumerate(): Promise<HidDevice[]> {
 	lib.iokit.IOHIDManagerSetDeviceMatching(manager, matching);
 	lib.cf.CFRelease(matching);
 	lib.iokit.IOHIDManagerScheduleWithRunLoop(manager, runLoop, lib.mode);
-	for (let i = 0; i < ENUMERATE_PUMPS; i++) {
-		pump(lib, PUMP_SECONDS);
-		await Bun.sleep(0);
-	}
+	for (let i = 0; i < ENUMERATE_PUMPS; i++) pump(lib, PUMP_SECONDS);
 
 	const set = lib.iokit.IOHIDManagerCopyDevices(manager);
 	const retained: Ref[] = [];
@@ -277,8 +283,7 @@ async function enumerate(): Promise<HidDevice[]> {
 }
 
 export const macosTransport: HidTransport = {
-	async devices() {
-		if (process.platform !== 'darwin') return [];
-		return enumerate();
-	},
+	devices: process.platform === 'darwin'
+		? Effect.try({ try: enumerate, catch: securityKeyFailure })
+		: Effect.succeed([]),
 };

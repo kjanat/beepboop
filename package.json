@@ -56,7 +56,7 @@
 	},
 	"dependencies": {
 		"@astrojs/cloudflare": "^14.4.4",
-		"@cfworker/json-schema": "^4.1.4",
+		"@cfworker/json-schema": "^4.1.6",
 		"@kjanat/dreamcli": "^5.0.0",
 		"@kjanat/openauth": "^0.6.0",
 		"@simplewebauthn/server": "^14.0.3",

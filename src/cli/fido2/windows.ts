@@ -1,5 +1,6 @@
 import { dlopen, FFIType, type Pointer, ptr, read, toArrayBuffer } from 'bun:ffi';
-import type { Assertion, AssertionRequest, Authenticator } from '@/cli/fido2/types';
+import { Effect } from 'effect';
+import { type Assertion, type AssertionRequest, type Authenticator, securityKeyFailure } from '@/cli/fido2/types';
 
 const CLIENT_DATA_VERSION = 1;
 const CREDENTIAL_VERSION = 1;
@@ -84,74 +85,76 @@ function errorName(address: Pointer | bigint | null): string | undefined {
 }
 
 export const windowsAuthenticator: Authenticator = {
-	async getAssertion(request: AssertionRequest): Promise<Assertion> {
-		if (process.platform !== 'win32') throw new Error('Windows WebAuthn is only available on Windows');
-		const webauthn = dlopen('webauthn.dll', {
-			WebAuthNGetApiVersionNumber: { args: [], returns: FFIType.u32 },
-			WebAuthNAuthenticatorGetAssertion: {
-				args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],
-				returns: FFIType.i32,
-			},
-			WebAuthNGetErrorName: { args: [FFIType.i32], returns: FFIType.ptr },
-			WebAuthNFreeAssertion: { args: [FFIType.ptr], returns: FFIType.void },
-		});
-		const user32 = dlopen('user32.dll', { GetForegroundWindow: { args: [], returns: FFIType.ptr } });
-		const kernel32 = dlopen('kernel32.dll', { GetConsoleWindow: { args: [], returns: FFIType.ptr } });
-		try {
-			if (webauthn.symbols.WebAuthNGetApiVersionNumber() < OPTIONS_VERSION) {
-				throw new Error('Windows WebAuthn API is too old');
-			}
-			const window = user32.symbols.GetForegroundWindow() ?? kernel32.symbols.GetConsoleWindow();
-			const retained: (Uint8Array | Uint16Array | ArrayBuffer)[] = [];
-			const keep = <T extends Uint8Array | Uint16Array | ArrayBuffer>(value: T): T => {
-				retained.push(value);
-				return value;
-			};
-			const rpId = keep(wide(request.rpId));
-			const algorithm = keep(wide('SHA-256'));
-			const type = keep(wide('public-key'));
-			const json = keep(request.clientDataJSON.slice());
-			const ids = request.allowCredentials.map((id) => keep(id.slice()));
-			const data = keep(clientData(json, algorithm));
-			const list = keep(credentials(ids, type));
-			const settings = keep(options(ids.length, list));
-			const output = keep(new ArrayBuffer(8));
-
-			request.touch();
-			const result = webauthn.symbols.WebAuthNAuthenticatorGetAssertion(
-				window,
-				ptr(rpId),
-				ptr(data),
-				ptr(settings),
-				ptr(output),
-			);
-			retained.length = 0;
-			if (result !== 0) {
-				const name = errorName(webauthn.symbols.WebAuthNGetErrorName(result));
-				throw new Error(name ?? `WebAuthn failed with HRESULT 0x${(result >>> 0).toString(16).padStart(8, '0')}`);
-			}
-			const handle = new DataView(output).getBigUint64(0, true);
-			const address = Number(handle);
-			if (address === 0) throw new Error('WebAuthn returned no assertion');
-			try {
-				const view = new DataView(toArrayBuffer(address, 0, ASSERTION_SIZE));
-				const authenticatorData = copyBytes(view, 4, 8);
-				const signature = copyBytes(view, 16, 24);
-				const credentialId = copyBytes(view, 36, 40);
-				const userHandle = copyBytes(view, 56, 64);
-				if (authenticatorData.byteLength === 0 || signature.byteLength === 0 || credentialId.byteLength === 0) {
-					throw new Error('WebAuthn returned an incomplete assertion');
-				}
-				return userHandle.byteLength > 0
-					? { credentialId, authenticatorData, signature, userHandle }
-					: { credentialId, authenticatorData, signature };
-			} finally {
-				webauthn.symbols.WebAuthNFreeAssertion(handle);
-			}
-		} finally {
-			kernel32.close();
-			user32.close();
-			webauthn.close();
-		}
-	},
+	getAssertion: request => Effect.try({ try: () => assert(request), catch: securityKeyFailure }),
 };
+
+function assert<E>(request: AssertionRequest<E>): Assertion {
+	if (process.platform !== 'win32') throw new Error('Windows WebAuthn is only available on Windows');
+	const webauthn = dlopen('webauthn.dll', {
+		WebAuthNGetApiVersionNumber: { args: [], returns: FFIType.u32 },
+		WebAuthNAuthenticatorGetAssertion: {
+			args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],
+			returns: FFIType.i32,
+		},
+		WebAuthNGetErrorName: { args: [FFIType.i32], returns: FFIType.ptr },
+		WebAuthNFreeAssertion: { args: [FFIType.ptr], returns: FFIType.void },
+	});
+	const user32 = dlopen('user32.dll', { GetForegroundWindow: { args: [], returns: FFIType.ptr } });
+	const kernel32 = dlopen('kernel32.dll', { GetConsoleWindow: { args: [], returns: FFIType.ptr } });
+	try {
+		if (webauthn.symbols.WebAuthNGetApiVersionNumber() < OPTIONS_VERSION) {
+			throw new Error('Windows WebAuthn API is too old');
+		}
+		const window = user32.symbols.GetForegroundWindow() ?? kernel32.symbols.GetConsoleWindow();
+		const retained: (Uint8Array | Uint16Array | ArrayBuffer)[] = [];
+		const keep = <T extends Uint8Array | Uint16Array | ArrayBuffer>(value: T): T => {
+			retained.push(value);
+			return value;
+		};
+		const rpId = keep(wide(request.rpId));
+		const algorithm = keep(wide('SHA-256'));
+		const type = keep(wide('public-key'));
+		const json = keep(request.clientDataJSON.slice());
+		const ids = request.allowCredentials.map((id) => keep(id.slice()));
+		const data = keep(clientData(json, algorithm));
+		const list = keep(credentials(ids, type));
+		const settings = keep(options(ids.length, list));
+		const output = keep(new ArrayBuffer(8));
+
+		request.touch();
+		const result = webauthn.symbols.WebAuthNAuthenticatorGetAssertion(
+			window,
+			ptr(rpId),
+			ptr(data),
+			ptr(settings),
+			ptr(output),
+		);
+		retained.length = 0;
+		if (result !== 0) {
+			const name = errorName(webauthn.symbols.WebAuthNGetErrorName(result));
+			throw new Error(name ?? `WebAuthn failed with HRESULT 0x${(result >>> 0).toString(16).padStart(8, '0')}`);
+		}
+		const handle = new DataView(output).getBigUint64(0, true);
+		const address = Number(handle);
+		if (address === 0) throw new Error('WebAuthn returned no assertion');
+		try {
+			const view = new DataView(toArrayBuffer(address, 0, ASSERTION_SIZE));
+			const authenticatorData = copyBytes(view, 4, 8);
+			const signature = copyBytes(view, 16, 24);
+			const credentialId = copyBytes(view, 36, 40);
+			const userHandle = copyBytes(view, 56, 64);
+			if (authenticatorData.byteLength === 0 || signature.byteLength === 0 || credentialId.byteLength === 0) {
+				throw new Error('WebAuthn returned an incomplete assertion');
+			}
+			return userHandle.byteLength > 0
+				? { credentialId, authenticatorData, signature, userHandle }
+				: { credentialId, authenticatorData, signature };
+		} finally {
+			webauthn.symbols.WebAuthNFreeAssertion(handle);
+		}
+	} finally {
+		kernel32.close();
+		user32.close();
+		webauthn.close();
+	}
+}

@@ -1,94 +1,124 @@
 #!/usr/bin/env bun
 
 import { resolve } from 'node:path';
+import { Effect } from 'effect';
 import { z } from 'zod';
 import { discover, resolvePublished } from '@/automation/managers';
 import { onboardingConfiguration } from '@/automation/onboarding';
 import { buildSnapshot } from '@/automation/snapshot';
-import type { Snapshot } from '@/automation/types';
+import type { DomainError } from '@/contract/errors';
+import { toDomainError } from '@/failure';
+import { attempt, main, parse, refuse, type ToolFailure } from '@/tooling/runtime';
 
-function command(args: string[]): string {
-	const result = Bun.spawnSync(args);
-	if (result.exitCode !== 0) throw new Error('Could not read repository revision');
-	return new TextDecoder().decode(result.stdout);
+function command(args: string[]): Effect.Effect<string, ToolFailure> {
+	return attempt(() => Bun.spawnSync(args)).pipe(
+		Effect.flatMap(result =>
+			result.exitCode === 0
+				? Effect.succeed(new TextDecoder().decode(result.stdout))
+				: refuse('Could not read repository revision')
+		),
+	);
 }
-let snapshot: Snapshot;
-if (process.argv[2] === '--github') {
+
+const fromGitHub = Effect.gen(function*() {
 	const name = process.argv[3];
-	if (!name || !/^\w[\w.-]*\/[\w.-]+$/.test(name)) throw new Error('Expected owner/repository');
-	const gh = <T extends z.ZodType>(path: string, schema: T): z.output<T> =>
-		schema.parse(JSON.parse(command(['gh', 'api', path])));
-	const metadata = gh(`repos/${name}`, z.object({ id: z.number(), default_branch: z.string() }));
-	const { sha } = gh(
+	if (!name || !/^\w[\w.-]*\/[\w.-]+$/.test(name)) return yield* refuse('Expected owner/repository');
+	const gh = <T extends z.ZodType>(path: string, schema: T) =>
+		command(['gh', 'api', path]).pipe(
+			Effect.flatMap(output => attempt((): unknown => JSON.parse(output))),
+			Effect.flatMap(value => parse(schema, value)),
+		);
+	const metadata = yield* gh(`repos/${name}`, z.object({ id: z.number(), default_branch: z.string() }));
+	const { sha } = yield* gh(
 		`repos/${name}/commits/${encodeURIComponent(metadata.default_branch)}`,
 		z.object({ sha: z.string() }),
 	);
-	const tree = gh(
+	const tree = yield* gh(
 		`repos/${name}/git/trees/${sha}?recursive=1`,
 		z.object({
 			truncated: z.boolean(),
 			tree: z.array(z.object({ path: z.string(), type: z.string(), mode: z.string() })),
 		}),
 	);
-	if (tree.truncated) throw new Error('Truncated repository tree');
-	snapshot = await buildSnapshot({
+	if (tree.truncated) return yield* refuse('Truncated repository tree');
+	return yield* buildSnapshot({
 		repository: { id: metadata.id, name, defaultBranch: metadata.default_branch },
 		sha,
 		entries: tree.tree,
-		read: async path => {
-			const file = gh(`repos/${name}/contents/${path}?ref=${sha}`, z.object({ size: z.number(), content: z.string() }));
-			if (file.size > 1048576) throw new Error('Discovery file limit exceeded');
-			return Buffer.from(file.content, 'base64').toString('utf8');
-		},
-		tags: async prefixes =>
-			prefixes.flatMap(prefix =>
-				gh(`repos/${name}/git/matching-refs/tags/${prefix}`, z.array(z.object({ ref: z.string() }))).map(row =>
-					row.ref.slice('refs/tags/'.length)
-				)
+		read: path =>
+			gh(`repos/${name}/contents/${path}?ref=${sha}`, z.object({ size: z.number(), content: z.string() })).pipe(
+				Effect.flatMap(file =>
+					file.size > 1048576
+						? refuse('Discovery file limit exceeded')
+						: Effect.succeed(Buffer.from(file.content, 'base64').toString('utf8'))
+				),
+				Effect.mapError(toDomainError),
 			),
+		tags: prefixes =>
+			Effect.forEach(
+				prefixes,
+				prefix =>
+					gh(`repos/${name}/git/matching-refs/tags/${prefix}`, z.array(z.object({ ref: z.string() }))).pipe(
+						Effect.map(rows => rows.map(row => row.ref.slice('refs/tags/'.length))),
+					),
+			).pipe(Effect.map(groups => groups.flat()), Effect.mapError(toDomainError)),
 	});
-} else {
+});
+
+const fromCheckout = Effect.gen(function*() {
 	const root = resolve(process.argv[2] ?? '.');
 	const git = (...args: string[]) => command(['git', '-C', root, ...args]);
-	const sha = git('rev-parse', 'HEAD').trim();
+	const sha = (yield* git('rev-parse', 'HEAD')).trim();
 	const remote = Bun.spawnSync(['git', '-C', root, 'remote', 'get-url', 'origin']);
 	const name = /github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?$/.exec(new TextDecoder().decode(remote.stdout).trim())?.[1]
 		?? 'local/inspection';
-	const tags = git('tag', '--list').split('\n').filter(Boolean);
-	snapshot = await buildSnapshot({
+	const tags = (yield* git('tag', '--list')).split('\n').filter(Boolean);
+	const entries = (yield* git('ls-tree', '-r', '-z', sha)).split('\0').filter(Boolean).map(line => {
+		const [meta = '', path = ''] = line.split('\t');
+		const [mode = '', type = ''] = meta.split(' ');
+		return { path, type, mode };
+	});
+	return yield* buildSnapshot({
 		repository: { id: 1, name, defaultBranch: 'HEAD' },
 		sha,
-		entries: git('ls-tree', '-r', '-z', sha).split('\0').filter(Boolean).map(line => {
-			const [meta = '', path = ''] = line.split('\t');
-			const [mode = '', type = ''] = meta.split(' ');
-			return { path, type, mode };
-		}),
-		read: async path => git('show', `${sha}:${path}`),
-		tags: async prefixes => tags.filter(tag => prefixes.some(prefix => tag.startsWith(prefix))),
+		entries,
+		read: path => git('show', `${sha}:${path}`).pipe(Effect.mapError(toDomainError)),
+		tags: prefixes => Effect.succeed(tags.filter(tag => prefixes.some(prefix => tag.startsWith(prefix)))),
 	});
+});
+
+function githubApi(path: string): Effect.Effect<unknown, DomainError> {
+	return attempt(() => Bun.spawnSync(['gh', 'api', path])).pipe(
+		Effect.flatMap((result): Effect.Effect<unknown, ToolFailure> =>
+			result.exitCode === 0
+				? attempt((): unknown => JSON.parse(new TextDecoder().decode(result.stdout)))
+				: new TextDecoder().decode(result.stderr).includes('HTTP 404')
+				? Effect.succeed(null)
+				: refuse(`gh api ${path} failed`)
+		),
+		Effect.mapError(toDomainError),
+	);
 }
-function githubApi(path: string): unknown {
-	const result = Bun.spawnSync(['gh', 'api', path]);
-	if (result.exitCode === 0) return JSON.parse(new TextDecoder().decode(result.stdout));
-	if (new TextDecoder().decode(result.stderr).includes('HTTP 404')) return null;
-	throw new Error(`gh api ${path} failed`);
-}
-const inventory = await resolvePublished(
-	discover(snapshot),
-	fetch,
-	process.argv[2] === '--github'
-		? { repository: snapshot.repository.name, github: async path => githubApi(path) }
-		: undefined,
-);
-console.log(
-	JSON.stringify(
-		{
-			repository: snapshot.repository,
-			sha: snapshot.sha,
-			inventory,
-			proposedConfiguration: onboardingConfiguration(snapshot, inventory),
-		},
-		null,
-		2,
-	),
+
+await main(
+	Effect.gen(function*() {
+		const snapshot = process.argv[2] === '--github' ? yield* fromGitHub : yield* fromCheckout;
+		const inventory = yield* resolvePublished(
+			discover(snapshot),
+			fetch,
+			process.argv[2] === '--github' ? { repository: snapshot.repository.name, github: githubApi } : undefined,
+		);
+		console.log(
+			JSON.stringify(
+				{
+					repository: snapshot.repository,
+					sha: snapshot.sha,
+					inventory,
+					proposedConfiguration: onboardingConfiguration(snapshot, inventory),
+				},
+				null,
+				2,
+			),
+		);
+	}),
 );

@@ -1,3 +1,4 @@
+import { Effect } from 'effect';
 import { parse as parseToml } from 'smol-toml';
 import { directory, inWorkspace, object } from '@/automation/managers/helpers';
 import type { Adapter } from '@/automation/managers/registry';
@@ -5,6 +6,7 @@ import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
 import { excluded, registry } from '@/automation/package-publication';
 import { fileProblem } from '@/contract/diagnostics';
+import { precondition } from '@/contract/errors';
 import { packageIdentity } from '@/package-url';
 export const cargoManager: Adapter<'cargo'> = {
 	name: 'cargo',
@@ -110,8 +112,7 @@ export const cargoManager: Adapter<'cargo'> = {
 	},
 	editVersion({ source, before, version }) {
 		const [path, key] = source.split('#');
-		if (!path || !key) throw new Error('Invalid version source');
-		const changed = new Map<string, string>();
+		if (!path || !key) return Effect.fail(precondition('Invalid version source'));
 		const section = key.slice(0, -'.version'.length);
 		let current = '',
 			count = 0;
@@ -127,48 +128,53 @@ export const cargoManager: Adapter<'cargo'> = {
 				return line;
 			})
 			.join('\n');
-		if (count !== 1) throw new Error(`Cannot safely edit ${source}`);
-		changed.set(path, after);
-		const result = changed.get(path);
-		if (result === undefined) throw new Error('Missing version edit');
-		return result;
+		return count === 1 ? Effect.succeed(after) : Effect.fail(precondition(`Cannot safely edit ${source}`));
 	},
 	updateDependencies({ snapshot, packages, version, changed }) {
 		// Update internal Cargo dependencies in every manifest, including unpublished consumers.
-		for (const [path, original] of Object.entries(snapshot.files).filter(([path]) => path.endsWith('Cargo.toml'))) {
-			let current = '';
-			const before = changed.get(path) ?? original;
-			const after = before
-				.split('\n')
-				.map((line) => {
-					const heading = line.match(/^\s*\[([^\]]+)\]/);
-					if (heading) current = heading[1] ?? '';
-					if (!/(?:^|\.)(?:dependencies|build-dependencies|dev-dependencies)(?:\.|$)/.test(current)) {
-						return line;
-					}
-					for (const pkg of packages.filter((p) => p.manager === 'cargo')) {
-						const name = line.match(/^\s*["']?([\w-]+)["']?\s*=/)?.[1];
-						const renamed = line.match(/package\s*=\s*["']([^"']+)["']/)?.[1];
-						if (
-							name === pkg.name
-							|| renamed === pkg.name
-							|| (current.endsWith(`.${pkg.name}`) && name === 'version')
-						) {
-							const pattern = line.includes('{')
-								? /(version\s*=\s*["'])([^"']+)(["'])/
-								: /(=\s*["'])([^"']+)(["'])/;
-							return line.replace(pattern, (_match, prefix: string, range: string, quote: string) => {
-								if (!/^[~^=]?\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(range)) {
-									throw new Error(`Cannot safely update Cargo dependency range ${range} in ${path}`);
-								}
-								return `${prefix}${range.match(/^[~^=]/)?.[0] ?? ''}${version}${quote}`;
-							});
+		return Effect.gen(function*() {
+			const manifests = Object.entries(snapshot.files).filter(([path]) => path.endsWith('Cargo.toml'));
+			for (const [path, original] of manifests) {
+				let current = '';
+				const unsafe: string[] = [];
+				const before = changed.get(path) ?? original;
+				const after = before
+					.split('\n')
+					.map((line) => {
+						const heading = line.match(/^\s*\[([^\]]+)\]/);
+						if (heading) current = heading[1] ?? '';
+						if (!/(?:^|\.)(?:dependencies|build-dependencies|dev-dependencies)(?:\.|$)/.test(current)) {
+							return line;
 						}
-					}
-					return line;
-				})
-				.join('\n');
-			if (after !== original) changed.set(path, after);
-		}
+						for (const pkg of packages.filter((p) => p.manager === 'cargo')) {
+							const name = line.match(/^\s*["']?([\w-]+)["']?\s*=/)?.[1];
+							const renamed = line.match(/package\s*=\s*["']([^"']+)["']/)?.[1];
+							if (
+								name === pkg.name
+								|| renamed === pkg.name
+								|| (current.endsWith(`.${pkg.name}`) && name === 'version')
+							) {
+								const pattern = line.includes('{')
+									? /(version\s*=\s*["'])([^"']+)(["'])/
+									: /(=\s*["'])([^"']+)(["'])/;
+								return line.replace(pattern, (match, prefix: string, range: string, quote: string) => {
+									if (!/^[~^=]?\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(range)) {
+										unsafe.push(range);
+										return match;
+									}
+									return `${prefix}${range.match(/^[~^=]/)?.[0] ?? ''}${version}${quote}`;
+								});
+							}
+						}
+						return line;
+					})
+					.join('\n');
+				const [range] = unsafe;
+				if (range !== undefined) {
+					return yield* precondition(`Cannot safely update Cargo dependency range ${range} in ${path}`);
+				}
+				if (after !== original) changed.set(path, after);
+			}
+		});
 	},
 };

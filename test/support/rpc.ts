@@ -1,5 +1,5 @@
 import { deserialize, serialize } from 'bun:jsc';
-import { durableObjectState, MemoryStorage } from './do-storage.ts';
+import { durableObjectState, MemoryStorage } from '@root/test/support/do-storage.ts';
 
 export interface RpcCall {
 	object: string;

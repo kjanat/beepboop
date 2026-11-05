@@ -1,5 +1,8 @@
+import { Effect } from 'effect';
 import { z } from 'zod';
-import type { SqlDatabase } from '@/persistence/d1/database';
+import type { DomainError } from '@/contract/errors';
+import { fromSync } from '@/failure';
+import { parse, type Sql, type SqlDatabase, sql } from '@/persistence/d1/database';
 
 const documentRow = z.object({ document: z.string() });
 const versionRow = z.object({ version: z.number().nullable() });
@@ -28,72 +31,94 @@ export interface Sealed {
 }
 
 export class CredentialStore {
-	constructor(private readonly db: SqlDatabase) {}
-	async list(): Promise<ListedCredential[]> {
-		const rows = await this.db.prepare(
-			'SELECT alias,version,key_id,active,created_at FROM credentials ORDER BY alias,version DESC',
-		).all();
-		return z.array(listedRow).parse(rows.results);
+	private readonly sql: Sql;
+	constructor(db: SqlDatabase) {
+		this.sql = sql(db);
 	}
-	async active(): Promise<ActiveCredential[]> {
-		const rows = await this.db.prepare(
-			'SELECT alias,version,created_at FROM credentials WHERE active=1 ORDER BY alias',
-		).all();
-		return z.array(activeRow).parse(rows.results);
+	list(): Effect.Effect<ListedCredential[], DomainError> {
+		return this.sql.all('SELECT alias,version,key_id,active,created_at FROM credentials ORDER BY alias,version DESC')
+			.pipe(Effect.flatMap(rows => parse(z.array(listedRow), rows)));
 	}
-	async activeVersion(alias: string): Promise<number | undefined> {
-		const row = await this.db.prepare('SELECT version FROM credentials WHERE alias=? AND active=1').bind(alias)
-			.first();
-		return row === null ? undefined : z.object({ version: z.number() }).parse(row).version;
-	}
-	async sealed(alias: string): Promise<SealedCredential | undefined> {
-		const row = await this.db.prepare('SELECT version,key_id,iv,ciphertext FROM credentials WHERE alias=? AND active=1')
-			.bind(alias).first();
-		return row === null ? undefined : sealedRow.parse(row);
-	}
-	async nextVersion(alias: string): Promise<number> {
-		const row = versionRow.parse(
-			await this.db.prepare('SELECT MAX(version) AS version FROM credentials WHERE alias=?').bind(alias).first(),
+	active(): Effect.Effect<ActiveCredential[], DomainError> {
+		return this.sql.all('SELECT alias,version,created_at FROM credentials WHERE active=1 ORDER BY alias').pipe(
+			Effect.flatMap(rows => parse(z.array(activeRow), rows)),
 		);
-		return (row.version ?? 0) + 1;
 	}
-	async store(sealed: Sealed): Promise<void> {
-		await this.db.batch([
-			this.db.prepare('UPDATE credentials SET active=0 WHERE alias=?').bind(sealed.alias),
-			this.db.prepare(
+	activeVersion(alias: string): Effect.Effect<number | undefined, DomainError> {
+		return this.sql.first('SELECT version FROM credentials WHERE alias=? AND active=1', alias).pipe(
+			Effect.flatMap(row =>
+				row === null
+					? Effect.undefined
+					: parse(z.object({ version: z.number() }), row).pipe(Effect.map(parsed => parsed.version))
+			),
+		);
+	}
+	sealed(alias: string): Effect.Effect<SealedCredential | undefined, DomainError> {
+		return this.sql.first('SELECT version,key_id,iv,ciphertext FROM credentials WHERE alias=? AND active=1', alias)
+			.pipe(Effect.flatMap(row => row === null ? Effect.undefined : parse(sealedRow, row)));
+	}
+	nextVersion(alias: string): Effect.Effect<number, DomainError> {
+		return this.sql.first('SELECT MAX(version) AS version FROM credentials WHERE alias=?', alias).pipe(
+			Effect.flatMap(row => parse(versionRow, row)),
+			Effect.map(row => (row.version ?? 0) + 1),
+		);
+	}
+	store(sealed: Sealed): Effect.Effect<void, DomainError> {
+		return this.sql.batch([
+			this.sql.statement('UPDATE credentials SET active=0 WHERE alias=?', sealed.alias),
+			this.sql.statement(
 				'INSERT INTO credentials(alias,version,key_id,ciphertext,iv,active,created_at) VALUES(?,?,?,?,?,1,?)',
-			).bind(sealed.alias, sealed.version, sealed.keyId, sealed.ciphertext, sealed.iv, Date.now()),
-		]);
+				sealed.alias,
+				sealed.version,
+				sealed.keyId,
+				sealed.ciphertext,
+				sealed.iv,
+				Date.now(),
+			),
+		]).pipe(Effect.asVoid);
 	}
-	async grantDocuments(filter: { alias?: string; repositoryId?: number } = {}): Promise<unknown[]> {
-		const query = filter.alias === undefined
-			? this.db.prepare('SELECT document FROM grants')
+	grantDocuments(filter: { alias?: string; repositoryId?: number } = {}): Effect.Effect<unknown[], DomainError> {
+		const rows = filter.alias === undefined
+			? this.sql.all('SELECT document FROM grants')
 			: filter.repositoryId === undefined
-			? this.db.prepare('SELECT document FROM grants WHERE alias=?').bind(filter.alias)
-			: this.db.prepare('SELECT document FROM grants WHERE alias=? AND repository_id=?').bind(
+			? this.sql.all('SELECT document FROM grants WHERE alias=?', filter.alias)
+			: this.sql.all(
+				'SELECT document FROM grants WHERE alias=? AND repository_id=?',
 				filter.alias,
 				filter.repositoryId,
 			);
-		return z.array(documentRow).parse((await query.all()).results).map(row => JSON.parse(row.document));
+		return rows.pipe(
+			Effect.flatMap(rows => parse(z.array(documentRow), rows)),
+			Effect.flatMap(rows => fromSync(() => rows.map((row): unknown => JSON.parse(row.document)))),
+		);
 	}
-	async hasGrant(id: string): Promise<boolean> {
-		return await this.db.prepare('SELECT id FROM grants WHERE id=?').bind(id).first() !== null;
+	hasGrant(id: string): Effect.Effect<boolean, DomainError> {
+		return this.sql.first('SELECT id FROM grants WHERE id=?', id).pipe(Effect.map(row => row !== null));
 	}
-	async putGrant(grant: { id: string; alias: string; repositoryId: number }): Promise<void> {
-		await this.db.prepare(
+	putGrant(grant: { id: string; alias: string; repositoryId: number }): Effect.Effect<void, DomainError> {
+		return this.sql.run(
 			'INSERT INTO grants(id,alias,repository_id,document) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET alias=excluded.alias,repository_id=excluded.repository_id,document=excluded.document',
-		).bind(grant.id, grant.alias, grant.repositoryId, JSON.stringify(grant)).run();
+			grant.id,
+			grant.alias,
+			grant.repositoryId,
+			JSON.stringify(grant),
+		).pipe(Effect.asVoid);
 	}
-	async deleteGrant(id: string): Promise<void> {
-		await this.db.prepare('DELETE FROM grants WHERE id=?').bind(id).run();
+	deleteGrant(id: string): Effect.Effect<void, DomainError> {
+		return this.sql.run('DELETE FROM grants WHERE id=?', id).pipe(Effect.asVoid);
 	}
-	async deliveries(): Promise<DeliveryRow[]> {
-		const rows = await this.db.prepare('SELECT grant_id,version,state,updated_at FROM secret_deliveries').all();
-		return z.array(deliveryRow).parse(rows.results);
+	deliveries(): Effect.Effect<DeliveryRow[], DomainError> {
+		return this.sql.all('SELECT grant_id,version,state,updated_at FROM secret_deliveries').pipe(
+			Effect.flatMap(rows => parse(z.array(deliveryRow), rows)),
+		);
 	}
-	async recordDelivery(grantId: string, version: number, state: string): Promise<void> {
-		await this.db.prepare(
+	recordDelivery(grantId: string, version: number, state: string): Effect.Effect<void, DomainError> {
+		return this.sql.run(
 			'INSERT INTO secret_deliveries(grant_id,version,state,updated_at) VALUES(?,?,?,?) ON CONFLICT(grant_id,version) DO UPDATE SET state=excluded.state,updated_at=excluded.updated_at',
-		).bind(grantId, version, state, Date.now()).run();
+			grantId,
+			version,
+			state,
+			Date.now(),
+		).pipe(Effect.asVoid);
 	}
 }

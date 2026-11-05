@@ -1,4 +1,4 @@
-import type { FakeGitHub, Repository } from './github.ts';
+import type { FakeGitHub, Repository } from '@root/test/support/github.ts';
 
 export const publishWorkflow = `name: Publish
 run-name: \${{ inputs.beepboop_title || github.workflow }}
