@@ -1,6 +1,24 @@
 {
 	"$schema": "https://docs.renovatebot.com/renovate-schema.json",
-	"extends": [
-		"config:recommended"
+	"extends": ["config:recommended"],
+	"addLabels": ["dependencies"],
+	"assignees": ["kjanat"],
+	"assignAutomerge": true,
+	"automerge": true,
+	"automergeStrategy": "squash",
+	"platformAutomerge": true,
+	"github-actions": { "enabled": false },
+	"minimumReleaseAge": "48h",
+	"osvVulnerabilityAlerts": true,
+	"vulnerabilityAlerts": { "minimumReleaseAge": null },
+	"lockFileMaintenance": {
+		"enabled": true,
+		"schedule": ["before 4am on monday"]
+	},
+	"packageRules": [
+		{
+			"matchPackageNames": ["python", "python/cpython"],
+			"versioning": "regex:^3\\.(?<major>\\d+)(\\.(?<patch>\\d+))?$"
+		}
 	]
 }
