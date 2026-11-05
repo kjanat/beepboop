@@ -143,8 +143,3 @@ export function decodeRequest<S extends z.ZodType>(schema: S, value: unknown): E
 	const parsed = schema.safeParse(value);
 	return parsed.success ? Effect.succeed(parsed.data) : Effect.fail(invalidRequest(parsed.error));
 }
-export function parseRequest<S extends z.ZodType>(schema: S, value: unknown): z.output<S> {
-	const parsed = schema.safeParse(value);
-	if (!parsed.success) throw invalidRequest(parsed.error);
-	return parsed.data;
-}

@@ -1,16 +1,22 @@
 import { isDeepStrictEqual } from 'node:util';
-import { parseDocument } from 'yaml';
+import { Result } from 'effect';
+import { type Document, parseDocument } from 'yaml';
 import { object, yaml } from '@/automation/managers/helpers';
 import { packageId } from '@/automation/package-identity';
 import type { SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
 import type { Package, Snapshot } from '@/automation/types';
+import { type DomainError, precondition } from '@/contract/errors';
+import { toDomainError } from '@/failure';
 
 export function actionRole(value: unknown): string | undefined {
 	if (typeof value !== 'string') return;
 	return /^(?:(?:\$|\.)\/actions\/|kjanat\/beepboop\/actions\/)(begin|prepare|report)(?:@[\w./-]+)?$/.exec(value)?.[1];
 }
-export function workflowEvidence(file: string, source: string): WorkflowEvidence {
-	const document = yaml(source), trigger = document.on;
+export function workflowEvidence(file: string, source: string): Result.Result<WorkflowEvidence, DomainError> {
+	return yaml(source).pipe(Result.map(document => evidenceOf(file, document)));
+}
+function evidenceOf(file: string, document: Record<string, unknown>): WorkflowEvidence {
+	const trigger = document.on;
 	const result: WorkflowEvidence = {
 		file,
 		jobs: Object.keys(object(document.jobs)),
@@ -70,10 +76,31 @@ export function integrateWorkflow(
 	packages: Package[],
 	actionsRevision?: string,
 	required: string[] = packages.map(packageId),
-): { content: string; blockers: string[]; notes: string[] } {
+): Result.Result<Integration, DomainError> {
 	const path = `.github/workflows/${choice.file}`, original = snapshot.files[path];
 	const document = parseDocument(original ?? 'name: Prepare release\non: {}\njobs: {}\n');
-	if (document.errors.length) throw new Error(`${choice.file}: invalid YAML`);
+	if (document.errors.length) return Result.fail(precondition(`${choice.file}: invalid YAML`));
+	return Result.try({
+		try: () => integrate(document, snapshot, original, stream, operation, choice, packages, actionsRevision, required),
+		catch: toDomainError,
+	});
+}
+interface Integration {
+	content: string;
+	blockers: string[];
+	notes: string[];
+}
+function integrate(
+	document: Document.Parsed,
+	snapshot: Snapshot,
+	original: string | undefined,
+	stream: string,
+	operation: 'prepare' | 'promote',
+	choice: SetupWorkflow,
+	packages: Package[],
+	actionsRevision: string | undefined,
+	required: string[],
+): Integration {
 	const root = object(document.toJS({ maxAliasCount: 100 })), jobs = object(root.jobs);
 	const blockers: string[] = [], notes: string[] = [];
 	const fail = (message: string) => blockers.push(`${choice.file}: ${message}`);

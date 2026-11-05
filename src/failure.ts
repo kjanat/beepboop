@@ -2,6 +2,7 @@ import { Cause, Effect } from 'effect';
 import { z } from 'zod';
 import { legacyDiagnostic } from '@/contract/diagnostics';
 import { type ApiError, DomainError, envelope, messageOf, statusOf } from '@/contract/errors';
+import { InvalidPackageUrl } from '@/package-url';
 
 interface Classified {
 	problem: ApiError;
@@ -24,7 +25,7 @@ export function classify(error: unknown, incident: string): Classified {
 		const message = 'Invalid JSON in request or configuration';
 		return { problem: { code: 'invalid', issues: [{ path: [], message }] }, message };
 	}
-	if (error instanceof Error && error.constructor === Error) {
+	if (error instanceof InvalidPackageUrl || (error instanceof Error && error.constructor === Error)) {
 		return {
 			problem: { code: 'precondition', diagnostics: [legacyDiagnostic(error.message)] },
 			message: error.message,

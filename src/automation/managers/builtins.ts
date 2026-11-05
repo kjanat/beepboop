@@ -57,4 +57,4 @@ const adapters = {
 	},
 } satisfies { [M in ManagerName]: Adapter<M> };
 
-export const managerRegistry = new ManagerRegistry(Object.values(adapters));
+export const managerRegistry = new ManagerRegistry(adapters);

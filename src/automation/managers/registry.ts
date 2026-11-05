@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from 'effect';
+import { Context, Effect, Layer, Result } from 'effect';
 import {
 	type Channel,
 	type ChannelOutcome,
@@ -12,10 +12,10 @@ import { packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import type { Inventory, Package, Publication, Snapshot } from '@/automation/types';
 import { destinationsOf, type ManagerDestinationId, type ManagerName, managerSpec } from '@/contract/catalog';
-import type { Diagnostic } from '@/contract/diagnostics';
+import { type Diagnostic, fileProblem } from '@/contract/diagnostics';
 import { type DomainError, precondition } from '@/contract/errors';
 import { fromPromise } from '@/failure';
-import { type PackageIdentity, packageIdentity } from '@/package-url';
+import { InvalidPackageUrl, type PackageIdentity, parsePackageIdentity } from '@/package-url';
 
 export interface Manager {
 	readonly name: ManagerName;
@@ -68,13 +68,11 @@ function unique(diagnostics: Diagnostic[]): Diagnostic[] {
 export function emptyInventory(): Inventory {
 	return { packages: [], workflows: [], managers: [], diagnostics: [], publicationOrder: [] };
 }
+export type Adapters = { readonly [M in ManagerName]: Adapter<M> };
 export class ManagerRegistry {
-	private readonly managers = new Map<ManagerName, Manager>();
-	constructor(managers: Manager[]) {
-		for (const manager of managers) {
-			if (this.managers.has(manager.name)) throw new Error(`Duplicate manager: ${manager.name}`);
-			this.managers.set(manager.name, manager);
-		}
+	private readonly managers: ReadonlyMap<ManagerName, Manager>;
+	constructor(private readonly adapters: Adapters) {
+		this.managers = new Map(Object.values(adapters).map(manager => [manager.name, manager]));
 	}
 	names(): ManagerName[] {
 		return [...this.managers.keys()];
@@ -200,13 +198,18 @@ export class ManagerRegistry {
 	discover(snapshot: Snapshot, enabled = this.names()): Inventory {
 		const result = emptyInventory();
 		for (const name of new Set(enabled)) {
-			const manager = this.managers.get(name);
-			if (!manager) throw new Error(`Unknown manager: ${name}`);
+			const manager: Manager = this.adapters[name];
 			const inventory = manager.discover(snapshot);
 			for (const pkg of inventory.packages) {
-				const identity = pkg.identity ?? manager.identity?.(pkg, snapshot);
-				if (!identity) throw new Error(`Manager ${name} did not identify package ${pkg.name}`);
-				pkg.identity = packageIdentity(identity);
+				const identified = pkg.identity ?? manager.identity?.(pkg, snapshot);
+				const identity = identified === undefined
+					? Result.fail(new InvalidPackageUrl({ message: `Manager ${name} did not identify package ${pkg.name}` }))
+					: parsePackageIdentity(identified);
+				if (Result.isFailure(identity)) {
+					result.diagnostics.push(fileProblem(pkg.manifest, 'invalid-manifest', identity.failure.message));
+					continue;
+				}
+				pkg.identity = identity.success;
 				result.packages.push(pkg);
 			}
 			result.workflows.push(...inventory.workflows);

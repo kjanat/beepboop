@@ -3,7 +3,7 @@ import type { Execution, Publication } from '@/automation/types.ts';
 
 /** Never combine evidence from different commits, configurations, or versions. */
 export function releaseSummaries(executions: Execution[]) {
-	const groups = new Map<string, Execution[]>();
+	const groups = new Map<string, { first: Execution; runs: Execution[] }>();
 	for (const execution of executions) {
 		const identity = JSON.stringify([
 			execution.repositoryId,
@@ -14,13 +14,11 @@ export function releaseSummaries(executions: Execution[]) {
 			execution.releaseSet?.group,
 			execution.releaseSet?.preparationId,
 		]);
-		const group = groups.get(identity) ?? [];
-		group.push(execution);
-		groups.set(identity, group);
+		const group = groups.get(identity);
+		if (group) group.runs.push(execution);
+		else groups.set(identity, { first: execution, runs: [execution] });
 	}
-	return [...groups.values()].map(runs => {
-		const first = runs[0];
-		if (!first) throw new Error('Release group is empty');
+	return [...groups.values()].map(({ first, runs }) => {
 		const required = first.releaseSet?.required ?? first.configuration.streams[first.stream]?.required ?? [];
 		const publications = required.map(id => {
 			const reports = runs.flatMap(run => run.publications.filter(publication => matchesPublication(id, publication)));
@@ -47,18 +45,16 @@ export type ReleaseSetState = 'succeeded' | 'needs attention' | 'awaiting approv
 
 /** Group the operations of one frozen monorepo release, including independent versions. */
 export function releaseSetSummaries(executions: Execution[]) {
-	const sets = new Map<string, Execution[]>();
+	const sets = new Map<string, { first: Execution; operationCount?: number; runs: Execution[] }>();
 	for (const execution of executions) {
-		if (!execution.releaseSet?.workflowId) continue;
-		const id = execution.releaseSet.workflowId;
-		const runs = sets.get(id) ?? [];
-		runs.push(execution);
-		sets.set(id, runs);
+		const id = execution.releaseSet?.workflowId;
+		if (!id) continue;
+		const set = sets.get(id);
+		if (set) set.runs.push(execution);
+		else sets.set(id, { first: execution, operationCount: execution.releaseSet?.operationCount, runs: [execution] });
 	}
-	return [...sets].map(([id, runs]) => {
-		const first = runs[0];
-		if (!first?.releaseSet) throw new Error('Empty release set');
-		const total = first.releaseSet.operationCount ?? runs.length;
+	return [...sets].map(([id, { first, operationCount, runs }]) => {
+		const total = operationCount ?? runs.length;
 		const complete = runs.filter(run => run.state === 'succeeded').length;
 		const error = runs.find(run => run.releaseSet?.workflowError)?.releaseSet?.workflowError;
 		const attention = Boolean(error) || runs.some(run => ['failed', 'cancelled', 'uncertain'].includes(run.state));

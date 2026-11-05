@@ -1,3 +1,4 @@
+import { Result } from 'effect';
 import { directory } from '@/automation/managers/helpers';
 import { goreleaserConfig } from '@/contract/catalog';
 import { compareVersions, semver } from '@/model';
@@ -18,11 +19,7 @@ export function latestTag(
 	return tags.flatMap(tag => {
 		if (!tag.startsWith(prefix)) return [];
 		const version = tag.slice(prefix.length);
-		try {
-			semver(version);
-		} catch {
-			return [];
-		}
+		if (Result.isFailure(Result.try(() => semver(version)))) return [];
 		return accept(version) ? [version.replace(/^v/, '')] : [];
 	}).sort(compareVersions).at(-1);
 }

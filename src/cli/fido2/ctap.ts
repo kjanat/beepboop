@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 import { bytes, type CborMap, type CborValue, decode, encode, map } from '@/cli/fido2/cbor';
 import { type PinProtocol, pinProtocol, sha256 } from '@/cli/fido2/pin';
 import {
@@ -10,7 +10,6 @@ import {
 	type HidDevice,
 	type HidTransport,
 	SecurityKeyError,
-	securityKeyFailure,
 } from '@/cli/fido2/types';
 
 // CTAPHID command bytes and CTAP2 status codes, from CTAP 2.1 sections 8.1.9 and 8.2.
@@ -31,10 +30,6 @@ export function ctapError(code: number): SecurityKeyError {
 		code,
 		message: status.get(code) ?? `Security key error 0x${code.toString(16).padStart(2, '0')}`,
 	});
-}
-
-function malformed<A>(run: () => A): Effect.Effect<A, SecurityKeyError> {
-	return Effect.try({ try: run, catch: securityKeyFailure });
 }
 
 const packet = 64;
@@ -106,7 +101,8 @@ class Channel {
 		waiting?: () => void,
 	): Effect.Effect<CborMap, SecurityKeyError> {
 		return Effect.gen({ self: this }, function*() {
-			const payload = yield* malformed(() => Uint8Array.from([operation, ...(parameters ? encode(parameters) : [])]));
+			const encoded = parameters ? yield* Effect.fromResult(encode(parameters)) : new Uint8Array();
+			const payload = Uint8Array.from([operation, ...encoded]);
 			yield* this.send(command.cbor, payload);
 			let prompted = false;
 			for (;;) {
@@ -124,7 +120,9 @@ class Channel {
 				}
 				const code = reply.data[0] ?? 0;
 				if (code !== 0) return yield* ctapError(code);
-				return reply.data.length > 1 ? yield* malformed(() => map(decode(reply.data.slice(1)))) : new Map();
+				return reply.data.length > 1
+					? yield* Effect.fromResult(decode(reply.data.slice(1)).pipe(Result.flatMap(map)))
+					: new Map();
 			}
 		});
 	}
@@ -143,25 +141,26 @@ function pinToken<E>(
 		const supported = info.get(0x06);
 		const version = Array.isArray(supported) && supported.includes(2) ? 2 : 1;
 		const agreement = yield* channel.cbor(0x06, new Map([[1, version], [2, 0x02]]));
-		const protocol = yield* malformed(() => pinProtocol(version, map(agreement.get(1))));
+		const protocol = yield* Effect.fromResult(
+			map(agreement.get(1)).pipe(Result.flatMap(key => pinProtocol(version, key))),
+		);
 		const pinHash = sha256(new TextEncoder().encode(yield* request.pin)).slice(0, 16);
-		const options = yield* malformed(() => map(info.get(0x04)));
+		const options = yield* Effect.fromResult(map(info.get(0x04)));
+		const encrypted = yield* Effect.fromResult(protocol.encrypt(pinHash));
 		const parameters: CborMap = options.get('pinUvAuthToken') === true
 			? new Map<number, CborValue>([
 				[1, version],
 				[2, 0x09],
 				[3, protocol.platformKey],
-				[6, protocol.encrypt(pinHash)],
+				[6, encrypted],
 				// Permission 0x02 is getAssertion, from CTAP 2.1 section 6.5.5.7.
 				[9, 0x02],
 				[10, request.rpId],
 			])
-			: new Map<number, CborValue>([[1, version], [2, 0x05], [3, protocol.platformKey], [
-				6,
-				protocol.encrypt(pinHash),
-			]]);
+			: new Map<number, CborValue>([[1, version], [2, 0x05], [3, protocol.platformKey], [6, encrypted]]);
 		const reply = yield* channel.cbor(0x06, parameters);
-		return { protocol, token: yield* malformed(() => protocol.decrypt(bytes(reply.get(2)))) };
+		const token = yield* Effect.fromResult(bytes(reply.get(2)).pipe(Result.flatMap(protocol.decrypt)));
+		return { protocol, token };
 	});
 }
 
@@ -183,7 +182,7 @@ function holdsCredential<E>(channel: Channel, request: AssertionRequest<E>): Eff
 function assert<E>(channel: Channel, request: AssertionRequest<E>): Effect.Effect<Assertion, SecurityKeyError | E> {
 	return Effect.gen(function*() {
 		const info = yield* channel.cbor(0x04, undefined);
-		const options = yield* malformed(() => map(info.get(0x04)));
+		const options = yield* Effect.fromResult(map(info.get(0x04)));
 		const parameters = new Map<number, CborValue>([
 			[1, request.rpId],
 			[2, request.clientDataHash],
@@ -203,14 +202,14 @@ function assert<E>(channel: Channel, request: AssertionRequest<E>): Effect.Effec
 		const credential = reply.get(1);
 		const user = reply.get(4);
 		const id = credential instanceof Map
-			? yield* malformed(() => bytes(credential.get('id')))
+			? yield* Effect.fromResult(bytes(credential.get('id')))
 			: request.allowCredentials[0];
 		if (!id) return yield* new SecurityKeyError({ message: 'The security key returned no credential' });
 		const userId = user instanceof Map ? user.get('id') : undefined;
 		return {
 			credentialId: id,
-			authenticatorData: yield* malformed(() => bytes(reply.get(2))),
-			signature: yield* malformed(() => bytes(reply.get(3))),
+			authenticatorData: yield* Effect.fromResult(bytes(reply.get(2))),
+			signature: yield* Effect.fromResult(bytes(reply.get(3))),
 			...(userId instanceof Uint8Array ? { userHandle: userId } : {}),
 		};
 	});

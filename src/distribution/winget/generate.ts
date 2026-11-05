@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Kaj Kowalski; Copyright (c) 2021 rhysd
+import { Effect } from 'effect';
 import { stringify } from 'yaml';
 import * as z from 'zod';
+import { type DomainError, precondition } from '@/contract/errors';
 import { plainText } from '@/distribution/winget/notes';
 import type {
 	DefaultLocaleManifest,
@@ -16,6 +18,7 @@ import {
 	schemaVersion,
 	versionManifest,
 } from '@/distribution/winget/schema';
+import { fromSync } from '@/failure';
 
 const metadata = defaultLocaleManifest.omit({
 	PackageIdentifier: true,
@@ -62,107 +65,121 @@ export interface Manifests {
 	defaultLocale: DefaultLocaleManifest;
 }
 export const releaseNotesLimit = 10000;
-export function parseChecksums(source: string): Map<string, string> {
-	const result = new Map<string, string>();
-	for (const [index, line] of source.split(/\r?\n/).entries()) {
-		if (!line) continue;
-		const match = /^([a-fA-F0-9]{64}) [ *](\S+)$/.exec(line);
-		if (!match?.[1] || !match[2]) throw new Error(`Malformed checksum line ${index + 1}`);
-		if (result.has(match[2])) throw new Error(`Duplicate checksum for ${match[2]}`);
-		result.set(match[2], match[1].toUpperCase());
-	}
-	return result;
-}
-function expand(value: string, variables: Record<string, string>): string {
-	return value.replace(/\{([^{}]+)\}/g, (_match, key: string) => {
-		const variable = Object.hasOwn(variables, key) ? variables[key] : undefined;
-		if (variable === undefined) throw new Error(`Unknown template variable ${key}`);
-		return variable;
+export function parseChecksums(source: string): Effect.Effect<Map<string, string>, DomainError> {
+	return Effect.gen(function*() {
+		const result = new Map<string, string>();
+		for (const [index, line] of source.split(/\r?\n/).entries()) {
+			if (!line) continue;
+			const match = /^([a-fA-F0-9]{64}) [ *](\S+)$/.exec(line);
+			if (!match?.[1] || !match[2]) return yield* precondition(`Malformed checksum line ${index + 1}`);
+			if (result.has(match[2])) return yield* precondition(`Duplicate checksum for ${match[2]}`);
+			result.set(match[2], match[1].toUpperCase());
+		}
+		return result;
 	});
 }
-function https(value: string): string {
-	const url = new URL(value);
-	if (url.protocol !== 'https:' || url.username || url.password || url.hash) {
-		throw new Error('Expected an HTTPS release URL');
-	}
-	return value;
+function expand(value: string, variables: Record<string, string>): Effect.Effect<string, DomainError> {
+	const unknown = [...value.matchAll(/\{([^{}]+)\}/g)].map(match => match[1] ?? '').find(key =>
+		!Object.hasOwn(variables, key)
+	);
+	return unknown === undefined
+		? Effect.succeed(value.replace(/\{([^{}]+)\}/g, (_match, key: string) => variables[key] ?? ''))
+		: Effect.fail(precondition(`Unknown template variable ${unknown}`));
 }
-export function capReleaseNotes(notes: string, url: string, limit = releaseNotesLimit): string {
+function https(value: string): Effect.Effect<string, DomainError> {
+	return fromSync(() => new URL(value)).pipe(
+		Effect.filterOrFail(
+			url => url.protocol === 'https:' && !url.username && !url.password && !url.hash,
+			() => precondition('Expected an HTTPS release URL'),
+		),
+		Effect.as(value),
+	);
+}
+export function capReleaseNotes(
+	notes: string,
+	url: string,
+	limit = releaseNotesLimit,
+): Effect.Effect<string, DomainError> {
 	const trimmed = notes.replaceAll('\r\n', '\n').trim();
-	if (trimmed.length <= limit) return trimmed;
+	if (trimmed.length <= limit) return Effect.succeed(trimmed);
 	const tail = `\n\nFull release notes: ${url}`;
-	if (tail.length >= limit) throw new Error('Release notes URL exceeds the length limit');
+	if (tail.length >= limit) return Effect.fail(precondition('Release notes URL exceeds the length limit'));
 	let cut = trimmed.lastIndexOf('\n\n', limit - tail.length);
 	if (cut <= 0) cut = limit - tail.length;
 	if (/[\uD800-\uDBFF]/.test(trimmed[cut - 1] ?? '')) cut--;
-	return trimmed.slice(0, cut).trimEnd() + tail;
+	return Effect.succeed(trimmed.slice(0, cut).trimEnd() + tail);
 }
-export function generateManifests(options: GenerateOptions): Manifests {
-	const config = wingetConfiguration.parse(options.configuration);
-	const version = options.version;
-	if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
-		throw new Error('Expected stable MAJOR.MINOR.PATCH version');
-	}
-	const tag = options.tag ?? `v${version}`;
-	// biome-ignore lint/suspicious/noControlCharactersInRegex: Reject control characters in release tags.
-	if (!tag || /[\x00-\x20?#]/.test(tag)) throw new Error('Invalid release tag');
-	const variables = { version, tag: encodeURIComponent(tag) };
-	const checksums = parseChecksums(options.checksums);
-	const releaseNotesUrl = https(expand(config.releaseNotesUrl, variables));
-	const entries = config.installers.map(item => {
-		const asset = expand(item.asset, variables);
-		if (!asset || /[\\/]/.test(asset) || asset === '.' || asset === '..') throw new Error('Expected an asset filename');
-		const digest = checksums.get(asset);
-		if (!digest) throw new Error(`Checksum missing for ${asset}`);
-		return {
-			Architecture: item.architecture,
-			InstallerUrl: https(expand(item.url, { ...variables, asset: encodeURIComponent(asset) })),
-			InstallerSha256: digest,
-		};
-	});
-	if (new Set(entries.map(e => e.Architecture)).size !== entries.length) {
-		throw new Error('Duplicate installer architecture');
-	}
-	for (
-		const file of [
-			...(config.installer.NestedInstallerFiles ?? []),
-			...(config.installer.InstallationMetadata?.Files ?? []),
-		]
-	) {
+export function generateManifests(options: GenerateOptions): Effect.Effect<Manifests, DomainError> {
+	return Effect.gen(function*() {
+		const config = yield* fromSync(() => wingetConfiguration.parse(options.configuration));
+		const version = options.version;
+		if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
+			return yield* precondition('Expected stable MAJOR.MINOR.PATCH version');
+		}
+		const tag = options.tag ?? `v${version}`;
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: Reject control characters in release tags.
+		if (!tag || /[\x00-\x20?#]/.test(tag)) return yield* precondition('Invalid release tag');
+		const variables = { version, tag: encodeURIComponent(tag) };
+		const checksums = yield* parseChecksums(options.checksums);
+		const releaseNotesUrl = yield* https(yield* expand(config.releaseNotesUrl, variables));
+		const entries: { Architecture: string; InstallerUrl: string; InstallerSha256: string }[] = [];
+		for (const item of config.installers) {
+			const asset = yield* expand(item.asset, variables);
+			if (!asset || /[\\/]/.test(asset) || asset === '.' || asset === '..') {
+				return yield* precondition('Expected an asset filename');
+			}
+			const digest = checksums.get(asset);
+			if (!digest) return yield* precondition(`Checksum missing for ${asset}`);
+			entries.push({
+				Architecture: item.architecture,
+				InstallerUrl: yield* https(yield* expand(item.url, { ...variables, asset: encodeURIComponent(asset) })),
+				InstallerSha256: digest,
+			});
+		}
+		if (new Set(entries.map(e => e.Architecture)).size !== entries.length) {
+			return yield* precondition('Duplicate installer architecture');
+		}
+		for (
+			const file of [
+				...(config.installer.NestedInstallerFiles ?? []),
+				...(config.installer.InstallationMetadata?.Files ?? []),
+			]
+		) {
+			if (
+				/^[\\/]|^[A-Za-z]:/.test(file.RelativeFilePath)
+				|| file.RelativeFilePath.split(/[\\/]/).some(part => part === '..')
+			) return yield* precondition('Unsafe installer relative path');
+		}
 		if (
-			/^[\\/]|^[A-Za-z]:/.test(file.RelativeFilePath)
-			|| file.RelativeFilePath.split(/[\\/]/).some(part => part === '..')
-		) throw new Error('Unsafe installer relative path');
-	}
-	if (
-		config.installer.InstallerType === 'zip'
-		&& (!config.installer.NestedInstallerType || !config.installer.NestedInstallerFiles?.length)
-	) throw new Error('ZIP installers require nested installer metadata');
-	const common = {
-		PackageIdentifier: config.packageIdentifier,
-		PackageVersion: version,
-		ManifestVersion: schemaVersion,
-	};
-	const notes = capReleaseNotes(plainText(options.releaseNotes), releaseNotesUrl);
-	return {
-		version: versionManifest.parse({ ...common, DefaultLocale: config.defaultLocale, ManifestType: 'version' }),
-		installer: installerManifest.parse({
-			...config.installer,
-			...common,
-			InstallerLocale: config.defaultLocale,
-			ReleaseDate: options.releaseDate,
-			Installers: entries,
-			ManifestType: 'installer',
-		}),
-		defaultLocale: defaultLocaleManifest.parse({
-			...config.metadata,
-			...common,
-			PackageLocale: config.defaultLocale,
-			...(notes ? { ReleaseNotes: notes } : {}),
-			ReleaseNotesUrl: releaseNotesUrl,
-			ManifestType: 'defaultLocale',
-		}),
-	};
+			config.installer.InstallerType === 'zip'
+			&& (!config.installer.NestedInstallerType || !config.installer.NestedInstallerFiles?.length)
+		) return yield* precondition('ZIP installers require nested installer metadata');
+		const common = {
+			PackageIdentifier: config.packageIdentifier,
+			PackageVersion: version,
+			ManifestVersion: schemaVersion,
+		};
+		const notes = yield* capReleaseNotes(plainText(options.releaseNotes), releaseNotesUrl);
+		return yield* fromSync(() => ({
+			version: versionManifest.parse({ ...common, DefaultLocale: config.defaultLocale, ManifestType: 'version' }),
+			installer: installerManifest.parse({
+				...config.installer,
+				...common,
+				InstallerLocale: config.defaultLocale,
+				ReleaseDate: options.releaseDate,
+				Installers: entries,
+				ManifestType: 'installer',
+			}),
+			defaultLocale: defaultLocaleManifest.parse({
+				...config.metadata,
+				...common,
+				PackageLocale: config.defaultLocale,
+				...(notes ? { ReleaseNotes: notes } : {}),
+				ReleaseNotesUrl: releaseNotesUrl,
+				ManifestType: 'defaultLocale',
+			}),
+		}));
+	});
 }
 export function renderManifests(manifests: Manifests): Record<string, string> {
 	const id = manifests.version.PackageIdentifier, locale = manifests.version.DefaultLocale;

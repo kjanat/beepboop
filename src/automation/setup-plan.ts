@@ -1,90 +1,65 @@
+import { Effect } from 'effect';
+import { z } from 'zod';
 import { exclusionReasons, type PackagePublication } from '@/automation/package-publication';
-import type { SetupChoices, SetupPlan, SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
-import { array, boolean, oneOf, record, string } from '@/model';
+import type { SetupPlan, SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
+import { type DomainError, precondition } from '@/contract/errors';
 
-function strings(value: unknown): string[] {
-	return array(value).map(string);
-}
-function workflow(value: unknown): SetupWorkflow {
-	const data = record(value);
-	return {
-		file: string(data.file),
-		...(data.job === undefined ? {} : { job: string(data.job) }),
-		triggers: oneOf(data.triggers, ['review', 'dispatchOnly', 'preserve'], 'Invalid workflow triggers'),
-		commands: string(data.commands),
-		publicationSteps: Object.fromEntries(
-			Object.entries(record(data.publicationSteps)).map(([id, step]) => [id, string(step)] as const),
-		),
-	};
-}
-function choices(value: unknown): SetupChoices {
-	const data = record(value);
-	return {
-		streams: array(data.streams).map(raw => {
-			const stream = record(raw);
-			return {
-				name: string(stream.name),
-				packages: strings(stream.packages),
-				versioning: oneOf(stream.versioning, ['workspace', 'independent', 'none'], 'Invalid versioning'),
-				required: strings(stream.required),
-				...(stream.prepare === undefined ? {} : { prepare: workflow(stream.prepare) }),
-				...(stream.promote === undefined ? {} : { promote: workflow(stream.promote) }),
-			};
-		}),
-		...(data.actionsRevision === undefined ? {} : { actionsRevision: string(data.actionsRevision) }),
-	};
-}
-function publication(value: unknown): PackagePublication {
-	const data = record(value);
-	if (data.kind === 'registry') return { kind: 'registry' };
-	if (data.kind !== 'excluded') throw new Error('Invalid package publication');
-	return { kind: 'excluded', reason: oneOf(data.reason, exclusionReasons, 'Invalid exclusion reason') };
-}
-function evidence(value: unknown): WorkflowEvidence {
-	const data = record(value);
-	return {
-		file: string(data.file),
-		jobs: strings(data.jobs),
-		steps: array(data.steps).map(raw => {
-			const step = record(raw);
-			return { job: string(step.job), id: string(step.id), label: string(step.label) };
-		}),
-		events: strings(data.events),
-		roles: array(data.roles).map(raw => {
-			const role = record(raw);
-			return { job: string(role.job), stream: string(role.stream), operation: string(role.operation) };
-		}),
-		preparationJobs: strings(data.preparationJobs),
-		reportingJobs: strings(data.reportingJobs),
-		prepares: boolean(data.prepares),
-		reports: boolean(data.reports),
-		publishes: boolean(data.publishes),
-	};
-}
-export function parseSetupPlan(value: unknown): SetupPlan {
-	const data = record(value);
-	const prior = data.prior === undefined ? undefined : record(data.prior);
-	return {
-		repository: string(data.repository),
-		sourceSha: string(data.sourceSha),
-		planId: string(data.planId),
-		setupHead: data.setupHead === null ? null : string(data.setupHead),
-		choices: choices(data.choices),
-		inventory: {
-			packages: array(record(data.inventory).packages).map(raw => {
-				const pkg = record(raw);
-				return { name: string(pkg.name), manifest: string(pkg.manifest), publication: publication(pkg.publication) };
-			}),
-		},
-		packageIds: strings(data.packageIds),
-		workflows: array(data.workflows).map(evidence),
-		edits: array(data.edits).map(raw => {
-			const edit = record(raw);
-			return { path: string(edit.path), before: string(edit.before), after: string(edit.after) };
-		}),
-		blockers: strings(data.blockers),
-		notes: strings(data.notes),
-		branchConflict: data.branchConflict === true,
-		...(prior ? { prior: { url: string(prior.url), superseded: boolean(prior.superseded) } } : {}),
-	};
+const strings = z.array(z.string());
+const workflow: z.ZodType<SetupWorkflow> = z.object({
+	file: z.string(),
+	job: z.string().optional(),
+	triggers: z.enum(['review', 'dispatchOnly', 'preserve'], { error: 'Invalid workflow triggers' }),
+	commands: z.string(),
+	publicationSteps: z.record(z.string(), z.string()),
+});
+const publication: z.ZodType<PackagePublication> = z.discriminatedUnion('kind', [
+	z.object({ kind: z.literal('registry') }).transform((): PackagePublication => ({ kind: 'registry' })),
+	z.object({ kind: z.literal('excluded'), reason: z.enum(exclusionReasons, { error: 'Invalid exclusion reason' }) })
+		.transform(({ reason }): PackagePublication => ({ kind: 'excluded', reason })),
+], { error: 'Invalid package publication' });
+const evidence: z.ZodType<WorkflowEvidence> = z.object({
+	file: z.string(),
+	jobs: strings,
+	steps: z.array(z.object({ job: z.string(), id: z.string(), label: z.string() })),
+	events: strings,
+	roles: z.array(z.object({ job: z.string(), stream: z.string(), operation: z.string() })),
+	preparationJobs: strings,
+	reportingJobs: strings,
+	prepares: z.boolean(),
+	reports: z.boolean(),
+	publishes: z.boolean(),
+});
+const setupPlan: z.ZodType<SetupPlan> = z.object({
+	repository: z.string(),
+	sourceSha: z.string(),
+	planId: z.string(),
+	setupHead: z.string().nullable(),
+	choices: z.object({
+		streams: z.array(z.object({
+			name: z.string(),
+			packages: strings,
+			versioning: z.enum(['workspace', 'independent', 'none'], { error: 'Invalid versioning' }),
+			required: strings,
+			prepare: workflow.optional(),
+			promote: workflow.optional(),
+		})),
+		actionsRevision: z.string().optional(),
+	}),
+	inventory: z.object({
+		packages: z.array(z.object({ name: z.string(), manifest: z.string(), publication })),
+	}),
+	packageIds: strings,
+	workflows: z.array(evidence),
+	edits: z.array(z.object({ path: z.string(), before: z.string(), after: z.string() })),
+	blockers: strings,
+	notes: strings,
+	branchConflict: z.unknown().transform(value => value === true),
+	prior: z.object({ url: z.string(), superseded: z.boolean() }).optional(),
+});
+
+export function parseSetupPlan(value: unknown): Effect.Effect<SetupPlan, DomainError> {
+	const parsed = setupPlan.safeParse(value);
+	return parsed.success
+		? Effect.succeed(parsed.data)
+		: Effect.fail(precondition(parsed.error.issues[0]?.message ?? 'Invalid setup plan'));
 }

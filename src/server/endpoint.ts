@@ -13,7 +13,8 @@ export const endpoint: APIRoute = ({ request, locals }) =>
 export function serve(request: Request, defer?: (work: Promise<void>) => void): Promise<Response> {
 	return Effect.runPromise(Effect.gen(function*() {
 		const path = new URL(request.url).pathname;
-		const response = yield* Effect.suspend(() => dispatch(request, bindings())).pipe(
+		const response = yield* bindings.pipe(
+			Effect.flatMap(env => dispatch(request, env)),
 			Effect.catchCause(cause => Effect.sync(() => failure(request, Cause.squash(cause)))),
 		);
 		if (!path.startsWith('/api/') && !path.startsWith('/auth/cli/')) return response;

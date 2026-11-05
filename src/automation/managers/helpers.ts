@@ -1,4 +1,7 @@
+import { Result } from 'effect';
 import { parseDocument } from 'yaml';
+import { type DomainError, precondition } from '@/contract/errors';
+import { toDomainError } from '@/failure';
 import { record } from '@/model';
 export function object(value: unknown): Record<string, unknown> {
 	return value !== null && typeof value === 'object' && !Array.isArray(value) ? record(value) : {};
@@ -24,8 +27,8 @@ export function inWorkspace(path: string, members: string[], exclusions: string[
 		&& !exclusions.some((pattern) => glob(pattern, path))
 	);
 }
-export function yaml(source: string): Record<string, unknown> {
+export function yaml(source: string): Result.Result<Record<string, unknown>, DomainError> {
 	const doc = parseDocument(source, { uniqueKeys: true });
-	if (doc.errors.length) throw new Error('Invalid YAML');
-	return object(doc.toJS({ maxAliasCount: 100 }));
+	if (doc.errors.length) return Result.fail(precondition('Invalid YAML'));
+	return Result.try({ try: () => object(doc.toJS({ maxAliasCount: 100 })), catch: toDomainError });
 }

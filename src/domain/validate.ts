@@ -1,4 +1,5 @@
-import { matchesPackage, releaseIdentity } from '@/automation/package-identity';
+import { Result } from 'effect';
+import { matchesPackage, parseReleaseIdentity } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import type { Configuration, Inventory, Snapshot, Stream } from '@/automation/types';
 import type { Diagnostic, DiagnosticSubject } from '@/contract/diagnostics';
@@ -6,11 +7,8 @@ import { operations as operationsOf } from '@/domain/configuration';
 
 function versioned(reference: string): boolean {
 	if (!reference.startsWith('pkg:')) return false;
-	try {
-		return releaseIdentity(reference).version !== undefined;
-	} catch {
-		return false;
-	}
+	const identity = parseReleaseIdentity(reference);
+	return Result.isSuccess(identity) && identity.success.version !== undefined;
 }
 
 function releaseDispatches(stream: Stream): Set<string> {

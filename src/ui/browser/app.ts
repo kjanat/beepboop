@@ -2,15 +2,18 @@ import { Cause, Effect } from 'effect';
 import { z } from 'zod';
 import { type NotificationKind, notificationKinds, type WatchedRegistry, watchedRegistries } from '@/contract/catalog';
 import { routes } from '@/contract/routes';
-import { array, integer, record, string } from '@/model';
 import { api } from '@/ui/browser/api';
 import {
+	element,
 	FieldError,
+	field,
 	find,
 	findAll,
+	listen,
 	Refused,
 	refuse,
 	report,
+	selectField,
 	show,
 	showError,
 	watchValidity,
@@ -73,11 +76,10 @@ function notificationKind(value: string | undefined): Effect.Effect<Notification
 	const found = notificationKinds.find(kind => kind === value);
 	return found ? Effect.succeed(found) : refuse('Choose a destination type.');
 }
-function storedVersion(form: HTMLFormElement, alias: string): number | undefined {
-	return z.record(z.string(), z.number()).parse(JSON.parse(form.dataset.versions ?? '{}'))[alias];
+function storedVersions(form: HTMLFormElement): Effect.Effect<Record<string, number>, Refused> {
+	return dataset(z.record(z.string(), z.number()), form.dataset.versions, '{}');
 }
-function overwriteConfirmed(form: HTMLFormElement, alias: string): boolean {
-	const versions = z.record(z.string(), z.number()).parse(JSON.parse(form.dataset.versions ?? '{}'));
+function overwriteConfirmed(form: HTMLFormElement, alias: string, versions: Record<string, number>): boolean {
 	const version = versions[alias];
 	if (version === undefined || form.dataset.confirmed === 'true') {
 		delete form.dataset.confirmed;
@@ -108,36 +110,30 @@ function overwriteConfirmed(form: HTMLFormElement, alias: string): boolean {
 }
 const revealTimers = new Map<HTMLElement, ReturnType<typeof setTimeout>>();
 
-function input(form: HTMLFormElement, name: string): HTMLInputElement | HTMLSelectElement {
-	const field = form.elements.namedItem(name);
-	if (!(field instanceof HTMLInputElement || field instanceof HTMLSelectElement)) {
-		throw new Error(`Missing field: ${name}`);
-	}
-	return field;
+const repositoryChoice: z.ZodType<RepositoryChoice> = z.object({
+	id: z.number().int().positive(),
+	name: z.string(),
+	workflows: z.array(z.object({
+		stream: z.string(),
+		operation: z.string(),
+		file: z.string(),
+		ref: z.string(),
+		credentials: z.array(z.string()),
+	})),
+});
+function decoded<S extends z.ZodType>(schema: S, value: unknown, message: string): Effect.Effect<z.output<S>, Refused> {
+	const parsed = schema.safeParse(value);
+	return parsed.success ? Effect.succeed(parsed.data) : refuse(message);
 }
-function selectInput(form: HTMLFormElement, name: string): HTMLSelectElement {
-	const field = form.elements.namedItem(name);
-	if (!(field instanceof HTMLSelectElement)) throw new Error(`Missing field: ${name}`);
-	return field;
+function dataset<S extends z.ZodType>(schema: S, source: string | undefined, fallback: string) {
+	const malformed = 'The dashboard sent malformed form data.';
+	return Effect.try({
+		try: (): unknown => JSON.parse(source ?? fallback),
+		catch: () => new Refused({ message: malformed }),
+	}).pipe(Effect.flatMap(value => decoded(schema, value, malformed)));
 }
-function repositoryChoices(form: HTMLFormElement): RepositoryChoice[] {
-	return array(JSON.parse(form.dataset.repositories ?? '[]')).map(raw => {
-		const repository = record(raw);
-		return {
-			id: integer(repository.id),
-			name: string(repository.name),
-			workflows: array(repository.workflows).map(value => {
-				const workflow = record(value);
-				return {
-					stream: string(workflow.stream),
-					operation: string(workflow.operation),
-					file: string(workflow.file),
-					ref: string(workflow.ref),
-					credentials: array(workflow.credentials).map(string),
-				};
-			}),
-		};
-	});
+function repositoryChoices(form: HTMLFormElement): Effect.Effect<RepositoryChoice[], Refused> {
+	return dataset(z.array(repositoryChoice), form.dataset.repositories, '[]');
 }
 function fields(form: HTMLFormElement): Record<string, string> {
 	return Object.fromEntries(
@@ -156,10 +152,9 @@ function elevated(form: HTMLFormElement) {
 	return Effect.gen(function*() {
 		show('Touch your enrolled security key to approve this action.', form);
 		const challenge = yield* api(routes.authenticatorsOptions, { register: false });
+		const options = yield* decoded(requestOptions, challenge.options, 'The server sent invalid security-key options.');
 		const credential = yield* browser(() =>
-			navigator.credentials.get({
-				publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(requestOptions.parse(challenge.options)),
-			})
+			navigator.credentials.get({ publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(options) })
 		);
 		if (!(credential instanceof PublicKeyCredential)) return yield* refuse('Security key authentication cancelled.');
 		const { proof } = yield* api(routes.authenticatorsVerify, { id: challenge.id, response: credential.toJSON() });
@@ -214,173 +209,178 @@ function inspecting(form: HTMLFormElement, name: string): () => void {
 	card.after(placeholder);
 	return () => placeholder.remove();
 }
-function selectedWorkflow(form: HTMLFormElement): Effect.Effect<Choice, FieldError> {
-	const repository = repositoryChoices(form).find(r => String(r.id) === input(form, 'repositoryId').value);
-	const choice = repository?.workflows[Number(input(form, 'choice').value)];
-	return choice
-		? Effect.succeed(choice)
-		: Effect.fail(
-			new FieldError({
+function selectedWorkflow(form: HTMLFormElement) {
+	return Effect.gen(function*() {
+		const repositoryId = yield* field(form, 'repositoryId'), choiceField = yield* field(form, 'choice');
+		const repository = (yield* repositoryChoices(form)).find(r => String(r.id) === repositoryId.value);
+		const choice = repository?.workflows[Number(choiceField.value)];
+		if (!choice) {
+			return yield* new FieldError({
 				message: 'Choose a repository and workflow.',
-				fields: [input(form, 'repositoryId'), input(form, 'choice')],
-			}),
-		);
+				fields: [repositoryId, choiceField],
+			});
+		}
+		return choice;
+	});
 }
-function attempt(work: () => void): void {
-	Effect.runSync(report(Effect.sync(work)));
-}
-function each(selector: string, setup: (form: HTMLFormElement) => void): void {
-	for (const form of findAll(document, selector, HTMLFormElement)) attempt(() => setup(form));
+function each<E>(selector: string, setup: (form: HTMLFormElement) => Effect.Effect<void, E>): void {
+	for (const form of findAll(document, selector, HTMLFormElement)) Effect.runSync(report(setup(form)));
 }
 const wingetPlans = new WeakMap<HTMLFormElement, { digest: string }>();
-each('form[data-action="winget-submit"]', form => {
-	const submit = find(form, 'button[value="submit"]', HTMLButtonElement);
-	if (!submit) throw Error('Missing WinGet submit button');
-	let revision = 0;
-	form.addEventListener('change', event => {
-		wingetPlans.delete(form);
-		submit.disabled = true;
-		form.querySelector('.plan-result')?.replaceChildren();
-		if (event.target !== input(form, 'repositoryId')) return;
-		const current = ++revision;
-		const release = selectInput(form, 'releaseId');
-		release.disabled = true;
-		release.replaceChildren(new Option('Loading releases…', ''));
-		if (!input(form, 'repositoryId').value) {
-			release.replaceChildren(new Option('Choose a repository first', ''));
-			return;
-		}
-		Effect.runFork(
-			api(routes.wingetReleases, { repositoryId: Number(input(form, 'repositoryId').value) }).pipe(
+each('form[data-action="winget-submit"]', form =>
+	Effect.gen(function*() {
+		const submit = yield* element(form, 'button[value="submit"]', HTMLButtonElement);
+		const repositoryId = yield* field(form, 'repositoryId');
+		const release = yield* selectField(form, 'releaseId');
+		let revision = 0;
+		listen(form, 'change', event =>
+			Effect.gen(function*() {
+				wingetPlans.delete(form);
+				submit.disabled = true;
+				form.querySelector('.plan-result')?.replaceChildren();
+				if (event.target !== repositoryId) return;
+				const current = ++revision;
+				release.disabled = true;
+				release.replaceChildren(new Option('Loading releases…', ''));
+				if (!repositoryId.value) {
+					release.replaceChildren(new Option('Choose a repository first', ''));
+					return;
+				}
+				yield* api(routes.wingetReleases, { repositoryId: Number(repositoryId.value) }).pipe(
+					Effect.matchCause({
+						onSuccess: rows => {
+							if (revision !== current) return;
+							release.replaceChildren(new Option(rows.length ? 'Choose a release' : 'No eligible stable releases', ''));
+							for (const row of rows) release.add(new Option(`${row.name} (${row.tag})`, String(row.id)));
+							release.disabled = !rows.length;
+						},
+						onFailure: cause => {
+							if (revision !== current) return;
+							release.replaceChildren(new Option('Unable to load releases', ''));
+							showError(Cause.squash(cause), form);
+						},
+					}),
+				);
+			}), form);
+	}));
+each('form[data-action="grant-save"]', form =>
+	Effect.gen(function*() {
+		const repositories = yield* repositoryChoices(form);
+		const repository = yield* field(form, 'repositoryId'), choice = yield* selectField(form, 'choice');
+		const delivery = yield* selectField(form, 'delivery'), alias = yield* field(form, 'alias');
+		const secretName = yield* field(form, 'secretName'), environment = yield* field(form, 'environment');
+		const updateScope = () => {
+			const scope = find(form, '.workflow-scope', HTMLElement);
+			const selected = choice.value === ''
+				? undefined
+				: repositories.find(r => String(r.id) === repository.value)?.workflows[Number(choice.value)];
+			if (scope) {
+				scope.replaceChildren();
+				if (selected) {
+					const details = node('dl', '');
+					details.className = 'metadata-grid';
+					for (
+						const [label, value] of [['Stream', selected.stream], ['Operation', selected.operation], [
+							'Workflow',
+							selected.file,
+						], ['Allowed ref', selected.ref]]
+					) {
+						const entry = node('div', '');
+						entry.append(node('dt', label ?? ''), node('dd', value ?? ''));
+						details.append(entry);
+					}
+					scope.append(details);
+				} else scope.textContent = 'Choose a repository and workflow.';
+			}
+			const runtime = delivery.options[0];
+			if (runtime) runtime.disabled = !!selected && !selected.credentials.includes(alias.value);
+			const help = find(form, '.delivery-help', HTMLElement);
+			if (help) {
+				help.textContent = selected && !selected.credentials.includes(alias.value)
+					? 'Runtime retrieval is unavailable until this name is added to this release stream’s credentials list in .github/beepboop.json. You can choose GitHub delivery instead.'
+					: 'Runtime retrieval uses the credentials Action. GitHub delivery is copied separately after saving access.';
+			}
+		};
+		repository.addEventListener('change', () => {
+			const selected = repositories.find(r => String(r.id) === repository.value);
+			choice.replaceChildren(new Option('Choose a workflow', ''));
+			selected?.workflows.forEach((w, index) => {
+				choice.add(new Option(`${w.stream} / ${w.operation} (${w.file})`, String(index)));
+			});
+			choice.disabled = !selected;
+			updateScope();
+		});
+		choice.addEventListener('change', updateScope);
+		delivery.addEventListener('change', () => {
+			const label = find(form, '[data-secret-name]', HTMLElement);
+			if (label) label.hidden = delivery.value === 'runtime';
+			secretName.disabled = delivery.value === 'runtime';
+			secretName.required = delivery.value !== 'runtime';
+			environment.required = delivery.value === 'environment';
+			updateScope();
+		});
+	}));
+each(
+	'form[data-action="release-prepare"],form[data-action="release-set"]',
+	form =>
+		Effect.sync(() =>
+			listen(form, 'change', () =>
+				Effect.gen(function*() {
+					const mode = form.elements.namedItem('versionMode');
+					if (!(mode instanceof HTMLSelectElement)) return;
+					for (const hidden of findAll(form, '[data-explicit]', HTMLElement)) {
+						hidden.hidden = mode.value !== 'explicit';
+					}
+					for (const hidden of findAll(form, '[data-prerelease]', HTMLElement)) {
+						hidden.hidden = mode.value !== 'prerelease';
+					}
+					(yield* field(form, 'version')).required = mode.value === 'explicit';
+				}), form)
+		),
+);
+each('form[data-action="approve"]', form =>
+	Effect.gen(function*() {
+		const status = find(form, '.approval-status', HTMLElement);
+		const approve = find(form, 'button', HTMLButtonElement);
+		const id = (yield* field(form, 'id')).value;
+		const force = yield* field(form, 'force');
+		const automatic = form.dataset.automatic === 'true';
+		const override = () => {
+			force.value = 'true';
+			if (!approve) return;
+			approve.textContent = automatic ? 'Release now anyway' : 'Approve anyway';
+			approve.hidden = false;
+		};
+		yield* Effect.forkDetach(
+			api(routes.executionsApproval, { id }).pipe(
 				Effect.matchCause({
-					onSuccess: rows => {
-						if (revision !== current) return;
-						release.replaceChildren(new Option(rows.length ? 'Choose a release' : 'No eligible stable releases', ''));
-						for (const row of rows) release.add(new Option(`${row.name} (${row.tag})`, String(row.id)));
-						release.disabled = !rows.length;
+					onSuccess: ({ problems }) => {
+						status?.replaceChildren(
+							...(problems.length ? problems : ['Signature verified and checks passed.']).map(text => node('li', text)),
+						);
+						if (problems.length) override();
 					},
 					onFailure: cause => {
-						if (revision !== current) return;
-						release.replaceChildren(new Option('Unable to load releases', ''));
-						showError(Cause.squash(cause), form);
+						const error = Cause.squash(cause);
+						status?.replaceChildren(
+							node('li', error instanceof Error ? error.message : 'Could not check this commit.'),
+						);
+						override();
 					},
 				}),
+				Effect.ensuring(Effect.sync(() => {
+					if (approve) approve.disabled = false;
+				})),
 			),
 		);
-	});
-});
-each('form[data-action="grant-save"]', form => {
-	const repositories = repositoryChoices(form);
-	const repository = input(form, 'repositoryId'), choice = selectInput(form, 'choice');
-	const updateScope = () => {
-		const scope = find(form, '.workflow-scope', HTMLElement);
-		const selected = choice.value === ''
-			? undefined
-			: repositories.find(r => String(r.id) === repository.value)?.workflows[Number(choice.value)];
-		if (scope) {
-			scope.replaceChildren();
-			if (selected) {
-				const details = node('dl', '');
-				details.className = 'metadata-grid';
-				for (
-					const [label, value] of [['Stream', selected.stream], ['Operation', selected.operation], [
-						'Workflow',
-						selected.file,
-					], ['Allowed ref', selected.ref]]
-				) {
-					const field = node('div', '');
-					field.append(node('dt', label ?? ''), node('dd', value ?? ''));
-					details.append(field);
-				}
-				scope.append(details);
-			} else scope.textContent = 'Choose a repository and workflow.';
-		}
-		const runtime = selectInput(form, 'delivery').options[0];
-		if (runtime) runtime.disabled = !!selected && !selected.credentials.includes(input(form, 'alias').value);
-		const help = find(form, '.delivery-help', HTMLElement);
-		if (help) {
-			help.textContent = selected && !selected.credentials.includes(input(form, 'alias').value)
-				? 'Runtime retrieval is unavailable until this name is added to this release stream’s credentials list in .github/beepboop.json. You can choose GitHub delivery instead.'
-				: 'Runtime retrieval uses the credentials Action. GitHub delivery is copied separately after saving access.';
-		}
-	};
-	repository.addEventListener('change', () => {
-		const selected = repositories.find(r => String(r.id) === repository.value);
-		choice.replaceChildren(new Option('Choose a workflow', ''));
-		selected?.workflows.forEach((w, index) => {
-			choice.add(new Option(`${w.stream} / ${w.operation} (${w.file})`, String(index)));
-		});
-		choice.disabled = !selected;
-		updateScope();
-	});
-	choice.addEventListener('change', updateScope);
-	input(form, 'delivery').addEventListener('change', () => {
-		const delivery = input(form, 'delivery').value;
-		const label = find(form, '[data-secret-name]', HTMLElement);
-		if (label) label.hidden = delivery === 'runtime';
-		const secretName = input(form, 'secretName');
-		secretName.disabled = delivery === 'runtime';
-		secretName.required = delivery !== 'runtime';
-		input(form, 'environment').required = delivery === 'environment';
-		updateScope();
-	});
-});
-each('form[data-action="release-prepare"],form[data-action="release-set"]', form => {
-	form.addEventListener('change', () => {
-		const mode = form.elements.namedItem('versionMode');
-		if (!(mode instanceof HTMLSelectElement)) return;
-		for (const element of findAll(form, '[data-explicit]', HTMLElement)) {
-			element.hidden = mode.value !== 'explicit';
-		}
-		for (const element of findAll(form, '[data-prerelease]', HTMLElement)) {
-			element.hidden = mode.value !== 'prerelease';
-		}
-		input(form, 'version').required = mode.value === 'explicit';
-	});
-});
-each('form[data-action="approve"]', form => {
-	const status = find(form, '.approval-status', HTMLElement);
-	const approve = find(form, 'button', HTMLButtonElement);
-	const id = input(form, 'id').value;
-	const automatic = form.dataset.automatic === 'true';
-	const override = () => {
-		input(form, 'force').value = 'true';
-		if (!approve) return;
-		approve.textContent = automatic ? 'Release now anyway' : 'Approve anyway';
-		approve.hidden = false;
-	};
-	Effect.runFork(
-		api(routes.executionsApproval, { id }).pipe(
-			Effect.matchCause({
-				onSuccess: ({ problems }) => {
-					status?.replaceChildren(
-						...(problems.length ? problems : ['Signature verified and checks passed.']).map(text => node('li', text)),
-					);
-					if (problems.length) override();
-				},
-				onFailure: cause => {
-					const error = Cause.squash(cause);
-					status?.replaceChildren(node('li', error instanceof Error ? error.message : 'Could not check this commit.'));
-					override();
-				},
-			}),
-			Effect.ensuring(Effect.sync(() => {
-				if (approve) approve.disabled = false;
-			})),
-		),
-	);
-});
-attempt(() => {
-	const repositorySelection = find(document, '.selection select[name="repository"]', HTMLSelectElement);
-	if (!repositorySelection) return;
-	repositorySelection.addEventListener('change', () => {
-		location.assign(`/releases?repository=${encodeURIComponent(repositorySelection.value)}`);
-	});
+	}));
+const repositorySelection = find(document, '.selection select[name="repository"]', HTMLSelectElement);
+repositorySelection?.addEventListener('change', () => {
+	location.assign(`/releases?repository=${encodeURIComponent(repositorySelection.value)}`);
 });
 
-attempt(() => {
-	const runsLatest = find(document, '[data-runs-latest]', HTMLElement);
-	if (!runsLatest) return;
+const runsLatest = find(document, '[data-runs-latest]', HTMLElement);
+if (runsLatest) {
 	const rendered = Number(runsLatest.dataset.runsLatest);
 	setInterval(() => {
 		if (document.hidden) return;
@@ -395,7 +395,7 @@ attempt(() => {
 			),
 		);
 	}, 5000);
-});
+}
 
 const reload = Effect.sync(() => location.reload());
 function navigate(url: string) {
@@ -421,7 +421,8 @@ function submitted(form: HTMLFormElement, action: string | undefined, clicked: s
 			if (clicked === 'preview') {
 				const plan = yield* api(routes.wingetPreview, selection);
 				if (
-					input(form, 'repositoryId').value !== data.repositoryId || input(form, 'releaseId').value !== data.releaseId
+					(yield* field(form, 'repositoryId')).value !== data.repositoryId
+					|| (yield* field(form, 'releaseId')).value !== data.releaseId
 				) return yield* refuse('Selection changed; preview again.');
 				wingetPlans.set(form, plan);
 				const result = form.querySelector('.plan-result');
@@ -452,14 +453,23 @@ function submitted(form: HTMLFormElement, action: string | undefined, clicked: s
 				: data.versionMode === 'prerelease'
 				? { bump: 'prerelease', base: data.base, identifier: data.identifier }
 				: { bump: data.versionMode };
-			const groups = findAll(form, 'fieldset[data-group]', HTMLFieldSetElement).filter(group => {
+			const chosen = findAll(form, 'fieldset[data-group]', HTMLFieldSetElement).filter(group => {
 				const selected = group.querySelector('input[type=checkbox]');
 				return selected instanceof HTMLInputElement && selected.checked;
-			}).map(group => ({
-				id: group.dataset.group,
-				packages: array(JSON.parse(group.dataset.packages ?? '[]')).map(string),
-				version: input(form, `version-${group.dataset.group}`).value,
-			}));
+			});
+			const entries = yield* Effect.forEach(chosen, group =>
+				Effect.gen(function*() {
+					const versionField = yield* field(form, `version-${group.dataset.group}`);
+					return {
+						group: {
+							id: group.dataset.group,
+							packages: yield* dataset(z.array(z.string()), group.dataset.packages, '[]'),
+							version: versionField.value,
+						},
+						versionField,
+					};
+				}));
+			const groups = entries.map(entry => entry.group);
 			const operations = findAll(form, 'select[data-operation]', HTMLSelectElement).filter(select => select.value)
 				.map(select => ({ id: select.dataset.operation, group: select.value }));
 			if (action === 'release-set' && !groups.length) {
@@ -468,11 +478,11 @@ function submitted(form: HTMLFormElement, action: string | undefined, clicked: s
 					fields: findAll(form, 'fieldset[data-group] input[type=checkbox]', HTMLInputElement),
 				});
 			}
-			const unversioned = groups.filter(group => !group.version);
+			const unversioned = entries.filter(entry => !entry.group.version);
 			if (action === 'release-set' && unversioned.length) {
 				return yield* new FieldError({
 					message: 'Enter a version for each selected group.',
-					fields: unversioned.map(group => input(form, `version-${group.id}`)),
+					fields: unversioned.map(entry => entry.versionField),
 				});
 			}
 			let run: { id: string };
@@ -520,15 +530,17 @@ function submitted(form: HTMLFormElement, action: string | undefined, clicked: s
 			});
 			yield* navigate('/runs');
 		} else if (action === 'secret-save') {
-			if (!overwriteConfirmed(form, data.alias ?? '')) return;
+			const versions = yield* storedVersions(form);
+			if (!overwriteConfirmed(form, data.alias ?? '', versions)) return;
 			const value = data.value;
+			const valueField = yield* field(form, 'value');
 			const proof = yield* elevated(form);
-			input(form, 'value').value = '';
+			valueField.value = '';
 			yield* api(routes.credentialsReplace, {
 				alias: data.alias ?? '',
 				value: value ?? '',
 				proof,
-				expectedVersion: storedVersion(form, data.alias ?? '') ?? null,
+				expectedVersion: versions[data.alias ?? ''] ?? null,
 			});
 			yield* reload;
 		} else if (action === 'secret-reveal') {
@@ -560,7 +572,7 @@ function submitted(form: HTMLFormElement, action: string | undefined, clicked: s
 			if (data.delivery === 'runtime' && !selected.credentials.includes(data.alias ?? '')) {
 				return yield* new FieldError({
 					message: 'Add this name to the stream’s credentials list before choosing runtime delivery.',
-					fields: [input(form, 'delivery')],
+					fields: [yield* field(form, 'delivery')],
 				});
 			}
 			yield* api(routes.credentialsGrant, {
@@ -617,10 +629,9 @@ function submitted(form: HTMLFormElement, action: string | undefined, clicked: s
 			const proof = form.dataset.first === 'true' ? undefined : yield* elevated(form);
 			const challenge = yield* api(routes.authenticatorsOptions, { register: true, label: data.label, proof });
 			show('Touch the security key you want to enroll.', form);
+			const options = yield* decoded(creationOptions, challenge.options, 'The server sent invalid enrollment options.');
 			const credential = yield* browser(() =>
-				navigator.credentials.create({
-					publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(creationOptions.parse(challenge.options)),
-				})
+				navigator.credentials.create({ publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(options) })
 			);
 			if (!(credential instanceof PublicKeyCredential)) return yield* refuse('Security key enrollment cancelled.');
 			yield* api(routes.authenticatorsVerify, { id: challenge.id, response: credential.toJSON() });
@@ -636,25 +647,26 @@ function submitted(form: HTMLFormElement, action: string | undefined, clicked: s
 	});
 }
 
-each('form[data-action]', form => {
-	watchValidity(form);
-	form.addEventListener('submit', event => {
-		event.preventDefault();
-		const action = form.dataset.action;
-		const data = fields(form);
-		const submitter = event.submitter;
-		const button = submitter instanceof HTMLButtonElement ? submitter : form.querySelector('button');
-		if (!button || form.dataset.busy === 'true') return;
-		const clicked = button.value;
-		form.dataset.busy = 'true';
-		button.disabled = true;
-		Effect.runFork(
-			report(submitted(form, action, clicked, data), form).pipe(
-				Effect.ensuring(Effect.sync(() => {
-					form.dataset.busy = 'false';
-					button.disabled = action === 'setup' && clicked === 'apply' && !canApplySetup(form);
-				})),
-			),
-		);
-	});
-});
+each('form[data-action]', form =>
+	Effect.sync(() => {
+		watchValidity(form);
+		form.addEventListener('submit', event => {
+			event.preventDefault();
+			const action = form.dataset.action;
+			const data = fields(form);
+			const submitter = event.submitter;
+			const button = submitter instanceof HTMLButtonElement ? submitter : form.querySelector('button');
+			if (!button || form.dataset.busy === 'true') return;
+			const clicked = button.value;
+			form.dataset.busy = 'true';
+			button.disabled = true;
+			Effect.runFork(
+				report(submitted(form, action, clicked, data), form).pipe(
+					Effect.ensuring(Effect.sync(() => {
+						form.dataset.busy = 'false';
+						button.disabled = action === 'setup' && clicked === 'apply' && !canApplySetup(form);
+					})),
+				),
+			);
+		});
+	}));

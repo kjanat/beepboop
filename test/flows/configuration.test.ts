@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 import { join } from 'node:path';
 import { Validator } from '@cfworker/json-schema';
 import { z } from 'zod';
@@ -116,7 +116,9 @@ async function documentedFragments(): Promise<unknown[]> {
 test('parsing a parsed configuration returns it unchanged, and stored copies decode to the same value', async () => {
 	for (const value of await shippedConfigurations()) {
 		const parsed = configurationSchema.parse(value);
-		expect(configurationDrift(value, parseRepositoryConfiguration(value))).toEqual([]);
+		const configuration = parseRepositoryConfiguration(value);
+		if (Result.isFailure(configuration)) throw configuration.failure;
+		expect(configurationDrift(value, configuration.success)).toEqual([]);
 		const encoded = JSON.stringify(parsed);
 		expect(JSON.stringify(configurationSchema.parse(parsed))).toBe(encoded);
 		expect(JSON.stringify(storedConfiguration.parse(JSON.parse(encoded)))).toBe(encoded);

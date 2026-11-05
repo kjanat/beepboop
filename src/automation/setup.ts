@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
 import { formatJson, json } from '@/automation/json';
 import { discover } from '@/automation/managers';
@@ -15,17 +15,18 @@ import {
 	triggerHandovers,
 	type Versioning,
 	versionings,
+	type WorkflowEvidence,
 } from '@/automation/setup-types';
 import { integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Package, RepositoryRecord, Snapshot } from '@/automation/types';
 import { blocking } from '@/contract/diagnostics';
-import { type DomainError, parseRequest } from '@/contract/errors';
+import { type DomainError, decodeRequest, precondition } from '@/contract/errors';
 import { sha256Hex } from '@/contract/ids';
 import { setupChoicesSchema } from '@/contract/setup';
 import { configurationDrift } from '@/domain/configuration';
 import { packageMarkdown } from '@/domain/package-label';
 import { validateAgainst } from '@/domain/validate';
-import { fromPromise, fromSync } from '@/failure';
+import { fromPromise, fromSync, toDomainError } from '@/failure';
 
 function releasedPackage(pkg: Package | undefined): boolean {
 	return !!pkg && publishable(pkg) && pkg.published !== undefined
@@ -55,12 +56,33 @@ export function withRegistryStatus(inventory: Inventory, stored: Inventory | und
 	};
 }
 /** Suggestions are editable policy, never permission to apply or publish. */
-export function suggestSetup(snapshot: Snapshot, inventory: Inventory, resolved?: Configuration): SetupChoices {
-	const raw = object(JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}'));
-	const configured = resolved?.streams ?? object(raw.streams);
-	const workflows = inventory.workflows.map(w =>
-		workflowEvidence(w.file, snapshot.files[`.github/workflows/${w.file}`] ?? '')
+function storedConfiguration(snapshot: Snapshot): Effect.Effect<Record<string, unknown>, DomainError> {
+	return fromSync(() => object(JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}')));
+}
+function evidence(snapshot: Snapshot, inventory: Inventory): Effect.Effect<WorkflowEvidence[], DomainError> {
+	return Effect.forEach(
+		inventory.workflows,
+		w => Effect.fromResult(workflowEvidence(w.file, snapshot.files[`.github/workflows/${w.file}`] ?? '')),
 	);
+}
+export function suggestSetup(
+	snapshot: Snapshot,
+	inventory: Inventory,
+	resolved?: Configuration,
+): Effect.Effect<SetupChoices, DomainError> {
+	return Effect.gen(function*() {
+		const raw = yield* storedConfiguration(snapshot);
+		const workflows = yield* evidence(snapshot, inventory);
+		return suggested(raw, workflows, inventory, resolved);
+	});
+}
+function suggested(
+	raw: Record<string, unknown>,
+	workflows: WorkflowEvidence[],
+	inventory: Inventory,
+	resolved?: Configuration,
+): SetupChoices {
+	const configured = resolved?.streams ?? object(raw.streams);
 	const names = new Set([...Object.keys(configured), ...workflows.flatMap(w => w.roles.map(role => role.stream))]);
 	if (!names.size) names.add('main');
 	const streams: SetupChoices['streams'] = [];
@@ -128,7 +150,7 @@ export function previewSetup(
 	resolved?: Configuration,
 ): Effect.Effect<SetupPlan, DomainError> {
 	return Effect.gen(function*() {
-		const plan = yield* fromSync(() => draftSetup(snapshot, inventory, input, baseline, resolved));
+		const plan = yield* draftSetup(snapshot, inventory, input, baseline, resolved);
 		const planId = yield* fromPromise(() =>
 			sha256Hex(JSON.stringify({ ...plan, presetShas: baseline.presetShas ?? {} }))
 		);
@@ -141,151 +163,179 @@ function draftSetup(
 	input: unknown,
 	baseline: SetupBaseline,
 	resolved?: Configuration,
-): Omit<SetupPlan, 'planId'> {
-	// Empty selections are allowed in suggestions, but cannot be applied.
-	const suggested = input === undefined;
-	const choices = suggested ? suggestSetup(snapshot, inventory, resolved) : parseRequest(setupChoicesSchema, input);
-	const raw = object(JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}'));
-	const configuration = structuredClone(raw);
-	const streams = { ...object(configuration.streams) };
-	const edits: SetupPlan['edits'] = [], blockers: string[] = [], notes: string[] = [];
-	notes.push(...inventory.diagnostics.map(entry => `Discovery: ${entry.message}`));
-	if (baseline.branchConflict) blockers.push(branchConflictBlocker);
-	const names = new Set<string>(), selectedFiles = new Set<string>();
-	const managers = new Set<string>(
-		Array.isArray(configuration.managers)
-			? configuration.managers.map(String)
-			: Object.keys(raw).length
-			? resolved?.managers ?? []
-			: [],
-	);
-	for (const selection of choices.streams) {
-		if (names.has(selection.name)) throw new Error('Duplicate selected stream');
-		names.add(selection.name);
-		const selected = inventory.packages.filter(pkg => selection.packages.includes(packageId(pkg)) && publishable(pkg));
-		if (!selection.packages.length) blockers.push(`${selection.name}: select the packages in this release stream.`);
-		if (selection.packages.some(id => !selected.some(pkg => packageId(pkg) === id))) {
-			blockers.push(`${selection.name}: selected package is no longer publishable or discovered.`);
-		}
-		if (new Set(selected.map(packageId)).size !== selected.length) {
-			blockers.push(`${selection.name}: duplicate package identities need distinct package configuration.`);
-		}
-		for (const pkg of selected) managers.add(pkg.manager);
-		const current = object(streams[selection.name]);
-		const key = (value: unknown) => selectorKey(String(value), inventory.packages);
-		const configuredRequired = Array.isArray(current.required) ? current.required.map(key) : undefined;
-		const optional = configuredRequired && Array.isArray(current.packages)
-			? current.packages.map(key).filter(id => !configuredRequired.includes(id))
-			: [];
-		const required = selected.filter(requirablePackage).map(packageId).filter(id => !optional.includes(key(id)));
-		const updated = {
-			...current,
-			packages: selection.packages,
-			versioning: selection.versioning,
-			required,
-		};
-		streams[selection.name] = updated;
-		for (const operation of ['prepare', 'promote'] as const) {
-			const workflow = selection[operation];
-			if (!workflow) {
-				blockers.push(
-					`${selection.name}: select a ${operation === 'prepare' ? 'preparation' : 'publication'} workflow.`,
-				);
-				continue;
-			}
-			if (selectedFiles.has(workflow.file)) {
-				blockers.push(`${workflow.file}: one workflow cannot be assigned to multiple release roles or streams.`);
-			}
-			selectedFiles.add(workflow.file);
-			managers.add('workflow');
-			const parent = object(current[operation]), previousBinding = object(parent.workflow);
-			const inherited = object(resolved?.streams[selection.name]?.[operation].workflow);
-			const binding: Record<string, unknown> = {
-				...previousBinding,
-				file: workflow.file,
-				ref: previousBinding.ref ?? inherited.ref ?? snapshot.repository.defaultBranch,
-				...(operation === 'promote' ? { publications: required } : {}),
-			};
-			if (binding.mode === 'observe' || inherited.mode === 'observe') binding.mode = 'dispatch';
-			if (typeof binding.ref === 'string' && binding.ref.includes('*')) {
-				blockers.push(`${selection.name}: ${operation} needs an exact dispatch ref in the existing configuration.`);
-			}
-			Object.assign(updated, {
-				[operation]: {
-					...parent,
-					...(operation === 'prepare' ? { strategy: 'managed' } : { approval: 'required' }),
-					workflow: binding,
-				},
-			});
-			const generated = integrateWorkflow(
-				snapshot,
-				selection.name,
-				operation,
-				workflow,
-				selected,
-				choices.actionsRevision,
-				required,
+): Effect.Effect<Omit<SetupPlan, 'planId'>, DomainError> {
+	return Effect.gen(function*() {
+		const raw = yield* storedConfiguration(snapshot);
+		const workflows = yield* evidence(snapshot, inventory);
+		// Empty selections are allowed in suggestions, but cannot be applied.
+		const choices = input === undefined
+			? suggested(raw, workflows, inventory, resolved)
+			: yield* decodeRequest(setupChoicesSchema, input);
+		return yield* drafted(snapshot, inventory, choices, raw, workflows, baseline, resolved);
+	});
+}
+function drafted(
+	snapshot: Snapshot,
+	inventory: Inventory,
+	choices: SetupChoices,
+	raw: Record<string, unknown>,
+	workflows: WorkflowEvidence[],
+	baseline: SetupBaseline,
+	resolved?: Configuration,
+): Effect.Effect<Omit<SetupPlan, 'planId'>, DomainError> {
+	return Effect.gen(function*() {
+		const configuration = structuredClone(raw);
+		const streams = { ...object(configuration.streams) };
+		const edits: SetupPlan['edits'] = [], blockers: string[] = [], notes: string[] = [];
+		notes.push(...inventory.diagnostics.map(entry => `Discovery: ${entry.message}`));
+		if (baseline.branchConflict) blockers.push(branchConflictBlocker);
+		const names = new Set<string>(), selectedFiles = new Set<string>();
+		const managers = new Set<string>(
+			Array.isArray(configuration.managers)
+				? configuration.managers.map(String)
+				: Object.keys(raw).length
+				? resolved?.managers ?? []
+				: [],
+		);
+		for (const selection of choices.streams) {
+			if (names.has(selection.name)) return yield* precondition('Duplicate selected stream');
+			names.add(selection.name);
+			const selected = inventory.packages.filter(pkg =>
+				selection.packages.includes(packageId(pkg)) && publishable(pkg)
 			);
-			blockers.push(...generated.blockers);
-			notes.push(...generated.notes);
-			const path = `.github/workflows/${workflow.file}`, before = snapshot.files[path] ?? '';
-			if (generated.content !== before) edits.push({ path, before, after: generated.content });
+			if (!selection.packages.length) blockers.push(`${selection.name}: select the packages in this release stream.`);
+			if (selection.packages.some(id => !selected.some(pkg => packageId(pkg) === id))) {
+				blockers.push(`${selection.name}: selected package is no longer publishable or discovered.`);
+			}
+			if (new Set(selected.map(packageId)).size !== selected.length) {
+				blockers.push(`${selection.name}: duplicate package identities need distinct package configuration.`);
+			}
+			for (const pkg of selected) managers.add(pkg.manager);
+			const current = object(streams[selection.name]);
+			const key = (value: unknown) => selectorKey(String(value), inventory.packages);
+			const configuredRequired = Array.isArray(current.required) ? current.required.map(key) : undefined;
+			const optional = configuredRequired && Array.isArray(current.packages)
+				? current.packages.map(key).filter(id => !configuredRequired.includes(id))
+				: [];
+			const required = selected.filter(requirablePackage).map(packageId).filter(id => !optional.includes(key(id)));
+			const updated = {
+				...current,
+				packages: selection.packages,
+				versioning: selection.versioning,
+				required,
+			};
+			streams[selection.name] = updated;
+			for (const operation of ['prepare', 'promote'] as const) {
+				const workflow = selection[operation];
+				if (!workflow) {
+					blockers.push(
+						`${selection.name}: select a ${operation === 'prepare' ? 'preparation' : 'publication'} workflow.`,
+					);
+					continue;
+				}
+				if (selectedFiles.has(workflow.file)) {
+					blockers.push(`${workflow.file}: one workflow cannot be assigned to multiple release roles or streams.`);
+				}
+				selectedFiles.add(workflow.file);
+				managers.add('workflow');
+				const parent = object(current[operation]), previousBinding = object(parent.workflow);
+				const inherited = object(resolved?.streams[selection.name]?.[operation].workflow);
+				const binding: Record<string, unknown> = {
+					...previousBinding,
+					file: workflow.file,
+					ref: previousBinding.ref ?? inherited.ref ?? snapshot.repository.defaultBranch,
+					...(operation === 'promote' ? { publications: required } : {}),
+				};
+				if (binding.mode === 'observe' || inherited.mode === 'observe') binding.mode = 'dispatch';
+				if (typeof binding.ref === 'string' && binding.ref.includes('*')) {
+					blockers.push(`${selection.name}: ${operation} needs an exact dispatch ref in the existing configuration.`);
+				}
+				Object.assign(updated, {
+					[operation]: {
+						...parent,
+						...(operation === 'prepare' ? { strategy: 'managed' } : { approval: 'required' }),
+						workflow: binding,
+					},
+				});
+				const generated = yield* Effect.fromResult(integrateWorkflow(
+					snapshot,
+					selection.name,
+					operation,
+					workflow,
+					selected,
+					choices.actionsRevision,
+					required,
+				));
+				blockers.push(...generated.blockers);
+				notes.push(...generated.notes);
+				const path = `.github/workflows/${workflow.file}`, before = snapshot.files[path] ?? '';
+				if (generated.content !== before) edits.push({ path, before, after: generated.content });
+			}
 		}
-	}
-	if (!choices.streams.length) blockers.push('Select at least one release stream.');
-	configuration.$schema ??= 'https://beepboop.kjanat.dev/schema/v1.json';
-	configuration.streams = streams;
-	configuration.managers = [...managers].sort();
-	try {
-		const proposal = resolved ? mergeConfiguration({ ...resolved }, configuration) : configuration;
-		const legacy = parseRepositoryConfiguration(proposal);
-		notes.push(...configurationDrift(proposal, legacy).map(entry => entry.message));
-		const proposed: Snapshot = {
-			...snapshot,
-			files: { ...snapshot.files, ...Object.fromEntries(edits.map(edit => [edit.path, edit.after])) },
-			paths: [...new Set([...snapshot.paths, ...edits.map(edit => edit.path)])],
-		};
-		const found = validateAgainst(legacy, discover(proposed, legacy.managers), proposed);
-		blockers.push(...blocking(found).map(entry => entry.message));
-	} catch (error) {
-		blockers.push(error instanceof Error ? error.message : 'Invalid configuration');
-	}
-	const before = snapshot.files['.github/beepboop.json'] ?? '';
-	// Do not reformat an unchanged configuration simply to make a PR.
-	const after = JSON.stringify(raw) === JSON.stringify(configuration) ? before : formatJson(json(configuration));
-	if (after !== before) edits.unshift({ path: '.github/beepboop.json', before, after });
-	notes.push(
-		'Registry permissions and trusted-publisher linkage are configured separately; this proposal does not publish packages.',
-	);
-	const prior = baseline.prior
-		? { url: baseline.prior.url, superseded: !!before && baseline.prior.content !== before }
-		: undefined;
-	if (prior?.superseded) {
+		if (!choices.streams.length) blockers.push('Select at least one release stream.');
+		configuration.$schema ??= 'https://beepboop.kjanat.dev/schema/v1.json';
+		configuration.streams = streams;
+		configuration.managers = [...managers].sort();
+		const validated = Result.gen(function*() {
+			const proposal = resolved ? yield* mergeConfiguration({ ...resolved }, configuration) : configuration;
+			const legacy = yield* parseRepositoryConfiguration(proposal);
+			const proposed: Snapshot = {
+				...snapshot,
+				files: { ...snapshot.files, ...Object.fromEntries(edits.map(edit => [edit.path, edit.after])) },
+				paths: [...new Set([...snapshot.paths, ...edits.map(edit => edit.path)])],
+			};
+			const found = yield* Result.try({
+				try: () => validateAgainst(legacy, discover(proposed, legacy.managers), proposed),
+				catch: toDomainError,
+			});
+			return {
+				drift: configurationDrift(proposal, legacy).map(entry => entry.message),
+				found: blocking(found).map(entry => entry.message),
+			};
+		});
+		if (Result.isSuccess(validated)) {
+			notes.push(...validated.success.drift);
+			blockers.push(...validated.success.found);
+		} else {
+			blockers.push(validated.failure.message);
+		}
+		const before = snapshot.files['.github/beepboop.json'] ?? '';
+		// Do not reformat an unchanged configuration simply to make a PR.
+		const after = JSON.stringify(raw) === JSON.stringify(configuration)
+			? before
+			: formatJson(yield* Effect.fromResult(json(configuration)));
+		if (after !== before) edits.unshift({ path: '.github/beepboop.json', before, after });
 		notes.push(
-			'The earlier setup proposal differs from configuration now on the default branch. Review this replacement against the current source.',
+			'Registry permissions and trusted-publisher linkage are configured separately; this proposal does not publish packages.',
 		);
-	}
-	if (baseline.workflowPermission === false && edits.some(edit => edit.path.startsWith('.github/workflows/'))) {
-		blockers.push(
-			'The GitHub App installation needs Workflows: write permission before this proposal can edit workflows. Update the app permission and approve the installation update, then preview again.',
-		);
-	}
-	return {
-		repository: snapshot.repository.name,
-		sourceSha: snapshot.sha,
-		setupHead: baseline.head,
-		choices,
-		inventory,
-		packageIds: inventory.packages.map(packageId),
-		workflows: inventory.workflows.map(w =>
-			workflowEvidence(w.file, snapshot.files[`.github/workflows/${w.file}`] ?? '')
-		),
-		edits,
-		blockers: [...new Set(blockers)],
-		notes,
-		branchConflict: baseline.branchConflict === true,
-		...(prior ? { prior } : {}),
-	};
+		const prior = baseline.prior
+			? { url: baseline.prior.url, superseded: !!before && baseline.prior.content !== before }
+			: undefined;
+		if (prior?.superseded) {
+			notes.push(
+				'The earlier setup proposal differs from configuration now on the default branch. Review this replacement against the current source.',
+			);
+		}
+		if (baseline.workflowPermission === false && edits.some(edit => edit.path.startsWith('.github/workflows/'))) {
+			blockers.push(
+				'The GitHub App installation needs Workflows: write permission before this proposal can edit workflows. Update the app permission and approve the installation update, then preview again.',
+			);
+		}
+		return {
+			repository: snapshot.repository.name,
+			sourceSha: snapshot.sha,
+			setupHead: baseline.head,
+			choices,
+			inventory,
+			packageIds: inventory.packages.map(packageId),
+			workflows,
+			edits,
+			blockers: [...new Set(blockers)],
+			notes,
+			branchConflict: baseline.branchConflict === true,
+			...(prior ? { prior } : {}),
+		};
+	});
 }
 type Operation = 'prepare' | 'promote';
 const operations: Operation[] = ['prepare', 'promote'];

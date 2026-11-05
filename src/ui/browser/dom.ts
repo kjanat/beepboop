@@ -1,9 +1,50 @@
 import { Cause, Data, Effect } from 'effect';
 
-function required<T extends Element>(selector: string, type: { new(): T }): T {
-	const found = document.querySelector(selector);
-	if (!(found instanceof type)) throw new Error(`Missing dashboard element: ${selector}`);
-	return found;
+export class MissingElement extends Data.TaggedError('MissingElement')<{ readonly message: string }> {}
+
+export function element<T extends Element>(
+	parent: ParentNode,
+	selector: string,
+	type: { new(): T },
+): Effect.Effect<T, MissingElement> {
+	const found = find(parent, selector, type);
+	return found
+		? Effect.succeed(found)
+		: Effect.fail(new MissingElement({ message: `Missing dashboard element: ${selector}` }));
+}
+
+export type FormField = HTMLInputElement | HTMLSelectElement;
+
+export function field(form: HTMLFormElement, name: string): Effect.Effect<FormField, MissingElement> {
+	const found = form.elements.namedItem(name);
+	return found instanceof HTMLInputElement || found instanceof HTMLSelectElement
+		? Effect.succeed(found)
+		: Effect.fail(new MissingElement({ message: `Missing field: ${name}` }));
+}
+
+export function selectField(form: HTMLFormElement, name: string): Effect.Effect<HTMLSelectElement, MissingElement> {
+	const found = form.elements.namedItem(name);
+	return found instanceof HTMLSelectElement
+		? Effect.succeed(found)
+		: Effect.fail(new MissingElement({ message: `Missing field: ${name}` }));
+}
+
+export function listen<E>(
+	target: EventTarget,
+	type: string,
+	handler: (event: Event) => Effect.Effect<void, E>,
+	form?: HTMLFormElement,
+): void {
+	target.addEventListener(type, event => Effect.runFork(report(handler(event), form)));
+}
+
+function pageFeedback(): HTMLElement {
+	const existing = find(document, '#feedback', HTMLOutputElement);
+	if (existing) return existing;
+	const created = document.createElement('output');
+	created.id = 'feedback';
+	document.body.append(created);
+	return created;
 }
 
 export function find<T extends Element>(parent: ParentNode, selector: string, type: { new(): T }): T | undefined {
@@ -75,7 +116,7 @@ export function watchValidity(form: HTMLFormElement): void {
 }
 
 export function show(message: string, form?: HTMLFormElement, tone: 'info' | 'error' = 'info'): void {
-	const feedback = form ? feedbackFor(form) : required('#feedback', HTMLOutputElement);
+	const feedback = form ? feedbackFor(form) : pageFeedback();
 	feedback.hidden = false;
 	feedback.dataset.tone = tone;
 	feedback.textContent = message;
@@ -83,7 +124,7 @@ export function show(message: string, form?: HTMLFormElement, tone: 'info' | 'er
 
 export function showError(error: unknown, form?: HTMLFormElement): void {
 	const message = error instanceof Error ? error.message : String(error);
-	const feedback = form ? feedbackFor(form) : required('#feedback', HTMLOutputElement);
+	const feedback = form ? feedbackFor(form) : pageFeedback();
 	if (form && error instanceof FieldError) {
 		for (const field of error.fields) describe(field, feedback.id, true);
 	}

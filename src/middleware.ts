@@ -1,23 +1,33 @@
 import { defineMiddleware } from 'astro:middleware';
 import { Effect } from 'effect';
 import { administrator } from '@/automation/auth.ts';
-import { DomainError } from '@/contract/errors';
 import { failure } from '@/failure';
 import { bindings } from '@/server/bindings.ts';
 import { dashboardPaths } from '@/server/sections.ts';
 
 export const onRequest = defineMiddleware(async (context, next) => {
 	if (dashboardPaths.has(context.url.pathname.replace(/\/$/, '') || '/')) {
-		try {
-			context.locals.actor = await Effect.runPromise(administrator(context.request, bindings()));
-		} catch (error) {
-			if (!(error instanceof DomainError)) throw error;
-			if (error.problem.code !== 'unauthenticated') return failure(context.request, error);
-			return context.redirect(
-				`/auth/login?return=${encodeURIComponent(`${context.url.pathname}${context.url.search}`)}`,
-				302,
-			);
-		}
+		const refused = await Effect.runPromise(
+			bindings.pipe(
+				Effect.flatMap(env => administrator(context.request, env)),
+				Effect.flatMap(actor =>
+					Effect.sync(() => {
+						context.locals.actor = actor;
+					})
+				),
+				Effect.as(undefined),
+				Effect.catchTag('DomainError', error =>
+					Effect.succeed(
+						error.problem.code === 'unauthenticated'
+							? context.redirect(
+								`/auth/login?return=${encodeURIComponent(`${context.url.pathname}${context.url.search}`)}`,
+								302,
+							)
+							: failure(context.request, error),
+					)),
+			),
+		);
+		if (refused) return refused;
 	}
 	const response = await next();
 	response.headers.set('Cache-Control', 'no-store');

@@ -1,3 +1,4 @@
+import { Result } from 'effect';
 import {
 	destinationLabels,
 	destinationOfPurlType,
@@ -6,7 +7,7 @@ import {
 	type ManagerDestinationId,
 	managerSpec,
 } from '@/contract/catalog';
-import { packageIdentity } from '@/package-url';
+import { parsePackageIdentity } from '@/package-url';
 
 interface PackageName {
 	name: string;
@@ -20,16 +21,14 @@ function parts(value: string): PackageName {
 		const destination = isManagerName(prefix) ? managerSpec(prefix).destinations?.primary : undefined;
 		return colon > 0 ? { name: value.slice(colon + 1), ...(destination ? { destination } : {}) } : { name: value };
 	}
-	try {
-		const identity = packageIdentity(value);
-		const destination = destinationOfPurlType(legacyJsrIdentity(identity) ? 'jsr' : identity.type);
-		return {
-			name: identity.namespace ? `${identity.namespace}/${identity.name}` : identity.name,
-			...(destination ? { destination } : {}),
-		};
-	} catch {
-		return { name: value };
-	}
+	const parsed = parsePackageIdentity(value);
+	if (Result.isFailure(parsed)) return { name: value };
+	const identity = parsed.success;
+	const destination = destinationOfPurlType(legacyJsrIdentity(identity) ? 'jsr' : identity.type);
+	return {
+		name: identity.namespace ? `${identity.namespace}/${identity.name}` : identity.name,
+		...(destination ? { destination } : {}),
+	};
 }
 
 export function registryPackageLabel(destination: ManagerDestinationId, name: string): string {

@@ -1,9 +1,9 @@
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 import { z } from 'zod';
 import { object } from '@/automation/managers/helpers';
-import { type Adapter, emptyInventory } from '@/automation/managers/registry';
+import { type Adapter, emptyInventory, type RegistryVersion } from '@/automation/managers/registry';
 import { latestVersion, unpublished } from '@/automation/managers/verification';
-import { extensionParts, identityOf } from '@/automation/package-identity';
+import { identityOf, parseExtension } from '@/automation/package-identity';
 import { excluded, registry } from '@/automation/package-publication';
 import type { Outcome, Publication } from '@/automation/types';
 import { fileProblem } from '@/contract/diagnostics';
@@ -66,25 +66,28 @@ export const vscodeManager: Adapter<'vscode'> = {
 	},
 	secondaryLatest: {
 		'open-vsx'(pkg, request) {
-			const { publisher, extension } = extensionParts(pkg.name);
-			return latestVersion(
-				request,
-				`https://open-vsx.org/api/${encodeURIComponent(publisher)}/${encodeURIComponent(extension)}`,
-				body => openVsxExtension.safeParse(body).data?.version,
-			);
+			return Result.match(parseExtension(pkg.name), {
+				onFailure: error =>
+					Effect.succeed<RegistryVersion>({ kind: 'failed', url: 'https://open-vsx.org', reason: error.message }),
+				onSuccess: ({ publisher, extension }) =>
+					latestVersion(
+						request,
+						`https://open-vsx.org/api/${encodeURIComponent(publisher)}/${encodeURIComponent(extension)}`,
+						body => openVsxExtension.safeParse(body).data?.version,
+					),
+			});
 		},
 	},
 	discover(snapshot) {
 		const inventory = emptyInventory();
 		for (const [path, source] of Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b))) {
 			if (path !== 'package.json' && !path.endsWith('/package.json')) continue;
-			let manifest: Record<string, unknown>;
-			try {
-				manifest = object(JSON.parse(source));
-			} catch {
+			const parsed = Result.try(() => object(JSON.parse(source)));
+			if (Result.isFailure(parsed)) {
 				inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', `cannot safely discover configuration`));
 				continue;
 			}
+			const manifest = parsed.success;
 			if (typeof object(manifest.engines).vscode !== 'string') continue;
 			inventory.managers = ['vscode'];
 			if (typeof manifest.publisher !== 'string' || !identifier.test(manifest.publisher)) {

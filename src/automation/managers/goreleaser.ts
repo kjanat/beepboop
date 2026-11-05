@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
 import type { Channel } from '@/automation/destinations';
 import { object, yaml } from '@/automation/managers/helpers';
@@ -12,11 +12,10 @@ import { type Diagnostic, fileProblem } from '@/contract/diagnostics';
 import { packageIdentity } from '@/package-url';
 
 function cargoName(snapshot: Snapshot): unknown {
-	try {
-		return object(object(parseToml(snapshot.files['Cargo.toml'] ?? '')).package).name;
-	} catch {
-		return undefined;
-	}
+	return Result.try(() => parseToml(snapshot.files['Cargo.toml'] ?? '')).pipe(
+		Result.map(manifest => object(object(manifest).package).name),
+		Result.getOrElse(() => undefined),
+	);
 }
 function moduleName(snapshot: Snapshot): string | undefined {
 	const module = /^\s*module\s+["`]?([^\s"`]+)/m.exec(snapshot.files['go.mod'] ?? '')?.[1];
@@ -138,13 +137,12 @@ export const goreleaserManager: Adapter<'goreleaser'> = {
 		const result = emptyInventory();
 		for (const [path, source] of Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b))) {
 			if (!goreleaserConfig.test(path)) continue;
-			let config: Record<string, unknown>;
-			try {
-				config = yaml(source);
-			} catch {
+			const parsed = yaml(source);
+			if (Result.isFailure(parsed)) {
 				result.diagnostics.push(fileProblem(path, 'invalid-manifest', `cannot safely discover configuration`));
 				continue;
 			}
+			const config = parsed.success;
 			result.managers = ['goreleaser'];
 			const name = projectName(snapshot, config);
 			if (!name) {

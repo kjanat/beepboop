@@ -5,7 +5,7 @@ import { Effect } from 'effect';
 import { compile } from 'json-schema-to-typescript';
 import { record } from '@/model';
 import { parseTypeDefinition } from '@/package-url/definition';
-import { attempt, attemptPromise, format, main, readJson, readText, refuse, type ToolFailure } from '@/tooling/runtime';
+import { attempt, attemptPromise, format, main, readJson, readText, refuse, ToolFailure } from '@/tooling/runtime';
 
 const root = resolve(import.meta.dir, '../../package-url');
 const banner =
@@ -44,7 +44,9 @@ await main(Effect.gen(function*() {
 	for (const [index, source] of sources.entries()) {
 		const filename = source.split('/').at(-1);
 		const value = yield* readJson(`${root}/${source}`);
-		const definition = yield* attempt(() => parseTypeDefinition(value));
+		const definition = yield* Effect.fromResult(parseTypeDefinition(value)).pipe(
+			Effect.mapError(error => new ToolFailure({ message: error.message, cause: error })),
+		);
 		if (filename !== `${definition.type}-definition.json`) return yield* refuse(`Type filename mismatch: ${filename}`);
 		imports.push(`import definition${index} from '@/package-url/${source}';`);
 		typeNames.push(JSON.stringify(definition.type));

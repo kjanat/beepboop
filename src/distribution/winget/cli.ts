@@ -6,7 +6,7 @@ import { cli, command, flag } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 import { generateManifests, renderManifests, wingetConfiguration } from '@/distribution/winget/generate';
 import { outputEntry } from '@/tooling/github-output';
-import { attempt, attemptPromise, parse, readJson } from '@/tooling/runtime';
+import { attempt, attemptPromise, parse, readJson, ToolFailure } from '@/tooling/runtime';
 
 export const generate = command('generate')
 	.description('Write WinGet version, installer, and locale manifests for a published release')
@@ -41,16 +41,14 @@ export const generate = command('generate')
 			const configuration = yield* parse(wingetConfiguration, yield* readJson(flags.config));
 			const checksums = yield* attemptPromise(() => readFile(flags.checksums, 'utf8'));
 			const releaseNotes = yield* attemptPromise(() => readFile(flags.releaseNotes, 'utf8'));
-			const manifests = yield* attempt(() =>
-				generateManifests({
-					configuration,
-					version: flags.version,
-					tag: flags.tag || undefined,
-					releaseDate: flags.releaseDate.toISOString().slice(0, 10),
-					checksums,
-					releaseNotes,
-				})
-			);
+			const manifests = yield* generateManifests({
+				configuration,
+				version: flags.version,
+				tag: flags.tag || undefined,
+				releaseDate: flags.releaseDate.toISOString().slice(0, 10),
+				checksums,
+				releaseNotes,
+			}).pipe(Effect.mapError(error => new ToolFailure({ message: error.detail ?? error.message, cause: error })));
 			const directory = resolve(flags.out);
 			const files: string[] = [];
 			for (const [name, content] of Object.entries(renderManifests(manifests))) {

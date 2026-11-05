@@ -1,18 +1,25 @@
+import { Result } from 'effect';
+import { type DomainError, precondition } from '@/contract/errors';
+
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json | undefined };
 
 const width = 80;
 
-export function json(value: unknown): Json {
+export function json(value: unknown): Result.Result<Json, DomainError> {
 	if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-		return value;
+		return Result.succeed(value);
 	}
-	if (Array.isArray(value)) return value.map(json);
+	if (Array.isArray(value)) return Result.all(value.map(json));
 	if (typeof value === 'object') {
-		return Object.fromEntries(
-			Object.entries(value).map(([key, item]) => [key, item === undefined ? undefined : json(item)] as const),
-		);
+		return Result.gen(function*() {
+			const entries: [string, Json | undefined][] = [];
+			for (const [key, item] of Object.entries(value)) {
+				entries.push([key, item === undefined ? undefined : yield* json(item)]);
+			}
+			return Object.fromEntries(entries);
+		});
 	}
-	throw new Error('Expected JSON value');
+	return Result.fail(precondition('Expected JSON value'));
 }
 
 export function formatJson(value: Json): string {

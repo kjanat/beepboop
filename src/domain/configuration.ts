@@ -1,8 +1,9 @@
 import { CronExpressionParser } from 'cron-parser';
+import { Result } from 'effect';
 import { z } from 'zod';
 import { versionFileSchema } from '@/automation/editors';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
-import { releaseIdentity } from '@/automation/package-identity';
+import { parseReleaseIdentity } from '@/automation/package-identity';
 import { refPattern, validRef } from '@/automation/policy';
 import { presetReferencePattern } from '@/automation/preset';
 import { managerNames } from '@/contract/catalog';
@@ -23,12 +24,10 @@ function issue(ctx: z.RefinementCtx, code: DiagnosticCode, message: string, path
 
 export const packageReference = nonempty.transform((value, ctx) => {
 	if (!value.startsWith('pkg:')) return value;
-	try {
-		return purl(releaseIdentity(value));
-	} catch (error) {
-		ctx.addIssue({ code: 'custom', message: error instanceof Error ? error.message : 'Invalid package URL' });
-		return z.NEVER;
-	}
+	const identity = parseReleaseIdentity(value);
+	if (Result.isSuccess(identity)) return purl(identity.success);
+	ctx.addIssue({ code: 'custom', message: identity.failure.message });
+	return z.NEVER;
 }).meta({
 	id: 'packageReference',
 	description:
@@ -38,12 +37,7 @@ const packageReferences = z.array(packageReference);
 
 const cron = nonempty.refine(value => {
 	if (value.trim().split(/\s+/).length !== 5) return false;
-	try {
-		CronExpressionParser.parse(value, { tz: 'UTC' });
-		return true;
-	} catch {
-		return false;
-	}
+	return Result.isSuccess(Result.try(() => CronExpressionParser.parse(value, { tz: 'UTC' })));
 }, 'Schedules use five-field UTC cron');
 
 const refPolicy = z.strictObject({

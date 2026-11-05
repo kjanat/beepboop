@@ -20,10 +20,7 @@ function readJson(path: string): Effect.Effect<unknown, CLIError> {
 	});
 }
 function parsePlan(value: unknown): Effect.Effect<SetupPlan, CLIError> {
-	return Effect.try({
-		try: () => parseSetupPlan(value),
-		catch: error => failure(error instanceof Error ? error.message : String(error), 'INVALID_PLAN'),
-	});
+	return parseSetupPlan(value).pipe(Effect.mapError(error => failure(error.message, 'INVALID_PLAN')));
 }
 /** Both frontends submit exactly the same policy choices to the preview/apply service. */
 export function chooseSetup(plan: SetupPlan, ask: Ask): Effect.Effect<SetupChoices, CLIError> {
@@ -195,7 +192,9 @@ export function setupRepository(
 				return yield* Effect.fail(failure('Use --plan with --apply, without --choices', 'INVALID_FLAGS'));
 			}
 			const reviewed = yield* parsePlan(yield* readJson(flags.plan));
-			const requested = repositoryReference(repository);
+			const requested = yield* repositoryReference(repository).pipe(
+				Effect.mapError(error => failure(error.message, 'INVALID_REPOSITORY')),
+			);
 			if (
 				requested.owner
 					? reviewed.repository !== `${requested.owner}/${requested.name}`

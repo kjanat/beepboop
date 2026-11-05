@@ -1,26 +1,30 @@
+import { Result } from 'effect';
 import { excluded, type PackagePublication, registry } from '@/automation/package-publication';
 import type { Execution, Inventory, Package, Publication, RepositoryRecord } from '@/automation/types';
 import { identifiedManagers, legacyJsrIdentity } from '@/contract/catalog';
 import { blocking, type Diagnostic, legacyDiagnostic, messages } from '@/contract/diagnostics';
-import { type PackageIdentity, packageIdentity, purl } from '@/package-url';
+import { InvalidPackageUrl, type PackageIdentity, packageIdentity, parsePackageIdentity, purl } from '@/package-url';
 
 type PackageRecord = Pick<Package, 'manager' | 'name' | 'version' | 'identity'>;
 /** Legacy records acquire a typed identity at the boundary; adapters stay independent of purl types. */
-export function identityOf(pkg: PackageRecord, repository?: string): PackageIdentity {
-	if (pkg.identity) return releaseIdentity(pkg.identity);
+export function parseIdentity(
+	pkg: PackageRecord,
+	repository?: string,
+): Result.Result<PackageIdentity, InvalidPackageUrl> {
+	if (pkg.identity) return parseReleaseIdentity(pkg.identity);
 	if (pkg.manager === 'jsr') {
 		const [namespace, name] = pkg.name.split('/');
-		if (!namespace?.startsWith('@') || !name) throw new Error('Invalid JSR package name');
-		return packageIdentity({
-			type: 'jsr',
-			namespace,
-			name,
-			version: pkg.version,
-		});
+		if (!namespace?.startsWith('@') || !name) {
+			return Result.fail(new InvalidPackageUrl({ message: 'Invalid JSR package name' }));
+		}
+		return parsePackageIdentity({ type: 'jsr', namespace, name, version: pkg.version });
 	}
 	if (pkg.manager === 'vscode') {
-		const { publisher, extension } = extensionParts(pkg.name);
-		return packageIdentity({ type: 'vscode-extension', namespace: publisher, name: extension, version: pkg.version });
+		return parseExtension(pkg.name).pipe(
+			Result.flatMap(({ publisher, extension }) =>
+				parsePackageIdentity({ type: 'vscode-extension', namespace: publisher, name: extension, version: pkg.version })
+			),
+		);
 	}
 	const type = pkg.manager === 'go' && pkg.name.includes('/') ? 'golang' : ['npm', 'cargo'].includes(pkg.manager)
 		? pkg.manager
@@ -32,17 +36,21 @@ export function identityOf(pkg: PackageRecord, repository?: string): PackageIden
 		: pkg.version;
 	const qualified = type === 'github' ? repository ?? pkg.name : pkg.name;
 	const slash = qualified.lastIndexOf('/');
-	return packageIdentity({
+	return parsePackageIdentity({
 		type,
 		name: type === 'generic' ? qualified : slash < 0 ? qualified : qualified.slice(slash + 1),
 		namespace: type === 'generic' ? pkg.manager : slash < 0 ? undefined : qualified.slice(0, slash),
 		version,
 	});
 }
-export function extensionParts(id: string): { publisher: string; extension: string } {
+export function identityOf(pkg: PackageRecord, repository?: string): PackageIdentity {
+	return Result.getOrThrow(parseIdentity(pkg, repository));
+}
+export function parseExtension(id: string): Result.Result<{ publisher: string; extension: string }, InvalidPackageUrl> {
 	const dot = id.indexOf('.');
-	if (dot < 1 || dot === id.length - 1) throw new Error('Invalid VS Code extension ID');
-	return { publisher: id.slice(0, dot), extension: id.slice(dot + 1) };
+	return dot < 1 || dot === id.length - 1
+		? Result.fail(new InvalidPackageUrl({ message: 'Invalid VS Code extension ID' }))
+		: Result.succeed({ publisher: id.slice(0, dot), extension: id.slice(dot + 1) });
 }
 /** An adapter explicitly selects a new publication version; other identity components stay unchanged. */
 export function publicationIdentity(pkg: PackageRecord, version: string): PackageIdentity {
@@ -161,9 +169,15 @@ export function packageKey(input: PackageIdentity | string): string {
 }
 
 /** Upgrade only Beepboop's historical JSR encoding; generic PURL parsing stays lossless. */
+export function parseReleaseIdentity(
+	input: PackageIdentity | string,
+): Result.Result<PackageIdentity, InvalidPackageUrl> {
+	return parsePackageIdentity(input).pipe(Result.flatMap(identity => {
+		if (!legacyJsrIdentity(identity)) return Result.succeed(identity);
+		const { repository_url: _repository, ...qualifiers } = identity.qualifiers ?? {};
+		return parsePackageIdentity({ ...identity, type: 'jsr', qualifiers });
+	}));
+}
 export function releaseIdentity(input: PackageIdentity | string): PackageIdentity {
-	const identity = packageIdentity(input);
-	if (!legacyJsrIdentity(identity)) return identity;
-	const { repository_url: _repository, ...qualifiers } = identity.qualifiers ?? {};
-	return packageIdentity({ ...identity, type: 'jsr', qualifiers });
+	return Result.getOrThrow(parseReleaseIdentity(input));
 }

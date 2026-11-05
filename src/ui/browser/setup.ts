@@ -1,16 +1,21 @@
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 import { publishable } from '@/automation/package-publication';
 import { parseSetupPlan } from '@/automation/setup-plan';
-import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
+import {
+	type SetupChoices,
+	type SetupPlan,
+	type SetupWorkflow,
+	triggerHandovers,
+	versionings,
+} from '@/automation/setup-types';
 import { routes } from '@/contract/routes';
 import { packageLabel } from '@/domain/package-label';
-import { oneOf } from '@/model';
 import { api } from '@/ui/browser/api';
 import { feedbackFor, find, Refused, refuse, show } from '@/ui/browser/dom';
 
 const sessions = new WeakMap<
 	HTMLFormElement,
-	{ plan: SetupPlan; choices: () => SetupChoices; reviewed?: string; takeOver?: string }
+	{ plan: SetupPlan; choices: () => Result.Result<SetupChoices, Refused>; reviewed?: string; takeOver?: string }
 >();
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = ''): HTMLElementTagNameMap[K] {
 	const node = document.createElement(tag);
@@ -57,7 +62,7 @@ function workflow(
 	role: 'prepare' | 'promote',
 	plan: SetupPlan,
 	choice?: SetupWorkflow,
-): () => SetupWorkflow | undefined {
+): () => Result.Result<SetupWorkflow | undefined, Refused> {
 	const box = element('fieldset');
 	box.append(element('legend', role === 'prepare' ? 'Preparation workflow' : 'Publication workflow'));
 	const file = select(box, 'Workflow', [
@@ -131,16 +136,24 @@ function workflow(
 	parent.append(box);
 	return () =>
 		file.value
-			? {
+			? choose(triggers.value, triggerHandovers, 'Invalid trigger handover').pipe(Result.map(handover => ({
 				file: file.value === 'new' ? newFile.value : file.value,
 				job: job.value || undefined,
-				triggers: oneOf(triggers.value, ['review', 'dispatchOnly', 'preserve'], 'Invalid trigger handover'),
+				triggers: handover,
 				commands: commands.value,
 				publicationSteps: Object.fromEntries(
 					[...mappingControls].filter(([, control]) => control.value).map(([id, control]) => [id, control.value]),
 				),
-			}
-			: undefined;
+			})))
+			: Result.succeed(undefined);
+}
+function choose<const T extends string>(
+	value: string,
+	allowed: readonly T[],
+	message: string,
+): Result.Result<T, Refused> {
+	const match = allowed.find(item => item === value);
+	return match === undefined ? Result.fail(new Refused({ message })) : Result.succeed(match);
 }
 function editor(form: HTMLFormElement, plan: SetupPlan) {
 	form.replaceChildren();
@@ -155,7 +168,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 	);
 	const streams = element('div');
 	form.append(streams);
-	const readers: (() => SetupChoices['streams'][number])[] = [];
+	const readers: (() => Result.Result<SetupChoices['streams'][number], Refused>)[] = [];
 	const add = (value: SetupChoices['streams'][number]) => {
 		const box = element('fieldset');
 		box.append(element('legend', 'Release stream'));
@@ -185,14 +198,20 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 		const prepare = workflow(box, 'prepare', plan, value.prepare),
 			promote = workflow(box, 'promote', plan, value.promote);
 		streams.append(box);
-		readers.push(() => ({
-			name: enabled.checked ? name.value : '',
-			versioning: oneOf(versioning.value, ['workspace', 'independent', 'none'], 'Invalid versioning'),
-			packages: packages(),
-			required: packages(),
-			prepare: prepare(),
-			promote: promote(),
-		}));
+		readers.push(() =>
+			Result.gen(function*() {
+				const prepared = yield* prepare();
+				const promoted = yield* promote();
+				return {
+					name: enabled.checked ? name.value : '',
+					versioning: yield* choose(versioning.value, versionings, 'Invalid versioning'),
+					packages: packages(),
+					required: packages(),
+					...(prepared ? { prepare: prepared } : {}),
+					...(promoted ? { promote: promoted } : {}),
+				};
+			})
+		);
 	};
 	plan.choices.streams.forEach(add);
 	const addButton = element('button', 'Add stream');
@@ -215,10 +234,11 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 	result.setAttribute('aria-live', 'polite');
 	form.append(preview, apply, takeOver, result);
 	feedbackFor(form);
-	const choices = () => ({
-		streams: readers.map(read => read()).filter(stream => stream.name),
-		...(revision.value ? { actionsRevision: revision.value } : {}),
-	});
+	const choices = (): Result.Result<SetupChoices, Refused> =>
+		Result.all(readers.map(read => read())).pipe(Result.map(streams => ({
+			streams: streams.filter(stream => stream.name),
+			...(revision.value ? { actionsRevision: revision.value } : {}),
+		})));
 	sessions.set(form, { plan, choices });
 	function invalidate() {
 		const session = sessions.get(form);
@@ -271,10 +291,7 @@ function takeOverAllowed(plan: SetupPlan): boolean {
 	return plan.branchConflict && plan.blockers.length === 1 && plan.edits.length > 0;
 }
 function parsePlan(value: unknown): Effect.Effect<SetupPlan, Refused> {
-	return Effect.try({
-		try: () => parseSetupPlan(value),
-		catch: error => new Refused({ message: error instanceof Error ? error.message : String(error) }),
-	});
+	return parseSetupPlan(value).pipe(Effect.mapError(error => new Refused({ message: error.message })));
 }
 export function setup(form: HTMLFormElement, action: string) {
 	return Effect.gen(function*() {
@@ -289,7 +306,7 @@ export function setup(form: HTMLFormElement, action: string) {
 			if (apply) apply.disabled = true;
 			return;
 		}
-		const choices = session.choices(), identity = JSON.stringify(choices);
+		const choices = yield* Effect.fromResult(session.choices()), identity = JSON.stringify(choices);
 		if (action !== 'apply' && action !== 'takeover') {
 			delete session.reviewed;
 			const plan = yield* parsePlan(yield* api(routes.setupPreview, { repository, choices }));

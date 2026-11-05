@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
 import { directory, inWorkspace, object } from '@/automation/managers/helpers';
 import type { Adapter } from '@/automation/managers/registry';
@@ -37,70 +37,67 @@ export const cargoManager: Adapter<'cargo'> = {
 	discover(snapshot) {
 		const inventory = emptyInventory();
 		const detected = new Set<import('@/contract/catalog').ManagerName>();
-		let workspace: Record<string, unknown> = {};
-		const patched = new Set<string>();
-		try {
-			const root = object(parseToml(snapshot.files['Cargo.toml'] ?? ''));
-			workspace = object(root.workspace);
-			for (const source of Object.values(object(root.patch))) {
-				for (const entry of Object.values(object(source))) {
-					const location = object(entry).path;
-					if (typeof location === 'string') patched.add(location.replace(/^\.\//, '').replace(/\/+$/, ''));
-				}
-			}
-		} catch {
+		const root = Result.try(() => object(parseToml(snapshot.files['Cargo.toml'] ?? '')));
+		if (Result.isFailure(root)) {
 			inventory.diagnostics.push(fileProblem('Cargo.toml', 'invalid-manifest', 'invalid TOML'));
+		}
+		const workspace = Result.isSuccess(root) ? object(root.success.workspace) : {};
+		const patched = new Set<string>();
+		for (const source of Object.values(Result.isSuccess(root) ? object(root.success.patch) : {})) {
+			for (const entry of Object.values(object(source))) {
+				const location = object(entry).path;
+				if (typeof location === 'string') patched.add(location.replace(/^\.\//, '').replace(/\/+$/, ''));
+			}
 		}
 		const members = Array.isArray(workspace.members) ? workspace.members.map(String) : [];
 		const exclude = Array.isArray(workspace.exclude) ? workspace.exclude.map(String) : [];
 		for (const [path, source] of Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b))) {
-			try {
-				if ((path === 'Cargo.toml' || path.endsWith('/Cargo.toml'))) {
-					if (path !== 'Cargo.toml' && !inWorkspace(directory(path), members, exclude)) continue;
-					const manifest = object(parseToml(source)),
-						pkg = object(manifest.package);
-					if (typeof pkg.name !== 'string') continue;
-					const inherited = object(pkg.version).workspace === true;
-					const version = inherited ? object(workspace.package).version : pkg.version;
-					if (typeof version !== 'string') throw new Error('Missing package version');
-					const deps = {
-						...object(manifest.dependencies),
-						...object(manifest['build-dependencies']),
-					};
-					for (const target of Object.values(object(manifest.target))) {
-						Object.assign(
-							deps,
-							object(object(target).dependencies),
-							object(object(target)['build-dependencies']),
-						);
-					}
-					const shared = object(workspace.dependencies);
-					const publish = object(pkg.publish).workspace === true ? object(workspace.package).publish : pkg.publish;
-					inventory.packages.push({
-						manager: 'cargo',
-						name: pkg.name,
-						version,
-						manifest: path,
-						versionSource: inherited
-							? 'Cargo.toml#workspace.package.version'
-							: `${path}#package.version`,
-						publication: patched.has(directory(path))
-							? excluded('upstream-patch')
-							: publish === false
-							? excluded('publish-disabled')
-							: Array.isArray(publish) && !publish.includes('crates-io')
-							? excluded('other-registry')
-							: registry,
-						dependencies: Object.entries(deps).map(([name, value]) => {
-							const dep = object(object(value).workspace === true ? shared[name] : value);
-							return typeof dep.package === 'string' ? dep.package : name;
-						}),
-					});
-					detected.add('cargo');
-				}
-			} catch {
+			if (path !== 'Cargo.toml' && !path.endsWith('/Cargo.toml')) continue;
+			if (path !== 'Cargo.toml' && !inWorkspace(directory(path), members, exclude)) continue;
+			const parsed = Result.try(() => object(parseToml(source)));
+			const manifest = Result.isSuccess(parsed) ? parsed.success : undefined;
+			const pkg = object(manifest?.package);
+			const inherited = object(pkg.version).workspace === true;
+			const version = inherited ? object(workspace.package).version : pkg.version;
+			if (!manifest || (typeof pkg.name === 'string' && typeof version !== 'string')) {
 				inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', `cannot safely discover configuration`));
+				continue;
 			}
+			if (typeof pkg.name !== 'string' || typeof version !== 'string') continue;
+			const deps = {
+				...object(manifest.dependencies),
+				...object(manifest['build-dependencies']),
+			};
+			for (const target of Object.values(object(manifest.target))) {
+				Object.assign(
+					deps,
+					object(object(target).dependencies),
+					object(object(target)['build-dependencies']),
+				);
+			}
+			const shared = object(workspace.dependencies);
+			const publish = object(pkg.publish).workspace === true ? object(workspace.package).publish : pkg.publish;
+			inventory.packages.push({
+				manager: 'cargo',
+				name: pkg.name,
+				version,
+				manifest: path,
+				versionSource: inherited
+					? 'Cargo.toml#workspace.package.version'
+					: `${path}#package.version`,
+				publication: patched.has(directory(path))
+					? excluded('upstream-patch')
+					: publish === false
+					? excluded('publish-disabled')
+					: Array.isArray(publish) && !publish.includes('crates-io')
+					? excluded('other-registry')
+					: registry,
+				dependencies: Object.entries(deps).map(([name, value]) => {
+					const dep = object(object(value).workspace === true ? shared[name] : value);
+					return typeof dep.package === 'string' ? dep.package : name;
+				}),
+			});
+			detected.add('cargo');
 		}
 
 		inventory.managers = [...detected];

@@ -10,6 +10,7 @@ import Runs from '@/components/Runs.astro';
 import Secrets from '@/components/Secrets.astro';
 import Security from '@/components/Security.astro';
 import WinGet from '@/components/WinGet.astro';
+import { unauthenticated } from '@/contract/errors';
 import Layout from '@/layouts/Dashboard.astro';
 import { bindings } from '@/server/bindings.ts';
 import { githubOutage } from '@/server/github-status.ts';
@@ -20,14 +21,19 @@ interface Props {
 	section: Section;
 }
 const { section } = Astro.props;
-const { actor } = Astro.locals;
-if (!actor) {
-	throw new Error('Dashboard pages require a signed-in administrator');
-}
-const [view, outage] = await Effect.runPromise(Effect.all([
-	load(section, { env: bindings(), actor }),
-	panel('github-status', githubOutage),
-], { concurrency: 'unbounded' }));
+const [view, outage] = await Effect.runPromise(Effect.gen(function*() {
+	const { actor } = Astro.locals;
+	if (!actor) {
+		return yield* unauthenticated(
+			'Dashboard pages require a signed-in administrator',
+		);
+	}
+	const env = yield* bindings;
+	return yield* Effect.all([
+		load(section, { env, actor }),
+		panel('github-status', githubOutage),
+	], { concurrency: 'unbounded' });
+}));
 ---
 <Layout
 	section={section}

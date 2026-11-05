@@ -148,16 +148,15 @@ export class WinGetService {
 				typeof asset.digest === 'string' && /^sha256:[a-f0-9]{64}$/i.test(asset.digest)
 			)
 				.map(asset => `${String(asset.digest).slice(7)}  ${text(asset.name)}`).join('\n');
-			const manifests = yield* fromSync(() =>
-				generateManifests({
-					configuration,
-					version,
-					tag,
-					checksums,
-					releaseDate: text(release.published_at).slice(0, 10),
-					releaseNotes: String(release.body ?? ''),
-				})
-			);
+			const releaseDate = yield* fromSync(() => text(release.published_at).slice(0, 10));
+			const manifests = yield* generateManifests({
+				configuration,
+				version,
+				tag,
+				checksums,
+				releaseDate,
+				releaseNotes: String(release.body ?? ''),
+			});
 			for (const installer of manifests.installer.Installers) {
 				const asset = assets.find(asset => asset.browser_download_url === installer.InstallerUrl);
 				if (

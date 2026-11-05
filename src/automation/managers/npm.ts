@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
 import { object } from '@/automation/managers/helpers';
 import type { Adapter, Fetcher, RegistryVersion } from '@/automation/managers/registry';
@@ -55,97 +55,106 @@ export const npmManager: Adapter<'npm'> = {
 		const inventory = emptyInventory();
 		const detected = new Set<import('@/contract/catalog').ManagerName>();
 		for (const [path, source] of Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b))) {
-			try {
-				if ((path === 'package.json' || path.endsWith('/package.json'))) {
-					const pkg = object(JSON.parse(source));
-					if (typeof object(pkg.engines).vscode === 'string') continue;
-					if (typeof pkg.name !== 'string' || !pkg.name.trim()) {
-						if (Object.hasOwn(pkg, 'name')) {
-							inventory.diagnostics.push(
-								fileProblem(path, 'invalid-manifest', `package name must be a nonempty string`),
-							);
-						}
-						continue;
-					}
-					// Standalone nested packages are still inventoried; independent versions are not silently synchronized.
-					inventory.packages.push({
-						manager: 'npm',
-						name: pkg.name,
-						...(typeof pkg.version === 'string' ? { version: pkg.version } : {}),
-						manifest: path,
-						versionSource: `${path}#version`,
-						publication: pkg.private === true ? excluded('private') : registry,
-						dependencies: Object.keys({
-							...object(pkg.dependencies),
-							...object(pkg.optionalDependencies),
-							...object(pkg.peerDependencies),
-						}),
-					});
-					detected.add('npm');
-				}
-			} catch {
+			if (path !== 'package.json' && !path.endsWith('/package.json')) continue;
+			const parsed = Result.try(() => object(JSON.parse(source)));
+			if (Result.isFailure(parsed)) {
 				inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', `cannot safely discover configuration`));
+				continue;
 			}
+			const pkg = parsed.success;
+			if (typeof object(pkg.engines).vscode === 'string') continue;
+			if (typeof pkg.name !== 'string' || !pkg.name.trim()) {
+				if (Object.hasOwn(pkg, 'name')) {
+					inventory.diagnostics.push(
+						fileProblem(path, 'invalid-manifest', `package name must be a nonempty string`),
+					);
+				}
+				continue;
+			}
+			// Standalone nested packages are still inventoried; independent versions are not silently synchronized.
+			inventory.packages.push({
+				manager: 'npm',
+				name: pkg.name,
+				...(typeof pkg.version === 'string' ? { version: pkg.version } : {}),
+				manifest: path,
+				versionSource: `${path}#version`,
+				publication: pkg.private === true ? excluded('private') : registry,
+				dependencies: Object.keys({
+					...object(pkg.dependencies),
+					...object(pkg.optionalDependencies),
+					...object(pkg.peerDependencies),
+				}),
+			});
+			detected.add('npm');
 		}
 		for (const [path, source] of Object.entries(snapshot.files)) {
 			if (!npmTargets.test(path)) continue;
-			try {
-				const descriptor = object(JSON.parse(source));
-				if (typeof descriptor.scope !== 'string' || !Array.isArray(descriptor.targets)) continue;
-				const workspace = object(parseToml(snapshot.files['Cargo.toml'] ?? '').workspace);
-				const version = object(workspace.package).version;
-				if (typeof version !== 'string') {
-					inventory.diagnostics.push(
-						fileProblem(path, 'invalid-manifest', `generated packages need workspace.package.version in Cargo.toml`),
-					);
-					continue;
-				}
-				const facades: Record<string, unknown>[] = Array.isArray(descriptor.facades)
-					? descriptor.facades.map(object)
-					: typeof descriptor.facade === 'string'
-					? [{ name: descriptor.facade }]
-					: [];
-				const generated: Package[] = [];
-				const add = (name: string, dependencies: string[], optional = false) =>
-					generated.push({
-						manager: 'npm',
-						name,
-						version,
-						manifest: path,
-						versionSource: 'Cargo.toml#workspace.package.version',
-						publication: registry,
-						dependencies,
-						generated: true,
-						optional,
-					});
-				for (const facade of facades) {
-					if (typeof facade.name !== 'string') continue;
-					const platforms: string[] = [];
-					for (const raw of descriptor.targets) {
-						const target = object(raw);
-						if (typeof target.pkg !== 'string') continue;
-						const name = `${descriptor.scope}/${typeof facade.pkg === 'string' ? `${facade.pkg}-` : ''}${target.pkg}`;
-						platforms.push(name);
-						add(name, [], target.experimental === true);
-					}
-					add(facade.name, platforms);
-					if (typeof facade.shim === 'string') add(facade.shim, [facade.name]);
-				}
-				const bundle = object(descriptor.bundle);
-				if (typeof bundle.name === 'string') {
-					add(
-						bundle.name,
-						facades.map((f) => String(f.name)),
-					);
-				}
-				inventory.packages = inventory.packages.filter(
-					(p) => p.manager !== 'npm' || !generated.some((g) => g.name === p.name),
-				);
-				inventory.packages.push(...generated);
-				detected.add('npm');
-			} catch {
+			const invalid = () =>
 				inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', `invalid npm target descriptor`));
+			const parsed = Result.try(() => object(JSON.parse(source)));
+			if (Result.isFailure(parsed)) {
+				invalid();
+				continue;
 			}
+			const descriptor = parsed.success;
+			const { targets } = descriptor;
+			if (typeof descriptor.scope !== 'string' || !Array.isArray(targets)) continue;
+			const cargo = Result.try(() => object(parseToml(snapshot.files['Cargo.toml'] ?? '')));
+			if (Result.isFailure(cargo)) {
+				invalid();
+				continue;
+			}
+			const workspace = object(cargo.success.workspace);
+			const version = object(workspace.package).version;
+			if (typeof version !== 'string') {
+				inventory.diagnostics.push(
+					fileProblem(path, 'invalid-manifest', `generated packages need workspace.package.version in Cargo.toml`),
+				);
+				continue;
+			}
+			const facades: Record<string, unknown>[] = Array.isArray(descriptor.facades)
+				? descriptor.facades.map(object)
+				: typeof descriptor.facade === 'string'
+				? [{ name: descriptor.facade }]
+				: [];
+			const generated: Package[] = [];
+			const add = (name: string, dependencies: string[], optional = false) =>
+				generated.push({
+					manager: 'npm',
+					name,
+					version,
+					manifest: path,
+					versionSource: 'Cargo.toml#workspace.package.version',
+					publication: registry,
+					dependencies,
+					generated: true,
+					optional,
+				});
+			for (const facade of facades) {
+				if (typeof facade.name !== 'string') continue;
+				const platforms: string[] = [];
+				for (const raw of targets) {
+					const target = object(raw);
+					if (typeof target.pkg !== 'string') continue;
+					const name = `${descriptor.scope}/${typeof facade.pkg === 'string' ? `${facade.pkg}-` : ''}${target.pkg}`;
+					platforms.push(name);
+					add(name, [], target.experimental === true);
+				}
+				add(facade.name, platforms);
+				if (typeof facade.shim === 'string') add(facade.shim, [facade.name]);
+			}
+			const bundle = object(descriptor.bundle);
+			if (typeof bundle.name === 'string') {
+				add(
+					bundle.name,
+					facades.map((f) => String(f.name)),
+				);
+			}
+			inventory.packages = inventory.packages.filter(
+				(p) => p.manager !== 'npm' || !generated.some((g) => g.name === p.name),
+			);
+			inventory.packages.push(...generated);
+			detected.add('npm');
 		}
 
 		inventory.managers = [...detected];

@@ -14,10 +14,7 @@ import { record } from '@/model';
 import { admin, type Context } from '@/server/handlers/kit';
 
 function reference(input: string) {
-	return Effect.try({
-		try: () => repositoryReference(input),
-		catch: error => invalid(error instanceof Error ? error.message : 'Invalid repository', ['repository']),
-	});
+	return repositoryReference(input).pipe(Effect.mapError(error => invalid(error.message, ['repository'])));
 }
 
 function ownerName(context: Context, input: string): Effect.Effect<string, DomainError> {
