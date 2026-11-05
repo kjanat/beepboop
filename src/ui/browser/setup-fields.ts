@@ -42,7 +42,7 @@ export function select(parent: HTMLElement, title: string, entries: [string, str
 }
 export interface Selection {
 	name: string;
-	packages: { id: string; name: string; manifest: string; versionSource?: string }[];
+	packages: { id: string; name: string; manifest: string; versionSource?: string; manager?: string }[];
 }
 export function preparationReasons(plan: SetupPlan, selection: Selection): string[] {
 	const reasons: string[] = [];
@@ -69,12 +69,12 @@ export function suggestedCommands(role: 'prepare' | 'promote', selection: Select
 	const rank = (id: string) => order.includes(id) ? order.indexOf(id) : order.length;
 	const packages = [...selection.packages].sort((left, right) => rank(left.id) - rank(right.id));
 	if (!packages.length) return '';
-	if (packages.every(pkg => pkg.manifest.endsWith('Cargo.toml'))) {
+	if (packages.every(pkg => pkg.manager === 'cargo')) {
 		return role === 'prepare'
 			? 'cargo check --workspace --all-targets\ncargo test --workspace'
 			: packages.map(pkg => `cargo publish --package ${quote(pkg.name)}`).join('\n');
 	}
-	if (packages.every(pkg => pkg.manifest.endsWith('package.json'))) {
+	if (packages.every(pkg => pkg.manager === 'npm')) {
 		const npm = plan.preparation?.lockfiles.some(path => path.endsWith('package-lock.json'));
 		const lockfiles = plan.preparation?.lockfiles ?? [];
 		const install = lockfiles.some(path => path.endsWith('bun.lock'))
@@ -167,8 +167,8 @@ export function workflow(
 	commands.rows = 4;
 	commands.spellcheck = false;
 	commands.placeholder = preparing
-		? 'For example: cargo check --workspace'
-		: 'For example: cargo publish --package my-crate';
+		? 'For example: ./scripts/check-release.sh'
+		: 'For example: ./scripts/publish.sh';
 	commands.value = initial?.commands ?? '';
 	label(
 		commandBox,
@@ -207,7 +207,7 @@ export function workflow(
 			}
 			return Result.succeed({
 				file: editor.file(),
-				job: file.value === 'new' || file.value === 'same' ? preparing ? 'prepare' : 'publish' : job.value,
+				job: selectedJob(),
 				triggers: triggers.disabled ? 'review' : triggers.value === 'dispatchOnly' ? 'dispatchOnly' : 'review',
 				commands: commands.disabled ? '' : commands.value,
 				publicationSteps: Object.fromEntries(
@@ -216,15 +216,25 @@ export function workflow(
 			});
 		},
 	};
+	function selectedJob(): string {
+		if (file.value === 'new') return preparing ? 'prepare' : 'publish';
+		if (file.value === 'same') {
+			if (initial?.file === editor.file() && initial.job) return initial.job;
+			return plan.workflows.find(w => w.file === editor.file())?.roles.find(entry =>
+				entry.stream === selection().name && entry.operation === role
+			)?.job ?? 'prepare';
+		}
+		return job.value;
+	}
 	const visible = (control: HTMLElement & { disabled: boolean }, show: boolean) => {
 		if (control.parentElement) control.parentElement.hidden = !show;
 		control.disabled = !show;
 	};
 	function refreshCommands() {
-		const evidence = plan.workflows.find(w => w.file === file.value);
+		const evidence = plan.workflows.find(w => w.file === editor.file());
 		const integrated = preparing
-			? evidence?.preparationJobs.includes(job.value)
-			: evidence?.reportingJobs.includes(job.value);
+			? evidence?.preparationJobs.includes(selectedJob())
+			: evidence?.reportingJobs.includes(selectedJob());
 		const needsCommands = !integrated
 			&& (preparing || !mappingControls.size || [...mappingControls.values()].some(control => !control.value));
 		commandBox.hidden = !needsCommands;
@@ -270,6 +280,7 @@ export function workflow(
 		if (preparing && !modeEdited) file.value = reasons.length ? publication?.isNew() ? 'same' : 'new' : '';
 		const same = [...file.options].find(option => option.value === 'same');
 		if (same) same.disabled = !publication?.isNew() && !(pairedInitially && publication?.file() === initial?.file);
+		if (same?.disabled && file.value === 'same') file.value = reasons.length ? 'new' : '';
 		const managed = preparing && !file.value, shared = file.value === 'same', creating = file.value === 'new';
 		controls.hidden = managed;
 		for (const control of controls.querySelectorAll('input,select,textarea')) {

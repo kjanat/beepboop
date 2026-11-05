@@ -40,7 +40,13 @@ export interface SetupPlan {
 	setupHead: string | null;
 	choices: SetupChoices;
 	inventory: {
-		packages: { name: string; manifest: string; publication: PackagePublication; versionSource?: string }[];
+		packages: {
+			name: string;
+			manifest: string;
+			publication: PackagePublication;
+			versionSource?: string;
+			manager?: string;
+		}[];
 		publicationOrder?: string[];
 	};
 	preparation?: { lockfiles: string[]; versionFileStreams: string[]; workflowStreams: string[] };

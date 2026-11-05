@@ -9,6 +9,8 @@ import {
 	type HTMLSelectElement,
 } from 'happy-dom';
 import { z } from 'zod';
+import { parseSetupPlan } from '@/automation/setup-plan';
+import { bearer } from '@root/test/support/http.ts';
 import { widget } from '@root/test/support/repositories.ts';
 import { origin, World } from '@root/test/support/world.ts';
 // Browser modules are checked separately to keep DOM and Worker Element types apart.
@@ -220,3 +222,97 @@ test('Cargo setup creates one workflow with preparation and publishing jobs', as
 	);
 	expect(configured.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(true);
 });
+
+test('extension manifests require explicit publishing commands instead of npm suggestions', async () => {
+	world.github.create('octo/extension', {
+		'package.json': JSON.stringify({
+			name: 'extension',
+			publisher: 'octo',
+			version: '1.0.0',
+			engines: { vscode: '^1.80.0' },
+		}),
+	});
+	const form = await open('octo/extension');
+	const publishing = role(form, 'promote');
+	const commands = control(publishing, 'Shell commands that publish the selected packages', window.HTMLTextAreaElement);
+	expect(commands.value).toBe('');
+	expect(commands.required).toBe(true);
+	expect(commands.placeholder).not.toContain('npm publish');
+	await expect(act(form, 'preview')).rejects.toThrow('Enter the shell commands that publish these packages.');
+});
+
+test('existing shared Go workflows do not require replacement preparation commands', async () => {
+	const repository = world.github.create('octo/tagged', { 'go.mod': 'module github.com/octo/tagged\n\ngo 1.26\n' });
+	const api = bearer(world, await world.cliSession());
+	const choices = {
+		streams: [{
+			name: 'main',
+			packages: ['pkg:golang/github.com/octo/tagged'],
+			required: [],
+			versioning: 'workspace',
+			prepare: { file: 'release.yml', job: 'check', commands: 'go test ./...' },
+			promote: { file: 'release.yml', job: 'ship', commands: 'goreleaser release' },
+		}],
+	};
+	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toEqual([]);
+	expect(
+		(await api('/api/repositories/setup/apply', {
+			repository: repository.name,
+			choices: plan.choices,
+			planId: plan.planId,
+			sourceSha: plan.sourceSha,
+			setupHead: plan.setupHead,
+		})).status,
+	).toBe(200);
+	world.github.merge(repository, 1);
+	const form = await open(repository.name);
+	const preparing = role(form, 'prepare');
+	const commands = control(
+		preparing,
+		'Shell commands to update lockfiles and check the release',
+		window.HTMLTextAreaElement,
+	);
+	expect(control(preparing, 'How should release changes be prepared?', window.HTMLSelectElement).value).toBe('same');
+	expect(commands.value).toBe('');
+	expect(commands.required).toBe(false);
+	expect(commands.disabled).toBe(true);
+	expect(form.checkValidity()).toBe(true);
+	await act(form, 'preview');
+	expect(form.querySelector('.setup-result')?.textContent).toContain('No file changes needed.');
+});
+
+test('an accidentally added release group can be disabled without losing existing choices', async () => {
+	widget(world.github, { configured: false });
+	const form = await open('octo/widget');
+	const add = [...form.querySelectorAll('button')].find(button => button.textContent === 'Add another release group');
+	if (!add) throw new Error('Missing add group button');
+	add.click();
+	const enabled = control(form, 'Include this release group', window.HTMLInputElement);
+	enabled.checked = false;
+	enabled.dispatchEvent(new window.Event('change', { bubbles: true }));
+	// happy-dom does not propagate fieldset disabling to descendant validity checks.
+	expect(enabled.closest('fieldset')?.querySelector('.setup-group-body')?.hasAttribute('disabled')).toBe(true);
+	await act(form, 'preview');
+	expect(form.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(false);
+});
+
+for (const locked of [false, true]) {
+	test(`switching publishing workflows resets unavailable shared preparation (locked=${locked})`, async () => {
+		const repository = widget(world.github, { configured: false });
+		if (locked) world.github.push(repository, { 'package-lock.json': '{"lockfileVersion":3}\n' }, 'Add a lockfile');
+		const form = await open('octo/widget');
+		const publishing = role(form, 'promote'), preparing = role(form, 'prepare');
+		const publication = control(publishing, 'Publishing workflow', window.HTMLSelectElement);
+		const preparation = control(preparing, 'How should release changes be prepared?', window.HTMLSelectElement);
+		change(publication, 'new');
+		change(preparation, 'same');
+		change(publication, 'publish.yml');
+		expect([...preparation.options].find(option => option.value === 'same')?.disabled).toBe(true);
+		expect(preparation.value).toBe(locked ? 'new' : '');
+		if (!locked) expect(preparing.textContent).toContain('Only the publishing workflow is needed.');
+		await act(form, 'preview');
+		expect(form.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(false);
+	});
+}

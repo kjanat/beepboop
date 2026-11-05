@@ -269,12 +269,11 @@ function drafted(
 					ref: previousBinding.ref ?? inherited.ref ?? snapshot.repository.defaultBranch,
 					...(operation === 'promote' ? { publications: required } : {}),
 				};
-				if (shared) {
-					binding.inputs = {
-						...object(previousBinding.inputs ?? inherited.inputs),
-						beepboop_operation: operation === 'promote' ? 'publish' : 'prepare',
-					};
-				}
+				const inputs = { ...object(inherited.inputs), ...object(previousBinding.inputs) };
+				if (shared) inputs.beepboop_operation = operation === 'promote' ? 'publish' : 'prepare';
+				else delete inputs.beepboop_operation;
+				if (Object.keys(inputs).length) binding.inputs = inputs;
+				else delete binding.inputs;
 				if (binding.mode === 'observe' || inherited.mode === 'observe') binding.mode = 'dispatch';
 				if (typeof binding.ref === 'string' && binding.ref.includes('*')) {
 					blockers.push(`${selection.name}: ${operation} needs an exact dispatch ref in the existing configuration.`);

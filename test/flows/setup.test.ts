@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 import { parse } from 'yaml';
 import { z } from 'zod';
+import { mergeConfiguration } from '@/automation/configuration';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices } from '@/automation/setup-types';
 import { bearer, field } from '@root/test/support/http.ts';
@@ -390,4 +391,89 @@ test('configuration-only adoption does not request workflow write permission', a
 	});
 	expect(applied.status).toBe(200);
 	expect(repository.pulls).toHaveLength(1);
+});
+
+for (const inherited of [false, true]) {
+	test(`separating workflows removes only the generated phase input (inherited=${inherited})`, async () => {
+		const repository = widget(world.github, { configured: false });
+		const policy = {
+			managers: ['npm', 'workflow'],
+			streams: {
+				main: {
+					packages: ['pkg:npm/widget'],
+					required: ['pkg:npm/widget'],
+					prepare: {
+						workflow: {
+							file: 'release.yml',
+							inputs: { beepboop_operation: 'prepare', channel: 'stable', dryRun: false },
+						},
+					},
+					promote: {
+						workflow: { file: 'release.yml', inputs: { beepboop_operation: 'publish', channel: 'stable', retries: 0 } },
+					},
+				},
+			},
+		};
+		if (inherited) world.github.create('octo/presets', { 'release.json': JSON.stringify(policy) });
+		world.github.push(repository, {
+			'.github/beepboop.json': JSON.stringify(inherited ? { extends: ['github>octo/presets:release'] } : policy),
+		}, 'Configure shared workflow inputs');
+		const api = bearer(world, await world.cliSession());
+		const choices = {
+			streams: [{
+				name: 'main',
+				packages: ['pkg:npm/widget'],
+				required: ['pkg:npm/widget'],
+				versioning: 'workspace',
+				prepare: { file: 'prepare-release.yml', job: 'prepare', commands: 'npm install' },
+				promote: { file: 'publish-release.yml', job: 'publish', commands: 'npm publish' },
+			}],
+		};
+		const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
+		const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+		expect(plan.blockers).toEqual([]);
+		const binding = z.object({ file: z.string(), inputs: z.record(z.string(), z.unknown()) });
+		const configuration = z.object({
+			streams: z.object({
+				main: z.object({
+					prepare: z.object({ workflow: binding }),
+					promote: z.object({ workflow: binding }),
+				}),
+			}),
+		});
+		const proposed = configuration.parse(
+			JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'),
+		);
+		expect(proposed.streams.main.prepare.workflow.inputs).toEqual({ channel: 'stable', dryRun: false });
+		expect(proposed.streams.main.promote.workflow.inputs).toEqual({ channel: 'stable', retries: 0 });
+		expect(
+			(await api('/api/repositories/setup/apply', {
+				repository: repository.name,
+				choices: plan.choices,
+				planId: plan.planId,
+				sourceSha: plan.sourceSha,
+				setupHead: plan.setupHead,
+			})).status,
+		).toBe(200);
+		world.github.merge(repository, 1);
+		const discovered = await api('/api/repositories/discover', { repository: repository.name });
+		expect(discovered.status).toBe(200);
+		const resolved = configuration.parse(field(discovered.body, 'configuration'));
+		expect(resolved.streams.main.prepare.workflow.inputs).toEqual({ channel: 'stable', dryRun: false });
+		expect(resolved.streams.main.promote.workflow.inputs).toEqual({ channel: 'stable', retries: 0 });
+	});
+}
+
+test('workflow input merging keeps shared phase inputs until the target file changes or explicitly overrides them', () => {
+	const base = { file: 'release.yml', inputs: { beepboop_operation: 'prepare', retries: 0 } };
+	const unchanged = mergeConfiguration(base, { file: 'release.yml', inputs: { dryRun: false } });
+	if (Result.isFailure(unchanged)) throw unchanged.failure;
+	expect(unchanged.success).toEqual({
+		file: 'release.yml',
+		inputs: { beepboop_operation: 'prepare', retries: 0, dryRun: false },
+	});
+	const explicit = mergeConfiguration(base, { file: 'custom.yml', inputs: { beepboop_operation: 'custom' } });
+	if (Result.isFailure(explicit)) throw explicit.failure;
+	expect(explicit.success).toEqual({ file: 'custom.yml', inputs: { beepboop_operation: 'custom', retries: 0 } });
+	expect(base.inputs.beepboop_operation).toBe('prepare');
 });

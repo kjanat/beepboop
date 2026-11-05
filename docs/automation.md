@@ -17,7 +17,7 @@ Cargo and npm commands are editable. For an existing publishing job, you can sel
 its publishing steps instead of adding commands. Trigger replacement choices only
 appear for existing workflows with automatic triggers.
 
-Select **Beepboop prepares the PR (no workflow)** when preparation only edits
+Select **Beepboop opens the version PR (no preparation job)** when preparation only edits
 versions stored in manifests or configured `versionFiles`. Repositories with
 lockfiles need a preparation workflow to regenerate them. Tag-only packages
 without a version file also need a preparation workflow.
@@ -60,7 +60,7 @@ package it publishes, links it to the repository and lets GitHub Actions runs
 started by Beepboop publish to the scope, using the credential stored as
 `jsr-token`.
 
-Select **Open or refresh setup PR** after reviewing the preview. A changed source
+Select **Open setup PR** after reviewing the preview. A changed source
 commit or setup branch invalidates it. Refreshing a proposal incorporates current
 default-branch files and refuses human changes on the setup branch. The dashboard
 also links earlier proposals, including proposals superseded by configuration now
@@ -578,7 +578,7 @@ current manifests and workflow integrations.
 While every commit on the setup branch is Beepboop's, Beepboop rebuilds the
 branch as one commit on the default branch and force-pushes it. Once anyone else
 commits to the branch, Beepboop stops updating that PR, its branch and its
-description. **Take over setup branch** on the Repositories page force-pushes
+description. **Replace edited setup branch** on the Repositories page force-pushes
 Beepboop's proposal and deletes those commits; maintenance then resumes. Missing permissions and unresolved workflow choices are shown on
 the PR.
 Unchanged proposals do not create commits. Closed and merged setup PRs are not

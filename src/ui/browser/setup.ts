@@ -44,7 +44,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 		const enabled = element('input');
 		enabled.type = 'checkbox';
 		enabled.checked = true;
-		if (plan.choices.streams.length > 1) label(box, 'Include this release group', enabled);
+		if (plan.choices.streams.length > 1 || readers.length > 0) label(box, 'Include this release group', enabled);
 		const body = element('fieldset');
 		body.className = 'setup-group-body';
 		box.append(body);

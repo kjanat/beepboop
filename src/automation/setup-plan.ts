@@ -47,7 +47,13 @@ const setupPlan: z.ZodType<SetupPlan> = z.object({
 	}),
 	inventory: z.object({
 		packages: z.array(
-			z.object({ name: z.string(), manifest: z.string(), publication, versionSource: z.string().optional() }),
+			z.object({
+				name: z.string(),
+				manifest: z.string(),
+				publication,
+				versionSource: z.string().optional(),
+				manager: z.string().optional(),
+			}),
 		),
 		publicationOrder: strings.optional(),
 	}),
