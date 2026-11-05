@@ -74,7 +74,7 @@ export function suggestedCommands(role: 'prepare' | 'promote', selection: Select
 			? 'cargo check --workspace --all-targets\ncargo test --workspace'
 			: packages.map(pkg => `cargo publish --package ${quote(pkg.name)}`).join('\n');
 	}
-	if (packages.every(pkg => pkg.manager === 'npm')) {
+	if (packages.every(pkg => pkg.manager === 'npm' && /(?:^|\/)package\.json$/.test(pkg.manifest))) {
 		const npm = plan.preparation?.lockfiles.some(path => path.endsWith('package-lock.json'));
 		const lockfiles = plan.preparation?.lockfiles ?? [];
 		const install = lockfiles.some(path => path.endsWith('bun.lock'))

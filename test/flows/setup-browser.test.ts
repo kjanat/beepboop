@@ -288,6 +288,63 @@ test('extension manifests require explicit publishing commands instead of npm su
 	await expect(act(form, 'preview')).rejects.toThrow('Enter the shell commands that publish these packages.');
 });
 
+test('generated npm targets require explicit commands, including alongside ordinary packages', async () => {
+	const repository = world.github.create('octo/generated', {
+		'Cargo.toml': '[workspace]\nmembers = []\n[workspace.package]\nversion = "1.0.0"\n',
+		'npm/targets.json': JSON.stringify({
+			scope: '@octo',
+			facade: '@octo/widget',
+			targets: [{ pkg: 'widget-linux-x64' }, { pkg: 'widget-darwin-arm64' }],
+		}),
+		'packages/ordinary/package.json': '{"name":"ordinary","version":"1.0.0"}',
+	});
+	const form = await open(repository.name);
+	const publishing = role(form, 'promote'), preparing = role(form, 'prepare');
+	const commands = control(publishing, 'Shell commands that publish the selected packages', window.HTMLTextAreaElement);
+	const ordinary = control(form, 'ordinary (packages/ordinary/package.json)', window.HTMLInputElement);
+	const targets = ['@octo/widget-linux-x64', '@octo/widget-darwin-arm64', '@octo/widget'].map(name =>
+		control(form, `${name} (npm/targets.json)`, window.HTMLInputElement)
+	);
+	const toggle = (input: HTMLInputElement, checked: boolean) => {
+		input.checked = checked;
+		input.dispatchEvent(new window.Event('change', { bubbles: true }));
+	};
+	expect(commands.value).toBe('');
+	expect(commands.required).toBe(true);
+	await expect(act(form, 'preview')).rejects.toThrow('Enter the shell commands that publish these packages.');
+	toggle(ordinary, false);
+	expect(commands.value).toBe('');
+	expect(commands.required).toBe(true);
+	for (const target of targets) toggle(target, false);
+	toggle(ordinary, true);
+	expect(commands.value).toBe("(cd 'packages/ordinary' &&\nnpm publish\n)");
+	for (const target of targets) toggle(target, true);
+	expect(commands.value).toBe('');
+
+	change(control(preparing, 'How should release changes be prepared?', window.HTMLSelectElement), 'new');
+	const checks = control(
+		preparing,
+		'Shell commands to update lockfiles and check the release',
+		window.HTMLTextAreaElement,
+	);
+	expect(checks.value).toBe('');
+	expect(checks.required).toBe(true);
+	commands.value = './scripts/generate-npm.sh\n./scripts/publish-npm.sh';
+	commands.dispatchEvent(new window.Event('input', { bubbles: true }));
+	await expect(act(form, 'preview')).rejects.toThrow('Enter the shell commands that prepare and check the release.');
+	checks.value = './scripts/prepare-npm.sh';
+	checks.dispatchEvent(new window.Event('input', { bubbles: true }));
+	await act(form, 'preview');
+	expect(form.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(false);
+	await act(form, 'apply');
+	expect(world.github.file(repository, '.github/workflows/release-generated.yml', 'automation/onboarding'))
+		.toContain('./scripts/generate-npm.sh\n');
+	expect(world.github.file(repository, '.github/workflows/release-generated.yml', 'automation/onboarding'))
+		.toContain('./scripts/publish-npm.sh');
+	expect(world.github.file(repository, '.github/workflows/prepare-generated.yml', 'automation/onboarding'))
+		.toContain('./scripts/prepare-npm.sh');
+});
+
 test('existing shared Go workflows do not require replacement preparation commands', async () => {
 	const repository = world.github.create('octo/tagged', { 'go.mod': 'module github.com/octo/tagged\n\ngo 1.26\n' });
 	const api = bearer(world, await world.cliSession());
