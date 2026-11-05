@@ -508,7 +508,8 @@ export class RepositoryGateway {
 			const token = yield* self.token(name, id, {
 				contents: 'write',
 				pull_requests: 'write',
-				...(setupEdits !== undefined || edits.some(edit => edit.path.startsWith('.github/workflows/'))
+				...(edits.some(edit => edit.path.startsWith('.github/workflows/'))
+						|| setupEdits?.some(edit => edit.path.startsWith('.github/workflows/'))
 					? { workflows: 'write' as const }
 					: {}),
 			});

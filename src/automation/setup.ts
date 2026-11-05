@@ -19,6 +19,7 @@ import {
 } from '@/automation/setup-types';
 import { integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Package, RepositoryRecord, Snapshot } from '@/automation/types';
+import { isLockfile } from '@/contract/catalog';
 import { blocking } from '@/contract/diagnostics';
 import { type DomainError, decodeRequest, precondition } from '@/contract/errors';
 import { sha256Hex } from '@/contract/ids';
@@ -228,6 +229,15 @@ function drafted(
 			for (const operation of ['prepare', 'promote'] as const) {
 				const workflow = selection[operation];
 				if (!workflow) {
+					if (
+						operation === 'prepare' && !resolved?.streams[selection.name]?.prepare.workflow
+						&& !object(object(current.prepare).workflow).file
+					) {
+						if (selection.versioning !== 'none' && snapshot.paths.some(isLockfile)) {
+							blockers.push(`${selection.name}: select a preparation workflow to regenerate lockfiles.`);
+						}
+						continue;
+					}
 					blockers.push(
 						`${selection.name}: select a ${operation === 'prepare' ? 'preparation' : 'publication'} workflow.`,
 					);
