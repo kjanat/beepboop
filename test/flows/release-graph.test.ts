@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Effect } from 'effect';
 import { z } from 'zod';
 import { discover } from '@/automation/managers';
+import { packageId } from '@/automation/package-identity';
 import { buildSnapshot } from '@/automation/snapshot';
 import { adoptionChoices, adoptionMarkdown } from '@/automation/release-graph/adoption';
 import {
@@ -929,6 +930,70 @@ describe('release streams', () => {
 		};
 		expect(target(stream(planned('npm run release').graph, 'main'), 'npm').names).toEqual(['tool']);
 		expect(planned('npm run release --ignore-scripts').graph.streams).toEqual([]);
+	});
+
+	test('prefix flags, mixed root publishes, extensions and python modules', async () => {
+		const steps = (...entries: string[]) =>
+			`on: { push: { tags: ['v*'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n${entries.join('')}`;
+		const mono = (workflowText: string): Snapshot => {
+			const files: Record<string, string> = {
+				'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0' }),
+				'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+				'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+				'.github/workflows/release.yml': workflowText,
+			};
+			return {
+				repository: { id: 1, name: 'octo/mono', defaultBranch: 'main' },
+				sha: 'a'.repeat(40),
+				files,
+				paths: Object.keys(files),
+			};
+		};
+		const prefixed = plan(mono(steps('      - run: npm --prefix packages/a publish\n')));
+		expect(target(stream(prefixed.graph, 'main'), 'npm').packages).toEqual(['pkg:npm/a']);
+		const mixed = plan(
+			mono(steps('      - run: npm publish\n', '      - working-directory: packages/a\n        run: npm publish\n')),
+		);
+		expect(target(stream(mixed.graph, 'main'), 'npm').packages.slice().sort()).toEqual([
+			'pkg:npm/a',
+			'pkg:npm/root-tool',
+		]);
+		const extension: Record<string, string> = {
+			'package.json': JSON.stringify({
+				name: 'lens',
+				publisher: 'octo',
+				version: '1.0.0',
+				engines: { vscode: '^1.90.0' },
+			}),
+			'.github/workflows/release.yml': steps(
+				'      - uses: HaaLeo/publish-vscode-extension@v2\n        with: { registryUrl: https://marketplace.visualstudio.com }\n',
+			),
+		};
+		const vscode: Snapshot = {
+			repository: { id: 2, name: 'octo/lens', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files: extension,
+			paths: Object.keys(extension),
+		};
+		const ids = discover(vscode).packages.filter(pkg => pkg.manager === 'vscode').map(packageId);
+		expect(ids).toHaveLength(1);
+		const lens = plan(vscode);
+		expect(target(stream(lens.graph, 'main'), 'vscode-marketplace').packages).toEqual(ids);
+		expect(lens.choices[0]?.observe?.map(binding => binding.publications)).toEqual([ids]);
+		const python: Record<string, string> = {
+			'pyproject.toml': '[project]\nname = "tool"\nversion = "1.0.0"\n',
+			'tooling/release.py': 'import subprocess\nsubprocess.run("twine upload dist/*", shell=True)\n',
+			'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", 'python -m tooling.release'),
+		};
+		const snapshot = await Effect.runPromise(buildSnapshot({
+			repository: { id: 3, name: 'octo/tool', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			entries: Object.keys(python).map(path => ({ path, type: 'blob', mode: '100644' })),
+			read: path => Effect.succeed(python[path] ?? null),
+			tags: () => Effect.succeed([]),
+		}));
+		expect(snapshot.files['tooling/release.py']).toBe(python['tooling/release.py']);
+		expect(target(stream(plan(snapshot).graph, 'main'), 'pypi').packages).toEqual(['pkg:pypi/tool']);
 	});
 
 	test('a local action runs only its own manifest', async () => {

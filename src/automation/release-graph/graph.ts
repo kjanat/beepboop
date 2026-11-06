@@ -332,6 +332,9 @@ function publicationRuns(graph: Graph, workflow: string, found: { workflow: stri
 		!verificationOnly.test(run) || /\b(?:publish|pack|package|build)\b/.test(run)
 	);
 }
+const qualified =
+	/\bcd\s|--prefix\b|--cwd\b|--dir\b|--config\b|--workspaces?\b|--recursive\b|--filter\b|(?:^|\s)-(?:C|w|ws|r)(?=\s|$)/m;
+const pathArgument = /\bpublish\s+["']?\$|\bpublish\b[^\n;&|]*\s["']?(?:\.{0,2}\/|[\w.-]+\/|[^\s"']+\.tgz\b)/;
 const packing =
 	/\b(?:npm|pnpm|yarn|bun(?:\s+pm)?)\s+(?:pack|publish)\b|\b(?:jsr|deno)\s+publish\b|\bcargo\s+(?:\+\S+\s+)?(?:publish|package)\b/;
 function targetsOf(
@@ -402,7 +405,7 @@ function targetsOf(
 				const cites = (value: string) => new RegExp(`(?<![\\w./-])${escapeRegExp(value)}(?![\\w-])`).test(text);
 				const citesDirectory = (value: string) =>
 					new RegExp(
-						`(?:\\b(?:--prefix|-C|--cwd|--dir|publish|pack)\\s+["']?(?:\\./)?${
+						`(?:(?:(?:^|[\\s;&|(])(?:--prefix|-C|--cwd|--dir)[= ]|\\b(?:publish|pack)\\s+)["']?(?:\\./)?${
 							escapeRegExp(value)
 						}/?["']?(?:\\s|$|[;&)])|(?<![\\w./-])${escapeRegExp(value)}/package\\.json)`,
 						'm',
@@ -437,11 +440,13 @@ function targetsOf(
 						: candidates;
 					return { workflow, packages: crates, cited: true };
 				}
-				const chosen = candidates.filter(covered);
 				const root = candidates.filter(pkg => directoryOf(pkg) === '');
-				const elsewhere = directories.length > 0
-					|| /\bcd\s|--prefix\b|--cwd\b|--dir\b|--workspaces?\b|--recursive\b|--filter\b|(?:^|\s)-(?:C|w|ws|r)(?=\s|$)/m
-						.test(commands);
+				const rooted = own.some(entry =>
+					entry.effect.kind === 'publish' && !entry.effect.directory && !qualified.test(entry.effect.text)
+					&& !pathArgument.test(entry.effect.text)
+				);
+				const chosen = candidates.filter(pkg => covered(pkg) || (rooted && root.includes(pkg)));
+				const elsewhere = directories.length > 0 || qualified.test(commands);
 				return chosen.length
 					? { workflow, packages: chosen, cited: true }
 					: root.length && !elsewhere
@@ -602,6 +607,17 @@ function targetsOf(
 				...base,
 				names: modules,
 				packages: managed('go').filter(pkg => modules.includes(pkg.name)).map(packageId),
+				variants: [],
+				optionalVariants: [],
+			});
+			continue;
+		}
+		if (destination === 'vscode-marketplace' || destination === 'open-vsx') {
+			const extensions = managed('vscode');
+			targets.push({
+				...base,
+				names: extensions.length ? extensions.map(pkg => pkg.name) : [destination],
+				packages: extensions.map(packageId),
 				variants: [],
 				optionalVariants: [],
 			});

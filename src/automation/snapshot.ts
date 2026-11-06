@@ -93,6 +93,13 @@ function referencedScripts(
 			].flatMap(match => match[1] ?? []),
 		),
 	];
+	const modules = [...text.matchAll(/\bpython3?\s+-m\s+([A-Za-z_][\w.]*)/g)].flatMap(match => {
+		const relative = (match[1] ?? '').replaceAll('.', '/');
+		return ['', 'src', ...directories].flatMap(directory => {
+			const base = directory ? `${directory}/${relative}` : relative;
+			return [`${base}.py`, `${base}/__main__.py`];
+		});
+	});
 	return blobs.filter(path =>
 		!requested.has(path) && !excluded.test(path)
 		&& (actions.some(action =>
@@ -100,6 +107,7 @@ function referencedScripts(
 			&& (script.test(path) || /^(?:action\.ya?ml|Dockerfile)$/.test(path.slice(action.length + 1)))
 		)
 			|| taskFile.test(path) && directories.includes(path.split('/').slice(0, -1).join('/'))
+			|| modules.includes(path)
 			|| script.test(path)
 				&& (text.includes(path)
 					|| directories.some(directory =>
