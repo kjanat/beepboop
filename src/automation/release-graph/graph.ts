@@ -1297,8 +1297,9 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 
 function incompleteProducts(snapshot: Snapshot, streams: StreamProposal[]): IncompleteProduct[] {
 	const published = new Set(streams.flatMap(stream => stream.targets.map(target => target.destination)));
-	const binaries = streams.flatMap(stream => stream.targets.flatMap(target => [...target.names, ...target.variants]))
-		.join(' ');
+	const binaries = streams.flatMap(stream =>
+		stream.targets.filter(target => target.destination === 'github-release').flatMap(target => target.binaries ?? [])
+	);
 	const products: IncompleteProduct[] = [];
 	for (const [path, source] of Object.entries(snapshot.files)) {
 		if (/(?:^|\/)package\.json$/.test(path) && source) {

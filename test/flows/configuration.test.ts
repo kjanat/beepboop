@@ -635,3 +635,23 @@ test('stored identities crash and outside package input stays a Result', () => {
 	)
 		.toBe(true);
 });
+
+test('the parser and schema agree on tag prefixes with directories', () => {
+	const document = (prefix: string) => ({
+		streams: {
+			main: {
+				versionSource: { kind: 'tags', prefix },
+				promote: { workflow: { file: 'publish.yml', refs: { phase: 'version', prefix } } },
+			},
+		},
+	});
+	for (
+		const [prefix, valid] of [['tools/v', true], ['a/b/v', true], ['../v', false], ['/v', false], [
+			'a//v',
+			false,
+		]] as const
+	) {
+		expect(Result.isSuccess(parseRepositoryConfiguration(document(prefix)))).toBe(valid);
+		expect(configurationSchema.safeParse(document(prefix)).success).toBe(valid);
+	}
+});

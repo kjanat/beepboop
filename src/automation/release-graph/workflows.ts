@@ -308,7 +308,7 @@ function taskBodies(snapshot: Snapshot, line: string): { name: string; body: str
 	});
 }
 const scriptCall =
-	/(?:(?:^|[\s;&|(])(?:bash|sh|node|bun(?:\s+run)?|deno\s+run(?:\s+-\S+)*|python3?|uv\s+run|pwsh(?:\s+-File)?)\s+(?:\.\/)?|(?:^|[\s;&|(])\.\/|^\s*)((?:[\w.-]+\/)*[\w.-]+\.(?:sh|bash|ps1|py|[cm]?[jt]s|rb))\b(?:\s+([a-z][\w-]*))?/gm;
+	/(?:(?:^|[\s;&|(])(?:bash|sh|node|bun(?:\s+run)?|deno\s+run(?:\s+-\S+)*|python3?|uv\s+run|pwsh(?:\s+-File)?)\s+["']?(?:\.\/)?|(?:^|[\s;&|(])["']?\.\/|^\s*)((?:[\w.-]+\/)*[\w.-]+\.(?:sh|bash|ps1|py|[cm]?[jt]s|rb))\b["']?(?:\s+([a-z][\w-]*))?/gm;
 
 function scriptEffects(
 	snapshot: Snapshot,
@@ -371,10 +371,32 @@ function actionEffects(snapshot: Snapshot, path: string, seen: Set<string>): { e
 	if (seen.has(path)) return { effects: [], runs: [] };
 	seen.add(path);
 	const effects: StepEffect[] = [], runs: string[] = [];
-	for (const [file, text] of actionFiles(snapshot, path)) {
+	const files = actionFiles(snapshot, path);
+	for (const [file, text] of files) {
 		if (/\/action\.ya?ml$/.test(file)) {
 			const parsed = yaml(text);
-			const steps = Result.isSuccess(parsed) ? object(parsed.success.runs).steps : undefined;
+			const definition = object(Result.isSuccess(parsed) ? parsed.success.runs : undefined);
+			const steps = definition.steps;
+			const declared = [text, ...files.filter(([other]) => /\/Dockerfile$/.test(other)).map(([, source]) => source)]
+				.join(
+					'\n',
+				);
+			const stepRuns = (Array.isArray(steps) ? steps : []).flatMap(step => {
+				const run = object(step).run;
+				return typeof run === 'string' ? [run.replace(/\$\{?GITHUB_ACTION_PATH\}?\//g, `${path}/`)] : [];
+			});
+			const called = new Set(stepRuns.flatMap(run => [...run.matchAll(scriptCall)].flatMap(match => match[1] ?? [])));
+			for (const [entry] of files) {
+				const relative = entry.slice(path.length + 1);
+				if (/\/(?:action\.ya?ml|Dockerfile)$/.test(entry) || called.has(entry)) continue;
+				const referenced = Array.isArray(steps)
+					? stepRuns.some(run => run.includes(relative))
+					: ['main', 'pre', 'post'].some(key => definition[key] === relative) || declared.includes(relative);
+				if (!referenced) continue;
+				const result = scriptEffects(snapshot, `bash ${entry}`, seen);
+				effects.push(...result.effects);
+				runs.push(...result.runs);
+			}
 			for (const entry of Array.isArray(steps) ? steps : []) {
 				const step = object(entry);
 				const nested = typeof step.uses === 'string' ? stepEffects(snapshot, step, file, seen) : undefined;
@@ -394,9 +416,6 @@ function actionEffects(snapshot: Snapshot, path: string, seen: Set<string>): { e
 					runs.push(...called.runs);
 				}
 			}
-		} else {
-			effects.push(...commandEffects(text, file));
-			runs.push(text);
 		}
 	}
 	return { effects, runs };

@@ -1489,11 +1489,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					) {
 						continue;
 					}
-					const prefix = stream.versionSource?.prefix
-						?? (pattern.startsWith('refs/tags/') ? /^[^*?[]*/.exec(pattern.slice('refs/tags/'.length))?.[0] : undefined)
-						?? '';
+					const prefix = [
+						stream.versionSource?.prefix,
+						pattern.startsWith('refs/tags/') ? /^[^*?[]*/.exec(pattern.slice('refs/tags/'.length))?.[0] : undefined,
+					].filter((value): value is string => value !== undefined && branch.startsWith(value))
+						.sort((a, b) => b.length - a.length)[0] ?? '';
 					const version = tagged
-						? (branch.startsWith(prefix) ? branch.slice(prefix.length) : branch).replace(/^v/, '')
+						? branch.slice(prefix.length).replace(/^v/, '')
 						: undefined;
 					const manifestVersions = !tagged && run.event === 'workflow_dispatch';
 					const eventId = `observed:${event.runId}`;

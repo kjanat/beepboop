@@ -204,3 +204,20 @@ test('editing an adopted stream clears publications and leaves observation', asy
 	const workflows = (await stored()).streams[stream.name]?.workflows ?? {};
 	expect(Object.values(workflows).filter(binding => binding.mode === 'observe')).toEqual([]);
 });
+
+test('every tag family of a workflow is observed', async () => {
+	const repository = world.github.create('octo/families', {
+		'package.json': JSON.stringify({ name: 'families', version: '1.0.0' }),
+		'.github/workflows/release.yml': workflow("{ push: { tags: ['foo-v*', 'bar-v*'] } }", 'npm publish'),
+	});
+	const { plan } = await adopt(repository);
+	expect(plan.choices.streams[0]?.observe?.map(binding => binding.ref)).toEqual([
+		'refs/tags/foo-v*',
+		'refs/tags/bar-v*',
+	]);
+	world.npm.publish('families', '1.0.0');
+	repository.refs.set('tags/bar-v1.0.0', world.github.head(repository));
+	const [execution] = await observe(repository, 'push', 'bar-v1.0.0');
+	expect(execution?.version).toBe('1.0.0');
+	expect(execution?.publications.map(publication => publication.outcome)).toEqual(['succeeded']);
+});

@@ -420,6 +420,43 @@ describe('release streams', () => {
 		expect(ids.every(id => id.length <= 63)).toBe(true);
 	});
 
+	test('a local action contributes only the scripts its steps run', () => {
+		const files: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'widget', version: '1.0.0' }),
+			'.github/actions/build/action.yml': [
+				'runs:',
+				'  using: composite',
+				'  steps:',
+				'    - shell: bash',
+				'      run: bash "${GITHUB_ACTION_PATH}/build.sh"',
+				'',
+			].join('\n'),
+			'.github/actions/build/build.sh': '#!/bin/sh\nnpm run build\n',
+			'.github/actions/build/release.sh': '#!/bin/sh\nnpm publish\n',
+			'.github/actions/publish/action.yml': [
+				'runs:',
+				'  using: composite',
+				'  steps:',
+				'    - shell: bash',
+				'      run: bash "${GITHUB_ACTION_PATH}/run.sh"',
+				'',
+			].join('\n'),
+			'.github/actions/publish/run.sh': '#!/bin/sh\nnpm publish\n',
+			'.github/workflows/ci.yml':
+				'on: { push: { branches: [main] } }\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./.github/actions/build\n',
+			'.github/workflows/release.yml':
+				'on: { push: { tags: ["v*"] } }\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./.github/actions/publish\n',
+		};
+		const { graph } = plan({
+			repository: { id: 1, name: 'octo/widget', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files,
+			paths: Object.keys(files),
+		});
+		expect(graph.streams.map(proposal => proposal.workflows.map(entry => entry.file))).toEqual([['release.yml']]);
+		expect(target(stream(graph, 'main'), 'npm').names).toEqual(['widget']);
+	});
+
 	test('observe bindings follow each workflow trigger', async () => {
 		const actionlint = await load('actionlint');
 		const main = actionlint.choices.find(choice => choice.name === 'actionlint');

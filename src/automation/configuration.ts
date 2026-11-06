@@ -108,7 +108,7 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 			yield* keys(policy, ['phase', 'prefix', 'aliases', 'signed'], 'refs');
 			const phase = yield* oneOf(policy.phase, ['version', 'aliases'], 'Invalid ref phase');
 			const prefix = policy.prefix === undefined ? 'v' : String(policy.prefix);
-			if (!/^[A-Za-z0-9._-]*$/.test(prefix) || prefix.includes('..')) return yield* reject('Invalid tag prefix');
+			if (!validTagPrefix(prefix)) return yield* reject('Invalid tag prefix');
 			const aliases = yield* Result.all(
 				(yield* strings(policy.aliases ?? [])).map(alias => oneOf(alias, ['major', 'minor'], 'Invalid aliases')),
 			);

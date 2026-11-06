@@ -2,7 +2,7 @@ import { latestTag } from '@/automation/managers/tags';
 import { packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import type { ReleaseGraph, StreamProposal, Target } from '@/automation/release-graph/graph';
-import type { Destination } from '@/automation/release-graph/workflows';
+import { type Destination, literalPrefix } from '@/automation/release-graph/workflows';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Inventory, Snapshot } from '@/automation/types';
 import { identifierPattern } from '@/domain/configuration';
@@ -72,34 +72,42 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 			: stream.versionGroup.source.kind === 'tags'
 			? stream.versionGroup.source.prefix
 			: undefined;
-		const observe = stream.workflows.filter(entry => entry.role === 'entry' || entry.role === 'channel').map(entry => {
-			const covered = new Set(
-				stream.targets.filter(target =>
-					target.operations.some(operation =>
-						operation.startsWith(`${entry.file}#`)
-						|| stream.workflows.some(member =>
-							member.role !== 'entry' && member.role !== 'channel' && operation.startsWith(`${member.file}#`)
+		const observe = stream.workflows.filter(entry => entry.role === 'entry' || entry.role === 'channel').flatMap(
+			entry => {
+				const covered = new Set(
+					stream.targets.filter(target =>
+						target.operations.some(operation =>
+							operation.startsWith(`${entry.file}#`)
+							|| stream.workflows.some(member =>
+								member.role !== 'entry' && member.role !== 'channel' && operation.startsWith(`${member.file}#`)
+							)
 						)
-					)
-				).flatMap(target => target.packages),
-			);
-			const tagged = entry.tagPatterns.length > 0 || entry.events.includes('release');
-			const versioned = (id: string) => {
-				const pkg = known.get(id);
-				return tagged
-					|| (entry.events.includes('workflow_dispatch') && !!pkg && !pkg.versionSource.startsWith('tags:'));
-			};
-			return {
-				name: bindingName(entry.file, taken),
-				file: entry.file,
-				...(tagged
-					? { ref: `refs/tags/${tagPrefix ?? ''}*` }
+					).flatMap(target => target.packages),
+				);
+				const tagged = entry.tagPatterns.length > 0 || entry.events.includes('release');
+				const versioned = (id: string) => {
+					const pkg = known.get(id);
+					return tagged
+						|| (entry.events.includes('workflow_dispatch') && !!pkg && !pkg.versionSource.startsWith('tags:'));
+				};
+				const publications = entry.role === 'channel' ? [] : required.filter(id => covered.has(id) && versioned(id));
+				const refs = tagged
+					? [
+						...new Set(
+							entry.tagPatterns.length ? entry.tagPatterns.map(pattern => literalPrefix(pattern)) : [tagPrefix ?? ''],
+						),
+					].map(prefix => `refs/tags/${prefix}*`)
 					: entry.branchPatterns.length
-					? { ref: branchRef(entry.branchPatterns) }
-					: {}),
-				publications: entry.role === 'channel' ? [] : required.filter(id => covered.has(id) && versioned(id)),
-			};
-		});
+					? [branchRef(entry.branchPatterns)]
+					: [undefined];
+				return refs.map(ref => ({
+					name: bindingName(entry.file, taken),
+					file: entry.file,
+					...(ref ? { ref } : {}),
+					publications,
+				}));
+			},
+		);
 		const versionSource: SetupChoices['streams'][number]['versionSource'] =
 			stream.trigger.kind === 'tags' && !fileVersions ? { kind: 'tags', prefix: stream.trigger.prefix } : undefined;
 		return {
