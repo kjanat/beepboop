@@ -41,6 +41,12 @@ await main(Effect.scoped(Effect.gen(function*() {
 	const version = (yield* capture([binary, '--version'], { cwd: temporary })).trim();
 	yield* expect(version === manifest.version, `beepboop --version printed ${version}`);
 	yield* expect(/auth/.test(yield* capture([binary, '--help'], { cwd: temporary })), 'Help omits auth');
+	for (const command of ['adopt', 'setup']) {
+		yield* expect(
+			/--plan/.test(yield* capture([binary, 'repositories', command, '--help'], { cwd: temporary })),
+			`repositories ${command} help omits reviewed-plan application`,
+		);
+	}
 	yield* expect(
 		/releaseVersion/.test(yield* capture([binary, 'releases', 'plan', '--help'], { cwd: temporary })),
 		'releases plan help omits releaseVersion',

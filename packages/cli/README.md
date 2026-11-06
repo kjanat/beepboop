@@ -9,12 +9,25 @@ Requires **Bun 1.4.4 or later**.
 bun add --global @kjanat/beepboop
 beepboop auth login
 beepboop repositories list
+beepboop repositories adopt owner/repository
 beepboop releases --help
 ```
 
 Login opens your browser for approval. The CLI stores a session in your user
 state directory; `beepboop auth logout` revokes it. The service must authorize
 your account. Installing the CLI does not grant access to the service.
+
+`repositories adopt` enrolls a repository installed on the Beepboop GitHub App,
+guides you through release setup, and previews the proposed files before asking
+to open a setup PR. Workflow filenames and jobs are generated for you. Merge the
+PR yourself to activate the configuration. `repositories setup` is an alias.
+
+For scripts, preview explicit choices and apply the reviewed plan separately:
+
+```sh
+beepboop repositories adopt owner/repository --choices choices.json --output plan.json --json
+beepboop repositories adopt owner/repository --plan plan.json --apply
+```
 
 ```sh
 beepboop --version

@@ -90,7 +90,7 @@ const auth = group('auth').description('Sign in, inspect your session, or revoke
 	);
 const repositories = group('repositories').description('Inspect and configure repository releases')
 	.command(
-		repository('setup', 'Review release configuration and workflow integration in a setup PR')
+		repository('adopt', 'Configure repository releases and open a reviewed setup PR').alias('setup')
 			.flag(
 				'choices',
 				flag.path({ mustExist: true }).describe('JSON setup choices; preview without interactive prompts'),

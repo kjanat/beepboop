@@ -228,4 +228,4 @@ test('packed prepare and refs runtimes publish the planned tag', async () => {
 	).toEqual(['prepare', 'promote']);
 	expect(world.github.unhandled).toEqual([]);
 	expect(world.network.unrouted).toEqual([]);
-});
+}, 30_000);

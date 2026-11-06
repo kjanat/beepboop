@@ -11,6 +11,7 @@ bun run beepboop auth status
 bun run beepboop repositories list
 bun run beepboop repositories show kjanat/actionlint
 bun run beepboop repositories discover kjanat/actionlint
+bun run beepboop repositories adopt kjanat/actionlint
 bun run beepboop runs list
 bun run beepboop secrets
 ```
@@ -108,26 +109,48 @@ For persistent zsh setup, save the output as `_beepboop` in a directory on your
 
 ## Configure repository releases
 
-`beepboop repositories setup owner/repository` uses DreamCLI's built-in prompts
-to select streams, packages, jobs, trigger handover, and missing integration
-commands. It prints the current and proposed files, then asks before creating or
-refreshing a setup PR. Unresolved requirements block apply.
+Run `beepboop repositories adopt owner/repository` to enroll a repository and
+configure its releases from the terminal. The Beepboop GitHub App must already
+be installed on that repository. You can also pass a repository name, GitHub URL
+or SSH URL. `repositories setup` remains an alias of `repositories adopt`.
+
+The guided flow selects packages and publishing workflows. New workflows get
+filenames based on the selected package or repository, with jobs and dispatch
+triggers generated automatically. A Cargo release that updates a lockfile can
+use one workflow with separate preparation and publishing jobs. Managed version
+PRs need no preparation job. Existing workflows only ask for a job when it cannot
+be inferred, and publishing-step mappings are explicit for each package.
+
+Command prompts accept Bash shell commands, not GitHub Actions YAML. Cargo and
+ordinary npm packages get editable suggestions; generated npm targets, VS Code
+extensions and other unsupported package types require your own commands.
+Optional customization covers filenames, versioning, additional release groups
+and the Actions revision. The current compatible Actions release is the default.
+
+The CLI prints the inspected commit and current/proposed files, then asks before
+creating or refreshing a setup PR. Unresolved requirements block apply. Merge
+that PR yourself, then run `repositories discover` to refresh inspection of the
+default branch.
 
 For automation, pass a JSON choices file with `--choices choices.json` and save
 the preview with `--output setup-plan.json`. That invocation only previews.
 After reviewing the file, apply it with:
 
 ```sh
-beepboop repositories setup owner/repository --plan setup-plan.json --apply
+beepboop repositories adopt owner/repository --choices choices.json --output setup-plan.json --json
+beepboop repositories adopt owner/repository --plan setup-plan.json --apply
 ```
 
-`--json` prints the full preview and never prompts to apply. `--apply` requires a
+`--json` prints the full preview without interactive prompts; without `--choices`
+it returns the server's current proposal, including unresolved requirements.
+Previewing enrolls the repository but does not write repository files.
+`--apply` requires a
 saved plan; it cannot skip review by combining it with new choices. The server
 rejects changes to the source, choices, generated files, preset revisions or setup
 branch since preview. The dashboard uses the same API and validation rules.
 
-A choices file contains `streams` and, for external integration actions,
-`actionsRevision` (the full published Actions commit). Each stream selects `name`,
+A choices file contains `streams` and optional `actionsRevision` (a release tag
+or full published Actions commit). Each stream selects `name`,
 `packages` (PURLs), `versioning`, `required`, `prepare` and `promote`. Workflow
 choices contain `file`, optional `job`, `triggers` (`review`, `dispatchOnly`, or
 `preserve`), `commands`, and `publicationSteps` mapping PURLs to publishing step
