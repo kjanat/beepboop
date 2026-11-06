@@ -2,7 +2,14 @@ import { Result } from 'effect';
 import { type ParseError, parse as parseJsonc } from 'jsonc-parser';
 import { parse as parseToml } from 'smol-toml';
 import { object, yaml } from '@/automation/managers/helpers';
-import { bindInputs, bindStep, disabled, expandStep, inputExpression } from '@/automation/release-graph/bindings';
+import {
+	bindInputs,
+	bindStep,
+	disabled,
+	expandStep,
+	inputExpression,
+	staticGuard,
+} from '@/automation/release-graph/bindings';
 import {
 	actionBindings,
 	liveJobs,
@@ -790,7 +797,7 @@ function buildJob(
 	const matrix = object(object(job.strategy).matrix);
 	for (const entry of steps) {
 		const raw = bindStep(object(entry), bindings);
-		if (disabled(raw.if)) continue;
+		if (disabled(raw.if) || staticGuard(raw.if, { inputs: bindings }) === false) continue;
 		const located = typeof directory === 'string' && raw['working-directory'] === undefined
 			? { ...raw, 'working-directory': directory }
 			: raw;

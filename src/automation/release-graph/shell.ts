@@ -23,10 +23,28 @@ function withoutComment(line: string): string {
 	}
 	return line;
 }
+const heredoc = /<<-?\s*(['"]?)([A-Za-z_]\w*)\1/;
+const interpreter = /^(?:sudo\s+)?(?:bash|sh|zsh|dash)\b/;
 export function lines(text: string): string[] {
-	return text.replace(/\\\r?\n\s*/g, ' ').split(/\r?\n/).map(line => withoutComment(line).trim()).filter(Boolean);
+	const found: string[] = [];
+	let delimiter: { word: string; run: boolean } | undefined;
+	for (const raw of text.replace(/\\\r?\n\s*/g, ' ').split(/\r?\n/)) {
+		if (delimiter) {
+			if (raw.trim() === delimiter.word) delimiter = undefined;
+			else if (delimiter.run) {
+				const body = withoutComment(raw).trim();
+				if (body) found.push(body);
+			}
+			continue;
+		}
+		const line = withoutComment(raw).trim();
+		if (!line) continue;
+		found.push(line);
+		const opened = heredoc.exec(line);
+		if (opened && !line.includes('<<<')) delimiter = { word: opened[2] ?? '', run: interpreter.test(line) };
+	}
+	return found;
 }
-
 export function splitCommands(line: string): string[] {
 	const parts: string[] = [];
 	let quote = '';

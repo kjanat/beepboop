@@ -139,7 +139,8 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 								ref: `refs/tags/${prefix}*`,
 								publications: channel ? [] : required.filter(id => {
 									const source = known.get(id)?.versionSource ?? '';
-									return scoped.has(id) && (!source.startsWith('tags:') || source === `tags:${prefix}`);
+									return scoped.has(id)
+										&& (!source.startsWith('tags:') || prefix === '' || source === `tags:${prefix}`);
 								}),
 							};
 						})

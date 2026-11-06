@@ -61,27 +61,47 @@ export const matrixExpression = /\$\{\{\s*matrix\.([\w-]+(?:\.[\w-]+)*)\s*\}\}/g
 export function substitute(text: string, assignment: Record<string, string>): string {
 	return text.replace(matrixExpression, (expression, key: string) => assignment[key] ?? expression);
 }
-const guardTerm =
-	/^(?:matrix\.([\w-]+(?:\.[\w-]+)*)\s*(==|!=)\s*'([^']*)'|'([^']*)'\s*(==|!=)\s*matrix\.([\w-]+(?:\.[\w-]+)*))$/;
 const guardKey = /\bmatrix\.([\w-]+(?:\.[\w-]+)*)/g;
-export function matrixGuard(condition: unknown, assignment: Record<string, string>): boolean | undefined {
+const reference = '((?:matrix|inputs|github\\.event\\.inputs)\\.[\\w-]+(?:\\.[\\w-]+)*)';
+const comparison = new RegExp(
+	`^(?:${reference}\\s*(==|!=)\\s*(?:'([^']*)'|(true|false))|(?:'([^']*)'|(true|false))\\s*(==|!=)\\s*${reference})$`,
+);
+const truthiness = new RegExp(`^(!?)\\s*${reference}$`);
+export interface GuardValues {
+	matrix?: Readonly<Record<string, string>>;
+	inputs?: Readonly<Record<string, string>>;
+}
+function lookup(path: string, values: GuardValues): string | undefined {
+	if (path.startsWith('matrix.')) return values.matrix?.[path.slice('matrix.'.length)];
+	return values.inputs?.[path.replace(/^(?:github\.event\.)?inputs\./, '')];
+}
+function evaluateTerm(term: string, values: GuardValues): boolean | undefined {
+	const trimmed = term.trim().replace(/^\(\s*|\s*\)$/g, '').trim();
+	const compared = comparison.exec(trimmed);
+	if (compared) {
+		const path = compared[1] ?? compared[8] ?? '';
+		const literal = compared[3] ?? compared[4] ?? compared[5] ?? compared[6] ?? '';
+		const operator = compared[2] ?? compared[7];
+		const value = lookup(path, values);
+		if (value === undefined) return undefined;
+		return operator === '==' ? value === literal : value !== literal;
+	}
+	const bare = truthiness.exec(trimmed);
+	if (bare) {
+		const value = lookup(bare[2] ?? '', values);
+		if (value === undefined) return undefined;
+		const truthy = !(value === '' || value === 'false' || value === '0');
+		return bare[1] ? !truthy : truthy;
+	}
+	return undefined;
+}
+export function staticGuard(condition: unknown, values: GuardValues): boolean | undefined {
 	if (typeof condition !== 'string') return undefined;
 	const unwrapped = condition.trim().replace(/^\$\{\{\s*([\s\S]*?)\s*\}\}$/, '$1').trim();
-	const alternatives = unwrapped.split('||').map(alternative =>
-		alternative.split('&&').map(term => {
-			const match = guardTerm.exec(term.trim().replace(/^\(|\)$/g, '').trim());
-			if (!match) return undefined;
-			const key = match[1] ?? match[6] ?? '';
-			const literal = match[3] ?? match[4] ?? '';
-			const operator = match[2] ?? match[5];
-			const value = assignment[key];
-			if (value === undefined) return undefined;
-			return operator === '==' ? value === literal : value !== literal;
-		})
-	);
-	const evaluated = alternatives.map(terms =>
-		terms.includes(false) ? false : terms.every(term => term === true) ? true : undefined
-	);
+	const evaluated = unwrapped.split('||').map(alternative => {
+		const terms = alternative.split('&&').map(term => evaluateTerm(term, values));
+		return terms.includes(false) ? false : terms.every(term => term === true) ? true : undefined;
+	});
 	return evaluated.includes(true) ? true : evaluated.every(result => result === false) ? false : undefined;
 }
 export function expandStep(step: Record<string, unknown>, matrix: Record<string, unknown>): Record<string, unknown>[] {
@@ -107,7 +127,7 @@ export function expandStep(step: Record<string, unknown>, matrix: Record<string,
 				)
 			).map(assignment => [JSON.stringify(assignment), assignment] as const),
 		).values(),
-	].filter(assignment => matrixGuard(step.if, assignment) !== false).slice(0, matrixLimit);
+	].filter(assignment => staticGuard(step.if, { matrix: assignment }) !== false).slice(0, matrixLimit);
 	const apply = (assignment: Record<string, string>): Record<string, unknown> => ({
 		...step,
 		...(typeof step.run === 'string' ? { run: substitute(step.run, assignment) } : {}),

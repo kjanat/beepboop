@@ -2429,6 +2429,42 @@ describe('release streams', () => {
 			101,
 			'npm',
 		)).toEqual(['pkg:npm/a']);
+		const widget = { 'package.json': JSON.stringify({ name: 'widget', version: '1.0.0' }) };
+		expect(
+			planned({
+				...widget,
+				'.github/workflows/release.yml': release(
+					"      - run: |\n          cat <<'EOF' > release-instructions.txt\n          npm publish\n          EOF\n",
+				),
+			}, 103).graph.streams,
+		).toEqual([]);
+		expect(
+			planned({
+				...widget,
+				'.github/workflows/release.yml': release(
+					"      - run: |\n          bash <<'EOF'\n          npm publish\n          EOF\n",
+				),
+			}, 104).graph.streams.length,
+		).toBe(1);
+		const gated = (value: string, id: number) =>
+			planned({
+				...widget,
+				'.github/workflows/publish.yml':
+					'on:\n  workflow_call:\n    inputs:\n      publish:\n        type: boolean\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - if: ${{ inputs.publish }}\n        run: npm publish\n',
+				'.github/workflows/release.yml':
+					`on: { push: { tags: ['v*'] } }\njobs:\n  call:\n    uses: ./.github/workflows/publish.yml\n    with: { publish: ${value} }\n`,
+			}, id).graph.streams.length;
+		expect(gated('false', 105)).toBe(0);
+		expect(gated('true', 106)).toBe(1);
+		const broad = planned({
+			'go.mod': 'module github.com/octo/mono\n\ngo 1.22\n',
+			'.github/workflows/release.yml':
+				'on: { push: { tags: [\'*\'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: gh release create "$GITHUB_REF_NAME" dist/*\n',
+		}, 107);
+		expect(
+			broad.choices.flatMap(choice => choice.observe ?? []).find(binding => binding.ref === 'refs/tags/*')
+				?.publications,
+		).toContain('pkg:golang/github.com/octo/mono');
 		const negated = planned({
 			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
 			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
