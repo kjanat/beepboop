@@ -193,44 +193,53 @@ export function packDirectories(run: string): string[] {
 	return found;
 }
 
+const logging = /^(?:echo|printf)\b/;
+function executed(command: string): string[] {
+	if (!logging.test(command)) return [command];
+	return [...command.replace(/'[^']*'/g, "''").matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)].map(match =>
+		(match[1] ?? match[2] ?? '').trim()
+	).filter(Boolean);
+}
 function commandEffects(text: string, source: string, directory = ''): StepEffect[] {
 	const effects: StepEffect[] = [];
-	walkDirectories(text.replace(/["']\s*,\s*(?:\{\s*args:\s*)?\[?\s*["']/g, ' '), directory, (line, here) => {
-		for (const pattern of patterns) {
-			if (pattern.command?.test(line)) {
+	walkDirectories(text.replace(/["']\s*,\s*(?:\{\s*args:\s*)?\[?\s*["']/g, ' '), directory, (command, here) => {
+		for (const line of executed(command)) {
+			for (const pattern of patterns) {
+				if (pattern.command?.test(line)) {
+					const repository = otherRepository(line);
+					effects.push({
+						kind: 'publish',
+						destination: pattern.destination,
+						source,
+						text: line,
+						...(repository ? { repository } : {}),
+						...(here ? { directory: here } : {}),
+					});
+				}
+			}
+			for (const release of line.matchAll(releaseCommand)) {
+				if (release[0].startsWith('goreleaser') && goreleaserBuildOnly.test(line)) continue;
 				const repository = otherRepository(line);
 				effects.push({
-					kind: 'publish',
-					destination: pattern.destination,
+					kind: 'release',
+					action: release[1] === 'upload' ? 'upload' : release[1] === 'edit' ? 'publish' : 'create',
 					source,
 					text: line,
 					...(repository ? { repository } : {}),
-					...(here ? { directory: here } : {}),
 				});
 			}
+			if (/\bsemantic-release\b(?![\w/-])/.test(line)) {
+				effects.push({ kind: 'release', action: 'publish', source, text: line });
+			}
+			if (aliasCommand.test(line)) effects.push({ kind: 'alias', source, text: line });
+			const dispatched = /\bgh\s+workflow\s+run\s+["']?([\w.-]+\.ya?ml)/.exec(line)
+				?? /\bcreateWorkflowDispatch\b[^\n]*workflow_id:\s*["']([\w.-]+\.ya?ml)/.exec(line);
+			if (dispatched?.[1]) effects.push({ kind: 'dispatch', workflow: dispatched[1], source, text: line });
+			if (/\bgit\s+push\b[^\n]*(?:--tags|refs\/tags\/|--atomic|\$\{?\{?\s*\w*tag)/i.test(line)) {
+				effects.push({ kind: 'tag', source, text: line });
+			}
+			if (/\bpkg-pr-new\s+publish\b/.test(line)) effects.push({ kind: 'preview', source, text: line });
 		}
-		for (const release of line.matchAll(releaseCommand)) {
-			if (release[0].startsWith('goreleaser') && goreleaserBuildOnly.test(line)) continue;
-			const repository = otherRepository(line);
-			effects.push({
-				kind: 'release',
-				action: release[1] === 'upload' ? 'upload' : release[1] === 'edit' ? 'publish' : 'create',
-				source,
-				text: line,
-				...(repository ? { repository } : {}),
-			});
-		}
-		if (/\bsemantic-release\b(?![\w/-])/.test(line)) {
-			effects.push({ kind: 'release', action: 'publish', source, text: line });
-		}
-		if (aliasCommand.test(line)) effects.push({ kind: 'alias', source, text: line });
-		const dispatched = /\bgh\s+workflow\s+run\s+["']?([\w.-]+\.ya?ml)/.exec(line)
-			?? /\bcreateWorkflowDispatch\b[^\n]*workflow_id:\s*["']([\w.-]+\.ya?ml)/.exec(line);
-		if (dispatched?.[1]) effects.push({ kind: 'dispatch', workflow: dispatched[1], source, text: line });
-		if (/\bgit\s+push\b[^\n]*(?:--tags|refs\/tags\/|--atomic|\$\{?\{?\s*\w*tag)/i.test(line)) {
-			effects.push({ kind: 'tag', source, text: line });
-		}
-		if (/\bpkg-pr-new\s+publish\b/.test(line)) effects.push({ kind: 'preview', source, text: line });
 	});
 	const assembled = /\bbuildx\s+(?:build|bake)\b/.exec(text);
 	if (
@@ -646,7 +655,8 @@ function actionEffects(
 				: definition.steps;
 			const declared = `${text}\n${snapshot.files[`${path}/Dockerfile`] ?? ''}`;
 			const stepRuns = (Array.isArray(steps) ? steps : []).flatMap(step => {
-				const run = bindStep(object(step), bindings).run;
+				const bound = bindStep(object(step), bindings);
+				const run = bound['working-directory'] === undefined ? bound.run : undefined;
 				return typeof run === 'string' ? [run.replace(/\$\{?GITHUB_ACTION_PATH\}?\//g, `${path}/`)] : [];
 			});
 			const called = new Set(stepRuns.flatMap(run => [...run.matchAll(scriptCall)].flatMap(match => match[1] ?? [])));

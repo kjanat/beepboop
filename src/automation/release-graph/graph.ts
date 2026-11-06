@@ -514,7 +514,8 @@ function targetsOf(
 							: [];
 						return (named.length && named.every(name => candidates.some(pkg => pkg.name === name))
 							? candidates.filter(pkg => named.includes(pkg.name))
-							: manifests.length && manifests.every(path => candidates.some(pkg => pkg.manifest === path))
+							: !everyCrate && manifests.length
+									&& manifests.every(path => candidates.some(pkg => pkg.manifest === path))
 							? candidates.filter(pkg => manifests.includes(pkg.manifest))
 							: !everyCrate && scope.every(path => candidates.some(pkg => directoryOf(pkg) === path))
 							? candidates.filter(pkg => scope.includes(directoryOf(pkg)))

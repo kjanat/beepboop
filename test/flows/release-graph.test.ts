@@ -2021,6 +2021,45 @@ describe('release streams', () => {
 			65,
 			'npm',
 		)).toEqual(['pkg:npm/root-tool']);
+		expect(selected(
+			{
+				'Cargo.toml': '[workspace]\nmembers = ["crates/a", "crates/b"]\n',
+				'crates/a/Cargo.toml': '[package]\nname = "a"\nversion = "1.0.0"\n',
+				'crates/b/Cargo.toml': '[package]\nname = "b"\nversion = "1.0.0"\n',
+				'.github/workflows/release.yml': release(
+					'      - run: cargo publish --workspace --manifest-path crates/a/Cargo.toml\n',
+				),
+			},
+			66,
+			'crates-io',
+		)).toEqual(['pkg:cargo/a', 'pkg:cargo/b']);
+		const rootTool = { 'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0' }) };
+		expect(
+			planned({
+				...rootTool,
+				'.github/workflows/release.yml': release('      - run: echo "To release, run npm publish"\n'),
+			}, 67).graph.streams,
+		).toEqual([]);
+		expect(selected(
+			{
+				...rootTool,
+				'.github/workflows/release.yml': release('      - run: echo "$(npm publish)"\n'),
+			},
+			68,
+			'npm',
+		)).toEqual(['pkg:npm/root-tool']);
+		expect(selected(
+			{
+				...rootTool,
+				'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+				'packages/a/publish.sh': 'npm publish\n',
+				'packages/a/action.yml':
+					'runs:\n  using: composite\n  steps:\n    - shell: bash\n      working-directory: ${{ github.action_path }}\n      run: bash publish.sh\n',
+				'.github/workflows/release.yml': release('      - uses: ./packages/a\n'),
+			},
+			69,
+			'npm',
+		)).toEqual(['pkg:npm/a']);
 		expect(
 			planned({
 				'package.json': JSON.stringify({ name: '@octo/tool', version: '1.0.0' }),
