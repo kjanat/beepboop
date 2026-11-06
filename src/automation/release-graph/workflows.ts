@@ -404,7 +404,7 @@ const invocations: readonly { pattern: RegExp; kinds: readonly TaskKind[]; many:
 	{ pattern: /\b(?:npm|pnpm|yarn|bun)\b[^\n;&|]*?\srun(?:-script)?\s+/g, kinds: ['package'], many: false },
 	{
 		pattern:
-			/\byarn\s+(?!(?:run|install|add|remove|init|dlx|exec|npm|publish|pack|version|config|workspaces?|why|info|set|up|cache)\b)/g,
+			/\b(?:yarn|pnpm)\s+(?!(?:run|run-script|install|install-test|i|it|add|remove|rm|uninstall|un|init|dlx|exec|npm|publish|pack|version|config|c|workspaces?|why|info|set|up|update|upgrade|cache|audit|bin|create|dedupe|deploy|doctor|env|fetch|import|link|ln|list|ls|outdated|patch|prune|rebuild|rb|root|setup|store|unlink|licenses|approve-builds|self-update|help|ignored-builds)\b)/g,
 		kinds: ['package'],
 		many: false,
 	},

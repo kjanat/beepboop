@@ -114,21 +114,67 @@ function workflowDirectories(read: ReadonlyMap<string, string>, repository: stri
 		}
 	};
 	for (const { file } of documents) visit(file, {}, [file]);
+	const localAction = /^\.\/(.+?)\/?$/;
+	const composite = (action: string, supplied: Record<string, unknown>, trail: readonly string[]): string[] => {
+		const source = read.get(`${action}/action.yml`) ?? read.get(`${action}/action.yaml`);
+		const parsed = source === undefined || trail.includes(action) ? undefined : yaml(source);
+		if (!parsed || Result.isFailure(parsed)) return [];
+		const bindings = {
+			...inputDefaults(parsed.success.inputs, Object.keys(supplied)),
+			...literalBindings(supplied),
+		};
+		const steps = object(parsed.success.runs).steps;
+		return (Array.isArray(steps) ? steps : []).flatMap(entry => {
+			const step = object(entry);
+			const nested = typeof step.uses === 'string' ? localAction.exec(step.uses)?.[1] : undefined;
+			return [
+				...(typeof step['working-directory'] === 'string' ? [bindInputs(step['working-directory'], bindings)] : []),
+				...(nested
+					? composite(
+						nested,
+						Object.fromEntries(
+							Object.entries(object(step.with)).map((
+								[key, value],
+							) => [key, typeof value === 'string' ? bindInputs(value, bindings) : value]),
+						),
+						[...trail, action],
+					)
+					: []),
+			];
+		});
+	};
 	return documents.flatMap(({ file, document }) =>
 		Object.values(object(document.jobs)).flatMap(entry => {
 			const job = object(entry);
 			const combinations = matrixCombinations(object(object(job.strategy).matrix)).concat([{}]);
 			const bindings = calls.get(file) ?? [{}];
+			const steps = (Array.isArray(job.steps) ? job.steps : []).map(object);
 			const declared = [
 				object(object(job.defaults).run)['working-directory'],
-				...(Array.isArray(job.steps) ? job.steps.map(step => object(step)['working-directory']) : []),
+				...steps.map(step => step['working-directory']),
 			].filter((value): value is string => typeof value === 'string' && value.includes('${{'));
-			return declared.flatMap(value =>
-				combinations.flatMap(combination =>
-					bindings.map(binding =>
-						bindInputs(substitute(value, combination), binding).replace(/^\.\//, '').replace(/\/$/, '')
-					)
-				)
+			const applied = steps.flatMap(step => {
+				const action = typeof step.uses === 'string' ? localAction.exec(step.uses)?.[1] : undefined;
+				return action ? [{ action, supplied: object(step.with) }] : [];
+			});
+			return combinations.flatMap(combination =>
+				bindings.flatMap(binding => {
+					const bind = (value: string) => bindInputs(substitute(value, combination), binding);
+					return [
+						...declared.map(bind),
+						...applied.flatMap(({ action, supplied }) =>
+							composite(
+								action,
+								Object.fromEntries(
+									Object.entries(supplied).map((
+										[key, value],
+									) => [key, typeof value === 'string' ? bind(value) : value]),
+								),
+								[],
+							)
+						),
+					].map(value => value.replace(/^\.\//, '').replace(/\/$/, ''));
+				})
 			).filter(value => value && !value.includes('${{'));
 		})
 	);

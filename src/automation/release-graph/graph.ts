@@ -446,7 +446,13 @@ function targetsOf(
 				const runs = publicationRuns(graph, workflow, own, files);
 				const directories = [
 					...new Set([
-						...own.flatMap(entry => entry.effect.kind === 'publish' ? entry.effect.directory ?? [] : []),
+						...own.flatMap(entry => {
+							if (entry.effect.kind !== 'publish') return [];
+							const override = /(?:^|\s)(?:--prefix|-C|--cwd|--dir)[= ]["']?([^\s"';&|]+)/.exec(entry.effect.text)?.[1];
+							return override !== undefined
+								? within(entry.effect.directory ?? '', override)
+								: entry.effect.directory ?? [];
+						}),
 						...runs.flatMap(packDirectories),
 					]),
 				];

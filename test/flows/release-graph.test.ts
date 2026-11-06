@@ -1992,6 +1992,35 @@ describe('release streams', () => {
 				"on: { push: { tags: ['v*'] } }\njobs:\n  start:\n    uses: ./.github/workflows/b.yml\n    with:\n      directory: packages/a\n",
 		}, 60);
 		expect(nestedScripts.files['packages/a/scripts/publish.sh']).toBe('npm publish\n');
+		const compositeScripts = await built({
+			...workspace,
+			'packages/a/scripts/publish.sh': 'npm publish\n',
+			'actions/publish/action.yml':
+				'inputs:\n  directory:\n    required: true\nruns:\n  using: composite\n  steps:\n    - shell: bash\n      working-directory: ${{ inputs.directory }}\n      run: bash scripts/publish.sh\n',
+			'.github/workflows/release.yml': release(
+				'      - uses: ./actions/publish\n        with:\n          directory: packages/a\n',
+			),
+		}, 63);
+		expect(compositeScripts.files['packages/a/scripts/publish.sh']).toBe('npm publish\n');
+		expect(selected(
+			{
+				'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+				'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+				'.github/workflows/release.yml': release(
+					'      - working-directory: packages/a\n        run: npm --prefix ../b publish\n',
+				),
+			},
+			64,
+			'npm',
+		)).toEqual(['pkg:npm/b']);
+		expect(selected(
+			{
+				'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0', scripts: { release: 'npm publish' } }),
+				'.github/workflows/release.yml': release('      - run: pnpm release\n'),
+			},
+			65,
+			'npm',
+		)).toEqual(['pkg:npm/root-tool']);
 		expect(
 			planned({
 				'package.json': JSON.stringify({ name: '@octo/tool', version: '1.0.0' }),
