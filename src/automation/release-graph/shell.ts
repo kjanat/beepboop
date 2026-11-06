@@ -6,10 +6,25 @@ export function rehearsing(command: string): boolean {
 	const literal = command.replace(/\$\{\{[^}]*\}\}/g, '');
 	return dryRun.test(literal) || rehearsalRegistry.test(literal);
 }
+function withoutComment(line: string): string {
+	let quote = '';
+	for (let index = 0; index < line.length; index++) {
+		const character = line[index] ?? '';
+		if (quote) {
+			if (character === '\\' && quote === '"') index++;
+			else if (character === quote) quote = '';
+		} else if (character === '\\') {
+			index++;
+		} else if (character === '"' || character === "'") {
+			quote = character;
+		} else if (character === '#' && (index === 0 || /\s/.test(line[index - 1] ?? ''))) {
+			return line.slice(0, index);
+		}
+	}
+	return line;
+}
 export function lines(text: string): string[] {
-	return text.replace(/\\\r?\n\s*/g, ' ').split(/\r?\n/).map(line => line.trim()).filter(line =>
-		line && !line.startsWith('#')
-	);
+	return text.replace(/\\\r?\n\s*/g, ' ').split(/\r?\n/).map(line => withoutComment(line).trim()).filter(Boolean);
 }
 
 export function splitCommands(line: string): string[] {

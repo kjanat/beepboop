@@ -61,14 +61,41 @@ export const matrixExpression = /\$\{\{\s*matrix\.([\w-]+(?:\.[\w-]+)*)\s*\}\}/g
 export function substitute(text: string, assignment: Record<string, string>): string {
 	return text.replace(matrixExpression, (expression, key: string) => assignment[key] ?? expression);
 }
+const guardTerm =
+	/^(?:matrix\.([\w-]+(?:\.[\w-]+)*)\s*(==|!=)\s*'([^']*)'|'([^']*)'\s*(==|!=)\s*matrix\.([\w-]+(?:\.[\w-]+)*))$/;
+const guardKey = /\bmatrix\.([\w-]+(?:\.[\w-]+)*)/g;
+export function matrixGuard(condition: unknown, assignment: Record<string, string>): boolean | undefined {
+	if (typeof condition !== 'string') return undefined;
+	const unwrapped = condition.trim().replace(/^\$\{\{\s*([\s\S]*?)\s*\}\}$/, '$1').trim();
+	const alternatives = unwrapped.split('||').map(alternative =>
+		alternative.split('&&').map(term => {
+			const match = guardTerm.exec(term.trim().replace(/^\(|\)$/g, '').trim());
+			if (!match) return undefined;
+			const key = match[1] ?? match[6] ?? '';
+			const literal = match[3] ?? match[4] ?? '';
+			const operator = match[2] ?? match[5];
+			const value = assignment[key];
+			if (value === undefined) return undefined;
+			return operator === '==' ? value === literal : value !== literal;
+		})
+	);
+	const evaluated = alternatives.map(terms =>
+		terms.includes(false) ? false : terms.every(term => term === true) ? true : undefined
+	);
+	return evaluated.includes(true) ? true : evaluated.every(result => result === false) ? false : undefined;
+}
 export function expandStep(step: Record<string, unknown>, matrix: Record<string, unknown>): Record<string, unknown>[] {
 	const directory = step['working-directory'];
 	const texts = [step.run, directory, ...Object.values(object(step.with))].filter((value): value is string =>
 		typeof value === 'string'
 	);
 	const combinations = matrixCombinations(matrix);
+	const guards = typeof step.if === 'string' ? [...step.if.matchAll(guardKey)].flatMap(match => match[1] ?? []) : [];
 	const keys = [
-		...new Set(texts.flatMap(text => [...text.matchAll(matrixExpression)].flatMap(match => match[1] ?? []))),
+		...new Set([
+			...texts.flatMap(text => [...text.matchAll(matrixExpression)].flatMap(match => match[1] ?? [])),
+			...guards,
+		]),
 	]
 		.filter(key => combinations.some(combination => combination[key] !== undefined));
 	if (!keys.length) return [step];
@@ -80,7 +107,7 @@ export function expandStep(step: Record<string, unknown>, matrix: Record<string,
 				)
 			).map(assignment => [JSON.stringify(assignment), assignment] as const),
 		).values(),
-	].slice(0, matrixLimit);
+	].filter(assignment => matrixGuard(step.if, assignment) !== false).slice(0, matrixLimit);
 	const apply = (assignment: Record<string, string>): Record<string, unknown> => ({
 		...step,
 		...(typeof step.run === 'string' ? { run: substitute(step.run, assignment) } : {}),

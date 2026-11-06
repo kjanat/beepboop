@@ -571,7 +571,7 @@ function targetsOf(
 					&& !pathArgument.test(entry.effect.text)
 				);
 				const scope = workspaceScope(commands);
-				const nested = scope.all || scope.recursive
+				const nested = (scope.all || scope.recursive) && workspaces.length === 0
 					? candidates.filter(pkg =>
 						inWorkspaces(declaredWorkspaces(snapshot), directoryOf(pkg))
 						|| (scope.root && directoryOf(pkg) === '')

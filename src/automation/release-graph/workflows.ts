@@ -441,6 +441,7 @@ function taskBodies(
 	snapshot: Snapshot,
 	line: string,
 	directory = '',
+	lifecycle = true,
 ): { name: string; body: string; source: string }[] {
 	const cargo = /\bcargo\s+([a-z][\w-]*)/.exec(line)?.[1];
 	const alias = cargo ? aliasTable(snapshot).get(cargo) : undefined;
@@ -489,7 +490,7 @@ function taskBodies(
 						const owner = dirs.find(dir => taskTable(snapshot, dir).present.has(kind));
 						const task = owner === undefined ? undefined : taskTable(snapshot, owner).tasks.get(kind)?.get(name);
 						if (task) {
-							const hooks = kind === 'package' && owner !== undefined && /^npm\b/.test(match[0])
+							const hooks = lifecycle && kind === 'package' && owner !== undefined && /^npm\b/.test(match[0])
 									&& !/--ignore-scripts\b/.test(line)
 								? taskTable(snapshot, owner).tasks.get('package')
 								: undefined;
@@ -563,7 +564,9 @@ function scriptEffects(
 					? published
 					: here;
 			const hooks = /\bnpm\b[^\n;&|]*\spublish(?![\w:-])/.test(line) && !/--ignore-scripts\b/.test(line)
-				? publishHooks.flatMap(hook => taskBodies(snapshot, line.replace(/\bpublish\b/, `run ${hook}`), hookDirectory))
+				? publishHooks.flatMap(hook =>
+					taskBodies(snapshot, line.replace(/\bpublish\b/, `run ${hook}`), hookDirectory, false)
+				)
 				: [];
 			for (const task of [...taskBodies(snapshot, line, here), ...hooks]) {
 				const key = `${task.source}#${task.name}#${task.body}`;

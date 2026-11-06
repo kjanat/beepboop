@@ -2374,6 +2374,49 @@ describe('release streams', () => {
 			95,
 			'npm',
 		)).toEqual(['pkg:npm/a']);
+		expect(selected(
+			{
+				'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+				'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+				'.github/workflows/release.yml': release(
+					"      - if: matrix.pkg == 'a'\n        run: npm --prefix packages/${{ matrix.pkg }} publish\n",
+					'    strategy:\n      matrix:\n        pkg: [a, b]\n',
+				),
+			},
+			96,
+			'npm',
+		)).toEqual(['pkg:npm/a']);
+		const commented = (run: string, id: number) =>
+			planned({
+				'package.json': JSON.stringify({ name: 'widget', version: '1.0.0' }),
+				'.github/workflows/release.yml': release(`      - run: |\n          ${run}\n`),
+			}, id).graph.streams;
+		expect(commented('true # npm publish', 97)).toEqual([]);
+		expect(commented('npm publish # latest', 98).length).toBe(1);
+		expect(selected(
+			{
+				'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0', private: true }),
+				'pnpm-workspace.yaml': "packages:\n  - 'packages/*'\n",
+				'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+				'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+				'.github/workflows/release.yml': release('      - run: pnpm --filter a -r publish --no-git-checks\n'),
+			},
+			99,
+			'npm',
+		)).toEqual(['pkg:npm/a']);
+		expect(selected(
+			{
+				'package.json': JSON.stringify({
+					name: 'root-tool',
+					version: '1.0.0',
+					scripts: { publish: 'echo published', prepublish: 'npm --prefix packages/b publish' },
+				}),
+				'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+				'.github/workflows/release.yml': release('      - run: npm publish\n'),
+			},
+			100,
+			'npm',
+		)).toEqual(['pkg:npm/root-tool']);
 		expect(
 			planned({
 				'package.json': JSON.stringify({ name: '@octo/tool', version: '1.0.0' }),
