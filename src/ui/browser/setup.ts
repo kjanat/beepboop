@@ -102,7 +102,10 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 		});
 		const pickers = () => [...body.querySelectorAll<HTMLFieldSetElement>('fieldset[data-workflow-role]')];
 		const showPickers = () => {
-			for (const picker of pickers()) picker.hidden = observing.checked;
+			for (const picker of pickers()) {
+				picker.hidden = observing.checked;
+				picker.disabled = observing.checked;
+			}
 		};
 		observing.addEventListener('change', showPickers);
 		showPickers();

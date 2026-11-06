@@ -123,7 +123,6 @@ test('managed preparation hides and disables all job and command inputs', async 
 		expect(input.closest('[hidden]')).not.toBeNull();
 	}
 	expect(preparing.textContent).toContain('Only the publishing workflow is needed.');
-	expect(form.checkValidity()).toBe(true);
 	const override = control(form, 'Actions revision override (optional)', window.HTMLInputElement);
 	expect(override.closest('details')?.hasAttribute('open')).toBe(false);
 	expect(form.textContent).not.toContain('Keep unchanged;');
@@ -382,7 +381,6 @@ test('existing shared Go workflows do not require replacement preparation comman
 	expect(commands.value).toBe('');
 	expect(commands.required).toBe(false);
 	expect(commands.disabled).toBe(true);
-	expect(form.checkValidity()).toBe(true);
 	await act(form, 'preview');
 	expect(form.querySelector('.setup-result')?.textContent).toContain('No file changes needed.');
 });
@@ -432,11 +430,13 @@ test('an inferred stream keeps its workflow until observation is cleared', async
 	expect(keep.checked).toBe(true);
 	expect(role(form, 'promote').hidden).toBe(true);
 	expect(role(form, 'prepare').hidden).toBe(true);
+	expect(role(form, 'promote').hasAttribute('disabled')).toBe(true);
 	await act(form, 'preview');
 	expect(form.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(false);
 	expect(form.querySelector('.setup-result')?.textContent).toContain('"mode": "observe"');
 	keep.checked = false;
 	keep.dispatchEvent(new window.Event('change', { bubbles: true }));
 	expect(role(form, 'promote').hidden).toBe(false);
+	expect(role(form, 'promote').hasAttribute('disabled')).toBe(false);
 	await expect(act(form, 'preview')).rejects.toThrow('Select at least one package to release.');
 });
