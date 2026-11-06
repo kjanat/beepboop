@@ -1,4 +1,5 @@
 import { Result } from 'effect';
+import { type ParseError, parse as parseJsonc } from 'jsonc-parser';
 import { parse as parseToml } from 'smol-toml';
 import { object, yaml } from '@/automation/managers/helpers';
 import type { Snapshot } from '@/automation/types';
@@ -74,7 +75,8 @@ const patterns: readonly Pattern[] = [
 	},
 	{
 		destination: 'jsr',
-		command: /\b(?:jsr|deno)\s+publish\b|\b(?:npx|bunx|pnpm\s+dlx|yarn\s+dlx)\s+(?:-y\s+)?jsr\s+publish\b/,
+		command:
+			/\b(?:jsr|deno)\s+publish\b|\b(?:npx|bunx|pnpm\s+dlx|yarn\s+dlx)\s+(?:(?:-y|--yes)\s+)?jsr(?:@[\w.-]+)?\s+publish\b/,
 	},
 	{
 		destination: 'crates-io',
@@ -255,12 +257,9 @@ function taskTable(snapshot: Snapshot, directory: string): TaskTable {
 		if (source === undefined) continue;
 		const kind: TaskKind = name === 'package.json' ? 'package' : 'deno';
 		present.add(kind);
-		let manifest: Record<string, unknown>;
-		try {
-			manifest = object(JSON.parse(source.replace(/^\s*\/\/.*$/gm, '')));
-		} catch {
-			continue;
-		}
+		const errors: ParseError[] = [];
+		const manifest = object(parseJsonc(source, errors, { allowTrailingComma: true }));
+		if (errors.length) continue;
 		for (const [task, body] of Object.entries({ ...object(manifest.scripts), ...object(manifest.tasks) })) {
 			const command = typeof body === 'string' ? body : object(body).command;
 			if (typeof command === 'string') add(kind, task, { body: command, source: path });

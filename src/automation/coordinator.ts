@@ -1497,7 +1497,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					const version = tagged
 						? branch.slice(prefix.length).replace(/^v/, '')
 						: undefined;
-					const manifestVersions = !tagged && run.event === 'workflow_dispatch';
+					const manifestVersions = !tagged
+						&& (run.event === 'workflow_dispatch' || (binding.publications?.length ?? 0) > 0);
 					const eventId = `observed:${event.runId}`;
 					const id = yield* executionId(repository.id, streamName, operation, eventId);
 					if (yield* this.read(`execution:${id}`)) continue;

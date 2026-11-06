@@ -102,7 +102,10 @@ test('a manually dispatched release takes its version from the manifest', async 
 		.toEqual([['pkg:npm/cli', '2.0.0', 'succeeded']]);
 	const executions = await observe(repository, 'workflow_run', 'main');
 	expect(executions).toHaveLength(2);
-	expect(executions.find(execution => execution.id !== dispatched?.id)?.publications).toEqual([]);
+	const triggered = executions.find(execution => execution.id !== dispatched?.id);
+	expect(triggered?.publications.map(publication => [publication.id, publication.version, publication.outcome]))
+		.toEqual([['pkg:npm/cli', '2.0.0', 'succeeded']]);
+	expect(triggered?.state).toBe('succeeded');
 });
 
 test('a tag prefix with a directory is proposed, applied and restored', async () => {
@@ -186,6 +189,10 @@ test('a manual dispatch of a branch publisher verifies its publications', async 
 	const [execution] = await observe(repository, 'workflow_dispatch', 'main');
 	expect(execution?.publications.map(publication => [publication.id, publication.version, publication.outcome]))
 		.toEqual([['pkg:npm/branch', '3.0.0', 'succeeded']]);
+	const pushed = (await observe(repository, 'push', 'main')).find(candidate => candidate.id !== execution?.id);
+	expect(pushed?.publications.map(publication => [publication.id, publication.version, publication.outcome]))
+		.toEqual([['pkg:npm/branch', '3.0.0', 'succeeded']]);
+	expect(pushed?.state).toBe('succeeded');
 });
 
 test('setup accepts the shorthand refs that configuration accepts', async () => {

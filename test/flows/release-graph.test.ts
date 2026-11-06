@@ -799,6 +799,34 @@ describe('release streams', () => {
 		expect(target(stream(graph, 'main'), 'crates-io').packages).toEqual(['pkg:cargo/a']);
 	});
 
+	test('JSONC task manifests and pinned JSR publishers', () => {
+		const jsonc: Record<string, string> = {
+			'deno.jsonc':
+				'{\n  // tool\n  "name": "@octo/tool",\n  "version": "1.0.0",\n  "exports": "./mod.ts",\n  "tasks": { "release": "deno publish", /* ship */ },\n}\n',
+			'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", 'deno task release'),
+		};
+		const tasks = plan({
+			repository: { id: 1, name: 'octo/tool', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files: jsonc,
+			paths: Object.keys(jsonc),
+		});
+		expect(target(stream(tasks.graph, 'main'), 'jsr').names).toEqual(['@octo/tool']);
+		for (const run of ['npx jsr@0.13.3 publish', 'npx -y jsr@latest publish']) {
+			const files: Record<string, string> = {
+				'jsr.json': JSON.stringify({ name: '@octo/pinned', version: '1.0.0', exports: './mod.ts' }),
+				'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", run),
+			};
+			const { graph } = plan({
+				repository: { id: 2, name: 'octo/pinned', defaultBranch: 'main' },
+				sha: 'a'.repeat(40),
+				files,
+				paths: Object.keys(files),
+			});
+			expect(destinations(stream(graph, 'main'))).toEqual(['jsr']);
+		}
+	});
+
 	test('a local action runs only its own manifest', async () => {
 		const files: Record<string, string> = {
 			'package.json': JSON.stringify({ name: 'widget', version: '1.0.0' }),
