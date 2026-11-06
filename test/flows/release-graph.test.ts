@@ -1788,6 +1788,27 @@ describe('release streams', () => {
 				proposal.targets.filter(entry => entry.destination === 'npm').flatMap(entry => entry.packages)
 			).sort(),
 		).toEqual([['pkg:npm/a'], ['pkg:npm/b']]);
+		expect(selected(
+			{
+				...workspace,
+				'.github/workflows/publish.yml': callee,
+				'.github/workflows/release.yml':
+					"on: { push: { tags: ['v*'] } }\njobs:\n  release:\n    strategy:\n      matrix:\n        directory: [packages/a, packages/b]\n    uses: ./.github/workflows/publish.yml\n    with:\n      directory: ${{ matrix.directory }}\n",
+			},
+			44,
+			'npm',
+		)).toEqual(['pkg:npm/a', 'pkg:npm/b']);
+		expect(selected(
+			{
+				...workspace,
+				'scripts/publish.sh': 'npm publish\n',
+				'.github/workflows/release.yml': release(
+					'      - run: cd packages/a && bash ../../scripts/publish.sh && cd ../b && bash ../../scripts/publish.sh\n',
+				),
+			},
+			45,
+			'npm',
+		)).toEqual(['pkg:npm/a', 'pkg:npm/b']);
 		const extension = {
 			'package.json': JSON.stringify({
 				name: 'tool',

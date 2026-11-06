@@ -502,17 +502,6 @@ export function within(directory: string, change: string): string {
 	}
 	return parts.join('/');
 }
-function liveCommands(line: string): string {
-	const parts = line.split(/(\s*(?:&&|\|\||;|\|)\s*)/);
-	const commands: { text: string; separator: string }[] = [];
-	for (let index = 0; index < parts.length; index += 2) {
-		commands.push({ text: parts[index] ?? '', separator: parts[index + 1] ?? '' });
-	}
-	const kept = commands.filter(command => !rehearsing(command.text));
-	return kept.map((command, index) => command.text + (index < kept.length - 1 ? command.separator || ' && ' : '')).join(
-		'',
-	);
-}
 const traversalLimit = 512;
 function scriptEffects(
 	snapshot: Snapshot,
@@ -521,18 +510,7 @@ function scriptEffects(
 	directory?: string,
 ): { effects: StepEffect[]; runs: string[] } {
 	const effects: StepEffect[] = [], runs: string[] = [];
-	let current = within('', directory ?? '');
-	for (const original of lines(run)) {
-		const line = liveCommands(original).trim();
-		if (!line) continue;
-		const alone = /^cd\s+["']?([^\s"';&|]+)["']?$/.exec(line);
-		if (alone) {
-			current = within(current, alone[1] ?? '');
-			continue;
-		}
-		const chained = /^(\(?)\s*cd\s+["']?([^\s"';&|]+)["']?\s*&&/.exec(line);
-		const here = chained ? within(current, chained[2] ?? '') : current;
-		if (chained && !chained[1]) current = here;
+	walkDirectories(run, directory ?? '', (line, here) => {
 		for (const match of line.matchAll(scriptCall)) {
 			const called = (match[1] ?? '').replace(/^\.\//, '');
 			const relative = here ? within(here, called) : undefined;
@@ -582,7 +560,7 @@ function scriptEffects(
 			effects.push(...nested.effects);
 			runs.push(...nested.runs);
 		}
-	}
+	});
 	return { effects, runs };
 }
 
@@ -1016,29 +994,32 @@ export function workflowModels(snapshot: Snapshot): Workflow[] {
 			if (!job?.calls || trail.includes(job.calls)) continue;
 			const callee = documents.get(job.calls);
 			if (!callee) continue;
-			const supplied = Object.fromEntries(
-				Object.entries(object(object(value).with)).map((
-					[key, input],
-				) => [key, typeof input === 'string' ? bindInputs(input, bindings) : input]),
-			);
-			const inherited = {
-				...inputDefaults(object(object(callee.document.on).workflow_call).inputs, Object.keys(supplied)),
-				...literalBindings(supplied),
-			};
-			const usable = Object.keys(inherited).length > 0
-				&& new RegExp(inputExpression.source).test(JSON.stringify(callee.document.jobs));
-			const bound = usable
-				? new Map(
-					liveJobs(callee.document).map(([calleeId, calleeJob]) =>
-						[
-							calleeId,
-							buildJob(snapshot, callee.path, callee.document, calleeId, object(calleeJob), inherited),
-						] as const
-					),
-				)
-				: undefined;
-			edges.set(job.calls, [...edges.get(job.calls) ?? [], { caller: root, ...(bound ? { bound } : {}) }]);
-			walk(root, job.calls, inherited, [...trail, job.calls]);
+			const assignments = matrixCombinations(object(object(object(value).strategy).matrix)).slice(0, 64);
+			for (const assignment of assignments.length ? assignments : [{}]) {
+				const supplied = Object.fromEntries(
+					Object.entries(object(object(value).with)).map((
+						[key, input],
+					) => [key, typeof input === 'string' ? substitute(bindInputs(input, bindings), assignment) : input]),
+				);
+				const inherited = {
+					...inputDefaults(object(object(callee.document.on).workflow_call).inputs, Object.keys(supplied)),
+					...literalBindings(supplied),
+				};
+				const usable = Object.keys(inherited).length > 0
+					&& new RegExp(inputExpression.source).test(JSON.stringify(callee.document.jobs));
+				const bound = usable
+					? new Map(
+						liveJobs(callee.document).map(([calleeId, calleeJob]) =>
+							[
+								calleeId,
+								buildJob(snapshot, callee.path, callee.document, calleeId, object(calleeJob), inherited),
+							] as const
+						),
+					)
+					: undefined;
+				edges.set(job.calls, [...edges.get(job.calls) ?? [], { caller: root, ...(bound ? { bound } : {}) }]);
+				walk(root, job.calls, inherited, [...trail, job.calls]);
+			}
 		}
 	};
 	for (const workflow of workflows) {
