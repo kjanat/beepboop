@@ -379,7 +379,9 @@ export class RepositoryGateway {
 			const refs = yield* Effect.forEach(prefixes, prefix =>
 				self.read(
 					z.array(matchingRefSchema).nullable(),
-					`/repos/${name}/git/matching-refs/tags/${prefix.split('/').map(encodeURIComponent).join('/')}`,
+					`/repos/${name}/git/matching-refs/tags${
+						prefix ? `/${prefix.split('/').map(encodeURIComponent).join('/')}` : ''
+					}`,
 					token,
 				).pipe(Effect.map(rows => (rows ?? []).map(row => row.ref.slice('refs/tags/'.length)))), {
 				concurrency: 'unbounded',

@@ -10,6 +10,7 @@ import {
 	localAction,
 	workflowCalls,
 	workflowDocuments,
+	workflowEvents,
 } from '@/automation/release-graph/calls';
 import { directoryFlagPattern, selectorFlagPattern } from '@/automation/release-graph/package-managers';
 import { escapeRegExp, within } from '@/automation/release-graph/shell';
@@ -258,7 +259,9 @@ export function buildSnapshot(
 		const prefixes = [
 			...new Set([...tagQueries([...new Set([...extraPaths, ...included])]), ...workflowTagPrefixes(read)]),
 		].filter((prefix, _, all) => !all.some(other => other !== prefix && prefix.startsWith(other))).sort();
-		const tags = prefixes.length ? [...new Set(yield* source.tags(prefixes))].sort() : undefined;
+		const releaseEvents = workflowDocuments(read).some(({ document }) => workflowEvents(document).includes('release'));
+		const queries = releaseEvents ? [...prefixes, ''] : prefixes;
+		const tags = queries.length ? [...new Set(yield* source.tags(queries))].sort() : undefined;
 		return { repository: source.repository, sha: source.sha, files, paths: blobs, ...(tags ? { tags } : {}) };
 	});
 }

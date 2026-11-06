@@ -51,6 +51,7 @@ export type StepEffect =
 		text: string;
 		repository?: string;
 		directory?: string;
+		condition?: string;
 	}
 	| { kind: 'release'; action: 'create' | 'publish' | 'upload'; source: string; text: string; repository?: string }
 	| { kind: 'artifact'; direction: 'upload' | 'download'; name: string; source: string }
@@ -771,7 +772,12 @@ function buildJob(
 			: raw;
 		for (const step of expandStep(located, matrix)) {
 			const result = stepEffects(snapshot, step, path, new Set());
-			effects.push(...result.effects);
+			const guard = typeof step.if === 'string' ? step.if : undefined;
+			effects.push(
+				...(guard
+					? result.effects.map(effect => effect.kind === 'publish' ? { ...effect, condition: guard } : effect)
+					: result.effects),
+			);
 			runs.push(...result.runs);
 			if (result.action) actions.push(result.action);
 		}

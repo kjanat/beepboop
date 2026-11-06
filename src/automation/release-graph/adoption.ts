@@ -92,8 +92,8 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 					...new Set(entry.tagPatterns.filter(pattern => !pattern.startsWith('!')).map(literalPrefix)),
 				].filter(Boolean);
 				const compatible = (operation: string, prefix: string | undefined) => {
-					const [file = '', job = ''] = operation.split('#');
-					const condition = members.get(file)?.conditions[job];
+					const [file = '', job = '', ...guard] = operation.split('#');
+					const condition = [members.get(file)?.conditions[job], guard.join('#')].filter(Boolean).join(' ');
 					if (prefix === undefined || !condition || families.length < 2) return true;
 					const named = families.filter(family =>
 						new RegExp(`['"](?:refs/tags/)?${escapeRegExp(family)}`).test(condition)

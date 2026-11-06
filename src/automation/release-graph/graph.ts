@@ -397,6 +397,26 @@ function defaultMembers(snapshot: Snapshot, directory: string): string[] {
 		return [];
 	}
 }
+function sourceKey(entry: { workflow: string; job: Job; effect: StepEffect }): string {
+	const guard = entry.effect.kind === 'publish' ? entry.effect.condition : undefined;
+	return `${entry.workflow}#${entry.job.id}${guard ? `#${guard}` : ''}`;
+}
+function globMatches(pattern: string, name: string): boolean {
+	const source = [...pattern].map(character =>
+		character === '*'
+			? '.*'
+			: character === '?'
+			? '.'
+			: character === '[' || character === ']'
+			? character
+			: escapeRegExp(character)
+	).join('');
+	try {
+		return new RegExp(`^${source}$`).test(name);
+	} catch {
+		return pattern === name;
+	}
+}
 function targetsOf(
 	graph: Graph,
 	files: string[],
@@ -442,8 +462,8 @@ function targetsOf(
 		if (destination === 'npm' || destination === 'jsr' || destination === 'crates-io') {
 			const manager = destination === 'npm' ? 'npm' : destination === 'jsr' ? 'jsr' : 'cargo';
 			const candidates = managed(manager);
-			const selections = [...new Set(found.map(entry => `${entry.workflow}#${entry.job.id}`))].map(operation => {
-				const own = found.filter(entry => `${entry.workflow}#${entry.job.id}` === operation);
+			const selections = [...new Set(found.map(sourceKey))].map(operation => {
+				const own = found.filter(entry => sourceKey(entry) === operation);
 				const workflow = own[0]?.workflow ?? '';
 				const effects = own.map(entry =>
 					entry.effect.kind === 'publish' || entry.effect.kind === 'release' ? entry.effect.text : ''
@@ -517,7 +537,7 @@ function targetsOf(
 						const everyCrate = /--workspace\b|--all\b/.test(command);
 						const scope = directory ? [directory] : packed.length ? packed : [''];
 						const excluded = everyCrate
-							? [...command.matchAll(/--exclude[= ]["']?([\w-]+)/g)].flatMap(match => match[1] ?? [])
+							? [...command.matchAll(/--exclude[= ]["']?([^\s"';&|]+)/g)].flatMap(match => match[1] ?? [])
 							: [];
 						return (named.length && named.every(name => candidates.some(pkg => pkg.name === name))
 							? candidates.filter(pkg => named.includes(pkg.name))
@@ -528,7 +548,7 @@ function targetsOf(
 							? candidates.filter(pkg => inWorkspaces(defaultMembers(snapshot, directory), directoryOf(pkg)))
 							: !everyCrate && scope.every(path => candidates.some(pkg => directoryOf(pkg) === path))
 							? candidates.filter(pkg => scope.includes(directoryOf(pkg)))
-							: candidates).filter(pkg => !excluded.includes(pkg.name));
+							: candidates).filter(pkg => !excluded.some(pattern => globMatches(pattern, pkg.name)));
 					};
 					const resolved = (invoked.length ? invoked : [{ command: '', directory: '' }]).map(resolve);
 					return {
@@ -760,9 +780,9 @@ function targetsOf(
 				variants: [],
 				optionalVariants: [],
 				sources: Object.fromEntries(
-					operations.map(operation => [
+					[...new Set(found.map(sourceKey))].map(operation => [
 						operation,
-						choose(found.filter(entry => `${entry.workflow}#${entry.job.id}` === operation)).map(packageId),
+						choose(found.filter(entry => sourceKey(entry) === operation)).map(packageId),
 					]),
 				),
 			});

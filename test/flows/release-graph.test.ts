@@ -2175,6 +2175,43 @@ describe('release streams', () => {
 			80,
 			'npm',
 		)).toEqual(['pkg:npm/a']);
+		const guarded = planned({
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+			'.github/workflows/release.yml':
+				"on: { push: { tags: ['a-v*', 'b-v*'] } }\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - if: startsWith(github.ref, 'refs/tags/a-v')\n        working-directory: packages/a\n        run: npm publish\n      - if: startsWith(github.ref, 'refs/tags/b-v')\n        working-directory: packages/b\n        run: npm publish\n",
+		}, 81);
+		const bindings = guarded.choices.flatMap(choice => choice.observe ?? []);
+		expect(bindings.find(binding => binding.ref === 'refs/tags/a-v*')?.publications).toEqual(['pkg:npm/a']);
+		expect(bindings.find(binding => binding.ref === 'refs/tags/b-v*')?.publications).toEqual(['pkg:npm/b']);
+		const asked: string[] = [];
+		const releaseFiles: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'widget', version: '1.2.0' }),
+			'.github/workflows/release.yml':
+				'on: { release: { types: [published] } }\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm publish\n',
+		};
+		const releaseSnapshot = await Effect.runPromise(buildSnapshot({
+			repository: { id: 82, name: 'octo/widget', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			entries: Object.keys(releaseFiles).map(path => ({ path, type: 'blob', mode: '100644' })),
+			read: path => Effect.succeed(releaseFiles[path] ?? null),
+			tags: prefixes => {
+				asked.push(...prefixes);
+				return Effect.succeed(prefixes.includes('') ? ['widget-v1.2.0'] : []);
+			},
+		}));
+		expect(asked).toContain('');
+		expect(releaseSnapshot.tags).toEqual(['widget-v1.2.0']);
+		expect(selected(
+			{
+				'Cargo.toml': '[workspace]\nmembers = ["crates/public-tool", "crates/internal-tool"]\n',
+				'crates/public-tool/Cargo.toml': '[package]\nname = "public-tool"\nversion = "1.0.0"\n',
+				'crates/internal-tool/Cargo.toml': '[package]\nname = "internal-tool"\nversion = "1.0.0"\n',
+				'.github/workflows/release.yml': release("      - run: cargo publish --workspace --exclude 'internal-*'\n"),
+			},
+			83,
+			'crates-io',
+		)).toEqual(['pkg:cargo/public-tool']);
 		expect(
 			planned({
 				'package.json': JSON.stringify({ name: '@octo/tool', version: '1.0.0' }),

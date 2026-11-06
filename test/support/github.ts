@@ -179,7 +179,7 @@ export class FakeGitHub {
 			if (content === undefined) throw new HttpError(404, 'Not Found');
 			return json({ encoding: 'base64', content: Buffer.from(content).toString('base64'), size: content.length });
 		});
-		this.route('GET', new RegExp(`^${repo}/git/matching-refs/tags/(.*)$`), match => {
+		this.route('GET', new RegExp(`^${repo}/git/matching-refs/tags(?:/(.*))?$`), match => {
 			const repository = this.repository(match[1]);
 			const prefix = `tags/${decodeURIComponent(match[2] ?? '')}`;
 			return json(
