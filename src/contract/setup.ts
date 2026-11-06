@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { tagPrefixPattern, validTagPrefix, workflowFilePattern } from '@/contract/catalog';
+import { refPattern, tagPrefixPattern, validRef, validTagPrefix, workflowFilePattern } from '@/contract/catalog';
 
 const workflow = z.object({
 	file: z.string().regex(workflowFilePattern),
@@ -13,7 +13,7 @@ const workflow = z.object({
 const observed = z.object({
 	name: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),
 	file: z.string().regex(workflowFilePattern),
-	ref: z.string().regex(/^refs\/(?:heads|tags)\/[A-Za-z0-9._/-]*\*?$/).optional(),
+	ref: z.string().regex(refPattern).refine(validRef, 'Invalid workflow ref').optional(),
 	publications: z.array(z.string()).default([]),
 }).strict();
 export const setupChoicesSchema = z.object({

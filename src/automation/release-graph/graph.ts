@@ -405,10 +405,14 @@ function targetsOf(
 					|| descriptors.some(source => new RegExp(`"${escapeRegExp(pkg.name)}"(?!\\s*:)`).test(source));
 				if (manager === 'cargo') {
 					const jobs = found.filter(entry => entry.workflow === workflow).flatMap(entry => entry.job.runs);
-					const named = [...[...effects, ...jobs].join('\n').matchAll(/(?:-p|--package)\s+["']?([\w-]+)/g)]
+					const commands = [...effects, ...jobs].join('\n');
+					const named = [...commands.matchAll(/(?:-p|--package)\s+["']?([\w-]+)/g)].flatMap(match => match[1] ?? []);
+					const manifests = [...commands.matchAll(/--manifest-path[= ]["']?(?:\.\/)?([^\s"';&|]*Cargo\.toml)/g)]
 						.flatMap(match => match[1] ?? []);
 					const crates = named.length && named.every(name => candidates.some(pkg => pkg.name === name))
 						? candidates.filter(pkg => named.includes(pkg.name))
+						: manifests.length && manifests.every(path => candidates.some(pkg => pkg.manifest === path))
+						? candidates.filter(pkg => manifests.includes(pkg.manifest))
 						: candidates;
 					return { workflow, packages: crates, cited: true };
 				}

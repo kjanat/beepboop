@@ -763,6 +763,42 @@ describe('release streams', () => {
 		expect(choices[0]?.observe?.map(binding => binding.publications)).toEqual([['pkg:npm/root-tool']]);
 	});
 
+	test('manifest paths select crates and disabled steps publish nothing', () => {
+		const files: Record<string, string> = {
+			'Cargo.toml': '[workspace]\nmembers = ["crates/a", "crates/b"]\n',
+			'crates/a/Cargo.toml': '[package]\nname = "a"\nversion = "1.0.0"\n',
+			'crates/b/Cargo.toml': '[package]\nname = "b"\nversion = "2.0.0"\n',
+			'package.json': JSON.stringify({ name: 'widget', version: '1.0.0' }),
+			'.github/workflows/release.yml': workflow(
+				"{ push: { tags: ['v*'] } }",
+				'cargo publish --manifest-path crates/a/Cargo.toml',
+			),
+			'.github/workflows/validate.yml': [
+				"on: { push: { tags: ['check-v*'] } }",
+				'jobs:',
+				'  validate:',
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - if: false',
+				'        run: npm publish',
+				'  skipped:',
+				'    if: ${{ false }}',
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - run: npm publish',
+				'',
+			].join('\n'),
+		};
+		const { graph } = plan({
+			repository: { id: 1, name: 'octo/crates', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files,
+			paths: Object.keys(files),
+		});
+		expect(graph.streams.map(proposal => proposal.workflows.map(entry => entry.file))).toEqual([['release.yml']]);
+		expect(target(stream(graph, 'main'), 'crates-io').packages).toEqual(['pkg:cargo/a']);
+	});
+
 	test('a local action runs only its own manifest', async () => {
 		const files: Record<string, string> = {
 			'package.json': JSON.stringify({ name: 'widget', version: '1.0.0' }),

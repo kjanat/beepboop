@@ -117,7 +117,14 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 							}),
 						}))
 						: []),
-					...(entry.branchPatterns.length ? [{ ref: branchRef(entry.branchPatterns), publications: [] }] : []),
+					...(entry.branchPatterns.length
+						? [{
+							ref: branchRef(entry.branchPatterns),
+							publications: channel || !dispatched
+								? []
+								: required.filter(id => covered.has(id) && fileVersioned(id)),
+						}]
+						: []),
 					...(!entry.branchPatterns.length && (!tagged || dispatched)
 						? [{
 							publications: channel || !dispatched

@@ -4,9 +4,15 @@ import { z } from 'zod';
 import { versionFileSchema } from '@/automation/editors';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { parseReleaseIdentity } from '@/automation/package-identity';
-import { refPattern, validRef } from '@/automation/policy';
 import { presetReferencePattern } from '@/automation/preset';
-import { managerNames, tagPrefixPattern, validTagPrefix, workflowFilePattern } from '@/contract/catalog';
+import {
+	managerNames,
+	refPattern,
+	tagPrefixPattern,
+	validRef,
+	validTagPrefix,
+	workflowFilePattern,
+} from '@/contract/catalog';
 import { type Diagnostic, type DiagnosticCode, isDiagnosticCode } from '@/contract/diagnostics';
 import { purl } from '@/package-url';
 

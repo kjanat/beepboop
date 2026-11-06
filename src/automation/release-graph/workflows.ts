@@ -475,7 +475,9 @@ function actionEffects(snapshot: Snapshot, path: string, seen: Set<string>): { e
 		if (text !== undefined) {
 			const parsed = yaml(text);
 			const definition = object(Result.isSuccess(parsed) ? parsed.success.runs : undefined);
-			const steps = definition.steps;
+			const steps = Array.isArray(definition.steps)
+				? definition.steps.filter(step => !disabled(object(step).if))
+				: definition.steps;
 			const declared = `${text}\n${snapshot.files[`${path}/Dockerfile`] ?? ''}`;
 			const stepRuns = (Array.isArray(steps) ? steps : []).flatMap(step => {
 				const run = object(step).run;
@@ -606,6 +608,11 @@ function stepEffects(
 	return { effects: alias, runs: [] };
 }
 
+function disabled(condition: unknown): boolean {
+	return condition === false
+		|| (typeof condition === 'string' && /^\s*(?:\$\{\{\s*false\s*\}\}|false)\s*$/.test(condition));
+}
+
 function triggerList(value: unknown, key: string): string[] {
 	const list = object(value)[key];
 	return Array.isArray(list) ? list.map(String) : typeof list === 'string' ? [list] : [];
@@ -625,7 +632,9 @@ export function workflowModels(snapshot: Snapshot): Workflow[] {
 			: Object.keys(object(trigger));
 		const on = object(trigger);
 		const file = path.slice('.github/workflows/'.length);
-		const jobs: Job[] = Object.entries(object(document.jobs)).map(([id, value]) => {
+		const jobs: Job[] = Object.entries(object(document.jobs)).filter(([, value]) => !disabled(object(value).if)).map((
+			[id, value],
+		) => {
 			const job = object(value);
 			const effects: StepEffect[] = [], runs: string[] = [], actions: string[] = [];
 			const steps = Array.isArray(job.steps) ? job.steps : [];
@@ -633,6 +642,7 @@ export function workflowModels(snapshot: Snapshot): Workflow[] {
 				?? object(object(document.defaults).run)['working-directory'];
 			for (const entry of steps) {
 				const step = object(entry);
+				if (disabled(step.if)) continue;
 				const result = stepEffects(
 					snapshot,
 					typeof directory === 'string' && step['working-directory'] === undefined

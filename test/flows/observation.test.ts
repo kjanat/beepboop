@@ -173,6 +173,40 @@ test('reopening setup keeps the implicit coverage of an observe binding', async 
 	expect(reopened.choices.streams[0]?.observe?.map(binding => binding.publications)).toEqual([['pkg:npm/widget']]);
 });
 
+test('a manual dispatch of a branch publisher verifies its publications', async () => {
+	const repository = world.github.create('octo/branch', {
+		'package.json': JSON.stringify({ name: 'branch', version: '3.0.0' }),
+		'.github/workflows/release.yml': workflow('{ push: { branches: [main] }, workflow_dispatch: {} }', 'npm publish'),
+	});
+	const { plan } = await adopt(repository);
+	expect(plan.choices.streams[0]?.observe).toEqual([
+		{ name: 'release', file: 'release.yml', ref: 'refs/heads/main', publications: ['pkg:npm/branch'] },
+	]);
+	world.npm.publish('branch', '3.0.0');
+	const [execution] = await observe(repository, 'workflow_dispatch', 'main');
+	expect(execution?.publications.map(publication => [publication.id, publication.version, publication.outcome]))
+		.toEqual([['pkg:npm/branch', '3.0.0', 'succeeded']]);
+});
+
+test('setup accepts the shorthand refs that configuration accepts', async () => {
+	const repository = world.github.create('octo/widget', {
+		'package.json': JSON.stringify({ name: 'widget', version: '1.2.0' }),
+		'.github/workflows/release.yml': workflow("{ push: { tags: ['widget-v*'] } }", 'npm publish'),
+	});
+	const { reopened } = await adopt(repository);
+	const [stream] = reopened.choices.streams;
+	if (!stream?.observe) throw new Error('Expected an observed stream');
+	const choices: SetupChoices = {
+		streams: [{ ...stream, observe: stream.observe.map(binding => ({ ...binding, ref: 'widget-v*' })) }],
+	};
+	const api = bearer(world, await world.cliSession());
+	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
+	expect(preview.status).toBe(200);
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toEqual([]);
+	expect(plan.choices.streams[0]?.observe?.map(binding => binding.ref)).toEqual(['widget-v*']);
+});
+
 test('a publisher on a non-default branch is observed on that branch', async () => {
 	const repository = world.github.create('octo/snapshots', {
 		'package.json': JSON.stringify({ name: 'snapshots', version: '1.0.0' }),
