@@ -403,17 +403,22 @@ function targetsOf(
 					|| !!pkg.generated
 					|| (directoryOf(pkg) !== '' && citesDirectory(directoryOf(pkg)))
 					|| descriptors.some(source => new RegExp(`"${escapeRegExp(pkg.name)}"(?!\\s*:)`).test(source));
+				if (manager === 'cargo') {
+					const jobs = found.filter(entry => entry.workflow === workflow).flatMap(entry => entry.job.runs);
+					const named = [...[...effects, ...jobs].join('\n').matchAll(/(?:-p|--package)\s+["']?([\w-]+)/g)]
+						.flatMap(match => match[1] ?? []);
+					const crates = named.length && named.every(name => candidates.some(pkg => pkg.name === name))
+						? candidates.filter(pkg => named.includes(pkg.name))
+						: candidates;
+					return { workflow, packages: crates, cited: true };
+				}
 				const chosen = candidates.filter(covered);
-				return manager !== 'cargo' && chosen.length
+				return chosen.length
 					? { workflow, packages: chosen, cited: true }
-					: { workflow, packages: candidates, cited: manager === 'cargo' };
+					: { workflow, packages: candidates, cited: false };
 			});
-			let packages = candidates.filter(pkg => selections.some(selection => selection.packages.includes(pkg)));
+			const packages = candidates.filter(pkg => selections.some(selection => selection.packages.includes(pkg)));
 			const selection: Target['selection'] = selections.every(entry => entry.cited) ? 'cited' : 'all';
-			const named = [...effectText.matchAll(/(?:-p|--package)\s+["']?([\w-]+)/g)].map(match => match[1]);
-			if (manager === 'cargo' && named.length && named.every(name => packages.some(pkg => pkg.name === name))) {
-				packages = packages.filter(pkg => named.includes(pkg.name));
-			}
 			if (!packages.length) {
 				const workflowText = [...new Set(found.map(entry => entry.workflow))].flatMap(workflow =>
 					graph.byFile.get(workflow)?.jobs.flatMap(job => job.runs) ?? []

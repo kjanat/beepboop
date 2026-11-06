@@ -501,12 +501,17 @@ function actionEffects(snapshot: Snapshot, path: string, seen: Set<string>): { e
 					runs.push(...nested.runs);
 				}
 				if (typeof step.run === 'string') {
-					effects.push(...commandEffects(step.run, file));
-					runs.push(step.run);
+					const directory = typeof step['working-directory'] === 'string'
+						? step['working-directory'].replace(/\$\{\{\s*github\.action_path\s*\}\}|\$\{?GITHUB_ACTION_PATH\}?/g, path)
+						: undefined;
+					const run = directory ? `cd ${directory}\n${step.run}` : step.run;
+					effects.push(...commandEffects(run, file));
+					runs.push(run);
 					const called = scriptEffects(
 						snapshot,
 						step.run.replace(/\$\{?GITHUB_ACTION_PATH\}?\//g, `${path}/`),
 						seen,
+						directory,
 					);
 					effects.push(...called.effects);
 					runs.push(...called.runs);

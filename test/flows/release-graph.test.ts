@@ -705,6 +705,48 @@ describe('release streams', () => {
 		]);
 	});
 
+	test('crate selections stay per workflow and composite steps keep their directory', () => {
+		const crates: Record<string, string> = {
+			'Cargo.toml': '[workspace]\nmembers = ["a", "b"]\n',
+			'a/Cargo.toml': '[package]\nname = "a"\nversion = "1.0.0"\n',
+			'b/Cargo.toml': '[package]\nname = "b"\nversion = "2.0.0"\n',
+			'.github/workflows/a.yml': workflow("{ push: { tags: ['v1.*'] } }", 'cargo publish -p a'),
+			'.github/workflows/b.yml': workflow("{ push: { tags: ['v2.*'] } }", 'cargo publish -p b'),
+		};
+		const { choices } = plan({
+			repository: { id: 1, name: 'octo/crates', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files: crates,
+			paths: Object.keys(crates),
+		});
+		expect(choices[0]?.observe?.map(binding => [binding.file, binding.publications])).toEqual([
+			['a.yml', ['pkg:cargo/a']],
+			['b.yml', ['pkg:cargo/b']],
+		]);
+		const composite: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'root', private: true, scripts: { release: 'echo nothing' } }),
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0', scripts: { release: 'npm publish' } }),
+			'.github/actions/release/action.yml': [
+				'runs:',
+				'  using: composite',
+				'  steps:',
+				'    - shell: bash',
+				'      working-directory: packages/a',
+				'      run: npm run release',
+				'',
+			].join('\n'),
+			'.github/workflows/release.yml':
+				'on: { push: { tags: ["v*"] } }\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./.github/actions/release\n',
+		};
+		const { graph } = plan({
+			repository: { id: 2, name: 'octo/mono', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files: composite,
+			paths: Object.keys(composite),
+		});
+		expect(target(stream(graph, 'main'), 'npm').names).toEqual(['a']);
+	});
+
 	test('a local action runs only its own manifest', async () => {
 		const files: Record<string, string> = {
 			'package.json': JSON.stringify({ name: 'widget', version: '1.0.0' }),
