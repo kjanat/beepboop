@@ -2307,6 +2307,23 @@ describe('release streams', () => {
 		)).toEqual(['pkg:npm/a']);
 		expect(
 			planned({
+				'package.json': JSON.stringify({ name: 'widget', version: '1.0.0' }),
+				'.github/workflows/release.yml': release('      - run: echo "Run tests && npm publish"\n'),
+			}, 91).graph.streams,
+		).toEqual([]);
+		const callSites = planned({
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+			'.github/workflows/publish.yml':
+				'on:\n  workflow_call:\n    inputs:\n      directory:\n        type: string\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - working-directory: ${{ inputs.directory }}\n        run: npm publish\n',
+			'.github/workflows/release.yml':
+				"on: { push: { tags: ['a-v*', 'b-v*'] } }\njobs:\n  a:\n    if: startsWith(github.ref, 'refs/tags/a-v')\n    uses: ./.github/workflows/publish.yml\n    with: { directory: packages/a }\n  b:\n    if: startsWith(github.ref, 'refs/tags/b-v')\n    uses: ./.github/workflows/publish.yml\n    with: { directory: packages/b }\n",
+		}, 92);
+		const siteBindings = callSites.choices.flatMap(choice => choice.observe ?? []);
+		expect(siteBindings.find(binding => binding.ref === 'refs/tags/a-v*')?.publications).toEqual(['pkg:npm/a']);
+		expect(siteBindings.find(binding => binding.ref === 'refs/tags/b-v*')?.publications).toEqual(['pkg:npm/b']);
+		expect(
+			planned({
 				'package.json': JSON.stringify({ name: '@octo/tool', version: '1.0.0' }),
 				'.github/workflows/release.yml': release('      - run: npm publish --registry https://npm.pkg.github.com\n'),
 			}, 61).graph.streams,

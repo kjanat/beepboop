@@ -12,11 +12,36 @@ export function lines(text: string): string[] {
 	);
 }
 
+export function splitCommands(line: string): string[] {
+	const parts: string[] = [];
+	let quote = '';
+	let start = 0;
+	for (let index = 0; index < line.length; index++) {
+		const character = line[index] ?? '';
+		if (quote) {
+			if (character === '\\' && quote === '"') index++;
+			else if (character === quote) quote = '';
+			continue;
+		}
+		if (character === '\\') {
+			index++;
+		} else if (character === '"' || character === "'") {
+			quote = character;
+		} else if (character === ';' || character === '|' || character === '&' && line[index + 1] === '&') {
+			parts.push(line.slice(start, index).trim());
+			if ((character === '|' || character === '&') && line[index + 1] === character) index++;
+			start = index + 1;
+		}
+	}
+	parts.push(line.slice(start).trim());
+	return parts;
+}
+
 export function walkDirectories(text: string, directory: string, visit: (command: string, here: string) => void): void {
 	let here = within('', directory);
 	const enclosing: string[] = [];
 	for (const line of lines(text)) {
-		for (const part of line.split(/\s*(?:&&|\|\||;|\|)\s*/)) {
+		for (const part of splitCommands(line)) {
 			let command = part.replace(/^(?:if|then|elif|else|do|fi|done)\b\s*/, '').trim();
 			const opens = command.startsWith('(');
 			if (opens) command = command.slice(1).trim();

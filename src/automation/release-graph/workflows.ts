@@ -846,11 +846,12 @@ export function workflowModels(snapshot: Snapshot): Workflow[] {
 	for (const call of workflowCalls(documents, snapshot.repository.name)) {
 		const usable = Object.keys(call.bindings).length > 0
 			&& new RegExp(inputExpression.source).test(JSON.stringify(call.callee.document.jobs));
-		const bound = usable
+		const bound = usable || call.guard !== undefined
 			? new Map(
-				liveJobs(call.callee.document).map(([id, job]) =>
-					[id, buildJob(snapshot, call.callee.path, call.callee.document, id, job, call.bindings)] as const
-				),
+				liveJobs(call.callee.document).map(([id, job]) => {
+					const built = buildJob(snapshot, call.callee.path, call.callee.document, id, job, call.bindings);
+					return [id, { ...built, effects: guarded(built.effects, call.guard) }] as const;
+				}),
 			)
 			: undefined;
 		edges.set(call.callee.file, [

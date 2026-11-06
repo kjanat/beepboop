@@ -21,6 +21,7 @@ export interface WorkflowCall {
 	job: string;
 	callee: WorkflowDocument;
 	bindings: Record<string, string>;
+	guard?: string;
 }
 
 const workflowPath = /^\.github\/workflows\/[^/]+\.ya?ml$/;
@@ -69,7 +70,13 @@ export function workflowCalls(documents: readonly WorkflowDocument[], repository
 		typeof job.uses === 'string' ? ownWorkflow(job.uses, repository)?.file : undefined;
 	const called = new Set(documents.flatMap(entry => liveJobs(entry.document).flatMap(([, job]) => target(job) ?? [])));
 	const calls: WorkflowCall[] = [];
-	const visit = (root: string, file: string, inherited: Readonly<Record<string, string>>, trail: readonly string[]) => {
+	const visit = (
+		root: string,
+		file: string,
+		inherited: Readonly<Record<string, string>>,
+		trail: readonly string[],
+		outer?: string,
+	) => {
 		const caller = byFile.get(file);
 		if (!caller) return;
 		for (const [id, job] of liveJobs(caller.document)) {
@@ -87,8 +94,10 @@ export function workflowCalls(documents: readonly WorkflowDocument[], repository
 					...inputDefaults(object(object(callee.document.on).workflow_call).inputs, Object.keys(supplied)),
 					...literalBindings(supplied),
 				};
-				calls.push({ root, caller: file, job: id, callee, bindings });
-				visit(root, callee.file, bindings, [...trail, callee.file]);
+				const guard = [outer, typeof job.if === 'string' ? job.if : undefined].filter(Boolean).join(' && ')
+					|| undefined;
+				calls.push({ root, caller: file, job: id, callee, bindings, ...(guard ? { guard } : {}) });
+				visit(root, callee.file, bindings, [...trail, callee.file], guard);
 			}
 		}
 	};
