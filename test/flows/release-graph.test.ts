@@ -2515,6 +2515,29 @@ describe('release streams', () => {
 			}, id).graph.streams.length;
 		expect(bareGated('false', 112)).toBe(0);
 		expect(bareGated('true', 113)).toBe(1);
+		const python = planned({
+			'packages/a/pyproject.toml': '[project]\nname = "pa"\nversion = "1.0.0"\n',
+			'packages/b/pyproject.toml': '[project]\nname = "pb"\nversion = "1.0.0"\n',
+			'.github/workflows/release.yml':
+				"on: { push: { tags: ['a-v*', 'b-v*'] } }\njobs:\n  a:\n    if: startsWith(github.ref, 'refs/tags/a-v')\n    runs-on: ubuntu-latest\n    steps:\n      - working-directory: packages/a\n        run: uv publish\n  b:\n    if: startsWith(github.ref, 'refs/tags/b-v')\n    runs-on: ubuntu-latest\n    steps:\n      - working-directory: packages/b\n        run: uv publish\n",
+		}, 114);
+		expect(
+			python.graph.streams.flatMap(proposal =>
+				proposal.targets.filter(entry => entry.destination === 'pypi').map(entry => entry.sources)
+			),
+		).toEqual([{ 'release.yml#a': ['pkg:pypi/pa'], 'release.yml#b': ['pkg:pypi/pb'] }]);
+		expect(selected(
+			{
+				'Cargo.toml': '[package]\nname = "root-crate"\nversion = "1.0.0"\n\n[workspace]\nmembers = ["packages/b"]\n',
+				'src/lib.rs': '',
+				'packages/b/Cargo.toml': '[package]\nname = "b"\nversion = "1.0.0"\n',
+				'.github/workflows/release.yml': release(
+					'      - run: |\n          (cd packages/b && cargo package)\n          cargo publish\n',
+				),
+			},
+			115,
+			'crates-io',
+		)).toEqual(['pkg:cargo/root-crate']);
 		const negated = planned({
 			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
 			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),

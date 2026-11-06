@@ -534,7 +534,6 @@ function targetsOf(
 						&& (directories.includes(directoryOf(pkg)) || citesDirectory(directoryOf(pkg))))
 					|| descriptors.some(source => new RegExp(`"${escapeRegExp(pkg.name)}"(?!\\s*:)`).test(source));
 				if (manager === 'cargo') {
-					const packed = [...new Set(runs.flatMap(packDirectories))];
 					const resolve = ({ command, directory }: { command: string; directory: string }) => {
 						const named = [...command.matchAll(/(?:-p|--package)(?:\s+|=)["']?([\w-]+)/g)].flatMap(match =>
 							match[1] ?? []
@@ -542,7 +541,7 @@ function targetsOf(
 						const manifests = [...command.matchAll(/--manifest-path[= ]["']?(?:\.\/)?([^\s"';&|]*Cargo\.toml)/g)]
 							.flatMap(match => within(directory, match[1] ?? ''));
 						const everyCrate = /--workspace\b|--all\b/.test(command);
-						const scope = directory ? [directory] : packed.length ? packed : [''];
+						const scope = directory ? [directory] : [''];
 						const excluded = everyCrate
 							? [...command.matchAll(/--exclude[= ]["']?([^\s"';&|]+)/g)].flatMap(match => match[1] ?? [])
 							: [];
@@ -660,36 +659,51 @@ function targetsOf(
 		}
 		if (destination === 'pypi') {
 			const projects = pyprojects(snapshot).filter(project => !project.private);
-			const matched = projects.filter(project =>
-				new RegExp(normalized(project.name), 'i').test(effectText)
-				|| new RegExp(normalized(project.name), 'i').test(found.map(entry => entry.workflow).join(' '))
-			);
-			const declared = [
-				...new Set(
-					[...effectText.matchAll(/pypi\.org\/(?:project|p)\/([A-Za-z0-9](?:[\w.-]*[A-Za-z0-9])?)(?=\/|\s|$)/g)]
-						.flatMap(match => match[1] ?? []),
-				),
-			];
-			const located = projects.filter(project => {
-				const directory = escapeRegExp(project.path.split('/').slice(0, -1).join('/'));
-				return directory !== '' && new RegExp(
-					`(?:\\b(?:cd|--directory|--project|-C)\\s+["']?(?:\\./)?${directory}/?["']?(?:\\s|$|[;&)])|(?<![\\w./-])${directory}/(?:dist|pyproject\\.toml)\\b)`,
-					'm',
-				).test(effectText);
-			});
-			const chosen = declared.length
-				? declared
-				: matched.length
-				? matched.map(project => project.name)
-				: located.length
-				? located.map(project => project.name)
-				: projects.filter(project => project.path === 'pyproject.toml').map(project => project.name);
+			const choose = (subset: typeof found): string[] => {
+				const subsetText = subset.map(entry =>
+					`${entry.effect.kind === 'publish' || entry.effect.kind === 'release' ? entry.effect.text : ''}\n${
+						entry.job.runs.join('\n')
+					}`
+				).join('\n');
+				const matched = projects.filter(project =>
+					new RegExp(normalized(project.name), 'i').test(subsetText)
+					|| new RegExp(normalized(project.name), 'i').test(subset.map(entry => entry.workflow).join(' '))
+				);
+				const declared = [
+					...new Set(
+						[...subsetText.matchAll(/pypi\.org\/(?:project|p)\/([A-Za-z0-9](?:[\w.-]*[A-Za-z0-9])?)(?=\/|\s|$)/g)]
+							.flatMap(match => match[1] ?? []),
+					),
+				];
+				const located = projects.filter(project => {
+					const directory = escapeRegExp(project.path.split('/').slice(0, -1).join('/'));
+					return directory !== '' && new RegExp(
+						`(?:\\b(?:cd|--directory|--project|-C)\\s+["']?(?:\\./)?${directory}/?["']?(?:\\s|$|[;&)])|(?<![\\w./-])${directory}/(?:dist|pyproject\\.toml)\\b)`,
+						'm',
+					).test(subsetText);
+				});
+				return declared.length
+					? declared
+					: matched.length
+					? matched.map(project => project.name)
+					: located.length
+					? located.map(project => project.name)
+					: projects.filter(project => project.path === 'pyproject.toml').map(project => project.name);
+			};
+			const identify = (name: string) => `pkg:pypi/${name.toLowerCase().replace(/[-_.]+/g, '-')}`;
+			const chosen = choose(found);
 			targets.push({
 				...base,
 				names: chosen,
-				packages: chosen.map(name => `pkg:pypi/${name.toLowerCase().replace(/[-_.]+/g, '-')}`),
+				packages: chosen.map(identify),
 				variants: [],
 				optionalVariants: [],
+				sources: Object.fromEntries(
+					[...new Set(found.map(sourceKey))].map(operation => [
+						operation,
+						choose(found.filter(entry => sourceKey(entry) === operation)).map(identify),
+					]),
+				),
 			});
 			continue;
 		}
