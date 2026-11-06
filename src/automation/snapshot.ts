@@ -1,6 +1,7 @@
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 import { safeVersionPath } from '@/automation/editors';
 import { pkgbuildFile } from '@/automation/managers/channels';
+import { object, yaml } from '@/automation/managers/helpers';
 import { tagQueries } from '@/automation/managers/tags';
 import type { Snapshot } from '@/automation/types';
 import { isLockfile, managerNames, managerSpec } from '@/contract/catalog';
@@ -20,11 +21,28 @@ export interface SnapshotSource {
 }
 
 const excluded = /(?:^|\/)(?:node_modules|vendor|target|testdata|fixtures|\.git)\//;
+export const releaseEvidence: readonly RegExp[] = [
+	/^\.github\/actions\/.+\.(?:ya?ml|[cm]?[jt]s|sh|py)$/,
+	/^\.github\/(?!workflows\/)[^/]+\/.+\.(?:py|sh|bash|ps1|[cm]?[jt]s|rb)$/,
+	/^\.github\/workflows\/[^/]+\.[cm]?[jt]s$/,
+	/(?:^|\/)\.?nfpm[^/]*\.ya?ml$/,
+	/^(?:[^/]+\/)?(?:Makefile|GNUmakefile|[Jj]ustfile|\.justfile)$/,
+	/(?:^|\/)pyproject\.toml$/,
+	/(?:^|\/)extension\.toml$/,
+	/(?:^|\/)\.vscodeignore$/,
+	/(?:^|\/)(?:Dockerfile|Containerfile)(?:\.[^/]+)?$/,
+	/(?:^|\/)targets\.json$/,
+	/(?:^|\/)\.cargo\/config(?:\.toml)?$/,
+	/^README\.md$/,
+	/(?:^|\/)\.?mise(?:\.[\w-]+)?\.toml$/,
+	/^(?:\.mise\/tasks|mise-tasks|\.config\/mise\/tasks)\/[^/]+$/,
+];
 const contents: readonly RegExp[] = [
 	/^\.github\/beepboop\.json$/,
 	/^actions\/(?:begin|prepare|report)\/action\.ya?ml$/,
 	pkgbuildFile,
 	...managerNames.flatMap(name => managerSpec(name).manifests),
+	...releaseEvidence,
 ];
 const markers: readonly RegExp[] = managerNames.flatMap(name => managerSpec(name).markers);
 
@@ -33,6 +51,29 @@ function marker(path: string): boolean {
 }
 function content(path: string): boolean {
 	return contents.some(pattern => pattern.test(path));
+}
+
+function workflowTagPrefixes(files: ReadonlyMap<string, string>): string[] {
+	return [...files].flatMap(([path, source]) => {
+		if (!/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) return [];
+		const parsed = yaml(source);
+		if (Result.isFailure(parsed)) return [];
+		const tags = object(object(parsed.success.on).push).tags;
+		return Array.isArray(tags)
+			? tags.flatMap(pattern =>
+				typeof pattern === 'string' && !pattern.startsWith('!') ? [/^[A-Za-z0-9._/-]*/.exec(pattern)?.[0] ?? ''] : []
+			)
+			: [];
+	});
+}
+
+const script = /\.(?:sh|bash|ps1|py|[cm]?[jt]s|rb)$/;
+const recipe = /(?:^|\/)(?:Makefile|GNUmakefile|[Jj]ustfile|\.justfile|package\.json)$/;
+function referencedScripts(blobs: readonly string[], read: ReadonlyMap<string, string>): string[] {
+	const text = [...read].filter(([path]) => path.startsWith('.github/') || recipe.test(path)).map(([, source]) =>
+		source
+	).join('\n');
+	return blobs.filter(path => script.test(path) && text.includes(path));
 }
 
 export function buildSnapshot(
@@ -52,18 +93,25 @@ export function buildSnapshot(
 		const fetched = [...new Set([...extraPaths, ...included.filter(path => !blank.has(path))])];
 		if (fetched.length > 400) return yield* precondition('Discovery file limit exceeded');
 		const read = new Map<string, string>();
-		yield* Effect.forEach(fetched, path =>
-			source.read(path).pipe(Effect.tap(text =>
-				Effect.sync(() => {
-					if (text !== null) read.set(path, text);
-				})
-			)), { concurrency: 8, discard: true });
+		const readAll = (paths: readonly string[]) =>
+			Effect.forEach(paths, path =>
+				source.read(path).pipe(Effect.tap(text =>
+					Effect.sync(() => {
+						if (text !== null) read.set(path, text);
+					})
+				)), { concurrency: 8, discard: true });
+		yield* readAll(fetched);
+		const referenced = referencedScripts(blobs, read).filter(path => !read.has(path) && !excluded.test(path));
+		if (fetched.length + referenced.length > 400) return yield* precondition('Discovery file limit exceeded');
+		yield* readAll(referenced);
 		const files: Record<string, string> = {};
 		for (const path of blobs) {
 			const text = blank.has(path) ? '' : read.get(path);
 			if (text !== undefined) files[path] = text;
 		}
-		const prefixes = tagQueries([...new Set([...extraPaths, ...included])]);
+		const prefixes = [
+			...new Set([...tagQueries([...new Set([...extraPaths, ...included])]), ...workflowTagPrefixes(read)]),
+		].filter((prefix, _, all) => !all.some(other => other !== prefix && prefix.startsWith(other))).sort();
 		const tags = prefixes.length ? [...new Set(yield* source.tags(prefixes))].sort() : undefined;
 		return { repository: source.repository, sha: source.sha, files, paths: blobs, ...(tags ? { tags } : {}) };
 	});
