@@ -1699,6 +1699,54 @@ describe('release streams', () => {
 			34,
 			'npm',
 		)).toEqual(['pkg:npm/a']);
+		expect(selected(
+			{
+				...workspace,
+				'.github/workflows/release.yml': release(
+					'      - working-directory: ${{ matrix.directory }}\n        run: ${{ matrix.command }}\n',
+					'    strategy:\n      matrix:\n        include:\n          - directory: packages/a\n            command: npm publish\n          - directory: packages/b\n            command: echo skip\n',
+				),
+			},
+			38,
+			'npm',
+		)).toEqual(['pkg:npm/a']);
+		expect(selected(
+			{
+				...workspace,
+				'actions/publish/action.yml':
+					'name: publish\ninputs:\n  directory:\n    default: packages/a\nruns:\n  using: composite\n  steps:\n    - shell: bash\n      working-directory: ${{ inputs.directory }}\n      run: npm publish\n',
+				'.github/workflows/release.yml': release('      - uses: ./actions/publish\n'),
+			},
+			39,
+			'npm',
+		)).toEqual(['pkg:npm/a']);
+		expect(selected(
+			{
+				...workspace,
+				'.github/workflows/publish.yml':
+					'on:\n  workflow_call:\n    inputs:\n      directory:\n        type: string\n        default: packages/a\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - working-directory: ${{ inputs.directory }}\n        run: npm publish\n',
+				'.github/workflows/release.yml':
+					"on: { push: { tags: ['v*'] } }\njobs:\n  release:\n    uses: ./.github/workflows/publish.yml\n",
+			},
+			40,
+			'npm',
+		)).toEqual(['pkg:npm/a']);
+		expect(selected(
+			{
+				...workspace,
+				'packages/a/package.json': JSON.stringify({
+					name: 'a',
+					version: '1.0.0',
+					scripts: { release: 'npm publish' },
+				}),
+				'tooling/release.py': 'import subprocess\nsubprocess.run("""\nnpm run release\n""", shell=True)\n',
+				'.github/workflows/release.yml': release(
+					'      - working-directory: packages/a\n        run: python -m tooling.release\n',
+				),
+			},
+			41,
+			'npm',
+		)).toEqual(['pkg:npm/a']);
 		const callee =
 			'on:\n  workflow_call:\n    inputs:\n      directory:\n        type: string\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - working-directory: ${{ inputs.directory }}\n        run: npm publish\n';
 		const caller = (tag: string, directory: string) =>

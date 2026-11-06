@@ -564,6 +564,9 @@ function scriptEffects(
 			const text = match[2] ? segment(source, match[2], !choice) : source;
 			effects.push(...commandEffects(text, path, here));
 			runs.push(text);
+			const nested = scriptEffects(snapshot, text, seen, here);
+			effects.push(...nested.effects);
+			runs.push(...nested.runs);
 		}
 		for (const task of taskBodies(snapshot, line, here)) {
 			const key = `${task.source}#${task.name}`;
@@ -596,8 +599,12 @@ function actionEffects(
 	snapshot: Snapshot,
 	path: string,
 	seen: Set<string>,
-	bindings: Readonly<Record<string, string>> = {},
+	supplied: Readonly<Record<string, unknown>> = {},
 ): { effects: StepEffect[]; runs: string[] } {
+	const manifest = [`${path}/action.yml`, `${path}/action.yaml`].flatMap(file => snapshot.files[file] ?? [])[0];
+	const parsedManifest = manifest === undefined ? undefined : yaml(manifest);
+	const declared = parsedManifest && Result.isSuccess(parsedManifest) ? parsedManifest.success.inputs : undefined;
+	const bindings = { ...inputDefaults(declared, Object.keys(supplied)), ...literalBindings(supplied) };
 	const visit = `${path} ${JSON.stringify(bindings)}`;
 	if (seen.has(visit)) return { effects: [], runs: [] };
 	seen.add(visit);
@@ -679,7 +686,7 @@ function stepEffects(
 		const own = new RegExp(`^${escapeRegExp(snapshot.repository.name)}/([^@]+?)/?@`, 'i').exec(uses)?.[1];
 		const local = localAction(uses) ?? own;
 		if (local && !local.startsWith('.github/workflows/')) {
-			const found = actionEffects(snapshot, local, seen, literalBindings(inputs));
+			const found = actionEffects(snapshot, local, seen, inputs);
 			return { effects: [...alias, ...found.effects], runs: found.runs, action: local };
 		}
 		const delegated = /^changesets\/action@/.test(uses) && typeof inputs.publish === 'string'
@@ -750,16 +757,49 @@ function stepEffects(
 	return { effects: alias, runs: [] };
 }
 
-function matrixValues(matrix: Record<string, unknown>, key: string): string[] {
-	const direct = matrix[key];
-	const include = Array.isArray(matrix.include) ? matrix.include.map(object).map(entry => entry[key]) : [];
-	return [
-		...new Set(
-			[...(Array.isArray(direct) ? direct : []), ...include].flatMap(value =>
-				typeof value === 'string' || typeof value === 'number' ? [String(value)] : []
-			),
-		),
-	];
+function matrixScalar(value: unknown): string | undefined {
+	return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+		? String(value)
+		: undefined;
+}
+function matrixCombinations(matrix: Record<string, unknown>): Record<string, string>[] {
+	const keys = Object.keys(matrix).filter(key => key !== 'include' && key !== 'exclude' && Array.isArray(matrix[key]));
+	let combinations: Record<string, string>[] = keys.length ? [{}] : [];
+	for (const key of keys) {
+		const values = (Array.isArray(matrix[key]) ? matrix[key] : []).flatMap(value => matrixScalar(value) ?? []);
+		if (combinations.length * values.length > 256) break;
+		combinations = combinations.flatMap(combination => values.map(value => ({ ...combination, [key]: value })));
+	}
+	const row = (entry: Record<string, unknown>) =>
+		Object.fromEntries(
+			Object.entries(entry).flatMap(([key, value]) => {
+				const scalar = matrixScalar(value);
+				return scalar === undefined ? [] : [[key, scalar] as const];
+			}),
+		);
+	const exclusions = (Array.isArray(matrix.exclude) ? matrix.exclude : []).map(entry => row(object(entry))).filter(
+		entry => Object.keys(entry).length > 0,
+	);
+	combinations = combinations.filter(combination =>
+		!exclusions.some(entry => Object.entries(entry).every(([key, value]) => combination[key] === value))
+	);
+	const original = new Set(keys);
+	const added: Record<string, string>[] = [];
+	for (const entry of (Array.isArray(matrix.include) ? matrix.include : []).map(item => row(object(item)))) {
+		if (!Object.keys(entry).length) continue;
+		const targets = combinations.filter(combination =>
+			Object.entries(entry).every(([key, value]) => !original.has(key) || combination[key] === value)
+		);
+		const extra = Object.fromEntries(Object.entries(entry).filter(([key]) => !original.has(key)));
+		if (keys.length && targets.length) {
+			combinations = combinations.map(combination =>
+				targets.includes(combination) ? { ...combination, ...extra } : combination
+			);
+		} else {
+			added.push(entry);
+		}
+	}
+	return [...combinations, ...added];
 }
 const matrixExpression = /\$\{\{\s*matrix\.([\w-]+)\s*\}\}/g;
 function substitute(text: string, assignment: Record<string, string>): string {
@@ -770,25 +810,21 @@ function expandStep(step: Record<string, unknown>, matrix: Record<string, unknow
 	const texts = [step.run, directory, ...Object.values(object(step.with))].filter((value): value is string =>
 		typeof value === 'string'
 	);
+	const combinations = matrixCombinations(matrix);
 	const keys = [
 		...new Set(texts.flatMap(text => [...text.matchAll(matrixExpression)].flatMap(match => match[1] ?? []))),
 	]
-		.filter(key => matrixValues(matrix, key).length);
+		.filter(key => combinations.some(combination => combination[key] !== undefined));
 	if (!keys.length) return [step];
-	let assignments: Record<string, string>[] = [{}];
-	for (const key of keys) {
-		const values = matrixValues(matrix, key);
-		if (assignments.length * values.length > 64) break;
-		assignments = assignments.flatMap(assignment => values.map(value => ({ ...assignment, [key]: value })));
-	}
-	const exclusions = Array.isArray(matrix.exclude) ? matrix.exclude.map(object) : [];
-	assignments = assignments.filter(assignment =>
-		!exclusions.some(entry => {
-			const entries = Object.entries(entry);
-			return entries.length > 0
-				&& entries.every(([key, value]) => assignment[key] !== undefined && assignment[key] === String(value));
-		})
-	);
+	const assignments = [
+		...new Map(
+			combinations.map(combination =>
+				Object.fromEntries(
+					keys.flatMap(key => combination[key] === undefined ? [] : [[key, combination[key]] as const]),
+				)
+			).map(assignment => [JSON.stringify(assignment), assignment] as const),
+		).values(),
+	].slice(0, 64);
 	const apply = (assignment: Record<string, string>): Record<string, unknown> => ({
 		...step,
 		...(typeof step.run === 'string' ? { run: substitute(step.run, assignment) } : {}),
@@ -848,6 +884,16 @@ function literalBindings(values: Record<string, unknown>): Record<string, string
 		}
 	}
 	return bindings;
+}
+function inputDefaults(declared: unknown, passed: readonly string[]): Record<string, string> {
+	return Object.fromEntries(
+		Object.entries(object(declared)).flatMap(([key, input]) => {
+			const fallback = matrixScalar(object(input).default);
+			return passed.includes(key) || fallback === undefined || fallback.includes('${{')
+				? []
+				: [[key, fallback] as const];
+		}),
+	);
 }
 function bindInputs(text: string, bindings: Readonly<Record<string, string>>): string {
 	return text.replace(inputExpression, (expression, key: string) => bindings[key] ?? expression);
@@ -965,7 +1011,11 @@ export function workflowModels(snapshot: Snapshot): Workflow[] {
 			if (!job?.calls) continue;
 			const callee = documents.get(job.calls);
 			if (!callee) continue;
-			const bindings = literalBindings(object(object(value).with));
+			const supplied = object(object(value).with);
+			const bindings = {
+				...inputDefaults(object(object(callee.document.on).workflow_call).inputs, Object.keys(supplied)),
+				...literalBindings(supplied),
+			};
 			const usable = Object.keys(bindings).length > 0
 				&& new RegExp(inputExpression.source).test(JSON.stringify(callee.document.jobs));
 			const bound = usable

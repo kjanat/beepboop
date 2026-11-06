@@ -1500,7 +1500,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						!pattern.startsWith('refs/tags/')
 							? undefined
 							: pattern.endsWith('*')
-							? /^[^*?[]*/.exec(pattern.slice('refs/tags/'.length))?.[0]
+							? /^[^*?[]*/.exec(pattern.slice('refs/tags/'.length))?.[0]?.replace(/(?<![\d.])\d[\d.]*$/, '')
 							: /^(.*?)v?\d+\.\d+/.exec(pattern.slice('refs/tags/'.length))?.[1],
 					].filter((value): value is string => value !== undefined && branch.startsWith(value))
 						.sort((a, b) => b.length - a.length)[0] ?? '';
