@@ -93,7 +93,7 @@ const patterns: readonly Pattern[] = [
 		action: /^(?:docker\/build-push-action|redhat-actions\/push-to-registry)@/,
 	},
 	{ destination: 'oci-artifact', command: /\boras\s+(?:push|attach|blob\s+push)\b/ },
-	{ destination: 'go-proxy', command: /^.*\bproxy\.golang\.org\//m },
+	{ destination: 'go-proxy', command: /\/@v\/[^\s"']+\.(?:info|mod|zip)\b|\/@latest\b/ },
 	{
 		destination: 'aur',
 		command: /aur@aur\.archlinux\.org|\baur\.archlinux\.org\/[\w.-]+\.git/,
