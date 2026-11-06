@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { Effect } from 'effect';
+import { z } from 'zod';
 import { parseSetupPlan } from '@/automation/setup-plan';
+import type { SetupChoices } from '@/automation/setup-types';
 import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { type Repository, ownerId } from '@root/test/support/github.ts';
@@ -119,4 +121,86 @@ test('a tag prefix with a directory is proposed, applied and restored', async ()
 	repository.refs.set('tags/tools/v0.2.0', world.github.head(repository));
 	const [execution] = await observe(repository, 'push', 'tools/v0.2.0');
 	expect(execution?.version).toBe('0.2.0');
+});
+
+test('a publisher on a non-default branch is observed on that branch', async () => {
+	const repository = world.github.create('octo/snapshots', {
+		'package.json': JSON.stringify({ name: 'snapshots', version: '1.0.0' }),
+		'.github/workflows/release.yml': workflow('{ push: { branches: [release] } }', 'npm publish --tag next'),
+	});
+	const { plan } = await adopt(repository);
+	expect(plan.choices.streams[0]?.observe).toEqual([
+		{ name: 'release', file: 'release.yml', ref: 'refs/heads/release', publications: [] },
+	]);
+	const [execution] = await observe(repository, 'push', 'release');
+	expect(execution?.stream).toBe(plan.choices.streams[0]?.name);
+	expect(execution?.publications).toEqual([]);
+});
+
+test('editing an adopted stream clears publications and leaves observation', async () => {
+	const repository = world.github.create('octo/widget', {
+		'package.json': JSON.stringify({ name: 'widget', version: '1.2.0' }),
+		'.github/workflows/release.yml': workflow("{ push: { tags: ['widget-v*'] } }", 'npm publish'),
+	});
+	const { reopened } = await adopt(repository);
+	const api = bearer(world, await world.cliSession());
+	const stored = async () =>
+		z.object({
+			streams: z.record(
+				z.string(),
+				z.object({ workflows: z.record(z.string(), z.object({ mode: z.string() }).loose()).optional() }).loose(),
+			),
+		}).parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'));
+	const apply = async (choices: SetupChoices) => {
+		const preview = await Effect.runPromise(
+			parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
+		);
+		expect(preview.blockers).toEqual([]);
+		const applied = await api('/api/repositories/setup/apply', {
+			repository: repository.name,
+			choices,
+			planId: preview.planId,
+			sourceSha: preview.sourceSha,
+			setupHead: preview.setupHead,
+		});
+		expect(applied.status).toBe(200);
+	};
+	const [stream] = reopened.choices.streams;
+	if (!stream?.observe) throw new Error('Expected an observed stream');
+	await apply({
+		streams: [{
+			...stream,
+			packages: [],
+			required: [],
+			observe: stream.observe.map(binding => ({ ...binding, publications: [] })),
+		}],
+	});
+	expect((await stored()).streams[stream.name]?.workflows?.release).toEqual({
+		file: 'release.yml',
+		mode: 'observe',
+		ref: 'refs/tags/widget-v*',
+		publications: [],
+	});
+	const { observe: _observe, versionSource: _versionSource, ...managed } = stream;
+	await apply({
+		streams: [{
+			...managed,
+			prepare: {
+				file: 'prepare.yml',
+				job: 'prepare',
+				triggers: 'review',
+				commands: 'npm install',
+				publicationSteps: {},
+			},
+			promote: {
+				file: 'publish.yml',
+				job: 'promote',
+				triggers: 'review',
+				commands: 'npm publish',
+				publicationSteps: {},
+			},
+		}],
+	});
+	const workflows = (await stored()).streams[stream.name]?.workflows ?? {};
+	expect(Object.values(workflows).filter(binding => binding.mode === 'observe')).toEqual([]);
 });

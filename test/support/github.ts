@@ -617,6 +617,7 @@ export class FakeGitHub {
 			html_url: `https://github.com/${repository.name}/pull/${pull.number}`,
 			state: pull.state,
 			merged: pull.merged,
+			merged_at: pull.merged ? '2026-01-01T00:00:00Z' : null,
 			title: pull.title,
 			body: pull.body,
 			user: { id: botId },

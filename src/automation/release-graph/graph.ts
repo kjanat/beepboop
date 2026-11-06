@@ -48,6 +48,7 @@ export interface StreamWorkflow {
 	role: EntryRole;
 	events: string[];
 	tagPatterns: string[];
+	branchPatterns: string[];
 }
 export interface StreamProposal {
 	id: string;
@@ -967,7 +968,13 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 				: recovery
 				? 'recovery'
 				: 'called');
-			return { file, role, events: workflow?.events ?? [], tagPatterns: workflow?.tagPatterns ?? [] };
+			return {
+				file,
+				role,
+				events: workflow?.events ?? [],
+				tagPatterns: workflow?.tagPatterns ?? [],
+				branchPatterns: workflow?.branchPatterns ?? [],
+			};
 		});
 		const untagged = trigger.kind === 'schedule' || trigger.kind === 'branch';
 		const channels = new Set<string>(untagged ? [] : ['stable']);
@@ -1092,6 +1099,7 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 				role: 'initiator',
 				events: initiator.workflow.events,
 				tagPatterns: initiator.workflow.tagPatterns,
+				branchPatterns: initiator.workflow.branchPatterns,
 			});
 			evidence.push(...workflowEvidence(initiator.workflow));
 			evidence.push({
@@ -1154,6 +1162,7 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 				role: 'called',
 				events: follower.events,
 				tagPatterns: follower.tagPatterns,
+				branchPatterns: follower.branchPatterns,
 			});
 			const docs = graph.effects(follower.file).filter(({ effect }) =>
 				effect.kind === 'publish' && effect.destination === 'docs'

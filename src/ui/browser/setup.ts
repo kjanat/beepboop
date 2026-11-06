@@ -145,6 +145,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 					packages,
 					required: packages,
 					versioning: policy,
+					...(value.versionSource ? { versionSource: value.versionSource } : {}),
 					...(prepare ? { prepare } : {}),
 					...(promote ? { promote } : {}),
 				};

@@ -258,20 +258,25 @@ function drafted(
 				required,
 				...(selection.versionSource ? { versionSource: selection.versionSource } : {}),
 			};
-			if (selection.observe?.length) {
-				const bindings = { ...object(current.workflows) };
-				for (const entry of selection.observe) {
-					bindings[entry.name] = {
-						...object(bindings[entry.name]),
-						file: entry.file,
-						mode: 'observe',
-						...(entry.ref ? { ref: entry.ref } : {}),
-						...(entry.publications.length ? { publications: entry.publications } : {}),
-					};
-				}
-				updated.workflows = bindings;
-				managers.add('workflow');
+			if (!selection.versionSource) delete updated.versionSource;
+			const bindings = Object.fromEntries(
+				Object.entries(object(current.workflows)).filter(([, value]) => object(value).mode !== 'observe'),
+			);
+			for (const entry of selection.observe ?? []) {
+				const previous = Object.entries(object(object(current.workflows)[entry.name])).filter(([field]) =>
+					field !== 'ref'
+				);
+				bindings[entry.name] = {
+					...Object.fromEntries(previous),
+					file: entry.file,
+					mode: 'observe',
+					...(entry.ref ? { ref: entry.ref } : {}),
+					publications: entry.publications,
+				};
 			}
+			if (Object.keys(bindings).length) updated.workflows = bindings;
+			else delete updated.workflows;
+			if (selection.observe?.length) managers.add('workflow');
 			streams[selection.name] = updated;
 			const shared = selection.prepare && selection.promote && selection.prepare.file === selection.promote.file;
 			for (const operation of ['prepare', 'promote'] as const) {

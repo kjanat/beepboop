@@ -41,6 +41,11 @@ function bindingName(file: string, taken: Set<string>): string {
 	return candidate;
 }
 
+function branchRef(patterns: readonly string[]): string {
+	const [only] = patterns;
+	return patterns.length === 1 && only !== undefined && /^[\w./-]+$/.test(only) ? `refs/heads/${only}` : 'refs/heads/*';
+}
+
 export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): SetupChoices['streams'] {
 	const known = new Map(inventory.packages.filter(publishable).map(pkg => [packageId(pkg), pkg]));
 	return graph.streams.map(stream => {
@@ -87,7 +92,11 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 			return {
 				name: bindingName(entry.file, taken),
 				file: entry.file,
-				...(tagged ? { ref: `refs/tags/${tagPrefix ?? ''}*` } : {}),
+				...(tagged
+					? { ref: `refs/tags/${tagPrefix ?? ''}*` }
+					: entry.branchPatterns.length
+					? { ref: branchRef(entry.branchPatterns) }
+					: {}),
 				publications: entry.role === 'channel' ? [] : required.filter(id => covered.has(id) && versioned(id)),
 			};
 		});
