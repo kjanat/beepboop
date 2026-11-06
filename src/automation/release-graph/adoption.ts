@@ -48,6 +48,10 @@ function branchRef(patterns: readonly string[]): string {
 
 export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): SetupChoices['streams'] {
 	const known = new Map(inventory.packages.filter(publishable).map(pkg => [packageId(pkg), pkg]));
+	const fileVersioned = (id: string) => {
+		const pkg = known.get(id);
+		return !!pkg && !pkg.versionSource.startsWith('tags:');
+	};
 	return graph.streams.map(stream => {
 		const packages = [...new Set(stream.targets.flatMap(target => target.packages))].filter(id => known.has(id));
 		const optional = new Set(
@@ -57,10 +61,7 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 			const pkg = known.get(id);
 			return !!pkg && !pkg.optional && !optional.has(pkg.name) && !optional.has(id);
 		});
-		const fileVersions = packages.some(id => {
-			const pkg = known.get(id);
-			return !!pkg && !pkg.versionSource.startsWith('tags:');
-		});
+		const fileVersions = packages.some(fileVersioned);
 		const versioning: SetupChoices['streams'][number]['versioning'] = stream.versionGroup.lockstep === 'conflicting'
 			? 'independent'
 			: packages.length || stream.trigger.kind === 'tags'
@@ -99,16 +100,13 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 				const tagged = entry.tagPatterns.length > 0 || entry.events.includes('release');
 				const dispatched = entry.events.includes('workflow_dispatch');
 				const channel = entry.role === 'channel';
-				const fileVersioned = (id: string) => {
-					const pkg = known.get(id);
-					return !!pkg && !pkg.versionSource.startsWith('tags:');
-				};
+				const tagPatterns = entry.tagPatterns.filter(pattern => !pattern.startsWith('!'));
 				const contexts: { ref?: string; publications: string[] }[] = [
 					...(tagged
 						? [
 							...new Set(
-								entry.tagPatterns.some(pattern => !pattern.startsWith('!'))
-									? entry.tagPatterns.filter(pattern => !pattern.startsWith('!')).map(pattern => literalPrefix(pattern))
+								tagPatterns.length
+									? tagPatterns.map(literalPrefix)
 									: [tagPrefix ?? ''],
 							),
 						].map(prefix => ({

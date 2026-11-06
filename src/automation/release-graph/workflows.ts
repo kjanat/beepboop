@@ -365,8 +365,8 @@ function taskBodies(
 			for (const name of many ? words : words.slice(0, 1)) {
 				for (const kind of kinds) {
 					const dirs = kind === 'make' ? [directory] : ancestors(directory);
-					const owner = dirs.map(dir => taskTable(snapshot, dir)).find(table => table.present.has(kind));
-					const task = owner?.tasks.get(kind)?.get(name);
+					const owner = dirs.find(dir => taskTable(snapshot, dir).present.has(kind));
+					const task = owner === undefined ? undefined : taskTable(snapshot, owner).tasks.get(kind)?.get(name);
 					if (task) {
 						found.push({ name, ...task });
 						break;
@@ -539,7 +539,7 @@ function stepEffects(
 			const found = actionEffects(snapshot, local, seen);
 			return { effects: [...alias, ...found.effects], runs: found.runs, action: local };
 		}
-		const effects: StepEffect[] = [
+		let effects: StepEffect[] = [
 			...alias,
 			...(typeof inputs.script === 'string' ? commandEffects(inputs.script, source) : []),
 		];
@@ -559,11 +559,7 @@ function stepEffects(
 		}
 		const pushes = inputs.push === true || (typeof inputs.push === 'string' && inputs.push !== 'false');
 		if (/^docker\/build-push-action@/.test(uses) && !pushes) {
-			effects.splice(
-				0,
-				effects.length,
-				...effects.filter(effect => !(effect.kind === 'publish' && effect.text === uses)),
-			);
+			effects = effects.filter(effect => !(effect.kind === 'publish' && effect.text === uses));
 		}
 		if (
 			releaseActions.test(uses)
