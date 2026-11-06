@@ -132,7 +132,7 @@ const patterns: readonly Pattern[] = [
 	},
 ];
 const releaseActions =
-	/^(?:softprops\/action-gh-release|ncipollo\/release-action|taiki-e\/create-gh-release-action|taiki-e\/upload-rust-binary-action|svenstaro\/upload-release-action|goreleaser\/goreleaser-action)@/;
+	/^(?:softprops\/action-gh-release|ncipollo\/release-action|taiki-e\/create-gh-release-action|taiki-e\/upload-rust-binary-action|svenstaro\/upload-release-action|goreleaser\/goreleaser-action|googleapis\/release-please-action)@/;
 const releaseCommand = /\bgh\s+release\s+(create|upload|edit)\b|\bgoreleaser\s+release\b/g;
 const goreleaserBuildOnly = /--snapshot\b|--skip[= ][\w,]*\bpublish\b|--skip-publish\b/;
 const aliasCommand =
@@ -216,6 +216,9 @@ function commandEffects(text: string, source: string, directory = ''): StepEffec
 				text: line,
 				...(repository ? { repository } : {}),
 			});
+		}
+		if (/\bsemantic-release\b(?![\w/-])/.test(line)) {
+			effects.push({ kind: 'release', action: 'publish', source, text: line });
 		}
 		if (aliasCommand.test(line)) effects.push({ kind: 'alias', source, text: line });
 		const dispatched = /\bgh\s+workflow\s+run\s+["']?([\w.-]+\.ya?ml)/.exec(line)

@@ -505,6 +505,43 @@ test('reopening setup keeps an empty required set', async () => {
 	expect(reopened.choices.streams[0]?.required).toEqual([]);
 });
 
+test('a run without a head branch is ignored', async () => {
+	const repository = world.github.create('octo/widget', {
+		'package.json': JSON.stringify({ name: 'widget', version: '1.2.0' }),
+		'.github/workflows/release.yml': workflow(
+			"{ push: { tags: ['widget-v*'], branches: [main, next] } }",
+			'npm publish',
+		),
+	});
+	await adopt(repository);
+	repository.runs.push({
+		id: 9001,
+		path: '.github/workflows/release.yml',
+		event: 'push',
+		headSha: world.github.head(repository),
+		headBranch: null,
+		status: 'completed',
+		conclusion: 'success',
+		attempt: 1,
+		title: 'Release',
+		inputs: {},
+	});
+	await world.webhook('workflow_run', {
+		action: 'completed',
+		workflow_run: {
+			id: 9001,
+			conclusion: 'success',
+			event: 'push',
+			path: '.github/workflows/release.yml',
+			head_repository: { id: repository.id },
+		},
+		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
+	});
+	await world.wait(2_000);
+	const journal = await world.coordinator(repository).exportJournal();
+	expect(journal.filter(entry => entry.key.startsWith('execution:') || entry.key.startsWith('observe:'))).toEqual([]);
+});
+
 test('a publisher on a non-default branch is observed on that branch', async () => {
 	const repository = world.github.create('octo/snapshots', {
 		'package.json': JSON.stringify({ name: 'snapshots', version: '1.0.0' }),

@@ -30,7 +30,7 @@ export interface Run {
 	path: string;
 	event: string;
 	headSha: string;
-	headBranch: string;
+	headBranch: string | null;
 	status: 'queued' | 'in_progress' | 'completed';
 	conclusion: string | null;
 	attempt: number;

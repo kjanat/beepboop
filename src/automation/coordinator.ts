@@ -1474,7 +1474,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			) {
 				return;
 			}
-			const branch = String(run.head_branch);
+			if (typeof run.head_branch !== 'string') return;
+			const branch = run.head_branch;
 			const patterns = Object.values(repository.configuration.streams).flatMap(stream =>
 				Object.values(stream.workflows).flatMap(binding => binding.ref ? [binding.ref] : [])
 			);

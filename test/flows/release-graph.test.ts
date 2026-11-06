@@ -1278,7 +1278,12 @@ describe('release streams', () => {
 		expect(publishes({
 			'package.json': tool,
 			'.github/workflows/release.yml': workflow('{ push: { branches: [main] } }', 'npx semantic-release'),
-		})).toEqual(['npm']);
+		})).toEqual(['github-release', 'npm']);
+		expect(publishes({
+			'package.json': tool,
+			'.github/workflows/release.yml':
+				'on: { push: { branches: [main] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: googleapis/release-please-action@v4\n        id: release\n      - if: ${{ steps.release.outputs.release_created }}\n        run: npm publish\n',
+		})).toEqual(['github-release', 'npm']);
 		expect(publishes({
 			'package.json': tool,
 			'.github/workflows/release.yml':
