@@ -50,6 +50,7 @@ export interface StreamWorkflow {
 	events: string[];
 	tagPatterns: string[];
 	branchPatterns: string[];
+	starts: string[];
 }
 export interface StreamProposal {
 	id: string;
@@ -141,6 +142,21 @@ class Graph {
 	}
 	entry(workflow: Workflow): boolean {
 		return workflow.events.some(event => entryEvents.includes(event));
+	}
+	starts(file: string): string[] {
+		const workflow = this.byFile.get(file);
+		if (!workflow) return [];
+		return [
+			...new Set([
+				...workflow.jobs.flatMap(job => [
+					...(job.calls ? [job.calls] : []),
+					...job.effects.flatMap(effect => effect.kind === 'dispatch' ? [effect.workflow] : []),
+				]),
+				...this.workflows.filter(other =>
+					other.file !== file && other.workflowRuns.some(source => source === file || source === workflow.name)
+				).map(other => other.file),
+			]),
+		];
 	}
 }
 
@@ -984,6 +1000,7 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 				events: workflow?.events ?? [],
 				tagPatterns: workflow?.tagPatterns ?? [],
 				branchPatterns: workflow?.branchPatterns ?? [],
+				starts: graph.starts(file),
 			};
 		});
 		if (!roles.some(entry => entry.role === 'entry')) {
@@ -1115,6 +1132,7 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 				events: initiator.workflow.events,
 				tagPatterns: initiator.workflow.tagPatterns,
 				branchPatterns: initiator.workflow.branchPatterns,
+				starts: graph.starts(initiator.workflow.file),
 			});
 			evidence.push(...workflowEvidence(initiator.workflow));
 			evidence.push({
@@ -1178,6 +1196,7 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 				events: follower.events,
 				tagPatterns: follower.tagPatterns,
 				branchPatterns: follower.branchPatterns,
+				starts: graph.starts(follower.file),
 			});
 			const docs = graph.effects(follower.file).filter(({ effect }) =>
 				effect.kind === 'publish' && effect.destination === 'docs'

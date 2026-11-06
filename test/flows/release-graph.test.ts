@@ -683,6 +683,53 @@ describe('release streams', () => {
 			['a.yml', ['pkg:npm/a']],
 			['b.yml', ['pkg:npm/b']],
 		]);
+		const called: Record<string, string> = {
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'packages/b/package.json': JSON.stringify({ name: 'b', version: '2.0.0' }),
+			'.github/workflows/publish-a.yml': workflow('{ workflow_call: {} }', 'cd packages/a && npm publish'),
+			'.github/workflows/publish-b.yml': workflow('{ workflow_call: {} }', 'cd packages/b && npm publish'),
+			'.github/workflows/a.yml':
+				'on: { push: { tags: ["v1.*"] } }\njobs:\n  publish:\n    uses: ./.github/workflows/publish-a.yml\n',
+			'.github/workflows/b.yml':
+				'on: { push: { tags: ["v2.*"] } }\njobs:\n  publish:\n    uses: ./.github/workflows/publish-b.yml\n',
+		};
+		const wrapped = plan({
+			repository: { id: 1, name: 'octo/mono', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files: called,
+			paths: Object.keys(called),
+		});
+		expect(wrapped.choices[0]?.observe?.map(binding => [binding.file, binding.publications])).toEqual([
+			['a.yml', ['pkg:npm/a']],
+			['b.yml', ['pkg:npm/b']],
+		]);
+	});
+
+	test('a local action runs only its own manifest', async () => {
+		const files: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'widget', version: '1.0.0' }),
+			'actions/build/action.yml': 'runs:\n  using: composite\n  steps:\n    - shell: bash\n      run: echo build\n',
+			'actions/build/unused/action.yml':
+				'runs:\n  using: composite\n  steps:\n    - shell: bash\n      run: npm publish\n',
+			'.github/workflows/ci.yml':
+				'on: { push: { branches: [main] } }\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./actions/build\n',
+		};
+		const { graph } = plan({
+			repository: { id: 1, name: 'octo/widget', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files,
+			paths: Object.keys(files),
+		});
+		expect(graph.streams).toEqual([]);
+		const snapshot = await Effect.runPromise(buildSnapshot({
+			repository: { id: 1, name: 'octo/widget', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			entries: Object.keys(files).map(path => ({ path, type: 'blob', mode: '100644' })),
+			read: path => Effect.succeed(files[path] ?? null),
+			tags: () => Effect.succeed([]),
+		}));
+		expect(Object.keys(snapshot.files)).toContain('actions/build/action.yml');
+		expect(Object.keys(snapshot.files)).not.toContain('actions/build/unused/action.yml');
 	});
 
 	test('make prerequisites reach the publishing recipe', () => {
@@ -704,7 +751,13 @@ describe('release streams', () => {
 		const actionlint = await load('actionlint');
 		const main = actionlint.choices.find(choice => choice.name === 'actionlint');
 		expect(main?.observe?.find(binding => binding.file === 'release.yml')?.ref).toBe('refs/tags/v*');
-		expect(main?.observe?.find(binding => binding.file === 'release-prepare.yml')?.ref).toBeUndefined();
+		expect(main?.observe?.find(binding => binding.file === 'release.yml')?.publications).toEqual([
+			'pkg:github/kjanat/actionlint',
+			'pkg:npm/%40kjanat/actionlint',
+		]);
+		const prepare = main?.observe?.find(binding => binding.file === 'release-prepare.yml');
+		expect(prepare?.ref).toBeUndefined();
+		expect(prepare?.publications).toEqual([]);
 		const nightly = main?.observe?.find(binding => binding.file === 'docker-nightly.yml');
 		expect(nightly?.ref).toBeUndefined();
 		expect(nightly?.publications).toEqual([]);

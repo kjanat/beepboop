@@ -93,8 +93,10 @@ function referencedScripts(
 	];
 	return blobs.filter(path =>
 		!requested.has(path) && !excluded.test(path)
-		&& ((actionManifest.test(path) || /(?:^|\/)Dockerfile$/.test(path) || script.test(path))
-				&& actions.some(action => path.startsWith(`${action}/`))
+		&& (actions.some(action =>
+			path.startsWith(`${action}/`)
+			&& (script.test(path) || /^(?:action\.ya?ml|Dockerfile)$/.test(path.slice(action.length + 1)))
+		)
 			|| script.test(path)
 				&& (text.includes(path)
 					|| directories.some(directory =>

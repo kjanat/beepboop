@@ -468,15 +468,13 @@ function actionEffects(snapshot: Snapshot, path: string, seen: Set<string>): { e
 	seen.add(path);
 	const effects: StepEffect[] = [], runs: string[] = [];
 	const files = actionFiles(snapshot, path);
-	for (const [file, text] of files) {
-		if (/\/action\.ya?ml$/.test(file)) {
+	for (const file of [`${path}/action.yml`, `${path}/action.yaml`]) {
+		const text = snapshot.files[file];
+		if (text !== undefined) {
 			const parsed = yaml(text);
 			const definition = object(Result.isSuccess(parsed) ? parsed.success.runs : undefined);
 			const steps = definition.steps;
-			const declared = [text, ...files.filter(([other]) => /\/Dockerfile$/.test(other)).map(([, source]) => source)]
-				.join(
-					'\n',
-				);
+			const declared = `${text}\n${snapshot.files[`${path}/Dockerfile`] ?? ''}`;
 			const stepRuns = (Array.isArray(steps) ? steps : []).flatMap(step => {
 				const run = object(step).run;
 				return typeof run === 'string' ? [run.replace(/\$\{?GITHUB_ACTION_PATH\}?\//g, `${path}/`)] : [];

@@ -72,17 +72,24 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 			: stream.versionGroup.source.kind === 'tags'
 			? stream.versionGroup.source.prefix
 			: undefined;
+		const members = new Map(stream.workflows.map(member => [member.file, member]));
 		const observe = stream.workflows.filter(entry => entry.role === 'entry' || entry.role === 'channel').flatMap(
 			entry => {
-				const files = [
-					entry.file,
-					...stream.workflows.filter(member => member.role !== 'entry' && member.role !== 'channel').map(member =>
-						member.file
-					),
-				];
+				const reached = new Set<string>();
+				const visit = (file: string) => {
+					const member = members.get(file);
+					if (!member || reached.has(file)) return;
+					if (file !== entry.file && (member.role === 'entry' || member.role === 'channel')) return;
+					reached.add(file);
+					for (const next of member.starts) visit(next);
+				};
+				visit(entry.file);
+				const files = [...reached];
 				const covered = new Set(
 					stream.targets.flatMap(target =>
-						target.sources
+						target.destination === 'github-release' && entry.events.includes('release')
+							? target.packages
+							: target.sources
 							? files.flatMap(file => target.sources?.[file] ?? [])
 							: target.operations.some(operation => files.some(file => operation.startsWith(`${file}#`)))
 							? target.packages
