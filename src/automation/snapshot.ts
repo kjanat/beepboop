@@ -68,14 +68,21 @@ function workflowTagPrefixes(files: ReadonlyMap<string, string>): string[] {
 }
 
 const script = /\.(?:sh|bash|ps1|py|[cm]?[jt]s|rb)$/;
+const actionManifest = /(?:^|\/)action\.ya?ml$/;
 const recipe = /(?:^|\/)(?:Makefile|GNUmakefile|[Jj]ustfile|\.justfile|package\.json)$/;
 function referencedScripts(
 	blobs: readonly string[],
 	read: ReadonlyMap<string, string>,
 	requested: ReadonlySet<string>,
 ): string[] {
-	const text = [...read].filter(([path]) => path.startsWith('.github/') || recipe.test(path) || script.test(path))
-		.map(([, source]) => source).join('\n');
+	const text = [...read].filter(([path]) =>
+		path.startsWith('.github/') || recipe.test(path) || script.test(path) || actionManifest.test(path)
+	).map(([, source]) => source).join('\n');
+	const actions = [
+		...new Set(
+			[...text.matchAll(/\buses:\s*["']?(?:\.|\$)\/([\w./-]+?)\/?["']?\s*$/gm)].flatMap(match => match[1] ?? []),
+		),
+	];
 	const directories = [
 		...new Set(
 			[...text.matchAll(/working-directory:\s*["']?(?:\.\/)?([\w./-]+?)\/?["']?\s*$/gm)].flatMap(match =>
@@ -84,11 +91,14 @@ function referencedScripts(
 		),
 	];
 	return blobs.filter(path =>
-		script.test(path) && !requested.has(path) && !excluded.test(path)
-		&& (text.includes(path)
-			|| directories.some(directory =>
-				path.startsWith(`${directory}/`) && text.includes(path.slice(directory.length + 1))
-			))
+		!requested.has(path) && !excluded.test(path)
+		&& ((actionManifest.test(path) || /(?:^|\/)Dockerfile$/.test(path) || script.test(path))
+				&& actions.some(action => path.startsWith(`${action}/`))
+			|| script.test(path)
+				&& (text.includes(path)
+					|| directories.some(directory =>
+						path.startsWith(`${directory}/`) && text.includes(path.slice(directory.length + 1))
+					)))
 	);
 }
 

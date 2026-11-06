@@ -527,6 +527,77 @@ describe('release streams', () => {
 		expect(tools?.observe).toEqual([{ name: 'tools', file: 'tools.yml', ref: 'refs/tags/tools/v*', publications: [] }]);
 	});
 
+	test('package tasks, forwarded arguments, outside actions and standalone reusable publishers', async () => {
+		const files: Record<string, string> = {
+			'package.json': JSON.stringify({
+				name: 'root',
+				private: true,
+				scripts: { build: 'echo build', release: 'npm publish' },
+			}),
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0', scripts: { release: 'npm publish' } }),
+			'actions/publish/action.yml':
+				'runs:\n  using: composite\n  steps:\n    - shell: bash\n      run: cd packages/a && npm publish\n',
+			'.github/workflows/build.yml': workflow('{ push: { branches: [main] } }', 'npm run build -- release'),
+			'.github/workflows/local.yml': [
+				'on: { push: { tags: ["local-v*"] } }',
+				'jobs:',
+				'  publish:',
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - working-directory: packages/a',
+				'        run: npm run release',
+				'',
+			].join('\n'),
+			'.github/workflows/action.yml': [
+				'on: { push: { tags: ["action-v*"] } }',
+				'jobs:',
+				'  publish:',
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - uses: ./actions/publish',
+				'',
+			].join('\n'),
+		};
+		const snapshot = await Effect.runPromise(buildSnapshot({
+			repository: { id: 1, name: 'octo/mono', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			entries: Object.keys(files).map(path => ({ path, type: 'blob', mode: '100644' })),
+			read: path => Effect.succeed(files[path] ?? null),
+			tags: () => Effect.succeed([]),
+		}));
+		expect(snapshot.files['actions/publish/action.yml']).toBe(files['actions/publish/action.yml']);
+		const { graph, choices } = plan(snapshot);
+		const members = graph.streams.flatMap(proposal => proposal.workflows.map(entry => entry.file));
+		expect(members).not.toContain('build.yml');
+		expect(target(stream(graph, 'local'), 'npm').names).toEqual(['a']);
+		expect(target(stream(graph, 'action'), 'npm').names).toEqual(['a']);
+		expect(choices.length).toBe(2);
+		const standalone: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'.github/workflows/reusable.yml': [
+				'on:',
+				'  workflow_dispatch: { inputs: { version: { type: string, required: true } } }',
+				'  workflow_call: { inputs: { version: { type: string, required: true } } }',
+				'jobs:',
+				'  publish:',
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - run: npm publish',
+				'',
+			].join('\n'),
+		};
+		const single = plan({
+			repository: { id: 1, name: 'octo/single', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files: standalone,
+			paths: Object.keys(standalone),
+		});
+		expect(single.graph.streams.map(proposal => proposal.workflows.map(entry => [entry.file, entry.role]))).toEqual([
+			[['reusable.yml', 'entry']],
+		]);
+		expect(single.choices[0]?.observe?.map(binding => binding.file)).toEqual(['reusable.yml']);
+	});
+
 	test('observe bindings follow each workflow trigger', async () => {
 		const actionlint = await load('actionlint');
 		const main = actionlint.choices.find(choice => choice.name === 'actionlint');

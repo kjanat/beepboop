@@ -976,6 +976,11 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 				branchPatterns: workflow?.branchPatterns ?? [],
 			};
 		});
+		if (!roles.some(entry => entry.role === 'entry')) {
+			for (const entry of roles) {
+				if (entry.role === 'recovery' && files.includes(entry.file) && !merged.has(entry.file)) entry.role = 'entry';
+			}
+		}
 		const untagged = trigger.kind === 'schedule' || trigger.kind === 'branch';
 		const channels = new Set<string>(untagged ? [] : ['stable']);
 		const allText = memberFiles.flatMap(file => graph.jobs(file)).flatMap((

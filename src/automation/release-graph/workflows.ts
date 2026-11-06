@@ -229,63 +229,87 @@ function modulePath(snapshot: Snapshot, module: string): string | undefined {
 		path.endsWith(`/${relative}.py`) || path === `${relative}.py` || path.endsWith(`/${relative}/__main__.py`)
 	);
 }
-const taskRunner =
-	/\b(?:(?:npm|pnpm|yarn|bun)\s+run|deno\s+task|runner(?:\s+(?:run|install|i))?|run|just|make|mise\s+run|cargo)\b/;
 type Task = { body: string; source: string };
 const taskKinds = ['package', 'deno', 'just', 'make', 'mise'] as const;
 type TaskKind = (typeof taskKinds)[number];
-type TaskTable = { tasks: Map<TaskKind, Map<string, Task>>; aliases: Map<string, Task> };
-const taskTables = new WeakMap<Snapshot, TaskTable>();
-function taskTable(snapshot: Snapshot): TaskTable {
-	const known = taskTables.get(snapshot);
+type TaskTable = { tasks: Map<TaskKind, Map<string, Task>>; present: Set<TaskKind> };
+const taskTables = new WeakMap<Snapshot, Map<string, TaskTable>>();
+const cargoAliases = new WeakMap<Snapshot, Map<string, Task>>();
+function taskTable(snapshot: Snapshot, directory: string): TaskTable {
+	const cached = taskTables.get(snapshot) ?? new Map<string, TaskTable>();
+	taskTables.set(snapshot, cached);
+	const known = cached.get(directory);
 	if (known) return known;
+	const at = (name: string) => directory ? `${directory}/${name}` : name;
 	const tasks = new Map<TaskKind, Map<string, Task>>(taskKinds.map(kind => [kind, new Map()]));
+	const present = new Set<TaskKind>();
 	const add = (kind: TaskKind, name: string, task: Task) => {
 		const table = tasks.get(kind);
 		if (table && !table.has(name)) table.set(name, task);
 	};
-	for (const path of ['package.json', 'deno.json', 'deno.jsonc']) {
+	for (const name of ['package.json', 'deno.json', 'deno.jsonc']) {
+		const path = at(name);
 		const source = snapshot.files[path];
-		if (!source) continue;
+		if (source === undefined) continue;
+		const kind: TaskKind = name === 'package.json' ? 'package' : 'deno';
+		present.add(kind);
 		let manifest: Record<string, unknown>;
 		try {
 			manifest = object(JSON.parse(source.replace(/^\s*\/\/.*$/gm, '')));
 		} catch {
 			continue;
 		}
-		for (const [name, body] of Object.entries({ ...object(manifest.scripts), ...object(manifest.tasks) })) {
+		for (const [task, body] of Object.entries({ ...object(manifest.scripts), ...object(manifest.tasks) })) {
 			const command = typeof body === 'string' ? body : object(body).command;
-			if (typeof command === 'string') {
-				add(path === 'package.json' ? 'package' : 'deno', name, { body: command, source: path });
-			}
+			if (typeof command === 'string') add(kind, task, { body: command, source: path });
 		}
 	}
-	for (const path of ['justfile', 'Justfile', '.justfile', 'Makefile', 'GNUmakefile']) {
+	for (const name of ['justfile', 'Justfile', '.justfile', 'Makefile', 'GNUmakefile']) {
+		const path = at(name);
 		const source = snapshot.files[path];
-		if (!source) continue;
+		if (source === undefined) continue;
+		const kind: TaskKind = /akefile$/.test(name) ? 'make' : 'just';
+		present.add(kind);
 		for (const match of source.matchAll(/^([A-Za-z][\w:-]*)(?:[^\n:=]*)?:(?!=)[^\n]*\n((?:[ \t]+[^\n]*\n?)*)/gm)) {
-			if (match[1]) add(/akefile$/.test(path) ? 'make' : 'just', match[1], { body: match[2] ?? '', source: path });
+			if (match[1]) add(kind, match[1], { body: match[2] ?? '', source: path });
 		}
 	}
-	for (const path of ['mise.toml', '.mise.toml', '.config/mise.toml', 'mise.local.toml']) {
+	for (const name of ['mise.toml', '.mise.toml', '.config/mise.toml', 'mise.local.toml']) {
+		const path = at(name);
 		const source = snapshot.files[path];
-		if (!source) continue;
+		if (source === undefined) continue;
+		present.add('mise');
 		let config: Record<string, unknown>;
 		try {
 			config = object(parseToml(source));
 		} catch {
 			continue;
 		}
-		for (const [name, task] of Object.entries(object(config.tasks))) {
-			const run = typeof task === 'string' ? task : object(task).run;
+		for (const [task, definition] of Object.entries(object(config.tasks))) {
+			const run = typeof definition === 'string' ? definition : object(definition).run;
 			const body = Array.isArray(run) ? run.map(String).join('\n') : typeof run === 'string' ? run : '';
-			if (body) add('mise', name, { body, source: path });
+			if (body) add('mise', task, { body, source: path });
 		}
 	}
+	const prefix = directory ? `${directory}/` : '';
 	for (const [path, source] of Object.entries(snapshot.files)) {
-		const task = /^(?:\.mise\/tasks|mise-tasks|\.config\/mise\/tasks)\/([^/.]+)(?:\.\w+)?$/.exec(path)?.[1];
-		if (task) add('mise', task, { body: source, source: path });
+		if (!path.startsWith(prefix)) continue;
+		const task = /^(?:\.mise\/tasks|mise-tasks|\.config\/mise\/tasks)\/([^/.]+)(?:\.\w+)?$/.exec(
+			path.slice(prefix.length),
+		)
+			?.[1];
+		if (task) {
+			present.add('mise');
+			add('mise', task, { body: source, source: path });
+		}
 	}
+	const table = { tasks, present };
+	cached.set(directory, table);
+	return table;
+}
+function aliasTable(snapshot: Snapshot): Map<string, Task> {
+	const known = cargoAliases.get(snapshot);
+	if (known) return known;
 	const aliases = new Map<string, Task>();
 	for (const path of ['.cargo/config.toml', '.cargo/config']) {
 		const source = snapshot.files[path];
@@ -301,31 +325,55 @@ function taskTable(snapshot: Snapshot): TaskTable {
 			if (body && !aliases.has(name)) aliases.set(name, { body: `cargo ${body}`, source: path });
 		}
 	}
-	const table = { tasks, aliases };
-	taskTables.set(snapshot, table);
-	return table;
+	cargoAliases.set(snapshot, aliases);
+	return aliases;
 }
-function taskBodies(snapshot: Snapshot, line: string): { name: string; body: string; source: string }[] {
-	if (!taskRunner.test(line)) return [];
-	const { tasks, aliases } = taskTable(snapshot);
+const invocations: readonly { pattern: RegExp; kinds: readonly TaskKind[]; many: boolean }[] = [
+	{ pattern: /\b(?:npm|pnpm|yarn|bun)\b[^\n;&|]*?\srun(?:-script)?\s+/g, kinds: ['package'], many: false },
+	{
+		pattern:
+			/\byarn\s+(?!(?:run|install|add|remove|init|dlx|exec|npm|publish|pack|version|config|workspaces?|why|info|set|up|cache)\b)/g,
+		kinds: ['package'],
+		many: false,
+	},
+	{ pattern: /\bdeno\s+task\s+/g, kinds: ['deno'], many: false },
+	{ pattern: /\bjust\s+/g, kinds: ['just'], many: true },
+	{ pattern: /\bmake\s+/g, kinds: ['make'], many: true },
+	{ pattern: /\bmise\s+run\s+/g, kinds: ['mise'], many: false },
+	{ pattern: /\brunner\s+(?:install|i)\s+/g, kinds: taskKinds, many: true },
+	{ pattern: /(?:^|[\s;&|(])(?:runner\s+run|runner(?!\s+(?:install|i)\b)|run)\s+/g, kinds: taskKinds, many: false },
+];
+function ancestors(directory: string): string[] {
+	const parts = directory ? directory.split('/') : [];
+	return parts.map((_, index) => parts.slice(0, parts.length - index).join('/')).concat('');
+}
+function taskBodies(
+	snapshot: Snapshot,
+	line: string,
+	directory = '',
+): { name: string; body: string; source: string }[] {
 	const cargo = /\bcargo\s+([a-z][\w-]*)/.exec(line)?.[1];
-	const alias = cargo ? aliases.get(cargo) : undefined;
+	const alias = cargo ? aliasTable(snapshot).get(cargo) : undefined;
 	if (cargo && alias) return [{ name: cargo, ...alias }];
-	const kinds: readonly TaskKind[] = /\b(?:npm|pnpm|yarn|bun)\s+run\b/.test(line)
-		? ['package']
-		: /\bdeno\s+task\b/.test(line)
-		? ['deno']
-		: /\bjust\b/.test(line)
-		? ['just']
-		: /\bmake\b/.test(line)
-		? ['make']
-		: /\bmise\s+run\b/.test(line)
-		? ['mise']
-		: taskKinds;
-	return line.split(/\s+/).flatMap(word => {
-		const task = kinds.map(kind => tasks.get(kind)?.get(word)).find(found => found !== undefined);
-		return task ? [{ name: word, ...task }] : [];
-	});
+	const found: { name: string; body: string; source: string }[] = [];
+	for (const { pattern, kinds, many } of invocations) {
+		for (const match of line.matchAll(pattern)) {
+			const rest = line.slice((match.index ?? 0) + match[0].length).split(/\s--(?:\s|$)|[;&|]/)[0] ?? '';
+			const words = rest.split(/\s+/).filter(word => word && !word.startsWith('-') && !word.includes('='));
+			for (const name of many ? words : words.slice(0, 1)) {
+				for (const kind of kinds) {
+					const dirs = kind === 'make' ? [directory] : ancestors(directory);
+					const owner = dirs.map(dir => taskTable(snapshot, dir)).find(table => table.present.has(kind));
+					const task = owner?.tasks.get(kind)?.get(name);
+					if (task) {
+						found.push({ name, ...task });
+						break;
+					}
+				}
+			}
+		}
+	}
+	return found;
 }
 const scriptCall =
 	/(?:(?:^|[\s;&|(])(?:bash|sh|node|bun(?:\s+run)?|deno\s+run(?:\s+-\S+)*|python3?|uv\s+run|pwsh(?:\s+-File)?)\s+["']?(?:\.\/)?|(?:^|[\s;&|(])["']?\.\/|^\s*)((?:[\w.-]+\/)*[\w.-]+\.(?:sh|bash|ps1|py|[cm]?[jt]s|rb))\b["']?(?:\s+([a-z][\w-]*))?/gm;
@@ -368,13 +416,17 @@ function scriptEffects(
 		runs.push(text);
 	}
 	for (const line of lines(run)) {
-		for (const task of taskBodies(snapshot, line)) {
+		for (const task of taskBodies(snapshot, line, base && base !== '.' ? base : '')) {
 			const key = `${task.source}#${task.name}`;
 			if (seen.has(key)) continue;
 			seen.add(key);
 			effects.push(...commandEffects(task.body, task.source));
 			runs.push(task.body);
-			const nested = scriptEffects(snapshot, task.body, seen);
+			const owner = task.source.replace(
+				/\/?(?:package\.json|deno\.jsonc?|[Jj]ustfile|\.justfile|(?:GNU)?[Mm]akefile|\.?mise(?:\.local)?\.toml|\.config\/mise\.toml|(?:\.mise\/tasks|mise-tasks|\.config\/mise\/tasks)\/[^/]+)$/,
+				'',
+			);
+			const nested = scriptEffects(snapshot, task.body, seen, owner || undefined);
 			effects.push(...nested.effects);
 			runs.push(...nested.runs);
 		}
