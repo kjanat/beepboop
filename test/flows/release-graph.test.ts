@@ -598,6 +598,44 @@ describe('release streams', () => {
 		expect(single.choices[0]?.observe?.map(binding => binding.file)).toEqual(['reusable.yml']);
 	});
 
+	test('shell directories, bun publish, odd PyPI names and many referenced scripts', async () => {
+		const files: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'root', private: true, scripts: { release: 'echo nothing' } }),
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0', scripts: { release: 'npm publish' } }),
+			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+			'pyproject.toml': '[project]\nname = "foo("\nversion = "1.0.0"\n',
+			'tools/pyproject.toml': '[project]\nname = "rich"\nversion = "1.0.0"\n',
+			'.github/workflows/a.yml': workflow("{ push: { tags: ['a-v*'] } }", 'cd packages/a && npm run release'),
+			'.github/workflows/b.yml': workflow("{ push: { tags: ['b-v*'] } }", 'cd packages/b && bun publish'),
+			'.github/workflows/py.yml': workflow("{ push: { tags: ['py-v*'] } }", 'uv publish --project enrich'),
+		};
+		const { graph } = plan({
+			repository: { id: 1, name: 'octo/mono', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files,
+			paths: Object.keys(files),
+		});
+		expect(target(stream(graph, 'a'), 'npm').names).toEqual(['a']);
+		expect(target(stream(graph, 'b'), 'npm').names).toEqual(['b']);
+		expect(target(stream(graph, 'py'), 'pypi').names).not.toContain('rich');
+		const scripts = Array.from({ length: 450 }, (_, index) => `scripts/s${index}.sh`);
+		const many: Record<string, string> = {
+			'.github/workflows/many.yml': workflow(
+				'{ workflow_dispatch: {} }',
+				scripts.map(path => `bash ${path}`).join(' && '),
+			),
+			...Object.fromEntries(scripts.map(path => [path, 'echo\n'])),
+		};
+		const snapshot = await Effect.runPromise(buildSnapshot({
+			repository: { id: 2, name: 'octo/many', defaultBranch: 'main' },
+			sha: 'b'.repeat(40),
+			entries: Object.keys(many).map(path => ({ path, type: 'blob', mode: '100644' })),
+			read: path => Effect.succeed(many[path] ?? null),
+			tags: () => Effect.succeed([]),
+		}));
+		expect(Object.keys(snapshot.files)).toHaveLength(400);
+	});
+
 	test('observe bindings follow each workflow trigger', async () => {
 		const actionlint = await load('actionlint');
 		const main = actionlint.choices.find(choice => choice.name === 'actionlint');

@@ -264,7 +264,7 @@ function mentions(text: string, name: string): boolean {
 	return new RegExp(`(?<![\\w-])${escapeRegExp(name)}(?![\\w-])`).test(text);
 }
 function normalized(name: string): string {
-	return name.toLowerCase().replace(/[-_.]+/g, '[-_.]');
+	return `(?<![\\w-])${name.toLowerCase().split(/[-_.]+/).map(escapeRegExp).join('[-_.]')}(?![\\w]|-[A-Za-z])`;
 }
 function goModules(snapshot: Snapshot): string[] {
 	return Object.entries(snapshot.files).flatMap(([path, source]) => {

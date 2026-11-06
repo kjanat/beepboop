@@ -133,9 +133,10 @@ export function buildSnapshot(
 			referenced.length;
 			referenced = referencedScripts(blobs, read, requested)
 		) {
-			for (const path of referenced) requested.add(path);
-			if (requested.size > 400) return yield* precondition('Discovery file limit exceeded');
-			yield* readAll(referenced);
+			const batch = referenced.slice(0, Math.max(0, 400 - requested.size));
+			if (!batch.length) break;
+			for (const path of batch) requested.add(path);
+			yield* readAll(batch);
 		}
 		const files: Record<string, string> = {};
 		for (const path of blobs) {

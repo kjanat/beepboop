@@ -69,7 +69,7 @@ const patterns: readonly Pattern[] = [
 	{
 		destination: 'npm',
 		command:
-			/\b(?:npm|pnpm|yarn)(?:@[\w.]+)?\s+(?:[^\n|;&]*\s)?(?<!\brun(?:-script)?\s+)publish(?![\w:-])|\bargs=\(publish\b/,
+			/\b(?:npm|pnpm|yarn|bun)(?:@[\w.]+)?\s+(?:[^\n|;&]*\s)?(?<!\brun(?:-script)?\s+)publish(?![\w:-])|\bargs=\(publish\b/,
 		action: /^JS-DevTools\/npm-publish@/,
 	},
 	{
@@ -378,6 +378,16 @@ function taskBodies(
 const scriptCall =
 	/(?:(?:^|[\s;&|(])(?:bash|sh|node|bun(?:\s+run)?|deno\s+run(?:\s+-\S+)*|python3?|uv\s+run|pwsh(?:\s+-File)?)\s+["']?(?:\.\/)?|(?:^|[\s;&|(])["']?\.\/|^\s*)((?:[\w.-]+\/)*[\w.-]+\.(?:sh|bash|ps1|py|[cm]?[jt]s|rb))\b["']?(?:\s+([a-z][\w-]*))?/gm;
 
+function within(directory: string, change: string): string {
+	if (change.startsWith('/') || change.includes('$')) return directory;
+	const parts = directory ? directory.split('/') : [];
+	for (const part of change.split('/')) {
+		if (!part || part === '.') continue;
+		if (part === '..') parts.pop();
+		else parts.push(part);
+	}
+	return parts.join('/');
+}
 function scriptEffects(
 	snapshot: Snapshot,
 	run: string,
@@ -385,38 +395,46 @@ function scriptEffects(
 	directory?: string,
 ): { effects: StepEffect[]; runs: string[] } {
 	const effects: StepEffect[] = [], runs: string[] = [];
-	const base = directory?.replace(/^\.\//, '').replace(/\/+$/, '');
-	for (const match of run.matchAll(scriptCall)) {
-		const called = (match[1] ?? '').replace(/^\.\//, '');
-		const relative = base && base !== '.' ? `${base}/${called}` : undefined;
-		const path = relative !== undefined && snapshot.files[relative] !== undefined ? relative : called;
-		const source = snapshot.files[path];
-		const key = `${path} ${match[2] ?? ''}`;
-		if (!source || seen.has(key) || /(?:^|\/)(?:tests?|__tests__|fixtures)\/|\.test\./.test(path)) continue;
-		seen.add(key);
-		const text = segment(source, match[2]);
-		effects.push(...commandEffects(text, path));
-		if (/^(?:promote|aliases?|float|latest)$/.test(match[2] ?? '')) {
-			effects.push({ kind: 'alias', source: path, text: match[0].trim() });
-		}
-		runs.push(text);
-		const nested = scriptEffects(snapshot, text, seen, directory);
-		effects.push(...nested.effects);
-		runs.push(...nested.runs);
-	}
-	for (const match of run.matchAll(moduleCall)) {
-		const path = modulePath(snapshot, match[1] ?? '');
-		const key = `${path ?? ''} ${match[2] ?? ''}`;
-		const source = path ? snapshot.files[path] : undefined;
-		if (!path || !source || seen.has(key)) continue;
-		seen.add(key);
-		const choice = match[2] ? new RegExp(`["']${match[2]}["']`).test(source) : false;
-		const text = match[2] ? segment(source, match[2], !choice) : source;
-		effects.push(...commandEffects(text, path));
-		runs.push(text);
-	}
+	let current = within('', directory ?? '');
 	for (const line of lines(run)) {
-		for (const task of taskBodies(snapshot, line, base && base !== '.' ? base : '')) {
+		const alone = /^cd\s+["']?([^\s"';&|]+)["']?$/.exec(line);
+		if (alone) {
+			current = within(current, alone[1] ?? '');
+			continue;
+		}
+		const chained = /^(\(?)\s*cd\s+["']?([^\s"';&|]+)["']?\s*&&/.exec(line);
+		const here = chained ? within(current, chained[2] ?? '') : current;
+		if (chained && !chained[1]) current = here;
+		for (const match of line.matchAll(scriptCall)) {
+			const called = (match[1] ?? '').replace(/^\.\//, '');
+			const relative = here ? `${here}/${called}` : undefined;
+			const path = relative !== undefined && snapshot.files[relative] !== undefined ? relative : called;
+			const source = snapshot.files[path];
+			const key = `${path} ${match[2] ?? ''}`;
+			if (!source || seen.has(key) || /(?:^|\/)(?:tests?|__tests__|fixtures)\/|\.test\./.test(path)) continue;
+			seen.add(key);
+			const text = segment(source, match[2]);
+			effects.push(...commandEffects(text, path));
+			if (/^(?:promote|aliases?|float|latest)$/.test(match[2] ?? '')) {
+				effects.push({ kind: 'alias', source: path, text: match[0].trim() });
+			}
+			runs.push(text);
+			const nested = scriptEffects(snapshot, text, seen, here);
+			effects.push(...nested.effects);
+			runs.push(...nested.runs);
+		}
+		for (const match of line.matchAll(moduleCall)) {
+			const path = modulePath(snapshot, match[1] ?? '');
+			const key = `${path ?? ''} ${match[2] ?? ''}`;
+			const source = path ? snapshot.files[path] : undefined;
+			if (!path || !source || seen.has(key)) continue;
+			seen.add(key);
+			const choice = match[2] ? new RegExp(`["']${match[2]}["']`).test(source) : false;
+			const text = match[2] ? segment(source, match[2], !choice) : source;
+			effects.push(...commandEffects(text, path));
+			runs.push(text);
+		}
+		for (const task of taskBodies(snapshot, line, here)) {
 			const key = `${task.source}#${task.name}`;
 			if (seen.has(key)) continue;
 			seen.add(key);
@@ -574,7 +592,7 @@ function stepEffects(
 	if (typeof step.run === 'string') {
 		const directory = typeof step['working-directory'] === 'string' ? step['working-directory'] : undefined;
 		const run = directory ? `cd ${directory}\n${step.run}` : step.run;
-		const called = scriptEffects(snapshot, run, seen, directory);
+		const called = scriptEffects(snapshot, step.run, seen, directory);
 		return {
 			effects: [...alias, ...commandEffects(run, source), ...called.effects],
 			runs: [run, ...called.runs],
