@@ -1,0 +1,61 @@
+{
+	"repository": {
+		"id": 1268830606,
+		"name": "kjanat/dprint-plugin-tex-fmt",
+		"defaultBranch": "master"
+	},
+	"sha": "d9b3113c5a006b46c452fd1c8e88a99f225f09bf",
+	"files": {
+		".cargo/config.toml": "#:schema https://gist.githubusercontent.com/kjanat/1172d9d2d6dbe7c6d9983aaabef2eea5/raw/cargo-config.bundle.json\n\n[alias]\n# one-letter\nt = \"test\"\n\n# short\ncl     = \"clippy --all-targets\"\nlint   = \"cl -- -D warnings\"\nschema = \"build\"\n\n# wasm\ncheck-wasm = \"check --lib --target wasm32-unknown-unknown\"\nwasm       = \"build --profile wasm-release --target wasm32-unknown-unknown\"\n\n[term]\nhyperlinks = false\n",
+		".github/workflows/ci.yml": "---\nname: CI\n\non:\n  push:\n    branches: [master]\n    paths-ignore: &paths [\"**.md\"]\n  pull_request: { paths-ignore: *paths }\n\nenv:\n  CARGO_TERM_COLOR: always\n  RUST_BACKTRACE: 1\n\npermissions: { contents: read }\n\njobs:\n  lint:\n    name: Lint + schema\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - uses: dtolnay/rust-toolchain@stable\n        with: { components: clippy }\n      - uses: Swatinem/rust-cache@v2\n      - run: cargo lint\n      - run: cargo schema\n      - run: git diff --exit-code schema.json\n\n  test:\n    name: Test\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - uses: dtolnay/rust-toolchain@stable\n      - uses: Swatinem/rust-cache@v2\n      - run: cargo test\n\n  check-wasm:\n    name: Check (wasm32-unknown-unknown)\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - uses: dtolnay/rust-toolchain@stable\n        with: { targets: wasm32-unknown-unknown }\n      - uses: Swatinem/rust-cache@v2\n      - run: cargo check --lib --target wasm32-unknown-unknown\n\n  wasm-build:\n    name: Wasm release build\n    needs: check-wasm\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - uses: dtolnay/rust-toolchain@stable\n        with: { targets: wasm32-unknown-unknown }\n      - uses: Swatinem/rust-cache@v2\n      - run: cargo build --profile wasm-release --target wasm32-unknown-unknown\n      - run: ls -lh target/wasm32-unknown-unknown/wasm-release/*.wasm\n      - uses: actions/upload-artifact@v7\n        with:\n          name: plugin-wasm\n          path: target/wasm32-unknown-unknown/wasm-release/dprint_plugin_tex_fmt.wasm\n\n  e2e:\n    name: End-to-end (wasm + dprint)\n    needs: [lint, test, wasm-build]\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - uses: actions/download-artifact@v8\n        with:\n          name: plugin-wasm\n          path: target/wasm32-unknown-unknown/wasm-release/\n      - uses: kjanat/dprint-check@v3\n        with: { install-only: true }\n      - run: bash scripts/e2e.sh\n",
+		".github/workflows/release.yml": "---\nname: Release\n\non:\n  push:\n    tags: [\"[0-9]+.[0-9]+.[0-9]+\"]\n\nenv:\n  CARGO_TERM_COLOR: always\n  RUST_BACKTRACE: 1\n\njobs:\n  release:\n    name: Release\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n    steps:\n      - uses: actions/checkout@v7\n      - uses: dtolnay/rust-toolchain@stable\n        with: { targets: wasm32-unknown-unknown }\n      - uses: Swatinem/rust-cache@v2\n      - run: cargo wasm\n      - run: cargo schema\n      - uses: softprops/action-gh-release@v3\n        with:\n          files: |\n            plugin.wasm\n            schema.json\n          body_path: release-fragment.md\n          generate_release_notes: true\n",
+		"Cargo.lock": "",
+		"Cargo.toml": "[package]\nname         = \"dprint-plugin-tex-fmt\"\nversion      = \"0.1.1\"\nedition      = \"2024\"\nrust-version = \"1.96\"\ndescription  = \"dprint Wasm plugin that formats tex\"\nreadme       = \"README.md\"\nrepository   = \"https://github.com/kjanat/dprint-plugin-tex-fmt\"\nlicense      = \"Apache-2.0 OR MIT\"\nkeywords     = [\"dprint\", \"formatter\", \"tex\", \"wasm\"]\ncategories   = [\"development-tools\", \"text-editors\"]\npublish      = false\nautobins     = false\n\n[lib]\ncrate-type = [\"cdylib\", \"lib\"]\nname       = \"dprint_plugin_tex_fmt\"\npath       = \"src/lib.rs\"\n\n[dependencies]\nanyhow = \"1\"\n\n[dependencies.dprint-core]\nversion  = \"0.67\"\nfeatures = [\"formatting\", \"wasm\"]\n\n[dependencies.dprint-core-macros]\nversion = \"0.1\"\n\n[dependencies.json-schema-sort]\nversion          = \"0.1\"\ndefault-features = false\n\n[dependencies.log]\nversion = \"0.4\"\n\n[dependencies.schemars]\nversion = \"1\"\n\n[dependencies.serde]\nversion  = \"1\"\nfeatures = [\"derive\"]\n\n[dependencies.serde_json]\nversion = \"1\"\n\n[dependencies.tex-fmt]\nversion = \"0.5\"\n\n[build-dependencies]\njson-schema-sort.version          = \"0.1\"\njson-schema-sort.default-features = false\nschemars                          = \"1\"\nserde.version                     = \"1\"\nserde.features                    = [\"derive\"]\nserde_json                        = \"1\"\n\n[patch.crates-io]\n# tex-fmt depends on web-time which uses wasm-bindgen browser APIs on\n# wasm32-unknown-unknown — a target that dprint plugins require but that has\n# no browser runtime.  This local stub replaces the timing implementation\n# with an atomic counter so the plugin loads without unresolved JS imports.\nweb-time = { path = \"crates/web-time\" }\n\n# Size-optimized profile for the published Wasm artifact: cold-load cost\n# dominates a dprint plugin, so trade compile time / steady-state speed for a\n# smaller binary. Built with `cargo build --profile wasm-release`.\n[profile.wasm-release]\ninherits      = \"release\"\nopt-level     = \"z\"\nstrip         = true\nlto           = \"fat\"\npanic         = \"abort\"\ncodegen-units = 1\n",
+		"README.md": "# dprint-plugin-tex-fmt\n\nA [dprint](https://dprint.dev) plugin that formats TeX files using [tex-fmt](https://github.com/WGUNDERWOOD/tex-fmt).\n\n## Usage\n\n```sh\ndprint add kjanat/tex-fmt\ndprint fmt\n```\n\nOr add manually to `dprint.json`:\n\n```json\n{\n  \"$schema\": \"https://dprint.dev/schemas/v0.json\",\n  \"plugins\": [\n    \"https://plugins.dprint.dev/kjanat/tex-fmt-0.1.1.wasm\"\n  ]\n}\n```\n\n## Configuration\n\nAll options are optional. Keys use `camelCase` under the `texFmt` top-level key. Global dprint options (`lineWidth`,\n`indentWidth`, `useTabs`) are used as fallbacks for `wraplen`, `tabsize`, and `tabchar` respectively.\n\n```json\n{\n  \"texFmt\": {\n    \"wrap\": true,\n    \"wraplen\": 80,\n    \"wrapmin\": 70,\n    \"tabsize\": 2,\n    \"tabchar\": \"space\",\n    \"lists\": [],\n    \"verbatims\": [],\n    \"noIndentEnvs\": [],\n    \"wrapChars\": [\" \"],\n    \"formatTables\": false\n  }\n}\n```\n\n| Key            | Type       | Default             | Description                                                               |\n| -------------- | ---------- | ------------------- | ------------------------------------------------------------------------- |\n| `wrap`         | `boolean`  | `true`              | Wrap long lines                                                           |\n| `wraplen`      | `integer`  | `80` / `lineWidth`  | Maximum line length before wrapping                                       |\n| `wrapmin`      | `integer`  | `wraplen - 10`      | Lines longer than this are wrapped (defaults to `wraplen - 10` when ≥ 50) |\n| `tabsize`      | `integer`  | `2` / `indentWidth` | Spaces per indent level                                                   |\n| `tabchar`      | `string`   | `\"space\"`           | Indentation character — `\"space\"` or `\"tab\"` (follows `useTabs`)          |\n| `lists`        | `string[]` | built-in defaults   | Extra list environments                                                   |\n| `verbatims`    | `string[]` | built-in defaults   | Extra verbatim environments                                               |\n| `noIndentEnvs` | `string[]` | `[\"document\"]`      | Environments that are not indented                                        |\n| `wrapChars`    | `string[]` | `[\" \"]`             | Characters after which lines may be wrapped (single-character strings)    |\n| `formatTables` | `boolean`  | `false`             | Enable experimental table formatting                                      |\n\n## License\n\nLicensed under either of [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT) at your option.\n",
+		"crates/web-time/Cargo.toml": "[package]\nname        = \"web-time\"\nversion     = \"1.1.0\"\nedition     = \"2021\"\ndescription = \"wasm32-safe web-time stub for dprint plugin use\"\nlicense     = \"MIT OR Apache-2.0\"\npublish     = false\n",
+		"scripts/e2e.sh": "#!/usr/bin/env bash\n# End-to-end test: build the wasm plugin, then run each fixture pair through\n# the real dprint binary and diff against the committed target file.\n#\n# Usage:\n#   bash scripts/e2e.sh            # uses an already-built wasm if present\n#   REBUILD=1 bash scripts/e2e.sh  # always rebuilds the wasm first\nset -euo pipefail\n\nWASM=target/wasm32-unknown-unknown/wasm-release/dprint_plugin_tex_fmt.wasm\n\nif [[ \"${REBUILD:-}\" == \"1\" || ! -f \"$WASM\" ]]; then\n\techo \"Building wasm...\"\n\tcargo build --profile wasm-release --target wasm32-unknown-unknown\nfi\n\nif ! command -v dprint &>/dev/null; then\n\techo \"error: dprint not found. Install with: cargo install dprint\" >&2\n\texit 1\nfi\n\npass=true\n\nfor source_file in tests/fixtures/*/source/*.tex; do\n\tfixture=$(basename \"$(dirname \"$(dirname \"$source_file\")\")\")\n\tfilename=$(basename \"$source_file\")\n\ttarget_file=\"tests/fixtures/$fixture/target/$filename\"\n\tconfig_file=\"tests/fixtures/$fixture/config.json\"\n\n\tactual=$(dprint fmt --config \"$config_file\" --stdin \"$source_file\" <\"$source_file\")\n\n\tif diff -u \"$target_file\" <(printf '%s\\n' \"$actual\") >/dev/null 2>&1; then\n\t\techo \"PASS: $fixture/$filename\"\n\telse\n\t\techo \"FAIL: $fixture/$filename\"\n\t\tdiff -u \"$target_file\" <(printf '%s\\n' \"$actual\") || true\n\t\tpass=false\n\tfi\ndone\n\n$pass && echo \"All e2e tests passed.\"\n"
+	},
+	"paths": [
+		".cargo/config.toml",
+		".dprint.jsonc",
+		".github/workflows/ci.yml",
+		".github/workflows/release.yml",
+		".gitignore",
+		".zed/settings.json",
+		"Cargo.lock",
+		"Cargo.toml",
+		"LICENSE-APACHE",
+		"LICENSE-MIT",
+		"README.md",
+		"build.rs",
+		"crates/web-time/Cargo.toml",
+		"crates/web-time/src/lib.rs",
+		"crates/web-time/src/wasm.rs",
+		"rust-toolchain.toml",
+		"rustfmt.toml",
+		"schema.json",
+		"scripts/e2e.sh",
+		"src/config.rs",
+		"src/lib.rs",
+		"src/schema_types.rs",
+		"tests/fixtures.rs",
+		"tests/fixtures/short_document/config.json",
+		"tests/fixtures/short_document/source/short_document.tex",
+		"tests/fixtures/short_document/target/short_document.tex",
+		"tests/fixtures/tabsize/config.json",
+		"tests/fixtures/tabsize/source/tabsize.tex",
+		"tests/fixtures/tabsize/target/tabsize.tex",
+		"tests/fixtures/verbatim/config.json",
+		"tests/fixtures/verbatim/source/verbatim.tex",
+		"tests/fixtures/verbatim/target/verbatim.tex",
+		"tests/fixtures/wrap/config.json",
+		"tests/fixtures/wrap/source/wrap.tex",
+		"tests/fixtures/wrap/target/wrap.tex",
+		"tests/format.rs",
+		"tombi.toml"
+	],
+	"tags": [
+		"0.1.0",
+		"0.1.1"
+	]
+}

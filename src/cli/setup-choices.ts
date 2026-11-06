@@ -30,16 +30,15 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 			const id = plan.packageIds[index];
 			return id && publishable(pkg) ? [{ ...pkg, id }] : [];
 		});
-		const [first, ...rest] = candidates.map(pkg => ({
+		const packageChoices = candidates.map(pkg => ({
 			value: pkg.id,
 			label: `${packageLabel(pkg.id)} (${pkg.manifest})`,
 		}));
-		if (!first) {
+		if (!packageChoices.length && !plan.choices.streams.some(stream => stream.observe?.length)) {
 			return yield* Effect.fail(
 				failure('No publishable packages discovered', 'NO_PACKAGES', 'Inspect the repository diagnostics first'),
 			);
 		}
-		const packageChoices = [first, ...rest] as [SelectChoice, ...SelectChoice[]];
 		const created: { choice: SetupWorkflow; stream: SetupChoices['streams'][number]; role: 'prepare' | 'promote' }[] =
 			[];
 		const files = () =>
@@ -52,7 +51,13 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 		});
 		const packages = (name: string, current: string[]) =>
 			Effect.gen(function*() {
-				if (candidates.length === 1) return [first.value];
+				const [only, ...more] = packageChoices;
+				if (!only) {
+					return yield* Effect.fail(
+						failure('No publishable packages discovered', 'NO_PACKAGES', 'Inspect the repository diagnostics first'),
+					);
+				}
+				if (!more.length) return [only.value];
 				if (current.length) {
 					out.log(`${name}: ${current.map(packageLabel).join(', ')}`);
 					if (
@@ -60,7 +65,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 					) return [...current];
 				}
 				return yield* Effect.promise(() =>
-					ask({ kind: 'multiselect', message: `${name}: packages to release`, min: 1, choices: packageChoices })
+					ask({ kind: 'multiselect', message: `${name}: packages to release`, min: 1, choices: [only, ...more] })
 				);
 			});
 		const chooseWorkflow = (
@@ -197,6 +202,27 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 		const configure = (stream: SetupChoices['streams'][number]) =>
 			Effect.gen(function*() {
 				const previousPackages = [...stream.packages];
+				if (stream.observe?.length) {
+					out.log(
+						`${stream.name} releases through ${
+							stream.observe.map(entry => `${entry.file}${entry.ref ? ` on ${entry.ref}` : ''}`).join(', ')
+						}${stream.packages.length ? `, which publish ${stream.packages.map(packageLabel).join(', ')}` : ''}.`,
+					);
+					const observe = yield* Effect.promise(() =>
+						ask({
+							kind: 'confirm',
+							message: `${stream.name}: keep these workflows and their triggers, and have Beepboop observe them?`,
+							default: true,
+						})
+					);
+					if (observe) {
+						stream.required = stream.required.filter(id => stream.packages.includes(id));
+						choices.streams.push(stream);
+						return;
+					}
+					delete stream.observe;
+					delete stream.versionSource;
+				}
 				stream.packages = yield* packages(stream.name, stream.packages);
 				stream.required = [...stream.packages];
 				choices.streams.push(stream);

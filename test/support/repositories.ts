@@ -87,3 +87,25 @@ export function widget(github: FakeGitHub, options: WidgetOptions = {}): Reposit
 export function passChecks(repository: Repository, sha: string): void {
 	repository.checks.set(sha, [{ name: 'test', status: 'completed', conclusion: 'success', runId: 1 }]);
 }
+
+export const pluginReleaseWorkflow = `name: Release
+on:
+  push: { tags: ['v*'] }
+permissions: { contents: write }
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: cargo build --release --target wasm32-unknown-unknown
+      - run: gh release create "$GITHUB_REF_NAME" plugin.wasm schema.json
+`;
+
+export function plugin(github: FakeGitHub): Repository {
+	const repository = github.create('octo/plugin', {
+		'Cargo.toml': '[package]\nname = "plugin"\nversion = "0.1.0"\npublish = false\n',
+		'.github/workflows/release.yml': pluginReleaseWorkflow,
+	});
+	passChecks(repository, github.head(repository));
+	return repository;
+}

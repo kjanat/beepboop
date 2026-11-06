@@ -10,7 +10,7 @@ import { parseSetupPlan } from '@/automation/setup-plan';
 import { app } from '@/cli/cli';
 import { Client } from '@/cli/client';
 import { routes } from '@/contract/routes';
-import { widget } from '@root/test/support/repositories.ts';
+import { plugin, widget } from '@root/test/support/repositories.ts';
 import { origin, World } from '@root/test/support/world.ts';
 
 let world: World;
@@ -30,7 +30,7 @@ afterEach(async () => {
 const run = (args: string[], answers?: unknown[]) =>
 	app.execute(['repositories', ...args], { answers, isTTY: true, env: {} });
 
-function defaults(overrides: Record<string, string> = {}) {
+function defaults(overrides: Record<string, string> = {}, confirmations: Record<string, boolean> = {}) {
 	const prompts: ResolvedPromptConfig[] = [];
 	const prompter: PromptEngine = {
 		async promptOne(config) {
@@ -38,7 +38,9 @@ function defaults(overrides: Record<string, string> = {}) {
 			if (config.kind === 'select') {
 				return { answered: true, value: overrides[config.message] ?? config.choices[0].value };
 			}
-			if (config.kind === 'confirm') return { answered: true, value: config.default ?? true };
+			if (config.kind === 'confirm') {
+				return { answered: true, value: confirmations[config.message] ?? config.default ?? true };
+			}
 			if (config.kind === 'input') return { answered: true, value: '' };
 			throw new Error(`Unexpected prompt: ${config.message}`);
 		},
@@ -347,7 +349,8 @@ test('automatic triggers default to review and retain an explicit saved handover
 		'.github/workflows/ship.yml':
 			'on: push\njobs:\n  ship:\n    runs-on: ubuntu-latest\n    steps:\n      - id: publish_existing\n        name: Publish\n        run: npm publish\n',
 	});
-	const initial = defaults({ 'main: publish packages': 'ship.yml' });
+	const observe = 'ship: keep these workflows and their triggers, and have Beepboop observe them?';
+	const initial = defaults({ 'ship: publish packages': 'ship.yml' }, { [observe]: false });
 	const blocked = await app.execute(['repositories', 'adopt', repository.name], {
 		prompter: initial.prompter,
 		isTTY: true,
@@ -358,7 +361,15 @@ test('automatic triggers default to review and retain an explicit saved handover
 	expect(trigger?.kind === 'select' && trigger.choices[0].value).toBe('review');
 	expect(repository.pulls).toHaveLength(0);
 	expect(
-		(await run(['adopt', repository.name], ['ship.yml', 'dispatchOnly', 'publish_existing', 'managed', false, true]))
+		(await run(['adopt', repository.name], [
+			false,
+			'ship.yml',
+			'dispatchOnly',
+			'publish_existing',
+			'managed',
+			false,
+			true,
+		]))
 			.exitCode,
 	).toBe(0);
 	const saved = defaults();
@@ -394,4 +405,33 @@ test('shared preparation does not ask for a second trigger handover', async () =
 	expect(result.exitCode).toBe(1);
 	expect(session.prompts.filter(prompt => prompt.message.includes('who starts this workflow'))).toHaveLength(1);
 	expect(result.stdout.join('')).toContain('shared workflows need separate preparation and publication jobs');
+});
+
+test('an inferred stream is adopted by observing its existing workflow', async () => {
+	const repository = plugin(world.github);
+	const session = defaults({}, { 'Open or refresh the setup PR with these exact changes?': true });
+	const result = await app.execute(['repositories', 'adopt', repository.name], {
+		prompter: session.prompter,
+		isTTY: true,
+		env: {},
+	});
+	expect(result.exitCode).toBe(0);
+	expect(session.prompts.map(prompt => prompt.message)).toContain(
+		'main: keep these workflows and their triggers, and have Beepboop observe them?',
+	);
+	expect(session.prompts.some(prompt => prompt.message.includes('publish packages'))).toBe(false);
+	expect(result.stdout.join('')).toContain('main releases through release.yml on refs/tags/v*.');
+	expect(repository.pulls).toHaveLength(1);
+	expect(repository.pulls[0]?.body).toContain('## Release plan');
+	const config = z.object({
+		streams: z.object({
+			main: z.object({ workflows: z.record(z.string(), z.object({ mode: z.string(), file: z.string() })) }),
+		}),
+	}).parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'));
+	expect(Object.values(config.streams.main.workflows)).toEqual([
+		expect.objectContaining({ mode: 'observe', file: 'release.yml' }),
+	]);
+	expect(world.github.file(repository, '.github/workflows/release.yml', 'automation/onboarding')).toBe(
+		world.github.file(repository, '.github/workflows/release.yml'),
+	);
 });

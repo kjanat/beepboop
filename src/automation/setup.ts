@@ -6,6 +6,8 @@ import { object } from '@/automation/managers/helpers';
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage, packageId, selectorKey } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
+import { adoptionChoices, adoptionMarkdown } from '@/automation/release-graph/adoption';
+import { inferReleaseGraph, type ReleaseGraph } from '@/automation/release-graph/graph';
 import {
 	type SetupChoices,
 	type SetupOption,
@@ -74,18 +76,23 @@ export function suggestSetup(
 	return Effect.gen(function*() {
 		const raw = yield* storedConfiguration(snapshot);
 		const workflows = yield* evidence(snapshot, inventory);
-		return suggested(raw, workflows, inventory, resolved);
+		return suggested(raw, workflows, inventory, inferReleaseGraph(snapshot, inventory), resolved);
 	});
 }
 function suggested(
 	raw: Record<string, unknown>,
 	workflows: WorkflowEvidence[],
 	inventory: Inventory,
+	graph: ReleaseGraph,
 	resolved?: Configuration,
 ): SetupChoices {
 	const configured = resolved?.streams ?? object(raw.streams);
 	const names = new Set([...Object.keys(configured), ...workflows.flatMap(w => w.roles.map(role => role.stream))]);
-	if (!names.size) names.add('main');
+	if (!names.size) {
+		const adopted = adoptionChoices(graph, inventory);
+		if (adopted.length) return { streams: adopted };
+		names.add('main');
+	}
 	const streams: SetupChoices['streams'] = [];
 	for (const name of names) {
 		const current = object(configured[name]);
@@ -168,11 +175,13 @@ function draftSetup(
 	return Effect.gen(function*() {
 		const raw = yield* storedConfiguration(snapshot);
 		const workflows = yield* evidence(snapshot, inventory);
+		const graph = inferReleaseGraph(snapshot, inventory);
 		// Empty selections are allowed in suggestions, but cannot be applied.
 		const choices = input === undefined
-			? suggested(raw, workflows, inventory, resolved)
+			? suggested(raw, workflows, inventory, graph, resolved)
 			: yield* decodeRequest(setupChoicesSchema, input);
-		return yield* drafted(snapshot, inventory, choices, raw, workflows, baseline, resolved);
+		const plan = yield* drafted(snapshot, inventory, choices, raw, workflows, baseline, resolved);
+		return { ...plan, adoption: adoptionMarkdown(graph, snapshot) };
 	});
 }
 function drafted(
@@ -204,7 +213,9 @@ function drafted(
 			const selected = inventory.packages.filter(pkg =>
 				selection.packages.includes(packageId(pkg)) && publishable(pkg)
 			);
-			if (!selection.packages.length) blockers.push(`${selection.name}: select the packages in this release stream.`);
+			if (!selection.packages.length && !selection.observe?.length) {
+				blockers.push(`${selection.name}: select the packages in this release stream.`);
+			}
 			if (selection.packages.some(id => !selected.some(pkg => packageId(pkg) === id))) {
 				blockers.push(`${selection.name}: selected package is no longer publishable or discovered.`);
 			}
@@ -218,18 +229,36 @@ function drafted(
 			const optional = configuredRequired && Array.isArray(current.packages)
 				? current.packages.map(key).filter(id => !configuredRequired.includes(id))
 				: [];
-			const required = selected.filter(requirablePackage).map(packageId).filter(id => !optional.includes(key(id)));
-			const updated = {
+			const required = selection.observe?.length
+				? selection.required.filter(id => selected.some(pkg => packageId(pkg) === id))
+				: selected.filter(requirablePackage).map(packageId).filter(id => !optional.includes(key(id)));
+			const updated: Record<string, unknown> = {
 				...current,
 				packages: selection.packages,
 				versioning: selection.versioning,
 				required,
+				...(selection.versionSource ? { versionSource: selection.versionSource } : {}),
 			};
+			if (selection.observe?.length) {
+				const bindings = { ...object(current.workflows) };
+				for (const entry of selection.observe) {
+					bindings[entry.name] = {
+						...object(bindings[entry.name]),
+						file: entry.file,
+						mode: 'observe',
+						...(entry.ref ? { ref: entry.ref } : {}),
+						...(entry.publications.length ? { publications: entry.publications } : {}),
+					};
+				}
+				updated.workflows = bindings;
+				managers.add('workflow');
+			}
 			streams[selection.name] = updated;
 			const shared = selection.prepare && selection.promote && selection.prepare.file === selection.promote.file;
 			for (const operation of ['prepare', 'promote'] as const) {
 				const workflow = selection[operation];
 				if (!workflow) {
+					if (selection.observe?.length) continue;
 					if (
 						operation === 'prepare' && !resolved?.streams[selection.name]?.prepare.workflow
 						&& !object(object(current.prepare).workflow).file
@@ -494,7 +523,16 @@ export function bodyChoices(body: string, options: SetupOption[], base: SetupCho
 				name: stream.name,
 				packages,
 				versioning: versions.find(value => value !== stream.versioning) ?? versions[0] ?? stream.versioning,
-				required: packages,
+				required: stream.observe ? stream.required.filter(id => packages.includes(id)) : packages,
+				...(stream.versionSource ? { versionSource: stream.versionSource } : {}),
+				...(stream.observe
+					? {
+						observe: stream.observe.map(entry => ({
+							...entry,
+							publications: entry.publications.filter(id => packages.includes(id)),
+						})),
+					}
+					: {}),
 				...(prepare ? { prepare } : {}),
 				...(promote ? { promote } : {}),
 			};
@@ -537,6 +575,7 @@ export function setupBody(plan: SetupPlan): string {
 			].join('\n');
 		}).join('\n')
 		+ '\n\nChange versioning, workflows and triggers in Beepboop under Repositories, Edit release setup.'
+		+ (plan.adoption?.length ? `\n\n${plan.adoption.join('\n').trimEnd()}` : '')
 		+ (plan.notes.length ? `\n\n${plan.notes.map(note => `- ${note}`).join('\n')}` : '')
 		+ '\n\nBeepboop keeps this proposal current when the default branch changes. Review all file changes before merging. Preparation and publication remain separate explicit operations.\n';
 }

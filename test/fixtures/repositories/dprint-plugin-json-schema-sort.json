@@ -1,0 +1,35 @@
+{
+	"repository": {
+		"id": 1267125379,
+		"name": "kjanat/dprint-plugin-json-schema-sort",
+		"defaultBranch": "master"
+	},
+	"sha": "6c9326f1b236498db5588e6842e00eba0d4ecc9d",
+	"files": {
+		".github/workflows/ci.yml": "name: CI\n\non:\n  push:\n  pull_request:\n\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v6\n      - uses: dtolnay/rust-toolchain@stable\n        with:\n          components: clippy, rustfmt\n          targets: wasm32-unknown-unknown\n      - run: cargo fmt --check\n      - run: cargo clippy --all-targets -- -D warnings\n      - run: cargo test\n      - run: cargo clippy --target wasm32-unknown-unknown -- -D warnings\n      - run: cargo build --profile wasm-release --target wasm32-unknown-unknown\n",
+		".github/workflows/release.yml": "name: Release\n\non:\n  push:\n    tags:\n      - \"[0-9]+.*\"\n\npermissions:\n  contents: write\n\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v6\n      - uses: dtolnay/rust-toolchain@stable\n        with:\n          targets: wasm32-unknown-unknown\n      - run: cargo test\n      - name: Build Wasm plugin\n        run: cargo build --profile wasm-release --target wasm32-unknown-unknown\n      - name: Stage release artifact\n        run: cp target/wasm32-unknown-unknown/wasm-release/dprint_plugin_json_schema_sort.wasm plugin.wasm\n      # `plugin.wasm` is the asset plugins.dprint.dev proxies for\n      # `dprint config add kjanat/json-schema-sort`.\n      - uses: softprops/action-gh-release@v2\n        with:\n          files: |\n            plugin.wasm\n            deployment/schema.json\n",
+		"Cargo.lock": "",
+		"Cargo.toml": "[package]\nname         = \"dprint-plugin-json-schema-sort\"\nversion      = \"0.1.2\"\nedition      = \"2024\"\nrust-version = \"1.85\"\ndescription  = \"dprint Wasm plugin that deterministically sorts JSON Schema files\"\nreadme       = \"README.md\"\nrepository   = \"https://github.com/kjanat/dprint-plugin-json-schema-sort\"\nlicense      = \"Apache-2.0 OR MIT\"\nkeywords     = [\"dprint\", \"formatter\", \"json\", \"schema\", \"wasm\"]\ncategories   = [\"development-tools\", \"text-editors\"]\npublish      = false\nautobins     = false\n\n[lib]\ncrate-type = [\"cdylib\", \"lib\"]\nname       = \"dprint_plugin_json_schema_sort\"\npath       = \"src/lib.rs\"\n\n[dependencies]\nanyhow = \"1\"\n\n[dependencies.dprint-core]\nversion  = \"0.67\"\nfeatures = [\"formatting\", \"wasm\"]\n\n[dependencies.dprint-core-macros]\nversion = \"0.1\"\n\n[dependencies.json-schema-sort]\nversion          = \"0.1\"\ndefault-features = false\n\n[dependencies.serde]\nversion  = \"1\"\nfeatures = [\"derive\"]\n\n[dependencies.serde_json]\nversion = \"1\"\n\n# Size-optimized profile for the published Wasm artifact: cold-load cost\n# dominates a dprint plugin, so trade compile time / steady-state speed for a\n# smaller binary. Built with `cargo build --profile wasm-release`.\n[profile.wasm-release]\ninherits      = \"release\"\nopt-level     = \"z\"\nstrip         = true\nlto           = \"fat\"\npanic         = \"abort\"\ncodegen-units = 1\n",
+		"README.md": "# dprint-plugin-json-schema-sort\n\nA [dprint](https://dprint.dev) Wasm plugin that deterministically sorts JSON Schema files into a stable, schema-aware\nkey order so diffs stop being noisy.\n\nIt wraps the [`json-schema-sort`](https://github.com/kjanat/json-schema-sort-rs) library. It sorts keys; it does not\nreformat whitespace — pair it with `dprint-plugin-json` for that.\n\n## Install\n\n```sh\ndprint add kjanat/json-schema-sort\n```\n\nThis resolves to this repository's latest release via plugins.dprint.dev. You can also pin the full URL:\n\n```sh\ndprint add https://github.com/kjanat/dprint-plugin-json-schema-sort/releases/latest/download/plugin.wasm\n```\n\n## Which files it formats\n\ndprint runs exactly one plugin per file. By default this plugin only claims files **named exactly `schema.json`** — it\ndeliberately does not claim every `.json` (that would collide with `dprint-plugin-json` and reorder unrelated files like\n`package.json`). So out of the box, with no extra config, bare `schema.json` files are sorted and everything else is\nleft to the JSON plugin.\n\nTo cover schemas with other names (`product.schema.json`) or in a known directory, add an `associations` glob —\nassociations take precedence over the built-in matching, so the listed files route to this plugin:\n\n```jsonc\n{\n  \"json\": {},\n  \"jsonSchemaSort\": {\n    // Optional — widen beyond the default bare `schema.json`.\n    // `associations` nests inside the plugin's own config as an array.\n    \"associations\": [\"**/schema.json\", \"**/*.schema.json\"],\n    // or by location: [\"schemas/**/*.json\"]\n  },\n  \"plugins\": [\n    \"https://plugins.dprint.dev/json-x.x.x.wasm\",\n    \"https://plugins.dprint.dev/kjanat/json-schema-sort-x.x.x.wasm\",\n  ],\n}\n```\n\nNote: a file routed to this plugin is sorted and re-emitted as 2-space JSON; it does not also pass through\n`dprint-plugin-json`'s whitespace config.\n\n## Configuration\n\n| Key                     | Type    | Default | Description                                                           |\n| ----------------------- | ------- | ------- | --------------------------------------------------------------------- |\n| `sortArrays`            | boolean | `true`  | Sort schema-safe string arrays such as `required` and `type`.         |\n| `preservePropertyOrder` | boolean | `false` | Keep property and `$defs` names in document order instead of sorting. |\n\n## Build\n\n```sh\ncargo test\ncargo build --profile wasm-release --target wasm32-unknown-unknown\n```\n\nThe release workflow publishes `plugin.wasm` and `deployment/schema.json` on each `v*` tag.\n"
+	},
+	"paths": [
+		".dprint.jsonc",
+		".github/workflows/ci.yml",
+		".github/workflows/release.yml",
+		".gitignore",
+		"Cargo.lock",
+		"Cargo.toml",
+		"LICENSE-APACHE",
+		"LICENSE-MIT",
+		"README.md",
+		"deployment/schema.json",
+		"rust-toolchain.toml",
+		"src/lib.rs",
+		"tombi.toml"
+	],
+	"tags": [
+		"0.1.0",
+		"0.1.1",
+		"0.1.2"
+	]
+}

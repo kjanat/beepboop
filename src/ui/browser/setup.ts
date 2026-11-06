@@ -1,7 +1,7 @@
 import { Effect, Result } from 'effect';
 import { publishable } from '@/automation/package-publication';
 import { parseSetupPlan } from '@/automation/setup-plan';
-import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
+import type { SetupChoices, SetupPlan, Versioning } from '@/automation/setup-types';
 import { routes } from '@/contract/routes';
 import { api } from '@/ui/browser/api';
 import { feedbackFor, find, Refused, refuse, show } from '@/ui/browser/dom';
@@ -57,6 +57,18 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 			label(body, `${pkg.name} (${pkg.manifest})`, input);
 			return [{ input, pkg: { ...pkg, id } }];
 		});
+		const observing = element('input');
+		observing.type = 'checkbox';
+		observing.checked = !!value.observe?.length;
+		if (value.observe?.length) {
+			label(
+				body,
+				`Keep ${
+					value.observe.map(entry => entry.file).join(', ')
+				} with their own triggers; Beepboop observes their runs and publications`,
+				observing,
+			);
+		}
 		const groupAdvanced = element('details');
 		groupAdvanced.append(element('summary', 'Versioning and group settings'));
 		const name = text(groupAdvanced, 'Release group name', value.name);
@@ -88,6 +100,12 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 			publishing.refresh();
 			preparing.refresh();
 		});
+		const pickers = () => [...body.querySelectorAll<HTMLFieldSetElement>('fieldset[data-workflow-role]')];
+		const showPickers = () => {
+			for (const picker of pickers()) picker.hidden = observing.checked;
+		};
+		observing.addEventListener('change', showPickers);
+		showPickers();
 		body.append(groupAdvanced);
 		enabled.addEventListener('change', () => {
 			body.disabled = !enabled.checked;
@@ -97,6 +115,24 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 			Result.gen(function*() {
 				if (!enabled.checked) return undefined;
 				const packages = selection().packages.map(pkg => pkg.id);
+				const policy: Versioning = versioning.value === 'independent'
+					? 'independent'
+					: versioning.value === 'none'
+					? 'none'
+					: 'workspace';
+				if (observing.checked && value.observe?.length) {
+					return {
+						name: name.value,
+						packages,
+						required: value.required.filter(id => packages.includes(id)),
+						versioning: policy,
+						...(value.versionSource ? { versionSource: value.versionSource } : {}),
+						observe: value.observe.map(entry => ({
+							...entry,
+							publications: entry.publications.filter(id => packages.includes(id)),
+						})),
+					};
+				}
 				if (!packages.length) {
 					return yield* Result.fail(new Refused({ message: 'Select at least one package to release.' }));
 				}
@@ -105,11 +141,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 					name: name.value,
 					packages,
 					required: packages,
-					versioning: versioning.value === 'independent'
-						? 'independent' as const
-						: versioning.value === 'none'
-						? 'none' as const
-						: 'workspace' as const,
+					versioning: policy,
 					...(prepare ? { prepare } : {}),
 					...(promote ? { promote } : {}),
 				};

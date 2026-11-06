@@ -66,7 +66,9 @@ bun run discover ../my-project
 bun run discover --github owner/repository
 ```
 
-Both commands print the package inventory and proposed configuration as JSON.
+Both commands print the package inventory, the inferred release streams and
+the release plan as JSON. Append `@ref` to the GitHub repository to inspect
+another revision. `--snapshot` prints the inspected files instead.
 
 <!-- markdownlint-disable-file -->
 

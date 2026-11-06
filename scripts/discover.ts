@@ -4,7 +4,8 @@ import { resolve } from 'node:path';
 import { Effect } from 'effect';
 import { z } from 'zod';
 import { discover, resolvePublished } from '@/automation/managers';
-import { onboardingConfiguration } from '@/automation/onboarding';
+import { adoptionChoices, adoptionMarkdown } from '@/automation/release-graph/adoption';
+import { inferReleaseGraph } from '@/automation/release-graph/graph';
 import { buildSnapshot } from '@/automation/snapshot';
 import type { DomainError } from '@/contract/errors';
 import { toDomainError } from '@/failure';
@@ -20,9 +21,10 @@ function command(args: string[]): Effect.Effect<string, ToolFailure> {
 	);
 }
 
+const options = process.argv.slice(2).filter(value => value !== '--snapshot');
 const fromGitHub = Effect.gen(function*() {
-	const name = process.argv[3];
-	if (!name || !/^\w[\w.-]*\/[\w.-]+$/.test(name)) return yield* refuse('Expected owner/repository');
+	const [name, ref] = (options[1] ?? '').split('@');
+	if (!name || !/^\w[\w.-]*\/[\w.-]+$/.test(name)) return yield* refuse('Expected owner/repository[@ref]');
 	const gh = <T extends z.ZodType>(path: string, schema: T) =>
 		command(['gh', 'api', path]).pipe(
 			Effect.flatMap(output => attempt((): unknown => JSON.parse(output))),
@@ -30,7 +32,7 @@ const fromGitHub = Effect.gen(function*() {
 		);
 	const metadata = yield* gh(`repos/${name}`, z.object({ id: z.number(), default_branch: z.string() }));
 	const { sha } = yield* gh(
-		`repos/${name}/commits/${encodeURIComponent(metadata.default_branch)}`,
+		`repos/${name}/commits/${encodeURIComponent(ref || metadata.default_branch)}`,
 		z.object({ sha: z.string() }),
 	);
 	const tree = yield* gh(
@@ -66,7 +68,7 @@ const fromGitHub = Effect.gen(function*() {
 });
 
 const fromCheckout = Effect.gen(function*() {
-	const root = resolve(process.argv[2] ?? '.');
+	const root = resolve(options[0] ?? '.');
 	const git = (...args: string[]) => command(['git', '-C', root, ...args]);
 	const sha = (yield* git('rev-parse', 'HEAD')).trim();
 	const remote = Bun.spawnSync(['git', '-C', root, 'remote', 'get-url', 'origin']);
@@ -102,19 +104,26 @@ function githubApi(path: string): Effect.Effect<unknown, DomainError> {
 
 await main(
 	Effect.gen(function*() {
-		const snapshot = process.argv[2] === '--github' ? yield* fromGitHub : yield* fromCheckout;
+		const github = options[0] === '--github';
+		const snapshot = github ? yield* fromGitHub : yield* fromCheckout;
+		if (process.argv.includes('--snapshot')) {
+			console.log(JSON.stringify(snapshot, null, '\t'));
+			return;
+		}
 		const inventory = yield* resolvePublished(
 			discover(snapshot),
 			fetch,
-			process.argv[2] === '--github' ? { repository: snapshot.repository.name, github: githubApi } : undefined,
+			github ? { repository: snapshot.repository.name, github: githubApi } : undefined,
 		);
+		const graph = inferReleaseGraph(snapshot, inventory);
 		console.log(
 			JSON.stringify(
 				{
 					repository: snapshot.repository,
 					sha: snapshot.sha,
 					inventory,
-					proposedConfiguration: onboardingConfiguration(snapshot, inventory),
+					streams: adoptionChoices(graph, inventory),
+					releasePlan: adoptionMarkdown(graph, snapshot).join('\n'),
 				},
 				null,
 				2,

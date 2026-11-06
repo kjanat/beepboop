@@ -9,6 +9,12 @@ const workflow = z.object({
 	/** Map publication identities to existing step IDs, for accurate outcome reporting. */
 	publicationSteps: z.record(z.string(), z.string()).default({}),
 }).strict();
+const observed = z.object({
+	name: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),
+	file: z.string().regex(/^[A-Za-z0-9_-]+\.ya?ml$/),
+	ref: z.string().regex(/^refs\/(?:heads|tags)\/[A-Za-z0-9._/-]*\*?$/).optional(),
+	publications: z.array(z.string()).default([]),
+}).strict();
 export const setupChoicesSchema = z.object({
 	streams: z.array(
 		z.object({
@@ -16,6 +22,9 @@ export const setupChoicesSchema = z.object({
 			packages: z.array(z.string()),
 			versioning: z.enum(['workspace', 'independent', 'none']),
 			required: z.array(z.string()),
+			versionSource: z.object({ kind: z.literal('tags'), prefix: z.string().regex(/^[A-Za-z0-9._-]*$/) }).strict()
+				.optional(),
+			observe: z.array(observed).optional(),
 			prepare: workflow.optional(),
 			promote: workflow.optional(),
 		}).strict(),

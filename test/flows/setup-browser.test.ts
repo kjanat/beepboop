@@ -11,7 +11,7 @@ import {
 import { z } from 'zod';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import { bearer } from '@root/test/support/http.ts';
-import { widget } from '@root/test/support/repositories.ts';
+import { plugin, widget } from '@root/test/support/repositories.ts';
 import { origin, World } from '@root/test/support/world.ts';
 // Browser modules are checked separately to keep DOM and Worker Element types apart.
 const browserModule = new URL('../../src/ui/browser/setup.ts', import.meta.url).href;
@@ -420,3 +420,23 @@ for (const locked of [false, true]) {
 		expect(form.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(false);
 	});
 }
+
+test('an inferred stream keeps its workflow until observation is cleared', async () => {
+	plugin(world.github);
+	const form = await open('octo/plugin');
+	const keep = control(
+		form,
+		'Keep release.yml with their own triggers; Beepboop observes their runs and publications',
+		window.HTMLInputElement,
+	);
+	expect(keep.checked).toBe(true);
+	expect(role(form, 'promote').hidden).toBe(true);
+	expect(role(form, 'prepare').hidden).toBe(true);
+	await act(form, 'preview');
+	expect(form.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(false);
+	expect(form.querySelector('.setup-result')?.textContent).toContain('"mode": "observe"');
+	keep.checked = false;
+	keep.dispatchEvent(new window.Event('change', { bubbles: true }));
+	expect(role(form, 'promote').hidden).toBe(false);
+	await expect(act(form, 'preview')).rejects.toThrow('Select at least one package to release.');
+});
