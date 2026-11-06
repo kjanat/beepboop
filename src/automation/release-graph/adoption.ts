@@ -82,14 +82,14 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 				publications: required.filter(id => covered.has(id)),
 			};
 		});
+		const versionSource: SetupChoices['streams'][number]['versionSource'] =
+			stream.trigger.kind === 'tags' && !fileVersions ? { kind: 'tags', prefix: stream.trigger.prefix } : undefined;
 		return {
 			name: stream.id,
 			packages,
 			versioning,
 			required,
-			...(stream.trigger.kind === 'tags' && !fileVersions
-				? { versionSource: { kind: 'tags' as const, prefix: stream.trigger.prefix } }
-				: {}),
+			...(versionSource ? { versionSource } : {}),
 			...(observe.length ? { observe } : {}),
 		};
 	});

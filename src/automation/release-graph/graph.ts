@@ -317,9 +317,9 @@ function targetsOf(
 				? [entry.effect.repository]
 				: []
 		)[0];
-		const base = {
+		const base: Omit<Target, 'names' | 'packages' | 'variants' | 'optionalVariants'> = {
 			destination,
-			selection: 'cited' as Target['selection'],
+			selection: 'cited',
 			operations,
 			phase,
 			downstream: downstreamDestinations.includes(destination),
