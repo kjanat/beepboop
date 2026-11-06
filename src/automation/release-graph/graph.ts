@@ -136,6 +136,19 @@ class Graph {
 			...(job.calls ? this.jobs(job.calls, seen) : []),
 		]);
 	}
+	view(job: Job, members: readonly string[]): Job {
+		if (!job.callers) return job;
+		return {
+			...job,
+			runs: [
+				...job.ownRuns ?? [],
+				...job.callers.filter(entry => members.includes(entry.caller)).flatMap(entry => entry.runs),
+			],
+		};
+	}
+	memberJobs(file: string, members: readonly string[]): Job[] {
+		return (this.byFile.get(file)?.jobs ?? []).map(job => this.view(job, members));
+	}
 	memberEffects(file: string, members: readonly string[]): { workflow: string; job: Job; effect: StepEffect }[] {
 		return this.jobs(file).filter(entry => entry.workflow === file).flatMap(({ workflow, job }) => {
 			const effects = job.callers
@@ -144,7 +157,7 @@ class Graph {
 					...job.callers.filter(entry => members.includes(entry.caller)).flatMap(entry => entry.effects),
 				]
 				: job.effects;
-			return effects.map(effect => ({ workflow, job, effect }));
+			return effects.map(effect => ({ workflow, job: this.view(job, members), effect }));
 		});
 	}
 	effects(file: string): { workflow: string; job: Job; effect: StepEffect }[] {
@@ -340,8 +353,13 @@ const assetKinds: readonly [RegExp, string][] = [
 
 const verificationOnly =
 	/\b(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|check|typecheck)|cargo\s+(?:test|clippy|check|fmt)|deno\s+(?:test|lint|check|fmt)|go\s+(?:test|vet))\b/;
-function publicationRuns(graph: Graph, workflow: string, found: { workflow: string; job: Job }[]): string[] {
-	const jobs = graph.byFile.get(workflow)?.jobs ?? [];
+function publicationRuns(
+	graph: Graph,
+	workflow: string,
+	found: { workflow: string; job: Job }[],
+	members: readonly string[],
+): string[] {
+	const jobs = graph.memberJobs(workflow, members);
 	const pending = found.filter(entry => entry.workflow === workflow).map(entry => entry.job.id);
 	const reached = new Set<string>();
 	while (pending.length) {
@@ -362,6 +380,18 @@ const installing =
 function directoryOf(pkg: Package): string {
 	return pkg.manifest.split('/').slice(0, -1).join('/');
 }
+function defaultMembers(snapshot: Snapshot, directory: string): string[] {
+	const source = snapshot.files[directory ? `${directory}/Cargo.toml` : 'Cargo.toml'];
+	if (source === undefined) return [];
+	try {
+		const members = object(object(parseToml(source)).workspace)['default-members'];
+		return Array.isArray(members)
+			? members.flatMap(member => typeof member === 'string' ? [within(directory, member)] : [])
+			: [];
+	} catch {
+		return [];
+	}
+}
 function targetsOf(
 	graph: Graph,
 	files: string[],
@@ -370,7 +400,7 @@ function targetsOf(
 ): Target[] {
 	const { snapshot, inventory } = graph;
 	const repository = snapshot.repository.name;
-	const text = files.flatMap(file => graph.jobs(file)).flatMap(({ job }) => job.runs).join('\n');
+	const text = files.flatMap(file => graph.memberJobs(file, files)).flatMap(job => job.runs).join('\n');
 	const publishing = entries.filter(entry => entry.effect.kind === 'publish' || entry.effect.kind === 'release');
 	const byDestination = new Map<Destination, typeof publishing>();
 	for (const entry of publishing) {
@@ -413,7 +443,7 @@ function targetsOf(
 				const effects = own.map(entry =>
 					entry.effect.kind === 'publish' || entry.effect.kind === 'release' ? entry.effect.text : ''
 				);
-				const runs = publicationRuns(graph, workflow, own);
+				const runs = publicationRuns(graph, workflow, own, files);
 				const directories = [
 					...new Set([
 						...own.flatMap(entry => entry.effect.kind === 'publish' ? entry.effect.directory ?? [] : []),
@@ -429,7 +459,7 @@ function targetsOf(
 						}]
 						: []
 				);
-				const text = [...effects, ...(graph.byFile.get(workflow)?.jobs.flatMap(job => job.runs) ?? [])].join('\n');
+				const text = [...effects, ...graph.memberJobs(workflow, files).flatMap(job => job.runs)].join('\n');
 				const publishing = [...effects, ...runs].join('\n');
 				const mentioning = publishing.split('\n').filter(line => !installing.test(line)).join('\n');
 				const cites = (value: string) => new RegExp(`(?<![\\w./-])${escapeRegExp(value)}(?![\\w-])`).test(text);
@@ -482,6 +512,8 @@ function targetsOf(
 							? candidates.filter(pkg => manifests.includes(pkg.manifest))
 							: !everyCrate && scope.every(path => candidates.some(pkg => directoryOf(pkg) === path))
 							? candidates.filter(pkg => scope.includes(directoryOf(pkg)))
+							: !everyCrate && defaultMembers(snapshot, directory).length
+							? candidates.filter(pkg => inWorkspaces(defaultMembers(snapshot, directory), directoryOf(pkg)))
 							: candidates).filter(pkg => !excluded.includes(pkg.name));
 					};
 					const resolved = (invoked.length ? invoked : [{ command: '', directory: '' }]).map(resolve);
@@ -514,7 +546,7 @@ function targetsOf(
 			const selection: Target['selection'] = selections.every(entry => entry.cited) ? 'cited' : 'all';
 			if (!packages.length) {
 				const workflowText = [...new Set(found.map(entry => entry.workflow))].flatMap(workflow =>
-					graph.byFile.get(workflow)?.jobs.flatMap(job => job.runs) ?? []
+					graph.memberJobs(workflow, files).flatMap(job => job.runs)
 				).join('\n');
 				const cited = destination === 'npm'
 					? [

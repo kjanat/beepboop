@@ -45,8 +45,9 @@ export interface Job {
 	needs: string[];
 	calls?: string;
 	callRef?: string;
-	callers?: { caller: string; effects: StepEffect[] }[];
+	callers?: { caller: string; effects: StepEffect[]; runs: string[] }[];
 	own?: StepEffect[];
+	ownRuns?: string[];
 	environment?: string;
 	matrix?: string;
 	condition?: string;
@@ -143,7 +144,7 @@ const aliasCommand =
 const dryRun =
 	/--dry-run(?![\w-]|=(?:false|0)\b)|\bnpm_config_dry_run=["']?(?:true|1)\b|\bcargo\s+(?:\+\S+\s+)?publish\b[^\n;&|]*\s-[a-z]*n[a-z]*\b/i;
 const rehearsalRegistry =
-	/--registry[= ]["']?https?:\/\/(?:localhost|127\.0\.0\.1)\b|--repository(?:-url)?[= ]["']?(?:testpypi\b|https?:\/\/test\.pypi\.org)/;
+	/--registry[= ]["']?https?:\/\/(?!registry\.npmjs\.org\b|registry\.yarnpkg\.com\b)|--repository(?:-url)?[= ]["']?(?:testpypi\b|https?:\/\/test\.pypi\.org)/;
 function rehearsing(command: string): boolean {
 	const literal = command.replace(/\$\{\{[^}]*\}\}/g, '');
 	return dryRun.test(literal) || rehearsalRegistry.test(literal);
@@ -1059,9 +1060,11 @@ export function workflowModels(snapshot: Snapshot): Workflow[] {
 			const callers = incoming.map(edge => ({
 				caller: edge.caller,
 				effects: edge.bound?.get(job.id)?.effects ?? job.effects,
+				runs: edge.bound?.get(job.id)?.runs ?? job.runs,
 			}));
 			const bound = incoming.flatMap(edge => edge.bound?.get(job.id) ?? []);
 			job.own = direct ? job.effects : [];
+			job.ownRuns = direct ? job.runs : [];
 			job.callers = callers;
 			job.effects = unique([...job.own, ...callers.flatMap(entry => entry.effects)]);
 			job.runs = unique([...direct ? job.runs : [], ...bound.flatMap(variant => variant.runs)]);

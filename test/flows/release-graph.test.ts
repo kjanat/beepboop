@@ -1958,6 +1958,54 @@ describe('release streams', () => {
 			57,
 			'npm',
 		)).toEqual(['pkg:npm/a', 'pkg:npm/root-tool']);
+		const prefixedCallee =
+			'on:\n  workflow_call:\n    inputs:\n      directory:\n        type: string\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm --prefix ${{ inputs.directory }} publish\n';
+		const prefixed = planned({
+			...workspace,
+			'.github/workflows/publish.yml': prefixedCallee,
+			'.github/workflows/a.yml': caller('a', 'packages/a'),
+			'.github/workflows/b.yml': caller('b', 'packages/b'),
+		}, 58);
+		expect(
+			prefixed.graph.streams.map(proposal =>
+				proposal.targets.filter(entry => entry.destination === 'npm').flatMap(entry => entry.packages)
+			).sort(),
+		).toEqual([['pkg:npm/a'], ['pkg:npm/b']]);
+		expect(selected(
+			{
+				'Cargo.toml': '[workspace]\nmembers = ["crates/a", "crates/b"]\ndefault-members = ["crates/a"]\n',
+				'crates/a/Cargo.toml': '[package]\nname = "a"\nversion = "1.0.0"\n',
+				'crates/b/Cargo.toml': '[package]\nname = "b"\nversion = "1.0.0"\n',
+				'.github/workflows/release.yml': release('      - run: cargo publish\n'),
+			},
+			59,
+			'crates-io',
+		)).toEqual(['pkg:cargo/a']);
+		const nestedScripts = await built({
+			...workspace,
+			'packages/a/scripts/publish.sh': 'npm publish\n',
+			'.github/workflows/c.yml':
+				'on:\n  workflow_call:\n    inputs:\n      directory:\n        type: string\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - working-directory: ${{ inputs.directory }}\n        run: bash scripts/publish.sh\n',
+			'.github/workflows/b.yml':
+				'on:\n  workflow_call:\n    inputs:\n      directory:\n        type: string\njobs:\n  forward:\n    uses: ./.github/workflows/c.yml\n    with:\n      directory: ${{ inputs.directory }}\n',
+			'.github/workflows/a.yml':
+				"on: { push: { tags: ['v*'] } }\njobs:\n  start:\n    uses: ./.github/workflows/b.yml\n    with:\n      directory: packages/a\n",
+		}, 60);
+		expect(nestedScripts.files['packages/a/scripts/publish.sh']).toBe('npm publish\n');
+		expect(
+			planned({
+				'package.json': JSON.stringify({ name: '@octo/tool', version: '1.0.0' }),
+				'.github/workflows/release.yml': release('      - run: npm publish --registry https://npm.pkg.github.com\n'),
+			}, 61).graph.streams,
+		).toEqual([]);
+		expect(selected(
+			{
+				'package.json': JSON.stringify({ name: 'tool', version: '1.0.0' }),
+				'.github/workflows/release.yml': release('      - run: npm publish --registry https://registry.npmjs.org\n'),
+			},
+			62,
+			'npm',
+		)).toEqual(['pkg:npm/tool']);
 		const goModule = planned({
 			'v2/go.mod': 'module github.com/octo/mono/v2\n\ngo 1.22\n',
 			'.github/workflows/release.yml': release('      - run: gh release create "$GITHUB_REF_NAME" dist/*\n'),

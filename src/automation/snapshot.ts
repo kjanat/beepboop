@@ -92,26 +92,28 @@ function workflowDirectories(read: ReadonlyMap<string, string>, repository: stri
 	});
 	const ownWorkflow = new RegExp(`^(?:\\./|${escapeRegExp(repository)}/)\\.github/workflows/([^@]+?)(?:@.+)?$`, 'i');
 	const calls = new Map<string, Record<string, string>[]>();
-	for (const { document } of documents) {
-		for (const entry of Object.values(object(document.jobs))) {
+	const visit = (file: string, inherited: Readonly<Record<string, string>>, trail: readonly string[]) => {
+		const caller = documents.find(candidate => candidate.file === file);
+		if (!caller) return;
+		for (const entry of Object.values(object(caller.document.jobs))) {
 			const job = object(entry);
-			const file = typeof job.uses === 'string' ? ownWorkflow.exec(job.uses)?.[1] : undefined;
-			const callee = documents.find(candidate => candidate.file === file);
-			if (!file || !callee) continue;
+			const target = typeof job.uses === 'string' ? ownWorkflow.exec(job.uses)?.[1] : undefined;
+			const callee = documents.find(candidate => candidate.file === target);
+			if (!target || !callee || trail.includes(target)) continue;
 			const declared = object(object(callee.document.on).workflow_call).inputs;
 			for (const assignment of matrixCombinations(object(object(job.strategy).matrix)).concat([{}])) {
 				const supplied = Object.fromEntries(
 					Object.entries(object(job.with)).map((
 						[key, value],
-					) => [key, typeof value === 'string' ? substitute(value, assignment) : value]),
+					) => [key, typeof value === 'string' ? bindInputs(substitute(value, assignment), inherited) : value]),
 				);
-				calls.set(file, [
-					...calls.get(file) ?? [],
-					{ ...inputDefaults(declared, Object.keys(supplied)), ...literalBindings(supplied) },
-				]);
+				const bindings = { ...inputDefaults(declared, Object.keys(supplied)), ...literalBindings(supplied) };
+				calls.set(target, [...calls.get(target) ?? [], bindings]);
+				visit(target, bindings, [...trail, target]);
 			}
 		}
-	}
+	};
+	for (const { file } of documents) visit(file, {}, [file]);
 	return documents.flatMap(({ file, document }) =>
 		Object.values(object(document.jobs)).flatMap(entry => {
 			const job = object(entry);
