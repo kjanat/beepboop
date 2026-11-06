@@ -144,7 +144,7 @@ const aliasCommand =
 const dryRun =
 	/--dry-run(?![\w-]|=(?:false|0)\b)|\bnpm_config_dry_run=["']?(?:true|1)\b|\bcargo\s+(?:\+\S+\s+)?publish\b[^\n;&|]*\s-[a-z]*n[a-z]*\b/i;
 const rehearsalRegistry =
-	/--registry[= ]["']?https?:\/\/(?!registry\.npmjs\.org\b|registry\.yarnpkg\.com\b)|--repository(?:-url)?[= ]["']?(?:testpypi\b|https?:\/\/test\.pypi\.org)/;
+	/--registry[= ]["']?https?:\/\/(?!registry\.npmjs\.org\b|registry\.yarnpkg\.com\b)|--repository(?:-url)?[= ]["']?(?:testpypi\b|https?:\/\/test\.pypi\.org)|\bcargo\s+(?:\+\S+\s+)?publish\b[^\n;&|]*\s--(?:registry[= ]["']?(?!crates-io\b)[\w.-]|index\b)/;
 function rehearsing(command: string): boolean {
 	const literal = command.replace(/\$\{\{[^}]*\}\}/g, '');
 	return dryRun.test(literal) || rehearsalRegistry.test(literal);
@@ -301,6 +301,11 @@ function modulePath(snapshot: Snapshot, module: string, directory = ''): string 
 		|| path === `${relative}/__main__.py`
 	);
 }
+function isolatedLines(recipe: string): string {
+	return recipe.replace(/\\\r?\n\s*/g, ' ').split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line =>
+		line.startsWith('#') ? line : `(${line})`
+	).join('\n');
+}
 type Task = { body: string; source: string };
 const taskKinds = ['package', 'deno', 'just', 'make', 'mise'] as const;
 type TaskKind = (typeof taskKinds)[number];
@@ -343,7 +348,9 @@ function taskTable(snapshot: Snapshot, directory: string): TaskTable {
 			const prerequisites = (match[2] ?? '')
 				.replace(/\(([^)]*)\)/g, (_, inner: string) => inner.trim().split(/\s+/)[0] ?? '')
 				.split(/\s+/).filter(word => /^[A-Za-z][\w:-]*$/.test(word));
-			const recipe = kind === 'make' ? (match[3] ?? '').replace(/^([ \t]+)[@+-]+/gm, '$1') : match[3] ?? '';
+			const stripped = kind === 'make' ? (match[3] ?? '').replace(/^([ \t]+)[@+-]+/gm, '$1') : match[3] ?? '';
+			const separate = !(kind === 'make' ? /^\.ONESHELL\s*:/m.test(source) : /^[ \t]*#!/.test(stripped));
+			const recipe = separate ? isolatedLines(stripped) : stripped;
 			const body = [recipe, ...prerequisites.map(prerequisite => `${kind} ${prerequisite}`)].join('\n');
 			if (match[1]) add(kind, match[1], { body, source: path });
 		}
@@ -498,13 +505,17 @@ function taskBodies(
 			const workspaces = workspaceDirectories(snapshot);
 			const declared = declaredWorkspaces(snapshot);
 			const every = /(?:^|\s)(?:-r|--recursive|--workspaces|-ws)(?=\s|$)/.test(invocation) || selectors.includes('*');
+			const includeRoot = /(?:^|\s)(?:--include-workspace-root|-iwr)(?:=true)?(?=\s|$)/.test(invocation);
 			const bases = every
 				? [
 					...new Set(
-						[...workspaces.values()].filter(dir =>
-							dir !== directory && dir.startsWith(directory)
-							&& (!declared.length || inWorkspaces(declared, dir))
-						),
+						[
+							...(includeRoot ? [directory] : []),
+							...[...workspaces.values()].filter(dir =>
+								dir !== directory && dir.startsWith(directory)
+								&& (!declared.length || inWorkspaces(declared, dir))
+							),
+						],
 					),
 				]
 				: selectors.length

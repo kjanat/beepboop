@@ -720,27 +720,43 @@ function targetsOf(
 		}
 		if (destination === 'vscode-marketplace' || destination === 'open-vsx') {
 			const extensions = managed('vscode');
-			const directories = new Set(
-				found.flatMap(entry => entry.effect.kind === 'publish' ? entry.effect.directory ?? [] : []),
-			);
-			const rooted = found.some(entry => entry.effect.kind === 'publish' && !entry.effect.directory);
-			const located = extensions.filter(pkg =>
-				directories.has(directoryOf(pkg))
-				|| mentions(effectText, pkg.name)
-				|| (directoryOf(pkg) !== ''
-					&& new RegExp(`(?<![\\w./-])${escapeRegExp(directoryOf(pkg))}(?![\\w-])`).test(effectText))
-			);
-			const chosen = located.length
-				? located
-				: rooted && extensions.some(pkg => directoryOf(pkg) === '')
-				? extensions.filter(pkg => directoryOf(pkg) === '')
-				: extensions;
+			const textOf = (subset: typeof found) =>
+				subset.map(entry =>
+					`${entry.effect.kind === 'publish' || entry.effect.kind === 'release' ? entry.effect.text : ''}\n${
+						entry.job.runs.join('\n')
+					}`
+				).join('\n');
+			const choose = (subset: typeof found) => {
+				const subsetText = textOf(subset);
+				const directories = new Set(
+					subset.flatMap(entry => entry.effect.kind === 'publish' ? entry.effect.directory ?? [] : []),
+				);
+				const rooted = subset.some(entry => entry.effect.kind === 'publish' && !entry.effect.directory);
+				const located = extensions.filter(pkg =>
+					directories.has(directoryOf(pkg))
+					|| mentions(subsetText, pkg.name)
+					|| (directoryOf(pkg) !== ''
+						&& new RegExp(`(?<![\\w./-])${escapeRegExp(directoryOf(pkg))}(?![\\w-])`).test(subsetText))
+				);
+				return located.length
+					? located
+					: rooted && extensions.some(pkg => directoryOf(pkg) === '')
+					? extensions.filter(pkg => directoryOf(pkg) === '')
+					: extensions;
+			};
+			const chosen = choose(found);
 			targets.push({
 				...base,
 				names: chosen.length ? chosen.map(pkg => pkg.name) : [destination],
 				packages: chosen.map(packageId),
 				variants: [],
 				optionalVariants: [],
+				sources: Object.fromEntries(
+					operations.map(operation => [
+						operation,
+						choose(found.filter(entry => `${entry.workflow}#${entry.job.id}` === operation)).map(packageId),
+					]),
+				),
 			});
 			continue;
 		}

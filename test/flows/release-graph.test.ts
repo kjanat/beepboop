@@ -2060,6 +2060,68 @@ describe('release streams', () => {
 			69,
 			'npm',
 		)).toEqual(['pkg:npm/a']);
+		const publishing = (name: string) =>
+			JSON.stringify({ name, version: '1.0.0', scripts: { release: 'npm publish' } });
+		expect(selected(
+			{
+				'package.json': JSON.stringify({
+					name: 'root-tool',
+					version: '1.0.0',
+					workspaces: ['packages/*'],
+					scripts: { release: 'npm publish' },
+				}),
+				'packages/a/package.json': publishing('a'),
+				'.github/workflows/release.yml': release(
+					'      - run: npm run release --workspaces --include-workspace-root\n',
+				),
+			},
+			70,
+			'npm',
+		)).toEqual(['pkg:npm/a', 'pkg:npm/root-tool']);
+		expect(
+			planned({
+				'Cargo.toml': '[package]\nname = "widget"\nversion = "1.0.0"\n',
+				'.github/workflows/release.yml': release('      - run: cargo publish --registry private\n'),
+			}, 71).graph.streams,
+		).toEqual([]);
+		expect(selected(
+			{
+				'Cargo.toml': '[package]\nname = "widget"\nversion = "1.0.0"\n',
+				'.github/workflows/release.yml': release('      - run: cargo publish --registry crates-io\n'),
+			},
+			72,
+			'crates-io',
+		)).toEqual(['pkg:cargo/widget']);
+		expect(selected(
+			{
+				'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0' }),
+				'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+				'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+				Makefile: 'release:\n\tcd packages/a && npm publish\n\tcd packages/b && npm publish\n',
+				'.github/workflows/release.yml': release('      - run: make release\n'),
+			},
+			73,
+			'npm',
+		)).toEqual(['pkg:npm/a', 'pkg:npm/b']);
+		const extensionJob = (id: string, tag: string, directory: string) =>
+			`  ${id}:\n    runs-on: ubuntu-latest\n    if: startsWith(github.ref, 'refs/tags/${tag}')\n    steps:\n      - working-directory: ${directory}\n        run: npx vsce publish\n`;
+		const extensionPackage = (name: string) =>
+			JSON.stringify({ name, version: '1.0.0', publisher: 'acme', engines: { vscode: '^1.90.0' } });
+		const perJob = planned({
+			'ext/a/package.json': extensionPackage('a'),
+			'ext/b/package.json': extensionPackage('b'),
+			'.github/workflows/release.yml': `on: { push: { tags: ['a-v*', 'b-v*'] } }\njobs:\n${
+				extensionJob('a', 'a-v', 'ext/a')
+			}${extensionJob('b', 'b-v', 'ext/b')}`,
+		}, 74);
+		expect(
+			perJob.graph.streams.flatMap(proposal =>
+				proposal.targets.filter(entry => entry.destination === 'vscode-marketplace').map(entry => entry.sources)
+			),
+		).toContainEqual({
+			'release.yml#a': ['pkg:vscode-extension/acme/a'],
+			'release.yml#b': ['pkg:vscode-extension/acme/b'],
+		});
 		expect(
 			planned({
 				'package.json': JSON.stringify({ name: '@octo/tool', version: '1.0.0' }),
