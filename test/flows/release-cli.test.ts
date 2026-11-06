@@ -38,7 +38,7 @@ afterEach(async () => {
 });
 const run = (args: string[], answers?: unknown[]) => app.execute(args, { answers, isTTY: true, env: {} });
 function git(cwd: string, ...args: string[]) {
-	const result = Bun.spawnSync(['git', '-C', cwd, ...args], { stdout: 'pipe', stderr: 'pipe' });
+	const result = Bun.spawnSync(['git', '-C', cwd, ...args], { env: process.env, stdout: 'pipe', stderr: 'pipe' });
 	if (result.exitCode !== 0) throw new Error(result.stderr.toString());
 	return result.stdout.toString().trim();
 }
