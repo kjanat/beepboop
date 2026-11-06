@@ -485,19 +485,22 @@ function targetsOf(
 						&& (directories.includes(directoryOf(pkg)) || citesDirectory(directoryOf(pkg))))
 					|| descriptors.some(source => new RegExp(`"${escapeRegExp(pkg.name)}"(?!\\s*:)`).test(source));
 				if (manager === 'cargo') {
+					const packed = [...new Set(runs.flatMap(packDirectories))];
 					const resolve = ({ command, directory }: { command: string; directory: string }) => {
 						const named = [...command.matchAll(/(?:-p|--package)\s+["']?([\w-]+)/g)].flatMap(match => match[1] ?? []);
 						const manifests = [...command.matchAll(/--manifest-path[= ]["']?(?:\.\/)?([^\s"';&|]*Cargo\.toml)/g)]
 							.flatMap(match => within(directory, match[1] ?? ''));
-						const excluded = /--workspace\b|--all\b/.test(command)
+						const everyCrate = /--workspace\b|--all\b/.test(command);
+						const scope = directory ? [directory] : packed.length ? packed : [''];
+						const excluded = everyCrate
 							? [...command.matchAll(/--exclude[= ]["']?([\w-]+)/g)].flatMap(match => match[1] ?? [])
 							: [];
 						return (named.length && named.every(name => candidates.some(pkg => pkg.name === name))
 							? candidates.filter(pkg => named.includes(pkg.name))
 							: manifests.length && manifests.every(path => candidates.some(pkg => pkg.manifest === path))
 							? candidates.filter(pkg => manifests.includes(pkg.manifest))
-							: directories.length && directories.every(path => candidates.some(pkg => directoryOf(pkg) === path))
-							? candidates.filter(pkg => directories.includes(directoryOf(pkg)))
+							: !everyCrate && scope.every(path => candidates.some(pkg => directoryOf(pkg) === path))
+							? candidates.filter(pkg => scope.includes(directoryOf(pkg)))
 							: candidates).filter(pkg => !excluded.includes(pkg.name));
 					};
 					const resolved = (invoked.length ? invoked : [{ command: '', directory: '' }]).map(resolve);

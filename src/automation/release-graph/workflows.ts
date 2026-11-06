@@ -480,7 +480,6 @@ function taskBodies(
 								{ name, ...task },
 								...(post ? [{ name: `post${name}`, ...post }] : []),
 							);
-							break;
 						}
 					}
 				}

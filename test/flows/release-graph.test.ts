@@ -1836,6 +1836,29 @@ describe('release streams', () => {
 		}));
 		expect(parentSnapshot.files['packages/scripts/publish.sh']).toBe('npm publish\n');
 		expect([...target(stream(plan(parentSnapshot).graph, 'main'), 'npm').packages].sort()).toEqual(['pkg:npm/a']);
+		const released = (name: string) => JSON.stringify({ name, version: '1.0.0', scripts: { release: 'npm publish' } });
+		expect(selected(
+			{
+				...workspace,
+				'packages/a/package.json': released('a'),
+				'packages/b/package.json': released('b'),
+				'.github/workflows/release.yml': release('      - run: npm run release --workspaces\n'),
+			},
+			49,
+			'npm',
+		)).toEqual(['pkg:npm/a', 'pkg:npm/b']);
+		expect(selected(
+			{
+				'Cargo.toml': '[package]\nname = "root-crate"\nversion = "1.0.0"\n\n[workspace]\nmembers = ["crates/a"]\n',
+				'src/lib.rs': '',
+				'crates/a/Cargo.toml': '[package]\nname = "a"\nversion = "1.0.0"\n',
+				'.github/workflows/release.yml': release(
+					'      - working-directory: crates/a\n        run: cargo publish\n      - run: cargo publish\n',
+				),
+			},
+			50,
+			'crates-io',
+		)).toEqual(['pkg:cargo/a', 'pkg:cargo/root-crate']);
 		const goModule = planned({
 			'v2/go.mod': 'module github.com/octo/mono/v2\n\ngo 1.22\n',
 			'.github/workflows/release.yml': release('      - run: gh release create "$GITHUB_REF_NAME" dist/*\n'),
