@@ -277,6 +277,21 @@ test('an observe binding on a numbered tag glob keeps every version component', 
 	expect(execution?.state).toBe('succeeded');
 });
 
+test('a placeholder manifest version is verified at the release version', async () => {
+	const repository = world.github.create('octo/widget', {
+		'package.json': JSON.stringify({ name: 'widget', version: '0.0.0' }),
+		'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", 'npm publish'),
+	});
+	await adopt(repository);
+	world.npm.publish('widget', '1.2.3');
+	repository.refs.set('tags/v1.2.3', world.github.head(repository));
+	const [execution] = await observe(repository, 'push', 'v1.2.3');
+	expect(execution?.version).toBe('1.2.3');
+	expect(execution?.state).toBe('succeeded');
+	expect(execution?.publications.map(publication => [publication.id, publication.version, publication.outcome]))
+		.toEqual([['pkg:npm/widget', '1.2.3', 'succeeded']]);
+});
+
 async function complete(
 	repository: Repository,
 	run: { id: number; event: string; branch: string; conclusion: string; attempt: number; path?: string },

@@ -1528,7 +1528,7 @@ describe('release streams', () => {
 		expect(target(stream(plan(snapshot).graph, 'main'), 'npm').packages).toEqual(['pkg:npm/tool']);
 	});
 
-	test('job defaults, parent paths, cargo commands, tag refs and npm workspaces select their own packages', () => {
+	test('job defaults, parent paths, cargo commands, tag refs and npm workspaces select their own packages', async () => {
 		const planned = (files: Record<string, string>, id: number) =>
 			plan({
 				repository: { id, name: 'octo/mono', defaultBranch: 'main' },
@@ -1809,6 +1809,40 @@ describe('release streams', () => {
 			45,
 			'npm',
 		)).toEqual(['pkg:npm/a', 'pkg:npm/b']);
+		expect(selected(
+			{
+				...workspace,
+				'.github/workflows/release.yml': release(
+					'      - run: cd packages/${{ matrix.pkg }} && npm publish\n',
+					'    strategy:\n      matrix:\n        pkg: [a, b]\n',
+				),
+			},
+			46,
+			'npm',
+		)).toEqual(['pkg:npm/a', 'pkg:npm/b']);
+		const parentFiles: Record<string, string> = {
+			...workspace,
+			'packages/scripts/publish.sh': 'npm publish\n',
+			'.github/workflows/release.yml': release(
+				'      - working-directory: packages/a\n        run: bash ../scripts/publish.sh\n',
+			),
+		};
+		const parentSnapshot = await Effect.runPromise(buildSnapshot({
+			repository: { id: 47, name: 'octo/mono', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			entries: Object.keys(parentFiles).map(path => ({ path, type: 'blob', mode: '100644' })),
+			read: path => Effect.succeed(parentFiles[path] ?? null),
+			tags: () => Effect.succeed([]),
+		}));
+		expect(parentSnapshot.files['packages/scripts/publish.sh']).toBe('npm publish\n');
+		expect([...target(stream(plan(parentSnapshot).graph, 'main'), 'npm').packages].sort()).toEqual(['pkg:npm/a']);
+		const goModule = planned({
+			'v2/go.mod': 'module github.com/octo/mono/v2\n\ngo 1.22\n',
+			'.github/workflows/release.yml': release('      - run: gh release create "$GITHUB_REF_NAME" dist/*\n'),
+		}, 48);
+		expect(target(stream(goModule.graph, 'main'), 'go-proxy').packages).toEqual([
+			'pkg:golang/github.com/octo/mono/v2',
+		]);
 		const extension = {
 			'package.json': JSON.stringify({
 				name: 'tool',

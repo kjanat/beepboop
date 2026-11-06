@@ -3,7 +3,7 @@ import { safeVersionPath } from '@/automation/editors';
 import { pkgbuildFile } from '@/automation/managers/channels';
 import { object, yaml } from '@/automation/managers/helpers';
 import { tagQueries } from '@/automation/managers/tags';
-import { escapeRegExp, literalPrefix } from '@/automation/release-graph/workflows';
+import { escapeRegExp, literalPrefix, within } from '@/automation/release-graph/workflows';
 import type { Snapshot } from '@/automation/types';
 import { isLockfile, managerNames, managerSpec } from '@/contract/catalog';
 import { type DomainError, precondition } from '@/contract/errors';
@@ -104,6 +104,11 @@ function referencedScripts(
 			].flatMap(match => match[1] ?? []),
 		),
 	];
+	const parents = new Set(
+		[...text.matchAll(/(?<![\w./-])((?:\.\.\/)+[\w./-]*\w)/g)].flatMap(match =>
+			['', ...directories].map(directory => within(directory, match[1] ?? ''))
+		),
+	);
 	const modules = [...text.matchAll(/\bpython3?\s+-m\s+([A-Za-z_][\w.]*)/g)].flatMap(match => {
 		const relative = (match[1] ?? '').replaceAll('.', '/');
 		return ['', 'src', ...directories].flatMap(directory => {
@@ -119,6 +124,7 @@ function referencedScripts(
 		)
 			|| taskFile.test(path) && directories.includes(path.split('/').slice(0, -1).join('/'))
 			|| modules.includes(path)
+			|| script.test(path) && parents.has(path)
 			|| script.test(path)
 				&& (text.includes(path)
 					|| directories.some(directory =>

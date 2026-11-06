@@ -26,7 +26,13 @@ import {
 	workflowRunsSchema,
 } from '@/automation/github-resources';
 import { type InboxEvent, inboxEntry } from '@/automation/inbox';
-import { canVerifyPublication, discover, observedVersion, verifyPublication } from '@/automation/managers';
+import {
+	canVerifyPublication,
+	discover,
+	observedVersion,
+	placeholderVersion,
+	verifyPublication,
+} from '@/automation/managers';
 import { tagPrefix } from '@/automation/managers/tags';
 import { verifyManifest } from '@/automation/manifest';
 import { mergeArtifacts, resolveInputs } from '@/automation/outputs';
@@ -1575,7 +1581,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					);
 					const mismatched = version !== undefined && stream.versioning === 'workspace'
 						? observed.filter(p =>
-							tagPrefix(p.versionSource) === undefined && p.version !== undefined && p.version !== version
+							tagPrefix(p.versionSource) === undefined && p.version !== undefined && !placeholderVersion(p.version)
+							&& p.version !== version
 						)
 						: [];
 					if (mismatched.length) {
@@ -1590,7 +1597,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					}
 					for (const pkg of observed) {
 						if (!canVerifyPublication(pkg.manager)) continue;
-						const released = version === undefined ? pkg.version : observedVersion(pkg, branch);
+						const released = version === undefined ? pkg.version : observedVersion(pkg, branch, version);
 						if (released === undefined) continue;
 						const publication: Publication = {
 							id: packageId(pkg),

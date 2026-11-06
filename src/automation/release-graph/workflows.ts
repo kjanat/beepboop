@@ -817,31 +817,7 @@ function expandStep(step: Record<string, unknown>, matrix: Record<string, unknow
 			}
 			: {}),
 	});
-	if (
-		typeof step.uses === 'string'
-		|| (typeof directory === 'string' && new RegExp(matrixExpression.source).test(directory))
-	) {
-		return assignments.map(apply);
-	}
-	const variants = assignments.map(apply);
-	const merged = (values: unknown[]) =>
-		[...new Set(values.filter((value): value is string => typeof value === 'string'))].join('\n');
-	return [{
-		...step,
-		...(typeof step.run === 'string' ? { run: merged(variants.map(variant => variant.run)) } : {}),
-		...(step.with !== undefined
-			? {
-				with: Object.fromEntries(
-					Object.keys(object(step.with)).map(key => [
-						key,
-						typeof object(step.with)[key] === 'string'
-							? merged(variants.map(variant => object(variant.with)[key]))
-							: object(step.with)[key],
-					]),
-				),
-			}
-			: {}),
-	}];
+	return assignments.map(apply);
 }
 function disabled(condition: unknown): boolean {
 	return condition === false

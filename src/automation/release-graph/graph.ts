@@ -1165,10 +1165,8 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 		if (trigger.kind === 'tags' && !targets.some(target => target.destination === 'go-proxy')) {
 			const modules = inventory.packages.filter(pkg => {
 				if (pkg.manager !== 'go' || !publishable(pkg)) return false;
-				const directory = pkg.manifest.replace(/\/?go\.mod$/, '');
-				return directory
-					? trigger.prefix === `${directory}/v` || trigger.prefix === `${directory}/`
-					: /^v?$/.test(trigger.prefix);
+				const prefix = tagPrefix(pkg.versionSource);
+				return prefix !== undefined && (trigger.prefix === prefix || trigger.prefix === prefix.replace(/v$/, ''));
 			});
 			const last = Math.max(0, ...targets.map(target => target.phase));
 			if (modules.length) {
