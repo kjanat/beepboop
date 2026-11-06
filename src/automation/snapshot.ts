@@ -4,7 +4,10 @@ import { pkgbuildFile } from '@/automation/managers/channels';
 import { object, yaml } from '@/automation/managers/helpers';
 import { tagQueries } from '@/automation/managers/tags';
 import {
+	bindInputs,
 	escapeRegExp,
+	inputDefaults,
+	literalBindings,
 	literalPrefix,
 	matrixCombinations,
 	substitute,
@@ -46,6 +49,7 @@ export const releaseEvidence: readonly RegExp[] = [
 ];
 const contents: readonly RegExp[] = [
 	/^\.github\/beepboop\.json$/,
+	/^pnpm-workspace\.ya?ml$/,
 	/^actions\/(?:begin|prepare|report)\/action\.ya?ml$/,
 	pkgbuildFile,
 	...managerNames.flatMap(name => managerSpec(name).manifests),
@@ -78,6 +82,56 @@ const actionManifest = /(?:^|\/)action\.ya?ml$/;
 const taskFile = /\/(?:Makefile|GNUmakefile|[Jj]ustfile|\.justfile|deno\.jsonc?|\.?mise(?:\.local)?\.toml)$/;
 const recipe =
 	/(?:^|\/)(?:Makefile|GNUmakefile|[Jj]ustfile|\.justfile|package\.json|deno\.jsonc?|\.?mise(?:\.local)?\.toml|\.config\/mise\.toml|(?:\.mise\/tasks|mise-tasks|\.config\/mise\/tasks)\/[^/]+)$/;
+function workflowDirectories(read: ReadonlyMap<string, string>, repository: string): string[] {
+	const documents = [...read].flatMap(([path, source]) => {
+		if (!/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) return [];
+		const parsed = yaml(source);
+		return Result.isFailure(parsed)
+			? []
+			: [{ file: path.slice('.github/workflows/'.length), document: parsed.success }];
+	});
+	const ownWorkflow = new RegExp(`^(?:\\./|${escapeRegExp(repository)}/)\\.github/workflows/([^@]+?)(?:@.+)?$`, 'i');
+	const calls = new Map<string, Record<string, string>[]>();
+	for (const { document } of documents) {
+		for (const entry of Object.values(object(document.jobs))) {
+			const job = object(entry);
+			const file = typeof job.uses === 'string' ? ownWorkflow.exec(job.uses)?.[1] : undefined;
+			const callee = documents.find(candidate => candidate.file === file);
+			if (!file || !callee) continue;
+			const declared = object(object(callee.document.on).workflow_call).inputs;
+			for (const assignment of matrixCombinations(object(object(job.strategy).matrix)).concat([{}])) {
+				const supplied = Object.fromEntries(
+					Object.entries(object(job.with)).map((
+						[key, value],
+					) => [key, typeof value === 'string' ? substitute(value, assignment) : value]),
+				);
+				calls.set(file, [
+					...calls.get(file) ?? [],
+					{ ...inputDefaults(declared, Object.keys(supplied)), ...literalBindings(supplied) },
+				]);
+			}
+		}
+	}
+	return documents.flatMap(({ file, document }) =>
+		Object.values(object(document.jobs)).flatMap(entry => {
+			const job = object(entry);
+			const combinations = matrixCombinations(object(object(job.strategy).matrix)).concat([{}]);
+			const bindings = calls.get(file) ?? [{}];
+			const declared = [
+				object(object(job.defaults).run)['working-directory'],
+				...(Array.isArray(job.steps) ? job.steps.map(step => object(step)['working-directory']) : []),
+			].filter((value): value is string => typeof value === 'string' && value.includes('${{'));
+			return declared.flatMap(value =>
+				combinations.flatMap(combination =>
+					bindings.map(binding =>
+						bindInputs(substitute(value, combination), binding).replace(/^\.\//, '').replace(/\/$/, '')
+					)
+				)
+			).filter(value => value && !value.includes('${{'));
+		})
+	);
+}
+
 function referencedScripts(
 	repository: string,
 	blobs: readonly string[],
@@ -99,23 +153,7 @@ function referencedScripts(
 			].flatMap(match => match[1] ?? []),
 		),
 	];
-	const matrixDirectories = [...read].filter(([path]) => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)).flatMap(
-		([, source]) => {
-			const parsed = yaml(source);
-			if (Result.isFailure(parsed)) return [];
-			return Object.values(object(parsed.success.jobs)).flatMap(entry => {
-				const job = object(entry);
-				const combinations = matrixCombinations(object(object(job.strategy).matrix));
-				const declared = [
-					object(object(job.defaults).run)['working-directory'],
-					...(Array.isArray(job.steps) ? job.steps.map(step => object(step)['working-directory']) : []),
-				].filter((value): value is string => typeof value === 'string' && value.includes('${{'));
-				return declared.flatMap(value =>
-					combinations.map(combination => substitute(value, combination).replace(/^\.\//, '').replace(/\/$/, ''))
-				).filter(value => value && !value.includes('${{'));
-			});
-		},
-	);
+	const matrixDirectories = workflowDirectories(read, repository);
 	const directories = [
 		...new Set(
 			[

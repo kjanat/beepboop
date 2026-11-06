@@ -466,7 +466,9 @@ function targetsOf(
 				if (manager === 'cargo') {
 					const packed = [...new Set(runs.flatMap(packDirectories))];
 					const resolve = ({ command, directory }: { command: string; directory: string }) => {
-						const named = [...command.matchAll(/(?:-p|--package)\s+["']?([\w-]+)/g)].flatMap(match => match[1] ?? []);
+						const named = [...command.matchAll(/(?:-p|--package)(?:\s+|=)["']?([\w-]+)/g)].flatMap(match =>
+							match[1] ?? []
+						);
 						const manifests = [...command.matchAll(/--manifest-path[= ]["']?(?:\.\/)?([^\s"';&|]*Cargo\.toml)/g)]
 							.flatMap(match => within(directory, match[1] ?? ''));
 						const everyCrate = /--workspace\b|--all\b/.test(command);

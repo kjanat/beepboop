@@ -1910,6 +1910,54 @@ describe('release streams', () => {
 			'pkg:npm/a',
 			'pkg:npm/b',
 		]);
+		const built = (files: Record<string, string>, id: number) =>
+			Effect.runPromise(buildSnapshot({
+				repository: { id, name: 'octo/mono', defaultBranch: 'main' },
+				sha: 'a'.repeat(40),
+				entries: Object.keys(files).map(path => ({ path, type: 'blob', mode: '100644' })),
+				read: path => Effect.succeed(files[path] ?? null),
+				tags: () => Effect.succeed([]),
+			}));
+		const pnpm = await built({
+			'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0' }),
+			'pnpm-workspace.yaml': "packages:\n  - 'packages/*'\n",
+			'packages/a/package.json': released('a'),
+			'examples/demo/package.json': released('demo'),
+			'.github/workflows/release.yml': release('      - run: pnpm -r run release\n'),
+		}, 54);
+		expect([...target(stream(plan(pnpm).graph, 'main'), 'npm').packages].sort()).toEqual(['pkg:npm/a']);
+		const reusableScripts = await built({
+			...workspace,
+			'packages/a/scripts/publish.sh': 'npm publish\n',
+			'.github/workflows/publish.yml':
+				'on:\n  workflow_call:\n    inputs:\n      directory:\n        type: string\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - working-directory: ${{ inputs.directory }}\n        run: bash scripts/publish.sh\n',
+			'.github/workflows/release.yml':
+				"on: { push: { tags: ['v*'] } }\njobs:\n  release:\n    uses: ./.github/workflows/publish.yml\n    with:\n      directory: packages/a\n",
+		}, 55);
+		expect(reusableScripts.files['packages/a/scripts/publish.sh']).toBe('npm publish\n');
+		expect(selected(
+			{
+				'Cargo.toml': '[workspace]\nmembers = ["crates/a", "crates/b"]\n',
+				'crates/a/Cargo.toml': '[package]\nname = "a"\nversion = "1.0.0"\n',
+				'crates/b/Cargo.toml': '[package]\nname = "b"\nversion = "1.0.0"\n',
+				'.github/workflows/release.yml': release('      - run: cargo publish --package=a\n'),
+			},
+			56,
+			'crates-io',
+		)).toEqual(['pkg:cargo/a']);
+		expect(selected(
+			{
+				'package.json': JSON.stringify({
+					name: 'root-tool',
+					version: '1.0.0',
+					scripts: { prepublishOnly: 'npm --prefix packages/a publish' },
+				}),
+				'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+				'.github/workflows/release.yml': release('      - run: npm publish\n'),
+			},
+			57,
+			'npm',
+		)).toEqual(['pkg:npm/a', 'pkg:npm/root-tool']);
 		const goModule = planned({
 			'v2/go.mod': 'module github.com/octo/mono/v2\n\ngo 1.22\n',
 			'.github/workflows/release.yml': release('      - run: gh release create "$GITHUB_REF_NAME" dist/*\n'),

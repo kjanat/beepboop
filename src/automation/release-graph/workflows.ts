@@ -546,6 +546,7 @@ export function within(directory: string, change: string): string {
 	return parts.join('/');
 }
 const traversalLimit = 512;
+const publishHooks = ['prepublishOnly', 'prepack', 'prepare', 'postpack', 'publish', 'postpublish'];
 function scriptEffects(
 	snapshot: Snapshot,
 	run: string,
@@ -589,7 +590,10 @@ function scriptEffects(
 			effects.push(...nested.effects);
 			runs.push(...nested.runs);
 		}
-		for (const task of taskBodies(snapshot, line, here)) {
+		const hooks = /\bnpm\b[^\n;&|]*\spublish(?![\w:-])/.test(line) && !/--ignore-scripts\b/.test(line)
+			? publishHooks.flatMap(hook => taskBodies(snapshot, line.replace(/\bpublish\b/, `run ${hook}`), here))
+			: [];
+		for (const task of [...taskBodies(snapshot, line, here), ...hooks]) {
 			const key = `${task.source}#${task.name}`;
 			if (seen.has(key)) continue;
 			seen.add(key);
@@ -873,7 +877,7 @@ function triggerList(value: unknown, key: string): string[] {
 }
 
 const inputExpression = /\$\{\{\s*(?:github\.event\.)?inputs\.([\w-]+)\s*\}\}/g;
-function literalBindings(values: Record<string, unknown>): Record<string, string> {
+export function literalBindings(values: Record<string, unknown>): Record<string, string> {
 	const bindings: Record<string, string> = {};
 	for (const [key, input] of Object.entries(values)) {
 		if (
@@ -885,7 +889,7 @@ function literalBindings(values: Record<string, unknown>): Record<string, string
 	}
 	return bindings;
 }
-function inputDefaults(declared: unknown, passed: readonly string[]): Record<string, string> {
+export function inputDefaults(declared: unknown, passed: readonly string[]): Record<string, string> {
 	return Object.fromEntries(
 		Object.entries(object(declared)).flatMap(([key, input]) => {
 			const fallback = matrixScalar(object(input).default);
@@ -895,7 +899,7 @@ function inputDefaults(declared: unknown, passed: readonly string[]): Record<str
 		}),
 	);
 }
-function bindInputs(text: string, bindings: Readonly<Record<string, string>>): string {
+export function bindInputs(text: string, bindings: Readonly<Record<string, string>>): string {
 	return text.replace(inputExpression, (expression, key: string) => bindings[key] ?? expression);
 }
 function bindStep(step: Record<string, unknown>, bindings: Readonly<Record<string, string>>): Record<string, unknown> {
