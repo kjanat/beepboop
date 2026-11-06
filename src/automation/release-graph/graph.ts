@@ -364,6 +364,7 @@ function publicationRuns(
 	workflow: string,
 	found: { workflow: string; job: Job }[],
 	members: readonly string[],
+	scoped = false,
 ): string[] {
 	const jobs = graph.memberJobs(workflow, members);
 	const pending = found.filter(entry => entry.workflow === workflow).map(entry => entry.job.id);
@@ -374,7 +375,8 @@ function publicationRuns(
 		reached.add(id);
 		pending.push(...(jobs.find(job => job.id === id)?.needs ?? []));
 	}
-	return jobs.filter(job => reached.has(job.id)).flatMap(job => job.runs).filter(run =>
+	const own = new Set(found.filter(entry => entry.workflow === workflow).map(entry => entry.job.id));
+	return jobs.filter(job => reached.has(job.id) && !(scoped && own.has(job.id))).flatMap(job => job.runs).filter(run =>
 		!verificationOnly.test(run) || /\b(?:publish|pack|package|build)\b/.test(run)
 	);
 }
@@ -468,7 +470,13 @@ function targetsOf(
 				const effects = own.map(entry =>
 					entry.effect.kind === 'publish' || entry.effect.kind === 'release' ? entry.effect.text : ''
 				);
-				const runs = publicationRuns(graph, workflow, own, files);
+				const runs = publicationRuns(
+					graph,
+					workflow,
+					own,
+					files,
+					own.some(entry => entry.effect.kind === 'publish' && entry.effect.condition !== undefined),
+				);
 				const directories = [
 					...new Set([
 						...own.flatMap(entry => {
@@ -563,7 +571,7 @@ function targetsOf(
 					&& !pathArgument.test(entry.effect.text)
 				);
 				const scope = workspaceScope(commands);
-				const nested = scope.all
+				const nested = scope.all || scope.recursive
 					? candidates.filter(pkg =>
 						inWorkspaces(declaredWorkspaces(snapshot), directoryOf(pkg))
 						|| (scope.root && directoryOf(pkg) === '')

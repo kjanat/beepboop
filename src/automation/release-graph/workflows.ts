@@ -635,7 +635,7 @@ function actionEffects(
 			for (const entry of Array.isArray(steps) ? steps : []) {
 				const step = bindStep(object(entry), bindings);
 				const stepped: StepEffect[] = [];
-				const nested = typeof step.uses === 'string' ? stepEffects(snapshot, step, file, seen) : undefined;
+				const nested = typeof step.uses === 'string' ? stepEffects(snapshot, step, file, new Set(seen)) : undefined;
 				if (nested) {
 					stepped.push(...nested.effects);
 					runs.push(...nested.runs);
@@ -650,7 +650,7 @@ function actionEffects(
 					const called = scriptEffects(
 						snapshot,
 						step.run.replace(/\$\{?GITHUB_ACTION_PATH\}?\//g, `${path}/`),
-						seen,
+						new Set(seen),
 						directory,
 					);
 					stepped.push(...called.effects);

@@ -2223,6 +2223,61 @@ describe('release streams', () => {
 		const composedBindings = composed.choices.flatMap(choice => choice.observe ?? []);
 		expect(composedBindings.find(binding => binding.ref === 'refs/tags/a-v*')?.publications).toEqual(['pkg:npm/a']);
 		expect(composedBindings.find(binding => binding.ref === 'refs/tags/b-v*')?.publications).toEqual(['pkg:npm/b']);
+		const guardedPrefix = planned({
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+			'.github/workflows/release.yml':
+				"on: { push: { tags: ['a-v*', 'b-v*'] } }\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - if: startsWith(github.ref, 'refs/tags/a-v')\n        run: npm --prefix packages/a publish\n      - if: startsWith(github.ref, 'refs/tags/b-v')\n        run: npm --prefix packages/b publish\n",
+		}, 85);
+		const guardedPrefixBindings = guardedPrefix.choices.flatMap(choice => choice.observe ?? []);
+		expect(guardedPrefixBindings.find(binding => binding.ref === 'refs/tags/a-v*')?.publications).toEqual([
+			'pkg:npm/a',
+		]);
+		expect(guardedPrefixBindings.find(binding => binding.ref === 'refs/tags/b-v*')?.publications).toEqual([
+			'pkg:npm/b',
+		]);
+		const helperFiles: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'widget', version: '1.0.0' }),
+			'scripts/publish.sh': 'npm publish\n',
+			'actions/publish/action.yml':
+				"runs:\n  using: composite\n  steps:\n    - if: startsWith(github.ref, 'refs/tags/a-v')\n      shell: bash\n      run: bash scripts/publish.sh\n    - if: startsWith(github.ref, 'refs/tags/b-v')\n      shell: bash\n      run: bash scripts/publish.sh\n",
+			'.github/workflows/release.yml':
+				"on: { push: { tags: ['a-v*', 'b-v*'] } }\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./actions/publish\n",
+		};
+		const helperJob = workflowModels({
+			repository: { id: 86, name: 'octo/widget', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files: helperFiles,
+			paths: Object.keys(helperFiles),
+		}).flatMap(model => model.jobs).flatMap(job => job.effects).flatMap(effect =>
+			effect.kind === 'publish' ? effect.condition ?? [] : []
+		);
+		expect(helperJob.some(condition => condition.includes('a-v'))).toBe(true);
+		expect(helperJob.some(condition => condition.includes('b-v'))).toBe(true);
+		expect(selected(
+			{
+				'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0' }),
+				'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+				'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+				'.github/workflows/release.yml': release(
+					'      - working-directory: ${{ matrix.package.directory }}\n        run: npm publish\n',
+					'    strategy:\n      matrix:\n        package:\n          - directory: packages/a\n          - directory: packages/b\n',
+				),
+			},
+			87,
+			'npm',
+		)).toEqual(['pkg:npm/a', 'pkg:npm/b']);
+		expect(selected(
+			{
+				'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0', private: true }),
+				'pnpm-workspace.yaml': "packages:\n  - 'packages/*'\n",
+				'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+				'examples/demo/package.json': JSON.stringify({ name: 'demo', version: '1.0.0' }),
+				'.github/workflows/release.yml': release('      - run: pnpm -r publish --no-git-checks\n'),
+			},
+			88,
+			'npm',
+		)).toEqual(['pkg:npm/a']);
 		expect(
 			planned({
 				'package.json': JSON.stringify({ name: '@octo/tool', version: '1.0.0' }),

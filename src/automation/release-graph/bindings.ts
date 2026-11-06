@@ -5,28 +5,40 @@ export function matrixScalar(value: unknown): string | undefined {
 		? String(value)
 		: undefined;
 }
+function flatten(key: string, value: unknown): Record<string, string>[] {
+	const scalar = matrixScalar(value);
+	if (scalar !== undefined) return [{ [key]: scalar }];
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return [];
+	const merged: Record<string, string> = {};
+	for (const [name, inner] of Object.entries(object(value))) {
+		for (const part of flatten(`${key}.${name}`, inner)) Object.assign(merged, part);
+	}
+	return Object.keys(merged).length ? [merged] : [];
+}
+function flatRow(entry: Record<string, unknown>): Record<string, string> {
+	const merged: Record<string, string> = {};
+	for (const [key, value] of Object.entries(entry)) {
+		for (const part of flatten(key, value)) Object.assign(merged, part);
+	}
+	return merged;
+}
 export function matrixCombinations(matrix: Record<string, unknown>): Record<string, string>[] {
 	const keys = Object.keys(matrix).filter(key => key !== 'include' && key !== 'exclude' && Array.isArray(matrix[key]));
 	let combinations: Record<string, string>[] = keys.length ? [{}] : [];
+	const original = new Set<string>();
 	for (const key of keys) {
-		const values = (Array.isArray(matrix[key]) ? matrix[key] : []).flatMap(value => matrixScalar(value) ?? []);
+		const values = (Array.isArray(matrix[key]) ? matrix[key] : []).flatMap(value => flatten(key, value));
 		if (combinations.length * values.length > 256) break;
-		combinations = combinations.flatMap(combination => values.map(value => ({ ...combination, [key]: value })));
+		for (const value of values) for (const name of Object.keys(value)) original.add(name);
+		combinations = combinations.flatMap(combination => values.map(value => ({ ...combination, ...value })));
 	}
-	const row = (entry: Record<string, unknown>) =>
-		Object.fromEntries(
-			Object.entries(entry).flatMap(([key, value]) => {
-				const scalar = matrixScalar(value);
-				return scalar === undefined ? [] : [[key, scalar] as const];
-			}),
-		);
+	const row = flatRow;
 	const exclusions = (Array.isArray(matrix.exclude) ? matrix.exclude : []).map(entry => row(object(entry))).filter(
 		entry => Object.keys(entry).length > 0,
 	);
 	combinations = combinations.filter(combination =>
 		!exclusions.some(entry => Object.entries(entry).every(([key, value]) => combination[key] === value))
 	);
-	const original = new Set(keys);
 	const added: Record<string, string>[] = [];
 	for (const entry of (Array.isArray(matrix.include) ? matrix.include : []).map(item => row(object(item)))) {
 		if (!Object.keys(entry).length) continue;
@@ -44,7 +56,7 @@ export function matrixCombinations(matrix: Record<string, unknown>): Record<stri
 	}
 	return [...combinations, ...added];
 }
-export const matrixExpression = /\$\{\{\s*matrix\.([\w-]+)\s*\}\}/g;
+export const matrixExpression = /\$\{\{\s*matrix\.([\w-]+(?:\.[\w-]+)*)\s*\}\}/g;
 export function substitute(text: string, assignment: Record<string, string>): string {
 	return text.replace(matrixExpression, (expression, key: string) => assignment[key] ?? expression);
 }
