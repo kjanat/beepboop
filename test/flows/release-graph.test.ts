@@ -1616,6 +1616,35 @@ describe('release streams', () => {
 			27,
 			'crates-io',
 		)).toEqual(['pkg:cargo/a']);
+		expect(selected(
+			{
+				...workspace,
+				'examples/demo/package.json': JSON.stringify({ name: 'demo', version: '1.0.0' }),
+				'.github/workflows/release.yml': release('      - run: npm publish --workspaces --include-workspace-root\n'),
+			},
+			28,
+			'npm',
+		)).toEqual(['pkg:npm/a', 'pkg:npm/b', 'pkg:npm/root-tool']);
+		expect(selected(
+			{
+				...workspace,
+				'scripts/publish.sh': 'npm publish\n',
+				'.github/workflows/release.yml': release(
+					'      - run: |\n          cd packages/a\n          bash ../../scripts/publish.sh\n          cd ../b\n          bash ../../scripts/publish.sh\n',
+				),
+			},
+			29,
+			'npm',
+		)).toEqual(['pkg:npm/a', 'pkg:npm/b']);
+		expect(selected(
+			{
+				'package.json': JSON.stringify({ name: 'tool', version: '1.0.0' }),
+				'scripts/release.sh': 'npm publish\n',
+				'.github/workflows/release.yml': release('      - run: npm publish --dry-run && bash scripts/release.sh\n'),
+			},
+			30,
+			'npm',
+		)).toEqual(['pkg:npm/tool']);
 		const families = {
 			'packages/core/package.json': JSON.stringify({ name: 'core', version: '1.0.0' }),
 			'packages/cli/package.json': JSON.stringify({ name: 'cli', version: '2.0.0' }),

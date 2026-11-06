@@ -498,6 +498,18 @@ export function within(directory: string, change: string): string {
 	}
 	return parts.join('/');
 }
+function liveCommands(line: string): string {
+	const parts = line.split(/(\s*(?:&&|\|\||;|\|)\s*)/);
+	const commands: { text: string; separator: string }[] = [];
+	for (let index = 0; index < parts.length; index += 2) {
+		commands.push({ text: parts[index] ?? '', separator: parts[index + 1] ?? '' });
+	}
+	const kept = commands.filter(command => !rehearsing(command.text));
+	return kept.map((command, index) => command.text + (index < kept.length - 1 ? command.separator || ' && ' : '')).join(
+		'',
+	);
+}
+const traversalLimit = 512;
 function scriptEffects(
 	snapshot: Snapshot,
 	run: string,
@@ -506,8 +518,9 @@ function scriptEffects(
 ): { effects: StepEffect[]; runs: string[] } {
 	const effects: StepEffect[] = [], runs: string[] = [];
 	let current = within('', directory ?? '');
-	for (const line of lines(run)) {
-		if (rehearsing(line)) continue;
+	for (const original of lines(run)) {
+		const line = liveCommands(original).trim();
+		if (!line) continue;
 		const alone = /^cd\s+["']?([^\s"';&|]+)["']?$/.exec(line);
 		if (alone) {
 			current = within(current, alone[1] ?? '');
@@ -521,8 +534,11 @@ function scriptEffects(
 			const relative = here ? within(here, called) : undefined;
 			const path = relative !== undefined && snapshot.files[relative] !== undefined ? relative : called;
 			const source = snapshot.files[path];
-			const key = `${path} ${match[2] ?? ''}`;
-			if (!source || seen.has(key) || /(?:^|\/)(?:tests?|__tests__|fixtures)\/|\.test\./.test(path)) continue;
+			const key = `${path} ${match[2] ?? ''} ${here}`;
+			if (
+				!source || seen.size >= traversalLimit || seen.has(key)
+				|| /(?:^|\/)(?:tests?|__tests__|fixtures)\/|\.test\./.test(path)
+			) continue;
 			seen.add(key);
 			const text = segment(source, match[2]);
 			effects.push(...commandEffects(text, path, here));
@@ -536,9 +552,9 @@ function scriptEffects(
 		}
 		for (const match of line.matchAll(moduleCall)) {
 			const path = modulePath(snapshot, match[1] ?? '');
-			const key = `${path ?? ''} ${match[2] ?? ''}`;
+			const key = `${path ?? ''} ${match[2] ?? ''} ${here}`;
 			const source = path ? snapshot.files[path] : undefined;
-			if (!path || !source || seen.has(key)) continue;
+			if (!path || !source || seen.size >= traversalLimit || seen.has(key)) continue;
 			seen.add(key);
 			const choice = match[2] ? new RegExp(`["']${match[2]}["']`).test(source) : false;
 			const text = match[2] ? segment(source, match[2], !choice) : source;

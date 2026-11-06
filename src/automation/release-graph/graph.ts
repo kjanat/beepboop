@@ -502,10 +502,12 @@ function targetsOf(
 					entry.effect.kind === 'publish' && !entry.effect.directory && !qualified.test(entry.effect.text)
 					&& !pathArgument.test(entry.effect.text)
 				);
-				const nested =
-					/(?:^|\s)(?:--workspaces|-ws)(?=\s|$)/.test(commands) && !/--include-workspace-root\b/.test(commands)
-						? candidates.filter(pkg => inWorkspaces(workspacePatterns(snapshot), directoryOf(pkg)))
-						: [];
+				const nested = /(?:^|\s)(?:--workspaces|-ws)(?=\s|$)/.test(commands)
+					? candidates.filter(pkg =>
+						inWorkspaces(workspacePatterns(snapshot), directoryOf(pkg))
+						|| (/--include-workspace-root\b/.test(commands) && directoryOf(pkg) === '')
+					)
+					: [];
 				const chosen = candidates.filter(pkg => covered(pkg) || (rooted && root.includes(pkg)) || nested.includes(pkg));
 				const elsewhere = directories.length > 0 || qualified.test(commands);
 				return chosen.length
