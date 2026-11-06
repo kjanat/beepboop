@@ -2486,6 +2486,35 @@ describe('release streams', () => {
 			110,
 			'npm',
 		)).toEqual(['pkg:npm/root-tool']);
+		expect(selected(
+			{
+				'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0', private: true }),
+				'pnpm-workspace.yaml': "packages:\n  - 'packages/*'\n",
+				'packages/a/package.json': JSON.stringify({
+					name: 'a',
+					version: '1.0.0',
+					scripts: { release: 'npm publish' },
+				}),
+				'packages/b/package.json': JSON.stringify({
+					name: 'b',
+					version: '1.0.0',
+					scripts: { release: 'npm publish' },
+				}),
+				'.github/workflows/release.yml': release('      - run: pnpm --filter a -r run release\n'),
+			},
+			111,
+			'npm',
+		)).toEqual(['pkg:npm/a']);
+		const bareGated = (value: string, id: number) =>
+			planned({
+				...widget,
+				'.github/workflows/publish.yml':
+					'on:\n  workflow_call:\n    inputs:\n      publish:\n        type: boolean\njobs:\n  publish:\n    if: inputs.publish\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm publish\n',
+				'.github/workflows/release.yml':
+					`on: { push: { tags: ['v*'] } }\njobs:\n  call:\n    uses: ./.github/workflows/publish.yml\n    with: { publish: ${value} }\n`,
+			}, id).graph.streams.length;
+		expect(bareGated('false', 112)).toBe(0);
+		expect(bareGated('true', 113)).toBe(1);
 		const negated = planned({
 			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
 			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),

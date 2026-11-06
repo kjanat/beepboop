@@ -2,14 +2,7 @@ import { Result } from 'effect';
 import { type ParseError, parse as parseJsonc } from 'jsonc-parser';
 import { parse as parseToml } from 'smol-toml';
 import { object, yaml } from '@/automation/managers/helpers';
-import {
-	bindInputs,
-	bindStep,
-	disabled,
-	expandStep,
-	inputExpression,
-	staticGuard,
-} from '@/automation/release-graph/bindings';
+import { bindInputs, bindStep, disabled, expandStep, staticGuard } from '@/automation/release-graph/bindings';
 import {
 	actionBindings,
 	liveJobs,
@@ -467,7 +460,8 @@ function taskBodies(
 			const workspaces = workspaceDirectories(snapshot);
 			const declared = declaredWorkspaces(snapshot);
 			const scope = workspaceScope(invocation);
-			const every = scope.all || scope.recursive || selectors.includes('*');
+			const named = selectors.filter(selector => selector !== '*');
+			const every = (scope.all || scope.recursive || selectors.includes('*')) && !named.length;
 			const bases = every
 				? [
 					...new Set(
@@ -859,7 +853,7 @@ export function workflowModels(snapshot: Snapshot): Workflow[] {
 	const edges = new Map<string, { caller: string; bound?: Map<string, Job> }[]>();
 	for (const call of workflowCalls(documents, snapshot.repository.name)) {
 		const usable = Object.keys(call.bindings).length > 0
-			&& new RegExp(inputExpression.source).test(JSON.stringify(call.callee.document.jobs));
+			&& /\binputs\.[\w-]+/.test(JSON.stringify(call.callee.document.jobs));
 		const bound = usable || call.guard !== undefined
 			? new Map(
 				liveJobs(call.callee.document).map(([id, job]) => {
