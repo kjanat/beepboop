@@ -93,7 +93,9 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 					const [file = '', job = ''] = operation.split('#');
 					const condition = members.get(file)?.conditions[job];
 					if (prefix === undefined || !condition || families.length < 2) return true;
-					const named = families.filter(family => new RegExp(`['"]${escapeRegExp(family)}`).test(condition));
+					const named = families.filter(family =>
+						new RegExp(`['"](?:refs/tags/)?${escapeRegExp(family)}`).test(condition)
+					);
 					return !named.length || named.includes(prefix);
 				};
 				const ownOperation = (operation: string) => files.some(file => operation.startsWith(`${file}#`));

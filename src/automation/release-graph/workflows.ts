@@ -518,7 +518,7 @@ function scriptEffects(
 		if (chained && !chained[1]) current = here;
 		for (const match of line.matchAll(scriptCall)) {
 			const called = (match[1] ?? '').replace(/^\.\//, '');
-			const relative = here ? `${here}/${called}` : undefined;
+			const relative = here ? within(here, called) : undefined;
 			const path = relative !== undefined && snapshot.files[relative] !== undefined ? relative : called;
 			const source = snapshot.files[path];
 			const key = `${path} ${match[2] ?? ''}`;
@@ -836,15 +836,11 @@ export function workflowModels(snapshot: Snapshot): Workflow[] {
 			for (const entry of steps) {
 				const raw = object(entry);
 				if (disabled(raw.if)) continue;
-				for (const step of expandStep(raw, matrix)) {
-					const result = stepEffects(
-						snapshot,
-						typeof directory === 'string' && step['working-directory'] === undefined
-							? { ...step, 'working-directory': directory }
-							: step,
-						path,
-						new Set(),
-					);
+				const located = typeof directory === 'string' && raw['working-directory'] === undefined
+					? { ...raw, 'working-directory': directory }
+					: raw;
+				for (const step of expandStep(located, matrix)) {
+					const result = stepEffects(snapshot, step, path, new Set());
 					effects.push(...result.effects);
 					runs.push(...result.runs);
 					if (result.action) actions.push(result.action);

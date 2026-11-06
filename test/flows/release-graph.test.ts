@@ -1528,6 +1528,98 @@ describe('release streams', () => {
 		expect(target(stream(plan(snapshot).graph, 'main'), 'npm').packages).toEqual(['pkg:npm/tool']);
 	});
 
+	test('job defaults, parent paths, cargo commands, tag refs and npm workspaces select their own packages', () => {
+		const planned = (files: Record<string, string>, id: number) =>
+			plan({
+				repository: { id, name: 'octo/mono', defaultBranch: 'main' },
+				sha: 'a'.repeat(40),
+				files,
+				paths: Object.keys(files),
+			});
+		const selected = (files: Record<string, string>, id: number, destination: Destination) =>
+			[...target(stream(planned(files, id).graph, 'main'), destination).packages].sort();
+		const workspace = {
+			'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0', workspaces: ['packages/*'] }),
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+		};
+		const release = (steps: string, extra = '') =>
+			`on: { push: { tags: ['v*'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n${extra}    steps:\n${steps}`;
+		expect(selected(
+			{
+				...workspace,
+				'.github/workflows/release.yml': release(
+					'      - run: npm publish\n',
+					'    strategy:\n      matrix:\n        pkg: [a]\n    defaults:\n      run:\n        working-directory: packages/${{ matrix.pkg }}\n',
+				),
+			},
+			20,
+			'npm',
+		)).toEqual(['pkg:npm/a']);
+		expect(selected(
+			{
+				...workspace,
+				'scripts/publish.sh': 'npm publish\n',
+				'.github/workflows/release.yml': release(
+					'      - working-directory: packages/a\n        run: bash ../../scripts/publish.sh\n',
+				),
+			},
+			21,
+			'npm',
+		)).toEqual(['pkg:npm/a']);
+		expect(selected(
+			{
+				'Cargo.toml': '[workspace]\nmembers = ["crates/a", "crates/b"]\n',
+				'crates/a/Cargo.toml': '[package]\nname = "a"\nversion = "1.0.0"\n',
+				'crates/b/Cargo.toml': '[package]\nname = "b"\nversion = "1.0.0"\n',
+				'.github/workflows/release.yml': release(
+					'      - run: cargo publish -p a\n      - run: cargo publish --manifest-path crates/b/Cargo.toml\n',
+				),
+			},
+			22,
+			'crates-io',
+		)).toEqual(['pkg:cargo/a', 'pkg:cargo/b']);
+		expect(selected(
+			{
+				...workspace,
+				'.github/workflows/release.yml': release('      - run: npm publish --workspaces\n'),
+			},
+			23,
+			'npm',
+		)).toEqual(['pkg:npm/a', 'pkg:npm/b']);
+		expect(selected(
+			{
+				...workspace,
+				'.github/workflows/release.yml': release('      - run: npm publish --workspaces --include-workspace-root\n'),
+			},
+			24,
+			'npm',
+		)).toEqual(['pkg:npm/a', 'pkg:npm/b', 'pkg:npm/root-tool']);
+		const families = {
+			'packages/core/package.json': JSON.stringify({ name: 'core', version: '1.0.0' }),
+			'packages/cli/package.json': JSON.stringify({ name: 'cli', version: '2.0.0' }),
+			'.github/workflows/release.yml': [
+				"on: { push: { tags: ['core-v*', 'cli-v*'] } }",
+				'jobs:',
+				'  core:',
+				"    if: startsWith(github.ref, 'refs/tags/core-v')",
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - run: cd packages/core && npm publish',
+				'  cli:',
+				"    if: startsWith(github.ref, 'refs/tags/cli-v')",
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - run: cd packages/cli && npm publish',
+				'',
+			].join('\n'),
+		};
+		expect(planned(families, 25).choices[0]?.observe?.map(binding => [binding.ref, binding.publications])).toEqual([
+			['refs/tags/core-v*', ['pkg:npm/core']],
+			['refs/tags/cli-v*', ['pkg:npm/cli']],
+		]);
+	});
+
 	test('runner flag lists parse in linear time and TestPyPI is matched by host', () => {
 		const flags = ` ${'-import '.repeat(5000)}x`;
 		const started = performance.now();

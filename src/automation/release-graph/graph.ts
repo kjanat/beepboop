@@ -408,6 +408,7 @@ function targetsOf(
 					]),
 				];
 				const commands = effects.join('\n');
+				const invoked = effects.filter(Boolean);
 				const text = [...effects, ...(graph.byFile.get(workflow)?.jobs.flatMap(job => job.runs) ?? [])].join('\n');
 				const publishing = [...effects, ...runs].join('\n');
 				const mentioning = publishing.split('\n').filter(line => !installing.test(line)).join('\n');
@@ -443,27 +444,38 @@ function targetsOf(
 						&& (directories.includes(directoryOf(pkg)) || citesDirectory(directoryOf(pkg))))
 					|| descriptors.some(source => new RegExp(`"${escapeRegExp(pkg.name)}"(?!\\s*:)`).test(source));
 				if (manager === 'cargo') {
-					const named = [...commands.matchAll(/(?:-p|--package)\s+["']?([\w-]+)/g)].flatMap(match => match[1] ?? []);
-					const manifests = [...commands.matchAll(/--manifest-path[= ]["']?(?:\.\/)?([^\s"';&|]*Cargo\.toml)/g)]
-						.flatMap(match => match[1] ?? []);
-					const excluded = /--workspace\b|--all\b/.test(commands)
-						? [...commands.matchAll(/--exclude[= ]["']?([\w-]+)/g)].flatMap(match => match[1] ?? [])
-						: [];
-					const crates = (named.length && named.every(name => candidates.some(pkg => pkg.name === name))
-						? candidates.filter(pkg => named.includes(pkg.name))
-						: manifests.length && manifests.every(path => candidates.some(pkg => pkg.manifest === path))
-						? candidates.filter(pkg => manifests.includes(pkg.manifest))
-						: directories.length && directories.every(path => candidates.some(pkg => directoryOf(pkg) === path))
-						? candidates.filter(pkg => directories.includes(directoryOf(pkg)))
-						: candidates).filter(pkg => !excluded.includes(pkg.name));
-					return { operation, packages: crates, cited: true };
+					const resolve = (command: string) => {
+						const named = [...command.matchAll(/(?:-p|--package)\s+["']?([\w-]+)/g)].flatMap(match => match[1] ?? []);
+						const manifests = [...command.matchAll(/--manifest-path[= ]["']?(?:\.\/)?([^\s"';&|]*Cargo\.toml)/g)]
+							.flatMap(match => match[1] ?? []);
+						const excluded = /--workspace\b|--all\b/.test(command)
+							? [...command.matchAll(/--exclude[= ]["']?([\w-]+)/g)].flatMap(match => match[1] ?? [])
+							: [];
+						return (named.length && named.every(name => candidates.some(pkg => pkg.name === name))
+							? candidates.filter(pkg => named.includes(pkg.name))
+							: manifests.length && manifests.every(path => candidates.some(pkg => pkg.manifest === path))
+							? candidates.filter(pkg => manifests.includes(pkg.manifest))
+							: directories.length && directories.every(path => candidates.some(pkg => directoryOf(pkg) === path))
+							? candidates.filter(pkg => directories.includes(directoryOf(pkg)))
+							: candidates).filter(pkg => !excluded.includes(pkg.name));
+					};
+					const resolved = (invoked.length ? invoked : ['']).map(resolve);
+					return {
+						operation,
+						packages: candidates.filter(pkg => resolved.some(list => list.includes(pkg))),
+						cited: true,
+					};
 				}
 				const root = candidates.filter(pkg => directoryOf(pkg) === '');
 				const rooted = own.some(entry =>
 					entry.effect.kind === 'publish' && !entry.effect.directory && !qualified.test(entry.effect.text)
 					&& !pathArgument.test(entry.effect.text)
 				);
-				const chosen = candidates.filter(pkg => covered(pkg) || (rooted && root.includes(pkg)));
+				const nested =
+					/(?:^|\s)(?:--workspaces|-ws)(?=\s|$)/.test(commands) && !/--include-workspace-root\b/.test(commands)
+						? candidates.filter(pkg => directoryOf(pkg) !== '')
+						: [];
+				const chosen = candidates.filter(pkg => covered(pkg) || (rooted && root.includes(pkg)) || nested.includes(pkg));
 				const elsewhere = directories.length > 0 || qualified.test(commands);
 				return chosen.length
 					? { operation, packages: chosen, cited: true }
