@@ -525,10 +525,10 @@ function targetsOf(
 							: !everyCrate && manifests.length
 									&& manifests.every(path => candidates.some(pkg => pkg.manifest === path))
 							? candidates.filter(pkg => manifests.includes(pkg.manifest))
+							: !everyCrate && scope.includes(directory) && defaultMembers(snapshot, directory).length
+							? candidates.filter(pkg => inWorkspaces(defaultMembers(snapshot, directory), directoryOf(pkg)))
 							: !everyCrate && scope.every(path => candidates.some(pkg => directoryOf(pkg) === path))
 							? candidates.filter(pkg => scope.includes(directoryOf(pkg)))
-							: !everyCrate && defaultMembers(snapshot, directory).length
-							? candidates.filter(pkg => inWorkspaces(defaultMembers(snapshot, directory), directoryOf(pkg)))
 							: candidates).filter(pkg => !excluded.includes(pkg.name));
 					};
 					const resolved = (invoked.length ? invoked : [{ command: '', directory: '' }]).map(resolve);

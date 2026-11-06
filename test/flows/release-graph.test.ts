@@ -2144,6 +2144,37 @@ describe('release streams', () => {
 			77,
 			'npm',
 		)).toEqual(['pkg:npm/b']);
+		expect(selected(
+			{
+				'Cargo.toml':
+					'[package]\nname = "root-crate"\nversion = "1.0.0"\n\n[workspace]\nmembers = ["crates/a"]\ndefault-members = ["crates/a"]\n',
+				'src/lib.rs': '',
+				'crates/a/Cargo.toml': '[package]\nname = "a"\nversion = "1.0.0"\n',
+				'.github/workflows/release.yml': release('      - run: cargo publish\n'),
+			},
+			78,
+			'crates-io',
+		)).toEqual(['pkg:cargo/a']);
+		const releasing = {
+			'package.json': JSON.stringify({ name: 'widget', version: '1.0.0', scripts: { release: 'npm publish' } }),
+		};
+		expect(
+			planned({
+				...releasing,
+				'.github/workflows/release.yml': release(
+					'      - run: echo "To release, run npm run release -- --tag latest"\n',
+				),
+			}, 79).graph.streams,
+		).toEqual([]);
+		expect(selected(
+			{
+				...releasing,
+				'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+				'.github/workflows/release.yml': release('      - run: npm run release -- ./packages/a\n'),
+			},
+			80,
+			'npm',
+		)).toEqual(['pkg:npm/a']);
 		expect(
 			planned({
 				'package.json': JSON.stringify({ name: '@octo/tool', version: '1.0.0' }),

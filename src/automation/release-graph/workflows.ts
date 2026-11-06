@@ -494,6 +494,8 @@ function taskBodies(
 		for (const match of line.matchAll(pattern)) {
 			const rest = line.slice((match.index ?? 0) + match[0].length).split(/\s--(?:\s|$)|[;&|]/)[0] ?? '';
 			const invocation = `${match[0]} ${rest}`;
+			const forwarded = /\s--\s+(.+)$/.exec(line.slice((match.index ?? 0) + match[0].length).split(/[;&|]/)[0] ?? '')
+				?.[1]?.trim();
 			const words = rest.replace(new RegExp(valueFlag.source, 'g'), ' ').split(/\s+/).filter(word =>
 				word && !word.startsWith('-') && !word.includes('=')
 			);
@@ -542,7 +544,7 @@ function taskBodies(
 							const pre = hooks?.get(`pre${name}`), post = hooks?.get(`post${name}`);
 							found.push(
 								...(pre ? [{ name: `pre${name}`, ...pre }] : []),
-								{ name, ...task },
+								{ name, ...task, body: forwarded && kind === 'package' ? `${task.body} ${forwarded}` : task.body },
 								...(post ? [{ name: `post${name}`, ...post }] : []),
 							);
 						}
@@ -575,58 +577,60 @@ function scriptEffects(
 	directory?: string,
 ): { effects: StepEffect[]; runs: string[] } {
 	const effects: StepEffect[] = [], runs: string[] = [];
-	walkDirectories(run, directory ?? '', (line, here) => {
-		for (const match of line.matchAll(scriptCall)) {
-			const called = (match[1] ?? '').replace(/^\.\//, '');
-			const relative = here ? within(here, called) : undefined;
-			const path = relative !== undefined && snapshot.files[relative] !== undefined ? relative : called;
-			const source = snapshot.files[path];
-			const key = `${path} ${match[2] ?? ''} ${here}`;
-			if (
-				!source || seen.size >= traversalLimit || seen.has(key)
-				|| /(?:^|\/)(?:tests?|__tests__|fixtures)\/|\.test\./.test(path)
-			) continue;
-			seen.add(key);
-			const text = segment(source, match[2]);
-			effects.push(...commandEffects(text, path, here));
-			if (/^(?:promote|aliases?|float|latest)$/.test(match[2] ?? '')) {
-				effects.push({ kind: 'alias', source: path, text: match[0].trim() });
+	walkDirectories(run, directory ?? '', (raw, here) => {
+		for (const line of executed(raw)) {
+			for (const match of line.matchAll(scriptCall)) {
+				const called = (match[1] ?? '').replace(/^\.\//, '');
+				const relative = here ? within(here, called) : undefined;
+				const path = relative !== undefined && snapshot.files[relative] !== undefined ? relative : called;
+				const source = snapshot.files[path];
+				const key = `${path} ${match[2] ?? ''} ${here}`;
+				if (
+					!source || seen.size >= traversalLimit || seen.has(key)
+					|| /(?:^|\/)(?:tests?|__tests__|fixtures)\/|\.test\./.test(path)
+				) continue;
+				seen.add(key);
+				const text = segment(source, match[2]);
+				effects.push(...commandEffects(text, path, here));
+				if (/^(?:promote|aliases?|float|latest)$/.test(match[2] ?? '')) {
+					effects.push({ kind: 'alias', source: path, text: match[0].trim() });
+				}
+				runs.push(text);
+				const nested = scriptEffects(snapshot, text, seen, here);
+				effects.push(...nested.effects);
+				runs.push(...nested.runs);
 			}
-			runs.push(text);
-			const nested = scriptEffects(snapshot, text, seen, here);
-			effects.push(...nested.effects);
-			runs.push(...nested.runs);
-		}
-		for (const match of line.matchAll(moduleCall)) {
-			const path = modulePath(snapshot, match[1] ?? '', here);
-			const key = `${path ?? ''} ${match[2] ?? ''} ${here}`;
-			const source = path ? snapshot.files[path] : undefined;
-			if (!path || !source || seen.size >= traversalLimit || seen.has(key)) continue;
-			seen.add(key);
-			const choice = match[2] ? new RegExp(`["']${match[2]}["']`).test(source) : false;
-			const text = match[2] ? segment(source, match[2], !choice) : source;
-			effects.push(...commandEffects(text, path, here));
-			runs.push(text);
-			const nested = scriptEffects(snapshot, text, seen, here);
-			effects.push(...nested.effects);
-			runs.push(...nested.runs);
-		}
-		const hooks = /\bnpm\b[^\n;&|]*\spublish(?![\w:-])/.test(line) && !/--ignore-scripts\b/.test(line)
-			? publishHooks.flatMap(hook => taskBodies(snapshot, line.replace(/\bpublish\b/, `run ${hook}`), here))
-			: [];
-		for (const task of [...taskBodies(snapshot, line, here), ...hooks]) {
-			const key = `${task.source}#${task.name}`;
-			if (seen.has(key)) continue;
-			seen.add(key);
-			const owner = task.source.replace(
-				/\/?(?:package\.json|deno\.jsonc?|[Jj]ustfile|\.justfile|(?:GNU)?[Mm]akefile|\.?mise(?:\.local)?\.toml|\.config\/mise\.toml|(?:\.mise\/tasks|mise-tasks|\.config\/mise\/tasks)\/[^/]+)$/,
-				'',
-			);
-			effects.push(...commandEffects(task.body, task.source, owner));
-			runs.push(task.body);
-			const nested = scriptEffects(snapshot, task.body, seen, owner || undefined);
-			effects.push(...nested.effects);
-			runs.push(...nested.runs);
+			for (const match of line.matchAll(moduleCall)) {
+				const path = modulePath(snapshot, match[1] ?? '', here);
+				const key = `${path ?? ''} ${match[2] ?? ''} ${here}`;
+				const source = path ? snapshot.files[path] : undefined;
+				if (!path || !source || seen.size >= traversalLimit || seen.has(key)) continue;
+				seen.add(key);
+				const choice = match[2] ? new RegExp(`["']${match[2]}["']`).test(source) : false;
+				const text = match[2] ? segment(source, match[2], !choice) : source;
+				effects.push(...commandEffects(text, path, here));
+				runs.push(text);
+				const nested = scriptEffects(snapshot, text, seen, here);
+				effects.push(...nested.effects);
+				runs.push(...nested.runs);
+			}
+			const hooks = /\bnpm\b[^\n;&|]*\spublish(?![\w:-])/.test(line) && !/--ignore-scripts\b/.test(line)
+				? publishHooks.flatMap(hook => taskBodies(snapshot, line.replace(/\bpublish\b/, `run ${hook}`), here))
+				: [];
+			for (const task of [...taskBodies(snapshot, line, here), ...hooks]) {
+				const key = `${task.source}#${task.name}#${task.body}`;
+				if (seen.has(key)) continue;
+				seen.add(key);
+				const owner = task.source.replace(
+					/\/?(?:package\.json|deno\.jsonc?|[Jj]ustfile|\.justfile|(?:GNU)?[Mm]akefile|\.?mise(?:\.local)?\.toml|\.config\/mise\.toml|(?:\.mise\/tasks|mise-tasks|\.config\/mise\/tasks)\/[^/]+)$/,
+					'',
+				);
+				effects.push(...commandEffects(task.body, task.source, owner));
+				runs.push(task.body);
+				const nested = scriptEffects(snapshot, task.body, seen, owner || undefined);
+				effects.push(...nested.effects);
+				runs.push(...nested.runs);
+			}
 		}
 	});
 	return { effects, runs };
