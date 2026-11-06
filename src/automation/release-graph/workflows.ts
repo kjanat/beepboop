@@ -69,7 +69,7 @@ const patterns: readonly Pattern[] = [
 	{
 		destination: 'npm',
 		command:
-			/\b(?:npm|pnpm|yarn|bun)(?:@[\w.]+)?\s+(?:[^\n|;&]*\s)?(?<!\brun(?:-script)?\s+)publish(?![\w:-])|\bargs=\(publish\b/,
+			/\b(?:npm|pnpm|yarn|bun)(?:@[\w.]+)?\s+(?:(?!(?:exec|dlx|x|run|run-script|--)(?:\s|$))[^\s|;&]+\s+)*publish(?![\w:-])|\bargs=\(publish\b/,
 		action: /^JS-DevTools\/npm-publish@/,
 	},
 	{

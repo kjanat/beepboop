@@ -85,9 +85,10 @@ function referencedScripts(
 	];
 	const directories = [
 		...new Set(
-			[...text.matchAll(/working-directory:\s*["']?(?:\.\/)?([\w./-]+?)\/?["']?\s*$/gm)].flatMap(match =>
-				match[1] ?? []
-			),
+			[
+				...text.matchAll(/working-directory:\s*["']?(?:\.\/)?([\w./-]+?)\/?["']?\s*$/gm),
+				...text.matchAll(/(?:^|[;&|(]|&&|\brun:)\s*cd\s+["']?(?:\.\/)?([\w.-][\w./-]*?)\/?["']?(?=\s|$|[;&|)])/gm),
+			].flatMap(match => match[1] ?? []),
 		),
 	];
 	return blobs.filter(path =>

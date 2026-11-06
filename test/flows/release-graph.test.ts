@@ -636,6 +636,35 @@ describe('release streams', () => {
 		expect(Object.keys(snapshot.files)).toHaveLength(400);
 	});
 
+	test('cd-relative scripts, executor arguments and manual callers of a shared publisher', async () => {
+		const files: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'tool', version: '1.0.0' }),
+			'jsr.json': JSON.stringify({ name: '@octo/tool', version: '1.0.0', exports: './mod.ts' }),
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'packages/a/scripts/publish.sh': '#!/bin/sh\nnpm publish\n',
+			'.github/workflows/a.yml': workflow("{ push: { tags: ['a-v*'] } }", 'cd packages/a && bash scripts/publish.sh'),
+			'.github/workflows/jsr.yml': workflow("{ push: { tags: ['jsr-v*'] } }", 'npm exec -- jsr publish'),
+			'.github/workflows/publish.yml': workflow('{ workflow_call: {} }', 'cd packages/a && npm publish'),
+			'.github/workflows/tag.yml':
+				'on: { push: { tags: ["shared-v*"] } }\njobs:\n  publish:\n    uses: ./.github/workflows/publish.yml\n',
+			'.github/workflows/manual.yml':
+				'on: { workflow_dispatch: {} }\njobs:\n  publish:\n    uses: ./.github/workflows/publish.yml\n',
+		};
+		const snapshot = await Effect.runPromise(buildSnapshot({
+			repository: { id: 1, name: 'octo/mono', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			entries: Object.keys(files).map(path => ({ path, type: 'blob', mode: '100644' })),
+			read: path => Effect.succeed(files[path] ?? null),
+			tags: () => Effect.succeed([]),
+		}));
+		expect(snapshot.files['packages/a/scripts/publish.sh']).toBe(files['packages/a/scripts/publish.sh']);
+		const { graph } = plan(snapshot);
+		expect(target(stream(graph, 'a'), 'npm').names).toEqual(['a']);
+		expect(destinations(stream(graph, 'jsr'))).toEqual(['jsr']);
+		expect(graph.omissions.map(omission => omission.subject)).not.toContain('`manual.yml`');
+		expect(graph.streams.flatMap(proposal => proposal.workflows.map(entry => entry.file))).toContain('manual.yml');
+	});
+
 	test('observe bindings follow each workflow trigger', async () => {
 		const actionlint = await load('actionlint');
 		const main = actionlint.choices.find(choice => choice.name === 'actionlint');

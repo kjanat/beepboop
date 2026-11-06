@@ -869,7 +869,10 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 			workflows.filter(candidate => candidate.file !== workflow.file && tagFamilies(candidate).length)
 				.flatMap(candidate => graph.jobs(candidate.file).map(entry => entry.workflow)),
 		);
-		const shared = callees.length > 0 && callees.every(callee => tagged.has(callee));
+		const shared = callees.length > 0 && callees.every(callee =>
+			tagged.has(callee)
+			&& !graph.effects(callee).some(({ effect }) => effect.kind === 'publish' || effect.kind === 'release')
+		);
 		if (
 			shared && !own.some(effect => effect.kind === 'publish' || effect.kind === 'release' || effect.kind === 'alias')
 		) {
