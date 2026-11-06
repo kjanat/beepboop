@@ -488,7 +488,7 @@ function taskBodies(
 const scriptCall =
 	/(?:(?:^|[\s;&|(])(?:bash|sh|source|\.|node(?:\s+(?:--?(?:import|require|loader)\s+\S+|--?(?!(?:import|require|loader)\b)[\w-]+(?:=\S+)?))*|bun(?:\s+run)?|deno\s+run(?:\s+(?:-\S+|[\w./][\w./-]*\.jsonc?))*|python3?|uv\s+run|pwsh(?:\s+-File)?|(?:(?:npx|bunx|pnpm(?:\s+exec|\s+dlx)?|yarn(?:\s+dlx)?)\s+(?:-y\s+)?)?(?:tsx|ts-node|esno|jiti|vite-node|babel-node))\s+["']?(?:\.\/)?|(?:^|[\s;&|(])["']?\.\/|^\s*)((?:[\w.-]+\/)*[\w.-]+\.(?:sh|bash|ps1|py|[cm]?[jt]s|rb))\b["']?(?:\s+([a-z][\w-]*))?/gm;
 
-function within(directory: string, change: string): string {
+export function within(directory: string, change: string): string {
 	if (change.startsWith('/') || change.includes('$')) return directory;
 	const parts = directory ? directory.split('/') : [];
 	for (const part of change.split('/')) {

@@ -1,3 +1,4 @@
+import { type ParseError, parse as parseJsonc } from 'jsonc-parser';
 import { parse as parseToml } from 'smol-toml';
 import { object } from '@/automation/managers/helpers';
 import { tagPrefix } from '@/automation/managers/tags';
@@ -11,6 +12,7 @@ import {
 	packDirectories,
 	type StepEffect,
 	type Workflow,
+	within,
 	workflowModels,
 } from '@/automation/release-graph/workflows';
 import type { Inventory, Package, Snapshot } from '@/automation/types';
@@ -348,6 +350,28 @@ const installing =
 function directoryOf(pkg: Package): string {
 	return pkg.manifest.split('/').slice(0, -1).join('/');
 }
+function workspacePatterns(snapshot: Snapshot): string[] {
+	const source = snapshot.files['package.json'];
+	if (source === undefined) return [];
+	const errors: ParseError[] = [];
+	const declared = object(parseJsonc(source, errors, { allowTrailingComma: true })).workspaces;
+	if (errors.length) return [];
+	const list = Array.isArray(declared) ? declared : object(declared).packages;
+	return Array.isArray(list) ? list.filter((entry): entry is string => typeof entry === 'string') : [];
+}
+function inWorkspaces(patterns: readonly string[], directory: string): boolean {
+	const matches = (pattern: string) =>
+		new RegExp(
+			`^${
+				escapeRegExp(pattern.replace(/^\.\//, '').replace(/\/$/, '')).replaceAll('\\*\\*', '.*').replaceAll(
+					'\\*',
+					'[^/]*',
+				)
+			}$`,
+		).test(directory);
+	return patterns.some(pattern => !pattern.startsWith('!') && matches(pattern))
+		&& !patterns.some(pattern => pattern.startsWith('!') && matches(pattern.slice(1)));
+}
 function targetsOf(
 	graph: Graph,
 	files: string[],
@@ -408,7 +432,14 @@ function targetsOf(
 					]),
 				];
 				const commands = effects.join('\n');
-				const invoked = effects.filter(Boolean);
+				const invoked = own.flatMap(entry =>
+					entry.effect.kind === 'publish' || entry.effect.kind === 'release'
+						? [{
+							command: entry.effect.text,
+							directory: entry.effect.kind === 'publish' ? entry.effect.directory ?? '' : '',
+						}]
+						: []
+				);
 				const text = [...effects, ...(graph.byFile.get(workflow)?.jobs.flatMap(job => job.runs) ?? [])].join('\n');
 				const publishing = [...effects, ...runs].join('\n');
 				const mentioning = publishing.split('\n').filter(line => !installing.test(line)).join('\n');
@@ -444,10 +475,10 @@ function targetsOf(
 						&& (directories.includes(directoryOf(pkg)) || citesDirectory(directoryOf(pkg))))
 					|| descriptors.some(source => new RegExp(`"${escapeRegExp(pkg.name)}"(?!\\s*:)`).test(source));
 				if (manager === 'cargo') {
-					const resolve = (command: string) => {
+					const resolve = ({ command, directory }: { command: string; directory: string }) => {
 						const named = [...command.matchAll(/(?:-p|--package)\s+["']?([\w-]+)/g)].flatMap(match => match[1] ?? []);
 						const manifests = [...command.matchAll(/--manifest-path[= ]["']?(?:\.\/)?([^\s"';&|]*Cargo\.toml)/g)]
-							.flatMap(match => match[1] ?? []);
+							.flatMap(match => within(directory, match[1] ?? ''));
 						const excluded = /--workspace\b|--all\b/.test(command)
 							? [...command.matchAll(/--exclude[= ]["']?([\w-]+)/g)].flatMap(match => match[1] ?? [])
 							: [];
@@ -459,7 +490,7 @@ function targetsOf(
 							? candidates.filter(pkg => directories.includes(directoryOf(pkg)))
 							: candidates).filter(pkg => !excluded.includes(pkg.name));
 					};
-					const resolved = (invoked.length ? invoked : ['']).map(resolve);
+					const resolved = (invoked.length ? invoked : [{ command: '', directory: '' }]).map(resolve);
 					return {
 						operation,
 						packages: candidates.filter(pkg => resolved.some(list => list.includes(pkg))),
@@ -473,7 +504,7 @@ function targetsOf(
 				);
 				const nested =
 					/(?:^|\s)(?:--workspaces|-ws)(?=\s|$)/.test(commands) && !/--include-workspace-root\b/.test(commands)
-						? candidates.filter(pkg => directoryOf(pkg) !== '')
+						? candidates.filter(pkg => inWorkspaces(workspacePatterns(snapshot), directoryOf(pkg)))
 						: [];
 				const chosen = candidates.filter(pkg => covered(pkg) || (rooted && root.includes(pkg)) || nested.includes(pkg));
 				const elsewhere = directories.length > 0 || qualified.test(commands);

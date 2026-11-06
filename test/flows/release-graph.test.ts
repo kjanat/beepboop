@@ -1595,6 +1595,27 @@ describe('release streams', () => {
 			24,
 			'npm',
 		)).toEqual(['pkg:npm/a', 'pkg:npm/b', 'pkg:npm/root-tool']);
+		expect(selected(
+			{
+				...workspace,
+				'examples/demo/package.json': JSON.stringify({ name: 'demo', version: '1.0.0' }),
+				'.github/workflows/release.yml': release('      - run: npm publish --workspaces\n'),
+			},
+			26,
+			'npm',
+		)).toEqual(['pkg:npm/a', 'pkg:npm/b']);
+		expect(selected(
+			{
+				'Cargo.toml': '[workspace]\nmembers = ["crates/a", "crates/b"]\n',
+				'crates/a/Cargo.toml': '[package]\nname = "a"\nversion = "1.0.0"\n',
+				'crates/b/Cargo.toml': '[package]\nname = "b"\nversion = "1.0.0"\n',
+				'.github/workflows/release.yml': release(
+					'      - working-directory: crates\n        run: cargo publish --manifest-path a/Cargo.toml\n',
+				),
+			},
+			27,
+			'crates-io',
+		)).toEqual(['pkg:cargo/a']);
 		const families = {
 			'packages/core/package.json': JSON.stringify({ name: 'core', version: '1.0.0' }),
 			'packages/cli/package.json': JSON.stringify({ name: 'cli', version: '2.0.0' }),
