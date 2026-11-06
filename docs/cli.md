@@ -50,6 +50,52 @@ and publication flow.
 
 ## Release preparation and execution
 
+From a repository checkout, start a version bump with:
+
+```sh
+beepboop release patch
+beepboop release minor
+beepboop release 0.1.0
+```
+
+The command resolves the GitHub repository from the checkout's `origin` fetch
+remote, or an unambiguous GitHub remote when there is no origin. HTTPS, SCP-style
+SSH and `ssh://` GitHub remotes are supported. Use `--repository owner/repository`
+to override this or run outside a checkout. The repository must already be
+enrolled; release previews do not run discovery or update existing setup PRs.
+
+Beepboop asks the server for the configured release streams. A sole eligible
+publishing stream is inferred; multiple streams show which packages they ship.
+Use `--stream NAME` to choose explicitly. With no version argument, the terminal
+asks for a patch/minor/major bump or an explicit version.
+
+The preview shows package versions, file changes and the exact server source
+commit. Releases use the server's default-branch state, so local branch commits
+and uncommitted files are not included. After confirmation, the command passes
+the returned plan ID and source SHA to preparation automatically. A stale plan
+is refused without silently replanning. The output identifies the preparation
+and explains the configured merge/approval steps; this command does not approve
+or publish a release.
+
+`--json` alone previews without any prompts or preparation. Supply the version
+and `--stream` if ambiguous. For scripts, add `--yes` to explicitly confirm the
+preview and start preparation:
+
+```sh
+beepboop release patch --repository owner/repository --stream main --json
+beepboop release patch --repository owner/repository --stream main --yes --json
+```
+
+Independent package release plans use the lower-level `plan-set`/`prepare-set`
+commands below. Already-prepared versions are also refused here so that a
+preparation command cannot accidentally initiate promotion.
+
+For streams with a tag-based `versionSource`, this flow stops at preparation.
+Merging the preparation PR does not create a publication run, and the CLI has
+no shared-version equivalent of `releases start`.
+
+The lower-level commands remain available for separately reviewed plans:
+
 Use stream names from `repositories show`. Repository numbers are resolved from
 the enrolled repository name.
 
@@ -57,7 +103,6 @@ the enrolled repository name.
 beepboop releases plan kjanat/actionlint --stream main --releaseVersion 2.1.0
 beepboop releases prepare kjanat/actionlint --stream main --releaseVersion 2.1.0 \
   --sourceSha REVIEWED_SOURCE_SHA --planId REVIEWED_PLAN_ID
-beepboop releases start PREPARATION_ID --sourceSha REVIEWED_SOURCE_SHA
 beepboop runs list
 beepboop runs approve EXECUTION_ID --sourceSha REVIEWED_SOURCE_SHA
 beepboop runs approve EXECUTION_ID --sourceSha REVIEWED_SOURCE_SHA --force
@@ -66,10 +111,9 @@ beepboop runs recover EXECUTION_ID --action retry
 ```
 
 Use the exact `sourceSha` and `planId` returned by the preview. Preparation rejects
-changed plans on the server. Start a release set after its preparation has
-completed and the repository's required review/merge steps are done. Approval is
-bound to the exact reviewed commit. `--force` approves even when the signature
-or checks fail, and the audit log records the problems it overrode. Recovery defaults to reconciliation; retry
+changed plans on the server. Approval is bound to the exact reviewed commit.
+`--force` approves even when the signature or checks fail, and the audit log
+records the problems it overrode. Recovery defaults to reconciliation; retry
 must be selected explicitly. Existing server approval and dispatch rules apply.
 
 Independent monorepo releases use the JSON plan format documented in
@@ -79,7 +123,13 @@ Independent monorepo releases use the JSON plan format documented in
 beepboop releases plan-set OWNER/REPO --stream main --plan release-plan.json
 beepboop releases prepare-set OWNER/REPO --stream main --plan release-plan.json \
   --sourceSha REVIEWED_SOURCE_SHA --planId REVIEWED_PLAN_ID
+beepboop releases start PREPARATION_ID --sourceSha MERGED_COMMIT_SHA
 ```
+
+`releases start` accepts preparations made by `prepare-set` only. Run it after
+preparation completes and the required review/merge steps are done, using the
+reviewed merged commit. Shared-version preparations use the stream's publication
+policy instead.
 
 The `secrets` command returns metadata and grants, never secret values. Secret
 writes, reveals, grant changes, and security-key management use the dashboard's

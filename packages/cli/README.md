@@ -10,6 +10,7 @@ bun add --global @kjanat/beepboop
 beepboop auth login
 beepboop repositories list
 beepboop repositories adopt owner/repository
+beepboop release patch
 beepboop releases --help
 ```
 
@@ -21,6 +22,15 @@ your account. Installing the CLI does not grant access to the service.
 guides you through release setup, and previews the proposed files before asking
 to open a setup PR. Workflow filenames and jobs are generated for you. Merge the
 PR yourself to activate the configuration. `repositories setup` is an alias.
+
+`beepboop release patch` resolves the current checkout's GitHub remote and asks
+the server what will ship. A sole release stream is selected automatically;
+ambiguous streams and an omitted version are prompted for. Review the package
+versions and source commit, then confirm preparation. Plan IDs and source SHAs
+are carried automatically. The server's default branch is the release source;
+uncommitted local changes are not included. Use `--repository` and `--stream` to
+override resolution, `--json` for a prompt-free preview, or `--yes` to explicitly
+start preparation in a script. Publication still follows repository policy.
 
 For scripts, preview explicit choices and apply the reviewed plan separately:
 

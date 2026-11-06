@@ -2,10 +2,11 @@ import { Effect, Result } from 'effect';
 import { planVersionFiles } from '@/automation/editors';
 import { createExecution } from '@/automation/execution';
 import { createReleasePreparation } from '@/automation/managed';
-import { planRelease, versionsInFiles } from '@/automation/managers';
+import { planRelease, selectedReleasePackages, versionsInFiles } from '@/automation/managers';
 import { matchesPackage } from '@/automation/package-identity';
 import { planReleaseSet } from '@/automation/planning';
 import { planHookUpdates } from '@/automation/precommit';
+import { resolvePackageVersion } from '@/automation/release-version';
 import type { AutomationService } from '@/automation/service';
 import type { ReleasePlan, Snapshot, Stream } from '@/automation/types';
 import { nextVersion, parseVersionRequest } from '@/automation/version';
@@ -109,6 +110,11 @@ function releasePlan(input: ReleaseInput, { service }: AdminContext) {
 			target = latest
 				? yield* nextVersion(latest, request)
 				: ('version' in request ? request.version : undefined);
+		} else if (stream.prepare.strategy === 'workflow') {
+			const request = yield* parseVersionRequest(input.version);
+			target = 'version' in request
+				? request.version
+				: yield* resolvePackageVersion(yield* selectedReleasePackages(repository.inventory, selected), request);
 		}
 		const plan: ReleasePlan = stream.prepare.strategy !== 'workflow' && versionsInFiles(repository.inventory)
 			? yield* planRelease(snapshot, repository.inventory, target, selected, undefined, stream.versionFiles)
