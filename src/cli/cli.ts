@@ -4,6 +4,7 @@ import { Effect } from 'effect';
 import { Client } from '@/cli/client';
 import type { SecurityKeyPrompts } from '@/cli/fido2/index';
 import { emit, failure } from '@/cli/output';
+import { releaseRepository, releaseVersion } from '@/cli/release';
 import { setupRepository } from '@/cli/setup';
 import { notificationKinds, watchedPackagePattern, watchedRegistries } from '@/contract/catalog';
 import { credentialAliasPattern, githubSecretNamePattern, shaPattern } from '@/contract/ids';
@@ -188,6 +189,21 @@ const runs = group('runs').description('Follow, approve and recover release oper
 				}))
 			),
 	);
+const release = base('release', 'Prepare a version PR for the current GitHub checkout')
+	.arg('version', arg.string().optional().describe('patch, minor, major or an explicit semantic version'))
+	.flag('repository', flag.string().describe('Repository override; otherwise resolve the current Git remote'))
+	.flag('stream', flag.string().describe('Release stream; inferred when only one is configured'))
+	.flag(
+		'yes',
+		flag.boolean().default(false).describe('Confirm the server preview and start preparation without prompting'),
+	)
+	.action(({ flags, args, ask, out }) =>
+		Effect.runPromise(
+			Client.at(flags.server).pipe(
+				Effect.flatMap(client => releaseRepository(client, { ...flags, version: args.version }, ask, out)),
+			),
+		)
+	);
 let releases = group('releases').description('Preview and prepare releases through repository policy');
 for (const operation of ['plan', 'prepare'] as const) {
 	releases = releases.command(
@@ -225,7 +241,7 @@ for (const operation of ['plan', 'prepare'] as const) {
 					const request = {
 						repositoryId: (yield* enrolled(client, args.repository)).id,
 						stream: flags.stream,
-						version: flags.releaseVersion,
+						version: yield* releaseVersion(flags.releaseVersion),
 					};
 					if (operation === 'plan') return yield* emit(out, yield* client.call(routes.releasesPlan, request));
 					if (flags.sourceSha && flags.planId) {
@@ -535,6 +551,6 @@ const notifications = group('notifications').description('Send package releases 
 export const app = cli('beepboop')
 	.manifest({ from: import.meta.url })
 	.links()
-	.command(auth).command(repositories).command(releases).command(runs)
+	.command(auth).command(repositories).command(release).command(releases).command(runs)
 	.command(secrets).command(notifications).completions();
 if (import.meta.main) await app.run();

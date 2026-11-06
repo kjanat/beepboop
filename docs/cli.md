@@ -50,6 +50,48 @@ and publication flow.
 
 ## Release preparation and execution
 
+From a repository checkout, start a version bump with:
+
+```sh
+beepboop release patch
+beepboop release minor
+beepboop release 0.1.0
+```
+
+The command resolves the GitHub repository from the checkout's `origin` fetch
+remote, or an unambiguous GitHub remote when there is no origin. HTTPS, SCP-style
+SSH and `ssh://` GitHub remotes are supported. Use `--repository owner/repository`
+to override this or run outside a checkout. The repository must already be
+enrolled; release previews do not run discovery or update existing setup PRs.
+
+Beepboop asks the server for the configured release streams. A sole eligible
+publishing stream is inferred; multiple streams show which packages they ship.
+Use `--stream NAME` to choose explicitly. With no version argument, the terminal
+asks for a patch/minor/major bump or an explicit version.
+
+The preview shows package versions, file changes and the exact server source
+commit. Releases use the server's default-branch state, so local branch commits
+and uncommitted files are not included. After confirmation, the command passes
+the returned plan ID and source SHA to preparation automatically. A stale plan
+is refused without silently replanning. The output identifies the preparation
+and explains the configured merge/approval steps; this command does not approve
+or publish a release.
+
+`--json` alone previews without any prompts or preparation. Supply the version
+and `--stream` if ambiguous. For scripts, add `--yes` to explicitly confirm the
+preview and start preparation:
+
+```sh
+beepboop release patch --repository owner/repository --stream main --json
+beepboop release patch --repository owner/repository --stream main --yes --json
+```
+
+Independent package release plans use the lower-level `plan-set`/`prepare-set`
+commands below. Already-prepared versions are also refused here so that a
+preparation command cannot accidentally initiate promotion.
+
+The lower-level commands remain available for separately reviewed plans:
+
 Use stream names from `repositories show`. Repository numbers are resolved from
 the enrolled repository name.
 

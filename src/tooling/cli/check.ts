@@ -41,6 +41,11 @@ await main(Effect.scoped(Effect.gen(function*() {
 	const version = (yield* capture([binary, '--version'], { cwd: temporary })).trim();
 	yield* expect(version === manifest.version, `beepboop --version printed ${version}`);
 	yield* expect(/auth/.test(yield* capture([binary, '--help'], { cwd: temporary })), 'Help omits auth');
+	const releaseHelp = yield* capture([binary, 'release', '--help'], { cwd: temporary });
+	yield* expect(
+		releaseHelp.includes('[version]') && releaseHelp.includes('--repository') && releaseHelp.includes('--yes'),
+		'release help omits optional version or release controls',
+	);
 	for (const command of ['adopt', 'setup']) {
 		yield* expect(
 			/--plan/.test(yield* capture([binary, 'repositories', command, '--help'], { cwd: temporary })),
@@ -52,8 +57,8 @@ await main(Effect.scoped(Effect.gen(function*() {
 		'releases plan help omits releaseVersion',
 	);
 	yield* expect(
-		/beepboop/.test(yield* capture([binary, 'completions', 'bash'], { cwd: temporary })),
-		'Bash completions omit beepboop',
+		/^\s+release\)$/m.test(yield* capture([binary, 'completions', 'bash'], { cwd: temporary })),
+		'Bash completions omit release',
 	);
 	yield* capture([
 		'bun',
