@@ -589,6 +589,9 @@ function actionFiles(snapshot: Snapshot, path: string): [string, string][] {
 	return Object.entries(snapshot.files).filter(([file]) => file.startsWith(prefix));
 }
 
+const actionPathReference = /\$\{\{\s*github\.action_path\s*\}\}|\$\{?GITHUB_ACTION_PATH\}?/g;
+const actionPathPrefix = /(?:\$\{\{\s*github\.action_path\s*\}\}|\$\{?GITHUB_ACTION_PATH\}?)\//g;
+
 function guarded(effects: StepEffect[], guard: unknown): StepEffect[] {
 	if (typeof guard !== 'string') return effects;
 	return effects.map(effect =>
@@ -625,7 +628,7 @@ function actionEffects(
 			const stepRuns = (Array.isArray(steps) ? steps : []).flatMap(step => {
 				const bound = bindStep(object(step), bindings);
 				const run = bound['working-directory'] === undefined ? bound.run : undefined;
-				return typeof run === 'string' ? [run.replace(/\$\{?GITHUB_ACTION_PATH\}?\//g, `${path}/`)] : [];
+				return typeof run === 'string' ? [run.replace(actionPathPrefix, `${path}/`)] : [];
 			});
 			const called = new Set(stepRuns.flatMap(run => [...run.matchAll(scriptCall)].flatMap(match => match[1] ?? [])));
 			for (const [entry] of files) {
@@ -649,14 +652,14 @@ function actionEffects(
 				}
 				if (typeof step.run === 'string') {
 					const directory = typeof step['working-directory'] === 'string'
-						? step['working-directory'].replace(/\$\{\{\s*github\.action_path\s*\}\}|\$\{?GITHUB_ACTION_PATH\}?/g, path)
+						? step['working-directory'].replace(actionPathReference, path)
 						: undefined;
 					const run = directory ? `cd ${directory}\n${step.run}` : step.run;
 					stepped.push(...commandEffects(run, file));
 					runs.push(run);
 					const called = scriptEffects(
 						snapshot,
-						step.run.replace(/\$\{?GITHUB_ACTION_PATH\}?\//g, `${path}/`),
+						step.run.replace(actionPathPrefix, `${path}/`),
 						new Set(seen),
 						directory,
 					);

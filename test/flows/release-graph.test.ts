@@ -2322,6 +2322,58 @@ describe('release streams', () => {
 		const siteBindings = callSites.choices.flatMap(choice => choice.observe ?? []);
 		expect(siteBindings.find(binding => binding.ref === 'refs/tags/a-v*')?.publications).toEqual(['pkg:npm/a']);
 		expect(siteBindings.find(binding => binding.ref === 'refs/tags/b-v*')?.publications).toEqual(['pkg:npm/b']);
+		const expressionFiles: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'widget', version: '1.0.0' }),
+			'actions/publish/publish.sh': 'npm publish\n',
+			'actions/publish/action.yml':
+				'runs:\n  using: composite\n  steps:\n    - if: startsWith(github.ref, \'refs/tags/a-v\')\n      shell: bash\n      run: bash "${{ github.action_path }}/publish.sh"\n',
+			'.github/workflows/release.yml':
+				"on: { push: { tags: ['a-v*', 'b-v*'] } }\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./actions/publish\n",
+		};
+		const expressionEffects = workflowModels({
+			repository: { id: 93, name: 'octo/widget', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files: expressionFiles,
+			paths: Object.keys(expressionFiles),
+		}).flatMap(model => model.jobs).flatMap(job => job.effects).flatMap(effect =>
+			effect.kind === 'publish' ? [effect] : []
+		);
+		expect(expressionEffects.length).toBeGreaterThan(0);
+		expect(expressionEffects.every(effect => effect.condition?.includes('a-v'))).toBe(true);
+		const wide = Array.from({ length: 65 }, (_, index) => `packages/p${index}`);
+		expect(
+			selected(
+				{
+					'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0', private: true }),
+					...Object.fromEntries(
+						wide.map(
+							directory => [
+								`${directory}/package.json`,
+								JSON.stringify({ name: directory.slice(9), version: '1.0.0' }),
+							],
+						),
+					),
+					'.github/workflows/release.yml': release(
+						'      - working-directory: ${{ matrix.directory }}\n        run: npm publish\n',
+						`    strategy:\n      matrix:\n        directory: [${wide.join(', ')}]\n`,
+					),
+				},
+				94,
+				'npm',
+			).length,
+		).toBe(65);
+		expect(selected(
+			{
+				'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0' }),
+				'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+				'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+				'.github/workflows/release.yml': release(
+					"      - run: |\n          (cd packages/a &&\n          VERSION=$(printf '1.0.0') &&\n          npm publish\n          )\n",
+				),
+			},
+			95,
+			'npm',
+		)).toEqual(['pkg:npm/a']);
 		expect(
 			planned({
 				'package.json': JSON.stringify({ name: '@octo/tool', version: '1.0.0' }),

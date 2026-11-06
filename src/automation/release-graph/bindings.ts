@@ -5,6 +5,7 @@ export function matrixScalar(value: unknown): string | undefined {
 		? String(value)
 		: undefined;
 }
+export const matrixLimit = 256;
 function flatten(key: string, value: unknown): Record<string, string>[] {
 	const scalar = matrixScalar(value);
 	if (scalar !== undefined) return [{ [key]: scalar }];
@@ -28,7 +29,7 @@ export function matrixCombinations(matrix: Record<string, unknown>): Record<stri
 	const original = new Set<string>();
 	for (const key of keys) {
 		const values = (Array.isArray(matrix[key]) ? matrix[key] : []).flatMap(value => flatten(key, value));
-		if (combinations.length * values.length > 256) break;
+		if (combinations.length * values.length > matrixLimit) break;
 		for (const value of values) for (const name of Object.keys(value)) original.add(name);
 		combinations = combinations.flatMap(combination => values.map(value => ({ ...combination, ...value })));
 	}
@@ -79,7 +80,7 @@ export function expandStep(step: Record<string, unknown>, matrix: Record<string,
 				)
 			).map(assignment => [JSON.stringify(assignment), assignment] as const),
 		).values(),
-	].slice(0, 64);
+	].slice(0, matrixLimit);
 	const apply = (assignment: Record<string, string>): Record<string, unknown> => ({
 		...step,
 		...(typeof step.run === 'string' ? { run: substitute(step.run, assignment) } : {}),

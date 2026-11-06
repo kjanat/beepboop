@@ -37,24 +37,46 @@ export function splitCommands(line: string): string[] {
 	return parts;
 }
 
+function parentheses(part: string): { open: number; close: number; leading: number } {
+	let quote = '';
+	let open = 0;
+	let close = 0;
+	for (let index = 0; index < part.length; index++) {
+		const character = part[index] ?? '';
+		if (quote) {
+			if (character === '\\' && quote === '"') index++;
+			else if (character === quote) quote = '';
+		} else if (character === '\\') {
+			index++;
+		} else if (character === '"' || character === "'") {
+			quote = character;
+		} else if (character === '(') {
+			open++;
+		} else if (character === ')') {
+			close++;
+		}
+	}
+	return { open, close, leading: /^\(+/.exec(part)?.[0].length ?? 0 };
+}
+
 export function walkDirectories(text: string, directory: string, visit: (command: string, here: string) => void): void {
 	let here = within('', directory);
 	const enclosing: string[] = [];
 	for (const line of lines(text)) {
 		for (const part of splitCommands(line)) {
-			let command = part.replace(/^(?:if|then|elif|else|do|fi|done)\b\s*/, '').trim();
-			const opens = command.startsWith('(');
-			if (opens) command = command.slice(1).trim();
-			const closes = /\)\s*$/.test(command);
-			if (closes) command = command.replace(/\)\s*$/, '').trim();
-			if (opens) enclosing.push(here);
+			const trimmed = part.replace(/^(?:if|then|elif|else|do|fi|done)\b\s*/, '').trim();
+			const { open, close, leading } = parentheses(trimmed);
+			const closing = Math.max(0, close - (open - leading));
+			let command = trimmed.slice(leading).trim();
+			for (let index = 0; index < closing; index++) command = command.replace(/\)\s*$/, '').trim();
+			for (let index = 0; index < leading; index++) enclosing.push(here);
 			const change = /^cd\s+["']?([^\s"';&|)]+)["']?$/.exec(command);
 			if (change) {
 				here = within(here, change[1] ?? '');
 			} else if (command && !rehearsing(command)) {
 				visit(command, here);
 			}
-			if (closes && enclosing.length) here = enclosing.pop() ?? here;
+			for (let index = 0; index < closing && enclosing.length; index++) here = enclosing.pop() ?? here;
 		}
 	}
 }
