@@ -1477,7 +1477,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (typeof run.head_branch !== 'string') return;
 			const branch = run.head_branch;
 			const patterns = Object.values(repository.configuration.streams).flatMap(stream =>
-				Object.values(stream.workflows).flatMap(binding => binding.ref ? [binding.ref] : [])
+				Object.values(stream.workflows).flatMap(binding =>
+					binding.ref && run.path === `.github/workflows/${binding.file}` ? [binding.ref] : []
+				)
 			);
 			const tagged = run.event === 'release'
 				|| patterns.some(pattern => pattern.startsWith('refs/tags/') && matchesRef(pattern, `refs/tags/${branch}`))
@@ -1529,10 +1531,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					execution.state = 'running';
 					if (version) {
 						const tag = yield* gateway.read(
-							gitRefSchema,
+							gitRefSchema.nullable(),
 							`/repos/${repository.name}/git/ref/tags/${encodeURIComponent(branch)}`,
 							token,
-						).pipe(Effect.catch(() => Effect.undefined));
+						);
 						if (!tag) {
 							yield* this.put({ ...execution, state: 'failed', reason: `Release tag ${branch} was not found` });
 							continue;

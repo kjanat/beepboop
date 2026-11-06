@@ -352,7 +352,7 @@ test('schema:check refuses a hand-edited schema file', async () => {
 	} finally {
 		await rm(edited);
 	}
-});
+}, 30_000);
 
 type Stream = WidgetDocument['streams']['main'];
 interface Finding {

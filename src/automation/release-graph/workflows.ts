@@ -485,7 +485,7 @@ function taskBodies(
 	return found;
 }
 const scriptCall =
-	/(?:(?:^|[\s;&|(])(?:bash|sh|source|\.|node(?:\s+--?(?:import|require|loader|experimental-[\w-]+)(?:[= ]\S+)?)*|bun(?:\s+run)?|deno\s+run(?:\s+(?:-\S+|[\w./-]+\.jsonc?))*|python3?|uv\s+run|pwsh(?:\s+-File)?|(?:(?:npx|bunx|pnpm(?:\s+exec|\s+dlx)?|yarn(?:\s+dlx)?)\s+(?:-y\s+)?)?(?:tsx|ts-node|esno|jiti|vite-node|babel-node))\s+["']?(?:\.\/)?|(?:^|[\s;&|(])["']?\.\/|^\s*)((?:[\w.-]+\/)*[\w.-]+\.(?:sh|bash|ps1|py|[cm]?[jt]s|rb))\b["']?(?:\s+([a-z][\w-]*))?/gm;
+	/(?:(?:^|[\s;&|(])(?:bash|sh|source|\.|node(?:\s+(?:--?(?:import|require|loader)\s+\S+|--?(?!(?:import|require|loader)\b)[\w-]+(?:=\S+)?))*|bun(?:\s+run)?|deno\s+run(?:\s+(?:-\S+|[\w./][\w./-]*\.jsonc?))*|python3?|uv\s+run|pwsh(?:\s+-File)?|(?:(?:npx|bunx|pnpm(?:\s+exec|\s+dlx)?|yarn(?:\s+dlx)?)\s+(?:-y\s+)?)?(?:tsx|ts-node|esno|jiti|vite-node|babel-node))\s+["']?(?:\.\/)?|(?:^|[\s;&|(])["']?\.\/|^\s*)((?:[\w.-]+\/)*[\w.-]+\.(?:sh|bash|ps1|py|[cm]?[jt]s|rb))\b["']?(?:\s+([a-z][\w-]*))?/gm;
 
 function within(directory: string, change: string): string {
 	if (change.startsWith('/') || change.includes('$')) return directory;
@@ -669,7 +669,8 @@ function stepEffects(
 		if (typeof dispatch === 'string') effects.push({ kind: 'dispatch', workflow: dispatch, source, text: uses });
 		const rehearsal = inputs['dry-run'] === true || inputs['dry-run'] === 'true' || inputs.dry_run === true
 			|| inputs.dry_run === 'true'
-			|| (typeof inputs['repository-url'] === 'string' && /test\.pypi\.org/.test(inputs['repository-url']));
+			|| (typeof inputs['repository-url'] === 'string' && URL.canParse(inputs['repository-url'])
+				&& new URL(inputs['repository-url']).hostname === 'test.pypi.org');
 		for (const pattern of patterns) {
 			if (pattern.action?.test(uses) && !rehearsal) {
 				const repository = typeof inputs.repository === 'string' ? inputs.repository : undefined;

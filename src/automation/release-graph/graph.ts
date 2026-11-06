@@ -809,7 +809,14 @@ function versionGroupOf(
 	}
 	const statuses = [...carriers.values()];
 	const versions = new Set(packages.filter(pkg => !pkg.generated).flatMap(pkg => pkg.version ? [pkg.version] : []));
-	const lockstep: EvidenceStatus = statuses.filter(status => status === 'inferred').length <= 1
+	const fileVersions = new Set(
+		packages.flatMap(pkg =>
+			!pkg.generated && tagPrefix(pkg.versionSource) === undefined && pkg.version ? [pkg.version] : []
+		),
+	);
+	const lockstep: EvidenceStatus = carriers.size > 1 && fileVersions.size > 1
+		? 'conflicting'
+		: statuses.filter(status => status === 'inferred').length <= 1
 		? 'declared'
 		: versions.size > 1
 		? 'conflicting'

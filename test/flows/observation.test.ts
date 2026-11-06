@@ -42,10 +42,15 @@ async function adopt(repository: Repository) {
 	return { plan, reopened };
 }
 
-async function observe(repository: Repository, event: string, branch: string): Promise<Execution[]> {
+async function observe(
+	repository: Repository,
+	event: string,
+	branch: string,
+	path = '.github/workflows/release.yml',
+): Promise<Execution[]> {
 	const run = {
 		id: 9000 + repository.runs.length,
-		path: '.github/workflows/release.yml',
+		path,
 		event,
 		headSha: world.github.head(repository),
 		headBranch: branch,
@@ -540,6 +545,48 @@ test('a run without a head branch is ignored', async () => {
 	await world.wait(2_000);
 	const journal = await world.coordinator(repository).exportJournal();
 	expect(journal.filter(entry => entry.key.startsWith('execution:') || entry.key.startsWith('observe:'))).toEqual([]);
+});
+
+test("a tag glob on one workflow does not reclassify another workflow's branch runs", async () => {
+	const repository = world.github.create('octo/widget', {
+		'package.json': JSON.stringify({ name: 'widget', version: '1.2.0' }),
+		'.github/workflows/release.yml': workflow('{ release: { types: [published] } }', 'npm publish'),
+		'.github/workflows/snapshot.yml': workflow('{ push: { branches: [main] } }', 'npm publish --tag next'),
+	});
+	const { plan } = await adopt(repository);
+	expect(plan.choices.streams.flatMap(stream => stream.observe?.map(binding => binding.ref) ?? []).sort()).toEqual([
+		'refs/heads/main',
+		'refs/tags/*',
+	]);
+	const [execution] = await observe(repository, 'push', 'main', '.github/workflows/snapshot.yml');
+	expect(execution?.operation).toBe('snapshot');
+	expect(execution?.state).toBe('succeeded');
+	expect(execution?.version).toBeUndefined();
+});
+
+test('a transient tag lookup failure is retried instead of failing the release', async () => {
+	const repository = world.github.create('octo/widget', {
+		'package.json': JSON.stringify({ name: 'widget', version: '1.2.0' }),
+		'.github/workflows/release.yml': workflow("{ push: { tags: ['widget-v*'] } }", 'npm publish'),
+	});
+	await adopt(repository);
+	world.npm.publish('widget', '1.2.0');
+	repository.refs.set('tags/widget-v1.2.0', world.github.head(repository));
+	let failing = true;
+	world.network.serve('api.github.com', request =>
+		failing && request.url.includes('/git/ref/tags/widget-v1.2.0')
+			? Response.json({ message: 'Unicorn' }, { status: 503 })
+			: world.github.handle(request));
+	const first = await observe(repository, 'push', 'widget-v1.2.0');
+	expect(first).toEqual([]);
+	failing = false;
+	await world.wait(2 * 60_000, 2_000);
+	const journal = await world.coordinator(repository).exportJournal();
+	const executions = journal.filter(entry => entry.key.startsWith('execution:')).map(entry =>
+		decodeExecutionV1(entry.value)
+	);
+	expect(executions.map(execution => [execution.version, execution.state])).toEqual([['1.2.0', 'succeeded']]);
+	world.network.serve('api.github.com', request => world.github.handle(request));
 });
 
 test('a publisher on a non-default branch is observed on that branch', async () => {

@@ -1468,6 +1468,56 @@ describe('release streams', () => {
 		expect(packages(matrixed, 5)).toEqual(['pkg:npm/a', 'pkg:npm/b']);
 	});
 
+	test('runner flag lists parse in linear time and TestPyPI is matched by host', () => {
+		const flags = ` ${'-import '.repeat(5000)}x`;
+		const started = performance.now();
+		const files: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'tool', version: '1.0.0' }),
+			'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", `node${flags} scripts/release.js`),
+			'.github/workflows/deno.yml': workflow("{ push: { tags: ['w*'] } }", `deno run${' -.json '.repeat(5000)}x`),
+		};
+		plan({
+			repository: { id: 1, name: 'octo/tool', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files,
+			paths: Object.keys(files),
+		});
+		expect(performance.now() - started).toBeLessThan(2_000);
+		const py = (url: string): Record<string, string> => ({
+			'pyproject.toml': '[project]\nname = "tool"\nversion = "1.0.0"\n',
+			'.github/workflows/release.yml':
+				`on: { push: { branches: [main] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: pypa/gh-action-pypi-publish@release/v1\n        with: { repository-url: "${url}" }\n`,
+		});
+		const kinds = (url: string) => {
+			const input = py(url);
+			return plan({
+				repository: { id: 2, name: 'octo/tool', defaultBranch: 'main' },
+				sha: 'a'.repeat(40),
+				files: input,
+				paths: Object.keys(input),
+			}).graph.streams.flatMap(proposal => proposal.targets.map(entry => entry.destination));
+		};
+		expect(kinds('https://test.pypi.org/legacy/')).toEqual([]);
+		expect(kinds('https://test.pypi.org.evil.example/legacy/')).toEqual(['pypi']);
+	});
+
+	test('workspace lockstep needs matching file versions', () => {
+		const files: Record<string, string> = {
+			'Cargo.toml': '[workspace]\nmembers = ["a", "b"]\n[workspace.package]\nversion = "1.0.0"\n',
+			'a/Cargo.toml': '[package]\nname = "a"\nversion.workspace = true\n',
+			'b/Cargo.toml': '[package]\nname = "b"\nversion = "0.3.0"\n',
+			'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", 'cargo publish --workspace'),
+		};
+		const { choices, graph } = plan({
+			repository: { id: 1, name: 'octo/crates', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files,
+			paths: Object.keys(files),
+		});
+		expect(stream(graph, 'main').versionGroup.lockstep).toBe('conflicting');
+		expect(choices[0]?.versioning).toBe('independent');
+	});
+
 	test('a local action runs only its own manifest', async () => {
 		const files: Record<string, string> = {
 			'package.json': JSON.stringify({ name: 'widget', version: '1.0.0' }),
