@@ -2212,6 +2212,17 @@ describe('release streams', () => {
 			83,
 			'crates-io',
 		)).toEqual(['pkg:cargo/public-tool']);
+		const composed = planned({
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+			'actions/publish/action.yml':
+				"runs:\n  using: composite\n  steps:\n    - if: startsWith(github.ref, 'refs/tags/a-v')\n      shell: bash\n      working-directory: packages/a\n      run: npm publish\n    - if: startsWith(github.ref, 'refs/tags/b-v')\n      shell: bash\n      working-directory: packages/b\n      run: npm publish\n",
+			'.github/workflows/release.yml':
+				"on: { push: { tags: ['a-v*', 'b-v*'] } }\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./actions/publish\n",
+		}, 84);
+		const composedBindings = composed.choices.flatMap(choice => choice.observe ?? []);
+		expect(composedBindings.find(binding => binding.ref === 'refs/tags/a-v*')?.publications).toEqual(['pkg:npm/a']);
+		expect(composedBindings.find(binding => binding.ref === 'refs/tags/b-v*')?.publications).toEqual(['pkg:npm/b']);
 		expect(
 			planned({
 				'package.json': JSON.stringify({ name: '@octo/tool', version: '1.0.0' }),

@@ -582,6 +582,15 @@ function actionFiles(snapshot: Snapshot, path: string): [string, string][] {
 	return Object.entries(snapshot.files).filter(([file]) => file.startsWith(prefix));
 }
 
+function guarded(effects: StepEffect[], guard: unknown): StepEffect[] {
+	if (typeof guard !== 'string') return effects;
+	return effects.map(effect =>
+		effect.kind === 'publish'
+			? { ...effect, condition: [guard, effect.condition].filter(Boolean).join(' && ') }
+			: effect
+	);
+}
+
 function actionEffects(
 	snapshot: Snapshot,
 	path: string,
@@ -625,9 +634,10 @@ function actionEffects(
 			}
 			for (const entry of Array.isArray(steps) ? steps : []) {
 				const step = bindStep(object(entry), bindings);
+				const stepped: StepEffect[] = [];
 				const nested = typeof step.uses === 'string' ? stepEffects(snapshot, step, file, seen) : undefined;
 				if (nested) {
-					effects.push(...nested.effects);
+					stepped.push(...nested.effects);
 					runs.push(...nested.runs);
 				}
 				if (typeof step.run === 'string') {
@@ -635,7 +645,7 @@ function actionEffects(
 						? step['working-directory'].replace(/\$\{\{\s*github\.action_path\s*\}\}|\$\{?GITHUB_ACTION_PATH\}?/g, path)
 						: undefined;
 					const run = directory ? `cd ${directory}\n${step.run}` : step.run;
-					effects.push(...commandEffects(run, file));
+					stepped.push(...commandEffects(run, file));
 					runs.push(run);
 					const called = scriptEffects(
 						snapshot,
@@ -643,9 +653,10 @@ function actionEffects(
 						seen,
 						directory,
 					);
-					effects.push(...called.effects);
+					stepped.push(...called.effects);
 					runs.push(...called.runs);
 				}
+				effects.push(...guarded(stepped, step.if));
 			}
 		}
 	}
@@ -772,12 +783,7 @@ function buildJob(
 			: raw;
 		for (const step of expandStep(located, matrix)) {
 			const result = stepEffects(snapshot, step, path, new Set());
-			const guard = typeof step.if === 'string' ? step.if : undefined;
-			effects.push(
-				...(guard
-					? result.effects.map(effect => effect.kind === 'publish' ? { ...effect, condition: guard } : effect)
-					: result.effects),
-			);
+			effects.push(...guarded(result.effects, step.if));
 			runs.push(...result.runs);
 			if (result.action) actions.push(result.action);
 		}
