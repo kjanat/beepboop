@@ -411,8 +411,14 @@ function targetsOf(
 					path.endsWith('.json') && !/(?:^|\/)(?:package|deno|jsr|composer|tsconfig[^/]*)\.json$/.test(path)
 					&& cites(path)
 				).map(([, source]) => source);
+				const workspaces = [...publishing.matchAll(/(?:--workspace[= ]|(?:^|\s)-w\s+)["']?([^\s"';&|]+)/gm)].flatMap(
+					match => match[1]?.replace(/^\.\//, '').replace(/\/$/, '') ?? [],
+				);
 				const covered = (pkg: Package) =>
-					new RegExp(`(?:--workspace[= ]|-w\\s+)["']?${escapeRegExp(pkg.name)}(?![\\w-])`).test(publishing)
+					workspaces.some(selector =>
+						selector === pkg.name || (directoryOf(pkg) !== ''
+							&& (directoryOf(pkg) === selector || directoryOf(pkg).startsWith(`${selector}/`)))
+					)
 					|| (pkg.name.startsWith('@') && new RegExp(`(?<![\\w@/.-])${escapeRegExp(pkg.name)}(?![\\w-])`).test(text))
 					|| !!pkg.generated
 					|| (directoryOf(pkg) !== ''

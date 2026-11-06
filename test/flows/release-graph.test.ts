@@ -887,6 +887,50 @@ describe('release streams', () => {
 		expect(target(stream(mono.graph, 'root'), 'npm').packages).toEqual(['pkg:npm/root-tool']);
 	});
 
+	test('workspace directories select packages and npm lifecycle hooks run', () => {
+		const mono = (run: string): Record<string, string> => ({
+			'package.json': JSON.stringify({ name: 'root', private: true, workspaces: ['packages/*', 'tools/*'] }),
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+			'tools/c/package.json': JSON.stringify({ name: 'c', version: '1.0.0' }),
+			'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", run),
+		});
+		for (
+			const [run, expected] of [
+				['npm publish --workspace packages/a', ['pkg:npm/a']],
+				['npm publish -w ./packages', ['pkg:npm/a', 'pkg:npm/b']],
+			] as const
+		) {
+			const files = mono(run);
+			const { graph } = plan({
+				repository: { id: 1, name: 'octo/mono', defaultBranch: 'main' },
+				sha: 'a'.repeat(40),
+				files,
+				paths: Object.keys(files),
+			});
+			expect(target(stream(graph, 'main'), 'npm').packages).toEqual([...expected]);
+		}
+		const hooked = (run: string): Record<string, string> => ({
+			'package.json': JSON.stringify({
+				name: 'tool',
+				version: '1.0.0',
+				scripts: { release: 'echo release', postrelease: 'npm publish' },
+			}),
+			'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", run),
+		});
+		const planned = (run: string) => {
+			const files = hooked(run);
+			return plan({
+				repository: { id: 2, name: 'octo/tool', defaultBranch: 'main' },
+				sha: 'a'.repeat(40),
+				files,
+				paths: Object.keys(files),
+			});
+		};
+		expect(target(stream(planned('npm run release').graph, 'main'), 'npm').names).toEqual(['tool']);
+		expect(planned('npm run release --ignore-scripts').graph.streams).toEqual([]);
+	});
+
 	test('a local action runs only its own manifest', async () => {
 		const files: Record<string, string> = {
 			'package.json': JSON.stringify({ name: 'widget', version: '1.0.0' }),

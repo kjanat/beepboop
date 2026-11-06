@@ -386,7 +386,16 @@ function taskBodies(
 					const owner = dirs.find(dir => taskTable(snapshot, dir).present.has(kind));
 					const task = owner === undefined ? undefined : taskTable(snapshot, owner).tasks.get(kind)?.get(name);
 					if (task) {
-						found.push({ name, ...task });
+						const hooks = kind === 'package' && owner !== undefined && /^npm\b/.test(match[0])
+								&& !/--ignore-scripts\b/.test(line)
+							? taskTable(snapshot, owner).tasks.get('package')
+							: undefined;
+						const pre = hooks?.get(`pre${name}`), post = hooks?.get(`post${name}`);
+						found.push(
+							...(pre ? [{ name: `pre${name}`, ...pre }] : []),
+							{ name, ...task },
+							...(post ? [{ name: `post${name}`, ...post }] : []),
+						);
 						break;
 					}
 				}
