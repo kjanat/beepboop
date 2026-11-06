@@ -74,15 +74,20 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 			: undefined;
 		const observe = stream.workflows.filter(entry => entry.role === 'entry' || entry.role === 'channel').flatMap(
 			entry => {
+				const files = [
+					entry.file,
+					...stream.workflows.filter(member => member.role !== 'entry' && member.role !== 'channel').map(member =>
+						member.file
+					),
+				];
 				const covered = new Set(
-					stream.targets.filter(target =>
-						target.operations.some(operation =>
-							operation.startsWith(`${entry.file}#`)
-							|| stream.workflows.some(member =>
-								member.role !== 'entry' && member.role !== 'channel' && operation.startsWith(`${member.file}#`)
-							)
-						)
-					).flatMap(target => target.packages),
+					stream.targets.flatMap(target =>
+						target.sources
+							? files.flatMap(file => target.sources?.[file] ?? [])
+							: target.operations.some(operation => files.some(file => operation.startsWith(`${file}#`)))
+							? target.packages
+							: []
+					),
 				);
 				const tagged = entry.tagPatterns.length > 0 || entry.events.includes('release');
 				const dispatched = entry.events.includes('workflow_dispatch');

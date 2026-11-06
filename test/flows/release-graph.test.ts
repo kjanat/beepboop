@@ -665,6 +665,26 @@ describe('release streams', () => {
 		expect(graph.streams.flatMap(proposal => proposal.workflows.map(entry => entry.file))).toContain('manual.yml');
 	});
 
+	test('each workflow binding requires only the packages that workflow publishes', () => {
+		const files: Record<string, string> = {
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'packages/b/package.json': JSON.stringify({ name: 'b', version: '2.0.0' }),
+			'.github/workflows/a.yml': workflow("{ push: { tags: ['v1.*'] } }", 'cd packages/a && npm publish'),
+			'.github/workflows/b.yml': workflow("{ push: { tags: ['v2.*'] } }", 'cd packages/b && npm publish'),
+		};
+		const { graph, choices } = plan({
+			repository: { id: 1, name: 'octo/mono', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files,
+			paths: Object.keys(files),
+		});
+		expect(graph.streams.map(proposal => proposal.id)).toEqual(['main']);
+		expect(choices[0]?.observe?.map(binding => [binding.file, binding.publications])).toEqual([
+			['a.yml', ['pkg:npm/a']],
+			['b.yml', ['pkg:npm/b']],
+		]);
+	});
+
 	test('observe bindings follow each workflow trigger', async () => {
 		const actionlint = await load('actionlint');
 		const main = actionlint.choices.find(choice => choice.name === 'actionlint');

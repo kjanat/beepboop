@@ -34,6 +34,7 @@ export interface Target {
 	downstream: boolean;
 	repository?: string;
 	binaries?: string[];
+	sources?: Record<string, string[]>;
 }
 export type Carrier = { path: string; status: 'declared' | 'derived' | 'inferred' };
 export interface VersionGroup {
@@ -388,8 +389,8 @@ function targetsOf(
 					|| descriptors.some(source => new RegExp(`"${escapeRegExp(pkg.name)}"(?!\\s*:)`).test(source));
 				const chosen = candidates.filter(covered);
 				return manager !== 'cargo' && chosen.length
-					? { packages: chosen, cited: true }
-					: { packages: candidates, cited: manager === 'cargo' };
+					? { workflow, packages: chosen, cited: true }
+					: { workflow, packages: candidates, cited: manager === 'cargo' };
 			});
 			let packages = candidates.filter(pkg => selections.some(selection => selection.packages.includes(pkg)));
 			const selection: Target['selection'] = selections.every(entry => entry.cited) ? 'cited' : 'all';
@@ -459,6 +460,12 @@ function targetsOf(
 					packages: group.map(packageId),
 					variants: variants.map(pkg => pkg.name),
 					optionalVariants: group.filter(pkg => pkg.optional).map(pkg => pkg.name),
+					sources: Object.fromEntries(
+						selections.map(entry => [
+							entry.workflow,
+							group.filter(pkg => entry.packages.includes(pkg)).map(packageId),
+						]),
+					),
 				});
 			}
 			continue;
