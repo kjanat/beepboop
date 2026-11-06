@@ -135,6 +135,17 @@ class Graph {
 			...(job.calls ? this.jobs(job.calls, seen) : []),
 		]);
 	}
+	memberEffects(file: string, members: readonly string[]): { workflow: string; job: Job; effect: StepEffect }[] {
+		return this.jobs(file).filter(entry => entry.workflow === file).flatMap(({ workflow, job }) => {
+			const effects = job.callers
+				? [
+					...job.own ?? [],
+					...job.callers.filter(entry => members.includes(entry.caller)).flatMap(entry => entry.effects),
+				]
+				: job.effects;
+			return effects.map(effect => ({ workflow, job, effect }));
+		});
+	}
 	effects(file: string): { workflow: string; job: Job; effect: StepEffect }[] {
 		return this.jobs(file).flatMap(entry => entry.job.effects.map(effect => ({ ...entry, effect })));
 	}
@@ -1092,7 +1103,7 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 		const hosts = [...groups.keys()].filter(other => other !== key && primary(other));
 		const packagesOf = (group: Workflow[]) => {
 			const files = [...new Set(group.flatMap(member => graph.jobs(member.file).map(entry => entry.workflow)))];
-			const entries = files.flatMap(file => graph.effects(file).filter(entry => entry.workflow === file));
+			const entries = files.flatMap(file => graph.memberEffects(file, files));
 			return new Set(
 				targetsOf(graph, files, entries, new Map()).filter(target => target.selection === 'cited')
 					.flatMap(target => target.packages),
@@ -1138,7 +1149,7 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 		const files = [...new Set(heads.map(head => head.file))];
 		const called = new Set(files.flatMap(file => graph.jobs(file)).map(entry => entry.workflow));
 		const memberFiles = [...new Set([...files, ...called])];
-		const entries = memberFiles.flatMap(file => graph.effects(file).filter(entry => entry.workflow === file));
+		const entries = memberFiles.flatMap(file => graph.memberEffects(file, memberFiles));
 		const phases = phasesOf(graph, files);
 		const targets = targetsOf(graph, memberFiles, entries, phases);
 		const [kind, value = ''] = key.split(/:(.*)/s);

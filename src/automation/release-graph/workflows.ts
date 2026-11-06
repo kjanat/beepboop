@@ -45,6 +45,8 @@ export interface Job {
 	needs: string[];
 	calls?: string;
 	callRef?: string;
+	callers?: { caller: string; effects: StepEffect[] }[];
+	own?: StepEffect[];
 	environment?: string;
 	matrix?: string;
 	condition?: string;
@@ -590,9 +592,15 @@ function actionFiles(snapshot: Snapshot, path: string): [string, string][] {
 	return Object.entries(snapshot.files).filter(([file]) => file.startsWith(prefix));
 }
 
-function actionEffects(snapshot: Snapshot, path: string, seen: Set<string>): { effects: StepEffect[]; runs: string[] } {
-	if (seen.has(path)) return { effects: [], runs: [] };
-	seen.add(path);
+function actionEffects(
+	snapshot: Snapshot,
+	path: string,
+	seen: Set<string>,
+	bindings: Readonly<Record<string, string>> = {},
+): { effects: StepEffect[]; runs: string[] } {
+	const visit = `${path} ${JSON.stringify(bindings)}`;
+	if (seen.has(visit)) return { effects: [], runs: [] };
+	seen.add(visit);
 	const effects: StepEffect[] = [], runs: string[] = [];
 	const files = actionFiles(snapshot, path);
 	for (const file of [`${path}/action.yml`, `${path}/action.yaml`]) {
@@ -605,7 +613,7 @@ function actionEffects(snapshot: Snapshot, path: string, seen: Set<string>): { e
 				: definition.steps;
 			const declared = `${text}\n${snapshot.files[`${path}/Dockerfile`] ?? ''}`;
 			const stepRuns = (Array.isArray(steps) ? steps : []).flatMap(step => {
-				const run = object(step).run;
+				const run = bindStep(object(step), bindings).run;
 				return typeof run === 'string' ? [run.replace(/\$\{?GITHUB_ACTION_PATH\}?\//g, `${path}/`)] : [];
 			});
 			const called = new Set(stepRuns.flatMap(run => [...run.matchAll(scriptCall)].flatMap(match => match[1] ?? [])));
@@ -621,7 +629,7 @@ function actionEffects(snapshot: Snapshot, path: string, seen: Set<string>): { e
 				runs.push(...result.runs);
 			}
 			for (const entry of Array.isArray(steps) ? steps : []) {
-				const step = object(entry);
+				const step = bindStep(object(entry), bindings);
 				const nested = typeof step.uses === 'string' ? stepEffects(snapshot, step, file, seen) : undefined;
 				if (nested) {
 					effects.push(...nested.effects);
@@ -671,7 +679,7 @@ function stepEffects(
 		const own = new RegExp(`^${escapeRegExp(snapshot.repository.name)}/([^@]+?)/?@`, 'i').exec(uses)?.[1];
 		const local = localAction(uses) ?? own;
 		if (local && !local.startsWith('.github/workflows/')) {
-			const found = actionEffects(snapshot, local, seen);
+			const found = actionEffects(snapshot, local, seen, literalBindings(inputs));
 			return { effects: [...alias, ...found.effects], runs: found.runs, action: local };
 		}
 		const delegated = /^changesets\/action@/.test(uses) && typeof inputs.publish === 'string'
@@ -829,6 +837,18 @@ function triggerList(value: unknown, key: string): string[] {
 }
 
 const inputExpression = /\$\{\{\s*(?:github\.event\.)?inputs\.([\w-]+)\s*\}\}/g;
+function literalBindings(values: Record<string, unknown>): Record<string, string> {
+	const bindings: Record<string, string> = {};
+	for (const [key, input] of Object.entries(values)) {
+		if (
+			(typeof input === 'string' || typeof input === 'number' || typeof input === 'boolean')
+			&& !String(input).includes('${{')
+		) {
+			bindings[key] = String(input);
+		}
+	}
+	return bindings;
+}
 function bindInputs(text: string, bindings: Readonly<Record<string, string>>): string {
 	return text.replace(inputExpression, (expression, key: string) => bindings[key] ?? expression);
 }
@@ -936,8 +956,7 @@ export function workflowModels(snapshot: Snapshot): Workflow[] {
 			jobs,
 		});
 	}
-	const variants = new Map<string, Job[]>();
-	const unbound = new Set<string>();
+	const edges = new Map<string, { caller: string; bound?: Map<string, Job> }[]>();
 	for (const workflow of workflows) {
 		const caller = documents.get(workflow.file);
 		if (!caller) continue;
@@ -946,37 +965,33 @@ export function workflowModels(snapshot: Snapshot): Workflow[] {
 			if (!job?.calls) continue;
 			const callee = documents.get(job.calls);
 			if (!callee) continue;
-			const bindings: Record<string, string> = {};
-			for (const [key, input] of Object.entries(object(object(value).with))) {
-				if (
-					(typeof input === 'string' || typeof input === 'number' || typeof input === 'boolean')
-					&& !String(input).includes('${{')
-				) {
-					bindings[key] = String(input);
-				}
-			}
-			if (
-				!Object.keys(bindings).length || !new RegExp(inputExpression.source).test(JSON.stringify(callee.document.jobs))
-			) {
-				unbound.add(job.calls);
-				continue;
-			}
-			for (const [calleeId, calleeJob] of liveJobs(callee.document)) {
-				const key = `${job.calls}#${calleeId}`;
-				variants.set(key, [
-					...variants.get(key) ?? [],
-					buildJob(snapshot, callee.path, callee.document, calleeId, object(calleeJob), bindings),
-				]);
-			}
+			const bindings = literalBindings(object(object(value).with));
+			const usable = Object.keys(bindings).length > 0
+				&& new RegExp(inputExpression.source).test(JSON.stringify(callee.document.jobs));
+			const bound = usable
+				? new Map(
+					liveJobs(callee.document).map(([calleeId, calleeJob]) =>
+						[calleeId, buildJob(snapshot, callee.path, callee.document, calleeId, object(calleeJob), bindings)] as const
+					),
+				)
+				: undefined;
+			edges.set(job.calls, [...edges.get(job.calls) ?? [], { caller: workflow.file, ...(bound ? { bound } : {}) }]);
 		}
 	}
+	const unique = <T>(values: T[]) => [...new Map(values.map(value => [JSON.stringify(value), value])).values()];
 	for (const workflow of workflows) {
-		const direct = unbound.has(workflow.file) || workflow.events.some(event => event !== 'workflow_call');
+		const incoming = edges.get(workflow.file);
+		if (!incoming?.some(edge => edge.bound)) continue;
+		const direct = workflow.events.some(event => event !== 'workflow_call');
 		for (const job of workflow.jobs) {
-			const bound = variants.get(`${workflow.file}#${job.id}`);
-			if (!bound) continue;
-			const unique = <T>(values: T[]) => [...new Map(values.map(value => [JSON.stringify(value), value])).values()];
-			job.effects = unique([...direct ? job.effects : [], ...bound.flatMap(variant => variant.effects)]);
+			const callers = incoming.map(edge => ({
+				caller: edge.caller,
+				effects: edge.bound?.get(job.id)?.effects ?? job.effects,
+			}));
+			const bound = incoming.flatMap(edge => edge.bound?.get(job.id) ?? []);
+			job.own = direct ? job.effects : [];
+			job.callers = callers;
+			job.effects = unique([...job.own, ...callers.flatMap(entry => entry.effects)]);
 			job.runs = unique([...direct ? job.runs : [], ...bound.flatMap(variant => variant.runs)]);
 			job.actions = unique([...direct ? job.actions : [], ...bound.flatMap(variant => variant.actions)]);
 		}

@@ -1688,6 +1688,49 @@ describe('release streams', () => {
 			33,
 			'npm',
 		)).toEqual(['pkg:npm/a', 'pkg:npm/b']);
+		expect(selected(
+			{
+				...workspace,
+				'actions/publish/action.yml':
+					'name: publish\ninputs:\n  directory:\n    required: true\nruns:\n  using: composite\n  steps:\n    - shell: bash\n      working-directory: ${{ inputs.directory }}\n      run: npm publish\n',
+				'.github/workflows/release.yml':
+					"on: { push: { tags: ['v*'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./actions/publish\n        with:\n          directory: packages/a\n",
+			},
+			34,
+			'npm',
+		)).toEqual(['pkg:npm/a']);
+		const callee =
+			'on:\n  workflow_call:\n    inputs:\n      directory:\n        type: string\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - working-directory: ${{ inputs.directory }}\n        run: npm publish\n';
+		const caller = (tag: string, directory: string) =>
+			`on: { push: { tags: ['${tag}-v*'] } }\njobs:\n  release:\n    uses: ./.github/workflows/publish.yml\n    with:\n      directory: ${directory}\n`;
+		const separate = planned({
+			...workspace,
+			'.github/workflows/publish.yml': callee,
+			'.github/workflows/a.yml': caller('a', 'packages/a'),
+			'.github/workflows/b.yml': caller('b', 'packages/b'),
+		}, 35);
+		expect(
+			separate.graph.streams.map(proposal =>
+				proposal.targets.filter(entry => entry.destination === 'npm').flatMap(entry => entry.packages)
+			).sort(),
+		).toEqual([['pkg:npm/a'], ['pkg:npm/b']]);
+		const extension = {
+			'package.json': JSON.stringify({
+				name: 'tool',
+				version: '1.0.0',
+				publisher: 'acme',
+				engines: { vscode: '^1.90.0' },
+			}),
+		};
+		const registries = (run: string, id: number) =>
+			planned({
+				...extension,
+				'.github/workflows/release.yml': release(run),
+			}, id).choices[0]?.observe?.map(binding => binding.publications);
+		expect(registries('      - run: npx ovsx publish\n', 36)).toEqual([[]]);
+		expect(registries('      - run: npx vsce publish\n      - run: npx ovsx publish\n', 37)).toEqual([[
+			'pkg:vscode-extension/acme/tool',
+		]]);
 		const families = {
 			'packages/core/package.json': JSON.stringify({ name: 'core', version: '1.0.0' }),
 			'packages/cli/package.json': JSON.stringify({ name: 'cli', version: '2.0.0' }),

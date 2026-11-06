@@ -53,9 +53,10 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 		return !!pkg && !pkg.versionSource.startsWith('tags:');
 	};
 	return graph.streams.map(stream => {
-		const packages = [...new Set(stream.targets.flatMap(target => target.packages))].filter(id => known.has(id));
+		const verifiable = stream.targets.filter(target => target.destination !== 'open-vsx');
+		const packages = [...new Set(verifiable.flatMap(target => target.packages))].filter(id => known.has(id));
 		const optional = new Set(
-			stream.targets.flatMap(target => target.required ? target.optionalVariants : target.packages),
+			verifiable.flatMap(target => target.required ? target.optionalVariants : target.packages),
 		);
 		const required = packages.filter(id => {
 			const pkg = known.get(id);
@@ -101,7 +102,7 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 				const ownOperation = (operation: string) => files.some(file => operation.startsWith(`${file}#`));
 				const coveredFor = (prefix?: string) =>
 					new Set(
-						stream.targets.flatMap(target =>
+						verifiable.flatMap(target =>
 							target.destination === 'github-release' && entry.events.includes('release')
 								? target.packages
 								: target.sources
