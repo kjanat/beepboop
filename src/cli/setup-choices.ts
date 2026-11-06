@@ -10,6 +10,7 @@ import {
 } from '@/automation/setup-defaults';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import { failure } from '@/cli/output';
+import { workflowFilePattern } from '@/contract/catalog';
 import { packageLabel } from '@/domain/package-label';
 
 function select(ask: Ask, message: string, entries: SelectChoice[]): Effect.Effect<string, CLIError> {
@@ -284,7 +285,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 						message: `${stream.name}: ${role === 'prepare' ? 'preparation' : 'publishing'} workflow filename`,
 						default: before,
 						validate: value =>
-							/^[A-Za-z0-9_-]+\.ya?ml$/.test(value) && (!files().includes(value) || value === before)
+							workflowFilePattern.test(value) && (!files().includes(value) || value === before)
 								&& !plan.workflows.some(w => w.file === value) || 'Use an unused YAML filename.',
 					})
 				);

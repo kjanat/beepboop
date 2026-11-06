@@ -314,10 +314,14 @@ function scriptEffects(
 	snapshot: Snapshot,
 	run: string,
 	seen: Set<string>,
+	directory?: string,
 ): { effects: StepEffect[]; runs: string[] } {
 	const effects: StepEffect[] = [], runs: string[] = [];
+	const base = directory?.replace(/^\.\//, '').replace(/\/+$/, '');
 	for (const match of run.matchAll(scriptCall)) {
-		const path = match[1] ?? '';
+		const called = (match[1] ?? '').replace(/^\.\//, '');
+		const relative = base && base !== '.' ? `${base}/${called}` : undefined;
+		const path = relative !== undefined && snapshot.files[relative] !== undefined ? relative : called;
 		const source = snapshot.files[path];
 		const key = `${path} ${match[2] ?? ''}`;
 		if (!source || seen.has(key) || /(?:^|\/)(?:tests?|__tests__|fixtures)\/|\.test\./.test(path)) continue;
@@ -498,7 +502,7 @@ function stepEffects(
 	if (typeof step.run === 'string') {
 		const directory = typeof step['working-directory'] === 'string' ? step['working-directory'] : undefined;
 		const run = directory ? `cd ${directory}\n${step.run}` : step.run;
-		const called = scriptEffects(snapshot, run, seen);
+		const called = scriptEffects(snapshot, run, seen, directory);
 		return {
 			effects: [...alias, ...commandEffects(run, source), ...called.effects],
 			runs: [run, ...called.runs],
@@ -595,5 +599,5 @@ export function workflowModels(snapshot: Snapshot): Workflow[] {
 }
 
 export function literalPrefix(pattern: string): string {
-	return /^[A-Za-z0-9._/-]*/.exec(pattern)?.[0] ?? '';
+	return (/^[A-Za-z0-9._/-]*/.exec(pattern)?.[0] ?? '').replace(/(?<![\d.])\d[\d.]*$/, '');
 }

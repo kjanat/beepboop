@@ -85,26 +85,37 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 					).flatMap(target => target.packages),
 				);
 				const tagged = entry.tagPatterns.length > 0 || entry.events.includes('release');
-				const versioned = (id: string) => {
+				const dispatched = entry.events.includes('workflow_dispatch');
+				const channel = entry.role === 'channel';
+				const fileVersioned = (id: string) => {
 					const pkg = known.get(id);
-					return tagged
-						|| (entry.events.includes('workflow_dispatch') && !!pkg && !pkg.versionSource.startsWith('tags:'));
+					return !!pkg && !pkg.versionSource.startsWith('tags:');
 				};
-				const publications = entry.role === 'channel' ? [] : required.filter(id => covered.has(id) && versioned(id));
-				const refs = tagged
-					? [
-						...new Set(
-							entry.tagPatterns.length ? entry.tagPatterns.map(pattern => literalPrefix(pattern)) : [tagPrefix ?? ''],
-						),
-					].map(prefix => `refs/tags/${prefix}*`)
-					: entry.branchPatterns.length
-					? [branchRef(entry.branchPatterns)]
-					: [undefined];
-				return refs.map(ref => ({
+				const contexts: { ref?: string; publications: string[] }[] = [
+					...(tagged
+						? [
+							...new Set(
+								entry.tagPatterns.length ? entry.tagPatterns.map(pattern => literalPrefix(pattern)) : [tagPrefix ?? ''],
+							),
+						].map(prefix => ({
+							ref: `refs/tags/${prefix}*`,
+							publications: channel ? [] : required.filter(id => covered.has(id)),
+						}))
+						: []),
+					...(entry.branchPatterns.length ? [{ ref: branchRef(entry.branchPatterns), publications: [] }] : []),
+					...(!entry.branchPatterns.length && (!tagged || dispatched)
+						? [{
+							publications: channel || !dispatched
+								? []
+								: required.filter(id => covered.has(id) && fileVersioned(id)),
+						}]
+						: []),
+				];
+				return contexts.map(context => ({
 					name: bindingName(entry.file, taken),
 					file: entry.file,
-					...(ref ? { ref } : {}),
-					publications,
+					...(context.ref ? { ref: context.ref } : {}),
+					publications: context.publications,
 				}));
 			},
 		);

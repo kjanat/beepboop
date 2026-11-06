@@ -6,12 +6,11 @@ import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs'
 import { parseReleaseIdentity } from '@/automation/package-identity';
 import { refPattern, validRef } from '@/automation/policy';
 import { presetReferencePattern } from '@/automation/preset';
-import { managerNames, tagPrefixPattern, validTagPrefix } from '@/contract/catalog';
+import { managerNames, tagPrefixPattern, validTagPrefix, workflowFilePattern } from '@/contract/catalog';
 import { type Diagnostic, type DiagnosticCode, isDiagnosticCode } from '@/contract/diagnostics';
 import { purl } from '@/package-url';
 
 export const identifierPattern = /^[a-z][a-z0-9-]{0,63}$/;
-export const workflowFilePattern = /^[A-Za-z0-9_-]+\.ya?ml$/;
 export const reservedOperations = ['prepare', 'promote'] as const;
 export type ReservedOperation = (typeof reservedOperations)[number];
 const nonempty = z.string().min(1);
@@ -183,7 +182,7 @@ function subscriptionSchema() {
 	const workflowRun = z.strictObject({
 		...subscriptionCommon,
 		event: z.literal('workflow_run'),
-		workflow: z.string().regex(/^[\w-]+\.ya?ml$/, 'Workflow subscription requires an exact filename'),
+		workflow: z.string().regex(workflowFilePattern, 'Workflow subscription requires an exact filename'),
 	});
 	return z.discriminatedUnion('event', [release, packageChanged, workflowRun]).transform(subscription => ({
 		id: subscription.id,

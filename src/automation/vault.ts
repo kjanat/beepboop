@@ -5,6 +5,7 @@ import { base64, bytes, type WorkflowIdentity } from '@/automation/auth';
 import type { RepositoryGateway } from '@/automation/github';
 import { matchesRef } from '@/automation/policy';
 import type { Store } from '@/automation/store';
+import { workflowFilePattern } from '@/contract/catalog';
 import { type DomainError, decodeRequest, forbidden, invalid, notFound, precondition } from '@/contract/errors';
 import { credentialAliasPattern, githubSecretNamePattern } from '@/contract/ids';
 import { fromPromise, fromSync } from '@/failure';
@@ -34,7 +35,7 @@ const grantFields = {
 	repositoryId: z.number().int().positive(),
 	repository: z.string().regex(/^[\w.-]+\/[\w.-]+$/),
 	operation: nonempty,
-	workflow: z.string().regex(/^[\w-]+\.ya?ml$/),
+	workflow: z.string().regex(workflowFilePattern),
 	ref: z.string().startsWith('refs/'),
 };
 const secretName = z.string({ error: 'Secret name required' }).regex(githubSecretNamePattern, 'Secret name required');

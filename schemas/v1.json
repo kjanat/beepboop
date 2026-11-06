@@ -394,7 +394,7 @@
 			"properties": {
 				"file": {
 					"type": "string",
-					"pattern": "^[A-Za-z0-9_-]+\\.ya?ml$"
+					"pattern": "^[\\w-][\\w.-]*\\.ya?ml$"
 				},
 				"ref": {
 					"type": "string",
@@ -660,7 +660,7 @@
 						},
 						"workflow": {
 							"type": "string",
-							"pattern": "^[\\w-]+\\.ya?ml$"
+							"pattern": "^[\\w-][\\w.-]*\\.ya?ml$"
 						}
 					},
 					"required": [

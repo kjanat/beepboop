@@ -457,6 +457,38 @@ describe('release streams', () => {
 		expect(target(stream(graph, 'main'), 'npm').names).toEqual(['widget']);
 	});
 
+	test('working directories, version filters and mixed triggers keep their releases', async () => {
+		const files: Record<string, string> = {
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'packages/a/scripts/publish.sh': '#!/bin/sh\nnpm publish\n',
+			'.github/workflows/release.yml': [
+				'on:',
+				'  push: { tags: ["v1.*"], branches: [release] }',
+				'  workflow_dispatch:',
+				'jobs:',
+				'  publish:',
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - working-directory: packages/a',
+				'        run: bash scripts/publish.sh',
+				'',
+			].join('\n'),
+		};
+		const snapshot = await Effect.runPromise(buildSnapshot({
+			repository: { id: 1, name: 'octo/mono', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			entries: Object.keys(files).map(path => ({ path, type: 'blob', mode: '100644' })),
+			read: path => Effect.succeed(files[path] ?? null),
+			tags: () => Effect.succeed(['v1.2.0']),
+		}));
+		expect(snapshot.files['packages/a/scripts/publish.sh']).toBe(files['packages/a/scripts/publish.sh']);
+		const { graph, choices } = plan(snapshot);
+		const main = stream(graph, 'main');
+		expect(main.trigger).toMatchObject({ kind: 'tags', prefix: 'v' });
+		expect(target(main, 'npm').names).toEqual(['a']);
+		expect(choices[0]?.observe?.map(binding => binding.ref)).toEqual(['refs/tags/v*', 'refs/heads/release']);
+	});
+
 	test('observe bindings follow each workflow trigger', async () => {
 		const actionlint = await load('actionlint');
 		const main = actionlint.choices.find(choice => choice.name === 'actionlint');
@@ -486,8 +518,11 @@ describe('release streams', () => {
 			for (const omission of first.graph.omissions) {
 				expect(first.markdown).toContain(`- ${omission.subject}: ${omission.reason}.`);
 			}
-			const files = first.choices.flatMap(choice => choice.observe?.map(binding => binding.file) ?? []);
-			expect(new Set(files).size).toBe(files.length);
+			for (const choice of first.choices) {
+				const bindings = choice.observe ?? [];
+				expect(new Set(bindings.map(binding => binding.name)).size).toBe(bindings.length);
+				expect(new Set(bindings.map(binding => `${binding.file} ${binding.ref ?? ''}`)).size).toBe(bindings.length);
+			}
 		}
 	});
 });

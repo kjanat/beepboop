@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import { tagPrefixPattern, validTagPrefix } from '@/contract/catalog';
+import { tagPrefixPattern, validTagPrefix, workflowFilePattern } from '@/contract/catalog';
 
 const workflow = z.object({
-	file: z.string().regex(/^[A-Za-z0-9_-]+\.ya?ml$/),
+	file: z.string().regex(workflowFilePattern),
 	job: z.string().optional(),
 	triggers: z.enum(['review', 'dispatchOnly', 'preserve']).default('review'),
 	/** Commands are explicit repository policy, never inferred from package names. */
@@ -12,7 +12,7 @@ const workflow = z.object({
 }).strict();
 const observed = z.object({
 	name: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),
-	file: z.string().regex(/^[A-Za-z0-9_-]+\.ya?ml$/),
+	file: z.string().regex(workflowFilePattern),
 	ref: z.string().regex(/^refs\/(?:heads|tags)\/[A-Za-z0-9._/-]*\*?$/).optional(),
 	publications: z.array(z.string()).default([]),
 }).strict();

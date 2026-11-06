@@ -7,7 +7,7 @@ import { parseReleaseIdentity } from '@/automation/package-identity';
 import { validRef } from '@/automation/policy';
 import { parsePresetReference } from '@/automation/preset';
 import type { Configuration, Stream, WorkflowBinding } from '@/automation/types';
-import { managerNames, validTagPrefix } from '@/contract/catalog';
+import { managerNames, validTagPrefix, workflowFilePattern } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
 import { type DomainError, precondition } from '@/contract/errors';
 import { configurationDrift, configurationSchema } from '@/domain/configuration';
@@ -121,7 +121,7 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 		const file = yield* text(data.file);
 		const ref = data.ref === undefined ? undefined : yield* text(data.ref);
 		if (ref !== undefined && !validRef(ref)) return yield* reject('Invalid workflow ref');
-		if (!/^[A-Za-z0-9_-]+\.ya?ml$/.test(file)) return yield* reject('Workflow must be a filename');
+		if (!workflowFilePattern.test(file)) return yield* reject('Workflow must be a filename');
 		const inputs: Record<string, string | boolean | number> = {};
 		for (
 			const [key, input] of Object.entries(data.inputs === undefined ? {} : yield* record(data.inputs))
@@ -304,7 +304,7 @@ function subscription(raw: unknown, streams: Record<string, Stream>): Parsed<Con
 		if (!identifier.test(id)) return yield* reject('Invalid subscription');
 		const event = yield* oneOf(kind, ['release', 'package.version.changed', 'workflow_run'], 'Invalid subscription');
 		if (!streams[stream]?.workflows[operation]) return yield* reject('Subscription references an unknown operation');
-		if (event === 'workflow_run' && (typeof row.workflow !== 'string' || !/^[\w-]+\.ya?ml$/.test(row.workflow))) {
+		if (event === 'workflow_run' && (typeof row.workflow !== 'string' || !workflowFilePattern.test(row.workflow))) {
 			return yield* reject('Workflow subscription requires an exact filename');
 		}
 		return {

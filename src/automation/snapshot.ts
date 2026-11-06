@@ -76,7 +76,20 @@ function referencedScripts(
 ): string[] {
 	const text = [...read].filter(([path]) => path.startsWith('.github/') || recipe.test(path) || script.test(path))
 		.map(([, source]) => source).join('\n');
-	return blobs.filter(path => script.test(path) && !requested.has(path) && !excluded.test(path) && text.includes(path));
+	const directories = [
+		...new Set(
+			[...text.matchAll(/working-directory:\s*["']?(?:\.\/)?([\w./-]+?)\/?["']?\s*$/gm)].flatMap(match =>
+				match[1] ?? []
+			),
+		),
+	];
+	return blobs.filter(path =>
+		script.test(path) && !requested.has(path) && !excluded.test(path)
+		&& (text.includes(path)
+			|| directories.some(directory =>
+				path.startsWith(`${directory}/`) && text.includes(path.slice(directory.length + 1))
+			))
+	);
 }
 
 export function buildSnapshot(

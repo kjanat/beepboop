@@ -221,3 +221,16 @@ test('every tag family of a workflow is observed', async () => {
 	expect(execution?.version).toBe('1.0.0');
 	expect(execution?.publications.map(publication => publication.outcome)).toEqual(['succeeded']);
 });
+
+test('a workflow filename with dots is adopted', async () => {
+	const repository = world.github.create('octo/dotted', {
+		'Cargo.toml': '[package]\nname = "dotted"\nversion = "0.1.0"\npublish = false\n',
+		'.github/workflows/release.plugin.yml': workflow(
+			"{ push: { tags: ['v*'] } }",
+			'gh release create "$GITHUB_REF_NAME" plugin.wasm',
+		),
+	});
+	const { plan, reopened } = await adopt(repository);
+	expect(plan.choices.streams[0]?.observe?.map(binding => binding.file)).toEqual(['release.plugin.yml']);
+	expect(reopened.choices.streams).toEqual(plan.choices.streams);
+});
