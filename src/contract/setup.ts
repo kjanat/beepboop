@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { tagPrefixPattern, validTagPrefix } from '@/contract/catalog';
 
 const workflow = z.object({
 	file: z.string().regex(/^[A-Za-z0-9_-]+\.ya?ml$/),
@@ -22,7 +23,10 @@ export const setupChoicesSchema = z.object({
 			packages: z.array(z.string()),
 			versioning: z.enum(['workspace', 'independent', 'none']),
 			required: z.array(z.string()),
-			versionSource: z.object({ kind: z.literal('tags'), prefix: z.string().regex(/^[A-Za-z0-9._-]*$/) }).strict()
+			versionSource: z.object({
+				kind: z.literal('tags'),
+				prefix: z.string().regex(tagPrefixPattern).refine(validTagPrefix, 'Invalid tag prefix'),
+			}).strict()
 				.optional(),
 			observe: z.array(observed).optional(),
 			prepare: workflow.optional(),

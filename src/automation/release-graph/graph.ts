@@ -43,6 +43,12 @@ export interface VersionGroup {
 	evidence: Evidence[];
 }
 export type EntryRole = 'entry' | 'called' | 'recovery' | 'channel' | 'initiator' | 'maintenance';
+export interface StreamWorkflow {
+	file: string;
+	role: EntryRole;
+	events: string[];
+	tagPatterns: string[];
+}
 export interface StreamProposal {
 	id: string;
 	name: string;
@@ -52,7 +58,7 @@ export interface StreamProposal {
 		| { kind: 'dispatch'; workflow: string }
 		| { kind: 'schedule'; workflow: string }
 		| { kind: 'branch'; workflow: string };
-	workflows: { file: string; role: EntryRole }[];
+	workflows: StreamWorkflow[];
 	channels: string[];
 	facets: string[];
 	versionGroup: VersionGroup;
@@ -292,6 +298,22 @@ const assetKinds: readonly [RegExp, string][] = [
 	[/\.wasm\b/, 'WebAssembly modules'],
 ];
 
+const verificationOnly =
+	/\b(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|check|typecheck)|cargo\s+(?:test|clippy|check|fmt)|deno\s+(?:test|lint|check|fmt)|go\s+(?:test|vet))\b/;
+function publicationRuns(graph: Graph, workflow: string, found: { workflow: string; job: Job }[]): string[] {
+	const jobs = graph.byFile.get(workflow)?.jobs ?? [];
+	const pending = found.filter(entry => entry.workflow === workflow).map(entry => entry.job.id);
+	const reached = new Set<string>();
+	while (pending.length) {
+		const id = pending.pop();
+		if (id === undefined || reached.has(id)) continue;
+		reached.add(id);
+		pending.push(...(jobs.find(job => job.id === id)?.needs ?? []));
+	}
+	return jobs.filter(job => reached.has(job.id)).flatMap(job => job.runs).filter(run =>
+		!verificationOnly.test(run) || /\b(?:publish|pack|package|build)\b/.test(run)
+	);
+}
 function targetsOf(
 	graph: Graph,
 	files: string[],
@@ -340,12 +362,11 @@ function targetsOf(
 			const candidates = managed(manager);
 			const directoryOf = (pkg: Package) => pkg.manifest.split('/').slice(0, -1).join('/');
 			const selections = [...new Set(found.map(entry => entry.workflow))].map(workflow => {
-				const text = [
-					...found.filter(entry => entry.workflow === workflow).map(entry =>
-						entry.effect.kind === 'publish' || entry.effect.kind === 'release' ? entry.effect.text : ''
-					),
-					...(graph.byFile.get(workflow)?.jobs.flatMap(job => job.runs) ?? []),
-				].join('\n');
+				const effects = found.filter(entry => entry.workflow === workflow).map(entry =>
+					entry.effect.kind === 'publish' || entry.effect.kind === 'release' ? entry.effect.text : ''
+				);
+				const text = [...effects, ...(graph.byFile.get(workflow)?.jobs.flatMap(job => job.runs) ?? [])].join('\n');
+				const publishing = [...effects, ...publicationRuns(graph, workflow, found)].join('\n');
 				const cites = (value: string) => new RegExp(`(?<![\\w./-])${escapeRegExp(value)}(?![\\w-])`).test(text);
 				const citesDirectory = (value: string) =>
 					new RegExp(
@@ -353,13 +374,13 @@ function targetsOf(
 							escapeRegExp(value)
 						}/?["']?(?:\\s|$|[;&)])|(?<![\\w./-])${escapeRegExp(value)}/package\\.json)`,
 						'm',
-					).test(text);
+					).test(publishing);
 				const descriptors = Object.entries(snapshot.files).filter(([path]) =>
 					path.endsWith('.json') && !/(?:^|\/)(?:package|deno|jsr|composer|tsconfig[^/]*)\.json$/.test(path)
 					&& cites(path)
 				).map(([, source]) => source);
 				const covered = (pkg: Package) =>
-					new RegExp(`(?:--workspace[= ]|-w\\s+)["']?${escapeRegExp(pkg.name)}(?![\\w-])`).test(text)
+					new RegExp(`(?:--workspace[= ]|-w\\s+)["']?${escapeRegExp(pkg.name)}(?![\\w-])`).test(publishing)
 					|| (pkg.name.startsWith('@') && new RegExp(`(?<![\\w@/.-])${escapeRegExp(pkg.name)}(?![\\w-])`).test(text))
 					|| !!pkg.generated
 					|| (directoryOf(pkg) !== '' && citesDirectory(directoryOf(pkg)))
@@ -924,10 +945,14 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 			: kind === 'schedule'
 			? { kind: 'schedule', workflow: value }
 			: { kind: 'branch', workflow: value };
-		let name = streamName(key, roots, snapshot.repository.name);
-		while (used.has(name)) name = identifier(`${name}-${streams.length + 1}`);
+		const base = streamName(key, roots, snapshot.repository.name);
+		let name = base;
+		for (let index = 2; used.has(name); index++) {
+			const suffix = `-${index}`;
+			name = `${base.slice(0, 63 - suffix.length).replace(/-+$/, '')}${suffix}`;
+		}
 		used.add(name);
-		const roles: { file: string; role: EntryRole }[] = memberFiles.map(file => {
+		const roles: StreamWorkflow[] = memberFiles.map(file => {
 			const workflow = graph.byFile.get(file);
 			const recovery = !!workflow && workflow.events.includes('workflow_dispatch')
 				&& (workflow.callInputs.length > 0 || (graph.callers.get(file)?.size ?? 0) > 0
@@ -942,7 +967,7 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 				: recovery
 				? 'recovery'
 				: 'called');
-			return { file, role };
+			return { file, role, events: workflow?.events ?? [], tagPatterns: workflow?.tagPatterns ?? [] };
 		});
 		const untagged = trigger.kind === 'schedule' || trigger.kind === 'branch';
 		const channels = new Set<string>(untagged ? [] : ['stable']);
@@ -966,16 +991,17 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 			const workflow = graph.byFile.get(file);
 			if (!workflow) return [];
 			const inputs = object(JSON.parse(workflow.dispatchText));
-			return Object.entries(inputs).filter(([input, value]) =>
-				/run[-_]?id|existing|resume|recover|backfill|destination|registry/i.test(
-					`${input} ${JSON.stringify(value)}`,
-				)
-				|| (object(value).options !== undefined
-					&& JSON.stringify(object(value).options).match(/"(?:npm|jsr|pypi|crates-io|mirror|oci|docker|aur|winget)"/g)
-							?.length !== undefined
-					&& (JSON.stringify(object(value).options).match(/"(?:npm|jsr|pypi|crates-io|mirror|oci|docker|aur|winget)"/g)
-							?.length ?? 0) >= 2)
-			).map(([input]) => `${code(file)} input ${code(input)}`);
+			return Object.entries(inputs).filter(([input, value]) => {
+				if (
+					/run[-_]?id|existing|resume|recover|backfill|destination|registry/i.test(`${input} ${JSON.stringify(value)}`)
+				) {
+					return true;
+				}
+				const options = object(value).options;
+				return options !== undefined
+					&& (JSON.stringify(options).match(/"(?:npm|jsr|pypi|crates-io|mirror|oci|docker|aur|winget)"/g)?.length ?? 0)
+						>= 2;
+			}).map(([input]) => `${code(file)} input ${code(input)}`);
 		});
 		const aliases = [
 			...new Set(
@@ -1061,7 +1087,12 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 				|| (initiator.tags && trigger.kind === 'tags'
 					&& [...groups.keys()].filter(other => other.startsWith('tags:')).length === 1);
 			if (!linked) continue;
-			roles.push({ file: initiator.workflow.file, role: 'initiator' });
+			roles.push({
+				file: initiator.workflow.file,
+				role: 'initiator',
+				events: initiator.workflow.events,
+				tagPatterns: initiator.workflow.tagPatterns,
+			});
 			evidence.push(...workflowEvidence(initiator.workflow));
 			evidence.push({
 				status: 'declared',
@@ -1118,7 +1149,12 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 		);
 		const last = Math.max(0, ...stream.targets.map(target => target.phase));
 		for (const follower of followers) {
-			stream.workflows.push({ file: follower.file, role: 'called' });
+			stream.workflows.push({
+				file: follower.file,
+				role: 'called',
+				events: follower.events,
+				tagPatterns: follower.tagPatterns,
+			});
 			const docs = graph.effects(follower.file).filter(({ effect }) =>
 				effect.kind === 'publish' && effect.destination === 'docs'
 			);

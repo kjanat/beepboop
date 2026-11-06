@@ -99,11 +99,28 @@ function suggested(
 		const packages = Array.isArray(current.packages)
 			? current.packages.map(value => selectorKey(String(value), inventory.packages))
 			: [];
-		const selected = packages.length ? packages : inventory.packages.filter(pkg =>
-			publishable(pkg) && (
-				names.size === 1 || pkg.manifest.split('/').slice(0, -1).includes(name)
-			)
-		).map(packageId);
+		const observe = Object.entries(object(current.workflows)).flatMap(([binding, value]) => {
+			const workflow = object(value);
+			if (workflow.mode !== 'observe' || typeof workflow.file !== 'string') return [];
+			return [{
+				name: binding,
+				file: workflow.file,
+				...(typeof workflow.ref === 'string' ? { ref: workflow.ref } : {}),
+				publications: Array.isArray(workflow.publications)
+					? workflow.publications.map(id => selectorKey(String(id), inventory.packages))
+					: [],
+			}];
+		});
+		const source = object(current.versionSource);
+		const versionSource: SetupChoices['streams'][number]['versionSource'] =
+			source.kind === 'tags' && typeof source.prefix === 'string' ? { kind: 'tags', prefix: source.prefix } : undefined;
+		const selected = packages.length || observe.length
+			? packages
+			: inventory.packages.filter(pkg =>
+				publishable(pkg) && (
+					names.size === 1 || pkg.manifest.split('/').slice(0, -1).includes(name)
+				)
+			).map(packageId);
 		const choose = (operation: 'prepare' | 'promote') => {
 			const binding = object(object(current[operation]).workflow);
 			const matches = workflows.filter(w => w.roles.some(role => role.stream === name && role.operation === operation));
@@ -123,6 +140,8 @@ function suggested(
 		};
 		streams.push({
 			name,
+			...(observe.length ? { observe } : {}),
+			...(versionSource ? { versionSource } : {}),
 			packages: selected,
 			versioning: current.versioning === 'independent' || current.versioning === 'none'
 				? current.versioning

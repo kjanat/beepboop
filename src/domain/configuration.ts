@@ -6,7 +6,7 @@ import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs'
 import { parseReleaseIdentity } from '@/automation/package-identity';
 import { refPattern, validRef } from '@/automation/policy';
 import { presetReferencePattern } from '@/automation/preset';
-import { managerNames } from '@/contract/catalog';
+import { managerNames, tagPrefixPattern, validTagPrefix } from '@/contract/catalog';
 import { type Diagnostic, type DiagnosticCode, isDiagnosticCode } from '@/contract/diagnostics';
 import { purl } from '@/package-url';
 
@@ -14,7 +14,6 @@ export const identifierPattern = /^[a-z][a-z0-9-]{0,63}$/;
 export const workflowFilePattern = /^[A-Za-z0-9_-]+\.ya?ml$/;
 export const reservedOperations = ['prepare', 'promote'] as const;
 export type ReservedOperation = (typeof reservedOperations)[number];
-const tagPrefix = /^[A-Za-z0-9._-]*$/;
 const nonempty = z.string().min(1);
 const identifier = z.string().regex(identifierPattern);
 
@@ -42,7 +41,7 @@ const cron = nonempty.refine(value => {
 
 const refPolicy = z.strictObject({
 	phase: z.enum(['version', 'aliases']),
-	prefix: z.string().regex(tagPrefix).refine(value => !value.includes('..'), 'Invalid tag prefix').default('v'),
+	prefix: z.string().regex(tagPrefixPattern).refine(validTagPrefix, 'Invalid tag prefix').default('v'),
 	aliases: z.array(z.enum(['major', 'minor'])).refine(
 		aliases => new Set(aliases).size === aliases.length,
 		'Invalid aliases',
@@ -112,7 +111,10 @@ function streamSchema() {
 	const shape = z.strictObject({
 		versioning: z.enum(['workspace', 'independent', 'none']).default('workspace'),
 		versionFiles: z.array(versionFileSchema).optional(),
-		versionSource: z.strictObject({ kind: z.literal('tags'), prefix: z.string().regex(tagPrefix) }).optional(),
+		versionSource: z.strictObject({
+			kind: z.literal('tags'),
+			prefix: z.string().regex(tagPrefixPattern).refine(validTagPrefix, 'Invalid tag prefix'),
+		}).optional(),
 		packages: packageReferences.optional(),
 		prepare: z.strictObject({
 			version: z.literal('manual').optional(),

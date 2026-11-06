@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Effect } from 'effect';
 import { z } from 'zod';
 import { discover } from '@/automation/managers';
+import { buildSnapshot } from '@/automation/snapshot';
 import { adoptionChoices, adoptionMarkdown } from '@/automation/release-graph/adoption';
 import {
 	inferReleaseGraph,
@@ -54,6 +55,9 @@ function plan(snapshot: Snapshot) {
 	};
 }
 
+function workflow(on: string, run: string): string {
+	return `on: ${on}\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ${run}\n`;
+}
 function stream(graph: ReleaseGraph, id: string): StreamProposal {
 	const found = graph.streams.find(candidate => candidate.id === id);
 	if (!found) throw new Error(`no stream ${id} in ${graph.streams.map(candidate => candidate.id).join(', ')}`);
@@ -209,7 +213,8 @@ describe('release streams', () => {
 		expect(main.facets).toContain('debian-package');
 		expect(target(main, 'github-release').variants).toContain('Debian packages');
 		expect(main.workflows.map(entry => entry.file).sort()).toEqual(['build.yml', 'ci.yml', 'release.yml']);
-		expect(omitted(go.graph, 'unifi-os.yml')).toContain('shared build');
+		expect(target(main, 'github-release').operations).toEqual(['release.yml#publish']);
+		expect(roleOf(main, 'build.yml')).toBe('called');
 		expect(go.choices[0]?.observe?.map(binding => binding.file)).toEqual(['release.yml']);
 		const master = await load('udm-iptv-master');
 		expect(stream(master.graph, 'main').workflows.map(entry => entry.file)).toEqual(['release.yml']);
@@ -339,6 +344,90 @@ describe('release streams', () => {
 		);
 		expect(target(widget, 'npm').names).toEqual(['widget']);
 		expect(markdown).toContain('pushes that run `snapshot.yml`');
+	});
+
+	test('discovery follows wrapper scripts and reads a single tag filter', async () => {
+		const files: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'widget', version: '1.0.0' }),
+			'.github/workflows/release.yml': workflow("{ push: { tags: 'tools/v*' } }", './scripts/release.sh'),
+			'scripts/release.sh': '#!/bin/sh\n./scripts/publish.sh\n',
+			'scripts/publish.sh': '#!/bin/sh\nnpm publish\n',
+			'scripts/unused.sh': '#!/bin/sh\necho unused\n',
+		};
+		const queried: string[] = [];
+		const snapshot = await Effect.runPromise(buildSnapshot({
+			repository: { id: 1, name: 'octo/widget', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			entries: Object.keys(files).map(path => ({ path, type: 'blob', mode: '100755' })),
+			read: path => Effect.succeed(files[path] ?? null),
+			tags: prefixes => {
+				queried.push(...prefixes);
+				return Effect.succeed(['tools/v1.0.0']);
+			},
+		}));
+		expect(snapshot.files['scripts/publish.sh']).toBe(files['scripts/publish.sh']);
+		expect(snapshot.files['scripts/unused.sh']).toBeUndefined();
+		expect(queried).toContain('tools/v');
+		const widget = stream(plan(snapshot).graph, 'tools');
+		expect(widget.trigger).toMatchObject({ kind: 'tags', prefix: 'tools/v' });
+		expect(target(widget, 'npm').names).toEqual(['widget']);
+	});
+
+	test('script runs, snapshot builds, tests and long names do not distort streams', () => {
+		const long = 'x'.repeat(70);
+		const files: Record<string, string> = {
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+			'.github/workflows/release.yml': [
+				'on: { push: { tags: ["v*"] } }',
+				'jobs:',
+				'  test:',
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - run: cd packages/a && npm test',
+				'  publish:',
+				'    needs: test',
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - run: cd packages/b && npm publish',
+				'',
+			].join('\n'),
+			'.github/workflows/ci.yml': [
+				'on: { push: { branches: [main] } }',
+				'jobs:',
+				'  snapshot:',
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - uses: goreleaser/goreleaser-action@v7',
+				'        with: { args: release --snapshot --clean }',
+				'      - run: npm run publish:docs',
+				'',
+			].join('\n'),
+			[`.github/workflows/${long}-a.yml`]: workflow('{ workflow_dispatch: {} }', 'gh release create v1'),
+			[`.github/workflows/${long}-b.yml`]: workflow('{ workflow_dispatch: {} }', 'gh release create v1'),
+		};
+		const { graph } = plan({
+			repository: { id: 1, name: 'octo/mono', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files,
+			paths: Object.keys(files),
+		});
+		expect(target(stream(graph, 'main'), 'npm').names).toEqual(['b']);
+		expect(graph.streams.flatMap(proposal => proposal.workflows.map(entry => entry.file))).not.toContain('ci.yml');
+		const ids = graph.streams.map(proposal => proposal.id).filter(id => id.startsWith('xxx'));
+		expect(ids).toHaveLength(2);
+		expect(new Set(ids).size).toBe(2);
+		expect(ids.every(id => id.length <= 63)).toBe(true);
+	});
+
+	test('observe bindings follow each workflow trigger', async () => {
+		const actionlint = await load('actionlint');
+		const main = actionlint.choices.find(choice => choice.name === 'actionlint');
+		expect(main?.observe?.find(binding => binding.file === 'release.yml')?.ref).toBe('refs/tags/v*');
+		expect(main?.observe?.find(binding => binding.file === 'release-prepare.yml')?.ref).toBeUndefined();
+		const nightly = main?.observe?.find(binding => binding.file === 'docker-nightly.yml');
+		expect(nightly?.ref).toBeUndefined();
+		expect(nightly?.publications).toEqual([]);
 	});
 
 	test('every fixture explains its groupings and omissions deterministically', async () => {

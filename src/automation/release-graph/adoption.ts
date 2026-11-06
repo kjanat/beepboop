@@ -62,6 +62,11 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 			? 'workspace'
 			: 'none';
 		const taken = new Set<string>();
+		const tagPrefix = stream.trigger.kind === 'tags'
+			? stream.trigger.prefix
+			: stream.versionGroup.source.kind === 'tags'
+			? stream.versionGroup.source.prefix
+			: undefined;
 		const observe = stream.workflows.filter(entry => entry.role === 'entry' || entry.role === 'channel').map(entry => {
 			const covered = new Set(
 				stream.targets.filter(target =>
@@ -73,13 +78,17 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 					)
 				).flatMap(target => target.packages),
 			);
+			const tagged = entry.tagPatterns.length > 0 || entry.events.includes('release');
+			const versioned = (id: string) => {
+				const pkg = known.get(id);
+				return tagged
+					|| (entry.events.includes('workflow_dispatch') && !!pkg && !pkg.versionSource.startsWith('tags:'));
+			};
 			return {
 				name: bindingName(entry.file, taken),
 				file: entry.file,
-				...(stream.trigger.kind === 'tags' && entry.role === 'entry'
-					? { ref: `refs/tags/${stream.trigger.prefix}*` }
-					: {}),
-				publications: required.filter(id => covered.has(id)),
+				...(tagged ? { ref: `refs/tags/${tagPrefix ?? ''}*` } : {}),
+				publications: entry.role === 'channel' ? [] : required.filter(id => covered.has(id) && versioned(id)),
 			};
 		});
 		const versionSource: SetupChoices['streams'][number]['versionSource'] =

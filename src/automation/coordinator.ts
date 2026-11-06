@@ -27,6 +27,7 @@ import {
 } from '@/automation/github-resources';
 import { type InboxEvent, inboxEntry } from '@/automation/inbox';
 import { canVerifyPublication, discover, observedVersion, verifyPublication } from '@/automation/managers';
+import { tagPrefix } from '@/automation/managers/tags';
 import { verifyManifest } from '@/automation/manifest';
 import { mergeArtifacts, resolveInputs } from '@/automation/outputs';
 import {
@@ -1466,24 +1467,35 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			);
 			if (
 				run.repository.id !== repository.id
-				|| !['push', 'release', 'workflow_dispatch', 'schedule'].includes(String(run.event))
+				|| !['push', 'release', 'workflow_dispatch', 'schedule', 'workflow_run', 'repository_dispatch'].includes(
+					String(run.event),
+				)
 			) {
 				return;
 			}
-			const branch = String(run.head_branch),
-				ref = run.event === 'release' || /^v?\d+\.\d+\.\d+/.test(branch)
-					? `refs/tags/${branch}`
-					: `refs/heads/${branch}`;
+			const branch = String(run.head_branch);
 			for (const [streamName, stream] of Object.entries(repository.configuration.streams)) {
 				for (const [operation, binding] of Object.entries(stream.workflows)) {
+					const pattern = binding.ref ?? repository.defaultBranch;
+					const tagged = run.event === 'release'
+						|| (run.event === 'push' && pattern.startsWith('refs/tags/')
+							&& matchesRef(pattern, `refs/tags/${branch}`))
+						|| /^v?\d+\.\d+\.\d+/.test(branch);
+					const ref = tagged ? `refs/tags/${branch}` : `refs/heads/${branch}`;
 					if (
 						binding.mode !== 'observe'
 						|| run.path !== `.github/workflows/${binding.file}`
-						|| !matchesRef(binding.ref ?? repository.defaultBranch, ref)
+						|| !matchesRef(pattern, ref)
 					) {
 						continue;
 					}
-					const version = ref.startsWith('refs/tags/') ? branch.replace(/^v/, '') : undefined;
+					const prefix = stream.versionSource?.prefix
+						?? (pattern.startsWith('refs/tags/') ? /^[^*?[]*/.exec(pattern.slice('refs/tags/'.length))?.[0] : undefined)
+						?? '';
+					const version = tagged
+						? (branch.startsWith(prefix) ? branch.slice(prefix.length) : branch).replace(/^v/, '')
+						: undefined;
+					const manifestVersions = !tagged && run.event === 'workflow_dispatch';
 					const eventId = `observed:${event.runId}`;
 					const id = yield* executionId(repository.id, streamName, operation, eventId);
 					if (yield* this.read(`execution:${id}`)) continue;
@@ -1545,13 +1557,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					for (
 						const pkg of inventory.packages.filter(
 							(p) =>
-								Boolean(version)
+								(Boolean(version) || (manifestVersions && tagPrefix(p.versionSource) === undefined))
 								&& publishable(p)
 								&& (!stream.packages || stream.packages.some(reference => matchesPackage(reference, p))),
 						)
 					) {
 						if (!canVerifyPublication(pkg.manager)) continue;
-						const released = observedVersion(pkg, branch);
+						const released = version === undefined ? pkg.version : observedVersion(pkg, branch);
 						if (released === undefined) continue;
 						const publication: Publication = {
 							id: packageId(pkg),

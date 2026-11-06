@@ -3,6 +3,7 @@ import { safeVersionPath } from '@/automation/editors';
 import { pkgbuildFile } from '@/automation/managers/channels';
 import { object, yaml } from '@/automation/managers/helpers';
 import { tagQueries } from '@/automation/managers/tags';
+import { literalPrefix } from '@/automation/release-graph/workflows';
 import type { Snapshot } from '@/automation/types';
 import { isLockfile, managerNames, managerSpec } from '@/contract/catalog';
 import { type DomainError, precondition } from '@/contract/errors';
@@ -59,21 +60,23 @@ function workflowTagPrefixes(files: ReadonlyMap<string, string>): string[] {
 		const parsed = yaml(source);
 		if (Result.isFailure(parsed)) return [];
 		const tags = object(object(parsed.success.on).push).tags;
-		return Array.isArray(tags)
-			? tags.flatMap(pattern =>
-				typeof pattern === 'string' && !pattern.startsWith('!') ? [/^[A-Za-z0-9._/-]*/.exec(pattern)?.[0] ?? ''] : []
-			)
-			: [];
+		const patterns: unknown[] = Array.isArray(tags) ? tags : [tags];
+		return patterns.flatMap(pattern =>
+			typeof pattern === 'string' && !pattern.startsWith('!') ? [literalPrefix(pattern)] : []
+		);
 	});
 }
 
 const script = /\.(?:sh|bash|ps1|py|[cm]?[jt]s|rb)$/;
 const recipe = /(?:^|\/)(?:Makefile|GNUmakefile|[Jj]ustfile|\.justfile|package\.json)$/;
-function referencedScripts(blobs: readonly string[], read: ReadonlyMap<string, string>): string[] {
-	const text = [...read].filter(([path]) => path.startsWith('.github/') || recipe.test(path)).map(([, source]) =>
-		source
-	).join('\n');
-	return blobs.filter(path => script.test(path) && text.includes(path));
+function referencedScripts(
+	blobs: readonly string[],
+	read: ReadonlyMap<string, string>,
+	requested: ReadonlySet<string>,
+): string[] {
+	const text = [...read].filter(([path]) => path.startsWith('.github/') || recipe.test(path) || script.test(path))
+		.map(([, source]) => source).join('\n');
+	return blobs.filter(path => script.test(path) && !requested.has(path) && !excluded.test(path) && text.includes(path));
 }
 
 export function buildSnapshot(
@@ -101,9 +104,16 @@ export function buildSnapshot(
 					})
 				)), { concurrency: 8, discard: true });
 		yield* readAll(fetched);
-		const referenced = referencedScripts(blobs, read).filter(path => !read.has(path) && !excluded.test(path));
-		if (fetched.length + referenced.length > 400) return yield* precondition('Discovery file limit exceeded');
-		yield* readAll(referenced);
+		const requested = new Set(fetched);
+		for (
+			let referenced = referencedScripts(blobs, read, requested);
+			referenced.length;
+			referenced = referencedScripts(blobs, read, requested)
+		) {
+			for (const path of referenced) requested.add(path);
+			if (requested.size > 400) return yield* precondition('Discovery file limit exceeded');
+			yield* readAll(referenced);
+		}
 		const files: Record<string, string> = {};
 		for (const path of blobs) {
 			const text = blank.has(path) ? '' : read.get(path);

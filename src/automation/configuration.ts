@@ -7,7 +7,7 @@ import { parseReleaseIdentity } from '@/automation/package-identity';
 import { validRef } from '@/automation/policy';
 import { parsePresetReference } from '@/automation/preset';
 import type { Configuration, Stream, WorkflowBinding } from '@/automation/types';
-import { managerNames } from '@/contract/catalog';
+import { managerNames, validTagPrefix } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
 import { type DomainError, precondition } from '@/contract/errors';
 import { configurationDrift, configurationSchema } from '@/domain/configuration';
@@ -211,7 +211,7 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 		if (row.versionSource !== undefined) {
 			const source = yield* record(row.versionSource);
 			yield* keys(source, ['kind', 'prefix'], 'versionSource');
-			if (source.kind !== 'tags' || typeof source.prefix !== 'string' || !/^[A-Za-z0-9._-]*$/.test(source.prefix)) {
+			if (source.kind !== 'tags' || typeof source.prefix !== 'string' || !validTagPrefix(source.prefix)) {
 				return yield* reject('Invalid tag version source');
 			}
 			versionSource = { kind: 'tags', prefix: source.prefix };

@@ -68,7 +68,8 @@ interface Pattern {
 const patterns: readonly Pattern[] = [
 	{
 		destination: 'npm',
-		command: /\b(?:npm|pnpm|yarn)(?:@[\w.]+)?\s+(?:[^\n|;&]*\s)?publish\b|\bargs=\(publish\b/,
+		command:
+			/\b(?:npm|pnpm|yarn)(?:@[\w.]+)?\s+(?:[^\n|;&]*\s)?(?<!\brun(?:-script)?\s+)publish(?![\w:-])|\bargs=\(publish\b/,
 		action: /^JS-DevTools\/npm-publish@/,
 	},
 	{
@@ -123,6 +124,7 @@ const patterns: readonly Pattern[] = [
 const releaseActions =
 	/^(?:softprops\/action-gh-release|ncipollo\/release-action|taiki-e\/create-gh-release-action|taiki-e\/upload-rust-binary-action|svenstaro\/upload-release-action|goreleaser\/goreleaser-action)@/;
 const releaseCommand = /\bgh\s+release\s+(create|upload|edit)\b|\bgoreleaser\s+release\b/;
+const goreleaserBuildOnly = /--snapshot\b|--skip[= ][\w,]*\bpublish\b/;
 const aliasCommand =
 	/\bgit\s+tag\s+(?:-[a-z]*f[a-z]*\s|--force\b)|\bgit\s+push\b[^\n]*(?:--force|\+refs\/tags\/)|\bnpm\s+dist-tag\s+add\b|\bdocker\s+buildx\s+imagetools\s+create\b[^\n]*:latest\b/;
 
@@ -152,7 +154,7 @@ function commandEffects(text: string, source: string): StepEffect[] {
 			}
 		}
 		const release = releaseCommand.exec(line);
-		if (release) {
+		if (release && !(release[0].startsWith('goreleaser') && goreleaserBuildOnly.test(line))) {
 			const repository = otherRepository(line);
 			effects.push({
 				kind: 'release',
@@ -450,7 +452,10 @@ function stepEffects(
 				...effects.filter(effect => !(effect.kind === 'publish' && effect.text === uses)),
 			);
 		}
-		if (releaseActions.test(uses)) {
+		if (
+			releaseActions.test(uses)
+			&& !(uses.startsWith('goreleaser/') && goreleaserBuildOnly.test(String(inputs.args ?? '')))
+		) {
 			const repository = typeof inputs.repository === 'string' ? inputs.repository : undefined;
 			effects.push({
 				kind: 'release',
