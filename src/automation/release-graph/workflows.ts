@@ -481,11 +481,13 @@ function taskBodies(
 				word && !word.startsWith('-') && !word.includes('=')
 			);
 			const change = /(?:^|\s)(?:--prefix|--cwd|--dir|-C)[= ]["']?([^\s"';&|]+)/.exec(invocation)?.[1];
-			const selector = /(?:^|\s)(?:-w|--workspace|--filter|-F)[= ]["']?([^\s"';&|]+)/.exec(invocation)?.[1]
-				?? /\byarn\s+workspace\s+["']?([^\s"';&|]+)/.exec(invocation)?.[1];
+			const selectors = [
+				...invocation.matchAll(/(?:^|\s)(?:-w|--workspace|--filter|-F)[= ]["']?([^\s"';&|]+)/g),
+				...invocation.matchAll(/\byarn\s+workspace\s+["']?([^\s"';&|]+)/g),
+			].flatMap(match => match[1] ?? []);
 			const workspaces = workspaceDirectories(snapshot);
 			const declared = declaredWorkspaces(snapshot);
-			const every = /(?:^|\s)(?:-r|--recursive|--workspaces|-ws)(?=\s|$)/.test(invocation) || selector === '*';
+			const every = /(?:^|\s)(?:-r|--recursive|--workspaces|-ws)(?=\s|$)/.test(invocation) || selectors.includes('*');
 			const bases = every
 				? [
 					...new Set(
@@ -495,10 +497,14 @@ function taskBodies(
 						),
 					),
 				]
-				: selector !== undefined
+				: selectors.length
 				? [
-					workspaces.get(selector)
-						?? (selector.includes('/') || selector.startsWith('.') ? within(directory, selector) : directory),
+					...new Set(
+						selectors.map(selector =>
+							workspaces.get(selector)
+								?? (selector.includes('/') || selector.startsWith('.') ? within(directory, selector) : directory)
+						),
+					),
 				]
 				: [change ? within(directory, change) : directory];
 			for (const name of many ? words : words.slice(0, 1)) {
@@ -777,7 +783,7 @@ function matrixScalar(value: unknown): string | undefined {
 		? String(value)
 		: undefined;
 }
-function matrixCombinations(matrix: Record<string, unknown>): Record<string, string>[] {
+export function matrixCombinations(matrix: Record<string, unknown>): Record<string, string>[] {
 	const keys = Object.keys(matrix).filter(key => key !== 'include' && key !== 'exclude' && Array.isArray(matrix[key]));
 	let combinations: Record<string, string>[] = keys.length ? [{}] : [];
 	for (const key of keys) {
@@ -817,7 +823,7 @@ function matrixCombinations(matrix: Record<string, unknown>): Record<string, str
 	return [...combinations, ...added];
 }
 const matrixExpression = /\$\{\{\s*matrix\.([\w-]+)\s*\}\}/g;
-function substitute(text: string, assignment: Record<string, string>): string {
+export function substitute(text: string, assignment: Record<string, string>): string {
 	return text.replace(matrixExpression, (expression, key: string) => assignment[key] ?? expression);
 }
 function expandStep(step: Record<string, unknown>, matrix: Record<string, unknown>): Record<string, unknown>[] {

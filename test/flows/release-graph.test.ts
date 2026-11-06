@@ -11,7 +11,7 @@ import {
 	type StreamProposal,
 	type Target,
 } from '@/automation/release-graph/graph';
-import type { Destination } from '@/automation/release-graph/workflows';
+import { type Destination, workflowModels } from '@/automation/release-graph/workflows';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { Snapshot } from '@/automation/types';
 import { bearer } from '@root/test/support/http.ts';
@@ -1869,6 +1869,47 @@ describe('release streams', () => {
 			50,
 			'crates-io',
 		)).toEqual(['pkg:cargo/a', 'pkg:cargo/root-crate']);
+		const repeated: Record<string, string> = {
+			...workspace,
+			'packages/a/package.json': released('a'),
+			'packages/b/package.json': released('b'),
+			'.github/workflows/release.yml': release('      - run: npm run release -w a -w b\n'),
+		};
+		const modeled = workflowModels({
+			repository: { id: 52, name: 'octo/mono', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files: repeated,
+			paths: Object.keys(repeated),
+		});
+		expect(
+			modeled.flatMap(model => model.jobs.flatMap(job => job.effects)).flatMap(effect =>
+				effect.kind === 'publish' ? effect.directory ?? [] : []
+			).sort(),
+		).toEqual(['packages/a', 'packages/b']);
+		const matrixFiles: Record<string, string> = {
+			...workspace,
+			'packages/a/scripts/publish.sh': 'npm publish\n',
+			'packages/b/scripts/publish.sh': 'npm publish\n',
+			'.github/workflows/release.yml': release(
+				'      - working-directory: ${{ matrix.directory }}\n        run: bash scripts/publish.sh\n',
+				'    strategy:\n      matrix:\n        directory: [packages/a, packages/b]\n',
+			),
+		};
+		const matrixSnapshot = await Effect.runPromise(buildSnapshot({
+			repository: { id: 53, name: 'octo/mono', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			entries: Object.keys(matrixFiles).map(path => ({ path, type: 'blob', mode: '100644' })),
+			read: path => Effect.succeed(matrixFiles[path] ?? null),
+			tags: () => Effect.succeed([]),
+		}));
+		expect(Object.keys(matrixSnapshot.files).filter(path => path.endsWith('scripts/publish.sh')).sort()).toEqual([
+			'packages/a/scripts/publish.sh',
+			'packages/b/scripts/publish.sh',
+		]);
+		expect([...target(stream(plan(matrixSnapshot).graph, 'main'), 'npm').packages].sort()).toEqual([
+			'pkg:npm/a',
+			'pkg:npm/b',
+		]);
 		const goModule = planned({
 			'v2/go.mod': 'module github.com/octo/mono/v2\n\ngo 1.22\n',
 			'.github/workflows/release.yml': release('      - run: gh release create "$GITHUB_REF_NAME" dist/*\n'),

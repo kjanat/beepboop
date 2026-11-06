@@ -3,7 +3,13 @@ import { safeVersionPath } from '@/automation/editors';
 import { pkgbuildFile } from '@/automation/managers/channels';
 import { object, yaml } from '@/automation/managers/helpers';
 import { tagQueries } from '@/automation/managers/tags';
-import { escapeRegExp, literalPrefix, within } from '@/automation/release-graph/workflows';
+import {
+	escapeRegExp,
+	literalPrefix,
+	matrixCombinations,
+	substitute,
+	within,
+} from '@/automation/release-graph/workflows';
 import type { Snapshot } from '@/automation/types';
 import { isLockfile, managerNames, managerSpec } from '@/contract/catalog';
 import { type DomainError, precondition } from '@/contract/errors';
@@ -93,6 +99,23 @@ function referencedScripts(
 			].flatMap(match => match[1] ?? []),
 		),
 	];
+	const matrixDirectories = [...read].filter(([path]) => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)).flatMap(
+		([, source]) => {
+			const parsed = yaml(source);
+			if (Result.isFailure(parsed)) return [];
+			return Object.values(object(parsed.success.jobs)).flatMap(entry => {
+				const job = object(entry);
+				const combinations = matrixCombinations(object(object(job.strategy).matrix));
+				const declared = [
+					object(object(job.defaults).run)['working-directory'],
+					...(Array.isArray(job.steps) ? job.steps.map(step => object(step)['working-directory']) : []),
+				].filter((value): value is string => typeof value === 'string' && value.includes('${{'));
+				return declared.flatMap(value =>
+					combinations.map(combination => substitute(value, combination).replace(/^\.\//, '').replace(/\/$/, ''))
+				).filter(value => value && !value.includes('${{'));
+			});
+		},
+	);
 	const directories = [
 		...new Set(
 			[
@@ -101,7 +124,7 @@ function referencedScripts(
 				...text.matchAll(
 					/(?:^|\s)(?:-C|--prefix|--cwd|--dir|-w|--workspace|--filter|-F)[= ]["']?(?:\.\/)?([\w.-][\w./-]*?)\/?["']?(?=\s|$|[;&|)"'])/gm,
 				),
-			].flatMap(match => match[1] ?? []),
+			].flatMap(match => match[1] ?? []).concat(matrixDirectories),
 		),
 	];
 	const parents = new Set(
