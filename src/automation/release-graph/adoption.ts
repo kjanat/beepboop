@@ -95,11 +95,16 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 					...(tagged
 						? [
 							...new Set(
-								entry.tagPatterns.length ? entry.tagPatterns.map(pattern => literalPrefix(pattern)) : [tagPrefix ?? ''],
+								entry.tagPatterns.some(pattern => !pattern.startsWith('!'))
+									? entry.tagPatterns.filter(pattern => !pattern.startsWith('!')).map(pattern => literalPrefix(pattern))
+									: [tagPrefix ?? ''],
 							),
 						].map(prefix => ({
 							ref: `refs/tags/${prefix}*`,
-							publications: channel ? [] : required.filter(id => covered.has(id)),
+							publications: channel ? [] : required.filter(id => {
+								const source = known.get(id)?.versionSource ?? '';
+								return covered.has(id) && (!source.startsWith('tags:') || source === `tags:${prefix}`);
+							}),
 						}))
 						: []),
 					...(entry.branchPatterns.length ? [{ ref: branchRef(entry.branchPatterns), publications: [] }] : []),

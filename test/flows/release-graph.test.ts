@@ -489,6 +489,44 @@ describe('release streams', () => {
 		expect(choices[0]?.observe?.map(binding => binding.ref)).toEqual(['refs/tags/v*', 'refs/heads/release']);
 	});
 
+	test('runner namespaces, nested scripts, negated filters and foreign tag prefixes', () => {
+		const files: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'root', private: true, scripts: { release: 'echo nothing' } }),
+			Makefile: 'release:\n\tcd packages/b && npm publish\n',
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'packages/a/scripts/release.sh': '#!/bin/sh\nbash scripts/publish.sh\n',
+			'packages/a/scripts/publish.sh': '#!/bin/sh\nnpm publish\n',
+			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+			'.goreleaser.yaml': 'project_name: tools\nbuilds: [{ binary: tools }]\n',
+			'.github/workflows/release.yml': [
+				'on: { push: { tags: ["v*", "!v*-rc*"] } }',
+				'jobs:',
+				'  a:',
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - working-directory: packages/a',
+				'        run: bash scripts/release.sh',
+				'  b:',
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - run: make release',
+				'',
+			].join('\n'),
+			'.github/workflows/tools.yml': workflow("{ push: { tags: ['tools/v*'] } }", 'goreleaser release --clean'),
+		};
+		const { graph, choices } = plan({
+			repository: { id: 1, name: 'octo/mono', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files,
+			paths: Object.keys(files),
+		});
+		expect(target(stream(graph, 'main'), 'npm').names.sort()).toEqual(['a', 'b']);
+		const main = choices.find(choice => choice.name === 'main');
+		expect(main?.observe?.map(binding => binding.ref)).toEqual(['refs/tags/v*']);
+		const tools = choices.find(choice => choice.name === 'tools');
+		expect(tools?.observe).toEqual([{ name: 'tools', file: 'tools.yml', ref: 'refs/tags/tools/v*', publications: [] }]);
+	});
+
 	test('observe bindings follow each workflow trigger', async () => {
 		const actionlint = await load('actionlint');
 		const main = actionlint.choices.find(choice => choice.name === 'actionlint');
