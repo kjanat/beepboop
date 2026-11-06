@@ -3,7 +3,7 @@ import { safeVersionPath } from '@/automation/editors';
 import { pkgbuildFile } from '@/automation/managers/channels';
 import { object, yaml } from '@/automation/managers/helpers';
 import { tagQueries } from '@/automation/managers/tags';
-import { literalPrefix } from '@/automation/release-graph/workflows';
+import { escapeRegExp, literalPrefix } from '@/automation/release-graph/workflows';
 import type { Snapshot } from '@/automation/types';
 import { isLockfile, managerNames, managerSpec } from '@/contract/catalog';
 import { type DomainError, precondition } from '@/contract/errors';
@@ -73,6 +73,7 @@ const taskFile = /\/(?:Makefile|GNUmakefile|[Jj]ustfile|\.justfile|deno\.jsonc?|
 const recipe =
 	/(?:^|\/)(?:Makefile|GNUmakefile|[Jj]ustfile|\.justfile|package\.json|deno\.jsonc?|\.?mise(?:\.local)?\.toml|\.config\/mise\.toml|(?:\.mise\/tasks|mise-tasks|\.config\/mise\/tasks)\/[^/]+)$/;
 function referencedScripts(
+	repository: string,
 	blobs: readonly string[],
 	read: ReadonlyMap<string, string>,
 	requested: ReadonlySet<string>,
@@ -80,9 +81,16 @@ function referencedScripts(
 	const text = [...read].filter(([path]) =>
 		path.startsWith('.github/') || recipe.test(path) || script.test(path) || actionManifest.test(path)
 	).map(([, source]) => source).join('\n');
+	const qualified = new RegExp(
+		`\\buses:\\s*["']?${escapeRegExp(repository)}/([\\w./-]+?)/?@[^\\s"']+["']?\\s*$`,
+		'gim',
+	);
 	const actions = [
 		...new Set(
-			[...text.matchAll(/\buses:\s*["']?(?:\.|\$)\/([\w./-]+?)\/?["']?\s*$/gm)].flatMap(match => match[1] ?? []),
+			[
+				...text.matchAll(/\buses:\s*["']?(?:\.|\$)\/([\w./-]+?)\/?["']?\s*$/gm),
+				...text.matchAll(qualified),
+			].flatMap(match => match[1] ?? []),
 		),
 	];
 	const directories = [
@@ -146,9 +154,9 @@ export function buildSnapshot(
 		yield* readAll(fetched);
 		const requested = new Set(fetched);
 		for (
-			let referenced = referencedScripts(blobs, read, requested);
+			let referenced = referencedScripts(source.repository.name, blobs, read, requested);
 			referenced.length;
-			referenced = referencedScripts(blobs, read, requested)
+			referenced = referencedScripts(source.repository.name, blobs, read, requested)
 		) {
 			const batch = referenced.slice(0, Math.max(0, 400 - requested.size));
 			if (!batch.length) break;

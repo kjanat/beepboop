@@ -283,6 +283,7 @@ function modulePath(snapshot: Snapshot, module: string): string | undefined {
 	const relative = module.replaceAll('.', '/');
 	return Object.keys(snapshot.files).find(path =>
 		path.endsWith(`/${relative}.py`) || path === `${relative}.py` || path.endsWith(`/${relative}/__main__.py`)
+		|| path === `${relative}/__main__.py`
 	);
 }
 type Task = { body: string; source: string };
@@ -541,7 +542,7 @@ function scriptEffects(
 			seen.add(key);
 			const choice = match[2] ? new RegExp(`["']${match[2]}["']`).test(source) : false;
 			const text = match[2] ? segment(source, match[2], !choice) : source;
-			effects.push(...commandEffects(text, path));
+			effects.push(...commandEffects(text, path, here));
 			runs.push(text);
 		}
 		for (const task of taskBodies(snapshot, line, here)) {
@@ -754,6 +755,14 @@ function expandStep(step: Record<string, unknown>, matrix: Record<string, unknow
 		if (assignments.length * values.length > 64) break;
 		assignments = assignments.flatMap(assignment => values.map(value => ({ ...assignment, [key]: value })));
 	}
+	const exclusions = Array.isArray(matrix.exclude) ? matrix.exclude.map(object) : [];
+	assignments = assignments.filter(assignment =>
+		!exclusions.some(entry => {
+			const entries = Object.entries(entry);
+			return entries.length > 0
+				&& entries.every(([key, value]) => assignment[key] !== undefined && assignment[key] === String(value));
+		})
+	);
 	const apply = (assignment: Record<string, string>): Record<string, unknown> => ({
 		...step,
 		...(typeof step.run === 'string' ? { run: substitute(step.run, assignment) } : {}),

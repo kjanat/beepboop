@@ -1466,6 +1466,66 @@ describe('release streams', () => {
 				"on: { push: { tags: ['v*'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        dir: [packages/a, packages/b]\n    steps:\n      - working-directory: ${{ matrix.dir }}\n        run: npm publish\n",
 		};
 		expect(packages(matrixed, 5)).toEqual(['pkg:npm/a', 'pkg:npm/b']);
+		expect(packages({
+			...matrixed,
+			'.github/workflows/release.yml':
+				"on: { push: { tags: ['v*'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        dir: [packages/a, packages/b]\n        exclude:\n          - dir: packages/b\n    steps:\n      - working-directory: ${{ matrix.dir }}\n        run: npm publish\n",
+		}, 6)).toEqual(['pkg:npm/a']);
+		expect(packages({
+			...matrixed,
+			'.github/workflows/release.yml':
+				"on: { push: { tags: ['v*'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        dir: [packages/a, packages/b]\n        os: [linux, windows]\n        exclude:\n          - dir: packages/b\n            os: windows\n    steps:\n      - working-directory: ${{ matrix.dir }}\n        run: npm publish\n",
+		}, 7)).toEqual(['pkg:npm/a', 'pkg:npm/b']);
+	});
+
+	test('python modules publish from the invoking directory and root package entry points', async () => {
+		const modulePlan = async (files: Record<string, string>, id: number) => {
+			const snapshot = await Effect.runPromise(buildSnapshot({
+				repository: { id, name: 'octo/mono', defaultBranch: 'main' },
+				sha: 'a'.repeat(40),
+				entries: Object.keys(files).map(path => ({ path, type: 'blob', mode: '100644' })),
+				read: path => Effect.succeed(files[path] ?? null),
+				tags: () => Effect.succeed([]),
+			}));
+			return { snapshot, graph: plan(snapshot).graph };
+		};
+		const workspace = {
+			'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0', workspaces: ['packages/*'] }),
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+		};
+		const nested = await modulePlan({
+			...workspace,
+			'tooling/release.py': 'import os\nos.system("npm publish")\n',
+			'.github/workflows/release.yml':
+				`on: { push: { tags: ['v*'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - working-directory: packages/a\n        run: python -m tooling.release\n`,
+		}, 8);
+		expect(target(stream(nested.graph, 'main'), 'npm').packages).toEqual(['pkg:npm/a']);
+		const entry = await modulePlan({
+			'pyproject.toml': '[project]\nname = "tool"\nversion = "1.0.0"\n',
+			'tooling/release/__main__.py': 'import subprocess\nsubprocess.run("twine upload dist/*", shell=True)\n',
+			'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", 'python -m tooling.release'),
+		}, 9);
+		expect(entry.snapshot.files['tooling/release/__main__.py']).toBeDefined();
+		expect(target(stream(entry.graph, 'main'), 'pypi').packages).toEqual(['pkg:pypi/tool']);
+	});
+
+	test('actions referenced by the repository name are fetched and traversed', async () => {
+		const files: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'tool', version: '1.0.0' }),
+			'actions/publish/action.yml':
+				'name: publish\nruns:\n  using: composite\n  steps:\n    - shell: bash\n      run: npm publish\n',
+			'.github/workflows/release.yml':
+				"on: { push: { tags: ['v*'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: octo/tool/actions/publish@main\n",
+		};
+		const snapshot = await Effect.runPromise(buildSnapshot({
+			repository: { id: 10, name: 'octo/tool', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			entries: Object.keys(files).map(path => ({ path, type: 'blob', mode: '100644' })),
+			read: path => Effect.succeed(files[path] ?? null),
+			tags: () => Effect.succeed([]),
+		}));
+		expect(snapshot.files['actions/publish/action.yml']).toBe(files['actions/publish/action.yml']);
+		expect(target(stream(plan(snapshot).graph, 'main'), 'npm').packages).toEqual(['pkg:npm/tool']);
 	});
 
 	test('runner flag lists parse in linear time and TestPyPI is matched by host', () => {
