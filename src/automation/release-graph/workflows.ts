@@ -15,6 +15,7 @@ import {
 import {
 	directoryOverride,
 	forwardedArguments,
+	publishFolder,
 	scriptShorthand,
 	withoutValueFlags,
 	workspaceScope,
@@ -555,8 +556,14 @@ function scriptEffects(
 				effects.push(...nested.effects);
 				runs.push(...nested.runs);
 			}
+			const folder = publishFolder(line);
+			const published = folder === undefined ? here : within(here, folder);
+			const hookDirectory =
+				published !== here && snapshot.files[`${published ? `${published}/` : ''}package.json`] !== undefined
+					? published
+					: here;
 			const hooks = /\bnpm\b[^\n;&|]*\spublish(?![\w:-])/.test(line) && !/--ignore-scripts\b/.test(line)
-				? publishHooks.flatMap(hook => taskBodies(snapshot, line.replace(/\bpublish\b/, `run ${hook}`), here))
+				? publishHooks.flatMap(hook => taskBodies(snapshot, line.replace(/\bpublish\b/, `run ${hook}`), hookDirectory))
 				: [];
 			for (const task of [...taskBodies(snapshot, line, here), ...hooks]) {
 				const key = `${task.source}#${task.name}#${task.body}`;

@@ -13,28 +13,23 @@ export function lines(text: string): string[] {
 }
 
 export function walkDirectories(text: string, directory: string, visit: (command: string, here: string) => void): void {
-	let current = within('', directory);
+	let here = within('', directory);
+	const enclosing: string[] = [];
 	for (const line of lines(text)) {
-		let here = current;
-		let depth = 0;
 		for (const part of line.split(/\s*(?:&&|\|\||;|\|)\s*/)) {
 			let command = part.replace(/^(?:if|then|elif|else|do|fi|done)\b\s*/, '').trim();
 			const opens = command.startsWith('(');
 			if (opens) command = command.slice(1).trim();
 			const closes = /\)\s*$/.test(command);
 			if (closes) command = command.replace(/\)\s*$/, '').trim();
-			if (opens) depth++;
+			if (opens) enclosing.push(here);
 			const change = /^cd\s+["']?([^\s"';&|)]+)["']?$/.exec(command);
 			if (change) {
 				here = within(here, change[1] ?? '');
-				if (depth === 0) current = here;
 			} else if (command && !rehearsing(command)) {
 				visit(command, here);
 			}
-			if (closes && depth > 0) {
-				depth--;
-				if (depth === 0) here = current;
-			}
+			if (closes && enclosing.length) here = enclosing.pop() ?? here;
 		}
 	}
 }

@@ -2278,6 +2278,33 @@ describe('release streams', () => {
 			88,
 			'npm',
 		)).toEqual(['pkg:npm/a']);
+		expect(selected(
+			{
+				'package.json': JSON.stringify({
+					name: 'root-tool',
+					version: '1.0.0',
+					private: true,
+					scripts: { prepublishOnly: 'npm --prefix packages/b publish' },
+				}),
+				'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+				'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+				'.github/workflows/release.yml': release('      - run: npm publish ./packages/a\n'),
+			},
+			89,
+			'npm',
+		)).toEqual(['pkg:npm/a']);
+		expect(selected(
+			{
+				'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0' }),
+				'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+				'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+				'.github/workflows/release.yml': release(
+					'      - run: |\n          (cd packages/a &&\n          npm publish\n          )\n',
+				),
+			},
+			90,
+			'npm',
+		)).toEqual(['pkg:npm/a']);
 		expect(
 			planned({
 				'package.json': JSON.stringify({ name: '@octo/tool', version: '1.0.0' }),
