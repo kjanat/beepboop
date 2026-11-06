@@ -790,7 +790,8 @@ function buildJob(
 	bindings: Readonly<Record<string, string>> = {},
 ): Job {
 	const effects: StepEffect[] = [], runs: string[] = [], actions: string[] = [];
-	const steps = Array.isArray(job.steps) ? job.steps : [];
+	const skipped = staticGuard(job.if, { inputs: bindings }) === false;
+	const steps = Array.isArray(job.steps) && !skipped ? job.steps : [];
 	const declared = object(object(job.defaults).run)['working-directory']
 		?? object(object(document.defaults).run)['working-directory'];
 	const directory = typeof declared === 'string' ? bindInputs(declared, bindings) : declared;

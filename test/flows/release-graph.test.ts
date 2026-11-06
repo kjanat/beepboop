@@ -2465,6 +2465,27 @@ describe('release streams', () => {
 			broad.choices.flatMap(choice => choice.observe ?? []).find(binding => binding.ref === 'refs/tags/*')
 				?.publications,
 		).toContain('pkg:golang/github.com/octo/mono');
+		const jobGated = (value: string, id: number) =>
+			planned({
+				...widget,
+				'.github/workflows/publish.yml':
+					'on:\n  workflow_call:\n    inputs:\n      publish:\n        type: boolean\njobs:\n  publish:\n    if: ${{ inputs.publish }}\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm publish\n',
+				'.github/workflows/release.yml':
+					`on: { push: { tags: ['v*'] } }\njobs:\n  call:\n    uses: ./.github/workflows/publish.yml\n    with: { publish: ${value} }\n`,
+			}, id).graph.streams.length;
+		expect(jobGated('false', 108)).toBe(0);
+		expect(jobGated('true', 109)).toBe(1);
+		expect(selected(
+			{
+				'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0' }),
+				'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+				'.github/workflows/release.yml': release(
+					'      - run: |\n          (cd packages/b && npm pack)\n          npm publish\n',
+				),
+			},
+			110,
+			'npm',
+		)).toEqual(['pkg:npm/root-tool']);
 		const negated = planned({
 			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
 			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),

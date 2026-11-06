@@ -488,7 +488,10 @@ function targetsOf(
 						? resolved
 						: base || [];
 				});
-				const directories = [...new Set(published.length ? published : runs.flatMap(packDirectories))];
+				const archived = own.some(entry =>
+					entry.effect.kind === 'publish' && !entry.effect.directory && pathArgument.test(entry.effect.text)
+				);
+				const directories = [...new Set(published.length || !archived ? published : runs.flatMap(packDirectories))];
 				const commands = effects.join('\n');
 				const invoked = own.flatMap(entry =>
 					entry.effect.kind === 'publish' || entry.effect.kind === 'release'
