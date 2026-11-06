@@ -930,6 +930,18 @@ describe('release streams', () => {
 		};
 		expect(target(stream(planned('npm run release').graph, 'main'), 'npm').names).toEqual(['tool']);
 		expect(planned('npm run release --ignore-scripts').graph.streams).toEqual([]);
+		const prefixed: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'root', private: true, scripts: { release: 'echo nothing' } }),
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0', scripts: { release: 'npm publish' } }),
+			'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", 'npm --prefix packages/a run release'),
+		};
+		const { graph } = plan({
+			repository: { id: 3, name: 'octo/mono', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files: prefixed,
+			paths: Object.keys(prefixed),
+		});
+		expect(target(stream(graph, 'main'), 'npm').packages).toEqual(['pkg:npm/a']);
 	});
 
 	test('prefix flags, mixed root publishes, extensions and python modules', async () => {
@@ -994,6 +1006,461 @@ describe('release streams', () => {
 		}));
 		expect(snapshot.files['tooling/release.py']).toBe(python['tooling/release.py']);
 		expect(target(stream(plan(snapshot).graph, 'main'), 'pypi').packages).toEqual(['pkg:pypi/tool']);
+	});
+
+	test('streams follow workflow_run chains, release events and tag families', () => {
+		const job = (on: string, id: string, run: string, condition?: string) =>
+			`${on}\n  ${id}:\n${
+				condition ? `    if: ${condition}\n` : ''
+			}    runs-on: ubuntu-latest\n    steps:\n      - run: ${run}\n`;
+		const chained: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'tool', version: '1.0.0' }),
+			'Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\n',
+			'.github/workflows/ci.yml': `name: CI\n${workflow("{ push: { tags: ['v*'], branches: [main] } }", 'npm test')}`,
+			'.github/workflows/release.yml': `name: Release\n${
+				workflow("{ workflow_run: { workflows: ['CI'], types: [completed] } }", 'npm publish')
+			}`,
+			'.github/workflows/crates.yml': `name: Crates\n${
+				workflow("{ workflow_run: { workflows: ['Release'], types: [completed] } }", 'cargo publish')
+			}`,
+		};
+		const chain = plan({
+			repository: { id: 1, name: 'octo/tool', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files: chained,
+			paths: Object.keys(chained),
+		});
+		const main = stream(chain.graph, 'main');
+		expect(main.trigger).toEqual({ kind: 'tags', prefix: 'v', patterns: ['v*'] });
+		expect(main.channels).toEqual(['stable']);
+		expect(main.workflows.map(entry => [entry.file, entry.role]).sort()).toEqual([
+			['ci.yml', 'entry'],
+			['crates.yml', 'called'],
+			['release.yml', 'called'],
+		]);
+		expect(chain.choices[0]?.observe).toEqual([
+			{ name: 'ci', file: 'ci.yml', ref: 'refs/tags/v*', publications: ['pkg:cargo/tool', 'pkg:npm/tool'] },
+			{ name: 'ci-2', file: 'ci.yml', ref: 'refs/heads/main', publications: [] },
+		]);
+		const families: Record<string, string> = {
+			'packages/core/package.json': JSON.stringify({ name: 'core', version: '1.0.0' }),
+			'packages/cli/package.json': JSON.stringify({ name: 'cli', version: '2.0.0' }),
+			'.github/workflows/release.yml': [
+				job(
+					"on: { push: { tags: ['core-v*', 'cli-v*'] } }\njobs:",
+					'core',
+					'cd packages/core && npm publish',
+					"startsWith(github.ref_name, 'core-v')",
+				),
+				job('', 'cli', 'cd packages/cli && npm publish', "startsWith(github.ref_name, 'cli-v')").slice(1),
+			].join(''),
+		};
+		const split = plan({
+			repository: { id: 2, name: 'octo/mono', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files: families,
+			paths: Object.keys(families),
+		});
+		expect(split.choices[0]?.observe?.map(binding => [binding.ref, binding.publications])).toEqual([
+			['refs/tags/core-v*', ['pkg:npm/core']],
+			['refs/tags/cli-v*', ['pkg:npm/cli']],
+		]);
+		const released: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'tool', version: '1.0.0' }),
+			'.github/workflows/publish.yml': workflow('{ release: { types: [published] } }', 'npm publish'),
+		};
+		const release = plan({
+			repository: { id: 3, name: 'octo/tool', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files: released,
+			paths: Object.keys(released),
+			tags: ['v1.0.0', 'v1.1.0'],
+		});
+		expect(stream(release.graph, 'tool').trigger).toEqual({ kind: 'release' });
+		expect(stream(release.graph, 'tool').channels).toEqual(['stable']);
+		expect(stream(release.graph, 'tool').versionGroup.source).toEqual({ kind: 'tags', prefix: 'v' });
+		expect(release.choices[0]?.observe).toEqual([
+			{ name: 'publish', file: 'publish.yml', ref: 'refs/tags/v*', publications: ['pkg:npm/tool'] },
+		]);
+		const branch = plan({
+			repository: { id: 4, name: 'octo/tool', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files: {
+				'package.json': JSON.stringify({ name: 'tool', version: '1.0.0' }),
+				'.github/workflows/publish.yml': workflow(
+					'{ push: { branches: [main] }, workflow_dispatch: {} }',
+					'npm publish',
+				),
+			},
+			paths: ['package.json', '.github/workflows/publish.yml'],
+		});
+		expect(stream(branch.graph, 'tool').trigger).toEqual({ kind: 'branch', workflow: 'publish.yml' });
+		expect(stream(branch.graph, 'tool').channels).toEqual(['snapshot']);
+	});
+
+	test('selection honors matrices, mentions, exclusions, extensions and mirrors', () => {
+		const matrixed = (crates: boolean): Record<string, string> =>
+			crates
+				? {
+					'Cargo.toml': '[workspace]\nmembers = ["a", "b", "c"]\n',
+					'a/Cargo.toml': '[package]\nname = "a"\nversion = "1.0.0"\n',
+					'b/Cargo.toml': '[package]\nname = "b"\nversion = "1.0.0"\n',
+					'c/Cargo.toml': '[package]\nname = "c"\nversion = "1.0.0"\n',
+					'.github/workflows/release.yml':
+						"on: { push: { tags: ['v*'] } }\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        crate: [a, b]\n    steps:\n      - run: cargo publish -p ${{ matrix.crate }}\n",
+				}
+				: {
+					'package.json': JSON.stringify({ name: 'root', private: true, workspaces: ['packages/*'] }),
+					'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+					'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+					'packages/c/package.json': JSON.stringify({ name: 'c', version: '1.0.0' }),
+					'.github/workflows/release.yml':
+						"on: { push: { tags: ['v*'] } }\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        package: [a, b]\n    steps:\n      - run: npm publish --workspace ${{ matrix.package }}\n",
+				};
+		const planned = (files: Record<string, string>, id = 1) =>
+			plan({
+				repository: { id, name: 'octo/mono', defaultBranch: 'main' },
+				sha: 'a'.repeat(40),
+				files,
+				paths: Object.keys(files),
+			});
+		expect(target(stream(planned(matrixed(true)).graph, 'main'), 'crates-io').packages).toEqual([
+			'pkg:cargo/a',
+			'pkg:cargo/b',
+		]);
+		expect(target(stream(planned(matrixed(false)).graph, 'main'), 'npm').packages).toEqual(['pkg:npm/a', 'pkg:npm/b']);
+		const scoped = planned({
+			'packages/core/package.json': JSON.stringify({ name: '@octo/core', version: '1.0.0' }),
+			'packages/cli/package.json': JSON.stringify({ name: '@octo/cli', version: '1.0.0' }),
+			'.github/workflows/release.yml': [
+				"on: { push: { tags: ['v*'] } }",
+				'jobs:',
+				'  release:',
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - run: npx @octo/cli check',
+				'      - run: cd packages/core && npm publish',
+				'      - run: npm view @octo/cli version',
+				'',
+			].join('\n'),
+		});
+		expect(target(stream(scoped.graph, 'main'), 'npm').packages).toEqual(['pkg:npm/%40octo/core']);
+		const excluded = planned({
+			'Cargo.toml': '[workspace]\nmembers = ["a", "b", "examples"]\n',
+			'a/Cargo.toml': '[package]\nname = "a"\nversion = "1.0.0"\n',
+			'b/Cargo.toml': '[package]\nname = "b"\nversion = "1.0.0"\n',
+			'examples/Cargo.toml': '[package]\nname = "examples"\nversion = "1.0.0"\n',
+			'.github/workflows/release.yml': workflow(
+				"{ push: { tags: ['v*'] } }",
+				'cargo publish --workspace --exclude examples',
+			),
+		});
+		expect(target(stream(excluded.graph, 'main'), 'crates-io').packages).toEqual(['pkg:cargo/a', 'pkg:cargo/b']);
+		const checked = planned({
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+			'.github/workflows/release.yml': [
+				"on: { push: { tags: ['v*'] } }",
+				'jobs:',
+				'  check:',
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - run: cd packages/a && npm pack --dry-run',
+				'  publish:',
+				'    needs: check',
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - run: cd packages/b && npm publish',
+				'',
+			].join('\n'),
+		});
+		expect(target(stream(checked.graph, 'main'), 'npm').packages).toEqual(['pkg:npm/b']);
+		const generated = planned({
+			'Cargo.toml': '[workspace]\nmembers = ["crates/tool"]\n[workspace.package]\nversion = "1.0.0"\n',
+			'crates/tool/Cargo.toml': '[package]\nname = "tool"\nversion.workspace = true\n',
+			'npm/targets.json': JSON.stringify({
+				scope: '@octo',
+				facade: '@octo/tool',
+				targets: [{ pkg: 'tool-linux-x64', target: 'x86_64-unknown-linux-gnu' }],
+			}),
+			'npm/publish.js': 'execSync("npm publish", { cwd: dir });\n',
+			'packages/theme/package.json': JSON.stringify({ name: '@octo/theme', version: '3.0.0' }),
+			'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", 'node npm/publish.js'),
+			'.github/workflows/theme.yml': workflow("{ push: { tags: ['theme-v*'] } }", 'cd packages/theme && npm publish'),
+		});
+		expect(target(stream(generated.graph, 'theme'), 'npm').packages).toEqual(['pkg:npm/%40octo/theme']);
+		expect(target(stream(generated.graph, 'main'), 'npm').packages).toEqual(['pkg:npm/%40octo/tool-linux-x64']);
+		const extensions = planned({
+			'ext/a/package.json': JSON.stringify({
+				name: 'a',
+				publisher: 'octo',
+				version: '1.0.0',
+				engines: { vscode: '^1.90.0' },
+			}),
+			'ext/b/package.json': JSON.stringify({
+				name: 'b',
+				publisher: 'octo',
+				version: '1.0.0',
+				engines: { vscode: '^1.90.0' },
+			}),
+			'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", 'cd ext/a && npx vsce publish'),
+		});
+		expect(target(stream(extensions.graph, 'main'), 'vscode-marketplace').packages).toEqual([
+			'pkg:vscode-extension/octo/a',
+		]);
+		expect(omitted(extensions.graph, 'octo.b')).toContain('Visual Studio Marketplace');
+		const mirrored = plan({
+			repository: { id: 7, name: 'octo/tool', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files: {
+				'go.mod': 'module github.com/octo/tool\n\ngo 1.22\n',
+				'.goreleaser.yaml': 'project_name: tool\nbuilds: [{ binary: tool }]\n',
+				'.github/workflows/release.yml': workflow(
+					"{ push: { tags: ['v*'] } }",
+					'gh release create "$GITHUB_REF_NAME" dist/* && gh release upload "$GITHUB_REF_NAME" plugin.wasm --repo octo/plugin',
+				),
+			},
+			paths: ['go.mod', '.goreleaser.yaml', '.github/workflows/release.yml'],
+			tags: ['v1.0.0'],
+		});
+		const releases = targets(stream(mirrored.graph, 'main'), 'github-release');
+		expect(releases.map(entry => [entry.repository, entry.packages])).toEqual([
+			[undefined, ['pkg:github/octo/tool']],
+			['octo/plugin', []],
+		]);
+		expect(target(stream(mirrored.graph, 'main'), 'go-proxy').packages).toEqual(['pkg:golang/github.com/octo/tool']);
+		const prefixed = planned({
+			'foo/pyproject.toml': '[project]\nname = "foo"\nversion = "1.0.0"\n',
+			'foo-bar/pyproject.toml': '[project]\nname = "foo-bar"\nversion = "1.0.0"\n',
+			'.github/workflows/release.yml': [
+				"on: { push: { tags: ['v*'] } }",
+				'jobs:',
+				'  release:',
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - run: cd foo && uv publish',
+				'      - run: cd foo-bar && uv publish',
+				'',
+			].join('\n'),
+		});
+		expect(target(stream(prefixed.graph, 'main'), 'pypi').packages).toEqual(['pkg:pypi/foo', 'pkg:pypi/foo-bar']);
+		expect(prefixed.graph.omissions).toEqual([]);
+	});
+
+	test('rehearsals, staging registries and release tooling', async () => {
+		const tool = JSON.stringify({ name: 'tool', version: '1.0.0', scripts: { release: 'npm publish' } });
+		const planned = (files: Record<string, string>, id = 1) =>
+			plan({
+				repository: { id, name: 'octo/tool', defaultBranch: 'main' },
+				sha: 'a'.repeat(40),
+				files,
+				paths: Object.keys(files),
+			});
+		const publishes = (files: Record<string, string>) =>
+			planned(files).graph.streams.flatMap(proposal => proposal.targets.map(entry => entry.destination));
+		for (
+			const run of [
+				"npm publish --provenance ${{ inputs.dry-run && '--dry-run' || '' }}",
+				'if [ "$DRY" = "1" ]; then npm publish --dry-run; else npm publish; fi',
+				'pnpm exec changeset publish',
+				'npx changeset publish',
+				'npx lerna publish from-git --yes',
+			]
+		) {
+			expect(
+				publishes({
+					'package.json': tool,
+					'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", run),
+				}),
+			)
+				.toEqual(['npm']);
+		}
+		expect(publishes({
+			'package.json': tool,
+			'.github/workflows/release.yml': workflow('{ push: { branches: [main] } }', 'npx semantic-release'),
+		})).toEqual(['npm']);
+		expect(publishes({
+			'package.json': tool,
+			'.github/workflows/release.yml':
+				'on: { push: { branches: [main] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: changesets/action@v1\n        with:\n          publish: npm run release\n',
+		})).toEqual(['npm']);
+		const py = '[project]\nname = "tool"\nversion = "1.0.0"\n';
+		expect(publishes({
+			'pyproject.toml': py,
+			'.github/workflows/release.yml': workflow(
+				'{ push: { branches: [main] } }',
+				'python -m twine upload --repository testpypi dist/*',
+			),
+		})).toEqual([]);
+		expect(publishes({
+			'pyproject.toml': py,
+			'.github/workflows/release.yml':
+				'on: { push: { branches: [main] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: pypa/gh-action-pypi-publish@release/v1\n        with: { repository-url: https://test.pypi.org/legacy/ }\n',
+		})).toEqual([]);
+		expect(publishes({
+			'.goreleaser.yaml': 'project_name: tool\nbuilds: [{ binary: tool }]\n',
+			'go.mod': 'module github.com/octo/tool\n\ngo 1.22\n',
+			'.github/workflows/ci.yml':
+				'on: { pull_request: {}, push: { tags: ["v*"] } }\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: goreleaser/goreleaser-action@v6\n        with: { args: release --clean --skip-publish }\n',
+		})).toEqual([]);
+		const crate = '[package]\nname = "tool"\nversion = "1.0.0"\n';
+		expect(
+			publishes({
+				'Cargo.toml': crate,
+				'.github/workflows/check.yml': workflow('{ pull_request: {} }', 'cargo release --no-confirm'),
+			}),
+		)
+			.toEqual([]);
+		expect(
+			publishes({
+				'Cargo.toml': crate,
+				'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", 'cargo release --execute --no-confirm'),
+			}),
+		)
+			.toEqual(['crates-io']);
+		expect(publishes({
+			'Cargo.toml': '[workspace]\nmembers = ["a"]\n',
+			'a/Cargo.toml': '[package]\nname = "a"\nversion = "1.0.0"\n',
+			'.github/workflows/release.yml': workflow(
+				"{ push: { tags: ['v*'] } }",
+				'cargo workspaces publish --from-git --yes',
+			),
+		})).toEqual(['crates-io']);
+		const scripted = async (files: Record<string, string>) =>
+			Effect.runPromise(buildSnapshot({
+				repository: { id: 2, name: 'octo/tool', defaultBranch: 'main' },
+				sha: 'a'.repeat(40),
+				entries: Object.keys(files).map(path => ({ path, type: 'blob', mode: '100644' })),
+				read: path => Effect.succeed(files[path] ?? null),
+				tags: () => Effect.succeed([]),
+			}));
+		const release = "import { $ } from 'bun';\nawait $`npm publish`;\n";
+		for (
+			const run of ['npx tsx scripts/release.ts', 'pnpm tsx scripts/release.ts', 'node --import tsx scripts/release.ts']
+		) {
+			const snapshot = await scripted({
+				'package.json': JSON.stringify({ name: 'tool', version: '1.0.0' }),
+				'scripts/release.ts': release,
+				'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", run),
+			});
+			expect(destinations(stream(plan(snapshot).graph, 'main'))).toEqual(['npm']);
+		}
+		const deno = await scripted({
+			'jsr.json': JSON.stringify({ name: '@octo/tool', version: '1.0.0', exports: './mod.ts' }),
+			'scripts/release.ts': "await new Deno.Command('deno', { args: ['publish'] }).output();\n",
+			'.github/workflows/release.yml': workflow(
+				"{ push: { tags: ['v*'] } }",
+				'deno run -A --config deno.json scripts/release.ts',
+			),
+		});
+		expect(destinations(stream(plan(deno).graph, 'main'))).toEqual(['jsr']);
+		expect(publishes({
+			'package.json': tool,
+			'.github/actions/publish/action.yml':
+				'runs:\n  using: composite\n  steps:\n    - shell: bash\n      run: npm publish\n',
+			'.github/workflows/release.yml':
+				"on: { push: { tags: ['v*'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: octo/tool/.github/actions/publish@main\n",
+		})).toEqual(['npm']);
+	});
+
+	test('workspace selectors, recipe directories and task dependencies', async () => {
+		const mono = (run: string, extra: Record<string, string> = {}): Record<string, string> => ({
+			'package.json': JSON.stringify({
+				name: 'root',
+				private: true,
+				workspaces: ['packages/*'],
+				scripts: { release: 'echo root' },
+			}),
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0', scripts: { release: 'npm publish' } }),
+			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0', scripts: { build: 'tsc' } }),
+			'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", run),
+			...extra,
+		});
+		const packages = (files: Record<string, string>, id = 1) =>
+			target(
+				stream(
+					plan({
+						repository: { id, name: 'octo/mono', defaultBranch: 'main' },
+						sha: 'a'.repeat(40),
+						files,
+						paths: Object.keys(files),
+					}).graph,
+					'main',
+				),
+				'npm',
+			).packages;
+		for (
+			const run of [
+				'npm run release -w packages/a',
+				'npm run release --workspace=packages/a',
+				'pnpm --filter a run release',
+				'pnpm -r run release',
+				'yarn workspace a run release',
+				'yarn --cwd packages/a release',
+				'yarn workspace a npm publish',
+				'pnpm --filter ./packages/a publish',
+				'pnpm publish --filter a',
+				'pnpm -F a publish',
+			]
+		) expect(packages(mono(run))).toEqual(['pkg:npm/a']);
+		expect(packages(mono('cd packages/a && npm publish && cd ../b && npm publish'))).toEqual([
+			'pkg:npm/a',
+			'pkg:npm/b',
+		]);
+		expect(packages(mono('make release', { Makefile: 'release:\n\t@cd packages/a && npm publish\n' }))).toEqual([
+			'pkg:npm/a',
+		]);
+		const built = async (files: Record<string, string>) =>
+			Effect.runPromise(buildSnapshot({
+				repository: { id: 3, name: 'octo/mono', defaultBranch: 'main' },
+				sha: 'a'.repeat(40),
+				entries: Object.keys(files).map(path => ({ path, type: 'blob', mode: '100644' })),
+				read: path => Effect.succeed(files[path] ?? null),
+				tags: () => Effect.succeed([]),
+			}));
+		const nested = await built(
+			mono('make -C packages/a release', { 'packages/a/Makefile': 'release:\n\tnpm publish\n' }),
+		);
+		expect(nested.files['packages/a/Makefile']).toBeDefined();
+		expect(target(stream(plan(nested).graph, 'main'), 'npm').packages).toEqual(['pkg:npm/a']);
+		const recursive = await built(mono('make release', {
+			Makefile: 'release:\n\t$(MAKE) -C packages/a publish\n',
+			'packages/a/Makefile': 'publish:\n\tnpm publish\n',
+		}));
+		expect(target(stream(plan(recursive).graph, 'main'), 'npm').packages).toEqual(['pkg:npm/a']);
+		const tool = JSON.stringify({ name: 'tool', version: '1.0.0' });
+		const single = (files: Record<string, string>) =>
+			destinations(
+				stream(
+					plan({
+						repository: { id: 4, name: 'octo/tool', defaultBranch: 'main' },
+						sha: 'a'.repeat(40),
+						files,
+						paths: Object.keys(files),
+					}).graph,
+					'main',
+				),
+			);
+		expect(single({
+			'package.json': tool,
+			'mise.toml':
+				'[tasks.release]\ndepends = ["build", "publish"]\n\n[tasks.build]\nrun = "echo build"\n\n[tasks.publish]\nrun = "npm publish"\n',
+			'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", 'mise run release'),
+		})).toEqual(['npm']);
+		expect(single({
+			'package.json': tool,
+			justfile:
+				'release version: build (publish version)\n\nbuild:\n\techo build\n\npublish version:\n\tnpm publish --tag {{version}}\n',
+			'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", 'just release 1.2.3'),
+		})).toEqual(['npm']);
+		const matrixed: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0', workspaces: ['packages/*'] }),
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+			'.github/workflows/release.yml':
+				"on: { push: { tags: ['v*'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        dir: [packages/a, packages/b]\n    steps:\n      - working-directory: ${{ matrix.dir }}\n        run: npm publish\n",
+		};
+		expect(packages(matrixed, 5)).toEqual(['pkg:npm/a', 'pkg:npm/b']);
 	});
 
 	test('a local action runs only its own manifest', async () => {

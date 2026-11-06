@@ -90,6 +90,9 @@ function referencedScripts(
 			[
 				...text.matchAll(/working-directory:\s*["']?(?:\.\/)?([\w./-]+?)\/?["']?\s*$/gm),
 				...text.matchAll(/(?:^|[;&|(]|&&|\brun:)\s*cd\s+["']?(?:\.\/)?([\w.-][\w./-]*?)\/?["']?(?=\s|$|[;&|)])/gm),
+				...text.matchAll(
+					/(?:^|\s)(?:-C|--prefix|--cwd|--dir|-w|--workspace|--filter|-F)[= ]["']?(?:\.\/)?([\w.-][\w./-]*?)\/?["']?(?=\s|$|[;&|)"'])/gm,
+				),
 			].flatMap(match => match[1] ?? []),
 		),
 	];

@@ -8,6 +8,7 @@ import {
 	escapeRegExp,
 	type Job,
 	literalPrefix,
+	packDirectories,
 	type StepEffect,
 	type Workflow,
 	workflowModels,
@@ -51,6 +52,7 @@ export interface StreamWorkflow {
 	tagPatterns: string[];
 	branchPatterns: string[];
 	starts: string[];
+	conditions: Record<string, string>;
 }
 export interface StreamProposal {
 	id: string;
@@ -181,9 +183,12 @@ function streamKey(graph: Graph, workflow: Workflow, seen = new Set<string>()): 
 		);
 		const [creator] = drafting.length === 1 ? drafting : creators.length === 1 ? creators : [];
 		if (creator) return streamKey(graph, creator, seen);
+		return `release:${workflow.file}`;
 	}
 	for (const source of workflow.workflowRuns) {
-		const upstream = graph.workflows.find(candidate => candidate.name === source || candidate.file === source);
+		const upstream = graph.workflows.find(candidate =>
+			candidate.file !== workflow.file && (candidate.name === source || candidate.file === source)
+		);
 		if (upstream) return streamKey(graph, upstream, seen);
 	}
 	const callers = [...graph.callers.get(workflow.file) ?? []].flatMap(file => graph.byFile.get(file) ?? []);
@@ -199,6 +204,9 @@ function streamKey(graph: Graph, workflow: Workflow, seen = new Set<string>()): 
 		dispatchers.length && workflow.events.every(event => event === 'workflow_dispatch' || event === 'workflow_call')
 	) {
 		return `dispatch:${workflow.file}`;
+	}
+	if (workflow.events.includes('push') && workflow.branchPatterns.length && !workflow.events.includes('schedule')) {
+		return `branch:${workflow.file}`;
 	}
 	if (workflow.events.includes('workflow_dispatch') && !workflow.events.includes('schedule')) {
 		return `dispatch:${workflow.file}`;
@@ -333,10 +341,13 @@ function publicationRuns(graph: Graph, workflow: string, found: { workflow: stri
 	);
 }
 const qualified =
-	/\bcd\s|--prefix\b|--cwd\b|--dir\b|--config\b|--workspaces?\b|--recursive\b|--filter\b|(?:^|\s)-(?:C|w|ws|r)(?=\s|$)/m;
+	/\bcd\s|--prefix\b|--cwd\b|--dir\b|--config\b|--workspaces?\b|--recursive\b|--filter\b|\byarn\s+workspace\s|(?:^|\s)-(?:C|w|ws|r|F)(?=\s|$)/m;
 const pathArgument = /\bpublish\s+["']?\$|\bpublish\b[^\n;&|]*\s["']?(?:\.{0,2}\/|[\w.-]+\/|[^\s"']+\.tgz\b)/;
-const packing =
-	/\b(?:npm|pnpm|yarn|bun(?:\s+pm)?)\s+(?:pack|publish)\b|\b(?:jsr|deno)\s+publish\b|\bcargo\s+(?:\+\S+\s+)?(?:publish|package)\b/;
+const installing =
+	/\b(?:npx|bunx|pnpm\s+(?:dlx|add|i|install)|yarn\s+(?:dlx|add)|npm\s+(?:view|info|show|install|i|ci|add|exec|x))\b/;
+function directoryOf(pkg: Package): string {
+	return pkg.manifest.split('/').slice(0, -1).join('/');
+}
 function targetsOf(
 	graph: Graph,
 	files: string[],
@@ -383,25 +394,23 @@ function targetsOf(
 		if (destination === 'npm' || destination === 'jsr' || destination === 'crates-io') {
 			const manager = destination === 'npm' ? 'npm' : destination === 'jsr' ? 'jsr' : 'cargo';
 			const candidates = managed(manager);
-			const directoryOf = (pkg: Package) => pkg.manifest.split('/').slice(0, -1).join('/');
-			const selections = [...new Set(found.map(entry => entry.workflow))].map(workflow => {
-				const own = found.filter(entry => entry.workflow === workflow);
+			const selections = [...new Set(found.map(entry => `${entry.workflow}#${entry.job.id}`))].map(operation => {
+				const own = found.filter(entry => `${entry.workflow}#${entry.job.id}` === operation);
+				const workflow = own[0]?.workflow ?? '';
 				const effects = own.map(entry =>
 					entry.effect.kind === 'publish' || entry.effect.kind === 'release' ? entry.effect.text : ''
 				);
-				const runs = publicationRuns(graph, workflow, found);
+				const runs = publicationRuns(graph, workflow, own);
 				const directories = [
 					...new Set([
 						...own.flatMap(entry => entry.effect.kind === 'publish' ? entry.effect.directory ?? [] : []),
-						...runs.filter(run => packing.test(run)).flatMap(run =>
-							[...run.matchAll(/(?:^|[;&|(])\s*cd\s+["']?(?:\.\/)?([\w.-][\w./-]*?)\/?["']?(?=\s|$|[;&|)])/gm)]
-								.flatMap(match => match[1] ?? [])
-						),
+						...runs.flatMap(packDirectories),
 					]),
 				];
 				const commands = effects.join('\n');
 				const text = [...effects, ...(graph.byFile.get(workflow)?.jobs.flatMap(job => job.runs) ?? [])].join('\n');
 				const publishing = [...effects, ...runs].join('\n');
+				const mentioning = publishing.split('\n').filter(line => !installing.test(line)).join('\n');
 				const cites = (value: string) => new RegExp(`(?<![\\w./-])${escapeRegExp(value)}(?![\\w-])`).test(text);
 				const citesDirectory = (value: string) =>
 					new RegExp(
@@ -414,16 +423,22 @@ function targetsOf(
 					path.endsWith('.json') && !/(?:^|\/)(?:package|deno|jsr|composer|tsconfig[^/]*)\.json$/.test(path)
 					&& cites(path)
 				).map(([, source]) => source);
-				const workspaces = [...publishing.matchAll(/(?:--workspace[= ]|(?:^|\s)-w\s+)["']?([^\s"';&|]+)/gm)].flatMap(
-					match => match[1]?.replace(/^\.\//, '').replace(/\/$/, '') ?? [],
-				);
+				const workspaces = [
+					...publishing.matchAll(
+						/(?:--workspace[= ]|--filter[= ]|(?:^|\s)-[wF]\s+|\byarn\s+workspace\s+)["']?([^\s"';&|]+)/gm,
+					),
+				].flatMap(match => match[1]?.replace(/^\.\//, '').replace(/\/$/, '') ?? []);
 				const covered = (pkg: Package) =>
 					workspaces.some(selector =>
 						selector === pkg.name || (directoryOf(pkg) !== ''
 							&& (directoryOf(pkg) === selector || directoryOf(pkg).startsWith(`${selector}/`)))
 					)
-					|| (pkg.name.startsWith('@') && new RegExp(`(?<![\\w@/.-])${escapeRegExp(pkg.name)}(?![\\w-])`).test(text))
-					|| !!pkg.generated
+					|| (pkg.name.startsWith('@')
+						&& new RegExp(`(?<![\\w@/.-])${escapeRegExp(pkg.name)}(?![\\w-])`).test(mentioning))
+					|| (!!pkg.generated
+						&& (directoryOf(pkg)
+							? new RegExp(`(?<![\\w./-])${escapeRegExp(directoryOf(pkg))}/`).test(text)
+							: cites(pkg.manifest)))
 					|| (directoryOf(pkg) !== ''
 						&& (directories.includes(directoryOf(pkg)) || citesDirectory(directoryOf(pkg))))
 					|| descriptors.some(source => new RegExp(`"${escapeRegExp(pkg.name)}"(?!\\s*:)`).test(source));
@@ -431,14 +446,17 @@ function targetsOf(
 					const named = [...commands.matchAll(/(?:-p|--package)\s+["']?([\w-]+)/g)].flatMap(match => match[1] ?? []);
 					const manifests = [...commands.matchAll(/--manifest-path[= ]["']?(?:\.\/)?([^\s"';&|]*Cargo\.toml)/g)]
 						.flatMap(match => match[1] ?? []);
-					const crates = named.length && named.every(name => candidates.some(pkg => pkg.name === name))
+					const excluded = /--workspace\b|--all\b/.test(commands)
+						? [...commands.matchAll(/--exclude[= ]["']?([\w-]+)/g)].flatMap(match => match[1] ?? [])
+						: [];
+					const crates = (named.length && named.every(name => candidates.some(pkg => pkg.name === name))
 						? candidates.filter(pkg => named.includes(pkg.name))
 						: manifests.length && manifests.every(path => candidates.some(pkg => pkg.manifest === path))
 						? candidates.filter(pkg => manifests.includes(pkg.manifest))
 						: directories.length && directories.every(path => candidates.some(pkg => directoryOf(pkg) === path))
 						? candidates.filter(pkg => directories.includes(directoryOf(pkg)))
-						: candidates;
-					return { workflow, packages: crates, cited: true };
+						: candidates).filter(pkg => !excluded.includes(pkg.name));
+					return { operation, packages: crates, cited: true };
 				}
 				const root = candidates.filter(pkg => directoryOf(pkg) === '');
 				const rooted = own.some(entry =>
@@ -448,10 +466,10 @@ function targetsOf(
 				const chosen = candidates.filter(pkg => covered(pkg) || (rooted && root.includes(pkg)));
 				const elsewhere = directories.length > 0 || qualified.test(commands);
 				return chosen.length
-					? { workflow, packages: chosen, cited: true }
+					? { operation, packages: chosen, cited: true }
 					: root.length && !elsewhere
-					? { workflow, packages: root, cited: true }
-					: { workflow, packages: candidates, cited: false };
+					? { operation, packages: root, cited: true }
+					: { operation, packages: candidates, cited: false };
 			});
 			const packages = candidates.filter(pkg => selections.some(selection => selection.packages.includes(pkg)));
 			const selection: Target['selection'] = selections.every(entry => entry.cited) ? 'cited' : 'all';
@@ -519,7 +537,7 @@ function targetsOf(
 					optionalVariants: group.filter(pkg => pkg.optional).map(pkg => pkg.name),
 					sources: Object.fromEntries(
 						selections.map(entry => [
-							entry.workflow,
+							entry.operation,
 							group.filter(pkg => entry.packages.includes(pkg)).map(packageId),
 						]),
 					),
@@ -549,8 +567,7 @@ function targetsOf(
 			const chosen = declared.length
 				? declared
 				: matched.length
-				? matched.filter(project => !matched.some(other => other !== project && other.name.startsWith(project.name)))
-					.map(project => project.name)
+				? matched.map(project => project.name)
 				: located.length
 				? located.map(project => project.name)
 				: projects.filter(project => project.path === 'pyproject.toml').map(project => project.name);
@@ -588,17 +605,28 @@ function targetsOf(
 			const binaries = [
 				...new Set(cargoBinaries(snapshot).map(binary => binary.name).filter(name => mentions(shipping, name))),
 			];
-			targets.push({
-				...base,
-				...(binaries.length ? { binaries } : {}),
-				names: [repositoryTarget ? `${repositoryTarget} releases` : `${repository} releases`],
-				packages: repositoryTarget
-					? []
-					: inventory.packages.filter(pkg => pkg.manager === 'github-release' || pkg.manager === 'goreleaser')
-						.filter(publishable).map(packageId),
-				variants: kinds,
-				optionalVariants: [],
-			});
+			const releaseRepository = (entry: typeof found[number]) =>
+				entry.effect.kind === 'release' && entry.effect.repository
+					&& entry.effect.repository.toLowerCase() !== repository.toLowerCase()
+					? entry.effect.repository
+					: '';
+			const { repository: _foreign, ...shared } = base;
+			for (const target of [...new Set(found.map(releaseRepository))]) {
+				const subset = found.filter(entry => releaseRepository(entry) === target);
+				targets.push({
+					...shared,
+					operations: [...new Set(subset.map(entry => `${entry.workflow}#${entry.job.id}`))],
+					phase: Math.min(...subset.map(entry => phases.get(`${entry.workflow}#${entry.job.id}`) ?? 0)),
+					...(target ? { repository: target } : binaries.length ? { binaries } : {}),
+					names: [target ? `${target} releases` : `${repository} releases`],
+					packages: target
+						? []
+						: inventory.packages.filter(pkg => pkg.manager === 'github-release' || pkg.manager === 'goreleaser')
+							.filter(publishable).map(packageId),
+					variants: kinds,
+					optionalVariants: [],
+				});
+			}
 			continue;
 		}
 		if (destination === 'go-proxy') {
@@ -614,10 +642,25 @@ function targetsOf(
 		}
 		if (destination === 'vscode-marketplace' || destination === 'open-vsx') {
 			const extensions = managed('vscode');
+			const directories = new Set(
+				found.flatMap(entry => entry.effect.kind === 'publish' ? entry.effect.directory ?? [] : []),
+			);
+			const rooted = found.some(entry => entry.effect.kind === 'publish' && !entry.effect.directory);
+			const located = extensions.filter(pkg =>
+				directories.has(directoryOf(pkg))
+				|| mentions(effectText, pkg.name)
+				|| (directoryOf(pkg) !== ''
+					&& new RegExp(`(?<![\\w./-])${escapeRegExp(directoryOf(pkg))}(?![\\w-])`).test(effectText))
+			);
+			const chosen = located.length
+				? located
+				: rooted && extensions.some(pkg => directoryOf(pkg) === '')
+				? extensions.filter(pkg => directoryOf(pkg) === '')
+				: extensions;
 			targets.push({
 				...base,
-				names: extensions.length ? extensions.map(pkg => pkg.name) : [destination],
-				packages: extensions.map(packageId),
+				names: chosen.length ? chosen.map(pkg => pkg.name) : [destination],
+				packages: chosen.map(packageId),
 				variants: [],
 				optionalVariants: [],
 			});
@@ -795,9 +838,11 @@ function versionGroupOf(
 			counts.set(full, (counts.get(full) ?? 0) + 1);
 		}
 	}
-	const [releasePrefix] = trigger.kind !== 'tags' && targets.some(target => target.destination === 'github-release')
+	const ranked = trigger.kind === 'release'
+			|| (trigger.kind !== 'tags' && targets.some(target => target.destination === 'github-release'))
 		? [...counts].sort(([, a], [, b]) => b - a).map(([prefix]) => prefix)
 		: [];
+	const releasePrefix = trigger.kind === 'release' && ranked.length > 1 ? '' : ranked[0];
 	if (releasePrefix !== undefined) {
 		evidence.push({
 			status: 'inferred',
@@ -1017,23 +1062,69 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 	}
 	const streams: StreamProposal[] = [];
 	const used = new Set<string>();
+	const upstreamOf = (workflow: Workflow): Workflow | undefined =>
+		workflow.workflowRuns.flatMap(source =>
+			graph.workflows.filter(candidate =>
+				candidate.file !== workflow.file && (candidate.name === source || candidate.file === source)
+			)
+		)[0];
+	const topOf = (workflow: Workflow): Workflow => {
+		const seen = new Set<string>();
+		let current = workflow;
+		for (let next = upstreamOf(current); next && !seen.has(next.file); next = upstreamOf(current)) {
+			seen.add(current.file);
+			current = next;
+		}
+		return current;
+	};
 	for (const [key, roots] of groups) {
-		const files = [...new Set(roots.map(root => root.file))];
+		const tops = roots.map(topOf).filter(top =>
+			!roots.includes(top) && graph.entry(top) && streamKey(graph, top) === key
+			&& ![...groups.values()].flat().some(other => other.file === top.file)
+		);
+		const heads = [...new Set([...tops, ...roots])];
+		const files = [...new Set(heads.map(head => head.file))];
 		const called = new Set(files.flatMap(file => graph.jobs(file)).map(entry => entry.workflow));
 		const memberFiles = [...new Set([...files, ...called])];
 		const entries = memberFiles.flatMap(file => graph.effects(file).filter(entry => entry.workflow === file));
 		const phases = phasesOf(graph, files);
 		const targets = targetsOf(graph, memberFiles, entries, phases);
 		const [kind, value = ''] = key.split(/:(.*)/s);
-		const tagWorkflow = roots.find(root => tagFamilies(root).length);
+		const tagWorkflow = heads.find(head => tagFamilies(head).length);
 		const trigger: StreamProposal['trigger'] = kind === 'tags'
 			? { kind: 'tags', prefix: value, patterns: tagWorkflow?.tagPatterns ?? [] }
+			: kind === 'release'
+			? { kind: 'release' }
 			: kind === 'dispatch'
 			? { kind: 'dispatch', workflow: value }
 			: kind === 'schedule'
 			? { kind: 'schedule', workflow: value }
 			: { kind: 'branch', workflow: value };
-		const base = streamName(key, roots, snapshot.repository.name);
+		if (trigger.kind === 'tags' && !targets.some(target => target.destination === 'go-proxy')) {
+			const modules = inventory.packages.filter(pkg => {
+				if (pkg.manager !== 'go' || !publishable(pkg)) return false;
+				const directory = pkg.manifest.replace(/\/?go\.mod$/, '');
+				return directory
+					? trigger.prefix === `${directory}/v` || trigger.prefix === `${directory}/`
+					: /^v?$/.test(trigger.prefix);
+			});
+			const last = Math.max(0, ...targets.map(target => target.phase));
+			if (modules.length) {
+				targets.push({
+					destination: 'go-proxy',
+					selection: 'cited',
+					names: modules.map(pkg => pkg.name),
+					packages: modules.map(packageId),
+					variants: [],
+					optionalVariants: [],
+					operations: [...new Set(targets.flatMap(target => target.operations))],
+					phase: last + 1,
+					required: true,
+					downstream: false,
+				});
+			}
+		}
+		const base = streamName(key, heads, snapshot.repository.name);
 		let name = base;
 		for (let index = 2; used.has(name); index++) {
 			const suffix = `-${index}`;
@@ -1046,7 +1137,8 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 				&& (workflow.callInputs.length > 0 || (graph.callers.get(file)?.size ?? 0) > 0
 					|| workflow.dispatchInputs.some(input => /run[-_]?id|recover|backfill|destination/i.test(input)));
 			const calledHere = files.some(other =>
-				other !== file && graph.jobs(other).some(entry => entry.job.calls === file)
+				other !== file
+				&& (graph.jobs(other).some(entry => entry.job.calls === file) || graph.starts(other).includes(file))
 			);
 			const role: EntryRole = merged.get(file) ?? (files.includes(file) && !calledHere
 				? recovery && workflow && !tagFamilies(workflow).length && !workflow.events.includes('release')
@@ -1062,6 +1154,9 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 				tagPatterns: workflow?.tagPatterns ?? [],
 				branchPatterns: workflow?.branchPatterns ?? [],
 				starts: graph.starts(file),
+				conditions: Object.fromEntries(
+					(workflow?.jobs ?? []).flatMap(job => job.condition ? [[job.id, job.condition]] : []),
+				),
 			};
 		});
 		if (!roles.some(entry => entry.role === 'entry')) {
@@ -1076,9 +1171,24 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 		) => [...job.runs, job.condition ?? ''])
 			.join('\n');
 		if (!untagged && /prerelease|\bnext\b|-rc|alpha|beta|preview/i.test(allText)) channels.add('prerelease');
-		const channelRoots = roots.filter(root => merged.get(root.file) !== 'maintenance');
+		const channelRoots = heads.filter(head => merged.get(head.file) !== 'maintenance');
+		const afterTag = (head: Workflow) => {
+			const reached = new Set<string>();
+			const pending = heads.filter(other => tagFamilies(other).length > 0 || other.events.includes('release')).map(
+				other => other.file,
+			);
+			while (pending.length) {
+				const file = pending.pop();
+				if (file === undefined || reached.has(file)) continue;
+				reached.add(file);
+				pending.push(...graph.starts(file));
+			}
+			return reached.has(head.file) && !(tagFamilies(head).length > 0 || head.events.includes('release'));
+		};
 		if (
-			channelRoots.some(root => root.events.includes('schedule') || root.events.includes('workflow_run'))
+			channelRoots.some(head =>
+				head.events.includes('schedule') || (head.events.includes('workflow_run') && !afterTag(head))
+			)
 			|| /\b(?:dist-tag|--tag|channel|tag_name|release)[\s=:]+["']?nightly\b|\bnightly\s+release/i.test(allText)
 		) channels.add('nightly');
 		if (
@@ -1194,6 +1304,7 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 				tagPatterns: initiator.workflow.tagPatterns,
 				branchPatterns: initiator.workflow.branchPatterns,
 				starts: graph.starts(initiator.workflow.file),
+				conditions: {},
 			});
 			evidence.push(...workflowEvidence(initiator.workflow));
 			evidence.push({
@@ -1258,6 +1369,9 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 				tagPatterns: follower.tagPatterns,
 				branchPatterns: follower.branchPatterns,
 				starts: graph.starts(follower.file),
+				conditions: Object.fromEntries(
+					follower.jobs.flatMap(job => job.condition ? [[job.id, job.condition]] : []),
+				),
 			});
 			const docs = graph.effects(follower.file).filter(({ effect }) =>
 				effect.kind === 'publish' && effect.destination === 'docs'
@@ -1304,6 +1418,8 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 				? 'crates.io'
 				: pkg.manager === 'go'
 				? 'the Go module proxy under a matching tag'
+				: pkg.manager === 'vscode'
+				? 'the Visual Studio Marketplace'
 				: pkg.manager;
 			omissions.push({
 				subject: code(pkg.name),
@@ -1345,7 +1461,10 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 			reason: `describes ${packages.length} generated npm packages, but no release workflow publishes them`,
 		});
 	}
-	const incomplete = incompleteProducts(snapshot, streams);
+	const targetedNames = new Set(
+		inventory.packages.filter(pkg => targeted.has(packageId(pkg))).map(pkg => pkg.name),
+	);
+	const incomplete = incompleteProducts(snapshot, streams, targetedNames);
 	const mirror = mirrorOf(snapshot, workflows);
 	if (mirror) {
 		unresolved.push(
@@ -1390,7 +1509,11 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 	};
 }
 
-function incompleteProducts(snapshot: Snapshot, streams: StreamProposal[]): IncompleteProduct[] {
+function incompleteProducts(
+	snapshot: Snapshot,
+	streams: StreamProposal[],
+	targeted: ReadonlySet<string>,
+): IncompleteProduct[] {
 	const published = new Set(streams.flatMap(stream => stream.targets.map(target => target.destination)));
 	const binaries = streams.flatMap(stream =>
 		stream.targets.filter(target => target.destination === 'github-release').flatMap(target => target.binaries ?? [])
@@ -1405,12 +1528,12 @@ function incompleteProducts(snapshot: Snapshot, streams: StreamProposal[]): Inco
 				continue;
 			}
 			if (typeof object(manifest.engines).vscode !== 'string') continue;
-			if (published.has('vscode-marketplace')) continue;
+			const name = `${String(manifest.publisher ?? '')}.${String(manifest.name ?? path)}`;
+			if (targeted.has(name)) continue;
 			const scripts = object(manifest.scripts);
 			const recipe = Object.entries(scripts).find(([, command]) =>
 				typeof command === 'string' && /\bvsce\s+package\b/.test(command)
 			)?.[0];
-			const name = `${String(manifest.publisher ?? '')}.${String(manifest.name ?? path)}`;
 			const dependencies = object(manifest.dependencies);
 			const local = Object.entries(dependencies).filter(([, spec]) =>
 				typeof spec === 'string' && /^(?:file|link|workspace):/.test(spec)

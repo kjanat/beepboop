@@ -2,7 +2,7 @@ import { latestTag } from '@/automation/managers/tags';
 import { packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import type { ReleaseGraph, StreamProposal, Target } from '@/automation/release-graph/graph';
-import { type Destination, literalPrefix } from '@/automation/release-graph/workflows';
+import { type Destination, escapeRegExp, literalPrefix } from '@/automation/release-graph/workflows';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Inventory, Snapshot } from '@/automation/types';
 import { identifierPattern } from '@/domain/configuration';
@@ -86,17 +86,32 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 				};
 				visit(entry.file);
 				const files = [...reached];
-				const covered = new Set(
-					stream.targets.flatMap(target =>
-						target.destination === 'github-release' && entry.events.includes('release')
-							? target.packages
-							: target.sources
-							? files.flatMap(file => target.sources?.[file] ?? [])
-							: target.operations.some(operation => files.some(file => operation.startsWith(`${file}#`)))
-							? target.packages
-							: []
-					),
-				);
+				const families = [
+					...new Set(entry.tagPatterns.filter(pattern => !pattern.startsWith('!')).map(literalPrefix)),
+				].filter(Boolean);
+				const compatible = (operation: string, prefix: string | undefined) => {
+					const [file = '', job = ''] = operation.split('#');
+					const condition = members.get(file)?.conditions[job];
+					if (prefix === undefined || !condition || families.length < 2) return true;
+					const named = families.filter(family => new RegExp(`['"]${escapeRegExp(family)}`).test(condition));
+					return !named.length || named.includes(prefix);
+				};
+				const ownOperation = (operation: string) => files.some(file => operation.startsWith(`${file}#`));
+				const coveredFor = (prefix?: string) =>
+					new Set(
+						stream.targets.flatMap(target =>
+							target.destination === 'github-release' && entry.events.includes('release')
+								? target.packages
+								: target.sources
+								? Object.entries(target.sources).filter(([operation]) =>
+									ownOperation(operation) && compatible(operation, prefix)
+								).flatMap(([, ids]) => ids)
+								: target.operations.some(ownOperation)
+								? target.packages
+								: []
+						),
+					);
+				const covered = coveredFor();
 				const tagged = entry.tagPatterns.length > 0 || entry.events.includes('release');
 				const dispatched = entry.events.includes('workflow_dispatch');
 				const channel = entry.role === 'channel';
@@ -109,13 +124,16 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 									? tagPatterns.map(literalPrefix)
 									: [tagPrefix ?? ''],
 							),
-						].map(prefix => ({
-							ref: `refs/tags/${prefix}*`,
-							publications: channel ? [] : required.filter(id => {
-								const source = known.get(id)?.versionSource ?? '';
-								return covered.has(id) && (!source.startsWith('tags:') || source === `tags:${prefix}`);
-							}),
-						}))
+						].map(prefix => {
+							const scoped = coveredFor(prefix);
+							return {
+								ref: `refs/tags/${prefix}*`,
+								publications: channel ? [] : required.filter(id => {
+									const source = known.get(id)?.versionSource ?? '';
+									return scoped.has(id) && (!source.startsWith('tags:') || source === `tags:${prefix}`);
+								}),
+							};
+						})
 						: []),
 					...(entry.branchPatterns.length
 						? [{

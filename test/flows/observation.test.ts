@@ -250,6 +250,261 @@ test('an observe binding on an exact tag keeps the tag version', async () => {
 	]);
 });
 
+async function complete(
+	repository: Repository,
+	run: { id: number; event: string; branch: string; conclusion: string; attempt: number; path?: string },
+): Promise<Execution[]> {
+	const path = run.path ?? '.github/workflows/release.yml';
+	const existing = repository.runs.find(entry => entry.id === run.id);
+	if (existing) {
+		existing.conclusion = run.conclusion;
+		existing.attempt = run.attempt;
+	} else {
+		repository.runs.push({
+			id: run.id,
+			path,
+			event: run.event,
+			headSha: world.github.head(repository),
+			headBranch: run.branch,
+			status: 'completed',
+			conclusion: run.conclusion,
+			attempt: run.attempt,
+			title: 'Release',
+			inputs: {},
+		});
+	}
+	await world.webhook('workflow_run', {
+		action: 'completed',
+		workflow_run: {
+			id: run.id,
+			conclusion: run.conclusion,
+			event: run.event,
+			path,
+			head_repository: { id: repository.id },
+		},
+		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
+	});
+	await world.wait(2_000);
+	const journal = await world.coordinator(repository).exportJournal();
+	return journal.filter(entry => entry.key.startsWith('execution:')).map(entry => decodeExecutionV1(entry.value));
+}
+
+test('a re-run attempt records its own outcome', async () => {
+	const repository = world.github.create('octo/widget', {
+		'package.json': JSON.stringify({ name: 'widget', version: '1.2.0' }),
+		'.github/workflows/release.yml': workflow("{ push: { tags: ['widget-v*'] } }", 'npm publish'),
+	});
+	await adopt(repository);
+	repository.refs.set('tags/widget-v1.2.0', world.github.head(repository));
+	const [first] = await complete(repository, {
+		id: 9001,
+		event: 'push',
+		branch: 'widget-v1.2.0',
+		conclusion: 'failure',
+		attempt: 1,
+	});
+	expect(first?.state).toBe('failed');
+	world.npm.publish('widget', '1.2.0');
+	const after = await complete(repository, {
+		id: 9001,
+		event: 'push',
+		branch: 'widget-v1.2.0',
+		conclusion: 'success',
+		attempt: 2,
+	});
+	expect(after.map(execution => [execution.runAttempt, execution.state])).toEqual([[2, 'succeeded']]);
+});
+
+test('a run without its tag fails once and an unreadable run stops being retried', async () => {
+	const repository = world.github.create('octo/widget', {
+		'package.json': JSON.stringify({ name: 'widget', version: '1.2.0' }),
+		'.github/workflows/release.yml': workflow("{ push: { tags: ['widget-v*'] } }", 'npm publish'),
+	});
+	await adopt(repository);
+	const [execution] = await complete(repository, {
+		id: 9001,
+		event: 'push',
+		branch: 'widget-v1.2.0',
+		conclusion: 'success',
+		attempt: 1,
+	});
+	expect(execution?.state).toBe('failed');
+	expect(execution?.reason).toBe('Release tag widget-v1.2.0 was not found');
+	await world.webhook('workflow_run', {
+		action: 'completed',
+		workflow_run: {
+			id: 9999,
+			conclusion: 'success',
+			event: 'push',
+			path: '.github/workflows/release.yml',
+			head_repository: { id: repository.id },
+		},
+		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
+	});
+	await world.wait(2_000);
+	await world.wait(12 * 60_000, 2_000);
+	const journal = await world.coordinator(repository).exportJournal();
+	expect(journal.filter(entry => entry.key.startsWith('observe:'))).toEqual([]);
+});
+
+test('a tag ahead of the manifest fails the observed release', async () => {
+	const repository = world.github.create('octo/widget', {
+		'package.json': JSON.stringify({ name: 'widget', version: '1.2.0' }),
+		'.github/workflows/release.yml': workflow("{ push: { tags: ['widget-v*'] } }", 'npm publish'),
+	});
+	await adopt(repository);
+	world.npm.publish('widget', '1.2.0');
+	repository.refs.set('tags/widget-v1.3.0', world.github.head(repository));
+	const [execution] = await complete(repository, {
+		id: 9001,
+		event: 'push',
+		branch: 'widget-v1.3.0',
+		conclusion: 'success',
+		attempt: 1,
+	});
+	expect(execution?.state).toBe('failed');
+	expect(execution?.reason).toBe('Tag widget-v1.3.0 names version 1.3.0, but widget carries 1.2.0');
+	expect(execution?.publications).toEqual([]);
+});
+
+test('an unsigned commit does not fail an observed release', async () => {
+	const repository = world.github.create('octo/widget', {
+		'package.json': JSON.stringify({ name: 'widget', version: '1.2.0' }),
+		'.github/workflows/release.yml': workflow("{ push: { tags: ['widget-v*'] } }", 'npm publish'),
+	});
+	await adopt(repository);
+	const head = repository.commits.get(world.github.head(repository));
+	if (!head) throw new Error('Expected the head commit');
+	head.verified = false;
+	world.npm.publish('widget', '1.2.0');
+	repository.refs.set('tags/widget-v1.2.0', world.github.head(repository));
+	const [execution] = await complete(repository, {
+		id: 9001,
+		event: 'push',
+		branch: 'widget-v1.2.0',
+		conclusion: 'success',
+		attempt: 1,
+	});
+	expect(execution?.state).toBe('succeeded');
+});
+
+test('a workflow_run run on a prefixed tag matches its tag binding', async () => {
+	const repository = world.github.create('octo/widget', {
+		'package.json': JSON.stringify({ name: 'widget', version: '1.2.0' }),
+		'.github/workflows/release.yml': workflow("{ push: { tags: ['widget-v*'] } }", 'echo build'),
+		'.github/workflows/publish.yml': workflow(
+			'{ workflow_run: { workflows: [Release], types: [completed] } }',
+			'npm publish',
+		),
+	});
+	const { plan } = await adopt(repository);
+	expect(plan.choices.streams[0]?.observe).toEqual([
+		{ name: 'release', file: 'release.yml', ref: 'refs/tags/widget-v*', publications: ['pkg:npm/widget'] },
+	]);
+	world.npm.publish('widget', '1.2.0');
+	repository.refs.set('tags/widget-v1.2.0', world.github.head(repository));
+	await complete(repository, { id: 9001, event: 'push', branch: 'widget-v1.2.0', conclusion: 'success', attempt: 1 });
+	const choices: SetupChoices = {
+		streams: [{
+			name: 'main',
+			packages: ['pkg:npm/widget'],
+			required: ['pkg:npm/widget'],
+			versioning: 'workspace',
+			observe: [{ name: 'publish', file: 'publish.yml', ref: 'refs/tags/widget-v*', publications: ['pkg:npm/widget'] }],
+		}],
+	};
+	const api = bearer(world, await world.cliSession());
+	const preview = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
+	);
+	expect(preview.blockers).toEqual([]);
+	expect(
+		(await api('/api/repositories/setup/apply', {
+			repository: repository.name,
+			choices,
+			planId: preview.planId,
+			sourceSha: preview.sourceSha,
+			setupHead: preview.setupHead,
+		})).status,
+	).toBe(200);
+	world.github.merge(repository, 2);
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	repository.refs.set('tags/widget-v1.2.0', world.github.head(repository));
+	const executions = await complete(repository, {
+		id: 9002,
+		event: 'workflow_run',
+		branch: 'widget-v1.2.0',
+		conclusion: 'success',
+		attempt: 1,
+		path: '.github/workflows/publish.yml',
+	});
+	const followed = executions.find(execution => execution.runId === 9002);
+	expect(followed?.operation).toBe('publish');
+	expect(followed?.version).toBe('1.2.0');
+	expect(followed?.publications.map(publication => [publication.id, publication.outcome])).toEqual([
+		['pkg:npm/widget', 'succeeded'],
+	]);
+});
+
+test('a tag push on a workflow with tag and branch triggers is recorded once', async () => {
+	const repository = world.github.create('octo/widget', {
+		'package.json': JSON.stringify({ name: 'widget', version: '1.2.0' }),
+		'.github/workflows/release.yml': workflow(
+			"{ push: { tags: ['widget-v*'], branches: [main, next] } }",
+			'npm publish',
+		),
+	});
+	const { plan } = await adopt(repository);
+	expect(plan.choices.streams[0]?.observe?.map(binding => binding.ref)).toEqual([
+		'refs/tags/widget-v*',
+		'refs/heads/*',
+	]);
+	world.npm.publish('widget', '1.2.0');
+	repository.refs.set('tags/widget-v1.2.0', world.github.head(repository));
+	const executions = await complete(repository, {
+		id: 9001,
+		event: 'push',
+		branch: 'widget-v1.2.0',
+		conclusion: 'success',
+		attempt: 1,
+	});
+	expect(executions.map(execution => [execution.operation, execution.version])).toEqual([['release', '1.2.0']]);
+});
+
+test('reopening setup keeps an empty required set', async () => {
+	const repository = world.github.create('octo/widget', {
+		'package.json': JSON.stringify({ name: 'widget', version: '1.2.0' }),
+		'.github/workflows/release.yml': workflow("{ push: { tags: ['widget-v*'] } }", 'npm publish'),
+	});
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const suggested = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name })).body),
+	);
+	const [stream] = suggested.choices.streams;
+	if (!stream?.observe) throw new Error('Expected an observed stream');
+	const choices: SetupChoices = { streams: [{ ...stream, required: [] }] };
+	const plan = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
+	);
+	expect(plan.blockers).toEqual([]);
+	expect(
+		(await api('/api/repositories/setup/apply', {
+			repository: repository.name,
+			choices,
+			planId: plan.planId,
+			sourceSha: plan.sourceSha,
+			setupHead: plan.setupHead,
+		})).status,
+	).toBe(200);
+	world.github.merge(repository, 1);
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const reopened = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name })).body),
+	);
+	expect(reopened.choices.streams[0]?.required).toEqual([]);
+});
+
 test('a publisher on a non-default branch is observed on that branch', async () => {
 	const repository = world.github.create('octo/snapshots', {
 		'package.json': JSON.stringify({ name: 'snapshots', version: '1.0.0' }),

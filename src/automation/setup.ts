@@ -149,7 +149,9 @@ function suggested(
 			versioning: current.versioning === 'independent' || current.versioning === 'none'
 				? current.versioning
 				: 'workspace',
-			required: Array.isArray(current.required)
+			required: Array.isArray(current.required) && observe.length
+				? current.required.map(value => selectorKey(String(value), inventory.packages))
+				: Array.isArray(current.required)
 				? [
 					...new Set([
 						...current.required.map(value => selectorKey(String(value), inventory.packages)),
