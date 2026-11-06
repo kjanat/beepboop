@@ -306,15 +306,20 @@ export function releaseRepository(
 				: 'Beepboop will open the version PR. Follow it with beepboop runs list.',
 		);
 		out.log('Review and merge the preparation PR.');
-		if (stream.versionSource?.kind === 'tags' || stream.versionFiles?.length) {
+		if (stream.versionSource?.kind === 'tags') {
 			out.log(
-				`After preparation completes, start its release with: beepboop releases start ${preparation.id} --sourceSha MERGED_COMMIT_SHA`,
+				'Preparation only: tag-based streams do not start publication after merge. Starting publication from this preparation is not supported yet.',
 			);
+			return;
 		}
+		out.log(
+			'After merge, Beepboop creates a publication run when package manifests and configured version files match an unreleased version. Follow it with beepboop runs list.',
+		);
+		if (stream.versionFiles?.length) out.log('Version files alone do not start publication.');
 		if (stream.promote.approval === 'required') {
 			out.log(
-				'After the merge, inspect beepboop runs list and approve the promotion with beepboop runs approve EXECUTION_ID --sourceSha MERGED_COMMIT_SHA.',
+				'If a publication run is created, approve it with beepboop runs approve EXECUTION_ID --sourceSha MERGED_COMMIT_SHA.',
 			);
-		} else out.log(`Publication follows the configured ${stream.promote.approval} approval policy after the merge.`);
+		} else out.log(`Any publication run follows the configured ${stream.promote.approval} approval policy.`);
 	});
 }

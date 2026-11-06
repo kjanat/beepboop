@@ -10,7 +10,7 @@ import { Client } from '@/cli/client';
 import { checkoutRepository } from '@/cli/release';
 import { routes } from '@/contract/routes';
 import { planReview } from '@/contract/views';
-import { publishWorkflow, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
+import { passChecks, publishWorkflow, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
 import { origin, World } from '@root/test/support/world.ts';
 
 let world: World, directory: string, client: Client;
@@ -319,6 +319,11 @@ for (const [bump, version] of [['patch', '1.2.4'], ['minor', '1.3.0'], ['major',
 		expect(prepared.exitCode).toBe(0);
 		expect(prepared.stdout.join('')).toContain(`→ ${version}`);
 		expect(prepared.stdout.join('')).toContain('Preparation runs in prepare.yml');
+		expect(prepared.stdout.join('')).toContain(
+			'when package manifests and configured version files match an unreleased version',
+		);
+		expect(prepared.stdout.join('')).toContain('If a publication run is created, approve it');
+		expect(prepared.stdout.join('')).not.toContain('releases start');
 		expect(prepareCalls()[0]?.body).toEqual({
 			repositoryId: repository.id,
 			stream: 'main',
@@ -337,6 +342,100 @@ for (const [bump, version] of [['patch', '1.2.4'], ['minor', '1.3.0'], ['major',
 		expect(repository.pulls).toHaveLength(0);
 	});
 }
+
+test('delegated manifest preparation can promote when its prepared versions reach the default branch', async () => {
+	const { repository } = await delegated();
+	const prepared = await run(['release', 'patch', '--repository', repository.name], [true]);
+	expect(prepared.exitCode).toBe(0);
+	expect(prepared.stdout.join('')).toContain('Follow it with beepboop runs list');
+	expect(prepared.stdout.join('')).not.toContain('releases start');
+	await world.wait(20_000);
+	expect(world.github.dispatches.map(dispatch => dispatch.file)).toEqual(['prepare.yml']);
+	// The repository workflow supplies these generated changes; the CLI does not run it locally.
+	const merged = world.github.push(repository, {
+		'package.json': `${JSON.stringify({ name: 'widget', version: '1.2.4' }, null, 2)}\n`,
+	}, 'Merge the workflow-prepared package version');
+	passChecks(repository, merged.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(1_000);
+	const executions = await Effect.runPromise(client.call(routes.executionsList, {}));
+	expect(executions.filter(execution => execution.operation === 'promote')).toEqual([
+		expect.objectContaining({ version: '1.2.4', sourceSha: merged.sha, state: 'blocked' }),
+	]);
+});
+
+test('managed manifest plans with custom version files promote after the preparation PR is merged', async () => {
+	const repository = await seed();
+	const configuration = z.looseObject({ streams: z.looseObject({ main: z.looseObject({}) }) }).parse(
+		JSON.parse(widgetConfiguration()),
+	);
+	configuration.streams.main.versionFiles = [{ path: 'VERSION', format: 'text', prefix: 'version=', suffix: '\n' }];
+	world.github.push(repository, {
+		'.github/beepboop.json': JSON.stringify(configuration),
+		'VERSION': 'version=1.0.0\n',
+	}, 'Keep the custom version file synchronized');
+	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	const prepared = await run(['release', 'patch', '--repository', repository.name], [true]);
+	expect(prepared.exitCode).toBe(0);
+	expect(prepared.stdout.join('')).toContain('Version files alone do not start publication');
+	expect(prepared.stdout.join('')).toContain('If a publication run is created, approve it');
+	expect(prepared.stdout.join('')).not.toContain('releases start');
+	expect(plans.at(-1)?.edits.map(edit => edit.path).sort()).toEqual(['VERSION', 'package.json']);
+	await world.wait(20_000);
+	const [pull] = repository.pulls;
+	if (!pull) throw new Error('No preparation pull request');
+	expect(world.github.file(repository, 'VERSION', pull.head.sha)).toBe('version=1.0.1\n');
+	const merged = world.github.merge(repository, pull.number);
+	passChecks(repository, merged.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(1_000);
+	const executions = await Effect.runPromise(client.call(routes.executionsList, {}));
+	expect(executions.filter(execution => execution.operation === 'promote')).toEqual([
+		expect.objectContaining({ version: '1.0.1', sourceSha: merged.sha, state: 'blocked' }),
+	]);
+});
+
+test('a version-file-only preparation does not promise or create publication after merge', async () => {
+	const packageId = 'pkg:golang/github.com/octo/tagged';
+	world.network.serve('proxy.golang.org', () => new Response(null, { status: 404 }));
+	const repository = world.github.create('octo/tagged', {
+		'go.mod': 'module github.com/octo/tagged\n\ngo 1.26\n',
+		'VERSION': 'version=1.0.0\n',
+		'.github/workflows/publish.yml': publishWorkflow.replaceAll('pkg:npm/widget', packageId),
+		'.github/beepboop.json': JSON.stringify({
+			managers: ['go', 'workflow'],
+			streams: {
+				main: {
+					packages: [packageId],
+					required: [packageId],
+					versionFiles: [{ path: 'VERSION', format: 'text', prefix: 'version=', suffix: '\n' }],
+					prepare: { strategy: 'managed' },
+					promote: {
+						approval: 'required',
+						workflow: { file: 'publish.yml', publications: [packageId] },
+					},
+				},
+			},
+		}),
+	});
+	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	const prepared = await run(['release', '1.1.0', '--repository', repository.name], [true]);
+	expect(prepared.exitCode).toBe(0);
+	expect(prepared.stdout.join('')).toContain('Version files alone do not start publication');
+	expect(prepared.stdout.join('')).toContain(
+		'when package manifests and configured version files match an unreleased version',
+	);
+	expect(prepared.stdout.join('')).not.toContain('releases start');
+	expect(plans.at(-1)?.edits.map(edit => edit.path)).toEqual(['VERSION']);
+	await world.wait(20_000);
+	const [pull] = repository.pulls;
+	if (!pull) throw new Error('No preparation pull request');
+	world.github.merge(repository, pull.number);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(1_000);
+	const executions = await Effect.runPromise(client.call(routes.executionsList, {}));
+	expect(executions.filter(execution => execution.operation === 'promote')).toEqual([]);
+});
 
 test('workflow bumps require a known baseline and explicit versions stay delegated', async () => {
 	const { repository } = await delegated(['widget'], {});
@@ -395,4 +494,22 @@ test('workflow tag-derived bumps remain authoritative when registry packages are
 	expect(explicit.exitCode).toBe(0);
 	expect(planReview.parse(JSON.parse(explicit.stdout.join('')).plan).version).toBe('3.0.0');
 	expect(prepareCalls()).toHaveLength(0);
+	const existing = (await Effect.runPromise(client.call(routes.executionsList, {})))
+		.filter(execution => execution.operation === 'promote').map(execution => execution.id);
+	const prepared = await run(['release', 'minor', '--repository', repository.name], [true]);
+	expect(prepared.exitCode).toBe(0);
+	expect(prepared.stdout.join('')).toContain('tag-based streams do not start publication after merge');
+	expect(prepared.stdout.join('')).toContain('Starting publication from this preparation is not supported yet');
+	expect(prepared.stdout.join('')).not.toContain('releases start');
+	expect(prepared.stdout.join('')).not.toContain('runs approve');
+	const merged = world.github.push(repository, {
+		'package.json': `${JSON.stringify({ name: 'widget', version: '2.5.0' }, null, 2)}\n`,
+	}, 'Merge the tag-derived preparation');
+	passChecks(repository, merged.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(1_000);
+	const executions = await Effect.runPromise(client.call(routes.executionsList, {}));
+	expect(executions.filter(execution => execution.operation === 'promote').map(execution => execution.id)).toEqual(
+		existing,
+	);
 });

@@ -90,6 +90,10 @@ Independent package release plans use the lower-level `plan-set`/`prepare-set`
 commands below. Already-prepared versions are also refused here so that a
 preparation command cannot accidentally initiate promotion.
 
+For streams with a tag-based `versionSource`, this flow stops at preparation.
+Merging the preparation PR does not create a publication run, and the CLI has
+no shared-version equivalent of `releases start`.
+
 The lower-level commands remain available for separately reviewed plans:
 
 Use stream names from `repositories show`. Repository numbers are resolved from
@@ -99,7 +103,6 @@ the enrolled repository name.
 beepboop releases plan kjanat/actionlint --stream main --releaseVersion 2.1.0
 beepboop releases prepare kjanat/actionlint --stream main --releaseVersion 2.1.0 \
   --sourceSha REVIEWED_SOURCE_SHA --planId REVIEWED_PLAN_ID
-beepboop releases start PREPARATION_ID --sourceSha REVIEWED_SOURCE_SHA
 beepboop runs list
 beepboop runs approve EXECUTION_ID --sourceSha REVIEWED_SOURCE_SHA
 beepboop runs approve EXECUTION_ID --sourceSha REVIEWED_SOURCE_SHA --force
@@ -108,10 +111,9 @@ beepboop runs recover EXECUTION_ID --action retry
 ```
 
 Use the exact `sourceSha` and `planId` returned by the preview. Preparation rejects
-changed plans on the server. Start a release set after its preparation has
-completed and the repository's required review/merge steps are done. Approval is
-bound to the exact reviewed commit. `--force` approves even when the signature
-or checks fail, and the audit log records the problems it overrode. Recovery defaults to reconciliation; retry
+changed plans on the server. Approval is bound to the exact reviewed commit.
+`--force` approves even when the signature or checks fail, and the audit log
+records the problems it overrode. Recovery defaults to reconciliation; retry
 must be selected explicitly. Existing server approval and dispatch rules apply.
 
 Independent monorepo releases use the JSON plan format documented in
@@ -121,7 +123,13 @@ Independent monorepo releases use the JSON plan format documented in
 beepboop releases plan-set OWNER/REPO --stream main --plan release-plan.json
 beepboop releases prepare-set OWNER/REPO --stream main --plan release-plan.json \
   --sourceSha REVIEWED_SOURCE_SHA --planId REVIEWED_PLAN_ID
+beepboop releases start PREPARATION_ID --sourceSha MERGED_COMMIT_SHA
 ```
+
+`releases start` accepts preparations made by `prepare-set` only. Run it after
+preparation completes and the required review/merge steps are done, using the
+reviewed merged commit. Shared-version preparations use the stream's publication
+policy instead.
 
 The `secrets` command returns metadata and grants, never secret values. Secret
 writes, reveals, grant changes, and security-key management use the dashboard's

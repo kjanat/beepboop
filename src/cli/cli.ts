@@ -317,7 +317,7 @@ for (const operation of ['plan-set', 'prepare-set'] as const) {
 	);
 }
 releases = releases.command(
-	base('start', 'Start the release operations for a completed preparation')
+	base('start', 'Start publication for a completed monorepo release set')
 		.arg('preparationId', arg.string().prompt({ kind: 'input', message: 'Preparation ID' }).required()).flag(
 			'sourceSha',
 			flag.string({ pattern: shaPattern }).prompt({ kind: 'input', message: 'Reviewed source commit SHA' })
