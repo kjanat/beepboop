@@ -235,7 +235,7 @@ test('a workflow filename with dots is adopted', async () => {
 	expect(reopened.choices.streams).toEqual(plan.choices.streams);
 });
 
-test('an observed run requires only the publications its binding lists', async () => {
+test('an observed run records only the publications its binding lists', async () => {
 	const repository = world.github.create('octo/pair', {
 		'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
 		'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
@@ -269,8 +269,7 @@ test('an observed run requires only the publications its binding lists', async (
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
 	world.npm.publish('a', '1.0.0');
 	const [execution] = await observe(repository, 'workflow_dispatch', 'main');
-	expect(execution?.publications.map(publication => [publication.id, publication.required])).toEqual([
-		['pkg:npm/a', true],
-		['pkg:npm/b', false],
-	]);
+	expect(execution?.publications.map(publication => [publication.id, publication.required, publication.outcome]))
+		.toEqual([['pkg:npm/a', true, 'succeeded']]);
+	expect(execution?.state).toBe('succeeded');
 });

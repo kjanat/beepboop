@@ -498,11 +498,20 @@ function targetsOf(
 						.flatMap(match => match[1] ?? []),
 				),
 			];
+			const located = projects.filter(project => {
+				const directory = escapeRegExp(project.path.split('/').slice(0, -1).join('/'));
+				return directory !== '' && new RegExp(
+					`(?:\\b(?:cd|--directory|--project|-C)\\s+["']?(?:\\./)?${directory}/?["']?(?:\\s|$|[;&)])|(?<![\\w./-])${directory}/(?:dist|pyproject\\.toml)\\b)`,
+					'm',
+				).test(effectText);
+			});
 			const chosen = declared.length
 				? declared
 				: matched.length
 				? matched.filter(project => !matched.some(other => other !== project && other.name.startsWith(project.name)))
 					.map(project => project.name)
+				: located.length
+				? located.map(project => project.name)
 				: projects.filter(project => project.path === 'pyproject.toml').map(project => project.name);
 			targets.push({
 				...base,

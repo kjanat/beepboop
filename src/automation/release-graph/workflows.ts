@@ -128,9 +128,11 @@ const goreleaserBuildOnly = /--snapshot\b|--skip[= ][\w,]*\bpublish\b/;
 const aliasCommand =
 	/\bgit\s+tag\s+(?:-[a-z]*f[a-z]*\s|--force\b)|\bgit\s+push\b[^\n]*(?:--force|\+refs\/tags\/)|\bnpm\s+dist-tag\s+add\b|\bdocker\s+buildx\s+imagetools\s+create\b[^\n]*:latest\b/;
 
+const dryRun =
+	/--dry-run(?![\w-]|=(?:false|0)\b)|\bnpm_config_dry_run=["']?(?:true|1)\b|\bcargo\s+(?:\+\S+\s+)?publish\b[^\n;&|]*\s-[a-z]*n[a-z]*\b/i;
 function lines(text: string): string[] {
 	return text.replace(/\\\r?\n\s*/g, ' ').split(/\r?\n/).map(line => line.trim()).filter(line =>
-		line && !line.startsWith('#') && !/--dry-run(?:\b|=true)/.test(line)
+		line && !line.startsWith('#') && !dryRun.test(line)
 		&& !/--registry[= ]["']?https?:\/\/(?:localhost|127\.0\.0\.1)\b/.test(line)
 	);
 }
@@ -545,8 +547,10 @@ function stepEffects(
 		];
 		const dispatch = /^(?:benc-uk|the-actions-org)\/workflow-dispatch@/.test(uses) ? inputs.workflow : undefined;
 		if (typeof dispatch === 'string') effects.push({ kind: 'dispatch', workflow: dispatch, source, text: uses });
+		const rehearsal = inputs['dry-run'] === true || inputs['dry-run'] === 'true' || inputs.dry_run === true
+			|| inputs.dry_run === 'true';
 		for (const pattern of patterns) {
-			if (pattern.action?.test(uses)) {
+			if (pattern.action?.test(uses) && !rehearsal) {
 				const repository = typeof inputs.repository === 'string' ? inputs.repository : undefined;
 				effects.push({
 					kind: 'publish',

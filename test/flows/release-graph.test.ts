@@ -732,6 +732,69 @@ describe('release streams', () => {
 		expect(Object.keys(snapshot.files)).not.toContain('actions/build/unused/action.yml');
 	});
 
+	test('rehearsals, PyPI working directories and mise task scripts', async () => {
+		const files: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'widget', version: '1.0.0' }),
+			'Cargo.toml': '[package]\nname = "widget"\nversion = "1.0.0"\n',
+			'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", 'npm publish --dry-run=false'),
+			'.github/workflows/check.yml': [
+				'on: { push: { branches: [main] }, workflow_dispatch: {} }',
+				'jobs:',
+				'  check:',
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - run: cargo publish -n',
+				'      - uses: JS-DevTools/npm-publish@v3',
+				'        with: { dry-run: true }',
+				'',
+			].join('\n'),
+		};
+		const { graph } = plan({
+			repository: { id: 1, name: 'octo/widget', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files,
+			paths: Object.keys(files),
+		});
+		expect(graph.streams.map(proposal => proposal.workflows.map(entry => entry.file))).toEqual([['release.yml']]);
+		expect(destinations(stream(graph, 'main'))).toEqual(['npm']);
+		const python: Record<string, string> = {
+			'pyproject.toml': '[project]\nname = "other"\nversion = "1.0.0"\n',
+			'packages/python/pyproject.toml': '[project]\nname = "quill"\nversion = "1.0.0"\n',
+			'.github/workflows/publish.yml': [
+				"on: { push: { tags: ['v*'] } }",
+				'jobs:',
+				'  publish:',
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - working-directory: packages/python',
+				'        run: uv build && uv publish',
+				'',
+			].join('\n'),
+		};
+		const pypi = plan({
+			repository: { id: 2, name: 'octo/python', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files: python,
+			paths: Object.keys(python),
+		});
+		expect(target(stream(pypi.graph, 'main'), 'pypi').packages).toEqual(['pkg:pypi/quill']);
+		const mise: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'tool', version: '1.0.0' }),
+			'mise.toml': '[tasks.release]\nrun = "bash scripts/publish.sh"\n',
+			'scripts/publish.sh': '#!/bin/sh\nnpm publish\n',
+			'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", 'mise run release'),
+		};
+		const snapshot = await Effect.runPromise(buildSnapshot({
+			repository: { id: 3, name: 'octo/tool', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			entries: Object.keys(mise).map(path => ({ path, type: 'blob', mode: '100644' })),
+			read: path => Effect.succeed(mise[path] ?? null),
+			tags: () => Effect.succeed([]),
+		}));
+		expect(snapshot.files['scripts/publish.sh']).toBe(mise['scripts/publish.sh']);
+		expect(target(stream(plan(snapshot).graph, 'main'), 'npm').names).toEqual(['tool']);
+	});
+
 	test('make prerequisites reach the publishing recipe', () => {
 		const files: Record<string, string> = {
 			'package.json': JSON.stringify({ name: 'tool', version: '1.0.0' }),

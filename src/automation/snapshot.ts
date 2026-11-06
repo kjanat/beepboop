@@ -69,7 +69,8 @@ function workflowTagPrefixes(files: ReadonlyMap<string, string>): string[] {
 
 const script = /\.(?:sh|bash|ps1|py|[cm]?[jt]s|rb)$/;
 const actionManifest = /(?:^|\/)action\.ya?ml$/;
-const recipe = /(?:^|\/)(?:Makefile|GNUmakefile|[Jj]ustfile|\.justfile|package\.json)$/;
+const recipe =
+	/(?:^|\/)(?:Makefile|GNUmakefile|[Jj]ustfile|\.justfile|package\.json|deno\.jsonc?|\.?mise(?:\.local)?\.toml|\.config\/mise\.toml|(?:\.mise\/tasks|mise-tasks|\.config\/mise\/tasks)\/[^/]+)$/;
 function referencedScripts(
 	blobs: readonly string[],
 	read: ReadonlyMap<string, string>,

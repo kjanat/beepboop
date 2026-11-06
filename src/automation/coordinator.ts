@@ -1561,7 +1561,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							(p) =>
 								(Boolean(version) || (manifestVersions && tagPrefix(p.versionSource) === undefined))
 								&& publishable(p)
-								&& (!stream.packages || stream.packages.some(reference => matchesPackage(reference, p))),
+								&& (!stream.packages || stream.packages.some(reference => matchesPackage(reference, p)))
+								&& (binding.publications === undefined
+									|| binding.publications.some(reference => matchesPackage(reference, p))),
 						)
 					) {
 						if (!canVerifyPublication(pkg.manager)) continue;
@@ -1574,9 +1576,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							name: pkg.name,
 							version: released,
 							outcome: 'pending',
-							required: !pkg.optional
-								&& (binding.publications === undefined
-									|| binding.publications.some(reference => matchesPackage(reference, pkg))),
+							required: !pkg.optional,
 						};
 						const context = this.gateway().verification(repository.name, repository.id);
 						execution.publications.push(yield* verifyPublication(publication, fetch, context));
