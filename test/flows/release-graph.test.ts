@@ -1849,6 +1849,16 @@ describe('release streams', () => {
 		)).toEqual(['pkg:npm/a', 'pkg:npm/b']);
 		expect(selected(
 			{
+				...workspace,
+				'packages/a/package.json': released('a'),
+				'examples/demo/package.json': released('demo'),
+				'.github/workflows/release.yml': release('      - run: npm run release --workspaces\n'),
+			},
+			51,
+			'npm',
+		)).toEqual(['pkg:npm/a']);
+		expect(selected(
+			{
 				'Cargo.toml': '[package]\nname = "root-crate"\nversion = "1.0.0"\n\n[workspace]\nmembers = ["crates/a"]\n',
 				'src/lib.rs': '',
 				'crates/a/Cargo.toml': '[package]\nname = "a"\nversion = "1.0.0"\n',

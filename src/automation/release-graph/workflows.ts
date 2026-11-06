@@ -433,6 +433,36 @@ function workspaceDirectories(snapshot: Snapshot): Map<string, string> {
 	packageDirectories.set(snapshot, found);
 	return found;
 }
+export function declaredWorkspaces(snapshot: Snapshot): string[] {
+	const patterns: string[] = [];
+	const source = snapshot.files['package.json'];
+	if (source !== undefined) {
+		const errors: ParseError[] = [];
+		const declared = object(parseJsonc(source, errors, { allowTrailingComma: true })).workspaces;
+		const list = Array.isArray(declared) ? declared : object(declared).packages;
+		if (!errors.length && Array.isArray(list)) {
+			patterns.push(...list.filter((entry): entry is string => typeof entry === 'string'));
+		}
+	}
+	const pnpm = snapshot.files['pnpm-workspace.yaml'];
+	const parsed = pnpm === undefined ? undefined : yaml(pnpm);
+	const packages = parsed && Result.isSuccess(parsed) ? parsed.success.packages : undefined;
+	if (Array.isArray(packages)) patterns.push(...packages.filter((entry): entry is string => typeof entry === 'string'));
+	return patterns;
+}
+export function inWorkspaces(patterns: readonly string[], directory: string): boolean {
+	const matches = (pattern: string) =>
+		new RegExp(
+			`^${
+				escapeRegExp(pattern.replace(/^\.\//, '').replace(/\/$/, '')).replaceAll('\\*\\*', '.*').replaceAll(
+					'\\*',
+					'[^/]*',
+				)
+			}$`,
+		).test(directory);
+	return patterns.some(pattern => !pattern.startsWith('!') && matches(pattern))
+		&& !patterns.some(pattern => pattern.startsWith('!') && matches(pattern.slice(1)));
+}
 const valueFlag = /(?:^|\s)(?:--prefix|--cwd|--dir|-C|-w|--workspace|--filter|-F)[= ]["']?([^\s"';&|]+)/;
 function taskBodies(
 	snapshot: Snapshot,
@@ -454,9 +484,17 @@ function taskBodies(
 			const selector = /(?:^|\s)(?:-w|--workspace|--filter|-F)[= ]["']?([^\s"';&|]+)/.exec(invocation)?.[1]
 				?? /\byarn\s+workspace\s+["']?([^\s"';&|]+)/.exec(invocation)?.[1];
 			const workspaces = workspaceDirectories(snapshot);
+			const declared = declaredWorkspaces(snapshot);
 			const every = /(?:^|\s)(?:-r|--recursive|--workspaces|-ws)(?=\s|$)/.test(invocation) || selector === '*';
 			const bases = every
-				? [...new Set([...workspaces.values()].filter(dir => dir !== directory && dir.startsWith(directory)))]
+				? [
+					...new Set(
+						[...workspaces.values()].filter(dir =>
+							dir !== directory && dir.startsWith(directory)
+							&& (!declared.length || inWorkspaces(declared, dir))
+						),
+					),
+				]
 				: selector !== undefined
 				? [
 					workspaces.get(selector)

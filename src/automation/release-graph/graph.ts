@@ -1,4 +1,3 @@
-import { type ParseError, parse as parseJsonc } from 'jsonc-parser';
 import { parse as parseToml } from 'smol-toml';
 import { object } from '@/automation/managers/helpers';
 import { tagPrefix } from '@/automation/managers/tags';
@@ -6,7 +5,9 @@ import { packageId } from '@/automation/package-identity';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
 import {
 	type Destination,
+	declaredWorkspaces,
 	escapeRegExp,
+	inWorkspaces,
 	type Job,
 	literalPrefix,
 	packDirectories,
@@ -361,28 +362,6 @@ const installing =
 function directoryOf(pkg: Package): string {
 	return pkg.manifest.split('/').slice(0, -1).join('/');
 }
-function workspacePatterns(snapshot: Snapshot): string[] {
-	const source = snapshot.files['package.json'];
-	if (source === undefined) return [];
-	const errors: ParseError[] = [];
-	const declared = object(parseJsonc(source, errors, { allowTrailingComma: true })).workspaces;
-	if (errors.length) return [];
-	const list = Array.isArray(declared) ? declared : object(declared).packages;
-	return Array.isArray(list) ? list.filter((entry): entry is string => typeof entry === 'string') : [];
-}
-function inWorkspaces(patterns: readonly string[], directory: string): boolean {
-	const matches = (pattern: string) =>
-		new RegExp(
-			`^${
-				escapeRegExp(pattern.replace(/^\.\//, '').replace(/\/$/, '')).replaceAll('\\*\\*', '.*').replaceAll(
-					'\\*',
-					'[^/]*',
-				)
-			}$`,
-		).test(directory);
-	return patterns.some(pattern => !pattern.startsWith('!') && matches(pattern))
-		&& !patterns.some(pattern => pattern.startsWith('!') && matches(pattern.slice(1)));
-}
 function targetsOf(
 	graph: Graph,
 	files: string[],
@@ -517,7 +496,7 @@ function targetsOf(
 				);
 				const nested = /(?:^|\s)(?:--workspaces|-ws)(?=\s|$)/.test(commands)
 					? candidates.filter(pkg =>
-						inWorkspaces(workspacePatterns(snapshot), directoryOf(pkg))
+						inWorkspaces(declaredWorkspaces(snapshot), directoryOf(pkg))
 						|| (/--include-workspace-root\b/.test(commands) && directoryOf(pkg) === '')
 					)
 					: [];

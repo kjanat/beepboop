@@ -1484,12 +1484,29 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const branch = run.head_branch;
 			const patterns = Object.values(repository.configuration.streams).flatMap(stream =>
 				Object.values(stream.workflows).flatMap(binding =>
-					binding.ref && run.path === `.github/workflows/${binding.file}` ? [binding.ref] : []
+					run.path === `.github/workflows/${binding.file}` ? [binding.ref ?? repository.defaultBranch] : []
 				)
 			);
-			const tagged = run.event === 'release'
-				|| patterns.some(pattern => pattern.startsWith('refs/tags/') && matchesRef(pattern, `refs/tags/${branch}`))
+			const tagTarget = (name: string) =>
+				Effect.gen(function*() {
+					const tag = yield* gateway.read(
+						gitRefSchema.nullable(),
+						`/repos/${repository.name}/git/ref/tags/${encodeURIComponent(name)}`,
+						token,
+					);
+					if (!tag) return undefined;
+					if (tag.object.type !== 'tag') return tag.object;
+					return (yield* gateway.read(gitTagSchema, `/repos/${repository.name}/git/tags/${tag.object.sha}`, token))
+						.object;
+				});
+			const tagLike =
+				patterns.some(pattern => pattern.startsWith('refs/tags/') && matchesRef(pattern, `refs/tags/${branch}`))
 				|| /^v?\d+\.\d+\.\d+/.test(branch);
+			const branchLike = patterns.some(pattern =>
+				!pattern.startsWith('refs/tags/') && matchesRef(pattern, `refs/heads/${branch}`)
+			);
+			const tagged = run.event === 'release'
+				|| (tagLike && (!branchLike || (yield* tagTarget(branch))?.sha === run.head_sha));
 			const ref = tagged ? `refs/tags/${branch}` : `refs/heads/${branch}`;
 			for (const [streamName, stream] of Object.entries(repository.configuration.streams)) {
 				for (const [operation, binding] of Object.entries(stream.workflows)) {
@@ -1536,22 +1553,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					execution.runAttempt = run.run_attempt;
 					execution.state = 'running';
 					if (version) {
-						const tag = yield* gateway.read(
-							gitRefSchema.nullable(),
-							`/repos/${repository.name}/git/ref/tags/${encodeURIComponent(branch)}`,
-							token,
-						);
-						if (!tag) {
+						const target = yield* tagTarget(branch);
+						if (!target) {
 							yield* this.put({ ...execution, state: 'failed', reason: `Release tag ${branch} was not found` });
 							continue;
-						}
-						let target = tag.object;
-						if (target.type === 'tag') {
-							target = (yield* gateway.read(
-								gitTagSchema,
-								`/repos/${repository.name}/git/tags/${target.sha}`,
-								token,
-							)).object;
 						}
 						if (target.type !== 'commit' || target.sha !== snapshot.sha) {
 							yield* this.put({

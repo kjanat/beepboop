@@ -513,6 +513,18 @@ test('a tag push on a workflow with tag and branch triggers is recorded once', a
 	expect(executions.map(execution => [execution.operation, execution.version])).toEqual([['release', '1.2.0']]);
 });
 
+test('a branch push is not classified as a tag by a tag glob', async () => {
+	const repository = world.github.create('octo/widget', {
+		'package.json': JSON.stringify({ name: 'widget', version: '1.2.0' }),
+		'.github/workflows/release.yml': workflow("{ push: { tags: ['*'], branches: [main] } }", 'npm publish'),
+	});
+	const { plan } = await adopt(repository);
+	expect(plan.choices.streams[0]?.observe?.map(binding => binding.ref)).toContain('refs/tags/*');
+	world.npm.publish('widget', '1.2.0');
+	const executions = await observe(repository, 'push', 'main');
+	expect(executions.map(execution => [execution.state, execution.reason])).toEqual([['succeeded', undefined]]);
+});
+
 test('reopening setup keeps an empty required set', async () => {
 	const repository = world.github.create('octo/widget', {
 		'package.json': JSON.stringify({ name: 'widget', version: '1.2.0' }),
