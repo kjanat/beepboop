@@ -839,7 +839,10 @@ function expandStep(step: Record<string, unknown>, matrix: Record<string, unknow
 			}
 			: {}),
 	});
-	if (typeof directory === 'string' && new RegExp(matrixExpression.source).test(directory)) {
+	if (
+		typeof step.uses === 'string'
+		|| (typeof directory === 'string' && new RegExp(matrixExpression.source).test(directory))
+	) {
 		return assignments.map(apply);
 	}
 	const variants = assignments.map(apply);
@@ -1003,29 +1006,44 @@ export function workflowModels(snapshot: Snapshot): Workflow[] {
 		});
 	}
 	const edges = new Map<string, { caller: string; bound?: Map<string, Job> }[]>();
-	for (const workflow of workflows) {
-		const caller = documents.get(workflow.file);
-		if (!caller) continue;
+	const called = new Set(workflows.flatMap(workflow => workflow.jobs.flatMap(job => job.calls ?? [])));
+	const walk = (root: string, file: string, bindings: Readonly<Record<string, string>>, trail: readonly string[]) => {
+		const workflow = workflows.find(candidate => candidate.file === file);
+		const caller = documents.get(file);
+		if (!workflow || !caller) return;
 		for (const [id, value] of liveJobs(caller.document)) {
 			const job = workflow.jobs.find(candidate => candidate.id === id);
-			if (!job?.calls) continue;
+			if (!job?.calls || trail.includes(job.calls)) continue;
 			const callee = documents.get(job.calls);
 			if (!callee) continue;
-			const supplied = object(object(value).with);
-			const bindings = {
+			const supplied = Object.fromEntries(
+				Object.entries(object(object(value).with)).map((
+					[key, input],
+				) => [key, typeof input === 'string' ? bindInputs(input, bindings) : input]),
+			);
+			const inherited = {
 				...inputDefaults(object(object(callee.document.on).workflow_call).inputs, Object.keys(supplied)),
 				...literalBindings(supplied),
 			};
-			const usable = Object.keys(bindings).length > 0
+			const usable = Object.keys(inherited).length > 0
 				&& new RegExp(inputExpression.source).test(JSON.stringify(callee.document.jobs));
 			const bound = usable
 				? new Map(
 					liveJobs(callee.document).map(([calleeId, calleeJob]) =>
-						[calleeId, buildJob(snapshot, callee.path, callee.document, calleeId, object(calleeJob), bindings)] as const
+						[
+							calleeId,
+							buildJob(snapshot, callee.path, callee.document, calleeId, object(calleeJob), inherited),
+						] as const
 					),
 				)
 				: undefined;
-			edges.set(job.calls, [...edges.get(job.calls) ?? [], { caller: workflow.file, ...(bound ? { bound } : {}) }]);
+			edges.set(job.calls, [...edges.get(job.calls) ?? [], { caller: root, ...(bound ? { bound } : {}) }]);
+			walk(root, job.calls, inherited, [...trail, job.calls]);
+		}
+	};
+	for (const workflow of workflows) {
+		if (!called.has(workflow.file) || workflow.events.some(event => event !== 'workflow_call')) {
+			walk(workflow.file, workflow.file, {}, [workflow.file]);
 		}
 	}
 	const unique = <T>(values: T[]) => [...new Map(values.map(value => [JSON.stringify(value), value])).values()];

@@ -1747,6 +1747,32 @@ describe('release streams', () => {
 			41,
 			'npm',
 		)).toEqual(['pkg:npm/a']);
+		expect(selected(
+			{
+				...workspace,
+				'.github/workflows/c.yml':
+					'on:\n  workflow_call:\n    inputs:\n      directory:\n        type: string\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - working-directory: ${{ inputs.directory }}\n        run: npm publish\n',
+				'.github/workflows/b.yml':
+					'on:\n  workflow_call:\n    inputs:\n      directory:\n        type: string\njobs:\n  forward:\n    uses: ./.github/workflows/c.yml\n    with:\n      directory: ${{ inputs.directory }}\n',
+				'.github/workflows/a.yml':
+					"on: { push: { tags: ['v*'] } }\njobs:\n  start:\n    uses: ./.github/workflows/b.yml\n    with:\n      directory: packages/a\n",
+			},
+			42,
+			'npm',
+		)).toEqual(['pkg:npm/a']);
+		expect(selected(
+			{
+				...workspace,
+				'actions/publish/action.yml':
+					'name: publish\ninputs:\n  directory:\n    required: true\nruns:\n  using: composite\n  steps:\n    - shell: bash\n      working-directory: ${{ inputs.directory }}\n      run: npm publish\n',
+				'.github/workflows/release.yml': release(
+					'      - uses: ./actions/publish\n        with:\n          directory: ${{ matrix.directory }}\n',
+					'    strategy:\n      matrix:\n        directory: [packages/a, packages/b]\n',
+				),
+			},
+			43,
+			'npm',
+		)).toEqual(['pkg:npm/a', 'pkg:npm/b']);
 		const callee =
 			'on:\n  workflow_call:\n    inputs:\n      directory:\n        type: string\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - working-directory: ${{ inputs.directory }}\n        run: npm publish\n';
 		const caller = (tag: string, directory: string) =>
