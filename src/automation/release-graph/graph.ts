@@ -413,8 +413,14 @@ function targetsOf(
 					return { workflow, packages: crates, cited: true };
 				}
 				const chosen = candidates.filter(covered);
+				const root = candidates.filter(pkg => directoryOf(pkg) === '');
+				const elsewhere =
+					/\bcd\s|--prefix\b|--cwd\b|--dir\b|--workspaces?\b|--recursive\b|--filter\b|(?:^|\s)-(?:C|w|ws|r)(?=\s|$)/m
+						.test(publishing);
 				return chosen.length
 					? { workflow, packages: chosen, cited: true }
+					: root.length && !elsewhere
+					? { workflow, packages: root, cited: true }
 					: { workflow, packages: candidates, cited: false };
 			});
 			const packages = candidates.filter(pkg => selections.some(selection => selection.packages.includes(pkg)));

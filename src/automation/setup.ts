@@ -99,6 +99,9 @@ function suggested(
 		const packages = Array.isArray(current.packages)
 			? current.packages.map(value => selectorKey(String(value), inventory.packages))
 			: [];
+		const covered = Array.isArray(current.packages)
+			? packages
+			: inventory.packages.filter(publishable).map(packageId);
 		const observe = Object.entries(object(current.workflows)).flatMap(([binding, value]) => {
 			const workflow = object(value);
 			if (workflow.mode !== 'observe' || typeof workflow.file !== 'string') return [];
@@ -108,14 +111,14 @@ function suggested(
 				...(typeof workflow.ref === 'string' ? { ref: workflow.ref } : {}),
 				publications: Array.isArray(workflow.publications)
 					? workflow.publications.map(id => selectorKey(String(id), inventory.packages))
-					: [],
+					: covered,
 			}];
 		});
 		const source = object(current.versionSource);
 		const versionSource: SetupChoices['streams'][number]['versionSource'] =
 			source.kind === 'tags' && typeof source.prefix === 'string' ? { kind: 'tags', prefix: source.prefix } : undefined;
 		const selected = packages.length || observe.length
-			? packages
+			? covered
 			: inventory.packages.filter(pkg =>
 				publishable(pkg) && (
 					names.size === 1 || pkg.manifest.split('/').slice(0, -1).includes(name)

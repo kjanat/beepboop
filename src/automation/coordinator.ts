@@ -1478,7 +1478,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				for (const [operation, binding] of Object.entries(stream.workflows)) {
 					const pattern = binding.ref ?? repository.defaultBranch;
 					const tagged = run.event === 'release'
-						|| (run.event === 'push' && pattern.startsWith('refs/tags/')
+						|| ((run.event === 'push' || run.event === 'workflow_dispatch') && pattern.startsWith('refs/tags/')
 							&& matchesRef(pattern, `refs/tags/${branch}`))
 						|| /^v?\d+\.\d+\.\d+/.test(branch);
 					const ref = tagged ? `refs/tags/${branch}` : `refs/heads/${branch}`;

@@ -747,6 +747,22 @@ describe('release streams', () => {
 		expect(target(stream(graph, 'main'), 'npm').names).toEqual(['a']);
 	});
 
+	test('an unqualified publish at the root selects the root package', () => {
+		const files: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0' }),
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", 'npm publish'),
+		};
+		const { graph, choices } = plan({
+			repository: { id: 1, name: 'octo/tool', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files,
+			paths: Object.keys(files),
+		});
+		expect(target(stream(graph, 'main'), 'npm').packages).toEqual(['pkg:npm/root-tool']);
+		expect(choices[0]?.observe?.map(binding => binding.publications)).toEqual([['pkg:npm/root-tool']]);
+	});
+
 	test('a local action runs only its own manifest', async () => {
 		const files: Record<string, string> = {
 			'package.json': JSON.stringify({ name: 'widget', version: '1.0.0' }),

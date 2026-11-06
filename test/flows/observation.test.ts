@@ -123,6 +123,56 @@ test('a tag prefix with a directory is proposed, applied and restored', async ()
 	expect(execution?.version).toBe('0.2.0');
 });
 
+test('a dispatch at a prefixed tag is observed as that release', async () => {
+	const repository = world.github.create('octo/tools', {
+		'Cargo.toml': '[package]\nname = "tools"\nversion = "0.1.0"\npublish = false\n',
+		'.github/workflows/release.yml': workflow(
+			"{ push: { tags: 'tools/v*' }, workflow_dispatch: {} }",
+			'gh release create "$GITHUB_REF_NAME" plugin.wasm',
+		),
+	});
+	const { plan } = await adopt(repository);
+	expect(plan.choices.streams[0]?.observe?.map(binding => binding.ref)).toContain('refs/tags/tools/v*');
+	repository.refs.set('tags/tools/v0.2.0', world.github.head(repository));
+	const executions = await observe(repository, 'workflow_dispatch', 'tools/v0.2.0');
+	expect(executions.map(execution => execution.version)).toEqual(['0.2.0']);
+});
+
+test('reopening setup keeps the implicit coverage of an observe binding', async () => {
+	const repository = world.github.create('octo/widget', {
+		'package.json': JSON.stringify({ name: 'widget', version: '1.2.0' }),
+		'.github/workflows/release.yml': workflow("{ push: { tags: ['widget-v*'] } }", 'npm publish'),
+	});
+	const { plan } = await adopt(repository);
+	const [stream] = plan.choices.streams;
+	if (!stream) throw new Error('Expected an adopted stream');
+	const path = ['.github', 'beepboop.json'].join('/');
+	const stored = z.object({
+		streams: z.record(
+			z.string(),
+			z.object({ workflows: z.record(z.string(), z.record(z.string(), z.unknown())) }).loose(),
+		),
+	}).loose().parse(JSON.parse(world.github.file(repository, path) ?? '{}'));
+	const current = stored.streams[stream.name];
+	if (!current) throw new Error('Expected the stored stream');
+	const { packages: _packages, ...rest } = current;
+	const workflows = Object.fromEntries(
+		Object.entries(current.workflows).map(([name, { publications: _publications, ...binding }]) => [name, binding]),
+	);
+	world.github.push(
+		repository,
+		{ [path]: JSON.stringify({ ...stored, streams: { ...stored.streams, [stream.name]: { ...rest, workflows } } }) },
+		'Drop explicit coverage',
+	);
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const reopened = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name })).body),
+	);
+	expect(reopened.choices.streams[0]?.packages).toEqual(['pkg:npm/widget']);
+	expect(reopened.choices.streams[0]?.observe?.map(binding => binding.publications)).toEqual([['pkg:npm/widget']]);
+});
+
 test('a publisher on a non-default branch is observed on that branch', async () => {
 	const repository = world.github.create('octo/snapshots', {
 		'package.json': JSON.stringify({ name: 'snapshots', version: '1.0.0' }),
