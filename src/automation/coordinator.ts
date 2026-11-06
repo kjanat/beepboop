@@ -1574,7 +1574,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							name: pkg.name,
 							version: released,
 							outcome: 'pending',
-							required: !pkg.optional,
+							required: !pkg.optional
+								&& (binding.publications === undefined
+									|| binding.publications.some(reference => matchesPackage(reference, pkg))),
 						};
 						const context = this.gateway().verification(repository.name, repository.id);
 						execution.publications.push(yield* verifyPublication(publication, fetch, context));

@@ -685,6 +685,21 @@ describe('release streams', () => {
 		]);
 	});
 
+	test('make prerequisites reach the publishing recipe', () => {
+		const files: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'tool', version: '1.0.0' }),
+			Makefile: 'release: build publish\n\nbuild:\n\techo build\n\npublish:\n\tnpm publish\n',
+			'.github/workflows/release.yml': workflow("{ push: { tags: ['v*'] } }", 'make release'),
+		};
+		const { graph } = plan({
+			repository: { id: 1, name: 'octo/tool', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files,
+			paths: Object.keys(files),
+		});
+		expect(target(stream(graph, 'main'), 'npm').names).toEqual(['tool']);
+	});
+
 	test('observe bindings follow each workflow trigger', async () => {
 		const actionlint = await load('actionlint');
 		const main = actionlint.choices.find(choice => choice.name === 'actionlint');

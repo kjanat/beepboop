@@ -270,8 +270,10 @@ function taskTable(snapshot: Snapshot, directory: string): TaskTable {
 		if (source === undefined) continue;
 		const kind: TaskKind = /akefile$/.test(name) ? 'make' : 'just';
 		present.add(kind);
-		for (const match of source.matchAll(/^([A-Za-z][\w:-]*)(?:[^\n:=]*)?:(?!=)[^\n]*\n((?:[ \t]+[^\n]*\n?)*)/gm)) {
-			if (match[1]) add(kind, match[1], { body: match[2] ?? '', source: path });
+		for (const match of source.matchAll(/^([A-Za-z][\w:-]*)(?:[^\n:=]*)?:(?!=)([^\n]*)\n((?:[ \t]+[^\n]*\n?)*)/gm)) {
+			const prerequisites = (match[2] ?? '').split(/\s+/).filter(word => /^[A-Za-z][\w:-]*$/.test(word));
+			const body = [match[3] ?? '', ...prerequisites.map(prerequisite => `${kind} ${prerequisite}`)].join('\n');
+			if (match[1]) add(kind, match[1], { body, source: path });
 		}
 	}
 	for (const name of ['mise.toml', '.mise.toml', '.config/mise.toml', 'mise.local.toml']) {

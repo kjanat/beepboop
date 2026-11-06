@@ -234,3 +234,43 @@ test('a workflow filename with dots is adopted', async () => {
 	expect(plan.choices.streams[0]?.observe?.map(binding => binding.file)).toEqual(['release.plugin.yml']);
 	expect(reopened.choices.streams).toEqual(plan.choices.streams);
 });
+
+test('an observed run requires only the publications its binding lists', async () => {
+	const repository = world.github.create('octo/pair', {
+		'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+		'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+		'.github/workflows/release.yml': workflow('{ workflow_dispatch: {} }', 'cd packages/a && npm publish'),
+	});
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const choices: SetupChoices = {
+		streams: [{
+			name: 'pair',
+			packages: ['pkg:npm/a', 'pkg:npm/b'],
+			required: ['pkg:npm/a', 'pkg:npm/b'],
+			versioning: 'independent',
+			observe: [{ name: 'release', file: 'release.yml', publications: ['pkg:npm/a'] }],
+		}],
+	};
+	const preview = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
+	);
+	expect(preview.blockers).toEqual([]);
+	expect(
+		(await api('/api/repositories/setup/apply', {
+			repository: repository.name,
+			choices,
+			planId: preview.planId,
+			sourceSha: preview.sourceSha,
+			setupHead: preview.setupHead,
+		})).status,
+	).toBe(200);
+	world.github.merge(repository, 1);
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	world.npm.publish('a', '1.0.0');
+	const [execution] = await observe(repository, 'workflow_dispatch', 'main');
+	expect(execution?.publications.map(publication => [publication.id, publication.required])).toEqual([
+		['pkg:npm/a', true],
+		['pkg:npm/b', false],
+	]);
+});
