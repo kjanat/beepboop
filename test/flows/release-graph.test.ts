@@ -1645,6 +1645,49 @@ describe('release streams', () => {
 			30,
 			'npm',
 		)).toEqual(['pkg:npm/tool']);
+		const scoped = selected(
+			{
+				'package.json': JSON.stringify({
+					name: 'root-tool',
+					version: '1.0.0',
+					workspaces: ['packages/*'],
+					scripts: { release: 'echo release' },
+				}),
+				'packages/a/package.json': JSON.stringify({
+					name: '@scope/a',
+					version: '1.0.0',
+					scripts: { release: 'npm publish' },
+				}),
+				'.github/workflows/release.yml': release('      - run: npm run release -w @scope/a\n'),
+			},
+			31,
+			'npm',
+		);
+		expect(scoped).toHaveLength(1);
+		expect(scoped[0]).toContain('scope');
+		expect(selected(
+			{
+				...workspace,
+				'tooling/release.py': 'print("rehearse")\n',
+				'packages/a/tooling/release.py': 'import os\nos.system("npm publish")\n',
+				'.github/workflows/release.yml': release(
+					'      - working-directory: packages/a\n        run: python -m tooling.release\n',
+				),
+			},
+			32,
+			'npm',
+		)).toEqual(['pkg:npm/a']);
+		expect(selected(
+			{
+				...workspace,
+				'.github/workflows/publish.yml':
+					'on:\n  workflow_call:\n    inputs:\n      directory:\n        type: string\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - working-directory: ${{ inputs.directory }}\n        run: npm publish\n',
+				'.github/workflows/release.yml':
+					"on: { push: { tags: ['v*'] } }\njobs:\n  a:\n    uses: ./.github/workflows/publish.yml\n    with:\n      directory: packages/a\n  b:\n    uses: ./.github/workflows/publish.yml\n    with:\n      directory: packages/b\n",
+			},
+			33,
+			'npm',
+		)).toEqual(['pkg:npm/a', 'pkg:npm/b']);
 		const families = {
 			'packages/core/package.json': JSON.stringify({ name: 'core', version: '1.0.0' }),
 			'packages/cli/package.json': JSON.stringify({ name: 'cli', version: '2.0.0' }),

@@ -279,8 +279,11 @@ function segment(source: string, argument: string | undefined, whole = true): st
 	return whole ? source : '';
 }
 const moduleCall = /\bpython3?\s+-m\s+([A-Za-z_][\w.]*)(?:\s+([a-z][\w-]*))?/g;
-function modulePath(snapshot: Snapshot, module: string): string | undefined {
+function modulePath(snapshot: Snapshot, module: string, directory = ''): string | undefined {
 	const relative = module.replaceAll('.', '/');
+	const local = directory ? `${directory}/${relative}` : relative;
+	const beside = [`${local}.py`, `${local}/__main__.py`].find(path => snapshot.files[path] !== undefined);
+	if (beside) return beside;
 	return Object.keys(snapshot.files).find(path =>
 		path.endsWith(`/${relative}.py`) || path === `${relative}.py` || path.endsWith(`/${relative}/__main__.py`)
 		|| path === `${relative}/__main__.py`
@@ -454,9 +457,8 @@ function taskBodies(
 				? [...new Set([...workspaces.values()].filter(dir => dir !== directory && dir.startsWith(directory)))]
 				: selector !== undefined
 				? [
-					selector.includes('/') || selector.startsWith('.')
-						? within(directory, selector)
-						: workspaces.get(selector) ?? directory,
+					workspaces.get(selector)
+						?? (selector.includes('/') || selector.startsWith('.') ? within(directory, selector) : directory),
 				]
 				: [change ? within(directory, change) : directory];
 			for (const name of many ? words : words.slice(0, 1)) {
@@ -551,7 +553,7 @@ function scriptEffects(
 			runs.push(...nested.runs);
 		}
 		for (const match of line.matchAll(moduleCall)) {
-			const path = modulePath(snapshot, match[1] ?? '');
+			const path = modulePath(snapshot, match[1] ?? '', here);
 			const key = `${path ?? ''} ${match[2] ?? ''} ${here}`;
 			const source = path ? snapshot.files[path] : undefined;
 			if (!path || !source || seen.size >= traversalLimit || seen.has(key)) continue;
@@ -826,8 +828,80 @@ function triggerList(value: unknown, key: string): string[] {
 	return Array.isArray(list) ? list.map(String) : typeof list === 'string' ? [list] : [];
 }
 
+const inputExpression = /\$\{\{\s*(?:github\.event\.)?inputs\.([\w-]+)\s*\}\}/g;
+function bindInputs(text: string, bindings: Readonly<Record<string, string>>): string {
+	return text.replace(inputExpression, (expression, key: string) => bindings[key] ?? expression);
+}
+function bindStep(step: Record<string, unknown>, bindings: Readonly<Record<string, string>>): Record<string, unknown> {
+	if (!Object.keys(bindings).length) return step;
+	const bound = (value: unknown) => typeof value === 'string' ? bindInputs(value, bindings) : value;
+	return {
+		...step,
+		...(step.run !== undefined ? { run: bound(step.run) } : {}),
+		...(step['working-directory'] !== undefined ? { 'working-directory': bound(step['working-directory']) } : {}),
+		...(step.with !== undefined
+			? { with: Object.fromEntries(Object.entries(object(step.with)).map(([key, value]) => [key, bound(value)])) }
+			: {}),
+	};
+}
+
+function buildJob(
+	snapshot: Snapshot,
+	path: string,
+	document: Record<string, unknown>,
+	id: string,
+	job: Record<string, unknown>,
+	bindings: Readonly<Record<string, string>> = {},
+): Job {
+	const effects: StepEffect[] = [], runs: string[] = [], actions: string[] = [];
+	const steps = Array.isArray(job.steps) ? job.steps : [];
+	const declared = object(object(job.defaults).run)['working-directory']
+		?? object(object(document.defaults).run)['working-directory'];
+	const directory = typeof declared === 'string' ? bindInputs(declared, bindings) : declared;
+	const matrix = object(object(job.strategy).matrix);
+	for (const entry of steps) {
+		const raw = bindStep(object(entry), bindings);
+		if (disabled(raw.if)) continue;
+		const located = typeof directory === 'string' && raw['working-directory'] === undefined
+			? { ...raw, 'working-directory': directory }
+			: raw;
+		for (const step of expandStep(located, matrix)) {
+			const result = stepEffects(snapshot, step, path, new Set());
+			effects.push(...result.effects);
+			runs.push(...result.runs);
+			if (result.action) actions.push(result.action);
+		}
+	}
+	const own = typeof job.uses === 'string'
+		? new RegExp(`^${escapeRegExp(snapshot.repository.name)}/(.+?)@(.+)$`, 'i').exec(
+			job.uses,
+		)
+		: null;
+	const calls = typeof job.uses === 'string' ? own?.[1] ?? localAction(job.uses) : undefined;
+	const values = Object.values(object(job.with)).filter(value => typeof value === 'string');
+	if (values.length) runs.push(values.join('\n'));
+	const environment = typeof job.environment === 'string' ? job.environment : object(job.environment).name;
+	const environmentUrl = object(job.environment).url;
+	if (typeof environmentUrl === 'string') runs.push(environmentUrl);
+	return {
+		id,
+		needs: Array.isArray(job.needs) ? job.needs.map(String) : typeof job.needs === 'string' ? [job.needs] : [],
+		...(calls?.startsWith('.github/workflows/') ? { calls: calls.slice('.github/workflows/'.length) } : {}),
+		...(own?.[2] ? { callRef: own[2] } : {}),
+		...(typeof environment === 'string' ? { environment } : {}),
+		...(Object.keys(matrix).length ? { matrix: JSON.stringify(matrix) } : {}),
+		...(typeof job.if === 'string' ? { condition: job.if } : {}),
+		effects,
+		runs,
+		actions,
+	};
+}
+
 export function workflowModels(snapshot: Snapshot): Workflow[] {
 	const workflows: Workflow[] = [];
+	const documents = new Map<string, { path: string; document: Record<string, unknown> }>();
+	const liveJobs = (document: Record<string, unknown>) =>
+		Object.entries(object(document.jobs)).filter(([, value]) => !disabled(object(value).if));
 	for (const [path, source] of Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b))) {
 		if (!/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) continue;
 		const parsed = yaml(source);
@@ -840,52 +914,8 @@ export function workflowModels(snapshot: Snapshot): Workflow[] {
 			: Object.keys(object(trigger));
 		const on = object(trigger);
 		const file = path.slice('.github/workflows/'.length);
-		const jobs: Job[] = Object.entries(object(document.jobs)).filter(([, value]) => !disabled(object(value).if)).map((
-			[id, value],
-		) => {
-			const job = object(value);
-			const effects: StepEffect[] = [], runs: string[] = [], actions: string[] = [];
-			const steps = Array.isArray(job.steps) ? job.steps : [];
-			const directory = object(object(job.defaults).run)['working-directory']
-				?? object(object(document.defaults).run)['working-directory'];
-			const matrix = object(object(job.strategy).matrix);
-			for (const entry of steps) {
-				const raw = object(entry);
-				if (disabled(raw.if)) continue;
-				const located = typeof directory === 'string' && raw['working-directory'] === undefined
-					? { ...raw, 'working-directory': directory }
-					: raw;
-				for (const step of expandStep(located, matrix)) {
-					const result = stepEffects(snapshot, step, path, new Set());
-					effects.push(...result.effects);
-					runs.push(...result.runs);
-					if (result.action) actions.push(result.action);
-				}
-			}
-			const own = typeof job.uses === 'string'
-				? new RegExp(`^${escapeRegExp(snapshot.repository.name)}/(.+?)@(.+)$`, 'i').exec(
-					job.uses,
-				)
-				: null;
-			const calls = typeof job.uses === 'string' ? own?.[1] ?? localAction(job.uses) : undefined;
-			const values = Object.values(object(job.with)).filter(value => typeof value === 'string');
-			if (values.length) runs.push(values.join('\n'));
-			const environment = typeof job.environment === 'string' ? job.environment : object(job.environment).name;
-			const environmentUrl = object(job.environment).url;
-			if (typeof environmentUrl === 'string') runs.push(environmentUrl);
-			return {
-				id,
-				needs: Array.isArray(job.needs) ? job.needs.map(String) : typeof job.needs === 'string' ? [job.needs] : [],
-				...(calls?.startsWith('.github/workflows/') ? { calls: calls.slice('.github/workflows/'.length) } : {}),
-				...(own?.[2] ? { callRef: own[2] } : {}),
-				...(typeof environment === 'string' ? { environment } : {}),
-				...(Object.keys(matrix).length ? { matrix: JSON.stringify(matrix) } : {}),
-				...(typeof job.if === 'string' ? { condition: job.if } : {}),
-				effects,
-				runs,
-				actions,
-			};
-		});
+		documents.set(file, { path, document });
+		const jobs: Job[] = liveJobs(document).map(([id, value]) => buildJob(snapshot, path, document, id, object(value)));
 		const generator = Object.keys(snapshot.files).find(candidate =>
 			/^\.github\/workflows\/[^/]+\.[cm]?[jt]s$/.test(candidate)
 			&& (snapshot.files[candidate] ?? '').includes(file)
@@ -905,6 +935,51 @@ export function workflowModels(snapshot: Snapshot): Workflow[] {
 			...(generator ? { generator } : {}),
 			jobs,
 		});
+	}
+	const variants = new Map<string, Job[]>();
+	const unbound = new Set<string>();
+	for (const workflow of workflows) {
+		const caller = documents.get(workflow.file);
+		if (!caller) continue;
+		for (const [id, value] of liveJobs(caller.document)) {
+			const job = workflow.jobs.find(candidate => candidate.id === id);
+			if (!job?.calls) continue;
+			const callee = documents.get(job.calls);
+			if (!callee) continue;
+			const bindings: Record<string, string> = {};
+			for (const [key, input] of Object.entries(object(object(value).with))) {
+				if (
+					(typeof input === 'string' || typeof input === 'number' || typeof input === 'boolean')
+					&& !String(input).includes('${{')
+				) {
+					bindings[key] = String(input);
+				}
+			}
+			if (
+				!Object.keys(bindings).length || !new RegExp(inputExpression.source).test(JSON.stringify(callee.document.jobs))
+			) {
+				unbound.add(job.calls);
+				continue;
+			}
+			for (const [calleeId, calleeJob] of liveJobs(callee.document)) {
+				const key = `${job.calls}#${calleeId}`;
+				variants.set(key, [
+					...variants.get(key) ?? [],
+					buildJob(snapshot, callee.path, callee.document, calleeId, object(calleeJob), bindings),
+				]);
+			}
+		}
+	}
+	for (const workflow of workflows) {
+		const direct = unbound.has(workflow.file) || workflow.events.some(event => event !== 'workflow_call');
+		for (const job of workflow.jobs) {
+			const bound = variants.get(`${workflow.file}#${job.id}`);
+			if (!bound) continue;
+			const unique = <T>(values: T[]) => [...new Map(values.map(value => [JSON.stringify(value), value])).values()];
+			job.effects = unique([...direct ? job.effects : [], ...bound.flatMap(variant => variant.effects)]);
+			job.runs = unique([...direct ? job.runs : [], ...bound.flatMap(variant => variant.runs)]);
+			job.actions = unique([...direct ? job.actions : [], ...bound.flatMap(variant => variant.actions)]);
+		}
 	}
 	return workflows;
 }
