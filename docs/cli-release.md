@@ -27,8 +27,18 @@ perform them. Publication is never triggered just by pushing this change.
 
 ## Release flow
 
-From the Beepboop checkout, run `beepboop release 0.1.0` (or `patch` for a later
-bump). The CLI infers `kjanat/beepboop` and the sole `cli` stream, shows the
+From the Beepboop checkout, run `bun link` once to make the CLI available on
+`PATH`, then start the first release:
+
+```sh
+bun link
+beepboop release 0.1.0
+```
+
+Use `patch` for a later bump. Without linking, run
+`bun run beepboop release 0.1.0` directly from the checkout instead. Neither
+method needs a published CLI package. The CLI infers `kjanat/beepboop` and the
+sole `cli` stream, shows the
 server's source commit and npm/JSR version changes, and starts preparation after
 confirmation. It carries the reviewed plan ID and source SHA automatically.
 This releases the server's default-branch state rather than uncommitted local
@@ -42,8 +52,9 @@ files. The dashboard flow below remains available.
    tests, and submits the resulting files through `actions/prepare` for a PR.
 3. Review and merge the PR. Beepboop detects the prepared package versions on
    the default-branch push and creates the promotion. Inspect it with
-   `beepboop runs list`, then approve that promotion in Beepboop. Approval checks
-   the exact merged commit's signature and CI results.
+   `beepboop runs list` (or `bun run beepboop runs list` without linking), then
+   approve that promotion in Beepboop. Approval checks the exact merged commit's
+   signature and CI results.
 4. Beepboop dispatches `publish-cli.yml`. `actions/begin` authenticates the
    execution, then the workflow checks out its approved source SHA and checks
    that both package versions match the execution. The workflow commit must also

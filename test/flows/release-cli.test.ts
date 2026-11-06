@@ -57,6 +57,41 @@ async function seed() {
 }
 const prepareCalls = () => requests.filter(request => request.path === '/api/releases/prepare');
 
+async function delegated(packages = ['widget'], published: Record<string, string> = { widget: '1.2.3' }) {
+	const repository = widget(world.github);
+	const configuration = z.looseObject({
+		streams: z.looseObject({ main: z.looseObject({ promote: z.looseObject({ workflow: z.looseObject({}) }) }) }),
+	}).parse(JSON.parse(widgetConfiguration()));
+	configuration.streams.main.prepare = { strategy: 'workflow', workflow: { file: 'prepare.yml' } };
+	configuration.streams.main.packages = packages.map(name => `pkg:npm/${name}`);
+	configuration.streams.main.required = configuration.streams.main.packages;
+	configuration.streams.main.promote.workflow.publications = configuration.streams.main.packages;
+	const files: Record<string, string> = {
+		'.github/beepboop.json': JSON.stringify(configuration),
+		'.github/workflows/prepare.yml': `name: Prepare
+on:
+  workflow_dispatch:
+    inputs:
+      beepboop_execution_id:
+        required: true
+        type: string
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./scripts/prepare-release.sh
+`,
+	};
+	for (const name of packages.filter(name => name !== 'widget')) {
+		files[`packages/${name}/package.json`] = JSON.stringify({ name, version: '1.0.0' });
+	}
+	for (const [name, version] of Object.entries(published)) world.npm.publish(name, version);
+	world.github.push(repository, files, 'Delegate version preparation to a workflow');
+	const discovered = await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	expect(discovered.diagnostics).toEqual([]);
+	return { repository, configuration };
+}
+
 for (
 	const remote of [
 		'https://github.com/octo/widget.git',
@@ -266,5 +301,98 @@ test('independent streams and already-prepared versions cannot accidentally init
 	]);
 	expect(independent.exitCode).not.toBe(0);
 	expect(independent.stdout.join('')).toContain('INDEPENDENT_STREAM');
+	expect(prepareCalls()).toHaveLength(0);
+});
+
+for (const [bump, version] of [['patch', '1.2.4'], ['minor', '1.3.0'], ['major', '2.0.0']] as const) {
+	test(`workflow-delegated ${bump} resolves on the server and prepares its reviewed target`, async () => {
+		const { repository } = await delegated();
+		const source = world.github.head(repository);
+		const preview = await run(['release', bump, '--repository', repository.name, '--json']);
+		expect(preview.exitCode).toBe(0);
+		const plan = planReview.parse(JSON.parse(preview.stdout.join('')).plan);
+		expect(plan.version).toBe(version);
+		expect(plan.edits).toEqual([]);
+		expect(plan.requiresPreparation).toBe(true);
+		expect(prepareCalls()).toHaveLength(0);
+		const prepared = await run(['release', bump, '--repository', repository.name], [true]);
+		expect(prepared.exitCode).toBe(0);
+		expect(prepared.stdout.join('')).toContain(`→ ${version}`);
+		expect(prepared.stdout.join('')).toContain('Preparation runs in prepare.yml');
+		expect(prepareCalls()[0]?.body).toEqual({
+			repositoryId: repository.id,
+			stream: 'main',
+			version: { bump },
+			sourceSha: plan.sourceSha,
+			planId: plan.planId,
+		});
+		const executions = await Effect.runPromise(client.call(routes.executionsList, {}));
+		expect(executions.map(execution => ({ operation: execution.operation, version: execution.version }))).toEqual([{
+			operation: 'prepare',
+			version,
+		}]);
+		await world.wait(20_000);
+		expect(world.github.dispatches.map(dispatch => dispatch.file)).toEqual(['prepare.yml']);
+		expect(world.github.head(repository)).toBe(source);
+		expect(repository.pulls).toHaveLength(0);
+	});
+}
+
+test('workflow bumps require a known baseline and explicit versions stay delegated', async () => {
+	const { repository } = await delegated(['widget'], {});
+	const refused = await run(['release', 'patch', '--repository', repository.name, '--yes', '--json']);
+	expect(refused.exitCode).not.toBe(0);
+	expect(refused.stdout.join('')).toContain('explicit version for the first release');
+	expect(prepareCalls()).toHaveLength(0);
+	const explicit = await run(['release', '4.0.0', '--repository', repository.name, '--json']);
+	expect(explicit.exitCode).toBe(0);
+	const plan = planReview.parse(JSON.parse(explicit.stdout.join('')).plan);
+	expect(plan.version).toBe('4.0.0');
+	expect(plan.edits).toEqual([]);
+	expect(plan.requiresPreparation).toBe(true);
+});
+
+test('workflow bump baselines use only the selected publishable package group', async () => {
+	const { repository, configuration } = await delegated(['widget', 'other'], { widget: '1.2.3', other: '2.0.0' });
+	const ambiguous = await run(['release', 'minor', '--repository', repository.name, '--yes', '--json']);
+	expect(ambiguous.exitCode).not.toBe(0);
+	expect(ambiguous.stdout.join('')).toContain('synchronized version group');
+	expect(prepareCalls()).toHaveLength(0);
+	const explicit = await run(['release', '4.0.0', '--repository', repository.name, '--json']);
+	expect(explicit.exitCode).toBe(0);
+	expect(planReview.parse(JSON.parse(explicit.stdout.join('')).plan).version).toBe('4.0.0');
+	configuration.streams.main.packages = ['pkg:npm/widget'];
+	configuration.streams.main.required = ['pkg:npm/widget'];
+	configuration.streams.main.promote.workflow.publications = ['pkg:npm/widget'];
+	world.github.push(
+		repository,
+		{ '.github/beepboop.json': JSON.stringify(configuration) },
+		'Select only widget for this stream',
+	);
+	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	const selected = await run(['release', 'minor', '--repository', repository.name, '--json']);
+	expect(selected.exitCode).toBe(0);
+	expect(planReview.parse(JSON.parse(selected.stdout.join('')).plan).version).toBe('1.3.0');
+});
+
+test('workflow tag-derived bumps remain authoritative when registry packages are unpublished', async () => {
+	const { repository, configuration } = await delegated(['widget'], {});
+	configuration.streams.main.versionSource = { kind: 'tags', prefix: 'v' };
+	world.github.push(
+		repository,
+		{ '.github/beepboop.json': JSON.stringify(configuration) },
+		'Take release versions from tags',
+	);
+	repository.refs.set('tags/v2.4.6', world.github.head(repository));
+	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	const preview = await run(['release', 'minor', '--repository', repository.name, '--json']);
+	expect(preview.exitCode).toBe(0);
+	const plan = planReview.parse(JSON.parse(preview.stdout.join('')).plan);
+	expect(plan.version).toBe('2.5.0');
+	expect(plan.edits).toEqual([]);
+	expect(plan.requiresPreparation).toBe(true);
+	const explicit = await run(['release', '3.0.0', '--repository', repository.name, '--json']);
+	expect(explicit.exitCode).toBe(0);
+	expect(planReview.parse(JSON.parse(explicit.stdout.join('')).plan).version).toBe('3.0.0');
 	expect(prepareCalls()).toHaveLength(0);
 });

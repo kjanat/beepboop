@@ -2,6 +2,7 @@ import { Effect } from 'effect';
 import type { Inventory, Package } from '@/automation/types';
 import { nextVersion, type VersionRequest } from '@/automation/version';
 import { blocking } from '@/contract/diagnostics';
+import { type DomainError, precondition } from '@/contract/errors';
 import { compareVersions } from '@/model';
 
 export function releasedVersion(pkg: Package): string | undefined {
@@ -12,6 +13,31 @@ export function releasedVersion(pkg: Package): string | undefined {
 
 function unique(values: (string | undefined)[]): string[] {
 	return [...new Set(values.flatMap(value => value === undefined ? [] : [value]))];
+}
+
+/** Resolve the shared release target from publication state, independently of file editing. */
+export function resolvePackageVersion(
+	packages: Package[],
+	request: VersionRequest,
+): Effect.Effect<string, DomainError> {
+	return Effect.gen(function*() {
+		const current = unique(packages.map(releasedVersion));
+		if (!('version' in request) && packages.some(pkg => releasedVersion(pkg) === undefined)) {
+			return yield* precondition('Select an explicit version for the first release');
+		}
+		if (!('version' in request) && current.length !== 1) {
+			return yield* precondition('Select a synchronized version group or supply an explicit version');
+		}
+		const [first] = current;
+		const version = 'version' in request ? request.version : first === undefined
+			? yield* precondition('Select an explicit version for the first release')
+			: yield* nextVersion(first, request);
+		const completing = packages.some(pkg => releasedVersion(pkg) !== version);
+		for (const previous of current) {
+			if (!completing || previous !== version) yield* nextVersion(previous, { version });
+		}
+		return version;
+	});
 }
 
 export function currentRelease(packages: Package[]): string | undefined {

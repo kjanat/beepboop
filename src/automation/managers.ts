@@ -5,21 +5,35 @@ import type { Fetcher, ManagerRegistry, VerificationContext } from '@/automation
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage, packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
-import { releasedVersion } from '@/automation/release-version';
+import { resolvePackageVersion } from '@/automation/release-version';
 import type { Inventory, Package, Publication, ReleasePlan, Snapshot } from '@/automation/types';
-import { nextVersion, parseVersionRequest, type VersionRequest } from '@/automation/version';
+import { parseVersionRequest } from '@/automation/version';
 import { isLockfile, type ManagerName } from '@/contract/catalog';
 import { type DomainError, precondition } from '@/contract/errors';
 
 export { publicationOrder } from '@/automation/managers/order';
 
-function explicit(request: VersionRequest): Effect.Effect<string, DomainError> {
-	return 'version' in request
-		? Effect.succeed(request.version)
-		: Effect.fail(precondition('Select an explicit version for the first release'));
-}
 export function discover(snapshot: Snapshot, enabled: ManagerName[] = managerRegistry.names()): Inventory {
 	return managerRegistry.discover(snapshot, enabled);
+}
+
+export function selectedReleasePackages(
+	inventory: Inventory,
+	selected?: string[],
+): Effect.Effect<Package[], DomainError> {
+	return Effect.gen(function*() {
+		if (selected?.some(name => !inventory.packages.some(pkg => publishable(pkg) && matchesPackage(name, pkg)))) {
+			return yield* precondition('Unknown selected publishable package');
+		}
+		const packages = inventory.packages.filter(pkg =>
+			publishable(pkg) && (!selected || selected.some(reference => matchesPackage(reference, pkg)))
+		);
+		if (!packages.length) return yield* precondition('No selected publishable packages');
+		if (new Set(packages.map(packageId)).size !== packages.length) {
+			return yield* precondition('Duplicate selected package identity');
+		}
+		return packages;
+	});
 }
 
 /** Changes only version-bearing lines. Lockfiles and generated files remain preparation-workflow work. */
@@ -33,36 +47,8 @@ export function planRelease(
 ): Effect.Effect<ReleasePlan, DomainError> {
 	return Effect.gen(function*() {
 		const request = yield* parseVersionRequest(target);
-		if (selected?.some(name => !inventory.packages.some(p => publishable(p) && matchesPackage(name, p)))) {
-			return yield* precondition('Unknown selected publishable package');
-		}
-		const packages = inventory.packages.filter(
-			(p) => publishable(p) && (!selected || selected.some(reference => matchesPackage(reference, p))),
-		);
-		if (!packages.length) return yield* precondition('No selected publishable packages');
-		if (new Set(packages.map(packageId)).size !== packages.length) {
-			return yield* precondition('Duplicate selected package identity');
-		}
-		const current = [
-			...new Set(packages.flatMap(p => {
-				const version = releasedVersion(p);
-				return version === undefined ? [] : [version];
-			})),
-		];
-		if (!('version' in request) && packages.some(p => releasedVersion(p) === undefined)) {
-			return yield* precondition('Select an explicit version for the first release');
-		}
-		if (!('version' in request) && current.length !== 1) {
-			return yield* precondition('Select a synchronized version group or supply an explicit version');
-		}
-		const [first] = current;
-		const version = first === undefined || 'version' in request
-			? yield* explicit(request)
-			: yield* nextVersion(first, request);
-		const completing = packages.some(p => releasedVersion(p) !== version);
-		for (const previous of current) {
-			if (!completing || previous !== version) yield* nextVersion(previous, { version });
-		}
+		const packages = yield* selectedReleasePackages(inventory, selected);
+		const version = yield* resolvePackageVersion(packages, request);
 		const diagnostics: string[] = [],
 			changed = new Map<string, string>();
 		const sources = new Set(packages.map((p) => p.versionSource));
