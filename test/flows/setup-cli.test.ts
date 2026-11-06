@@ -85,18 +85,10 @@ test('Cargo adoption generates one workflow and advanced renaming keeps the shar
 		'Cargo.toml': '[package]\nname = "my-crate"\nversion = "1.0.0"\nedition = "2024"\n',
 		'Cargo.lock': '# Lockfile\n',
 	});
-	const result = await run(['adopt', repository.name], [
-		'new',
-		'',
-		'same',
-		'',
-		true,
-		false,
-		'workspace',
-		'my-release.yml',
-		'',
-		true,
-	]);
+	const result = await run(
+		['adopt', repository.name],
+		['new', '', 'same', '', true, false, 'workspace', 'my-release.yml', '', true],
+	);
 	expect(result.exitCode).toBe(0);
 	expect(result.stdout.join('')).toContain('Cargo.lock must be updated');
 	const source = world.github.file(repository, '.github/workflows/my-release.yml', 'automation/onboarding') ?? '';
@@ -136,17 +128,10 @@ jobs:
         run: ./scripts/publish-a.sh
 `,
 	});
-	const result = await run(['adopt', repository.name], [
-		true,
-		'ship.yml',
-		'ship',
-		'publish_a',
-		'',
-		'',
-		'managed',
-		false,
-		true,
-	]);
+	const result = await run(
+		['adopt', repository.name],
+		[true, 'ship.yml', 'ship', 'publish_a', '', '', 'managed', false, true],
+	);
 	expect(result.exitCode).toBe(0);
 	const workflow = z.object({
 		jobs: z.object({
@@ -180,15 +165,10 @@ test('generated npm targets require explicit commands instead of an npm publish 
 		}),
 	});
 	// Empty input retries: there is no guessed command to accept for descriptor-backed packages.
-	const result = await run(['adopt', repository.name], [
-		true,
-		'new',
-		'',
-		'./scripts/generate-and-publish.sh',
-		'managed',
-		false,
-		true,
-	]);
+	const result = await run(
+		['adopt', repository.name],
+		[true, 'new', '', './scripts/generate-and-publish.sh', 'managed', false, true],
+	);
 	expect(result.exitCode).toBe(0);
 	const workflow = world.github.file(repository, '.github/workflows/release-generated.yml', 'automation/onboarding')
 		?? '';
@@ -291,15 +271,10 @@ test('saved Cargo commands are kept for the same packages and regenerated after 
 	const unchanged = await run(['adopt', repository.name], [true, 'new', '', 'managed', false, false]);
 	expect(unchanged.exitCode).toBe(0);
 	expect(unchanged.stdout.join('')).toContain("cargo publish --package 'crate-a' --locked");
-	const changed = await run(['adopt', repository.name], [
-		false,
-		['pkg:cargo/crate-b'],
-		'new',
-		'',
-		'managed',
-		false,
-		true,
-	]);
+	const changed = await run(
+		['adopt', repository.name],
+		[false, ['pkg:cargo/crate-b'], 'new', '', 'managed', false, true],
+	);
 	expect(changed.exitCode).toBe(0);
 	const source = world.github.file(repository, '.github/workflows/release.yml', 'automation/onboarding') ?? '';
 	expect(source).toContain("cargo publish --package 'crate-b'");
@@ -327,16 +302,10 @@ test('changing publishing-step mappings regenerates commands for the newly unmap
 			},
 		}],
 	});
-	const changed = await run(['adopt', repository.name], [
-		true,
-		'ship.yml',
-		'',
-		'publish_existing',
-		'',
-		'managed',
-		false,
-		true,
-	]);
+	const changed = await run(
+		['adopt', repository.name],
+		[true, 'ship.yml', '', 'publish_existing', '', 'managed', false, true],
+	);
 	expect(changed.exitCode).toBe(0);
 	const source = world.github.file(repository, '.github/workflows/ship.yml', 'automation/onboarding') ?? '';
 	expect(source).toContain("cd 'packages/a'");
@@ -361,15 +330,10 @@ test('automatic triggers default to review and retain an explicit saved handover
 	expect(trigger?.kind === 'select' && trigger.choices[0].value).toBe('review');
 	expect(repository.pulls).toHaveLength(0);
 	expect(
-		(await run(['adopt', repository.name], [
-			false,
-			'ship.yml',
-			'dispatchOnly',
-			'publish_existing',
-			'managed',
-			false,
-			true,
-		]))
+		(await run(
+			['adopt', repository.name],
+			[false, 'ship.yml', 'dispatchOnly', 'publish_existing', 'managed', false, true],
+		))
 			.exitCode,
 	).toBe(0);
 	const saved = defaults();

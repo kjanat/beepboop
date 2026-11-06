@@ -75,10 +75,10 @@ export function workflow(
 	const pairedInitially = preparing && initial && initial.file === publication?.file();
 	const file = select(box, preparing ? 'How should release changes be prepared?' : 'Publishing workflow', [
 		...(preparing
-			? [['', 'Beepboop opens the version PR (no preparation job)'], [
-				'same',
-				'Add a preparation job to the publishing workflow',
-			]] as [string, string][]
+			? [
+				['', 'Beepboop opens the version PR (no preparation job)'],
+				['same', 'Add a preparation job to the publishing workflow'],
+			] as [string, string][]
 			: []),
 		['new', preparing ? 'Create a separate preparation workflow' : 'Create a release workflow'],
 		...plan.workflows.map((w): [string, string] => [w.file, w.file]),

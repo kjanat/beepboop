@@ -280,10 +280,12 @@ each('form[data-action="grant-save"]', form =>
 					const details = node('dl', '');
 					details.className = 'metadata-grid';
 					for (
-						const [label, value] of [['Stream', selected.stream], ['Operation', selected.operation], [
-							'Workflow',
-							selected.file,
-						], ['Allowed ref', selected.ref]]
+						const [label, value] of [
+							['Stream', selected.stream],
+							['Operation', selected.operation],
+							['Workflow', selected.file],
+							['Allowed ref', selected.ref],
+						]
 					) {
 						const entry = node('div', '');
 						entry.append(node('dt', label ?? ''), node('dd', value ?? ''));

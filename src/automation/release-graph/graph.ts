@@ -402,12 +402,13 @@ function targetsOf(
 	for (const [destination, found] of byDestination) {
 		const operations = [...new Set(found.map(entry => `${entry.workflow}#${entry.job.id}`))];
 		const phase = Math.min(...found.map(entry => phases.get(`${entry.workflow}#${entry.job.id}`) ?? 0));
-		const repositoryTarget = found.flatMap(entry =>
-			(entry.effect.kind === 'publish' || entry.effect.kind === 'release') && entry.effect.repository
-				&& entry.effect.repository.toLowerCase() !== repository.toLowerCase()
-				? [entry.effect.repository]
-				: []
-		)[0];
+		const repositoryTarget =
+			found.flatMap(entry =>
+				(entry.effect.kind === 'publish' || entry.effect.kind === 'release') && entry.effect.repository
+					&& entry.effect.repository.toLowerCase() !== repository.toLowerCase()
+					? [entry.effect.repository]
+					: []
+			)[0];
 		const base: Omit<Target, 'names' | 'packages' | 'variants' | 'optionalVariants'> = {
 			destination,
 			selection: 'cited',
@@ -423,9 +424,7 @@ function targetsOf(
 			}`
 		).join('\n');
 		const managed = (manager: Package['manager']) =>
-			inventory.packages.filter(pkg =>
-				pkg.manager === manager && publishable(pkg)
-			);
+			inventory.packages.filter(pkg => pkg.manager === manager && publishable(pkg));
 		if (destination === 'npm' || destination === 'jsr' || destination === 'crates-io') {
 			const manager = destination === 'npm' ? 'npm' : destination === 'jsr' ? 'jsr' : 'cargo';
 			const candidates = managed(manager);

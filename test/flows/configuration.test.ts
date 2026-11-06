@@ -623,13 +623,11 @@ test('stored identities crash and outside package input stays a Result', () => {
 	const main = configuration.streams.main;
 	if (main === undefined) throw new Error('Missing main stream');
 	main.packages = ['pkg:npm/', 'pkg:npm/widget@1.2.3'];
-	const diagnostics = validateAgainst(configuration, {
-		packages: [],
-		workflows: [],
-		managers: [],
-		diagnostics: [],
-		publicationOrder: [],
-	}, { paths: ['.github/workflows/publish.yml', '.github/workflows/ci.yml'] });
+	const diagnostics = validateAgainst(
+		configuration,
+		{ packages: [], workflows: [], managers: [], diagnostics: [], publicationOrder: [] },
+		{ paths: ['.github/workflows/publish.yml', '.github/workflows/ci.yml'] },
+	);
 	expect(
 		diagnostics.some(entry => entry.code === 'versioned-reference' && entry.message.includes('pkg:npm/widget@1.2.3')),
 	)
@@ -646,10 +644,13 @@ test('the parser and schema agree on tag prefixes with directories', () => {
 		},
 	});
 	for (
-		const [prefix, valid] of [['tools/v', true], ['a/b/v', true], ['../v', false], ['/v', false], [
-			'a//v',
-			false,
-		]] as const
+		const [prefix, valid] of [
+			['tools/v', true],
+			['a/b/v', true],
+			['../v', false],
+			['/v', false],
+			['a//v', false],
+		] as const
 	) {
 		expect(Result.isSuccess(parseRepositoryConfiguration(document(prefix)))).toBe(valid);
 		expect(configurationSchema.safeParse(document(prefix)).success).toBe(valid);
