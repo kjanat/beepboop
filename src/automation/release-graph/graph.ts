@@ -4,16 +4,22 @@ import { tagPrefix } from '@/automation/managers/tags';
 import { packageId } from '@/automation/package-identity';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
 import {
+	crossesDirectories,
+	directoryFlagPattern,
+	directoryOverride,
+	publishFolder,
+	workspaceScope,
+	workspaceSelectors,
+} from '@/automation/release-graph/package-managers';
+import { escapeRegExp, packDirectories, within } from '@/automation/release-graph/shell';
+import {
 	type Destination,
 	declaredWorkspaces,
-	escapeRegExp,
 	inWorkspaces,
 	type Job,
 	literalPrefix,
-	packDirectories,
 	type StepEffect,
 	type Workflow,
-	within,
 	workflowModels,
 } from '@/automation/release-graph/workflows';
 import type { Inventory, Package, Snapshot } from '@/automation/types';
@@ -372,8 +378,7 @@ function publicationRuns(
 		!verificationOnly.test(run) || /\b(?:publish|pack|package|build)\b/.test(run)
 	);
 }
-const qualified =
-	/\bcd\s|--prefix\b|--cwd\b|--dir\b|--config\b|--workspaces?\b|--recursive\b|--filter\b|\byarn\s+workspace\s|(?:^|\s)-(?:C|w|ws|r|F)(?=\s|$)/m;
+const qualified = crossesDirectories;
 const pathArgument = /\bpublish\s+["']?\$|\bpublish\b[^\n;&|]*\s["']?(?:\.{0,2}\/|[\w.-]+\/|[^\s"']+\.tgz\b)/;
 const installing =
 	/\b(?:npx|bunx|pnpm\s+(?:dlx|add|i|install)|yarn\s+(?:dlx|add)|npm\s+(?:view|info|show|install|i|ci|add|exec|x))\b/;
@@ -449,14 +454,10 @@ function targetsOf(
 						...own.flatMap(entry => {
 							if (entry.effect.kind !== 'publish') return [];
 							const base = entry.effect.directory ?? '';
-							const override = /(?:^|\s)(?:--prefix|-C|--cwd|--dir)[= ]["']?([^\s"';&|]+)/.exec(entry.effect.text)?.[1];
+							const override = directoryOverride(entry.effect.text);
 							if (override !== undefined) return within(base, override);
-							const folder =
-								/\b(?:publish|pack)\s+(?:-\S+\s+)*["']?(\.{1,2}(?=[\s"';&|]|$|\/)[^\s"';&|]*|[\w@][^\s"';&|$]*\/[^\s"';&|]*)/
-									.exec(entry.effect.text)?.[1];
-							const resolved = folder === undefined || /\.(?:tgz|tar\.gz)$/.test(folder)
-								? undefined
-								: within(base, folder);
+							const folder = publishFolder(entry.effect.text);
+							const resolved = folder === undefined ? undefined : within(base, folder);
 							return resolved !== undefined && candidates.some(pkg => directoryOf(pkg) === resolved)
 								? resolved
 								: base || [];
@@ -479,7 +480,7 @@ function targetsOf(
 				const cites = (value: string) => new RegExp(`(?<![\\w./-])${escapeRegExp(value)}(?![\\w-])`).test(text);
 				const citesDirectory = (value: string) =>
 					new RegExp(
-						`(?:(?:(?:^|[\\s;&|(])(?:--prefix|-C|--cwd|--dir)[= ]|\\b(?:publish|pack)\\s+)["']?(?:\\./)?${
+						`(?:(?:(?:^|[\\s;&|(])(?:${directoryFlagPattern})[= ]|\\b(?:publish|pack)\\s+)["']?(?:\\./)?${
 							escapeRegExp(value)
 						}/?["']?(?:\\s|$|[;&)])|(?<![\\w./-])${escapeRegExp(value)}/package\\.json)`,
 						'm',
@@ -488,11 +489,9 @@ function targetsOf(
 					path.endsWith('.json') && !/(?:^|\/)(?:package|deno|jsr|composer|tsconfig[^/]*)\.json$/.test(path)
 					&& cites(path)
 				).map(([, source]) => source);
-				const workspaces = [
-					...publishing.matchAll(
-						/(?:--workspace[= ]|--filter[= ]|(?:^|\s)-[wF]\s+|\byarn\s+workspace\s+)["']?([^\s"';&|]+)/gm,
-					),
-				].flatMap(match => match[1]?.replace(/^\.\//, '').replace(/\/$/, '') ?? []);
+				const workspaces = workspaceSelectors(publishing).map(selector =>
+					selector.replace(/^\.\//, '').replace(/\/$/, '')
+				);
 				const covered = (pkg: Package) =>
 					workspaces.some(selector =>
 						selector === pkg.name || (directoryOf(pkg) !== ''
@@ -543,10 +542,11 @@ function targetsOf(
 					entry.effect.kind === 'publish' && !entry.effect.directory && !qualified.test(entry.effect.text)
 					&& !pathArgument.test(entry.effect.text)
 				);
-				const nested = /(?:^|\s)(?:--workspaces|-ws)(?=\s|$)/.test(commands)
+				const scope = workspaceScope(commands);
+				const nested = scope.all
 					? candidates.filter(pkg =>
 						inWorkspaces(declaredWorkspaces(snapshot), directoryOf(pkg))
-						|| (/--include-workspace-root\b/.test(commands) && directoryOf(pkg) === '')
+						|| (scope.root && directoryOf(pkg) === '')
 					)
 					: [];
 				const chosen = candidates.filter(pkg => covered(pkg) || (rooted && root.includes(pkg)) || nested.includes(pkg));

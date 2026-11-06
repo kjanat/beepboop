@@ -2,6 +2,25 @@ import { Result } from 'effect';
 import { type ParseError, parse as parseJsonc } from 'jsonc-parser';
 import { parse as parseToml } from 'smol-toml';
 import { object, yaml } from '@/automation/managers/helpers';
+import { bindInputs, bindStep, disabled, expandStep, inputExpression } from '@/automation/release-graph/bindings';
+import {
+	actionBindings,
+	liveJobs,
+	localAction,
+	ownWorkflow,
+	workflowCalls,
+	workflowDocuments,
+	workflowEvents,
+} from '@/automation/release-graph/calls';
+import {
+	directoryOverride,
+	forwardedArguments,
+	scriptShorthand,
+	withoutValueFlags,
+	workspaceScope,
+	workspaceSelectors,
+} from '@/automation/release-graph/package-managers';
+import { escapeRegExp, executed, isolatedLines, walkDirectories, within } from '@/automation/release-graph/shell';
 import type { Snapshot } from '@/automation/types';
 
 export const destinations = [
@@ -141,65 +160,10 @@ const goreleaserBuildOnly = /--snapshot\b|--skip[= ][\w,]*\bpublish\b|--skip-pub
 const aliasCommand =
 	/\bgit\s+tag\s+(?:-[a-z]*f[a-z]*\s|--force\b)|\bgit\s+push\b[^\n]*(?:--force|\+refs\/tags\/)|\bnpm\s+dist-tag\s+add\b|\bdocker\s+buildx\s+imagetools\s+create\b[^\n]*:latest\b/;
 
-const dryRun =
-	/--dry-run(?![\w-]|=(?:false|0)\b)|\bnpm_config_dry_run=["']?(?:true|1)\b|\bcargo\s+(?:\+\S+\s+)?publish\b[^\n;&|]*\s-[a-z]*n[a-z]*\b/i;
-const rehearsalRegistry =
-	/--registry[= ]["']?https?:\/\/(?!registry\.npmjs\.org\b|registry\.yarnpkg\.com\b)|--repository(?:-url)?[= ]["']?(?:testpypi\b|https?:\/\/test\.pypi\.org)|\bcargo\s+(?:\+\S+\s+)?publish\b[^\n;&|]*\s--(?:registry[= ]["']?(?!crates-io\b)[\w.-]|index\b)/;
-function rehearsing(command: string): boolean {
-	const literal = command.replace(/\$\{\{[^}]*\}\}/g, '');
-	return dryRun.test(literal) || rehearsalRegistry.test(literal);
-}
-function lines(text: string): string[] {
-	return text.replace(/\\\r?\n\s*/g, ' ').split(/\r?\n/).map(line => line.trim()).filter(line =>
-		line && !line.startsWith('#')
-	);
-}
 function otherRepository(text: string): string | undefined {
 	return /--repo(?:=|\s+)["']?([\w.-]+\/[\w.-]+)/.exec(text)?.[1];
 }
 
-function walkDirectories(text: string, directory: string, visit: (command: string, here: string) => void): void {
-	let current = within('', directory);
-	for (const line of lines(text)) {
-		let here = current;
-		let depth = 0;
-		for (const part of line.split(/\s*(?:&&|\|\||;|\|)\s*/)) {
-			let command = part.replace(/^(?:if|then|elif|else|do|fi|done)\b\s*/, '').trim();
-			const opens = command.startsWith('(');
-			if (opens) command = command.slice(1).trim();
-			const closes = /\)\s*$/.test(command);
-			if (closes) command = command.replace(/\)\s*$/, '').trim();
-			if (opens) depth++;
-			const change = /^cd\s+["']?([^\s"';&|)]+)["']?$/.exec(command);
-			if (change) {
-				here = within(here, change[1] ?? '');
-				if (depth === 0) current = here;
-			} else if (command && !rehearsing(command)) {
-				visit(command, here);
-			}
-			if (closes && depth > 0) {
-				depth--;
-				if (depth === 0) here = current;
-			}
-		}
-	}
-}
-const packCommand = /\b(?:npm|pnpm|yarn|bun(?:\s+pm)?)\s+pack\b|\bcargo\s+(?:\+\S+\s+)?package\b/;
-export function packDirectories(run: string): string[] {
-	const found: string[] = [];
-	walkDirectories(run, '', (line, here) => {
-		if (here && packCommand.test(line)) found.push(here);
-	});
-	return found;
-}
-
-const logging = /^(?:echo|printf)\b/;
-function executed(command: string): string[] {
-	if (!logging.test(command)) return [command];
-	return [...command.replace(/'[^']*'/g, "''").matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)].map(match =>
-		(match[1] ?? match[2] ?? '').trim()
-	).filter(Boolean);
-}
 function commandEffects(text: string, source: string, directory = ''): StepEffect[] {
 	const effects: StepEffect[] = [];
 	walkDirectories(text.replace(/["']\s*,\s*(?:\{\s*args:\s*)?\[?\s*["']/g, ' '), directory, (command, here) => {
@@ -249,9 +213,6 @@ function commandEffects(text: string, source: string, directory = ''): StepEffec
 	return effects;
 }
 
-export function escapeRegExp(value: string): string {
-	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 function withCalledFunctions(source: string, body: string, seen = new Set<string>()): string {
 	const parts = [body];
 	for (const match of source.matchAll(/^\s*(?:function\s+)?([A-Za-z_][\w-]*)\s*\(\)\s*\{/gm)) {
@@ -300,11 +261,6 @@ function modulePath(snapshot: Snapshot, module: string, directory = ''): string 
 		path.endsWith(`/${relative}.py`) || path === `${relative}.py` || path.endsWith(`/${relative}/__main__.py`)
 		|| path === `${relative}/__main__.py`
 	);
-}
-function isolatedLines(recipe: string): string {
-	return recipe.replace(/\\\r?\n\s*/g, ' ').split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line =>
-		line.startsWith('#') ? line : `(${line})`
-	).join('\n');
 }
 type Task = { body: string; source: string };
 const taskKinds = ['package', 'deno', 'just', 'make', 'mise'] as const;
@@ -419,8 +375,7 @@ function aliasTable(snapshot: Snapshot): Map<string, Task> {
 const invocations: readonly { pattern: RegExp; kinds: readonly TaskKind[]; many: boolean }[] = [
 	{ pattern: /\b(?:npm|pnpm|yarn|bun)\b[^\n;&|]*?\srun(?:-script)?\s+/g, kinds: ['package'], many: false },
 	{
-		pattern:
-			/\b(?:yarn|pnpm)\s+(?!(?:run|run-script|install|install-test|i|it|add|remove|rm|uninstall|un|init|dlx|exec|npm|publish|pack|version|config|c|workspaces?|why|info|set|up|update|upgrade|cache|audit|bin|create|dedupe|deploy|doctor|env|fetch|import|link|ln|list|ls|outdated|patch|prune|rebuild|rb|root|setup|store|unlink|licenses|approve-builds|self-update|help|ignored-builds)\b)/g,
+		pattern: scriptShorthand,
 		kinds: ['package'],
 		many: false,
 	},
@@ -480,7 +435,6 @@ export function inWorkspaces(patterns: readonly string[], directory: string): bo
 	return patterns.some(pattern => !pattern.startsWith('!') && matches(pattern))
 		&& !patterns.some(pattern => pattern.startsWith('!') && matches(pattern.slice(1)));
 }
-const valueFlag = /(?:^|\s)(?:--prefix|--cwd|--dir|-C|-w|--workspace|--filter|-F)[= ]["']?([^\s"';&|]+)/;
 function taskBodies(
 	snapshot: Snapshot,
 	line: string,
@@ -494,25 +448,21 @@ function taskBodies(
 		for (const match of line.matchAll(pattern)) {
 			const rest = line.slice((match.index ?? 0) + match[0].length).split(/\s--(?:\s|$)|[;&|]/)[0] ?? '';
 			const invocation = `${match[0]} ${rest}`;
-			const forwarded = /\s--\s+(.+)$/.exec(line.slice((match.index ?? 0) + match[0].length).split(/[;&|]/)[0] ?? '')
-				?.[1]?.trim();
-			const words = rest.replace(new RegExp(valueFlag.source, 'g'), ' ').split(/\s+/).filter(word =>
+			const forwarded = forwardedArguments(line.slice((match.index ?? 0) + match[0].length).split(/[;&|]/)[0] ?? '');
+			const words = withoutValueFlags(rest).split(/\s+/).filter(word =>
 				word && !word.startsWith('-') && !word.includes('=')
 			);
-			const change = /(?:^|\s)(?:--prefix|--cwd|--dir|-C)[= ]["']?([^\s"';&|]+)/.exec(invocation)?.[1];
-			const selectors = [
-				...invocation.matchAll(/(?:^|\s)(?:-w|--workspace|--filter|-F)[= ]["']?([^\s"';&|]+)/g),
-				...invocation.matchAll(/\byarn\s+workspace\s+["']?([^\s"';&|]+)/g),
-			].flatMap(match => match[1] ?? []);
+			const change = directoryOverride(invocation);
+			const selectors = workspaceSelectors(invocation);
 			const workspaces = workspaceDirectories(snapshot);
 			const declared = declaredWorkspaces(snapshot);
-			const every = /(?:^|\s)(?:-r|--recursive|--workspaces|-ws)(?=\s|$)/.test(invocation) || selectors.includes('*');
-			const includeRoot = /(?:^|\s)(?:--include-workspace-root|-iwr)(?:=true)?(?=\s|$)/.test(invocation);
+			const scope = workspaceScope(invocation);
+			const every = scope.all || scope.recursive || selectors.includes('*');
 			const bases = every
 				? [
 					...new Set(
 						[
-							...(includeRoot ? [directory] : []),
+							...(scope.root ? [directory] : []),
 							...[...workspaces.values()].filter(dir =>
 								dir !== directory && dir.startsWith(directory)
 								&& (!declared.length || inWorkspaces(declared, dir))
@@ -558,16 +508,6 @@ function taskBodies(
 const scriptCall =
 	/(?:(?:^|[\s;&|(])(?:bash|sh|source|\.|node(?:\s+(?:--?(?:import|require|loader)\s+\S+|--?(?!(?:import|require|loader)\b)[\w-]+(?:=\S+)?))*|bun(?:\s+run)?|deno\s+run(?:\s+(?:-\S+|[\w./][\w./-]*\.jsonc?))*|python3?|uv\s+run|pwsh(?:\s+-File)?|(?:(?:npx|bunx|pnpm(?:\s+exec|\s+dlx)?|yarn(?:\s+dlx)?)\s+(?:-y\s+)?)?(?:tsx|ts-node|esno|jiti|vite-node|babel-node))\s+["']?(?:\.\/)?|(?:^|[\s;&|(])["']?\.\/|^\s*)((?:[\w.-]+\/)*[\w.-]+\.(?:sh|bash|ps1|py|[cm]?[jt]s|rb))\b["']?(?:\s+([a-z][\w-]*))?/gm;
 
-export function within(directory: string, change: string): string {
-	if (change.startsWith('/') || change.includes('$')) return directory;
-	const parts = directory ? directory.split('/') : [];
-	for (const part of change.split('/')) {
-		if (!part || part === '.') continue;
-		if (part === '..') parts.pop();
-		else parts.push(part);
-	}
-	return parts.join('/');
-}
 const traversalLimit = 512;
 const publishHooks = ['prepublishOnly', 'prepack', 'prepare', 'postpack', 'publish', 'postpublish'];
 function scriptEffects(
@@ -636,10 +576,6 @@ function scriptEffects(
 	return { effects, runs };
 }
 
-function localAction(uses: string): string | undefined {
-	return /^(?:\.\/|\$\/)(.+?)\/?$/.exec(uses)?.[1];
-}
-
 function actionFiles(snapshot: Snapshot, path: string): [string, string][] {
 	const prefix = `${path}/`;
 	return Object.entries(snapshot.files).filter(([file]) => file.startsWith(prefix));
@@ -651,10 +587,10 @@ function actionEffects(
 	seen: Set<string>,
 	supplied: Readonly<Record<string, unknown>> = {},
 ): { effects: StepEffect[]; runs: string[] } {
-	const manifest = [`${path}/action.yml`, `${path}/action.yaml`].flatMap(file => snapshot.files[file] ?? [])[0];
-	const parsedManifest = manifest === undefined ? undefined : yaml(manifest);
-	const declared = parsedManifest && Result.isSuccess(parsedManifest) ? parsedManifest.success.inputs : undefined;
-	const bindings = { ...inputDefaults(declared, Object.keys(supplied)), ...literalBindings(supplied) };
+	const { bindings } = actionBindings(
+		[`${path}/action.yml`, `${path}/action.yaml`].flatMap(file => snapshot.files[file] ?? [])[0],
+		supplied,
+	);
 	const visit = `${path} ${JSON.stringify(bindings)}`;
 	if (seen.has(visit)) return { effects: [], runs: [] };
 	seen.add(visit);
@@ -808,137 +744,9 @@ function stepEffects(
 	return { effects: alias, runs: [] };
 }
 
-function matrixScalar(value: unknown): string | undefined {
-	return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
-		? String(value)
-		: undefined;
-}
-export function matrixCombinations(matrix: Record<string, unknown>): Record<string, string>[] {
-	const keys = Object.keys(matrix).filter(key => key !== 'include' && key !== 'exclude' && Array.isArray(matrix[key]));
-	let combinations: Record<string, string>[] = keys.length ? [{}] : [];
-	for (const key of keys) {
-		const values = (Array.isArray(matrix[key]) ? matrix[key] : []).flatMap(value => matrixScalar(value) ?? []);
-		if (combinations.length * values.length > 256) break;
-		combinations = combinations.flatMap(combination => values.map(value => ({ ...combination, [key]: value })));
-	}
-	const row = (entry: Record<string, unknown>) =>
-		Object.fromEntries(
-			Object.entries(entry).flatMap(([key, value]) => {
-				const scalar = matrixScalar(value);
-				return scalar === undefined ? [] : [[key, scalar] as const];
-			}),
-		);
-	const exclusions = (Array.isArray(matrix.exclude) ? matrix.exclude : []).map(entry => row(object(entry))).filter(
-		entry => Object.keys(entry).length > 0,
-	);
-	combinations = combinations.filter(combination =>
-		!exclusions.some(entry => Object.entries(entry).every(([key, value]) => combination[key] === value))
-	);
-	const original = new Set(keys);
-	const added: Record<string, string>[] = [];
-	for (const entry of (Array.isArray(matrix.include) ? matrix.include : []).map(item => row(object(item)))) {
-		if (!Object.keys(entry).length) continue;
-		const targets = combinations.filter(combination =>
-			Object.entries(entry).every(([key, value]) => !original.has(key) || combination[key] === value)
-		);
-		const extra = Object.fromEntries(Object.entries(entry).filter(([key]) => !original.has(key)));
-		if (keys.length && targets.length) {
-			combinations = combinations.map(combination =>
-				targets.includes(combination) ? { ...combination, ...extra } : combination
-			);
-		} else {
-			added.push(entry);
-		}
-	}
-	return [...combinations, ...added];
-}
-const matrixExpression = /\$\{\{\s*matrix\.([\w-]+)\s*\}\}/g;
-export function substitute(text: string, assignment: Record<string, string>): string {
-	return text.replace(matrixExpression, (expression, key: string) => assignment[key] ?? expression);
-}
-function expandStep(step: Record<string, unknown>, matrix: Record<string, unknown>): Record<string, unknown>[] {
-	const directory = step['working-directory'];
-	const texts = [step.run, directory, ...Object.values(object(step.with))].filter((value): value is string =>
-		typeof value === 'string'
-	);
-	const combinations = matrixCombinations(matrix);
-	const keys = [
-		...new Set(texts.flatMap(text => [...text.matchAll(matrixExpression)].flatMap(match => match[1] ?? []))),
-	]
-		.filter(key => combinations.some(combination => combination[key] !== undefined));
-	if (!keys.length) return [step];
-	const assignments = [
-		...new Map(
-			combinations.map(combination =>
-				Object.fromEntries(
-					keys.flatMap(key => combination[key] === undefined ? [] : [[key, combination[key]] as const]),
-				)
-			).map(assignment => [JSON.stringify(assignment), assignment] as const),
-		).values(),
-	].slice(0, 64);
-	const apply = (assignment: Record<string, string>): Record<string, unknown> => ({
-		...step,
-		...(typeof step.run === 'string' ? { run: substitute(step.run, assignment) } : {}),
-		...(typeof directory === 'string' ? { 'working-directory': substitute(directory, assignment) } : {}),
-		...(step.with !== undefined
-			? {
-				with: Object.fromEntries(
-					Object.entries(object(step.with)).map((
-						[key, value],
-					) => [key, typeof value === 'string' ? substitute(value, assignment) : value]),
-				),
-			}
-			: {}),
-	});
-	return assignments.map(apply);
-}
-function disabled(condition: unknown): boolean {
-	return condition === false
-		|| (typeof condition === 'string' && /^\s*(?:\$\{\{\s*false\s*\}\}|false)\s*$/.test(condition));
-}
-
 function triggerList(value: unknown, key: string): string[] {
 	const list = object(value)[key];
 	return Array.isArray(list) ? list.map(String) : typeof list === 'string' ? [list] : [];
-}
-
-const inputExpression = /\$\{\{\s*(?:github\.event\.)?inputs\.([\w-]+)\s*\}\}/g;
-export function literalBindings(values: Record<string, unknown>): Record<string, string> {
-	const bindings: Record<string, string> = {};
-	for (const [key, input] of Object.entries(values)) {
-		if (
-			(typeof input === 'string' || typeof input === 'number' || typeof input === 'boolean')
-			&& !String(input).includes('${{')
-		) {
-			bindings[key] = String(input);
-		}
-	}
-	return bindings;
-}
-export function inputDefaults(declared: unknown, passed: readonly string[]): Record<string, string> {
-	return Object.fromEntries(
-		Object.entries(object(declared)).flatMap(([key, input]) => {
-			const fallback = matrixScalar(object(input).default);
-			return passed.includes(key) || fallback === undefined || fallback.includes('${{')
-				? []
-				: [[key, fallback] as const];
-		}),
-	);
-}
-export function bindInputs(text: string, bindings: Readonly<Record<string, string>>): string {
-	return text.replace(inputExpression, (expression, key: string) => bindings[key] ?? expression);
-}
-function bindStep(step: Record<string, unknown>, bindings: Readonly<Record<string, string>>): Record<string, unknown> {
-	if (!Object.keys(bindings).length) return step;
-	const bound = (value: unknown) => typeof value === 'string' ? bindInputs(value, bindings) : value;
-	return {
-		...step,
-		...(step.run !== undefined ? { run: bound(step.run) } : {}),
-		...(step['working-directory'] !== undefined ? { 'working-directory': bound(step['working-directory']) } : {}),
-		...(step.with !== undefined
-			? { with: Object.fromEntries(Object.entries(object(step.with)).map(([key, value]) => [key, bound(value)])) }
-			: {}),
-	};
 }
 
 function buildJob(
@@ -968,12 +776,7 @@ function buildJob(
 			if (result.action) actions.push(result.action);
 		}
 	}
-	const own = typeof job.uses === 'string'
-		? new RegExp(`^${escapeRegExp(snapshot.repository.name)}/(.+?)@(.+)$`, 'i').exec(
-			job.uses,
-		)
-		: null;
-	const calls = typeof job.uses === 'string' ? own?.[1] ?? localAction(job.uses) : undefined;
+	const called = typeof job.uses === 'string' ? ownWorkflow(job.uses, snapshot.repository.name) : undefined;
 	const values = Object.values(object(job.with)).filter(value => typeof value === 'string');
 	if (values.length) runs.push(values.join('\n'));
 	const environment = typeof job.environment === 'string' ? job.environment : object(job.environment).name;
@@ -982,8 +785,8 @@ function buildJob(
 	return {
 		id,
 		needs: Array.isArray(job.needs) ? job.needs.map(String) : typeof job.needs === 'string' ? [job.needs] : [],
-		...(calls?.startsWith('.github/workflows/') ? { calls: calls.slice('.github/workflows/'.length) } : {}),
-		...(own?.[2] ? { callRef: own[2] } : {}),
+		...(called ? { calls: called.file } : {}),
+		...(called?.ref ? { callRef: called.ref } : {}),
 		...(typeof environment === 'string' ? { environment } : {}),
 		...(Object.keys(matrix).length ? { matrix: JSON.stringify(matrix) } : {}),
 		...(typeof job.if === 'string' ? { condition: job.if } : {}),
@@ -995,23 +798,11 @@ function buildJob(
 
 export function workflowModels(snapshot: Snapshot): Workflow[] {
 	const workflows: Workflow[] = [];
-	const documents = new Map<string, { path: string; document: Record<string, unknown> }>();
-	const liveJobs = (document: Record<string, unknown>) =>
-		Object.entries(object(document.jobs)).filter(([, value]) => !disabled(object(value).if));
-	for (const [path, source] of Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b))) {
-		if (!/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) continue;
-		const parsed = yaml(source);
-		if (Result.isFailure(parsed)) continue;
-		const document = parsed.success, trigger = document.on;
-		const events = typeof trigger === 'string'
-			? [trigger]
-			: Array.isArray(trigger)
-			? trigger.map(String)
-			: Object.keys(object(trigger));
-		const on = object(trigger);
-		const file = path.slice('.github/workflows/'.length);
-		documents.set(file, { path, document });
-		const jobs: Job[] = liveJobs(document).map(([id, value]) => buildJob(snapshot, path, document, id, object(value)));
+	const documents = workflowDocuments(Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b)));
+	for (const { file, path, document } of documents) {
+		const events = workflowEvents(document);
+		const on = object(document.on);
+		const jobs: Job[] = liveJobs(document).map(([id, job]) => buildJob(snapshot, path, document, id, job));
 		const generator = Object.keys(snapshot.files).find(candidate =>
 			/^\.github\/workflows\/[^/]+\.[cm]?[jt]s$/.test(candidate)
 			&& (snapshot.files[candidate] ?? '').includes(file)
@@ -1033,48 +824,20 @@ export function workflowModels(snapshot: Snapshot): Workflow[] {
 		});
 	}
 	const edges = new Map<string, { caller: string; bound?: Map<string, Job> }[]>();
-	const called = new Set(workflows.flatMap(workflow => workflow.jobs.flatMap(job => job.calls ?? [])));
-	const walk = (root: string, file: string, bindings: Readonly<Record<string, string>>, trail: readonly string[]) => {
-		const workflow = workflows.find(candidate => candidate.file === file);
-		const caller = documents.get(file);
-		if (!workflow || !caller) return;
-		for (const [id, value] of liveJobs(caller.document)) {
-			const job = workflow.jobs.find(candidate => candidate.id === id);
-			if (!job?.calls || trail.includes(job.calls)) continue;
-			const callee = documents.get(job.calls);
-			if (!callee) continue;
-			const assignments = matrixCombinations(object(object(object(value).strategy).matrix)).slice(0, 64);
-			for (const assignment of assignments.length ? assignments : [{}]) {
-				const supplied = Object.fromEntries(
-					Object.entries(object(object(value).with)).map((
-						[key, input],
-					) => [key, typeof input === 'string' ? substitute(bindInputs(input, bindings), assignment) : input]),
-				);
-				const inherited = {
-					...inputDefaults(object(object(callee.document.on).workflow_call).inputs, Object.keys(supplied)),
-					...literalBindings(supplied),
-				};
-				const usable = Object.keys(inherited).length > 0
-					&& new RegExp(inputExpression.source).test(JSON.stringify(callee.document.jobs));
-				const bound = usable
-					? new Map(
-						liveJobs(callee.document).map(([calleeId, calleeJob]) =>
-							[
-								calleeId,
-								buildJob(snapshot, callee.path, callee.document, calleeId, object(calleeJob), inherited),
-							] as const
-						),
-					)
-					: undefined;
-				edges.set(job.calls, [...edges.get(job.calls) ?? [], { caller: root, ...(bound ? { bound } : {}) }]);
-				walk(root, job.calls, inherited, [...trail, job.calls]);
-			}
-		}
-	};
-	for (const workflow of workflows) {
-		if (!called.has(workflow.file) || workflow.events.some(event => event !== 'workflow_call')) {
-			walk(workflow.file, workflow.file, {}, [workflow.file]);
-		}
+	for (const call of workflowCalls(documents, snapshot.repository.name)) {
+		const usable = Object.keys(call.bindings).length > 0
+			&& new RegExp(inputExpression.source).test(JSON.stringify(call.callee.document.jobs));
+		const bound = usable
+			? new Map(
+				liveJobs(call.callee.document).map(([id, job]) =>
+					[id, buildJob(snapshot, call.callee.path, call.callee.document, id, job, call.bindings)] as const
+				),
+			)
+			: undefined;
+		edges.set(call.callee.file, [
+			...edges.get(call.callee.file) ?? [],
+			{ caller: call.root, ...(bound ? { bound } : {}) },
+		]);
 	}
 	const unique = <T>(values: T[]) => [...new Map(values.map(value => [JSON.stringify(value), value])).values()];
 	for (const workflow of workflows) {

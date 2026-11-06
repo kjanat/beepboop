@@ -3,16 +3,17 @@ import { safeVersionPath } from '@/automation/editors';
 import { pkgbuildFile } from '@/automation/managers/channels';
 import { object, yaml } from '@/automation/managers/helpers';
 import { tagQueries } from '@/automation/managers/tags';
+import { bindInputs, matrixCombinations, substitute } from '@/automation/release-graph/bindings';
 import {
-	bindInputs,
-	escapeRegExp,
-	inputDefaults,
-	literalBindings,
-	literalPrefix,
-	matrixCombinations,
-	substitute,
-	within,
-} from '@/automation/release-graph/workflows';
+	actionBindings,
+	liveJobs,
+	localAction,
+	workflowCalls,
+	workflowDocuments,
+} from '@/automation/release-graph/calls';
+import { directoryFlagPattern, selectorFlagPattern } from '@/automation/release-graph/package-managers';
+import { escapeRegExp, within } from '@/automation/release-graph/shell';
+import { literalPrefix } from '@/automation/release-graph/workflows';
 import type { Snapshot } from '@/automation/types';
 import { isLockfile, managerNames, managerSpec } from '@/contract/catalog';
 import { type DomainError, precondition } from '@/contract/errors';
@@ -83,50 +84,18 @@ const taskFile = /\/(?:Makefile|GNUmakefile|[Jj]ustfile|\.justfile|deno\.jsonc?|
 const recipe =
 	/(?:^|\/)(?:Makefile|GNUmakefile|[Jj]ustfile|\.justfile|package\.json|deno\.jsonc?|\.?mise(?:\.local)?\.toml|\.config\/mise\.toml|(?:\.mise\/tasks|mise-tasks|\.config\/mise\/tasks)\/[^/]+)$/;
 function workflowDirectories(read: ReadonlyMap<string, string>, repository: string): string[] {
-	const documents = [...read].flatMap(([path, source]) => {
-		if (!/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) return [];
-		const parsed = yaml(source);
-		return Result.isFailure(parsed)
-			? []
-			: [{ file: path.slice('.github/workflows/'.length), document: parsed.success }];
-	});
-	const ownWorkflow = new RegExp(`^(?:\\./|${escapeRegExp(repository)}/)\\.github/workflows/([^@]+?)(?:@.+)?$`, 'i');
-	const calls = new Map<string, Record<string, string>[]>();
-	const visit = (file: string, inherited: Readonly<Record<string, string>>, trail: readonly string[]) => {
-		const caller = documents.find(candidate => candidate.file === file);
-		if (!caller) return;
-		for (const entry of Object.values(object(caller.document.jobs))) {
-			const job = object(entry);
-			const target = typeof job.uses === 'string' ? ownWorkflow.exec(job.uses)?.[1] : undefined;
-			const callee = documents.find(candidate => candidate.file === target);
-			if (!target || !callee || trail.includes(target)) continue;
-			const declared = object(object(callee.document.on).workflow_call).inputs;
-			for (const assignment of matrixCombinations(object(object(job.strategy).matrix)).concat([{}])) {
-				const supplied = Object.fromEntries(
-					Object.entries(object(job.with)).map((
-						[key, value],
-					) => [key, typeof value === 'string' ? bindInputs(substitute(value, assignment), inherited) : value]),
-				);
-				const bindings = { ...inputDefaults(declared, Object.keys(supplied)), ...literalBindings(supplied) };
-				calls.set(target, [...calls.get(target) ?? [], bindings]);
-				visit(target, bindings, [...trail, target]);
-			}
-		}
-	};
-	for (const { file } of documents) visit(file, {}, [file]);
-	const localAction = /^\.\/(.+?)\/?$/;
+	const documents = workflowDocuments(read);
+	const calls = workflowCalls(documents, repository);
 	const composite = (action: string, supplied: Record<string, unknown>, trail: readonly string[]): string[] => {
-		const source = read.get(`${action}/action.yml`) ?? read.get(`${action}/action.yaml`);
-		const parsed = source === undefined || trail.includes(action) ? undefined : yaml(source);
-		if (!parsed || Result.isFailure(parsed)) return [];
-		const bindings = {
-			...inputDefaults(parsed.success.inputs, Object.keys(supplied)),
-			...literalBindings(supplied),
-		};
-		const steps = object(parsed.success.runs).steps;
+		if (trail.includes(action)) return [];
+		const { definition, bindings } = actionBindings(
+			read.get(`${action}/action.yml`) ?? read.get(`${action}/action.yaml`),
+			supplied,
+		);
+		const steps = definition.steps;
 		return (Array.isArray(steps) ? steps : []).flatMap(entry => {
 			const step = object(entry);
-			const nested = typeof step.uses === 'string' ? localAction.exec(step.uses)?.[1] : undefined;
+			const nested = typeof step.uses === 'string' ? localAction(step.uses) : undefined;
 			return [
 				...(typeof step['working-directory'] === 'string' ? [bindInputs(step['working-directory'], bindings)] : []),
 				...(nested
@@ -144,17 +113,17 @@ function workflowDirectories(read: ReadonlyMap<string, string>, repository: stri
 		});
 	};
 	return documents.flatMap(({ file, document }) =>
-		Object.values(object(document.jobs)).flatMap(entry => {
-			const job = object(entry);
+		liveJobs(document).flatMap(([, job]) => {
 			const combinations = matrixCombinations(object(object(job.strategy).matrix)).concat([{}]);
-			const bindings = calls.get(file) ?? [{}];
+			const incoming = calls.filter(call => call.callee.file === file).map(call => call.bindings);
+			const bindings = incoming.length ? incoming : [{}];
 			const steps = (Array.isArray(job.steps) ? job.steps : []).map(object);
 			const declared = [
 				object(object(job.defaults).run)['working-directory'],
 				...steps.map(step => step['working-directory']),
 			].filter((value): value is string => typeof value === 'string' && value.includes('${{'));
 			const applied = steps.flatMap(step => {
-				const action = typeof step.uses === 'string' ? localAction.exec(step.uses)?.[1] : undefined;
+				const action = typeof step.uses === 'string' ? localAction(step.uses) : undefined;
 				return action ? [{ action, supplied: object(step.with) }] : [];
 			});
 			return combinations.flatMap(combination =>
@@ -208,7 +177,10 @@ function referencedScripts(
 				...text.matchAll(/working-directory:\s*["']?(?:\.\/)?([\w./-]+?)\/?["']?\s*$/gm),
 				...text.matchAll(/(?:^|[;&|(]|&&|\brun:)\s*cd\s+["']?(?:\.\/)?([\w.-][\w./-]*?)\/?["']?(?=\s|$|[;&|)])/gm),
 				...text.matchAll(
-					/(?:^|\s)(?:-C|--prefix|--cwd|--dir|-w|--workspace|--filter|-F)[= ]["']?(?:\.\/)?([\w.-][\w./-]*?)\/?["']?(?=\s|$|[;&|)"'])/gm,
+					new RegExp(
+						`(?:^|\\s)(?:${directoryFlagPattern}|${selectorFlagPattern})[= ]["']?(?:\\./)?([\\w.-][\\w./-]*?)/?["']?(?=\\s|$|[;&|)"'])`,
+						'gm',
+					),
 				),
 			].flatMap(match => match[1] ?? []).concat(matrixDirectories),
 		),
