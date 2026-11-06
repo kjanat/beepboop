@@ -25,7 +25,14 @@ export const destinations = [
 export type Destination = (typeof destinations)[number];
 
 export type StepEffect =
-	| { kind: 'publish'; destination: Destination; source: string; text: string; repository?: string }
+	| {
+		kind: 'publish';
+		destination: Destination;
+		source: string;
+		text: string;
+		repository?: string;
+		directory?: string;
+	}
 	| { kind: 'release'; action: 'create' | 'publish' | 'upload'; source: string; text: string; repository?: string }
 	| { kind: 'artifact'; direction: 'upload' | 'download'; name: string; source: string }
 	| { kind: 'alias'; source: string; text: string }
@@ -142,9 +149,18 @@ function otherRepository(text: string): string | undefined {
 	return /--repo(?:=|\s+)["']?([\w.-]+\/[\w.-]+)/.exec(text)?.[1];
 }
 
-function commandEffects(text: string, source: string): StepEffect[] {
+function commandEffects(text: string, source: string, directory = ''): StepEffect[] {
 	const effects: StepEffect[] = [];
+	let current = within('', directory);
 	for (const line of lines(text.replace(/["']\s*,\s*["']/g, ' '))) {
+		const alone = /^cd\s+["']?([^\s"';&|]+)["']?$/.exec(line);
+		if (alone) {
+			current = within(current, alone[1] ?? '');
+			continue;
+		}
+		const chained = /^(\(?)\s*cd\s+["']?([^\s"';&|]+)["']?\s*&&/.exec(line);
+		const here = chained ? within(current, chained[2] ?? '') : current;
+		if (chained && !chained[1]) current = here;
 		for (const pattern of patterns) {
 			if (pattern.command?.test(line)) {
 				const repository = otherRepository(line);
@@ -154,6 +170,7 @@ function commandEffects(text: string, source: string): StepEffect[] {
 					source,
 					text: line,
 					...(repository ? { repository } : {}),
+					...(here ? { directory: here } : {}),
 				});
 			}
 		}
@@ -379,7 +396,7 @@ function taskBodies(
 	return found;
 }
 const scriptCall =
-	/(?:(?:^|[\s;&|(])(?:bash|sh|node|bun(?:\s+run)?|deno\s+run(?:\s+-\S+)*|python3?|uv\s+run|pwsh(?:\s+-File)?)\s+["']?(?:\.\/)?|(?:^|[\s;&|(])["']?\.\/|^\s*)((?:[\w.-]+\/)*[\w.-]+\.(?:sh|bash|ps1|py|[cm]?[jt]s|rb))\b["']?(?:\s+([a-z][\w-]*))?/gm;
+	/(?:(?:^|[\s;&|(])(?:bash|sh|source|\.|node|bun(?:\s+run)?|deno\s+run(?:\s+-\S+)*|python3?|uv\s+run|pwsh(?:\s+-File)?)\s+["']?(?:\.\/)?|(?:^|[\s;&|(])["']?\.\/|^\s*)((?:[\w.-]+\/)*[\w.-]+\.(?:sh|bash|ps1|py|[cm]?[jt]s|rb))\b["']?(?:\s+([a-z][\w-]*))?/gm;
 
 function within(directory: string, change: string): string {
 	if (change.startsWith('/') || change.includes('$')) return directory;
@@ -417,7 +434,7 @@ function scriptEffects(
 			if (!source || seen.has(key) || /(?:^|\/)(?:tests?|__tests__|fixtures)\/|\.test\./.test(path)) continue;
 			seen.add(key);
 			const text = segment(source, match[2]);
-			effects.push(...commandEffects(text, path));
+			effects.push(...commandEffects(text, path, here));
 			if (/^(?:promote|aliases?|float|latest)$/.test(match[2] ?? '')) {
 				effects.push({ kind: 'alias', source: path, text: match[0].trim() });
 			}
@@ -441,12 +458,12 @@ function scriptEffects(
 			const key = `${task.source}#${task.name}`;
 			if (seen.has(key)) continue;
 			seen.add(key);
-			effects.push(...commandEffects(task.body, task.source));
-			runs.push(task.body);
 			const owner = task.source.replace(
 				/\/?(?:package\.json|deno\.jsonc?|[Jj]ustfile|\.justfile|(?:GNU)?[Mm]akefile|\.?mise(?:\.local)?\.toml|\.config\/mise\.toml|(?:\.mise\/tasks|mise-tasks|\.config\/mise\/tasks)\/[^/]+)$/,
 				'',
 			);
+			effects.push(...commandEffects(task.body, task.source, owner));
+			runs.push(task.body);
 			const nested = scriptEffects(snapshot, task.body, seen, owner || undefined);
 			effects.push(...nested.effects);
 			runs.push(...nested.runs);

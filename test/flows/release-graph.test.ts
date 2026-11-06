@@ -827,6 +827,66 @@ describe('release streams', () => {
 		}
 	});
 
+	test('publication commands, publish directories, nested recipes and sourced scripts', async () => {
+		const job = (...runs: string[]) =>
+			`on: { push: { tags: ['v*'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n${
+				runs.map(run => `      - run: ${run}\n`).join('')
+			}`;
+		const crates: Record<string, string> = {
+			'Cargo.toml': '[workspace]\nmembers = ["a", "b"]\n',
+			'a/Cargo.toml': '[package]\nname = "a"\nversion = "1.0.0"\n',
+			'b/Cargo.toml': '[package]\nname = "b"\nversion = "2.0.0"\n',
+			'.github/workflows/release.yml': job('cargo build -p b', 'cargo publish -p a'),
+		};
+		const cargo = plan({
+			repository: { id: 1, name: 'octo/crates', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files: crates,
+			paths: Object.keys(crates),
+		});
+		expect(target(stream(cargo.graph, 'main'), 'crates-io').packages).toEqual(['pkg:cargo/a']);
+		const npm: Record<string, string> = {
+			'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0' }),
+			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0', scripts: { build: 'tsc' } }),
+			'.github/workflows/release.yml': job('cd packages/b && npm run build', 'npm publish'),
+		};
+		const root = plan({
+			repository: { id: 2, name: 'octo/tool', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files: npm,
+			paths: Object.keys(npm),
+		});
+		expect(target(stream(root.graph, 'main'), 'npm').packages).toEqual(['pkg:npm/root-tool']);
+		const nested: Record<string, string> = {
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'packages/a/Makefile': 'release:\n\tnpm publish\n',
+			'scripts/publish.sh': '#!/bin/sh\nnpm publish\n',
+			'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0' }),
+			'.github/workflows/release.yml': [
+				"on: { push: { tags: ['v*'] } }",
+				'jobs:',
+				'  release:',
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - working-directory: packages/a',
+				'        run: make release',
+				'',
+			].join('\n'),
+			'.github/workflows/root.yml': workflow("{ push: { tags: ['root-v*'] } }", 'source scripts/publish.sh'),
+		};
+		const snapshot = await Effect.runPromise(buildSnapshot({
+			repository: { id: 3, name: 'octo/mono', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			entries: Object.keys(nested).map(path => ({ path, type: 'blob', mode: '100644' })),
+			read: path => Effect.succeed(nested[path] ?? null),
+			tags: () => Effect.succeed([]),
+		}));
+		expect(snapshot.files['packages/a/Makefile']).toBe(nested['packages/a/Makefile']);
+		const mono = plan(snapshot);
+		expect(target(stream(mono.graph, 'main'), 'npm').packages).toEqual(['pkg:npm/a']);
+		expect(target(stream(mono.graph, 'root'), 'npm').packages).toEqual(['pkg:npm/root-tool']);
+	});
+
 	test('a local action runs only its own manifest', async () => {
 		const files: Record<string, string> = {
 			'package.json': JSON.stringify({ name: 'widget', version: '1.0.0' }),

@@ -332,6 +332,8 @@ function publicationRuns(graph: Graph, workflow: string, found: { workflow: stri
 		!verificationOnly.test(run) || /\b(?:publish|pack|package|build)\b/.test(run)
 	);
 }
+const packing =
+	/\b(?:npm|pnpm|yarn|bun(?:\s+pm)?)\s+(?:pack|publish)\b|\b(?:jsr|deno)\s+publish\b|\bcargo\s+(?:\+\S+\s+)?(?:publish|package)\b/;
 function targetsOf(
 	graph: Graph,
 	files: string[],
@@ -380,15 +382,27 @@ function targetsOf(
 			const candidates = managed(manager);
 			const directoryOf = (pkg: Package) => pkg.manifest.split('/').slice(0, -1).join('/');
 			const selections = [...new Set(found.map(entry => entry.workflow))].map(workflow => {
-				const effects = found.filter(entry => entry.workflow === workflow).map(entry =>
+				const own = found.filter(entry => entry.workflow === workflow);
+				const effects = own.map(entry =>
 					entry.effect.kind === 'publish' || entry.effect.kind === 'release' ? entry.effect.text : ''
 				);
+				const runs = publicationRuns(graph, workflow, found);
+				const directories = [
+					...new Set([
+						...own.flatMap(entry => entry.effect.kind === 'publish' ? entry.effect.directory ?? [] : []),
+						...runs.filter(run => packing.test(run)).flatMap(run =>
+							[...run.matchAll(/(?:^|[;&|(])\s*cd\s+["']?(?:\.\/)?([\w.-][\w./-]*?)\/?["']?(?=\s|$|[;&|)])/gm)]
+								.flatMap(match => match[1] ?? [])
+						),
+					]),
+				];
+				const commands = effects.join('\n');
 				const text = [...effects, ...(graph.byFile.get(workflow)?.jobs.flatMap(job => job.runs) ?? [])].join('\n');
-				const publishing = [...effects, ...publicationRuns(graph, workflow, found)].join('\n');
+				const publishing = [...effects, ...runs].join('\n');
 				const cites = (value: string) => new RegExp(`(?<![\\w./-])${escapeRegExp(value)}(?![\\w-])`).test(text);
 				const citesDirectory = (value: string) =>
 					new RegExp(
-						`(?:\\b(?:cd|--prefix|-C|--cwd|--dir|publish|pack)\\s+["']?(?:\\./)?${
+						`(?:\\b(?:--prefix|-C|--cwd|--dir|publish|pack)\\s+["']?(?:\\./)?${
 							escapeRegExp(value)
 						}/?["']?(?:\\s|$|[;&)])|(?<![\\w./-])${escapeRegExp(value)}/package\\.json)`,
 						'm',
@@ -401,11 +415,10 @@ function targetsOf(
 					new RegExp(`(?:--workspace[= ]|-w\\s+)["']?${escapeRegExp(pkg.name)}(?![\\w-])`).test(publishing)
 					|| (pkg.name.startsWith('@') && new RegExp(`(?<![\\w@/.-])${escapeRegExp(pkg.name)}(?![\\w-])`).test(text))
 					|| !!pkg.generated
-					|| (directoryOf(pkg) !== '' && citesDirectory(directoryOf(pkg)))
+					|| (directoryOf(pkg) !== ''
+						&& (directories.includes(directoryOf(pkg)) || citesDirectory(directoryOf(pkg))))
 					|| descriptors.some(source => new RegExp(`"${escapeRegExp(pkg.name)}"(?!\\s*:)`).test(source));
 				if (manager === 'cargo') {
-					const jobs = found.filter(entry => entry.workflow === workflow).flatMap(entry => entry.job.runs);
-					const commands = [...effects, ...jobs].join('\n');
 					const named = [...commands.matchAll(/(?:-p|--package)\s+["']?([\w-]+)/g)].flatMap(match => match[1] ?? []);
 					const manifests = [...commands.matchAll(/--manifest-path[= ]["']?(?:\.\/)?([^\s"';&|]*Cargo\.toml)/g)]
 						.flatMap(match => match[1] ?? []);
@@ -413,14 +426,16 @@ function targetsOf(
 						? candidates.filter(pkg => named.includes(pkg.name))
 						: manifests.length && manifests.every(path => candidates.some(pkg => pkg.manifest === path))
 						? candidates.filter(pkg => manifests.includes(pkg.manifest))
+						: directories.length && directories.every(path => candidates.some(pkg => directoryOf(pkg) === path))
+						? candidates.filter(pkg => directories.includes(directoryOf(pkg)))
 						: candidates;
 					return { workflow, packages: crates, cited: true };
 				}
 				const chosen = candidates.filter(covered);
 				const root = candidates.filter(pkg => directoryOf(pkg) === '');
-				const elsewhere =
-					/\bcd\s|--prefix\b|--cwd\b|--dir\b|--workspaces?\b|--recursive\b|--filter\b|(?:^|\s)-(?:C|w|ws|r)(?=\s|$)/m
-						.test(publishing);
+				const elsewhere = directories.length > 0
+					|| /\bcd\s|--prefix\b|--cwd\b|--dir\b|--workspaces?\b|--recursive\b|--filter\b|(?:^|\s)-(?:C|w|ws|r)(?=\s|$)/m
+						.test(commands);
 				return chosen.length
 					? { workflow, packages: chosen, cited: true }
 					: root.length && !elsewhere

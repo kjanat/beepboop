@@ -214,6 +214,42 @@ test('setup accepts the shorthand refs that configuration accepts', async () => 
 	expect(plan.choices.streams[0]?.observe?.map(binding => binding.ref)).toEqual(['widget-v*']);
 });
 
+test('an observe binding on an exact tag keeps the tag version', async () => {
+	const repository = world.github.create('octo/widget', {
+		'package.json': JSON.stringify({ name: 'widget', version: '1.2.0' }),
+		'.github/workflows/release.yml': workflow("{ push: { tags: ['widget-v*'] } }", 'npm publish'),
+	});
+	const { plan } = await adopt(repository);
+	const [stream] = plan.choices.streams;
+	if (!stream) throw new Error('Expected an adopted stream');
+	const path = ['.github', 'beepboop.json'].join('/');
+	const stored = z.object({
+		streams: z.record(
+			z.string(),
+			z.object({ workflows: z.record(z.string(), z.record(z.string(), z.unknown())) }).loose(),
+		),
+	}).loose().parse(JSON.parse(world.github.file(repository, path) ?? '{}'));
+	const current = stored.streams[stream.name];
+	if (!current) throw new Error('Expected the stored stream');
+	const workflows = Object.fromEntries(
+		Object.entries(current.workflows).map(([name, binding]) => [name, { ...binding, ref: 'refs/tags/widget-v1.2.0' }]),
+	);
+	world.github.push(
+		repository,
+		{ [path]: JSON.stringify({ ...stored, streams: { ...stored.streams, [stream.name]: { ...current, workflows } } }) },
+		'Pin the release tag',
+	);
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	world.npm.publish('widget', '1.2.0');
+	repository.refs.set('tags/widget-v1.2.0', world.github.head(repository));
+	const [execution] = await observe(repository, 'push', 'widget-v1.2.0');
+	expect(execution?.version).toBe('1.2.0');
+	expect(execution?.publications.map(publication => [publication.id, publication.outcome])).toEqual([
+		['pkg:npm/widget', 'succeeded'],
+	]);
+});
+
 test('a publisher on a non-default branch is observed on that branch', async () => {
 	const repository = world.github.create('octo/snapshots', {
 		'package.json': JSON.stringify({ name: 'snapshots', version: '1.0.0' }),

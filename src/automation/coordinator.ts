@@ -1491,7 +1491,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					}
 					const prefix = [
 						stream.versionSource?.prefix,
-						pattern.startsWith('refs/tags/') ? /^[^*?[]*/.exec(pattern.slice('refs/tags/'.length))?.[0] : undefined,
+						!pattern.startsWith('refs/tags/')
+							? undefined
+							: pattern.endsWith('*')
+							? /^[^*?[]*/.exec(pattern.slice('refs/tags/'.length))?.[0]
+							: /^(.*?)v?\d+\.\d+/.exec(pattern.slice('refs/tags/'.length))?.[1],
 					].filter((value): value is string => value !== undefined && branch.startsWith(value))
 						.sort((a, b) => b.length - a.length)[0] ?? '';
 					const version = tagged

@@ -69,6 +69,7 @@ function workflowTagPrefixes(files: ReadonlyMap<string, string>): string[] {
 
 const script = /\.(?:sh|bash|ps1|py|[cm]?[jt]s|rb)$/;
 const actionManifest = /(?:^|\/)action\.ya?ml$/;
+const taskFile = /\/(?:Makefile|GNUmakefile|[Jj]ustfile|\.justfile|deno\.jsonc?|\.?mise(?:\.local)?\.toml)$/;
 const recipe =
 	/(?:^|\/)(?:Makefile|GNUmakefile|[Jj]ustfile|\.justfile|package\.json|deno\.jsonc?|\.?mise(?:\.local)?\.toml|\.config\/mise\.toml|(?:\.mise\/tasks|mise-tasks|\.config\/mise\/tasks)\/[^/]+)$/;
 function referencedScripts(
@@ -98,6 +99,7 @@ function referencedScripts(
 			path.startsWith(`${action}/`)
 			&& (script.test(path) || /^(?:action\.ya?ml|Dockerfile)$/.test(path.slice(action.length + 1)))
 		)
+			|| taskFile.test(path) && directories.includes(path.split('/').slice(0, -1).join('/'))
 			|| script.test(path)
 				&& (text.includes(path)
 					|| directories.some(directory =>
