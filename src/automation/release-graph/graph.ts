@@ -448,10 +448,18 @@ function targetsOf(
 					...new Set([
 						...own.flatMap(entry => {
 							if (entry.effect.kind !== 'publish') return [];
+							const base = entry.effect.directory ?? '';
 							const override = /(?:^|\s)(?:--prefix|-C|--cwd|--dir)[= ]["']?([^\s"';&|]+)/.exec(entry.effect.text)?.[1];
-							return override !== undefined
-								? within(entry.effect.directory ?? '', override)
-								: entry.effect.directory ?? [];
+							if (override !== undefined) return within(base, override);
+							const folder =
+								/\b(?:publish|pack)\s+(?:-\S+\s+)*["']?(\.{1,2}(?=[\s"';&|]|$|\/)[^\s"';&|]*|[\w@][^\s"';&|$]*\/[^\s"';&|]*)/
+									.exec(entry.effect.text)?.[1];
+							const resolved = folder === undefined || /\.(?:tgz|tar\.gz)$/.test(folder)
+								? undefined
+								: within(base, folder);
+							return resolved !== undefined && candidates.some(pkg => directoryOf(pkg) === resolved)
+								? resolved
+								: base || [];
 						}),
 						...runs.flatMap(packDirectories),
 					]),

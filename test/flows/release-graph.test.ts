@@ -2122,6 +2122,28 @@ describe('release streams', () => {
 			'release.yml#a': ['pkg:vscode-extension/acme/a'],
 			'release.yml#b': ['pkg:vscode-extension/acme/b'],
 		});
+		const configured = (registry: string, id: number) =>
+			planned({
+				'package.json': JSON.stringify({ name: 'widget', version: '1.0.0', publishConfig: { registry } }),
+				'.github/workflows/release.yml': release('      - run: npm publish\n'),
+			}, id);
+		const github = configured('https://npm.pkg.github.com', 75);
+		expect(target(stream(github.graph, 'main'), 'npm').packages).toEqual([]);
+		expect(github.choices.flatMap(choice => choice.required)).toEqual([]);
+		expect(
+			target(stream(configured('https://registry.npmjs.org/', 76).graph, 'main'), 'npm').packages,
+		).toEqual(['pkg:npm/widget']);
+		expect(selected(
+			{
+				'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+				'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+				'.github/workflows/release.yml': release(
+					'      - working-directory: packages/a\n        run: npm publish ../b\n',
+				),
+			},
+			77,
+			'npm',
+		)).toEqual(['pkg:npm/b']);
 		expect(
 			planned({
 				'package.json': JSON.stringify({ name: '@octo/tool', version: '1.0.0' }),

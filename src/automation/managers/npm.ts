@@ -11,6 +11,11 @@ import { fileProblem } from '@/contract/diagnostics';
 import { precondition } from '@/contract/errors';
 import { fromSync } from '@/failure';
 import { packageIdentity } from '@/package-url';
+
+const defaultRegistry = /^https?:\/\/registry\.(?:npmjs\.org|yarnpkg\.com)(?:[/:?#]|$)/;
+function foreignRegistry(value: unknown): boolean {
+	return typeof value === 'string' && !defaultRegistry.test(value.trim());
+}
 export function npmLatest(name: string, request: Fetcher): Effect.Effect<RegistryVersion> {
 	return latestVersion(
 		request,
@@ -78,7 +83,11 @@ export const npmManager: Adapter<'npm'> = {
 				...(typeof pkg.version === 'string' ? { version: pkg.version } : {}),
 				manifest: path,
 				versionSource: `${path}#version`,
-				publication: pkg.private === true ? excluded('private') : registry,
+				publication: pkg.private === true
+					? excluded('private')
+					: foreignRegistry(object(pkg.publishConfig).registry)
+					? excluded('other-registry')
+					: registry,
 				dependencies: Object.keys({
 					...object(pkg.dependencies),
 					...object(pkg.optionalDependencies),
