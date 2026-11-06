@@ -95,10 +95,15 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 					const [file = '', job = '', ...guard] = operation.split('#');
 					const condition = [members.get(file)?.conditions[job], guard.join('#')].filter(Boolean).join(' ');
 					if (prefix === undefined || !condition || families.length < 2) return true;
-					const named = families.filter(family =>
-						new RegExp(`['"](?:refs/tags/)?${escapeRegExp(family)}`).test(condition)
+					const mentions = families.flatMap(family =>
+						[...condition.matchAll(new RegExp(`['"](?:refs/tags/)?${escapeRegExp(family)}`, 'g'))].map(match => ({
+							family,
+							negated: /!\s*\w+\(\s*[^()]*$|!=\s*$/.test(condition.slice(0, match.index)),
+						}))
 					);
-					return !named.length || named.includes(prefix);
+					const positive = mentions.filter(mention => !mention.negated).map(mention => mention.family);
+					const negative = mentions.filter(mention => mention.negated).map(mention => mention.family);
+					return positive.length ? positive.includes(prefix) : !negative.includes(prefix);
 				};
 				const ownOperation = (operation: string) => files.some(file => operation.startsWith(`${file}#`));
 				const coveredFor = (prefix?: string) =>

@@ -477,22 +477,18 @@ function targetsOf(
 					files,
 					own.some(entry => entry.effect.kind === 'publish' && entry.effect.condition !== undefined),
 				);
-				const directories = [
-					...new Set([
-						...own.flatMap(entry => {
-							if (entry.effect.kind !== 'publish') return [];
-							const base = entry.effect.directory ?? '';
-							const override = directoryOverride(entry.effect.text);
-							if (override !== undefined) return within(base, override);
-							const folder = publishFolder(entry.effect.text);
-							const resolved = folder === undefined ? undefined : within(base, folder);
-							return resolved !== undefined && candidates.some(pkg => directoryOf(pkg) === resolved)
-								? resolved
-								: base || [];
-						}),
-						...runs.flatMap(packDirectories),
-					]),
-				];
+				const published = own.flatMap(entry => {
+					if (entry.effect.kind !== 'publish') return [];
+					const base = entry.effect.directory ?? '';
+					const override = directoryOverride(entry.effect.text);
+					if (override !== undefined) return within(base, override);
+					const folder = publishFolder(entry.effect.text);
+					const resolved = folder === undefined ? undefined : within(base, folder);
+					return resolved !== undefined && candidates.some(pkg => directoryOf(pkg) === resolved)
+						? resolved
+						: base || [];
+				});
+				const directories = [...new Set(published.length ? published : runs.flatMap(packDirectories))];
 				const commands = effects.join('\n');
 				const invoked = own.flatMap(entry =>
 					entry.effect.kind === 'publish' || entry.effect.kind === 'release'

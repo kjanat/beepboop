@@ -2417,6 +2417,27 @@ describe('release streams', () => {
 			100,
 			'npm',
 		)).toEqual(['pkg:npm/root-tool']);
+		expect(selected(
+			{
+				'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0' }),
+				'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+				'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+				'.github/workflows/release.yml': release(
+					'      - run: |\n          cd packages/b && npm pack\n          cd ../a && npm publish\n',
+				),
+			},
+			101,
+			'npm',
+		)).toEqual(['pkg:npm/a']);
+		const negated = planned({
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+			'.github/workflows/release.yml':
+				"on: { push: { tags: ['a-v*', 'b-v*'] } }\njobs:\n  a:\n    if: ${{ !startsWith(github.ref, 'refs/tags/b-v') }}\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm --prefix packages/a publish\n  b:\n    if: startsWith(github.ref, 'refs/tags/b-v')\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm --prefix packages/b publish\n",
+		}, 102);
+		const negatedBindings = negated.choices.flatMap(choice => choice.observe ?? []);
+		expect(negatedBindings.find(binding => binding.ref === 'refs/tags/a-v*')?.publications).toEqual(['pkg:npm/a']);
+		expect(negatedBindings.find(binding => binding.ref === 'refs/tags/b-v*')?.publications).toEqual(['pkg:npm/b']);
 		expect(
 			planned({
 				'package.json': JSON.stringify({ name: '@octo/tool', version: '1.0.0' }),
