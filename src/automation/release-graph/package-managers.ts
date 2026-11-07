@@ -100,6 +100,11 @@ export function forwardedArguments(command: string): string | undefined {
 	return forwarded.exec(command)?.[1]?.trim();
 }
 
+export function publishesTarball(command: string): boolean {
+	const found = folder.exec(command)?.[1];
+	return found !== undefined && /\.(?:tgz|tar\.gz)$/.test(found);
+}
+
 export function publishFolder(command: string): string | undefined {
 	const found = folder.exec(command)?.[1];
 	return found === undefined || /\.(?:tgz|tar\.gz)$/.test(found) ? undefined : found;

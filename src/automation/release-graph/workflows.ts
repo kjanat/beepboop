@@ -15,6 +15,7 @@ import {
 import {
 	directoryOverride,
 	forwardedArguments,
+	publishesTarball,
 	publishFolder,
 	scriptShorthand,
 	withoutValueFlags,
@@ -583,6 +584,7 @@ function scriptEffects(
 					? published
 					: here;
 			const hooks = /\bnpm\b[^\n;&|]*\spublish(?![\w:-])/.test(line) && !/--ignore-scripts\b/.test(line)
+					&& !publishesTarball(line)
 				? publishHooks.flatMap(hook =>
 					taskBodies(snapshot, line.replace(/\bpublish\b/, `run ${hook}`), hookDirectory, false)
 				)
@@ -644,7 +646,9 @@ function actionEffects(
 			const parsed = yaml(text);
 			const definition = object(Result.isSuccess(parsed) ? parsed.success.runs : undefined);
 			const steps = Array.isArray(definition.steps)
-				? definition.steps.filter(step => !disabled(object(step).if))
+				? definition.steps.filter(step =>
+					!disabled(object(step).if) && staticGuard(object(step).if, { inputs: bindings }) !== false
+				)
 				: definition.steps;
 			const declared = `${text}\n${snapshot.files[`${path}/Dockerfile`] ?? ''}`;
 			const stepRuns = (Array.isArray(steps) ? steps : []).flatMap(step => {

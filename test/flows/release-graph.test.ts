@@ -2593,6 +2593,33 @@ describe('release streams', () => {
 			}, id).graph.streams.length;
 		expect(helper('publish() {\n  npm publish\n}\necho build complete\n', 121)).toBe(0);
 		expect(helper('publish() {\n  npm publish\n}\npublish\n', 122)).toBe(1);
+		const gatedAction = (value: string, id: number) =>
+			planned({
+				...widget,
+				'actions/publish/action.yml':
+					"runs:\n  using: composite\n  steps:\n    - if: inputs.publish == 'true'\n      shell: bash\n      run: npm publish\n",
+				'.github/workflows/release.yml': release(
+					`      - uses: ./actions/publish\n        with: { publish: '${value}' }\n`,
+				),
+			}, id).graph.streams.length;
+		expect(gatedAction('false', 123)).toBe(0);
+		expect(gatedAction('true', 124)).toBe(1);
+		const tarball = (command: string, id: number) =>
+			selected(
+				{
+					'package.json': JSON.stringify({
+						name: 'root-tool',
+						version: '1.0.0',
+						scripts: { prepublishOnly: 'npm --prefix packages/b publish' },
+					}),
+					'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+					'.github/workflows/release.yml': release(`      - run: ${command}\n`),
+				},
+				id,
+				'npm',
+			);
+		expect(tarball('npm publish ./dist/root-1.0.0.tgz', 125)).toEqual(['pkg:npm/root-tool']);
+		expect(tarball('npm publish', 126)).toEqual(['pkg:npm/b', 'pkg:npm/root-tool']);
 		const negated = planned({
 			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
 			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
