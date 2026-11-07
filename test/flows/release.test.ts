@@ -211,6 +211,20 @@ test('a finished run whose registry publication appears late is verified without
 	expect(world.github.dispatches).toHaveLength(1);
 });
 
+test('a registry outage during verification is retried once the registry answers again', async () => {
+	const { api } = await finishedPromotion('pending');
+	world.network.serve('registry.npmjs.org', () => new Response('unavailable', { status: 503 }));
+	await world.wait(61_000);
+	expect((await only(api, 'promote')).state).toBe('uncertain');
+
+	world.network.serve('registry.npmjs.org', request => world.npm.handle(request));
+	world.npm.publish('widget', '1.1.0');
+	await world.wait(61_000);
+	const settled = await only(api, 'promote');
+	expect(settled.state).toBe('succeeded');
+	expect(world.github.dispatches).toHaveLength(1);
+});
+
 test('a finished run whose publication cannot be rechecked is blocked and needs attention', async () => {
 	const { finished } = await finishedPromotion('skipped');
 	expect(finished.state).toBe('blocked');

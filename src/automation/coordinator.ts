@@ -1797,6 +1797,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const runAttempt = run.run_attempt;
 				if (
 					run.status === 'completed' && execution.state === 'uncertain' && runAttempt <= (execution.runAttempt ?? 0)
+					&& !execution.publications.some(recheckable)
 				) {
 					return;
 				}
