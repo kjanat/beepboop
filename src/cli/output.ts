@@ -7,13 +7,15 @@ export function failure(message: string, code: string, suggest?: string): CLIErr
 export const signIn = 'Run beepboop auth login';
 export function emit(out: Out, value: unknown): Effect.Effect<void> {
 	return Effect.gen(function*() {
-		const jq = process.stdout.isTTY ? Bun.which('jq') : null;
+		const jq = out.isTTY && !out.jsonMode ? Bun.which('jq') : null;
 		if (!jq) return out.json(value);
-		const child = Bun.spawn([jq, '.'], {
+		const child = Bun.spawn([jq, ...(out.color.isColorSupported ? ['--color-output'] : []), '.'], {
 			stdin: new Blob([JSON.stringify(value)]),
-			stdout: 'inherit',
+			stdout: 'pipe',
 			stderr: 'inherit',
 		});
-		if ((yield* Effect.promise(() => child.exited)) !== 0) out.json(value);
+		const [text, code] = yield* Effect.promise(() => Promise.all([new Response(child.stdout).text(), child.exited]));
+		if (code !== 0) return out.json(value);
+		out.log(text.trimEnd());
 	});
 }

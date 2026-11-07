@@ -167,6 +167,21 @@ test('release resolves this checkout, previews server changes and hands the exac
 	}
 });
 
+test('command output stays in the command channel when the process runs in a terminal', async () => {
+	const repository = await seed();
+	const terminal = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+	Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+	try {
+		const preview = await run(['release', 'patch', '--repository', repository.name, '--json']);
+		expect(JSON.parse(preview.stdout.join(''))).toHaveProperty('plan.version', '1.0.1');
+		const shown = await run(['repositories', 'show', repository.name]);
+		expect(JSON.parse(Bun.stripANSI(shown.stdout.join('')))).toHaveProperty('name', repository.name);
+	} finally {
+		if (terminal) Object.defineProperty(process.stdout, 'isTTY', terminal);
+		else Reflect.deleteProperty(process.stdout, 'isTTY');
+	}
+});
+
 test('JSON previews are read-only and explicit --yes supports unattended preparation outside a checkout', async () => {
 	const repository = await seed();
 	const preview = await run(['release', 'patch', '--repository', repository.name, '--json']);
