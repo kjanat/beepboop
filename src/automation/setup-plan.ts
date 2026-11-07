@@ -40,6 +40,10 @@ const setupPlan: z.ZodType<SetupPlan> = z.object({
 			packages: strings,
 			versioning: z.enum(['workspace', 'independent', 'none'], { error: 'Invalid versioning' }),
 			required: strings,
+			versionSource: z.object({ kind: z.literal('tags'), prefix: z.string() }).optional(),
+			observe: z.array(
+				z.object({ name: z.string(), file: z.string(), ref: z.string().optional(), publications: strings }),
+			).optional(),
 			prepare: workflow.optional(),
 			promote: workflow.optional(),
 		})),
@@ -63,6 +67,7 @@ const setupPlan: z.ZodType<SetupPlan> = z.object({
 	edits: z.array(z.object({ path: z.string(), before: z.string(), after: z.string() })),
 	blockers: strings,
 	notes: strings,
+	adoption: strings.optional(),
 	branchConflict: z.unknown().transform(value => value === true),
 	prior: z.object({ url: z.string(), superseded: z.boolean() }).optional(),
 });

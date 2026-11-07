@@ -1,0 +1,308 @@
+import { object } from '@/automation/managers/helpers';
+
+const stringMark = '\u0000';
+const numeric = /^-?\d+(?:\.\d+)?$/;
+export function scalarText(value: string | number | boolean): string {
+	return typeof value === 'string' && (value === 'true' || value === 'false' || numeric.test(value))
+		? `${stringMark}${value}`
+		: String(value);
+}
+function plain(text: string): string {
+	return text.replaceAll(stringMark, '');
+}
+export function typedScalar(text: string): string | number | boolean {
+	if (text.startsWith(stringMark)) return plain(text);
+	if (text === 'true') return true;
+	if (text === 'false') return false;
+	return numeric.test(text) && String(Number(text)) === text ? Number(text) : text;
+}
+type Operand = { kind: 'string' | 'number' | 'boolean'; text: string };
+function operand(text: string): Operand {
+	if (text.startsWith(stringMark)) return { kind: 'string', text: plain(text) };
+	if (text === 'true' || text === 'false') return { kind: 'boolean', text };
+	return { kind: numeric.test(text) ? 'number' : 'string', text };
+}
+function asNumber(value: Operand): number {
+	if (value.kind === 'boolean') return value.text === 'true' ? 1 : 0;
+	return value.text.trim() === '' ? 0 : Number(value.text);
+}
+function equal(left: Operand, right: Operand): boolean {
+	if (left.kind !== right.kind) return asNumber(left) === asNumber(right);
+	if (left.kind === 'string') return left.text.toLowerCase() === right.text.toLowerCase();
+	if (left.kind === 'number') return Number(left.text) === Number(right.text);
+	return left.text === right.text;
+}
+const wholeInput = /^\s*\$\{\{\s*(?:github\.event\.)?inputs\.([\w-]+)\s*\}\}\s*$/;
+const wholeMatrix = /^\s*\$\{\{\s*matrix\.([\w-]+(?:\.[\w-]+)*)\s*\}\}\s*$/;
+export function forwardInput(
+	input: unknown,
+	inherited: Readonly<Record<string, string>>,
+	assignment: Readonly<Record<string, string>>,
+): unknown {
+	if (typeof input !== 'string') return input;
+	const direct = wholeInput.exec(input)?.[1];
+	const inputText = direct === undefined ? undefined : inherited[direct];
+	if (inputText !== undefined) return typedScalar(inputText);
+	const swept = wholeMatrix.exec(input)?.[1];
+	const matrixText = swept === undefined ? undefined : assignment[swept];
+	if (matrixText !== undefined) return typedScalar(matrixText);
+	return substitute(bindInputs(input, inherited), assignment);
+}
+export function matrixScalar(value: unknown): string | undefined {
+	return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+		? scalarText(value)
+		: undefined;
+}
+export const matrixLimit = 256;
+function flatten(key: string, value: unknown): Record<string, string>[] {
+	const scalar = matrixScalar(value);
+	if (scalar !== undefined) return [{ [key]: scalar }];
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return [];
+	const merged: Record<string, string> = {};
+	for (const [name, inner] of Object.entries(object(value))) {
+		for (const part of flatten(`${key}.${name}`, inner)) Object.assign(merged, part);
+	}
+	return Object.keys(merged).length ? [merged] : [];
+}
+function flatRow(entry: Record<string, unknown>): Record<string, string> {
+	const merged: Record<string, string> = {};
+	for (const [key, value] of Object.entries(entry)) {
+		for (const part of flatten(key, value)) Object.assign(merged, part);
+	}
+	return merged;
+}
+export function matrixCombinations(matrix: Record<string, unknown>): Record<string, string>[] {
+	const keys = Object.keys(matrix).filter(key => key !== 'include' && key !== 'exclude' && Array.isArray(matrix[key]));
+	let combinations: Record<string, string>[] = keys.length ? [{}] : [];
+	const original = new Set<string>();
+	for (const key of keys) {
+		const values = (Array.isArray(matrix[key]) ? matrix[key] : []).flatMap(value => flatten(key, value));
+		if (combinations.length * values.length > matrixLimit) break;
+		for (const value of values) for (const name of Object.keys(value)) original.add(name);
+		combinations = combinations.flatMap(combination => values.map(value => ({ ...combination, ...value })));
+	}
+	const row = flatRow;
+	const exclusions = (Array.isArray(matrix.exclude) ? matrix.exclude : []).map(entry => row(object(entry))).filter(
+		entry => Object.keys(entry).length > 0,
+	);
+	combinations = combinations.filter(combination =>
+		!exclusions.some(entry => Object.entries(entry).every(([key, value]) => combination[key] === value))
+	);
+	const added: Record<string, string>[] = [];
+	for (const entry of (Array.isArray(matrix.include) ? matrix.include : []).map(item => row(object(item)))) {
+		if (!Object.keys(entry).length) continue;
+		const targets = combinations.filter(combination =>
+			Object.entries(entry).every(([key, value]) => !original.has(key) || combination[key] === value)
+		);
+		const extra = Object.fromEntries(Object.entries(entry).filter(([key]) => !original.has(key)));
+		if (keys.length && targets.length) {
+			combinations = combinations.map(combination =>
+				targets.includes(combination) ? { ...combination, ...extra } : combination
+			);
+		} else {
+			added.push(entry);
+		}
+	}
+	return [...combinations, ...added];
+}
+export const matrixExpression = /\$\{\{\s*matrix\.([\w-]+(?:\.[\w-]+)*)\s*\}\}/g;
+export function substitute(text: string, assignment: Record<string, string>): string {
+	return text.replace(matrixExpression, (expression, key: string) => {
+		const value = assignment[key];
+		return value === undefined ? expression : plain(value);
+	});
+}
+const guardKey = /\bmatrix\.([\w-]+(?:\.[\w-]+)*)/g;
+const reference = '((?:matrix|inputs|github\\.event\\.inputs)\\.[\\w-]+(?:\\.[\\w-]+)*)';
+const comparison = new RegExp(
+	`^(?:${reference}\\s*(==|!=)\\s*(?:'([^']*)'|(true|false))|(?:'([^']*)'|(true|false))\\s*(==|!=)\\s*${reference})$`,
+);
+const truthiness = new RegExp(`^(!?)\\s*${reference}$`);
+export interface GuardValues {
+	matrix?: Readonly<Record<string, string>>;
+	inputs?: Readonly<Record<string, string>>;
+}
+function lookup(path: string, values: GuardValues): string | undefined {
+	if (path.startsWith('matrix.')) return values.matrix?.[path.slice('matrix.'.length)];
+	return values.inputs?.[path.replace(/^(?:github\.event\.)?inputs\./, '')];
+}
+function evaluateTerm(term: string, values: GuardValues): boolean | undefined {
+	const trimmed = term.trim();
+	const compared = comparison.exec(trimmed);
+	if (compared) {
+		const path = compared[1] ?? compared[8] ?? '';
+		const text = compared[3] ?? compared[5];
+		const flag = compared[4] ?? compared[6];
+		const literal: Operand = text !== undefined ? { kind: 'string', text } : { kind: 'boolean', text: flag ?? 'false' };
+		const operator = compared[2] ?? compared[7];
+		const value = lookup(path, values);
+		if (value === undefined) return undefined;
+		return operator === '==' ? equal(operand(value), literal) : !equal(operand(value), literal);
+	}
+	const bare = truthiness.exec(trimmed);
+	if (bare) {
+		const value = lookup(bare[2] ?? '', values);
+		if (value === undefined) return undefined;
+		const truthy = !(value === '' || value === 'false' || value === '0');
+		return bare[1] ? !truthy : truthy;
+	}
+	return undefined;
+}
+type Truth = boolean | undefined;
+const both = (left: Truth, right: Truth): Truth =>
+	left === false || right === false ? false : left === true && right === true ? true : undefined;
+const either = (left: Truth, right: Truth): Truth =>
+	left === true || right === true ? true : left === false && right === false ? false : undefined;
+const inverse = (value: Truth): Truth => value === undefined ? undefined : !value;
+export function staticGuard(condition: unknown, values: GuardValues): boolean | undefined {
+	if (typeof condition !== 'string') return undefined;
+	const source = condition.trim().replace(/^\$\{\{\s*([\s\S]*?)\s*\}\}$/, '$1').trim();
+	let position = 0;
+	let malformed = false;
+	const skip = () => {
+		while (/\s/.test(source[position] ?? '')) position++;
+	};
+	const operator = (token: string) => {
+		skip();
+		if (!source.startsWith(token, position)) return false;
+		position += token.length;
+		return true;
+	};
+	const atom = (): Truth => {
+		const begin = position;
+		let depth = 0;
+		let quoted = false;
+		while (position < source.length) {
+			const character = source[position];
+			if (character === "'") quoted = !quoted;
+			else if (!quoted) {
+				if (character === '(') depth++;
+				else if (character === ')') {
+					if (depth === 0) break;
+					depth--;
+				} else if (depth === 0 && (source.startsWith('&&', position) || source.startsWith('||', position))) break;
+			}
+			position++;
+		}
+		return evaluateTerm(source.slice(begin, position), values);
+	};
+	const primary = (): Truth => {
+		skip();
+		const negated = source[position] === '!' && /^!\s*\(/.test(source.slice(position));
+		if (negated) position++;
+		skip();
+		if (source[position] !== '(') return atom();
+		position++;
+		const inner = disjunction();
+		if (!operator(')')) malformed = true;
+		return negated ? inverse(inner) : inner;
+	};
+	const conjunction = (): Truth => {
+		let result = primary();
+		while (operator('&&')) result = both(result, primary());
+		return result;
+	};
+	const disjunction = (): Truth => {
+		let result = conjunction();
+		while (operator('||')) result = either(result, conjunction());
+		return result;
+	};
+	const result = disjunction();
+	skip();
+	return malformed || position < source.length ? undefined : result;
+}
+export function expandStep(
+	step: Record<string, unknown>,
+	matrix: Record<string, unknown>,
+	inputs: Readonly<Record<string, string>> = {},
+): Record<string, unknown>[] {
+	const directory = step['working-directory'];
+	const texts = [step.run, directory, ...Object.values(object(step.with))].filter((value): value is string =>
+		typeof value === 'string'
+	);
+	const combinations = matrixCombinations(matrix);
+	const guards = typeof step.if === 'string' ? [...step.if.matchAll(guardKey)].flatMap(match => match[1] ?? []) : [];
+	const keys = [
+		...new Set([
+			...texts.flatMap(text => [...text.matchAll(matrixExpression)].flatMap(match => match[1] ?? [])),
+			...guards,
+		]),
+	]
+		.filter(key => combinations.some(combination => combination[key] !== undefined));
+	if (!keys.length) return [step];
+	const assignments = [
+		...new Map(
+			combinations.map(combination =>
+				Object.fromEntries(
+					keys.flatMap(key => combination[key] === undefined ? [] : [[key, combination[key]] as const]),
+				)
+			).map(assignment => [JSON.stringify(assignment), assignment] as const),
+		).values(),
+	].filter(assignment => staticGuard(step.if, { matrix: assignment, inputs }) !== false).slice(0, matrixLimit);
+	const apply = (assignment: Record<string, string>): Record<string, unknown> => ({
+		...step,
+		...(typeof step.run === 'string' ? { run: substitute(step.run, assignment) } : {}),
+		...(typeof directory === 'string' ? { 'working-directory': substitute(directory, assignment) } : {}),
+		...(step.with !== undefined
+			? {
+				with: Object.fromEntries(
+					Object.entries(object(step.with)).map((
+						[key, value],
+					) => [key, typeof value === 'string' ? substitute(value, assignment) : value]),
+				),
+			}
+			: {}),
+	});
+	return assignments.map(apply);
+}
+export function disabled(condition: unknown): boolean {
+	return condition === false
+		|| (typeof condition === 'string' && /^\s*(?:\$\{\{\s*false\s*\}\}|false)\s*$/.test(condition));
+}
+
+export const inputExpression = /\$\{\{\s*(?:github\.event\.)?inputs\.([\w-]+)\s*\}\}/g;
+export function literalBindings(values: Record<string, unknown>): Record<string, string> {
+	const bindings: Record<string, string> = {};
+	for (const [key, input] of Object.entries(values)) {
+		if (
+			(typeof input === 'string' || typeof input === 'number' || typeof input === 'boolean')
+			&& !String(input).includes('${{')
+		) {
+			bindings[key] = scalarText(input);
+		}
+	}
+	return bindings;
+}
+function implicitDefault(type: unknown): string {
+	return type === 'boolean' ? 'false' : type === 'number' ? '0' : '';
+}
+export function inputDefaults(declared: unknown, passed: readonly string[]): Record<string, string> {
+	return Object.fromEntries(
+		Object.entries(object(declared)).flatMap(([key, input]) => {
+			const spec = object(input);
+			const fallback = matrixScalar(spec.default) ?? implicitDefault(spec.type);
+			return passed.includes(key) || fallback.includes('${{') ? [] : [[key, fallback] as const];
+		}),
+	);
+}
+export function bindInputs(text: string, bindings: Readonly<Record<string, string>>): string {
+	return text.replace(inputExpression, (expression, key: string) => {
+		const value = bindings[key];
+		return value === undefined ? expression : plain(value);
+	});
+}
+export function bindStep(
+	step: Record<string, unknown>,
+	bindings: Readonly<Record<string, string>>,
+): Record<string, unknown> {
+	if (!Object.keys(bindings).length) return step;
+	const bound = (value: unknown) => typeof value === 'string' ? bindInputs(value, bindings) : value;
+	return {
+		...step,
+		...(step.run !== undefined ? { run: bound(step.run) } : {}),
+		...(step['working-directory'] !== undefined ? { 'working-directory': bound(step['working-directory']) } : {}),
+		...(step.with !== undefined
+			? { with: Object.fromEntries(Object.entries(object(step.with)).map(([key, value]) => [key, bound(value)])) }
+			: {}),
+	};
+}

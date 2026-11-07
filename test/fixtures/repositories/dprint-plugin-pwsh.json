@@ -1,0 +1,15 @@
+{
+	"repository": {
+		"id": 1336544238,
+		"name": "kjanat/dprint-plugin-pwsh",
+		"defaultBranch": "master"
+	},
+	"sha": "9864a01d7daa91e0b5926ba42a02ff779490b289",
+	"files": {
+		"README.md": "# dprint-plugin-pwsh\n\nRelease mirror for the [PowerShell dprint plugin][monorepo] — a standalone\nPowerShell formatter (no PowerShell, no .NET) matching PSScriptAnalyzer's\n`Invoke-Formatter` output.\n\n## Install\n\n```sh\ndprint add kjanat/pwsh\n```\n\nor pin a version in `dprint.json`:\n\n```jsonc\n{\n  \"powershell\": { \"indentWidth\": 4 },\n  \"plugins\": [\"https://plugins.dprint.dev/kjanat/pwsh-x.y.z.wasm\"]\n}\n```\n\n## Source\n\nNo source here — code, [configuration docs][config-docs], and issues live in\n[kjanat/powershell-formatter][monorepo].\n\n[monorepo]: https://github.com/kjanat/powershell-formatter\n[config-docs]: https://github.com/kjanat/powershell-formatter/blob/master/docs/configuration.md\n"
+	},
+	"paths": [
+		"LICENSE",
+		"README.md"
+	]
+}

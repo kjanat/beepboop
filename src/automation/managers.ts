@@ -120,9 +120,12 @@ export function resolvePublished(
 ): Effect.Effect<Inventory> {
 	return managerRegistry.resolvePublished(inventory, request, context);
 }
-export function observedVersion(pkg: Package, tag: string): string | undefined {
+export function placeholderVersion(version: string | undefined): boolean {
+	return version === '0.0.0';
+}
+export function observedVersion(pkg: Package, tag: string, release?: string): string | undefined {
 	const prefix = tagPrefix(pkg.versionSource);
-	if (prefix === undefined) return pkg.version;
+	if (prefix === undefined) return placeholderVersion(pkg.version) && release !== undefined ? release : pkg.version;
 	return tag.startsWith(prefix) ? tag.slice(prefix.length).replace(/^v/, '') : undefined;
 }
 export function versionsInFiles(inventory: Inventory): boolean {

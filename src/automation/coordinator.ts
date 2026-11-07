@@ -26,7 +26,14 @@ import {
 	workflowRunsSchema,
 } from '@/automation/github-resources';
 import { type InboxEvent, inboxEntry } from '@/automation/inbox';
-import { canVerifyPublication, discover, observedVersion, verifyPublication } from '@/automation/managers';
+import {
+	canVerifyPublication,
+	discover,
+	observedVersion,
+	placeholderVersion,
+	verifyPublication,
+} from '@/automation/managers';
+import { tagPrefix } from '@/automation/managers/tags';
 import { verifyManifest } from '@/automation/manifest';
 import { mergeArtifacts, resolveInputs } from '@/automation/outputs';
 import {
@@ -101,6 +108,7 @@ const releaseWake = z.union([
 type ReleaseWake = z.output<typeof releaseWake>;
 const reconcileDue = z.number().nullable();
 const inboxAttempts = 8;
+const observationAttempts = 10;
 const access = z.object({ suspended: z.boolean() });
 const reconcileInterval = 60_000;
 const settleInterval = 15_000;
@@ -1466,27 +1474,74 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			);
 			if (
 				run.repository.id !== repository.id
-				|| !['push', 'release', 'workflow_dispatch', 'schedule'].includes(String(run.event))
+				|| !['push', 'release', 'workflow_dispatch', 'schedule', 'workflow_run', 'repository_dispatch'].includes(
+					String(run.event),
+				)
 			) {
 				return;
 			}
-			const branch = String(run.head_branch),
-				ref = run.event === 'release' || /^v?\d+\.\d+\.\d+/.test(branch)
-					? `refs/tags/${branch}`
-					: `refs/heads/${branch}`;
+			if (typeof run.head_branch !== 'string') return;
+			const branch = run.head_branch;
+			const patterns = Object.values(repository.configuration.streams).flatMap(stream =>
+				Object.values(stream.workflows).flatMap(binding =>
+					run.path === `.github/workflows/${binding.file}` ? [binding.ref ?? repository.defaultBranch] : []
+				)
+			);
+			const tagTarget = (name: string) =>
+				Effect.gen(function*() {
+					const tag = yield* gateway.read(
+						gitRefSchema.nullable(),
+						`/repos/${repository.name}/git/ref/tags/${encodeURIComponent(name)}`,
+						token,
+					);
+					if (!tag) return undefined;
+					if (tag.object.type !== 'tag') return tag.object;
+					return (yield* gateway.read(gitTagSchema, `/repos/${repository.name}/git/tags/${tag.object.sha}`, token))
+						.object;
+				});
+			const tagLike = patterns.some(pattern => matchesRef(pattern, `refs/tags/${branch}`))
+				|| /^v?\d+\.\d+\.\d+/.test(branch);
+			const branchLike = patterns.some(pattern =>
+				!pattern.startsWith('refs/tags/') && matchesRef(pattern, `refs/heads/${branch}`)
+			);
+			const tagged = run.event === 'release'
+				|| (tagLike && (!branchLike || (yield* tagTarget(branch))?.sha === run.head_sha));
+			const ref = tagged ? `refs/tags/${branch}` : `refs/heads/${branch}`;
 			for (const [streamName, stream] of Object.entries(repository.configuration.streams)) {
 				for (const [operation, binding] of Object.entries(stream.workflows)) {
+					const pattern = binding.ref ?? repository.defaultBranch;
 					if (
 						binding.mode !== 'observe'
 						|| run.path !== `.github/workflows/${binding.file}`
-						|| !matchesRef(binding.ref ?? repository.defaultBranch, ref)
+						|| !matchesRef(pattern, ref)
 					) {
 						continue;
 					}
-					const version = ref.startsWith('refs/tags/') ? branch.replace(/^v/, '') : undefined;
+					const tagName = pattern.startsWith('refs/tags/')
+						? pattern.slice('refs/tags/'.length)
+						: pattern.startsWith('refs/')
+						? undefined
+						: pattern;
+					const prefix = [
+						stream.versionSource?.prefix,
+						tagName === undefined
+							? undefined
+							: tagName.endsWith('*')
+							? /^[^*?[]*/.exec(tagName)?.[0]?.replace(/(?<![\d.])\d[\d.]*$/, '')
+							: /^(.*?)v?\d+\.\d+/.exec(tagName)?.[1],
+					].filter((value): value is string => value !== undefined && branch.startsWith(value))
+						.sort((a, b) => b.length - a.length)[0] ?? '';
+					const version = tagged
+						? branch.slice(prefix.length).replace(/^v/, '')
+						: undefined;
+					const manifestVersions = !tagged
+						&& (run.event === 'workflow_dispatch' || (binding.publications?.length ?? 0) > 0);
 					const eventId = `observed:${event.runId}`;
 					const id = yield* executionId(repository.id, streamName, operation, eventId);
-					if (yield* this.read(`execution:${id}`)) continue;
+					if (yield* this.read(`execution:${id}`)) {
+						const previous = yield* this.get(id);
+						if (previous.state === 'succeeded' || (previous.runAttempt ?? 0) >= run.run_attempt) continue;
+					}
 					const snapshot = yield* gateway.snapshot(repository.name, repository.id, run.head_sha);
 					const execution = yield* (
 						createExecution(repository, {
@@ -1502,33 +1557,16 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					execution.runAttempt = run.run_attempt;
 					execution.state = 'running';
 					if (version) {
-						const commit = yield* gateway.read(
-							commitSchema,
-							`/repos/${repository.name}/commits/${snapshot.sha}`,
-							token,
-						);
-						const tag = yield* gateway.read(
-							gitRefSchema,
-							`/repos/${repository.name}/git/ref/tags/${encodeURIComponent(branch)}`,
-							token,
-						);
-						let target = tag.object;
-						if (target.type === 'tag') {
-							target = (yield* gateway.read(
-								gitTagSchema,
-								`/repos/${repository.name}/git/tags/${target.sha}`,
-								token,
-							)).object;
+						const target = yield* tagTarget(branch);
+						if (!target) {
+							yield* this.put({ ...execution, state: 'failed', reason: `Release tag ${branch} was not found` });
+							continue;
 						}
-						if (
-							commit.commit.verification.verified !== true
-							|| target.type !== 'commit'
-							|| target.sha !== snapshot.sha
-						) {
+						if (target.type !== 'commit' || target.sha !== snapshot.sha) {
 							yield* this.put({
 								...execution,
 								state: 'failed',
-								reason: 'Source commit signature or release tag identity is invalid',
+								reason: `Release tag ${branch} does not point at the source commit`,
 							});
 							continue;
 						}
@@ -1542,16 +1580,33 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					) {
 						return yield* precondition('Producer inventory is incomplete');
 					}
-					for (
-						const pkg of inventory.packages.filter(
-							(p) =>
-								Boolean(version)
-								&& publishable(p)
-								&& (!stream.packages || stream.packages.some(reference => matchesPackage(reference, p))),
+					const observed = inventory.packages.filter(
+						(p) =>
+							(Boolean(version) || (manifestVersions && tagPrefix(p.versionSource) === undefined))
+							&& publishable(p)
+							&& (!stream.packages || stream.packages.some(reference => matchesPackage(reference, p)))
+							&& (binding.publications === undefined
+								|| binding.publications.some(reference => matchesPackage(reference, p))),
+					);
+					const mismatched = version !== undefined && stream.versioning === 'workspace'
+						? observed.filter(p =>
+							tagPrefix(p.versionSource) === undefined && p.version !== undefined && !placeholderVersion(p.version)
+							&& p.version !== version
 						)
-					) {
+						: [];
+					if (mismatched.length) {
+						yield* this.put({
+							...execution,
+							state: 'failed',
+							reason: `Tag ${branch} names version ${version}, but ${
+								mismatched.map(p => `${p.name} carries ${p.version}`).join(', ')
+							}`,
+						});
+						continue;
+					}
+					for (const pkg of observed) {
 						if (!canVerifyPublication(pkg.manager)) continue;
-						const released = observedVersion(pkg, branch);
+						const released = version === undefined ? pkg.version : observedVersion(pkg, branch, version);
 						if (released === undefined) continue;
 						const publication: Publication = {
 							id: packageId(pkg),
@@ -1583,12 +1638,22 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				yield* this.observe(event).pipe(
 					Effect.andThen(this.remove(key)),
 					recover(error =>
-						this.write(key, {
-							...event,
-							due: now + reconcileInterval,
-							attempts: (event.attempts ?? 0) + 1,
-							error: decodeError(error),
-						})
+						(event.attempts ?? 0) + 1 >= observationAttempts
+							? this.remove(key).pipe(
+								Effect.andThen(
+									this.auditQuietly(
+										'observe.dead',
+										`run ${event.runId} after ${(event.attempts ?? 0) + 1} attempts: ${decodeError(error)}`,
+										'observe.audit-failed',
+									),
+								),
+							)
+							: this.write(key, {
+								...event,
+								due: now + reconcileInterval,
+								attempts: (event.attempts ?? 0) + 1,
+								error: decodeError(error),
+							})
 					),
 				);
 			}

@@ -164,6 +164,13 @@ configure its releases from the terminal. The Beepboop GitHub App must already
 be installed on that repository. You can also pass a repository name, GitHub URL
 or SSH URL. `repositories setup` remains an alias of `repositories adopt`.
 
+For a repository without a configuration, the CLI shows the streams inferred
+from its existing release workflows and asks for each whether to keep those
+workflows and their triggers with Beepboop observing them. Answering yes
+adopts the stream as it is. The setup PR body explains each stream, its
+publication order, and anything left out. Answering no continues with the
+guided flow below for that stream.
+
 The guided flow selects packages and publishing workflows. New workflows get
 filenames based on the selected package or repository, with jobs and dispatch
 triggers generated automatically. A Cargo release that updates a lockfile can
@@ -204,5 +211,9 @@ or full published Actions commit). Each stream selects `name`,
 `packages` (PURLs), `versioning`, `required`, `prepare` and `promote`. Workflow
 choices contain `file`, optional `job`, `triggers` (`review`, `dispatchOnly`, or
 `preserve`), `commands`, and `publicationSteps` mapping PURLs to publishing step
-IDs. Existing integrated reporting needs no new mappings. Leaving trigger
+IDs. Existing integrated reporting needs no new mappings. A stream can instead
+list `observe` bindings, each with `name`, `file`, an optional `ref` pattern
+and the `publications` that workflow produces; observed streams need no
+`prepare` or `promote`. `versionSource` (`{ "kind": "tags", "prefix": "v" }`)
+takes the stream's version from its tags. Leaving trigger
 conflicts unresolved produces a blocked preview rather than an implicit handover.

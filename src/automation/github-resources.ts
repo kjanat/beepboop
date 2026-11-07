@@ -52,6 +52,7 @@ export const pullSchema = z.object({
 	html_url: textSchema,
 	state: looseSchema,
 	merged: looseSchema,
+	merged_at: looseSchema,
 	body: looseSchema,
 	head: z.object({ ref: z.string(), sha: shaSchema, repo: identified }),
 	base: z.object({ ref: textSchema, repo: z.object({ id: z.number(), default_branch: textSchema }) }),

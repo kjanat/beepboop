@@ -12,6 +12,16 @@ export const managerNames = [
 	'workflow',
 ] as const;
 export type ManagerName = (typeof managerNames)[number];
+export const workflowFilePattern = /^[\w-][\w.-]*\.ya?ml$/;
+export const tagPrefixPattern = /^(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]*$/;
+export function validTagPrefix(value: string): boolean {
+	return tagPrefixPattern.test(value) && !value.includes('..');
+}
+/** Ref patterns are deliberately limited to one trailing wildcard. */
+export const refPattern = /^(?:refs\/(?:heads|tags)\/)?[A-Za-z0-9][A-Za-z0-9._/-]*\*?$/;
+export function validRef(value: string): boolean {
+	return refPattern.test(value) && !value.includes('..') && !value.includes('//');
+}
 export const reportableManagerNames = managerNames.filter((name): name is Exclude<ManagerName, 'pre-commit'> =>
 	name !== 'pre-commit'
 );

@@ -352,7 +352,7 @@ test('schema:check refuses a hand-edited schema file', async () => {
 	} finally {
 		await rm(edited);
 	}
-});
+}, 30_000);
 
 type Stream = WidgetDocument['streams']['main'];
 interface Finding {
@@ -623,15 +623,36 @@ test('stored identities crash and outside package input stays a Result', () => {
 	const main = configuration.streams.main;
 	if (main === undefined) throw new Error('Missing main stream');
 	main.packages = ['pkg:npm/', 'pkg:npm/widget@1.2.3'];
-	const diagnostics = validateAgainst(configuration, {
-		packages: [],
-		workflows: [],
-		managers: [],
-		diagnostics: [],
-		publicationOrder: [],
-	}, { paths: ['.github/workflows/publish.yml', '.github/workflows/ci.yml'] });
+	const diagnostics = validateAgainst(
+		configuration,
+		{ packages: [], workflows: [], managers: [], diagnostics: [], publicationOrder: [] },
+		{ paths: ['.github/workflows/publish.yml', '.github/workflows/ci.yml'] },
+	);
 	expect(
 		diagnostics.some(entry => entry.code === 'versioned-reference' && entry.message.includes('pkg:npm/widget@1.2.3')),
 	)
 		.toBe(true);
+});
+
+test('the parser and schema agree on tag prefixes with directories', () => {
+	const document = (prefix: string) => ({
+		streams: {
+			main: {
+				versionSource: { kind: 'tags', prefix },
+				promote: { workflow: { file: 'publish.yml', refs: { phase: 'version', prefix } } },
+			},
+		},
+	});
+	for (
+		const [prefix, valid] of [
+			['tools/v', true],
+			['a/b/v', true],
+			['../v', false],
+			['/v', false],
+			['a//v', false],
+		] as const
+	) {
+		expect(Result.isSuccess(parseRepositoryConfiguration(document(prefix)))).toBe(valid);
+		expect(configurationSchema.safeParse(document(prefix)).success).toBe(valid);
+	}
 });

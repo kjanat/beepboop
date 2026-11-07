@@ -4,10 +4,9 @@ import { z } from 'zod';
 import { versionFileSchema } from '@/automation/editors';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { parseReleaseIdentity } from '@/automation/package-identity';
-import { validRef } from '@/automation/policy';
 import { parsePresetReference } from '@/automation/preset';
 import type { Configuration, Stream, WorkflowBinding } from '@/automation/types';
-import { managerNames } from '@/contract/catalog';
+import { managerNames, validRef, validTagPrefix, workflowFilePattern } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
 import { type DomainError, precondition } from '@/contract/errors';
 import { configurationDrift, configurationSchema } from '@/domain/configuration';
@@ -108,7 +107,7 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 			yield* keys(policy, ['phase', 'prefix', 'aliases', 'signed'], 'refs');
 			const phase = yield* oneOf(policy.phase, ['version', 'aliases'], 'Invalid ref phase');
 			const prefix = policy.prefix === undefined ? 'v' : String(policy.prefix);
-			if (!/^[A-Za-z0-9._-]*$/.test(prefix) || prefix.includes('..')) return yield* reject('Invalid tag prefix');
+			if (!validTagPrefix(prefix)) return yield* reject('Invalid tag prefix');
 			const aliases = yield* Result.all(
 				(yield* strings(policy.aliases ?? [])).map(alias => oneOf(alias, ['major', 'minor'], 'Invalid aliases')),
 			);
@@ -121,7 +120,7 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 		const file = yield* text(data.file);
 		const ref = data.ref === undefined ? undefined : yield* text(data.ref);
 		if (ref !== undefined && !validRef(ref)) return yield* reject('Invalid workflow ref');
-		if (!/^[A-Za-z0-9_-]+\.ya?ml$/.test(file)) return yield* reject('Workflow must be a filename');
+		if (!workflowFilePattern.test(file)) return yield* reject('Workflow must be a filename');
 		const inputs: Record<string, string | boolean | number> = {};
 		for (
 			const [key, input] of Object.entries(data.inputs === undefined ? {} : yield* record(data.inputs))
@@ -211,7 +210,7 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 		if (row.versionSource !== undefined) {
 			const source = yield* record(row.versionSource);
 			yield* keys(source, ['kind', 'prefix'], 'versionSource');
-			if (source.kind !== 'tags' || typeof source.prefix !== 'string' || !/^[A-Za-z0-9._-]*$/.test(source.prefix)) {
+			if (source.kind !== 'tags' || typeof source.prefix !== 'string' || !validTagPrefix(source.prefix)) {
 				return yield* reject('Invalid tag version source');
 			}
 			versionSource = { kind: 'tags', prefix: source.prefix };
@@ -304,7 +303,7 @@ function subscription(raw: unknown, streams: Record<string, Stream>): Parsed<Con
 		if (!identifier.test(id)) return yield* reject('Invalid subscription');
 		const event = yield* oneOf(kind, ['release', 'package.version.changed', 'workflow_run'], 'Invalid subscription');
 		if (!streams[stream]?.workflows[operation]) return yield* reject('Subscription references an unknown operation');
-		if (event === 'workflow_run' && (typeof row.workflow !== 'string' || !/^[\w-]+\.ya?ml$/.test(row.workflow))) {
+		if (event === 'workflow_run' && (typeof row.workflow !== 'string' || !workflowFilePattern.test(row.workflow))) {
 			return yield* reject('Workflow subscription requires an exact filename');
 		}
 		return {

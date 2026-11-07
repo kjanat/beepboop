@@ -370,9 +370,10 @@ test('configuration-only adoption does not request workflow write permission', a
 		if (request.method === 'POST' && new URL(request.url).pathname.endsWith('/access_tokens')) {
 			const body = z.object({ permissions: z.record(z.string(), z.string()) }).parse(await request.clone().json());
 			if (body.permissions.workflows === 'write') {
-				return Response.json({ message: 'The permissions requested are not granted to this installation' }, {
-					status: 422,
-				});
+				return Response.json(
+					{ message: 'The permissions requested are not granted to this installation' },
+					{ status: 422 },
+				);
 			}
 		}
 		return world.github.handle(request);

@@ -5,8 +5,24 @@
 Install the GitHub App, then open the dashboard and select **Inspect**. Beepboop
 reads the default branch and displays its packages and release workflows.
 
+For a repository without a configuration, the first proposal comes from its
+existing release workflows. Beepboop reads the workflows, the local actions,
+scripts and task recipes they run, and the repository's tags. It groups them
+into release streams: one per tag family, manually dispatched release, or
+scheduled channel. Each stream observes its existing workflows and keeps their
+triggers, so adoption changes only `.github/beepboop.json`. The setup PR body
+contains a **Release plan** section. For each stream it lists the starting
+trigger, the workflows and their roles, the version source and carriers, the
+publication order per destination, moving aliases and the start command. It
+also names each grouping's evidence. Products that cannot publish yet (editor
+extensions without a publishing workflow) appear under **Not ready to publish**
+and stay out of the stream's required publications. Packages and workflows
+that no release publishes appear under **Left out** with the reason.
+Inspection reads the repository and never runs its code.
+
 Select **Configure releases** (or **Edit release setup** for an existing
-configuration). Select the packages and either create a publishing workflow or
+configuration). An inferred stream shows a checked **Keep … with their own
+triggers** option; clear it to configure that stream's workflows instead. Select the packages and either create a publishing workflow or
 use an existing one. New workflows get an editable filename based on the package
 or repository name, a publishing job, and the required dispatch trigger. Existing
 workflows with a single job or a recognized integration select that job automatically.

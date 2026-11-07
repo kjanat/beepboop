@@ -379,7 +379,9 @@ export class RepositoryGateway {
 			const refs = yield* Effect.forEach(prefixes, prefix =>
 				self.read(
 					z.array(matchingRefSchema).nullable(),
-					`/repos/${name}/git/matching-refs/tags/${prefix.split('/').map(encodeURIComponent).join('/')}`,
+					`/repos/${name}/git/matching-refs/tags${
+						prefix ? `/${prefix.split('/').map(encodeURIComponent).join('/')}` : ''
+					}`,
 					token,
 				).pipe(Effect.map(rows => (rows ?? []).map(row => row.ref.slice('refs/tags/'.length)))), {
 				concurrency: 'unbounded',
@@ -815,11 +817,11 @@ export class RepositoryGateway {
 		return Effect.gen(function*() {
 			const { name } = snapshot.repository;
 			const owner = name.split('/')[0];
-			const pulls = yield* self.read(
+			const pulls = (yield* self.read(
 				z.array(pullSchema),
 				`/repos/${name}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`,
 				token,
-			);
+			)).filter(pull => pull.merged !== true && typeof pull.merged_at !== 'string');
 			if (pulls.length > 1) return yield* precondition('Multiple matching pull requests');
 			if (pulls[0] && pulls[0].state !== 'open') {
 				return yield* precondition('Preparation pull request was closed');

@@ -30,7 +30,7 @@ export interface Run {
 	path: string;
 	event: string;
 	headSha: string;
-	headBranch: string;
+	headBranch: string | null;
 	status: 'queued' | 'in_progress' | 'completed';
 	conclusion: string | null;
 	attempt: number;
@@ -179,7 +179,7 @@ export class FakeGitHub {
 			if (content === undefined) throw new HttpError(404, 'Not Found');
 			return json({ encoding: 'base64', content: Buffer.from(content).toString('base64'), size: content.length });
 		});
-		this.route('GET', new RegExp(`^${repo}/git/matching-refs/tags/(.*)$`), match => {
+		this.route('GET', new RegExp(`^${repo}/git/matching-refs/tags(?:/(.*))?$`), match => {
 			const repository = this.repository(match[1]);
 			const prefix = `tags/${decodeURIComponent(match[2] ?? '')}`;
 			return json(
@@ -617,6 +617,7 @@ export class FakeGitHub {
 			html_url: `https://github.com/${repository.name}/pull/${pull.number}`,
 			state: pull.state,
 			merged: pull.merged,
+			merged_at: pull.merged ? '2026-01-01T00:00:00Z' : null,
 			title: pull.title,
 			body: pull.body,
 			user: { id: botId },

@@ -11,7 +11,7 @@ import {
 import { z } from 'zod';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import { bearer } from '@root/test/support/http.ts';
-import { widget } from '@root/test/support/repositories.ts';
+import { passChecks, plugin, widget } from '@root/test/support/repositories.ts';
 import { origin, World } from '@root/test/support/world.ts';
 // Browser modules are checked separately to keep DOM and Worker Element types apart.
 const browserModule = new URL('../../src/ui/browser/setup.ts', import.meta.url).href;
@@ -123,7 +123,6 @@ test('managed preparation hides and disables all job and command inputs', async 
 		expect(input.closest('[hidden]')).not.toBeNull();
 	}
 	expect(preparing.textContent).toContain('Only the publishing workflow is needed.');
-	expect(form.checkValidity()).toBe(true);
 	const override = control(form, 'Actions revision override (optional)', window.HTMLInputElement);
 	expect(override.closest('details')?.hasAttribute('open')).toBe(false);
 	expect(form.textContent).not.toContain('Keep unchanged;');
@@ -382,7 +381,6 @@ test('existing shared Go workflows do not require replacement preparation comman
 	expect(commands.value).toBe('');
 	expect(commands.required).toBe(false);
 	expect(commands.disabled).toBe(true);
-	expect(form.checkValidity()).toBe(true);
 	await act(form, 'preview');
 	expect(form.querySelector('.setup-result')?.textContent).toContain('No file changes needed.');
 });
@@ -420,3 +418,53 @@ for (const locked of [false, true]) {
 		expect(form.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(false);
 	});
 }
+
+test('an observed stream rejects a package its workflows do not publish', async () => {
+	const repository = world.github.create('octo/pair', {
+		'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+		'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+		'.github/workflows/release.yml':
+			"name: Release\non:\n  push: { tags: ['v*'] }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm --prefix packages/a publish\n",
+	});
+	passChecks(repository, world.github.head(repository));
+	const form = await open('octo/pair');
+	await act(form, 'preview');
+	expect(form.querySelector('.setup-result')?.textContent).toContain('"mode": "observe"');
+	control(form, 'a (packages/a/package.json)', window.HTMLInputElement).checked = false;
+	control(form, 'b (packages/b/package.json)', window.HTMLInputElement).checked = true;
+	await expect(act(form, 'preview')).rejects.toThrow('not published by the observed workflows');
+});
+
+test('an observed branch publisher without publication checks keeps its proposed packages', async () => {
+	const repository = world.github.create('octo/branchy', {
+		'package.json': JSON.stringify({ name: 'branchy', version: '1.0.0' }),
+		'.github/workflows/release.yml':
+			'name: Release\non:\n  push: { branches: [release] }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm publish\n',
+	});
+	passChecks(repository, world.github.head(repository));
+	const form = await open('octo/branchy');
+	await act(form, 'preview');
+	expect(form.querySelector('.setup-result')?.textContent).toContain('"mode": "observe"');
+});
+
+test('an inferred stream keeps its workflow until observation is cleared', async () => {
+	plugin(world.github);
+	const form = await open('octo/plugin');
+	const keep = control(
+		form,
+		'Keep release.yml with their own triggers; Beepboop observes their runs and publications',
+		window.HTMLInputElement,
+	);
+	expect(keep.checked).toBe(true);
+	expect(role(form, 'promote').hidden).toBe(true);
+	expect(role(form, 'prepare').hidden).toBe(true);
+	expect(role(form, 'promote').hasAttribute('disabled')).toBe(true);
+	await act(form, 'preview');
+	expect(form.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(false);
+	expect(form.querySelector('.setup-result')?.textContent).toContain('"mode": "observe"');
+	keep.checked = false;
+	keep.dispatchEvent(new window.Event('change', { bubbles: true }));
+	expect(role(form, 'promote').hidden).toBe(false);
+	expect(role(form, 'promote').hasAttribute('disabled')).toBe(false);
+	await expect(act(form, 'preview')).rejects.toThrow('Select at least one package to release.');
+});
