@@ -209,6 +209,28 @@ test('a finished run whose registry publication appears late is verified without
 	expect(settled.state).toBe('succeeded');
 	expect(settled.publications.map(publication => publication.outcome)).toEqual(['succeeded']);
 	expect(world.github.dispatches).toHaveLength(1);
+	expect(runCard(finished, Date.now())).toMatchObject({ release: undefined, publications: [{ href: undefined }] });
+	expect(runCard(settled, Date.now())).toMatchObject({
+		release: 'https://github.com/octo/widget/releases/tag/v1.1.0',
+		publications: [{ href: 'https://www.npmjs.com/package/widget/v/1.1.0' }],
+	});
+	const module = settled.publications.map(publication => ({
+		...publication,
+		manager: 'go' as const,
+		name: 'statute.kjanat.dev',
+		version: '0.13.1',
+	}));
+	expect(runCard({ ...settled, publications: module }, Date.now()).publications.map(p => p.href)).toEqual([
+		'https://pkg.go.dev/statute.kjanat.dev@v0.13.1',
+	]);
+	const scoped = settled.publications.flatMap(publication => [
+		{ ...publication, manager: 'npm' as const, name: '@kjanat/beepboop', version: '0.1.0' },
+		{ ...publication, manager: 'jsr' as const, name: '@kjanat/beepboop', version: '0.1.0' },
+	]);
+	expect(runCard({ ...settled, publications: scoped }, Date.now()).publications.map(p => p.href)).toEqual([
+		'https://www.npmjs.com/package/@kjanat/beepboop/v/0.1.0',
+		'https://jsr.io/@kjanat/beepboop@0.1.0',
+	]);
 });
 
 test('a registry outage during verification is retried once the registry answers again', async () => {

@@ -2,7 +2,9 @@ import type { ManagerDestinationId, WatchedRegistry } from '@/contract/catalog';
 import { defaultTagPolicy, semVer, tagFor } from '@/contract/version';
 
 function encodePath(...parts: string[]): string {
-	return parts.flatMap(part => part.split('/')).filter(Boolean).map(encodeURIComponent).join('/');
+	return parts.flatMap(part => part.split('/')).filter(Boolean).map(part =>
+		encodeURIComponent(part).replaceAll('%40', '@')
+	).join('/');
 }
 
 export function githubHref(repository: string, ...path: string[]): string {

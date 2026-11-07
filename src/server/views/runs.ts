@@ -1,5 +1,7 @@
 import { matchesPublication } from '@/automation/package-identity.ts';
 import type { Execution } from '@/automation/types.ts';
+import { managerSpec } from '@/contract/catalog';
+import { githubHref, registryHref } from '@/contract/links';
 import { formatTime } from '@/contract/time';
 import { defaultTagPolicy, semVer, tagFor } from '@/contract/version';
 import { packageDisplayName } from '@/server/package-name.ts';
@@ -21,6 +23,20 @@ function publicationName(run: Execution, publication: Execution['publications'][
 	return `tag ${parsed.success ? tagFor(run.workflow?.refs ?? defaultTagPolicy, parsed.data) : publication.version}`;
 }
 
+function publicationHref(run: Execution, publication: Execution['publications'][number]): string | undefined {
+	const destination = managerSpec(publication.manager).destinations?.primary;
+	if (publication.outcome !== 'succeeded' || !destination) return undefined;
+	return registryHref(destination, publication.name, publication.version, run.repository);
+}
+
+function releaseHref(run: Execution): string | undefined {
+	if (run.state !== 'succeeded') return undefined;
+	const parsed = semVer.safeParse(run.version);
+	const tag = run.release?.tag
+		?? (parsed.success ? tagFor(run.workflow?.refs ?? defaultTagPolicy, parsed.data) : undefined);
+	return tag ? githubHref(run.repository, 'releases', 'tag', tag) : undefined;
+}
+
 export function runCard(run: Execution, now: number) {
 	const required = run.releaseSet?.required ?? run.configuration.streams[run.stream]?.required ?? [];
 	const approving = run.state === 'awaiting-approval';
@@ -39,7 +55,12 @@ export function runCard(run: Execution, now: number) {
 			? missing
 			: [],
 		preparationUrl: preparation?.url.startsWith('https://github.com/') ? preparation.url : undefined,
-		publications: run.publications.map(publication => ({ ...publication, label: publicationName(run, publication) })),
+		publications: run.publications.map(publication => ({
+			...publication,
+			label: publicationName(run, publication),
+			href: publicationHref(run, publication),
+		})),
+		release: releaseHref(run),
 		retryable: Boolean(run.workflow) && ['failed', 'cancelled'].includes(run.state)
 			&& !(run.operation === 'prepare' && !run.plan && !run.managed),
 		reconcilable: run.state === 'uncertain',

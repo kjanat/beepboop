@@ -157,6 +157,11 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 				 </a>
 			 </Field>
 			 <Field label="Updated"><Time value={run.updatedAt} /></Field>
+			 {card.release && (
+				 <Field label="Release">
+					 <a href={card.release}>Open on GitHub ↗</a>
+				 </Field>
+			 )}
 			 {run.runId && (
 				 <Field label="Workflow run">
 					 <a
@@ -182,7 +187,7 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 						 {card.publications.map(p => (
 							 <tr>
 								 <td>
-									 {p.label}
+									 {p.href ? <a href={p.href}>{p.label} ↗</a> : p.label}
 									 <small>{p.required ? 'required' : 'optional'}</small>
 								 </td>
 								 <td>{p.version}</td>
