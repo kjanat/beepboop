@@ -7,10 +7,10 @@ inputs:
 outputs:
   was-installed:
     description: Whether this action installed Bun
-    value: ${{ !fromJSON(steps.check-bun.outputs.json).available }}
+    value: ${{ !fromJSON(steps.check-bun.outputs.json || '{}').available }}
   bun-version:
     description: Version of the Bun this action provides
-    value: ${{ case(fromJSON(steps.check-bun.outputs.json).available, fromJSON(steps.check-bun.outputs.json).bun-version, steps.setup-bun.outputs.bun-version) }}
+    value: ${{ case(fromJSON(steps.check-bun.outputs.json || '{}').available == true, fromJSON(steps.check-bun.outputs.json || '{}').bun-version, steps.setup-bun.outputs.bun-version) }}
 runs:
   using: composite
   steps:
