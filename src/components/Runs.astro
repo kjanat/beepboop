@@ -187,7 +187,10 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 						 {card.publications.map(p => (
 							 <tr>
 								 <td>
-									 {p.href ? <a href={p.href}>{p.label} ↗</a> : p.label}
+									 {p.label}
+									 {p.href && (
+										 <a href={p.href} aria-label={`Open ${p.label}`}>↗</a>
+									 )}
 									 <small>{p.required ? 'required' : 'optional'}</small>
 								 </td>
 								 <td>{p.version}</td>
