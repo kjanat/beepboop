@@ -34,6 +34,7 @@ import { fromPromise, fromSync } from '@/failure';
 import { decode, sha, textSchema } from '@/model';
 
 type Permission = Record<string, 'read' | 'write'>;
+const coAuthor = 'Co-authored-by: kjanat <6353477+kjanat@users.noreply.github.com>';
 const ownerLogins = new Map<number, string>();
 const botIdentities = new Map<string, BotIdentity>();
 function detailOf(body: string): string {
@@ -502,8 +503,9 @@ export class RepositoryGateway {
 		checkpoint?: (head: string) => Effect.Effect<void, DomainError>,
 		setupEdits?: Edit[],
 		existingPull?: number,
-		takeOver = false,
+		options: { takeOver?: boolean; coAuthored?: boolean } = {},
 	): Effect.Effect<{ url: string; head: string }, DomainError> {
+		const { takeOver = false, coAuthored = false } = options;
 		const self = this;
 		return Effect.gen(function*() {
 			const { name, id } = snapshot.repository;
@@ -558,7 +560,7 @@ export class RepositoryGateway {
 				})),
 			});
 			const { sha: head } = yield* self.read(createdSchema, `/repos/${name}/git/commits`, token, 'POST', {
-				message: title,
+				message: coAuthored ? `${title}\n\n${coAuthor}` : title,
 				tree: tree.sha,
 				parents: setupEdits ? [snapshot.sha] : [base],
 			});

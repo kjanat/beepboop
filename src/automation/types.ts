@@ -176,6 +176,7 @@ export interface Execution {
 	runId?: number;
 	runAttempt?: number;
 	attempts: number;
+	initiatedBy?: string;
 	package?: PackageTarget;
 	reservation?: PublishKind;
 	notBefore?: number;

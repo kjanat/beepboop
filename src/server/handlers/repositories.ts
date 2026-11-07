@@ -89,7 +89,7 @@ export const repositoryEndpoints = {
 					undefined,
 					previous,
 					undefined,
-					takeOver,
+					{ takeOver, coAuthored: true },
 				);
 			const content = plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after
 				?? snapshot.files['.github/beepboop.json'];

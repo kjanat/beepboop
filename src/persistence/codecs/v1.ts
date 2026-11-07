@@ -278,6 +278,7 @@ const executionSchema: z.ZodType<Execution> = z.object({
 	runId: z.number().optional(),
 	runAttempt: z.number().optional(),
 	attempts: z.number(),
+	initiatedBy: z.string().optional(),
 	package: z.object({ id: z.string(), manager: managerName }).optional(),
 	reservation: z.enum(['new', 'update']).optional(),
 	notBefore: z.number().optional(),
