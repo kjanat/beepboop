@@ -124,6 +124,19 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 					? 'none'
 					: 'workspace';
 				if (observing.checked && value.observe?.length) {
+					const observed = value.observe;
+					const unobserved = packages.filter(id => !observed.some(entry => entry.publications.includes(id)));
+					if (unobserved.length) {
+						return yield* Result.fail(
+							new Refused({
+								message: `${unobserved.join(', ')} ${
+									unobserved.length === 1 ? 'is' : 'are'
+								} not published by the observed workflows. Deselect ${
+									unobserved.length === 1 ? 'it' : 'them'
+								} or clear the observation option.`,
+							}),
+						);
+					}
 					return {
 						name: name.value,
 						packages,

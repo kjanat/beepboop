@@ -11,7 +11,7 @@ import {
 import { z } from 'zod';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import { bearer } from '@root/test/support/http.ts';
-import { plugin, widget } from '@root/test/support/repositories.ts';
+import { passChecks, plugin, widget } from '@root/test/support/repositories.ts';
 import { origin, World } from '@root/test/support/world.ts';
 // Browser modules are checked separately to keep DOM and Worker Element types apart.
 const browserModule = new URL('../../src/ui/browser/setup.ts', import.meta.url).href;
@@ -418,6 +418,22 @@ for (const locked of [false, true]) {
 		expect(form.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(false);
 	});
 }
+
+test('an observed stream rejects a package its workflows do not publish', async () => {
+	const repository = world.github.create('octo/pair', {
+		'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+		'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+		'.github/workflows/release.yml':
+			"name: Release\non:\n  push: { tags: ['v*'] }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm --prefix packages/a publish\n",
+	});
+	passChecks(repository, world.github.head(repository));
+	const form = await open('octo/pair');
+	await act(form, 'preview');
+	expect(form.querySelector('.setup-result')?.textContent).toContain('"mode": "observe"');
+	control(form, 'a (packages/a/package.json)', window.HTMLInputElement).checked = false;
+	control(form, 'b (packages/b/package.json)', window.HTMLInputElement).checked = true;
+	await expect(act(form, 'preview')).rejects.toThrow('not published by the observed workflows');
+});
 
 test('an inferred stream keeps its workflow until observation is cleared', async () => {
 	plugin(world.github);

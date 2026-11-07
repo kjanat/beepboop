@@ -520,7 +520,7 @@ function targetsOf(
 							escapeRegExp(value)
 						}/?["']?(?:\\s|$|[;&)])|(?<![\\w./-])${escapeRegExp(value)}/package\\.json)`,
 						'm',
-					).test(publishing);
+					).test(mentioning);
 				const descriptors = Object.entries(snapshot.files).filter(([path]) =>
 					path.endsWith('.json') && !/(?:^|\/)(?:package|deno|jsr|composer|tsconfig[^/]*)\.json$/.test(path)
 					&& cites(path)

@@ -2620,6 +2620,18 @@ describe('release streams', () => {
 			);
 		expect(tarball('npm publish ./dist/root-1.0.0.tgz', 125)).toEqual(['pkg:npm/root-tool']);
 		expect(tarball('npm publish', 126)).toEqual(['pkg:npm/b', 'pkg:npm/root-tool']);
+		const installed = (run: string, id: number) =>
+			selected(
+				{
+					'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+					'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+					'.github/workflows/release.yml': release(`      - run: |\n          ${run}\n`),
+				},
+				id,
+				'npm',
+			);
+		expect(installed('npm ci --ignore-scripts --prefix packages/b\n          npm --prefix packages/a publish', 127))
+			.toEqual(['pkg:npm/a']);
 		const negated = planned({
 			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
 			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
