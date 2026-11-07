@@ -709,10 +709,21 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				`Source: ${execution.sourceSha}\nPreparation execution: ${execution.id}\n\nPromotion requires approval.`;
 			const result = prepared.head
 				? yield* gateway.resumePreparation(source, branch, title, body, prepared.head)
-				: yield* gateway.pullRequest(source, branch, title, body, ordered, undefined, head => {
-					prepared.head = head;
-					return this.put(execution);
-				});
+				: yield* gateway.pullRequest(
+					source,
+					branch,
+					title,
+					body,
+					ordered,
+					undefined,
+					head => {
+						prepared.head = head;
+						return this.put(execution);
+					},
+					undefined,
+					undefined,
+					{ coAuthored: execution.initiatedBy !== undefined },
+				);
 			prepared.result = result;
 			yield* this.put(execution);
 			return result;
@@ -1754,6 +1765,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							operation.head = head;
 							return this.put(execution);
 						},
+						undefined,
+						undefined,
+						{ coAuthored: execution.initiatedBy !== undefined },
 					);
 				execution.state = 'succeeded';
 				delete execution.reason;

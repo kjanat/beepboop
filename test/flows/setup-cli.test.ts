@@ -74,6 +74,9 @@ test('adopt enrolls a repository, reviews generated files and only opens a PR af
 		'run: npm publish',
 	);
 	expect(accepted.stdout.join('')).toContain('/pull/1');
+	expect(world.github.resolve(repository, 'automation/onboarding').message).toContain(
+		'Co-authored-by: kjanat <6353477+kjanat@users.noreply.github.com>',
+	);
 	world.github.merge(repository, 1);
 	const reopened = await run(['setup', repository.name], ['release-widget.yml', 'managed', false]);
 	expect(reopened.exitCode).toBe(0);

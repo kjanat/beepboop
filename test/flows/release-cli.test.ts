@@ -430,6 +430,9 @@ test('a version-file-only preparation does not promise or create publication aft
 	await world.wait(20_000);
 	const [pull] = repository.pulls;
 	if (!pull) throw new Error('No preparation pull request');
+	expect(world.github.resolve(repository, pull.head.sha).message).toContain(
+		'Co-authored-by: kjanat <6353477+kjanat@users.noreply.github.com>',
+	);
 	world.github.merge(repository, pull.number);
 	expect((await world.push(repository)).status).toBe(202);
 	await world.wait(1_000);

@@ -174,6 +174,7 @@ export const releaseEndpoints = {
 						version: plan.version,
 					})
 				);
+				promotion.initiatedBy = actor;
 				yield* service.store.audit(actor, 'release.prepare', promotion.id);
 				return yield* service.enqueue(repository, promotion);
 			}
@@ -188,6 +189,7 @@ export const releaseEndpoints = {
 					})
 					: createReleasePreparation(repository, input.stream, plan)
 			);
+			execution.initiatedBy = actor;
 			yield* service.store.audit(actor, 'release.prepare', execution.id);
 			return yield* service.enqueue(repository, execution);
 		})),
@@ -203,6 +205,7 @@ export const releaseEndpoints = {
 			}
 			if (input.planId !== planId) return yield* conflict('stale-plan', 'Release plan changed; preview it again');
 			const execution = yield* createReleasePreparation(repository, input.stream, plan);
+			execution.initiatedBy = context.actor;
 			yield* context.service.store.audit(context.actor, 'release.prepare-set', execution.id);
 			return yield* context.service.enqueue(repository, execution);
 		})),
@@ -238,6 +241,11 @@ export const releaseEndpoints = {
 				`chore: update hooks to ${release.version}`,
 				`Upstream: ${event.source}\nCommit: ${release.commit}`,
 				edits,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				{ coAuthored: true },
 			);
 			yield* service.store.audit(actor, 'hooks.prepare', result.url);
 			return result;

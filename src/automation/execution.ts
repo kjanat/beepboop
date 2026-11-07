@@ -65,7 +65,11 @@ export function deriveExecution(
 		configurationSha: parent.configurationSha,
 		presetShas: parent.presetShas,
 		workflows: revision.inventory.workflows,
-	}, request);
+	}, request).pipe(
+		Effect.map(execution =>
+			parent.initiatedBy === undefined ? execution : { ...execution, initiatedBy: parent.initiatedBy }
+		),
+	);
 }
 
 function executionFrom(source: ExecutionSource, request: ExecutionRequest): Effect.Effect<Execution, DomainError> {

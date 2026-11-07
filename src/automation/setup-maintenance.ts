@@ -118,6 +118,7 @@ export function maintainSetup(
 				undefined,
 				previous,
 				pull.number,
+				{ coAuthored: true },
 			);
 			const generated = new Map(
 				previous.flatMap(edit => {
