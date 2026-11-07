@@ -360,7 +360,7 @@ test('delegated manifest preparation can promote when its prepared versions reac
 	await world.wait(1_000);
 	const executions = await Effect.runPromise(client.call(routes.executionsList, {}));
 	expect(executions.filter(execution => execution.operation === 'promote')).toEqual([
-		expect.objectContaining({ version: '1.2.4', sourceSha: merged.sha, state: 'blocked' }),
+		expect.objectContaining({ version: '1.2.4', sourceSha: merged.sha, state: 'awaiting-approval' }),
 	]);
 });
 
@@ -391,7 +391,7 @@ test('managed manifest plans with custom version files promote after the prepara
 	await world.wait(1_000);
 	const executions = await Effect.runPromise(client.call(routes.executionsList, {}));
 	expect(executions.filter(execution => execution.operation === 'promote')).toEqual([
-		expect.objectContaining({ version: '1.0.1', sourceSha: merged.sha, state: 'blocked' }),
+		expect.objectContaining({ version: '1.0.1', sourceSha: merged.sha, state: 'awaiting-approval' }),
 	]);
 });
 

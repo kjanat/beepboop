@@ -132,7 +132,9 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 			 		}Beepboop releases this commit once it is verified and its checks pass.`
 			 		: 'Waiting for your approval.'
 			 	: (run.state !== 'succeeded' && run.reason)
-			 		|| (run.state === 'succeeded'
+			 		|| (run.state === 'verifying'
+			 			? 'The workflow finished. Beepboop is waiting for the registries to show every publication.'
+			 			: run.state === 'succeeded'
 			 			? 'This operation completed.'
 			 			: 'Follow the workflow and publication results below.')}
 		 </p>

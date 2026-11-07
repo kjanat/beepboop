@@ -36,7 +36,9 @@ export function releaseSummaries(executions: Execution[]) {
 			publications,
 			verified,
 			updatedAt: Math.max(...runs.map(run => run.updatedAt)),
-			attention: runs.some(run => ['blocked', 'failed', 'cancelled', 'uncertain'].includes(run.state)),
+			attention: runs.some(run =>
+				['awaiting-approval', 'blocked', 'failed', 'cancelled', 'uncertain'].includes(run.state)
+			),
 		};
 	}).sort((a, b) => b.updatedAt - a.updatedAt);
 }
@@ -57,12 +59,13 @@ export function releaseSetSummaries(executions: Execution[]) {
 		const total = operationCount ?? runs.length;
 		const complete = runs.filter(run => run.state === 'succeeded').length;
 		const error = runs.find(run => run.releaseSet?.workflowError)?.releaseSet?.workflowError;
-		const attention = Boolean(error) || runs.some(run => ['failed', 'cancelled', 'uncertain'].includes(run.state));
+		const attention = Boolean(error)
+			|| runs.some(run => ['blocked', 'failed', 'cancelled', 'uncertain'].includes(run.state));
 		const state: ReleaseSetState = complete === total
 			? 'succeeded'
 			: attention
 			? 'needs attention'
-			: runs.some(run => run.operation === 'promote' && run.state === 'blocked')
+			: runs.some(run => run.state === 'awaiting-approval')
 			? 'awaiting approval'
 			: 'in progress';
 		return {

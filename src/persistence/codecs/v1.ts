@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Channel, ChannelOutcome, RegistryOutcome } from '@/automation/destinations';
+import { completion } from '@/automation/execution';
 import { inputSchema, outputSchema, platformSchema, type ResolvedInput } from '@/automation/outputs';
 import {
 	identifyExecution,
@@ -29,6 +30,7 @@ import type {
 import { managerDestinationIds, managerNames } from '@/contract/catalog';
 import { diagnostic, isDiagnosticCode } from '@/contract/diagnostics';
 import { setupChoicesSchema } from '@/contract/setup';
+import { executionStates } from '@/contract/views';
 import type { PackageIdentity } from '@/package-url';
 import { storedBinding, storedConfiguration } from '@/persistence/codecs/configuration';
 
@@ -262,17 +264,7 @@ const executionSchema: z.ZodType<Execution> = z.object({
 	workflowSha: z.string().optional(),
 	helperShas: strings.optional(),
 	version: z.string().optional(),
-	state: z.enum([
-		'pending',
-		'blocked',
-		'ready',
-		'dispatching',
-		'running',
-		'succeeded',
-		'failed',
-		'cancelled',
-		'uncertain',
-	]),
+	state: z.enum(executionStates),
 	dependencies: strings,
 	workflow: storedBinding.extend({ ref: z.string() }).optional(),
 	runId: z.number().optional(),
@@ -320,15 +312,25 @@ const setupEditSchema: z.ZodType<SetupEdit> = z.object({
 export function decodeRepositoryV1(value: unknown): RepositoryRecord {
 	return identifyRepository(repositorySchema.parse(value));
 }
+function currentState(execution: Execution): Execution {
+	if (execution.state !== 'blocked') return execution;
+	if (execution.operation === 'promote' && execution.attempts === 0 && execution.approvedAt === undefined) {
+		return { ...execution, state: 'awaiting-approval' };
+	}
+	if (execution.runId !== undefined && completion(execution, true) === 'verifying') {
+		return { ...execution, state: 'verifying' };
+	}
+	return execution;
+}
 export function decodeExecutionV1(value: unknown): Execution {
-	return identifyExecution(executionSchema.parse(value));
+	return currentState(identifyExecution(executionSchema.parse(value)));
 }
 export function decodeEventV1(value: unknown): AutomationEvent {
 	return automationEventSchema.parse(value);
 }
 export function decodeDeliveryV1(value: unknown): SubscriptionDelivery {
 	const delivery = deliverySchema.parse(value);
-	return { ...delivery, execution: identifyExecution(delivery.execution) };
+	return { ...delivery, execution: currentState(identifyExecution(delivery.execution)) };
 }
 export function decodeSetupEditV1(value: unknown): SetupEdit {
 	return setupEditSchema.parse(value);

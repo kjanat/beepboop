@@ -23,7 +23,7 @@ function publicationName(run: Execution, publication: Execution['publications'][
 
 export function runCard(run: Execution, now: number) {
 	const required = run.releaseSet?.required ?? run.configuration.streams[run.stream]?.required ?? [];
-	const approving = run.state === 'blocked' && run.operation === 'promote';
+	const approving = run.state === 'awaiting-approval';
 	const automatic = approving
 		&& (run.configuration.streams[run.stream]?.promote.approval === 'push' || run.approvedBy === 'merge');
 	const missing = required.filter(id =>
@@ -35,7 +35,9 @@ export function runCard(run: Execution, now: number) {
 		until: waitingUntil(run, now),
 		approving,
 		automatic,
-		missing: !approving && run.operation !== 'prepare' && run.state !== 'cancelled' ? missing : [],
+		missing: !approving && run.state !== 'verifying' && run.operation !== 'prepare' && run.state !== 'cancelled'
+			? missing
+			: [],
 		preparationUrl: preparation?.url.startsWith('https://github.com/') ? preparation.url : undefined,
 		publications: run.publications.map(publication => ({ ...publication, label: publicationName(run, publication) })),
 		retryable: Boolean(run.workflow) && ['failed', 'cancelled'].includes(run.state)
