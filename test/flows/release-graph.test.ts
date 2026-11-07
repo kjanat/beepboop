@@ -2925,6 +2925,18 @@ describe('release streams', () => {
 		const negatedBindings = negated.choices.flatMap(choice => choice.observe ?? []);
 		expect(negatedBindings.find(binding => binding.ref === 'refs/tags/a-v*')?.publications).toEqual(['pkg:npm/a']);
 		expect(negatedBindings.find(binding => binding.ref === 'refs/tags/b-v*')?.publications).toEqual(['pkg:npm/b']);
+		const comparedBindings = (comparison: string, id: number) =>
+			planned({
+				'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+				'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+				'.github/workflows/release.yml':
+					`on: { push: { tags: ['a-v*', 'b-v*'] } }\njobs:\n  a:\n    if: \${{ startsWith(github.ref, 'refs/tags/b-v') ${comparison} }}\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm --prefix packages/a publish\n  b:\n    if: startsWith(github.ref, 'refs/tags/b-v')\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm --prefix packages/b publish\n`,
+			}, id).choices.flatMap(choice => choice.observe ?? []);
+		for (const [comparison, id] of [['== false', 168], ['!= true', 169]] as const) {
+			const bindings = comparedBindings(comparison, id);
+			expect(bindings.find(binding => binding.ref === 'refs/tags/a-v*')?.publications).toEqual(['pkg:npm/a']);
+			expect(bindings.find(binding => binding.ref === 'refs/tags/b-v*')?.publications).toEqual(['pkg:npm/b']);
+		}
 		expect(
 			planned({
 				'package.json': JSON.stringify({ name: '@octo/tool', version: '1.0.0' }),

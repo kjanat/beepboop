@@ -96,10 +96,16 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 					const condition = [members.get(file)?.conditions[job], guard.join('#')].filter(Boolean).join(' ');
 					if (prefix === undefined || !condition || families.length < 2) return true;
 					const mentions = families.flatMap(family =>
-						[...condition.matchAll(new RegExp(`['"](?:refs/tags/)?${escapeRegExp(family)}`, 'g'))].map(match => ({
-							family,
-							negated: /!\s*\w+\(\s*[^()]*$|!=\s*$/.test(condition.slice(0, match.index)),
-						}))
+						[...condition.matchAll(new RegExp(`['"](?:refs/tags/)?${escapeRegExp(family)}`, 'g'))].map(match => {
+							const compared = /^[^()]*\)\s*(==|!=)\s*(true|false)\b/.exec(
+								condition.slice(match.index + match[0].length),
+							);
+							const flipped = compared ? (compared[1] === '==') === (compared[2] === 'false') : false;
+							return {
+								family,
+								negated: /!\s*\w+\(\s*[^()]*$|!=\s*$/.test(condition.slice(0, match.index)) !== flipped,
+							};
+						})
 					);
 					const positive = mentions.filter(mention => !mention.negated).map(mention => mention.family);
 					const negative = mentions.filter(mention => mention.negated).map(mention => mention.family);
