@@ -1935,6 +1935,24 @@ describe('release streams', () => {
 		}, 158);
 		expect(Object.keys(miseHelper.files)).toContain('packages/a/scripts/publish.sh');
 		expect([...target(stream(plan(miseHelper).graph, 'main'), 'npm').packages]).toEqual(['pkg:npm/a']);
+		const chained = await built({
+			'package.json': JSON.stringify({ name: 'root', version: '1.0.0' }),
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'packages/a/scripts/publish.sh': 'npm publish\n',
+			'.github/workflows/release.yml': release(
+				'      - run: |\n          cd packages/a\n          cd scripts\n          bash publish.sh\n',
+			),
+		}, 162);
+		expect(Object.keys(chained.files)).toContain('packages/a/scripts/publish.sh');
+		const workingDirectory = await built({
+			'package.json': JSON.stringify({ name: 'root', version: '1.0.0' }),
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'packages/a/scripts/publish.sh': 'npm publish\n',
+			'.github/workflows/release.yml': release(
+				'      - working-directory: packages/a\n        run: cd scripts && bash publish.sh\n',
+			),
+		}, 163);
+		expect(Object.keys(workingDirectory.files)).toContain('packages/a/scripts/publish.sh');
 		const reusableScripts = await built({
 			...workspace,
 			'packages/a/scripts/publish.sh': 'npm publish\n',
@@ -2674,6 +2692,21 @@ describe('release streams', () => {
 			);
 		expect(crates('public-*', 160)).toEqual(['pkg:cargo/public-a']);
 		expect(crates('internal-b', 161)).toEqual(['pkg:cargo/internal-b']);
+		const scriptBody = (body: string, id: number) =>
+			planned({
+				'package.json': JSON.stringify({ name: 'widget', version: '1.0.0', scripts: { build: body } }),
+				'.github/workflows/release.yml': release('      - run: npm run build\n'),
+			}, id).graph.streams.length;
+		expect(scriptBody('f() { npm publish; }; echo build complete', 164)).toBe(0);
+		expect(scriptBody('f() { npm publish; }; f', 165)).toBe(1);
+		const rehearsal = (step: string, id: number) =>
+			planned({
+				...widget,
+				'.github/workflows/release.yml':
+					`on: { push: { tags: ['v*'] } }\nenv: { NPM_CONFIG_DRY_RUN: 'true' }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm publish\n${step}`,
+			}, id).graph.streams.length;
+		expect(rehearsal('', 166)).toBe(0);
+		expect(rehearsal("        env: { NPM_CONFIG_DRY_RUN: 'false' }\n", 167)).toBe(1);
 		const helper = (source: string, id: number) =>
 			planned({
 				...widget,

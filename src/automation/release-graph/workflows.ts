@@ -252,8 +252,19 @@ function shellTopLevel(source: string): string {
 			inside = !/^\}/.test(line);
 			continue;
 		}
-		if (/^\s*(?:function\s+)?[A-Za-z_][\w-]*\s*\(\)\s*\{/.test(line)) {
-			inside = !/\}\s*$/.test(line);
+		const definition = /^\s*(?:function\s+)?[A-Za-z_][\w-]*\s*\(\)\s*\{/.exec(line);
+		if (definition) {
+			let depth = 1;
+			let end = -1;
+			for (let index = definition[0].length; index < line.length && end < 0; index++) {
+				if (line[index] === '{') depth++;
+				else if (line[index] === '}' && --depth === 0) end = index;
+			}
+			if (end < 0) inside = true;
+			else {
+				const remainder = line.slice(end + 1).replace(/^[\s;&|]+/, '');
+				if (remainder) kept.push(remainder);
+			}
 			continue;
 		}
 		kept.push(line);
@@ -624,9 +635,10 @@ function scriptEffects(
 					/\/?(?:package\.json|deno\.jsonc?|[Jj]ustfile|\.justfile|(?:GNU)?[Mm]akefile|\.?mise(?:\.local)?\.toml|\.config\/mise\.toml|(?:\.mise\/tasks|mise-tasks|\.config\/mise\/tasks)\/[^/]+)$/,
 					'',
 				);
-				effects.push(...commandEffects(task.body, task.source, owner));
-				runs.push(task.body);
-				const nested = scriptEffects(snapshot, task.body, seen, owner || undefined);
+				const body = executable(task.body, undefined);
+				effects.push(...commandEffects(body, task.source, owner));
+				runs.push(body);
+				const nested = scriptEffects(snapshot, body, seen, owner || undefined);
 				effects.push(...nested.effects);
 				runs.push(...nested.runs);
 			}
@@ -849,7 +861,18 @@ function buildJob(
 			: raw;
 		for (const step of expandStep(located, matrix, bindings)) {
 			const result = stepEffects(snapshot, step, path, new Set());
-			effects.push(...guarded(result.effects, step.if));
+			const rehearsed = [document.env, job.env, step.env].reduce<boolean>((current, env) => {
+				const entry = Object.entries(object(env)).find(([key]) => /^npm_config_dry[-_]run$/i.test(key));
+				return entry ? entry[1] === true || String(entry[1]).toLowerCase() === 'true' : current;
+			}, false);
+			effects.push(
+				...guarded(
+					rehearsed
+						? result.effects.filter(effect => !(effect.kind === 'publish' && effect.destination === 'npm'))
+						: result.effects,
+					step.if,
+				),
+			);
 			runs.push(...result.runs);
 			if (result.action) actions.push(result.action);
 		}

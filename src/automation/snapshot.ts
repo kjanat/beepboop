@@ -182,6 +182,22 @@ function referencedScripts(
 			)
 			: []
 	);
+	const changes = /(?:^|[;&|(]|&&|\brun:)\s*cd\s+["']?(?:\.\/)?([\w.-][\w./-]*?)\/?["']?(?=\s|$|[;&|)])/g;
+	const chained: string[] = [];
+	let current = '';
+	for (const line of text.split('\n')) {
+		if (/^\s*-\s|\brun:/.test(line)) current = '';
+		for (const change of line.matchAll(changes)) {
+			current = within(current, change[1] ?? '');
+			if (current) chained.push(current);
+		}
+	}
+	const configured = [...text.matchAll(/working-directory:\s*["']?(?:\.\/)?([\w./-]+?)\/?["']?\s*$/gm)].flatMap(
+		match => match[1] ?? [],
+	);
+	const crossed = configured.flatMap(directory =>
+		[...text.matchAll(changes)].map(change => within(directory, change[1] ?? ''))
+	);
 	const directories = [
 		...new Set(
 			[
@@ -193,7 +209,7 @@ function referencedScripts(
 						'gm',
 					),
 				),
-			].flatMap(match => match[1] ?? []).concat(matrixDirectories, taskDirectories),
+			].flatMap(match => match[1] ?? []).concat(matrixDirectories, taskDirectories, chained, crossed),
 		),
 	];
 	const parents = new Set(
