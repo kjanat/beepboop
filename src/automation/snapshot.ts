@@ -86,7 +86,7 @@ const recipe =
 	/(?:^|\/)(?:Makefile|GNUmakefile|[Jj]ustfile|\.justfile|package\.json|deno\.jsonc?|\.?mise(?:\.local)?\.toml|\.config\/mise\.toml|(?:\.mise\/tasks|mise-tasks|\.config\/mise\/tasks)\/[^/]+)$/;
 function workflowDirectories(read: ReadonlyMap<string, string>, repository: string): string[] {
 	const documents = workflowDocuments(read);
-	const calls = workflowCalls(documents, repository);
+	const { calls } = workflowCalls(documents, repository);
 	const composite = (action: string, supplied: Record<string, unknown>, trail: readonly string[]): string[] => {
 		if (trail.includes(action)) return [];
 		const { definition, bindings } = actionBindings(

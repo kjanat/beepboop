@@ -1109,6 +1109,12 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 	const groups = new Map<string, Workflow[]>();
 	const initiators: { workflow: Workflow; dispatches: string[]; tags: boolean }[] = [];
 	for (const workflow of workflows) {
+		if (workflow.truncated) {
+			omissions.push({
+				subject: code(workflow.file),
+				reason: 'reaches more reusable workflow calls than inference follows, so some publications may be missing',
+			});
+		}
 		const effects = graph.effects(workflow.file);
 		const previews = effects.filter(({ effect }) => effect.kind === 'preview');
 		if (previews.length && workflow.events.every(event => /^pull_request/.test(event) || event === 'push')) {

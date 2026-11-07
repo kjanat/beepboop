@@ -65,12 +65,19 @@ export function liveJobs(document: Record<string, unknown>): [string, Record<str
 	});
 }
 
-export function workflowCalls(documents: readonly WorkflowDocument[], repository: string): WorkflowCall[] {
+export const callLimit = 2048;
+
+export function workflowCalls(
+	documents: readonly WorkflowDocument[],
+	repository: string,
+): { calls: WorkflowCall[]; truncated: string[] } {
 	const byFile = new Map(documents.map(entry => [entry.file, entry] as const));
 	const target = (job: Record<string, unknown>) =>
 		typeof job.uses === 'string' ? ownWorkflow(job.uses, repository)?.file : undefined;
 	const called = new Set(documents.flatMap(entry => liveJobs(entry.document).flatMap(([, job]) => target(job) ?? [])));
 	const calls: WorkflowCall[] = [];
+	const truncated = new Set<string>();
+	const seen = new Set<string>();
 	const visit = (
 		root: string,
 		file: string,
@@ -85,7 +92,6 @@ export function workflowCalls(documents: readonly WorkflowDocument[], repository
 			const callee = name === undefined ? undefined : byFile.get(name);
 			if (!callee || trail.includes(callee.file) || staticGuard(job.if, { inputs: inherited }) === false) continue;
 			const assignments = matrixCombinations(object(object(job.strategy).matrix)).slice(0, matrixLimit);
-			const seen = new Set<string>();
 			for (const assignment of assignments.length ? assignments : [{}]) {
 				const supplied = Object.fromEntries(
 					Object.entries(object(job.with)).map(([key, input]) => [key, forwardInput(input, inherited, assignment)]),
@@ -96,8 +102,12 @@ export function workflowCalls(documents: readonly WorkflowDocument[], repository
 				};
 				const guard = [outer, typeof job.if === 'string' ? job.if : undefined].filter(Boolean).join(' && ')
 					|| undefined;
-				const key = JSON.stringify([bindings, guard]);
+				const key = JSON.stringify([root, file, id, bindings, guard]);
 				if (seen.has(key)) continue;
+				if (calls.length >= callLimit) {
+					truncated.add(root);
+					continue;
+				}
 				seen.add(key);
 				calls.push({ root, caller: file, job: id, callee, bindings, ...(guard ? { guard } : {}) });
 				visit(root, callee.file, bindings, [...trail, callee.file], guard);
@@ -109,7 +119,7 @@ export function workflowCalls(documents: readonly WorkflowDocument[], repository
 			visit(file, file, {}, [file]);
 		}
 	}
-	return calls;
+	return { calls, truncated: [...truncated] };
 }
 
 export function actionBindings(

@@ -97,6 +97,7 @@ export interface Workflow {
 	dispatchText: string;
 	callInputs: string[];
 	generator?: string;
+	truncated?: true;
 	jobs: Job[];
 }
 
@@ -890,7 +891,11 @@ export function workflowModels(snapshot: Snapshot): Workflow[] {
 		});
 	}
 	const edges = new Map<string, { caller: string; bound?: Map<string, Job> }[]>();
-	for (const call of workflowCalls(documents, snapshot.repository.name)) {
+	const { calls, truncated } = workflowCalls(documents, snapshot.repository.name);
+	for (const workflow of workflows) {
+		if (truncated.includes(workflow.file)) workflow.truncated = true;
+	}
+	for (const call of calls) {
 		const usable = Object.keys(call.bindings).length > 0
 			&& /\binputs\.[\w-]+/.test(JSON.stringify(call.callee.document.jobs));
 		const bound = usable || call.guard !== undefined

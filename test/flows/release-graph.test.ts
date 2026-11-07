@@ -2708,6 +2708,35 @@ describe('release streams', () => {
 			return planned(files, id).graph.streams.length;
 		};
 		expect(fanOut(4, 140)).toBe(1);
+		const accumulating = (levels: number, id: number) => {
+			const sweep = 'n: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]';
+			const files: Record<string, string> = {
+				...widget,
+				'.github/workflows/leaf.yml':
+					'on: { workflow_call: {} }\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm publish\n',
+			};
+			for (let level = 1; level <= levels; level++) {
+				const earlier = Array.from({ length: level - 1 }, (_, index) => `n${index + 1}`);
+				const forwards = [
+					...earlier.map(name => `      ${name}: \${{ inputs.${name} }}`),
+					`      n${level}: \${{ matrix.n }}`,
+				];
+				const declared = earlier.map(name => `      ${name}: { type: number }`);
+				const next = level === levels ? 'leaf' : `level${level + 1}`;
+				const body =
+					`jobs:\n  next:\n    strategy:\n      matrix:\n        ${sweep}\n    uses: ./.github/workflows/${next}.yml\n    with:\n${
+						forwards.join('\n')
+					}\n`;
+				files[`.github/workflows/${level === 1 ? 'release' : `level${level}`}.yml`] = level === 1
+					? `on: { push: { tags: ['v*'] } }\n${body}`
+					: `on:\n  workflow_call:\n    inputs:\n${declared.join('\n')}\n${body}`;
+			}
+			return planned(files, id).graph.omissions;
+		};
+		expect(accumulating(2, 141)).toEqual([]);
+		expect(accumulating(5, 142).map(omission => omission.reason)).toEqual([
+			'reaches more reusable workflow calls than inference follows, so some publications may be missing',
+		]);
 		const tarball = (command: string, id: number) =>
 			selected(
 				{
