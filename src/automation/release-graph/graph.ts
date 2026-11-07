@@ -61,6 +61,7 @@ export interface StreamWorkflow {
 	tagPatterns: string[];
 	branchPatterns: string[];
 	starts: string[];
+	completions: string[];
 	conditions: Record<string, string>;
 }
 export interface StreamProposal {
@@ -177,6 +178,13 @@ class Graph {
 	}
 	entry(workflow: Workflow): boolean {
 		return workflow.events.some(event => entryEvents.includes(event));
+	}
+	completions(file: string): string[] {
+		const workflow = this.byFile.get(file);
+		if (!workflow) return [];
+		return this.workflows.filter(other =>
+			other.file !== file && other.workflowRuns.some(source => source === file || source === workflow.name)
+		).map(other => other.file);
 	}
 	starts(file: string): string[] {
 		const workflow = this.byFile.get(file);
@@ -1300,6 +1308,7 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 				tagPatterns: workflow?.tagPatterns ?? [],
 				branchPatterns: workflow?.branchPatterns ?? [],
 				starts: graph.starts(file),
+				completions: graph.completions(file),
 				conditions: Object.fromEntries(
 					(workflow?.jobs ?? []).flatMap(job => job.condition ? [[job.id, job.condition]] : []),
 				),
@@ -1450,6 +1459,7 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 				tagPatterns: initiator.workflow.tagPatterns,
 				branchPatterns: initiator.workflow.branchPatterns,
 				starts: graph.starts(initiator.workflow.file),
+				completions: graph.completions(initiator.workflow.file),
 				conditions: {},
 			});
 			evidence.push(...workflowEvidence(initiator.workflow));
@@ -1515,6 +1525,7 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 				tagPatterns: follower.tagPatterns,
 				branchPatterns: follower.branchPatterns,
 				starts: graph.starts(follower.file),
+				completions: graph.completions(follower.file),
 				conditions: Object.fromEntries(
 					follower.jobs.flatMap(job => job.condition ? [[job.id, job.condition]] : []),
 				),
