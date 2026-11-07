@@ -291,7 +291,7 @@ function modulePath(snapshot: Snapshot, module: string, directory = ''): string 
 		|| path === `${relative}/__main__.py`
 	);
 }
-type Task = { body: string; source: string };
+type Task = { body: string; source: string; directory?: string };
 const taskKinds = ['package', 'deno', 'just', 'make', 'mise'] as const;
 type TaskKind = (typeof taskKinds)[number];
 type TaskTable = { tasks: Map<TaskKind, Map<string, Task>>; present: Set<TaskKind> };
@@ -361,7 +361,11 @@ function taskTable(snapshot: Snapshot, directory: string): TaskTable {
 				Array.isArray(run) ? run.map(String).join('\n') : typeof run === 'string' ? run : '',
 				...depends.map(dependency => `mise run ${dependency}`),
 			].filter(Boolean).join('\n');
-			if (body) add('mise', task, { body, source: path });
+			const dir = object(definition).dir;
+			const located = typeof dir === 'string'
+				? within(directory, dir.replace(/^\{\{\s*config_root\s*\}\}\/?/, '').replace(/^\.\//, ''))
+				: undefined;
+			if (body) add('mise', task, { body, source: path, ...(located !== undefined ? { directory: located } : {}) });
 		}
 	}
 	const prefix = directory ? `${directory}/` : '';
@@ -469,11 +473,11 @@ function taskBodies(
 	line: string,
 	directory = '',
 	lifecycle = true,
-): { name: string; body: string; source: string }[] {
+): { name: string; body: string; source: string; directory?: string }[] {
 	const cargo = /\bcargo\s+([a-z][\w-]*)/.exec(line)?.[1];
 	const alias = cargo ? aliasTable(snapshot).get(cargo) : undefined;
 	if (cargo && alias) return [{ name: cargo, ...alias }];
-	const found: { name: string; body: string; source: string }[] = [];
+	const found: { name: string; body: string; source: string; directory?: string }[] = [];
 	for (const { pattern, kinds, many } of invocations) {
 		for (const match of line.matchAll(pattern)) {
 			const rest = line.slice((match.index ?? 0) + match[0].length).split(/\s--(?:\s|$)|[;&|]/)[0] ?? '';
@@ -611,7 +615,7 @@ function scriptEffects(
 				const key = `${task.source}#${task.name}#${task.body}`;
 				if (seen.has(key)) continue;
 				seen.add(key);
-				const owner = task.source.replace(
+				const owner = task.directory ?? task.source.replace(
 					/\/?(?:package\.json|deno\.jsonc?|[Jj]ustfile|\.justfile|(?:GNU)?[Mm]akefile|\.?mise(?:\.local)?\.toml|\.config\/mise\.toml|(?:\.mise\/tasks|mise-tasks|\.config\/mise\/tasks)\/[^/]+)$/,
 					'',
 				);

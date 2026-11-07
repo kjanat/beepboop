@@ -2779,6 +2779,32 @@ describe('release streams', () => {
 		expect(building('npm --prefix packages/b run build\n          npm --prefix packages/a publish', 147)).toEqual([
 			'pkg:npm/a',
 		]);
+		const typed = (type: string, condition: string, value: string, id: number) =>
+			planned({
+				...widget,
+				'.github/workflows/leaf.yml':
+					`on:\n  workflow_call:\n    inputs:\n      flag:\n        type: ${type}\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - if: ${condition}\n        run: npm publish\n`,
+				'.github/workflows/release.yml':
+					`on: { push: { tags: ['v*'] } }\njobs:\n  call:\n    uses: ./.github/workflows/leaf.yml\n    with: { flag: ${value} }\n`,
+			}, id).graph.streams.length;
+		expect(typed('boolean', "inputs.flag == 'false'", 'false', 148)).toBe(0);
+		expect(typed('boolean', "inputs.flag == 'true'", 'true', 149)).toBe(0);
+		expect(typed('string', "inputs.flag == 'stable'", 'STABLE', 150)).toBe(1);
+		expect(typed('string', "inputs.flag == 'stable'", 'beta', 151)).toBe(0);
+		expect(typed('string', "inputs.flag == 'true'", "'true'", 152)).toBe(1);
+		const miseDir = (extra: string, id: number) =>
+			selected(
+				{
+					'package.json': JSON.stringify({ name: 'root', version: '1.0.0' }),
+					'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+					'mise.toml': `[tasks.release]\n${extra}run = "npm publish"\n`,
+					'.github/workflows/release.yml': release('      - run: mise run release\n'),
+				},
+				id,
+				'npm',
+			);
+		expect(miseDir('dir = "packages/a"\n', 153)).toEqual(['pkg:npm/a']);
+		expect(miseDir('', 154)).toEqual(['pkg:npm/root']);
 		const tarball = (command: string, id: number) =>
 			selected(
 				{

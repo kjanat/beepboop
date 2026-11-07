@@ -1,8 +1,11 @@
 import { object } from '@/automation/managers/helpers';
 
 const stringMark = '\u0000';
+const numeric = /^-?\d+(?:\.\d+)?$/;
 export function scalarText(value: string | number | boolean): string {
-	return typeof value === 'string' && (value === 'false' || value === '0') ? `${stringMark}${value}` : String(value);
+	return typeof value === 'string' && (value === 'true' || value === 'false' || numeric.test(value))
+		? `${stringMark}${value}`
+		: String(value);
 }
 function plain(text: string): string {
 	return text.replaceAll(stringMark, '');
@@ -11,7 +14,23 @@ export function typedScalar(text: string): string | number | boolean {
 	if (text.startsWith(stringMark)) return plain(text);
 	if (text === 'true') return true;
 	if (text === 'false') return false;
-	return text === '0' ? 0 : text;
+	return numeric.test(text) && String(Number(text)) === text ? Number(text) : text;
+}
+type Operand = { kind: 'string' | 'number' | 'boolean'; text: string };
+function operand(text: string): Operand {
+	if (text.startsWith(stringMark)) return { kind: 'string', text: plain(text) };
+	if (text === 'true' || text === 'false') return { kind: 'boolean', text };
+	return { kind: numeric.test(text) ? 'number' : 'string', text };
+}
+function asNumber(value: Operand): number {
+	if (value.kind === 'boolean') return value.text === 'true' ? 1 : 0;
+	return value.text.trim() === '' ? 0 : Number(value.text);
+}
+function equal(left: Operand, right: Operand): boolean {
+	if (left.kind !== right.kind) return asNumber(left) === asNumber(right);
+	if (left.kind === 'string') return left.text.toLowerCase() === right.text.toLowerCase();
+	if (left.kind === 'number') return Number(left.text) === Number(right.text);
+	return left.text === right.text;
 }
 const wholeInput = /^\s*\$\{\{\s*(?:github\.event\.)?inputs\.([\w-]+)\s*\}\}\s*$/;
 const wholeMatrix = /^\s*\$\{\{\s*matrix\.([\w-]+(?:\.[\w-]+)*)\s*\}\}\s*$/;
@@ -112,11 +131,13 @@ function evaluateTerm(term: string, values: GuardValues): boolean | undefined {
 	const compared = comparison.exec(trimmed);
 	if (compared) {
 		const path = compared[1] ?? compared[8] ?? '';
-		const literal = compared[3] ?? compared[4] ?? compared[5] ?? compared[6] ?? '';
+		const text = compared[3] ?? compared[5];
+		const flag = compared[4] ?? compared[6];
+		const literal: Operand = text !== undefined ? { kind: 'string', text } : { kind: 'boolean', text: flag ?? 'false' };
 		const operator = compared[2] ?? compared[7];
 		const value = lookup(path, values);
 		if (value === undefined) return undefined;
-		return operator === '==' ? plain(value) === literal : plain(value) !== literal;
+		return operator === '==' ? equal(operand(value), literal) : !equal(operand(value), literal);
 	}
 	const bare = truthiness.exec(trimmed);
 	if (bare) {
