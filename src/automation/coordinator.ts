@@ -8,6 +8,7 @@ import {
 	dependenciesReady,
 	expectedRunTitle,
 	mergePublications,
+	recheckable,
 	runTitle,
 	validatePublicationIdentity,
 } from '@/automation/execution';
@@ -135,9 +136,6 @@ function moved(execution: Execution, head: { ref: string; sha: string }): string
 	return `${head.ref} is at ${head.sha.slice(0, 12)} but this execution builds ${execution.sourceSha.slice(0, 12)}; ${
 		release ? 'prepare the release again' : 'trigger the operation again'
 	}`;
-}
-function verifying(publication: Publication): boolean {
-	return canVerifyPublication(publication.manager) && ['pending', 'uncertain'].includes(publication.outcome);
 }
 export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private readonly lock = Semaphore.makeUnsafe(1);
@@ -1805,7 +1803,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (run.status === 'completed') {
 					for (let i = 0; i < execution.publications.length; i++) {
 						const publication = execution.publications[i];
-						if (publication && verifying(publication)) {
+						if (publication && recheckable(publication)) {
 							const context = this.gateway().verification(execution.repository, execution.repositoryId);
 							execution.publications[i] = yield* verifyPublication(publication, fetch, context);
 						}
@@ -1955,7 +1953,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const publications = yield* Effect.forEach(
 					execution.publications,
 					publication =>
-						verifying(publication)
+						recheckable(publication)
 							? verifyPublication(publication, fetch, context)
 							: Effect.succeed(publication),
 					{ concurrency: 'unbounded' },
@@ -2021,7 +2019,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					.map((e) => e.stream),
 			);
 			const unresolved = (execution: Execution) =>
-				['succeeded', 'failed'].includes(execution.state) && execution.publications.some(verifying);
+				['succeeded', 'failed'].includes(execution.state) && execution.publications.some(recheckable);
 			if (active.some(e => !e.releaseSet?.workflowId) || executions.some(unresolved)) {
 				yield* this.requestReconcile(started + reconcileInterval);
 			}

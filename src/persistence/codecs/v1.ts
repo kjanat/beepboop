@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Channel, ChannelOutcome, RegistryOutcome } from '@/automation/destinations';
+import { completion } from '@/automation/execution';
 import { inputSchema, outputSchema, platformSchema, type ResolvedInput } from '@/automation/outputs';
 import {
 	identifyExecution,
@@ -316,7 +317,7 @@ function currentState(execution: Execution): Execution {
 	if (execution.operation === 'promote' && execution.attempts === 0 && execution.approvedAt === undefined) {
 		return { ...execution, state: 'awaiting-approval' };
 	}
-	if (execution.runId !== undefined && execution.publications.some(publication => publication.outcome === 'pending')) {
+	if (execution.runId !== undefined && completion(execution, true) === 'verifying') {
 		return { ...execution, state: 'verifying' };
 	}
 	return execution;

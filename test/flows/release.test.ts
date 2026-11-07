@@ -4,6 +4,8 @@ import { z } from 'zod';
 import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
+import { releaseSetSummaries } from '@/server/releases';
+import { runCard } from '@/server/views/runs';
 import { runAction } from '@root/test/support/actions.ts';
 import { packedRelease } from '@root/test/support/packed-release.ts';
 import { botId, ownerId } from '@root/test/support/github.ts';
@@ -124,7 +126,7 @@ test('a managed release travels from discovery to a verified publication', async
 	expect(world.network.unrouted).toEqual([]);
 });
 
-test('a finished run whose registry publication appears late is verified without a second approval', async () => {
+async function finishedPromotion(outcome: 'pending' | 'skipped') {
 	const repository = widget(world.github);
 	world.npm.publish('widget', '1.0.0');
 	const api = bearer(world, await world.cliSession());
@@ -155,32 +157,36 @@ test('a finished run whose registry publication appears late is verified without
 	await runAction(world, 'report', identity, {
 		EXECUTION_ID: promotion.id,
 		PUBLICATIONS: JSON.stringify([
-			{ id: 'pkg:npm/widget', manager: 'npm', name: 'widget', version: '1.1.0', outcome: 'pending' },
+			{ id: 'pkg:npm/widget', manager: 'npm', name: 'widget', version: '1.1.0', outcome },
 		]),
 	});
 	run.status = 'completed';
 	run.conclusion = 'success';
-	const finish = () =>
-		world.webhook('workflow_run', {
-			action: 'completed',
-			workflow_run: {
-				id: run.id,
-				conclusion: 'success',
-				event: 'workflow_dispatch',
-				path: run.path,
-				head_repository: { id: repository.id },
-			},
-			repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
-		});
-	await finish();
+	await world.webhook('workflow_run', {
+		action: 'completed',
+		workflow_run: {
+			id: run.id,
+			conclusion: 'success',
+			event: 'workflow_dispatch',
+			path: run.path,
+			head_repository: { id: repository.id },
+		},
+		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
+	});
 	await world.wait(2_000);
-	const waiting = await only(api, 'promote');
-	expect(waiting.state).toBe('verifying');
-	expect(waiting.publications.map(publication => publication.outcome)).toEqual(['pending']);
-	const stored = (await world.coordinator(repository).exportJournal()).find(entry =>
+	const entry = (await world.coordinator(repository).exportJournal()).find(entry =>
 		entry.key === `execution:${promotion.id}`
 	);
-	expect(Reflect.get(Object(stored?.value), 'state')).toBe('verifying');
+	const stored = z.record(z.string(), z.unknown()).parse(entry?.value);
+	return { api, merged, promotion, stored, finished: await only(api, 'promote') };
+}
+
+test('a finished run whose registry publication appears late is verified without a second approval', async () => {
+	const { api, merged, promotion, stored, finished } = await finishedPromotion('pending');
+	expect(finished.state).toBe('verifying');
+	expect(finished.publications.map(publication => publication.outcome)).toEqual(['pending']);
+	expect(stored['state']).toBe('verifying');
+	expect(runCard(finished, Date.now()).missing).toEqual([]);
 	expect((await api('/api/executions/approve', { id: promotion.id, sourceSha: merged.sha })).status).not.toBe(200);
 
 	world.npm.publish('widget', '1.1.0');
@@ -189,6 +195,30 @@ test('a finished run whose registry publication appears late is verified without
 	expect(settled.state).toBe('succeeded');
 	expect(settled.publications.map(publication => publication.outcome)).toEqual(['succeeded']);
 	expect(world.github.dispatches).toHaveLength(1);
+});
+
+test('a finished run whose publication cannot be rechecked is blocked and needs attention', async () => {
+	const { finished } = await finishedPromotion('skipped');
+	expect(finished.state).toBe('blocked');
+	expect(finished.publications.map(publication => publication.outcome)).toEqual(['skipped']);
+	expect(runCard(finished, Date.now()).missing).toEqual(['pkg:npm/widget']);
+	const releaseSet = {
+		preparationId: 'preparation',
+		group: 'main',
+		required: [],
+		workflowId: 'set',
+		operationCount: 2,
+	};
+	expect(releaseSetSummaries([{ ...finished, state: 'blocked', releaseSet }]).map(summary => summary.state)).toEqual([
+		'needs attention',
+	]);
+});
+
+test('a stored blocked promotion decodes as verifying only when a recheck can settle it', async () => {
+	const { stored } = await finishedPromotion('pending');
+	expect(decodeExecutionV1({ ...stored, state: 'blocked' }).state).toBe('verifying');
+	const workflow = { ...z.record(z.string(), z.unknown()).parse(stored['workflow']), publications: ['pkg:npm/other'] };
+	expect(decodeExecutionV1({ ...stored, state: 'blocked', workflow }).state).toBe('blocked');
 });
 
 test('a promotion whose workflow branch was deleted fails with the missing ref named', async () => {

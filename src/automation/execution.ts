@@ -1,4 +1,5 @@
 import { Effect } from 'effect';
+import { canVerifyPublication } from '@/automation/managers';
 import { outputsComplete } from '@/automation/outputs';
 import { matchesPackage, matchesPublication, packageId, parseIdentity } from '@/automation/package-identity';
 import type {
@@ -160,8 +161,12 @@ export function completion(execution: Execution, runSucceeded: boolean): Executi
 	);
 	if (publications.some((p) => p.outcome === 'failed')) return 'failed';
 	if (publications.some((p) => p.outcome === 'uncertain')) return 'uncertain';
-	if (publications.some((p) => p.outcome !== 'succeeded')) return 'verifying';
-	return 'succeeded';
+	const open = publications.filter((p) => p.outcome !== 'succeeded');
+	if (!open.length) return 'succeeded';
+	return open.every(recheckable) ? 'verifying' : 'blocked';
+}
+export function recheckable(publication: Publication): boolean {
+	return canVerifyPublication(publication.manager) && ['pending', 'uncertain'].includes(publication.outcome);
 }
 export function mergePublications(
 	prior: Publication[],
