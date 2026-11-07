@@ -2805,6 +2805,18 @@ describe('release streams', () => {
 			);
 		expect(miseDir('dir = "packages/a"\n', 153)).toEqual(['pkg:npm/a']);
 		expect(miseDir('', 154)).toEqual(['pkg:npm/root']);
+		expect(building('npm pack ./packages/b\n          npm --prefix packages/a publish', 155)).toEqual([
+			'pkg:npm/a',
+		]);
+		const inline = (script: string, id: number) =>
+			planned({
+				...widget,
+				'.github/workflows/release.yml': release(
+					`      - run: |\n${script.split('\n').map(line => `          ${line}`).join('\n')}\n`,
+				),
+			}, id).graph.streams.length;
+		expect(inline('publish() {\n  npm publish\n}\necho build complete', 156)).toBe(0);
+		expect(inline('publish() {\n  npm publish\n}\npublish', 157)).toBe(1);
 		const tarball = (command: string, id: number) =>
 			selected(
 				{

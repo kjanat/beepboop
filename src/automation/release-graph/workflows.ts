@@ -239,7 +239,12 @@ function withCalledFunctions(source: string, body: string, seen = new Set<string
 }
 const shellScript = /^#!.*\b(?:ba|z|da|k)?sh\b/;
 function topLevel(source: string, path: string): string {
-	if (!shellScript.test(source) && !/\.(?:ba|z|da|k)?sh$/.test(path)) return source;
+	return shellScript.test(source) || /\.(?:ba|z|da|k)?sh$/.test(path) ? shellTopLevel(source) : source;
+}
+function executable(run: string, shell: unknown): string {
+	return typeof shell === 'string' && !/^(?:bash|sh|zsh|dash)\b/.test(shell) ? run : shellTopLevel(run);
+}
+function shellTopLevel(source: string): string {
 	const kept: string[] = [];
 	let inside = false;
 	for (const line of source.split('\n')) {
@@ -702,12 +707,13 @@ function actionEffects(
 					const directory = typeof step['working-directory'] === 'string'
 						? step['working-directory'].replace(actionPathReference, path)
 						: undefined;
-					const run = directory ? `cd ${directory}\n${step.run}` : step.run;
+					const body = executable(step.run, step.shell);
+					const run = directory ? `cd ${directory}\n${body}` : body;
 					stepped.push(...commandEffects(run, file));
 					runs.push(run);
 					const called = scriptEffects(
 						snapshot,
-						step.run.replace(actionPathPrefix, `${path}/`),
+						body.replace(actionPathPrefix, `${path}/`),
 						new Set(seen),
 						directory,
 					);
@@ -804,8 +810,9 @@ function stepEffects(
 	}
 	if (typeof step.run === 'string') {
 		const directory = typeof step['working-directory'] === 'string' ? step['working-directory'] : undefined;
-		const run = directory ? `cd ${directory}\n${step.run}` : step.run;
-		const called = scriptEffects(snapshot, step.run, seen, directory);
+		const body = executable(step.run, step.shell);
+		const run = directory ? `cd ${directory}\n${body}` : body;
+		const called = scriptEffects(snapshot, body, seen, directory);
 		return {
 			effects: [...alias, ...commandEffects(run, source), ...called.effects],
 			runs: [run, ...called.runs],

@@ -502,9 +502,11 @@ function targetsOf(
 				const cites = (value: string) => new RegExp(`(?<![\\w./-])${escapeRegExp(value)}(?![\\w-])`).test(text);
 				const citesDirectory = (value: string) =>
 					new RegExp(
-						`(?:(?:(?:^|[\\s;&|(])(?:${directoryFlagPattern})[= ]|\\b(?:publish|pack)\\s+)["']?(?:\\./)?${
+						`(?:(?:(?:^|[\\s;&|(])(?:${directoryFlagPattern})[= ]|\\b(?:publish${
+							archived ? '|pack' : ''
+						})\\s+)["']?(?:\\./)?${escapeRegExp(value)}/?["']?(?:\\s|$|[;&)])|(?<![\\w./-])${
 							escapeRegExp(value)
-						}/?["']?(?:\\s|$|[;&)])|(?<![\\w./-])${escapeRegExp(value)}/package\\.json)`,
+						}/package\\.json)`,
 						'm',
 					).test(supplementing);
 				const descriptors = Object.entries(snapshot.files).filter(([path]) =>
