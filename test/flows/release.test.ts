@@ -4,7 +4,8 @@ import { z } from 'zod';
 import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
-import { releaseSetSummaries } from '@/server/releases';
+import { releaseSetSummaries, releaseSummaries } from '@/server/releases';
+import { overview } from '@/server/views/overview';
 import { runCard } from '@/server/views/runs';
 import { runAction } from '@root/test/support/actions.ts';
 import { packedRelease } from '@root/test/support/packed-release.ts';
@@ -187,6 +188,19 @@ test('a finished run whose registry publication appears late is verified without
 	expect(finished.publications.map(publication => publication.outcome)).toEqual(['pending']);
 	expect(stored['state']).toBe('verifying');
 	expect(runCard(finished, Date.now()).missing).toEqual([]);
+	const counts = (state: Execution['state']) => {
+		const { attention, running } = overview({
+			section: 'overview',
+			repositories: { readable: [], unreadable: [] },
+			executions: { readable: [{ ...finished, state }], unreadable: [] },
+		});
+		return { attention, running };
+	};
+	expect(counts('verifying')).toEqual({ attention: 0, running: 1 });
+	expect(counts('awaiting-approval')).toEqual({ attention: 1, running: 0 });
+	expect(releaseSummaries([{ ...finished, state: 'awaiting-approval' }]).map(release => release.attention)).toEqual([
+		true,
+	]);
 	expect((await api('/api/executions/approve', { id: promotion.id, sourceSha: merged.sha })).status).not.toBe(200);
 
 	world.npm.publish('widget', '1.1.0');

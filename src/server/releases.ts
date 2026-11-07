@@ -36,7 +36,9 @@ export function releaseSummaries(executions: Execution[]) {
 			publications,
 			verified,
 			updatedAt: Math.max(...runs.map(run => run.updatedAt)),
-			attention: runs.some(run => ['blocked', 'failed', 'cancelled', 'uncertain'].includes(run.state)),
+			attention: runs.some(run =>
+				['awaiting-approval', 'blocked', 'failed', 'cancelled', 'uncertain'].includes(run.state)
+			),
 		};
 	}).sort((a, b) => b.updatedAt - a.updatedAt);
 }
