@@ -2386,6 +2386,32 @@ describe('release streams', () => {
 			96,
 			'npm',
 		)).toEqual(['pkg:npm/a']);
+		const grouped = (condition: string, id: number) =>
+			selected(
+				{
+					'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+					'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+					'.github/workflows/release.yml': release(
+						`      - if: ${condition}\n        run: npm --prefix packages/\${{ matrix.pkg }} publish\n`,
+						'    strategy:\n      matrix:\n        pkg: [a, b]\n        channel: [stable, next]\n',
+					),
+				},
+				id,
+				'npm',
+			);
+		expect(grouped("matrix.pkg == 'a' && (matrix.channel == 'stable' || matrix.channel == 'next')", 129)).toEqual([
+			'pkg:npm/a',
+		]);
+		expect(grouped("${{ !(matrix.pkg == 'a') && matrix.channel == 'next' }}", 130)).toEqual(['pkg:npm/b']);
+		expect(
+			planned({
+				'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+				'.github/workflows/release.yml': release(
+					"      - if: (matrix.pkg == 'a' || matrix.pkg == 'b') && matrix.channel == 'beta'\n        run: npm --prefix packages/${{ matrix.pkg }} publish\n",
+					'    strategy:\n      matrix:\n        pkg: [a, b]\n        channel: [stable, next]\n',
+				),
+			}, 131).graph.streams,
+		).toEqual([]);
 		const commented = (run: string, id: number) =>
 			planned({
 				'package.json': JSON.stringify({ name: 'widget', version: '1.0.0' }),

@@ -76,7 +76,7 @@ function lookup(path: string, values: GuardValues): string | undefined {
 	return values.inputs?.[path.replace(/^(?:github\.event\.)?inputs\./, '')];
 }
 function evaluateTerm(term: string, values: GuardValues): boolean | undefined {
-	const trimmed = term.trim().replace(/^\(\s*|\s*\)$/g, '').trim();
+	const trimmed = term.trim();
 	const compared = comparison.exec(trimmed);
 	if (compared) {
 		const path = compared[1] ?? compared[8] ?? '';
@@ -95,14 +95,68 @@ function evaluateTerm(term: string, values: GuardValues): boolean | undefined {
 	}
 	return undefined;
 }
+type Truth = boolean | undefined;
+const both = (left: Truth, right: Truth): Truth =>
+	left === false || right === false ? false : left === true && right === true ? true : undefined;
+const either = (left: Truth, right: Truth): Truth =>
+	left === true || right === true ? true : left === false && right === false ? false : undefined;
+const inverse = (value: Truth): Truth => value === undefined ? undefined : !value;
 export function staticGuard(condition: unknown, values: GuardValues): boolean | undefined {
 	if (typeof condition !== 'string') return undefined;
-	const unwrapped = condition.trim().replace(/^\$\{\{\s*([\s\S]*?)\s*\}\}$/, '$1').trim();
-	const evaluated = unwrapped.split('||').map(alternative => {
-		const terms = alternative.split('&&').map(term => evaluateTerm(term, values));
-		return terms.includes(false) ? false : terms.every(term => term === true) ? true : undefined;
-	});
-	return evaluated.includes(true) ? true : evaluated.every(result => result === false) ? false : undefined;
+	const source = condition.trim().replace(/^\$\{\{\s*([\s\S]*?)\s*\}\}$/, '$1').trim();
+	let position = 0;
+	let malformed = false;
+	const skip = () => {
+		while (/\s/.test(source[position] ?? '')) position++;
+	};
+	const operator = (token: string) => {
+		skip();
+		if (!source.startsWith(token, position)) return false;
+		position += token.length;
+		return true;
+	};
+	const atom = (): Truth => {
+		const begin = position;
+		let depth = 0;
+		let quoted = false;
+		while (position < source.length) {
+			const character = source[position];
+			if (character === "'") quoted = !quoted;
+			else if (!quoted) {
+				if (character === '(') depth++;
+				else if (character === ')') {
+					if (depth === 0) break;
+					depth--;
+				} else if (depth === 0 && (source.startsWith('&&', position) || source.startsWith('||', position))) break;
+			}
+			position++;
+		}
+		return evaluateTerm(source.slice(begin, position), values);
+	};
+	const primary = (): Truth => {
+		skip();
+		const negated = source[position] === '!' && /^!\s*\(/.test(source.slice(position));
+		if (negated) position++;
+		skip();
+		if (source[position] !== '(') return atom();
+		position++;
+		const inner = disjunction();
+		if (!operator(')')) malformed = true;
+		return negated ? inverse(inner) : inner;
+	};
+	const conjunction = (): Truth => {
+		let result = primary();
+		while (operator('&&')) result = both(result, primary());
+		return result;
+	};
+	const disjunction = (): Truth => {
+		let result = conjunction();
+		while (operator('||')) result = either(result, conjunction());
+		return result;
+	};
+	const result = disjunction();
+	skip();
+	return malformed || position < source.length ? undefined : result;
 }
 export function expandStep(step: Record<string, unknown>, matrix: Record<string, unknown>): Record<string, unknown>[] {
 	const directory = step['working-directory'];
