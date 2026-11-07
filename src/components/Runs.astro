@@ -1,4 +1,5 @@
 ---
+import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
 import Field from '@/components/Field.astro';
 import Time from '@/components/Time.astro';
@@ -35,11 +36,11 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 		</p>
 		<dl class="fields metadata">
 			<Field label="Source">
-				<a
+				<code>{release.sourceSha.slice(0, 12)}</code>
+				<Arrow
 					href={`https://github.com/${release.repository}/commit/${release.sourceSha}`}
-				>
-					<code>{release.sourceSha.slice(0, 12)}</code>
-				</a>
+					label="Open source commit on GitHub"
+				/>
 			</Field>
 		</dl>
 		<div class="table-scroll">
@@ -58,7 +59,11 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 							<td>{run.releaseSet?.group}</td>
 							<td>{run.version}</td>
 							<td>
-								<a href={`#${run.id}`}>{run.operation}</a>
+								{run.operation}
+								<Arrow
+									href={`#${run.id}`}
+									label={`Show the ${run.operation} operation`}
+								/>
 								{run.package && <small><code>{run.package.id}</code></small>}
 							</td>
 							<td>{progress(run, now)}</td>
@@ -150,23 +155,26 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 				 <Field label="Package">{packageLabel(run.package.id)}</Field>
 			 )}
 			 <Field label="Commit">
-				 <a
+				 <code>{run.sourceSha.slice(0, 12)}</code>
+				 <Arrow
 					 href={`https://github.com/${run.repository}/commit/${run.sourceSha}`}
-				 >
-					 <code>{run.sourceSha.slice(0, 12)}</code>
-				 </a>
+					 label="Open commit on GitHub"
+				 />
 			 </Field>
 			 <Field label="Updated"><Time value={run.updatedAt} /></Field>
 			 {card.release && (
 				 <Field label="Release">
-					 <a href={card.release}>Open on GitHub ↗</a>
+					 <code>{card.release.tag}</code>
+					 <Arrow href={card.release.href} label="Open release on GitHub" />
 				 </Field>
 			 )}
 			 {run.runId && (
 				 <Field label="Workflow run">
-					 <a
+					 <code>{run.runId}</code>
+					 <Arrow
 						 href={`https://github.com/${run.repository}/actions/runs/${run.runId}`}
-					 >Open on GitHub ↗</a>
+						 label="Open workflow run on GitHub"
+					 />
 				 </Field>
 			 )}
 		 </dl>
@@ -188,9 +196,7 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 							 <tr>
 								 <td>
 									 {p.label}
-									 {p.href && (
-										 <a href={p.href} aria-label={`Open ${p.label}`}>↗</a>
-									 )}
+									 {p.href && <Arrow href={p.href} label={`Open ${p.label}`} />}
 									 <small>{p.required ? 'required' : 'optional'}</small>
 								 </td>
 								 <td>{p.version}</td>
@@ -225,11 +231,11 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 					 {card.automatic
 					 	? 'Checks on commit'
 					 	: 'Approve publishing from commit'}
-					 <a
+					 <code>{run.sourceSha}</code>
+					 <Arrow
 						 href={`https://github.com/${run.repository}/commit/${run.sourceSha}`}
-					 >
-						 <code>{run.sourceSha}</code>
-					 </a>
+						 label="Open commit on GitHub"
+					 />
 				 </p>
 				 <ul class="approval-status" aria-live="polite">
 					 <li>Checking the commit signature and checks…</li>
@@ -280,21 +286,23 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 			 <dl>
 				 <dt>Configuration commit</dt>
 				 <dd>
-					 <a
+					 <code>{run.configurationSha}</code>
+					 <Arrow
 						 href={`https://github.com/${run.repository}/commit/${run.configurationSha}`}
-					 >
-						 <code>{run.configurationSha}</code>
-					 </a>
+						 label="Open configuration commit on GitHub"
+					 />
 				 </dd>
 				 <dt>Workflow commit</dt>
 				 <dd>
 					 {run.workflowSha
 					 	? (
-							<a
-								href={`https://github.com/${run.repository}/commit/${run.workflowSha}`}
-							>
+							<>
 								<code>{run.workflowSha}</code>
-							</a>
+								<Arrow
+									href={`https://github.com/${run.repository}/commit/${run.workflowSha}`}
+									label="Open workflow commit on GitHub"
+								/>
+							</>
 						)
 					 	: 'Not dispatched yet'}
 				 </dd>

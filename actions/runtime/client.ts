@@ -51,6 +51,15 @@ function writeResult(mode: Mode, data: Record<string, unknown>) {
 				yield* writeOutput('bot-login', login);
 				yield* writeOutput('bot-id', String(id));
 				yield* writeOutput('bot-email', email);
+				yield* writeOutput(
+					'gitId',
+					JSON.stringify({
+						GIT_AUTHOR_NAME: login,
+						GIT_AUTHOR_EMAIL: email,
+						GIT_COMMITTER_NAME: login,
+						GIT_COMMITTER_EMAIL: email,
+					}),
+				);
 			}
 			yield* mask(data.token);
 			yield* writeOutput('token', data.token);

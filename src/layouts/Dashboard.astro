@@ -1,5 +1,6 @@
 ---
 import icon from '@root/assets/beepboop-icon.png';
+import Arrow from '@/components/Arrow.astro';
 import Field from '@/components/Field.astro';
 import type { GitHubOutage } from '@/server/github-status.ts';
 import { type Section, sectionPages, sections } from '@/server/sections.ts';
@@ -75,7 +76,12 @@ const { title, description } = sectionPages[section];
 						<ul>
 							{outage.incidents.map(incident => (
 								<li>
-									<a href={incident.url}>{incident.name}</a> ({incident.status})
+									{incident.name}
+									<Arrow
+										href={incident.url}
+										label={`Open incident ${incident.name}`}
+									/>
+									({incident.status})
 								</li>
 							))}
 						</ul>
@@ -92,8 +98,14 @@ const { title, description } = sectionPages[section];
 						</dl>
 					)}
 					<p class="outage-links">
-						<a href={outage.page}>Live status</a>
-						<a href={outage.source}>githubstatus.com</a>
+						<span>Live status <Arrow
+								href={outage.page}
+								label="Open live GitHub status"
+							/></span>
+						<span>githubstatus.com <Arrow
+								href={outage.source}
+								label="Open githubstatus.com"
+							/></span>
 					</p>
 				</section>
 			)}

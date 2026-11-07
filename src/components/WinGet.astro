@@ -1,4 +1,5 @@
 ---
+import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
 import Field from '@/components/Field.astro';
 import Time from '@/components/Time.astro';
@@ -117,9 +118,10 @@ const repositories = data.repositories.filter(repo =>
 					 {item.checks && <Field label="Validation">{item.checks}</Field>}
 				 </dl>
 				 {item.url && (
-					 <a href={item.url} target="_blank" rel="noreferrer">
-						 Open submission #{item.number}
-					 </a>
+					 <p>
+						 Submission #{item.number}
+						 <Arrow href={item.url} label={`Open submission #${item.number}`} />
+					 </p>
 				 )}
 				 {item.reviews && <p>{item.reviews}</p>}
 				 {item.reason && <p class="hint">{item.reason}</p>}
@@ -149,11 +151,11 @@ const repositories = data.repositories.filter(repo =>
 						 Submitted manifests and source commit
 					 </summary>
 					 <p>
-						 <a
+						 <code>{item.plan.sourceSha}</code>
+						 <Arrow
 							 href={`https://github.com/${item.plan.repository}/commit/${item.plan.sourceSha}`}
-						 >
-							 <code>{item.plan.sourceSha}</code>
-						 </a>
+							 label="Open source commit on GitHub"
+						 />
 					 </p>
 					 {Object.entries(item.plan.files).map(([path, content]) => (
 						 <details>

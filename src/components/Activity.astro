@@ -1,4 +1,5 @@
 ---
+import Arrow from '@/components/Arrow.astro';
 import Time from '@/components/Time.astro';
 import { githubHref } from '@/contract/links';
 import { actorLabel, parseActor, runRepository } from '@/domain/audit';
@@ -42,7 +43,10 @@ function activityActor(
 					 </td>
 					 <td>{entry.action.replaceAll('.', ' ').replaceAll('-', ' ')}</td>
 					 <td>
-						 {actor.href ? <a href={actor.href}>{actor.label}</a> : actor.label}
+						 {actor.label}
+						 {actor.href && (
+							 <Arrow href={actor.href} label={`Open ${actor.label}`} />
+						 )}
 					 </td>
 					 <td class="break">{entry.target}</td>
 				 </tr>

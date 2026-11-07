@@ -1,0 +1,31 @@
+name: Set up Bun
+description: Uses Bun from PATH or installs it with oven-sh/setup-bun
+inputs:
+  bun-version:
+    description: Bun version to install when PATH has no Bun
+    default: latest
+outputs:
+  was-installed:
+    description: Whether this action installed Bun
+    value: ${{ !fromJSON(steps.check-bun.outputs.json).available }}
+  bun-version:
+    description: Version of the Bun this action provides
+    value: ${{ case(fromJSON(steps.check-bun.outputs.json).available, fromJSON(steps.check-bun.outputs.json).bun-version, steps.setup-bun.outputs.bun-version) }}
+runs:
+  using: composite
+  steps:
+    - name: Check for Bun
+      id: check-bun
+      shell: bash
+      run: |
+        { printf 'json='; tee <<EOF | jq -c .; } >"${GITHUB_OUTPUT:-/dev/stdout}"
+        {
+          "available": $(command -v bun >/dev/null 2>&1 && echo true || echo false),
+          "bun-version": "$(bun --version 2>/dev/null | tr -d '\n' | tr -d '\r' || echo "")"
+        }
+        EOF
+    - name: Setup Bun
+      id: setup-bun
+      if: ${{ !fromJSON(steps.check-bun.outputs.json).available }}
+      uses: oven-sh/setup-bun@v2
+      with: { bun-version: "${{ inputs.bun-version }}" }

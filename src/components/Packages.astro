@@ -1,4 +1,5 @@
 ---
+import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
 import Time from '@/components/Time.astro';
 import { destinationLabels, watchedRegistries } from '@/contract/catalog';
@@ -71,9 +72,11 @@ const packages = packagesPage(data);
 					<tr>
 						<td>
 							<Badge tone="neutral" label={destinationLabels[pkg.registry]} />
-							<a
+							{pkg.name}
+							<Arrow
 								href={watchedPackageHref(pkg.registry, pkg.name)}
-							>{pkg.name}</a>
+								label={`Open ${pkg.name} on ${destinationLabels[pkg.registry]}`}
+							/>
 						</td>
 						<td>{pkg.version ?? 'Not checked yet'}</td>
 						<td>
@@ -88,9 +91,11 @@ const packages = packagesPage(data);
 								<ul class="package-list">
 									{pkg.publishers.map(name => (
 										<li>
-											<a
+											{name}
+											<Arrow
 												href={`/repositories?repository=${encodeURIComponent(name)}`}
-											>{name}</a>
+												label={`Show repository ${name}`}
+											/>
 										</li>
 									))}
 								</ul>
@@ -101,9 +106,11 @@ const packages = packagesPage(data);
 								<ul class="package-list">
 									{pkg.dependents.map(name => (
 										<li>
-											<a
+											{name}
+											<Arrow
 												href={`/repositories?repository=${encodeURIComponent(name)}`}
-											>{name}</a>
+												label={`Show repository ${name}`}
+											/>
 										</li>
 									))}
 								</ul>

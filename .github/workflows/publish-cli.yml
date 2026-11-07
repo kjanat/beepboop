@@ -31,9 +31,7 @@ jobs:
           operation: promote
       - name: Checkout approved source
         uses: actions/checkout@v7
-        with:
-          ref: ${{ fromJSON(steps.release.outputs.context).sourceSha }}
-          persist-credentials: false
+        with: { ref: "${{ fromJSON(steps.release.outputs.context).sourceSha }}", persist-credentials: false }
       - run: runner i -f gate
       - name: Validate release version
         id: metadata
@@ -41,8 +39,7 @@ jobs:
         env: { RELEASE_CONTEXT: "${{ steps.release.outputs.context }}" }
       - uses: $/actions/credentials
         id: credentials
-        with:
-          aliases: '["npm-token"]'
+        with: { aliases: '["npm-token"]' }
       - name: Publish npm
         id: npm
         run: bun src/tooling/cli/release.ts npm
