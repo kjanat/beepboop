@@ -263,6 +263,22 @@ test('an observe binding on an exact tag keeps the tag version', async () => {
 	]);
 });
 
+test('an observe binding on a shorthand tag glob keeps the tag version', async () => {
+	const repository = world.github.create('octo/widget', {
+		'package.json': JSON.stringify({ name: 'widget', version: '1.2.0' }),
+		'.github/workflows/release.yml': workflow("{ push: { tags: ['widget-v*'] } }", 'npm publish'),
+	});
+	const { plan } = await adopt(repository);
+	await pin(repository, plan, 'widget-v*');
+	world.npm.publish('widget', '1.2.0');
+	repository.refs.set('tags/widget-v1.2.0', world.github.head(repository));
+	const [execution] = await observe(repository, 'push', 'widget-v1.2.0');
+	expect(execution?.version).toBe('1.2.0');
+	expect(execution?.publications.map(publication => [publication.id, publication.outcome])).toEqual([
+		['pkg:npm/widget', 'succeeded'],
+	]);
+});
+
 test('an observe binding on a numbered tag glob keeps every version component', async () => {
 	const repository = world.github.create('octo/widget', {
 		'package.json': JSON.stringify({ name: 'widget', version: '1.2.3' }),

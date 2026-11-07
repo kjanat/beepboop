@@ -1,14 +1,13 @@
 import { Result } from 'effect';
 import { object, yaml } from '@/automation/managers/helpers';
 import {
-	bindInputs,
 	disabled,
+	forwardInput,
 	inputDefaults,
 	literalBindings,
 	matrixCombinations,
 	matrixLimit,
 	staticGuard,
-	substitute,
 } from '@/automation/release-graph/bindings';
 import { escapeRegExp } from '@/automation/release-graph/shell';
 
@@ -86,11 +85,10 @@ export function workflowCalls(documents: readonly WorkflowDocument[], repository
 			const callee = name === undefined ? undefined : byFile.get(name);
 			if (!callee || trail.includes(callee.file) || staticGuard(job.if, { inputs: inherited }) === false) continue;
 			const assignments = matrixCombinations(object(object(job.strategy).matrix)).slice(0, matrixLimit);
+			const seen = new Set<string>();
 			for (const assignment of assignments.length ? assignments : [{}]) {
 				const supplied = Object.fromEntries(
-					Object.entries(object(job.with)).map((
-						[key, input],
-					) => [key, typeof input === 'string' ? substitute(bindInputs(input, inherited), assignment) : input]),
+					Object.entries(object(job.with)).map(([key, input]) => [key, forwardInput(input, inherited, assignment)]),
 				);
 				const bindings = {
 					...inputDefaults(object(object(callee.document.on).workflow_call).inputs, Object.keys(supplied)),
@@ -98,6 +96,9 @@ export function workflowCalls(documents: readonly WorkflowDocument[], repository
 				};
 				const guard = [outer, typeof job.if === 'string' ? job.if : undefined].filter(Boolean).join(' && ')
 					|| undefined;
+				const key = JSON.stringify([bindings, guard]);
+				if (seen.has(key)) continue;
+				seen.add(key);
 				calls.push({ root, caller: file, job: id, callee, bindings, ...(guard ? { guard } : {}) });
 				visit(root, callee.file, bindings, [...trail, callee.file], guard);
 			}

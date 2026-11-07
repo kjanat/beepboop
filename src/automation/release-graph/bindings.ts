@@ -7,6 +7,28 @@ export function scalarText(value: string | number | boolean): string {
 function plain(text: string): string {
 	return text.replaceAll(stringMark, '');
 }
+export function typedScalar(text: string): string | number | boolean {
+	if (text.startsWith(stringMark)) return plain(text);
+	if (text === 'true') return true;
+	if (text === 'false') return false;
+	return text === '0' ? 0 : text;
+}
+const wholeInput = /^\s*\$\{\{\s*(?:github\.event\.)?inputs\.([\w-]+)\s*\}\}\s*$/;
+const wholeMatrix = /^\s*\$\{\{\s*matrix\.([\w-]+(?:\.[\w-]+)*)\s*\}\}\s*$/;
+export function forwardInput(
+	input: unknown,
+	inherited: Readonly<Record<string, string>>,
+	assignment: Readonly<Record<string, string>>,
+): unknown {
+	if (typeof input !== 'string') return input;
+	const direct = wholeInput.exec(input)?.[1];
+	const inputText = direct === undefined ? undefined : inherited[direct];
+	if (inputText !== undefined) return typedScalar(inputText);
+	const swept = wholeMatrix.exec(input)?.[1];
+	const matrixText = swept === undefined ? undefined : assignment[swept];
+	if (matrixText !== undefined) return typedScalar(matrixText);
+	return substitute(bindInputs(input, inherited), assignment);
+}
 export function matrixScalar(value: unknown): string | undefined {
 	return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
 		? scalarText(value)

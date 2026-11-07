@@ -2666,6 +2666,48 @@ describe('release streams', () => {
 			}, id).graph.streams.length;
 		expect(negatedAction('false', 134)).toBe(0);
 		expect(negatedAction('', 135)).toBe(1);
+		const groupedAction = (condition: string, extra: string, id: number) =>
+			planned({
+				...widget,
+				'actions/publish/action.yml':
+					`runs:\n  using: composite\n  steps:\n    - if: \${{ ${condition} }}\n      shell: bash\n      run: npm publish\n`,
+				'.github/workflows/release.yml': release(
+					`      - uses: ./actions/publish\n        with: { publish: true${extra} }\n`,
+				),
+			}, id).graph.streams.length;
+		expect(groupedAction('!(inputs.publish && inputs.extra)', ', extra: false', 136)).toBe(1);
+		expect(groupedAction('!(inputs.publish && inputs.extra)', ', extra: true', 137)).toBe(0);
+		const forwarded = (value: string, id: number) =>
+			planned({
+				...widget,
+				'.github/workflows/leaf.yml':
+					'on:\n  workflow_call:\n    inputs:\n      publish:\n        type: boolean\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - if: inputs.publish\n        run: npm publish\n',
+				'.github/workflows/mid.yml':
+					'on:\n  workflow_call:\n    inputs:\n      publish:\n        type: boolean\njobs:\n  forward:\n    uses: ./.github/workflows/leaf.yml\n    with:\n      publish: ${{ inputs.publish }}\n',
+				'.github/workflows/release.yml':
+					`on: { push: { tags: ['v*'] } }\njobs:\n  call:\n    uses: ./.github/workflows/mid.yml\n    with: { publish: ${value} }\n`,
+			}, id).graph.streams.length;
+		expect(forwarded('false', 138)).toBe(0);
+		expect(forwarded('true', 139)).toBe(1);
+		const fanOut = (levels: number, id: number) => {
+			const files: Record<string, string> = {
+				...widget,
+				'.github/workflows/leaf.yml':
+					'on: { workflow_call: {} }\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm publish\n',
+			};
+			for (let level = 1; level < levels; level++) {
+				files[`.github/workflows/level${level}.yml`] =
+					`on: { workflow_call: {} }\njobs:\n  next:\n    strategy:\n      matrix:\n        n: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]\n    uses: ./.github/workflows/${
+						level + 1 === levels ? 'leaf' : `level${level + 1}`
+					}.yml\n`;
+			}
+			files['.github/workflows/release.yml'] =
+				`on: { push: { tags: ['v*'] } }\njobs:\n  call:\n    strategy:\n      matrix:\n        n: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]\n    uses: ./.github/workflows/${
+					levels === 1 ? 'leaf' : 'level1'
+				}.yml\n`;
+			return planned(files, id).graph.streams.length;
+		};
+		expect(fanOut(4, 140)).toBe(1);
 		const tarball = (command: string, id: number) =>
 			selected(
 				{

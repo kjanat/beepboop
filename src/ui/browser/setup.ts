@@ -125,7 +125,10 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 					: 'workspace';
 				if (observing.checked && value.observe?.length) {
 					const observed = value.observe;
-					const unobserved = packages.filter(id => !observed.some(entry => entry.publications.includes(id)));
+					const unchecked = observed.every(entry => entry.publications.length === 0);
+					const unobserved = packages.filter(id =>
+						!observed.some(entry => entry.publications.includes(id)) && !(unchecked && value.packages.includes(id))
+					);
 					if (unobserved.length) {
 						return yield* Result.fail(
 							new Refused({

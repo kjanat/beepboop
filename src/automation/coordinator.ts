@@ -1499,8 +1499,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					return (yield* gateway.read(gitTagSchema, `/repos/${repository.name}/git/tags/${tag.object.sha}`, token))
 						.object;
 				});
-			const tagLike =
-				patterns.some(pattern => pattern.startsWith('refs/tags/') && matchesRef(pattern, `refs/tags/${branch}`))
+			const tagLike = patterns.some(pattern => matchesRef(pattern, `refs/tags/${branch}`))
 				|| /^v?\d+\.\d+\.\d+/.test(branch);
 			const branchLike = patterns.some(pattern =>
 				!pattern.startsWith('refs/tags/') && matchesRef(pattern, `refs/heads/${branch}`)
@@ -1518,13 +1517,18 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					) {
 						continue;
 					}
+					const tagName = pattern.startsWith('refs/tags/')
+						? pattern.slice('refs/tags/'.length)
+						: pattern.startsWith('refs/')
+						? undefined
+						: pattern;
 					const prefix = [
 						stream.versionSource?.prefix,
-						!pattern.startsWith('refs/tags/')
+						tagName === undefined
 							? undefined
-							: pattern.endsWith('*')
-							? /^[^*?[]*/.exec(pattern.slice('refs/tags/'.length))?.[0]?.replace(/(?<![\d.])\d[\d.]*$/, '')
-							: /^(.*?)v?\d+\.\d+/.exec(pattern.slice('refs/tags/'.length))?.[1],
+							: tagName.endsWith('*')
+							? /^[^*?[]*/.exec(tagName)?.[0]?.replace(/(?<![\d.])\d[\d.]*$/, '')
+							: /^(.*?)v?\d+\.\d+/.exec(tagName)?.[1],
 					].filter((value): value is string => value !== undefined && branch.startsWith(value))
 						.sort((a, b) => b.length - a.length)[0] ?? '';
 					const version = tagged

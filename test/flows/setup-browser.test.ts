@@ -435,6 +435,18 @@ test('an observed stream rejects a package its workflows do not publish', async 
 	await expect(act(form, 'preview')).rejects.toThrow('not published by the observed workflows');
 });
 
+test('an observed branch publisher without publication checks keeps its proposed packages', async () => {
+	const repository = world.github.create('octo/branchy', {
+		'package.json': JSON.stringify({ name: 'branchy', version: '1.0.0' }),
+		'.github/workflows/release.yml':
+			'name: Release\non:\n  push: { branches: [release] }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm publish\n',
+	});
+	passChecks(repository, world.github.head(repository));
+	const form = await open('octo/branchy');
+	await act(form, 'preview');
+	expect(form.querySelector('.setup-result')?.textContent).toContain('"mode": "observe"');
+});
+
 test('an inferred stream keeps its workflow until observation is cleared', async () => {
 	plugin(world.github);
 	const form = await open('octo/plugin');
