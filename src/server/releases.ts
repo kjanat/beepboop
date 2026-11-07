@@ -62,7 +62,7 @@ export function releaseSetSummaries(executions: Execution[]) {
 			? 'succeeded'
 			: attention
 			? 'needs attention'
-			: runs.some(run => run.operation === 'promote' && run.state === 'blocked')
+			: runs.some(run => run.state === 'awaiting-approval')
 			? 'awaiting approval'
 			: 'in progress';
 		return {

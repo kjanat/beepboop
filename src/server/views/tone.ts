@@ -7,10 +7,12 @@ import type { ReleaseSetState, releaseSummaries } from '@/server/releases.ts';
 
 export const executionTone = {
 	pending: 'waiting',
+	'awaiting-approval': 'warn',
 	blocked: 'warn',
 	ready: 'active',
 	dispatching: 'active',
 	running: 'active',
+	verifying: 'waiting',
 	succeeded: 'ok',
 	failed: 'error',
 	cancelled: 'error',

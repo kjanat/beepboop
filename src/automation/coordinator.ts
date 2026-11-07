@@ -1161,7 +1161,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			for (const other of yield* this.executions()) {
 				if (
 					other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
-					&& other.version === execution.version && ['blocked', 'pending', 'ready', 'failed'].includes(other.state)
+					&& other.version === execution.version
+					&& ['awaiting-approval', 'blocked', 'pending', 'ready', 'failed'].includes(other.state)
 				) {
 					yield* this.put({ ...other, state: 'cancelled', reason: `Superseded by ${execution.id}` });
 				}
@@ -1197,11 +1198,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return this.serial(Effect.gen({ self: this }, function*() {
 			const execution = yield* this.get(id);
 			const commit = yield* Effect.fromResult(sha(commitSha));
-			if (
-				execution.operation !== 'promote'
-				|| execution.state !== 'blocked'
-				|| execution.sourceSha !== commit
-			) {
+			if (execution.state !== 'awaiting-approval' || execution.sourceSha !== commit) {
 				return yield* precondition('Approval does not match promotion target');
 			}
 			const token = yield* this.gateway().token(execution.repository, execution.repositoryId);
@@ -1225,7 +1222,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	approvalReadiness(id: string): Promise<{ problems: string[] }> {
 		return Effect.runPromise(Effect.gen({ self: this }, function*() {
 			const execution = yield* this.get(id);
-			if (execution.operation !== 'promote' || execution.state !== 'blocked') {
+			if (execution.state !== 'awaiting-approval') {
 				return { problems: ['This promotion is not waiting for approval'] };
 			}
 			return { problems: yield* this.approvalProblems(execution) };
@@ -1366,7 +1363,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					publication.outcome === 'succeeded' ? publication : { ...publication, outcome: 'pending' as const }
 				);
 				if (execution.operation === 'promote' && execution.attempts === 0 && execution.approvedAt === undefined) {
-					const next: Execution = { ...execution, state: 'blocked', publications };
+					const next: Execution = { ...execution, state: 'awaiting-approval', publications };
 					delete next.reason;
 					yield* this.put(next);
 				} else yield* this.redispatch(execution, publications);
@@ -1970,7 +1967,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			if (execution.state === 'succeeded') yield* this.captureReleaseEvent(execution);
 			if (!active.includes(execution) || execution.state === 'pending') return 'continue' as const;
-			if (execution.state === 'blocked' && execution.operation === 'promote') {
+			if (execution.state === 'awaiting-approval') {
 				if (
 					execution.configuration.streams[execution.stream]?.promote.approval !== 'push'
 					&& execution.approvedBy !== 'merge'

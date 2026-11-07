@@ -10,10 +10,12 @@ export interface Status {
 
 export const executionStates = [
 	'pending',
+	'awaiting-approval',
 	'blocked',
 	'ready',
 	'dispatching',
 	'running',
+	'verifying',
 	'succeeded',
 	'failed',
 	'cancelled',

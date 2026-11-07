@@ -55,7 +55,7 @@ test('a managed release travels from discovery to a verified publication', async
 	expect((await world.push(repository)).status).toBe(202);
 	await world.wait(1_000);
 	const promotion = await only(api, 'promote');
-	expect(promotion.state).toBe('blocked');
+	expect(promotion.state).toBe('awaiting-approval');
 	expect(promotion.sourceSha).toBe(merged.sha);
 
 	const readiness = await api('/api/executions/approval', { id: promotion.id });
@@ -122,6 +122,73 @@ test('a managed release travels from discovery to a verified publication', async
 	]);
 	expect(world.github.unhandled).toEqual([]);
 	expect(world.network.unrouted).toEqual([]);
+});
+
+test('a finished run whose registry publication appears late is verified without a second approval', async () => {
+	const repository = widget(world.github);
+	world.npm.publish('widget', '1.0.0');
+	const api = bearer(world, await world.cliSession());
+	await api('/api/repositories/discover', { repository: 'octo/widget' });
+	const request = { repositoryId: repository.id, stream: 'main', version: '1.1.0' };
+	const plan = await api('/api/releases/plan', request);
+	await api('/api/releases/prepare', {
+		...request,
+		sourceSha: text(plan.body, 'sourceSha'),
+		planId: text(plan.body, 'planId'),
+	});
+	await world.wait(20_000);
+	const [pull] = repository.pulls;
+	if (!pull) throw new Error('No preparation pull request');
+	const merged = world.github.merge(repository, pull.number);
+	passChecks(repository, merged.sha);
+	await world.push(repository);
+	await world.wait(1_000);
+	const promotion = await only(api, 'promote');
+	expect(promotion.state).toBe('awaiting-approval');
+	await api('/api/executions/approve', { id: promotion.id, sourceSha: merged.sha });
+	await world.wait(16_000);
+	const run = repository.runs.at(-1);
+	if (!run) throw new Error('No workflow run');
+	run.status = 'in_progress';
+	const identity = { repository, runId: run.id, sha: run.headSha, file: 'publish.yml', actorId: botId };
+	await runAction(world, 'begin', identity, { EXECUTION_ID: promotion.id, STREAM: 'main', OPERATION: 'promote' });
+	await runAction(world, 'report', identity, {
+		EXECUTION_ID: promotion.id,
+		PUBLICATIONS: JSON.stringify([
+			{ id: 'pkg:npm/widget', manager: 'npm', name: 'widget', version: '1.1.0', outcome: 'pending' },
+		]),
+	});
+	run.status = 'completed';
+	run.conclusion = 'success';
+	const finish = () =>
+		world.webhook('workflow_run', {
+			action: 'completed',
+			workflow_run: {
+				id: run.id,
+				conclusion: 'success',
+				event: 'workflow_dispatch',
+				path: run.path,
+				head_repository: { id: repository.id },
+			},
+			repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
+		});
+	await finish();
+	await world.wait(2_000);
+	const waiting = await only(api, 'promote');
+	expect(waiting.state).toBe('verifying');
+	expect(waiting.publications.map(publication => publication.outcome)).toEqual(['pending']);
+	const stored = (await world.coordinator(repository).exportJournal()).find(entry =>
+		entry.key === `execution:${promotion.id}`
+	);
+	expect(Reflect.get(Object(stored?.value), 'state')).toBe('verifying');
+	expect((await api('/api/executions/approve', { id: promotion.id, sourceSha: merged.sha })).status).not.toBe(200);
+
+	world.npm.publish('widget', '1.1.0');
+	await world.wait(61_000);
+	const settled = await only(api, 'promote');
+	expect(settled.state).toBe('succeeded');
+	expect(settled.publications.map(publication => publication.outcome)).toEqual(['succeeded']);
+	expect(world.github.dispatches).toHaveLength(1);
 });
 
 test('a promotion whose workflow branch was deleted fails with the missing ref named', async () => {
@@ -207,7 +274,7 @@ test('a merge-approved release whose merge cannot be confirmed waits for approva
 			`GitHub HTTP 403 on GET /repos/octo/widget/compare/${merged.sha}...${merged.sha}: Resource not accessible by integration`,
 	}]);
 	const promotion = await only(api, 'promote');
-	expect(promotion.state).toBe('blocked');
+	expect(promotion.state).toBe('awaiting-approval');
 	expect(promotion.approvedBy).toBeUndefined();
 });
 

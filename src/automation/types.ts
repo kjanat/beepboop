@@ -4,6 +4,7 @@ import type { PackagePublication } from '@/automation/package-publication';
 import type { RefPlan } from '@/automation/refs';
 import type { ManagerName } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
+import type { ExecutionStateView } from '@/contract/views';
 import type { Configuration, WorkflowBinding } from '@/domain/configuration';
 import type { Access } from '@/domain/repository';
 import type { PackageIdentity } from '@/package-url';
@@ -97,16 +98,7 @@ export interface Artifact {
 	digest: string;
 	expiresAt: string;
 }
-export type ExecutionState =
-	| 'pending'
-	| 'blocked'
-	| 'ready'
-	| 'dispatching'
-	| 'running'
-	| 'succeeded'
-	| 'failed'
-	| 'cancelled'
-	| 'uncertain';
+export type ExecutionState = ExecutionStateView;
 export interface ReleaseReference {
 	group?: string;
 	id: string;

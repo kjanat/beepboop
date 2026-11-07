@@ -115,7 +115,7 @@ function executionFrom(source: ExecutionSource, request: ExecutionRequest): Effe
 			presetShas: { ...source.presetShas },
 			sourceSha: request.sourceSha,
 			...(version ? { version } : {}),
-			state: observed ? 'pending' : operation === 'promote' ? 'blocked' : 'ready',
+			state: observed ? 'pending' : operation === 'promote' ? 'awaiting-approval' : 'ready',
 			dependencies,
 			workflow: { ...binding, ref: binding.ref ?? source.defaultBranch },
 			...(workflow?.dispatchInputs.includes('beepboop_title') ? { titled: true } : {}),
@@ -160,7 +160,7 @@ export function completion(execution: Execution, runSucceeded: boolean): Executi
 	);
 	if (publications.some((p) => p.outcome === 'failed')) return 'failed';
 	if (publications.some((p) => p.outcome === 'uncertain')) return 'uncertain';
-	if (publications.some((p) => p.outcome !== 'succeeded')) return 'blocked';
+	if (publications.some((p) => p.outcome !== 'succeeded')) return 'verifying';
 	return 'succeeded';
 }
 export function mergePublications(
