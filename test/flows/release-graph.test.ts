@@ -2538,6 +2538,31 @@ describe('release streams', () => {
 			115,
 			'crates-io',
 		)).toEqual(['pkg:cargo/root-crate']);
+		const nestedGate = (value: string, id: number) =>
+			planned({
+				...widget,
+				'.github/workflows/leaf.yml':
+					'on: { workflow_call: {} }\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm publish\n',
+				'.github/workflows/mid.yml':
+					'on:\n  workflow_call:\n    inputs:\n      publish:\n        type: boolean\njobs:\n  forward:\n    if: inputs.publish\n    uses: ./.github/workflows/leaf.yml\n',
+				'.github/workflows/release.yml':
+					`on: { push: { tags: ['v*'] } }\njobs:\n  call:\n    uses: ./.github/workflows/mid.yml\n    with: { publish: ${value} }\n`,
+			}, id).graph.streams.length;
+		expect(nestedGate('false', 116)).toBe(0);
+		expect(nestedGate('true', 117)).toBe(1);
+		const sameJob = planned({
+			'packages/a/pyproject.toml': '[project]\nname = "pa"\nversion = "1.0.0"\n',
+			'packages/b/pyproject.toml': '[project]\nname = "pb"\nversion = "1.0.0"\n',
+			'.github/workflows/release.yml':
+				"on: { push: { tags: ['a-v*', 'b-v*'] } }\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - if: startsWith(github.ref, 'refs/tags/a-v')\n        working-directory: packages/a\n        run: uv publish\n      - if: startsWith(github.ref, 'refs/tags/b-v')\n        working-directory: packages/b\n        run: uv publish\n",
+		}, 118);
+		expect(
+			sameJob.graph.streams.flatMap(proposal =>
+				proposal.targets.filter(entry => entry.destination === 'pypi').flatMap(entry =>
+					Object.values(entry.sources ?? {}).map(ids => ids.join(','))
+				)
+			).sort(),
+		).toEqual(['pkg:pypi/pa', 'pkg:pypi/pb']);
 		const negated = planned({
 			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
 			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),

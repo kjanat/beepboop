@@ -7,6 +7,7 @@ import {
 	literalBindings,
 	matrixCombinations,
 	matrixLimit,
+	staticGuard,
 	substitute,
 } from '@/automation/release-graph/bindings';
 import { escapeRegExp } from '@/automation/release-graph/shell';
@@ -83,7 +84,7 @@ export function workflowCalls(documents: readonly WorkflowDocument[], repository
 		for (const [id, job] of liveJobs(caller.document)) {
 			const name = target(job);
 			const callee = name === undefined ? undefined : byFile.get(name);
-			if (!callee || trail.includes(callee.file)) continue;
+			if (!callee || trail.includes(callee.file) || staticGuard(job.if, { inputs: inherited }) === false) continue;
 			const assignments = matrixCombinations(object(object(job.strategy).matrix)).slice(0, matrixLimit);
 			for (const assignment of assignments.length ? assignments : [{}]) {
 				const supplied = Object.fromEntries(

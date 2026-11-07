@@ -399,6 +399,15 @@ function defaultMembers(snapshot: Snapshot, directory: string): string[] {
 		return [];
 	}
 }
+function sourceText(subset: { job: Job; effect: StepEffect }[]): string {
+	const scoped = subset.some(entry => entry.effect.kind === 'publish' && entry.effect.condition !== undefined);
+	return subset.map(entry => {
+		const effect = entry.effect;
+		const command = effect.kind === 'publish' || effect.kind === 'release' ? effect.text : '';
+		const directory = effect.kind === 'publish' && effect.directory ? `cd ${effect.directory}\n` : '';
+		return `${directory}${command}${scoped ? '' : `\n${entry.job.runs.join('\n')}`}`;
+	}).join('\n');
+}
 function sourceKey(entry: { workflow: string; job: Job; effect: StepEffect }): string {
 	const guard = entry.effect.kind === 'publish' ? entry.effect.condition : undefined;
 	return `${entry.workflow}#${entry.job.id}${guard ? `#${guard}` : ''}`;
@@ -660,11 +669,7 @@ function targetsOf(
 		if (destination === 'pypi') {
 			const projects = pyprojects(snapshot).filter(project => !project.private);
 			const choose = (subset: typeof found): string[] => {
-				const subsetText = subset.map(entry =>
-					`${entry.effect.kind === 'publish' || entry.effect.kind === 'release' ? entry.effect.text : ''}\n${
-						entry.job.runs.join('\n')
-					}`
-				).join('\n');
+				const subsetText = sourceText(subset);
 				const matched = projects.filter(project =>
 					new RegExp(normalized(project.name), 'i').test(subsetText)
 					|| new RegExp(normalized(project.name), 'i').test(subset.map(entry => entry.workflow).join(' '))
@@ -769,14 +774,8 @@ function targetsOf(
 		}
 		if (destination === 'vscode-marketplace' || destination === 'open-vsx') {
 			const extensions = managed('vscode');
-			const textOf = (subset: typeof found) =>
-				subset.map(entry =>
-					`${entry.effect.kind === 'publish' || entry.effect.kind === 'release' ? entry.effect.text : ''}\n${
-						entry.job.runs.join('\n')
-					}`
-				).join('\n');
 			const choose = (subset: typeof found) => {
-				const subsetText = textOf(subset);
+				const subsetText = sourceText(subset);
 				const directories = new Set(
 					subset.flatMap(entry => entry.effect.kind === 'publish' ? entry.effect.directory ?? [] : []),
 				);

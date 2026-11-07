@@ -867,6 +867,16 @@ export function workflowModels(snapshot: Snapshot): Workflow[] {
 			{ caller: call.root, ...(bound ? { bound } : {}) },
 		]);
 	}
+	const referenced = new Set(workflows.flatMap(workflow => workflow.jobs.flatMap(job => job.calls ?? [])));
+	for (const workflow of workflows) {
+		if (!referenced.has(workflow.file) || edges.has(workflow.file)) continue;
+		if (workflow.events.some(event => event !== 'workflow_call')) continue;
+		for (const job of workflow.jobs) {
+			job.effects = [];
+			job.runs = [];
+			job.actions = [];
+		}
+	}
 	const unique = <T>(values: T[]) => [...new Map(values.map(value => [JSON.stringify(value), value])).values()];
 	for (const workflow of workflows) {
 		const incoming = edges.get(workflow.file);
