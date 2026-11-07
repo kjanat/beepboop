@@ -22,7 +22,14 @@ import {
 	workspaceScope,
 	workspaceSelectors,
 } from '@/automation/release-graph/package-managers';
-import { escapeRegExp, executed, isolatedLines, walkDirectories, within } from '@/automation/release-graph/shell';
+import {
+	escapeRegExp,
+	executed,
+	globMatches,
+	isolatedLines,
+	walkDirectories,
+	within,
+} from '@/automation/release-graph/shell';
 import type { Snapshot } from '@/automation/types';
 
 export const destinations = [
@@ -479,8 +486,16 @@ function taskBodies(
 			const workspaces = workspaceDirectories(snapshot);
 			const declared = declaredWorkspaces(snapshot);
 			const scope = workspaceScope(invocation);
-			const named = selectors.filter(selector => selector !== '*');
-			const every = (scope.all || scope.recursive || selectors.includes('*')) && !named.length;
+			const negative = selectors.filter(selector => selector.startsWith('!')).map(selector => selector.slice(1));
+			const positive = selectors.filter(selector => !selector.startsWith('!'));
+			const named = positive.filter(selector => selector !== '*');
+			const every =
+				(scope.all || scope.recursive || positive.includes('*') || (positive.length === 0 && negative.length > 0))
+				&& !named.length;
+			const matching = (selector: string) =>
+				[...workspaces].filter(([name, dir]) => name === selector || dir === selector || globMatches(selector, name))
+					.map(([, dir]) => dir);
+			const skipped = new Set(negative.flatMap(matching));
 			const bases = every
 				? [
 					...new Set(
@@ -488,18 +503,20 @@ function taskBodies(
 							...(scope.root ? [directory] : []),
 							...[...workspaces.values()].filter(dir =>
 								dir !== directory && dir.startsWith(directory)
-								&& (!declared.length || inWorkspaces(declared, dir))
+								&& (!declared.length || inWorkspaces(declared, dir)) && !skipped.has(dir)
 							),
 						],
 					),
 				]
-				: selectors.length
+				: positive.length
 				? [
 					...new Set(
-						selectors.map(selector =>
-							workspaces.get(selector)
-								?? (selector.includes('/') || selector.startsWith('.') ? within(directory, selector) : directory)
-						),
+						positive.flatMap(selector => {
+							const found = matching(selector);
+							return found.length
+								? found
+								: [selector.includes('/') || selector.startsWith('.') ? within(directory, selector) : directory];
+						}),
 					),
 				]
 				: [change ? within(directory, change) : directory];

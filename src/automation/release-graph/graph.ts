@@ -11,7 +11,7 @@ import {
 	workspaceScope,
 	workspaceSelectors,
 } from '@/automation/release-graph/package-managers';
-import { escapeRegExp, packDirectories, within } from '@/automation/release-graph/shell';
+import { escapeRegExp, globMatches, packDirectories, within } from '@/automation/release-graph/shell';
 import {
 	type Destination,
 	declaredWorkspaces,
@@ -411,22 +411,6 @@ function sourceText(subset: { job: Job; effect: StepEffect }[]): string {
 function sourceKey(entry: { workflow: string; job: Job; effect: StepEffect }): string {
 	const guard = entry.effect.kind === 'publish' ? entry.effect.condition : undefined;
 	return `${entry.workflow}#${entry.job.id}${guard ? `#${guard}` : ''}`;
-}
-function globMatches(pattern: string, name: string): boolean {
-	const source = [...pattern].map(character =>
-		character === '*'
-			? '.*'
-			: character === '?'
-			? '.'
-			: character === '[' || character === ']'
-			? character
-			: escapeRegExp(character)
-	).join('');
-	try {
-		return new RegExp(`^${source}$`).test(name);
-	} catch {
-		return pattern === name;
-	}
 }
 function targetsOf(
 	graph: Graph,

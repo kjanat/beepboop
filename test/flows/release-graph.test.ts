@@ -2611,6 +2611,31 @@ describe('release streams', () => {
 			120,
 			'npm',
 		)).toEqual(['pkg:npm/%40public/a']);
+		const scripted = {
+			...filterWorkspace,
+			'packages/a/package.json': JSON.stringify({
+				name: '@public/a',
+				version: '1.0.0',
+				scripts: { release: 'npm publish' },
+			}),
+			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0', scripts: { release: 'npm publish' } }),
+		};
+		expect(selected(
+			{
+				...scripted,
+				'.github/workflows/release.yml': release("      - run: pnpm --filter '@public/*' -r run release\n"),
+			},
+			132,
+			'npm',
+		)).toEqual(['pkg:npm/%40public/a']);
+		expect(selected(
+			{
+				...scripted,
+				'.github/workflows/release.yml': release("      - run: pnpm --filter '!b' -r run release\n"),
+			},
+			133,
+			'npm',
+		)).toEqual(['pkg:npm/%40public/a']);
 		const helper = (source: string, id: number) =>
 			planned({
 				...widget,
@@ -2630,6 +2655,17 @@ describe('release streams', () => {
 			}, id).graph.streams.length;
 		expect(gatedAction('false', 123)).toBe(0);
 		expect(gatedAction('true', 124)).toBe(1);
+		const negatedAction = (value: string, id: number) =>
+			planned({
+				...widget,
+				'actions/publish/action.yml':
+					'runs:\n  using: composite\n  steps:\n    - if: ${{ !inputs.publish }}\n      shell: bash\n      run: npm publish\n',
+				'.github/workflows/release.yml': release(
+					`      - uses: ./actions/publish\n        with: { publish: '${value}' }\n`,
+				),
+			}, id).graph.streams.length;
+		expect(negatedAction('false', 134)).toBe(0);
+		expect(negatedAction('', 135)).toBe(1);
 		const tarball = (command: string, id: number) =>
 			selected(
 				{

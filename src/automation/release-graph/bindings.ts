@@ -1,8 +1,15 @@
 import { object } from '@/automation/managers/helpers';
 
+const stringMark = '\u0000';
+export function scalarText(value: string | number | boolean): string {
+	return typeof value === 'string' && (value === 'false' || value === '0') ? `${stringMark}${value}` : String(value);
+}
+function plain(text: string): string {
+	return text.replaceAll(stringMark, '');
+}
 export function matrixScalar(value: unknown): string | undefined {
 	return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
-		? String(value)
+		? scalarText(value)
 		: undefined;
 }
 export const matrixLimit = 256;
@@ -59,7 +66,10 @@ export function matrixCombinations(matrix: Record<string, unknown>): Record<stri
 }
 export const matrixExpression = /\$\{\{\s*matrix\.([\w-]+(?:\.[\w-]+)*)\s*\}\}/g;
 export function substitute(text: string, assignment: Record<string, string>): string {
-	return text.replace(matrixExpression, (expression, key: string) => assignment[key] ?? expression);
+	return text.replace(matrixExpression, (expression, key: string) => {
+		const value = assignment[key];
+		return value === undefined ? expression : plain(value);
+	});
 }
 const guardKey = /\bmatrix\.([\w-]+(?:\.[\w-]+)*)/g;
 const reference = '((?:matrix|inputs|github\\.event\\.inputs)\\.[\\w-]+(?:\\.[\\w-]+)*)';
@@ -84,7 +94,7 @@ function evaluateTerm(term: string, values: GuardValues): boolean | undefined {
 		const operator = compared[2] ?? compared[7];
 		const value = lookup(path, values);
 		if (value === undefined) return undefined;
-		return operator === '==' ? value === literal : value !== literal;
+		return operator === '==' ? plain(value) === literal : plain(value) !== literal;
 	}
 	const bare = truthiness.exec(trimmed);
 	if (bare) {
@@ -211,7 +221,7 @@ export function literalBindings(values: Record<string, unknown>): Record<string,
 			(typeof input === 'string' || typeof input === 'number' || typeof input === 'boolean')
 			&& !String(input).includes('${{')
 		) {
-			bindings[key] = String(input);
+			bindings[key] = scalarText(input);
 		}
 	}
 	return bindings;
@@ -227,7 +237,10 @@ export function inputDefaults(declared: unknown, passed: readonly string[]): Rec
 	);
 }
 export function bindInputs(text: string, bindings: Readonly<Record<string, string>>): string {
-	return text.replace(inputExpression, (expression, key: string) => bindings[key] ?? expression);
+	return text.replace(inputExpression, (expression, key: string) => {
+		const value = bindings[key];
+		return value === undefined ? expression : plain(value);
+	});
 }
 export function bindStep(
 	step: Record<string, unknown>,
