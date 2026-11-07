@@ -382,6 +382,7 @@ function publicationRuns(
 }
 const qualified = crossesDirectories;
 const pathArgument = /\bpublish\s+["']?\$|\bpublish\b[^\n;&|]*\s["']?(?:\.{0,2}\/|[\w.-]+\/|[^\s"']+\.tgz\b)/;
+const scripted = /\b(?:npm|pnpm|yarn|bun)\b[^\n]*\s(?:run|run-script)(?:\s|$)/;
 const installing =
 	/\b(?:npx|bunx|pnpm\s+(?:dlx|add|i|install)|yarn\s+(?:dlx|add)|npm\s+(?:view|info|show|install|i|ci|add|exec|x))\b/;
 function directoryOf(pkg: Package): string {
@@ -497,6 +498,7 @@ function targetsOf(
 				const text = [...effects, ...graph.memberJobs(workflow, files).flatMap(job => job.runs)].join('\n');
 				const publishing = [...effects, ...runs].join('\n');
 				const mentioning = publishing.split('\n').filter(line => !installing.test(line)).join('\n');
+				const supplementing = mentioning.split('\n').filter(line => !scripted.test(line)).join('\n');
 				const cites = (value: string) => new RegExp(`(?<![\\w./-])${escapeRegExp(value)}(?![\\w-])`).test(text);
 				const citesDirectory = (value: string) =>
 					new RegExp(
@@ -504,7 +506,7 @@ function targetsOf(
 							escapeRegExp(value)
 						}/?["']?(?:\\s|$|[;&)])|(?<![\\w./-])${escapeRegExp(value)}/package\\.json)`,
 						'm',
-					).test(mentioning);
+					).test(supplementing);
 				const descriptors = Object.entries(snapshot.files).filter(([path]) =>
 					path.endsWith('.json') && !/(?:^|\/)(?:package|deno|jsr|composer|tsconfig[^/]*)\.json$/.test(path)
 					&& cites(path)

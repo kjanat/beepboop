@@ -836,7 +836,7 @@ function buildJob(
 		const located = typeof directory === 'string' && raw['working-directory'] === undefined
 			? { ...raw, 'working-directory': directory }
 			: raw;
-		for (const step of expandStep(located, matrix)) {
+		for (const step of expandStep(located, matrix, bindings)) {
 			const result = stepEffects(snapshot, step, path, new Set());
 			effects.push(...guarded(result.effects, step.if));
 			runs.push(...result.runs);

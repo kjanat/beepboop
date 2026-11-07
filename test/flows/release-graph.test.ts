@@ -2737,6 +2737,48 @@ describe('release streams', () => {
 		expect(accumulating(5, 142).map(omission => omission.reason)).toEqual([
 			'reaches more reusable workflow calls than inference follows, so some publications may be missing',
 		]);
+		const omitted = (supplied: string, id: number) =>
+			planned({
+				...widget,
+				'.github/workflows/leaf.yml':
+					'on:\n  workflow_call:\n    inputs:\n      publish:\n        type: boolean\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - if: inputs.publish\n        run: npm publish\n',
+				'.github/workflows/release.yml':
+					`on: { push: { tags: ['v*'] } }\njobs:\n  call:\n    uses: ./.github/workflows/leaf.yml\n${supplied}`,
+			}, id).graph.streams.length;
+		expect(omitted('', 143)).toBe(0);
+		expect(omitted('    with: { publish: true }\n', 144)).toBe(1);
+		const mixed = (value: string, id: number) =>
+			selected(
+				{
+					'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+					'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+					'.github/workflows/leaf.yml':
+						"on:\n  workflow_call:\n    inputs:\n      publish:\n        type: boolean\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        pkg: [a, b]\n    steps:\n      - if: matrix.pkg == 'a' || inputs.publish\n        run: npm --prefix packages/${{ matrix.pkg }} publish\n",
+					'.github/workflows/release.yml':
+						`on: { push: { tags: ['v*'] } }\njobs:\n  call:\n    uses: ./.github/workflows/leaf.yml\n    with: { publish: ${value} }\n`,
+				},
+				id,
+				'npm',
+			);
+		expect(mixed('false', 145)).toEqual(['pkg:npm/a']);
+		expect(mixed('true', 146)).toEqual(['pkg:npm/a', 'pkg:npm/b']);
+		const building = (run: string, id: number) =>
+			selected(
+				{
+					'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+					'packages/b/package.json': JSON.stringify({
+						name: 'b',
+						version: '1.0.0',
+						scripts: { build: 'echo build' },
+					}),
+					'.github/workflows/release.yml': release(`      - run: |\n          ${run}\n`),
+				},
+				id,
+				'npm',
+			);
+		expect(building('npm --prefix packages/b run build\n          npm --prefix packages/a publish', 147)).toEqual([
+			'pkg:npm/a',
+		]);
 		const tarball = (command: string, id: number) =>
 			selected(
 				{

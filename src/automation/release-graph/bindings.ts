@@ -190,7 +190,11 @@ export function staticGuard(condition: unknown, values: GuardValues): boolean | 
 	skip();
 	return malformed || position < source.length ? undefined : result;
 }
-export function expandStep(step: Record<string, unknown>, matrix: Record<string, unknown>): Record<string, unknown>[] {
+export function expandStep(
+	step: Record<string, unknown>,
+	matrix: Record<string, unknown>,
+	inputs: Readonly<Record<string, string>> = {},
+): Record<string, unknown>[] {
 	const directory = step['working-directory'];
 	const texts = [step.run, directory, ...Object.values(object(step.with))].filter((value): value is string =>
 		typeof value === 'string'
@@ -213,7 +217,7 @@ export function expandStep(step: Record<string, unknown>, matrix: Record<string,
 				)
 			).map(assignment => [JSON.stringify(assignment), assignment] as const),
 		).values(),
-	].filter(assignment => staticGuard(step.if, { matrix: assignment }) !== false).slice(0, matrixLimit);
+	].filter(assignment => staticGuard(step.if, { matrix: assignment, inputs }) !== false).slice(0, matrixLimit);
 	const apply = (assignment: Record<string, string>): Record<string, unknown> => ({
 		...step,
 		...(typeof step.run === 'string' ? { run: substitute(step.run, assignment) } : {}),
@@ -248,13 +252,15 @@ export function literalBindings(values: Record<string, unknown>): Record<string,
 	}
 	return bindings;
 }
+function implicitDefault(type: unknown): string {
+	return type === 'boolean' ? 'false' : type === 'number' ? '0' : '';
+}
 export function inputDefaults(declared: unknown, passed: readonly string[]): Record<string, string> {
 	return Object.fromEntries(
 		Object.entries(object(declared)).flatMap(([key, input]) => {
-			const fallback = matrixScalar(object(input).default);
-			return passed.includes(key) || fallback === undefined || fallback.includes('${{')
-				? []
-				: [[key, fallback] as const];
+			const spec = object(input);
+			const fallback = matrixScalar(spec.default) ?? implicitDefault(spec.type);
+			return passed.includes(key) || fallback.includes('${{') ? [] : [[key, fallback] as const];
 		}),
 	);
 }
