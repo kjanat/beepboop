@@ -404,7 +404,16 @@ gets contents and pull requests write. The route refuses other permissions by
 default.
 The action also outputs `bot-login`, `bot-id` and `bot-email`, resolved from the
 configured App and its GitHub bot user. Use those outputs for Git author and
-committer identity; use the installation token for push authentication.
+committer identity; use the installation token for push authentication. The
+`gitId` output holds the same identity as a JSON object of `GIT_AUTHOR_NAME`,
+`GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` and `GIT_COMMITTER_EMAIL`, ready to
+insert into a step environment:
+
+```yaml
+env:
+  "${{ insert }}": ${{ fromJSON(steps.beepboop.outputs.gitId) }}
+```
+
 Every issued token is recorded in the audit log.
 
 A run that Beepboop dispatched passes its execution ID:

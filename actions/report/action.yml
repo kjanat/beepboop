@@ -20,23 +20,14 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Check for Bun
+    - name: Ensure Bun is available
       id: bun
-      shell: bash
-      run: |
-        if command -v bun >/dev/null 2>&1; then
-          echo "available=true" >> "${GITHUB_OUTPUT}"
-        fi
-    - name: Setup Bun
-      if: steps.bun.outputs.available != 'true'
-      uses: oven-sh/setup-bun@v2
-      with:
-        bun-version: latest
+      uses: $/actions/deps/bun
     - id: client
       shell: bash
       env:
-        SERVICE_ORIGIN: ${{ inputs.service }}
+        ARTIFACTS: ${{ inputs.artifacts }}
         EXECUTION_ID: ${{ inputs.execution-id }}
         PUBLICATIONS: ${{ inputs.publications }}
-        ARTIFACTS: ${{ inputs.artifacts }}
+        SERVICE_ORIGIN: ${{ inputs.service }}
       run: bun "${GITHUB_ACTION_PATH}/../runtime/client.ts" report

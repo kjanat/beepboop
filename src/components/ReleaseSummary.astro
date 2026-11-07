@@ -1,4 +1,5 @@
 ---
+import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
 import Field from '@/components/Field.astro';
 import { packageLabel } from '@/domain/package-label';
@@ -27,11 +28,11 @@ const { releases } = Astro.props;
 		</div>
 		<dl class="fields metadata">
 			<Field label="Commit">
-				<a
+				<code>{release.commit.slice(0, 12)}</code>
+				<Arrow
 					href={`https://github.com/${release.repository}/commit/${release.commit}`}
-				>
-					<code>{release.commit.slice(0, 12)}</code>
-				</a>
+					label="Open commit on GitHub"
+				/>
 			</Field>
 		</dl>
 		{release.publications.length ? (
@@ -57,11 +58,13 @@ const { releases } = Astro.props;
 		 )}
 		<ul class="run-links">
 			{release.runs.map(run => (
-				<li>
-					<a class="run-link" href={`/runs#${run.id}`}>
-						{run.operation}
-						<Badge tone={executionTone[run.state]} label={run.state} />
-					</a>
+				<li class="run-link">
+					{run.operation}
+					<Badge tone={executionTone[run.state]} label={run.state} />
+					<Arrow
+						href={`/runs#${run.id}`}
+						label={`Show the ${run.operation} operation`}
+					/>
 				</li>
 			))}
 		</ul>

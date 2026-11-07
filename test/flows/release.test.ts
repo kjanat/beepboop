@@ -155,6 +155,11 @@ async function finishedPromotion(outcome: 'pending' | 'skipped') {
 	run.status = 'in_progress';
 	const identity = { repository, runId: run.id, sha: run.headSha, file: 'publish.yml', actorId: botId };
 	await runAction(world, 'begin', identity, { EXECUTION_ID: promotion.id, STREAM: 'main', OPERATION: 'promote' });
+	const token = await runAction(world, 'token', identity, {
+		EXECUTION_ID: promotion.id,
+		PERMISSIONS: '{"contents":"read"}',
+		TOKEN_IDENTITY: 'true',
+	});
 	await runAction(world, 'report', identity, {
 		EXECUTION_ID: promotion.id,
 		PUBLICATIONS: JSON.stringify([
@@ -179,8 +184,21 @@ async function finishedPromotion(outcome: 'pending' | 'skipped') {
 		entry.key === `execution:${promotion.id}`
 	);
 	const stored = z.record(z.string(), z.unknown()).parse(entry?.value);
-	return { api, merged, promotion, stored, finished: await only(api, 'promote') };
+	return { api, merged, promotion, stored, token, finished: await only(api, 'promote') };
 }
+
+test('the token action outputs the bot identity as an insertable Git environment', async () => {
+	const { token } = await finishedPromotion('pending');
+	const login = token.outputs['bot-login'];
+	const email = token.outputs['bot-email'];
+	expect(login).toMatch(/\[bot\]$/);
+	expect(JSON.parse(token.outputs['gitId'] ?? '')).toEqual({
+		GIT_AUTHOR_NAME: login,
+		GIT_AUTHOR_EMAIL: email,
+		GIT_COMMITTER_NAME: login,
+		GIT_COMMITTER_EMAIL: email,
+	});
+});
 
 test('a finished run whose registry publication appears late is verified without a second approval', async () => {
 	const { api, merged, promotion, stored, finished } = await finishedPromotion('pending');
@@ -211,7 +229,7 @@ test('a finished run whose registry publication appears late is verified without
 	expect(world.github.dispatches).toHaveLength(1);
 	expect(runCard(finished, Date.now())).toMatchObject({ release: undefined, publications: [{ href: undefined }] });
 	expect(runCard(settled, Date.now())).toMatchObject({
-		release: 'https://github.com/octo/widget/releases/tag/v1.1.0',
+		release: { tag: 'v1.1.0', href: 'https://github.com/octo/widget/releases/tag/v1.1.0' },
 		publications: [{ href: 'https://www.npmjs.com/package/widget/v/1.1.0' }],
 	});
 	const module = settled.publications.map(publication => ({

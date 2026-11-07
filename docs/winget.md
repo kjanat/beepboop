@@ -76,6 +76,10 @@ be dispatched manually. It verifies the source commit, then publishes the
 complete source repository snapshot to the `actions` branch. Other Actions and
 their shared runtime keep their paths.
 
+A push whose head commit message contains `Actions-Release: skip` publishes
+and tags nothing. The next push without it publishes the complete snapshot,
+including the skipped changes.
+
 The workflow then tags the distribution commit. It compares each
 `actions/*/action.yml` with the previous release. A removed action, input or
 output, or a newly required input, is a major release. An added action, input

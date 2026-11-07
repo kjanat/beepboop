@@ -3,6 +3,7 @@ import { winget, wingetOutcome } from '@/automation/destinations';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
 import { publishedOutsideRequired } from '@/automation/setup';
 import type { RepositoryRecord } from '@/automation/types';
+import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
 import Field from '@/components/Field.astro';
 import Time from '@/components/Time.astro';
@@ -76,7 +77,13 @@ function wingetDestination(repository: RepositoryRecord) {
 {data.repositories.unreadable.map(row => (
 	<article id={`repository-${row.id}`}>
 		<div class="section-heading">
-			<h2><a href={`https://github.com/${row.name}`}>{row.name} ↗</a></h2>
+			<h2>
+				{row.name}
+				<Arrow
+					href={`https://github.com/${row.name}`}
+					label={`Open ${row.name} on GitHub`}
+				/>
+			</h2>
 			<Badge tone="error" label="Record unreadable" />
 		</div>
 		<pre>{row.error}</pre>
@@ -91,7 +98,11 @@ function wingetDestination(repository: RepositoryRecord) {
 			</summary>
 			<dl class="fields metadata">
 				<Field label="Repository">
-					<a href={`https://github.com/${repository.name}`}>Open on GitHub ↗</a>
+					{repository.name}
+					<Arrow
+						href={`https://github.com/${repository.name}`}
+						label={`Open ${repository.name} on GitHub`}
+					/>
 				</Field>
 				<Field label="Inspected"><Time value={repository.updatedAt} /></Field>
 				{repository.access.kind === 'suspended' && (
@@ -100,11 +111,11 @@ function wingetDestination(repository: RepositoryRecord) {
 						/></Field>
 				)}
 				<Field label="Commit">
-					<a
+					<code>{repository.sha.slice(0, 12)}</code>
+					<Arrow
 						href={`https://github.com/${repository.name}/commit/${repository.sha}`}
-					>
-						<code>{repository.sha.slice(0, 12)}</code>
-					</a>
+						label="Open inspected commit on GitHub"
+					/>
 				</Field>
 			</dl>
 			{repository.diagnostics.map(entry => (
@@ -182,11 +193,13 @@ function wingetDestination(repository: RepositoryRecord) {
 										<td>
 											{packageDisplayName(p)}
 											<small>
-												<a
+												{p.manifest}
+												<Arrow
 													href={`https://github.com/${repository.name}/blob/${repository.sha}/${
 														p.manifest.split('/').map(encodeURIComponent).join('/')
 													}`}
-												>{p.manifest}</a>
+													label={`Open ${p.manifest} on GitHub`}
+												/>
 											</small>
 											{p.previousModule && (
 												<small>
@@ -199,9 +212,13 @@ function wingetDestination(repository: RepositoryRecord) {
 											<ul class="destination-list">
 												{packageDestinations(p, repository.name).map(entry => (
 													<li>
-														{entry.href ? (
-															<a href={entry.href}>{entry.label}</a>
-														) : entry.label}: {entry.status}
+														{entry.label}
+														{entry.href && (
+															<Arrow
+																href={entry.href}
+																label={`Open ${entry.label}`}
+															/>
+														)}: {entry.status}
 													</li>
 												))}
 											</ul>
@@ -219,17 +236,23 @@ function wingetDestination(repository: RepositoryRecord) {
 										<td>
 											<code>{winget.title}</code>
 											<small>
-												<a
+												{winget.policy.config}
+												<Arrow
 													href={`https://github.com/${repository.name}/blob/${repository.sha}/${
 														winget.policy.config.split('/').map(encodeURIComponent).join('/')
 													}`}
-												>{winget.policy.config}</a>
+													label={`Open ${winget.policy.config} on GitHub`}
+												/>
 											</small>
 										</td>
 										<td>
-											{winget.entry.href ? (
-												<a href={winget.entry.href}>{winget.entry.label}</a>
-											) : winget.entry.label}: {winget.entry.status}
+											{winget.entry.label}
+											{winget.entry.href && (
+												<Arrow
+													href={winget.entry.href}
+													label={`Open ${winget.entry.label}`}
+												/>
+											)}: {winget.entry.status}
 										</td>
 										<td>
 											Release tags starting with
@@ -244,15 +267,24 @@ function wingetDestination(repository: RepositoryRecord) {
 										<td>
 											<code>{outcome.name}</code>
 											<small>
-												<a
+												{outcome.manifest}
+												<Arrow
 													href={`https://github.com/${repository.name}/blob/${repository.sha}/${
 														outcome.manifest.split('/').map(encodeURIComponent).join('/')
 													}`}
-												>{outcome.manifest}</a>
+													label={`Open ${outcome.manifest} on GitHub`}
+												/>
 											</small>
 										</td>
 										<td>
-											<a href={entry.href}>{entry.label}</a>: {entry.status}
+											{entry.label}
+											{entry.href && (
+												<Arrow
+													href={entry.href}
+													label={`Open ${entry.label}`}
+												/>
+											)}:
+											{entry.status}
 										</td>
 										<td>
 											{outcome.state === 'tracking' ? 'Default branch' : 'Not linked to a package'}
@@ -268,11 +300,13 @@ function wingetDestination(repository: RepositoryRecord) {
 							<ul class="inline-list">
 								{repository.inventory.packages.filter(p => !publishable(p)).map(p => (
 									<li>
-										<a
+										{p.name}
+										<Arrow
 											href={`https://github.com/${repository.name}/blob/${repository.sha}/${
 												p.manifest.split('/').map(encodeURIComponent).join('/')
 											}`}
-										>{p.name}</a>
+											label={`Open ${p.manifest} on GitHub`}
+										/>
 										({exclusionLabel(p.publication)})
 									</li>
 								))}
@@ -288,9 +322,11 @@ function wingetDestination(repository: RepositoryRecord) {
 								<li>
 									<strong>{w.stream} / {w.operation}</strong>
 									<small>
-										<a
+										{w.file}
+										<Arrow
 											href={`https://github.com/${repository.name}/blob/${repository.sha}/.github/workflows/${w.file}`}
-										>{w.file}</a>
+											label={`Open ${w.file} on GitHub`}
+										/>
 									</small>
 									<small>Ref: <code>{w.ref}</code></small>
 									<small>
@@ -309,9 +345,11 @@ function wingetDestination(repository: RepositoryRecord) {
 									 {repository.inventory.workflows.map(workflow => (
 										 <li>
 											 <strong>
-												 <a
+												 {workflow.name || workflow.file}
+												 <Arrow
 													 href={`https://github.com/${repository.name}/blob/${repository.sha}/.github/workflows/${workflow.file}`}
-												 >{workflow.name || workflow.file}</a>
+													 label={`Open ${workflow.file} on GitHub`}
+												 />
 											 </strong>
 											 <small>
 												 {workflow.events.join(', ') || 'No supported triggers'}
