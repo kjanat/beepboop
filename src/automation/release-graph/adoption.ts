@@ -1,6 +1,7 @@
 import { latestTag } from '@/automation/managers/tags';
 import { packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
+import { staticGuard } from '@/automation/release-graph/bindings';
 import type { ReleaseGraph, StreamProposal, StreamWorkflow, Target } from '@/automation/release-graph/graph';
 import { escapeRegExp } from '@/automation/release-graph/shell';
 import { type Destination, literalPrefix } from '@/automation/release-graph/workflows';
@@ -78,23 +79,24 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 			? stream.versionGroup.source.prefix
 			: undefined;
 		const members = new Map(stream.workflows.map(member => [member.file, member]));
-		const independent = (file: string) => members.get(file)?.events.includes('workflow_run') === true;
 		const collected = new Set<string>();
-		const collect = (self: StreamWorkflow, entry: StreamWorkflow): Observation[] => {
-			if (collected.has(self.file)) return [];
-			collected.add(self.file);
+		const collect = (self: StreamWorkflow, entry: StreamWorkflow): Omit<Observation, 'name'>[] => {
+			const key = `${self.file}\n${entry.file}`;
+			if (collected.has(key)) return [];
+			collected.add(key);
 			const reached = new Set<string>();
 			const downstream: StreamWorkflow[] = [];
 			const visit = (file: string) => {
 				const member = members.get(file);
 				if (!member || reached.has(file)) return;
 				if (file !== self.file && (member.role === 'entry' || member.role === 'channel')) return;
-				if (file !== self.file && independent(file)) {
-					downstream.push(member);
-					return;
-				}
 				reached.add(file);
-				for (const next of member.starts) visit(next);
+				for (const next of member.starts) {
+					const child = members.get(next);
+					if (child && member.completions.includes(next) && child.role !== 'entry' && child.role !== 'channel') {
+						downstream.push(child);
+					} else visit(next);
+				}
 			};
 			visit(self.file);
 			const files = [...reached];
@@ -103,8 +105,17 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 			].filter(Boolean);
 			const compatible = (operation: string, prefix: string | undefined) => {
 				const [file = '', job = '', ...guard] = operation.split('#');
-				const condition = [members.get(file)?.conditions[job], guard.join('#')].filter(Boolean).join(' ');
+				const parts = [members.get(file)?.conditions[job], guard.join('#')].filter(Boolean);
+				const condition = parts.join(' ');
 				if (prefix === undefined || !condition || families.length < 2) return true;
+				const sample = `${prefix}1.0.0`;
+				const outcomes = parts.map(part =>
+					staticGuard(part, {
+						github: { ref: `refs/tags/${sample}`, ref_name: sample, 'event.release.tag_name': sample },
+					})
+				);
+				if (outcomes.includes(false)) return false;
+				if (outcomes.every(outcome => outcome === true)) return true;
 				const mentions = families.flatMap(family =>
 					[...condition.matchAll(new RegExp(`['"](?:refs/tags/)?${escapeRegExp(family)}`, 'g'))].map(match => {
 						const compared = /^[^()]*\)\s*(==|!=)\s*(true|false)\b/.exec(
@@ -138,7 +149,7 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 				);
 			const covered = coveredFor();
 			const tagged = entry.tagPatterns.length > 0 || entry.events.includes('release');
-			const dispatched = self.events.includes('workflow_dispatch');
+			const dispatched = entry.events.includes('workflow_dispatch') || self.events.includes('workflow_dispatch');
 			const channel = entry.role === 'channel';
 			const tagPatterns = entry.tagPatterns.filter(pattern => !pattern.startsWith('!'));
 			const contexts: { ref?: string; publications: string[] }[] = [
@@ -179,7 +190,6 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 			];
 			return [
 				...contexts.map(context => ({
-					name: bindingName(self.file, taken),
 					file: self.file,
 					...(context.ref ? { ref: context.ref } : {}),
 					publications: context.publications,
@@ -187,9 +197,25 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 				...downstream.flatMap(member => collect(member, entry)),
 			];
 		};
-		const observe = stream.workflows.filter(entry => entry.role === 'entry' || entry.role === 'channel').flatMap(
-			entry => collect(entry, entry),
-		);
+		const merged = new Map<string, Omit<Observation, 'name'>>();
+		for (
+			const binding of stream.workflows.filter(entry => entry.role === 'entry' || entry.role === 'channel').flatMap(
+				entry => collect(entry, entry),
+			)
+		) {
+			const key = `${binding.file}\n${binding.ref ?? ''}`;
+			const existing = merged.get(key);
+			merged.set(
+				key,
+				existing
+					? { ...existing, publications: [...new Set([...existing.publications, ...binding.publications])] }
+					: binding,
+			);
+		}
+		const observe: Observation[] = [...merged.values()].map(binding => ({
+			name: bindingName(binding.file, taken),
+			...binding,
+		}));
 		const versionSource: SetupChoices['streams'][number]['versionSource'] =
 			stream.trigger.kind === 'tags' && !fileVersions ? { kind: 'tags', prefix: stream.trigger.prefix } : undefined;
 		return {

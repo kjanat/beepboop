@@ -2947,6 +2947,67 @@ describe('release streams', () => {
 			['release.yml', 'refs/tags/v*', []],
 			['publish.yml', 'refs/tags/v*', ['pkg:npm/widget']],
 		]);
+		const grouping = (expression: string, id: number) =>
+			planned({
+				'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+				'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+				'.github/workflows/release.yml':
+					`on: { push: { tags: ['a-v*', 'b-v*'] } }\njobs:\n  a:\n    if: \${{ ${expression} }}\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm --prefix packages/a publish\n  b:\n    if: startsWith(github.ref, 'refs/tags/b-v')\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm --prefix packages/b publish\n`,
+			}, id).choices.flatMap(choice => choice.observe ?? []).map(binding => [binding.ref, binding.publications]);
+		expect(grouping("(startsWith(github.ref, 'refs/tags/b-v')) == false", 171)).toEqual([
+			['refs/tags/a-v*', ['pkg:npm/a']],
+			['refs/tags/b-v*', ['pkg:npm/b']],
+		]);
+		for (
+			const [expression, id] of [
+				["!(startsWith(github.ref, 'refs/tags/b-v')) == false", 172],
+				["!(startsWith(github.ref, 'refs/tags/b-v') == false)", 173],
+			] as const
+		) {
+			expect(grouping(expression, id)).toEqual([
+				['refs/tags/a-v*', []],
+				['refs/tags/b-v*', ['pkg:npm/a', 'pkg:npm/b']],
+			]);
+		}
+		const dispatchChain = planned({
+			...widget,
+			'.github/workflows/release.yml':
+				'name: Release\non: workflow_dispatch\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo build\n',
+			'.github/workflows/publish.yml':
+				'name: Publish\non:\n  workflow_run:\n    workflows: [Release]\n    types: [completed]\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm publish\n',
+		}, 174).choices.flatMap(choice => choice.observe ?? []);
+		expect(dispatchChain.map(binding => [binding.file, binding.ref, binding.publications])).toEqual([
+			['release.yml', undefined, []],
+			['publish.yml', undefined, ['pkg:npm/widget']],
+		]);
+		const reusable = planned({
+			...widget,
+			'.github/workflows/release.yml':
+				"name: Release\non: { push: { tags: ['v*'] } }\njobs:\n  publish:\n    uses: ./.github/workflows/publish.yml\n",
+			'.github/workflows/build.yml':
+				"name: Build\non: { push: { tags: ['v*'] } }\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo build\n",
+			'.github/workflows/publish.yml':
+				'name: Publish\non:\n  workflow_call: {}\n  workflow_run:\n    workflows: [Build]\n    types: [completed]\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm publish\n',
+		}, 175).choices.flatMap(choice => choice.observe ?? []);
+		expect(reusable.map(binding => [binding.file, binding.ref, binding.publications])).toEqual([
+			['build.yml', 'refs/tags/v*', []],
+			['publish.yml', 'refs/tags/v*', ['pkg:npm/widget']],
+			['release.yml', 'refs/tags/v*', ['pkg:npm/widget']],
+		]);
+		const sharedPlan = planned({
+			...widget,
+			'.github/workflows/first.yml':
+				"name: First\non: { push: { tags: ['v*'] } }\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo first\n",
+			'.github/workflows/second.yml':
+				"name: Second\non: { push: { tags: ['v*'], branches: [main] } }\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm publish\n",
+			'.github/workflows/publish.yml':
+				'name: Publish\non:\n  workflow_run:\n    workflows: [First, Second]\n    types: [completed]\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm publish\n',
+		}, 176);
+		const shared = sharedPlan.choices.flatMap(choice => choice.observe ?? []);
+		expect(shared.filter(binding => binding.file === 'publish.yml').map(binding => binding.ref).sort()).toEqual([
+			'refs/heads/main',
+			'refs/tags/v*',
+		]);
 		for (const [comparison, id] of [['== false', 168], ['!= true', 169]] as const) {
 			const bindings = comparedBindings(comparison, id);
 			expect(bindings.find(binding => binding.ref === 'refs/tags/a-v*')?.publications).toEqual(['pkg:npm/a']);

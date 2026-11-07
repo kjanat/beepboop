@@ -113,7 +113,8 @@ export function substitute(text: string, assignment: Record<string, string>): st
 	});
 }
 const guardKey = /\bmatrix\.([\w-]+(?:\.[\w-]+)*)/g;
-const reference = '((?:matrix|inputs|github\\.event\\.inputs)\\.[\\w-]+(?:\\.[\\w-]+)*)';
+const reference =
+	'((?:matrix|inputs|github\\.event\\.inputs)\\.[\\w-]+(?:\\.[\\w-]+)*|github\\.(?:ref_name|ref|event\\.release\\.tag_name))';
 const comparison = new RegExp(
 	`^(?:${reference}\\s*(==|!=)\\s*(?:'([^']*)'|(true|false))|(?:'([^']*)'|(true|false))\\s*(==|!=)\\s*${reference})$`,
 );
@@ -121,9 +122,13 @@ const truthiness = new RegExp(`^(!?)\\s*${reference}$`);
 export interface GuardValues {
 	matrix?: Readonly<Record<string, string>>;
 	inputs?: Readonly<Record<string, string>>;
+	github?: Readonly<Record<string, string>>;
 }
 function lookup(path: string, values: GuardValues): string | undefined {
 	if (path.startsWith('matrix.')) return values.matrix?.[path.slice('matrix.'.length)];
+	if (path.startsWith('github.') && !path.startsWith('github.event.inputs.')) {
+		return values.github?.[path.slice('github.'.length)];
+	}
 	return values.inputs?.[path.replace(/^(?:github\.event\.)?inputs\./, '')];
 }
 function evaluateTerm(term: string, values: GuardValues): boolean | undefined {
@@ -138,6 +143,24 @@ function evaluateTerm(term: string, values: GuardValues): boolean | undefined {
 		const value = lookup(path, values);
 		if (value === undefined) return undefined;
 		return operator === '==' ? equal(operand(value), literal) : !equal(operand(value), literal);
+	}
+	const suffix = /^([\s\S]+?)\s*(==|!=)\s*(true|false)$/.exec(trimmed);
+	if (suffix) {
+		const inner = evaluateTerm(suffix[1] ?? '', values);
+		return inner === undefined ? undefined : (inner === (suffix[3] === 'true')) === (suffix[2] === '==');
+	}
+	if (trimmed.startsWith('!') && !trimmed.startsWith('!=')) return inverse(evaluateTerm(trimmed.slice(1), values));
+	const call = /^(startsWith|endsWith|contains)\(\s*([\w.]+)\s*,\s*'([^']*)'\s*\)$/i.exec(trimmed);
+	if (call) {
+		const subject = lookup(call[2] ?? '', values);
+		if (subject === undefined) return undefined;
+		const haystack = plain(subject).toLowerCase(), needle = (call[3] ?? '').toLowerCase();
+		const name = (call[1] ?? '').toLowerCase();
+		return name === 'startswith'
+			? haystack.startsWith(needle)
+			: name === 'endswith'
+			? haystack.endsWith(needle)
+			: haystack.includes(needle);
 	}
 	const bare = truthiness.exec(trimmed);
 	if (bare) {
@@ -195,7 +218,11 @@ export function staticGuard(condition: unknown, values: GuardValues): boolean | 
 		position++;
 		const inner = disjunction();
 		if (!operator(')')) malformed = true;
-		return negated ? inverse(inner) : inner;
+		const grouped = negated ? inverse(inner) : inner;
+		const compared = /^\s*(==|!=)\s*(true|false)\b/.exec(source.slice(position));
+		if (!compared) return grouped;
+		position += compared[0].length;
+		return grouped === undefined ? undefined : (grouped === (compared[2] === 'true')) === (compared[1] === '==');
 	};
 	const conjunction = (): Truth => {
 		let result = primary();
