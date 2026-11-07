@@ -457,7 +457,8 @@ test('a workflow_run run on a prefixed tag matches its tag binding', async () =>
 	});
 	const { plan } = await adopt(repository);
 	expect(plan.choices.streams[0]?.observe).toEqual([
-		{ name: 'release', file: 'release.yml', ref: 'refs/tags/widget-v*', publications: ['pkg:npm/widget'] },
+		{ name: 'release', file: 'release.yml', ref: 'refs/tags/widget-v*', publications: [] },
+		{ name: 'publish', file: 'publish.yml', ref: 'refs/tags/widget-v*', publications: ['pkg:npm/widget'] },
 	]);
 	world.npm.publish('widget', '1.2.0');
 	repository.refs.set('tags/widget-v1.2.0', world.github.head(repository));

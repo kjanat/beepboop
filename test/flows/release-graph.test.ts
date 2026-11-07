@@ -1039,8 +1039,12 @@ describe('release streams', () => {
 			['release.yml', 'called'],
 		]);
 		expect(chain.choices[0]?.observe).toEqual([
-			{ name: 'ci', file: 'ci.yml', ref: 'refs/tags/v*', publications: ['pkg:cargo/tool', 'pkg:npm/tool'] },
+			{ name: 'ci', file: 'ci.yml', ref: 'refs/tags/v*', publications: [] },
 			{ name: 'ci-2', file: 'ci.yml', ref: 'refs/heads/main', publications: [] },
+			{ name: 'release', file: 'release.yml', ref: 'refs/tags/v*', publications: ['pkg:npm/tool'] },
+			{ name: 'release-2', file: 'release.yml', ref: 'refs/heads/main', publications: [] },
+			{ name: 'crates', file: 'crates.yml', ref: 'refs/tags/v*', publications: ['pkg:cargo/tool'] },
+			{ name: 'crates-2', file: 'crates.yml', ref: 'refs/heads/main', publications: [] },
 		]);
 		const families: Record<string, string> = {
 			'packages/core/package.json': JSON.stringify({ name: 'core', version: '1.0.0' }),
@@ -2932,6 +2936,17 @@ describe('release streams', () => {
 				'.github/workflows/release.yml':
 					`on: { push: { tags: ['a-v*', 'b-v*'] } }\njobs:\n  a:\n    if: \${{ startsWith(github.ref, 'refs/tags/b-v') ${comparison} }}\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm --prefix packages/a publish\n  b:\n    if: startsWith(github.ref, 'refs/tags/b-v')\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm --prefix packages/b publish\n`,
 			}, id).choices.flatMap(choice => choice.observe ?? []);
+		const downstreamBindings = planned({
+			...widget,
+			'.github/workflows/release.yml':
+				"name: Release\non: { push: { tags: ['v*'] } }\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo build\n",
+			'.github/workflows/publish.yml':
+				'name: Publish\non:\n  workflow_run:\n    workflows: [Release]\n    types: [completed]\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm publish\n',
+		}, 170).choices.flatMap(choice => choice.observe ?? []);
+		expect(downstreamBindings.map(binding => [binding.file, binding.ref, binding.publications])).toEqual([
+			['release.yml', 'refs/tags/v*', []],
+			['publish.yml', 'refs/tags/v*', ['pkg:npm/widget']],
+		]);
 		for (const [comparison, id] of [['== false', 168], ['!= true', 169]] as const) {
 			const bindings = comparedBindings(comparison, id);
 			expect(bindings.find(binding => binding.ref === 'refs/tags/a-v*')?.publications).toEqual(['pkg:npm/a']);
