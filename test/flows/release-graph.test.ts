@@ -1926,6 +1926,15 @@ describe('release streams', () => {
 			'.github/workflows/release.yml': release('      - run: pnpm -r run release\n'),
 		}, 54);
 		expect([...target(stream(plan(pnpm).graph, 'main'), 'npm').packages].sort()).toEqual(['pkg:npm/a']);
+		const miseHelper = await built({
+			'package.json': JSON.stringify({ name: 'root', version: '1.0.0' }),
+			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
+			'packages/a/scripts/publish.sh': 'npm publish\n',
+			'mise.toml': '[tasks.release]\ndir = "packages/a"\nrun = "bash scripts/publish.sh"\n',
+			'.github/workflows/release.yml': release('      - run: mise run release\n'),
+		}, 158);
+		expect(Object.keys(miseHelper.files)).toContain('packages/a/scripts/publish.sh');
+		expect([...target(stream(plan(miseHelper).graph, 'main'), 'npm').packages]).toEqual(['pkg:npm/a']);
 		const reusableScripts = await built({
 			...workspace,
 			'packages/a/scripts/publish.sh': 'npm publish\n',
@@ -2636,6 +2645,35 @@ describe('release streams', () => {
 			133,
 			'npm',
 		)).toEqual(['pkg:npm/%40public/a']);
+		const partial = {
+			...filterWorkspace,
+			'packages/a/package.json': JSON.stringify({
+				name: '@public/a',
+				version: '1.0.0',
+				scripts: { release: 'npm publish' },
+			}),
+		};
+		expect(selected(
+			{
+				...partial,
+				'.github/workflows/release.yml': release("      - run: pnpm --filter '*' -r run release\n"),
+			},
+			159,
+			'npm',
+		)).toEqual(['pkg:npm/%40public/a']);
+		const crates = (selector: string, id: number) =>
+			selected(
+				{
+					'Cargo.toml': '[workspace]\nmembers = ["public-a", "internal-b"]\n',
+					'public-a/Cargo.toml': '[package]\nname = "public-a"\nversion = "1.0.0"\n',
+					'internal-b/Cargo.toml': '[package]\nname = "internal-b"\nversion = "1.0.0"\n',
+					'.github/workflows/release.yml': release(`      - run: cargo publish --package '${selector}'\n`),
+				},
+				id,
+				'crates-io',
+			);
+		expect(crates('public-*', 160)).toEqual(['pkg:cargo/public-a']);
+		expect(crates('internal-b', 161)).toEqual(['pkg:cargo/internal-b']);
 		const helper = (source: string, id: number) =>
 			planned({
 				...widget,

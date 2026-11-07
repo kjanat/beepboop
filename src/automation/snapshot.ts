@@ -172,6 +172,16 @@ function referencedScripts(
 		),
 	];
 	const matrixDirectories = workflowDirectories(read, repository);
+	const taskDirectories = [...read].flatMap(([path, source]) =>
+		/(?:^|\/)\.?mise(?:\.[\w-]+)?\.toml$/.test(path)
+			? [...source.matchAll(/^\s*dir\s*=\s*["']([^"']+)["']/gm)].flatMap(match =>
+				within(
+					path.replace(/\/?(?:\.config\/)?[^/]*$/, ''),
+					(match[1] ?? '').replace(/^\{\{\s*config_root\s*\}\}\/?/, '').replace(/^\.\//, '').replace(/\/$/, ''),
+				)
+			)
+			: []
+	);
 	const directories = [
 		...new Set(
 			[
@@ -183,7 +193,7 @@ function referencedScripts(
 						'gm',
 					),
 				),
-			].flatMap(match => match[1] ?? []).concat(matrixDirectories),
+			].flatMap(match => match[1] ?? []).concat(matrixDirectories, taskDirectories),
 		),
 	];
 	const parents = new Set(

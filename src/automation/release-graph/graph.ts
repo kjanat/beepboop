@@ -513,7 +513,7 @@ function targetsOf(
 					path.endsWith('.json') && !/(?:^|\/)(?:package|deno|jsr|composer|tsconfig[^/]*)\.json$/.test(path)
 					&& cites(path)
 				).map(([, source]) => source);
-				const workspaces = workspaceSelectors(publishing).map(selector =>
+				const workspaces = workspaceSelectors(supplementing).map(selector =>
 					selector.replace(/^\.\//, '').replace(/\/$/, '')
 				);
 				const negated = workspaces.filter(selector => selector.startsWith('!')).map(selector => selector.slice(1));
@@ -535,7 +535,7 @@ function targetsOf(
 					|| descriptors.some(source => new RegExp(`"${escapeRegExp(pkg.name)}"(?!\\s*:)`).test(source));
 				if (manager === 'cargo') {
 					const resolve = ({ command, directory }: { command: string; directory: string }) => {
-						const named = [...command.matchAll(/(?:-p|--package)(?:\s+|=)["']?([\w-]+)/g)].flatMap(match =>
+						const named = [...command.matchAll(/(?:-p|--package)(?:\s+|=)["']?([\w*?[\]-]+)/g)].flatMap(match =>
 							match[1] ?? []
 						);
 						const manifests = [...command.matchAll(/--manifest-path[= ]["']?(?:\.\/)?([^\s"';&|]*Cargo\.toml)/g)]
@@ -545,8 +545,8 @@ function targetsOf(
 						const excluded = everyCrate
 							? [...command.matchAll(/--exclude[= ]["']?([^\s"';&|]+)/g)].flatMap(match => match[1] ?? [])
 							: [];
-						return (named.length && named.every(name => candidates.some(pkg => pkg.name === name))
-							? candidates.filter(pkg => named.includes(pkg.name))
+						return (named.length && named.every(name => candidates.some(pkg => globMatches(name, pkg.name)))
+							? candidates.filter(pkg => named.some(name => globMatches(name, pkg.name)))
 							: !everyCrate && manifests.length
 									&& manifests.every(path => candidates.some(pkg => pkg.manifest === path))
 							? candidates.filter(pkg => manifests.includes(pkg.manifest))
