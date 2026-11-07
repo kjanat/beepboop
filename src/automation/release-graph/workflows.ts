@@ -228,8 +228,26 @@ function withCalledFunctions(source: string, body: string, seen = new Set<string
 	}
 	return parts.join('\n');
 }
-function segment(source: string, argument: string | undefined, whole = true): string {
-	if (!argument) return source;
+const shellScript = /^#!.*\b(?:ba|z|da|k)?sh\b/;
+function topLevel(source: string, path: string): string {
+	if (!shellScript.test(source) && !/\.(?:ba|z|da|k)?sh$/.test(path)) return source;
+	const kept: string[] = [];
+	let inside = false;
+	for (const line of source.split('\n')) {
+		if (inside) {
+			inside = !/^\}/.test(line);
+			continue;
+		}
+		if (/^\s*(?:function\s+)?[A-Za-z_][\w-]*\s*\(\)\s*\{/.test(line)) {
+			inside = !/\}\s*$/.test(line);
+			continue;
+		}
+		kept.push(line);
+	}
+	return withCalledFunctions(source, kept.join('\n'));
+}
+function segment(source: string, argument: string | undefined, whole = true, path = ''): string {
+	if (!argument) return topLevel(source, path);
 	const escaped = escapeRegExp(argument);
 	const branch = new RegExp(`^\\s*(?:[\\w-]+\\|)*["']?${escaped}["']?(?:\\|[\\w-]+)*\\)\\s*$`, 'm').exec(source);
 	if (branch) {
@@ -534,7 +552,7 @@ function scriptEffects(
 					|| /(?:^|\/)(?:tests?|__tests__|fixtures)\/|\.test\./.test(path)
 				) continue;
 				seen.add(key);
-				const text = segment(source, match[2]);
+				const text = segment(source, match[2], true, path);
 				effects.push(...commandEffects(text, path, here));
 				if (/^(?:promote|aliases?|float|latest)$/.test(match[2] ?? '')) {
 					effects.push({ kind: 'alias', source: path, text: match[0].trim() });

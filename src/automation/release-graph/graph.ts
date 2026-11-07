@@ -528,11 +528,14 @@ function targetsOf(
 				const workspaces = workspaceSelectors(publishing).map(selector =>
 					selector.replace(/^\.\//, '').replace(/\/$/, '')
 				);
+				const negated = workspaces.filter(selector => selector.startsWith('!')).map(selector => selector.slice(1));
+				const positive = workspaces.filter(selector => !selector.startsWith('!'));
+				const selects = (selector: string, pkg: Package) =>
+					selector === pkg.name || globMatches(selector, pkg.name) || (directoryOf(pkg) !== ''
+						&& (directoryOf(pkg) === selector || directoryOf(pkg).startsWith(`${selector}/`)));
+				const filtered = (pkg: Package) => negated.some(selector => selects(selector, pkg));
 				const covered = (pkg: Package) =>
-					workspaces.some(selector =>
-						selector === pkg.name || (directoryOf(pkg) !== ''
-							&& (directoryOf(pkg) === selector || directoryOf(pkg).startsWith(`${selector}/`)))
-					)
+					(positive.length ? positive.some(selector => selects(selector, pkg)) : negated.length > 0 && !filtered(pkg))
 					|| (pkg.name.startsWith('@')
 						&& new RegExp(`(?<![\\w@/.-])${escapeRegExp(pkg.name)}(?![\\w-])`).test(mentioning))
 					|| (!!pkg.generated
@@ -584,7 +587,9 @@ function targetsOf(
 						|| (scope.root && directoryOf(pkg) === '')
 					)
 					: [];
-				const chosen = candidates.filter(pkg => covered(pkg) || (rooted && root.includes(pkg)) || nested.includes(pkg));
+				const chosen = candidates.filter(pkg =>
+					!filtered(pkg) && (covered(pkg) || (rooted && root.includes(pkg)) || nested.includes(pkg))
+				);
 				const elsewhere = directories.length > 0 || qualified.test(commands);
 				return chosen.length
 					? { operation, packages: chosen, cited: true }

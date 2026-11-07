@@ -2563,6 +2563,36 @@ describe('release streams', () => {
 				)
 			).sort(),
 		).toEqual(['pkg:pypi/pa', 'pkg:pypi/pb']);
+		const filterWorkspace = {
+			'package.json': JSON.stringify({ name: 'root-tool', version: '1.0.0', private: true }),
+			'pnpm-workspace.yaml': "packages:\n  - 'packages/*'\n",
+			'packages/a/package.json': JSON.stringify({ name: '@public/a', version: '1.0.0' }),
+			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
+		};
+		expect(selected(
+			{
+				...filterWorkspace,
+				'.github/workflows/release.yml': release("      - run: pnpm --filter '!b' -r publish --no-git-checks\n"),
+			},
+			119,
+			'npm',
+		)).toEqual(['pkg:npm/%40public/a']);
+		expect(selected(
+			{
+				...filterWorkspace,
+				'.github/workflows/release.yml': release("      - run: pnpm --filter '@public/*' -r publish --no-git-checks\n"),
+			},
+			120,
+			'npm',
+		)).toEqual(['pkg:npm/%40public/a']);
+		const helper = (source: string, id: number) =>
+			planned({
+				...widget,
+				'scripts/build.sh': source,
+				'.github/workflows/release.yml': release('      - run: bash scripts/build.sh\n'),
+			}, id).graph.streams.length;
+		expect(helper('publish() {\n  npm publish\n}\necho build complete\n', 121)).toBe(0);
+		expect(helper('publish() {\n  npm publish\n}\npublish\n', 122)).toBe(1);
 		const negated = planned({
 			'packages/a/package.json': JSON.stringify({ name: 'a', version: '1.0.0' }),
 			'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
