@@ -6,6 +6,7 @@ import {
 	completion,
 	createExecution,
 	dependenciesReady,
+	deriveExecution,
 	expectedRunTitle,
 	mergePublications,
 	recheckable,
@@ -293,6 +294,24 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private releaseSet(key: string): Effect.Effect<ReleaseSetRecord | undefined, DomainError> {
 		return this.read(key).pipe(Effect.flatMap(value => fromSync(() => releaseSetRecord.optional().parse(value))));
 	}
+	private continueAfter(observed: Execution): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const stream = observed.configuration.streams[observed.stream];
+			const record = yield* this.store().repository(observed.repositoryId);
+			if (!stream || !record) return;
+			for (const [operation, binding] of Object.entries(stream.workflows)) {
+				if (binding.mode === 'observe' || !binding.needs?.includes(observed.operation)) continue;
+				const next = yield* deriveExecution(observed, record, {
+					stream: observed.stream,
+					operation,
+					eventId: observed.eventId,
+					sourceSha: observed.sourceSha,
+					...(observed.version ? { version: observed.version } : {}),
+				});
+				if (!(yield* this.stored(next.id))) yield* this.put(next);
+			}
+		});
+	}
 	private put(execution: Execution): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			Object.assign(execution, identifyExecution(execution));
@@ -319,6 +338,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				[{ entity: 'execution', id: execution.id, repositoryId: execution.repositoryId, value: execution }],
 				extra,
 			);
+			if (
+				execution.eventId.startsWith('observed:') && execution.state === 'succeeded'
+				&& previous?.state !== 'succeeded'
+			) yield* this.continueAfter(execution);
 			if (execution.state === 'succeeded') yield* this.captureReleaseEvent(execution);
 		});
 	}
@@ -1612,6 +1635,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					execution.runId = event.runId;
 					execution.runAttempt = run.run_attempt;
 					execution.state = 'running';
+					execution.dependencies = (yield* this.executions()).filter(other =>
+						other.stream === streamName && other.operation === 'promote' && other.state === 'succeeded'
+						&& version !== undefined && other.version === version && other.sourceSha === snapshot.sha
+					).map(other => other.id);
 					if (version) {
 						const target = yield* tagTarget(branch);
 						if (!target) {

@@ -85,6 +85,15 @@ const observed = z.object({
 	file: z.string().regex(workflowFilePattern),
 	ref: z.string().regex(refPattern).refine(validRef, 'Invalid workflow ref').optional(),
 	publications: z.array(z.string()).default([]),
+	needs: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)).optional(),
+}).strict();
+const operation = workflow.extend({
+	name: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/).refine(
+		name => name !== 'prepare' && name !== 'promote',
+		'prepare and promote are reserved operation names',
+	),
+	needs: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)).min(1),
+	publications: z.array(z.string()).default([]),
 }).strict();
 export const setupChoicesSchema = z.object({
 	streams: z.array(
@@ -103,6 +112,7 @@ export const setupChoicesSchema = z.object({
 			needs: z.record(z.string(), z.array(z.string())).optional(),
 			prepare: workflow.optional(),
 			promote: workflow.optional(),
+			operations: z.array(operation).optional(),
 		}).strict(),
 	),
 	/** Full commit of the published Actions distribution, required for external actions. */

@@ -4,6 +4,7 @@ import type { SetupChoices } from '@/contract/setup';
 export type { SetupChoices } from '@/contract/setup';
 
 export type SetupWorkflow = NonNullable<SetupChoices['streams'][number]['prepare']>;
+export type SetupOperation = NonNullable<SetupChoices['streams'][number]['operations']>[number];
 export type Versioning = SetupChoices['streams'][number]['versioning'];
 export type TriggerHandover = SetupWorkflow['triggers'];
 export const versionings: readonly Versioning[] = ['workspace', 'independent', 'none'];

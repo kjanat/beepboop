@@ -275,9 +275,18 @@ function drafted(
 			};
 			if (!selection.versionSource) delete updated.versionSource;
 			if (!selection.needs) delete updated.needs;
-			const granted = (['prepare', 'promote'] as const).flatMap(operation =>
-				Object.values(selection[operation]?.credentials ?? {}).map(alias => ({ operation, alias }))
-			);
+			const granted = [
+				...(['prepare', 'promote'] as const).flatMap(operation =>
+					Object.values(selection[operation]?.credentials ?? {}).map(alias => ({
+						operation,
+						file: selection[operation]?.file,
+						alias,
+					}))
+				),
+				...(selection.operations ?? []).flatMap(entry =>
+					Object.values(entry.credentials ?? {}).map(alias => ({ operation: entry.name, file: entry.file, alias }))
+				),
+			];
 			const credentials = [
 				...new Set([
 					...(Array.isArray(current.credentials) ? current.credentials.map(String) : []),
@@ -285,11 +294,9 @@ function drafted(
 				]),
 			];
 			if (credentials.length) updated.credentials = credentials;
-			for (const { operation, alias } of granted) {
+			for (const { operation, file, alias } of granted) {
 				notes.push(
-					`${
-						selection[operation]?.file
-					}: grant ${alias} with \`beepboop secrets grant ${snapshot.repository.name} ${alias} --operation ${operation}\`.`,
+					`${file}: grant ${alias} with \`beepboop secrets grant ${snapshot.repository.name} ${alias} --operation ${operation}\`.`,
 				);
 			}
 			const bindings = Object.fromEntries(
@@ -299,22 +306,37 @@ function drafted(
 				const previous = Object.entries(object(object(current.workflows)[entry.name])).filter(([field]) =>
 					field !== 'ref'
 				);
-				bindings[entry.name] = {
+				const observed: Record<string, unknown> = {
 					...Object.fromEntries(previous),
 					file: entry.file,
 					mode: 'observe',
 					...(entry.ref ? { ref: entry.ref } : {}),
 					publications: entry.publications,
+					...(entry.needs?.length ? { needs: entry.needs } : {}),
+				};
+				if (!entry.needs?.length) delete observed.needs;
+				bindings[entry.name] = observed;
+			}
+			for (const entry of selection.operations ?? []) {
+				const previous = object(object(current.workflows)[entry.name]);
+				bindings[entry.name] = {
+					...previous,
+					file: entry.file,
+					ref: typeof previous.ref === 'string' ? previous.ref : snapshot.repository.defaultBranch,
+					publications: entry.publications,
+					needs: entry.needs,
 				};
 			}
 			if (Object.keys(bindings).length) updated.workflows = bindings;
 			else delete updated.workflows;
 			if (selection.observe?.length) managers.add('workflow');
 			streams[selection.name] = updated;
+			const delegated = new Set(selection.operations?.flatMap(entry => entry.publications) ?? []);
+			const promoted = published.filter(pkg => !delegated.has(packageId(pkg)));
 			const shared = selection.prepare && selection.promote && selection.prepare.file === selection.promote.file;
 			for (const operation of ['prepare', 'promote'] as const) {
 				const workflow = selection[operation];
-				const reported = required.filter(id => published.some(pkg => packageId(pkg) === id));
+				const reported = required.filter(id => promoted.some(pkg => packageId(pkg) === id));
 				if (!workflow) {
 					if (selection.observe?.length) continue;
 					if (
@@ -388,9 +410,29 @@ function drafted(
 					selection.name,
 					operation,
 					workflow,
-					operation === 'promote' ? published : selected,
+					operation === 'promote' ? promoted : selected,
 					choices.actionsRevision,
 					required,
+				));
+				blockers.push(...generated.blockers);
+				notes.push(...generated.notes);
+				const path = `.github/workflows/${workflow.file}`, before = snapshot.files[path] ?? '';
+				if (generated.content !== before) edits.push({ path, before, after: generated.content });
+			}
+			for (const entry of selection.operations ?? []) {
+				const { name: operation, needs: _needs, publications, ...workflow } = entry;
+				if (selectedFiles.has(workflow.file)) {
+					blockers.push(`${workflow.file}: one workflow cannot be assigned to multiple release roles or streams.`);
+				}
+				selectedFiles.add(workflow.file);
+				const generated = yield* Effect.fromResult(integrateWorkflow(
+					snapshot,
+					selection.name,
+					operation,
+					workflow,
+					published.filter(pkg => publications.includes(packageId(pkg))),
+					choices.actionsRevision,
+					required.filter(id => publications.includes(id)),
 				));
 				blockers.push(...generated.blockers);
 				notes.push(...generated.notes);
@@ -641,6 +683,9 @@ export function setupBody(plan: SetupPlan): string {
 				`  - Versioning: ${versioningLabels[stream.versioning]}`,
 				`  - Preparation: ${workflow(stream.prepare)}`,
 				`  - Publication: ${workflow(stream.promote)}`,
+				...(stream.operations ?? []).map(entry =>
+					`  - After ${entry.needs.map(name => `\`${name}\``).join(', ')}: ${workflow(entry)}`
+				),
 				...(stream.needs && Object.keys(stream.needs).length
 					? [
 						'  - Publication order',

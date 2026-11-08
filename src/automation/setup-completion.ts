@@ -88,33 +88,42 @@ export function completeTaggedStreams(
 		tests[0] ?? 'cargo test --workspace --locked',
 	];
 	const joined = modules.filter(pkg => !released(pkg));
-	const promoted = [...crates, ...joined].map(packageId);
+	const moduleIds = joined.map(packageId);
 	const crateIds = new Map(crates.map(pkg => [pkg.name, packageId(pkg)]));
 	const proposal = graph.streams.find(entry => entry.id === stream.name);
 	const phases = new Map(
 		(proposal?.targets ?? []).flatMap(target => target.packages.map(id => [id, target.phase] as const)),
 	);
-	const observed = [
-		...new Set(
-			(stream.observe ?? []).filter(entry => entry.ref?.startsWith('refs/tags/')).flatMap(entry => entry.publications),
-		),
-	];
+	const starter = (stream.observe ?? []).find(entry => entry.ref === `refs/tags/${tagPrefix}*`);
+	const observed = [...new Set(starter?.publications ?? [])];
 	const needs: Record<string, string[]> = {};
 	const depend = (id: string, dependencies: readonly string[]) => {
 		const unique = [...new Set(dependencies)].filter(dependency => dependency !== id);
 		if (unique.length) needs[id] = unique;
 	};
-	for (const pkg of crates) {
-		depend(packageId(pkg), pkg.dependencies.flatMap(name => crateIds.get(name) ?? []));
-	}
-	for (const pkg of joined) depend(packageId(pkg), crates.map(packageId));
 	for (const id of observed) {
 		const phase = phases.get(id) ?? 0;
-		depend(id, [...promoted, ...observed.filter(other => (phases.get(other) ?? 0) < phase)]);
+		depend(id, [...moduleIds, ...observed.filter(other => (phases.get(other) ?? 0) < phase)]);
 	}
+	for (const pkg of crates) {
+		depend(packageId(pkg), [
+			...(starter ? observed : []),
+			...pkg.dependencies.flatMap(name => crateIds.get(name) ?? []),
+		]);
+	}
+	if (!starter) { for (const id of moduleIds) depend(id, crates.map(packageId)); }
+	const publish = {
+		triggers: 'review' as const,
+		commands: crates.map(pkg => `cargo publish --locked --package ${quote(pkg.name)}`).join('\n'),
+		publicationSteps: {},
+		credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' },
+	};
 	const { versionSource: _, ...rest } = stream;
 	const completed: Stream = {
 		...rest,
+		...(starter
+			? { observe: (stream.observe ?? []).map(entry => entry === starter ? { ...entry, needs: ['promote'] } : entry) }
+			: {}),
 		...(Object.keys(needs).length ? { needs } : {}),
 		packages: [...stream.packages, ...added],
 		required: [...stream.required, ...added.filter(id => !byId.get(id)?.optional)],
@@ -128,14 +137,24 @@ export function completeTaggedStreams(
 				},
 			}
 			: {}),
-		promote: {
-			file: unusedFile('release-crates', taken),
-			triggers: 'review',
-			commands: crates.map(pkg => `cargo publish --locked --package ${quote(pkg.name)}`).join('\n'),
-			publicationSteps: {},
-			credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' },
-			tagPrefix,
-		},
+		...(starter
+			? {
+				promote: {
+					file: unusedFile(`release-${stream.name}`, taken),
+					triggers: 'review',
+					commands: '',
+					publicationSteps: {},
+					tagPrefix,
+				},
+				operations: [{
+					name: 'crates',
+					file: unusedFile('publish-crates', taken),
+					...publish,
+					needs: [starter.name],
+					publications: crates.map(packageId),
+				}],
+			}
+			: { promote: { file: unusedFile('release-crates', taken), ...publish, tagPrefix } }),
 	};
 	const names = new Set(streams.map(entry => entry.name));
 	const independent = modules.filter(released).map((pkg): Stream => {

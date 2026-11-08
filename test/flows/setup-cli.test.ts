@@ -328,20 +328,21 @@ test('setup PRs and their refreshes are assigned to the owner with a review requ
 
 const lintSummary = [
 	'Release group lint:',
-	'- After you approve a release, release-crates.yml (new) publishes lint and lint-core to crates.io, then pushes the tag lint-v<version>.',
+	'- After you approve a release, release-lint.yml (new) pushes the tag lint-v<version>.',
 	'- Tags matching lint-v* start release.yml. It publishes @octo/lint to npm, and Beepboop records each run. Its triggers stay as they are.',
+	'- After release.yml succeeds, publish-crates.yml (new) publishes lint and lint-core to crates.io.',
 	'- prepare-release.yml (new) runs `cargo update --workspace` and `cargo test --workspace --locked` in the version PR.',
 	'- Publication order:',
-	'  1. In parallel: lint and lint-core to crates.io',
-	'  2. @octo/lint to npm',
+	'  1. @octo/lint to npm',
+	'  2. In parallel: lint and lint-core to crates.io',
 ];
 
 function lintProposal(repository: { name: string }, sha: string) {
 	return [
 		`Proposed setup for ${repository.name} at ${sha}:`,
 		...lintSummary,
-		'The setup PR writes .github/beepboop.json, .github/workflows/prepare-release.yml and .github/workflows/release-crates.yml.',
-		'release-crates.yml: grant crates-io with `beepboop secrets grant octo/lint crates-io --operation promote`.',
+		'The setup PR writes .github/beepboop.json, .github/workflows/prepare-release.yml, .github/workflows/release-lint.yml and .github/workflows/publish-crates.yml.',
+		'publish-crates.yml: grant crates-io with `beepboop secrets grant octo/lint crates-io --operation crates`.',
 		'Set up registry access and trusted publishing in each registry. The setup PR publishes nothing.',
 	];
 }
@@ -381,7 +382,7 @@ test('one adopt in a terminal shows the proposal, asks once and opens the setup 
 		['open', ['octo'], ['octo']],
 	]);
 	expect(repository.pulls[0]?.body).toContain(
-		'  - Publication order\n    1. In parallel: `lint` on crates.io, `lint-core` on crates.io\n    2. `@octo/lint` on npm\n',
+		'  - Publication order\n    1. `@octo/lint` on npm\n    2. In parallel: `lint` on crates.io, `lint-core` on crates.io\n',
 	);
 });
 

@@ -55,7 +55,7 @@ function evidenceOf(file: string, document: Record<string, unknown>): WorkflowEv
 			}
 			if (
 				role === 'begin' && typeof inputs.stream === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(inputs.stream)
-				&& (inputs.operation === 'prepare' || inputs.operation === 'promote')
+				&& typeof inputs.operation === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(inputs.operation)
 			) {
 				result.roles.push({ job, stream: inputs.stream, operation: inputs.operation });
 			}
@@ -89,7 +89,7 @@ const runName = '$' + '{{ inputs.beepboop_title || github.workflow }}';
 export function integrateWorkflow(
 	snapshot: Snapshot,
 	stream: string,
-	operation: 'prepare' | 'promote',
+	operation: string,
 	choice: SetupWorkflow,
 	packages: Package[],
 	actionsRevision?: string,
@@ -185,7 +185,7 @@ function integrate(
 	snapshot: Snapshot,
 	original: string | undefined,
 	stream: string,
-	operation: 'prepare' | 'promote',
+	operation: string,
 	choice: SetupWorkflow,
 	packages: Package[],
 	actionsRevision: string | undefined,

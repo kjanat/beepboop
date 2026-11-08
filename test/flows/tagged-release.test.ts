@@ -81,7 +81,7 @@ async function completed(repository: Repository, run: { id: number; path: string
 
 const refPlan = z.object({ changes: z.array(z.object({ name: z.string(), commit: z.string() })) });
 
-test('a bare adoption releases crates, Go modules and the tag-triggered npm workflow from one approval', async () => {
+test('one approval pushes the tags, then the tag workflow publishes, then the crates publish', async () => {
 	const published = new Map<string, string>();
 	world.network.serve('crates.io', request => {
 		const [, , , , name, version] = new URL(request.url).pathname.split('/');
@@ -145,11 +145,10 @@ test('a bare adoption releases crates, Go modules and the tag-triggered npm work
 		publicationSteps: {},
 	});
 	expect(stream.promote).toEqual({
-		file: 'release-crates.yml',
+		file: 'release-lint.yml',
 		triggers: 'review',
-		commands: "cargo publish --locked --package 'lint-core'\ncargo publish --locked --package 'lint'",
+		commands: '',
 		publicationSteps: {},
-		credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' },
 		tagPrefix: 'lint-v',
 	});
 	expect(stream.observe).toEqual([{
@@ -157,30 +156,47 @@ test('a bare adoption releases crates, Go modules and the tag-triggered npm work
 		file: 'release.yml',
 		ref: 'refs/tags/lint-v*',
 		publications: ['pkg:npm/%40octo/lint', 'pkg:pypi/lint-py', 'pkg:github/octo/lint'],
+		needs: ['promote'],
 	}]);
-	const crates = ['pkg:cargo/lint-core', 'pkg:cargo/lint'], tagged = [...crates, 'pkg:golang/github.com/octo/lint/go'];
+	expect(stream.operations).toEqual([{
+		name: 'crates',
+		file: 'publish-crates.yml',
+		triggers: 'review',
+		commands: "cargo publish --locked --package 'lint-core'\ncargo publish --locked --package 'lint'",
+		publicationSteps: {},
+		credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' },
+		needs: ['release'],
+		publications: ['pkg:cargo/lint-core', 'pkg:cargo/lint'],
+	}]);
+	const module = 'pkg:golang/github.com/octo/lint/go', github = 'pkg:github/octo/lint';
+	const registries = ['pkg:npm/%40octo/lint', 'pkg:pypi/lint-py', github];
 	expect(stream.needs).toEqual({
-		'pkg:cargo/lint': ['pkg:cargo/lint-core'],
-		'pkg:golang/github.com/octo/lint/go': crates,
-		'pkg:npm/%40octo/lint': tagged,
-		'pkg:pypi/lint-py': tagged,
-		'pkg:github/octo/lint': tagged,
+		'pkg:npm/%40octo/lint': [module],
+		'pkg:pypi/lint-py': [module],
+		[github]: [module],
+		'pkg:cargo/lint-core': registries,
+		'pkg:cargo/lint': [...registries, 'pkg:cargo/lint-core'],
 	});
 	const configured = z.object({
-		streams: z.record(z.string(), z.object({ needs: z.record(z.string(), z.array(z.string())) })),
+		streams: z.record(
+			z.string(),
+			z.looseObject({
+				needs: z.record(z.string(), z.array(z.string())),
+				promote: z.looseObject({ workflow: z.looseObject({ publications: z.array(z.string()) }) }),
+				workflows: z.record(z.string(), z.looseObject({ needs: z.array(z.string()).optional() })),
+			}),
+		),
 	}).parse(JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'));
 	expect(configured.streams[stream.name]?.needs).toEqual(stream.needs);
-	expect(plan.edits.length).toBeGreaterThan(0);
-	const generated = plan.edits.find(edit => edit.path === '.github/workflows/release-crates.yml')?.after ?? '';
-	const steps = z.object({
-		jobs: z.object({ promote: z.object({ steps: z.array(z.looseObject({ id: z.string().optional() })) }) }),
-	}).parse(parse(generated)).jobs.promote.steps.map(step => step.id);
-	expect(steps.filter(id => id?.startsWith('beepboop_'))).toEqual([
-		'beepboop_credentials',
-		'beepboop_publish',
-		'beepboop_token',
-		'beepboop_refs',
-	]);
+	expect(configured.streams[stream.name]?.promote.workflow.publications).toEqual([module]);
+	expect(configured.streams[stream.name]?.workflows.release?.needs).toEqual(['promote']);
+	expect(configured.streams[stream.name]?.workflows.crates?.needs).toEqual(['release']);
+	const stepIds = (file: string, job: string) =>
+		z.object({ jobs: z.record(z.string(), z.object({ steps: z.array(z.looseObject({ id: z.string().optional() })) })) })
+			.parse(parse(plan.edits.find(edit => edit.path === `.github/workflows/${file}`)?.after ?? ''))
+			.jobs[job]?.steps.flatMap(step => step.id?.startsWith('beepboop_') ? [step.id] : []);
+	expect(stepIds('release-lint.yml', 'promote')).toEqual(['beepboop_token', 'beepboop_refs']);
+	expect(stepIds('publish-crates.yml', 'crates')).toEqual(['beepboop_credentials', 'beepboop_publish']);
 	const applied = await api('/api/repositories/setup/apply', {
 		repository: repository.name,
 		choices: plan.choices,
@@ -265,49 +281,35 @@ test('a bare adoption releases crates, Go modules and the tag-triggered npm work
 		expect(text(approved.body, 'state')).toBe('ready');
 		await world.wait(16_000);
 
-		const promoteRun = one(
-			repository.runs.filter(run => run.path === '.github/workflows/release-crates.yml'),
-			'crates run',
-		);
-		const identity = {
-			repository,
-			runId: promoteRun.id,
-			sha: promoteRun.headSha,
-			file: 'release-crates.yml',
-			actorId: botId,
+		const runOf = (file: string) => {
+			const run = one(repository.runs.filter(entry => entry.path === `.github/workflows/${file}`), file);
+			return { run, identity: { repository, runId: run.id, sha: run.headSha, file, actorId: botId } };
 		};
-		await runAction(world, 'begin', identity, {
+		const outcome = (state: string) => ({ outcome: state, required: true, version: '1.1.0' });
+		const tags = runOf('release-lint.yml');
+		await runAction(world, 'begin', tags.identity, {
 			EXECUTION_ID: promotion.id,
 			STREAM: stream.name,
 			OPERATION: 'promote',
 		});
-		published.set('lint-core@1.1.0', 'crate');
-		published.set('lint@1.1.0', 'crate');
-		const planned = await runAction(world, 'refs-plan', identity, { EXECUTION_ID: promotion.id });
+		const planned = await runAction(world, 'refs-plan', tags.identity, { EXECUTION_ID: promotion.id });
 		const changes = refPlan.parse(JSON.parse(planned.outputs.result ?? '')).changes;
 		expect(changes.map(change => change.name)).toEqual(['lint-v1.1.0', 'go/v1.1.0']);
 		for (const [index, change] of changes.entries()) {
 			world.github.recordTag(repository, change.name, String(index + 1).repeat(40), change.commit, true);
 		}
-		await runAction(world, 'refs-complete', identity, { EXECUTION_ID: promotion.id });
+		await runAction(world, 'refs-complete', tags.identity, { EXECUTION_ID: promotion.id });
 		published.set('go@v1.1.0', 'module');
-		const outcome = (step: string) => ({ outcome: step, required: true, version: '1.1.0' });
-		await runAction(world, 'report', identity, {
+		await runAction(world, 'report', tags.identity, {
 			EXECUTION_ID: promotion.id,
 			PUBLICATIONS: JSON.stringify([
-				{ id: 'pkg:cargo/lint-core', manager: 'cargo', name: 'lint-core', ...outcome('succeeded') },
-				{ id: 'pkg:cargo/lint', manager: 'cargo', name: 'lint', ...outcome('succeeded') },
-				{
-					id: 'pkg:golang/github.com/octo/lint/go',
-					manager: 'go',
-					name: 'github.com/octo/lint/go',
-					...outcome('succeeded'),
-				},
+				{ id: module, manager: 'go', name: 'github.com/octo/lint/go', ...outcome('succeeded') },
 			]),
 		});
-		promoteRun.status = 'completed';
-		promoteRun.conclusion = 'success';
-		await completed(repository, promoteRun, 'workflow_dispatch');
+		tags.run.status = 'completed';
+		tags.run.conclusion = 'success';
+		await completed(repository, tags.run, 'workflow_dispatch');
+		expect(repository.runs.filter(run => run.path === '.github/workflows/publish-crates.yml')).toEqual([]);
 
 		world.npm.publish('@octo/lint', '1.1.0');
 		published.set('lint-py@1.1.0', 'project');
@@ -335,6 +337,34 @@ test('a bare adoption releases crates, Go modules and the tag-triggered npm work
 		};
 		repository.runs.push(tagRun);
 		await completed(repository, tagRun, 'push');
+		await world.wait(16_000);
+
+		const crates = runOf('publish-crates.yml');
+		const crateExecution = one(
+			z.array(z.unknown()).parse((await api('/api/executions')).body).map(decodeExecutionV1).filter(entry =>
+				entry.operation === 'crates'
+			),
+			'crates execution',
+		);
+		expect(crateExecution.version).toBe('1.1.0');
+		expect(crateExecution.sourceSha).toBe(released);
+		await runAction(world, 'begin', crates.identity, {
+			EXECUTION_ID: crateExecution.id,
+			STREAM: stream.name,
+			OPERATION: 'crates',
+		});
+		published.set('lint-core@1.1.0', 'crate');
+		published.set('lint@1.1.0', 'crate');
+		await runAction(world, 'report', crates.identity, {
+			EXECUTION_ID: crateExecution.id,
+			PUBLICATIONS: JSON.stringify([
+				{ id: 'pkg:cargo/lint-core', manager: 'cargo', name: 'lint-core', ...outcome('succeeded') },
+				{ id: 'pkg:cargo/lint', manager: 'cargo', name: 'lint', ...outcome('succeeded') },
+			]),
+		});
+		crates.run.status = 'completed';
+		crates.run.conclusion = 'success';
+		await completed(repository, crates.run, 'workflow_dispatch');
 
 		const journal = await world.coordinator(repository).exportJournal();
 		const executions = journal.filter(entry => entry.key.startsWith('execution:')).map(entry =>
@@ -346,16 +376,21 @@ test('a bare adoption releases crates, Go modules and the tag-triggered npm work
 					publication => [publication.id, publication.version, publication.outcome],
 				)
 			).sort();
-		expect(executions.find(entry => entry.operation === 'promote')?.state).toBe('succeeded');
-		expect(outcomes('promote')).toEqual([
-			['pkg:cargo/lint', '1.1.0', 'succeeded'],
-			['pkg:cargo/lint-core', '1.1.0', 'succeeded'],
-			['pkg:golang/github.com/octo/lint/go', '1.1.0', 'succeeded'],
+		expect(executions.map(entry => [entry.operation, entry.state]).sort()).toEqual([
+			['crates', 'succeeded'],
+			['prepare', 'succeeded'],
+			['promote', 'succeeded'],
+			['release', 'succeeded'],
 		]);
+		expect(outcomes('promote')).toEqual([[module, '1.1.0', 'succeeded']]);
 		expect(outcomes('release')).toEqual([
 			['pkg:github/octo/lint', 'lint-v1.1.0', 'succeeded'],
 			['pkg:npm/%40octo/lint', '1.1.0', 'succeeded'],
 			['pkg:pypi/lint-py', '1.1.0', 'succeeded'],
+		]);
+		expect(outcomes('crates')).toEqual([
+			['pkg:cargo/lint', '1.1.0', 'succeeded'],
+			['pkg:cargo/lint-core', '1.1.0', 'succeeded'],
 		]);
 	} finally {
 		rmSync(checkout.dir, { recursive: true, force: true });

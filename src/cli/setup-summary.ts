@@ -42,9 +42,10 @@ export function streamSummary(stream: Stream, plan: SetupPlan): string[] {
 	};
 	const lines: string[] = [];
 	const observed = new Set(stream.observe?.flatMap(entry => entry.publications) ?? []);
+	const delegated = new Set(stream.operations?.flatMap(entry => entry.publications) ?? []);
 	const promote = stream.promote;
 	if (promote) {
-		const own = stream.packages.filter(id => !observed.has(id));
+		const own = stream.packages.filter(id => !observed.has(id) && !delegated.has(id));
 		const registered = own.filter(id => packages.get(id)?.manager !== 'go');
 		const tags = promote.tagPrefix
 			? [
@@ -80,6 +81,14 @@ export function streamSummary(stream: Stream, plan: SetupPlan): string[] {
 			`${ids.length ? `${start}. It publishes ${publishes(ids)}` : start}, and Beepboop records each run. ${
 				tags.length ? 'Its triggers stay as they are.' : ''
 			}`.trimEnd(),
+		);
+	}
+	for (const operation of stream.operations ?? []) {
+		const after = operation.needs.map(name => stream.observe?.find(entry => entry.name === name)?.file ?? name);
+		lines.push(
+			`After ${listed(after)} ${after.length === 1 ? 'succeeds' : 'succeed'}, ${named(operation.file)} publishes ${
+				publishes(operation.publications)
+			}.`,
 		);
 	}
 	const prepare = stream.prepare;

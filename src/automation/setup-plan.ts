@@ -2,14 +2,14 @@ import { Effect } from 'effect';
 import { z } from 'zod';
 import type { PackagePublication } from '@/automation/package-publication';
 import { exclusionReasons } from '@/automation/package-publication';
-import type { SetupPlan, SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
+import type { SetupOperation, SetupPlan, SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { binaries } from '@/contract/setup';
 import { versionFileSchema } from '@/contract/version-files';
 
 const strings = z.array(z.string());
-const workflow: z.ZodType<SetupWorkflow> = z.object({
+const workflowShape = z.object({
 	file: z.string(),
 	job: z.string().optional(),
 	triggers: z.enum(['review', 'dispatchOnly', 'preserve'], { error: 'Invalid workflow triggers' }),
@@ -18,6 +18,12 @@ const workflow: z.ZodType<SetupWorkflow> = z.object({
 	credentials: z.record(z.string(), z.string()).optional(),
 	tagPrefix: z.string().optional(),
 	binaries: binaries.optional(),
+});
+const workflow: z.ZodType<SetupWorkflow> = workflowShape.strict();
+const operation: z.ZodType<SetupOperation> = workflowShape.extend({
+	name: z.string(),
+	needs: strings,
+	publications: strings,
 }).strict();
 const publication: z.ZodType<PackagePublication> = z.discriminatedUnion('kind', [
 	z.object({ kind: z.literal('registry') }).transform((): PackagePublication => ({ kind: 'registry' })),
@@ -51,11 +57,18 @@ const setupPlan: z.ZodType<SetupPlan> = z.object({
 				versionSource: z.object({ kind: z.literal('tags'), prefix: z.string() }).optional(),
 				versionFiles: z.array(versionFileSchema).optional(),
 				observe: z.array(
-					z.object({ name: z.string(), file: z.string(), ref: z.string().optional(), publications: strings }).strict(),
+					z.object({
+						name: z.string(),
+						file: z.string(),
+						ref: z.string().optional(),
+						publications: strings,
+						needs: strings.optional(),
+					}).strict(),
 				).optional(),
 				needs: z.record(z.string(), z.array(z.string())).optional(),
 				prepare: workflow.optional(),
 				promote: workflow.optional(),
+				operations: z.array(operation).optional(),
 			}).strict(),
 		),
 		actionsRevision: z.string().optional(),
