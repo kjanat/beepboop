@@ -19,7 +19,7 @@ inputs:
   permission-workflows:
     description: Workflows permission, write, for the publish-actions purpose only
   permissions:
-    description: JSON object of GitHub App permissions, each read or write; the permission-* inputs replace it. Without either, the token gets contents and pull requests write.
+    description: JSON object of GitHub App permissions, each read or write. Set either this input or the permission-* inputs. Without either, the token gets contents and pull requests write.
   execution-id:
     description: Beepboop execution ID, required when Beepboop dispatched the run
     default: ""
