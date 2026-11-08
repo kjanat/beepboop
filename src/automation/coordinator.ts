@@ -49,7 +49,7 @@ import {
 import { publishable } from '@/automation/package-publication';
 import { matchesRef } from '@/automation/policy';
 import type { PublishBudget } from '@/automation/publish-budget';
-import { planRefs, type RefPlan } from '@/automation/refs';
+import { planRefs, type RefPlan, type TagSigner, tagObject, tagPayload } from '@/automation/refs';
 import { compileReleaseSet } from '@/automation/release-set';
 import { manifestProblems } from '@/automation/release-version';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
@@ -74,6 +74,7 @@ export interface CoordinatorBindings extends AutomationBindings {
 	OWNER_ID: string;
 	RELEASE_WORKFLOW: Workflow<ReleaseWorkflowParams>;
 	PUBLISH_BUDGET: DurableObjectNamespace<PublishBudget>;
+	SIGNER?: TagSigner;
 }
 interface ReleaseSetRecord {
 	target: string;
@@ -815,7 +816,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (!execution.refPlan) {
 				if (complete) return yield* precondition('Ref plan has not been authorized');
 				const changes = yield* planRefs(policy, version, execution.sourceSha, refs);
-				execution.refPlan = { repository: execution.repository, executionId: id, version, changes };
+				execution.refPlan = yield* this.signRefs({
+					repository: execution.repository,
+					executionId: id,
+					version,
+					changes,
+				});
 				yield* this.put(execution);
 			}
 			const plan = execution.refPlan;
@@ -848,6 +854,23 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			return plan;
 		}));
+	}
+	private signRefs(plan: RefPlan): Effect.Effect<RefPlan, DomainError> {
+		const signer = this.env.SIGNER;
+		if (!signer || !plan.changes.some(change => change.signed)) return Effect.succeed(plan);
+		return Effect.gen(function*() {
+			const identity = yield* fromPromise(() => signer.identity());
+			if (!/^[^<>\n]+ <[^<>\s]+>$/.test(identity.userId)) {
+				return yield* precondition('The signing key needs a user ID with a name and email');
+			}
+			const tagger = `${identity.userId} ${Math.floor(Date.now() / 1000)} +0000`;
+			const changes = yield* Effect.forEach(plan.changes, change =>
+				change.signed && change.expected === null
+					? fromPromise(() => signer.sign(tagPayload(change, plan.version, tagger), `beepboop:${plan.repository}`))
+						.pipe(Effect.map(signature => ({ ...change, object: tagObject(change, plan.version, tagger, signature) })))
+					: Effect.succeed(change));
+			return { ...plan, changes, publicKey: identity.publicKey };
+		});
 	}
 	private promoted(execution: Execution): Effect.Effect<boolean, DomainError> {
 		if (execution.operation === 'promote') return Effect.succeed(true);

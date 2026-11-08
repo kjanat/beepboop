@@ -224,7 +224,9 @@ const refPlan: z.ZodType<RefPlan> = z.object({
 		commit: z.string(),
 		annotated: z.boolean(),
 		signed: z.boolean(),
+		object: z.string().optional(),
 	})),
+	publicKey: z.string().optional(),
 });
 const pullResult = z.object({ url: z.string(), head: z.string() });
 const executionSchema: z.ZodType<Execution> = z.object({

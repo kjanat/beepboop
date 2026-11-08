@@ -64,7 +64,7 @@ export interface Repository {
 	labels: Set<string>;
 	releases: Release[];
 	signatures: boolean;
-	tagObjects: Map<string, { name: string; commit: string }>;
+	tagObjects: Map<string, { name: string; commit: string; verified: boolean }>;
 }
 
 function hash(value: unknown): string {
@@ -201,7 +201,7 @@ export class FakeGitHub {
 			return json({
 				tag: tag.name,
 				object: { sha: tag.commit, type: 'commit' },
-				verification: { verified: true },
+				verification: { verified: tag.verified },
 			});
 		});
 		this.route('GET', new RegExp(`^${repo}/git/commits/([0-9a-f]{40})$`), match => {
@@ -560,9 +560,9 @@ export class FakeGitHub {
 		}
 		for (const run of repository.runs) if (run.headSha === from) run.headSha = to;
 	}
-	recordTag(repository: Repository, name: string, oid: string, commit: string): void {
+	recordTag(repository: Repository, name: string, oid: string, commit: string, verified: boolean): void {
 		repository.refs.set(`tags/${name}`, oid);
-		repository.tagObjects.set(oid, { name, commit });
+		repository.tagObjects.set(oid, { name, commit, verified });
 	}
 	file(repository: Repository, path: string, ref = repository.defaultBranch): string | undefined {
 		return this.files(repository, this.resolve(repository, ref)).get(path);

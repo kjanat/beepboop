@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { commitAll, gitOutput, materialize, runAction, runRuntime } from '@root/test/support/actions.ts';
@@ -6,8 +6,10 @@ import type { Repository } from '@root/test/support/github.ts';
 import { botId, ownerId } from '@root/test/support/github.ts';
 import { bearer, text } from '@root/test/support/http.ts';
 import { passChecks, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
+import type { SigningKey } from '@root/test/support/signing.ts';
 import type { World } from '@root/test/support/world.ts';
 import { z } from 'zod';
+import type { TagSigner } from '@/automation/refs';
 
 const prepareWorkflow = `name: Prepare
 on:
@@ -25,8 +27,20 @@ jobs:
 
 const contextFields = z.object({ id: z.string(), sourceSha: z.string() });
 const refPlan = z.object({
-	changes: z.array(z.object({ name: z.string(), commit: z.string(), annotated: z.boolean() })),
+	changes: z.array(z.object({
+		name: z.string(),
+		commit: z.string(),
+		annotated: z.boolean(),
+		object: z.string().optional(),
+	})),
+	publicKey: z.string().optional(),
 });
+export type PackedRefPlan = z.infer<typeof refPlan>;
+
+export interface PackedSigning {
+	key: SigningKey;
+	signer?: TagSigner;
+}
 
 function one<T>(items: T[], label: string): T {
 	const [item] = items;
@@ -44,11 +58,14 @@ function filesAt(repository: Repository, sha: string): Record<string, string> {
 export interface PackedRelease {
 	repository: Repository;
 	promotionId: string;
+	plan: PackedRefPlan;
+	tags: Record<string, string>;
 }
 
 export async function packedRelease(
 	world: World,
 	beforeRefs?: (promotionId: string) => Promise<void>,
+	signing?: PackedSigning,
 ): Promise<PackedRelease> {
 	const repository = widget(world.github);
 	world.npm.publish('widget', '1.0.0');
@@ -65,8 +82,9 @@ export async function packedRelease(
 		phase: 'version',
 		prefix: 'v',
 		aliases: [],
-		signed: false,
+		signed: signing !== undefined,
 	};
+	if (signing?.signer) world.env.SIGNER = signing.signer;
 	const pushed = world.github.push(repository, {
 		'.github/beepboop.json': `${JSON.stringify(configuration, null, '\t')}\n`,
 		'.github/workflows/prepare.yml': prepareWorkflow,
@@ -184,23 +202,35 @@ export async function packedRelease(
 		if (beforeRefs) await beforeRefs(promotionId);
 		const planned = await runAction(world, 'refs-plan', promoteIdentity, { EXECUTION_ID: promotionId });
 		const planBody = refPlan.parse(JSON.parse(planned.outputs.result ?? ''));
+		const local = signing && !signing.signer ? signing.key : undefined;
 		writeFileSync(
 			gitconfig,
-			`[url "${origin}"]\n\tinsteadOf = https://github.com/${repository.name}.git\n`,
+			`[url "${origin}"]\n\tinsteadOf = https://github.com/${repository.name}.git\n${
+				local ? `[user]\n\tsigningkey = ${local.fingerprint}\n` : ''
+			}`,
 		);
 		gitOutput(scratch, ['init', '--bare', origin]);
+		const refsTemp = join(scratch, 'refs-temp');
+		mkdirSync(refsTemp);
 		await runRuntime('refs', {
 			REF_PLAN: planned.outputs.result ?? '',
 			REF_TOKEN: 'destination-token',
 			GITHUB_WORKSPACE: checkout.dir,
 			GIT_CONFIG_GLOBAL: gitconfig,
+			RUNNER_TEMP: refsTemp,
+			...(local ? { GNUPGHOME: local.home } : {}),
 		});
+		const tags: Record<string, string> = {};
 		for (const change of planBody.changes) {
 			const oid = gitOutput(origin, ['rev-parse', `refs/tags/${change.name}`]);
 			const commit = gitOutput(origin, ['rev-parse', `refs/tags/${change.name}^{commit}`]);
 			if (commit !== change.commit) throw new Error(`Tag ${change.name} points at ${commit}`);
-			if (change.annotated) world.github.recordTag(repository, change.name, oid, commit);
+			if (!change.annotated) continue;
+			tags[change.name] = gitOutput(origin, ['cat-file', '-p', oid]);
+			const verified = signing?.key.verifies(origin, `refs/tags/${change.name}`) ?? false;
+			world.github.recordTag(repository, change.name, oid, commit, verified);
 		}
+		if (readdirSync(refsTemp).length) throw new Error('The refs runtime left files in RUNNER_TEMP');
 		await runAction(world, 'refs-complete', promoteIdentity, { EXECUTION_ID: promotionId });
 		world.npm.publish('widget', '1.1.0');
 		await runAction(world, 'report', promoteIdentity, {
@@ -223,7 +253,7 @@ export async function packedRelease(
 			repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
 		});
 		await world.wait(2_000);
-		return { repository, promotionId };
+		return { repository, promotionId, plan: planBody, tags };
 	} finally {
 		rmSync(checkout.dir, { recursive: true, force: true });
 		rmSync(scratch, { recursive: true, force: true });

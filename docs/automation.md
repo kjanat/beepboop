@@ -537,8 +537,13 @@ A workflow binding can declare `refs` with `phase: "version"` or `"aliases"`,
 `prefix` (default `v`), `aliases: ["major", "minor"]`, and `signed` (default false).
 Ref operations require promotion approval, either as the promotion operation or
 through its dependencies. Use `actions/publish-refs` after `begin`, passing the
-repository token as `token`. Signed version tags require a configured Git signer.
-Alias operations should depend on the publication operations they distribute.
+repository token as `token`. Signed version tags use the `SIGNER` service
+binding to the `Signer` entrypoint of gpg-signing-service. Beepboop signs the
+planned tag object with that key's primary user ID as tagger, and the Action
+writes it with `git mktag` and checks it with `git verify-tag`. Without the
+binding, the Action runs `git tag -s` with the runner's own Git signing key.
+GitHub must report the version tag as verified, so the key's email belongs on
+the repository owner's GitHub account. Alias operations should depend on the publication operations they distribute.
 
 The Action publishes an authorized plan with atomic Git pushes and explicit
 expected old object IDs. Version tags target one commit; stable aliases exclude

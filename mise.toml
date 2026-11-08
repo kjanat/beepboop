@@ -7,5 +7,16 @@ python                 = "3.15.2"
 "github:kjanat/runner" = "latest"
 "github:sharkdp/fd"    = "latest"
 
+[tools."http:actionlint"]
+version          = "343"
+url              = 'https://pkg.pr.new/kjanat/actionlint/@kjanat-actionlint/actionlint-{{ os(macos="darwin", windows="win32") }}-{{ arch() }}@{{ version }}'
+format           = "tar.gz"
+strip_components = 1
+bin_path         = "bin"
+
 [settings]
 prereleases = false
+
+[wrappers.actionlint]
+command = "mise"
+args    = ["exec", "http:actionlint", "--", "actionlint", "check"]

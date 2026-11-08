@@ -20,12 +20,29 @@ export interface RefChange {
 	commit: string;
 	annotated: boolean;
 	signed: boolean;
+	object?: string;
 }
 export interface RefPlan {
 	repository: string;
 	executionId: string;
 	version: string;
 	changes: RefChange[];
+	publicKey?: string;
+}
+export interface SigningIdentity {
+	publicKey: string;
+	userId: string;
+}
+/** The `Signer` RPC entrypoint of gpg-signing-service. */
+export interface TagSigner {
+	identity(): Promise<SigningIdentity>;
+	sign(data: string, caller: string): Promise<string>;
+}
+export function tagObject(change: RefChange, version: string, tagger: string, signature: string): string {
+	return `${tagPayload(change, version, tagger)}${signature.endsWith('\n') ? signature : `${signature}\n`}`;
+}
+export function tagPayload(change: RefChange, version: string, tagger: string): string {
+	return `object ${change.commit}\ntype commit\ntag ${change.name}\ntagger ${tagger}\n\nRelease ${version}\n`;
 }
 export function planRefs(
 	policy: RefPolicy,

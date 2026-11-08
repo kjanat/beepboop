@@ -12,6 +12,7 @@ import { packedRelease } from '@root/test/support/packed-release.ts';
 import { botId, ownerId } from '@root/test/support/github.ts';
 import { bearer, type Reply, text } from '@root/test/support/http.ts';
 import { passChecks, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
+import { fakeSigner, signingKey } from '@root/test/support/signing.ts';
 import { World } from '@root/test/support/world.ts';
 
 let world: World;
@@ -376,8 +377,72 @@ test('a merge-approved release whose merge cannot be confirmed waits for approva
 	expect(promotion.approvedBy).toBeUndefined();
 });
 
+test('the signer binding signs the planned version tag', async () => {
+	const key = signingKey('Release Bot (CI) <release@example.com>');
+	try {
+		const signer = fakeSigner(key);
+		const { plan, tags } = await packedRelease(world, undefined, { key, signer });
+		const promotion = await only(bearer(world, await world.cliSession()), 'promote');
+		expect(promotion.state).toBe('succeeded');
+		expect(promotion.publications.find(entry => entry.id === 'refs:promote')?.outcome).toBe('succeeded');
+		expect(plan.publicKey).toBe(key.publicKey);
+		expect(signer.calls).toEqual([{
+			data: expect.stringMatching(
+				/^object [0-9a-f]{40}\ntype commit\ntag v1\.1\.0\ntagger Release Bot \(CI\) <release@example\.com> \d+ \+0000\n\nRelease 1\.1\.0\n$/,
+			),
+			caller: 'beepboop:octo/widget',
+		}]);
+		expect(tags['v1.1.0']).toBe(plan.changes[0]?.object?.trimEnd());
+		expect(tags['v1.1.0']).toContain('-----BEGIN PGP SIGNATURE-----');
+	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
+test('signed version tags fall back to the runner key without a signer binding', async () => {
+	const key = signingKey('Beepboop <bot@example.com>');
+	try {
+		const { plan, tags } = await packedRelease(world, undefined, { key });
+		const promotion = await only(bearer(world, await world.cliSession()), 'promote');
+		expect(promotion.state).toBe('succeeded');
+		expect(plan.publicKey).toBeUndefined();
+		expect(plan.changes[0]?.object).toBeUndefined();
+		expect(tags['v1.1.0']).toContain('tagger Beepboop <bot@example.com>');
+		expect(tags['v1.1.0']).toContain('-----BEGIN PGP SIGNATURE-----');
+	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
+test('the refs runtime refuses a signature from another key', async () => {
+	const key = signingKey('Release Bot <release@example.com>');
+	const other = signingKey('Mallory <mallory@example.com>');
+	try {
+		const signer = fakeSigner(key, { signWith: other });
+		await expect(packedRelease(world, undefined, { key, signer })).rejects.toThrow('Git verify-tag failed');
+	} finally {
+		key.dispose();
+		other.dispose();
+	}
+}, 30_000);
+
+test('ref planning refuses a signing key without a name and email', async () => {
+	const key = signingKey('Release Bot <release@example.com>');
+	try {
+		const signer = fakeSigner(key, { userId: 'release-bot' });
+		await expect(packedRelease(world, undefined, { key, signer })).rejects.toThrow(
+			'The signing key needs a user ID with a name and email',
+		);
+		expect(signer.calls).toEqual([]);
+	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
 test('packed prepare and refs runtimes publish the planned tag', async () => {
-	const { repository, promotionId } = await packedRelease(world);
+	const { repository, promotionId, plan, tags } = await packedRelease(world);
+	expect(plan.publicKey).toBeUndefined();
+	expect(tags['v1.1.0']).not.toContain('-----BEGIN PGP SIGNATURE-----');
 	const api = bearer(world, await world.cliSession());
 	const promotion = await only(api, 'promote');
 	expect(promotion.id).toBe(promotionId);

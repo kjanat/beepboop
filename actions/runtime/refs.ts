@@ -1,4 +1,7 @@
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { ActionFailure, attempt, type Invalid, refuse } from '@root/actions/runtime/protocol.ts';
 import { Effect, Result } from 'effect';
 import type { RefChange, RefPlan } from '@/automation/refs.ts';
@@ -6,26 +9,45 @@ import { array, boolean, record, text } from '@/model.ts';
 
 interface Git {
 	read(...args: string[]): Effect.Effect<string, ActionFailure>;
+	write(input: string, ...args: string[]): Effect.Effect<string, ActionFailure>;
 	exists(ref: string): Effect.Effect<boolean>;
 }
 
-function createGit(root: string, token?: string): Git {
+function createGit(root: string, token?: string, keyring?: string): Git {
 	const env = { ...process.env };
 	if (token) {
 		env.GIT_CONFIG_COUNT = '1';
 		env.GIT_CONFIG_KEY_0 = 'http.https://github.com/.extraheader';
 		env.GIT_CONFIG_VALUE_0 = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`;
 	}
-	const run = (...args: string[]) => Effect.sync(() => spawnSync('git', args, { cwd: root, env, encoding: 'utf8' }));
+	if (keyring) env.GNUPGHOME = keyring;
+	const run = (input: string | undefined, args: string[]) =>
+		Effect.sync(() => spawnSync('git', args, { cwd: root, env, encoding: 'utf8', input }));
+	const output = (input: string | undefined, args: string[]) =>
+		run(input, args).pipe(Effect.flatMap(result =>
+			result.status === 0
+				? Effect.succeed(result.stdout.trim())
+				: Effect.fail(new ActionFailure({ message: `Git ${args[0]} failed; inspect the repository and ref plan` }))
+		));
 	return {
-		read: (...args) =>
-			run(...args).pipe(Effect.flatMap(result =>
-				result.status === 0
-					? Effect.succeed(result.stdout.trim())
-					: Effect.fail(new ActionFailure({ message: `Git ${args[0]} failed; inspect the repository and ref plan` }))
-			)),
-		exists: ref => run('rev-parse', '--verify', ref).pipe(Effect.map(result => result.status === 0)),
+		read: (...args) => output(undefined, args),
+		write: (input, ...args) => output(input, args),
+		exists: ref => run(undefined, ['rev-parse', '--verify', ref]).pipe(Effect.map(result => result.status === 0)),
 	};
+}
+
+function importKey(keyring: string, publicKey: string): Effect.Effect<void, ActionFailure> {
+	return Effect.gen(function*() {
+		yield* Effect.fromResult(attempt(() => writeFileSync(join(keyring, 'gpg.conf'), 'no-autostart\n')));
+		const result = yield* Effect.sync(() =>
+			spawnSync('gpg', ['--batch', '--no-tty', '--import'], {
+				env: { ...process.env, GNUPGHOME: keyring },
+				encoding: 'utf8',
+				input: publicKey,
+			})
+		);
+		if (result.status !== 0) return yield* new ActionFailure({ message: 'Could not import the signing key' });
+	});
 }
 
 function verifyTag(git: Git, ref: string, change: RefChange, message: string): Effect.Effect<void, ActionFailure> {
@@ -53,25 +75,30 @@ function verifyPublishedTag(
 	});
 }
 
+function createTag(git: Git, ref: string, change: RefChange, version: string): Effect.Effect<void, ActionFailure> {
+	return Effect.gen(function*() {
+		if (change.object === undefined) {
+			yield* git.read('tag', change.signed ? '-s' : '-a', '-m', `Release ${version}`, '--', change.name, change.commit);
+			return;
+		}
+		yield* git.read('update-ref', ref, yield* git.write(change.object, 'mktag'), '');
+	});
+}
+
 function prepareTag(git: Git, ref: string, change: RefChange, version: string): Effect.Effect<string, ActionFailure> {
 	return Effect.gen(function*() {
 		if (yield* git.exists(ref)) {
 			yield* verifyTag(git, ref, change, 'Local tag differs from the ref plan');
 		} else {
-			yield* git.read('tag', change.signed ? '-s' : '-a', '-m', `Release ${version}`, '--', change.name, change.commit);
+			yield* createTag(git, ref, change, version);
+			yield* verifyTag(git, ref, change, 'Created tag differs from the ref plan');
 		}
 		return yield* git.read('rev-parse', ref);
 	});
 }
 
-export function publishRefs(
-	plan: RefPlan,
-	root: string,
-	remote: string,
-	token?: string,
-): Effect.Effect<void, ActionFailure> {
+function publish(plan: RefPlan, git: Git, remote: string): Effect.Effect<void, ActionFailure> {
 	return Effect.gen(function*() {
-		const git = createGit(root, token);
 		const leases: string[] = [];
 		const refspecs: string[] = [];
 		for (const change of plan.changes) {
@@ -93,6 +120,22 @@ export function publishRefs(
 	});
 }
 
+export function publishRefs(
+	plan: RefPlan,
+	root: string,
+	remote: string,
+	token?: string,
+): Effect.Effect<void, ActionFailure> {
+	const publicKey = plan.publicKey;
+	if (publicKey === undefined) return publish(plan, createGit(root, token), remote);
+	return Effect.acquireUseRelease(
+		Effect.fromResult(attempt(() => mkdtempSync(join(process.env.RUNNER_TEMP || tmpdir(), 'beepboop-gnupg-')))),
+		keyring =>
+			importKey(keyring, publicKey).pipe(Effect.andThen(publish(plan, createGit(root, token, keyring), remote))),
+		keyring => Effect.sync(() => rmSync(keyring, { recursive: true, force: true })),
+	);
+}
+
 function parseChange(entry: unknown): Result.Result<RefChange, Invalid> {
 	return Result.gen(function*() {
 		const change = yield* record(entry);
@@ -102,6 +145,7 @@ function parseChange(entry: unknown): Result.Result<RefChange, Invalid> {
 			commit: yield* text(change.commit),
 			annotated: yield* boolean(change.annotated),
 			signed: yield* boolean(change.signed),
+			...(change.object === undefined ? {} : { object: yield* text(change.object) }),
 		};
 	});
 }
@@ -114,6 +158,7 @@ function parsePlan(value: unknown): Result.Result<RefPlan, Invalid> {
 			executionId: yield* text(plan.executionId),
 			version: yield* text(plan.version),
 			changes: yield* Result.all((yield* array(plan.changes)).map(parseChange)),
+			...(plan.publicKey === undefined ? {} : { publicKey: yield* text(plan.publicKey) }),
 		};
 	});
 }
