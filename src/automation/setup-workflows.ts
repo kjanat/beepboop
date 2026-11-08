@@ -96,14 +96,18 @@ export function integrateWorkflow(
 	required: string[] = packages.map(packageId),
 ): Result.Result<Integration, DomainError> {
 	const path = `.github/workflows/${choice.file}`, original = snapshot.files[path];
-	const document = parseDocument(
-		original ?? `name: ${operation === 'prepare' ? 'Prepare release' : 'Publish packages'}\non: {}\njobs: {}\n`,
-	);
+	const document = parseDocument(original ?? `name: ${workflowName(stream, operation)}\non: {}\njobs: {}\n`);
 	if (document.errors.length) return Result.fail(precondition(`${choice.file}: invalid YAML`));
 	return Result.try({
 		try: () => integrate(document, snapshot, original, stream, operation, choice, packages, actionsRevision, required),
 		catch: toDomainError,
 	});
+}
+function workflowName(stream: string, operation: string): string {
+	const named = stream === 'main' ? '' : ` ${stream}`;
+	if (operation === 'prepare') return `Prepare${named} release`;
+	if (operation === 'promote') return named ? `Publish${named}` : 'Publish packages';
+	return `Publish${named} ${operation}`;
 }
 interface Integration {
 	content: string;
@@ -151,6 +155,8 @@ export function integrateReleaseWorkflow(
 			if (!existing) document.setIn(['jobs', job], document.createNode({ 'runs-on': 'ubuntu-latest', steps: [] }));
 			else document.deleteIn(['jobs', job, 'if']);
 		}
+		const jobsNode = document.get('jobs', true);
+		if (!existing && isMap(jobsNode)) jobsNode.flow = false;
 		let source = renderWorkflow(document);
 		const blockers: string[] = [], notes: string[] = [];
 		for (const [operation, choice] of [['prepare', prepare], ['promote', promote]] as const) {
@@ -391,7 +397,10 @@ function integrate(
 		&& !steps.some(step => typeof step.uses === 'string' && step.uses.startsWith('jdx/mise-action@'));
 	const commandSteps = (step: Record<string, unknown>): Record<string, unknown>[] => {
 		const toolchain = mise ? [{ uses: pinned('mise') }] : [];
-		if (!aliases.length) return [...toolchain, step];
+		const script = typeof step.run === 'string' && step.run.includes('\n') && !step.run.endsWith('\n')
+			? { ...step, run: `${step.run}\n` }
+			: step;
+		if (!aliases.length) return [...toolchain, script];
 		if (steps.some(entry => entry.id === 'beepboop_credentials')) fail('step ID beepboop_credentials is already used');
 		return [
 			...toolchain,
@@ -401,7 +410,7 @@ function integrate(
 				with: { 'execution-id': `\${{ steps.${id}.outputs.execution-id }}`, aliases: JSON.stringify(aliases) },
 			},
 			{
-				...step,
+				...script,
 				env: Object.fromEntries(
 					Object.entries(credentials).map(([name, alias]) => [
 						name,

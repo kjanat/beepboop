@@ -44,6 +44,49 @@ export function suggestedWorkflowFile(
 function quote(value: string) {
 	return `'${value.replaceAll("'", "'\\''")}'`;
 }
+const publishCrate = String.raw`crate_status() {
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' --retry 4 --retry-delay 5 \
+    --user-agent "$GITHUB_REPOSITORY (beepboop)" "https://crates.io/api/v1/crates/$1/$2"
+}
+publish_crate() {
+  local crate="$1" version status output wait
+  version="$(cargo metadata --locked --no-deps --format-version 1 \
+    | jq -r --arg crate "$crate" '.packages[] | select(.name == $crate) | .version')"
+  for attempt in 1 2 3 4 5; do
+    status="$(crate_status "$crate" "$version")"
+    if [ "$status" = 200 ]; then
+      echo "$crate $version is on crates.io"
+      return 0
+    fi
+    if [ "$status" != 404 ]; then
+      echo "crates.io returned HTTP $status for $crate $version" >&2
+      return 1
+    fi
+    if output="$(cargo publish --locked --package "$crate" 2>&1)"; then
+      printf '%s\n' "$output"
+      return 0
+    fi
+    printf '%s\n' "$output"
+    case "$output" in
+      *'status 429'*) ;;
+      *)
+        [ "$(crate_status "$crate" "$version")" = 200 ] && return 0
+        return 1
+        ;;
+    esac
+    wait=90
+    if [[ "$output" =~ try\ again\ after\ ([A-Za-z]{3},\ [0-9]{2}\ [A-Za-z]{3}\ [0-9]{4}\ [0-9:]{8}\ GMT) ]]; then
+      wait=$(($(date -u -d "${'$'}{BASH_REMATCH[1]}" +%s) - $(date -u +%s) + 5))
+    fi
+    echo "crates.io rate limits $crate $version; attempt $attempt waits $wait seconds"
+    if [ "$wait" -gt 0 ]; then sleep "$wait"; fi
+  done
+  echo "crates.io kept rate limiting $crate $version" >&2
+  return 1
+}`;
+export function cratePublishCommands(names: string[]): string {
+	return [publishCrate, ...names.map(name => `publish_crate ${quote(name)}`)].join('\n');
+}
 export function suggestedCommands(role: 'prepare' | 'promote', selection: Selection, plan: SetupPlan): string {
 	const commands = managerCommands(role, selection, plan);
 	return role === 'prepare' && commands && plan.preparation?.lockfiles.some(path => /(?:^|\/)uv\.lock$/.test(path))
@@ -58,7 +101,7 @@ function managerCommands(role: 'prepare' | 'promote', selection: Selection, plan
 	if (packages.every(pkg => pkg.manager === 'cargo')) {
 		return role === 'prepare'
 			? 'cargo check --workspace --all-targets\ncargo test --workspace'
-			: packages.map(pkg => `cargo publish --package ${quote(pkg.name)}`).join('\n');
+			: cratePublishCommands(packages.map(pkg => pkg.name));
 	}
 	if (packages.every(pkg => pkg.manager === 'npm' && /(?:^|\/)package\.json$/.test(pkg.manifest))) {
 		const npm = plan.preparation?.lockfiles.some(path => path.endsWith('package-lock.json'));

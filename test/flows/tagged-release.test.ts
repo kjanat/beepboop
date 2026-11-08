@@ -6,6 +6,7 @@ import { Effect } from 'effect';
 import { parse } from 'yaml';
 import { z } from 'zod';
 import { setupOptions } from '@/automation/setup';
+import { cratePublishCommands } from '@/automation/setup-defaults';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import { streamSummary } from '@/automation/setup-summary';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
@@ -212,7 +213,7 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 		name: 'crates',
 		file: 'publish-crates.yml',
 		triggers: 'review',
-		commands: "cargo publish --locked --package 'lint-core'\ncargo publish --locked --package 'lint'",
+		commands: cratePublishCommands(['lint-core', 'lint']),
 		publicationSteps: {},
 		credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' },
 		needs: ['release'],
@@ -247,6 +248,17 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 			.jobs[job]?.steps.flatMap(step => step.id?.startsWith('beepboop_') ? [step.id] : []);
 	expect(stepIds('release-lint.yml', 'promote')).toEqual(['beepboop_token', 'beepboop_refs']);
 	expect(stepIds('publish-crates.yml', 'crates')).toEqual(['beepboop_credentials', 'beepboop_publish']);
+	const source = (file: string) => plan.edits.find(edit => edit.path === `.github/workflows/${file}`)?.after ?? '';
+	expect(
+		['release-lint.yml', 'publish-crates.yml'].map(file =>
+			z.object({ name: z.string() }).parse(parse(source(file))).name
+		),
+	)
+		.toEqual(['Publish lint', 'Publish lint crates']);
+	expect(source('publish-crates.yml')).toContain('        run: |\n          crate_status() {\n');
+	expect(source('publish-crates.yml')).toContain(
+		"          publish_crate 'lint-core'\n          publish_crate 'lint'\n",
+	);
 	const applied = await api('/api/repositories/setup/apply', {
 		repository: repository.name,
 		choices: plan.choices,

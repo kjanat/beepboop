@@ -238,7 +238,7 @@ test('Cargo setup creates one workflow with preparation and publishing jobs', as
 		?? '';
 	expect(workflow).toContain("inputs.beepboop_operation == 'prepare'");
 	expect(workflow).toContain("inputs.beepboop_operation == 'publish'");
-	expect(workflow).toContain("cargo publish --package 'my-crate'");
+	expect(workflow).toContain("publish_crate 'my-crate'");
 	const binding = z.object({ file: z.string(), inputs: z.object({ beepboop_operation: z.string() }) });
 	const configuration = z.object({
 		streams: z.object({

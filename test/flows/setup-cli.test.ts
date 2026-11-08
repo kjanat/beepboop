@@ -103,7 +103,7 @@ test('Cargo adoption generates one workflow and advanced renaming keeps the shar
 	expect(result.exitCode).toBe(0);
 	expect(result.stdout.join('')).toContain('Cargo.lock must be updated');
 	const source = world.github.file(repository, '.github/workflows/my-release.yml', 'automation/onboarding') ?? '';
-	expect(source).toContain("cargo publish --package 'my-crate'");
+	expect(source).toContain("publish_crate 'my-crate'");
 	expect(source).toContain("inputs.beepboop_operation == 'prepare'");
 	expect(source).toContain("inputs.beepboop_operation == 'publish'");
 	expect(world.github.file(repository, '.github/workflows/release-my-crate.yml', 'automation/onboarding'))
@@ -158,7 +158,7 @@ jobs:
 		}),
 	}).parse(parse(world.github.file(repository, '.github/workflows/ship.yml', 'automation/onboarding') ?? ''));
 	const steps = workflow.jobs.ship.steps;
-	expect(steps.find(step => step.id === 'beepboop_publish')?.run).toBe("(cd 'packages/b' &&\nnpm publish\n)");
+	expect(steps.find(step => step.id === 'beepboop_publish')?.run).toBe("(cd 'packages/b' &&\nnpm publish\n)\n");
 	const publications = z.array(z.object({ name: z.string(), outcome: z.string() })).parse(
 		JSON.parse(steps.find(step => step.with?.publications)?.with?.publications ?? '[]'),
 	);
@@ -560,8 +560,8 @@ test('saved Cargo commands are kept for the same packages and regenerated after 
 	);
 	expect(changed.exitCode).toBe(0);
 	const source = world.github.file(repository, '.github/workflows/release.yml', 'automation/onboarding') ?? '';
-	expect(source).toContain("cargo publish --package 'crate-b'");
-	expect(source).not.toContain("cargo publish --package 'crate-a'");
+	expect(source).toContain("publish_crate 'crate-b'");
+	expect(source).not.toContain("'crate-a'");
 });
 
 test('changing publishing-step mappings regenerates commands for the newly unmapped packages', async () => {
