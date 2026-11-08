@@ -750,3 +750,49 @@ test('a completed run starts the crates when its build jobs passed, after tracki
 		['release', 'failed'],
 	]);
 }, 60_000);
+
+for (const rewritten of [false, true]) {
+	test(
+		rewritten
+			? 'the crates refuse when the default branch no longer contains the tagged commit'
+			: 'the crates publish the tagged commit after the default branch moves on',
+		async () => {
+			const { repository, run, crateRuns, executions } = await stagedRelease();
+			const branch = repository.defaultBranch;
+			if (rewritten) {
+				const parent = repository.commits.get(run.headSha)?.parents[0];
+				if (!parent) throw new Error('The tagged commit has no parent');
+				repository.refs.set('heads/rewrite', parent);
+				const replaced = world.github.push(repository, { 'README.md': '# Rewritten\n' }, 'Rewrite history', 'rewrite');
+				repository.refs.set(`heads/${branch}`, replaced.sha);
+			} else {
+				world.github.push(repository, { 'README.md': '# Moved on\n' }, 'Merge a dependency update');
+			}
+			expect(world.github.head(repository)).not.toBe(run.headSha);
+			run.jobs = [...passedBuild, { name: 'npm', status: 'in_progress', conclusion: null }];
+			await world.wait(48_000);
+			const crates = one((await executions()).filter(entry => entry.operation === 'crates'), 'crates execution');
+			expect(crates.sourceSha).toBe(run.headSha);
+			if (rewritten) {
+				expect(crateRuns()).toEqual([]);
+				expect([crates.state, crates.reason]).toEqual([
+					'failed',
+					`${branch} at ${world.github.head(repository).slice(0, 12)} no longer contains ${run.headSha.slice(0, 12)}`,
+				]);
+			} else {
+				const dispatched = one(crateRuns(), 'crates run');
+				expect(dispatched.headSha).toBe(world.github.head(repository));
+				const begun = await runAction(
+					world,
+					'begin',
+					{ repository, runId: dispatched.id, sha: dispatched.headSha, file: 'publish-crates.yml', actorId: botId },
+					{ EXECUTION_ID: crates.id, STREAM: 'lint', OPERATION: 'crates' },
+				);
+				expect(JSON.parse(begun.outputs.context ?? '{}')).toMatchObject({ sourceSha: run.headSha });
+				expect(one((await executions()).filter(entry => entry.operation === 'crates'), 'crates execution').state)
+					.toBe('running');
+			}
+		},
+		60_000,
+	);
+}

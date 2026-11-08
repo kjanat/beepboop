@@ -19,6 +19,7 @@ import {
 	checkRunsSchema,
 	commitSchema,
 	commitStatusSchema,
+	comparisonSchema,
 	dispatchSchema,
 	type GitHubRelease,
 	gitRefSchema,
@@ -802,7 +803,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			) {
 				return yield* precondition('Run identity mismatch');
 			}
-			if (run.head_sha !== execution.sourceSha) {
+			if (!(yield* this.contains(execution, run.head_sha, token))) {
 				return yield* precondition(
 					`The run is at ${run.head_sha.slice(0, 12)} but this execution releases ${execution.sourceSha.slice(0, 12)}`,
 				);
@@ -1377,6 +1378,26 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return { ref, sha: commit.sha };
 		});
 	}
+	private contains(execution: Execution, sha: string, token: string): Effect.Effect<boolean, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			if (sha === execution.sourceSha) return true;
+			if (!execution.eventId.startsWith('observed:')) return false;
+			const comparison = yield* this.gateway().read(
+				comparisonSchema,
+				`/repos/${execution.repository}/compare/${execution.sourceSha}...${sha}`,
+				token,
+			);
+			return comparison.status === 'ahead';
+		});
+	}
+	private headMoved(execution: Execution, token: string): Effect.Effect<string | undefined, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const head = yield* this.refHead(execution, token);
+			if (!head || (yield* this.contains(execution, head.sha, token))) return undefined;
+			if (!execution.eventId.startsWith('observed:')) return moved(execution, head);
+			return `${head.ref} at ${head.sha.slice(0, 12)} no longer contains ${execution.sourceSha.slice(0, 12)}`;
+		});
+	}
 	private redispatch(execution: Execution, publications: Publication[]): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const gateway = this.gateway();
@@ -1384,8 +1405,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				contents: 'read',
 				actions: 'write',
 			});
-			const head = yield* this.refHead(execution, token);
-			if (head && head.sha !== execution.sourceSha) return yield* precondition(moved(execution, head));
+			const moved = yield* this.headMoved(execution, token);
+			if (moved) return yield* precondition(moved);
 			const run = execution.runId
 				? yield* gateway.read(
 					workflowRunSchema,
@@ -2143,9 +2164,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					)
 				) return;
 			}
-			const head = yield* this.refHead(execution, token);
-			if (head && head.sha !== execution.sourceSha) {
-				yield* this.put({ ...execution, state: 'failed', reason: moved(execution, head) });
+			const reason = yield* this.headMoved(execution, token);
+			if (reason) {
+				yield* this.put({ ...execution, state: 'failed', reason });
 				return;
 			}
 			execution.resolvedInputs = yield* resolveInputs(execution, executions);
