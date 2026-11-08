@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { Effect, Result } from 'effect';
-import { parse } from 'yaml';
+import { parse, parseDocument } from 'yaml';
 import { z } from 'zod';
 import { mergeConfiguration } from '@/automation/configuration';
 import { pinned } from '@/automation/setup-actions';
@@ -717,6 +717,71 @@ test('setup delivers selected credentials to the publishing commands', async () 
 	expect(plan.notes).toContain(
 		'release-widget.yml: grant npm-token with `beepboop secrets grant octo/widget npm-token --operation promote`.',
 	);
+});
+
+test('generated workflows keep every expression on one line', async () => {
+	const repository = world.github.create('octo/lint', {
+		'Cargo.toml': '[workspace]\nmembers = ["crates/core", "crates/cli"]\n[workspace.package]\nversion = "1.0.0"\n',
+		'crates/core/Cargo.toml': '[package]\nname = "lint-core"\nversion.workspace = true\n',
+		'crates/cli/Cargo.toml': '[package]\nname = "lint"\nversion.workspace = true\n',
+		'go/go.mod': 'module github.com/octo/lint/go\n\ngo 1.26\n',
+		'mise.toml': '[tools]\nrust = "stable"\n',
+	});
+	const packages = ['pkg:cargo/lint-core', 'pkg:cargo/lint', 'pkg:golang/github.com/octo/lint/go'];
+	const api = bearer(world, await world.cliSession());
+	const choices: SetupChoices = {
+		streams: [{
+			name: 'main',
+			packages,
+			required: packages,
+			versioning: 'workspace',
+			prepare: {
+				file: 'prepare-release.yml',
+				job: 'prepare',
+				triggers: 'review',
+				commands: 'cargo update --workspace\ncargo test --workspace --locked',
+				publicationSteps: {},
+			},
+			promote: {
+				file: 'release-crates.yml',
+				job: 'publish',
+				triggers: 'review',
+				commands: "cargo publish --locked --package 'lint-core'\ncargo publish --locked --package 'lint'",
+				publicationSteps: {},
+				credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' },
+				tagPrefix: 'lint-v',
+			},
+		}],
+	};
+	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toEqual([]);
+	const workflows = plan.edits.filter(edit => edit.path.startsWith('.github/workflows/'));
+	expect(workflows.map(edit => edit.path).sort()).toEqual([
+		'.github/workflows/prepare-release.yml',
+		'.github/workflows/release-crates.yml',
+	]);
+	for (const edit of workflows) {
+		expect(parseDocument(edit.after ?? '').errors).toEqual([]);
+		for (const line of (edit.after ?? '').split('\n')) {
+			expect({ line, closes: line.split('}}').length }).toEqual({ line, closes: line.split('${{').length });
+		}
+	}
+	const release = workflows.find(edit => edit.path === '.github/workflows/release-crates.yml')?.after ?? '';
+	const report = binaryWorkflowSchema.parse(parse(release)).jobs.publish?.steps.find(step => step.with?.publications);
+	const publications = z.array(z.object({ id: z.string(), outcome: z.string() })).parse(
+		JSON.parse(String(report?.with?.publications)),
+	);
+	expect(publications.map(entry => entry.id)).toEqual([
+		'pkg:cargo/lint',
+		'pkg:cargo/lint-core',
+		'pkg:golang/github.com/octo/lint/go',
+	]);
+	expect(publications.map(entry => entry.outcome)).toEqual([
+		"${{ steps.beepboop_publish.outcome == 'success' && 'succeeded' || 'failed' }}",
+		"${{ steps.beepboop_publish.outcome == 'success' && 'succeeded' || 'failed' }}",
+		"${{ steps.beepboop_refs.outcome == 'success' && 'succeeded' || 'failed' }}",
+	]);
 });
 
 test('setup installs the mise toolchain before the setup commands', async () => {

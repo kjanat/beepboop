@@ -4,7 +4,7 @@ import type { Document } from 'yaml';
 import { isMap, isNode, parseDocument, visit } from 'yaml';
 import { object, yaml } from '@/automation/managers/helpers';
 import { packageId } from '@/automation/package-identity';
-import { annotatePins, pinned } from '@/automation/setup-actions';
+import { annotatePins, pinned, renderWorkflow } from '@/automation/setup-actions';
 import {
 	assetConflicts,
 	beginJobId,
@@ -151,7 +151,7 @@ export function integrateReleaseWorkflow(
 			if (!existing) document.setIn(['jobs', job], document.createNode({ 'runs-on': 'ubuntu-latest', steps: [] }));
 			else document.deleteIn(['jobs', job, 'if']);
 		}
-		let source = document.toString();
+		let source = renderWorkflow(document);
 		const blockers: string[] = [], notes: string[] = [];
 		for (const [operation, choice] of [['prepare', prepare], ['promote', promote]] as const) {
 			const result = yield* integrateWorkflow(
@@ -177,7 +177,7 @@ export function integrateReleaseWorkflow(
 		});
 		combined.setIn(['jobs', prepareJob, 'if'], gate('prepare'));
 		combined.setIn(['jobs', publishJob, 'if'], gate('promote'));
-		return { content: combined.toString(), blockers, notes };
+		return { content: renderWorkflow(combined), blockers, notes };
 	});
 }
 function integrate(
@@ -469,7 +469,7 @@ function integrate(
 			if: `\u0024{{ !cancelled() && steps.${id}.outcome == 'success' }}`,
 			with: {
 				'execution-id': `\u0024{{ steps.${id}.outputs.execution-id }}`,
-				publications: JSON.stringify(publications),
+				publications: `${JSON.stringify(publications, null, 2)}\n`,
 			},
 		});
 	}
@@ -531,5 +531,5 @@ function integrate(
 	}
 	const unchanged = original !== undefined
 		&& isDeepStrictEqual(parseDocument(original).toJS({ maxAliasCount: 100 }), document.toJS({ maxAliasCount: 100 }));
-	return { content: unchanged ? original : annotatePins(document.toString()), blockers, notes };
+	return { content: unchanged ? original : annotatePins(renderWorkflow(document)), blockers, notes };
 }

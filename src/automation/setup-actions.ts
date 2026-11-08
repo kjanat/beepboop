@@ -1,3 +1,4 @@
+import type { Document } from 'yaml';
 import { isScalar, parseDocument, visit } from 'yaml';
 
 interface Pin {
@@ -32,6 +33,10 @@ export function pinned(action: PinnedAction): string {
 
 const versions = new Map<string, string>(Object.values(pins).map(pin => [`${pin.repository}@${pin.sha}`, pin.version]));
 
+export function renderWorkflow(document: Document): string {
+	return document.toString({ lineWidth: 0 });
+}
+
 export function annotatePins(source: string): string {
 	const document = parseDocument(source);
 	visit(document, {
@@ -41,5 +46,5 @@ export function annotatePins(source: string): string {
 			if (version && !pair.value.comment) pair.value.comment = ` ${version}`;
 		},
 	});
-	return document.toString();
+	return renderWorkflow(document);
 }
