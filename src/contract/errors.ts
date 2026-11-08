@@ -112,6 +112,7 @@ export function envelope(problem: ApiError, message = messageOf(problem)): Error
 export function notFound(resource: Resource, message?: string, id?: string): DomainError {
 	return domainError({ code: 'not-found', resource, ...(id === undefined ? {} : { id }) }, message);
 }
+export const securityKeyRequired = 'This action needs a security-key touch; upgrade the beepboop CLI';
 export function forbidden(reason: string): DomainError {
 	return domainError({ code: 'forbidden', reason });
 }

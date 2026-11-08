@@ -455,6 +455,37 @@ test('push approval cancels a promotion once its version tag targets another com
 	expect(world.github.dispatches.map(dispatch => dispatch.file)).not.toContain('publish.yml');
 });
 
+test('a grant the server would refuse fails before any security-key prompt', async () => {
+	const repository = widget(world.github, { configured: false });
+	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	const elevated = spyOn(client, 'elevated');
+	const refused = await run(['secrets', 'grant', repository.name, 'npm-token', '--stream', 'main']);
+	expect(refused.exitCode).not.toBe(0);
+	expect(refused.stderr.join('')).toContain('Repository not configured');
+	expect(elevated).not.toHaveBeenCalled();
+});
+
+test('an acceptable grant asks for the security key once and stores the grant', async () => {
+	const repository = await seed();
+	await world.db.prepare(
+		'INSERT INTO credentials(alias,version,key_id,ciphertext,iv,active,created_at) VALUES(?,?,?,?,?,1,?)',
+	).bind('npm-token', 1, 'v1', 'sealed', 'iv', Date.now()).run();
+	await world.db.prepare('INSERT INTO sessions(id,kind,document,expires_at) VALUES(?,?,?,?)')
+		.bind(
+			'proof',
+			'elevation',
+			JSON.stringify({ subject: world.env.ADMIN_SUBJECT, elevated: true }),
+			Date.now() + 60_000,
+		)
+		.run();
+	const elevated = spyOn(client, 'elevated').mockReturnValue(Effect.succeed('proof'));
+	const granted = await run(['secrets', 'grant', repository.name, 'npm-token']);
+	expect(granted.exitCode).toBe(0);
+	expect(elevated).toHaveBeenCalledTimes(1);
+	const rows = await world.db.prepare('SELECT alias FROM grants WHERE repository_id=?').bind(repository.id).all();
+	expect(rows.results).toEqual([{ alias: 'npm-token' }]);
+});
+
 test('managed manifest plans with custom version files promote after the preparation PR is merged', async () => {
 	const repository = await seed();
 	const configuration = z.looseObject({ streams: z.looseObject({ main: z.looseObject({}) }) }).parse(

@@ -6,7 +6,15 @@ import { Effect } from 'effect';
 import type { z } from 'zod';
 import { type SecurityKeyPrompts, securityKeyAssertion } from '@/cli/fido2/index';
 import { failure, signIn } from '@/cli/output';
-import { type ApiFailure, call, failureOf, send, type Transport, type Unreachable } from '@/contract/client';
+import {
+	type ApiFailure,
+	call,
+	elevatedCall,
+	failureOf,
+	send,
+	type Transport,
+	type Unreachable,
+} from '@/contract/client';
 import type { ErrorCode } from '@/contract/errors';
 import { cliTokenPattern, confirmationCode, loginSecret, sha256Hex } from '@/contract/ids';
 import { type Route, routes } from '@/contract/routes';
@@ -59,6 +67,11 @@ export function serverOrigin(value: string): Effect.Effect<string, CLIError> {
 }
 function local<A>(run: () => Promise<A>): Effect.Effect<A> {
 	return Effect.promise(run);
+}
+function refusal(error: ApiFailure): CLIError {
+	return error.status === 401
+		? failure('Session revoked', 'SESSION_REVOKED', signIn)
+		: failure(error.message, error.problem ? codes[error.problem.code] : `HTTP_${error.status}`);
 }
 function unreachable(error: Unreachable): Effect.Effect<never> {
 	return Effect.die(error.cause);
@@ -143,11 +156,19 @@ export class Client {
 			const transport = this.transport(yield* this.session());
 			return yield* call(route, input, transport).pipe(
 				Effect.catchTag('Unreachable', unreachable),
-				Effect.mapError((error: ApiFailure) =>
-					error.status === 401
-						? failure('Session revoked', 'SESSION_REVOKED', signIn)
-						: failure(error.message, error.problem ? codes[error.problem.code] : `HTTP_${error.status}`)
-				),
+				Effect.mapError(refusal),
+			);
+		});
+	}
+	elevatedCall<Q extends z.ZodType, S extends z.ZodType>(
+		route: Route<Q, S>,
+		input: (proof: string | undefined) => z.input<Q>,
+		prompts: SecurityKeyPrompts<CLIError>,
+	): Effect.Effect<z.output<S>, CLIError> {
+		return Effect.gen({ self: this }, function*() {
+			const transport = this.transport(yield* this.session());
+			return yield* elevatedCall(route, input, transport, Effect.suspend(() => this.elevated(prompts))).pipe(
+				Effect.catchTags({ Unreachable: unreachable, ApiFailure: error => Effect.fail(refusal(error)) }),
 			);
 		});
 	}

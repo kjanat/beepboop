@@ -1,6 +1,6 @@
 import { Data, Effect } from 'effect';
 import type { z } from 'zod';
-import { type ApiError, errorEnvelope } from '@/contract/errors';
+import { type ApiError, errorEnvelope, securityKeyRequired } from '@/contract/errors';
 import type { Route } from '@/contract/routes';
 
 export interface Outgoing {
@@ -85,4 +85,18 @@ export function call<Q extends z.ZodType, S extends z.ZodType>(
 		const body = yield* Effect.promise((): Promise<unknown> => response.json());
 		return route.response.parse(body);
 	});
+}
+export function elevatedCall<Q extends z.ZodType, S extends z.ZodType, E>(
+	route: Route<Q, S>,
+	input: (proof: string | undefined) => z.input<Q>,
+	transport: Transport,
+	prove: Effect.Effect<string, E>,
+): Effect.Effect<z.output<S>, ApiFailure | Unreachable | E> {
+	return call(route, input(undefined), transport).pipe(
+		Effect.catchIf(
+			(error): error is ApiFailure =>
+				error._tag === 'ApiFailure' && error.status === 403 && error.message === securityKeyRequired,
+			() => Effect.flatMap(prove, proof => call(route, input(proof), transport)),
+		),
+	);
 }

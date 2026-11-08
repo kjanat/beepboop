@@ -2,7 +2,7 @@ import { Cause, Effect } from 'effect';
 import { z } from 'zod';
 import { type NotificationKind, notificationKinds, type WatchedRegistry, watchedRegistries } from '@/contract/catalog';
 import { routes } from '@/contract/routes';
-import { api } from '@/ui/browser/api';
+import { api, elevatedApi } from '@/ui/browser/api';
 import {
 	element,
 	FieldError,
@@ -541,18 +541,21 @@ function submitted(form: HTMLFormElement, action: string | undefined, clicked: s
 			if (!overwriteConfirmed(form, data.alias ?? '', versions)) return;
 			const value = data.value;
 			const valueField = yield* field(form, 'value');
-			const proof = yield* elevated(form);
-			valueField.value = '';
-			yield* api(routes.credentialsReplace, {
+			yield* elevatedApi(routes.credentialsReplace, proof => ({
 				alias: data.alias ?? '',
 				value: value ?? '',
 				proof,
 				expectedVersion: versions[data.alias ?? ''] ?? null,
-			});
+			}), elevated(form));
+			valueField.value = '';
 			yield* reload;
 		} else if (action === 'secret-reveal') {
 			clearRevealed();
-			const result = yield* api(routes.credentialsReveal, { alias: data.alias ?? '', proof: yield* elevated(form) });
+			const result = yield* elevatedApi(
+				routes.credentialsReveal,
+				proof => ({ alias: data.alias ?? '', proof }),
+				elevated(form),
+			);
 			const output = find(form, '.revealed', HTMLElement);
 			if (output) {
 				output.textContent = result.value;
@@ -566,7 +569,11 @@ function submitted(form: HTMLFormElement, action: string | undefined, clicked: s
 			}
 			show('Value shown for 30 seconds. It also clears when you leave this page.', form);
 		} else if (action === 'secret-sync') {
-			const results = yield* api(routes.credentialsSync, { alias: data.alias ?? '', proof: yield* elevated(form) });
+			const results = yield* elevatedApi(
+				routes.credentialsSync,
+				proof => ({ alias: data.alias ?? '', proof }),
+				elevated(form),
+			);
 			const failed = results.filter(r => r.state !== 'succeeded').length;
 			show(
 				failed
@@ -582,7 +589,7 @@ function submitted(form: HTMLFormElement, action: string | undefined, clicked: s
 					fields: [yield* field(form, 'delivery')],
 				});
 			}
-			yield* api(routes.credentialsGrant, {
+			yield* elevatedApi(routes.credentialsGrant, proof => ({
 				selection: {
 					alias: data.alias,
 					repositoryId: Number(data.repositoryId),
@@ -592,8 +599,8 @@ function submitted(form: HTMLFormElement, action: string | undefined, clicked: s
 					environment: data.environment,
 					secretName: data.secretName,
 				},
-				proof: yield* elevated(form),
-			});
+				proof,
+			}), elevated(form));
 			yield* reload;
 		} else if (action === 'grant-revoke') {
 			if (
@@ -602,7 +609,7 @@ function submitted(form: HTMLFormElement, action: string | undefined, clicked: s
 					'Remove this permission? The value already copied to GitHub will remain there. Delete that GitHub secret separately to remove it.',
 				)
 			) return;
-			yield* api(routes.credentialsRevoke, { grantId: data.grantId ?? '', proof: yield* elevated(form) });
+			yield* elevatedApi(routes.credentialsRevoke, proof => ({ grantId: data.grantId ?? '', proof }), elevated(form));
 			yield* reload;
 		} else if (action === 'package-add' || action === 'package-remove') {
 			const watch = { registry: yield* registry(data.registry), name: data.name ?? '' };
@@ -648,7 +655,7 @@ function submitted(form: HTMLFormElement, action: string | undefined, clicked: s
 			else yield* api(routes.cliSessionsRevokeAll, {});
 			yield* reload;
 		} else if (action === 'key-remove') {
-			yield* api(routes.authenticatorsRemove, { id: data.id ?? '', proof: yield* elevated(form) });
+			yield* elevatedApi(routes.authenticatorsRemove, proof => ({ id: data.id ?? '', proof }), elevated(form));
 			yield* reload;
 		}
 	});

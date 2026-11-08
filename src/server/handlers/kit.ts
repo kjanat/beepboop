@@ -3,7 +3,7 @@ import type { z } from 'zod';
 import { Authenticators, administrator, type WorkflowIdentity, workflowIdentity } from '@/automation/auth';
 import type { AutomationBindings, AutomationService } from '@/automation/service';
 import type { RepositoryRecord } from '@/automation/types';
-import { type DomainError, decodeRequest, forbidden } from '@/contract/errors';
+import { type DomainError, decodeRequest, forbidden, securityKeyRequired } from '@/contract/errors';
 import type { AnyRoute, Known, Route } from '@/contract/routes';
 import { readiness } from '@/domain/repository';
 import { fromSync } from '@/failure';
@@ -59,8 +59,6 @@ export function admin<Q extends z.ZodType, S extends z.ZodType>(
 	};
 }
 
-const upgrade = 'This action needs a security-key touch; upgrade the beepboop CLI';
-
 export function elevated<Q extends z.ZodType, S extends z.ZodType>(
 	route: Route<Q, S>,
 	precheck: (input: z.output<Q>, context: AdminContext) => Effect.Effect<Elevated<S>, DomainError>,
@@ -72,8 +70,8 @@ export function elevated<Q extends z.ZodType, S extends z.ZodType>(
 				const actor = yield* administrator(context.request, context.env);
 				const { raw, input } = yield* parsed(route, read);
 				const proof = typeof raw === 'object' && raw !== null && 'proof' in raw ? raw.proof : undefined;
-				if (typeof proof !== 'string') return yield* forbidden(upgrade);
 				const { commit } = yield* precheck(input, { ...context, actor });
+				if (typeof proof !== 'string') return yield* forbidden(securityKeyRequired);
 				yield* new Authenticators(context.env).consume(actor, proof);
 				return yield* respond(route.response, commit);
 			}),

@@ -10,8 +10,9 @@ import {
 } from 'happy-dom';
 import { z } from 'zod';
 import { parseSetupPlan } from '@/automation/setup-plan';
+import { routes } from '@/contract/routes';
 import { bearer } from '@root/test/support/http.ts';
-import { passChecks, plugin, widget } from '@root/test/support/repositories.ts';
+import { passChecks, plugin, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
 import { origin, World } from '@root/test/support/world.ts';
 // Browser modules are checked separately to keep DOM and Worker Element types apart.
 const browserModule = new URL('../../src/ui/browser/setup.ts', import.meta.url).href;
@@ -85,6 +86,51 @@ function role(form: HTMLFormElement, name: string): HTMLElement {
 	if (!(node instanceof window.HTMLElement)) throw new Error(`Missing ${name} section`);
 	return node;
 }
+
+test('the dashboard asks for the security key only for a grant the server accepts', async () => {
+	const api: {
+		elevatedApi(
+			route: typeof routes.credentialsGrant,
+			input: (proof: string | undefined) => z.input<typeof routes.credentialsGrant.request>,
+			prove: Effect.Effect<string>,
+		): Effect.Effect<unknown, unknown>;
+	} = await import(new URL('../../src/ui/browser/api.ts', import.meta.url).href);
+	let prompts = 0;
+	const prove = Effect.sync(() => {
+		prompts++;
+		return 'proof';
+	});
+	const grant = (repositoryId: number) => (proof: string | undefined) => ({
+		proof,
+		selection: { alias: 'npm-token', repositoryId, stream: 'main', operation: 'promote', delivery: 'runtime' },
+	});
+	const unconfigured = widget(world.github, { configured: false });
+	const session = bearer(world, await world.cliSession());
+	await session('/api/repositories/discover', { repository: unconfigured.name });
+	const refused = await Effect.runPromise(
+		Effect.flip(api.elevatedApi(routes.credentialsGrant, grant(unconfigured.id), prove)),
+	);
+	expect(refused).toMatchObject({ status: 422, message: 'Repository not configured' });
+	expect(prompts).toBe(0);
+
+	world.github.push(unconfigured, { '.github/beepboop.json': widgetConfiguration() }, 'Configure releases');
+	await session('/api/repositories/discover', { repository: unconfigured.name });
+	await world.db.prepare(
+		'INSERT INTO credentials(alias,version,key_id,ciphertext,iv,active,created_at) VALUES(?,?,?,?,?,1,?)',
+	).bind('npm-token', 1, 'v1', 'sealed', 'iv', Date.now()).run();
+	await world.db.prepare('INSERT INTO sessions(id,kind,document,expires_at) VALUES(?,?,?,?)')
+		.bind(
+			'proof',
+			'elevation',
+			JSON.stringify({ subject: world.env.ADMIN_SUBJECT, elevated: true }),
+			Date.now() + 60_000,
+		)
+		.run();
+	expect(await Effect.runPromise(api.elevatedApi(routes.credentialsGrant, grant(unconfigured.id), prove))).toEqual({
+		granted: true,
+	});
+	expect(prompts).toBe(1);
+});
 
 test('new publishing workflows get editable filenames, jobs and triggers automatically', async () => {
 	widget(world.github, { configured: false });

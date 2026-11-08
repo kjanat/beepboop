@@ -414,13 +414,11 @@ const secrets = group('secrets').description('Store secret values and list workf
 							failure('Secret value is empty', 'EMPTY_VALUE', 'Pipe the value on stdin or type it at the prompt'),
 						);
 					}
-					const proof = yield* client.elevated(securityKey(ask));
-					const { version } = yield* client.call(routes.credentialsReplace, {
-						alias: args.alias,
-						value,
-						proof,
-						expectedVersion: stored ?? null,
-					});
+					const { version } = yield* client.elevatedCall(
+						routes.credentialsReplace,
+						proof => ({ alias: args.alias, value, proof, expectedVersion: stored ?? null }),
+						securityKey(ask),
+					);
 					if (out.jsonMode) return yield* emit(out, { alias: args.alias, version });
 					out.log(`Saved ${args.alias} as version ${version}.`);
 				}))
@@ -454,8 +452,7 @@ const secrets = group('secrets').description('Store secret values and list workf
 						));
 					}
 					out.log(`Granting ${target.name} ${stream}/${flags.operation} access to ${args.alias}.`);
-					const proof = yield* client.elevated(securityKey(ask));
-					yield* client.call(routes.credentialsGrant, {
+					yield* client.elevatedCall(routes.credentialsGrant, proof => ({
 						proof,
 						selection: {
 							alias: args.alias,
@@ -466,7 +463,7 @@ const secrets = group('secrets').description('Store secret values and list workf
 							...(flags.environment ? { environment: flags.environment } : {}),
 							...(flags.secretName ? { secretName: flags.secretName } : {}),
 						},
-					});
+					}), securityKey(ask));
 					if (out.jsonMode) {
 						return yield* emit(out, {
 							alias: args.alias,
@@ -485,8 +482,14 @@ const secrets = group('secrets').description('Store secret values and list workf
 			.action(({ flags, args, ask, out }) =>
 				Effect.runPromise(Effect.gen(function*() {
 					const client = yield* Client.at(flags.server);
-					const proof = yield* client.elevated(securityKey(ask));
-					yield* emit(out, yield* client.call(routes.credentialsRevoke, { grantId: args.grantId, proof }));
+					yield* emit(
+						out,
+						yield* client.elevatedCall(
+							routes.credentialsRevoke,
+							proof => ({ grantId: args.grantId, proof }),
+							securityKey(ask),
+						),
+					);
 				}))
 			),
 	);
