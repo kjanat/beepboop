@@ -445,7 +445,7 @@ function drafted(
 			: formatJson(yield* Effect.fromResult(json(configuration)));
 		if (after !== before) edits.unshift({ path: '.github/beepboop.json', before, after });
 		notes.push(
-			'Registry permissions and trusted-publisher linkage are configured separately; this proposal does not publish packages.',
+			'Set up registry access and trusted publishing in each registry. The setup PR publishes nothing.',
 		);
 		const prior = baseline.prior
 			? { url: baseline.prior.url, superseded: !!before && baseline.prior.content !== before }

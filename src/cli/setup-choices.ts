@@ -10,6 +10,7 @@ import {
 } from '@/automation/setup-defaults';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import { failure } from '@/cli/output';
+import { streamSummary } from '@/cli/setup-summary';
 import { workflowFilePattern } from '@/contract/catalog';
 import { packageLabel } from '@/domain/package-label';
 
@@ -204,15 +205,11 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 			Effect.gen(function*() {
 				const previousPackages = [...stream.packages];
 				if (stream.observe?.length) {
-					out.log(
-						`${stream.name} releases through ${
-							stream.observe.map(entry => `${entry.file}${entry.ref ? ` on ${entry.ref}` : ''}`).join(', ')
-						}${stream.packages.length ? `, which publish ${stream.packages.map(packageLabel).join(', ')}` : ''}.`,
-					);
+					out.log(`Release group ${stream.name}:\n${streamSummary(stream, plan).map(line => `- ${line}`).join('\n')}`);
 					const observe = yield* Effect.promise(() =>
 						ask({
 							kind: 'confirm',
-							message: `${stream.name}: keep these workflows and their triggers, and have Beepboop observe them?`,
+							message: `${stream.name}: use this setup? Answer no to pick the packages and workflows yourself.`,
 							default: true,
 						})
 					);

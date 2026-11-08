@@ -6,6 +6,7 @@ import type { SetupPlan } from '@/automation/setup-types';
 import type { Client } from '@/cli/client';
 import { emit, failure } from '@/cli/output';
 import { chooseSetup } from '@/cli/setup-choices';
+import { listed, streamSummary } from '@/cli/setup-summary';
 import { routes } from '@/contract/routes';
 
 function readJson(path: string): Effect.Effect<unknown, CLIError> {
@@ -62,9 +63,10 @@ export function setupRepository(
 			),
 		);
 		const initial = yield* parsePlan(yield* client.call(routes.setupPreview, { repository }));
+		const unattended = !flags.choices && !out.jsonMode && !out.isTTY;
 		const choices: unknown = flags.choices
 			? yield* readJson(flags.choices)
-			: out.jsonMode
+			: out.jsonMode || unattended
 			? initial.choices
 			: yield* chooseSetup(initial, ask, out);
 		const preview = yield* client.call(routes.setupPreview, { repository, choices });
@@ -72,6 +74,19 @@ export function setupRepository(
 		const output = flags.output;
 		if (output) yield* Effect.promise(() => Bun.write(output, `${JSON.stringify(preview, null, 2)}\n`));
 		if (out.jsonMode) return yield* emit(out, preview);
+		if (unattended) {
+			out.log(`Proposed setup for ${plan.repository} at ${plan.sourceSha}:`);
+			for (const stream of plan.choices.streams) {
+				out.log(`Release group ${stream.name}:\n${streamSummary(stream, plan).map(line => `- ${line}`).join('\n')}`);
+			}
+			if (plan.edits.length) out.log(`The setup PR writes ${listed(plan.edits.map(edit => edit.path))}.`);
+			for (const message of [...plan.blockers, ...plan.notes]) out.log(message);
+			if (plan.blockers.length) return out.setExitCode(1);
+			if (!plan.edits.length) return out.log('Release setup already matches.');
+			const saved = output ?? 'setup-plan.json';
+			if (!output) out.log(`Save this proposal with: beepboop repositories adopt ${repository} --output ${saved}`);
+			return out.log(`Open the setup PR with: beepboop repositories adopt ${repository} --plan ${saved} --apply`);
+		}
 		out.log(`Inspected commit: ${plan.sourceSha}`);
 		for (const edit of plan.edits) out.log(`\n${edit.path}\nCurrent:\n${edit.before}\nProposed:\n${edit.after}`);
 		for (const message of [...plan.blockers, ...plan.notes]) out.log(message);

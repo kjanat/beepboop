@@ -318,6 +318,55 @@ test('setup PRs and their refreshes are assigned to the owner with a review requ
 	});
 });
 
+const lintSummary = [
+	'Release group lint:',
+	'- After you approve a release, release-crates.yml (new) publishes lint and lint-core to crates.io, then pushes the tag lint-v<version>.',
+	'- Tags matching lint-v* start release.yml. It publishes @octo/lint to npm, and Beepboop records each run. Its triggers stay as they are.',
+	'- prepare-release.yml (new) runs `cargo update --workspace` in the version PR.',
+];
+
+test('a bare adoption without a terminal prints the proposal and how to apply it', async () => {
+	const repository = bindingsRepository();
+	const output = join(directory, 'plan.json');
+	const result = await app.execute(['repositories', 'adopt', repository.name, '--output', output], {
+		isTTY: false,
+		env: {},
+	});
+	expect(result.stderr.join('')).toBe('');
+	expect(result.exitCode).toBe(0);
+	expect(result.stdout.join('').split('\n')).toEqual([
+		`Proposed setup for octo/lint at ${world.github.head(repository)}:`,
+		...lintSummary,
+		'The setup PR writes .github/beepboop.json, .github/workflows/prepare-release.yml and .github/workflows/release-crates.yml.',
+		'release-crates.yml: grant crates-io with `beepboop secrets grant octo/lint crates-io --operation promote`.',
+		'Set up registry access and trusted publishing in each registry. The setup PR publishes nothing.',
+		`Open the setup PR with: beepboop repositories adopt octo/lint --plan ${output} --apply`,
+		'',
+	]);
+	const plan = await Effect.runPromise(parseSetupPlan(await Bun.file(output).json()));
+	expect((await run(['adopt', repository.name, '--plan', output, '--apply', '--json'])).exitCode).toBe(0);
+	expect(repository.pulls).toHaveLength(1);
+	expect(plan.blockers).toEqual([]);
+});
+
+test('the interactive adoption summarizes each workflow before asking', async () => {
+	const repository = bindingsRepository();
+	const session = defaults({}, { 'Open or refresh the setup PR with these exact changes?': false });
+	const result = await app.execute(['repositories', 'adopt', repository.name], {
+		prompter: session.prompter,
+		isTTY: true,
+		env: {},
+	});
+	expect(result.exitCode).toBe(0);
+	expect(result.stdout.join('').split('\nInspected commit')[0]?.split('\n')).toEqual(lintSummary);
+	expect(session.prompts.map(prompt => prompt.message)).toEqual([
+		'lint: use this setup? Answer no to pick the packages and workflows yourself.',
+		'Customize filenames, versioning, release groups or Actions revision?',
+		'Open or refresh the setup PR with these exact changes?',
+	]);
+	expect(repository.pulls).toHaveLength(0);
+});
+
 test('a closed setup PR drops its choices and a bare preview proposes afresh', async () => {
 	const repository = bindingsRepository();
 	const choices = join(directory, 'choices.json'), output = join(directory, 'plan.json');
@@ -478,7 +527,7 @@ test('automatic triggers default to review and retain an explicit saved handover
 		'.github/workflows/ship.yml':
 			'on: push\njobs:\n  ship:\n    runs-on: ubuntu-latest\n    steps:\n      - id: publish_existing\n        name: Publish\n        run: npm publish\n',
 	});
-	const observe = 'ship: keep these workflows and their triggers, and have Beepboop observe them?';
+	const observe = 'ship: use this setup? Answer no to pick the packages and workflows yourself.';
 	const initial = defaults({ 'ship: publish packages': 'ship.yml' }, { [observe]: false });
 	const blocked = await app.execute(['repositories', 'adopt', repository.name], {
 		prompter: initial.prompter,
@@ -541,10 +590,12 @@ test('an inferred stream is adopted by observing its existing workflow', async (
 	});
 	expect(result.exitCode).toBe(0);
 	expect(session.prompts.map(prompt => prompt.message)).toContain(
-		'main: keep these workflows and their triggers, and have Beepboop observe them?',
+		'main: use this setup? Answer no to pick the packages and workflows yourself.',
 	);
 	expect(session.prompts.some(prompt => prompt.message.includes('publish packages'))).toBe(false);
-	expect(result.stdout.join('')).toContain('main releases through release.yml on refs/tags/v*.');
+	expect(result.stdout.join('')).toContain(
+		'Release group main:\n- Tags matching v* start release.yml, and Beepboop records each run. Its triggers stay as they are.\n',
+	);
 	expect(repository.pulls).toHaveLength(1);
 	expect(repository.pulls[0]?.body).toContain('## Release plan');
 	const config = z.object({

@@ -197,11 +197,19 @@ its releases. Install the Beepboop GitHub App on the repository first. The
 command also accepts a bare repository name, a GitHub URL or an SSH URL.
 `repositories setup` is an alias.
 
-For a repository without a configuration, the CLI lists the streams it inferred
-from existing release workflows. For each stream it asks whether Beepboop should
-observe those workflows and keep their triggers. Yes adopts the stream as it
-is. No sends that stream through the guided flow below. The setup PR body
-explains each stream, its publication order and anything setup left out.
+For a repository without a configuration, the CLI describes each stream it
+inferred from existing release workflows: which workflow publishes which
+packages where, which tags start them, and what runs in the version PR. A
+tag-triggered workflow keeps its triggers. When crates in the repository have no
+publishing workflow, the proposal adds one that publishes them and then pushes
+the version tag and each Go module tag. That tag starts the existing workflow.
+Then the CLI asks whether to use the proposal. No sends that stream through the
+guided flow below. The setup PR body explains each stream, its publication
+order and anything setup left out.
+
+Without a terminal, `repositories adopt` prints the proposal and the command
+that opens the setup PR. Add `--output setup-plan.json` to save the proposal for
+`--plan setup-plan.json --apply`.
 
 The guided flow asks for packages and publishing workflows. Beepboop names new
 workflows after the selected package or the repository and writes their jobs
