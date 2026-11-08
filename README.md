@@ -4,34 +4,47 @@
 
 Release automation for ~~your~~ *my* GitHub repositories.
 
-Beepboop discovers packages, opens release preparation PRs, starts publishing workflows,
-and tracks their results. Configure each repository in `.github/beepboop.json`,
-share defaults through presets, and manage releases from one dashboard.
+Beepboop finds the packages in a repository, opens a PR that bumps their
+versions, and starts your publishing workflows after you approve the merged
+commit. It signs the release tags, tracks every publication, and lets you retry
+failed jobs from one dashboard. Each repository keeps its settings in
+`.github/beepboop.json`. Presets share defaults across repositories.
 
 ## Release a project
 
-1. Install the [GitHub App](https://github.com/apps/beepboop-by-kjanat) on the repository.
-2. Open the dashboard and select **Inspect** to discover its packages and workflows.
-3. Select **Configure releases**, choose the packages and publishing workflow, then preview and open the setup PR. Workflow names and jobs are filled in for new workflows.
-4. Connect preparation and promotion workflows using the [Actions integration](docs/automation.md#connect-a-workflow).
-5. Choose a version, review the preparation PR, and merge it.
-6. Approve promotion of the chosen commit. Follow builds and publications in the dashboard; retry failed jobs from the execution page.
+1. Install the [GitHub App](https://github.com/apps/beepboop-by-kjanat) on the
+   repository.
+2. Open the dashboard and select **Inspect**. Beepboop lists the packages and
+   workflows it found.
+3. Select **Configure releases**. Choose the packages and the publishing
+   workflow, preview the setup, and open the setup PR. Beepboop names new
+   workflows and writes their jobs.
+4. Connect your preparation and promotion workflows with the
+   [Actions integration](docs/automation.md#connect-a-workflow).
+5. Choose a version. Review the preparation PR and merge it.
+6. Approve promotion of the merged commit. The dashboard shows each build and
+   publication. Retry a failed job from its execution page.
 
-Discovery covers Cargo and npm packages, generated npm targets, GitHub workflows,
-GoReleaser configuration, and container publishing. Build commands, signing, and
-package generation run in your repository's GitHub Actions workflows.
+Beepboop discovers Cargo, npm, JSR, Go and VS Code extension packages,
+generated npm targets, GitHub workflows, GoReleaser configuration, Homebrew and
+Scoop manifests, pre-commit hooks and container publishing. Your GitHub Actions
+workflows run the builds and package generation.
 
 ## Configure and operate
 
-- [User guide](docs/automation.md): onboarding, release streams, Actions, credentials, and subscriptions.
-- [Release planning](docs/release-planning.md): independent versions, platform outputs,
-  managed and workflow preparation, and declarative version files.
-- [Ecosystem managers](docs/managers.md): discovery, editing, and verification adapters.
-- [Deployment](docs/deployment.md): Cloudflare, GitHub App, login, and security keys.
-- [WinGet manifests and bot submissions](docs/winget.md): configurable package metadata,
-  installer assets, checksums, and release notes.
+- [User guide](docs/automation.md) covers onboarding, release streams, Actions,
+  credentials and subscriptions.
+- [Release planning](docs/release-planning.md) covers independent versions,
+  platform outputs, managed and workflow preparation, and version files.
+- [Ecosystem managers](docs/managers.md) describes the discovery, editing and
+  verification adapters.
+- [Deployment](docs/deployment.md) covers Cloudflare, the GitHub App, login and
+  security keys.
+- [WinGet](docs/winget.md) covers package metadata, installer assets, checksums,
+  release notes and bot submissions.
 - [Configuration schema](schemas/v1.json) and [preset templates](presets/).
-- [Architecture](docs/adr-001-repository-automation.md): execution storage, authentication, and recovery.
+- [Architecture](docs/adr-001-repository-automation.md) covers execution
+  storage, authentication and recovery.
 
 ## Development
 
@@ -43,38 +56,35 @@ bun run test
 bun run deploy:dry
 ```
 
-Start the dashboard with `bun run dev` at `http://localhost:4321`. This applies
-pending migrations to the local D1 database before starting Astro. Local login
-requires the exact `http://localhost:4321/auth/callback` URL to be registered for
-the `beepboop` client at the configured OpenAuth issuer. Production registration
-alone does not enable localhost login. See [local development](docs/deployment.md#local-development).
+CI runs `bun run gate` and `bun run deploy:dry`.
 
-Astro pages, components, and layouts live in `src/pages`, `src/components`, and
-`src/layouts`. Browser interactions live in `src/ui/browser`; styles live in
-`src/styles`. Import paths are defined in `tsconfig.json`. `bun run build`
-builds the Cloudflare Worker and browser assets into `dist/`. The custom Worker
-entrypoint also exports the release coordinator and scheduled reconciliation.
-API routes preserve the existing GitHub Actions contracts.
+`bun run dev` applies pending migrations to the local D1 database and starts the
+dashboard at `http://localhost:4321`. Local login works only when the OpenAuth
+issuer has `http://localhost:4321/auth/callback` registered for the `beepboop`
+client. See [local development](docs/deployment.md#local-development).
 
-Astro's checker currently needs the TypeScript 6 language-service API. `bun run check` uses Astro to check the project;
-`typescript-native` remains available as a separate dependency.
+Astro pages, components and layouts live in `src/pages`, `src/components` and
+`src/layouts`. Browser code lives in `src/ui/browser` and styles in
+`src/styles`. `tsconfig.json` defines the import paths. `bun run build` writes
+the Cloudflare Worker and browser assets to `dist/`. The Worker entrypoint also
+exports the release coordinator and the scheduled reconciliation.
 
-Preview discovery from a checkout's committed HEAD or a GitHub repository:
+To preview discovery from a checkout's committed HEAD or from GitHub:
 
 ```sh
 bun run discover ../my-project
 bun run discover --github owner/repository
 ```
 
-Both commands print the package inventory, the inferred release streams and
-the release plan as JSON. Append `@ref` to the GitHub repository to inspect
-another revision. `--snapshot` prints the inspected files instead.
+Both commands print the package inventory, the inferred release streams and the
+release plan as JSON. Append `@ref` to the GitHub repository to inspect another
+revision. `--snapshot` prints the inspected files instead.
 
 <!-- markdownlint-disable-file -->
 
 ## Authenticated CLI
 
 Run `bun run beepboop auth login` to authorize your terminal, then
-`bun run beepboop --help` to explore repository and release commands.
-See [CLI usage and authentication](docs/cli.md) and the
-[Beepboop-managed npm and JSR release flow](docs/cli-release.md) for `@kjanat/beepboop`.
+`bun run beepboop --help` to list the repository and release commands. See
+[CLI usage and authentication](docs/cli.md) and
+[how Beepboop releases its CLI](docs/cli-release.md) for `@kjanat/beepboop`.

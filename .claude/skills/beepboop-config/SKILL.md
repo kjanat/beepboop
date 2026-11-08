@@ -140,8 +140,10 @@ beepboop secrets grant owner/repo crates-io --stream main --operation promote
 ```
 
 `--delivery runtime` is the default and lets the credentials action fetch the
-value during the run. `repository` and `environment` copy it into a GitHub
-secret named by `--secretName`. The alias must already be in the stream's
+value during the run. The run must match the granted workflow file, ref and
+job environment. `repository` and `environment` delivery copy the value into
+the GitHub secret named by `--secretName` when the user presses **Copy latest
+value to GitHub** in the dashboard. The alias must already be in the stream's
 `credentials` list, which means the setup PR is merged.
 
 Trusted publishing on crates.io works only for a crate that exists, so the

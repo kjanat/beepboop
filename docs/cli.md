@@ -1,9 +1,9 @@
 # Beepboop CLI
 
-The Bun CLI uses DreamCLI and the same API and repository policy as the dashboard.
-Run it from this checkout with `bun run beepboop`, or run `bun link` once to install
-its `beepboop` executable locally. Bun must be installed; no generated `dist/`
-CLI is needed.
+The `beepboop` CLI calls the same API as the dashboard and follows the same
+repository policy. Run it from this checkout with `bun run beepboop`, or run
+`bun link` once to put a `beepboop` executable on your `PATH`. The CLI needs
+Bun.
 
 ```sh
 bun run beepboop auth login
@@ -13,40 +13,36 @@ bun run beepboop repositories show kjanat/actionlint
 bun run beepboop repositories discover kjanat/actionlint
 bun run beepboop repositories adopt kjanat/actionlint
 bun run beepboop runs list
-bun run beepboop secrets
+bun run beepboop secrets list
 ```
 
-`auth login` prompts for the server URL and whether to open your browser. It also
-prints the URL and a confirmation code. Open the URL, sign in through
-OpenAuth if needed, compare the code, and approve your terminal. The command waits
-up to five minutes. Approval is exchanged once for a session that lasts until
-`auth logout` revokes it on the server and deletes the local credential. A
-revoked session requires another login.
+`auth login` asks for the server URL and whether to open your browser. It prints
+a URL and a confirmation code. Open the URL, sign in through OpenAuth, check that
+the code matches, and approve the terminal. The command waits up to five
+minutes. The session lasts until `auth logout`, which revokes it on the server
+and deletes the local credential. After a revocation you log in again.
 
-Credentials are separate for each server. They are written atomically with mode
-`0600` under `$XDG_STATE_HOME/beepboop` (default `~/.local/state/beepboop`), in a
-`0700` directory. The server stores only a hash of the session token. Server-side
-sessions use the existing `sessions` table and expiry checks.
+The CLI keeps one credential per server. It writes the file atomically with mode
+`0600` in a `0700` directory under `$XDG_STATE_HOME/beepboop`, which defaults to
+`~/.local/state/beepboop`. The server stores only a hash of the session token.
 
-Every command accepts `--server https://beepboop.kjanat.dev`, or reads
-`BEEPBOOP_SERVER`. HTTP is allowed only for localhost development. The CLI refuses
-redirects when sending credentials. The new authentication endpoints must be
-deployed before using this CLI against a server.
+Every command accepts `--server https://beepboop.kjanat.dev` and reads
+`BEEPBOOP_SERVER`. Plain HTTP works only for localhost. The CLI refuses
+redirects on requests that carry credentials.
 
-Repository and run lists display tables; add `--json` for their full API records.
-Plans and other structured responses are JSON. Use `--help` on any command.
-Missing repository, stream, version, plan, and approval inputs are prompted for in
-an interactive terminal. Explicit arguments skip their prompts; scripts must
-supply required inputs. Use `auth login --server URL --no-browser` to print the
-login link without opening a browser.
+Repository and run lists print tables. Add `--json` to get the full API records.
+Plans and other structured responses print as JSON. Every command has `--help`.
+In an interactive terminal the CLI prompts for a missing repository, stream,
+version, plan or approval. Arguments you pass skip their prompts, and scripts
+must pass every required input. `auth login --server URL --no-browser` prints
+the login link and leaves the browser closed.
 
-Flags use camelCase, including `--releaseVersion`, `--sourceSha` and `--planId`.
-The root `--version` prints the installed CLI version.
+Flags use camelCase, such as `--releaseVersion`, `--sourceSha` and `--planId`.
+The root `--version` flag prints the CLI version.
 
-The publishable package is `@kjanat/beepboop` on npm and JSR. After its first
-release, install it with `bun add --global @kjanat/beepboop`.
-See [how Beepboop releases itself](cli-release.md) for the preparation, approval
-and publication flow.
+The package is `@kjanat/beepboop` on npm and JSR. Install it with
+`bun add --global @kjanat/beepboop`. [How Beepboop releases its CLI](cli-release.md)
+walks through the preparation, approval and publication of that package.
 
 ## Release preparation and execution
 
@@ -58,46 +54,45 @@ beepboop release minor
 beepboop release 0.1.0
 ```
 
-The command resolves the GitHub repository from the checkout's `origin` fetch
-remote, or an unambiguous GitHub remote when there is no origin. HTTPS, SCP-style
-SSH and `ssh://` GitHub remotes are supported. Use `--repository owner/repository`
-to override this or run outside a checkout. The repository must already be
-enrolled; release previews do not run discovery or update existing setup PRs.
+`beepboop release` reads the GitHub repository from the checkout's `origin`
+fetch remote. Without an `origin`, it uses the only GitHub remote. It accepts
+HTTPS, SCP-style SSH and `ssh://` remotes. Pass `--repository owner/repository`
+to override the remote or to run outside a checkout. The repository must be
+enrolled already. The release preview skips discovery and leaves setup PRs
+alone.
 
-Beepboop asks the server for the configured release streams. A sole eligible
-publishing stream is inferred; multiple streams show which packages they ship.
-Use `--stream NAME` to choose explicitly. With no version argument, the terminal
-asks for a patch/minor/major bump or an explicit version.
+The server returns the configured release streams. When one stream can publish,
+the CLI picks it. With several streams the CLI shows which packages each one
+ships. Pass `--stream NAME` to choose. Without a version argument the CLI asks
+for a patch, minor or major bump or an explicit version.
 
-The preview shows package versions, file changes and the exact server source
-commit. Releases use the server's default-branch state, so local branch commits
-and uncommitted files are not included. After confirmation, the command passes
-the returned plan ID and source SHA to preparation automatically. A stale plan
-is refused without silently replanning. The output identifies the preparation
-and explains the configured merge/approval steps; this command does not approve
-or publish a release.
+The preview shows the package versions, the file changes and the exact source
+commit on the server. Beepboop releases the default branch as the server sees
+it. Local commits and uncommitted files stay out. After you confirm, the CLI
+passes the plan ID and source SHA to preparation. The server refuses a plan that
+changed since the preview. The output names the preparation and lists the merge
+and approval steps that follow. `beepboop release` never approves or publishes.
 
-`--json` alone previews without any prompts or preparation. Supply the version
-and `--stream` if ambiguous. For scripts, add `--yes` to explicitly confirm the
-preview and start preparation:
+`--json` on its own previews and stops. Pass the version, and `--stream` when the
+repository has several streams. Add `--yes` to confirm the preview and start
+preparation from a script:
 
 ```sh
 beepboop release patch --repository owner/repository --stream main --json
 beepboop release patch --repository owner/repository --stream main --yes --json
 ```
 
-Independent package release plans use the lower-level `plan-set`/`prepare-set`
-commands below. Already-prepared versions are also refused here so that a
-preparation command cannot accidentally initiate promotion.
+`beepboop release` refuses versions that are prepared already, and it handles
+only shared-version streams. Independent package versions use `plan-set` and
+`prepare-set` below.
 
-For streams with a tag-based `versionSource`, this flow stops at preparation.
-Merging the preparation PR does not create a publication run, and the CLI has
-no shared-version equivalent of `releases start`.
+For a stream whose `versionSource` reads tags, the flow ends at preparation.
+Merging the preparation PR starts no publication run, and the CLI has no
+shared-version counterpart to `releases start`.
 
-The lower-level commands remain available for separately reviewed plans:
-
-Use stream names from `repositories show`. Repository numbers are resolved from
-the enrolled repository name.
+The lower-level commands split preview, preparation and approval into separate
+steps. Take stream names from `repositories show`. The CLI looks up the
+repository by its enrolled name.
 
 ```sh
 beepboop releases plan kjanat/actionlint --stream main --releaseVersion 2.1.0
@@ -110,13 +105,14 @@ beepboop runs recover EXECUTION_ID
 beepboop runs recover EXECUTION_ID --action retry
 ```
 
-Use the exact `sourceSha` and `planId` returned by the preview. Preparation rejects
-changed plans on the server. Approval is bound to the exact reviewed commit.
-`--force` approves even when the signature or checks fail, and the audit log
-records the problems it overrode. Recovery defaults to reconciliation; retry
-must be selected explicitly. Existing server approval and dispatch rules apply.
+Pass the exact `sourceSha` and `planId` from the preview. The server rejects a
+preparation whose plan changed. An approval names one reviewed commit.
+`--force` approves when the signature or checks fail, and the audit log records
+each failure it overrode. `runs recover` reconciles by default. Pass
+`--action retry` to retry. The server applies its usual approval and dispatch
+rules.
 
-Independent monorepo releases use the JSON plan format documented in
+Independent monorepo releases take a JSON plan, described in
 [release planning](release-planning.md):
 
 ```sh
@@ -126,18 +122,54 @@ beepboop releases prepare-set OWNER/REPO --stream main --plan release-plan.json 
 beepboop releases start PREPARATION_ID --sourceSha MERGED_COMMIT_SHA
 ```
 
-`releases start` accepts preparations made by `prepare-set` only. Run it after
-preparation completes and the required review/merge steps are done, using the
-reviewed merged commit. Shared-version preparations use the stream's publication
-policy instead.
+`releases start` accepts only preparations from `prepare-set`. Run it after
+preparation finishes and the PR is reviewed and merged, with the merged commit.
+Shared-version preparations follow the stream's publication policy instead.
 
-The `secrets` command returns metadata and grants, never secret values. Secret
-writes, reveals, grant changes, and security-key management use the dashboard's
-fresh WebAuthn verification. A CLI session does not remove that requirement.
+## Secrets
+
+```sh
+beepboop secrets list
+printf '%s' "$TOKEN" | beepboop secrets set crates-io
+beepboop secrets grant owner/repository crates-io --operation promote
+beepboop secrets revoke GRANT_ID
+```
+
+`secrets list` prints secret names, versions, grants and deliveries. Values stay
+on the server. `secrets set` reads the value from stdin, or from a hidden prompt in a
+terminal, and asks before it overwrites a stored version.
+
+`set`, `grant` and `revoke` each need a touch of a registered security key. The
+CLI talks to the key directly over HID on Linux and macOS and through Windows
+WebAuthn on Windows. It asks for the key's PIN when the key has one. Revealing a
+secret works only in the dashboard.
+
+`secrets grant` lets one stream operation of a repository use a secret. The
+alias must appear in that stream's `credentials` list in `.github/beepboop.json`.
+`--stream` defaults to the only stream, and `--operation` defaults to `promote`.
+`--delivery runtime`, the default, makes the credentials action fetch the value
+during the run, for the granted workflow file, ref and environment. With
+`--delivery repository` or `--delivery environment`, Beepboop copies the value
+into the GitHub secret named by `--secretName` when you press **Copy latest
+value to GitHub** in the dashboard. Environment delivery also needs
+`--environment`.
+
+## Notifications
+
+```sh
+beepboop notifications list
+beepboop notifications add --name releases --kind slack --secret slack-webhook
+beepboop notifications subscribe DESTINATION_ID npm:svgo
+```
+
+A destination posts to the webhook URL stored in a secret. `--kind` is `slack`
+or `http`. `--subscribe-new` subscribes the destination to every package that
+Beepboop starts watching later. `subscribe` takes a package as `npm:name` or
+`jsr:@scope/name`.
 
 ## Shell completions
 
-DreamCLI generates completions directly from the command schema:
+DreamCLI generates completions from the command definitions:
 
 ```sh
 beepboop completions zsh
@@ -146,7 +178,7 @@ beepboop completions fish
 beepboop completions powershell
 ```
 
-For the current zsh session, enable completion and load the generated script:
+To load completions into the current zsh session:
 
 ```zsh
 autoload -Uz compinit
@@ -154,66 +186,90 @@ compinit
 source <(beepboop completions zsh)
 ```
 
-For persistent zsh setup, save the output as `_beepboop` in a directory on your
-`fpath` before running `compinit` in your shell configuration.
+To keep them, save the output as `_beepboop` in a directory on your `fpath`.
+Your shell configuration must run `compinit` after that directory joins
+`fpath`.
 
 ## Configure repository releases
 
-Run `beepboop repositories adopt owner/repository` to enroll a repository and
-configure its releases from the terminal. The Beepboop GitHub App must already
-be installed on that repository. You can also pass a repository name, GitHub URL
-or SSH URL. `repositories setup` remains an alias of `repositories adopt`.
+`beepboop repositories adopt owner/repository` enrolls a repository and sets up
+its releases. Install the Beepboop GitHub App on the repository first. The
+command also accepts a bare repository name, a GitHub URL or an SSH URL.
+`repositories setup` is an alias.
 
-For a repository without a configuration, the CLI shows the streams inferred
-from its existing release workflows and asks for each whether to keep those
-workflows and their triggers with Beepboop observing them. Answering yes
-adopts the stream as it is. The setup PR body explains each stream, its
-publication order, and anything left out. Answering no continues with the
-guided flow below for that stream.
+For a repository without a configuration, the CLI lists the streams it inferred
+from existing release workflows. For each stream it asks whether Beepboop should
+observe those workflows and keep their triggers. Yes adopts the stream as it
+is. No sends that stream through the guided flow below. The setup PR body
+explains each stream, its publication order and anything setup left out.
 
-The guided flow selects packages and publishing workflows. New workflows get
-filenames based on the selected package or repository, with jobs and dispatch
-triggers generated automatically. A Cargo release that updates a lockfile can
-use one workflow with separate preparation and publishing jobs. Managed version
-PRs need no preparation job. Existing workflows only ask for a job when it cannot
-be inferred, and publishing-step mappings are explicit for each package.
+The guided flow asks for packages and publishing workflows. Beepboop names new
+workflows after the selected package or the repository and writes their jobs
+and dispatch triggers. A Cargo release that updates a lockfile can use one
+workflow with a preparation job and a publishing job. Managed version PRs need
+no preparation job. For an existing workflow the CLI asks for a job only when
+it cannot tell which one publishes. You map publishing steps to packages
+explicitly.
 
-Command prompts accept Bash shell commands, not GitHub Actions YAML. Cargo and
-ordinary npm packages get editable suggestions; generated npm targets, VS Code
-extensions and other unsupported package types require your own commands.
-Optional customization covers filenames, versioning, additional release groups
-and the Actions revision. The current compatible Actions release is the default.
+Command prompts take Bash commands, and Beepboop writes them into one workflow
+step. Cargo and plain npm packages get editable suggested commands, and a repository with
+`uv.lock` gets `uv lock` at the end of its preparation commands. Generated npm
+targets, VS Code extensions and other package types need your own commands.
+Optional steps let you change filenames and versioning, add release groups and
+pick the Actions revision. The default is the current compatible Actions
+release.
 
-The CLI prints the inspected commit and current/proposed files, then asks before
-creating or refreshing a setup PR. Unresolved requirements block apply. Merge
-that PR yourself, then run `repositories discover` to refresh inspection of the
-default branch.
+The CLI prints the inspected commit and the current and proposed files. It asks
+before it creates or refreshes the setup PR. Unresolved requirements block the
+apply. Merge the setup PR yourself, then run `repositories discover` to inspect
+the default branch again.
 
 For automation, pass a JSON choices file with `--choices choices.json` and save
-the preview with `--output setup-plan.json`. That invocation only previews.
-After reviewing the file, apply it with:
+the preview with `--output setup-plan.json`. That command only previews. After
+you review the saved plan, apply it:
 
 ```sh
 beepboop repositories adopt owner/repository --choices choices.json --output setup-plan.json --json
 beepboop repositories adopt owner/repository --plan setup-plan.json --apply
 ```
 
-`--json` prints the full preview without interactive prompts; without `--choices`
-it returns the server's current proposal, including unresolved requirements.
-Previewing enrolls the repository but does not write repository files.
-`--apply` requires a
-saved plan; it cannot skip review by combining it with new choices. The server
-rejects changes to the source, choices, generated files, preset revisions or setup
-branch since preview. The dashboard uses the same API and validation rules.
+`--json` prints the full preview without prompts. Without `--choices` it prints
+the server's current proposal, unresolved requirements included. A preview
+enrolls the repository and writes no repository files. `--apply` needs a saved
+plan and refuses `--choices`. The server rejects the apply when the source,
+choices, generated files, preset revisions or setup branch changed after the
+preview. The dashboard goes through the same API and validation.
 
-A choices file contains `streams` and optional `actionsRevision` (a release tag
-or full published Actions commit). Each stream selects `name`,
-`packages` (PURLs), `versioning`, `required`, `prepare` and `promote`. Workflow
-choices contain `file`, optional `job`, `triggers` (`review`, `dispatchOnly`, or
-`preserve`), `commands`, and `publicationSteps` mapping PURLs to publishing step
-IDs. Existing integrated reporting needs no new mappings. A stream can instead
-list `observe` bindings, each with `name`, `file`, an optional `ref` pattern
-and the `publications` that workflow produces; observed streams need no
-`prepare` or `promote`. `versionSource` (`{ "kind": "tags", "prefix": "v" }`)
-takes the stream's version from its tags. Leaving trigger
-conflicts unresolved produces a blocked preview rather than an implicit handover.
+A choices file holds `streams` and an optional `actionsRevision`, which is a
+release tag or a full commit of the published Actions. Each stream has these
+fields:
+
+- `name`, `packages` (PURLs), `versioning` (`workspace`, `independent` or
+  `none`) and `required`.
+- `versionSource`, such as `{ "kind": "tags", "prefix": "v" }`, to read the
+  stream's version from its tags.
+- `versionFiles`, extra files that carry the version, in `json`, `yaml`,
+  `toml` or `text` format.
+- `prepare` and `promote`, each a workflow choice.
+- `observe`, a list of workflows that Beepboop watches. Each entry has `name`,
+  `file`, an optional `ref` pattern and the `publications` that workflow
+  produces. An observed stream needs no `prepare` or `promote`.
+
+A workflow choice has these fields:
+
+- `file` and an optional `job`.
+- `triggers`: `review` keeps the existing triggers and reports conflicts.
+  `dispatchOnly` replaces them with Beepboop dispatch. `preserve` keeps them
+  and blocks any integration that conflicts with them. An existing workflow
+  with push or tag triggers needs `dispatchOnly`, and when it has several jobs
+  you first move the publishing job into its own workflow.
+- `commands`, the Bash commands for the generated step.
+- `publicationSteps`, which maps PURLs to the IDs of the steps that publish
+  them. A workflow that already reports through Beepboop needs no new mappings.
+- `credentials`, which maps environment variable names to secret aliases for
+  the commands step.
+- `tagPrefix`, the prefix of the version tag the workflow pushes, such as `v`.
+- `binaries`, Go or Cargo builds for the release assets.
+
+A preview with unresolved trigger conflicts stays blocked until you choose
+`triggers` for that workflow.
