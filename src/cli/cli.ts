@@ -4,7 +4,7 @@ import { Effect } from 'effect';
 import { Client } from '@/cli/client';
 import type { SecurityKeyPrompts } from '@/cli/fido2/index';
 import { emit, failure } from '@/cli/output';
-import { releaseRepository, releaseVersion } from '@/cli/release';
+import { checkoutRepository, releaseRepository, releaseVersion } from '@/cli/release';
 import { setupRepository } from '@/cli/setup';
 import { notificationKinds, watchedPackagePattern, watchedRegistries } from '@/contract/catalog';
 import { credentialAliasPattern, githubSecretNamePattern, shaPattern } from '@/contract/ids';
@@ -89,16 +89,26 @@ const auth = group('auth').description('Sign in, inspect your session, or revoke
 			}))
 		),
 	);
-const repositories = group('repositories').description('Inspect and configure repository releases')
+const adoptChoices = flag.path({ mustExist: true }).describe(
+	'Advanced: JSON setup choices to preview instead of the proposal',
+);
+const adoptOutput = flag.path().describe('Advanced: save the preview as JSON instead of opening the PR');
+const adoptPlan = flag.path({ mustExist: true }).describe('Advanced: saved preview to apply with --apply');
+const adoptApply = flag.boolean().default(false).describe('Advanced: apply the exact saved --plan');
+const adopt = base('adopt', 'Propose release setup for this checkout and open the setup PR')
+	.arg('repository', arg.string().optional().describe('Repository override; otherwise the current Git remote'))
+	.flag('choices', adoptChoices).flag('output', adoptOutput).flag('plan', adoptPlan).flag('apply', adoptApply)
+	.action(({ flags, args, ask, out }) =>
+		Effect.runPromise(Effect.gen(function*() {
+			const client = yield* Client.at(flags.server);
+			const name = args.repository ?? (yield* checkoutRepository(process.cwd()));
+			yield* setupRepository(client, name, flags, ask, out);
+		}))
+	);
+const repositories = group('repositories').alias('repo').description('Inspect and configure repository releases')
 	.command(
-		repository('adopt', 'Configure repository releases and open a reviewed setup PR').alias('setup')
-			.flag(
-				'choices',
-				flag.path({ mustExist: true }).describe('JSON setup choices; preview without interactive prompts'),
-			)
-			.flag('output', flag.path().describe('Save the reviewed preview as JSON'))
-			.flag('plan', flag.path({ mustExist: true }).describe('Previously reviewed preview to apply'))
-			.flag('apply', flag.boolean().default(false).describe('Apply the exact reviewed --plan'))
+		repository('adopt', 'Propose release setup for a repository and open the setup PR').alias('setup')
+			.flag('choices', adoptChoices).flag('output', adoptOutput).flag('plan', adoptPlan).flag('apply', adoptApply)
 			.action(({ flags, args, ask, out }) =>
 				Effect.runPromise(
 					Client.at(flags.server).pipe(
@@ -551,6 +561,6 @@ const notifications = group('notifications').description('Send package releases 
 export const app = cli('beepboop')
 	.manifest({ from: import.meta.url })
 	.links()
-	.command(auth).command(repositories).command(release).command(releases).command(runs)
+	.command(auth).command(adopt).command(repositories).command(release).command(releases).command(runs)
 	.command(secrets).command(notifications).completions();
 if (import.meta.main) await app.run();

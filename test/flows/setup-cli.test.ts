@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
@@ -30,6 +30,8 @@ afterEach(async () => {
 const run = (args: string[], answers?: unknown[]) =>
 	app.execute(['repositories', ...args], { answers, isTTY: true, env: {} });
 
+const proposalPrompt = 'Open or refresh the setup PR with this proposal? Answer no to choose the setup yourself.';
+
 function defaults(overrides: Record<string, string> = {}, confirmations: Record<string, boolean> = {}) {
 	const prompts: ResolvedPromptConfig[] = [];
 	const prompter: PromptEngine = {
@@ -39,7 +41,10 @@ function defaults(overrides: Record<string, string> = {}, confirmations: Record<
 				return { answered: true, value: overrides[config.message] ?? config.choices[0].value };
 			}
 			if (config.kind === 'confirm') {
-				return { answered: true, value: confirmations[config.message] ?? config.default ?? true };
+				return {
+					answered: true,
+					value: confirmations[config.message] ?? (config.message === proposalPrompt ? false : config.default ?? true),
+				};
 			}
 			if (config.kind === 'input') return { answered: true, value: '' };
 			throw new Error(`Unexpected prompt: ${config.message}`);
@@ -59,14 +64,17 @@ async function propose(repository: string, choices: unknown) {
 test('adopt enrolls a repository, reviews generated files and only opens a PR after confirmation', async () => {
 	const repository = widget(world.github, { configured: false });
 	const original = world.github.head(repository);
-	const declined = await run(['adopt', repository.name], ['new', '', 'managed', false, false]);
+	const declined = await run(['adopt', repository.name], [false, 'new', '', 'managed', false, false]);
 	expect(declined.exitCode).toBe(0);
 	expect(declined.stdout.join('')).toContain('release-widget.yml');
 	expect(repository.pulls).toHaveLength(0);
 	expect((await Effect.runPromise(client.call(routes.repositoriesList, {}))).map(row => row.name)).toContain(
 		repository.name,
 	);
-	const accepted = await run(['adopt', `https://github.com/${repository.name}`], ['new', '', 'managed', false, true]);
+	const accepted = await run(
+		['adopt', `https://github.com/${repository.name}`],
+		[false, 'new', '', 'managed', false, true],
+	);
 	expect(accepted.exitCode).toBe(0);
 	expect(repository.pulls).toHaveLength(1);
 	expect(world.github.head(repository)).toBe(original);
@@ -90,7 +98,7 @@ test('Cargo adoption generates one workflow and advanced renaming keeps the shar
 	});
 	const result = await run(
 		['adopt', repository.name],
-		['new', '', 'same', '', true, false, 'workspace', 'my-release.yml', '', true],
+		[false, 'new', '', 'same', '', true, false, 'workspace', 'my-release.yml', '', true],
 	);
 	expect(result.exitCode).toBe(0);
 	expect(result.stdout.join('')).toContain('Cargo.lock must be updated');
@@ -106,7 +114,7 @@ test('Cargo adoption generates one workflow and advanced renaming keeps the shar
 	);
 	expect(config.streams.main.prepare.workflow.file).toBe('my-release.yml');
 	expect(config.streams.main.promote.workflow.file).toBe('my-release.yml');
-	const refreshed = await run(['adopt', repository.name], ['new', '', 'same', '', false, true]);
+	const refreshed = await run(['adopt', repository.name], [false, 'new', '', 'same', '', false, true]);
 	expect(refreshed.exitCode).toBe(0);
 	expect(repository.pulls).toHaveLength(1);
 	expect(world.github.file(repository, '.github/workflows/my-release.yml', 'automation/onboarding')).toBe(source);
@@ -325,7 +333,17 @@ const lintSummary = [
 	'- prepare-release.yml (new) runs `cargo update --workspace` in the version PR.',
 ];
 
-test('a bare adoption without a terminal prints the proposal and how to apply it', async () => {
+function lintProposal(repository: { name: string }, sha: string) {
+	return [
+		`Proposed setup for ${repository.name} at ${sha}:`,
+		...lintSummary,
+		'The setup PR writes .github/beepboop.json, .github/workflows/prepare-release.yml and .github/workflows/release-crates.yml.',
+		'release-crates.yml: grant crates-io with `beepboop secrets grant octo/lint crates-io --operation promote`.',
+		'Set up registry access and trusted publishing in each registry. The setup PR publishes nothing.',
+	];
+}
+
+test('a saved preview prints the proposal and how to apply it', async () => {
 	const repository = bindingsRepository();
 	const output = join(directory, 'plan.json');
 	const result = await app.execute(['repositories', 'adopt', repository.name, '--output', output], {
@@ -335,36 +353,49 @@ test('a bare adoption without a terminal prints the proposal and how to apply it
 	expect(result.stderr.join('')).toBe('');
 	expect(result.exitCode).toBe(0);
 	expect(result.stdout.join('').split('\n')).toEqual([
-		`Proposed setup for octo/lint at ${world.github.head(repository)}:`,
-		...lintSummary,
-		'The setup PR writes .github/beepboop.json, .github/workflows/prepare-release.yml and .github/workflows/release-crates.yml.',
-		'release-crates.yml: grant crates-io with `beepboop secrets grant octo/lint crates-io --operation promote`.',
-		'Set up registry access and trusted publishing in each registry. The setup PR publishes nothing.',
-		`Open the setup PR with: beepboop repositories adopt octo/lint --plan ${output} --apply`,
+		...lintProposal(repository, world.github.head(repository)),
+		`Open the setup PR with: beepboop adopt octo/lint --plan ${output} --apply`,
 		'',
 	]);
-	const plan = await Effect.runPromise(parseSetupPlan(await Bun.file(output).json()));
+	expect(repository.pulls).toHaveLength(0);
 	expect((await run(['adopt', repository.name, '--plan', output, '--apply', '--json'])).exitCode).toBe(0);
 	expect(repository.pulls).toHaveLength(1);
-	expect(plan.blockers).toEqual([]);
 });
 
-test('the interactive adoption summarizes each workflow before asking', async () => {
+test('one adopt in a terminal shows the proposal, asks once and opens the setup PR', async () => {
 	const repository = bindingsRepository();
-	const session = defaults({}, { 'Open or refresh the setup PR with these exact changes?': false });
-	const result = await app.execute(['repositories', 'adopt', repository.name], {
-		prompter: session.prompter,
-		isTTY: true,
-		env: {},
-	});
+	const session = defaults({}, { [proposalPrompt]: true });
+	const result = await app.execute(['adopt', repository.name], { prompter: session.prompter, isTTY: true, env: {} });
+	expect(result.stderr.join('')).toBe('');
 	expect(result.exitCode).toBe(0);
-	expect(result.stdout.join('').split('\nInspected commit')[0]?.split('\n')).toEqual(lintSummary);
-	expect(session.prompts.map(prompt => prompt.message)).toEqual([
-		'lint: use this setup? Answer no to pick the packages and workflows yourself.',
-		'Customize filenames, versioning, release groups or Actions revision?',
-		'Open or refresh the setup PR with these exact changes?',
+	expect(session.prompts.map(prompt => prompt.message)).toEqual([proposalPrompt]);
+	expect(result.stdout.join('').split('\n')).toEqual([
+		...lintProposal(repository, world.github.head(repository)),
+		'Setup PR: https://github.com/octo/lint/pull/1',
+		'',
 	]);
-	expect(repository.pulls).toHaveLength(0);
+	expect(repository.pulls.map(pull => [pull.state, pull.assignees, pull.reviewers])).toEqual([
+		['open', ['octo'], ['octo']],
+	]);
+});
+
+test('one adopt without arguments or a terminal opens the setup PR for the checkout', async () => {
+	const repository = bindingsRepository();
+	const checkout = join(directory, 'checkout');
+	await mkdir(checkout);
+	for (const args of [['init', '-q'], ['remote', 'add', 'origin', 'git@github.com:octo/lint.git']]) {
+		expect(Bun.spawnSync(['git', '-C', checkout, ...args]).exitCode).toBe(0);
+	}
+	const cwd = spyOn(process, 'cwd').mockReturnValue(checkout);
+	const result = await app.execute(['adopt'], { isTTY: false, env: {} }).finally(() => cwd.mockRestore());
+	expect(result.stderr.join('')).toBe('');
+	expect(result.exitCode).toBe(0);
+	expect(result.stdout.join('')).toContain('Setup PR: https://github.com/octo/lint/pull/1\n');
+	expect(repository.pulls).toHaveLength(1);
+	const again = await app.execute(['repo', 'adopt', repository.name], { isTTY: false, env: {} });
+	expect(again.exitCode).toBe(0);
+	expect(again.stdout.join('')).toContain('Setup PR: https://github.com/octo/lint/pull/1\n');
+	expect(repository.pulls).toHaveLength(1);
 });
 
 test('applying after the setup PR was closed unmerged opens a new setup PR', async () => {
@@ -482,7 +513,7 @@ for (const scripted of [true, false]) {
 		world.github.push(repository, { 'README.md': '# Updated default branch\n' }, 'Change source after opening setup');
 		const result = scripted
 			? await run(['adopt', repository.name, '--choices', file, '--json'])
-			: await run(['adopt', repository.name], ['new', '', 'managed', false, false]);
+			: await run(['adopt', repository.name], [false, 'new', '', 'managed', false, false]);
 		expect(result.exitCode).toBe(0);
 		expect(world.github.resolve(repository, 'automation/onboarding').sha).toBe(head);
 		expect(repository.pulls).toEqual(before);
@@ -504,12 +535,12 @@ test('saved Cargo commands are kept for the same packages and regenerated after 
 			promote: { file: 'release.yml', job: 'publish', commands: "cargo publish --package 'crate-a' --locked" },
 		}],
 	});
-	const unchanged = await run(['adopt', repository.name], [true, 'new', '', 'managed', false, false]);
+	const unchanged = await run(['adopt', repository.name], [false, true, 'new', '', 'managed', false, false]);
 	expect(unchanged.exitCode).toBe(0);
 	expect(unchanged.stdout.join('')).toContain("cargo publish --package 'crate-a' --locked");
 	const changed = await run(
 		['adopt', repository.name],
-		[false, ['pkg:cargo/crate-b'], 'new', '', 'managed', false, true],
+		[false, false, ['pkg:cargo/crate-b'], 'new', '', 'managed', false, true],
 	);
 	expect(changed.exitCode).toBe(0);
 	const source = world.github.file(repository, '.github/workflows/release.yml', 'automation/onboarding') ?? '';
@@ -540,7 +571,7 @@ test('changing publishing-step mappings regenerates commands for the newly unmap
 	});
 	const changed = await run(
 		['adopt', repository.name],
-		[true, 'ship.yml', '', 'publish_existing', '', 'managed', false, true],
+		[false, true, 'ship.yml', '', 'publish_existing', '', 'managed', false, true],
 	);
 	expect(changed.exitCode).toBe(0);
 	const source = world.github.file(repository, '.github/workflows/ship.yml', 'automation/onboarding') ?? '';
@@ -568,7 +599,7 @@ test('automatic triggers default to review and retain an explicit saved handover
 	expect(
 		(await run(
 			['adopt', repository.name],
-			[false, 'ship.yml', 'dispatchOnly', 'publish_existing', 'managed', false, true],
+			[false, false, 'ship.yml', 'dispatchOnly', 'publish_existing', 'managed', false, true],
 		))
 			.exitCode,
 	).toBe(0);

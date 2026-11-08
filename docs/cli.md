@@ -192,24 +192,28 @@ Your shell configuration must run `compinit` after that directory joins
 
 ## Configure repository releases
 
-`beepboop repositories adopt owner/repository` enrolls a repository and sets up
-its releases. Install the Beepboop GitHub App on the repository first. The
-command also accepts a bare repository name, a GitHub URL or an SSH URL.
-`repositories setup` is an alias.
+Run `beepboop adopt` in a checkout to set up its releases. The CLI reads the
+GitHub repository from the `origin` remote, enrolls it, prints the proposal and
+opens or refreshes the setup PR. In a terminal it asks once before it opens the
+PR, and the default answer is yes. Without a terminal it opens the PR right
+away. A proposal with unresolved requirements opens nothing and exits with
+status 1. Install the Beepboop GitHub App on the repository first.
 
-For a repository without a configuration, the CLI describes each stream it
-inferred from existing release workflows: which workflow publishes which
-packages where, which tags start them, and what runs in the version PR. A
-tag-triggered workflow keeps its triggers. When crates in the repository have no
-publishing workflow, the proposal adds one that publishes them and then pushes
-the version tag and each Go module tag. That tag starts the existing workflow.
-Then the CLI asks whether to use the proposal. No sends that stream through the
-guided flow below. The setup PR body explains each stream, its publication
-order and anything setup left out.
+`beepboop adopt owner/repository` names the repository instead.
+`beepboop repositories adopt owner/repository`, `beepboop repo adopt` and
+`repositories setup` do the same. They also accept a bare repository name, a
+GitHub URL or an SSH URL.
 
-Without a terminal, `repositories adopt` prints the proposal and the command
-that opens the setup PR. Add `--output setup-plan.json` to save the proposal for
-`--plan setup-plan.json --apply`.
+The proposal describes each stream: which workflow publishes which packages
+where, which tags start it, and what runs in the version PR. A tag-triggered
+workflow keeps its triggers. When crates in the repository have no publishing
+workflow, the proposal adds one that publishes them and then pushes the version
+tag and each Go module tag. That tag starts the existing workflow. The setup PR
+body explains each stream, its publication order and anything setup left out.
+A closed setup PR does not block a new one.
+
+Answer no to choose the setup yourself in the guided flow below. A proposal
+with unresolved requirements starts the guided flow directly.
 
 The guided flow asks for packages and publishing workflows. Beepboop names new
 workflows after the selected package or the repository and writes their jobs
@@ -227,8 +231,8 @@ Optional steps let you change filenames and versioning, add release groups and
 pick the Actions revision. The default is the current compatible Actions
 release.
 
-The CLI prints the inspected commit and the current and proposed files. It asks
-before it creates or refreshes the setup PR. Unresolved requirements block the
+In the guided flow the CLI prints the inspected commit and the current and
+proposed files. It asks before it creates or refreshes the setup PR. Unresolved requirements block the
 apply. Merge the setup PR yourself, then run `repositories discover` to inspect
 the default branch again.
 
@@ -237,8 +241,8 @@ the preview with `--output setup-plan.json`. That command only previews. After
 you review the saved plan, apply it:
 
 ```sh
-beepboop repositories adopt owner/repository --choices choices.json --output setup-plan.json --json
-beepboop repositories adopt owner/repository --plan setup-plan.json --apply
+beepboop adopt owner/repository --choices choices.json --output setup-plan.json --json
+beepboop adopt owner/repository --plan setup-plan.json --apply
 ```
 
 `--json` prints the full preview without prompts. Without `--choices` it prints

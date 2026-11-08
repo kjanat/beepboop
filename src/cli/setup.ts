@@ -63,10 +63,40 @@ export function setupRepository(
 			),
 		);
 		const initial = yield* parsePlan(yield* client.call(routes.setupPreview, { repository }));
-		const unattended = !flags.choices && !out.jsonMode && !out.isTTY;
+		const reviewing = !!flags.choices || !!flags.output || out.jsonMode;
+		const describe = (plan: SetupPlan) => {
+			out.log(`Proposed setup for ${plan.repository} at ${plan.sourceSha}:`);
+			for (const stream of plan.choices.streams) {
+				out.log(`Release group ${stream.name}:\n${streamSummary(stream, plan).map(line => `- ${line}`).join('\n')}`);
+			}
+			if (plan.edits.length) out.log(`The setup PR writes ${listed(plan.edits.map(edit => edit.path))}.`);
+			for (const message of [...plan.blockers, ...plan.notes]) out.log(message);
+		};
+		const open = (plan: SetupPlan) =>
+			client.call(routes.setupApply, {
+				repository,
+				choices: plan.choices,
+				planId: plan.planId,
+				sourceSha: plan.sourceSha,
+				setupHead: plan.setupHead,
+			}).pipe(Effect.map(result => out.log(`Setup PR: ${result.url}`)));
+		if (!reviewing) {
+			describe(initial);
+			if (!initial.blockers.length && !initial.edits.length) return out.log('Release setup already matches.');
+			if (!initial.blockers.length) {
+				const accepted = !out.isTTY || (yield* Effect.promise(() =>
+					ask({
+						kind: 'confirm',
+						message: 'Open or refresh the setup PR with this proposal? Answer no to choose the setup yourself.',
+						default: true,
+					})
+				));
+				if (accepted) return yield* open(initial);
+			} else if (!out.isTTY) return out.setExitCode(1);
+		}
 		const choices: unknown = flags.choices
 			? yield* readJson(flags.choices)
-			: out.jsonMode || unattended
+			: out.jsonMode || flags.output
 			? initial.choices
 			: yield* chooseSetup(initial, ask, out);
 		const preview = yield* client.call(routes.setupPreview, { repository, choices });
@@ -74,18 +104,10 @@ export function setupRepository(
 		const output = flags.output;
 		if (output) yield* Effect.promise(() => Bun.write(output, `${JSON.stringify(preview, null, 2)}\n`));
 		if (out.jsonMode) return yield* emit(out, preview);
-		if (unattended) {
-			out.log(`Proposed setup for ${plan.repository} at ${plan.sourceSha}:`);
-			for (const stream of plan.choices.streams) {
-				out.log(`Release group ${stream.name}:\n${streamSummary(stream, plan).map(line => `- ${line}`).join('\n')}`);
-			}
-			if (plan.edits.length) out.log(`The setup PR writes ${listed(plan.edits.map(edit => edit.path))}.`);
-			for (const message of [...plan.blockers, ...plan.notes]) out.log(message);
+		if (output) {
+			describe(plan);
 			if (plan.blockers.length) return out.setExitCode(1);
-			if (!plan.edits.length) return out.log('Release setup already matches.');
-			const saved = output ?? 'setup-plan.json';
-			if (!output) out.log(`Save this proposal with: beepboop repositories adopt ${repository} --output ${saved}`);
-			return out.log(`Open the setup PR with: beepboop repositories adopt ${repository} --plan ${saved} --apply`);
+			return out.log(`Open the setup PR with: beepboop adopt ${repository} --plan ${output} --apply`);
 		}
 		out.log(`Inspected commit: ${plan.sourceSha}`);
 		for (const edit of plan.edits) out.log(`\n${edit.path}\nCurrent:\n${edit.before}\nProposed:\n${edit.after}`);
