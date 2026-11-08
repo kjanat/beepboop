@@ -1,9 +1,10 @@
 import { Effect, Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
-import { directory, inWorkspace, object } from '@/automation/managers/helpers';
+import { directory, object } from '@/automation/managers/helpers';
 import type { Adapter } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
+import { cargoMembers } from '@/automation/managers/workspaces';
 import { excluded, registry } from '@/automation/package-publication';
 import { fileProblem } from '@/contract/diagnostics';
 import { precondition } from '@/contract/errors';
@@ -49,11 +50,10 @@ export const cargoManager: Adapter<'cargo'> = {
 				if (typeof location === 'string') patched.add(location.replace(/^\.\//, '').replace(/\/+$/, ''));
 			}
 		}
-		const members = Array.isArray(workspace.members) ? workspace.members.map(String) : [];
-		const exclude = Array.isArray(workspace.exclude) ? workspace.exclude.map(String) : [];
+		const member = cargoMembers(path => snapshot.files[path], Object.keys(snapshot.files));
 		for (const [path, source] of Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b))) {
 			if (path !== 'Cargo.toml' && !path.endsWith('/Cargo.toml')) continue;
-			if (path !== 'Cargo.toml' && !inWorkspace(directory(path), members, exclude)) continue;
+			if (path !== 'Cargo.toml' && !member(directory(path))) continue;
 			const parsed = Result.try(() => object(parseToml(source)));
 			const manifest = Result.isSuccess(parsed) ? parsed.success : undefined;
 			const pkg = object(manifest?.package);

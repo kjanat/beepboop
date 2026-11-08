@@ -2,6 +2,7 @@ import { Effect, Result } from 'effect';
 import { pkgbuildFile } from '@/automation/managers/channels';
 import { object, yaml } from '@/automation/managers/helpers';
 import { tagQueries } from '@/automation/managers/tags';
+import { workspaceMembers } from '@/automation/managers/workspaces';
 import { bindInputs, matrixCombinations, substitute } from '@/automation/release-graph/bindings';
 import {
 	actionBindings,
@@ -267,6 +268,21 @@ export function buildSnapshot(
 				)), { concurrency: 8, discard: true });
 		yield* readAll(fetched);
 		const requested = new Set(fetched);
+		for (;;) {
+			const member = workspaceMembers(path => read.get(path), [...read.keys()]);
+			const claimed = blobs.filter(path =>
+				!requested.has(path) && excluded.test(path) && (marker(path) || content(path))
+				&& member(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '')
+			);
+			if (!claimed.length) break;
+			if (requested.size + claimed.length > 400) return yield* precondition('Discovery file limit exceeded');
+			for (const path of claimed) {
+				requested.add(path);
+				included.push(path);
+				if (marker(path)) blank.add(path);
+			}
+			yield* readAll(claimed.filter(path => !blank.has(path)));
+		}
 		for (
 			let referenced = referencedScripts(source.repository.name, blobs, read, requested);
 			referenced.length;
