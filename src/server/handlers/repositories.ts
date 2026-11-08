@@ -146,8 +146,10 @@ function setupReview(input: { repository: string; choices?: unknown }, context: 
 		const branchConflict = !!head && saved?.head !== head && !branchFiles;
 		const previous = branchFiles ?? setupEdits(saved);
 		const priorConfiguration = previous.find(edit => edit.path === '.github/beepboop.json')?.before ?? '';
-		const choices = input.choices
-			?? ((snapshot.files['.github/beepboop.json'] ?? '') === priorConfiguration ? saved?.choices : undefined);
+		const proposed = typeof saved?.url === 'string'
+			&& (snapshot.files['.github/beepboop.json'] ?? '') === priorConfiguration
+			&& (yield* service.gateway.openSetupPull(name, id)) !== undefined;
+		const choices = input.choices ?? (proposed ? saved?.choices : undefined);
 		const workflowPermission = yield* service.gateway.canEditWorkflows(name, id);
 		const plan = yield* previewSetup(snapshot, inventory, choices, {
 			head,

@@ -318,6 +318,26 @@ test('setup PRs and their refreshes are assigned to the owner with a review requ
 	});
 });
 
+test('a closed setup PR drops its choices and a bare preview proposes afresh', async () => {
+	const repository = bindingsRepository();
+	const choices = join(directory, 'choices.json'), output = join(directory, 'plan.json');
+	const saved = { streams: [{ ...bindingsChoices.streams[0], versionFiles: [] }] };
+	await Bun.write(choices, JSON.stringify(saved));
+	expect((await run(['adopt', repository.name, '--choices', choices, '--output', output, '--json'])).exitCode).toBe(0);
+	expect((await run(['adopt', repository.name, '--plan', output, '--apply', '--json'])).exitCode).toBe(0);
+	const bare = async () => {
+		const result = await run(['adopt', repository.name, '--json']);
+		expect(result.exitCode).toBe(0);
+		return (await Effect.runPromise(parseSetupPlan(JSON.parse(result.stdout.join(''))))).choices.streams[0];
+	};
+	expect((await bare())?.versionFiles).toEqual([]);
+	const [pull] = repository.pulls;
+	if (pull) pull.state = 'closed';
+	const fresh = await bare();
+	expect(fresh?.versionFiles).toBeUndefined();
+	expect(fresh?.promote?.tagPrefix).toBe('lint-v');
+});
+
 test('a plan with choice fields this CLI does not know asks for an upgrade and sends nothing', async () => {
 	const repository = bindingsRepository();
 	const choices = join(directory, 'choices.json'), output = join(directory, 'plan.json');
