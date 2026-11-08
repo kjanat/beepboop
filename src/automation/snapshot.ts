@@ -1,5 +1,4 @@
 import { Effect, Result } from 'effect';
-import { safeVersionPath } from '@/automation/editors';
 import { pkgbuildFile } from '@/automation/managers/channels';
 import { object, yaml } from '@/automation/managers/helpers';
 import { tagQueries } from '@/automation/managers/tags';
@@ -18,6 +17,7 @@ import { literalPrefix } from '@/automation/release-graph/workflows';
 import type { Snapshot } from '@/automation/types';
 import { isLockfile, managerNames, managerSpec } from '@/contract/catalog';
 import { type DomainError, precondition } from '@/contract/errors';
+import { safeVersionPath } from '@/contract/version-files';
 
 export interface TreeEntry {
 	path: string;

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { refPattern, tagPrefixPattern, validRef, validTagPrefix, workflowFilePattern } from '@/contract/catalog';
+import { versionFileSchema } from '@/contract/version-files';
 
 export const binaryTargets = [
 	'linux-amd64',
@@ -92,6 +93,7 @@ export const setupChoicesSchema = z.object({
 				prefix: z.string().regex(tagPrefixPattern).refine(validTagPrefix, 'Invalid tag prefix'),
 			}).strict()
 				.optional(),
+			versionFiles: z.array(versionFileSchema).optional(),
 			observe: z.array(observed).optional(),
 			prepare: workflow.optional(),
 			promote: workflow.optional(),

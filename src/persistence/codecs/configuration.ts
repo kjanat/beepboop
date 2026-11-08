@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { versionFileSchema } from '@/automation/editors';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { managerNames } from '@/contract/catalog';
+import { versionFileSchema } from '@/contract/version-files';
 import type { Configuration } from '@/domain/configuration';
 
 const managerName = z.enum(managerNames);

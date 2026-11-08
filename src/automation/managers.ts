@@ -1,5 +1,5 @@
 import { Effect } from 'effect';
-import { alreadyPrepared, applyVersionFiles, type VersionFile } from '@/automation/editors';
+import { alreadyPrepared, applyVersionFiles } from '@/automation/editors';
 import { managerRegistry } from '@/automation/managers/builtins';
 import type { Fetcher, ManagerRegistry, VerificationContext } from '@/automation/managers/registry';
 import { tagPrefix } from '@/automation/managers/tags';
@@ -10,6 +10,7 @@ import type { Inventory, Package, Publication, ReleasePlan, Snapshot } from '@/a
 import { parseVersionRequest } from '@/automation/version';
 import { isLockfile, type ManagerName } from '@/contract/catalog';
 import { type DomainError, precondition } from '@/contract/errors';
+import type { VersionFile } from '@/contract/version-files';
 
 export { publicationOrder } from '@/automation/managers/order';
 

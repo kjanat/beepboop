@@ -6,6 +6,7 @@ import type { SetupPlan, SetupWorkflow, WorkflowEvidence } from '@/automation/se
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { binaries } from '@/contract/setup';
+import { versionFileSchema } from '@/contract/version-files';
 
 const strings = z.array(z.string());
 const workflow: z.ZodType<SetupWorkflow> = z.object({
@@ -45,6 +46,7 @@ const setupPlan: z.ZodType<SetupPlan> = z.object({
 			versioning: z.enum(['workspace', 'independent', 'none'], { error: 'Invalid versioning' }),
 			required: strings,
 			versionSource: z.object({ kind: z.literal('tags'), prefix: z.string() }).optional(),
+			versionFiles: z.array(versionFileSchema).optional(),
 			observe: z.array(
 				z.object({ name: z.string(), file: z.string(), ref: z.string().optional(), publications: strings }),
 			).optional(),

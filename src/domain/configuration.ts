@@ -1,7 +1,6 @@
 import { CronExpressionParser } from 'cron-parser';
 import { Result } from 'effect';
 import { z } from 'zod';
-import { versionFileSchema } from '@/automation/editors';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { parseReleaseIdentity } from '@/automation/package-identity';
 import { presetReferencePattern } from '@/automation/preset';
@@ -14,6 +13,7 @@ import {
 	workflowFilePattern,
 } from '@/contract/catalog';
 import { type Diagnostic, type DiagnosticCode, isDiagnosticCode } from '@/contract/diagnostics';
+import { versionFileSchema } from '@/contract/version-files';
 import { purl } from '@/package-url';
 
 export const identifierPattern = /^[a-z][a-z0-9-]{0,63}$/;

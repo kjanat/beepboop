@@ -263,6 +263,7 @@ function drafted(
 				versioning: selection.versioning,
 				required,
 				...(selection.versionSource ? { versionSource: selection.versionSource } : {}),
+				...(selection.versionFiles ? { versionFiles: selection.versionFiles } : {}),
 			};
 			if (!selection.versionSource) delete updated.versionSource;
 			const bindings = Object.fromEntries(
@@ -296,9 +297,10 @@ function drafted(
 						if (selected.length && snapshot.paths.some(isLockfile)) {
 							blockers.push(`${selection.name}: select a preparation workflow to regenerate lockfiles.`);
 						}
-						const versionFiles = Array.isArray(current.versionFiles)
-							? current.versionFiles
-							: resolved?.streams[selection.name]?.versionFiles ?? [];
+						const versionFiles = selection.versionFiles
+							?? (Array.isArray(current.versionFiles)
+								? current.versionFiles
+								: resolved?.streams[selection.name]?.versionFiles ?? []);
 						const strategy = object(current.prepare).strategy ?? resolved?.streams[selection.name]?.prepare.strategy;
 						if (strategy === 'workflow') {
 							blockers.push(`${selection.name}: select a preparation workflow for the configured workflow strategy.`);

@@ -594,6 +594,55 @@ test('binary builds refuse jobs given as an alias', async () => {
 	expect(plan.blockers).toContain('release.yml: jobs must be a plain mapping, not an alias');
 });
 
+test('setup writes the selected version files into the stream', async () => {
+	const repository = binaryRepository();
+	const api = bearer(world, await world.cliSession());
+	const choices = binaryChoices();
+	const stream = choices.streams[0];
+	if (!stream) throw new Error('stream expected');
+	choices.streams[0] = {
+		...stream,
+		versionFiles: [{ path: 'tool/Cargo.toml', format: 'toml', key: ['package', 'version'], template: '{version}' }],
+	};
+	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toEqual([]);
+	const configuration = z.object({
+		streams: z.record(z.string(), z.object({ versionFiles: z.array(z.record(z.string(), z.unknown())) })),
+	}).parse(JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'));
+	expect(configuration.streams.main?.versionFiles).toEqual([
+		{ path: 'tool/Cargo.toml', format: 'toml', key: ['package', 'version'], template: '{version}' },
+	]);
+	const applied = await api('/api/repositories/setup/apply', {
+		repository: repository.name,
+		choices: plan.choices,
+		planId: plan.planId,
+		sourceSha: plan.sourceSha,
+		setupHead: plan.setupHead,
+	});
+	expect(applied.status).toBe(200);
+});
+
+test('setup refuses a selected version file that does not exist', async () => {
+	const repository = binaryRepository();
+	const api = bearer(world, await world.cliSession());
+	const choices = binaryChoices();
+	const stream = choices.streams[0];
+	if (!stream) throw new Error('stream expected');
+	choices.streams[0] = {
+		...stream,
+		versionFiles: [{
+			path: 'python/pyproject.toml',
+			format: 'toml',
+			key: ['project', 'version'],
+			template: '{version}',
+		}],
+	};
+	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toContain('Stream main edits python/pyproject.toml, which does not exist');
+});
+
 test('binary builds refuse a foreign job under a build job name', async () => {
 	const repository = binaryRepository();
 	const workflow = publishWorkflow.replace(

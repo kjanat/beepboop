@@ -1,7 +1,6 @@
 import { CronExpressionParser } from 'cron-parser';
 import { Effect, Result } from 'effect';
 import { z } from 'zod';
-import { versionFileSchema } from '@/automation/editors';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { parseReleaseIdentity } from '@/automation/package-identity';
 import { parsePresetReference } from '@/automation/preset';
@@ -9,6 +8,7 @@ import type { Configuration, Stream, WorkflowBinding } from '@/automation/types'
 import { managerNames, validRef, validTagPrefix, workflowFilePattern } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
 import { type DomainError, precondition } from '@/contract/errors';
+import { versionFileSchema } from '@/contract/version-files';
 import { configurationDrift, configurationSchema } from '@/domain/configuration';
 import { toDomainError } from '@/failure';
 import { array, oneOf, record, strings, text } from '@/model';

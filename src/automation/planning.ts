@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
 import { z } from 'zod';
-import { applyVersionFiles, type VersionFile } from '@/automation/editors';
+import { applyVersionFiles } from '@/automation/editors';
 import { planRelease, publicationOrder } from '@/automation/managers';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { matchesPackage, selectorKey } from '@/automation/package-identity';
@@ -9,6 +9,7 @@ import type { Edit, Inventory, Snapshot } from '@/automation/types';
 import { parseVersionRequest } from '@/automation/version';
 import { isLockfile } from '@/contract/catalog';
 import { type DomainError, decodeRequest, precondition } from '@/contract/errors';
+import type { VersionFile } from '@/contract/version-files';
 
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
 const operation = z.strictObject({
