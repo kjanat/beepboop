@@ -377,7 +377,7 @@ test('a merge-approved release whose merge cannot be confirmed waits for approva
 	expect(promotion.approvedBy).toBeUndefined();
 });
 
-test('the signer binding signs the planned version tag', async () => {
+test('the signer binding signs the version tag without a signed ref policy', async () => {
 	const key = signingKey('Release Bot (CI) <release@example.com>');
 	try {
 		const signer = fakeSigner(key);
@@ -385,6 +385,7 @@ test('the signer binding signs the planned version tag', async () => {
 		const promotion = await only(bearer(world, await world.cliSession()), 'promote');
 		expect(promotion.state).toBe('succeeded');
 		expect(promotion.publications.find(entry => entry.id === 'refs:promote')?.outcome).toBe('succeeded');
+		expect(plan.changes[0]?.signed).toBe(true);
 		expect(plan.publicKey).toBe(key.publicKey);
 		expect(signer.calls).toEqual([{
 			data: expect.stringMatching(

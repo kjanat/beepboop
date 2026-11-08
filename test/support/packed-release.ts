@@ -31,6 +31,7 @@ const refPlan = z.object({
 		name: z.string(),
 		commit: z.string(),
 		annotated: z.boolean(),
+		signed: z.boolean(),
 		object: z.string().optional(),
 	})),
 	publicKey: z.string().optional(),
@@ -82,7 +83,7 @@ export async function packedRelease(
 		phase: 'version',
 		prefix: 'v',
 		aliases: [],
-		signed: signing !== undefined,
+		signed: signing !== undefined && signing.signer === undefined,
 	};
 	if (signing?.signer) world.env.SIGNER = signing.signer;
 	const pushed = world.github.push(repository, {

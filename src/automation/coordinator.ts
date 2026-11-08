@@ -857,7 +857,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private signRefs(plan: RefPlan): Effect.Effect<RefPlan, DomainError> {
 		const signer = this.env.SIGNER;
-		if (!signer || !plan.changes.some(change => change.signed)) return Effect.succeed(plan);
+		if (!signer || !plan.changes.some(change => change.annotated)) return Effect.succeed(plan);
 		return Effect.gen(function*() {
 			const identity = yield* fromPromise(() => signer.identity());
 			if (!/^[^<>\n]+ <[^<>\s]+>$/.test(identity.userId)) {
@@ -865,9 +865,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			const tagger = `${identity.userId} ${Math.floor(Date.now() / 1000)} +0000`;
 			const changes = yield* Effect.forEach(plan.changes, change =>
-				change.signed && change.expected === null
+				change.annotated && change.expected === null
 					? fromPromise(() => signer.sign(tagPayload(change, plan.version, tagger), `beepboop:${plan.repository}`))
-						.pipe(Effect.map(signature => ({ ...change, object: tagObject(change, plan.version, tagger, signature) })))
+						.pipe(Effect.map(signature => ({
+							...change,
+							signed: true,
+							object: tagObject(change, plan.version, tagger, signature),
+						})))
 					: Effect.succeed(change));
 			return { ...plan, changes, publicKey: identity.publicKey };
 		});

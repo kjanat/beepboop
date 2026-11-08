@@ -70,6 +70,8 @@ const platforms: Record<BinaryTarget, Platform> = {
 	),
 };
 
+export const checkoutAction = 'actions/checkout@v7';
+
 // GitHub expressions, evaluated by Actions rather than JavaScript.
 const expression = (value: string) => `\${{ ${value} }}`;
 const matrix = (key: string) => expression(`matrix.${key}`);
@@ -114,7 +116,7 @@ function toolchain(build: BinaryBuild, targets: readonly BinaryTarget[]): Toolch
 				asset: assetName(build, target),
 			})),
 			setup: [{
-				uses: 'actions/setup-go@v6',
+				uses: 'actions/setup-go@v7',
 				with: { 'go-version-file': `${build.module}/go.mod`, 'cache-dependency-path': `${build.module}/go.sum` },
 			}],
 			build: {
@@ -158,7 +160,6 @@ export function binaryJobs(
 	id: string,
 ): Record<string, Record<string, unknown>> {
 	const context = `fromJSON(steps.${id}.outputs.context)`;
-	const checkout = 'actions/checkout@v7';
 	return Object.fromEntries(release.builds.map(build => {
 		const { label, runner, include, setup, build: step } = toolchain(build, release.targets);
 		return [buildJobId(build), {
@@ -167,9 +168,9 @@ export function binaryJobs(
 			permissions: { contents: 'read', 'id-token': 'write' },
 			strategy: { 'fail-fast': true, matrix: { include } },
 			steps: [
-				{ uses: checkout, with: { 'persist-credentials': false } },
+				{ uses: checkoutAction, with: { 'persist-credentials': false } },
 				begin,
-				{ uses: checkout, with: { ref: expression(`${context}.sourceSha`), 'persist-credentials': false } },
+				{ uses: checkoutAction, with: { ref: expression(`${context}.sourceSha`), 'persist-credentials': false } },
 				...setup,
 				{
 					id: 'asset',
@@ -204,8 +205,27 @@ echo "name=\${TEMPLATE//\\{version\\}/\${VERSION}}" >> "\${GITHUB_OUTPUT}"
 }
 
 export function releaseSteps(id: string, action: (name: string) => string): Record<string, unknown>[] {
+	const sbom = `dist/${expression('github.event.repository.name')}.spdx.json`;
 	return [
 		{ uses: 'actions/download-artifact@v8', with: { path: 'dist', 'merge-multiple': true } },
+		{
+			name: 'Write checksums',
+			shell: 'bash',
+			'working-directory': 'dist',
+			run: 'sha256sum -- * > checksums.txt\n',
+		},
+		{
+			uses: 'anchore/sbom-action@v0',
+			with: {
+				path: 'dist',
+				format: 'spdx-json',
+				'output-file': sbom,
+				'upload-artifact': false,
+				'upload-release-assets': false,
+			},
+		},
+		{ uses: 'actions/attest@v4', with: { 'subject-checksums': 'dist/checksums.txt' } },
+		{ uses: 'actions/attest@v4', with: { 'subject-checksums': 'dist/checksums.txt', 'sbom-path': sbom } },
 		{
 			id: 'beepboop_binaries',
 			name: 'Upload binaries to the draft release',
@@ -216,9 +236,7 @@ export function releaseSteps(id: string, action: (name: string) => string): Reco
 				GH_REPO: expression('github.repository'),
 				TAG: expression(`fromJSON(steps.${id}.outputs.context).draftRelease.tag`),
 			},
-			run: `sha256sum -- * > checksums.txt
-gh release upload "\${TAG}" -- *
-`,
+			run: `gh release upload "\${TAG}" -- *\n`,
 		},
 		{ uses: action('publish-refs'), with: { token: expression('github.token') } },
 		{ uses: action('publish-release'), with: { 'execution-id': expression(`steps.${id}.outputs.execution-id`) } },

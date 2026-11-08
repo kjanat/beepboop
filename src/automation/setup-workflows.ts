@@ -4,7 +4,7 @@ import type { Document } from 'yaml';
 import { parseDocument, visit } from 'yaml';
 import { object, yaml } from '@/automation/managers/helpers';
 import { packageId } from '@/automation/package-identity';
-import { assetConflicts, binaryJobs, buildJobId, releaseSteps } from '@/automation/setup-binaries';
+import { assetConflicts, binaryJobs, buildJobId, checkoutAction, releaseSteps } from '@/automation/setup-binaries';
 import type { SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
 import type { Package, Snapshot } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
@@ -186,16 +186,28 @@ function integrate(
 	}
 	const job = object(jobs[jobName]);
 	const binaries = choice.binaries;
-	if (binaries && (operation !== 'promote' || original !== undefined)) {
-		fail('binary builds need a new publication workflow');
+	if (binaries && operation !== 'promote') {
+		fail('binary builds belong to the publication workflow');
 		return { content: original ?? '', blockers, notes };
 	}
-	if (binaries?.builds.some(build => buildJobId(build) === jobName)) {
+	const buildJobs = binaries?.builds.map(buildJobId) ?? [];
+	if (buildJobs.includes(jobName)) {
 		fail(`job ${jobName} conflicts with a binary build job`);
 		return { content: original ?? '', blockers, notes };
 	}
+	for (const name of buildJobs) {
+		const steps = object(jobs[name]).steps;
+		if (
+			jobs[name] !== undefined
+			&& !(Array.isArray(steps) && steps.some(step => actionRole(object(step).uses) === 'begin'))
+		) {
+			fail(`job ${name} already exists and is not a Beepboop binary build`);
+		}
+	}
 	for (const conflict of binaries ? assetConflicts(binaries) : []) fail(conflict);
-	if (job.uses || job.strategy || job.needs || job.if || job.container) {
+	const needs = Array.isArray(job.needs) ? job.needs : job.needs === undefined ? [] : [job.needs];
+	const buildNeeds = needs.length > 0 && needs.every(need => typeof need === 'string' && buildJobs.includes(need));
+	if (job.uses || job.strategy || (job.needs && !buildNeeds) || job.if || job.container) {
 		fail(
 			'reusable, matrix, dependent, conditional or container jobs require explicit workflow integration before setup',
 		);
@@ -291,13 +303,13 @@ function integrate(
 		if (checkouts.length > 1 || checkouts.some(step => object(step.with).path || object(step.with).repository)) {
 			fail('multiple or non-root checkouts need manual integration');
 		}
-		const checkout = checkouts[0] ?? { uses: 'actions/checkout@v7' };
+		const checkout = checkouts[0] ?? {};
 		steps = steps.filter(step => !checkouts.includes(step));
 		steps.unshift(
-			{ uses: checkout.uses, with: { ...object(checkout.with), 'persist-credentials': false } },
+			{ uses: checkoutAction, with: { ...object(checkout.with), 'persist-credentials': false } },
 			{ uses: action('begin'), id, with: { 'execution-id': executionInput, stream, operation } },
 			{
-				uses: checkout.uses,
+				uses: checkoutAction,
 				with: {
 					...object(checkout.with),
 					ref: `\u0024{{ fromJSON(steps.${id}.outputs.context).sourceSha }}`,
@@ -328,9 +340,10 @@ function integrate(
 				return !inputs.path && !inputs.repository && !inputs.ref;
 			})
 		) {
-			const checkout = checkouts[0] ?? { uses: 'actions/checkout@v7' };
+			const checkout = checkouts[0] ?? {};
 			const bootstrap = {
 				...checkout,
+				uses: checkoutAction,
 				with: { ...object(checkout.with), 'persist-credentials': false },
 			};
 			const checkoutIndex = steps.indexOf(checkout);
@@ -340,7 +353,7 @@ function integrate(
 				steps.splice(steps.indexOf(existingBegin), 0, bootstrap);
 			}
 			steps.splice(steps.indexOf(existingBegin) + 1, 0, {
-				uses: checkout.uses,
+				uses: checkoutAction,
 				with: { ...object(checkout.with), ref: sourceRef, 'persist-credentials': false },
 			});
 			notes.push(`${choice.file}: checks out the approved execution commit after the existing begin step.`);
@@ -363,6 +376,15 @@ function integrate(
 			!prepareSteps.some(step => object(step.with).mode === 'apply' && object(step.with).context === context)
 			|| !prepareSteps.some(step => object(step.with).mode === 'submit' && object(step.with).context === context)
 		) fail('preparation needs apply and submit steps using the begin context');
+	} else if (binaries && steps.some(step => actionRole(step.uses) === 'report')) {
+		if (!steps.some(step => step.id === 'beepboop_binaries')) {
+			if (
+				steps.some(step => typeof step.uses === 'string' && /\/actions\/publish-(?:refs|release)\b/.test(step.uses))
+			) {
+				fail('publish-refs and publish-release need to follow the binary upload; remove them before setup');
+			}
+			steps.splice(steps.findIndex(step => actionRole(step.uses) === 'report'), 0, ...releaseSteps(id, action));
+		}
 	} else if (!steps.some(step => actionRole(step.uses) === 'report')) {
 		if (!original && !choice.commands.trim() && !binaries) fail('supply publication commands');
 		if (binaries) steps.push(...releaseSteps(id, action));
@@ -420,7 +442,7 @@ function integrate(
 		const begin = { uses: action('begin'), id, with: { 'execution-id': executionInput, stream, operation } };
 		const builds = binaryJobs(binaries, begin, id);
 		const node = document.createNode(
-			{ ...builds, ...object(document.toJS({ maxAliasCount: 100 }).jobs) },
+			{ ...builds, ...object(document.toJS({ maxAliasCount: 100 }).jobs), ...builds },
 			{ aliasDuplicateObjects: false },
 		);
 		visit(node, {
@@ -430,7 +452,12 @@ function integrate(
 		});
 		document.set('jobs', node);
 		document.setIn(['jobs', jobName, 'needs'], Object.keys(builds));
-		document.setIn(['jobs', jobName, 'permissions'], { ...granted, contents: 'write', 'id-token': 'write' });
+		document.setIn(['jobs', jobName, 'permissions'], {
+			...granted,
+			contents: 'write',
+			'id-token': 'write',
+			attestations: 'write',
+		});
 	}
 	const unchanged = original !== undefined
 		&& isDeepStrictEqual(parseDocument(original).toJS({ maxAliasCount: 100 }), document.toJS({ maxAliasCount: 100 }));

@@ -135,7 +135,7 @@ for (const configured of [false, true]) {
 	});
 }
 
-test('adoption preserves an ordinary checkout immediately before begin', async () => {
+test('adoption keeps an ordinary checkout before begin on the latest checkout major', async () => {
 	const repository = widget(world.github, { configured: false });
 	world.github.push(repository, {
 		'.github/workflows/publish.yml': publishWorkflow.replace(
@@ -155,12 +155,43 @@ test('adoption preserves an ordinary checkout immediately before begin', async (
 	const edit = plan.edits.find(edit => edit.path === '.github/workflows/publish.yml');
 	const steps = workflowSchema.parse(parse(edit?.after ?? '')).jobs.publish.steps;
 	expect(steps[0]).toEqual({
-		uses: 'actions/checkout@v6',
+		uses: 'actions/checkout@v7',
 		id: 'source',
 		with: { 'fetch-depth': 0, 'persist-credentials': false },
 	});
 	expect(steps[1]?.uses).toBe('kjanat/beepboop/actions/begin@actions');
+	expect(steps[2]?.uses).toBe('actions/checkout@v7');
 	expect(steps[2]?.with?.ref).toBe('${{ fromJSON(steps.release.outputs.context).sourceSha }}');
+});
+
+test('integration moves an old checkout to the latest checkout major', async () => {
+	const repository = binaryRepository();
+	world.github.push(repository, {
+		'.github/workflows/release.yml': `name: Release
+on: workflow_dispatch
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+`,
+	}, 'Add a release workflow');
+	const api = bearer(world, await world.cliSession());
+	const preview = await api('/api/repositories/setup/preview', {
+		repository: repository.name,
+		choices: binaryChoices(),
+	});
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toEqual([]);
+	const after = plan.edits.find(edit => edit.path === '.github/workflows/release.yml')?.after ?? '';
+	const { jobs } = binaryWorkflowSchema.parse(parse(after));
+	const checkouts = Object.values(jobs).flatMap(job => job.steps)
+		.filter(step => step.uses?.startsWith('actions/checkout@'));
+	expect(checkouts.length).toBe(6);
+	expect(new Set(checkouts.map(step => step.uses))).toEqual(new Set(['actions/checkout@v7']));
+	expect(jobs.publish?.steps[0]?.with).toEqual({ 'fetch-depth': 0, 'persist-credentials': false });
 });
 
 for (const preparation of ['run: npm install', 'uses: octo/build-artifacts@v1']) {
@@ -325,6 +356,7 @@ const binaryWorkflowSchema = z.object({
 				uses: z.string().optional(),
 				run: z.string().optional(),
 				id: z.string().optional(),
+				name: z.string().optional(),
 				env: z.record(z.string(), z.string()).optional(),
 				with: z.record(z.string(), z.unknown()).optional(),
 			})),
@@ -414,16 +446,32 @@ test('a publication workflow builds each binary in a platform matrix and release
 		PACKAGE: './cmd/signer',
 	});
 	expect(jobs.publish?.needs).toEqual(['build-signer', 'build-tool']);
-	expect(jobs.publish?.permissions).toEqual({ contents: 'write', 'id-token': 'write' });
-	expect(jobs.publish?.steps.map(step => step.uses ?? step.id)).toEqual([
+	expect(jobs.publish?.permissions).toEqual({ contents: 'write', 'id-token': 'write', attestations: 'write' });
+	expect(jobs.publish?.steps.map(step => step.uses ?? step.id ?? step.name)).toEqual([
 		'actions/checkout@v7',
 		'kjanat/beepboop/actions/begin@v1',
 		'actions/checkout@v7',
 		'actions/download-artifact@v8',
+		'Write checksums',
+		'anchore/sbom-action@v0',
+		'actions/attest@v4',
+		'actions/attest@v4',
 		'beepboop_binaries',
 		'kjanat/beepboop/actions/publish-refs@v1',
 		'kjanat/beepboop/actions/publish-release@v1',
 		'kjanat/beepboop/actions/report@v1',
+	]);
+	const sbom = '${{ github.event.repository.name }}';
+	expect(jobs.publish?.steps.find(step => step.uses === 'anchore/sbom-action@v0')?.with).toEqual({
+		path: 'dist',
+		format: 'spdx-json',
+		'output-file': `dist/${sbom}.spdx.json`,
+		'upload-artifact': false,
+		'upload-release-assets': false,
+	});
+	expect(jobs.publish?.steps.filter(step => step.uses === 'actions/attest@v4').map(step => step.with)).toEqual([
+		{ 'subject-checksums': 'dist/checksums.txt' },
+		{ 'subject-checksums': 'dist/checksums.txt', 'sbom-path': `dist/${sbom}.spdx.json` },
 	]);
 	const configuration = z.object({
 		managers: z.array(z.string()),
@@ -462,7 +510,7 @@ test('binary builds whose asset names collide block setup', async () => {
 	expect(plan.blockers).toEqual(['release.yml: signer linux-amd64 and signer linux-arm64 both produce signer']);
 });
 
-test('binary builds need a new publication workflow', async () => {
+test('binary builds join an existing publication workflow and stay stable on a rerun', async () => {
 	const repository = binaryRepository();
 	world.github.push(repository, { '.github/workflows/release.yml': publishWorkflow }, 'Add a release workflow');
 	const api = bearer(world, await world.cliSession());
@@ -471,7 +519,66 @@ test('binary builds need a new publication workflow', async () => {
 		choices: binaryChoices(),
 	});
 	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
-	expect(plan.blockers).toContain('release.yml: binary builds need a new publication workflow');
+	expect(plan.blockers).toEqual([]);
+	const after = plan.edits.find(edit => edit.path === '.github/workflows/release.yml')?.after ?? '';
+	const { jobs } = binaryWorkflowSchema.parse(parse(after));
+	expect(Object.keys(jobs)).toEqual(['build-signer', 'build-tool', 'publish']);
+	expect(jobs['build-signer']?.steps[1]).toMatchObject({ uses: 'kjanat/beepboop/actions/begin@v1', id: 'release' });
+	expect(jobs.publish?.needs).toEqual(['build-signer', 'build-tool']);
+	expect(jobs.publish?.steps.map(step => step.uses ?? step.id ?? step.name ?? step.run)).toEqual([
+		'actions/checkout@v7',
+		'kjanat/beepboop/actions/begin@actions',
+		'actions/checkout@v7',
+		'npm publish',
+		'actions/download-artifact@v8',
+		'Write checksums',
+		'anchore/sbom-action@v0',
+		'actions/attest@v4',
+		'actions/attest@v4',
+		'beepboop_binaries',
+		'kjanat/beepboop/actions/publish-refs@v1',
+		'kjanat/beepboop/actions/publish-release@v1',
+		'kjanat/beepboop/actions/report@actions',
+	]);
+	world.github.push(repository, { '.github/workflows/release.yml': after }, 'Integrate binary builds');
+	const rerun = await api('/api/repositories/setup/preview', { repository: repository.name, choices: binaryChoices() });
+	const replanned = await Effect.runPromise(parseSetupPlan(rerun.body));
+	expect(replanned.blockers).toEqual([]);
+	expect(replanned.edits.find(edit => edit.path === '.github/workflows/release.yml')).toBeUndefined();
+});
+
+test('binary builds refuse a foreign job under a build job name', async () => {
+	const repository = binaryRepository();
+	const workflow = publishWorkflow.replace(
+		'jobs:\n',
+		'jobs:\n  build-signer:\n    runs-on: ubuntu-latest\n    steps:\n      - run: make\n',
+	);
+	world.github.push(repository, { '.github/workflows/release.yml': workflow }, 'Add a release workflow');
+	const api = bearer(world, await world.cliSession());
+	const preview = await api('/api/repositories/setup/preview', {
+		repository: repository.name,
+		choices: binaryChoices(),
+	});
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toContain('release.yml: job build-signer already exists and is not a Beepboop binary build');
+});
+
+test('binary builds refuse ref publication that runs before the upload', async () => {
+	const repository = binaryRepository();
+	const workflow = publishWorkflow.replace(
+		'      - run: npm publish\n',
+		'      - run: npm publish\n      - uses: kjanat/beepboop/actions/publish-refs@v1\n        with:\n          token: ${{ github.token }}\n',
+	);
+	world.github.push(repository, { '.github/workflows/release.yml': workflow }, 'Add a release workflow');
+	const api = bearer(world, await world.cliSession());
+	const preview = await api('/api/repositories/setup/preview', {
+		repository: repository.name,
+		choices: binaryChoices(),
+	});
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toContain(
+		'release.yml: publish-refs and publish-release need to follow the binary upload; remove them before setup',
+	);
 });
 
 test('binary builds belong to the publication job alone', async () => {
@@ -497,7 +604,7 @@ test('binary builds belong to the publication job alone', async () => {
 	};
 	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
 	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
-	expect(plan.blockers).toContain('prepare.yml: binary builds need a new publication workflow');
+	expect(plan.blockers).toContain('prepare.yml: binary builds belong to the publication workflow');
 	expect(plan.blockers).toContain('release.yml: job build-signer conflicts with a binary build job');
 });
 

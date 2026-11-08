@@ -537,13 +537,14 @@ A workflow binding can declare `refs` with `phase: "version"` or `"aliases"`,
 `prefix` (default `v`), `aliases: ["major", "minor"]`, and `signed` (default false).
 Ref operations require promotion approval, either as the promotion operation or
 through its dependencies. Use `actions/publish-refs` after `begin`, passing the
-repository token as `token`. Signed version tags use the `SIGNER` service
-binding to the `Signer` entrypoint of gpg-signing-service. Beepboop signs the
-planned tag object with that key's primary user ID as tagger, and the Action
-writes it with `git mktag` and checks it with `git verify-tag`. Without the
-binding, the Action runs `git tag -s` with the runner's own Git signing key.
-GitHub must report the version tag as verified, so the key's email belongs on
-the repository owner's GitHub account. Alias operations should depend on the publication operations they distribute.
+repository token as `token`. When the Worker has the `SIGNER` service binding
+to the `Signer` entrypoint of gpg-signing-service, Beepboop signs every new
+version tag, whatever `signed` says. It signs the planned tag object with that
+key's primary user ID as tagger, and the Action writes it with `git mktag` and
+checks it with `git verify-tag`. Without the binding, `signed: true` makes the
+Action run `git tag -s` with the runner's own Git signing key. GitHub must
+report a signed version tag as verified, so the key's email belongs on the
+repository owner's GitHub account. Alias operations should depend on the publication operations they distribute.
 
 The Action publishes an authorized plan with atomic Git pushes and explicit
 expected old object IDs. Version tags target one commit; stable aliases exclude
@@ -581,7 +582,7 @@ publication.
 
 ### Binary builds
 
-A new publication workflow can build binaries for its GitHub release. Add
+A publication workflow can build binaries for its GitHub release. Add
 `binaries` to the stream's `promote` setup choice:
 
 ```json
@@ -607,11 +608,20 @@ A new publication workflow can build binaries for its GitHub release. Add
 build. Go builds cross-compile on `ubuntu-latest` with `CGO_ENABLED=0` and set
 `main.version`. Cargo builds run on a native runner for each target. Each build
 job runs `begin`, builds the approved commit and uploads its file as an
-artifact. The publication job downloads every artifact, writes
-`checksums.txt`, uploads the files to the draft release, publishes the version
-tag with `actions/publish-refs` and the release with `actions/publish-release`.
-The workflow binding lists `github-release:<owner>/<repo>` in `publications`
-and declares `refs` with `phase: "version"`.
+artifact. The publication job downloads every artifact and writes
+`checksums.txt`. It generates an SPDX SBOM named
+`<repository>.spdx.json` with `anchore/sbom-action` and attests build
+provenance and the SBOM for every checksummed file with `actions/attest`. It
+then uploads the files to the draft release, publishes the version tag with
+`actions/publish-refs` and the release with `actions/publish-release`. The
+workflow binding lists `github-release:<owner>/<repo>` in `publications` and
+declares `refs` with `phase: "version"`.
+
+In an existing workflow, setup adds the build jobs, makes the selected job wait
+for them and inserts the release steps before its `report` step. A job that
+already carries a build job's name must be a Beepboop binary build, and
+`publish-refs` or `publish-release` must not run before the upload. Every
+checkout that setup writes uses `actions/checkout@v7`.
 
 Each build names its files with `asset`. The defaults are
 `{name}-{go.os}-{go.arch}{ext}` for Go and `{name}-{rust.target}{ext}` for
