@@ -763,17 +763,27 @@ test('a completed run starts the crates when its build jobs passed, after tracki
 	]);
 }, 60_000);
 
-for (const observed of [true, false]) {
+for (const scenario of ['observed', 'unobserved', 'renamed'] as const) {
 	test(
-		observed
+		scenario === 'observed'
 			? 'crates missing from an earlier tagged release publish from the tagged commit after setup'
-			: 'without a run of the tagged release, the missing crates need a new version',
+			: scenario === 'unobserved'
+			? 'without a run of the tagged release, the missing crates need a new version'
+			: 'crates that the tagged commit does not contain need a new version',
 		async () => {
+			const observed = scenario === 'observed';
 			world.network.serve('crates.io', () => new Response(null, { status: 404 }));
 			world.network.serve('pypi.org', () => new Response(null, { status: 404 }));
 			world.network.serve('proxy.golang.org', () => new Response(null, { status: 404 }));
 			const repository = lintRepository(stagedWorkflow);
 			world.npm.publish('@octo/lint', '1.0.0');
+			if (scenario === 'renamed') {
+				world.github.push(repository, {
+					'crates/core/Cargo.toml': '[package]\nname = "lint-engine"\nversion.workspace = true\n',
+					'crates/cli/Cargo.toml':
+						'[package]\nname = "lint"\nversion.workspace = true\n\n[dependencies]\nlint-engine = { path = "../core", version = "1.0.0" }\n',
+				}, 'Name the engine crate');
+			}
 			const tagged = world.github.head(repository);
 			repository.refs.set('tags/lint-v1.0.0', tagged);
 			const earlier: Repository['runs'][number] = {
@@ -789,8 +799,17 @@ for (const observed of [true, false]) {
 				inputs: {},
 				jobs: [...passedBuild, { name: 'npm', status: 'completed', conclusion: 'failure' }],
 			};
-			if (observed) repository.runs.push(earlier);
-			world.github.push(repository, { 'README.md': '# Lint\n' }, 'Document the tool');
+			if (scenario !== 'unobserved') repository.runs.push(earlier);
+			world.github.push(repository, {
+				'README.md': '# Lint\n',
+				...(scenario === 'renamed'
+					? {
+						'crates/core/Cargo.toml': '[package]\nname = "lint-core"\nversion.workspace = true\n',
+						'crates/cli/Cargo.toml':
+							'[package]\nname = "lint"\nversion.workspace = true\n\n[dependencies]\nlint-core = { path = "../core", version = "1.0.0" }\n',
+					}
+					: {}),
+			}, 'Document the tool');
 			const api = bearer(world, await world.cliSession());
 			expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
 			const plan = await Effect.runPromise(

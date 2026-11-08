@@ -333,7 +333,7 @@ export class AutomationService {
 					);
 					if (conflict) {
 						const missing = packages.filter(pkg => releasedVersion(pkg) !== version);
-						const backfill = yield* this.backfill(repository, name, conflict, missing);
+						const backfill = yield* this.backfill(repository, name, conflict, version, missing);
 						const stranded = missing.filter(pkg => !backfill?.covered.includes(pkg)).map(packageId);
 						const message = [
 							...(backfill
@@ -384,21 +384,35 @@ export class AutomationService {
 		repository: ReadyRepository,
 		streamName: string,
 		tag: RefState,
+		version: string,
 		missing: Package[],
 	): Effect.Effect<{ run: number; file: string; covered: Package[] } | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const workflows = repository.configuration.streams[streamName]?.workflows ?? {};
+			let tagged: Package[] | undefined;
 			for (const [operation, binding] of Object.entries(workflows)) {
 				if (
 					binding.mode !== 'observe'
 					|| !matchesRef(binding.ref ?? repository.defaultBranch, `refs/tags/${tag.name}`)
 				) continue;
-				const covered = missing.filter(pkg =>
-					Object.values(workflows).some(next =>
-						next.needs?.includes(operation) && next.publications?.some(reference => matchesPackage(reference, pkg))
-					)
+				const dependents = Object.values(workflows).filter(next =>
+					next.needs?.includes(operation)
+					&& next.publications?.some(reference => missing.some(pkg => matchesPackage(reference, pkg)))
 				);
-				if (!covered.length) continue;
+				if (!dependents.length) continue;
+				tagged ??= discover(
+					yield* this.gateway.snapshot(repository.name, repository.id, tag.commit),
+					repository.configuration.managers,
+				).packages;
+				const released = tagged.filter(pkg => publishable(pkg) && pkg.version === version);
+				if (
+					!dependents.every(next =>
+						next.publications?.every(reference => released.some(pkg => matchesPackage(reference, pkg)))
+					)
+				) continue;
+				const covered = missing.filter(pkg =>
+					dependents.some(next => next.publications?.some(reference => matchesPackage(reference, pkg)))
+				);
 				const token = yield* this.gateway.token(repository.name, repository.id);
 				const { workflow_runs: runs } = yield* this.gateway.read(
 					workflowRunsSchema,
