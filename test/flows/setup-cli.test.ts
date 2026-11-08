@@ -367,6 +367,33 @@ test('the interactive adoption summarizes each workflow before asking', async ()
 	expect(repository.pulls).toHaveLength(0);
 });
 
+test('applying after the setup PR was closed unmerged opens a new setup PR', async () => {
+	const repository = bindingsRepository();
+	const output = join(directory, 'plan.json');
+	const apply = async () => {
+		expect((await app.execute(['repositories', 'adopt', repository.name, '--output', output], { env: {} })).exitCode)
+			.toBe(0);
+		const applied = await run(['adopt', repository.name, '--plan', output, '--apply', '--json']);
+		expect(applied.stderr.join('')).toBe('');
+		expect(applied.exitCode).toBe(0);
+	};
+	await apply();
+	const [closed] = repository.pulls;
+	if (closed) closed.state = 'closed';
+	await apply();
+	expect(repository.pulls.map(pull => ({
+		number: pull.number,
+		state: pull.state,
+		assignees: pull.assignees,
+		reviewers: pull.reviewers,
+	}))).toEqual([
+		{ number: 1, state: 'closed', assignees: ['octo'], reviewers: ['octo'] },
+		{ number: 2, state: 'open', assignees: ['octo'], reviewers: ['octo'] },
+	]);
+	await apply();
+	expect(repository.pulls).toHaveLength(2);
+});
+
 test('a closed setup PR drops its choices and a bare preview proposes afresh', async () => {
 	const repository = bindingsRepository();
 	const choices = join(directory, 'choices.json'), output = join(directory, 'plan.json');

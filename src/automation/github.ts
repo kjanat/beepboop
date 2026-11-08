@@ -819,14 +819,19 @@ export class RepositoryGateway {
 		return Effect.gen(function*() {
 			const { name } = snapshot.repository;
 			const owner = name.split('/')[0];
-			const pulls = (yield* self.read(
+			const unmerged = (yield* self.read(
 				z.array(pullSchema),
 				`/repos/${name}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`,
 				token,
 			)).filter(pull => pull.merged !== true && typeof pull.merged_at !== 'string');
-			if (pulls.length > 1) return yield* precondition('Multiple matching pull requests');
+			const pulls = branch === 'automation/onboarding' ? unmerged.filter(pull => pull.state === 'open') : unmerged;
+			if (pulls.length > 1) {
+				return yield* precondition(`Several unmerged pull requests use ${branch}; keep one of them`);
+			}
 			if (pulls[0] && pulls[0].state !== 'open') {
-				return yield* precondition('Preparation pull request was closed');
+				return yield* precondition(
+					`The preparation PR #${pulls[0].number} was closed without merging. Reopen it to continue this release.`,
+				);
 			}
 			const pull = pulls[0]
 				? yield* self.read(pullSchema, `/repos/${name}/pulls/${pulls[0].number}`, token, 'PATCH', { title, body })
