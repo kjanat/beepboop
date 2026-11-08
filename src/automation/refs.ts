@@ -67,14 +67,15 @@ export function tagConflict(
 	commit: string,
 	refs: RefState[],
 	modulePrefixes: string[] = [],
-): string | undefined {
+): RefState | undefined {
 	for (const name of versionTags(policy, version, modulePrefixes)) {
 		const existing = refs.find(ref => ref.name === name);
-		if (existing && existing.commit !== commit) {
-			return `Version tag ${name} already targets ${existing.commit.slice(0, 12)}`;
-		}
+		if (existing && existing.commit !== commit) return existing;
 	}
 	return undefined;
+}
+export function conflictMessage(tag: RefState): string {
+	return `Version tag ${tag.name} already targets ${tag.commit.slice(0, 12)}`;
 }
 export function planRefs(
 	policy: RefPolicy,
@@ -86,7 +87,7 @@ export function planRefs(
 	return Effect.gen(function*() {
 		const normalized = yield* fromSync(() => semVer.parse(version));
 		const conflict = tagConflict(policy, normalized, commit, refs, modulePrefixes);
-		if (conflict) return yield* precondition(conflict);
+		if (conflict) return yield* precondition(conflictMessage(conflict));
 		const tag = tagFor(policy, normalized);
 		const full = refs.find(ref => ref.name === tag);
 		if (policy.phase === 'version') {

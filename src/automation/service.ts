@@ -7,6 +7,7 @@ import { resolveConfiguration } from '@/automation/configuration';
 import type { AutomationCoordinator } from '@/automation/coordinator';
 import { createExecution, deriveExecution } from '@/automation/execution';
 import { type Credentials, RepositoryGateway } from '@/automation/github';
+import { workflowRunsSchema } from '@/automation/github-resources';
 import { type InboxEvent, inboxEvent, type SetupPullEdit, type SetupPullMerge } from '@/automation/inbox';
 import { discover, planRelease, resolvePublished, versionsInFiles } from '@/automation/managers';
 import { jsrTokenAlias, jsrTokenRefused, setUpJsrPackage } from '@/automation/managers/jsr';
@@ -15,14 +16,15 @@ import { Notifications } from '@/automation/notifications';
 import { matchesPackage, packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import { pollPackages } from '@/automation/package-watch';
-import { moduleTagPrefixes, type RefState, tagConflict } from '@/automation/refs';
+import { matchesRef } from '@/automation/policy';
+import { conflictMessage, moduleTagPrefixes, type RefState, tagConflict } from '@/automation/refs';
 import { manifestProblems, releasedVersion, unreleasedManifestVersion } from '@/automation/release-version';
 import { setupOptionsSchema } from '@/automation/schemas';
 import { bodyChoices } from '@/automation/setup';
 import { maintainSetup, setupEdits } from '@/automation/setup-maintenance';
 import { decodeError, Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
-import type { AutomationEvent, Execution, RepositoryRecord, SubscriptionDelivery } from '@/automation/types';
+import type { AutomationEvent, Execution, Package, RepositoryRecord, SubscriptionDelivery } from '@/automation/types';
 import { parseGrant, Secrets, secretsLayer, Vault } from '@/automation/vault';
 import { type WinGetBindings, WinGetService } from '@/automation/winget';
 import type { Diagnostic } from '@/contract/diagnostics';
@@ -40,6 +42,7 @@ import { CredentialStore } from '@/persistence/d1/credentials';
 import { OnboardingStore } from '@/persistence/d1/onboarding';
 import { ScheduleStore } from '@/persistence/d1/schedules';
 import { SessionStore } from '@/persistence/d1/sessions';
+import { executionId } from '@/persistence/identity-keys';
 import { readBody, verifySignature } from '@/webhook';
 
 const webhookInstallation = z.object({ account: z.object({ id: looseSchema }) });
@@ -329,12 +332,30 @@ export class AutomationService {
 						moduleTagPrefixes(repository.inventory.packages, stream.packages ?? []),
 					);
 					if (conflict) {
-						const missing = packages.filter(pkg => releasedVersion(pkg) !== version).map(packageId);
+						const missing = packages.filter(pkg => releasedVersion(pkg) !== version);
+						const backfill = yield* this.backfill(repository, name, conflict, missing);
+						const stranded = missing.filter(pkg => !backfill?.covered.includes(pkg)).map(packageId);
+						const message = [
+							...(backfill
+								? [
+									`${
+										backfill.covered.map(packageId).join(', ')
+									} ${version} publish from ${conflict.name} after ${backfill.file} run ${backfill.run}.`,
+								]
+								: []),
+							...(stranded.length
+								? [
+									`${conflictMessage(conflict)}, so ${
+										stranded.join(', ')
+									} cannot publish ${version}. Release a new version.`,
+								]
+								: []),
+						].join(' ');
 						tagged.push({
 							code: 'version-tagged',
 							severity: 'warning',
 							subject: { kind: 'stream', name },
-							message: `${conflict}, so ${missing.join(', ')} cannot publish ${version}. Release a new version.`,
+							message,
 						});
 						continue;
 					}
@@ -357,6 +378,49 @@ export class AutomationService {
 				stored.diagnostics.push(...tagged);
 				yield* this.store.putRepository(stored);
 			}
+		});
+	}
+	private backfill(
+		repository: ReadyRepository,
+		streamName: string,
+		tag: RefState,
+		missing: Package[],
+	): Effect.Effect<{ run: number; file: string; covered: Package[] } | undefined, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const workflows = repository.configuration.streams[streamName]?.workflows ?? {};
+			for (const [operation, binding] of Object.entries(workflows)) {
+				if (
+					binding.mode !== 'observe'
+					|| !matchesRef(binding.ref ?? repository.defaultBranch, `refs/tags/${tag.name}`)
+				) continue;
+				const covered = missing.filter(pkg =>
+					Object.values(workflows).some(next =>
+						next.needs?.includes(operation) && next.publications?.some(reference => matchesPackage(reference, pkg))
+					)
+				);
+				if (!covered.length) continue;
+				const token = yield* this.gateway.token(repository.name, repository.id);
+				const { workflow_runs: runs } = yield* this.gateway.read(
+					workflowRunsSchema,
+					`/repos/${repository.name}/actions/runs?head_sha=${tag.commit}&per_page=100`,
+					token,
+				);
+				const run = runs
+					.filter(run =>
+						run.path === `.github/workflows/${binding.file}` && run.head_branch === tag.name
+						&& run.status === 'completed'
+					)
+					.sort((left, right) => right.id - left.id)[0];
+				if (!run) continue;
+				const coordinator = this.coordinator(repository.id);
+				const observed = yield* executionId(repository.id, streamName, operation, `observed:${run.id}`);
+				if (!(yield* fromPromise(() => coordinator.execution(observed)))) {
+					yield* fromPromise(() => coordinator.observeRun(repository.id, run.id));
+					yield* this.store.audit('beepboop', 'release.backfill', `${repository.name}:${tag.name}:${run.id}`);
+				}
+				return { run: run.id, file: binding.file, covered };
+			}
+			return undefined;
 		});
 	}
 	webhook(request: Request): Effect.Effect<Response, DomainError> {

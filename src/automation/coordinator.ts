@@ -56,6 +56,7 @@ import { publishable } from '@/automation/package-publication';
 import { matchesRef } from '@/automation/policy';
 import type { PublishBudget } from '@/automation/publish-budget';
 import {
+	conflictMessage,
 	moduleTagPrefixes,
 	planRefs,
 	type RefPlan,
@@ -1329,7 +1330,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (execution.operation !== 'promote' || !policy || !version.success) return undefined;
 			const repository = yield* this.store().repository(execution.repositoryId);
 			const refs = yield* this.gateway().tagRefs(execution.repository, execution.repositoryId);
-			return tagConflict(
+			const conflict = tagConflict(
 				policy,
 				version.data,
 				execution.sourceSha,
@@ -1339,6 +1340,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					execution.configuration.streams[execution.stream]?.packages ?? [],
 				),
 			);
+			return conflict && conflictMessage(conflict);
 		});
 	}
 	private approvalProblems(execution: Execution): Effect.Effect<string[], DomainError> {

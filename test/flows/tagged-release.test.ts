@@ -763,6 +763,92 @@ test('a completed run starts the crates when its build jobs passed, after tracki
 	]);
 }, 60_000);
 
+for (const observed of [true, false]) {
+	test(
+		observed
+			? 'crates missing from an earlier tagged release publish from the tagged commit after setup'
+			: 'without a run of the tagged release, the missing crates need a new version',
+		async () => {
+			world.network.serve('crates.io', () => new Response(null, { status: 404 }));
+			world.network.serve('pypi.org', () => new Response(null, { status: 404 }));
+			world.network.serve('proxy.golang.org', () => new Response(null, { status: 404 }));
+			const repository = lintRepository(stagedWorkflow);
+			world.npm.publish('@octo/lint', '1.0.0');
+			const tagged = world.github.head(repository);
+			repository.refs.set('tags/lint-v1.0.0', tagged);
+			const earlier: Repository['runs'][number] = {
+				id: 9100,
+				path: '.github/workflows/release.yml',
+				event: 'push',
+				headSha: tagged,
+				headBranch: 'lint-v1.0.0',
+				status: 'completed',
+				conclusion: 'failure',
+				attempt: 1,
+				title: 'Release',
+				inputs: {},
+				jobs: [...passedBuild, { name: 'npm', status: 'completed', conclusion: 'failure' }],
+			};
+			if (observed) repository.runs.push(earlier);
+			world.github.push(repository, { 'README.md': '# Lint\n' }, 'Document the tool');
+			const api = bearer(world, await world.cliSession());
+			expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+			const plan = await Effect.runPromise(
+				parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name })).body),
+			);
+			expect(plan.blockers).toEqual([]);
+			const applied = await api('/api/repositories/setup/apply', {
+				repository: repository.name,
+				choices: plan.choices,
+				planId: plan.planId,
+				sourceSha: plan.sourceSha,
+				setupHead: plan.setupHead,
+			});
+			expect(applied.status).toBe(200);
+			const merged = world.github.merge(repository, 1);
+			passChecks(repository, merged.sha);
+			const discovered = z.object({ findings: z.array(z.looseObject({ message: z.string() })) }).parse(
+				(await api('/api/repositories/discover', { repository: repository.name })).body,
+			);
+			const stranded = `Version tag lint-v1.0.0 already targets ${tagged.slice(0, 12)}, so ${
+				observed ? '' : 'pkg:cargo/lint, pkg:cargo/lint-core, '
+			}pkg:golang/github.com/octo/lint/go, pkg:pypi/lint-py cannot publish 1.0.0. Release a new version.`;
+			expect(discovered.findings.map(finding => finding.message)).toEqual([
+				observed
+					? `pkg:cargo/lint, pkg:cargo/lint-core 1.0.0 publish from lint-v1.0.0 after release.yml run 9100. ${stranded}`
+					: stranded,
+			]);
+			await world.wait(16_000);
+			const executions = z.array(z.unknown()).parse((await api('/api/executions')).body).map(decodeExecutionV1);
+			expect(executions.filter(entry => entry.operation === 'promote')).toEqual([]);
+			if (!observed) {
+				expect(executions).toEqual([]);
+				return;
+			}
+			const crates = one(executions.filter(entry => entry.operation === 'crates'), 'crates execution');
+			expect([crates.version, crates.sourceSha, crates.dependencies]).toEqual(['1.0.0', tagged, []]);
+			const dispatched = one(
+				repository.runs.filter(entry => entry.path === '.github/workflows/publish-crates.yml'),
+				'crates run',
+			);
+			const begun = await runAction(
+				world,
+				'begin',
+				{ repository, runId: dispatched.id, sha: dispatched.headSha, file: 'publish-crates.yml', actorId: botId },
+				{ EXECUTION_ID: crates.id, STREAM: 'lint', OPERATION: 'crates' },
+			);
+			expect(JSON.parse(begun.outputs.context ?? '{}')).toMatchObject({ sourceSha: tagged, version: '1.0.0' });
+			expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+			expect(
+				z.array(z.unknown()).parse((await api('/api/executions')).body).map(decodeExecutionV1).filter(entry =>
+					entry.operation === 'crates'
+				),
+			).toHaveLength(1);
+		},
+		60_000,
+	);
+}
+
 for (const rewritten of [false, true]) {
 	test(
 		rewritten
