@@ -18,7 +18,7 @@ const workflow: z.ZodType<SetupWorkflow> = z.object({
 	credentials: z.record(z.string(), z.string()).optional(),
 	tagPrefix: z.string().optional(),
 	binaries: binaries.optional(),
-});
+}).strict();
 const publication: z.ZodType<PackagePublication> = z.discriminatedUnion('kind', [
 	z.object({ kind: z.literal('registry') }).transform((): PackagePublication => ({ kind: 'registry' })),
 	z.object({ kind: z.literal('excluded'), reason: z.enum(exclusionReasons, { error: 'Invalid exclusion reason' }) })
@@ -42,21 +42,23 @@ const setupPlan: z.ZodType<SetupPlan> = z.object({
 	planId: z.string(),
 	setupHead: z.string().nullable(),
 	choices: z.object({
-		streams: z.array(z.object({
-			name: z.string(),
-			packages: strings,
-			versioning: z.enum(['workspace', 'independent', 'none'], { error: 'Invalid versioning' }),
-			required: strings,
-			versionSource: z.object({ kind: z.literal('tags'), prefix: z.string() }).optional(),
-			versionFiles: z.array(versionFileSchema).optional(),
-			observe: z.array(
-				z.object({ name: z.string(), file: z.string(), ref: z.string().optional(), publications: strings }),
-			).optional(),
-			prepare: workflow.optional(),
-			promote: workflow.optional(),
-		})),
+		streams: z.array(
+			z.object({
+				name: z.string(),
+				packages: strings,
+				versioning: z.enum(['workspace', 'independent', 'none'], { error: 'Invalid versioning' }),
+				required: strings,
+				versionSource: z.object({ kind: z.literal('tags'), prefix: z.string() }).optional(),
+				versionFiles: z.array(versionFileSchema).optional(),
+				observe: z.array(
+					z.object({ name: z.string(), file: z.string(), ref: z.string().optional(), publications: strings }).strict(),
+				).optional(),
+				prepare: workflow.optional(),
+				promote: workflow.optional(),
+			}).strict(),
+		),
 		actionsRevision: z.string().optional(),
-	}),
+	}).strict(),
 	inventory: z.object({
 		packages: z.array(
 			z.object({
@@ -82,7 +84,16 @@ const setupPlan: z.ZodType<SetupPlan> = z.object({
 
 export function parseSetupPlan(value: unknown): Effect.Effect<SetupPlan, DomainError> {
 	const parsed = setupPlan.safeParse(value);
-	return parsed.success
-		? Effect.succeed(parsed.data)
-		: Effect.fail(precondition(parsed.error.issues[0]?.message ?? 'Invalid setup plan'));
+	if (parsed.success) return Effect.succeed(parsed.data);
+	const unknown =
+		parsed.error.issues.flatMap(issue =>
+			issue.code === 'unrecognized_keys' && issue.path[0] === 'choices' ? [issue] : []
+		)[0];
+	return Effect.fail(precondition(
+		unknown
+			? `The setup choices contain ${
+				unknown.keys.join(', ')
+			}, which this beepboop version does not support. Upgrade beepboop and run the command again.`
+			: parsed.error.issues[0]?.message ?? 'Invalid setup plan',
+	));
 }

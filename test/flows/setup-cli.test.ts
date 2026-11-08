@@ -209,12 +209,122 @@ test('scripted adoption previews choices and applies only the saved review, refu
 	const stale = await run(['adopt', repository.name, '--plan', output, '--apply']);
 	expect(stale.exitCode).not.toBe(0);
 	expect(repository.pulls).toHaveLength(0);
-	expect(stale.stderr.join('')).toContain('preview again');
+	expect(stale.stderr.join('')).toContain(
+		`The default branch moved to ${world.github.head(repository)}. Preview again.`,
+	);
 	expect((await run(['adopt', repository.name, '--choices', choices, '--output', output, '--json'])).exitCode).toBe(0);
 	const applied = await run(['adopt', repository.name, '--plan', output, '--apply', '--json']);
 	expect(applied.exitCode).toBe(0);
 	expect(repository.pulls).toHaveLength(1);
 	expect(JSON.parse(applied.stdout.join(''))).toHaveProperty('url');
+});
+
+function bindingsRepository() {
+	return world.github.create('octo/lint', {
+		'Cargo.toml': '[workspace]\nmembers = ["crates/core", "crates/cli"]\n[workspace.package]\nversion = "1.0.0"\n',
+		'Cargo.lock': '# Lockfile\n',
+		'crates/core/Cargo.toml': '[package]\nname = "lint-core"\nversion.workspace = true\n',
+		'crates/cli/Cargo.toml': '[package]\nname = "lint"\nversion.workspace = true\n',
+		'bindings/js/package.json': '{"name":"@octo/lint","version":"1.0.0"}\n',
+		'bindings/python/pyproject.toml': '[project]\nname = "lint"\nversion = "1.0.0"\n',
+		'mise.toml': '[tools]\nrust = "stable"\n',
+		'.github/workflows/release.yml': `name: Release
+on:
+  push:
+    tags: ['lint-v*']
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: npm publish
+        working-directory: bindings/js
+`,
+	});
+}
+const bindingsChoices = {
+	streams: [{
+		name: 'main',
+		packages: ['pkg:cargo/lint-core', 'pkg:cargo/lint'],
+		required: ['pkg:cargo/lint-core', 'pkg:cargo/lint'],
+		versioning: 'workspace',
+		observe: [{
+			name: 'release',
+			file: 'release.yml',
+			ref: 'refs/tags/lint-v*',
+			publications: ['pkg:npm/%40octo/lint'],
+		}],
+		prepare: {
+			file: 'prepare-release.yml',
+			job: 'prepare',
+			triggers: 'review',
+			commands: 'cargo update --workspace\ncargo test --workspace --locked',
+			publicationSteps: {},
+		},
+		promote: {
+			file: 'release-crates.yml',
+			job: 'publish',
+			triggers: 'review',
+			commands: "cargo publish --locked --package 'lint-core'\ncargo publish --locked --package 'lint'",
+			publicationSteps: {},
+			credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' },
+			tagPrefix: 'lint-v',
+		},
+		versionFiles: [
+			{ path: 'bindings/js/package.json', format: 'json', key: ['version'] },
+			{ path: 'bindings/python/pyproject.toml', format: 'toml', key: ['project', 'version'] },
+		],
+	}],
+};
+
+test('a saved plan with version files, credentials, a tag prefix and observed workflows applies unchanged', async () => {
+	const repository = bindingsRepository();
+	const choices = join(directory, 'choices.json'), output = join(directory, 'plan.json');
+	await Bun.write(choices, JSON.stringify(bindingsChoices));
+	expect((await run(['adopt', repository.name, '--choices', choices, '--output', output, '--json'])).exitCode).toBe(0);
+	const plan = await Effect.runPromise(parseSetupPlan(await Bun.file(output).json()));
+	expect(plan.blockers).toEqual([]);
+	expect(plan.choices.streams[0]?.versionFiles).toHaveLength(2);
+	const applied = await run(['adopt', repository.name, '--plan', output, '--apply', '--json']);
+	expect(applied.stderr.join('')).toBe('');
+	expect(applied.exitCode).toBe(0);
+	expect(repository.pulls).toHaveLength(1);
+});
+
+test('a plan with choice fields this CLI does not know asks for an upgrade and sends nothing', async () => {
+	const repository = bindingsRepository();
+	const choices = join(directory, 'choices.json'), output = join(directory, 'plan.json');
+	await Bun.write(choices, JSON.stringify(bindingsChoices));
+	expect((await run(['adopt', repository.name, '--choices', choices, '--output', output, '--json'])).exitCode).toBe(0);
+	const saved = z.object({ choices: z.object({ streams: z.array(z.record(z.string(), z.unknown())) }) }).passthrough()
+		.parse(await Bun.file(output).json());
+	const [stream] = saved.choices.streams;
+	if (stream) stream.channels = { stable: 'latest' };
+	await Bun.write(output, JSON.stringify(saved));
+	const applied = await run(['adopt', repository.name, '--plan', output, '--apply']);
+	expect(applied.exitCode).not.toBe(0);
+	expect(applied.stderr.join('')).toContain(
+		'The setup choices contain channels, which this beepboop version does not support. Upgrade beepboop and run the command again.',
+	);
+	expect(repository.pulls).toHaveLength(0);
+});
+
+test('apply names an outdated CLI when the choices it sends no longer match the reviewed plan', async () => {
+	const repository = bindingsRepository();
+	const choices = join(directory, 'choices.json'), output = join(directory, 'plan.json');
+	await Bun.write(choices, JSON.stringify(bindingsChoices));
+	expect((await run(['adopt', repository.name, '--choices', choices, '--output', output, '--json'])).exitCode).toBe(0);
+	const plan = await Effect.runPromise(parseSetupPlan(await Bun.file(output).json()));
+	const stripped = { streams: plan.choices.streams.map(({ versionFiles: _, ...stream }) => stream) };
+	const refused = await Effect.runPromise(Effect.flip(client.call(routes.setupApply, {
+		repository: repository.name,
+		choices: stripped,
+		planId: plan.planId,
+		sourceSha: plan.sourceSha,
+		setupHead: plan.setupHead,
+	})));
+	expect(refused.message).toContain('An outdated beepboop CLI drops choice fields it does not know. Upgrade beepboop');
+	expect(repository.pulls).toHaveLength(0);
 });
 
 test('JSON adoption previews without prompting and help exposes adopt and the setup alias', async () => {

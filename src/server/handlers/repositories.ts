@@ -64,8 +64,17 @@ export const repositoryEndpoints = {
 		Effect.gen(function*() {
 			const { service, actor } = context;
 			const { plan, head, snapshot, saved, previous, branchConflict, id } = yield* setupReview(input, context);
-			if (input.planId !== plan.planId || input.sourceSha !== plan.sourceSha || input.setupHead !== head) {
-				return yield* conflict('stale-plan', 'Setup source, choices or branch changed; preview again');
+			if (input.sourceSha !== plan.sourceSha) {
+				return yield* conflict('stale-plan', `The default branch moved to ${snapshot.sha}. Preview again.`);
+			}
+			if (input.setupHead !== head) {
+				return yield* conflict('stale-plan', 'The setup branch changed after the preview. Preview again.');
+			}
+			if (input.planId !== plan.planId) {
+				return yield* conflict(
+					'stale-plan',
+					'These choices produce a different plan than the reviewed preview. An outdated beepboop CLI drops choice fields it does not know. Upgrade beepboop, or preview again if presets changed.',
+				);
 			}
 			const takeOver = input.takeOver === true && branchConflict;
 			const blockers = plan.blockers.filter(blocker => !takeOver || blocker !== branchConflictBlocker);
