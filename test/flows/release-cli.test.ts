@@ -379,6 +379,82 @@ test('delegated manifest preparation can promote when its prepared versions reac
 	]);
 });
 
+async function tagged(approval: 'required' | 'push' = 'required') {
+	const { repository, configuration } = await delegated();
+	configuration.streams.main.promote.workflow.refs = { phase: 'version', prefix: 'v' };
+	configuration.streams.main.promote.approval = approval;
+	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Tag each release');
+	const before = world.github.head(repository);
+	const merged = world.github.push(repository, {
+		'package.json': `${JSON.stringify({ name: 'widget', version: '1.2.4' }, null, 2)}\n`,
+	}, 'Merge the workflow-prepared package version');
+	return { repository, before, merged };
+}
+const promotions = async () =>
+	(await Effect.runPromise(client.call(routes.executionsList, {}))).filter(execution =>
+		execution.operation === 'promote'
+	);
+
+test('a version whose tag targets another commit gets no promotion and a repository warning', async () => {
+	const { repository, before, merged } = await tagged();
+	repository.refs.set('tags/v1.2.4', before);
+	passChecks(repository, merged.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(1_000);
+	expect(await promotions()).toEqual([]);
+	const discovered = await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	expect(discovered.diagnostics).toEqual([]);
+	expect(discovered.findings).toEqual([{
+		code: 'version-tagged',
+		severity: 'warning',
+		subject: { kind: 'stream', name: 'main' },
+		message: `Version tag v1.2.4 already targets ${
+			before.slice(0, 12)
+		}, so pkg:npm/widget cannot publish 1.2.4. Release a new version.`,
+	}]);
+	expect(await promotions()).toEqual([]);
+});
+
+test('no approval overrides a version tag on another commit, and the CLI cancels the promotion', async () => {
+	const { repository, before, merged } = await tagged();
+	passChecks(repository, merged.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(1_000);
+	const [promotion] = await promotions();
+	if (!promotion) throw new Error('No promotion');
+	expect(promotion).toEqual(expect.objectContaining({ state: 'awaiting-approval', sourceSha: merged.sha }));
+	repository.refs.set('tags/v1.2.4', before);
+	const conflict = `Version tag v1.2.4 already targets ${before.slice(0, 12)}`;
+	expect(await Effect.runPromise(client.call(routes.executionsApproval, { id: promotion.id }))).toEqual({
+		problems: [],
+		blocked: [`${conflict}. Release a new version.`],
+	});
+	const forced = await run(['runs', 'approve', promotion.id, '--sourceSha', merged.sha, '--force']);
+	expect(forced.exitCode).not.toBe(0);
+	expect(forced.stderr.join('')).toContain(conflict);
+	expect((await promotions())[0]?.state).toBe('awaiting-approval');
+	const cancelled = await run(['runs', 'cancel', promotion.id, '--json']);
+	expect(cancelled.exitCode).toBe(0);
+	expect(await promotions()).toEqual([expect.objectContaining({ id: promotion.id, state: 'cancelled' })]);
+	expect((await run(['runs', 'cancel', promotion.id])).exitCode).not.toBe(0);
+});
+
+test('push approval cancels a promotion once its version tag targets another commit', async () => {
+	const { repository, before, merged } = await tagged('push');
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(1_000);
+	const [promotion] = await promotions();
+	expect(promotion).toEqual(expect.objectContaining({ state: 'awaiting-approval', sourceSha: merged.sha }));
+	repository.refs.set('tags/v1.2.4', before);
+	passChecks(repository, merged.sha);
+	await world.wait(60_000);
+	expect(await promotions()).toEqual([expect.objectContaining({
+		state: 'cancelled',
+		reason: `Version tag v1.2.4 already targets ${before.slice(0, 12)}`,
+	})]);
+	expect(world.github.dispatches.map(dispatch => dispatch.file)).not.toContain('publish.yml');
+});
+
 test('managed manifest plans with custom version files promote after the preparation PR is merged', async () => {
 	const repository = await seed();
 	const configuration = z.looseObject({ streams: z.looseObject({ main: z.looseObject({}) }) }).parse(

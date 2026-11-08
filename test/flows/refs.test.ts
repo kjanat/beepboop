@@ -58,5 +58,5 @@ test('a version ref plan refuses a module tag on another commit', async () => {
 		planRefs(policy, '1.1.0', commit, [{ name: 'go/v1.1.0', oid, commit: other }], ['go/v']),
 	);
 	expect(Exit.isFailure(exit)).toBe(true);
-	expect(JSON.stringify(exit)).toContain('Version tag go/v1.1.0 already targets another commit');
+	expect(JSON.stringify(exit)).toContain(`Version tag go/v1.1.0 already targets ${other.slice(0, 12)}`);
 });

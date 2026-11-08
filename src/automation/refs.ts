@@ -2,7 +2,7 @@ import { Effect } from 'effect';
 import { matchesPackage } from '@/automation/package-identity';
 import type { Package } from '@/automation/types';
 import { type DomainError, precondition } from '@/contract/errors';
-import { compare, isPrerelease, parseTag, semVer, tagFor } from '@/contract/version';
+import { compare, isPrerelease, parseTag, type SemVer, semVer, tagFor } from '@/contract/version';
 import { fromSync } from '@/failure';
 
 export interface RefPolicy {
@@ -55,6 +55,27 @@ export function moduleTagPrefixes(packages: Package[], references: string[]): st
 			: []
 	);
 }
+function versionTags(policy: RefPolicy, version: SemVer, modulePrefixes: string[]): string[] {
+	const tag = tagFor(policy, version);
+	return policy.phase === 'version'
+		? [tag, ...modulePrefixes.filter(prefix => prefix !== policy.prefix).map(prefix => `${prefix}${version}`)]
+		: [tag];
+}
+export function tagConflict(
+	policy: RefPolicy,
+	version: SemVer,
+	commit: string,
+	refs: RefState[],
+	modulePrefixes: string[] = [],
+): string | undefined {
+	for (const name of versionTags(policy, version, modulePrefixes)) {
+		const existing = refs.find(ref => ref.name === name);
+		if (existing && existing.commit !== commit) {
+			return `Version tag ${name} already targets ${existing.commit.slice(0, 12)}`;
+		}
+	}
+	return undefined;
+}
 export function planRefs(
 	policy: RefPolicy,
 	version: string,
@@ -64,21 +85,18 @@ export function planRefs(
 ): Effect.Effect<RefChange[], DomainError> {
 	return Effect.gen(function*() {
 		const normalized = yield* fromSync(() => semVer.parse(version));
+		const conflict = tagConflict(policy, normalized, commit, refs, modulePrefixes);
+		if (conflict) return yield* precondition(conflict);
 		const tag = tagFor(policy, normalized);
 		const full = refs.find(ref => ref.name === tag);
-		if (full && full.commit !== commit) return yield* precondition('Version tag already targets another commit');
 		if (policy.phase === 'version') {
-			const changes: RefChange[] = [];
-			for (
-				const name of [tag, ...modulePrefixes.filter(prefix => prefix !== policy.prefix).map(p => `${p}${normalized}`)]
-			) {
-				const existing = refs.find(ref => ref.name === name);
-				if (existing && existing.commit !== commit) {
-					return yield* precondition(`Version tag ${name} already targets another commit`);
-				}
-				changes.push({ name, expected: existing?.oid ?? null, commit, annotated: true, signed: policy.signed });
-			}
-			return changes;
+			return versionTags(policy, normalized, modulePrefixes).map(name => ({
+				name,
+				expected: refs.find(ref => ref.name === name)?.oid ?? null,
+				commit,
+				annotated: true,
+				signed: policy.signed,
+			}));
 		}
 		if (!full) return yield* precondition('Publish the version tag before aliases');
 		if (isPrerelease(normalized)) return [];

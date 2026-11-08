@@ -63,7 +63,7 @@ test('a managed release travels from discovery to a verified publication', async
 	expect(promotion.sourceSha).toBe(merged.sha);
 
 	const readiness = await api('/api/executions/approval', { id: promotion.id });
-	expect(readiness.body).toEqual({ problems: [] });
+	expect(readiness.body).toEqual({ problems: [], blocked: [] });
 	const approved = await api('/api/executions/approve', { id: promotion.id, sourceSha: merged.sha });
 	expect(text(approved.body, 'state')).toBe('ready');
 

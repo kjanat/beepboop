@@ -101,6 +101,7 @@ beepboop releases prepare kjanat/actionlint --stream main --releaseVersion 2.1.0
 beepboop runs list
 beepboop runs approve EXECUTION_ID --sourceSha REVIEWED_SOURCE_SHA
 beepboop runs approve EXECUTION_ID --sourceSha REVIEWED_SOURCE_SHA --force
+beepboop runs cancel EXECUTION_ID
 beepboop runs recover EXECUTION_ID
 beepboop runs recover EXECUTION_ID --action retry
 ```
@@ -108,7 +109,9 @@ beepboop runs recover EXECUTION_ID --action retry
 Pass the exact `sourceSha` and `planId` from the preview. The server rejects a
 preparation whose plan changed. An approval names one reviewed commit.
 `--force` approves when the signature or checks fail, and the audit log records
-each failure it overrode. `runs recover` reconciles by default. Pass
+each failure it overrode. `--force` cannot approve a version whose tag already
+targets another commit. `runs cancel` cancels the operation and its running
+workflow. `runs recover` reconciles by default. Pass
 `--action retry` to retry. The server applies its usual approval and dispatch
 rules.
 

@@ -147,7 +147,7 @@ const repositories = group('repositories').alias('repo').description('Inspect an
 				})),
 		),
 	);
-const runs = group('runs').description('Follow, approve and recover release operations')
+const runs = group('runs').description('Follow, approve, cancel and recover release operations')
 	.command(
 		base('list', 'List release operations').action(({ flags, out }) =>
 			Effect.runPromise(Effect.gen(function*() {
@@ -183,6 +183,16 @@ const runs = group('runs').description('Follow, approve and recover release oper
 							force: flags.force,
 						}),
 					);
+				}))
+			),
+	)
+	.command(
+		base('cancel', 'Cancel an operation and its running workflow')
+			.arg('id', arg.string().prompt({ kind: 'input', message: 'Execution ID' }).required())
+			.action(({ flags, args, out }) =>
+				Effect.runPromise(Effect.gen(function*() {
+					const client = yield* Client.at(flags.server);
+					yield* emit(out, yield* client.call(routes.executionsCancel, { id: args.id }));
 				}))
 			),
 	)

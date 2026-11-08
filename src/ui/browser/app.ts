@@ -356,11 +356,16 @@ each('form[data-action="approve"]', form =>
 		yield* Effect.forkDetach(
 			api(routes.executionsApproval, { id }).pipe(
 				Effect.matchCause({
-					onSuccess: ({ problems }) => {
+					onSuccess: ({ problems, blocked }) => {
 						status?.replaceChildren(
-							...(problems.length ? problems : ['Signature verified and checks passed.']).map(text => node('li', text)),
+							...(blocked.length ? blocked : problems.length ? problems : ['Signature verified and checks passed.'])
+								.map(
+									text => node('li', text),
+								),
 						);
-						if (problems.length) override();
+						if (blocked.length) {
+							if (approve) approve.hidden = true;
+						} else if (problems.length) override();
 					},
 					onFailure: cause => {
 						const error = Cause.squash(cause);

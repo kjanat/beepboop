@@ -55,7 +55,15 @@ import {
 import { publishable } from '@/automation/package-publication';
 import { matchesRef } from '@/automation/policy';
 import type { PublishBudget } from '@/automation/publish-budget';
-import { moduleTagPrefixes, planRefs, type RefPlan, type TagSigner, tagObject, tagPayload } from '@/automation/refs';
+import {
+	moduleTagPrefixes,
+	planRefs,
+	type RefPlan,
+	type TagSigner,
+	tagConflict,
+	tagObject,
+	tagPayload,
+} from '@/automation/refs';
 import { releaseNotes } from '@/automation/release-notes';
 import { compileReleaseSet } from '@/automation/release-set';
 import { manifestProblems } from '@/automation/release-version';
@@ -1257,6 +1265,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				yield* this.put({ ...execution, state: 'cancelled', reason: `Superseded by ${newer.id}` });
 				return true;
 			}
+			const conflict = yield* this.tagProblem(execution);
+			if (conflict) {
+				yield* this.put({ ...execution, state: 'cancelled', reason: conflict });
+				return true;
+			}
 			const problems = yield* this.approvalProblems(execution);
 			if (problems.length) {
 				const reason = `Releases when the commit is verified and its checks pass: ${problems.join('; ')}`;
@@ -1283,6 +1296,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (head && head.sha !== execution.sourceSha) {
 				return yield* precondition(`${head.ref} is at ${head.sha.slice(0, 12)}. Approve the release for that commit.`);
 			}
+			const conflict = yield* this.tagProblem(execution);
+			if (conflict) return yield* precondition(conflict);
 			const problems = yield* this.approvalProblems(execution);
 			if (problems.length && !force) return yield* precondition(problems.join('; '));
 			yield* this.store().audit(
@@ -1296,14 +1311,35 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return next;
 		}));
 	}
-	approvalReadiness(id: string): Promise<{ problems: string[] }> {
+	approvalReadiness(id: string): Promise<{ problems: string[]; blocked: string[] }> {
 		return Effect.runPromise(Effect.gen({ self: this }, function*() {
 			const execution = yield* this.get(id);
 			if (execution.state !== 'awaiting-approval') {
-				return { problems: ['This promotion is not waiting for approval'] };
+				return { problems: [], blocked: ['This promotion is not waiting for approval'] };
 			}
-			return { problems: yield* this.approvalProblems(execution) };
+			const conflict = yield* this.tagProblem(execution);
+			if (conflict) return { problems: [], blocked: [`${conflict}. Release a new version.`] };
+			return { problems: yield* this.approvalProblems(execution), blocked: [] };
 		}));
+	}
+	private tagProblem(execution: Execution): Effect.Effect<string | undefined, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const policy = execution.workflow?.refs;
+			const version = semVer.safeParse(execution.version);
+			if (execution.operation !== 'promote' || !policy || !version.success) return undefined;
+			const repository = yield* this.store().repository(execution.repositoryId);
+			const refs = yield* this.gateway().tagRefs(execution.repository, execution.repositoryId);
+			return tagConflict(
+				policy,
+				version.data,
+				execution.sourceSha,
+				refs,
+				moduleTagPrefixes(
+					repository?.inventory.packages ?? [],
+					execution.configuration.streams[execution.stream]?.packages ?? [],
+				),
+			);
+		});
 	}
 	private approvalProblems(execution: Execution): Effect.Effect<string[], DomainError> {
 		return Effect.gen({ self: this }, function*() {
@@ -1496,7 +1532,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					yield* gateway.call(`${path}/cancel`, token, 'POST');
 				}
 			}
-			const next: Execution = { ...execution, state: 'cancelled', reason: 'Cancelled from the dashboard' };
+			const next: Execution = { ...execution, state: 'cancelled', reason: `Cancelled by ${actor}` };
 			yield* this.put(next);
 			yield* this.store().audit(actor, 'execution.cancel', id);
 			return next;

@@ -87,7 +87,7 @@ export const notificationsView = z.looseObject({
 });
 export type NotificationsView = z.output<typeof notificationsView>;
 
-export const approvalReadiness = z.looseObject({ problems: z.array(z.string()) });
+export const approvalReadiness = z.looseObject({ problems: z.array(z.string()), blocked: z.array(z.string()) });
 export const securityChallenge = z.looseObject({ id: z.string(), options: z.unknown() });
 export const securityProof = z.looseObject({ proof: z.string().optional() });
 export const acknowledged = z.looseObject({ ok: z.boolean() });

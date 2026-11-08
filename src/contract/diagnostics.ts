@@ -23,6 +23,7 @@ export const diagnosticCodes = [
 	'configuration-drift',
 	'lookup-failed',
 	'unconfigured',
+	'version-tagged',
 ] as const;
 export type DiagnosticCode = (typeof diagnosticCodes)[number];
 

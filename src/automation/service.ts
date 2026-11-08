@@ -12,10 +12,11 @@ import { discover, planRelease, resolvePublished, versionsInFiles } from '@/auto
 import { jsrTokenAlias, jsrTokenRefused, setUpJsrPackage } from '@/automation/managers/jsr';
 import { registryLayer } from '@/automation/managers/registry';
 import { Notifications } from '@/automation/notifications';
-import { matchesPackage } from '@/automation/package-identity';
+import { matchesPackage, packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import { pollPackages } from '@/automation/package-watch';
-import { manifestProblems, unreleasedManifestVersion } from '@/automation/release-version';
+import { moduleTagPrefixes, type RefState, tagConflict } from '@/automation/refs';
+import { manifestProblems, releasedVersion, unreleasedManifestVersion } from '@/automation/release-version';
 import { setupOptionsSchema } from '@/automation/schemas';
 import { bodyChoices } from '@/automation/setup';
 import { maintainSetup, setupEdits } from '@/automation/setup-maintenance';
@@ -24,8 +25,10 @@ import { matchesSubscription } from '@/automation/subscriptions';
 import type { AutomationEvent, Execution, RepositoryRecord, SubscriptionDelivery } from '@/automation/types';
 import { parseGrant, Secrets, secretsLayer, Vault } from '@/automation/vault';
 import { type WinGetBindings, WinGetService } from '@/automation/winget';
+import type { Diagnostic } from '@/contract/diagnostics';
 import { type DomainError, notFound, precondition } from '@/contract/errors';
 import { setupChoicesSchema } from '@/contract/setup';
+import { semVer } from '@/contract/version';
 import { configurationDiagnostics, configurationProblem } from '@/domain/configuration';
 import { type Access, type ReadyRepository, readiness, requireReady } from '@/domain/repository';
 import { validateAgainst } from '@/domain/validate';
@@ -287,6 +290,8 @@ export class AutomationService {
 			const state = readiness(stored);
 			if (state.kind !== 'ready') return;
 			const repository = state.repository;
+			let tags: RefState[] | undefined;
+			const tagged: Diagnostic[] = [];
 			for (const [name, stream] of Object.entries(repository.configuration.streams)) {
 				if (!stream.promote.workflow || stream.versionSource?.kind === 'tags') continue;
 				const packages = repository.inventory.packages.filter(pkg =>
@@ -312,6 +317,28 @@ export class AutomationService {
 					stream.versionFiles,
 				);
 				if (plan.edits.length || plan.requiresPreparation) continue;
+				const policy = stream.promote.workflow.refs;
+				const parsed = semVer.safeParse(version);
+				if (policy && parsed.success) {
+					tags ??= yield* this.gateway.tagRefs(repository.name, repository.id);
+					const conflict = tagConflict(
+						policy,
+						parsed.data,
+						plan.sourceSha,
+						tags,
+						moduleTagPrefixes(repository.inventory.packages, stream.packages ?? []),
+					);
+					if (conflict) {
+						const missing = packages.filter(pkg => releasedVersion(pkg) !== version).map(packageId);
+						tagged.push({
+							code: 'version-tagged',
+							severity: 'warning',
+							subject: { kind: 'stream', name },
+							message: `${conflict}, so ${missing.join(', ')} cannot publish ${version}. Release a new version.`,
+						});
+						continue;
+					}
+				}
 				const promotion = yield* (
 					createExecution(repository, {
 						stream: name,
@@ -325,6 +352,10 @@ export class AutomationService {
 				if (merge) promotion.approvedBy = 'merge';
 				yield* this.store.audit('beepboop', 'release.push', promotion.id);
 				yield* this.enqueue(repository, promotion);
+			}
+			if (tagged.length) {
+				stored.diagnostics.push(...tagged);
+				yield* this.store.putRepository(stored);
 			}
 		});
 	}
