@@ -738,6 +738,48 @@ test('a tag prefix adds ref publication before the report of an existing workflo
 	expect(replanned.edits.find(edit => edit.path === '.github/workflows/publish.yml')).toBeUndefined();
 });
 
+test('the promote report leaves out observed publications and reports Go modules from the tag push', async () => {
+	const repository = widget(world.github, { configured: false });
+	world.github.push(repository, { 'go/go.mod': 'module github.com/octo/widget/go\n\ngo 1.26\n' }, 'Add a Go module');
+	const api = bearer(world, await world.cliSession());
+	const inspected = await Effect.runPromise(parseSetupPlan(
+		(await api('/api/repositories/setup/preview', { repository: repository.name })).body,
+	));
+	const goModule = inspected.packageIds.find(id => id.startsWith('pkg:golang/'));
+	if (!goModule) throw new Error('Go module expected');
+	const choices: SetupChoices = {
+		streams: [{
+			name: 'main',
+			packages: ['pkg:npm/widget', goModule],
+			required: ['pkg:npm/widget', goModule],
+			versioning: 'workspace',
+			observe: [{ name: 'npm', file: 'publish.yml', ref: 'master', publications: ['pkg:npm/widget'] }],
+			promote: {
+				file: 'release-widget.yml',
+				job: 'publish',
+				triggers: 'review',
+				commands: '',
+				publicationSteps: {},
+				tagPrefix: 'v',
+			},
+		}],
+	};
+	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	const after = plan.edits.find(edit => edit.path === '.github/workflows/release-widget.yml')?.after ?? '';
+	const steps = binaryWorkflowSchema.parse(parse(after)).jobs.publish?.steps ?? [];
+	const report = steps.find(step => step.uses === 'kjanat/beepboop/actions/report@v1');
+	expect(JSON.parse(String(report?.with?.publications))).toEqual([{
+		id: goModule,
+		manager: 'go',
+		name: 'github.com/octo/widget/go',
+		version: '${{ fromJSON(steps.beepboop.outputs.context).version }}',
+		required: true,
+		outcome: "${{ steps.beepboop_refs.outcome == 'success' && 'succeeded' || 'failed' }}",
+	}]);
+	expect(steps.map(step => step.id).filter(Boolean)).toEqual(['beepboop', 'beepboop_token', 'beepboop_refs']);
+});
+
 test('setup refuses a selected version file that does not exist', async () => {
 	const repository = binaryRepository();
 	const api = bearer(world, await world.cliSession());

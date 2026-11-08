@@ -112,6 +112,7 @@ export function integrateReleaseWorkflow(
 	packages: Package[],
 	actionsRevision?: string,
 	required: string[] = packages.map(packageId),
+	published: Package[] = packages,
 ): Result.Result<Integration, DomainError> {
 	return Result.gen(function*() {
 		const path = `.github/workflows/${promote.file}`;
@@ -150,7 +151,7 @@ export function integrateReleaseWorkflow(
 				stream,
 				operation,
 				{ ...choice, job: operation === 'prepare' ? prepareJob : publishJob, triggers: 'review' },
-				packages,
+				operation === 'prepare' ? packages : published,
 				actionsRevision,
 				required,
 			);
@@ -419,15 +420,21 @@ function integrate(
 			steps.splice(steps.findIndex(step => actionRole(step.uses) === 'report'), 0, ...releaseSteps(id, action));
 		}
 	} else if (!steps.some(step => actionRole(step.uses) === 'report')) {
-		if (!original && !choice.commands.trim() && !binaries) fail('supply publication commands');
+		if (!original && !choice.commands.trim() && !binaries && !choice.tagPrefix) fail('supply publication commands');
 		if (binaries) steps.push(...releaseSteps(id, action));
 		if (choice.commands.trim()) {
 			if (steps.some(step => step.id === 'beepboop_publish')) fail('step ID beepboop_publish is already used');
 			steps.push(...commandSteps({ id: 'beepboop_publish', name: 'Publish selected packages', run: choice.commands }));
 		}
+		if (choice.tagPrefix && !binaries) steps.push(...refSteps(id, action));
+		const tagged = (pkg: Package) => pkg.manager === 'go' && (binaries !== undefined || choice.tagPrefix !== undefined);
 		const publications = packages.map(pkg => {
-			const step = choice.publicationSteps[packageId(pkg)] ?? (choice.commands.trim() ? 'beepboop_publish' : '');
-			if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(step) || !steps.some(entry => entry.id === step && entry.run)) {
+			const step = choice.publicationSteps[packageId(pkg)]
+				?? (tagged(pkg) ? 'beepboop_refs' : choice.commands.trim() ? 'beepboop_publish' : '');
+			if (
+				!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(step)
+				|| !steps.some(entry => entry.id === step && (entry.run || step === 'beepboop_refs'))
+			) {
 				fail(`select the publishing command step for ${packageId(pkg)}`);
 			}
 			return {

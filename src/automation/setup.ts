@@ -237,6 +237,8 @@ function drafted(
 			const selected = inventory.packages.filter(pkg =>
 				selection.packages.includes(packageId(pkg)) && publishable(pkg)
 			);
+			const observedPublications = selection.observe?.flatMap(entry => entry.publications) ?? [];
+			const published = selected.filter(pkg => !observedPublications.some(reference => matchesPackage(reference, pkg)));
 			if (selection.promote?.binaries) managers.add('github-release');
 			if (!selection.packages.length && !selection.observe?.length && !selection.promote?.binaries) {
 				blockers.push(`${selection.name}: select the packages in this release stream.`);
@@ -378,7 +380,7 @@ function drafted(
 					selection.name,
 					operation,
 					workflow,
-					selected,
+					operation === 'promote' ? published : selected,
 					choices.actionsRevision,
 					required,
 				));
@@ -396,6 +398,7 @@ function drafted(
 					selected,
 					choices.actionsRevision,
 					required,
+					published,
 				));
 				blockers.push(...generated.blockers);
 				notes.push(...generated.notes);

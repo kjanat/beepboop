@@ -251,6 +251,10 @@ export function refSteps(id: string, action: (name: string) => string): Record<s
 			uses: action('token'),
 			with: { 'execution-id': expression(`steps.${id}.outputs.execution-id`), 'permission-contents': 'write' },
 		},
-		{ uses: action('publish-refs'), with: { token: expression('steps.beepboop_token.outputs.token') } },
+		{
+			id: 'beepboop_refs',
+			uses: action('publish-refs'),
+			with: { token: expression('steps.beepboop_token.outputs.token') },
+		},
 	];
 }
