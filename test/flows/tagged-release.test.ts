@@ -36,6 +36,12 @@ jobs:
       - uses: actions/checkout@v7
       - run: uv build --directory bindings/python
       - uses: pypa/gh-action-pypi-publish@release/v1
+  github:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - run: gh release create "$GITHUB_REF_NAME" dist/*
 `;
 
 function lintRepository(): Repository {
@@ -99,6 +105,21 @@ test('a bare adoption releases crates, Go modules and the tag-triggered npm work
 	for (const name of ['lint-core', 'lint']) published.set(`${name}@1.0.0`, 'crate');
 	published.set('go@v1.0.0', 'module');
 	world.npm.publish('@octo/lint', '1.0.0');
+	published.set('lint-py@1.0.0', 'project');
+	world.network.serve('pypi.org', request => {
+		const [, , name, version] = new URL(request.url).pathname.split('/');
+		const known = [...published.keys()].filter(key => key.startsWith(`${name}@`)).map(key =>
+			key.slice(`${name}@`.length)
+		);
+		if (!name || !known.length) return new Response(null, { status: 404 });
+		if (version === 'json') return Response.json({ info: { name, version: known.at(-1) } });
+		return known.includes(version ?? '')
+			? Response.json({
+				info: { name, version, yanked: false },
+				urls: [{ packagetype: 'sdist', yanked: false, digests: { sha256: 'd'.repeat(64) } }],
+			})
+			: new Response(null, { status: 404 });
+	});
 	const repository = lintRepository();
 	passChecks(repository, world.github.head(repository));
 	const api = bearer(world, await world.cliSession());
@@ -114,14 +135,13 @@ test('a bare adoption releases crates, Go modules and the tag-triggered npm work
 		'pkg:cargo/lint-core',
 		'pkg:golang/github.com/octo/lint/go',
 		'pkg:npm/%40octo/lint',
+		'pkg:pypi/lint-py',
 	]);
-	expect(stream.versionFiles).toEqual([
-		{ path: 'bindings/python/pyproject.toml', format: 'toml', key: ['project', 'version'], template: '{version}' },
-	]);
+	expect(stream.versionFiles).toBeUndefined();
 	expect(stream.prepare).toEqual({
 		file: 'prepare-release.yml',
 		triggers: 'review',
-		commands: 'cargo update --workspace',
+		commands: 'cargo update --workspace\ncargo test --workspace --locked',
 		publicationSteps: {},
 	});
 	expect(stream.promote).toEqual({
@@ -132,9 +152,25 @@ test('a bare adoption releases crates, Go modules and the tag-triggered npm work
 		credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' },
 		tagPrefix: 'lint-v',
 	});
-	expect(stream.observe?.find(entry => entry.ref === 'refs/tags/lint-v*')?.publications).toEqual([
-		'pkg:npm/%40octo/lint',
-	]);
+	expect(stream.observe).toEqual([{
+		name: 'release',
+		file: 'release.yml',
+		ref: 'refs/tags/lint-v*',
+		publications: ['pkg:npm/%40octo/lint', 'pkg:pypi/lint-py', 'pkg:github/octo/lint'],
+	}]);
+	const crates = ['pkg:cargo/lint-core', 'pkg:cargo/lint'], tagged = [...crates, 'pkg:golang/github.com/octo/lint/go'];
+	expect(stream.needs).toEqual({
+		'pkg:cargo/lint': ['pkg:cargo/lint-core'],
+		'pkg:golang/github.com/octo/lint/go': crates,
+		'pkg:npm/%40octo/lint': tagged,
+		'pkg:pypi/lint-py': tagged,
+		'pkg:github/octo/lint': tagged,
+	});
+	const configured = z.object({
+		streams: z.record(z.string(), z.object({ needs: z.record(z.string(), z.array(z.string())) })),
+	}).parse(JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'));
+	expect(configured.streams[stream.name]?.needs).toEqual(stream.needs);
+	expect(plan.edits.length).toBeGreaterThan(0);
 	const generated = plan.edits.find(edit => edit.path === '.github/workflows/release-crates.yml')?.after ?? '';
 	const steps = z.object({
 		jobs: z.object({ promote: z.object({ steps: z.array(z.looseObject({ id: z.string().optional() })) }) }),
@@ -274,6 +310,17 @@ test('a bare adoption releases crates, Go modules and the tag-triggered npm work
 		await completed(repository, promoteRun, 'workflow_dispatch');
 
 		world.npm.publish('@octo/lint', '1.1.0');
+		published.set('lint-py@1.1.0', 'project');
+		repository.releases.push({
+			id: 1,
+			tag: 'lint-v1.1.0',
+			target: released,
+			draft: false,
+			prerelease: false,
+			authorId: botId,
+			body: '',
+			assets: ['lint-x86_64-unknown-linux-gnu.tar.gz'],
+		});
 		const tagRun = {
 			id: 9100,
 			path: '.github/workflows/release.yml',
@@ -295,7 +342,7 @@ test('a bare adoption releases crates, Go modules and the tag-triggered npm work
 		);
 		const outcomes = (operation: string) =>
 			executions.filter(entry => entry.operation === operation).flatMap(entry =>
-				entry.publications.filter(publication => publication.id.startsWith('pkg:')).map(
+				entry.publications.filter(publication => !publication.id.startsWith('refs:')).map(
 					publication => [publication.id, publication.version, publication.outcome],
 				)
 			).sort();
@@ -305,9 +352,47 @@ test('a bare adoption releases crates, Go modules and the tag-triggered npm work
 			['pkg:cargo/lint-core', '1.1.0', 'succeeded'],
 			['pkg:golang/github.com/octo/lint/go', '1.1.0', 'succeeded'],
 		]);
-		expect(outcomes('release')).toEqual([['pkg:npm/%40octo/lint', '1.1.0', 'succeeded']]);
+		expect(outcomes('release')).toEqual([
+			['pkg:github/octo/lint', 'lint-v1.1.0', 'succeeded'],
+			['pkg:npm/%40octo/lint', '1.1.0', 'succeeded'],
+			['pkg:pypi/lint-py', '1.1.0', 'succeeded'],
+		]);
 	} finally {
 		rmSync(checkout.dir, { recursive: true, force: true });
 		rmSync(scratch, { recursive: true, force: true });
 	}
 }, 60_000);
+
+test('a Go module with its own released tags becomes its own stream', async () => {
+	const repository = lintRepository();
+	world.github.push(repository, { 'sdk/go.mod': 'module github.com/octo/lint/sdk\n\ngo 1.26\n' }, 'Add the SDK');
+	repository.refs.set('tags/sdk/v0.3.0', world.github.head(repository));
+	const api = bearer(world, await world.cliSession());
+	const plan = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name })).body),
+	);
+	expect(plan.blockers).toEqual([]);
+	expect(plan.choices.streams.map(stream => [stream.name, stream.packages.filter(id => id.startsWith('pkg:golang/'))]))
+		.toEqual([
+			['lint', ['pkg:golang/github.com/octo/lint/go']],
+			['sdk', ['pkg:golang/github.com/octo/lint/sdk']],
+		]);
+	expect(plan.choices.streams[1]).toEqual({
+		name: 'sdk',
+		packages: ['pkg:golang/github.com/octo/lint/sdk'],
+		versioning: 'workspace',
+		required: ['pkg:golang/github.com/octo/lint/sdk'],
+		versionSource: { kind: 'tags', prefix: 'sdk/v' },
+		prepare: {
+			file: 'prepare-sdk.yml',
+			triggers: 'review',
+			commands: "(cd 'sdk' && go mod tidy -diff)",
+			publicationSteps: {},
+		},
+		promote: { file: 'release-sdk.yml', triggers: 'review', commands: '', publicationSteps: {}, tagPrefix: 'sdk/v' },
+	});
+	expect(plan.edits.map(edit => edit.path)).toEqual(expect.arrayContaining([
+		'.github/workflows/prepare-sdk.yml',
+		'.github/workflows/release-sdk.yml',
+	]));
+});

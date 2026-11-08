@@ -30,6 +30,13 @@ The `jsr` adapter reads `jsr.json`, `jsr.jsonc`, `deno.json` and
 `deno.json` or `deno.jsonc` without `name` is a Deno project and adds no
 package. Version edits keep comments and formatting.
 
+The `pypi` adapter reads every `pyproject.toml` outside `.github/` that has a
+`[project]` name. It records the normalized project name and the static
+`[project].version`. A project with `tool.uv.package = false` or the
+`Private :: Do Not Upload` classifier is private. Version edits change only
+`version` in the `[project]` table. Verification reads the PyPI JSON API for the
+release and needs at least one file that is not yanked.
+
 The `vscode` adapter discovers `package.json` files with a string
 `engines.vscode`. Its package name is the extension ID `publisher.name`, with
 purl type `vscode-extension`. It verifies publications against the Visual
@@ -49,9 +56,8 @@ use managed preparation when no generated lockfiles need refreshing.
 `src/contract/catalog.ts` declares every manager name and its purl type,
 manifest patterns, marker patterns, lockfile names, destinations and version
 policy. Snapshots fetch the content of manifest paths and record marker and
-lockfile paths with empty content. `projectLockfiles` in the same file lists
-lockfiles that no manager reads, such as `uv.lock`. Setup suggests `uv lock` as
-the last preparation command when the repository has one. To add an ecosystem,
+lockfile paths with empty content. Setup adds `uv lock` to the preparation
+commands when the repository has a `uv.lock`. To add an ecosystem,
 add its name and catalog entry, implement its adapter, and register it in `builtins.ts`. The typecheck
 fails until the catalog and `builtins.ts` cover the same names. Run
 `run schema:generate` to add the name to `schemas/v1.json`. Include fixtures for
@@ -70,6 +76,7 @@ workflows publish there. Each inspection records one result per destination:
 | `npm`                          | npm                                 |
 | `cargo`                        | crates.io                           |
 | `jsr`                          | JSR                                 |
+| `pypi`                         | PyPI                                |
 | `go`                           | Go module proxy                     |
 | `goreleaser`, `github-release` | GitHub release                      |
 | `oci`                          | Container registry                  |

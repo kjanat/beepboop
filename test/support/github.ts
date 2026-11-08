@@ -54,6 +54,7 @@ export interface Release {
 	prerelease: boolean;
 	authorId: number;
 	body: string;
+	assets?: string[];
 }
 export interface Repository {
 	id: number;
@@ -727,7 +728,12 @@ export class FakeGitHub {
 			author: { id: release.authorId },
 			html_url: `https://github.com/${repository.name}/releases/tag/${release.tag}`,
 			body: release.body,
-			assets: [],
+			assets: (release.assets ?? []).map((name, index) => ({
+				id: index + 1,
+				name,
+				state: 'uploaded',
+				content_type: 'application/octet-stream',
+			})),
 		};
 	}
 }

@@ -21,6 +21,7 @@
 				"cargo",
 				"npm",
 				"jsr",
+				"pypi",
 				"github-release",
 				"oci",
 				"goreleaser",
@@ -37,6 +38,7 @@
 					"cargo",
 					"npm",
 					"jsr",
+					"pypi",
 					"github-release",
 					"oci",
 					"goreleaser",
@@ -343,6 +345,21 @@
 					"type": "array",
 					"items": {
 						"$ref": "#/$defs/packageReference"
+					}
+				},
+				"needs": {
+					"description": "Publications that must finish before each listed publication, keyed by package reference",
+					"type": "object",
+					"propertyNames": {
+						"type": "string",
+						"minLength": 1
+					},
+					"additionalProperties": {
+						"type": "array",
+						"items": {
+							"type": "string",
+							"minLength": 1
+						}
 					}
 				},
 				"credentials": {

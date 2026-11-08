@@ -330,7 +330,10 @@ const lintSummary = [
 	'Release group lint:',
 	'- After you approve a release, release-crates.yml (new) publishes lint and lint-core to crates.io, then pushes the tag lint-v<version>.',
 	'- Tags matching lint-v* start release.yml. It publishes @octo/lint to npm, and Beepboop records each run. Its triggers stay as they are.',
-	'- prepare-release.yml (new) runs `cargo update --workspace` in the version PR.',
+	'- prepare-release.yml (new) runs `cargo update --workspace` and `cargo test --workspace --locked` in the version PR.',
+	'- Publication order:',
+	'  1. In parallel: lint and lint-core to crates.io',
+	'  2. @octo/lint to npm',
 ];
 
 function lintProposal(repository: { name: string }, sha: string) {
@@ -377,6 +380,9 @@ test('one adopt in a terminal shows the proposal, asks once and opens the setup 
 	expect(repository.pulls.map(pull => [pull.state, pull.assignees, pull.reviewers])).toEqual([
 		['open', ['octo'], ['octo']],
 	]);
+	expect(repository.pulls[0]?.body).toContain(
+		'  - Publication order\n    1. In parallel: `lint` on crates.io, `lint-core` on crates.io\n    2. `@octo/lint` on npm\n',
+	);
 });
 
 test('one adopt without arguments or a terminal opens the setup PR for the checkout', async () => {
@@ -652,7 +658,7 @@ test('an inferred stream is adopted by observing its existing workflow', async (
 	);
 	expect(session.prompts.some(prompt => prompt.message.includes('publish packages'))).toBe(false);
 	expect(result.stdout.join('')).toContain(
-		'Release group main:\n- Tags matching v* start release.yml, and Beepboop records each run. Its triggers stay as they are.\n',
+		'Release group main:\n- Tags matching v* start release.yml. It publishes the GitHub release, and Beepboop records each run. Its triggers stay as they are.\n',
 	);
 	expect(repository.pulls).toHaveLength(1);
 	expect(repository.pulls[0]?.body).toContain('## Release plan');

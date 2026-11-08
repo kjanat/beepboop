@@ -1577,28 +1577,14 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 				? 'the Go module proxy under a matching tag'
 				: pkg.manager === 'vscode'
 				? 'the Visual Studio Marketplace'
+				: pkg.manager === 'pypi'
+				? 'PyPI'
 				: pkg.manager;
 			omissions.push({
 				subject: code(pkg.name),
 				reason: `${code(pkg.manifest)} is publishable, but no release workflow publishes it to ${destination}`,
 			});
 		}
-	}
-	const pypiNames = new Set(
-		streams.flatMap(stream =>
-			stream.targets.filter(target => target.destination === 'pypi').flatMap(target =>
-				target.names.map(name => name.toLowerCase().replace(/[-_.]+/g, '-'))
-			)
-		),
-	);
-	for (const project of pyprojects(snapshot)) {
-		if (pypiNames.has(project.name.toLowerCase().replace(/[-_.]+/g, '-'))) continue;
-		omissions.push({
-			subject: code(project.name),
-			reason: project.private
-				? `private (${code(project.path)})`
-				: `${code(project.path)} describes a Python project, but no release workflow publishes it to PyPI`,
-		});
 	}
 	const shipped = streams.flatMap(stream => stream.targets.flatMap(target => target.binaries ?? []));
 	if (shipped.length) {

@@ -185,7 +185,7 @@ Top-level fields:
 
 - `extends` takes presets as `github>owner/repo:preset` with an optional
   `#ref`. This repository ships presets in `presets/`.
-- `managers` limits discovery. Names are `pre-commit`, `cargo`, `npm`, `jsr`,
+- `managers` limits discovery. Names are `pre-commit`, `cargo`, `npm`, `jsr`, `pypi`,
   `github-release`, `oci`, `goreleaser`, `go`, `vscode`, `manifest` and
   `workflow`. The default is all of them.
 - `streams` maps a stream name to a stream.
@@ -207,6 +207,10 @@ Stream fields:
 - `workflows` maps extra operation names to workflow bindings. The names
   `prepare` and `promote` are reserved.
 - `credentials` lists secret aliases that the stream may request.
+- `needs` maps a publication to the publications that must finish first. Setup
+  derives it from Cargo dependencies, from the order of the generated publish
+  and tag steps, and from the job order of an observed workflow. The setup PR
+  body and the CLI summary show it as numbered stages.
 - `channels` names the stable and prerelease channels, `latest` and `next` by
   default.
 - `concurrency` is `queue` or `supersede-pending`.

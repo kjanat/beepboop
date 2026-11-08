@@ -100,6 +100,7 @@ export const setupChoicesSchema = z.object({
 				.optional(),
 			versionFiles: z.array(versionFileSchema).optional(),
 			observe: z.array(observed).optional(),
+			needs: z.record(z.string(), z.array(z.string())).optional(),
 			prepare: workflow.optional(),
 			promote: workflow.optional(),
 		}).strict(),

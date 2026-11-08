@@ -101,9 +101,9 @@ describe('release streams', () => {
 		expect(target(main, 'pypi').phase).toBeLessThan(target(main, 'oci').phase);
 		expect(target(main, 'oci').names).toEqual(['ghcr.io/kjanat/kp2bw']);
 		expect(main.aliases).toContain('publish.yml#finalize');
-		expect(choices.map(choice => [choice.name, choice.versionSource])).toEqual([
-			['stubs', { kind: 'tags', prefix: 'stubs-v' }],
-			['main', { kind: 'tags', prefix: 'v' }],
+		expect(choices.map(choice => [choice.name, choice.packages, choice.versionSource])).toEqual([
+			['stubs', ['pkg:pypi/pykeepass-stubs'], undefined],
+			['main', ['pkg:pypi/kp2bw'], undefined],
 		]);
 	});
 
@@ -3297,7 +3297,12 @@ describe('adoption PR', () => {
 			versioning: 'workspace',
 			required: [],
 			versionSource: { kind: 'tags', prefix: 'v' },
-			observe: [{ name: 'release', file: 'release.yml', ref: 'refs/tags/v*', publications: [] }],
+			observe: [{
+				name: 'release',
+				file: 'release.yml',
+				ref: 'refs/tags/v*',
+				publications: ['pkg:github/kjanat/dprint-plugin-svg'],
+			}],
 		}]);
 		expect(plan.adoption?.join('\n')).toContain('### Stream `main`');
 		expect(plan.edits.map(edit => edit.path)).toEqual(['.github/beepboop.json']);

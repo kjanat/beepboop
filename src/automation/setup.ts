@@ -29,6 +29,7 @@ import { sha256Hex } from '@/contract/ids';
 import { setupChoicesSchema } from '@/contract/setup';
 import { configurationDrift } from '@/domain/configuration';
 import { packageMarkdown } from '@/domain/package-label';
+import { publicationStages } from '@/domain/publication-stages';
 import { validateAgainst } from '@/domain/validate';
 import { fromPromise, fromSync, toDomainError } from '@/failure';
 
@@ -91,7 +92,7 @@ function suggested(
 	const configured = resolved?.streams ?? object(raw.streams);
 	const names = new Set([...Object.keys(configured), ...workflows.flatMap(w => w.roles.map(role => role.stream))]);
 	if (!names.size) {
-		const adopted = adoptionChoices(graph, inventory);
+		const adopted = adoptionChoices(graph, inventory, snapshot.repository.name);
 		if (adopted.length) return { streams: completeTaggedStreams(adopted, snapshot, inventory, graph) };
 		names.add('main');
 	}
@@ -270,8 +271,10 @@ function drafted(
 				required,
 				...(selection.versionSource ? { versionSource: selection.versionSource } : {}),
 				...(selection.versionFiles ? { versionFiles: selection.versionFiles } : {}),
+				...(selection.needs ? { needs: selection.needs } : {}),
 			};
 			if (!selection.versionSource) delete updated.versionSource;
+			if (!selection.needs) delete updated.needs;
 			const granted = (['prepare', 'promote'] as const).flatMap(operation =>
 				Object.values(selection[operation]?.credentials ?? {}).map(alias => ({ operation, alias }))
 			);
@@ -638,6 +641,17 @@ export function setupBody(plan: SetupPlan): string {
 				`  - Versioning: ${versioningLabels[stream.versioning]}`,
 				`  - Preparation: ${workflow(stream.prepare)}`,
 				`  - Publication: ${workflow(stream.promote)}`,
+				...(stream.needs && Object.keys(stream.needs).length
+					? [
+						'  - Publication order',
+						...publicationStages(
+							[...stream.packages, ...(stream.observe ?? []).flatMap(entry => entry.publications)],
+							stream.needs,
+						).map((stage, index) =>
+							`    ${index + 1}. ${stage.length > 1 ? 'In parallel: ' : ''}${stage.map(packageMarkdown).join(', ')}`
+						),
+					]
+					: []),
 			].join('\n');
 		}).join('\n')
 		+ '\n\nChange versioning, workflows and triggers in Beepboop under Repositories, Edit release setup.'

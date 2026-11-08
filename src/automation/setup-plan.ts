@@ -53,6 +53,7 @@ const setupPlan: z.ZodType<SetupPlan> = z.object({
 				observe: z.array(
 					z.object({ name: z.string(), file: z.string(), ref: z.string().optional(), publications: strings }).strict(),
 				).optional(),
+				needs: z.record(z.string(), z.array(z.string())).optional(),
 				prepare: workflow.optional(),
 				promote: workflow.optional(),
 			}).strict(),

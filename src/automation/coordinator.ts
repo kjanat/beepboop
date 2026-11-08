@@ -1676,6 +1676,23 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						const context = this.gateway().verification(repository.name, repository.id);
 						execution.publications.push(yield* verifyPublication(publication, fetch, context));
 					}
+					const releaseId = `github-release:${repository.name}`;
+					if (tagged && binding.publications?.some(id => selectorKey(id) === selectorKey(releaseId))) {
+						const release = yield* gateway.read(
+							releaseSchema.nullable(),
+							`/repos/${repository.name}/releases/tags/${encodeURIComponent(branch)}`,
+							token,
+						);
+						execution.publications.push({
+							id: releaseId,
+							manager: 'github-release',
+							name: repository.name,
+							version: branch,
+							outcome: release && release.draft === false && release.assets.length ? 'succeeded' : 'failed',
+							required: true,
+							...(typeof release?.html_url === 'string' ? { url: release.html_url } : {}),
+						});
+					}
 					yield* this.put(execution);
 				}
 			}

@@ -177,6 +177,7 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 				'promote',
 				'workflows',
 				'required',
+				'needs',
 				'credentials',
 				'channels',
 				'concurrency',
@@ -219,6 +220,13 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 			? undefined
 			: yield* parsedItems(row.versionFiles, versionFileSchema);
 		const packages = row.packages === undefined ? undefined : yield* packageReferences(row.packages);
+		let needs: Record<string, string[]> | undefined;
+		if (row.needs !== undefined) {
+			needs = {};
+			for (const [publication, dependencies] of Object.entries(yield* record(row.needs))) {
+				needs[publication] = yield* strings(dependencies);
+			}
+		}
 		return {
 			...(versionFiles === undefined ? {} : { versionFiles }),
 			...(versionSource ? { versionSource } : {}),
@@ -240,6 +248,7 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 			},
 			workflows,
 			required: yield* packageReferences(row.required ?? []),
+			...(needs === undefined ? {} : { needs }),
 			credentials: yield* strings(row.credentials ?? []),
 			channels: {
 				stable: yield* text(channels.stable ?? 'latest'),

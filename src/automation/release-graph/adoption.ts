@@ -50,7 +50,11 @@ function branchRef(patterns: readonly string[]): string {
 	return patterns.length === 1 && only !== undefined && /^[\w./-]+$/.test(only) ? `refs/heads/${only}` : 'refs/heads/*';
 }
 
-export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): SetupChoices['streams'] {
+export function adoptionChoices(
+	graph: ReleaseGraph,
+	inventory: Inventory,
+	repository?: string,
+): SetupChoices['streams'] {
 	const known = new Map(inventory.packages.filter(publishable).map(pkg => [packageId(pkg), pkg]));
 	const fileVersioned = (id: string) => {
 		const pkg = known.get(id);
@@ -148,6 +152,12 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 					),
 				);
 			const covered = coveredFor();
+			const released = (prefix?: string) =>
+				repository !== undefined
+				&& verifiable.some(target =>
+					target.destination === 'github-release' && target.repository === undefined
+					&& target.operations.some(operation => ownOperation(operation) && compatible(operation, prefix))
+				);
 			const tagged = entry.tagPatterns.length > 0 || entry.events.includes('release');
 			const dispatched = entry.events.includes('workflow_dispatch') || self.events.includes('workflow_dispatch');
 			const channel = entry.role === 'channel';
@@ -164,11 +174,14 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 						const scoped = coveredFor(prefix);
 						return {
 							ref: `refs/tags/${prefix}*`,
-							publications: channel ? [] : required.filter(id => {
-								const source = known.get(id)?.versionSource ?? '';
-								return scoped.has(id)
-									&& (!source.startsWith('tags:') || prefix === '' || source === `tags:${prefix}`);
-							}),
+							publications: channel ? [] : [
+								...required.filter(id => {
+									const source = known.get(id)?.versionSource ?? '';
+									return scoped.has(id)
+										&& (!source.startsWith('tags:') || prefix === '' || source === `tags:${prefix}`);
+								}),
+								...(released(prefix) ? [`pkg:github/${repository}`] : []),
+							],
 						};
 					})
 					: []),

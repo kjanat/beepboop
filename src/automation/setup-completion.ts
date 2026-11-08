@@ -1,5 +1,3 @@
-import { parse as parseToml } from 'smol-toml';
-import { object } from '@/automation/managers/helpers';
 import { packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import type { ReleaseGraph } from '@/automation/release-graph/graph';
@@ -8,7 +6,6 @@ import type { Inventory, Package, Snapshot } from '@/automation/types';
 import { isLockfile } from '@/contract/catalog';
 
 type Stream = SetupChoices['streams'][number];
-type VersionFile = NonNullable<Stream['versionFiles']>[number];
 
 const lockCommands: [RegExp, string][] = [
 	[/(?:^|\/)Cargo\.lock$/, 'cargo update --workspace'],
@@ -32,24 +29,6 @@ function unusedFile(base: string, taken: string[]): string {
 	taken.push(file);
 	return file;
 }
-function normalizedPython(name: string): string {
-	return name.toLowerCase().replace(/[-_.]+/g, '-');
-}
-function pythonVersionFiles(snapshot: Snapshot, names: Set<string>, version: string): VersionFile[] {
-	return Object.entries(snapshot.files).flatMap(([path, source]): VersionFile[] => {
-		if (!/(?:^|\/)pyproject\.toml$/.test(path) || path.startsWith('.github/') || !source) return [];
-		try {
-			const project = object(object(parseToml(source)).project);
-			return typeof project.name === 'string' && names.has(normalizedPython(project.name))
-					&& project.version === version
-				? [{ path, format: 'toml', key: ['project', 'version'], template: '{version}' }]
-				: [];
-		} catch {
-			return [];
-		}
-	});
-}
-
 export function completeTaggedStreams(
 	streams: Stream[],
 	snapshot: Snapshot,
@@ -88,30 +67,57 @@ export function completeTaggedStreams(
 	const crates = inventory.packages.filter(pkg => pkg.manager === 'cargo' && open(pkg) && pkg.version === version)
 		.sort((left, right) => rank(left) - rank(right));
 	if (!crates.length) return streams;
+	const modulePrefix = (pkg: Package) => pkg.versionSource.slice('tags:'.length);
+	const released = (pkg: Package) => (snapshot.tags ?? []).some(tag => tag.startsWith(modulePrefix(pkg)));
 	const modules = inventory.packages.filter(pkg =>
 		pkg.manager === 'go' && open(pkg) && pkg.versionSource.startsWith('tags:')
 	);
-	const added = [...crates, ...modules].map(packageId);
+	const added = [...crates, ...modules.filter(pkg => !released(pkg))].map(packageId);
 	const taken = inventory.workflows.map(workflow => workflow.file);
-	const python = new Set(
-		graph.streams.flatMap(proposal =>
-			proposal.targets.filter(target => target.destination === 'pypi').flatMap(target =>
-				target.names.map(normalizedPython)
-			)
-		),
-	);
-	const versionFiles = [...(stream.versionFiles ?? []), ...pythonVersionFiles(snapshot, python, version)];
 	const lockfiles = snapshot.paths.filter(isLockfile);
-	const preparation = lockfiles.flatMap(path => {
-		const command = lockCommands.find(([pattern]) => pattern.test(path))?.[1];
-		return command ? [within(path, command)] : [];
-	});
+	const tests = Object.entries(snapshot.files).filter(([path]) => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(path))
+		.flatMap(([, source]) =>
+			[...source.matchAll(/^\s*(?:-\s+)?run:\s*(cargo test\b[^\n#]*)$/gm)].map(match => match[1]?.trim())
+		)
+		.filter((command): command is string => !!command && !/\$\{\{/.test(command));
+	const preparation = [
+		...lockfiles.flatMap(path => {
+			const command = lockCommands.find(([pattern]) => pattern.test(path))?.[1];
+			return command ? [within(path, command)] : [];
+		}),
+		tests[0] ?? 'cargo test --workspace --locked',
+	];
+	const joined = modules.filter(pkg => !released(pkg));
+	const promoted = [...crates, ...joined].map(packageId);
+	const crateIds = new Map(crates.map(pkg => [pkg.name, packageId(pkg)]));
+	const proposal = graph.streams.find(entry => entry.id === stream.name);
+	const phases = new Map(
+		(proposal?.targets ?? []).flatMap(target => target.packages.map(id => [id, target.phase] as const)),
+	);
+	const observed = [
+		...new Set(
+			(stream.observe ?? []).filter(entry => entry.ref?.startsWith('refs/tags/')).flatMap(entry => entry.publications),
+		),
+	];
+	const needs: Record<string, string[]> = {};
+	const depend = (id: string, dependencies: readonly string[]) => {
+		const unique = [...new Set(dependencies)].filter(dependency => dependency !== id);
+		if (unique.length) needs[id] = unique;
+	};
+	for (const pkg of crates) {
+		depend(packageId(pkg), pkg.dependencies.flatMap(name => crateIds.get(name) ?? []));
+	}
+	for (const pkg of joined) depend(packageId(pkg), crates.map(packageId));
+	for (const id of observed) {
+		const phase = phases.get(id) ?? 0;
+		depend(id, [...promoted, ...observed.filter(other => (phases.get(other) ?? 0) < phase)]);
+	}
 	const { versionSource: _, ...rest } = stream;
 	const completed: Stream = {
 		...rest,
+		...(Object.keys(needs).length ? { needs } : {}),
 		packages: [...stream.packages, ...added],
 		required: [...stream.required, ...added.filter(id => !byId.get(id)?.optional)],
-		...(versionFiles.length ? { versionFiles } : {}),
 		...(preparation.length
 			? {
 				prepare: {
@@ -131,5 +137,33 @@ export function completeTaggedStreams(
 			tagPrefix,
 		},
 	};
-	return streams.map(entry => entry === stream ? completed : entry);
+	const names = new Set(streams.map(entry => entry.name));
+	const independent = modules.filter(released).map((pkg): Stream => {
+		const prefix = modulePrefix(pkg);
+		const base = prefix.replace(/\/?v$/, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'go';
+		let name = /^[a-z]/.test(base) ? base.slice(0, 64) : `go-${base}`.slice(0, 64), index = 2;
+		while (names.has(name)) name = `${base}-${index++}`;
+		names.add(name);
+		return {
+			name,
+			packages: [packageId(pkg)],
+			versioning: 'workspace',
+			required: [packageId(pkg)],
+			versionSource: { kind: 'tags', prefix },
+			prepare: {
+				file: unusedFile(`prepare-${name}`, taken),
+				triggers: 'review',
+				commands: within(pkg.manifest, 'go mod tidy -diff'),
+				publicationSteps: {},
+			},
+			promote: {
+				file: unusedFile(`release-${name}`, taken),
+				triggers: 'review',
+				commands: '',
+				publicationSteps: {},
+				tagPrefix: prefix,
+			},
+		};
+	});
+	return [...streams.map(entry => entry === stream ? completed : entry), ...independent];
 }

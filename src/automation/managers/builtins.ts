@@ -4,6 +4,7 @@ import { goManager } from '@/automation/managers/go';
 import { goreleaserManager } from '@/automation/managers/goreleaser';
 import { jsrManager } from '@/automation/managers/jsr';
 import { npmManager } from '@/automation/managers/npm';
+import { pypiManager } from '@/automation/managers/pypi';
 import { type Adapter, emptyInventory, ManagerRegistry } from '@/automation/managers/registry';
 import { vscodeManager } from '@/automation/managers/vscode';
 import { workflowManager } from '@/automation/managers/workflow';
@@ -25,6 +26,7 @@ const adapters = {
 	npm: npmManager,
 	vscode: vscodeManager,
 	jsr: jsrManager,
+	pypi: pypiManager,
 	workflow: workflowManager,
 	'github-release': { name: 'github-release', discover: workflowDetected('github-release') },
 	oci: { name: 'oci', verifyPublication: verifyImage, discover: workflowDetected('oci') },

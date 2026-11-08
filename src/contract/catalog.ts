@@ -3,6 +3,7 @@ export const managerNames = [
 	'cargo',
 	'npm',
 	'jsr',
+	'pypi',
 	'github-release',
 	'oci',
 	'goreleaser',
@@ -33,6 +34,7 @@ export const managerDestinationIds = [
 	'npm',
 	'crates-io',
 	'jsr',
+	'pypi',
 	'go-proxy',
 	'github-release',
 	'oci',
@@ -50,6 +52,7 @@ export const destinationLabels = {
 	npm: 'npm',
 	'crates-io': 'crates.io',
 	jsr: 'JSR',
+	pypi: 'PyPI',
 	'go-proxy': 'Go module proxy',
 	'github-release': 'GitHub release',
 	oci: 'Container registry',
@@ -112,6 +115,14 @@ export const managerCatalog = {
 		destinations: { primary: 'jsr', secondary: [] },
 		versionPolicy: 'equals-execution',
 	},
+	pypi: {
+		manifests: [/(?:^|\/)pyproject\.toml$/],
+		markers: [],
+		lockfiles: ['uv.lock'],
+		purlType: 'pypi',
+		destinations: { primary: 'pypi', secondary: [] },
+		versionPolicy: 'equals-execution',
+	},
 	'github-release': {
 		manifests: [],
 		markers: [],
@@ -170,11 +181,7 @@ export const managerCatalog = {
 	},
 } as const satisfies Record<ManagerName, ManagerSpec>;
 
-const projectLockfiles = ['uv.lock'];
-const lockfileNames = new Set<string>([
-	...managerNames.flatMap(name => managerSpec(name).lockfiles),
-	...projectLockfiles,
-]);
+const lockfileNames = new Set<string>(managerNames.flatMap(name => managerSpec(name).lockfiles));
 export function isLockfile(path: string): boolean {
 	return lockfileNames.has(path.slice(path.lastIndexOf('/') + 1));
 }

@@ -138,6 +138,9 @@ function streamSchema() {
 			}
 		}).default({}),
 		required: packageReferences.default([]),
+		needs: z.record(nonempty, z.array(nonempty)).optional().describe(
+			'Publications that must finish before each listed publication, keyed by package reference',
+		),
 		credentials: z.array(nonempty).default([]),
 		channels: z.strictObject({ stable: nonempty.default('latest'), prerelease: nonempty.default('next') }).default({
 			stable: 'latest',
@@ -170,6 +173,7 @@ function streamSchema() {
 		},
 		workflows: stream.workflows,
 		required: stream.required,
+		...(stream.needs === undefined ? {} : { needs: stream.needs }),
 		credentials: stream.credentials,
 		channels: { stable: stream.channels.stable, prerelease: stream.channels.prerelease },
 	})).meta({ id: 'stream' });

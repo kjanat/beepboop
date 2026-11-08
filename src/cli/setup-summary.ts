@@ -1,4 +1,5 @@
 import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
+import { publicationStages } from '@/domain/publication-stages';
 
 type Stream = SetupChoices['streams'][number];
 
@@ -6,6 +7,8 @@ const registries: Record<string, string> = {
 	cargo: 'crates.io',
 	npm: 'npm',
 	jsr: 'JSR',
+	pypi: 'PyPI',
+	go: 'the Go module proxy',
 	vscode: 'the Visual Studio Marketplace',
 	oci: 'the container registry',
 	'github-release': 'GitHub releases',
@@ -26,12 +29,16 @@ export function streamSummary(stream: Stream, plan: SetupPlan): string[] {
 	const named = (file: string) => existing.has(file) ? file : `${file} (new)`;
 	const publishes = (ids: readonly string[]) => {
 		const groups = new Map<string, string[]>();
-		for (const id of ids) {
+		const release = ids.some(id => /^(?:pkg:github\/|github-release:)/.test(id));
+		for (const id of ids.filter(id => !/^(?:pkg:github\/|github-release:)/.test(id))) {
 			const pkg = packages.get(id);
 			const registry = pkg ? registries[pkg.manager ?? ''] ?? pkg.manager ?? 'its registry' : 'its registry';
 			groups.set(registry, [...groups.get(registry) ?? [], pkg?.name ?? id]);
 		}
-		return listed([...groups].map(([registry, names]) => `${listed(names)} to ${registry}`));
+		return listed([
+			...[...groups].map(([registry, names]) => `${listed(names)} to ${registry}`),
+			...(release ? ['the GitHub release'] : []),
+		]);
 	};
 	const lines: string[] = [];
 	const observed = new Set(stream.observe?.flatMap(entry => entry.publications) ?? []);
@@ -88,5 +95,16 @@ export function streamSummary(stream: Stream, plan: SetupPlan): string[] {
 	}
 	const versionFiles = stream.versionFiles?.map(file => file.path) ?? [];
 	if (versionFiles.length) lines.push(`The version PR also updates ${listed(versionFiles)}.`);
+	const needs = stream.needs ?? {};
+	if (Object.keys(needs).length) {
+		const ids = [...stream.packages, ...(stream.observe ?? []).flatMap(entry => entry.publications)];
+		const stages = publicationStages(ids, needs);
+		lines.push(
+			`Publication order:\n${
+				stages.map((stage, index) => `  ${index + 1}. ${stage.length > 1 ? 'In parallel: ' : ''}${publishes(stage)}`)
+					.join('\n')
+			}`,
+		);
+	}
 	return lines;
 }
