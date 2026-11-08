@@ -32,7 +32,7 @@ filename; duplicate filenames and missing selected assets are errors.
 `v1` follows the latest compatible Actions release. Pin `vX.Y.Z` or a
 distribution commit for a fixed version. Distribution commits live on the
 `actions` branch and run the source directly with Bun. Each composite Action uses Bun from PATH
-or installs the latest Bun with `oven-sh/setup-bun@v2`. The generator installs
+or installs the latest Bun with `oven-sh/setup-bun` v2.2.0, pinned by commit SHA. The generator installs
 locked production dependencies in the Action checkout with lifecycle scripts disabled.
 The `release` step in this example supplies the release version and date.
 The Action outputs `directory` and `files` (a JSON path array).

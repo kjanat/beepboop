@@ -928,11 +928,12 @@ A publication workflow can build binaries for its GitHub release. Add
 }
 ```
 
-`targets` defaults to all six platforms. Setup generates one matrix job per
-build. Go builds cross-compile on `ubuntu-latest` with `CGO_ENABLED=0` and set
-`main.version`. Cargo builds run on a native runner for each target. Each build
-job runs `begin`, builds the approved commit and uploads its file as an
-artifact.
+`targets` defaults to all six platforms. Setup generates a `begin` job and one
+matrix job per build. The `begin` job alone holds `id-token: write`. It runs
+`begin` and outputs the approved commit and version. Go builds cross-compile on
+`ubuntu-latest` with `CGO_ENABLED=0` and set `main.version`. Cargo builds run on
+a native runner for each target. Each build job has only `contents: read`. It
+checks out the approved commit, builds it and uploads its file as an artifact.
 
 The publication job then runs these steps:
 
@@ -948,11 +949,18 @@ The publication job then runs these steps:
 The workflow binding lists `github-release:<owner>/<repo>` in `publications`
 and declares `refs` with `phase: "version"`.
 
-In an existing workflow, setup adds the build jobs, makes the selected job wait
-for them and inserts the release steps before its `report` step. A job that
-already carries a build job's name must be a Beepboop binary build. Any existing
-`publish-refs` or `publish-release` step must run after the upload. Every
-checkout that setup writes uses `actions/checkout@v7`.
+In an existing workflow, setup adds the `begin` and build jobs, makes the
+selected job wait for the builds and inserts the release steps before its
+`report` step. A job that already carries the name `begin` or a build job's name
+must be a Beepboop binary build. Any existing `publish-refs` or
+`publish-release` step must run after the upload. When the job already uploads
+binaries, setup replaces its generated release steps, from the artifact
+download through `publish-release`.
+
+Setup pins every third-party action it writes to a full commit SHA and adds the
+release version as a comment, for example
+`actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1`. The
+pinned `anchore/sbom-action` installs the Syft release that its commit names.
 
 Each build names its files with `asset`. The default is
 `{name}-{go.os}-{go.arch}{ext}` for Go and `{name}-{rust.target}{ext}` for

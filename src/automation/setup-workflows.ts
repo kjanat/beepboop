@@ -4,11 +4,13 @@ import type { Document } from 'yaml';
 import { isMap, isNode, parseDocument, visit } from 'yaml';
 import { object, yaml } from '@/automation/managers/helpers';
 import { packageId } from '@/automation/package-identity';
+import { annotatePins, pinned } from '@/automation/setup-actions';
 import {
 	assetConflicts,
+	beginJobId,
+	begunSource,
 	binaryJobs,
 	buildJobId,
-	checkoutAction,
 	refSteps,
 	releaseSteps,
 } from '@/automation/setup-binaries';
@@ -71,6 +73,12 @@ function evidenceOf(file: string, document: Record<string, unknown>): WorkflowEv
 			) result.publishes = true;
 		}
 	}
+	const reports = (role: WorkflowEvidence['roles'][number]) =>
+		role.operation === 'promote' && result.reportingJobs.includes(role.job);
+	result.roles = result.roles.filter(role =>
+		role.operation !== 'promote' || reports(role)
+		|| !result.roles.some(other => other.stream === role.stream && reports(other))
+	);
 	return result;
 }
 // GitHub expression, evaluated by Actions rather than JavaScript.
@@ -204,18 +212,18 @@ function integrate(
 		return { content: original ?? '', blockers, notes };
 	}
 	const buildJobs = binaries?.builds.map(buildJobId) ?? [];
-	if (buildJobs.includes(jobName)) {
+	const binaryJobIds = binaries ? [beginJobId, ...buildJobs] : [];
+	if (binaryJobIds.includes(jobName)) {
 		fail(`job ${jobName} conflicts with a binary build job`);
 		return { content: original ?? '', blockers, notes };
 	}
-	for (const name of buildJobs) {
+	for (const name of binaryJobIds) {
 		const steps = object(jobs[name]).steps;
-		if (
-			jobs[name] !== undefined
-			&& !(Array.isArray(steps) && steps.some(step => actionRole(object(step).uses) === 'begin'))
-		) {
-			fail(`job ${name} already exists and is not a Beepboop binary build`);
-		}
+		const owned = Array.isArray(steps)
+			&& steps.map(object).some(step =>
+				actionRole(step.uses) === 'begin' || (name !== beginJobId && object(step.with).ref === begunSource)
+			);
+		if (jobs[name] !== undefined && !owned) fail(`job ${name} already exists and is not a Beepboop binary build`);
 	}
 	for (const conflict of binaries ? assetConflicts(binaries) : []) fail(conflict);
 	const needs = Array.isArray(job.needs) ? job.needs : job.needs === undefined ? [] : [job.needs];
@@ -319,10 +327,10 @@ function integrate(
 		const checkout = checkouts[0] ?? {};
 		steps = steps.filter(step => !checkouts.includes(step));
 		steps.unshift(
-			{ uses: checkoutAction, with: { ...object(checkout.with), 'persist-credentials': false } },
+			{ uses: pinned('checkout'), with: { ...object(checkout.with), 'persist-credentials': false } },
 			{ uses: action('begin'), id, with: { 'execution-id': executionInput, stream, operation } },
 			{
-				uses: checkoutAction,
+				uses: pinned('checkout'),
 				with: {
 					...object(checkout.with),
 					ref: `\u0024{{ fromJSON(steps.${id}.outputs.context).sourceSha }}`,
@@ -356,7 +364,7 @@ function integrate(
 			const checkout = checkouts[0] ?? {};
 			const bootstrap = {
 				...checkout,
-				uses: checkoutAction,
+				uses: pinned('checkout'),
 				with: { ...object(checkout.with), 'persist-credentials': false },
 			};
 			const checkoutIndex = steps.indexOf(checkout);
@@ -366,7 +374,7 @@ function integrate(
 				steps.splice(steps.indexOf(existingBegin), 0, bootstrap);
 			}
 			steps.splice(steps.indexOf(existingBegin) + 1, 0, {
-				uses: checkoutAction,
+				uses: pinned('checkout'),
 				with: { ...object(checkout.with), ref: sourceRef, 'persist-credentials': false },
 			});
 			notes.push(`${choice.file}: checks out the approved execution commit after the existing begin step.`);
@@ -382,7 +390,7 @@ function integrate(
 	const mise = ['mise.toml', '.mise.toml', '.config/mise.toml'].some(path => snapshot.files[path] !== undefined)
 		&& !steps.some(step => typeof step.uses === 'string' && step.uses.startsWith('jdx/mise-action@'));
 	const commandSteps = (step: Record<string, unknown>): Record<string, unknown>[] => {
-		const toolchain = mise ? [{ uses: 'jdx/mise-action@v5' }] : [];
+		const toolchain = mise ? [{ uses: pinned('mise') }] : [];
 		if (!aliases.length) return [...toolchain, step];
 		if (steps.some(entry => entry.id === 'beepboop_credentials')) fail('step ID beepboop_credentials is already used');
 		return [
@@ -415,7 +423,13 @@ function integrate(
 			|| !prepareSteps.some(step => object(step.with).mode === 'submit' && object(step.with).context === context)
 		) fail('preparation needs apply and submit steps using the begin context');
 	} else if (binaries && steps.some(step => actionRole(step.uses) === 'report')) {
-		if (!steps.some(step => step.id === 'beepboop_binaries')) {
+		const uses = (pattern: RegExp) => steps.findIndex(step => typeof step.uses === 'string' && pattern.test(step.uses));
+		const download = uses(/^actions\/download-artifact@/), release = uses(/\/actions\/publish-release\b/);
+		if (steps.some(step => step.id === 'beepboop_binaries')) {
+			if (download >= 0 && download < release) {
+				steps.splice(download, release - download + 1, ...releaseSteps(id, action));
+			}
+		} else {
 			if (
 				steps.some(step => typeof step.uses === 'string' && /\/actions\/publish-(?:refs|release)\b/.test(step.uses))
 			) {
@@ -487,11 +501,8 @@ function integrate(
 			fail('preparation must apply after checkout and submit after validation');
 		}
 	}
-	// Only rewrite the steps sequence when inserting integration; existing steps keep comments.
-	if (
-		!existingBegin || (operation === 'prepare' && !Array.isArray(job.steps))
-		|| steps.length !== (Array.isArray(job.steps) ? job.steps.length : 0)
-	) document.setIn(['jobs', jobName, 'steps'], steps);
+	// Only rewrite the steps sequence when integration changes it; existing steps keep comments.
+	if (!existingBegin || !isDeepStrictEqual(steps, job.steps)) document.setIn(['jobs', jobName, 'steps'], steps);
 	if (jobsMap && (!original || binaries)) jobsMap.flow = false;
 	if (binaries && jobsMap) {
 		const begin = { uses: action('begin'), id, with: { 'execution-id': executionInput, stream, operation } };
@@ -510,7 +521,7 @@ function integrate(
 				return pair;
 			}),
 		);
-		document.setIn(['jobs', jobName, 'needs'], Object.keys(builds));
+		document.setIn(['jobs', jobName, 'needs'], buildJobs);
 		document.setIn(['jobs', jobName, 'permissions'], {
 			...granted,
 			contents: 'write',
@@ -520,5 +531,5 @@ function integrate(
 	}
 	const unchanged = original !== undefined
 		&& isDeepStrictEqual(parseDocument(original).toJS({ maxAliasCount: 100 }), document.toJS({ maxAliasCount: 100 }));
-	return { content: unchanged ? original : document.toString(), blockers, notes };
+	return { content: unchanged ? original : annotatePins(document.toString()), blockers, notes };
 }

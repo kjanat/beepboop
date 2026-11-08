@@ -1,3 +1,4 @@
+import { pinned } from '@/automation/setup-actions';
 import type { AssetPlaceholder, BinaryBuild, BinaryRelease, BinaryTarget } from '@/contract/setup';
 
 interface Platform {
@@ -70,11 +71,13 @@ const platforms: Record<BinaryTarget, Platform> = {
 	),
 };
 
-export const checkoutAction = 'actions/checkout@v7';
-
 // GitHub expressions, evaluated by Actions rather than JavaScript.
 const expression = (value: string) => `\${{ ${value} }}`;
 const matrix = (key: string) => expression(`matrix.${key}`);
+
+export const beginJobId = 'begin';
+const begun = (output: 'sourceSha' | 'version') => expression(`needs.${beginJobId}.outputs.${output}`);
+export const begunSource = begun('sourceSha');
 
 export function assetName(build: BinaryBuild, target: BinaryTarget): string {
 	const names: Record<string, string> = { ...platforms[target].names, name: build.name, version: '{version}' };
@@ -116,7 +119,7 @@ function toolchain(build: BinaryBuild, targets: readonly BinaryTarget[]): Toolch
 				asset: assetName(build, target),
 			})),
 			setup: [{
-				uses: 'actions/setup-go@v7',
+				uses: pinned('setupGo'),
 				with: { 'go-version-file': `${build.module}/go.mod`, 'cache-dependency-path': `${build.module}/go.sum` },
 			}],
 			build: {
@@ -160,23 +163,22 @@ export function binaryJobs(
 	id: string,
 ): Record<string, Record<string, unknown>> {
 	const context = `fromJSON(steps.${id}.outputs.context)`;
-	return Object.fromEntries(release.builds.map(build => {
+	const builds = release.builds.map(build => {
 		const { label, runner, include, setup, build: step } = toolchain(build, release.targets);
 		return [buildJobId(build), {
 			name: `Build ${build.name} (${label})`,
+			needs: [beginJobId],
 			'runs-on': runner,
-			permissions: { contents: 'read', 'id-token': 'write' },
+			permissions: { contents: 'read' },
 			strategy: { 'fail-fast': true, matrix: { include } },
 			steps: [
-				{ uses: checkoutAction, with: { 'persist-credentials': false } },
-				begin,
-				{ uses: checkoutAction, with: { ref: expression(`${context}.sourceSha`), 'persist-credentials': false } },
+				{ uses: pinned('checkout'), with: { ref: begunSource, 'persist-credentials': false } },
 				...setup,
 				{
 					id: 'asset',
 					name: 'Name the release asset',
 					shell: 'bash',
-					env: { VERSION: expression(`${context}.version`), TEMPLATE: matrix('asset') },
+					env: { VERSION: begun('version'), TEMPLATE: matrix('asset') },
 					run: `mkdir -p dist
 echo "name=\${TEMPLATE//\\{version\\}/\${VERSION}}" >> "\${GITHUB_OUTPUT}"
 `,
@@ -186,13 +188,13 @@ echo "name=\${TEMPLATE//\\{version\\}/\${VERSION}}" >> "\${GITHUB_OUTPUT}"
 					shell: 'bash',
 					env: {
 						...step.env,
-						VERSION: expression(`${context}.version`),
+						VERSION: begun('version'),
 						ASSET: expression('steps.asset.outputs.name'),
 					},
 					run: step.run,
 				},
 				{
-					uses: 'actions/upload-artifact@v7',
+					uses: pinned('upload'),
 					with: {
 						name: expression('steps.asset.outputs.name'),
 						path: `dist/${expression('steps.asset.outputs.name')}`,
@@ -201,13 +203,23 @@ echo "name=\${TEMPLATE//\\{version\\}/\${VERSION}}" >> "\${GITHUB_OUTPUT}"
 				},
 			],
 		}];
-	}));
+	});
+	return Object.fromEntries([
+		[beginJobId, {
+			name: 'Begin release',
+			'runs-on': 'ubuntu-latest',
+			permissions: { contents: 'read', 'id-token': 'write' },
+			outputs: { sourceSha: expression(`${context}.sourceSha`), version: expression(`${context}.version`) },
+			steps: [{ uses: pinned('checkout'), with: { 'persist-credentials': false } }, begin],
+		}],
+		...builds,
+	]);
 }
 
 export function releaseSteps(id: string, action: (name: string) => string): Record<string, unknown>[] {
 	const sbom = `dist/${expression('github.event.repository.name')}.spdx.json`;
 	return [
-		{ uses: 'actions/download-artifact@v8', with: { path: 'dist', 'merge-multiple': true } },
+		{ uses: pinned('download'), with: { path: 'dist', 'merge-multiple': true } },
 		{
 			name: 'Write checksums',
 			shell: 'bash',
@@ -215,7 +227,7 @@ export function releaseSteps(id: string, action: (name: string) => string): Reco
 			run: 'sha256sum -- * > checksums.txt\n',
 		},
 		{
-			uses: 'anchore/sbom-action@v0',
+			uses: pinned('sbom'),
 			with: {
 				path: 'dist',
 				format: 'spdx-json',
@@ -224,8 +236,8 @@ export function releaseSteps(id: string, action: (name: string) => string): Reco
 				'upload-release-assets': false,
 			},
 		},
-		{ uses: 'actions/attest@v4', with: { 'subject-checksums': 'dist/checksums.txt' } },
-		{ uses: 'actions/attest@v4', with: { 'subject-checksums': 'dist/checksums.txt', 'sbom-path': sbom } },
+		{ uses: pinned('attest'), with: { 'subject-checksums': 'dist/checksums.txt' } },
+		{ uses: pinned('attest'), with: { 'subject-checksums': 'dist/checksums.txt', 'sbom-path': sbom } },
 		{
 			id: 'beepboop_binaries',
 			name: 'Upload binaries to the draft release',
