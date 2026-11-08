@@ -146,6 +146,20 @@ test('a dispatch at a prefixed tag is observed as that release', async () => {
 	expect(executions.map(execution => execution.version)).toEqual(['0.2.0']);
 });
 
+test('a workflow with tag and dispatch triggers is observed once, on its tags', async () => {
+	const repository = world.github.create('octo/widget', {
+		'package.json': JSON.stringify({ name: 'widget', version: '1.2.0' }),
+		'.github/workflows/release.yml': workflow(
+			"{ push: { tags: ['widget-v*'] }, workflow_dispatch: { inputs: { registry: { type: string } } } }",
+			'npm publish',
+		),
+	});
+	const { plan } = await adopt(repository);
+	expect(plan.choices.streams[0]?.observe).toEqual([
+		{ name: 'release', file: 'release.yml', ref: 'refs/tags/widget-v*', publications: ['pkg:npm/widget'] },
+	]);
+});
+
 test('reopening setup keeps the implicit coverage of an observe binding', async () => {
 	const repository = world.github.create('octo/widget', {
 		'package.json': JSON.stringify({ name: 'widget', version: '1.2.0' }),

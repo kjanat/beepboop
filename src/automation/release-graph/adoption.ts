@@ -180,7 +180,7 @@ export function adoptionChoices(graph: ReleaseGraph, inventory: Inventory): Setu
 							: required.filter(id => covered.has(id) && fileVersioned(id)),
 					}]
 					: []),
-				...(!entry.branchPatterns.length && (!tagged || dispatched)
+				...(!entry.branchPatterns.length && !tagged
 					? [{
 						publications: channel || !dispatched
 							? []
