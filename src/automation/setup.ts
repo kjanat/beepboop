@@ -201,11 +201,13 @@ function draftSetup(
 		const workflows = yield* evidence(snapshot, inventory);
 		const graph = inferReleaseGraph(snapshot, inventory);
 		// Empty selections are allowed in suggestions, but cannot be applied.
-		const choices = input === undefined
-			? suggested(raw, workflows, inventory, graph, resolved)
-			: yield* decodeRequest(setupChoicesSchema, input);
+		const suggestion = suggested(raw, workflows, inventory, graph, resolved);
+		const choices = input === undefined ? suggestion : yield* decodeRequest(setupChoicesSchema, input);
+		const normalized = setupChoicesSchema.safeParse(suggestion);
+		const inferred = input === undefined
+			|| JSON.stringify(choices) === JSON.stringify(normalized.success ? normalized.data : suggestion);
 		const plan = yield* drafted(snapshot, inventory, choices, raw, workflows, baseline, resolved);
-		return { ...plan, adoption: adoptionMarkdown(graph, snapshot) };
+		return inferred ? { ...plan, adoption: adoptionMarkdown(graph, snapshot) } : plan;
 	});
 }
 function drafted(

@@ -648,9 +648,14 @@ test('setup delivers selected credentials to the publishing commands', async () 
 	const repository = widget(world.github, { configured: false });
 	const api = bearer(world, await world.cliSession());
 	const choices = credentialChoices('release-widget.yml', 'npm publish');
+	const inferred = await Effect.runPromise(parseSetupPlan(
+		(await api('/api/repositories/setup/preview', { repository: repository.name })).body,
+	));
+	expect(inferred.adoption?.length).toBeGreaterThan(0);
 	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
 	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
 	expect(plan.blockers).toEqual([]);
+	expect(plan.adoption).toBeUndefined();
 	const after = plan.edits.find(edit => edit.path === '.github/workflows/release-widget.yml')?.after ?? '';
 	const steps = binaryWorkflowSchema.parse(parse(after)).jobs.publish?.steps ?? [];
 	const credentials = steps.findIndex(step => step.id === 'beepboop_credentials');
