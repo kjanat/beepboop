@@ -574,6 +574,58 @@ the release, or accepts an existing published release whose tag and prerelease
 flag match. The release is recorded as the operation's `github-release`
 publication.
 
+### Binary builds
+
+A new publication workflow can build binaries for its GitHub release. Add
+`binaries` to the stream's `promote` setup choice:
+
+```json
+{
+  "binaries": {
+    "builds": [
+      { "toolchain": "go", "name": "gpg-sign", "module": "client", "package": "./cmd/gpg-sign" },
+      { "toolchain": "cargo", "name": "tool", "manifest": "tool/Cargo.toml" }
+    ],
+    "targets": [
+      "linux-amd64",
+      "linux-arm64",
+      "darwin-amd64",
+      "darwin-arm64",
+      "windows-amd64",
+      "windows-arm64"
+    ]
+  }
+}
+```
+
+`targets` defaults to all six platforms. Setup generates one matrix job per
+build. Go builds cross-compile on `ubuntu-latest` with `CGO_ENABLED=0` and set
+`main.version`. Cargo builds run on a native runner for each target. Each build
+job runs `begin`, builds the approved commit and uploads its file as an
+artifact. The publication job downloads every artifact, writes
+`checksums.txt`, uploads the files to the draft release, publishes the version
+tag with `actions/publish-refs` and the release with `actions/publish-release`.
+The workflow binding lists `github-release:<owner>/<repo>` in `publications`
+and declares `refs` with `phase: "version"`.
+
+Each build names its files with `asset`. The defaults are
+`{name}-{go.os}-{go.arch}{ext}` for Go and `{name}-{rust.target}{ext}` for
+Cargo. Placeholders:
+
+| Placeholder       | linux-amd64                | darwin-arm64           | windows-amd64            |
+| ----------------- | -------------------------- | ---------------------- | ------------------------ |
+| `{go.os}`         | `linux`                    | `darwin`               | `windows`                |
+| `{go.arch}`       | `amd64`                    | `arm64`                | `amd64`                  |
+| `{rust.target}`   | `x86_64-unknown-linux-gnu` | `aarch64-apple-darwin` | `x86_64-pc-windows-msvc` |
+| `{node.platform}` | `linux`                    | `darwin`               | `win32`                  |
+| `{node.arch}`     | `x64`                      | `arm64`                | `x64`                    |
+| `{uname.os}`      | `Linux`                    | `Darwin`               | `Windows`                |
+| `{uname.arch}`    | `x86_64`                   | `arm64`                | `x86_64`                 |
+| `{ext}`           | (empty)                    | (empty)                | `.exe`                   |
+
+`{name}` is the build name and `{version}` the released version. Setup blocks
+when two files would get the same name.
+
 ## Downstream release context
 
 Release subscriptions provide `context.upstreamRelease`, including repository

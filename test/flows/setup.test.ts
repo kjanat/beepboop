@@ -313,6 +313,194 @@ test('managed setup still requires a workflow to regenerate lockfiles', async ()
 	expect(repository.pulls).toHaveLength(0);
 });
 
+const binaryWorkflowSchema = z.object({
+	jobs: z.record(
+		z.string(),
+		z.object({
+			'runs-on': z.string(),
+			needs: z.array(z.string()).optional(),
+			permissions: z.record(z.string(), z.string()).optional(),
+			strategy: z.object({ matrix: z.object({ include: z.array(z.record(z.string(), z.string())) }) }).optional(),
+			steps: z.array(z.object({
+				uses: z.string().optional(),
+				run: z.string().optional(),
+				id: z.string().optional(),
+				env: z.record(z.string(), z.string()).optional(),
+				with: z.record(z.string(), z.unknown()).optional(),
+			})),
+		}),
+	),
+});
+function binaryRepository() {
+	return world.github.create('octo/signer', {
+		'client/go.mod': 'module github.com/octo/signer/client\n\ngo 1.26\n',
+		'client/go.sum': '',
+		'client/cmd/signer/main.go': 'package main\n\nvar version = "dev"\n\nfunc main() {}\n',
+		'tool/Cargo.toml': '[package]\nname = "tool"\nversion = "0.0.0"\nedition = "2024"\n',
+		'tool/Cargo.lock': 'version = 4\n',
+		'bun.lock': '{}\n',
+	});
+}
+function binaryChoices(promote: Partial<NonNullable<SetupChoices['streams'][number]['promote']>> = {}): SetupChoices {
+	return {
+		streams: [{
+			name: 'main',
+			packages: [],
+			required: [],
+			versioning: 'workspace',
+			versionSource: { kind: 'tags', prefix: 'v' },
+			promote: {
+				file: 'release.yml',
+				job: 'publish',
+				triggers: 'review',
+				commands: '',
+				publicationSteps: {},
+				binaries: {
+					builds: [
+						{
+							toolchain: 'go',
+							name: 'signer',
+							module: 'client',
+							package: './cmd/signer',
+							asset: '{name}-{go.os}-{go.arch}{ext}',
+						},
+						{ toolchain: 'cargo', name: 'tool', manifest: 'tool/Cargo.toml', asset: '{name}-{rust.target}{ext}' },
+					],
+					targets: ['linux-amd64', 'darwin-arm64', 'windows-amd64'],
+				},
+				...promote,
+			},
+		}],
+	};
+}
+
+test('a publication workflow builds each binary in a platform matrix and releases the assets', async () => {
+	const repository = binaryRepository();
+	const api = bearer(world, await world.cliSession());
+	const choices = binaryChoices();
+	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
+	expect(preview.status).toBe(200);
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toEqual([]);
+	const edit = plan.edits.find(edit => edit.path === '.github/workflows/release.yml');
+	const { jobs } = binaryWorkflowSchema.parse(parse(edit?.after ?? ''));
+	expect(Object.keys(jobs)).toEqual(['build-signer', 'build-tool', 'publish']);
+	expect(jobs['build-signer']?.['runs-on']).toBe('ubuntu-latest');
+	expect(jobs['build-signer']?.strategy?.matrix.include).toEqual([
+		{ goos: 'linux', goarch: 'amd64', asset: 'signer-linux-amd64' },
+		{ goos: 'darwin', goarch: 'arm64', asset: 'signer-darwin-arm64' },
+		{ goos: 'windows', goarch: 'amd64', asset: 'signer-windows-amd64.exe' },
+	]);
+	expect(jobs['build-tool']?.['runs-on']).toBe('${{ matrix.runner }}');
+	expect(jobs['build-tool']?.strategy?.matrix.include).toEqual([
+		{ runner: 'ubuntu-latest', target: 'x86_64-unknown-linux-gnu', ext: '', asset: 'tool-x86_64-unknown-linux-gnu' },
+		{ runner: 'macos-latest', target: 'aarch64-apple-darwin', ext: '', asset: 'tool-aarch64-apple-darwin' },
+		{
+			runner: 'windows-latest',
+			target: 'x86_64-pc-windows-msvc',
+			ext: '.exe',
+			asset: 'tool-x86_64-pc-windows-msvc.exe',
+		},
+	]);
+	for (const job of ['build-signer', 'build-tool']) {
+		const steps = jobs[job]?.steps ?? [];
+		expect(steps[1]?.uses).toBe('kjanat/beepboop/actions/begin@v1');
+		expect(steps[2]?.with?.ref).toBe('${{ fromJSON(steps.beepboop.outputs.context).sourceSha }}');
+		expect(steps.at(-1)?.uses).toBe('actions/upload-artifact@v7');
+	}
+	expect(jobs['build-signer']?.steps.find(step => step.run?.startsWith('go build'))?.env).toMatchObject({
+		GOOS: '${{ matrix.goos }}',
+		MODULE: 'client',
+		PACKAGE: './cmd/signer',
+	});
+	expect(jobs.publish?.needs).toEqual(['build-signer', 'build-tool']);
+	expect(jobs.publish?.permissions).toEqual({ contents: 'write', 'id-token': 'write' });
+	expect(jobs.publish?.steps.map(step => step.uses ?? step.id)).toEqual([
+		'actions/checkout@v7',
+		'kjanat/beepboop/actions/begin@v1',
+		'actions/checkout@v7',
+		'actions/download-artifact@v8',
+		'beepboop_binaries',
+		'kjanat/beepboop/actions/publish-refs@v1',
+		'kjanat/beepboop/actions/publish-release@v1',
+		'kjanat/beepboop/actions/report@v1',
+	]);
+	const configuration = z.object({
+		managers: z.array(z.string()),
+		streams: z.record(z.string(), z.object({ promote: z.object({ workflow: z.record(z.string(), z.unknown()) }) })),
+	}).parse(JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'));
+	expect(configuration.managers).toContain('github-release');
+	expect(configuration.streams.main?.promote.workflow).toMatchObject({
+		file: 'release.yml',
+		publications: ['github-release:octo/signer'],
+		refs: { phase: 'version', prefix: 'v' },
+	});
+	const applied = await api('/api/repositories/setup/apply', {
+		repository: repository.name,
+		choices: plan.choices,
+		planId: plan.planId,
+		sourceSha: plan.sourceSha,
+		setupHead: plan.setupHead,
+	});
+	expect(applied.status).toBe(200);
+	expect(repository.pulls).toHaveLength(1);
+});
+
+test('binary builds whose asset names collide block setup', async () => {
+	const repository = binaryRepository();
+	const api = bearer(world, await world.cliSession());
+	const preview = await api('/api/repositories/setup/preview', {
+		repository: repository.name,
+		choices: binaryChoices({
+			binaries: {
+				builds: [{ toolchain: 'go', name: 'signer', module: 'client', package: './cmd/signer', asset: '{name}{ext}' }],
+				targets: ['linux-amd64', 'linux-arm64'],
+			},
+		}),
+	});
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toEqual(['release.yml: signer linux-amd64 and signer linux-arm64 both produce signer']);
+});
+
+test('binary builds need a new publication workflow', async () => {
+	const repository = binaryRepository();
+	world.github.push(repository, { '.github/workflows/release.yml': publishWorkflow }, 'Add a release workflow');
+	const api = bearer(world, await world.cliSession());
+	const preview = await api('/api/repositories/setup/preview', {
+		repository: repository.name,
+		choices: binaryChoices(),
+	});
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toContain('release.yml: binary builds need a new publication workflow');
+});
+
+test('binary builds belong to the publication job alone', async () => {
+	const repository = binaryRepository();
+	const api = bearer(world, await world.cliSession());
+	const choices = binaryChoices({ job: 'build-signer' });
+	const promote = choices.streams[0]?.promote;
+	if (!promote?.binaries) throw new Error('binary choices expected');
+	choices.streams[0] = {
+		...choices.streams[0],
+		name: 'main',
+		packages: [],
+		required: [],
+		versioning: 'workspace',
+		prepare: {
+			file: 'prepare.yml',
+			job: 'prepare',
+			triggers: 'review',
+			commands: 'go test ./...',
+			publicationSteps: {},
+			binaries: promote.binaries,
+		},
+	};
+	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toContain('prepare.yml: binary builds need a new publication workflow');
+	expect(plan.blockers).toContain('release.yml: job build-signer conflicts with a binary build job');
+});
+
 test('setup preserves a configured workflow preparation strategy', async () => {
 	const repository = widget(world.github);
 	world.github.push(repository, {

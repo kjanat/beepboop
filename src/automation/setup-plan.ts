@@ -1,8 +1,11 @@
 import { Effect } from 'effect';
 import { z } from 'zod';
-import { exclusionReasons, type PackagePublication } from '@/automation/package-publication';
+import type { PackagePublication } from '@/automation/package-publication';
+import { exclusionReasons } from '@/automation/package-publication';
 import type { SetupPlan, SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
-import { type DomainError, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
+import { binaries } from '@/contract/setup';
 
 const strings = z.array(z.string());
 const workflow: z.ZodType<SetupWorkflow> = z.object({
@@ -11,6 +14,7 @@ const workflow: z.ZodType<SetupWorkflow> = z.object({
 	triggers: z.enum(['review', 'dispatchOnly', 'preserve'], { error: 'Invalid workflow triggers' }),
 	commands: z.string(),
 	publicationSteps: z.record(z.string(), z.string()),
+	binaries: binaries.optional(),
 });
 const publication: z.ZodType<PackagePublication> = z.discriminatedUnion('kind', [
 	z.object({ kind: z.literal('registry') }).transform((): PackagePublication => ({ kind: 'registry' })),

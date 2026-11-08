@@ -1,6 +1,69 @@
 import { z } from 'zod';
 import { refPattern, tagPrefixPattern, validRef, validTagPrefix, workflowFilePattern } from '@/contract/catalog';
 
+export const binaryTargets = [
+	'linux-amd64',
+	'linux-arm64',
+	'darwin-amd64',
+	'darwin-arm64',
+	'windows-amd64',
+	'windows-arm64',
+] as const;
+export type BinaryTarget = (typeof binaryTargets)[number];
+const directory = z.string().regex(/^(?:\.|[\w.-]+(?:\/[\w.-]+)*)$/).refine(
+	value => !value.split('/').includes('..'),
+	'Invalid directory',
+);
+const binaryName = z.string().regex(/^[A-Za-z0-9][\w.-]*$/);
+export const assetPlaceholders = [
+	'name',
+	'version',
+	'ext',
+	'go.os',
+	'go.arch',
+	'rust.target',
+	'node.platform',
+	'node.arch',
+	'uname.os',
+	'uname.arch',
+] as const;
+export type AssetPlaceholder = (typeof assetPlaceholders)[number];
+const asset = z.string().regex(/^(?:[\w.-]|\{[\w.]+\})+$/).refine(
+	value =>
+		[...value.matchAll(/\{([\w.]+)\}/g)].every(([, key]) => assetPlaceholders.some(placeholder => placeholder === key)),
+	'Unknown asset placeholder',
+);
+const binaryBuild = z.discriminatedUnion('toolchain', [
+	z.object({
+		toolchain: z.literal('go'),
+		name: binaryName,
+		module: directory,
+		package: z.string().regex(/^\.(?:\/[\w.-]+)*$/).refine(value => !value.split('/').includes('..'), 'Invalid package')
+			.default('.'),
+		asset: asset.default('{name}-{go.os}-{go.arch}{ext}'),
+	}).strict(),
+	z.object({
+		toolchain: z.literal('cargo'),
+		name: binaryName,
+		manifest: z.string().regex(/^(?:[\w.-]+\/)*Cargo\.toml$/).refine(
+			value => !value.split('/').includes('..'),
+			'Invalid manifest',
+		),
+		asset: asset.default('{name}-{rust.target}{ext}'),
+	}).strict(),
+]);
+export type BinaryBuild = z.infer<typeof binaryBuild>;
+export const binaries = z.object({
+	builds: z.array(binaryBuild).min(1).refine(
+		builds => new Set(builds.map(build => build.name)).size === builds.length,
+		'Binary names must be unique',
+	),
+	targets: z.array(z.enum(binaryTargets)).min(1).refine(
+		targets => new Set(targets).size === targets.length,
+		'Targets must be unique',
+	).default([...binaryTargets]),
+}).strict();
+export type BinaryRelease = z.infer<typeof binaries>;
 const workflow = z.object({
 	file: z.string().regex(workflowFilePattern),
 	job: z.string().optional(),
@@ -9,6 +72,7 @@ const workflow = z.object({
 	commands: z.string().default(''),
 	/** Map publication identities to existing step IDs, for accurate outcome reporting. */
 	publicationSteps: z.record(z.string(), z.string()).default({}),
+	binaries: binaries.optional(),
 }).strict();
 const observed = z.object({
 	name: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),

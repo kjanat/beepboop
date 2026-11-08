@@ -237,7 +237,8 @@ function drafted(
 			const selected = inventory.packages.filter(pkg =>
 				selection.packages.includes(packageId(pkg)) && publishable(pkg)
 			);
-			if (!selection.packages.length && !selection.observe?.length) {
+			if (selection.promote?.binaries) managers.add('github-release');
+			if (!selection.packages.length && !selection.observe?.length && !selection.promote?.binaries) {
 				blockers.push(`${selection.name}: select the packages in this release stream.`);
 			}
 			if (selection.packages.some(id => !selected.some(pkg => packageId(pkg) === id))) {
@@ -292,7 +293,7 @@ function drafted(
 						operation === 'prepare' && !resolved?.streams[selection.name]?.prepare.workflow
 						&& !object(object(current.prepare).workflow).file
 					) {
-						if (snapshot.paths.some(isLockfile)) {
+						if (selected.length && snapshot.paths.some(isLockfile)) {
 							blockers.push(`${selection.name}: select a preparation workflow to regenerate lockfiles.`);
 						}
 						const versionFiles = Array.isArray(current.versionFiles)
@@ -325,7 +326,16 @@ function drafted(
 					...previousBinding,
 					file: workflow.file,
 					ref: previousBinding.ref ?? inherited.ref ?? snapshot.repository.defaultBranch,
-					...(operation === 'promote' ? { publications: required } : {}),
+					...(operation === 'promote'
+						? {
+							publications: workflow.binaries
+								? [...required, `github-release:${snapshot.repository.name}`]
+								: required,
+						}
+						: {}),
+					...(operation === 'promote' && workflow.binaries && !previousBinding.refs
+						? { refs: { phase: 'version', prefix: selection.versionSource?.prefix ?? 'v' } }
+						: {}),
 				};
 				const inputs = { ...object(inherited.inputs), ...object(previousBinding.inputs) };
 				if (shared) inputs.beepboop_operation = operation === 'promote' ? 'publish' : 'prepare';

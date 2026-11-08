@@ -1,11 +1,14 @@
 import { isDeepStrictEqual } from 'node:util';
 import { Result } from 'effect';
-import { type Document, parseDocument } from 'yaml';
+import type { Document } from 'yaml';
+import { parseDocument, visit } from 'yaml';
 import { object, yaml } from '@/automation/managers/helpers';
 import { packageId } from '@/automation/package-identity';
+import { assetConflicts, binaryJobs, buildJobId, releaseSteps } from '@/automation/setup-binaries';
 import type { SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
 import type { Package, Snapshot } from '@/automation/types';
-import { type DomainError, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
 import { toDomainError } from '@/failure';
 
 export function actionRole(value: unknown): string | undefined {
@@ -182,6 +185,16 @@ function integrate(
 		return { content: original ?? '', blockers, notes };
 	}
 	const job = object(jobs[jobName]);
+	const binaries = choice.binaries;
+	if (binaries && (operation !== 'promote' || original !== undefined)) {
+		fail('binary builds need a new publication workflow');
+		return { content: original ?? '', blockers, notes };
+	}
+	if (binaries?.builds.some(build => buildJobId(build) === jobName)) {
+		fail(`job ${jobName} conflicts with a binary build job`);
+		return { content: original ?? '', blockers, notes };
+	}
+	for (const conflict of binaries ? assetConflicts(binaries) : []) fail(conflict);
 	if (job.uses || job.strategy || job.needs || job.if || job.container) {
 		fail(
 			'reusable, matrix, dependent, conditional or container jobs require explicit workflow integration before setup',
@@ -351,7 +364,8 @@ function integrate(
 			|| !prepareSteps.some(step => object(step.with).mode === 'submit' && object(step.with).context === context)
 		) fail('preparation needs apply and submit steps using the begin context');
 	} else if (!steps.some(step => actionRole(step.uses) === 'report')) {
-		if (!original && !choice.commands.trim()) fail('supply publication commands');
+		if (!original && !choice.commands.trim() && !binaries) fail('supply publication commands');
+		if (binaries) steps.push(...releaseSteps(id, action));
 		if (choice.commands.trim()) {
 			if (steps.some(step => step.id === 'beepboop_publish')) fail('step ID beepboop_publish is already used');
 			steps.push({ id: 'beepboop_publish', name: 'Publish selected packages', run: choice.commands });
@@ -402,6 +416,22 @@ function integrate(
 		!existingBegin || (operation === 'prepare' && !Array.isArray(job.steps))
 		|| steps.length !== (Array.isArray(job.steps) ? job.steps.length : 0)
 	) document.setIn(['jobs', jobName, 'steps'], steps);
+	if (binaries) {
+		const begin = { uses: action('begin'), id, with: { 'execution-id': executionInput, stream, operation } };
+		const builds = binaryJobs(binaries, begin, id);
+		const node = document.createNode(
+			{ ...builds, ...object(document.toJS({ maxAliasCount: 100 }).jobs) },
+			{ aliasDuplicateObjects: false },
+		);
+		visit(node, {
+			Scalar(_, scalar) {
+				if (typeof scalar.value === 'string' && scalar.value.includes('\n')) scalar.type = 'BLOCK_LITERAL';
+			},
+		});
+		document.set('jobs', node);
+		document.setIn(['jobs', jobName, 'needs'], Object.keys(builds));
+		document.setIn(['jobs', jobName, 'permissions'], { ...granted, contents: 'write', 'id-token': 'write' });
+	}
 	const unchanged = original !== undefined
 		&& isDeepStrictEqual(parseDocument(original).toJS({ maxAliasCount: 100 }), document.toJS({ maxAliasCount: 100 }));
 	return { content: unchanged ? original : document.toString(), blockers, notes };
