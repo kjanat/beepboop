@@ -49,8 +49,10 @@ use managed preparation when no generated lockfiles need refreshing.
 `src/contract/catalog.ts` declares every manager name and its purl type,
 manifest patterns, marker patterns, lockfile names, destinations and version
 policy. Snapshots fetch the content of manifest paths and record marker and
-lockfile paths with empty content. To add an ecosystem, add its name and catalog
-entry, implement its adapter, and register it in `builtins.ts`. The typecheck
+lockfile paths with empty content. `projectLockfiles` in the same file lists
+lockfiles that no manager reads, such as `uv.lock`. Setup suggests `uv lock` as
+the last preparation command when the repository has one. To add an ecosystem,
+add its name and catalog entry, implement its adapter, and register it in `builtins.ts`. The typecheck
 fails until the catalog and `builtins.ts` cover the same names. Run
 `run schema:generate` to add the name to `schemas/v1.json`. Include fixtures for
 discovery, version edits, dependency ranges, and verification failures for every

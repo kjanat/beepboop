@@ -170,7 +170,11 @@ export const managerCatalog = {
 	},
 } as const satisfies Record<ManagerName, ManagerSpec>;
 
-const lockfileNames = new Set<string>(managerNames.flatMap(name => managerSpec(name).lockfiles));
+const projectLockfiles = ['uv.lock'];
+const lockfileNames = new Set<string>([
+	...managerNames.flatMap(name => managerSpec(name).lockfiles),
+	...projectLockfiles,
+]);
 export function isLockfile(path: string): boolean {
 	return lockfileNames.has(path.slice(path.lastIndexOf('/') + 1));
 }

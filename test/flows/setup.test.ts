@@ -3,6 +3,7 @@ import { Effect, Result } from 'effect';
 import { parse } from 'yaml';
 import { z } from 'zod';
 import { mergeConfiguration } from '@/automation/configuration';
+import { suggestedCommands } from '@/automation/setup-defaults';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices } from '@/automation/setup-types';
 import { bearer, field } from '@root/test/support/http.ts';
@@ -342,6 +343,22 @@ test('managed setup still requires a workflow to regenerate lockfiles', async ()
 	});
 	expect(applied.status).toBe(422);
 	expect(repository.pulls).toHaveLength(0);
+});
+
+test('a uv lockfile needs a preparation workflow that runs uv lock', async () => {
+	const repository = widget(world.github, { configured: false });
+	world.github.push(repository, { 'bindings/python/uv.lock': 'version = 1\n' }, 'Add a uv lockfile');
+	const api = bearer(world, await world.cliSession());
+	const plan = await Effect.runPromise(parseSetupPlan(
+		(await api('/api/repositories/setup/preview', { repository: repository.name })).body,
+	));
+	expect(plan.preparation?.lockfiles).toEqual(['bindings/python/uv.lock']);
+	expect(plan.blockers).toContain('main: select a preparation workflow to regenerate lockfiles.');
+	const widgetPackage = { id: 'pkg:npm/widget', name: 'widget', manifest: 'package.json', manager: 'npm' };
+	expect(suggestedCommands('prepare', { name: 'main', packages: [widgetPackage] }, plan)).toBe(
+		'npm install\nnpm run test --if-present\nuv lock',
+	);
+	expect(suggestedCommands('promote', { name: 'main', packages: [widgetPackage] }, plan)).toBe('npm publish');
 });
 
 const binaryWorkflowSchema = z.object({

@@ -45,6 +45,12 @@ function quote(value: string) {
 	return `'${value.replaceAll("'", "'\\''")}'`;
 }
 export function suggestedCommands(role: 'prepare' | 'promote', selection: Selection, plan: SetupPlan): string {
+	const commands = managerCommands(role, selection, plan);
+	return role === 'prepare' && commands && plan.preparation?.lockfiles.some(path => /(?:^|\/)uv\.lock$/.test(path))
+		? `${commands}\nuv lock`
+		: commands;
+}
+function managerCommands(role: 'prepare' | 'promote', selection: Selection, plan: SetupPlan): string {
 	const order = plan.inventory.publicationOrder ?? [];
 	const rank = (id: string) => order.includes(id) ? order.indexOf(id) : order.length;
 	const packages = [...selection.packages].sort((left, right) => rank(left.id) - rank(right.id));
