@@ -443,11 +443,12 @@ function integrate(
 		!existingBegin || (operation === 'prepare' && !Array.isArray(job.steps))
 		|| steps.length !== (Array.isArray(job.steps) ? job.steps.length : 0)
 	) document.setIn(['jobs', jobName, 'steps'], steps);
-	if (binaries) {
+	if (jobsMap && (!original || binaries)) jobsMap.flow = false;
+	if (binaries && jobsMap) {
 		const begin = { uses: action('begin'), id, with: { 'execution-id': executionInput, stream, operation } };
 		const builds = binaryJobs(binaries, begin, id);
-		for (const name of Object.keys(builds)) jobsMap?.delete(name);
-		jobsMap?.items.unshift(
+		for (const name of Object.keys(builds)) jobsMap.delete(name);
+		jobsMap.items.unshift(
 			...Object.entries(builds).map(([name, build]) => {
 				const pair = document.createPair(name, build, { aliasDuplicateObjects: false });
 				if (isNode(pair.value)) {

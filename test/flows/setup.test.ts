@@ -417,6 +417,8 @@ test('a publication workflow builds each binary in a platform matrix and release
 	const edit = plan.edits.find(edit => edit.path === '.github/workflows/release.yml');
 	const { jobs } = binaryWorkflowSchema.parse(parse(edit?.after ?? ''));
 	expect(Object.keys(jobs)).toEqual(['build-signer', 'build-tool', 'publish']);
+	expect(edit?.after).toMatch(/^jobs:\n {2}build-signer:\n {4}name: /m);
+	expect(edit?.after).toMatch(/^ {2}publish:\n/m);
 	expect(jobs['build-signer']?.['runs-on']).toBe('ubuntu-latest');
 	expect(jobs['build-signer']?.strategy?.matrix.include).toEqual([
 		{ goos: 'linux', goarch: 'amd64', asset: 'signer-linux-amd64' },
@@ -523,6 +525,7 @@ test('binary builds join an existing publication workflow and stay stable on a r
 	const after = plan.edits.find(edit => edit.path === '.github/workflows/release.yml')?.after ?? '';
 	const { jobs } = binaryWorkflowSchema.parse(parse(after));
 	expect(Object.keys(jobs)).toEqual(['build-signer', 'build-tool', 'publish']);
+	expect(after).toMatch(/^jobs:\n {2}build-signer:\n {4}name: /m);
 	expect(jobs['build-signer']?.steps[1]).toMatchObject({ uses: 'kjanat/beepboop/actions/begin@v1', id: 'release' });
 	expect(jobs.publish?.needs).toEqual(['build-signer', 'build-tool']);
 	expect(jobs.publish?.steps.map(step => step.uses ?? step.id ?? step.name ?? step.run)).toEqual([
