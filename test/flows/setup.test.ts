@@ -547,6 +547,50 @@ test('binary builds join an existing publication workflow and stay stable on a r
 	expect(replanned.edits.find(edit => edit.path === '.github/workflows/release.yml')).toBeUndefined();
 });
 
+test('binary builds leave the other jobs of an existing workflow untouched', async () => {
+	const repository = binaryRepository();
+	const lint = `  lint:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned for the audit trail.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: make lint
+`;
+	world.github.push(
+		repository,
+		{ '.github/workflows/release.yml': publishWorkflow.replace('jobs:\n', `jobs:\n${lint}`) },
+		'Add a release workflow',
+	);
+	const api = bearer(world, await world.cliSession());
+	const preview = await api('/api/repositories/setup/preview', {
+		repository: repository.name,
+		choices: binaryChoices(),
+	});
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toEqual([]);
+	const after = plan.edits.find(edit => edit.path === '.github/workflows/release.yml')?.after ?? '';
+	expect(after).toContain(lint);
+	expect(Object.keys(binaryWorkflowSchema.parse(parse(after)).jobs)).toEqual([
+		'build-signer',
+		'build-tool',
+		'lint',
+		'publish',
+	]);
+});
+
+test('binary builds refuse jobs given as an alias', async () => {
+	const repository = binaryRepository();
+	const workflow = publishWorkflow.replace('jobs:\n', 'shared: &jobs\n').concat('jobs: *jobs\n');
+	world.github.push(repository, { '.github/workflows/release.yml': workflow }, 'Add a release workflow');
+	const api = bearer(world, await world.cliSession());
+	const preview = await api('/api/repositories/setup/preview', {
+		repository: repository.name,
+		choices: binaryChoices(),
+	});
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toContain('release.yml: jobs must be a plain mapping, not an alias');
+});
+
 test('binary builds refuse a foreign job under a build job name', async () => {
 	const repository = binaryRepository();
 	const workflow = publishWorkflow.replace(

@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { Result } from 'effect';
 import type { Document } from 'yaml';
-import { parseDocument, visit } from 'yaml';
+import { isMap, isNode, parseDocument, visit } from 'yaml';
 import { object, yaml } from '@/automation/managers/helpers';
 import { packageId } from '@/automation/package-identity';
 import { assetConflicts, binaryJobs, buildJobId, checkoutAction, releaseSteps } from '@/automation/setup-binaries';
@@ -188,6 +188,11 @@ function integrate(
 	const binaries = choice.binaries;
 	if (binaries && operation !== 'promote') {
 		fail('binary builds belong to the publication workflow');
+		return { content: original ?? '', blockers, notes };
+	}
+	const jobsNode = document.get('jobs', true), jobsMap = isMap(jobsNode) ? jobsNode : undefined;
+	if (binaries && !jobsMap) {
+		fail('jobs must be a plain mapping, not an alias');
 		return { content: original ?? '', blockers, notes };
 	}
 	const buildJobs = binaries?.builds.map(buildJobId) ?? [];
@@ -441,16 +446,20 @@ function integrate(
 	if (binaries) {
 		const begin = { uses: action('begin'), id, with: { 'execution-id': executionInput, stream, operation } };
 		const builds = binaryJobs(binaries, begin, id);
-		const node = document.createNode(
-			{ ...builds, ...object(document.toJS({ maxAliasCount: 100 }).jobs), ...builds },
-			{ aliasDuplicateObjects: false },
+		for (const name of Object.keys(builds)) jobsMap?.delete(name);
+		jobsMap?.items.unshift(
+			...Object.entries(builds).map(([name, build]) => {
+				const pair = document.createPair(name, build, { aliasDuplicateObjects: false });
+				if (isNode(pair.value)) {
+					visit(pair.value, {
+						Scalar(_, scalar) {
+							if (typeof scalar.value === 'string' && scalar.value.includes('\n')) scalar.type = 'BLOCK_LITERAL';
+						},
+					});
+				}
+				return pair;
+			}),
 		);
-		visit(node, {
-			Scalar(_, scalar) {
-				if (typeof scalar.value === 'string' && scalar.value.includes('\n')) scalar.type = 'BLOCK_LITERAL';
-			},
-		});
-		document.set('jobs', node);
 		document.setIn(['jobs', jobName, 'needs'], Object.keys(builds));
 		document.setIn(['jobs', jobName, 'permissions'], {
 			...granted,
