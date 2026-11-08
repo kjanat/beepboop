@@ -1,8 +1,8 @@
-import { matchesPublication } from '@/automation/package-identity';
-import type { Execution, Publication } from '@/automation/types.ts';
+import { matchesPackage, matchesPublication } from '@/automation/package-identity';
+import type { Execution, Publication, RepositoryRecord } from '@/automation/types.ts';
 
 /** Never combine evidence from different commits, configurations, or versions. */
-export function releaseSummaries(executions: Execution[]) {
+export function releaseSummaries(executions: Execution[], repositories: RepositoryRecord[] = []) {
 	const groups = new Map<string, { first: Execution; runs: Execution[] }>();
 	for (const execution of executions) {
 		const identity = JSON.stringify([
@@ -23,7 +23,13 @@ export function releaseSummaries(executions: Execution[]) {
 		const publications = required.map(id => {
 			const reports = runs.flatMap(run => run.publications.filter(publication => matchesPublication(id, publication)));
 			const succeeded = reports.find(report => report.outcome === 'succeeded');
-			const outcome: Publication['outcome'] | 'waiting' = succeeded?.outcome ?? reports.at(-1)?.outcome ?? 'waiting';
+			const registered = repositories.find(repository => repository.id === first.repositoryId)?.inventory.packages
+				.some(pkg =>
+					matchesPackage(id, pkg) && pkg.publicationStatus === 'published' && first.version !== undefined
+					&& pkg.published === first.version
+				);
+			const outcome: Publication['outcome'] | 'waiting' = succeeded?.outcome
+				?? (registered ? 'succeeded' : reports.at(-1)?.outcome ?? 'waiting');
 			return { id, outcome };
 		});
 		const verified = publications.filter(p => p.outcome === 'succeeded').length;

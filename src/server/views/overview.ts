@@ -17,6 +17,6 @@ export function overview({ repositories, executions }: ViewOf<'overview'>) {
 		running,
 		setup,
 		unconnected: !repositories.readable.length && !repositories.unreadable.length,
-		releases: releaseSummaries(executions.readable).slice(0, 10),
+		releases: releaseSummaries(executions.readable, repositories.readable).slice(0, 10),
 	};
 }

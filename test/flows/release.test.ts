@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { Effect } from 'effect';
 import { z } from 'zod';
+import { Store } from '@/automation/store';
 import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
@@ -185,7 +186,7 @@ async function finishedPromotion(outcome: 'pending' | 'skipped') {
 		entry.key === `execution:${promotion.id}`
 	);
 	const stored = z.record(z.string(), z.unknown()).parse(entry?.value);
-	return { api, merged, promotion, stored, token, finished: await only(api, 'promote') };
+	return { api, repository, merged, promotion, stored, token, finished: await only(api, 'promote') };
 }
 
 test('the token action outputs the bot identity as an insertable Git environment', async () => {
@@ -202,7 +203,7 @@ test('the token action outputs the bot identity as an insertable Git environment
 });
 
 test('a finished run whose registry publication appears late is verified without a second approval', async () => {
-	const { api, merged, promotion, stored, finished } = await finishedPromotion('pending');
+	const { api, repository, merged, promotion, stored, finished } = await finishedPromotion('pending');
 	expect(finished.state).toBe('verifying');
 	expect(finished.publications.map(publication => publication.outcome)).toEqual(['pending']);
 	expect(stored['state']).toBe('verifying');
@@ -228,6 +229,19 @@ test('a finished run whose registry publication appears late is verified without
 	expect(settled.state).toBe('succeeded');
 	expect(settled.publications.map(publication => publication.outcome)).toEqual(['succeeded']);
 	expect(world.github.dispatches).toHaveLength(1);
+	await api('/api/repositories/discover', { repository: repository.name });
+	const record = await Effect.runPromise(new Store(world.db).repository(repository.id));
+	if (!record) throw new Error('No stored repository');
+	const unreported = { ...finished, state: 'awaiting-approval' as const, publications: [] };
+	expect(releaseSummaries([unreported]).map(release => [release.verified, release.publications])).toEqual([
+		[0, [{ id: 'pkg:npm/widget', outcome: 'waiting' }]],
+	]);
+	expect(releaseSummaries([unreported], [record]).map(release => [release.verified, release.publications])).toEqual([
+		[1, [{ id: 'pkg:npm/widget', outcome: 'succeeded' }]],
+	]);
+	expect(releaseSummaries([{ ...unreported, version: '1.2.0' }], [record]).map(release => release.verified)).toEqual([
+		0,
+	]);
 	expect(runCard(finished, Date.now())).toMatchObject({ release: undefined, publications: [{ href: undefined }] });
 	expect(runCard(settled, Date.now())).toMatchObject({
 		release: { tag: 'v1.1.0', href: 'https://github.com/octo/widget/releases/tag/v1.1.0' },
