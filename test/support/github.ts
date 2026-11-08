@@ -24,6 +24,8 @@ export interface Pull {
 	title: string;
 	body: string;
 	labels: string[];
+	assignees: string[];
+	reviewers: string[];
 	author?: string;
 }
 export interface Run {
@@ -282,6 +284,8 @@ export class FakeGitHub {
 				title: stringField(body, 'title'),
 				body: stringField(body, 'body'),
 				labels: [],
+				assignees: [],
+				reviewers: [],
 			};
 			repository.pulls.push(pull);
 			return json(this.pullJson(repository, pull), 201);
@@ -315,6 +319,18 @@ export class FakeGitHub {
 			const pull = this.pull(repository, Number(match[2]));
 			pull.labels = [...new Set([...pull.labels, ...(Array.isArray(body.labels) ? body.labels.map(String) : [])])];
 			return json(pull.labels.map(name => ({ name })));
+		});
+		this.route('POST', new RegExp(`^${repo}/issues/(\\d+)/assignees$`), (match, _url, body) => {
+			const pull = this.pull(this.repository(match[1]), Number(match[2]));
+			const added = Array.isArray(body.assignees) ? body.assignees.map(String) : [];
+			pull.assignees = [...new Set([...pull.assignees, ...added])];
+			return json({ number: pull.number, assignees: pull.assignees.map(login => ({ login })) }, 201);
+		});
+		this.route('POST', new RegExp(`^${repo}/pulls/(\\d+)/requested_reviewers$`), (match, _url, body) => {
+			const pull = this.pull(this.repository(match[1]), Number(match[2]));
+			const added = Array.isArray(body.reviewers) ? body.reviewers.map(String) : [];
+			pull.reviewers = [...new Set([...pull.reviewers, ...added])];
+			return json(this.pullJson(this.repository(match[1]), pull), 201);
 		});
 		this.route('GET', new RegExp(`^${repo}/compare/([^.]+)\\.\\.\\.(.+)$`), match => {
 			const repository = this.repository(match[1]);
@@ -680,6 +696,8 @@ export class FakeGitHub {
 			title: pull.title,
 			body: pull.body,
 			user: { id: botId },
+			assignees: pull.assignees.map(login => ({ login })),
+			requested_reviewers: pull.reviewers.map(login => ({ login })),
 			head: { ref: pull.head.ref, sha: pull.head.sha, repo: { id: repository.id } },
 			base: { ref: pull.base, repo: { id: repository.id, default_branch: repository.defaultBranch } },
 		};

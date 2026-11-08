@@ -863,6 +863,17 @@ export class RepositoryGateway {
 			if (labels.some((name) => !applied.includes(name))) {
 				return yield* precondition('Pull request labels were not confirmed');
 			}
+			const maintainer = yield* self.ownerLogin();
+			if (!pull.assignees?.some(assignee => assignee.login === maintainer)) {
+				yield* self.call(`/repos/${name}/issues/${pull.number}/assignees`, token, 'POST', {
+					assignees: [maintainer],
+				});
+			}
+			if (!pull.requested_reviewers?.some(reviewer => reviewer.login === maintainer)) {
+				yield* self.call(`/repos/${name}/pulls/${pull.number}/requested_reviewers`, token, 'POST', {
+					reviewers: [maintainer],
+				});
+			}
 			const actual = yield* self.read(
 				gitRefSchema,
 				`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`,

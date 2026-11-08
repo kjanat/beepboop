@@ -54,6 +54,8 @@ export const pullSchema = z.object({
 	merged: looseSchema,
 	merged_at: looseSchema,
 	body: looseSchema,
+	assignees: z.array(z.object({ login: z.string() })).nullish(),
+	requested_reviewers: z.array(z.object({ login: z.string() })).nullish(),
 	head: z.object({ ref: z.string(), sha: shaSchema, repo: identified }),
 	base: z.object({ ref: textSchema, repo: z.object({ id: z.number(), default_branch: textSchema }) }),
 });

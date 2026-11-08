@@ -291,6 +291,33 @@ test('a saved plan with version files, credentials, a tag prefix and observed wo
 	expect(repository.pulls).toHaveLength(1);
 });
 
+test('setup PRs and their refreshes are assigned to the owner with a review request', async () => {
+	const repository = bindingsRepository();
+	const choices = join(directory, 'choices.json'), output = join(directory, 'plan.json');
+	await Bun.write(choices, JSON.stringify(bindingsChoices));
+	const apply = async () => {
+		expect((await run(['adopt', repository.name, '--choices', choices, '--output', output, '--json'])).exitCode)
+			.toBe(0);
+		expect((await run(['adopt', repository.name, '--plan', output, '--apply', '--json'])).exitCode).toBe(0);
+	};
+	await apply();
+	const [pull] = repository.pulls;
+	expect({ assignees: pull?.assignees, reviewers: pull?.reviewers }).toEqual({
+		assignees: ['octo'],
+		reviewers: ['octo'],
+	});
+	if (pull) {
+		pull.assignees = [];
+		pull.reviewers = [];
+	}
+	await apply();
+	expect(repository.pulls).toHaveLength(1);
+	expect({ assignees: pull?.assignees, reviewers: pull?.reviewers }).toEqual({
+		assignees: ['octo'],
+		reviewers: ['octo'],
+	});
+});
+
 test('a plan with choice fields this CLI does not know asks for an upgrade and sends nothing', async () => {
 	const repository = bindingsRepository();
 	const choices = join(directory, 'choices.json'), output = join(directory, 'plan.json');

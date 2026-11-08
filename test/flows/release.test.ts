@@ -475,6 +475,8 @@ test('publish-release replaces the draft notes with one copy free of bot attribu
 				title: 'Document the widget',
 				body: '',
 				labels: [],
+				assignees: [],
+				reviewers: [],
 				author: 'octo',
 			});
 			const draft = target.releases.find(release => release.draft);
@@ -485,6 +487,10 @@ test('publish-release replaces the draft notes with one copy free of bot attribu
 		true,
 	);
 	const preparation = repository.pulls[0];
+	expect({ assignees: preparation?.assignees, reviewers: preparation?.reviewers }).toEqual({
+		assignees: ['octo'],
+		reviewers: ['octo'],
+	});
 	expect(repository.releases.map(release => ({ tag: release.tag, draft: release.draft }))).toEqual([
 		{ tag: 'v1.1.0', draft: false },
 	]);
