@@ -266,6 +266,23 @@ function drafted(
 				...(selection.versionFiles ? { versionFiles: selection.versionFiles } : {}),
 			};
 			if (!selection.versionSource) delete updated.versionSource;
+			const granted = (['prepare', 'promote'] as const).flatMap(operation =>
+				Object.values(selection[operation]?.credentials ?? {}).map(alias => ({ operation, alias }))
+			);
+			const credentials = [
+				...new Set([
+					...(Array.isArray(current.credentials) ? current.credentials.map(String) : []),
+					...granted.map(entry => entry.alias),
+				]),
+			];
+			if (credentials.length) updated.credentials = credentials;
+			for (const { operation, alias } of granted) {
+				notes.push(
+					`${
+						selection[operation]?.file
+					}: grant ${alias} with \`beepboop secrets grant ${snapshot.repository.name} ${alias} --operation ${operation}\`.`,
+				);
+			}
 			const bindings = Object.fromEntries(
 				Object.entries(object(current.workflows)).filter(([, value]) => object(value).mode !== 'observe'),
 			);

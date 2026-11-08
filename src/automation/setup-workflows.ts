@@ -370,12 +370,33 @@ function integrate(
 		&& object(step.with).ref === sourceRef
 	);
 	if (approvedIndex < 0) fail('checkout the execution sourceSha after begin');
+	const credentials = choice.credentials ?? {}, aliases = [...new Set(Object.values(credentials))];
+	const commandSteps = (step: Record<string, unknown>): Record<string, unknown>[] => {
+		if (!aliases.length) return [step];
+		if (steps.some(entry => entry.id === 'beepboop_credentials')) fail('step ID beepboop_credentials is already used');
+		return [
+			{
+				id: 'beepboop_credentials',
+				uses: action('credentials'),
+				with: { 'execution-id': `\${{ steps.${id}.outputs.execution-id }}`, aliases: JSON.stringify(aliases) },
+			},
+			{
+				...step,
+				env: Object.fromEntries(
+					Object.entries(credentials).map(([name, alias]) => [
+						name,
+						`\${{ fromJSON(steps.beepboop_credentials.outputs.values)['${alias}'] }}`,
+					]),
+				),
+			},
+		];
+	};
 	if (operation === 'prepare') {
 		const prepareSteps = steps.filter(step => actionRole(step.uses) === 'prepare');
 		if (!prepareSteps.length) {
 			if (!choice.commands.trim()) fail('supply preparation commands to update lockfiles, build and validate');
 			steps.splice(approvedIndex + 1, 0, { uses: action('prepare'), with: { mode: 'apply', context } });
-			if (choice.commands.trim()) steps.push({ name: 'Prepare and validate', run: choice.commands });
+			if (choice.commands.trim()) steps.push(...commandSteps({ name: 'Prepare and validate', run: choice.commands }));
 			steps.push({ uses: action('prepare'), with: { mode: 'submit', context } });
 		} else if (
 			!prepareSteps.some(step => object(step.with).mode === 'apply' && object(step.with).context === context)
@@ -395,7 +416,7 @@ function integrate(
 		if (binaries) steps.push(...releaseSteps(id, action));
 		if (choice.commands.trim()) {
 			if (steps.some(step => step.id === 'beepboop_publish')) fail('step ID beepboop_publish is already used');
-			steps.push({ id: 'beepboop_publish', name: 'Publish selected packages', run: choice.commands });
+			steps.push(...commandSteps({ id: 'beepboop_publish', name: 'Publish selected packages', run: choice.commands }));
 		}
 		const publications = packages.map(pkg => {
 			const step = choice.publicationSteps[packageId(pkg)] ?? (choice.commands.trim() ? 'beepboop_publish' : '');
@@ -419,6 +440,9 @@ function integrate(
 				publications: JSON.stringify(publications),
 			},
 		});
+	}
+	if (aliases.length && !steps.some(step => step.id === 'beepboop_credentials')) {
+		fail('credentials need setup commands to receive them, or a beepboop_credentials step in the job');
 	}
 	const report = steps.find(step => actionRole(step.uses) === 'report');
 	if (

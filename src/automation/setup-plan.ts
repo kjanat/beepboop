@@ -15,6 +15,7 @@ const workflow: z.ZodType<SetupWorkflow> = z.object({
 	triggers: z.enum(['review', 'dispatchOnly', 'preserve'], { error: 'Invalid workflow triggers' }),
 	commands: z.string(),
 	publicationSteps: z.record(z.string(), z.string()),
+	credentials: z.record(z.string(), z.string()).optional(),
 	binaries: binaries.optional(),
 });
 const publication: z.ZodType<PackagePublication> = z.discriminatedUnion('kind', [

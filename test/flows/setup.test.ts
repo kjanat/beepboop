@@ -623,6 +623,65 @@ test('setup writes the selected version files into the stream', async () => {
 	expect(applied.status).toBe(200);
 });
 
+function credentialChoices(file: string, commands: string): SetupChoices {
+	return {
+		streams: [{
+			name: 'main',
+			packages: ['pkg:npm/widget'],
+			required: ['pkg:npm/widget'],
+			versioning: 'workspace',
+			promote: {
+				file,
+				job: 'publish',
+				triggers: 'review',
+				commands,
+				publicationSteps: {},
+				credentials: { NODE_AUTH_TOKEN: 'npm-token' },
+			},
+		}],
+	};
+}
+
+test('setup delivers selected credentials to the publishing commands', async () => {
+	const repository = widget(world.github, { configured: false });
+	const api = bearer(world, await world.cliSession());
+	const choices = credentialChoices('release-widget.yml', 'npm publish');
+	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toEqual([]);
+	const after = plan.edits.find(edit => edit.path === '.github/workflows/release-widget.yml')?.after ?? '';
+	const steps = binaryWorkflowSchema.parse(parse(after)).jobs.publish?.steps ?? [];
+	const credentials = steps.findIndex(step => step.id === 'beepboop_credentials');
+	expect(steps[credentials]).toEqual({
+		id: 'beepboop_credentials',
+		uses: 'kjanat/beepboop/actions/credentials@v1',
+		with: { 'execution-id': '${{ steps.beepboop.outputs.execution-id }}', aliases: '["npm-token"]' },
+	});
+	expect(steps[credentials + 1]).toMatchObject({
+		id: 'beepboop_publish',
+		run: 'npm publish',
+		env: { NODE_AUTH_TOKEN: "${{ fromJSON(steps.beepboop_credentials.outputs.values)['npm-token'] }}" },
+	});
+	const configuration = z.object({
+		streams: z.record(z.string(), z.object({ credentials: z.array(z.string()) })),
+	}).parse(JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'));
+	expect(configuration.streams.main?.credentials).toEqual(['npm-token']);
+	expect(plan.notes).toContain(
+		'release-widget.yml: grant npm-token with `beepboop secrets grant octo/widget npm-token --operation promote`.',
+	);
+});
+
+test('setup refuses credentials that no setup command receives', async () => {
+	const repository = widget(world.github, { configured: false });
+	const api = bearer(world, await world.cliSession());
+	const choices = credentialChoices('publish.yml', '');
+	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toContain(
+		'publish.yml: credentials need setup commands to receive them, or a beepboop_credentials step in the job',
+	);
+});
+
 test('setup refuses a selected version file that does not exist', async () => {
 	const repository = binaryRepository();
 	const api = bearer(world, await world.cliSession());

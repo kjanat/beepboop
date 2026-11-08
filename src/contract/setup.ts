@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { refPattern, tagPrefixPattern, validRef, validTagPrefix, workflowFilePattern } from '@/contract/catalog';
+import { credentialAliasPattern } from '@/contract/ids';
 import { versionFileSchema } from '@/contract/version-files';
 
 export const binaryTargets = [
@@ -73,6 +74,8 @@ const workflow = z.object({
 	commands: z.string().default(''),
 	/** Map publication identities to existing step IDs, for accurate outcome reporting. */
 	publicationSteps: z.record(z.string(), z.string()).default({}),
+	/** Environment variable name to stored credential alias, for the setup commands step. */
+	credentials: z.record(z.string().regex(/^[A-Z_][A-Z0-9_]*$/), z.string().regex(credentialAliasPattern)).optional(),
 	binaries: binaries.optional(),
 }).strict();
 const observed = z.object({

@@ -367,7 +367,13 @@ Choose a delivery method:
 | `environment` | Synchronization to a GitHub environment secret.                               |
 
 Runtime retrieval also requires the alias in the stream's `credentials` list.
-Values are masked before the Action writes outputs. Synchronization displays
+Values are masked before the Action writes outputs.
+
+A workflow setup choice can map environment variables to aliases, for example
+`"credentials": { "CARGO_REGISTRY_TOKEN": "crates-io" }`. Setup adds the aliases
+to the stream's `credentials`, a `beepboop_credentials` step running
+`actions/credentials`, and the variables on the step that runs the setup
+commands. The preview names the `beepboop secrets grant` command for each alias. Synchronization displays
 success or failure for each destination and credential version.
 
 Revocation stops future access through the grant. Delete synchronized GitHub
