@@ -379,10 +379,14 @@ function integrate(
 	);
 	if (approvedIndex < 0) fail('checkout the execution sourceSha after begin');
 	const credentials = choice.credentials ?? {}, aliases = [...new Set(Object.values(credentials))];
+	const mise = ['mise.toml', '.mise.toml', '.config/mise.toml'].some(path => snapshot.files[path] !== undefined)
+		&& !steps.some(step => typeof step.uses === 'string' && step.uses.startsWith('jdx/mise-action@'));
 	const commandSteps = (step: Record<string, unknown>): Record<string, unknown>[] => {
-		if (!aliases.length) return [step];
+		const toolchain = mise ? [{ uses: 'jdx/mise-action@v5' }] : [];
+		if (!aliases.length) return [...toolchain, step];
 		if (steps.some(entry => entry.id === 'beepboop_credentials')) fail('step ID beepboop_credentials is already used');
 		return [
+			...toolchain,
 			{
 				id: 'beepboop_credentials',
 				uses: action('credentials'),

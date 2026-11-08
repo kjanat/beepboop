@@ -28,6 +28,10 @@ or repository name, a publishing job, and the required dispatch trigger. Existin
 workflows with a single job or a recognized integration select that job automatically.
 You only need to choose a job when its purpose is ambiguous.
 
+When the repository has a `mise.toml`, `.mise.toml` or `.config/mise.toml`,
+setup installs its tools with `jdx/mise-action` before the step that runs the
+commands.
+
 Command boxes contain **Bash shell commands**, not GitHub Actions YAML. Suggested
 Cargo and npm commands are editable. For an existing publishing job, you can select
 its publishing steps instead of adding commands. Trigger replacement choices only
