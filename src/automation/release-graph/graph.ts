@@ -684,7 +684,7 @@ function targetsOf(
 				const located = projects.filter(project => {
 					const directory = escapeRegExp(project.path.split('/').slice(0, -1).join('/'));
 					return directory !== '' && new RegExp(
-						`(?:\\b(?:cd|--directory|--project|-C)\\s+["']?(?:\\./)?${directory}/?["']?(?:\\s|$|[;&)])|(?<![\\w./-])${directory}/(?:dist|pyproject\\.toml)\\b)`,
+						`(?:(?:\\bcd|(?<![\\w-])(?:--directory|--project|-C))\\s+["']?(?:\\./)?${directory}/?["']?(?:\\s|$|[;&)])|(?<![\\w./-])${directory}/(?:dist|pyproject\\.toml)\\b)`,
 						'm',
 					).test(subsetText);
 				});

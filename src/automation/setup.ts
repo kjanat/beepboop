@@ -8,6 +8,7 @@ import { matchesPackage, packageId, selectorKey } from '@/automation/package-ide
 import { publishable } from '@/automation/package-publication';
 import { adoptionChoices, adoptionMarkdown } from '@/automation/release-graph/adoption';
 import { inferReleaseGraph, type ReleaseGraph } from '@/automation/release-graph/graph';
+import { completeTaggedStreams } from '@/automation/setup-completion';
 import {
 	type SetupChoices,
 	type SetupOption,
@@ -76,10 +77,11 @@ export function suggestSetup(
 	return Effect.gen(function*() {
 		const raw = yield* storedConfiguration(snapshot);
 		const workflows = yield* evidence(snapshot, inventory);
-		return suggested(raw, workflows, inventory, inferReleaseGraph(snapshot, inventory), resolved);
+		return suggested(snapshot, raw, workflows, inventory, inferReleaseGraph(snapshot, inventory), resolved);
 	});
 }
 function suggested(
+	snapshot: Snapshot,
 	raw: Record<string, unknown>,
 	workflows: WorkflowEvidence[],
 	inventory: Inventory,
@@ -90,7 +92,7 @@ function suggested(
 	const names = new Set([...Object.keys(configured), ...workflows.flatMap(w => w.roles.map(role => role.stream))]);
 	if (!names.size) {
 		const adopted = adoptionChoices(graph, inventory);
-		if (adopted.length) return { streams: adopted };
+		if (adopted.length) return { streams: completeTaggedStreams(adopted, snapshot, inventory, graph) };
 		names.add('main');
 	}
 	const streams: SetupChoices['streams'] = [];
@@ -201,11 +203,11 @@ function draftSetup(
 		const workflows = yield* evidence(snapshot, inventory);
 		const graph = inferReleaseGraph(snapshot, inventory);
 		// Empty selections are allowed in suggestions, but cannot be applied.
-		const suggestion = suggested(raw, workflows, inventory, graph, resolved);
-		const choices = input === undefined ? suggestion : yield* decodeRequest(setupChoicesSchema, input);
+		const suggestion = suggested(snapshot, raw, workflows, inventory, graph, resolved);
 		const normalized = setupChoicesSchema.safeParse(suggestion);
-		const inferred = input === undefined
-			|| JSON.stringify(choices) === JSON.stringify(normalized.success ? normalized.data : suggestion);
+		const proposal = normalized.success ? normalized.data : suggestion;
+		const choices = input === undefined ? proposal : yield* decodeRequest(setupChoicesSchema, input);
+		const inferred = input === undefined || JSON.stringify(choices) === JSON.stringify(proposal);
 		const plan = yield* drafted(snapshot, inventory, choices, raw, workflows, baseline, resolved);
 		return inferred ? { ...plan, adoption: adoptionMarkdown(graph, snapshot) } : plan;
 	});
@@ -309,6 +311,7 @@ function drafted(
 			const shared = selection.prepare && selection.promote && selection.prepare.file === selection.promote.file;
 			for (const operation of ['prepare', 'promote'] as const) {
 				const workflow = selection[operation];
+				const reported = required.filter(id => published.some(pkg => packageId(pkg) === id));
 				if (!workflow) {
 					if (selection.observe?.length) continue;
 					if (
@@ -352,8 +355,8 @@ function drafted(
 					...(operation === 'promote'
 						? {
 							publications: workflow.binaries
-								? [...required, `github-release:${snapshot.repository.name}`]
-								: required,
+								? [...reported, `github-release:${snapshot.repository.name}`]
+								: reported,
 						}
 						: {}),
 					...(operation === 'promote' && (workflow.binaries || workflow.tagPrefix) && !previousBinding.refs
