@@ -1,4 +1,6 @@
 import { Effect } from 'effect';
+import { matchesPackage } from '@/automation/package-identity';
+import type { Package } from '@/automation/types';
 import { type DomainError, precondition } from '@/contract/errors';
 import { compare, isPrerelease, parseTag, semVer, tagFor } from '@/contract/version';
 import { fromSync } from '@/failure';
@@ -44,11 +46,21 @@ export function tagObject(change: RefChange, version: string, tagger: string, si
 export function tagPayload(change: RefChange, version: string, tagger: string): string {
 	return `object ${change.commit}\ntype commit\ntag ${change.name}\ntagger ${tagger}\n\nRelease ${version}\n`;
 }
+/** A Go module publishes a version by its own tag, such as `go/v1.2.3` for the module in `go/`. */
+export function moduleTagPrefixes(packages: Package[], references: string[]): string[] {
+	return packages.flatMap(pkg =>
+		pkg.manager === 'go' && pkg.versionSource?.startsWith('tags:')
+			&& references.some(reference => matchesPackage(reference, pkg))
+			? [pkg.versionSource.slice('tags:'.length)]
+			: []
+	);
+}
 export function planRefs(
 	policy: RefPolicy,
 	version: string,
 	commit: string,
 	refs: RefState[],
+	modulePrefixes: string[] = [],
 ): Effect.Effect<RefChange[], DomainError> {
 	return Effect.gen(function*() {
 		const normalized = yield* fromSync(() => semVer.parse(version));
@@ -56,7 +68,17 @@ export function planRefs(
 		const full = refs.find(ref => ref.name === tag);
 		if (full && full.commit !== commit) return yield* precondition('Version tag already targets another commit');
 		if (policy.phase === 'version') {
-			return [{ name: tag, expected: full?.oid ?? null, commit, annotated: true, signed: policy.signed }];
+			const changes: RefChange[] = [];
+			for (
+				const name of [tag, ...modulePrefixes.filter(prefix => prefix !== policy.prefix).map(p => `${p}${normalized}`)]
+			) {
+				const existing = refs.find(ref => ref.name === name);
+				if (existing && existing.commit !== commit) {
+					return yield* precondition(`Version tag ${name} already targets another commit`);
+				}
+				changes.push({ name, expected: existing?.oid ?? null, commit, annotated: true, signed: policy.signed });
+			}
+			return changes;
 		}
 		if (!full) return yield* precondition('Publish the version tag before aliases');
 		if (isPrerelease(normalized)) return [];

@@ -49,7 +49,7 @@ import {
 import { publishable } from '@/automation/package-publication';
 import { matchesRef } from '@/automation/policy';
 import type { PublishBudget } from '@/automation/publish-budget';
-import { planRefs, type RefPlan, type TagSigner, tagObject, tagPayload } from '@/automation/refs';
+import { moduleTagPrefixes, planRefs, type RefPlan, type TagSigner, tagObject, tagPayload } from '@/automation/refs';
 import { compileReleaseSet } from '@/automation/release-set';
 import { manifestProblems } from '@/automation/release-version';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
@@ -815,7 +815,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const refs = yield* gateway.tagRefs(execution.repository, execution.repositoryId);
 			if (!execution.refPlan) {
 				if (complete) return yield* precondition('Ref plan has not been authorized');
-				const changes = yield* planRefs(policy, version, execution.sourceSha, refs);
+				const repository = yield* this.store().repository(execution.repositoryId);
+				const changes = yield* planRefs(
+					policy,
+					version,
+					execution.sourceSha,
+					refs,
+					moduleTagPrefixes(
+						repository?.inventory.packages ?? [],
+						execution.configuration.streams[execution.stream]?.packages ?? [],
+					),
+				);
 				execution.refPlan = yield* this.signRefs({
 					repository: execution.repository,
 					executionId: id,
