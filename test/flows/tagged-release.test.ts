@@ -517,6 +517,22 @@ async function mergedSetup(tamper: boolean, login = 'octo') {
 	await world.db.prepare(
 		'INSERT INTO credentials(alias,version,key_id,ciphertext,iv,active,created_at) VALUES(?,?,?,?,?,1,?)',
 	).bind('crates-io', 1, 'v1', 'sealed', 'iv', Date.now()).run();
+	const foreign = {
+		id: 'foreign',
+		alias: 'crates-io',
+		repositoryId: repository.id + 1,
+		repository: 'octo/other',
+		operation: 'crates',
+		workflow: 'publish-crates.yml',
+		ref: 'refs/heads/main',
+		delivery: 'runtime',
+	};
+	await world.db.prepare('INSERT INTO grants(id,alias,repository_id,document) VALUES(?,?,?,?)').bind(
+		foreign.id,
+		foreign.alias,
+		foreign.repositoryId,
+		JSON.stringify(foreign),
+	).run();
 	if (tamper) {
 		world.github.push(
 			repository,

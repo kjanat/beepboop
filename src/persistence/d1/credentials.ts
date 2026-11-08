@@ -79,7 +79,9 @@ export class CredentialStore {
 	}
 	grantDocuments(filter: { alias?: string; repositoryId?: number } = {}): Effect.Effect<unknown[], DomainError> {
 		const rows = filter.alias === undefined
-			? this.sql.all('SELECT document FROM grants')
+			? filter.repositoryId === undefined
+				? this.sql.all('SELECT document FROM grants')
+				: this.sql.all('SELECT document FROM grants WHERE repository_id=?', filter.repositoryId)
 			: filter.repositoryId === undefined
 			? this.sql.all('SELECT document FROM grants WHERE alias=?', filter.alias)
 			: this.sql.all(
