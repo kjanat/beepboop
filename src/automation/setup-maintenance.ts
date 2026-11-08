@@ -29,6 +29,10 @@ export function setupEdits(saved: Record<string, unknown> | undefined): Edit[] {
 		: [];
 }
 
+export function followsProposal(saved: Record<string, unknown> | undefined, body: string): boolean {
+	return saved?.inferred === true || (saved?.inferred === undefined && body.includes('\n## Release plan\n'));
+}
+
 /** Reconcile an already-open proposal after discovery, without starting a release or changing human edits. */
 export function maintainSetup(
 	store: Store,
@@ -76,7 +80,9 @@ export function maintainSetup(
 			);
 			const original = previous.find(edit => edit.path === '.github/beepboop.json')?.before ?? '';
 			const choices = requested?.choices
-				?? ((snapshot.files['.github/beepboop.json'] ?? '') === original ? saved.choices : undefined);
+				?? ((snapshot.files['.github/beepboop.json'] ?? '') === original && !followsProposal(saved, pull.body)
+					? saved.choices
+					: undefined);
 			const workflowPermission = yield* gateway.canEditWorkflows(name, id);
 			const plan = yield* previewSetup(snapshot, inventory, choices, {
 				head: pull.head,
@@ -86,7 +92,7 @@ export function maintainSetup(
 			}, resolved.configuration);
 			const fingerprint = yield* fromPromise(() => sha256Hex(JSON.stringify({ plan, head: pull.head })));
 			if (!requested && saved.maintenanceFingerprint === fingerprint && saved.options !== undefined) return;
-			const applied = { choices: plan.choices, options: setupOptions(plan) };
+			const applied = { choices: plan.choices, options: setupOptions(plan), inferred: plan.adoption !== undefined };
 			if (plan.blockers.length || !plan.edits.length) {
 				yield* gateway.setupStatus(
 					name,
@@ -136,6 +142,7 @@ export function maintainSetup(
 					?? snapshot.files['.github/beepboop.json'],
 				choices: plan.choices,
 				options: setupOptions(plan),
+				inferred: plan.adoption !== undefined,
 				edits: [...generated.values()],
 				maintenanceFingerprint: undefined,
 			});

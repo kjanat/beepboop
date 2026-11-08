@@ -5,7 +5,7 @@ import { discover } from '@/automation/managers';
 import { encodeRepository } from '@/automation/package-identity';
 import { repositoryName, repositoryReference } from '@/automation/repository-name';
 import { branchConflictBlocker, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
-import { sameEdits, setupEdits } from '@/automation/setup-maintenance';
+import { followsProposal, sameEdits, setupEdits } from '@/automation/setup-maintenance';
 import { conflict, type DomainError, domainError, invalid, notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import { configurationDiagnostics } from '@/domain/configuration';
@@ -115,6 +115,7 @@ export const repositoryEndpoints = {
 				sourceSha: snapshot.sha,
 				choices: plan.choices,
 				options: setupOptions(plan),
+				inferred: plan.adoption !== undefined,
 				edits: [...generated.values()],
 			});
 			yield* service.store.audit(actor, 'repository.setup', String(id));
@@ -146,9 +147,9 @@ function setupReview(input: { repository: string; choices?: unknown }, context: 
 		const branchConflict = !!head && saved?.head !== head && !branchFiles;
 		const previous = branchFiles ?? setupEdits(saved);
 		const priorConfiguration = previous.find(edit => edit.path === '.github/beepboop.json')?.before ?? '';
-		const proposed = typeof saved?.url === 'string'
-			&& (snapshot.files['.github/beepboop.json'] ?? '') === priorConfiguration
-			&& (yield* service.gateway.openSetupPull(name, id)) !== undefined;
+		const open = typeof saved?.url === 'string' ? yield* service.gateway.openSetupPull(name, id) : undefined;
+		const proposed = open !== undefined && (snapshot.files['.github/beepboop.json'] ?? '') === priorConfiguration
+			&& !followsProposal(saved, open.body);
 		const choices = input.choices ?? (proposed ? saved?.choices : undefined);
 		const workflowPermission = yield* service.gateway.canEditWorkflows(name, id);
 		const plan = yield* previewSetup(snapshot, inventory, choices, {

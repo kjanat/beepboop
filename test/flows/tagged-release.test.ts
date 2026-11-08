@@ -497,3 +497,28 @@ test('a setup PR merged by someone else grants nothing', async () => {
 test('a setup PR whose generated files changed before the merge grants nothing', async () => {
 	expect(await mergedSetup(true)).toEqual([]);
 });
+
+test('an uncustomized setup PR follows the current proposal when the default branch changes', async () => {
+	const repository = lintRepository();
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const plan = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name })).body),
+	);
+	const applied = await api('/api/repositories/setup/apply', {
+		repository: repository.name,
+		choices: plan.choices,
+		planId: plan.planId,
+		sourceSha: plan.sourceSha,
+		setupHead: plan.setupHead,
+	});
+	expect(applied.status).toBe(200);
+	world.github.push(repository, { 'sdk/go.mod': 'module github.com/octo/lint/sdk\n\ngo 1.26\n' }, 'Add the SDK');
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(5_000);
+	const configured = z.object({ streams: z.record(z.string(), z.object({ packages: z.array(z.string()) })) }).parse(
+		JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'),
+	);
+	expect(configured.streams.lint?.packages).toContain('pkg:golang/github.com/octo/lint/sdk');
+	expect(repository.pulls).toHaveLength(1);
+});

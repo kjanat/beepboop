@@ -338,15 +338,17 @@ export class FakeGitHub {
 			const base = this.resolve(repository, decodeURIComponent(match[2] ?? ''));
 			const head = this.resolve(repository, decodeURIComponent(match[3] ?? ''));
 			const ahead = this.ancestry(repository, head.sha, base.sha);
-			const before = this.files(repository, base), after = this.files(repository, head);
+			const common = this.mergeBase(repository, base.sha, head.sha) ?? base;
+			const before = this.files(repository, common), after = this.files(repository, head);
 			const changed = [...new Set([...before.keys(), ...after.keys()])].filter(path =>
 				before.get(path) !== after.get(path)
 			);
+			const since = this.ancestry(repository, head.sha, common.sha) ?? [];
 			return json({
 				status: base.sha === head.sha ? 'identical' : ahead ? 'ahead' : 'diverged',
-				ahead_by: ahead?.length ?? 0,
-				merge_base_commit: { sha: base.sha },
-				commits: (ahead ?? []).map(sha => {
+				ahead_by: since.length,
+				merge_base_commit: { sha: common.sha },
+				commits: since.map(sha => {
 					const commit = this.resolve(repository, sha);
 					return { sha, author: { id: commit.authorId }, commit: { verification: { verified: commit.verified } } };
 				}),
@@ -684,6 +686,24 @@ export class FakeGitHub {
 		const created = { ...commit, sha: hash([commit, repository.commits.size, Date.now()]) };
 		repository.commits.set(created.sha, created);
 		return created;
+	}
+	private mergeBase(repository: Repository, left: string, right: string): Commit | undefined {
+		const ancestors = new Set<string>();
+		const pending = [left];
+		for (let sha = pending.shift(); sha !== undefined; sha = pending.shift()) {
+			if (ancestors.has(sha)) continue;
+			ancestors.add(sha);
+			pending.push(...repository.commits.get(sha)?.parents ?? []);
+		}
+		const queue = [right];
+		const visited = new Set<string>();
+		for (let sha = queue.shift(); sha !== undefined; sha = queue.shift()) {
+			if (ancestors.has(sha)) return repository.commits.get(sha);
+			if (visited.has(sha)) continue;
+			visited.add(sha);
+			queue.push(...repository.commits.get(sha)?.parents ?? []);
+		}
+		return undefined;
 	}
 	private ancestry(repository: Repository, head: string, base: string): string[] | undefined {
 		const path: string[] = [];
