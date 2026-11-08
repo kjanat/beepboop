@@ -352,8 +352,8 @@ function drafted(
 								: required,
 						}
 						: {}),
-					...(operation === 'promote' && workflow.binaries && !previousBinding.refs
-						? { refs: { phase: 'version', prefix: selection.versionSource?.prefix ?? 'v' } }
+					...(operation === 'promote' && (workflow.binaries || workflow.tagPrefix) && !previousBinding.refs
+						? { refs: { phase: 'version', prefix: workflow.tagPrefix ?? selection.versionSource?.prefix ?? 'v' } }
 						: {}),
 				};
 				const inputs = { ...object(inherited.inputs), ...object(previousBinding.inputs) };

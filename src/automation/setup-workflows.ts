@@ -4,7 +4,14 @@ import type { Document } from 'yaml';
 import { isMap, isNode, parseDocument, visit } from 'yaml';
 import { object, yaml } from '@/automation/managers/helpers';
 import { packageId } from '@/automation/package-identity';
-import { assetConflicts, binaryJobs, buildJobId, checkoutAction, releaseSteps } from '@/automation/setup-binaries';
+import {
+	assetConflicts,
+	binaryJobs,
+	buildJobId,
+	checkoutAction,
+	refSteps,
+	releaseSteps,
+} from '@/automation/setup-binaries';
 import type { SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
 import type { Package, Snapshot } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
@@ -440,6 +447,13 @@ function integrate(
 				publications: JSON.stringify(publications),
 			},
 		});
+	}
+	if (
+		operation === 'promote' && choice.tagPrefix && !binaries
+		&& !steps.some(step => typeof step.uses === 'string' && /\/actions\/publish-refs\b/.test(step.uses))
+	) {
+		const reportIndex = steps.findIndex(step => actionRole(step.uses) === 'report');
+		steps.splice(reportIndex < 0 ? steps.length : reportIndex, 0, ...refSteps(id, action));
 	}
 	if (aliases.length && !steps.some(step => step.id === 'beepboop_credentials')) {
 		fail('credentials need setup commands to receive them, or a beepboop_credentials step in the job');

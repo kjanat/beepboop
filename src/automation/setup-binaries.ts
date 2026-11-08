@@ -238,7 +238,19 @@ export function releaseSteps(id: string, action: (name: string) => string): Reco
 			},
 			run: `gh release upload "\${TAG}" -- *\n`,
 		},
-		{ uses: action('publish-refs'), with: { token: expression('github.token') } },
+		...refSteps(id, action),
 		{ uses: action('publish-release'), with: { 'execution-id': expression(`steps.${id}.outputs.execution-id`) } },
+	];
+}
+
+/** Tags pushed with `github.token` start no workflows, so the push uses the App installation token. */
+export function refSteps(id: string, action: (name: string) => string): Record<string, unknown>[] {
+	return [
+		{
+			id: 'beepboop_token',
+			uses: action('token'),
+			with: { 'execution-id': expression(`steps.${id}.outputs.execution-id`), 'permission-contents': 'write' },
+		},
+		{ uses: action('publish-refs'), with: { token: expression('steps.beepboop_token.outputs.token') } },
 	];
 }

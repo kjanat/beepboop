@@ -552,6 +552,15 @@ Action run `git tag -s` with the runner's own Git signing key. GitHub must
 report a signed version tag as verified, so the key's email belongs on the
 repository owner's GitHub account. Alias operations should depend on the publication operations they distribute.
 
+A version operation also tags every Go module the stream names in `packages`
+with that module's own prefix, such as `go/v1.2.3` for a module in `go/`.
+
+Setup writes `refs` with `phase: "version"` for binary releases and for a
+promote setup choice with `tagPrefix`, such as `"tagPrefix": "cli-v"`. The
+generated `publish-refs` step pushes with a Beepboop App token from
+`actions/token`. A push with `github.token` starts no other workflows, so a
+workflow triggered by the version tag would not run.
+
 The Action publishes an authorized plan with atomic Git pushes and explicit
 expected old object IDs. Version tags target one commit; stable aliases exclude
 prereleases and reject downgrades. The service checks the resulting refs before

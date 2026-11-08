@@ -76,6 +76,8 @@ const workflow = z.object({
 	publicationSteps: z.record(z.string(), z.string()).default({}),
 	/** Environment variable name to stored credential alias, for the setup commands step. */
 	credentials: z.record(z.string().regex(/^[A-Z_][A-Z0-9_]*$/), z.string().regex(credentialAliasPattern)).optional(),
+	/** Prefix of the version tag the publication workflow pushes, such as `v` or `cli-v`. */
+	tagPrefix: z.string().regex(tagPrefixPattern).refine(validTagPrefix, 'Invalid tag prefix').optional(),
 	binaries: binaries.optional(),
 }).strict();
 const observed = z.object({

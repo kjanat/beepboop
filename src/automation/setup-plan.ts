@@ -16,6 +16,7 @@ const workflow: z.ZodType<SetupWorkflow> = z.object({
 	commands: z.string(),
 	publicationSteps: z.record(z.string(), z.string()),
 	credentials: z.record(z.string(), z.string()).optional(),
+	tagPrefix: z.string().optional(),
 	binaries: binaries.optional(),
 });
 const publication: z.ZodType<PackagePublication> = z.discriminatedUnion('kind', [

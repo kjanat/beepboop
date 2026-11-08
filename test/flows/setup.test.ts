@@ -459,6 +459,7 @@ test('a publication workflow builds each binary in a platform matrix and release
 		'actions/attest@v4',
 		'actions/attest@v4',
 		'beepboop_binaries',
+		'kjanat/beepboop/actions/token@v1',
 		'kjanat/beepboop/actions/publish-refs@v1',
 		'kjanat/beepboop/actions/publish-release@v1',
 		'kjanat/beepboop/actions/report@v1',
@@ -539,6 +540,7 @@ test('binary builds join an existing publication workflow and stay stable on a r
 		'actions/attest@v4',
 		'actions/attest@v4',
 		'beepboop_binaries',
+		'kjanat/beepboop/actions/token@v1',
 		'kjanat/beepboop/actions/publish-refs@v1',
 		'kjanat/beepboop/actions/publish-release@v1',
 		'kjanat/beepboop/actions/report@actions',
@@ -680,6 +682,60 @@ test('setup refuses credentials that no setup command receives', async () => {
 	expect(plan.blockers).toContain(
 		'publish.yml: credentials need setup commands to receive them, or a beepboop_credentials step in the job',
 	);
+});
+
+test('a tag prefix makes the publication workflow push its version tag with the App token', async () => {
+	const repository = widget(world.github, { configured: false });
+	const api = bearer(world, await world.cliSession());
+	const choices = credentialChoices('release-widget.yml', 'npm publish');
+	const promote = choices.streams[0]?.promote;
+	if (!promote) throw new Error('promote expected');
+	promote.tagPrefix = 'widget-v';
+	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toEqual([]);
+	const after = plan.edits.find(edit => edit.path === '.github/workflows/release-widget.yml')?.after ?? '';
+	const steps = binaryWorkflowSchema.parse(parse(after)).jobs.publish?.steps ?? [];
+	expect(steps.slice(-4).map(step => step.uses ?? step.id)).toEqual([
+		'beepboop_publish',
+		'kjanat/beepboop/actions/token@v1',
+		'kjanat/beepboop/actions/publish-refs@v1',
+		'kjanat/beepboop/actions/report@v1',
+	]);
+	expect(steps.at(-3)).toEqual({
+		id: 'beepboop_token',
+		uses: 'kjanat/beepboop/actions/token@v1',
+		with: { 'execution-id': '${{ steps.beepboop.outputs.execution-id }}', 'permission-contents': 'write' },
+	});
+	expect(steps.at(-2)?.with).toEqual({ token: '${{ steps.beepboop_token.outputs.token }}' });
+	const configuration = z.object({
+		streams: z.record(z.string(), z.object({ promote: z.object({ workflow: z.record(z.string(), z.unknown()) }) })),
+	}).parse(JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'));
+	expect(configuration.streams.main?.promote.workflow.refs).toEqual({ phase: 'version', prefix: 'widget-v' });
+});
+
+test('a tag prefix adds ref publication before the report of an existing workflow, once', async () => {
+	const repository = widget(world.github, { configured: false });
+	const api = bearer(world, await world.cliSession());
+	const choices = credentialChoices('publish.yml', '');
+	const promote = choices.streams[0]?.promote;
+	if (!promote) throw new Error('promote expected');
+	promote.credentials = undefined;
+	promote.publicationSteps = { 'pkg:npm/widget': 'publish' };
+	promote.tagPrefix = 'v';
+	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	const after = plan.edits.find(edit => edit.path === '.github/workflows/publish.yml')?.after ?? '';
+	const steps = binaryWorkflowSchema.parse(parse(after)).jobs.publish?.steps ?? [];
+	expect(steps.slice(-3).map(step => step.uses)).toEqual([
+		'kjanat/beepboop/actions/token@v1',
+		'kjanat/beepboop/actions/publish-refs@v1',
+		'kjanat/beepboop/actions/report@actions',
+	]);
+	world.github.push(repository, { '.github/workflows/publish.yml': after }, 'Publish the version tag');
+	const rerun = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
+	const replanned = await Effect.runPromise(parseSetupPlan(rerun.body));
+	expect(replanned.edits.find(edit => edit.path === '.github/workflows/publish.yml')).toBeUndefined();
 });
 
 test('setup refuses a selected version file that does not exist', async () => {
