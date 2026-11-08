@@ -144,6 +144,11 @@ CLI talks to the key directly over HID on Linux and macOS and through Windows
 WebAuthn on Windows. It asks for the key's PIN when the key has one. Revealing a
 secret works only in the dashboard.
 
+When the repository owner merges a Beepboop setup PR, Beepboop grants each
+secret that the PR's workflows request, for runtime delivery to that operation's
+workflow. It grants nothing when someone else merges the PR, when a generated
+file changed before the merge, or when no value is stored under the name.
+
 `secrets grant` lets one stream operation of a repository use a secret. The
 alias must appear in that stream's `credentials` list in `.github/beepboop.json`.
 `--stream` defaults to the only stream, and `--operation` defaults to `promote`.

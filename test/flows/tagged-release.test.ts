@@ -431,3 +431,69 @@ test('a Go module with its own released tags becomes its own stream', async () =
 		'.github/workflows/release-sdk.yml',
 	]));
 });
+
+async function mergedSetup(tamper: boolean, login = 'octo') {
+	const repository = lintRepository();
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const plan = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name })).body),
+	);
+	expect(plan.blockers).toEqual([]);
+	const applied = await api('/api/repositories/setup/apply', {
+		repository: repository.name,
+		choices: plan.choices,
+		planId: plan.planId,
+		sourceSha: plan.sourceSha,
+		setupHead: plan.setupHead,
+	});
+	expect(applied.status).toBe(200);
+	await world.db.prepare(
+		'INSERT INTO credentials(alias,version,key_id,ciphertext,iv,active,created_at) VALUES(?,?,?,?,?,1,?)',
+	).bind('crates-io', 1, 'v1', 'sealed', 'iv', Date.now()).run();
+	if (tamper) {
+		world.github.push(
+			repository,
+			{
+				'.github/workflows/publish-crates.yml': 'on: workflow_dispatch\njobs: {}\n',
+			},
+			'Change the crates workflow',
+			'automation/onboarding',
+		);
+	}
+	const merged = world.github.merge(repository, 1);
+	await world.webhook('pull_request', {
+		action: 'closed',
+		pull_request: {
+			number: 1,
+			merged: true,
+			merge_commit_sha: merged.sha,
+			user: { id: botId },
+			merged_by: { id: ownerId, login },
+			head: { ref: 'automation/onboarding', repo: { id: repository.id } },
+			base: { repo: { id: repository.id } },
+		},
+		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
+	});
+	await world.wait(2_000);
+	const rows = await world.db.prepare('SELECT document FROM grants WHERE repository_id=?').bind(repository.id).all();
+	return z.array(z.object({ document: z.string() })).parse(rows.results).map(row =>
+		z.looseObject({ alias: z.string(), operation: z.string(), workflow: z.string(), ref: z.string() }).parse(
+			JSON.parse(row.document),
+		)
+	);
+}
+
+test('merging the setup PR as the owner grants the credentials it requests', async () => {
+	expect((await mergedSetup(false)).map(grant => [grant.alias, grant.operation, grant.workflow, grant.ref])).toEqual([
+		['crates-io', 'crates', 'publish-crates.yml', 'refs/heads/main'],
+	]);
+});
+
+test('a setup PR merged by someone else grants nothing', async () => {
+	expect(await mergedSetup(false, 'mallory')).toEqual([]);
+});
+
+test('a setup PR whose generated files changed before the merge grants nothing', async () => {
+	expect(await mergedSetup(true)).toEqual([]);
+});

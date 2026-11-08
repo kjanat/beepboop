@@ -130,9 +130,11 @@ come from mise.
 
 ## Secrets
 
-A credential reaches a workflow only after an administrator grants it. Each
-of these commands needs a security-key touch from the user, so leave them to
-the user:
+A credential reaches a workflow only after it is granted. When the repository
+owner merges a Beepboop setup PR, Beepboop grants the credentials that the PR's
+generated workflows request, as long as the generated files are unchanged and a
+value is stored. Other grants need these commands, and each needs a
+security-key touch from the user, so leave them to the user:
 
 ```sh
 printf '%s' "$TOKEN" | beepboop secrets set crates-io

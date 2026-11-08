@@ -342,7 +342,7 @@ function lintProposal(repository: { name: string }, sha: string) {
 		`Proposed setup for ${repository.name} at ${sha}:`,
 		...lintSummary,
 		'The setup PR writes .github/beepboop.json, .github/workflows/prepare-release.yml, .github/workflows/release-lint.yml and .github/workflows/publish-crates.yml.',
-		'publish-crates.yml: grant crates-io with `beepboop secrets grant octo/lint crates-io --operation crates`.',
+		'publish-crates.yml: when the repository owner merges this PR, Beepboop grants it the stored crates-io secret for the crates operation.',
 		'Set up registry access and trusted publishing in each registry. The setup PR publishes nothing.',
 	];
 }

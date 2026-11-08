@@ -296,7 +296,7 @@ function drafted(
 			if (credentials.length) updated.credentials = credentials;
 			for (const { operation, file, alias } of granted) {
 				notes.push(
-					`${file}: grant ${alias} with \`beepboop secrets grant ${snapshot.repository.name} ${alias} --operation ${operation}\`.`,
+					`${file}: when the repository owner merges this PR, Beepboop grants it the stored ${alias} secret for the ${operation} operation.`,
 				);
 			}
 			const bindings = Object.fromEntries(

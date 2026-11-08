@@ -1,12 +1,13 @@
 import { CronExpressionParser } from 'cron-parser';
 import { Cause, Effect, Layer, Result } from 'effect';
 import { z } from 'zod';
+import { configuredGrant } from '@/automation/access';
 import type { AuthBindings } from '@/automation/auth';
 import { resolveConfiguration } from '@/automation/configuration';
 import type { AutomationCoordinator } from '@/automation/coordinator';
 import { createExecution, deriveExecution } from '@/automation/execution';
 import { type Credentials, RepositoryGateway } from '@/automation/github';
-import { type InboxEvent, inboxEvent, type SetupPullEdit } from '@/automation/inbox';
+import { type InboxEvent, inboxEvent, type SetupPullEdit, type SetupPullMerge } from '@/automation/inbox';
 import { discover, planRelease, resolvePublished, versionsInFiles } from '@/automation/managers';
 import { jsrTokenAlias, jsrTokenRefused, setUpJsrPackage } from '@/automation/managers/jsr';
 import { registryLayer } from '@/automation/managers/registry';
@@ -17,11 +18,11 @@ import { pollPackages } from '@/automation/package-watch';
 import { manifestProblems, unreleasedManifestVersion } from '@/automation/release-version';
 import { setupOptionsSchema } from '@/automation/schemas';
 import { bodyChoices } from '@/automation/setup';
-import { maintainSetup } from '@/automation/setup-maintenance';
+import { maintainSetup, setupEdits } from '@/automation/setup-maintenance';
 import { decodeError, Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
 import type { AutomationEvent, Execution, RepositoryRecord, SubscriptionDelivery } from '@/automation/types';
-import { Secrets, secretsLayer, Vault } from '@/automation/vault';
+import { parseGrant, Secrets, secretsLayer, Vault } from '@/automation/vault';
 import { type WinGetBindings, WinGetService } from '@/automation/winget';
 import { type DomainError, notFound, precondition } from '@/contract/errors';
 import { setupChoicesSchema } from '@/contract/setup';
@@ -389,7 +390,11 @@ export class AutomationService {
 		});
 	}
 	private inbound(event: string | null, payload: Record<string, unknown>): Parsed<unknown> {
-		if (event === 'pull_request') return Result.succeed({ kind: event, edit: payload });
+		if (event === 'pull_request') {
+			return Result.succeed(
+				payload.action === 'closed' ? { kind: 'setup_merged', merge: payload } : { kind: event, edit: payload },
+			);
+		}
 		if (event === 'push') return Result.succeed({ kind: event, ref: payload.ref });
 		if (event === 'release') return Result.succeed({ kind: event, action: payload.action });
 		return Result.gen(function*() {
@@ -413,6 +418,7 @@ export class AutomationService {
 			const repository = yield* this.store.repository(repositoryId);
 			if (!repository) return;
 			if (event.kind === 'pull_request') return yield* this.setupEdited(repository, event.edit);
+			if (event.kind === 'setup_merged') return yield* this.setupMerged(repository, event.merge);
 			if (event.kind === 'release') {
 				if (event.action === 'published') yield* this.winget().automatic(repository);
 				return;
@@ -435,6 +441,57 @@ export class AutomationService {
 					event: 'workflow_run',
 					workflow: run.path.replace(/^\.github\/workflows\//, ''),
 				});
+			}
+		});
+	}
+	private setupMerged(repository: RepositoryRecord, merge: SetupPullMerge): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const { pull_request: pull } = merge;
+			if (pull.head.repo.id !== repository.id || pull.base.repo.id !== repository.id) return;
+			const bot = yield* this.gateway.botIdentity;
+			if (pull.user.id !== bot.id || pull.merged_by.login !== (yield* this.gateway.ownerLogin())) return;
+			const document = yield* this.onboarding.document(repository.id);
+			if (document === undefined) return;
+			const saved = yield* Effect.fromResult(record(yield* fromJson(document)));
+			if (saved.url !== `https://github.com/${repository.name}/pull/${pull.number}`) return;
+			const choices = yield* fromSync(() => setupChoicesSchema.optional().parse(saved.choices));
+			if (!choices) return;
+			const generated = setupEdits(saved);
+			const merged = yield* this.gateway.snapshot(
+				repository.name,
+				repository.id,
+				pull.merge_commit_sha,
+				generated.map(edit => edit.path),
+			);
+			if (!generated.length || generated.some(edit => merged.files[edit.path] !== edit.after)) return;
+			yield* this.refresh(repository.name, repository.id);
+			const current = yield* this.store.repository(repository.id);
+			if (!current) return;
+			const ready = yield* requireReady(current);
+			const existing = yield* Effect.forEach(
+				yield* this.credentials.grantDocuments({ repositoryId: repository.id }),
+				parseGrant,
+			);
+			for (const stream of choices.streams) {
+				const requested = [
+					...(['prepare', 'promote'] as const).flatMap(operation =>
+						Object.values(stream[operation]?.credentials ?? {}).map(alias => ({ operation, alias }))
+					),
+					...(stream.operations ?? []).flatMap(entry =>
+						Object.values(entry.credentials ?? {}).map(alias => ({ operation: entry.name, alias }))
+					),
+				];
+				for (const { operation, alias } of requested) {
+					if ((yield* this.credentials.activeVersion(alias)) === undefined) continue;
+					const grant = yield* configuredGrant(ready, { stream: stream.name, operation, alias, delivery: 'runtime' });
+					if (
+						existing.some(other =>
+							other.alias === grant.alias && other.operation === grant.operation
+							&& other.workflow === grant.workflow && other.ref === grant.ref && other.delivery === 'runtime'
+						)
+					) continue;
+					yield* this.vault().grant(grant, `merge:${pull.merged_by.login}`);
+				}
 			}
 		});
 	}

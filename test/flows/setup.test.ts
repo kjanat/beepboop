@@ -715,7 +715,7 @@ test('setup delivers selected credentials to the publishing commands', async () 
 	}).parse(JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'));
 	expect(configuration.streams.main?.credentials).toEqual(['npm-token']);
 	expect(plan.notes).toContain(
-		'release-widget.yml: grant npm-token with `beepboop secrets grant octo/widget npm-token --operation promote`.',
+		'release-widget.yml: when the repository owner merges this PR, Beepboop grants it the stored npm-token secret for the promote operation.',
 	);
 });
 

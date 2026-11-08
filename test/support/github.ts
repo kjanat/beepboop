@@ -576,8 +576,13 @@ export class FakeGitHub {
 		repository.refs.set(`heads/${defaultBranch}`, commit.sha);
 		return repository;
 	}
-	push(repository: Repository, files: Record<string, string | null>, message: string): Commit {
-		const parent = this.resolve(repository, repository.defaultBranch);
+	push(
+		repository: Repository,
+		files: Record<string, string | null>,
+		message: string,
+		branch = repository.defaultBranch,
+	): Commit {
+		const parent = this.resolve(repository, branch);
 		const next = new Map(this.files(repository, parent));
 		for (const [path, content] of Object.entries(files)) {
 			if (content === null) next.delete(path);
@@ -590,7 +595,10 @@ export class FakeGitHub {
 			verified: true,
 			authorId: ownerId,
 		});
-		repository.refs.set(`heads/${repository.defaultBranch}`, commit.sha);
+		repository.refs.set(`heads/${branch}`, commit.sha);
+		for (const pull of repository.pulls) {
+			if (pull.state === 'open' && pull.head.ref === branch) pull.head.sha = commit.sha;
+		}
 		return commit;
 	}
 	merge(repository: Repository, number: number): Commit {
