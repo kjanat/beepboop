@@ -88,40 +88,79 @@ export function cratePublishCommands(names: string[]): string {
 	return [publishCrate, ...names.map(name => `publish_crate ${quote(name)}`)].join('\n');
 }
 export function suggestedCommands(role: 'prepare' | 'promote', selection: Selection, plan: SetupPlan): string {
-	const commands = managerCommands(role, selection, plan);
+	const commands = ungenerated(selection).length ? '' : managerCommands(role, selection, plan);
 	return role === 'prepare' && commands && plan.preparation?.lockfiles.some(path => /(?:^|\/)uv\.lock$/.test(path))
 		? `${commands}\nuv lock`
 		: commands;
 }
+type Selected = Selection['packages'][number];
+function directory(manifest: string): string {
+	return manifest.split('/').slice(0, -1).join('/');
+}
+function npmPackage(pkg: Selected): boolean {
+	return pkg.manager === 'npm' && /(?:^|\/)package\.json$/.test(pkg.manifest);
+}
+const generators: Record<
+	string,
+	{
+		covers(pkg: Selected): boolean;
+		commands(role: 'prepare' | 'promote', packages: Selected[], plan: SetupPlan): string;
+	}
+> = {
+	cargo: {
+		covers: () => true,
+		commands: (role, packages) =>
+			role === 'prepare'
+				? 'cargo check --workspace --all-targets\ncargo test --workspace'
+				: cratePublishCommands(packages.map(pkg => pkg.name)),
+	},
+	npm: {
+		covers: npmPackage,
+		commands: (role, packages, plan) => {
+			const lockfiles = plan.preparation?.lockfiles ?? [];
+			const install = lockfiles.some(path => path.endsWith('bun.lock'))
+				? 'bun install'
+				: lockfiles.some(path => path.endsWith('pnpm-lock.yaml'))
+				? 'pnpm install --no-frozen-lockfile'
+				: lockfiles.some(path => path.endsWith('yarn.lock'))
+				? 'YARN_ENABLE_IMMUTABLE_INSTALLS=false yarn install'
+				: lockfiles.some(path => path.endsWith('package-lock.json'))
+				? 'npm install --package-lock-only\nnpm ci'
+				: 'npm install';
+			const command = role === 'promote' ? 'npm publish' : `${install}\nnpm run test --if-present`;
+			return [
+				...new Set(packages.map(pkg => {
+					const dir = directory(pkg.manifest);
+					return dir ? `(cd ${quote(dir)} &&\n${command}\n)` : command;
+				})),
+			].join('\n');
+		},
+	},
+	pypi: {
+		covers: pkg => /(?:^|\/)pyproject\.toml$/.test(pkg.manifest),
+		commands: (role, packages) =>
+			packages.map(pkg => {
+				const dir = directory(pkg.manifest);
+				const build = `uv build${dir ? ` --project ${quote(dir)}` : ''}`;
+				return role === 'prepare'
+					? `${build} --out-dir "$RUNNER_TEMP"/dist/${quote(pkg.name)}`
+					: `${build} --out-dir ${quote(`dist/${pkg.name}`)}\nuv publish --check-url https://pypi.org/simple/ ${
+						quote(`dist/${pkg.name}/*`)
+					}`;
+			}).join('\n'),
+	},
+};
+export function ungenerated(selection: Selection): Selected[] {
+	return selection.packages.filter(pkg => !generators[pkg.manager ?? '']?.covers(pkg));
+}
 function managerCommands(role: 'prepare' | 'promote', selection: Selection, plan: SetupPlan): string {
 	const order = plan.inventory.publicationOrder ?? [];
 	const rank = (id: string) => order.includes(id) ? order.indexOf(id) : order.length;
-	const packages = [...selection.packages].sort((left, right) => rank(left.id) - rank(right.id));
-	if (!packages.length) return '';
-	if (packages.every(pkg => pkg.manager === 'cargo')) {
-		return role === 'prepare'
-			? 'cargo check --workspace --all-targets\ncargo test --workspace'
-			: cratePublishCommands(packages.map(pkg => pkg.name));
+	const groups = new Map<string, Selected[]>();
+	for (const pkg of [...selection.packages].sort((left, right) => rank(left.id) - rank(right.id))) {
+		const manager = pkg.manager ?? '';
+		groups.set(manager, [...(groups.get(manager) ?? []), pkg]);
 	}
-	if (packages.every(pkg => pkg.manager === 'npm' && /(?:^|\/)package\.json$/.test(pkg.manifest))) {
-		const npm = plan.preparation?.lockfiles.some(path => path.endsWith('package-lock.json'));
-		const lockfiles = plan.preparation?.lockfiles ?? [];
-		const install = lockfiles.some(path => path.endsWith('bun.lock'))
-			? 'bun install'
-			: lockfiles.some(path => path.endsWith('pnpm-lock.yaml'))
-			? 'pnpm install --no-frozen-lockfile'
-			: lockfiles.some(path => path.endsWith('yarn.lock'))
-			? 'YARN_ENABLE_IMMUTABLE_INSTALLS=false yarn install'
-			: npm
-			? 'npm install --package-lock-only\nnpm ci'
-			: 'npm install';
-		const command = role === 'promote' ? 'npm publish' : `${install}\nnpm run test --if-present`;
-		return [
-			...new Set(packages.map(pkg => {
-				const dir = pkg.manifest.split('/').slice(0, -1).join('/');
-				return dir ? `(cd ${quote(dir)} &&\n${command}\n)` : command;
-			})),
-		].join('\n');
-	}
-	return '';
+	return [...groups].flatMap(([manager, packages]) => generators[manager]?.commands(role, packages, plan) ?? [])
+		.join('\n');
 }

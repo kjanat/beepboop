@@ -7,6 +7,7 @@ import {
 	type Selection,
 	suggestedCommands,
 	suggestedWorkflowFile,
+	ungenerated,
 } from '@/automation/setup-defaults';
 import { streamSummary } from '@/automation/setup-summary';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
@@ -21,6 +22,35 @@ function select(ask: Ask, message: string, entries: SelectChoice[]): Effect.Effe
 		: Effect.fail(failure('No choices available', 'NO_CHOICES'));
 }
 
+function typedCommands(ask: Ask, packages: string, purpose: string): Effect.Effect<string, CLIError> {
+	return Effect.gen(function*() {
+		const lines: string[] = [];
+		for (;;) {
+			const line = yield* Effect.promise(() =>
+				ask({
+					kind: 'input',
+					message: lines.length
+						? 'Next command (empty line ends)'
+						: `Beepboop cannot generate ${purpose} commands for ${packages}. Enter them one line at a time, then an empty line.`,
+					empty: 'accept',
+					trim: false,
+				})
+			);
+			if (!line.trim()) break;
+			lines.push(line);
+		}
+		if (!lines.length) {
+			return yield* Effect.fail(
+				failure(
+					`No ${purpose} commands for ${packages}`,
+					'COMMANDS_REQUIRED',
+					'Enter their commands, or leave those packages out',
+				),
+			);
+		}
+		return lines.join('\n');
+	});
+}
 /** Interactive choices use the same defaults and reviewed API as the dashboard. */
 export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<SetupChoices, CLIError> {
 	return Effect.gen(function*() {
@@ -174,23 +204,27 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				const unchanged = previous?.file === file && previous.job === job
 					&& isDeepStrictEqual([...previousPackages].sort(), [...stream.packages].sort())
 					&& isDeepStrictEqual(previous.publicationSteps, publicationSteps);
+				const covered = { ...selectedPackages, packages: preparing ? selectedPackages.packages : remaining };
+				const missing = unchanged && previous.commands ? [] : ungenerated(covered);
 				const suggested = unchanged && previous.commands
 					? previous.commands
-					: suggestedCommands(role, {
-						...selectedPackages,
-						packages: preparing ? selectedPackages.packages : remaining,
-					}, plan);
-				const commands = integrated || (!preparing && !remaining.length) ? '' : yield* Effect.promise(() =>
-					ask({
-						kind: 'input',
-						message: preparing
-							? 'Bash commands to update lockfiles and check the release (no YAML)'
-							: 'Bash commands to generate/build and publish the selected packages (no YAML)',
-						...(suggested ? { default: suggested } : {}),
-						empty: 'retry',
-						validate: value => !!value.trim() || 'Enter the shell commands your project needs.',
-					})
-				);
+					: suggestedCommands(
+						role,
+						{ ...covered, packages: covered.packages.filter(pkg => !missing.includes(pkg)) },
+						plan,
+					);
+				const commands = integrated || (!preparing && !remaining.length)
+					? ''
+					: missing.length
+					? [
+						suggested,
+						yield* typedCommands(
+							ask,
+							missing.map(pkg => `${packageLabel(pkg.id)} (${pkg.manager ?? 'unknown manager'})`).join(', '),
+							preparing ? 'preparation' : 'build and publish',
+						),
+					].filter(Boolean).join('\n')
+					: suggested;
 				const choice: SetupWorkflow = {
 					file,
 					job,

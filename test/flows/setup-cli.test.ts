@@ -166,6 +166,49 @@ jobs:
 	expect(publications.find(pkg => pkg.name === 'package-b')?.outcome).toContain('steps.beepboop_publish.outcome');
 });
 
+for (const mixed of ['pypi', 'npm'] as const) {
+	test(`a cargo and ${mixed} selection adopts with generated commands and no commands prompt`, async () => {
+		const repository = world.github.create('octo/mixed', {
+			'Cargo.toml': '[package]\nname = "mixed-cli"\nversion = "1.0.0"\nedition = "2024"\n',
+			...(mixed === 'pypi'
+				? { 'bench/pyproject.toml': '[project]\nname = "mixed-bench"\nversion = "1.0.0"\n' }
+				: { 'js/package.json': '{"name":"mixed-js","version":"1.0.0"}' }),
+		});
+		const result = await run(['adopt', repository.name], [true, 'new', 'managed', false, true]);
+		expect(result.stdout.join('')).not.toContain('Bash commands');
+		expect(result.exitCode).toBe(0);
+		const workflow = z.object({
+			jobs: z.object({
+				publish: z.object({ steps: z.array(z.object({ id: z.string().optional(), run: z.string().optional() })) }),
+			}),
+		}).parse(
+			parse(world.github.file(repository, '.github/workflows/release-mixed.yml', 'automation/onboarding') ?? ''),
+		);
+		const script = workflow.jobs.publish.steps.find(step => step.id === 'beepboop_publish')?.run ?? '';
+		expect(script).toContain("publish_crate 'mixed-cli'\n");
+		expect(script).toEndWith(
+			mixed === 'pypi'
+				? "uv build --project 'bench' --out-dir 'dist/mixed-bench'\nuv publish --check-url https://pypi.org/simple/ 'dist/mixed-bench/*'\n"
+				: "(cd 'js' &&\nnpm publish\n)\n",
+		);
+	});
+}
+
+test('adoption stops when no commands are entered for packages without generated commands', async () => {
+	const repository = world.github.create('octo/generated', {
+		'Cargo.toml': '[workspace]\nmembers = []\n[workspace.package]\nversion = "1.0.0"\n',
+		'npm/targets.json': JSON.stringify({
+			scope: '@octo',
+			facade: '@octo/widget',
+			targets: [{ pkg: 'widget-linux-x64' }],
+		}),
+	});
+	const result = await run(['adopt', repository.name], [true, 'new', '']);
+	expect(result.exitCode).not.toBe(0);
+	expect(result.stderr.join('')).toContain('No build and publish commands for');
+	expect(repository.pulls).toEqual([]);
+});
+
 test('generated npm targets require explicit commands instead of an npm publish suggestion', async () => {
 	const repository = world.github.create('octo/generated', {
 		'Cargo.toml': '[workspace]\nmembers = []\n[workspace.package]\nversion = "1.0.0"\n',
@@ -175,10 +218,9 @@ test('generated npm targets require explicit commands instead of an npm publish 
 			targets: [{ pkg: 'widget-linux-x64' }],
 		}),
 	});
-	// Empty input retries: there is no guessed command to accept for descriptor-backed packages.
 	const result = await run(
 		['adopt', repository.name],
-		[true, 'new', '', './scripts/generate-and-publish.sh', 'managed', false, true],
+		[true, 'new', './scripts/generate-and-publish.sh', '', 'managed', false, true],
 	);
 	expect(result.exitCode).toBe(0);
 	const workflow = world.github.file(repository, '.github/workflows/release-generated.yml', 'automation/onboarding')
