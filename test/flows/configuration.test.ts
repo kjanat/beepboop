@@ -656,3 +656,37 @@ test('the parser and schema agree on tag prefixes with directories', () => {
 		expect(configurationSchema.safeParse(document(prefix)).success).toBe(valid);
 	}
 });
+
+test('the parser and schema agree on job gates', () => {
+	const document = (needsJobs: unknown, mode = 'observe') => ({
+		streams: {
+			main: {
+				promote: { workflow: { file: 'publish.yml' } },
+				needs: { 'pkg:cargo/cli': ['pkg:cargo/core'] },
+				workflows: {
+					release: { file: 'release.yml', mode, ref: 'refs/tags/v*', needs: ['promote'] },
+					crates: { file: 'crates.yml', needs: ['release'], needsJobs },
+				},
+			},
+		},
+	});
+	for (
+		const [value, valid] of [
+			[document({ release: ['plan', 'build_all', 'Assemble-1'] }), true],
+			[document({ promote: ['plan'] }), false],
+			[document({ release: ['plan'] }, 'dispatch'), false],
+			[document({ release: [] }), false],
+			[document({ release: ['1plan'] }), false],
+		] as const
+	) {
+		expect(Result.isSuccess(parseRepositoryConfiguration(value))).toBe(valid);
+		expect(configurationSchema.safeParse(value).success).toBe(valid);
+	}
+	const parsed = configurationSchema.parse(document({ release: ['plan'] }));
+	const encoded = storedConfiguration.parse(parsed).streams.main;
+	expect(encoded?.workflows.crates?.needsJobs).toEqual({ release: ['plan'] });
+	expect(encoded?.needs).toEqual({ 'pkg:cargo/cli': ['pkg:cargo/core'] });
+	const legacy = parseRepositoryConfiguration(document({ release: ['plan'] }));
+	if (Result.isFailure(legacy)) throw new Error('The parser rejected a valid job gate');
+	expect(configurationDrift(document({ release: ['plan'] }), legacy.success)).toEqual([]);
+});

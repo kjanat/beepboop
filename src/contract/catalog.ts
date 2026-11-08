@@ -14,6 +14,7 @@ export const managerNames = [
 ] as const;
 export type ManagerName = (typeof managerNames)[number];
 export const workflowFilePattern = /^[\w-][\w.-]*\.ya?ml$/;
+export const jobKeyPattern = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 export const tagPrefixPattern = /^(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]*$/;
 export function validTagPrefix(value: string): boolean {
 	return tagPrefixPattern.test(value) && !value.includes('..');

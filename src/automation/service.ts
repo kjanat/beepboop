@@ -429,7 +429,7 @@ export class AutomationService {
 			}
 			const { action, run } = event;
 			const coordinator = this.coordinator(repository.id);
-			if (action !== 'completed') return yield* fromPromise(() => coordinator.wake());
+			if (action !== 'completed') return yield* fromPromise(() => coordinator.trackRun(repository.id, run.id));
 			yield* fromPromise(() => coordinator.observeRun(repository.id, run.id));
 			if (
 				run.conclusion === 'success' && ['push', 'release', 'workflow_dispatch', 'schedule'].includes(run.event)

@@ -1,3 +1,4 @@
+import { gateJobs, workflowJobs } from '@/automation/job-gate';
 import { packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import type { ReleaseGraph } from '@/automation/release-graph/graph';
@@ -96,6 +97,17 @@ export function completeTaggedStreams(
 	);
 	const starter = (stream.observe ?? []).find(entry => entry.ref === `refs/tags/${tagPrefix}*`);
 	const observed = [...new Set(starter?.publications ?? [])];
+	const starterJobs = starter && workflowJobs(snapshot.files[`.github/workflows/${starter.file}`] ?? '');
+	const gate = starter && starterJobs
+		? gateJobs(
+			starterJobs,
+			(proposal?.targets ?? []).flatMap(target =>
+				target.operations.flatMap(operation =>
+					operation.startsWith(`${starter.file}#`) ? [operation.slice(starter.file.length + 1)] : []
+				)
+			),
+		)
+		: [];
 	const needs: Record<string, string[]> = {};
 	const depend = (id: string, dependencies: readonly string[]) => {
 		const unique = [...new Set(dependencies)].filter(dependency => dependency !== id);
@@ -107,7 +119,7 @@ export function completeTaggedStreams(
 	}
 	for (const pkg of crates) {
 		depend(packageId(pkg), [
-			...(starter ? observed : []),
+			...(starter ? gate.length ? moduleIds : observed : []),
 			...pkg.dependencies.flatMap(name => crateIds.get(name) ?? []),
 		]);
 	}
@@ -151,6 +163,7 @@ export function completeTaggedStreams(
 					file: unusedFile('publish-crates', taken),
 					...publish,
 					needs: [starter.name],
+					...(gate.length ? { needsJobs: { [starter.name]: gate } } : {}),
 					publications: crates.map(packageId),
 				}],
 			}

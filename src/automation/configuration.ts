@@ -5,7 +5,7 @@ import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs'
 import { parseReleaseIdentity } from '@/automation/package-identity';
 import { parsePresetReference } from '@/automation/preset';
 import type { Configuration, Stream, WorkflowBinding } from '@/automation/types';
-import { managerNames, validRef, validTagPrefix, workflowFilePattern } from '@/contract/catalog';
+import { jobKeyPattern, managerNames, validRef, validTagPrefix, workflowFilePattern } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
 import { type DomainError, precondition } from '@/contract/errors';
 import { versionFileSchema } from '@/contract/version-files';
@@ -78,6 +78,7 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 				'inputs',
 				'required',
 				'needs',
+				'needsJobs',
 				'schedule',
 				'publications',
 				'mode',
@@ -143,6 +144,17 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 		const platform = data.platform === undefined ? undefined : yield* lift(() => platformSchema.parse(data.platform));
 		const needs = data.needs === undefined && !artifactInputs ? undefined : yield* strings(data.needs ?? []);
 		const publications = data.publications === undefined ? undefined : yield* packageReferences(data.publications);
+		let needsJobs: Record<string, string[]> | undefined;
+		if (data.needsJobs !== undefined) {
+			needsJobs = {};
+			for (const [operation, jobs] of Object.entries(yield* record(data.needsJobs))) {
+				const names = yield* strings(jobs);
+				if (!identifier.test(operation) || !names.length || names.some(name => !jobKeyPattern.test(name))) {
+					return yield* reject('Invalid needsJobs');
+				}
+				needsJobs[operation] = names;
+			}
+		}
 		return {
 			...(outputs ? { outputs } : {}),
 			...(artifactInputs ? { artifactInputs } : {}),
@@ -153,6 +165,7 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 			...(needs === undefined
 				? {}
 				: { needs: [...new Set([...needs, ...(artifactInputs ?? []).map(input => input.operation)])] }),
+			...(needsJobs === undefined ? {} : { needsJobs }),
 			...(publications === undefined ? {} : { publications }),
 			...(schedule === undefined ? {} : { schedule }),
 			file,
@@ -283,6 +296,11 @@ function operationGraph(stream: Stream): Parsed<void> {
 			for (const input of operation?.artifactInputs ?? []) {
 				if (!operations[input.operation]?.outputs?.some(output => output.id === input.output)) {
 					return yield* reject(`Unknown output: ${input.operation}/${input.output}`);
+				}
+			}
+			for (const needed of Object.keys(operation?.needsJobs ?? {})) {
+				if (!operation?.needs?.includes(needed) || operations[needed]?.mode !== 'observe') {
+					return yield* reject(`needsJobs.${needed} must name an observed operation listed in needs`);
 				}
 			}
 			if (operation?.refs && !approved(name)) {

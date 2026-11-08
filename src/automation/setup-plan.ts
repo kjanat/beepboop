@@ -23,6 +23,7 @@ const workflow: z.ZodType<SetupWorkflow> = workflowShape.strict();
 const operation: z.ZodType<SetupOperation> = workflowShape.extend({
 	name: z.string(),
 	needs: strings,
+	needsJobs: z.record(z.string(), strings).optional(),
 	publications: strings,
 }).strict();
 const publication: z.ZodType<PackagePublication> = z.discriminatedUnion('kind', [

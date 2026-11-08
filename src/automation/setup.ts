@@ -351,13 +351,16 @@ function drafted(
 			}
 			for (const entry of selection.operations ?? []) {
 				const previous = object(object(current.workflows)[entry.name]);
-				bindings[entry.name] = {
+				const operation: Record<string, unknown> = {
 					...previous,
 					file: entry.file,
 					ref: typeof previous.ref === 'string' ? previous.ref : snapshot.repository.defaultBranch,
 					publications: entry.publications,
 					needs: entry.needs,
+					...(entry.needsJobs ? { needsJobs: entry.needsJobs } : {}),
 				};
+				if (!entry.needsJobs) delete operation.needsJobs;
+				bindings[entry.name] = operation;
 			}
 			if (Object.keys(bindings).length) updated.workflows = bindings;
 			else delete updated.workflows;
@@ -452,7 +455,7 @@ function drafted(
 				if (generated.content !== before) edits.push({ path, before, after: generated.content });
 			}
 			for (const entry of selection.operations ?? []) {
-				const { name: operation, needs: _needs, publications, ...workflow } = entry;
+				const { name: operation, needs: _needs, needsJobs: _jobs, publications, ...workflow } = entry;
 				if (selectedFiles.has(workflow.file)) {
 					blockers.push(`${workflow.file}: one workflow cannot be assigned to multiple release roles or streams.`);
 				}
@@ -722,7 +725,12 @@ export function setupBody(plan: SetupPlan): string {
 				`  - Preparation: ${workflow(stream.prepare)}`,
 				`  - Publication: ${workflow(stream.promote)}`,
 				...(stream.operations ?? []).map(entry =>
-					`  - After ${entry.needs.map(name => `\`${name}\``).join(', ')}: ${workflow(entry)}`
+					`  - After ${
+						entry.needs.map(name => {
+							const jobs = entry.needsJobs?.[name];
+							return jobs ? `jobs ${jobs.map(job => `\`${job}\``).join(', ')} of \`${name}\`` : `\`${name}\``;
+						}).join(', ')
+					}: ${workflow(entry)}`
 				),
 				...(stream.needs && Object.keys(stream.needs).length
 					? [

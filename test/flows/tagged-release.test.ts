@@ -7,6 +7,7 @@ import { parse } from 'yaml';
 import { z } from 'zod';
 import { setupOptions } from '@/automation/setup';
 import { parseSetupPlan } from '@/automation/setup-plan';
+import { streamSummary } from '@/automation/setup-summary';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { commitAll, gitOutput, materialize, runAction, runRuntime } from '@root/test/support/actions.ts';
 import { botId, ownerId, type Repository } from '@root/test/support/github.ts';
@@ -45,7 +46,55 @@ jobs:
       - run: gh release create "$GITHUB_REF_NAME" dist/*
 `;
 
-function lintRepository(): Repository {
+const stagedWorkflow = `name: Release
+on:
+  push:
+    tags: ['lint-v*']
+jobs:
+  plan:
+    name: Plan release
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo plan
+  build:
+    name: \${{ matrix.target }}
+    needs: plan
+    strategy:
+      matrix:
+        target: [linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo build
+  assemble:
+    name: Assemble payload
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo assemble
+  github:
+    needs: assemble
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - run: gh release create "$GITHUB_REF_NAME" dist/*
+  npm:
+    needs: github
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: npm publish
+        working-directory: bindings/js
+  pypi:
+    needs: github
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: uv build --directory bindings/python
+      - uses: pypa/gh-action-pypi-publish@release/v1
+`;
+
+function lintRepository(workflow = releaseWorkflow): Repository {
 	return world.github.create('octo/lint', {
 		'Cargo.toml': '[workspace]\nmembers = ["crates/core", "crates/cli"]\n\n[workspace.package]\nversion = "1.0.0"\n',
 		'Cargo.lock': '# Lockfile\n',
@@ -55,7 +104,7 @@ function lintRepository(): Repository {
 		'bindings/js/package.json': '{\n  "name": "@octo/lint",\n  "version": "1.0.0"\n}\n',
 		'bindings/python/pyproject.toml': '[project]\nname = "lint-py"\nversion = "1.0.0"\n',
 		'go/go.mod': 'module github.com/octo/lint/go\n\ngo 1.26\n',
-		'.github/workflows/release.yml': releaseWorkflow,
+		'.github/workflows/release.yml': workflow,
 	});
 }
 
@@ -527,3 +576,177 @@ test('an uncustomized setup PR follows the current proposal when the default bra
 	expect(configured.streams.lint?.packages).toContain('pkg:golang/github.com/octo/lint/sdk');
 	expect(repository.pulls).toHaveLength(1);
 });
+
+const passedBuild: NonNullable<Repository['runs'][number]['jobs']> = [
+	{ name: 'Plan release', status: 'completed', conclusion: 'success' },
+	{ name: 'linux', status: 'completed', conclusion: 'success' },
+	{ name: 'macos', status: 'completed', conclusion: 'success' },
+	{ name: 'Assemble payload', status: 'completed', conclusion: 'success' },
+	{ name: 'github', status: 'completed', conclusion: 'success' },
+];
+
+async function stagedRelease() {
+	world.network.serve('crates.io', () => new Response(null, { status: 404 }));
+	world.network.serve('pypi.org', () => new Response(null, { status: 404 }));
+	world.network.serve('proxy.golang.org', () => new Response(null, { status: 404 }));
+	const repository = lintRepository(stagedWorkflow);
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const plan = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name })).body),
+	);
+	expect(plan.blockers).toEqual([]);
+	const [stream] = plan.choices.streams;
+	if (!stream) throw new Error('No proposed stream');
+	expect(stream.operations?.map(entry => [entry.name, entry.needs, entry.needsJobs])).toEqual([
+		['crates', ['release'], { release: ['plan', 'build', 'assemble'] }],
+	]);
+	expect(streamSummary(stream, plan)).toContain(
+		'After the plan, build and assemble jobs of release.yml succeed, publish-crates.yml (new) publishes lint-core and lint to crates.io.',
+	);
+	const module = 'pkg:golang/github.com/octo/lint/go';
+	expect(stream.needs?.['pkg:cargo/lint-core']).toEqual([module]);
+	expect(stream.needs?.['pkg:cargo/lint']).toEqual([module, 'pkg:cargo/lint-core']);
+	const applied = await api('/api/repositories/setup/apply', {
+		repository: repository.name,
+		choices: plan.choices,
+		planId: plan.planId,
+		sourceSha: plan.sourceSha,
+		setupHead: plan.setupHead,
+	});
+	expect(applied.status).toBe(200);
+	expect(one(repository.pulls, 'setup pull request').body).toContain(
+		'  - After jobs `plan`, `build`, `assemble` of `release`: `publish-crates.yml`',
+	);
+	const merged = world.github.merge(repository, 1);
+	passChecks(repository, merged.sha);
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const configured = z.object({
+		streams: z.record(z.string(), z.object({ workflows: z.record(z.string(), z.looseObject({})) })),
+	}).parse(JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}'));
+	expect(configured.streams[stream.name]?.workflows.crates).toMatchObject({
+		needs: ['release'],
+		needsJobs: { release: ['plan', 'build', 'assemble'] },
+	});
+	repository.refs.set('tags/lint-v1.0.0', merged.sha);
+	const run: Repository['runs'][number] = {
+		id: 9200,
+		path: '.github/workflows/release.yml',
+		event: 'push',
+		headSha: merged.sha,
+		headBranch: 'lint-v1.0.0',
+		status: 'in_progress',
+		conclusion: null,
+		attempt: 1,
+		title: 'Release',
+		inputs: {},
+		jobs: [
+			{ name: 'Plan release', status: 'completed', conclusion: 'success' },
+			{ name: 'linux', status: 'completed', conclusion: 'success' },
+			{ name: 'macos', status: 'in_progress', conclusion: null },
+		],
+	};
+	repository.runs.push(run);
+	const notify = async (action: string) => {
+		await world.webhook('workflow_run', {
+			action,
+			workflow_run: {
+				id: run.id,
+				conclusion: run.conclusion,
+				event: run.event,
+				path: run.path,
+				head_repository: { id: repository.id },
+			},
+			repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
+		});
+	};
+	await notify('in_progress');
+	await world.wait(2_000);
+	const crateRuns = () => repository.runs.filter(entry => entry.path === '.github/workflows/publish-crates.yml');
+	const executions = async () =>
+		z.array(z.unknown()).parse((await api('/api/executions')).body).map(decodeExecutionV1).filter(entry =>
+			entry.operation !== 'promote'
+		);
+	expect(crateRuns()).toEqual([]);
+	return { repository, run, notify, crateRuns, executions };
+}
+
+test('the crates start once the build jobs pass while npm still runs', async () => {
+	const { run, notify, crateRuns, executions } = await stagedRelease();
+	run.jobs = [
+		...Array.from({ length: 120 }, (_, index) => ({
+			name: `lint ${index}`,
+			status: 'completed' as const,
+			conclusion: 'success',
+		})),
+		...passedBuild,
+		{ name: 'npm', status: 'in_progress', conclusion: null },
+	];
+	await world.wait(48_000);
+	expect(run.status).toBe('in_progress');
+	expect(crateRuns()).toHaveLength(1);
+	const crates = one((await executions()).filter(entry => entry.operation === 'crates'), 'crates execution');
+	expect([crates.state, crates.version, crates.sourceSha, crates.dependencies]).toEqual([
+		'dispatching',
+		'1.0.0',
+		run.headSha,
+		[],
+	]);
+	run.jobs = run.jobs.map(job => job.name === 'npm' ? { ...job, status: 'completed', conclusion: 'failure' } : job);
+	run.status = 'completed';
+	run.conclusion = 'failure';
+	await notify('completed');
+	await world.wait(16_000);
+	expect(crateRuns()).toHaveLength(1);
+	expect((await executions()).map(entry => [entry.operation, entry.state]).sort()).toEqual([
+		['crates', 'running'],
+		['release', 'failed'],
+	]);
+}, 60_000);
+
+test('the crates never start when a build job fails', async () => {
+	const { run, notify, crateRuns, executions } = await stagedRelease();
+	run.jobs = [
+		{ name: 'Plan release', status: 'completed', conclusion: 'success' },
+		{ name: 'linux', status: 'completed', conclusion: 'success' },
+		{ name: 'macos', status: 'completed', conclusion: 'failure' },
+		{ name: 'Assemble payload', status: 'completed', conclusion: 'skipped' },
+		{ name: 'github', status: 'completed', conclusion: 'skipped' },
+	];
+	await world.wait(48_000);
+	expect(crateRuns()).toEqual([]);
+	run.status = 'completed';
+	run.conclusion = 'failure';
+	await notify('completed');
+	await world.wait(16_000);
+	expect(crateRuns()).toEqual([]);
+	expect((await executions()).map(entry => [entry.operation, entry.state])).toEqual([['release', 'failed']]);
+}, 60_000);
+
+test('a completed run starts the crates when its build jobs passed, after tracking gave up', async () => {
+	const { repository, run, notify, crateRuns, executions } = await stagedRelease();
+	const storage = world.coordinators.instance(String(repository.id)).storage;
+	world.network.serve('api.github.com', request => {
+		if (new URL(request.url).pathname.endsWith('/jobs')) throw new TypeError('Connection reset by peer');
+		return world.github.handle(request);
+	});
+	run.jobs = [...passedBuild, { name: 'npm', status: 'in_progress', conclusion: null }];
+	await world.wait(30_000 * 11);
+	expect([...storage.snapshot()].filter(([key]) => key.startsWith('track:'))).toEqual([]);
+	const dead = await world.db.prepare('SELECT target FROM audit WHERE action=?').bind('track.dead').all();
+	expect(z.array(z.object({ target: z.string() })).parse(dead.results).map(row => row.target)).toEqual([
+		expect.stringMatching(/^run 9200 after 10 attempts: GitHub unreachable on GET .*\/jobs/),
+	]);
+	expect(crateRuns()).toEqual([]);
+	world.network.serve('api.github.com', request => world.github.handle(request));
+	run.jobs = [...passedBuild, { name: 'npm', status: 'completed', conclusion: 'failure' }];
+	run.status = 'completed';
+	run.conclusion = 'failure';
+	await notify('completed');
+	await world.wait(32_000);
+	expect(crateRuns()).toHaveLength(1);
+	expect((await executions()).map(entry => [entry.operation, entry.state]).sort()).toEqual([
+		['crates', 'running'],
+		['release', 'failed'],
+	]);
+}, 60_000);

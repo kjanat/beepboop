@@ -87,9 +87,14 @@ export function streamSummary(
 		);
 	}
 	for (const operation of stream.operations ?? []) {
-		const after = operation.needs.map(name => stream.observe?.find(entry => entry.name === name)?.file ?? name);
+		const after = operation.needs.map(name => {
+			const file = stream.observe?.find(entry => entry.name === name)?.file ?? name;
+			const jobs = operation.needsJobs?.[name];
+			return jobs ? `the ${listed(jobs)} ${jobs.length === 1 ? 'job' : 'jobs'} of ${file}` : file;
+		});
+		const plural = after.length > 1 || operation.needs.some(name => (operation.needsJobs?.[name]?.length ?? 0) > 1);
 		lines.push(
-			`After ${listed(after)} ${after.length === 1 ? 'succeeds' : 'succeed'}, ${named(operation.file)} publishes ${
+			`After ${listed(after)} ${plural ? 'succeed' : 'succeeds'}, ${named(operation.file)} publishes ${
 				publishes(operation.publications)
 			}.`,
 		);

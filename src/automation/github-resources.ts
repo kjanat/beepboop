@@ -72,7 +72,12 @@ export const workflowRunSchema = z.object({
 	head_branch: looseSchema,
 	run_attempt: countSchema,
 });
+export type WorkflowRun = z.output<typeof workflowRunSchema>;
 export const workflowRunsSchema = z.object({ workflow_runs: z.array(workflowRunSchema) });
+export const workflowJobsSchema = z.object({
+	total_count: z.number().int().nonnegative(),
+	jobs: z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().nullable() })),
+});
 export const dispatchSchema = z.object({ workflow_run_id: countSchema.optional() }).nullable();
 const assetSchema = z.object({ id: countSchema, name: textSchema, state: looseSchema, content_type: textSchema });
 export const releaseSchema = z.object({

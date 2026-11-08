@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import { refPattern, tagPrefixPattern, validRef, validTagPrefix, workflowFilePattern } from '@/contract/catalog';
+import {
+	jobKeyPattern,
+	refPattern,
+	tagPrefixPattern,
+	validRef,
+	validTagPrefix,
+	workflowFilePattern,
+} from '@/contract/catalog';
 import { credentialAliasPattern } from '@/contract/ids';
 import { versionFileSchema } from '@/contract/version-files';
 
@@ -93,6 +100,8 @@ const operation = workflow.extend({
 		'prepare and promote are reserved operation names',
 	),
 	needs: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)).min(1),
+	needsJobs: z.record(z.string().regex(/^[a-z][a-z0-9-]{0,63}$/), z.array(z.string().regex(jobKeyPattern)).min(1))
+		.optional(),
 	publications: z.array(z.string()).default([]),
 }).strict();
 export const setupChoicesSchema = z.object({

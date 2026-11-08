@@ -21,6 +21,7 @@ const binding = {
 	mode: z.enum(['observe', 'dispatch']).optional(),
 	each: z.literal('package').optional(),
 	needs: strings.optional(),
+	needsJobs: z.record(z.string(), strings).optional(),
 	publications: strings.optional(),
 	schedule: z.string().optional(),
 	file: z.string(),
@@ -43,6 +44,7 @@ const stream = z.object({
 	promote: z.object({ approval: z.enum(['required', 'merge', 'push']), workflow: workflowBinding.optional() }),
 	workflows: z.record(z.string(), workflowBinding),
 	required: strings,
+	needs: z.record(z.string(), strings).optional(),
 	credentials: strings,
 	channels: z.object({ stable: z.string(), prerelease: z.string() }),
 });

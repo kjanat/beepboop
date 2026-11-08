@@ -25,10 +25,13 @@ import {
 	gitTagSchema,
 	releaseNotesSchema,
 	releaseSchema,
+	type WorkflowRun,
+	workflowJobsSchema,
 	workflowRunSchema,
 	workflowRunsSchema,
 } from '@/automation/github-resources';
 import { type InboxEvent, inboxEntry } from '@/automation/inbox';
+import { gateState, type RunJob, resolvable, type WorkflowJobs, workflowJobs } from '@/automation/job-gate';
 import {
 	canVerifyPublication,
 	discover,
@@ -63,7 +66,7 @@ import { decodeError, Store } from '@/automation/store';
 import type { Artifact, AutomationEvent, Edit, Execution, Publication, ReleaseReference } from '@/automation/types';
 import { type DomainError, precondition } from '@/contract/errors';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
-import { readiness } from '@/domain/repository';
+import { type ReadyRepository, readiness } from '@/domain/repository';
 import { fromPromise, fromSync, recover, retryable, toDomainError } from '@/failure';
 import { sha } from '@/model';
 import { decodeEventV1, decodeExecutionV1, decodeSetupEditV1 } from '@/persistence/codecs/v1';
@@ -114,6 +117,7 @@ type ReleaseWake = z.output<typeof releaseWake>;
 const reconcileDue = z.number().nullable();
 const inboxAttempts = 8;
 const observationAttempts = 10;
+const jobPollInterval = 30_000;
 const access = z.object({ suspended: z.boolean() });
 const reconcileInterval = 60_000;
 const settleInterval = 15_000;
@@ -206,9 +210,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const wake = releaseWake.safeParse(value);
 				return wake.success ? wakeDue(wake.data) : now;
 			});
-			const observations = [...(yield* this.list({ prefix: 'observe:' })).values()].map(value =>
-				observation.safeParse(value).data?.due ?? now
-			);
+			const observations = [
+				...(yield* this.list({ prefix: 'observe:' })).values(),
+				...(yield* this.list({ prefix: 'track:' })).values(),
+			].map(value => observation.safeParse(value).data?.due ?? now);
 			const inbox = [...(yield* this.list({ prefix: 'inbox:' })).values()].map(value =>
 				inboxEntry.safeParse(value).data?.due ?? now
 			);
@@ -1538,15 +1543,23 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			yield* this.wakeUp();
 		}));
 	}
-	private observe(event: z.output<typeof observation>): Effect.Effect<void, DomainError> {
+	trackRun(repositoryId: number, runId: number): Promise<void> {
+		return Effect.runPromise(Effect.gen({ self: this }, function*() {
+			const key = `track:${runId}`;
+			if ((yield* this.read(key)) === undefined) yield* this.write(key, { repositoryId, runId });
+			yield* this.wakeUp();
+		}));
+	}
+	private observedRun(
+		event: z.output<typeof observation>,
+	): Effect.Effect<{ repository: ReadyRepository; run: WorkflowRun; token: string } | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const stored = yield* this.store().repository(event.repositoryId);
 			const state = stored && readiness(stored);
-			if (state?.kind !== 'ready') return;
+			if (state?.kind !== 'ready') return undefined;
 			const repository = state.repository;
-			const gateway = this.gateway();
-			const token = yield* gateway.token(repository.name, repository.id);
-			const run = yield* gateway.read(
+			const token = yield* this.gateway().token(repository.name, repository.id);
+			const run = yield* this.gateway().read(
 				workflowRunSchema,
 				`/repos/${repository.name}/actions/runs/${event.runId}`,
 				token,
@@ -1557,9 +1570,104 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					String(run.event),
 				)
 			) {
-				return;
+				return undefined;
 			}
-			if (typeof run.head_branch !== 'string') return;
+			return { repository, run, token };
+		});
+	}
+	private observe(event: z.output<typeof observation>): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const observed = yield* this.observedRun(event);
+			if (!observed) return;
+			const executions = yield* this.observeRunOf(observed.repository, observed.run, observed.token, true);
+			yield* this.openGates(observed.repository, observed.run, observed.token, Effect.succeed(executions));
+		});
+	}
+	private track(event: z.output<typeof observation>): Effect.Effect<boolean, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const observed = yield* this.observedRun(event);
+			if (!observed || observed.run.status === 'completed') return true;
+			const { repository, run, token } = observed;
+			return !(yield* this.openGates(repository, run, token, this.observeRunOf(repository, run, token, false)));
+		});
+	}
+	private runJobs(repository: string, run: WorkflowRun, token: string): Effect.Effect<RunJob[], DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const jobs: RunJob[] = [];
+			for (let page = 1;; page++) {
+				const listed = yield* this.gateway().read(
+					workflowJobsSchema,
+					`/repos/${repository}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs?per_page=100&page=${page}`,
+					token,
+				);
+				jobs.push(...listed.jobs);
+				if (!listed.jobs.length || jobs.length >= listed.total_count) return jobs;
+			}
+		});
+	}
+	private openGates(
+		repository: ReadyRepository,
+		run: WorkflowRun,
+		token: string,
+		parents: Effect.Effect<Execution[], DomainError>,
+	): Effect.Effect<boolean, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			let waiting = false;
+			let workflow: WorkflowJobs | null | undefined;
+			let jobs: RunJob[] | undefined;
+			const ready: { stream: string; operation: string; needed: string }[] = [];
+			for (const [streamName, stream] of Object.entries(repository.configuration.streams)) {
+				for (const [operation, binding] of Object.entries(stream.workflows)) {
+					for (const [needed, required] of Object.entries(binding.needsJobs ?? {})) {
+						if (run.path !== `.github/workflows/${stream.workflows[needed]?.file}`) continue;
+						const id = yield* executionId(repository.id, streamName, operation, `observed:${run.id}`);
+						if (yield* this.stored(id)) continue;
+						if (workflow === undefined) {
+							const source = yield* this.gateway().file(repository.name, run.path, run.head_sha, token);
+							workflow = (source === null ? undefined : workflowJobs(source)) ?? null;
+						}
+						if (!workflow || !resolvable(workflow, required)) continue;
+						jobs ??= yield* this.runJobs(repository.name, run, token);
+						const gate = gateState(workflow, required, jobs);
+						if (gate === 'waiting') waiting = true;
+						if (gate === 'ready') ready.push({ stream: streamName, operation, needed });
+					}
+				}
+			}
+			if (!ready.length) return waiting;
+			const observed = yield* parents;
+			for (const gate of ready) {
+				const parent = observed.find(execution =>
+					execution.stream === gate.stream && execution.operation === gate.needed && execution.state === 'running'
+				);
+				if (!parent) continue;
+				const next = yield* deriveExecution(parent, repository, {
+					stream: gate.stream,
+					operation: gate.operation,
+					eventId: parent.eventId,
+					sourceSha: parent.sourceSha,
+					...(parent.version ? { version: parent.version } : {}),
+				});
+				yield* this.put({ ...next, dependencies: next.dependencies.filter(id => id !== parent.id) });
+			}
+			return waiting;
+		});
+	}
+	private observeRunOf(
+		repository: ReadyRepository,
+		run: WorkflowRun,
+		token: string,
+		record: boolean,
+	): Effect.Effect<Execution[], DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const gateway = this.gateway();
+			const observedExecutions: Execution[] = [];
+			const settle = (execution: Execution) =>
+				Effect.gen({ self: this }, function*() {
+					if (record) yield* this.put(execution);
+					observedExecutions.push(execution);
+				});
+			if (typeof run.head_branch !== 'string') return observedExecutions;
 			const branch = run.head_branch;
 			const patterns = Object.values(repository.configuration.streams).flatMap(stream =>
 				Object.values(stream.workflows).flatMap(binding =>
@@ -1615,7 +1723,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						: undefined;
 					const manifestVersions = !tagged
 						&& (run.event === 'workflow_dispatch' || (binding.publications?.length ?? 0) > 0);
-					const eventId = `observed:${event.runId}`;
+					const eventId = `observed:${run.id}`;
 					const id = yield* executionId(repository.id, streamName, operation, eventId);
 					if (yield* this.read(`execution:${id}`)) {
 						const previous = yield* this.get(id);
@@ -1632,7 +1740,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							observed: true,
 						})
 					);
-					execution.runId = event.runId;
+					execution.runId = run.id;
 					execution.runAttempt = run.run_attempt;
 					execution.state = 'running';
 					execution.dependencies = (yield* this.executions()).filter(other =>
@@ -1642,11 +1750,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					if (version) {
 						const target = yield* tagTarget(branch);
 						if (!target) {
-							yield* this.put({ ...execution, state: 'failed', reason: `Release tag ${branch} was not found` });
+							yield* settle({ ...execution, state: 'failed', reason: `Release tag ${branch} was not found` });
 							continue;
 						}
 						if (target.type !== 'commit' || target.sha !== snapshot.sha) {
-							yield* this.put({
+							yield* settle({
 								...execution,
 								state: 'failed',
 								reason: `Release tag ${branch} does not point at the source commit`,
@@ -1678,13 +1786,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						)
 						: [];
 					if (mismatched.length) {
-						yield* this.put({
+						yield* settle({
 							...execution,
 							state: 'failed',
 							reason: `Tag ${branch} names version ${version}, but ${
 								mismatched.map(p => `${p.name} carries ${p.version}`).join(', ')
 							}`,
 						});
+						continue;
+					}
+					if (!record) {
+						yield* settle(execution);
 						continue;
 					}
 					for (const pkg of observed) {
@@ -1720,8 +1832,47 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							...(typeof release?.html_url === 'string' ? { url: release.html_url } : {}),
 						});
 					}
-					yield* this.put(execution);
+					yield* settle(execution);
 				}
+			}
+			return observedExecutions;
+		});
+	}
+	private tracking(now: number): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			for (const [key, value] of yield* this.list({ prefix: 'track:' })) {
+				const parsed = observation.safeParse(value);
+				if (!parsed.success) {
+					yield* this.remove(key);
+					continue;
+				}
+				const event = parsed.data;
+				if ((event.due ?? 0) > now) continue;
+				yield* this.track(event).pipe(
+					Effect.flatMap(done =>
+						done
+							? this.remove(key)
+							: this.write(key, { repositoryId: event.repositoryId, runId: event.runId, due: now + jobPollInterval })
+					),
+					recover(error =>
+						(event.attempts ?? 0) + 1 >= observationAttempts
+							? this.remove(key).pipe(
+								Effect.andThen(
+									this.auditQuietly(
+										'track.dead',
+										`run ${event.runId} after ${(event.attempts ?? 0) + 1} attempts: ${decodeError(error)}`,
+										'track.audit-failed',
+									),
+								),
+							)
+							: this.write(key, {
+								...event,
+								due: now + jobPollInterval,
+								attempts: (event.attempts ?? 0) + 1,
+								error: decodeError(error),
+							})
+					),
+				);
 			}
 		});
 	}
@@ -1802,6 +1953,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				this.serialized(Effect.gen({ self: this }, function*() {
 					yield* this.deliverReleaseEvents(now);
 					yield* this.observations(now);
+					yield* this.tracking(now);
 					const due = yield* this.read('reconcile-at');
 					if (due === undefined || ((yield* this.reconcileAt()) ?? Number.POSITIVE_INFINITY) <= now) {
 						yield* this.reconcile();

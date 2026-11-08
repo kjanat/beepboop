@@ -5,6 +5,7 @@ import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs'
 import { parseReleaseIdentity } from '@/automation/package-identity';
 import { presetReferencePattern } from '@/automation/preset';
 import {
+	jobKeyPattern,
 	managerNames,
 	refPattern,
 	tagPrefixPattern,
@@ -61,6 +62,9 @@ function bindingSchema() {
 		inputs: z.record(z.string(), z.union([z.string(), z.boolean(), z.number()])).optional(),
 		required: z.boolean().optional(),
 		needs: z.array(nonempty).optional(),
+		needsJobs: z.record(identifier, z.array(z.string().regex(jobKeyPattern)).min(1)).optional().describe(
+			'Jobs of an observed operation in needs that must succeed before this operation starts, keyed by that operation',
+		),
 		schedule: cron.optional(),
 		publications: packageReferences.optional(),
 		mode: z.enum(['observe', 'dispatch']).optional(),
@@ -101,6 +105,7 @@ function bindingSchema() {
 					...new Set([...(binding.needs ?? []), ...(binding.artifactInputs ?? []).map(input => input.operation)]),
 				],
 			}),
+		...(binding.needsJobs === undefined ? {} : { needsJobs: binding.needsJobs }),
 		...(binding.publications === undefined ? {} : { publications: binding.publications }),
 		...(binding.schedule === undefined ? {} : { schedule: binding.schedule }),
 		file: binding.file,
@@ -269,6 +274,15 @@ function graph(stream: Stream, path: (string | number)[], ctx: z.RefinementCtx):
 					`Unknown output: ${input.operation}/${input.output}`,
 					[...where(name), 'artifactInputs'],
 				);
+			}
+		}
+		for (const needed of Object.keys(operation.needsJobs ?? {})) {
+			if (!operation.needs?.includes(needed) || operationsOf.get(needed)?.mode !== 'observe') {
+				issue(ctx, 'unknown-reference', `needsJobs.${needed} must name an observed operation listed in needs`, [
+					...where(name),
+					'needsJobs',
+					needed,
+				]);
 			}
 		}
 		if (operation.refs && !approved(name)) {

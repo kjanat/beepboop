@@ -440,6 +440,22 @@
 						"minLength": 1
 					}
 				},
+				"needsJobs": {
+					"description": "Jobs of an observed operation in needs that must succeed before this operation starts, keyed by that operation",
+					"type": "object",
+					"propertyNames": {
+						"type": "string",
+						"pattern": "^[a-z][a-z0-9-]{0,63}$"
+					},
+					"additionalProperties": {
+						"minItems": 1,
+						"type": "array",
+						"items": {
+							"type": "string",
+							"pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+						}
+					}
+				},
 				"schedule": {
 					"type": "string",
 					"minLength": 1

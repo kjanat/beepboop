@@ -39,6 +39,7 @@ export interface Run {
 	attempt: number;
 	title: string;
 	inputs: Record<string, string>;
+	jobs?: { name: string; status: 'queued' | 'in_progress' | 'completed'; conclusion: string | null }[];
 }
 export interface CheckRun {
 	name: string;
@@ -427,6 +428,13 @@ export class FakeGitHub {
 		this.route('GET', new RegExp(`^${repo}/actions/runs/(\\d+)$`), match => {
 			const repository = this.repository(match[1]);
 			return json(this.runJson(repository, this.run(repository, Number(match[2]))));
+		});
+		this.route('GET', new RegExp(`^${repo}/actions/runs/(\\d+)/attempts/(\\d+)/jobs$`), (match, url) => {
+			const run = this.run(this.repository(match[1]), Number(match[2]));
+			if (run.attempt !== Number(match[3])) throw new HttpError(404, 'Not Found');
+			const jobs = run.jobs ?? [];
+			const size = Number(url.searchParams.get('per_page') ?? 30), page = Number(url.searchParams.get('page') ?? 1);
+			return json({ total_count: jobs.length, jobs: jobs.slice((page - 1) * size, page * size) });
 		});
 		this.route('POST', new RegExp(`^${repo}/actions/runs/(\\d+)/cancel$`), match => {
 			const run = this.run(this.repository(match[1]), Number(match[2]));
