@@ -22,6 +22,7 @@ import {
 	type GitHubRelease,
 	gitRefSchema,
 	gitTagSchema,
+	releaseNotesSchema,
 	releaseSchema,
 	workflowRunSchema,
 	workflowRunsSchema,
@@ -50,6 +51,7 @@ import { publishable } from '@/automation/package-publication';
 import { matchesRef } from '@/automation/policy';
 import type { PublishBudget } from '@/automation/publish-budget';
 import { moduleTagPrefixes, planRefs, type RefPlan, type TagSigner, tagObject, tagPayload } from '@/automation/refs';
+import { releaseNotes } from '@/automation/release-notes';
 import { compileReleaseSet } from '@/automation/release-set';
 import { manifestProblems } from '@/automation/release-version';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
@@ -957,7 +959,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						tag_name: tag,
 						target_commitish: execution.sourceSha,
 						name: tag,
-						generate_release_notes: true,
+						body: yield* this.releaseBody(execution, tag, write),
 						prerelease,
 					}));
 			if (release.tag_name !== tag || release.draft !== false || release.prerelease !== prerelease) {
@@ -1008,7 +1010,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					tag_name: target.tag,
 					target_commitish: execution.sourceSha,
 					name: target.tag,
-					generate_release_notes: true,
 					prerelease: target.prerelease,
 					draft: true,
 				},
@@ -1058,8 +1059,20 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (current.assets.some(asset => asset.state !== 'uploaded')) {
 				return yield* precondition('Draft GitHub release has unfinished asset uploads');
 			}
-			return yield* gateway.read(releaseSchema, path, token, 'PATCH', { draft: false });
+			return yield* gateway.read(releaseSchema, path, token, 'PATCH', {
+				draft: false,
+				body: yield* this.releaseBody(execution, target.tag, token),
+			});
 		});
+	}
+	private releaseBody(execution: Execution, tag: string, token: string): Effect.Effect<string, DomainError> {
+		return this.gateway().read(
+			releaseNotesSchema,
+			`/repos/${execution.repository}/releases/generate-notes`,
+			token,
+			'POST',
+			{ tag_name: tag, target_commitish: execution.sourceSha },
+		).pipe(Effect.map(generated => releaseNotes(generated.body)));
 	}
 	report(
 		id: string,

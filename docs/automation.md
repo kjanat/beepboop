@@ -872,10 +872,10 @@ completes the operation. Beepboop reserves `refs:` report IDs for this check.
 
 When a dispatched operation lists `github-release:<owner>/<repo>` in its
 `publications`, Beepboop creates a draft release before it dispatches the run.
-The draft has the tag `<prefix><version>`, targets the approved commit and
-carries generated notes. Beepboop marks the draft as a prerelease for
-prerelease versions. The run's `context.draftRelease` holds the draft's `id`
-and `tag`. Upload release assets to the draft during the run:
+The draft has the tag `<prefix><version>` and targets the approved commit.
+Beepboop marks the draft as a prerelease for prerelease versions. The run's
+`context.draftRelease` holds the draft's `id` and `tag`. Upload release assets
+to the draft during the run:
 
 ```sh
 gh release upload "$TAG" target/package/*.crate
@@ -898,6 +898,11 @@ upload is unfinished. For an operation without a draft, Beepboop creates the
 release, or accepts an existing published release whose tag and prerelease flag
 match. Beepboop records the release as the operation's `github-release`
 publication.
+
+Beepboop writes the release notes when it publishes or creates the release. It
+asks GitHub to generate them, then drops each `by @<name>[bot]` attribution and
+each bot entry under `New Contributors`. The notes replace the whole release
+body. A retried publication leaves one copy.
 
 ### Binary builds
 

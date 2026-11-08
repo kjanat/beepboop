@@ -84,6 +84,7 @@ export const releaseSchema = z.object({
 	assets: z.array(assetSchema),
 });
 export type GitHubRelease = z.output<typeof releaseSchema>;
+export const releaseNotesSchema = z.object({ body: z.string() });
 export const artifactSchema = z.object({
 	workflow_run: identified,
 	expired: looseSchema,

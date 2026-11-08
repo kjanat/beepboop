@@ -460,3 +460,87 @@ test('packed prepare and refs runtimes publish the planned tag', async () => {
 	expect(world.github.unhandled).toEqual([]);
 	expect(world.network.unrouted).toEqual([]);
 }, 30_000);
+
+test('publish-release replaces the draft notes with one copy free of bot attribution', async () => {
+	const { repository } = await packedRelease(
+		world,
+		async () => {
+			const target = world.github.repository('octo/widget');
+			target.pulls.push({
+				number: target.pulls.length + 1,
+				head: { ref: 'docs', sha: world.github.head(target) },
+				base: target.defaultBranch,
+				state: 'closed',
+				merged: true,
+				title: 'Document the widget',
+				body: '',
+				labels: [],
+				author: 'octo',
+			});
+			const draft = target.releases.find(release => release.draft);
+			if (!draft) throw new Error('Expected the dispatch to create a draft release');
+			draft.body = "## What's Changed\n* Stale by @claude[bot] in https://github.com/octo/widget/pull/1\n";
+		},
+		undefined,
+		true,
+	);
+	const preparation = repository.pulls[0];
+	expect(repository.releases.map(release => ({ tag: release.tag, draft: release.draft }))).toEqual([
+		{ tag: 'v1.1.0', draft: false },
+	]);
+	expect(repository.releases[0]?.body).toBe([
+		"## What's Changed",
+		`* ${preparation?.title} in https://github.com/octo/widget/pull/1`,
+		'* Document the widget by @octo in https://github.com/octo/widget/pull/2',
+		'',
+		'## New Contributors',
+		'* @octo made their first contribution in https://github.com/octo/widget/pull/2',
+		'',
+		'**Full Changelog**: https://github.com/octo/widget/commits/v1.1.0',
+	].join('\n'));
+	const promotion = await only(bearer(world, await world.cliSession()), 'promote');
+	expect(promotion.state).toBe('succeeded');
+	expect(promotion.publications.find(entry => entry.manager === 'github-release')).toMatchObject({
+		id: 'pkg:github/octo/widget',
+		version: 'v1.1.0',
+		outcome: 'succeeded',
+	});
+	expect(world.github.unhandled).toEqual([]);
+}, 30_000);
+
+test('publish-release drops the contributor section when only bots contributed', async () => {
+	const { repository } = await packedRelease(world, undefined, undefined, true);
+	expect(repository.releases[0]?.body).toBe([
+		"## What's Changed",
+		`* ${repository.pulls[0]?.title} in https://github.com/octo/widget/pull/1`,
+		'',
+		'**Full Changelog**: https://github.com/octo/widget/commits/v1.1.0',
+	].join('\n'));
+	expect(repository.releases[0]?.body).not.toContain('[bot]');
+}, 30_000);
+
+test('publish-release creates a missing release with the same cleaned notes', async () => {
+	const { repository } = await packedRelease(
+		world,
+		async promotionId => {
+			const target = world.github.repository('octo/widget');
+			target.releases = [];
+			const storage = world.coordinators.instance(String(target.id)).storage;
+			const key = `execution:${promotionId}`;
+			const stored = z.looseObject({ draftRelease: z.unknown() }).parse(await storage.get(key));
+			delete stored.draftRelease;
+			await storage.put(key, stored);
+		},
+		undefined,
+		true,
+	);
+	expect(repository.releases.map(release => ({ draft: release.draft, body: release.body }))).toEqual([{
+		draft: false,
+		body: [
+			"## What's Changed",
+			`* ${repository.pulls[0]?.title} in https://github.com/octo/widget/pull/1`,
+			'',
+			'**Full Changelog**: https://github.com/octo/widget/commits/v1.1.0',
+		].join('\n'),
+	}]);
+}, 30_000);

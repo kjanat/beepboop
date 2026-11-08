@@ -24,6 +24,7 @@ export interface Pull {
 	title: string;
 	body: string;
 	labels: string[];
+	author?: string;
 }
 export interface Run {
 	id: number;
@@ -50,6 +51,7 @@ export interface Release {
 	draft: boolean;
 	prerelease: boolean;
 	authorId: number;
+	body: string;
 }
 export interface Repository {
 	id: number;
@@ -432,6 +434,58 @@ export class FakeGitHub {
 			if (!release) throw new HttpError(404, 'Not Found');
 			return json(this.releaseJson(repository, release));
 		});
+		this.route('POST', new RegExp(`^${repo}/releases$`), (match, _url, body) => {
+			const repository = this.repository(match[1]);
+			const release: Release = {
+				id: this.id(),
+				tag: stringField(body, 'tag_name'),
+				target: stringField(body, 'target_commitish'),
+				draft: body.draft === true,
+				prerelease: body.prerelease === true,
+				authorId: botId,
+				body: typeof body.body === 'string' ? body.body : '',
+			};
+			repository.releases.push(release);
+			return json(this.releaseJson(repository, release), 201);
+		});
+		this.route('POST', new RegExp(`^${repo}/releases/generate-notes$`), (match, _url, body) => {
+			const repository = this.repository(match[1]);
+			const tag = stringField(body, 'tag_name');
+			const merged = repository.pulls.filter(pull => pull.merged);
+			const link = (pull: Pull) => `https://github.com/${repository.name}/pull/${pull.number}`;
+			const firsts = merged.filter((pull, index) =>
+				merged.findIndex(other => (other.author ?? botLogin) === (pull.author ?? botLogin)) === index
+			);
+			return json({
+				name: tag,
+				body: [
+					"## What's Changed",
+					...merged.map(pull => `* ${pull.title} by @${pull.author ?? botLogin} in ${link(pull)}`),
+					'',
+					'## New Contributors',
+					...firsts.map(pull => `* @${pull.author ?? botLogin} made their first contribution in ${link(pull)}`),
+					'',
+					`**Full Changelog**: https://github.com/${repository.name}/commits/${tag}`,
+				].join('\r\n'),
+			});
+		});
+		this.route('GET', new RegExp(`^${repo}/releases/(\\d+)$`), match => {
+			const repository = this.repository(match[1]);
+			return json(this.releaseJson(repository, this.release(repository, Number(match[2]))));
+		});
+		this.route('PATCH', new RegExp(`^${repo}/releases/(\\d+)$`), (match, _url, body) => {
+			const repository = this.repository(match[1]);
+			const release = this.release(repository, Number(match[2]));
+			if (typeof body.draft === 'boolean') release.draft = body.draft;
+			if (typeof body.body === 'string') release.body = body.body;
+			return json(this.releaseJson(repository, release));
+		});
+		this.route('DELETE', new RegExp(`^${repo}/releases/(\\d+)$`), match => {
+			const repository = this.repository(match[1]);
+			const release = this.release(repository, Number(match[2]));
+			repository.releases = repository.releases.filter(entry => entry !== release);
+			return new Response(null, { status: 204 });
+		});
 	}
 
 	private route(method: string, pattern: RegExp, handler: Route): void {
@@ -572,6 +626,11 @@ export class FakeGitHub {
 		if (!pull) throw new HttpError(404, 'Not Found');
 		return pull;
 	}
+	release(repository: Repository, id: number): Release {
+		const release = repository.releases.find(entry => entry.id === id);
+		if (!release) throw new HttpError(404, 'Not Found');
+		return release;
+	}
 	run(repository: Repository, id: number): Run {
 		const run = repository.runs.find(entry => entry.id === id);
 		if (!run) throw new HttpError(404, 'Not Found');
@@ -649,6 +708,7 @@ export class FakeGitHub {
 			prerelease: release.prerelease,
 			author: { id: release.authorId },
 			html_url: `https://github.com/${repository.name}/releases/tag/${release.tag}`,
+			body: release.body,
 			assets: [],
 		};
 	}

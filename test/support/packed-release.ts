@@ -67,6 +67,7 @@ export async function packedRelease(
 	world: World,
 	beforeRefs?: (promotionId: string) => Promise<void>,
 	signing?: PackedSigning,
+	githubRelease = false,
 ): Promise<PackedRelease> {
 	const repository = widget(world.github);
 	world.npm.publish('widget', '1.0.0');
@@ -74,11 +75,12 @@ export async function packedRelease(
 		streams: z.looseObject({
 			main: z.looseObject({
 				prepare: z.looseObject({}),
-				promote: z.looseObject({ workflow: z.looseObject({}) }),
+				promote: z.looseObject({ workflow: z.looseObject({ publications: z.array(z.string()) }) }),
 			}),
 		}),
 	}).parse(JSON.parse(widgetConfiguration()));
 	configuration.streams.main.prepare = { workflow: { file: 'prepare.yml' } };
+	if (githubRelease) configuration.streams.main.promote.workflow.publications.push('github-release:octo/widget');
 	configuration.streams.main.promote.workflow.refs = {
 		phase: 'version',
 		prefix: 'v',
@@ -233,6 +235,7 @@ export async function packedRelease(
 		}
 		if (readdirSync(refsTemp).length) throw new Error('The refs runtime left files in RUNNER_TEMP');
 		await runAction(world, 'refs-complete', promoteIdentity, { EXECUTION_ID: promotionId });
+		if (githubRelease) await runAction(world, 'release', promoteIdentity, { EXECUTION_ID: promotionId });
 		world.npm.publish('widget', '1.1.0');
 		await runAction(world, 'report', promoteIdentity, {
 			EXECUTION_ID: promotionId,
