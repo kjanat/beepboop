@@ -82,7 +82,22 @@ a {
 	text-underline-offset: 3px;
 }
 a.arrow {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 2rem;
+	min-height: 2rem;
+	margin-inline-start: 0.25rem;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	font-size: 1.15rem;
+	line-height: 1;
 	text-decoration: none;
+	vertical-align: middle;
+}
+a.arrow:hover {
+	border-color: var(--blue);
+	background: var(--hover);
 }
 button, input, select {
 	font: inherit;
