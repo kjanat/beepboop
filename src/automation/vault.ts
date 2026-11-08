@@ -54,6 +54,10 @@ const grantSchema = z.discriminatedUnion('delivery', [
 		secretName,
 	}),
 ]);
+export function runtimeGrant(grant: Grant, operation: string, repository: string, ref: string): boolean {
+	return grant.delivery === 'runtime' && grant.operation === operation && grant.repository === repository
+		&& matchesRef(grant.ref, ref);
+}
 export function parseGrant(value: unknown): Effect.Effect<Grant, DomainError> {
 	return fromSync(() => grantSchema.parse(value));
 }
@@ -148,10 +152,7 @@ export class Vault {
 		return Effect.gen({ self: this }, function*() {
 			const allowed = (yield* this.grants({ alias, repositoryId: identity.repositoryId })).some(
 				(g) =>
-					g.delivery === 'runtime'
-					&& g.operation === operation
-					&& g.repository === identity.repository
-					&& matchesRef(g.ref, identity.ref)
+					runtimeGrant(g, operation, identity.repository, identity.ref)
 					&& g.environment === identity.environment
 					&& identity.workflowRef
 						=== `${identity.repository}/.github/workflows/${g.workflow}@${identity.ref}`,

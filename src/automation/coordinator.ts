@@ -74,12 +74,14 @@ import { maintainSetup } from '@/automation/setup-maintenance';
 import type { SetupEdit } from '@/automation/setup-types';
 import { decodeError, Store } from '@/automation/store';
 import type { Artifact, AutomationEvent, Edit, Execution, Publication, ReleaseReference } from '@/automation/types';
+import { parseGrant, runtimeGrant } from '@/automation/vault';
 import { type DomainError, precondition } from '@/contract/errors';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
 import { type ReadyRepository, readiness } from '@/domain/repository';
 import { fromPromise, fromSync, recover, retryable, toDomainError } from '@/failure';
 import { sha } from '@/model';
 import { decodeEventV1, decodeExecutionV1, decodeSetupEditV1 } from '@/persistence/codecs/v1';
+import { CredentialStore } from '@/persistence/d1/credentials';
 import type { SqlDatabase } from '@/persistence/d1/database';
 import { ProjectionStore } from '@/persistence/d1/projection';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
@@ -1271,6 +1273,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				yield* this.put({ ...execution, state: 'cancelled', reason: conflict });
 				return true;
 			}
+			const waiting = (yield* this.ungranted(execution)) ?? (yield* this.upstream(execution, executions));
+			if (waiting) {
+				if (execution.reason !== waiting) yield* this.put({ ...execution, reason: waiting });
+				return false;
+			}
 			const problems = yield* this.approvalProblems(execution);
 			if (problems.length) {
 				const reason = `Releases when the commit is verified and its checks pass: ${problems.join('; ')}`;
@@ -1283,6 +1290,69 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			yield* this.supersedeVersion(next);
 			yield* this.put(next);
 			return true;
+		});
+	}
+	private ungranted(execution: Execution): Effect.Effect<string | undefined, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const stream = execution.configuration.streams[execution.stream];
+			if (!stream?.credentials.length) return undefined;
+			const record = yield* this.store().repository(execution.repositoryId);
+			const defaultBranch = record?.defaultBranch ?? execution.workflow?.ref ?? '';
+			const bindings = [
+				['promote', stream.promote.workflow] as const,
+				['prepare', stream.prepare.workflow] as const,
+				...Object.entries(stream.workflows).filter(([, binding]) => binding.mode !== 'observe'),
+			].flatMap(([operation, binding]) => {
+				if (!binding) return [];
+				const ref = binding.ref ?? defaultBranch;
+				return [{ operation, file: binding.file, ref: ref.startsWith('refs/') ? ref : `refs/heads/${ref}` }];
+			});
+			const missing: string[] = [];
+			for (const alias of stream.credentials) {
+				const grants = yield* Effect.forEach(
+					yield* new CredentialStore(this.env.DB).grantDocuments({ alias, repositoryId: execution.repositoryId }),
+					parseGrant,
+				);
+				if (
+					!bindings.some(binding =>
+						grants.some(grant =>
+							grant.workflow === binding.file
+							&& runtimeGrant(grant, binding.operation, execution.repository, binding.ref)
+						)
+					)
+				) missing.push(alias);
+			}
+			const workflow = stream.promote.workflow?.file ?? execution.workflow?.file;
+			return missing.length
+				? `Releases once ${missing.join(', ')} ${missing.length === 1 ? 'has' : 'have'} a runtime grant for ${workflow}`
+				: undefined;
+		});
+	}
+	private upstream(execution: Execution, executions: Execution[]): Effect.Effect<string | undefined, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const record = yield* this.store().repository(execution.repositoryId);
+			if (!record) return undefined;
+			const packagesOf = (candidate: Execution) => {
+				const references = candidate.configuration.streams[candidate.stream]?.packages;
+				return record.inventory.packages.filter(pkg =>
+					publishable(pkg) && (!references || references.some(reference => matchesPackage(reference, pkg)))
+				);
+			};
+			const needed = new Set(
+				packagesOf(execution).flatMap(pkg => pkg.dependencies.map(name => `${pkg.manager}:${name}`)),
+			);
+			for (const other of executions) {
+				if (
+					other.id === execution.id || other.operation !== 'promote' || other.stream === execution.stream
+					|| other.repositoryId !== execution.repositoryId || other.sourceSha !== execution.sourceSha
+					|| ['succeeded', 'cancelled', 'failed'].includes(other.state)
+				) continue;
+				const provided = packagesOf(other).filter(pkg => needed.has(`${pkg.manager}:${pkg.name}`));
+				if (provided.length) {
+					return `Releases after the ${other.stream} release publishes ${provided.map(packageId).join(', ')}`;
+				}
+			}
+			return undefined;
 		});
 	}
 	approve(id: string, commitSha: string, actor: string, force = false): Promise<Execution> {

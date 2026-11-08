@@ -4,6 +4,7 @@ import { parseGrant, validCredential } from '@/automation/vault';
 import { conflict, type DomainError, notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import { requireReady } from '@/domain/repository';
+import { fromPromise } from '@/failure';
 import type { CredentialStore } from '@/persistence/d1/credentials';
 import { admin, elevated } from '@/server/handlers/kit';
 
@@ -63,7 +64,12 @@ export const credentialEndpoints = {
 			if ((yield* service.credentials.activeVersion(grant.alias)) === undefined) {
 				return yield* precondition('Store a value under this name before granting access');
 			}
-			return { commit: service.vault().grant(grant, actor).pipe(Effect.as({ granted: true })) };
+			return {
+				commit: service.vault().grant(grant, actor).pipe(
+					Effect.andThen(fromPromise(() => service.coordinator(grant.repositoryId).wake())),
+					Effect.as({ granted: true }),
+				),
+			};
 		})),
 	credentialsRevoke: elevated(routes.credentialsRevoke, (input, { service, actor }) =>
 		Effect.gen(function*() {

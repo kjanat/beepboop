@@ -602,6 +602,7 @@ export class AutomationService {
 					yield* this.vault().grant(grant, `merge:${pull.merged_by.login}`);
 				}
 			}
+			yield* fromPromise(() => this.coordinator(repository.id).wake());
 		});
 	}
 	private setupEdited(repository: RepositoryRecord, edit: SetupPullEdit): Effect.Effect<void, DomainError> {
