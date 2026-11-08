@@ -2,11 +2,11 @@ import type { Ask, CLIError, Out } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 import { repositoryReference } from '@/automation/repository-name';
 import { parseSetupPlan } from '@/automation/setup-plan';
+import { listed, streamSummary } from '@/automation/setup-summary';
 import type { SetupPlan } from '@/automation/setup-types';
 import type { Client } from '@/cli/client';
 import { emit, failure } from '@/cli/output';
 import { chooseSetup } from '@/cli/setup-choices';
-import { listed, streamSummary } from '@/cli/setup-summary';
 import { routes } from '@/contract/routes';
 
 function readJson(path: string): Effect.Effect<unknown, CLIError> {

@@ -8,9 +8,9 @@ import {
 	suggestedCommands,
 	suggestedWorkflowFile,
 } from '@/automation/setup-defaults';
+import { streamSummary } from '@/automation/setup-summary';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import { failure } from '@/cli/output';
-import { streamSummary } from '@/cli/setup-summary';
 import { workflowFilePattern } from '@/contract/catalog';
 import { packageLabel } from '@/domain/package-label';
 

@@ -6,9 +6,10 @@ import { object } from '@/automation/managers/helpers';
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage, packageId, selectorKey } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
-import { adoptionChoices, adoptionMarkdown } from '@/automation/release-graph/adoption';
+import { adoptionChoices, startCommand } from '@/automation/release-graph/adoption';
 import { inferReleaseGraph, type ReleaseGraph } from '@/automation/release-graph/graph';
 import { completeTaggedStreams } from '@/automation/setup-completion';
+import { streamSummary } from '@/automation/setup-summary';
 import {
 	type SetupChoices,
 	type SetupOption,
@@ -210,8 +211,39 @@ function draftSetup(
 		const choices = input === undefined ? proposal : yield* decodeRequest(setupChoicesSchema, input);
 		const inferred = input === undefined || JSON.stringify(choices) === JSON.stringify(proposal);
 		const plan = yield* drafted(snapshot, inventory, choices, raw, workflows, baseline, resolved);
-		return inferred ? { ...plan, adoption: adoptionMarkdown(graph, snapshot) } : plan;
+		return inferred ? { ...plan, adoption: proposalMarkdown(graph, snapshot, plan) } : plan;
 	});
+}
+function proposalMarkdown(
+	graph: ReleaseGraph,
+	snapshot: Snapshot,
+	plan: Omit<SetupPlan, 'planId'>,
+): string[] {
+	const lines = ['## Release plan', ''];
+	for (const stream of plan.choices.streams) {
+		lines.push(`### Stream \`${stream.name}\``, '', ...streamSummary(stream, plan).map(line => `- ${line}`));
+		const proposal = graph.streams.find(entry => entry.id === stream.name);
+		if (stream.promote) {
+			lines.push(
+				'- Start a release with `beepboop release` in a checkout or from the dashboard. Beepboop opens the version PR, and after you merge it, it asks you to approve the release.',
+			);
+		} else if (proposal) lines.push(`- ${startCommand(proposal, snapshot)}`);
+		lines.push('');
+	}
+	const proposed = new Set(
+		plan.choices.streams.flatMap(stream => stream.packages).flatMap(id => {
+			const index = plan.packageIds.indexOf(id);
+			const pkg = index < 0 ? undefined : plan.inventory.packages[index];
+			return pkg ? [`\`${pkg.name}\``] : [];
+		}),
+	);
+	const omissions = graph.omissions.filter(omission => !proposed.has(omission.subject));
+	if (omissions.length) {
+		lines.push('### Left out', '', ...omissions.map(omission => `- ${omission.subject}: ${omission.reason}.`), '');
+	}
+	if (graph.notes.length) lines.push('### Notes', '', ...graph.notes.map(note => `- ${note}`), '');
+	if (graph.unresolved.length) lines.push('### Decisions needed', '', ...graph.unresolved.map(item => `- ${item}`), '');
+	return lines;
 }
 function drafted(
 	snapshot: Snapshot,
@@ -538,8 +570,10 @@ export function setupOptions(plan: SetupPlan): SetupOption[] {
 		const pkg = plan.inventory.packages[index];
 		return pkg !== undefined && publishable(pkg);
 	});
-	return plan.choices.streams.flatMap((stream): SetupOption[] => [
-		...[...new Set([...candidates, ...stream.packages])].map((id): SetupOption => ({
+	const assigned = new Set(plan.choices.streams.flatMap(stream => stream.packages));
+	const unassigned = candidates.filter(id => !assigned.has(id));
+	return plan.choices.streams.flatMap((stream, index): SetupOption[] => [
+		...[...new Set([...stream.packages, ...(index === 0 ? unassigned : [])])].map((id): SetupOption => ({
 			kind: 'package',
 			stream: stream.name,
 			package: id,
@@ -667,7 +701,11 @@ export function setupBody(plan: SetupPlan): string {
 		`${indent}- [${selected(option, plan.choices) ? 'x' : ' '}] <!-- beepboop:choice:${optionId(option)} --> ${label}`;
 	const workflow = (binding: SetupWorkflow | undefined) =>
 		binding
-			? `\`${binding.file}\`${binding.job ? ` (job \`${binding.job}\`)` : ''}, ${triggerLabels[binding.triggers]}`
+			? `\`${binding.file}\`${binding.job ? ` (job \`${binding.job}\`)` : ''}, ${
+				plan.workflows.some(evidence => evidence.file === binding.file)
+					? triggerLabels[binding.triggers]
+					: 'created by this PR and started only by Beepboop'
+			}`
 			: 'none';
 	return `Configure releases from inspected commit [${plan.sourceSha}](https://github.com/${plan.repository}/commit/${plan.sourceSha}).\n\n`
 		+ 'Tick or untick packages to change this proposal. Every ticked package must be published for a release to succeed. Beepboop rebuilds the proposal 5 seconds after the last edit.\n\n'

@@ -381,9 +381,18 @@ test('one adopt in a terminal shows the proposal, asks once and opens the setup 
 	expect(repository.pulls.map(pull => [pull.state, pull.assignees, pull.reviewers])).toEqual([
 		['open', ['octo'], ['octo']],
 	]);
-	expect(repository.pulls[0]?.body).toContain(
+	const body = repository.pulls[0]?.body ?? '';
+	expect(body).toContain(
 		'  - Publication order\n    1. `@octo/lint` on npm\n    2. In parallel: `lint` on crates.io, `lint-core` on crates.io\n',
 	);
+	expect(body).toContain(
+		`## Release plan\n\n### Stream \`lint\`\n\n${
+			lintSummary.slice(1).join('\n')
+		}\n- Start a release with \`beepboop release\` in a checkout or from the dashboard.`,
+	);
+	expect(body).toContain('`release-lint.yml`, created by this PR and started only by Beepboop');
+	expect(body).not.toContain('git tag');
+	expect(body).not.toMatch(/`lint(?:-core)?`: .*no release workflow publishes it/);
 });
 
 test('one adopt without arguments or a terminal opens the setup PR for the checkout', async () => {

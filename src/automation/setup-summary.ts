@@ -23,7 +23,10 @@ function sentence(value: string): string {
 	return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
 }
 
-export function streamSummary(stream: Stream, plan: SetupPlan): string[] {
+export function streamSummary(
+	stream: Stream,
+	plan: Pick<SetupPlan, 'inventory' | 'packageIds' | 'workflows'>,
+): string[] {
 	const packages = new Map(plan.inventory.packages.map((pkg, index) => [plan.packageIds[index] ?? '', pkg]));
 	const existing = new Set(plan.workflows.map(workflow => workflow.file));
 	const named = (file: string) => existing.has(file) ? file : `${file} (new)`;

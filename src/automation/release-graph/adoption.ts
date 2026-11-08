@@ -265,7 +265,7 @@ function targetLine(target: Target): string {
 	}`;
 }
 
-function startCommand(stream: StreamProposal, snapshot: Snapshot): string {
+export function startCommand(stream: StreamProposal, snapshot: Snapshot): string {
 	if (stream.trigger.kind === 'tags') {
 		const prefix = stream.trigger.prefix;
 		const latest = latestTag(snapshot.tags ?? [], prefix);

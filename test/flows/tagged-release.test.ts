@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { Effect } from 'effect';
 import { parse } from 'yaml';
 import { z } from 'zod';
+import { setupOptions } from '@/automation/setup';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { commitAll, gitOutput, materialize, runAction, runRuntime } from '@root/test/support/actions.ts';
@@ -430,6 +431,10 @@ test('a Go module with its own released tags becomes its own stream', async () =
 		'.github/workflows/prepare-sdk.yml',
 		'.github/workflows/release-sdk.yml',
 	]));
+	const offered = (stream: string) =>
+		setupOptions(plan).flatMap(option => option.kind === 'package' && option.stream === stream ? [option.package] : []);
+	expect(offered('sdk')).toEqual(['pkg:golang/github.com/octo/lint/sdk']);
+	expect(offered('lint')).not.toContain('pkg:golang/github.com/octo/lint/sdk');
 });
 
 async function mergedSetup(tamper: boolean, login = 'octo') {
