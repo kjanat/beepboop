@@ -17,6 +17,11 @@
 	},
 	"packageRules": [
 		{
+			"matchPackageNames": ["typescript", "@effect/tsgo"],
+			"groupName": "TypeScript and Effect tsgo",
+			"minimumReleaseAge": "7 days"
+		},
+		{
 			"matchPackageNames": ["python", "python/cpython"],
 			"versioning": "regex:^3\\.(?<major>\\d+)(\\.(?<patch>\\d+))?$"
 		}
