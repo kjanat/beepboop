@@ -10,6 +10,7 @@ import { lookOf, step } from '@/cli/look';
 import { emit, failure } from '@/cli/output';
 import { checkoutRepository, releaseRepository, releaseVersion } from '@/cli/release';
 import { setupRepository } from '@/cli/setup';
+import { stdin } from '@/cli/stdin';
 import {
 	credentialTables,
 	executionTable,
@@ -513,12 +514,6 @@ const secrets = group('secrets').description('Store secret values and list workf
 					'Secret name: 1-64 letters, numbers, underscores or hyphens',
 				),
 			)
-			.flag(
-				'value',
-				flag.string().stdin({ when: 'missing', trim: true }).sensitive().describe(
-					'Secret value; read from stdin when piped, otherwise asked for at a hidden prompt',
-				),
-			)
 			.action(({ flags, args, ask, out }) =>
 				Effect.runPromise(Effect.gen(function*() {
 					const client = yield* Client.at(flags.server);
@@ -529,7 +524,8 @@ const secrets = group('secrets').description('Store secret values and list workf
 						client.call(routes.credentialsList, {}),
 						() => `Read ${look.pkg(args.alias)}`,
 					)).credentials.find(row => row.alias === args.alias && row.active === 1)?.version;
-					const interactive = flags.value === undefined && out.isTTY;
+					const piped = yield* Effect.promise(() => stdin.piped());
+					const interactive = piped === null && out.isTTY;
 					if (
 						stored !== undefined && interactive
 						&& !(yield* Effect.promise(() =>
@@ -542,10 +538,11 @@ const secrets = group('secrets').description('Store secret values and list workf
 					) {
 						return yield* Effect.fail(failure('Secret left unchanged', 'ABORTED'));
 					}
-					const value = flags.value
-						?? (interactive
+					const value = piped === null
+						? interactive
 							? yield* Effect.promise(() => ask({ kind: 'password', message: `Value for ${args.alias}` }))
-							: '');
+							: ''
+						: piped.replace(/\r?\n$/, '');
 					if (!value) {
 						return yield* Effect.fail(
 							failure('Secret value is empty', 'EMPTY_VALUE', 'Pipe the value on stdin or type it at the prompt'),
