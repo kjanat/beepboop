@@ -6,7 +6,7 @@ import { discover } from '@/automation/managers';
 import { packageId } from '@/automation/package-identity';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
 import { documentRow } from '@/automation/schemas';
-import { previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
+import { previewSetup, releaseAfterMerge, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import type { SetupChoices } from '@/automation/setup-types';
 import { decodeError, type Store } from '@/automation/store';
 import type { Edit, Snapshot } from '@/automation/types';
@@ -112,7 +112,7 @@ export function maintainSetup(
 							? `Automatic update needs attention:\n${plan.blockers.map(message => `- ${message}`).join('\n')}`
 							: 'The default branch already matches the proposed setup.'
 					}`,
-					setupBody(plan),
+					setupBody(plan, releaseAfterMerge(pull.body)),
 				);
 				yield* save({ ...saved, ...applied, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha });
 				return;
@@ -120,7 +120,13 @@ export function maintainSetup(
 			// Even an unchanged source may need a newer generator's output. An identical proposal needs no commit.
 			if (saved.sourceSha === snapshot.sha && sameEdits(previous, plan.edits)) {
 				yield* current;
-				yield* gateway.setupStatus(name, id, pull.number, `${summary}\n\nThe proposal is up to date.`, setupBody(plan));
+				yield* gateway.setupStatus(
+					name,
+					id,
+					pull.number,
+					`${summary}\n\nThe proposal is up to date.`,
+					setupBody(plan, releaseAfterMerge(pull.body)),
+				);
 				yield* save({ ...saved, ...applied, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha });
 				return;
 			}
@@ -128,7 +134,7 @@ export function maintainSetup(
 				snapshot,
 				'automation/onboarding',
 				'chore: configure release automation',
-				setupBody(plan),
+				setupBody(plan, releaseAfterMerge(pull.body)),
 				plan.edits,
 				pull.head,
 				() => current,

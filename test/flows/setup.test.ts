@@ -1594,6 +1594,18 @@ test('a body edit ticks a package that the saved options from an older discovery
 	expect(configured(repository, 'automation/onboarding')).toEqual(['pkg:npm/widget', 'pkg:npm/gadget']);
 });
 
+test('a setup rebuild keeps a ticked Release after merge box', async () => {
+	const { repository, api, pull } = await gadgetSetup();
+	const box = '<!-- beepboop:release-after-merge --> Release after merge';
+	expect(pull.body).toContain(`- [ ] ${box}`);
+	pull.body = pull.body.replace(`- [ ] ${box}`, `- [x] ${box}`);
+	const head = pull.head.sha;
+	world.github.push(repository, { 'README.md': '# widget\n\nMoved on.\n' }, 'Move the default branch');
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	expect(pull.head.sha).not.toBe(head);
+	expect(pull.body).toContain(`- [x] ${box}`);
+});
+
 test('a refresh that started before a newer setup edit neither pushes nor rewrites the PR', async () => {
 	const { repository, api, pull } = await gadgetSetup();
 	const head = pull.head.sha, body = pull.body;

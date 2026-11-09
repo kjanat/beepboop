@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { Effect } from 'effect';
+import { parseSetupPlan } from '@/automation/setup-plan';
 import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { runAction } from '@root/test/support/actions.ts';
@@ -61,6 +63,71 @@ async function finish(repository: Repository, promotion: Execution, name: string
 	});
 	await world.wait(2_000);
 }
+
+async function mergedSetup(release: boolean) {
+	const repository = widget(world.github, { configured: false });
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const preview = await api('/api/repositories/setup/preview', {
+		repository: repository.name,
+		choices: {
+			streams: [{
+				name: 'main',
+				packages: ['pkg:npm/widget'],
+				required: ['pkg:npm/widget'],
+				versioning: 'workspace',
+				approval: 'push',
+				promote: {
+					file: 'release.yml',
+					job: 'promote',
+					triggers: 'review',
+					commands: 'npm publish',
+					publicationSteps: {},
+				},
+			}],
+		},
+	});
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toEqual([]);
+	expect(
+		(await api('/api/repositories/setup/apply', {
+			repository: repository.name,
+			choices: plan.choices,
+			planId: plan.planId,
+			sourceSha: plan.sourceSha,
+			setupHead: plan.setupHead,
+		})).status,
+	).toBe(200);
+	const pull = repository.pulls[0];
+	if (!pull) throw new Error('No setup pull request');
+	const box = '- [ ] <!-- beepboop:release-after-merge --> Release after merge';
+	expect(pull.body).toContain(box);
+	if (release) pull.body = pull.body.replace(box, '- [x] <!-- beepboop:release-after-merge --> Release after merge');
+	const merged = world.github.merge(repository, pull.number);
+	passChecks(repository, merged.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	return { repository, api, merged };
+}
+
+test('merging a setup PR with Release after merge unticked starts no release', async () => {
+	const { repository, api, merged } = await mergedSetup(false);
+	expect((await promotions(api)).filter(promotion => promotion.sourceSha === merged.sha)).toEqual([]);
+	const next = world.github.push(repository, { 'README.md': '# widget\n\nUsage.\n' }, 'Document usage');
+	passChecks(repository, next.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	expect((await promotions(api)).map(promotion => [promotion.sourceSha, promotion.version])).toEqual([
+		[next.sha, '1.0.0'],
+	]);
+}, 60_000);
+
+test('merging a setup PR with Release after merge ticked releases its version', async () => {
+	const { api, merged } = await mergedSetup(true);
+	expect((await promotions(api)).map(promotion => [promotion.sourceSha, promotion.version])).toEqual([
+		[merged.sha, '1.0.0'],
+	]);
+}, 60_000);
 
 test('a push release waits for its credential grant and dispatches once the grant exists', async () => {
 	const repository = widget(world.github, { approval: 'push' });

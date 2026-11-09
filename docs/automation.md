@@ -1111,5 +1111,11 @@ It then rebuilds the proposal once from the boxes and rewrites the whole
 description. As with automatic maintenance, unresolved choices and edited
 setup-branch files appear on the PR, and Beepboop leaves the branch as it is.
 
+The description ends with an unticked **Release after merge** box. Beepboop
+reads it from the merged PR. Ticked, the merge commit releases its unpublished
+version under the configured approval. Unticked, Beepboop starts no release for
+the merge commit. Later default-branch commits release under the configured
+approval.
+
 The GitHub App needs the **Pull request** event. The app manifest subscribes to
 it. Existing installations must tick the event in the App settings.

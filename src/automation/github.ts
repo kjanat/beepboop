@@ -757,6 +757,25 @@ export class RepositoryGateway {
 			};
 		});
 	}
+	setupMerge(
+		name: string,
+		id: number,
+		url: string,
+	): Effect.Effect<{ sha: string; body: string } | undefined, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const prefix = `https://github.com/${name}/pull/`;
+			const number = url.startsWith(prefix) ? url.slice(prefix.length) : '';
+			if (!/^[1-9][0-9]*$/.test(number)) return undefined;
+			const token = yield* self.token(name, id, { contents: 'read', pull_requests: 'read' });
+			const pull = yield* self.read(pullSchema, `/repos/${name}/pulls/${number}`, token);
+			if (pull.merged !== true || pull.head.repo.id !== id || pull.head.ref !== 'automation/onboarding') {
+				return undefined;
+			}
+			const sha = yield* self.mergeCommit(name, number, token);
+			return sha === undefined ? undefined : { sha, body: typeof pull.body === 'string' ? pull.body : '' };
+		});
+	}
 	/** Update only the bot's status section, including when a human changed the proposal branch. */
 	setupStatus(
 		name: string,

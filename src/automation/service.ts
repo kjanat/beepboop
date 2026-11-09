@@ -19,7 +19,7 @@ import { pollPackages } from '@/automation/package-watch';
 import { matchesRef } from '@/automation/policy';
 import { conflictMessage, moduleTagPrefixes, type RefState, tagConflict } from '@/automation/refs';
 import { manifestProblems, releasedVersion, unreleasedManifestVersion } from '@/automation/release-version';
-import { bodyChoices } from '@/automation/setup';
+import { bodyChoices, releaseAfterMerge } from '@/automation/setup';
 import { currentOptions, maintainSetup, setupEdits } from '@/automation/setup-maintenance';
 import { decodeError, Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
@@ -293,6 +293,7 @@ export class AutomationService {
 			if (state.kind !== 'ready') return;
 			const repository = state.repository;
 			let tags: RefState[] | undefined;
+			let setupMerge: { sha: string; body: string } | null | undefined;
 			const tagged: Diagnostic[] = [];
 			for (const [name, stream] of Object.entries(repository.configuration.streams)) {
 				if (!stream.promote.workflow || stream.versionSource?.kind === 'tags') continue;
@@ -369,6 +370,8 @@ export class AutomationService {
 					})
 				);
 				if (yield* fromPromise(() => this.coordinator(repository.id).execution(promotion.id))) continue;
+				setupMerge ??= (yield* this.setupMerge(repository)) ?? null;
+				if (setupMerge?.sha === plan.sourceSha && !releaseAfterMerge(setupMerge.body)) continue;
 				if (merge) promotion.approvedBy = 'merge';
 				yield* this.store.audit('beepboop', 'release.push', promotion.id);
 				yield* this.enqueue(repository, promotion);
@@ -377,6 +380,17 @@ export class AutomationService {
 				stored.diagnostics.push(...tagged);
 				yield* this.store.putRepository(stored);
 			}
+		});
+	}
+	private setupMerge(
+		repository: ReadyRepository,
+	): Effect.Effect<{ sha: string; body: string } | undefined, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const document = yield* this.onboarding.document(repository.id);
+			if (document === undefined) return undefined;
+			const saved = yield* Effect.fromResult(record(yield* fromJson(document)));
+			if (typeof saved.url !== 'string') return undefined;
+			return yield* this.gateway.setupMerge(repository.name, repository.id, saved.url);
 		});
 	}
 	private backfill(

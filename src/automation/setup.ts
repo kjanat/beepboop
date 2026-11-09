@@ -837,7 +837,11 @@ const triggerLabels: Record<TriggerHandover, string> = {
 	dispatchOnly: 'Replace existing triggers with Beepboop dispatch',
 	preserve: 'Preserve existing triggers; block incompatible integration',
 };
-export function setupBody(plan: SetupPlan): string {
+const releaseMarker = '<!-- beepboop:release-after-merge -->';
+export function releaseAfterMerge(body: string): boolean {
+	return /^[ \t]*[-*+] \[[xX]\] <!-- beepboop:release-after-merge -->/m.test(body);
+}
+export function setupBody(plan: SetupPlan, release = false): string {
 	const options = setupOptions(plan);
 	const box = (indent: string, option: SetupOption, label: string) =>
 		`${indent}- [${selected(option, plan.choices) ? 'x' : ' '}] <!-- beepboop:choice:${optionId(option)} --> ${label}`;
@@ -885,6 +889,8 @@ export function setupBody(plan: SetupPlan): string {
 			].join('\n');
 		}).join('\n')
 		+ '\n\nChange versioning, workflows and triggers in Beepboop under Repositories, Edit release setup.'
+		+ '\n\nTick this box to release the current version when this PR merges.\n\n'
+		+ `- [${release ? 'x' : ' '}] ${releaseMarker} Release after merge`
 		+ (plan.adoption?.length ? `\n\n${plan.adoption.join('\n').trimEnd()}` : '')
 		+ (plan.notes.length ? `\n\n${plan.notes.map(note => `- ${note}`).join('\n')}` : '')
 		+ '\n\nBeepboop keeps this proposal current when the default branch changes. Review all file changes before merging. Preparation and publication remain separate explicit operations.\n';
