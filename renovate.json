@@ -17,9 +17,16 @@
 	},
 	"packageRules": [
 		{
+			"matchDepTypes": ["devDependencies"],
+			"rangeStrategy": "pin"
+		},
+		{
 			"matchPackageNames": ["typescript", "@effect/tsgo"],
 			"groupName": "TypeScript and Effect tsgo",
-			"minimumReleaseAge": "7 days"
+			"minimumReleaseAge": "7 days",
+			"rangeStrategy": "pin",
+			"internalChecksFilter": "strict",
+			"allowedVersions": "!/-dev\\./"
 		},
 		{
 			"matchPackageNames": ["python", "python/cpython"],
