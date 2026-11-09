@@ -251,7 +251,8 @@ function suggested(
 			prepare: choose('prepare'),
 			promote: proposeBinaries(
 				choose('promote'),
-				workflowSetup.safeParse(object(object(current.promote).workflow).setup).success,
+				workflowSetup.safeParse(object(object(current.promote).workflow).setup).success
+					|| observe.some(entry => entry.publications.includes(`pkg:github/${snapshot.repository.name}`)),
 				candidates.filter(candidate => selected.includes(candidate.package)),
 			),
 		});

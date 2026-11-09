@@ -501,6 +501,49 @@ test('a rebuild keeps the needs and the GitHub release publication of an observe
 	expect(plan.choices.streams[0]?.observe).toEqual([observed]);
 });
 
+test('setup proposes no binaries when an observed workflow already publishes the GitHub release', async () => {
+	const repository = world.github.create('octo/tool', {
+		'Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\nedition = "2024"\n',
+		'src/main.rs': 'fn main() {}\n',
+		'.github/workflows/github-release.yml':
+			'name: GitHub release\non: { push: { tags: [\'v*\'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: gh release create "$GITHUB_REF_NAME"\n',
+	});
+	const api = bearer(world, await world.cliSession());
+	await applyChoices(
+		api,
+		repository.name,
+		crateChoices({
+			observe: [{
+				name: 'release',
+				file: 'github-release.yml',
+				ref: 'refs/tags/v*',
+				publications: ['pkg:github/octo/tool'],
+			}],
+		}),
+	);
+	world.github.merge(repository, 1);
+	const source = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
+	const legacy = (publications: string[]) =>
+		`${
+			JSON.stringify(
+				source,
+				(key, value) =>
+					key === 'setup'
+						? undefined
+						: key === 'publications' && value[0]?.startsWith('pkg:github')
+						? publications
+						: value,
+				'\t',
+			)
+		}\n`;
+	world.github.push(repository, { '.github/beepboop.json': legacy(['pkg:github/octo/tool']) }, 'Drop setup inputs');
+	const observed = await previewSetup(api, repository.name);
+	expect(observed.choices.streams[0]?.promote?.binaries).toBeUndefined();
+	world.github.push(repository, { '.github/beepboop.json': legacy([]) }, 'Stop observing the GitHub release');
+	const unobserved = await previewSetup(api, repository.name);
+	expect(unobserved.choices.streams[0]?.promote?.binaries?.builds.map(build => build.name)).toEqual(['tool']);
+});
+
 test('a ticked target that the binary is expected to fail on stays ticked with a note beside it', async () => {
 	const repository = engineRepository();
 	const api = bearer(world, await world.cliSession());
