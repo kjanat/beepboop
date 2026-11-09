@@ -3,6 +3,7 @@ import { Data, Effect, Result } from 'effect';
 import type { DomainError } from '@/contract/errors.ts';
 import { parseRetryAfter } from '@/domain/http-date.ts';
 import { array, record, text } from '@/model.ts';
+import { attemptWith, failWith, rejectWith } from '@/refusal.ts';
 
 export const modes = [
 	'begin',
@@ -30,16 +31,13 @@ export const endpoints = {
 export class ActionFailure extends Data.TaggedError('ActionFailure')<{ readonly message: string }> {}
 export type Invalid = ActionFailure | DomainError;
 
-export function refuse(message: string): Result.Result<never, ActionFailure> {
-	return Result.fail(new ActionFailure({ message }));
+function actionFailure(message: string): ActionFailure {
+	return new ActionFailure({ message });
 }
 
-export function attempt<A>(run: () => A): Result.Result<A, ActionFailure> {
-	return Result.try({
-		try: run,
-		catch: error => new ActionFailure({ message: error instanceof Error ? error.message : String(error) }),
-	});
-}
+export const fail = failWith(actionFailure);
+export const refuse = rejectWith(actionFailure);
+export const attempt = attemptWith(actionFailure);
 
 export function parseMode(value: string | undefined): Result.Result<Mode, ActionFailure> {
 	const mode = modes.find(candidate => candidate === value);

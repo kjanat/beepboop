@@ -1,6 +1,6 @@
 import { Context, Effect, Layer } from 'effect';
-import type { z } from 'zod';
 import type { DomainError } from '@/contract/errors';
+import { parseWith } from '@/decode';
 import { fromPromise, fromSync } from '@/failure';
 
 export interface SqlResult {
@@ -41,9 +41,7 @@ export function sql(db: SqlDatabase): Sql {
 	};
 }
 
-export function parse<S extends z.ZodType>(schema: S, value: unknown): Effect.Effect<z.output<S>, DomainError> {
-	return fromSync(() => schema.parse(value));
-}
+export const parse = parseWith(fromSync);
 
 export class Database extends Context.Service<Database, Sql>()('beepboop/Database') {}
 

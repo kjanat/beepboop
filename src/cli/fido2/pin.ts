@@ -11,7 +11,7 @@ import { Result } from 'effect';
 import type { CborMap } from '@/cli/fido2/cbor';
 import { bytes } from '@/cli/fido2/cbor';
 import type { SecurityKeyError } from '@/cli/fido2/types';
-import { securityKeyFailure } from '@/cli/fido2/types';
+import { attemptSecurityKey } from '@/cli/fido2/types';
 
 export interface PinProtocol {
 	readonly version: 1 | 2;
@@ -21,17 +21,13 @@ export interface PinProtocol {
 	authenticate(key: Uint8Array, message: Uint8Array): Uint8Array;
 }
 
-function crypto<A>(run: () => A): Result.Result<A, SecurityKeyError> {
-	return Result.try({ try: run, catch: securityKeyFailure });
-}
-
 function aes(
 	decrypt: boolean,
 	key: Uint8Array,
 	iv: Uint8Array,
 	data: Uint8Array,
 ): Result.Result<Uint8Array, SecurityKeyError> {
-	return crypto(() => {
+	return attemptSecurityKey(() => {
 		const cipher = decrypt ? createDecipheriv('aes-256-cbc', key, iv) : createCipheriv('aes-256-cbc', key, iv);
 		cipher.setAutoPadding(false);
 		return new Uint8Array(Buffer.concat([cipher.update(data), cipher.final()]));
@@ -55,7 +51,7 @@ export function pinProtocol(version: 1 | 2, authenticatorKey: CborMap): Result.R
 			...yield* bytes(authenticatorKey.get(-2)),
 			...yield* bytes(authenticatorKey.get(-3)),
 		]);
-		const z = yield* crypto(() => new Uint8Array(ecdh.computeSecret(peer)));
+		const z = yield* attemptSecurityKey(() => new Uint8Array(ecdh.computeSecret(peer)));
 		// COSE_Key for ECDH-ES+HKDF-256 on P-256, from CTAP 2.1 section 6.5.6.
 		const platformKey: CborMap = new Map<number, number | Uint8Array>([
 			[1, 2],
@@ -75,7 +71,7 @@ export function pinProtocol(version: 1 | 2, authenticatorKey: CborMap): Result.R
 			};
 		}
 		const salt = new Uint8Array(32);
-		const aesKey = yield* crypto(() => new Uint8Array(hkdfSync('sha256', z, salt, 'CTAP2 AES key', 32)));
+		const aesKey = yield* attemptSecurityKey(() => new Uint8Array(hkdfSync('sha256', z, salt, 'CTAP2 AES key', 32)));
 		return {
 			version,
 			platformKey,

@@ -1,13 +1,22 @@
 import { Data, Effect } from 'effect';
+import { attemptWith, errorMessage, failWith, rejectWith } from '@/refusal';
 
 export class SecurityKeyError extends Data.TaggedError('SecurityKeyError')<{
 	readonly message: string;
 	readonly code?: number;
 }> {}
 
-export function securityKeyFailure(error: unknown): SecurityKeyError {
-	return new SecurityKeyError({ message: error instanceof Error ? error.message : String(error) });
+function securityKeyError(message: string): SecurityKeyError {
+	return new SecurityKeyError({ message });
 }
+
+export function securityKeyFailure(error: unknown): SecurityKeyError {
+	return securityKeyError(errorMessage(error));
+}
+
+export const refuseSecurityKey = failWith(securityKeyError);
+export const rejectSecurityKey = rejectWith(securityKeyError);
+export const attemptSecurityKey = attemptWith(securityKeyError);
 
 export interface HidDevice {
 	readonly path: string;

@@ -4,12 +4,11 @@ import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { shaPattern } from '@/contract/ids';
 import { compare, semverPattern } from '@/contract/semver';
+import { rejectWith } from '@/refusal';
 
 export type Parsed<A> = Result.Result<A, DomainError>;
 
-function invalid(message: string): Parsed<never> {
-	return Result.fail(precondition(message));
-}
+export const invalid = rejectWith(precondition);
 
 export const textSchema = z.string().min(1);
 export const countSchema = z.int().positive();

@@ -9,6 +9,7 @@ import { emit, failure } from '@/cli/output';
 import { shaPattern } from '@/contract/ids';
 import { routes } from '@/contract/routes';
 import { semverPattern } from '@/contract/semver';
+import { decodeWith } from '@/decode';
 import { packageLabel } from '@/domain/package-label';
 
 const bumps = ['patch', 'minor', 'major'] as const;
@@ -126,12 +127,11 @@ const summarySchema = z.looseObject({
 	blockers: z.array(z.string()).optional(),
 });
 function decode<S extends z.ZodType>(schema: S, value: unknown): Effect.Effect<z.output<S>, CLIError> {
-	const result = schema.safeParse(value);
-	return result.success
-		? Effect.succeed(result.data)
-		: Effect.fail(
-			failure('Server returned an invalid release description', 'INVALID_RESPONSE', result.error.issues[0]?.message),
-		);
+	return decodeWith(
+		schema,
+		value,
+		error => failure('Server returned an invalid release description', 'INVALID_RESPONSE', error.issues[0]?.message),
+	);
 }
 
 export interface ReleaseOptions {

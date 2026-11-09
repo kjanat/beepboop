@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Scope } from 'effect';
 import { Data, Effect } from 'effect';
-import type { z } from 'zod';
+import { parseWith } from '@/decode';
+import { failWith } from '@/refusal';
 
 export class ToolFailure
 	extends Data.TaggedError('ToolFailure')<{ readonly message: string; readonly cause?: unknown }>
@@ -14,21 +15,21 @@ function message(cause: unknown): string {
 	return cause instanceof Error ? cause.message : String(cause);
 }
 
-export function refuse(text: string): Effect.Effect<never, ToolFailure> {
-	return Effect.fail(new ToolFailure({ message: text }));
+function toolFailure(cause: unknown): ToolFailure {
+	return new ToolFailure({ message: message(cause), cause });
 }
 
+export const refuse = failWith(text => new ToolFailure({ message: text }));
+
 export function attempt<A>(run: () => A): Effect.Effect<A, ToolFailure> {
-	return Effect.try({ try: run, catch: cause => new ToolFailure({ message: message(cause), cause }) });
+	return Effect.try({ try: run, catch: toolFailure });
 }
 
 export function attemptPromise<A>(run: () => Promise<A>): Effect.Effect<A, ToolFailure> {
-	return Effect.tryPromise({ try: run, catch: cause => new ToolFailure({ message: message(cause), cause }) });
+	return Effect.tryPromise({ try: run, catch: toolFailure });
 }
 
-export function parse<S extends z.ZodType>(schema: S, value: unknown): Effect.Effect<z.output<S>, ToolFailure> {
-	return attempt(() => schema.parse(value));
-}
+export const parse = parseWith(attempt);
 
 export function readJson(path: string): Effect.Effect<unknown, ToolFailure> {
 	return attemptPromise((): Promise<unknown> => Bun.file(path).json());

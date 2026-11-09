@@ -12,7 +12,7 @@ import { precondition } from '@/contract/errors';
 import { versionFileSchema } from '@/contract/version-files';
 import { configurationDrift, configurationSchema } from '@/domain/configuration';
 import { toDomainError } from '@/failure';
-import { array, oneOf, record, strings, text } from '@/model';
+import { array, invalid, oneOf, record, strings, text } from '@/model';
 import { purl } from '@/package-url';
 
 type Invalid = DomainError | z.ZodError;
@@ -20,9 +20,6 @@ type Parsed<A> = Result.Result<A, Invalid>;
 
 function lift<A>(run: () => A): Parsed<A> {
 	return Result.try({ try: run, catch: error => error instanceof z.ZodError ? error : toDomainError(error) });
-}
-function reject(message: string): Parsed<never> {
-	return Result.fail(precondition(message));
 }
 function packageReferences(value: unknown): Parsed<string[]> {
 	return Result.gen(function*() {
@@ -37,7 +34,7 @@ function packageReferences(value: unknown): Parsed<string[]> {
 const identifier = /^[a-z][a-z0-9-]{0,63}$/;
 function keys(data: Record<string, unknown>, allowed: string[], context: string): Parsed<void> {
 	const unknown = Object.keys(data).find(key => !allowed.includes(key));
-	return unknown === undefined ? Result.void : reject(`${context}: unknown field ${unknown}`);
+	return unknown === undefined ? Result.void : invalid(`${context}: unknown field ${unknown}`);
 }
 function parsedItems<A>(value: unknown, schema: z.ZodType<A>): Parsed<A[]> {
 	return Result.gen(function*() {
@@ -49,16 +46,16 @@ function winGetPolicy(value: unknown): Parsed<NonNullable<Configuration['winget'
 	return Result.gen(function*() {
 		const row = yield* record(value);
 		if (Object.keys(row).some(key => !['config', 'tagPrefix', 'automatic'].includes(key))) {
-			return yield* reject('Unknown WinGet setting');
+			return yield* invalid('Unknown WinGet setting');
 		}
 		const config = yield* text(row.config);
 		if (!/^[\w./-]+\.json$/.test(config) || config.startsWith('/') || config.split('/').includes('..')) {
-			return yield* reject('Invalid WinGet configuration path');
+			return yield* invalid('Invalid WinGet configuration path');
 		}
 		const tagPrefix = row.tagPrefix === undefined ? 'v' : String(row.tagPrefix);
-		if (!/^[\w.-]*$/.test(tagPrefix)) return yield* reject('Invalid WinGet tag prefix');
+		if (!/^[\w.-]*$/.test(tagPrefix)) return yield* invalid('Invalid WinGet tag prefix');
 		if (row.automatic !== undefined && typeof row.automatic !== 'boolean') {
-			return yield* reject('Invalid WinGet automatic setting');
+			return yield* invalid('Invalid WinGet automatic setting');
 		}
 		return { config, tagPrefix, automatic: row.automatic === true };
 	});
@@ -66,7 +63,7 @@ function winGetPolicy(value: unknown): Parsed<NonNullable<Configuration['winget'
 function workflowInput(value: unknown): Parsed<string | boolean | number> {
 	return typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number'
 		? Result.succeed(value)
-		: reject('Invalid workflow input');
+		: invalid('Invalid workflow input');
 }
 function binding(value: unknown): Parsed<WorkflowBinding> {
 	return Result.gen(function*() {
@@ -93,7 +90,7 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 		);
 		const schedule = data.schedule === undefined ? undefined : yield* text(data.schedule);
 		if (schedule !== undefined) {
-			if (schedule.trim().split(/\s+/).length !== 5) return yield* reject('Schedules use five-field UTC cron');
+			if (schedule.trim().split(/\s+/).length !== 5) return yield* invalid('Schedules use five-field UTC cron');
 			yield* lift(() => CronExpressionParser.parse(schedule, { tz: 'UTC' }));
 		}
 		const mode = data.mode === undefined
@@ -101,7 +98,7 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 			: yield* oneOf(data.mode, ['observe', 'dispatch'], 'Invalid workflow mode');
 		const each = data.each === undefined ? undefined : yield* oneOf(data.each, ['package'], 'Invalid workflow each');
 		if (each && (data.outputs !== undefined || data.artifactInputs !== undefined || data.refs !== undefined)) {
-			return yield* reject('Per-package workflows cannot declare outputs, artifact inputs or refs');
+			return yield* invalid('Per-package workflows cannot declare outputs, artifact inputs or refs');
 		}
 		let refs: WorkflowBinding['refs'];
 		if (data.refs !== undefined) {
@@ -109,35 +106,35 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 			yield* keys(policy, ['phase', 'prefix', 'aliases', 'signed'], 'refs');
 			const phase = yield* oneOf(policy.phase, ['version', 'aliases'], 'Invalid ref phase');
 			const prefix = policy.prefix === undefined ? 'v' : String(policy.prefix);
-			if (!validTagPrefix(prefix)) return yield* reject('Invalid tag prefix');
+			if (!validTagPrefix(prefix)) return yield* invalid('Invalid tag prefix');
 			const aliases = yield* Result.all(
 				(yield* strings(policy.aliases ?? [])).map(alias => oneOf(alias, ['major', 'minor'], 'Invalid aliases')),
 			);
-			if (new Set(aliases).size !== aliases.length) return yield* reject('Invalid aliases');
+			if (new Set(aliases).size !== aliases.length) return yield* invalid('Invalid aliases');
 			if (policy.signed !== undefined && typeof policy.signed !== 'boolean') {
-				return yield* reject('Invalid signed policy');
+				return yield* invalid('Invalid signed policy');
 			}
 			refs = { phase, prefix, aliases, signed: policy.signed === true };
 		}
 		const file = yield* text(data.file);
 		const ref = data.ref === undefined ? undefined : yield* text(data.ref);
-		if (ref !== undefined && !validRef(ref)) return yield* reject('Invalid workflow ref');
-		if (!workflowFilePattern.test(file)) return yield* reject('Workflow must be a filename');
+		if (ref !== undefined && !validRef(ref)) return yield* invalid('Invalid workflow ref');
+		if (!workflowFilePattern.test(file)) return yield* invalid('Workflow must be a filename');
 		const inputs: Record<string, string | boolean | number> = {};
 		for (
 			const [key, input] of Object.entries(data.inputs === undefined ? {} : yield* record(data.inputs))
 		) {
 			if (key === 'beepboop_execution_id' || (each && key === 'package')) {
-				return yield* reject('Invalid workflow input');
+				return yield* invalid('Invalid workflow input');
 			}
 			inputs[key] = yield* workflowInput(input);
 		}
 		if (data.required !== undefined && typeof data.required !== 'boolean') {
-			return yield* reject('Invalid required flag');
+			return yield* invalid('Invalid required flag');
 		}
 		const outputs = data.outputs === undefined ? undefined : yield* parsedItems(data.outputs, outputSchema);
 		if (outputs && new Set(outputs.map(output => output.id)).size !== outputs.length) {
-			return yield* reject('Duplicate output');
+			return yield* invalid('Duplicate output');
 		}
 		const artifactInputs = data.artifactInputs === undefined
 			? undefined
@@ -151,7 +148,7 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 			for (const [operation, jobs] of Object.entries(yield* record(data.needsJobs))) {
 				const names = yield* strings(jobs);
 				if (!identifier.test(operation) || !names.length || names.some(name => !jobKeyPattern.test(name))) {
-					return yield* reject('Invalid needsJobs');
+					return yield* invalid('Invalid needsJobs');
 				}
 				needsJobs[operation] = names;
 			}
@@ -178,7 +175,7 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 }
 function stream(name: string, raw: unknown): Parsed<Stream> {
 	return Result.gen(function*() {
-		if (!identifier.test(name)) return yield* reject('Invalid stream name');
+		if (!identifier.test(name)) return yield* invalid('Invalid stream name');
 		const row = yield* record(raw);
 		yield* keys(
 			row,
@@ -208,7 +205,7 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 		yield* keys(promote, ['approval', 'workflow'], 'promote');
 		yield* keys(channels, ['stable', 'prerelease'], 'channels');
 		if (prepare.version !== undefined && prepare.version !== 'manual') {
-			return yield* reject('Only manual version selection is supported');
+			return yield* invalid('Only manual version selection is supported');
 		}
 		const versioning = yield* oneOf(
 			row.versioning ?? 'workspace',
@@ -218,7 +215,7 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 		const concurrency = yield* oneOf(row.concurrency ?? 'queue', ['queue', 'supersede-pending'], 'Invalid concurrency');
 		const workflows: Record<string, WorkflowBinding> = {};
 		for (const [operation, value] of Object.entries(yield* record(row.workflows ?? {}))) {
-			if (!identifier.test(operation)) return yield* reject('Invalid operation name');
+			if (!identifier.test(operation)) return yield* invalid('Invalid operation name');
 			workflows[operation] = yield* binding(value);
 		}
 		let versionSource: Stream['versionSource'];
@@ -226,7 +223,7 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 			const source = yield* record(row.versionSource);
 			yield* keys(source, ['kind', 'prefix'], 'versionSource');
 			if (source.kind !== 'tags' || typeof source.prefix !== 'string' || !validTagPrefix(source.prefix)) {
-				return yield* reject('Invalid tag version source');
+				return yield* invalid('Invalid tag version source');
 			}
 			versionSource = { kind: 'tags', prefix: source.prefix };
 		}
@@ -283,9 +280,9 @@ function operationGraph(stream: Stream): Parsed<void> {
 		const visit = (name: string): Parsed<void> =>
 			Result.gen(function*() {
 				if (done.has(name)) return;
-				if (visiting.has(name)) return yield* reject('Operation dependency cycle');
+				if (visiting.has(name)) return yield* invalid('Operation dependency cycle');
 				const operation = operations[name];
-				if (!operation) return yield* reject(`Unknown dependency ${name}`);
+				if (!operation) return yield* invalid(`Unknown dependency ${name}`);
 				visiting.add(name);
 				for (const dependency of operation.needs ?? []) yield* visit(dependency);
 				visiting.delete(name);
@@ -296,16 +293,16 @@ function operationGraph(stream: Stream): Parsed<void> {
 		for (const [name, operation] of Object.entries(operations)) {
 			for (const input of operation?.artifactInputs ?? []) {
 				if (!operations[input.operation]?.outputs?.some(output => output.id === input.output)) {
-					return yield* reject(`Unknown output: ${input.operation}/${input.output}`);
+					return yield* invalid(`Unknown output: ${input.operation}/${input.output}`);
 				}
 			}
 			for (const needed of Object.keys(operation?.needsJobs ?? {})) {
 				if (!operation?.needs?.includes(needed) || operations[needed]?.mode !== 'observe') {
-					return yield* reject(`needsJobs.${needed} must name an observed operation listed in needs`);
+					return yield* invalid(`needsJobs.${needed} must name an observed operation listed in needs`);
 				}
 			}
 			if (operation?.refs && !approved(name)) {
-				return yield* reject('Ref publication requires promotion approval in its dependencies');
+				return yield* invalid('Ref publication requires promotion approval in its dependencies');
 			}
 		}
 	});
@@ -328,11 +325,11 @@ function subscription(raw: unknown, streams: Record<string, Stream>): Parsed<Con
 			kind = yield* text(row.event),
 			stream = yield* text(row.stream),
 			operation = yield* text(row.operation);
-		if (!identifier.test(id)) return yield* reject('Invalid subscription');
+		if (!identifier.test(id)) return yield* invalid('Invalid subscription');
 		const event = yield* oneOf(kind, ['release', 'package.version.changed', 'workflow_run'], 'Invalid subscription');
-		if (!streams[stream]?.workflows[operation]) return yield* reject('Subscription references an unknown operation');
+		if (!streams[stream]?.workflows[operation]) return yield* invalid('Subscription references an unknown operation');
 		if (event === 'workflow_run' && (typeof row.workflow !== 'string' || !workflowFilePattern.test(row.workflow))) {
-			return yield* reject('Workflow subscription requires an exact filename');
+			return yield* invalid('Workflow subscription requires an exact filename');
 		}
 		return {
 			id,
@@ -364,7 +361,7 @@ export function parseRepositoryConfiguration(value: unknown): Parsed<Configurati
 			subscriptions.push(yield* subscription(raw, streams));
 		}
 		if (new Set(subscriptions.map((s) => s.id)).size !== subscriptions.length) {
-			return yield* reject('Duplicate subscription');
+			return yield* invalid('Duplicate subscription');
 		}
 		return {
 			...(data.winget === undefined ? {} : { winget: yield* winGetPolicy(data.winget) }),
@@ -392,7 +389,7 @@ export function mergeConfiguration(
 		}
 		for (const [key, value] of Object.entries(override)) {
 			if (['__proto__', 'constructor', 'prototype'].includes(key)) {
-				return yield* Result.fail(precondition('Invalid configuration key'));
+				return yield* invalid('Invalid configuration key');
 			}
 			const prior = result[key];
 			result[key] = value

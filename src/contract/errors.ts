@@ -1,6 +1,8 @@
-import { Data, Effect } from 'effect';
+import type { Effect } from 'effect';
+import { Data } from 'effect';
 import { z } from 'zod';
 import { diagnostic } from '@/contract/diagnostics';
+import { decodeWith } from '@/decode';
 
 export const resources = [
 	'repository',
@@ -141,6 +143,5 @@ export function invalidRequest(error: z.ZodError): DomainError {
 	});
 }
 export function decodeRequest<S extends z.ZodType>(schema: S, value: unknown): Effect.Effect<z.output<S>, DomainError> {
-	const parsed = schema.safeParse(value);
-	return parsed.success ? Effect.succeed(parsed.data) : Effect.fail(invalidRequest(parsed.error));
+	return decodeWith(schema, value, invalidRequest);
 }

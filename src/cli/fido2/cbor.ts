@@ -1,13 +1,10 @@
 import { Result } from 'effect';
-import { SecurityKeyError } from '@/cli/fido2/types';
+import type { SecurityKeyError } from '@/cli/fido2/types';
+import { rejectSecurityKey } from '@/cli/fido2/types';
 
 export type CborValue = number | string | boolean | Uint8Array | CborValue[] | CborMap;
 export type CborMap = Map<number | string, CborValue>;
 type Decoded<A> = Result.Result<A, SecurityKeyError>;
-
-function malformed(message: string): Decoded<never> {
-	return Result.fail(new SecurityKeyError({ message }));
-}
 
 function head(major: number, length: number): number[] {
 	if (length < 24) return [(major << 5) | length];
@@ -27,7 +24,7 @@ export function encode(value: CborValue): Decoded<Uint8Array> {
 	const write = (item: CborValue): Decoded<void> =>
 		Result.gen(function*() {
 			if (typeof item === 'number') {
-				if (!Number.isSafeInteger(item)) return yield* malformed('CBOR encoder supports integers only');
+				if (!Number.isSafeInteger(item)) return yield* rejectSecurityKey('CBOR encoder supports integers only');
 				bytes.push(...(item >= 0 ? head(0, item) : head(1, -1 - item)));
 			} else if (typeof item === 'string') {
 				const text = new TextEncoder().encode(item);
@@ -57,7 +54,7 @@ export function decode(input: Uint8Array): Decoded<CborValue> {
 	let offset = 0;
 	const byte = (): Decoded<number> => {
 		const value = input[offset++];
-		return value === undefined ? malformed('Truncated CBOR') : Result.succeed(value);
+		return value === undefined ? rejectSecurityKey('Truncated CBOR') : Result.succeed(value);
 	};
 	const word = (): Decoded<number> =>
 		Result.gen(function*() {
@@ -74,13 +71,13 @@ export function decode(input: Uint8Array): Decoded<CborValue> {
 				const high = yield* word();
 				const low = yield* word();
 				const value = high * 2 ** 32 + low;
-				if (!Number.isSafeInteger(value)) return yield* malformed('CBOR integer too large');
+				if (!Number.isSafeInteger(value)) return yield* rejectSecurityKey('CBOR integer too large');
 				return value;
 			}
-			return yield* malformed('Unsupported CBOR length');
+			return yield* rejectSecurityKey('Unsupported CBOR length');
 		});
 	const take = (count: number): Decoded<Uint8Array> => {
-		if (offset + count > input.length) return malformed('Truncated CBOR');
+		if (offset + count > input.length) return rejectSecurityKey('Truncated CBOR');
 		const slice = input.slice(offset, offset + count);
 		offset += count;
 		return Result.succeed(slice);
@@ -101,7 +98,9 @@ export function decode(input: Uint8Array): Decoded<CborValue> {
 				const map: CborMap = new Map();
 				for (let index = yield* length(info); index > 0; index--) {
 					const key = yield* read();
-					if (typeof key !== 'number' && typeof key !== 'string') return yield* malformed('Unsupported CBOR map key');
+					if (typeof key !== 'number' && typeof key !== 'string') {
+						return yield* rejectSecurityKey('Unsupported CBOR map key');
+					}
 					map.set(key, yield* read());
 				}
 				return map;
@@ -112,15 +111,15 @@ export function decode(input: Uint8Array): Decoded<CborValue> {
 			}
 			if (initial === 0xf4) return false;
 			if (initial === 0xf5) return true;
-			return yield* malformed('Unsupported CBOR value');
+			return yield* rejectSecurityKey('Unsupported CBOR value');
 		});
 	return read();
 }
 
 export function map(value: CborValue | undefined): Decoded<CborMap> {
-	return value instanceof Map ? Result.succeed(value) : malformed('Expected a CBOR map');
+	return value instanceof Map ? Result.succeed(value) : rejectSecurityKey('Expected a CBOR map');
 }
 
 export function bytes(value: CborValue | undefined): Decoded<Uint8Array> {
-	return value instanceof Uint8Array ? Result.succeed(value) : malformed('Expected CBOR bytes');
+	return value instanceof Uint8Array ? Result.succeed(value) : rejectSecurityKey('Expected CBOR bytes');
 }

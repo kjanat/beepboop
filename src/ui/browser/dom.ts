@@ -1,4 +1,5 @@
 import { Cause, Data, Effect } from 'effect';
+import { failWith } from '@/refusal';
 
 export class MissingElement extends Data.TaggedError('MissingElement')<{ readonly message: string }> {}
 
@@ -63,9 +64,7 @@ export class FieldError extends Data.TaggedError('FieldError')<{
 
 export class Refused extends Data.TaggedError('Refused')<{ readonly message: string }> {}
 
-export function refuse(message: string): Effect.Effect<never, Refused> {
-	return Effect.fail(new Refused({ message }));
-}
+export const refuse = failWith(message => new Refused({ message }));
 
 export function report<E>(program: Effect.Effect<void, E>, form?: HTMLFormElement): Effect.Effect<void> {
 	return program.pipe(Effect.catchCause(cause => Effect.sync(() => showError(Cause.squash(cause), form))));

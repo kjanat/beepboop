@@ -1,10 +1,10 @@
 import { appendFileSync } from 'node:fs';
 import type { Mode } from '@root/actions/runtime/protocol.ts';
 import {
-	ActionFailure,
 	attempt,
 	endpoints,
 	exchange,
+	fail,
 	parseMode,
 	requestBody,
 	required,
@@ -13,10 +13,6 @@ import { identityToken, mask, post, serviceOrigin } from '@root/actions/runtime/
 import { Effect } from 'effect';
 import { record, text } from '@/model.ts';
 import { writeOutput } from '@/tooling/github-output.ts';
-
-function fail(message: string): Effect.Effect<never, ActionFailure> {
-	return Effect.fail(new ActionFailure({ message }));
-}
 
 function writeResult(mode: Mode, data: Record<string, unknown>) {
 	return Effect.gen(function*() {

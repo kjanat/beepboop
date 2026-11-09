@@ -1,11 +1,7 @@
 import type { Invalid } from '@root/actions/runtime/protocol.ts';
-import { ActionFailure, attempt, failureOf, isJson, required } from '@root/actions/runtime/protocol.ts';
+import { ActionFailure, attempt, fail, failureOf, isJson, required } from '@root/actions/runtime/protocol.ts';
 import { Effect } from 'effect';
 import { record } from '@/model.ts';
-
-function fail(message: string): Effect.Effect<never, ActionFailure> {
-	return Effect.fail(new ActionFailure({ message }));
-}
 
 export function mask(value: string): Effect.Effect<void> {
 	return Effect.sync(() =>

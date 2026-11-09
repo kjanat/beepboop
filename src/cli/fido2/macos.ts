@@ -2,7 +2,7 @@ import type { Pointer } from 'bun:ffi';
 import { dlopen, FFIType, JSCallback, ptr, toArrayBuffer } from 'bun:ffi';
 import { Effect, Result } from 'effect';
 import type { HidDevice, HidTransport } from '@/cli/fido2/types';
-import { SecurityKeyError, securityKeyFailure } from '@/cli/fido2/types';
+import { attemptSecurityKey, rejectSecurityKey, SecurityKeyError } from '@/cli/fido2/types';
 
 const IOKIT_PATH = '/System/Library/Frameworks/IOKit.framework/IOKit';
 const CORE_FOUNDATION_PATH = '/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation';
@@ -24,12 +24,10 @@ const K_IO_RETURN_SUCCESS = 0;
 type Ref = Pointer | bigint;
 type Native<A> = Result.Result<A, SecurityKeyError>;
 
-function failed(message: string): Native<never> {
-	return Result.fail(new SecurityKeyError({ message }));
-}
-
 function ref(value: Pointer | bigint | null, what: string): Native<Ref> {
-	return value === null || value === 0 || value === 0n ? failed(`${what} returned null`) : Result.succeed(value);
+	return value === null || value === 0 || value === 0n
+		? rejectSecurityKey(`${what} returned null`)
+		: Result.succeed(value);
 }
 
 function cString(value: string): Uint8Array {
@@ -41,11 +39,7 @@ function ioFailure(code: number, what: string): string {
 }
 
 function ioReturn(code: number, what: string): Native<void> {
-	return code === K_IO_RETURN_SUCCESS ? Result.void : failed(ioFailure(code, what));
-}
-
-function native<A>(run: () => A): Native<A> {
-	return Result.try({ try: run, catch: securityKeyFailure });
+	return code === K_IO_RETURN_SUCCESS ? Result.void : rejectSecurityKey(ioFailure(code, what));
 }
 
 function loadSystem() {
@@ -114,7 +108,7 @@ function loadIOKit() {
 
 function loadDataSymbols(): Native<{ keyCallbacks: Ref; valueCallbacks: Ref }> {
 	return Result.gen(function*() {
-		const system = yield* native(loadSystem);
+		const system = yield* attemptSecurityKey(loadSystem);
 		const handle = yield* ref(
 			system.dlopen(ptr(cString(CORE_FOUNDATION_PATH)), RTLD_LAZY),
 			'dlopen(CoreFoundation)',
@@ -141,7 +135,7 @@ interface Api extends ReturnType<typeof libraries> {
 
 function load(): Native<Api> {
 	return Result.gen(function*() {
-		const { cf, iokit } = yield* native(libraries);
+		const { cf, iokit } = yield* attemptSecurityKey(libraries);
 		const { keyCallbacks, valueCallbacks } = yield* loadDataSymbols();
 		const string = (value: string): Native<Ref> =>
 			ref(
@@ -225,7 +219,7 @@ function createDevice(lib: Api, handle: Ref, index: number): Native<HidDevice> {
 		if (open !== K_IO_RETURN_SUCCESS) {
 			callback.close();
 			lib.cf.CFRelease(handle);
-			return yield* failed(ioFailure(open, 'IOHIDDeviceOpen'));
+			return yield* rejectSecurityKey(ioFailure(open, 'IOHIDDeviceOpen'));
 		}
 		lib.iokit.IOHIDDeviceRegisterInputReportCallback(
 			handle,
@@ -245,7 +239,7 @@ function createDevice(lib: Api, handle: Ref, index: number): Native<HidDevice> {
 						return yield* new SecurityKeyError({ message: `HID report must be ${REPORT_SIZE} bytes` });
 					}
 					const code = yield* Effect.fromResult(
-						native(() =>
+						attemptSecurityKey(() =>
 							lib.iokit.IOHIDDeviceSetReport(handle, K_IOHID_REPORT_TYPE_OUTPUT, 0, ptr(report), report.length)
 						),
 					);

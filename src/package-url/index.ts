@@ -3,6 +3,7 @@ import { PackageURL } from 'packageurl-js';
 import type { ComponentDefinition, TypeDefinition } from '@/package-url/definition';
 import { parseTypeDefinition } from '@/package-url/definition';
 import definitions from '@/package-url/definitions';
+import { attemptWith, rejectWith } from '@/refusal';
 
 export type { ComponentDefinition, TypeDefinition } from '@/package-url/definition';
 export type {
@@ -45,15 +46,11 @@ function stringIdentity(
 
 export class InvalidPackageUrl extends Data.TaggedError('InvalidPackageUrl')<{ readonly message: string }> {}
 
-function invalid(message: string): Result.Result<never, InvalidPackageUrl> {
-	return Result.fail(new InvalidPackageUrl({ message }));
+function invalidPackageUrl(message: string): InvalidPackageUrl {
+	return new InvalidPackageUrl({ message });
 }
-function library<A>(run: () => A): Result.Result<A, InvalidPackageUrl> {
-	return Result.try({
-		try: run,
-		catch: error => new InvalidPackageUrl({ message: error instanceof Error ? error.message : String(error) }),
-	});
-}
+const invalid = rejectWith(invalidPackageUrl);
+const library = attemptWith(invalidPackageUrl);
 
 /** Identities read from stored or discovered records, which were validated with parsePackageIdentity. */
 export function packageIdentity(input: PackageIdentity | string): PackageIdentity {

@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Invalid } from '@root/actions/runtime/protocol.ts';
-import { ActionFailure, attempt, required } from '@root/actions/runtime/protocol.ts';
+import { ActionFailure, attempt, fail, required } from '@root/actions/runtime/protocol.ts';
 import { call, mask, serviceOrigin } from '@root/actions/runtime/session.ts';
 import { Effect } from 'effect';
 import { z } from 'zod';
@@ -34,10 +34,6 @@ interface Artifact {
 const longestWait = publishWaitMinutes * 60_000;
 const verificationPolls = 20;
 const packageAttempts = 8;
-
-function fail(message: string): Effect.Effect<never, ActionFailure> {
-	return Effect.fail(new ActionFailure({ message }));
-}
 
 function sha256(path: string): Effect.Effect<string, ActionFailure> {
 	return Effect.fromResult(attempt(() => createHash('sha256').update(readFileSync(path)).digest('hex')));
