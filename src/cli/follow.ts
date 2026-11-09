@@ -44,6 +44,7 @@ export interface Followed {
 	stream: string;
 	version: string;
 	execution: { id: string };
+	bumped: boolean;
 }
 
 const outcomeState: Record<string, State> = {
@@ -167,10 +168,14 @@ function snapshot(client: Client, followed: Followed): Effect.Effect<Tracked[], 
 export function followRelease(client: Client, out: Out, followed: Followed): Effect.Effect<void, CLIError> {
 	return Effect.gen(function*() {
 		const look = lookOf(out);
-		const spinner = out.spinner(`Applying the ${look.version(followed.version)} version bump`);
+		const spinner = out.spinner(
+			followed.bumped
+				? `Applying the ${look.version(followed.version)} version bump`
+				: `Starting the release of ${look.version(followed.version)}`,
+		);
 		let progress: ProgressHandle | undefined;
 		let phase: string | undefined;
-		let announced = false;
+		let announced = !followed.bumped;
 		for (;;) {
 			yield* client.pause(followInterval);
 			const rows = yield* snapshot(client, followed);

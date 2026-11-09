@@ -87,17 +87,22 @@ release and returns at once. Spinners and progress bars stay off when the
 output is not a terminal, and `NO_COLOR` turns off the colors and links. See [Start a release](automation.md#start-a-release). Without
 that entry, `beepboop release` never approves or publishes.
 
-`--json` on its own previews and stops. Pass the version, and `--stream` when the
-repository has several streams. Add `--yes` to confirm the preview and start
-preparation from a script:
+The confirmation defaults to no. `--yes` skips only the confirmation; the
+preview still prints. `--dry-run` plans on the server, prints the preview, or
+JSON with `--json`, and starts nothing. `--json` on its own also previews and
+stops. Pass the version, and `--stream` when the repository has several
+streams. Add `--yes` to start from a script:
 
 ```sh
-beepboop release patch --repository owner/repository --stream main --json
+beepboop release patch --repository owner/repository --stream main --dry-run
 beepboop release patch --repository owner/repository --stream main --yes --json
 ```
 
-`beepboop release` refuses versions that are prepared already, and it handles
-only shared-version streams. Independent package versions use `plan-set` and
+When the default branch already carries the version, a stream with the cli
+start publishes it after the same single confirmation. A promotion that waits
+for approval takes the start as its approval. Without the cli start,
+`beepboop release` refuses a version that is prepared already. It handles only
+shared-version streams. Independent package versions use `plan-set` and
 `prepare-set` below.
 
 For a stream whose `versionSource` reads tags, the flow ends at preparation.

@@ -306,18 +306,28 @@ const runs = group('runs').description('Follow, approve, cancel and recover rele
 				}))
 			),
 	);
-const release = base('release', 'Prepare a version PR for the current GitHub checkout')
+const release = base('release', 'Release this Git checkout: preview a version on the server, confirm, then act')
+	.example('beepboop release', 'Ask for the stream (when several) and version, preview, confirm (default no)')
+	.example('beepboop release patch', 'cli start: bump, then publish; the start approves the publication')
+	.example('beepboop release 1.2.0', 'cli start, 1.2.0 already on the default branch: publish it')
+	.example('beepboop release minor', 'No cli start, bump commit: commit the version bump')
+	.example('beepboop release major', 'No cli start, bump pr: open the version PR')
+	.example('beepboop release patch --yes', 'Skip only the confirmation')
+	.example('beepboop release patch --dry-run', 'Print the preview (packages, version file diffs), start nothing')
 	.arg('version', arg.string().optional().describe('patch, minor, major or an explicit semantic version'))
 	.flag('repository', flag.string().describe('Repository override; otherwise resolve the current Git remote'))
 	.flag('stream', flag.string().describe('Release stream; inferred when only one is configured'))
+	.flag('yes', flag.boolean().default(false).describe('Skip the confirmation; the preview still prints'))
 	.flag(
-		'yes',
-		flag.boolean().default(false).describe('Confirm the server preview and start preparation without prompting'),
+		'dry-run',
+		flag.boolean().default(false).describe('Plan on the server, print the preview and start nothing'),
 	)
 	.action(({ flags, args, ask, out }) =>
 		Effect.runPromise(
 			Client.at(flags.server).pipe(
-				Effect.flatMap(client => releaseRepository(client, { ...flags, version: args.version }, ask, out)),
+				Effect.flatMap(client =>
+					releaseRepository(client, { ...flags, dryRun: flags['dry-run'], version: args.version }, ask, out)
+				),
 			),
 		)
 	);

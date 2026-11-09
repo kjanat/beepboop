@@ -742,6 +742,16 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				return yield* precondition('Execution needs exactly one runner');
 			}
 			const prior = yield* this.stored(execution.id);
+			if (prior?.state === 'awaiting-approval' && prior.approvedBy === undefined && execution.approvedBy === 'start') {
+				const started: Execution = {
+					...prior,
+					approvedBy: execution.approvedBy,
+					...(execution.started ? { started: execution.started } : {}),
+					...(execution.initiatedBy ? { initiatedBy: execution.initiatedBy } : {}),
+				};
+				yield* this.put(started);
+				return started;
+			}
 			if (prior) return prior;
 			if (execution.configuration.streams[execution.stream]?.concurrency === 'supersede-pending') {
 				for (const old of yield* this.executions()) {

@@ -138,6 +138,7 @@ export interface ReleaseOptions {
 	stream?: string;
 	version?: string;
 	yes: boolean;
+	dryRun: boolean;
 }
 
 export function releaseRepository(
@@ -262,15 +263,18 @@ export function releaseRepository(
 		);
 		const summary = yield* decode(summarySchema, plan);
 		if (summary.blockers?.length) return yield* Effect.fail(failure(summary.blockers.join('\n'), 'BLOCKED_PLAN'));
-		if (!plan.edits.length && !plan.requiresPreparation) {
+		const started = startsFrom(stream.start, 'cli') !== undefined;
+		const committing = stream.prepare.bump === 'commit';
+		const pending = plan.edits.length > 0 || plan.requiresPreparation === true;
+		if (!pending && !started) {
 			return yield* Effect.fail(failure(
 				`Version ${summary.version} is already prepared at ${summary.sourceSha}`,
 				'ALREADY_PREPARED',
-				'This command only initiates preparation; inspect existing release operations with beepboop runs list',
+				`Approve its publication with beepboop runs approve, or add the cli start to ${selected} to start it here`,
 			));
 		}
 		const preview = { repository: repository.name, stream: selected, defaultBranch: repository.defaultBranch, plan };
-		if (out.jsonMode && !options.yes) return yield* emit(out, preview);
+		if (out.jsonMode && (options.dryRun || !options.yes)) return yield* emit(out, preview);
 		if (!out.jsonMode) {
 			out.log(
 				look.heading(
@@ -305,10 +309,11 @@ export function releaseRepository(
 			} else out.log('The configured preparation workflow determines the package versions.');
 			for (const note of plan.diagnostics ?? []) out.log(look.note(note));
 			for (const edit of plan.edits) out.log(`\n${edit.path}\nCurrent:\n${edit.before}\nProposed:\n${edit.after}`);
+			if (!pending) {
+				out.log(`${repository.defaultBranch} already carries ${look.version(summary.version)}. Starting publishes it.`);
+			}
 		}
-		const started = startsFrom(stream.start, 'cli') !== undefined;
-		const committing = stream.prepare.bump === 'commit';
-		const pending = plan.edits.length || plan.requiresPreparation;
+		if (options.dryRun) return out.log(look.note('Dry run: Beepboop started nothing.'));
 		if (
 			!options.yes
 			&& !(yield* prompt(() =>
@@ -349,6 +354,7 @@ export function releaseRepository(
 				stream: selected,
 				version: summary.version,
 				execution: preparation,
+				bumped: pending,
 			});
 		}
 		out.log(

@@ -105,7 +105,7 @@ export class AutomationService {
 			const coordinator = this.coordinator(repository.id);
 			if (execution.managed) return yield* fromPromise(() => coordinator.enqueue(execution));
 			const existing = yield* fromPromise(() => coordinator.execution(execution.id));
-			if (existing) return yield* fromPromise(() => coordinator.enqueue(existing));
+			if (existing) return yield* fromPromise(() => coordinator.enqueue(execution));
 			const stream = execution.configuration.streams[execution.stream];
 			if (
 				execution.operation === 'prepare'
