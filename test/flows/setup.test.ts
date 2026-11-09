@@ -1360,26 +1360,13 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 		}),
 	}).parse(parse(plan.edits.find(edit => edit.path === '.github/workflows/release-sql.yml')?.after ?? ''));
 	const steps = workflow.jobs.publish.steps;
-	const script = steps.find(step => step.id === 'beepboop_publish')?.run ?? '';
-	expect(script.split('\n').filter(line => line.startsWith('publish_crate '))).toEqual([
-		"publish_crate 'sql-parser'",
-		"publish_crate 'sql'",
-		"publish_crate 'sql-cli'",
-	]);
+	expect(plan.choices.streams[0]?.promote?.commands).toBe(ledgerCommand);
+	expect(steps.find(step => step.id === 'beepboop_publish')).toMatchObject({
+		uses: 'kjanat/beepboop/actions/publish@v1',
+		with: { credentials: JSON.stringify({ CARGO_REGISTRY_TOKEN: 'crates-io' }) },
+	});
 	expect(steps.map(step => step.uses ?? step.id).filter(step => /publish-(?:refs|release)|report/.test(step ?? '')))
-		.toEqual([
-			'kjanat/beepboop/actions/publish-refs@v1',
-			'kjanat/beepboop/actions/publish-release@v1',
-			'kjanat/beepboop/actions/report@v1',
-		]);
-	const reported = z.array(z.object({ name: z.string(), outcome: z.string() })).parse(
-		JSON.parse(steps.find(step => step.with?.publications)?.with?.publications ?? '[]'),
-	);
-	expect(reported.map(entry => entry.outcome)).toEqual(
-		reported.map(entry =>
-			`\${{ steps.beepboop_publish.outputs['${entry.name}'] == 'succeeded' && 'succeeded' || 'failed' }}`
-		),
-	);
+		.toEqual(['kjanat/beepboop/actions/publish-refs@v1', 'kjanat/beepboop/actions/publish-release@v1']);
 	const without = structuredClone(choices);
 	const stream = without.streams[0];
 	if (!stream) throw new Error('stream expected');
@@ -1395,16 +1382,7 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 	expect(partial.notes).toContain(
 		'main: a selected package depends on `sql-parser` on crates.io, and its registry does not have this version. Publish it first.',
 	);
-	const partialScript = z.object({
-		jobs: z.object({
-			publish: z.object({ steps: z.array(z.object({ id: z.string().optional(), run: z.string().optional() })) }),
-		}),
-	}).parse(parse(partial.edits.find(edit => edit.path === '.github/workflows/release-sql.yml')?.after ?? ''))
-		.jobs.publish.steps.find(step => step.id === 'beepboop_publish')?.run ?? '';
-	expect(partialScript.split('\n').filter(line => line.startsWith('publish_crate '))).toEqual([
-		"publish_crate 'sql'",
-		"publish_crate 'sql-cli'",
-	]);
+	expect(partial.choices.streams[0]?.promote?.commands).toBe(ledgerCommand);
 });
 
 test('an unticked dependency in the setup PR body stays unticked through edits and refreshes', async () => {
@@ -1488,7 +1466,7 @@ test('an unticked dependency in the setup PR body stays unticked through edits a
 	expect(pull.body).toMatch(untickedBox);
 });
 
-test('a saved crate script becomes beepboop publish once the selection adds an npm package', async () => {
+test('a saved crate script becomes beepboop publish', async () => {
 	const repository = world.github.create('octo/mixed', {
 		'Cargo.toml': '[package]\nname = "mixed-cli"\nversion = "1.0.0"\nedition = "2024"\n',
 		'js/package.json': '{"name":"mixed-js","version":"1.0.0"}',
@@ -1514,7 +1492,7 @@ test('a saved crate script becomes beepboop publish once the selection adds an n
 			parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
 		);
 	const crates = await preview(promote(['pkg:cargo/mixed-cli']));
-	expect(crates.choices.streams[0]?.promote?.commands).toBe(cratePublishCommands(['mixed-cli']));
+	expect(crates.choices.streams[0]?.promote?.commands).toBe(ledgerCommand);
 	const mixed = await preview(promote(['pkg:cargo/mixed-cli', 'pkg:npm/mixed-js']));
 	expect(mixed.choices.streams[0]?.promote?.commands).toBe(ledgerCommand);
 });

@@ -179,12 +179,7 @@ export function refreshedCommands(
 	plan: Context,
 ): string {
 	if (!commands) return commands;
-	if (crateScript(commands)) {
-		const crates = selection.packages.filter(pkg => pkg.manager === 'cargo');
-		return crates.length && crates.length === selection.packages.length
-			? cratePublishCommands(ordered(crates, plan).map(pkg => pkg.name))
-			: suggestedCommands(role, selection, plan) || commands;
-	}
+	if (crateScript(commands)) return suggestedCommands(role, selection, plan) || commands;
 	const named = candidates.filter(pkg =>
 		[quote(pkg.name), quote(directory(pkg.manifest)), quote(`dist/${pkg.name}`)].some(token => commands.includes(token))
 	);
