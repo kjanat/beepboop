@@ -92,6 +92,9 @@ export class Client {
 	): Effect.Effect<Client, CLIError> {
 		return serverOrigin(server).pipe(Effect.map(origin => new Client(origin, directory)));
 	}
+	pause(millis: number): Effect.Effect<void> {
+		return Effect.sleep(millis);
+	}
 	private file(): Effect.Effect<string> {
 		return local(() => sha256Hex(this.origin)).pipe(Effect.map(hash => join(this.directory, `${hash}.json`)));
 	}

@@ -1,0 +1,75 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`release output carries color and links in a terminal and the same text without them: colored 1`] = `
+"\x1B[1mRelease \x1B[1m\x1B[36mocto/widget\x1B[39m\x1B[22m\x1B[1m / main → \x1B[35m1.0.1\x1B[39m\x1B[22m
+Source: main at \x1B[34m<id>\x1B[39m
+\x1B[2mThe server plans from the repository default branch. Local branch commits and uncommitted files are not included.\x1B[22m
+package  registry  current  release
+-------  --------  -------  -------
+\x1B[1m\x1B[36mwidget\x1B[39m\x1B[22m   npm       1.0.0    \x1B[35m1.0.1\x1B[39m  
+
+package.json
+Current:
+{
+  "name": "widget",
+  "version": "1.0.0",
+  "description": "A test package",
+  "license": "MIT",
+  "repository": "https://github.com/octo/example"
+}
+
+Proposed:
+{
+  "name": "widget",
+  "version": "1.0.1",
+  "description": "A test package",
+  "license": "MIT",
+  "repository": "https://github.com/octo/example"
+}
+
+Release <id>: ready
+Beepboop commits the version bump to main, then publishes once that commit is verified and its checks pass.
+\x1B[2mFailing checks or package metadata problems stop the release with a reason.\x1B[22m
+package  registry  version  state      
+-------  --------  -------  -----------
+\x1B[1m\x1B[36mwidget\x1B[39m\x1B[22m   npm       \x1B[35m1.0.1\x1B[39m    \x1B[32m✔\x1B[39m \x1B[32msucceeded\x1B[39m
+Run: \x1B[4m\x1B[34m\x1B]8;;https://github.com/octo/widget/actions/runs/1014\x1B\\https://github.com/octo/widget/actions/runs/1014\x1B]8;;\x1B\\\x1B[39m\x1B[24m
+"
+`;
+
+exports[`release output carries color and links in a terminal and the same text without them: plain 1`] = `
+"Release octo/widget / main → 1.0.1
+Source: main at <id>
+The server plans from the repository default branch. Local branch commits and uncommitted files are not included.
+package  registry  current  release
+-------  --------  -------  -------
+widget   npm       1.0.0    1.0.1  
+
+package.json
+Current:
+{
+  "name": "widget",
+  "version": "1.0.0",
+  "description": "A test package",
+  "license": "MIT",
+  "repository": "https://github.com/octo/example"
+}
+
+Proposed:
+{
+  "name": "widget",
+  "version": "1.0.1",
+  "description": "A test package",
+  "license": "MIT",
+  "repository": "https://github.com/octo/example"
+}
+
+Release <id>: ready
+Beepboop commits the version bump to main, then publishes once that commit is verified and its checks pass.
+Failing checks or package metadata problems stop the release with a reason.
+package  registry  version  state      
+-------  --------  -------  -----------
+widget   npm       1.0.1    ✔ succeeded
+Run: https://github.com/octo/widget/actions/runs/1014
+"
+`;

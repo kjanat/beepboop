@@ -2,10 +2,12 @@ import { beforeEach, expect, spyOn, test } from 'bun:test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { PromptEngine } from '@kjanat/dreamcli';
-import { gitOutput } from '@root/test/support/actions.ts';
+import { createOutput } from '@kjanat/dreamcli';
+import { begin, gitOutput, runAction, runIdentity } from '@root/test/support/actions.ts';
 import { runCli, savedClient } from '@root/test/support/cli.ts';
 import { discoveredWidget } from '@root/test/support/client.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
+import type { Repository } from '@root/test/support/github.ts';
 import { promotionsOf } from '@root/test/support/releases.ts';
 import {
 	editableConfiguration,
@@ -17,11 +19,12 @@ import {
 } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
+import { strip } from 'ansispeck';
 import { Effect } from 'effect';
 import { z } from 'zod';
 import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
-import { checkoutRepository } from '@/cli/release';
+import { checkoutRepository, releaseRepository } from '@/cli/release';
 import { routes } from '@/contract/routes';
 import { planReview } from '@/contract/views';
 
@@ -619,25 +622,253 @@ test('workflow tag-derived bumps remain authoritative when registry packages are
 	expect((await promotions()).map(execution => execution.id)).toEqual(existing);
 });
 
-test('release starts the release when the stream enables CLI starts, and says nothing waits for approval', async () => {
+async function cliStarts() {
 	const repository = await seed();
 	const configuration = z.looseObject({ streams: z.looseObject({ main: z.looseObject({}) }) }).parse(
 		JSON.parse(widgetConfiguration()),
 	);
 	configuration.streams.main.start = [{ via: 'cli' }];
 	configuration.streams.main.prepare = { strategy: 'managed', bump: 'commit' };
-	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Start from the CLI');
+	configuration.streams.main.credentials = [];
+	const head = world.github.push(
+		repository,
+		{ '.github/beepboop.json': JSON.stringify(configuration) },
+		'Start from the CLI',
+	);
+	passChecks(repository, head.sha);
 	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	return repository;
+}
+
+function releaseRun(repository: Repository) {
+	const steps = [
+		() => world.wait(16_000),
+		async () => {
+			passChecks(repository, world.github.head(repository));
+			expect((await world.push(repository)).status).toBe(202);
+			await world.wait(16_000);
+		},
+		async () => {
+			const run = repository.runs.at(-1);
+			const execution = run?.inputs.beepboop_execution_id;
+			if (!run || !execution) throw new Error('The release dispatched no run');
+			run.status = 'in_progress';
+			const identity = runIdentity(repository, run, 'publish.yml');
+			await begin(world, identity, execution, 'main', 'promote');
+			world.npm.publish('widget', '1.0.1');
+			await runAction(world, 'report', identity, {
+				EXECUTION_ID: execution,
+				PUBLICATIONS: JSON.stringify([
+					{ id: 'pkg:npm/widget', manager: 'npm', name: 'widget', version: '1.0.1', outcome: 'succeeded' },
+				]),
+			});
+			run.status = 'completed';
+			run.conclusion = 'success';
+			await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
+			await world.wait(16_000);
+		},
+	];
+	return spyOn(client, 'pause').mockImplementation(() =>
+		Effect.promise(async () => {
+			await (steps.shift() ?? (() => world.wait(16_000)))();
+		})
+	);
+}
+
+test('release follows a started release through the bump, checks, dispatch and publication', async () => {
+	const repository = await cliStarts();
 	const declined = await run(['release', 'patch', '--repository', repository.name], [false]);
 	expect(declined.stdout.join('')).toContain('Release start cancelled.');
+	releaseRun(repository);
 	const started = await run(['release', 'patch', '--repository', repository.name], [true]);
 	expect(started.exitCode).toBe(0);
 	const output = started.stdout.join('');
-	expect(output).toContain('Release ');
 	expect(output).toContain(
 		'Beepboop commits the version bump to main, then publishes once that commit is verified and its checks pass.',
 	);
 	expect(output).toContain('Failing checks or package metadata problems stop the release with a reason.');
 	expect(output).not.toContain('runs approve');
+	expect(output).toContain(
+		'package  registry  version  state      \n-------  --------  -------  -----------\nwidget   npm       1.0.1    ✔ succeeded\n',
+	);
+	expect(output).toContain(`Run: https://github.com/octo/widget/actions/runs/${repository.runs.at(-1)?.id}\n`);
+	const dispatched = repository.runs.at(-1);
+	const commit = world.github.resolve(repository, repository.defaultBranch).sha;
+	const activity = started.activity.map(event =>
+		'text' in event ? [event.type, event.text] : 'label' in event ? [event.type, event.label] : [event.type]
+	);
+	expect(activity).toEqual(expect.arrayContaining([
+		['spinner:start', 'Reading octo/widget from Beepboop'],
+		['spinner:succeed', 'octo/widget releases from main'],
+		['spinner:start', 'Planning patch of octo/widget / main on the server'],
+		['spinner:start', 'Starting the release'],
+		['spinner:start', 'Applying the 1.0.1 version bump'],
+		['spinner:update', `Version commit ${commit} is on main. Waiting for Beepboop to see it`],
+		['spinner:succeed', `Release run https://github.com/octo/widget/actions/runs/${dispatched?.id}`],
+		['progress:start', 'Publishing'],
+	]));
+	expect(started.activity).toContainEqual(expect.objectContaining({ type: 'progress:done' }));
 	expect(prepareCalls()).toHaveLength(1);
+});
+
+test('activity output stays out of JSON output', async () => {
+	const repository = await cliStarts();
+	const json = await run(['release', 'patch', '--repository', repository.name, '--json', '--yes']);
+	expect(json.exitCode).toBe(0);
+	expect(JSON.parse(json.stdout.join(''))).toHaveProperty('preparation.operation', 'prepare');
+	expect(json.stderr.join('')).not.toContain('Planning');
+});
+
+test('activity output stays out of piped output while the release is followed', async () => {
+	const repository = await cliStarts();
+	releaseRun(repository);
+	const piped = await app.execute(['release', 'patch', '--repository', repository.name, '--yes'], {
+		isTTY: false,
+		env: {},
+	});
+	expect(piped.exitCode).toBe(0);
+	for (const text of [...piped.stdout, ...piped.stderr]) {
+		expect(text).not.toContain('Reading octo/widget');
+		expect(text).not.toContain('Planning');
+	}
+});
+
+test('release output carries color and links in a terminal and the same text without them', async () => {
+	const repository = await cliStarts();
+	const capture = (color: boolean) => {
+		const lines: string[] = [];
+		const out = createOutput({
+			isTTY: true,
+			color,
+			hyperlinks: true,
+			stdout: line => lines.push(line),
+			stderr: () => undefined,
+		});
+		return { out, lines };
+	};
+	const normalized = (lines: string[]) => lines.join('').replace(/(?<![0-9a-f])[0-9a-f]{12,64}(?![0-9a-f])/g, '<id>');
+	const colored = capture(true);
+	releaseRun(repository);
+	await Effect.runPromise(
+		releaseRepository(
+			client,
+			{ repository: repository.name, version: 'patch', yes: true },
+			() => Promise.reject(new Error('No prompt expected')),
+			colored.out,
+		),
+	);
+	colored.out.stopActive();
+	const text = normalized(colored.lines);
+	expect(text).toContain('\u001b[');
+	expect(text).toContain('\u001b]8;;https://github.com/octo/widget/actions/runs/');
+	expect(text).toMatchSnapshot('colored');
+	expect(strip(text)).toMatchSnapshot('plain');
+	expect(strip(text)).toContain('Release octo/widget / main → 1.0.1');
+});
+
+test('release shows the wait for checks and stops with the failing check', async () => {
+	const repository = await cliStarts();
+	const steps = [
+		() => world.wait(16_000),
+		async () => {
+			repository.checks.set(world.github.head(repository), [
+				{ name: 'test', status: 'in_progress', conclusion: null, runId: 1 },
+			]);
+			expect((await world.push(repository)).status).toBe(202);
+			await world.wait(16_000);
+		},
+		async () => {
+			repository.checks.set(world.github.head(repository), [
+				{ name: 'test', status: 'completed', conclusion: 'failure', runId: 1 },
+			]);
+			await world.wait(16_000);
+		},
+	];
+	spyOn(client, 'pause').mockImplementation(() =>
+		Effect.promise(async () => {
+			await (steps.shift() ?? (() => world.wait(16_000)))();
+		})
+	);
+	const result = await run(['release', 'patch', '--repository', repository.name], [true]);
+	expect(result.exitCode).toBe(1);
+	const head = world.github.head(repository);
+	expect(result.activity).toContainEqual({
+		type: 'spinner:update',
+		text:
+			`Waiting for checks on ${head}: Releases when the commit is verified and its checks pass: test is still running`,
+	});
+	expect(result.activity).toContainEqual({ type: 'spinner:fail', text: 'The release stopped: test failure' });
+	expect(repository.runs).toEqual([]);
+});
+
+test('release links the version PR of a started release and stops following for the merge', async () => {
+	const repository = await cliStarts();
+	const configuration = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
+	configuration.streams.main.prepare = { strategy: 'managed', bump: 'pr' };
+	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Bump through a PR');
+	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	spyOn(client, 'pause').mockImplementation(() => Effect.promise(() => world.wait(16_000)));
+	const result = await run(['release', 'patch', '--repository', repository.name], [true]);
+	expect(result.exitCode).toBe(0);
+	expect(result.activity).toContainEqual({
+		type: 'spinner:succeed',
+		text: `Version PR https://github.com/octo/widget/pull/${repository.pulls[0]?.number}`,
+	});
+	expect(result.stdout.join('')).toContain('Merging the version PR continues the release without another approval.');
+});
+
+test('release stops with the reason when the version bump fails', async () => {
+	const repository = await cliStarts();
+	repository.protectedBranches.add(repository.defaultBranch);
+	spyOn(client, 'pause').mockImplementation(() => Effect.promise(() => world.wait(16_000)));
+	const result = await run(['release', 'patch', '--repository', repository.name], [true]);
+	expect(result.exitCode).toBe(1);
+	expect(result.activity).toContainEqual(expect.objectContaining({
+		type: 'spinner:fail',
+		text: expect.stringContaining('The version bump stopped: GitHub refused the version commit on main'),
+	}));
+});
+
+test('release reports a failed release run with its link', async () => {
+	const repository = await cliStarts();
+	const steps = [
+		() => world.wait(16_000),
+		async () => {
+			passChecks(repository, world.github.head(repository));
+			expect((await world.push(repository)).status).toBe(202);
+			await world.wait(16_000);
+		},
+		async () => {
+			const dispatched = repository.runs.at(-1);
+			if (!dispatched) throw new Error('The release dispatched no run');
+			dispatched.status = 'in_progress';
+			await begin(
+				world,
+				runIdentity(repository, dispatched, 'publish.yml'),
+				dispatched.inputs.beepboop_execution_id ?? '',
+				'main',
+				'promote',
+			);
+		},
+		async () => {
+			const dispatched = repository.runs.at(-1);
+			if (!dispatched) throw new Error('The release dispatched no run');
+			dispatched.status = 'completed';
+			dispatched.conclusion = 'failure';
+			await world.workflowRun(repository, dispatched, 'failure', 'workflow_dispatch');
+			await world.wait(16_000);
+		},
+	];
+	spyOn(client, 'pause').mockImplementation(() =>
+		Effect.promise(async () => {
+			await (steps.shift() ?? (() => world.wait(16_000)))();
+		})
+	);
+	const result = await run(['release', 'patch', '--repository', repository.name], [true]);
+	expect(result.exitCode).toBe(1);
+	expect(result.activity).toContainEqual(expect.objectContaining({ type: 'progress:start', label: 'Publishing' }));
+	expect(result.activity).toContainEqual(expect.objectContaining({ type: 'progress:fail' }));
+	expect(result.stdout.join('')).toContain(
+		`Run: https://github.com/octo/widget/actions/runs/${repository.runs.at(-1)?.id}`,
+	);
 });

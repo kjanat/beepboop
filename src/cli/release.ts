@@ -4,6 +4,8 @@ import { Effect } from 'effect';
 import { z } from 'zod';
 import { repositoryReference } from '@/automation/repository-name';
 import type { Client } from '@/cli/client';
+import { followRelease } from '@/cli/follow';
+import { lookOf, registryOf, step, table } from '@/cli/look';
 import { emit, failure } from '@/cli/output';
 import { releaseStart, startsFrom, versionBump } from '@/contract/release-start';
 import { routes } from '@/contract/routes';
@@ -146,8 +148,14 @@ export function releaseRepository(
 	cwd = process.cwd(),
 ): Effect.Effect<void, CLIError> {
 	return Effect.gen(function*() {
+		const look = lookOf(out);
 		const reference = options.repository ?? (yield* checkoutRepository(cwd));
-		const repository = yield* client.call(routes.repositoriesResolve, { repository: reference });
+		const repository = yield* step(
+			out,
+			`Reading ${look.pkg(reference)} from Beepboop`,
+			client.call(routes.repositoriesResolve, { repository: reference }),
+			found => `${look.pkg(found.name)} releases from ${found.defaultBranch}`,
+		);
 		const configured = Object.entries(repository.configuration?.streams ?? {});
 		if (!configured.length) {
 			return yield* Effect.fail(
@@ -246,7 +254,12 @@ export function releaseRepository(
 			}
 		}
 		const request = { repositoryId: repository.id, stream: selected, version: yield* releaseVersion(version) };
-		const plan = yield* client.call(routes.releasesPlan, request);
+		const plan = yield* step(
+			out,
+			`Planning ${look.version(version)} of ${look.pkg(repository.name)} / ${selected} on the server`,
+			client.call(routes.releasesPlan, request),
+			planned => `Planned ${look.version(planned.version ?? version)} at ${look.sha(planned.sourceSha)}`,
+		);
 		const summary = yield* decode(summarySchema, plan);
 		if (summary.blockers?.length) return yield* Effect.fail(failure(summary.blockers.join('\n'), 'BLOCKED_PLAN'));
 		if (!plan.edits.length && !plan.requiresPreparation) {
@@ -259,30 +272,38 @@ export function releaseRepository(
 		const preview = { repository: repository.name, stream: selected, defaultBranch: repository.defaultBranch, plan };
 		if (out.jsonMode && !options.yes) return yield* emit(out, preview);
 		if (!out.jsonMode) {
-			out.log(`Release ${repository.name} / ${selected} → ${summary.version}`);
-			out.log(`Source: ${repository.defaultBranch} at ${summary.sourceSha}`);
 			out.log(
-				'The server plans from the repository default branch. Local branch commits and uncommitted files are not included.',
+				look.heading(
+					`Release ${look.pkg(repository.name)} / ${selected} → ${look.version(summary.version)}`,
+				),
+			);
+			out.log(`Source: ${repository.defaultBranch} at ${look.sha(summary.sourceSha)}`);
+			out.log(
+				look.note(
+					'The server plans from the repository default branch. Local branch commits and uncommitted files are not included.',
+				),
 			);
 			if (summary.packages?.length) {
-				out.table(
+				table(
+					out,
 					summary.packages.map(pkg => ({
-						package: pkg.name,
-						registry: pkg.manager,
+						package: look.pkg(pkg.name),
+						registry: registryOf(pkg.manager),
 						current: pkg.version ?? 'unknown',
-						release: summary.version,
+						release: look.version(summary.version),
 					})),
 				);
 			} else if (stream.packages?.length) {
-				out.table(
+				table(
+					out,
 					stream.packages.map(id => ({
-						package: packageLabel(id),
+						package: look.pkg(packageLabel(id)),
 						current: 'determined by preparation workflow',
-						release: summary.version,
+						release: look.version(summary.version),
 					})),
 				);
 			} else out.log('The configured preparation workflow determines the package versions.');
-			for (const note of plan.diagnostics ?? []) out.log(note);
+			for (const note of plan.diagnostics ?? []) out.log(look.note(note));
 			for (const edit of plan.edits) out.log(`\n${edit.path}\nCurrent:\n${edit.before}\nProposed:\n${edit.after}`);
 		}
 		const started = startsFrom(stream.start, 'cli') !== undefined;
@@ -302,11 +323,12 @@ export function releaseRepository(
 				})
 			))
 		) return out.log(started ? 'Release start cancelled.' : 'Release preparation cancelled.');
-		const preparation = yield* client.call(routes.releasesPrepare, {
-			...request,
-			sourceSha: summary.sourceSha,
-			planId: summary.planId,
-		});
+		const preparation = yield* step(
+			out,
+			started ? 'Starting the release' : 'Preparing the release',
+			client.call(routes.releasesPrepare, { ...request, sourceSha: summary.sourceSha, planId: summary.planId }),
+			created => `${started ? 'Release' : 'Preparation'} ${created.id} is ${created.state}`,
+		);
 		if (out.jsonMode) return yield* emit(out, { ...preview, preparation });
 		out.log(`${started ? 'Release' : 'Preparation'} ${preparation.id}: ${preparation.state}`);
 		if (started) {
@@ -318,9 +340,16 @@ export function releaseRepository(
 					: 'Beepboop opens the version PR. Merging it continues the release without another approval.',
 			);
 			out.log(
-				'Failing checks or package metadata problems stop the release with a reason. Follow it with beepboop runs list.',
+				look.note('Failing checks or package metadata problems stop the release with a reason.'),
 			);
-			return;
+			return yield* followRelease(client, out, {
+				repository: repository.name,
+				repositoryId: repository.id,
+				defaultBranch: repository.defaultBranch,
+				stream: selected,
+				version: summary.version,
+				execution: preparation,
+			});
 		}
 		out.log(
 			stream.prepare.workflow

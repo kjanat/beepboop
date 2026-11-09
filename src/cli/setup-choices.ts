@@ -6,6 +6,7 @@ import type { Selection } from '@/automation/setup-defaults';
 import { preparationReasons, suggestedCommands, suggestedWorkflowFile, ungenerated } from '@/automation/setup-defaults';
 import { streamSummary } from '@/automation/setup-summary';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
+import { lookOf } from '@/cli/look';
 import { failure } from '@/cli/output';
 import { workflowFilePattern } from '@/contract/catalog';
 import { identifierPattern } from '@/contract/ids';
@@ -121,6 +122,7 @@ function typedCommands(ask: Ask, packages: string, purpose: string): Effect.Effe
 /** Interactive choices use the same defaults and reviewed API as the dashboard. */
 export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<SetupChoices, CLIError> {
 	return Effect.gen(function*() {
+		const look = lookOf(out);
 		const choices: SetupChoices = {
 			streams: [],
 			...(plan.choices.actionsRevision ? { actionsRevision: plan.choices.actionsRevision } : {}),
@@ -158,7 +160,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				}
 				if (!more.length) return [only.value];
 				if (current.length) {
-					out.log(`${name}: ${current.map(packageLabel).join(', ')}`);
+					out.log(`${name}: ${current.map(id => look.pkg(packageLabel(id))).join(', ')}`);
 					if (
 						yield* Effect.promise(() => ask({ kind: 'confirm', message: 'Use these packages?', default: true }))
 					) return [...current];
@@ -183,11 +185,11 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 					? 'same'
 					: existing ?? (preparing ? reasons.length ? canShare ? 'same' : 'new' : 'managed' : 'new');
 				if (preparing) {
-					out.log(
+					out.log(look.note(
 						reasons.length
 							? reasons.join(' ')
 							: 'Beepboop can edit version files and open the release PR without a preparation job.',
-					);
+					));
 				}
 				const entries: SelectChoice[] = [
 					...(preparing && !reasons.length
@@ -224,7 +226,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 					: preparing
 					? 'prepare'
 					: 'publish');
-				out.log(`${stream.name}: ${file}, ${job} job${selected === 'new' ? ' (generated)' : ''}.`);
+				out.log(`${stream.name}: ${look.heading(file)}, ${job} job${selected === 'new' ? ' (generated)' : ''}.`);
 				let triggers: SetupWorkflow['triggers'] = 'review';
 				if (selected !== 'same' && evidence?.events.some(event => event !== 'workflow_dispatch')) {
 					const prior = previous?.file === file ? previous.triggers : 'review';
@@ -316,7 +318,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				const builds: typeof offered = [];
 				for (const entry of offered) {
 					const note = entry.candidate && leftOut(entry.candidate);
-					if (note) out.log(note);
+					if (note) out.log(look.state('skipped', note));
 					const wanted = yield* Effect.promise(() =>
 						ask({
 							kind: 'confirm',

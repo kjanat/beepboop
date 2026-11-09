@@ -432,6 +432,11 @@ function lintProposal(repository: { name: string }, sha: string) {
 	return [
 		`Proposed setup for ${repository.name} at ${sha}:`,
 		...lintSummary,
+		'package     registry   manifest                  release ',
+		'----------  ---------  ------------------------  --------',
+		'@octo/lint  npm        bindings/js/package.json  required',
+		'lint        crates.io  crates/cli/Cargo.toml     required',
+		'lint-core   crates.io  crates/core/Cargo.toml    required',
 		'The setup PR writes .github/beepboop.json, .github/workflows/prepare-release.yml, .github/workflows/release-lint.yml and .github/workflows/publish-crates.yml.',
 		'lint: tick when a version raised without a start publishes. Until you do, Beepboop waits for your approval.',
 		'lint: tick how a version bump reaches the default branch. Until you do, Beepboop opens a version PR.',
@@ -473,6 +478,19 @@ test('one adopt in a terminal shows the proposal, asks once and opens the setup 
 		'Setup PR: https://github.com/octo/lint/pull/1',
 		'',
 	]);
+	expect(
+		result.activity.map(event =>
+			event.type === 'spinner:stop' ? [event.type] : [event.type, 'text' in event ? event.text : '']
+		),
+	)
+		.toEqual([
+			['spinner:start', 'Inspecting octo/lint'],
+			['spinner:succeed', `Inspected octo/lint at ${world.github.head(repository)}`],
+			['spinner:start', 'Building the setup plan'],
+			['spinner:succeed', `Setup plan for ${world.github.head(repository)} is ready`],
+			['spinner:start', 'Opening the setup PR'],
+			['spinner:succeed', 'Setup PR https://github.com/octo/lint/pull/1'],
+		]);
 	expect(repository.pulls.map(pull => [pull.state, pull.assignees, pull.reviewers])).toEqual([
 		['open', ['octo'], ['octo']],
 	]);

@@ -75,8 +75,14 @@ and approval steps that follow.
 
 When the stream lists `{ "via": "cli" }` in `start`, the confirmation starts the
 release, and the start approves it. Beepboop then bumps the version, publishes
-and tags without another approval, and the output says how the bump reaches the
-default branch. See [Start a release](automation.md#start-a-release). Without
+and tags without another approval. The command follows the release: a spinner
+shows the version bump, the wait for checks and the dispatch, a progress bar
+counts the publications, and a table lists each package's outcome with links to
+the run and the GitHub release. With a version PR, the command links the PR and
+stops, and merging it continues the release. A failing check or a refused bump
+ends the command with exit code 1 and the reason. `--json` prints the started
+release and returns at once. Spinners and progress bars stay off when the
+output is not a terminal, and `NO_COLOR` turns off the colors and links. See [Start a release](automation.md#start-a-release). Without
 that entry, `beepboop release` never approves or publishes.
 
 `--json` on its own previews and stops. Pass the version, and `--stream` when the
