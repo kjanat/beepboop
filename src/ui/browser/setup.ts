@@ -176,11 +176,12 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 			publishing.refresh();
 			preparing.refresh();
 		});
+		const managed = !!(value.prepare || value.promote);
 		const pickers = () => [...body.querySelectorAll<HTMLFieldSetElement>('fieldset[data-workflow-role]')];
 		const showPickers = () => {
 			for (const picker of pickers()) {
-				picker.hidden = observing.checked;
-				picker.disabled = observing.checked;
+				picker.hidden = observing.checked && !managed;
+				picker.disabled = observing.checked && !managed;
 			}
 		};
 		observing.addEventListener('change', showPickers);
@@ -217,7 +218,14 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 						? Result.succeed(parsed.data)
 						: Result.fail(new Refused({ message: `${name.value}: ${issueText(parsed.error)}` }));
 				};
-				if (observing.checked && value.observe?.length) {
+				const kept = (observed: NonNullable<typeof value.observe>) =>
+					observed.map(entry => ({
+						...entry,
+						publications: entry.publications.filter(id =>
+							packages.includes(id) || !selected.some(offered => offered.pkg.id === id)
+						),
+					}));
+				if (observing.checked && value.observe?.length && !managed) {
 					const observed = value.observe;
 					const unchecked = observed.every(entry => entry.publications.length === 0);
 					const unobserved = packages.filter(id =>
@@ -239,10 +247,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 						packages,
 						required: value.required.filter(id => packages.includes(id)),
 						versioning: policy,
-						observe: value.observe.map(entry => ({
-							...entry,
-							publications: entry.publications.filter(id => packages.includes(id)),
-						})),
+						observe: kept(observed),
 					});
 				}
 				if (!packages.length) {
@@ -256,6 +261,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 					versioning: policy,
 					...(prepare ? { prepare } : {}),
 					...(promote ? { promote } : {}),
+					...(observing.checked && value.observe?.length ? { observe: kept(value.observe) } : {}),
 				});
 			})
 		);

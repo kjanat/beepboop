@@ -457,6 +457,50 @@ test('a maintenance rebuild keeps the approval, starts and bump the default bran
 	);
 });
 
+test('a rebuild keeps the needs and the GitHub release publication of an observed workflow', async () => {
+	const repository = world.github.create('octo/tool', {
+		'Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\nedition = "2024"\n',
+		'src/main.rs': 'fn main() {}\n',
+		'.github/workflows/github-release.yml':
+			'name: GitHub release\non: { push: { tags: [\'v*\'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: gh release create "$GITHUB_REF_NAME"\n',
+	});
+	const api = bearer(world, await world.cliSession());
+	const observed = {
+		name: 'release',
+		file: 'github-release.yml',
+		ref: 'refs/tags/v*',
+		publications: ['pkg:github/octo/tool'],
+		needs: ['promote'],
+	};
+	const choices = crateChoices({ observe: [observed] });
+	const plan = await applyChoices(api, repository.name, choices);
+	const workflows = z.object({
+		streams: z.object({ main: z.object({ workflows: z.record(z.string(), z.looseObject({})) }) }),
+	});
+	const binding = (ref?: string) =>
+		workflows.parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', ref) ?? '{}')).streams.main
+			.workflows.release;
+	expect(binding('automation/onboarding')).toMatchObject({
+		publications: ['pkg:github/octo/tool'],
+		needs: ['promote'],
+	});
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const [pull] = repository.pulls;
+	if (!pull) throw new Error('Missing setup PR');
+	await editPull(world, repository, pull, tick(pull.body, 'approval:main:required'));
+	await world.wait(16_000);
+	expect(modeOf(repository, 'automation/onboarding').approval).toBe('required');
+	expect(binding('automation/onboarding')).toMatchObject({
+		publications: ['pkg:github/octo/tool'],
+		needs: ['promote'],
+	});
+	world.github.merge(repository, pull.number);
+	const reread = await previewSetup(api, repository.name);
+	expect(reread.edits).toEqual([]);
+	expect(reread.choices.streams[0]?.observe).toEqual([observed]);
+	expect(plan.choices.streams[0]?.observe).toEqual([observed]);
+});
+
 test('a ticked target that the binary is expected to fail on stays ticked with a note beside it', async () => {
 	const repository = engineRepository();
 	const api = bearer(world, await world.cliSession());

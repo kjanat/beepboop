@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { bearer } from '@root/test/support/http.ts';
 import { passChecks, plugin, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
-import { applySetup } from '@root/test/support/setup.ts';
+import { applyChoices, applySetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
@@ -469,6 +469,44 @@ test('an observed stream rejects a package its workflows do not publish', async 
 	control(form, 'a (packages/a/package.json)', window.HTMLInputElement).checked = false;
 	control(form, 'b (packages/b/package.json)', window.HTMLInputElement).checked = true;
 	await expect(act(form, 'preview')).rejects.toThrow('not published by the observed workflows');
+});
+
+test('an observed workflow keeps its needs and publications the dashboard offers no box for', async () => {
+	const repository = world.github.create('octo/tool', {
+		'Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\nedition = "2024"\n',
+		'src/main.rs': 'fn main() {}\n',
+		'.github/workflows/github-release.yml':
+			'name: GitHub release\non: { push: { tags: [\'v*\'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: gh release create "$GITHUB_REF_NAME"\n',
+	});
+	const api = bearer(world, await world.cliSession());
+	await applyChoices(api, repository.name, {
+		streams: [{
+			name: 'main',
+			packages: ['pkg:cargo/tool'],
+			required: ['pkg:cargo/tool'],
+			versioning: 'workspace',
+			promote: {
+				file: 'release.yml',
+				job: 'publish',
+				triggers: 'review',
+				commands: "cargo publish --package 'tool' --locked",
+				publicationSteps: {},
+			},
+			observe: [{
+				name: 'release',
+				file: 'github-release.yml',
+				ref: 'refs/tags/v*',
+				publications: ['pkg:github/octo/tool'],
+				needs: ['promote'],
+			}],
+		}],
+	});
+	world.github.merge(repository, 1);
+	passChecks(repository, world.github.head(repository));
+	const form = await open('octo/tool');
+	expect(role(form, 'promote').hidden).toBe(false);
+	await act(form, 'preview');
+	expect(form.querySelector('.setup-result')?.textContent).toContain('No file changes needed.');
 });
 
 test('an observed branch publisher without publication checks keeps its proposed packages', async () => {
