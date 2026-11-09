@@ -35,12 +35,15 @@ export function registryPackageLabel(destination: ManagerDestinationId, name: st
 	return `${name} on ${destinationLabels[destination]}`;
 }
 
-export function packageLabel(value: string): string {
+function described(value: string, shown: (name: string) => string): string {
 	const { name, destination } = parts(value);
-	return destination ? registryPackageLabel(destination, name) : name;
+	return destination ? registryPackageLabel(destination, shown(name)) : shown(name);
+}
+
+export function packageLabel(value: string): string {
+	return described(value, name => name);
 }
 
 export function packageMarkdown(value: string): string {
-	const { name, destination } = parts(value);
-	return destination ? `\`${name}\` on ${destinationLabels[destination]}` : `\`${name}\``;
+	return described(value, name => `\`${name}\``);
 }

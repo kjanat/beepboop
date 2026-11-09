@@ -3,6 +3,7 @@ import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
 import Field from '@/components/Field.astro';
 import Time from '@/components/Time.astro';
+import { githubHref } from '@/contract/links';
 import { readiness } from '@/domain/repository';
 import type { ViewOf } from '@/server/loaders.ts';
 import { submissionTone } from '@/server/views/tone.ts';
@@ -153,7 +154,7 @@ const repositories = data.repositories.filter(repo =>
 					 <p>
 						 <code>{item.plan.sourceSha}</code>
 						 <Arrow
-							 href={`https://github.com/${item.plan.repository}/commit/${item.plan.sourceSha}`}
+							 href={githubHref(item.plan.repository, 'commit', item.plan.sourceSha)}
 							 label="Open source commit on GitHub"
 						 />
 					 </p>

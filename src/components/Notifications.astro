@@ -1,8 +1,10 @@
 ---
 import Badge from '@/components/Badge.astro';
+import DestinationChoices from '@/components/DestinationChoices.astro';
 import Field from '@/components/Field.astro';
+import RemoveForm from '@/components/RemoveForm.astro';
 import Time from '@/components/Time.astro';
-import { notificationKindLabels, notificationKinds } from '@/contract/catalog';
+import { notificationKindLabels } from '@/contract/catalog';
 import { registryPackageLabel } from '@/domain/package-label';
 import type { ViewOf } from '@/server/loaders.ts';
 import { notificationsPage } from '@/server/views/notifications.ts';
@@ -43,23 +45,7 @@ const { destinations, deliveries } = notificationsPage(data);
 					required
 				>
 			</label>
-			<label>
-				Type
-				<select name="kind">
-					{notificationKinds.map(kind => (
-						<option value={kind}>{notificationKindLabels[kind]}</option>
-					))}
-				</select>
-			</label>
-			<label>
-				Webhook URL secret
-				<select name="credential" required>
-					<option value="">Choose a secret</option>
-					{data.secrets.map(secret => (
-						<option value={secret.alias}>{secret.alias}</option>
-					))}
-				</select>
-			</label>
+			<DestinationChoices secrets={data.secrets} />
 		</div>
 		<label class="check">
 			<input type="checkbox" name="subscribeNew" value="true" checked>
@@ -107,29 +93,11 @@ const { destinations, deliveries } = notificationsPage(data);
 							required
 						>
 					</label>
-					<label>
-						Type
-						<select name="kind">
-							{notificationKinds.map(kind => (
-								<option value={kind} selected={destination.kind === kind}>
-									{notificationKindLabels[kind]}
-								</option>
-							))}
-						</select>
-					</label>
-					<label>
-						Webhook URL secret
-						<select name="credential" required>
-							{data.secrets.map(secret => (
-								<option
-									value={secret.alias}
-									selected={secret.alias === destination.credential}
-								>
-									{secret.alias}
-								</option>
-							))}
-						</select>
-					</label>
+					<DestinationChoices
+						secrets={data.secrets}
+						kind={destination.kind}
+						credential={destination.credential}
+					/>
 				</div>
 				<label class="check">
 					<input
@@ -157,19 +125,15 @@ const { destinations, deliveries } = notificationsPage(data);
 				</button>
 			</form>
 		</details>
-		<form
-			data-action="notification-remove"
-			method="post"
-			action="/api/notifications/remove"
+		<RemoveForm
+			action="notification-remove"
+			endpoint="/api/notifications/remove"
+			name="id"
+			value={destination.id}
+			label={`Remove destination ${destination.name}`}
 		>
-			<input type="hidden" name="id" value={destination.id}>
-			<button
-				class="danger"
-				aria-label={`Remove destination ${destination.name}`}
-			>
-				Remove destination
-			</button>
-		</form>
+			Remove destination
+		</RemoveForm>
 	</article>
 ))}
 <h2>Recent notifications</h2>

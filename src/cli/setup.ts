@@ -5,16 +5,11 @@ import { parseSetupPlan } from '@/automation/setup-plan';
 import { listed, streamSummary } from '@/automation/setup-summary';
 import type { SetupPlan } from '@/automation/setup-types';
 import type { Client } from '@/cli/client';
+import { readJson } from '@/cli/json-file';
 import { emit, failure } from '@/cli/output';
 import { chooseSetup } from '@/cli/setup-choices';
 import { routes } from '@/contract/routes';
 
-function readJson(path: string): Effect.Effect<unknown, CLIError> {
-	return Effect.tryPromise({
-		try: (): Promise<unknown> => Bun.file(path).json(),
-		catch: () => failure(`${path} is not readable JSON`, 'INVALID_FILE'),
-	});
-}
 function parsePlan(value: unknown): Effect.Effect<SetupPlan, CLIError> {
 	return parseSetupPlan(value).pipe(Effect.mapError(error => failure(error.message, 'INVALID_PLAN')));
 }

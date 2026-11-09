@@ -1,10 +1,11 @@
 #!/usr/bin/env bun
-import type { CLIError } from '@kjanat/dreamcli';
+import type { CLIError, InteractiveResult, Out } from '@kjanat/dreamcli';
 import { arg, cli, command, flag, group } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 import { Client } from '@/cli/client';
 import type { SecurityKeyPrompts } from '@/cli/fido2/index';
-import { emit, failure } from '@/cli/output';
+import { readJson } from '@/cli/json-file';
+import { emit, emitTable, failure } from '@/cli/output';
 import { checkoutRepository, releaseRepository, releaseVersion } from '@/cli/release';
 import { setupRepository } from '@/cli/setup';
 import { notificationKinds, watchedPackagePattern, watchedRegistries } from '@/contract/catalog';
@@ -25,23 +26,12 @@ const base = (name: string, description: string, promptServer = false) =>
 					'Beepboop server origin',
 				),
 		);
-const repository = (name: string, description: string) =>
-	base(name, description)
-		.arg(
-			'repository',
-			arg.string().prompt({ kind: 'input', message: 'Repository (name, owner/name or GitHub URL)' }).required()
-				.describe(
-					'Repository: name, owner/name or GitHub URL',
-				),
-		);
+const repositoryArg = arg.string().prompt({ kind: 'input', message: 'Repository (name, owner/name or GitHub URL)' })
+	.required().describe('Repository: name, owner/name or GitHub URL');
+const checkoutArg = arg.string().optional().describe('Repository override; otherwise the current Git remote');
+const repository = (name: string, description: string) => base(name, description).arg('repository', repositoryArg);
 function enrolled(client: Client, repository: string) {
 	return client.call(routes.repositoriesResolve, { repository });
-}
-function readJson(path: string): Effect.Effect<unknown, CLIError> {
-	return Effect.tryPromise({
-		try: (): Promise<unknown> => Bun.file(path).json(),
-		catch: () => failure(`${path} is not readable JSON`, 'INVALID_FILE'),
-	});
 }
 export const authStatus = base('status', 'Verify your saved session with the server').action(({ flags, out }) =>
 	Effect.runPromise(Effect.gen(function*() {
@@ -90,45 +80,41 @@ const auth = group('auth').description('Sign in, inspect your session, or revoke
 			}))
 		),
 	);
-const adoptChoices = flag.path({ mustExist: true }).describe(
-	'Advanced: JSON setup choices to preview instead of the proposal',
-);
-const adoptOutput = flag.path().describe('Advanced: save the preview as JSON instead of opening the PR');
-const adoptPlan = flag.path({ mustExist: true }).describe('Advanced: saved preview to apply with --apply');
-const adoptApply = flag.boolean().default(false).describe('Advanced: apply the exact saved --plan');
-const adopt = base('adopt', 'Propose release setup for this checkout and open the setup PR')
-	.arg('repository', arg.string().optional().describe('Repository override; otherwise the current Git remote'))
-	.flag('choices', adoptChoices).flag('output', adoptOutput).flag('plan', adoptPlan).flag('apply', adoptApply)
-	.action(({ flags, args, ask, out }) =>
-		Effect.runPromise(Effect.gen(function*() {
-			const client = yield* Client.at(flags.server);
-			const name = args.repository ?? (yield* checkoutRepository(process.cwd()));
-			yield* setupRepository(client, name, flags, ask, out);
-		}))
-	);
+const adoptCommand = (name: string, description: string, target: typeof repositoryArg | typeof checkoutArg) =>
+	base(name, description).arg('repository', target)
+		.flag(
+			'choices',
+			flag.path({ mustExist: true }).describe('Advanced: JSON setup choices to preview instead of the proposal'),
+		)
+		.flag('output', flag.path().describe('Advanced: save the preview as JSON instead of opening the PR'))
+		.flag('plan', flag.path({ mustExist: true }).describe('Advanced: saved preview to apply with --apply'))
+		.flag('apply', flag.boolean().default(false).describe('Advanced: apply the exact saved --plan'))
+		.action(({ flags, args, ask, out }) =>
+			Effect.runPromise(Effect.gen(function*() {
+				const client = yield* Client.at(flags.server);
+				const name = args.repository ?? (yield* checkoutRepository(process.cwd()));
+				yield* setupRepository(client, name, flags, ask, out);
+			}))
+		);
+const adopt = adoptCommand('adopt', 'Propose release setup for this checkout and open the setup PR', checkoutArg);
 const repositories = group('repositories').alias('repo').description('Inspect and configure repository releases')
 	.command(
-		repository('adopt', 'Propose release setup for a repository and open the setup PR').alias('setup')
-			.flag('choices', adoptChoices).flag('output', adoptOutput).flag('plan', adoptPlan).flag('apply', adoptApply)
-			.action(({ flags, args, ask, out }) =>
-				Effect.runPromise(
-					Client.at(flags.server).pipe(
-						Effect.flatMap(client => setupRepository(client, args.repository, flags, ask, out)),
-					),
-				)
-			),
+		adoptCommand('adopt', 'Propose release setup for a repository and open the setup PR', repositoryArg).alias('setup'),
 	)
 	.command(
 		base('list', 'List enrolled repositories').action(({ flags, out }) =>
 			Effect.runPromise(Effect.gen(function*() {
-				const rows = yield* (yield* Client.at(flags.server)).call(routes.repositoriesList, {});
-				if (out.jsonMode) return yield* emit(out, rows);
-				out.table(rows.map(row => ({
-					repository: row.name,
-					branch: row.defaultBranch,
-					streams: Object.keys(row.configuration?.streams ?? {}).join(', '),
-					problems: row.diagnostics.join('; '),
-				})));
+				yield* emitTable(
+					out,
+					yield* (yield* Client.at(flags.server)).call(routes.repositoriesList, {}),
+					rows =>
+						rows.map(row => ({
+							repository: row.name,
+							branch: row.defaultBranch,
+							streams: Object.keys(row.configuration?.streams ?? {}).join(', '),
+							problems: row.diagnostics.join('; '),
+						})),
+				);
 			}))
 		),
 	)
@@ -152,16 +138,19 @@ const runs = group('runs').description('Follow, approve, cancel and recover rele
 	.command(
 		base('list', 'List release operations').action(({ flags, out }) =>
 			Effect.runPromise(Effect.gen(function*() {
-				const rows = yield* (yield* Client.at(flags.server)).call(routes.executionsList, {});
-				if (out.jsonMode) return yield* emit(out, rows);
-				out.table(rows.map(row => ({
-					id: row.id,
-					repository: row.repository,
-					stream: row.stream,
-					operation: row.operation,
-					version: row.version ?? '',
-					state: row.state,
-				})));
+				yield* emitTable(
+					out,
+					yield* (yield* Client.at(flags.server)).call(routes.executionsList, {}),
+					rows =>
+						rows.map(row => ({
+							id: row.id,
+							repository: row.repository,
+							stream: row.stream,
+							operation: row.operation,
+							version: row.version ?? '',
+							state: row.state,
+						})),
+				);
 			}))
 		),
 	)
@@ -225,8 +214,74 @@ const release = base('release', 'Prepare a version PR for the current GitHub che
 			),
 		)
 	);
+interface Review {
+	plan: string;
+	prepare: string;
+	subject: string;
+}
+interface ReviewFlags {
+	server: string;
+	stream: string;
+	sourceSha?: string | undefined;
+	planId?: string | undefined;
+}
+type ReleaseRequest<I> = I & { repositoryId: number; stream: string };
+interface ReleaseReview<I> {
+	review: Review;
+	operation: string;
+	flags: ReviewFlags;
+	repository: string;
+	input: Effect.Effect<I, CLIError>;
+	plan(client: Client, request: ReleaseRequest<I>): Effect.Effect<unknown, CLIError>;
+	prepare(
+		client: Client,
+		request: ReleaseRequest<I> & { sourceSha: string; planId: string },
+	): Effect.Effect<unknown, CLIError>;
+}
+const singleReview: Review = { plan: 'plan', prepare: 'prepare', subject: 'Prepare' };
+const setReview: Review = { plan: 'plan-set', prepare: 'prepare-set', subject: 'prepare-set' };
+const releaseStream = flag.string().prompt({ kind: 'input', message: 'Release stream' }).required();
+const reviewFlags = (review: Review) => ({
+	sourceSha: flag.string({ pattern: shaPattern }).describe(
+		`Required for ${review.prepare}: source SHA from ${review.plan}`,
+	),
+	planId: flag.string().describe(`Required for ${review.prepare}: plan identity from ${review.plan}`),
+});
+function reviewPrompts(review: Review, operation: string): InteractiveResult {
+	return operation === review.prepare
+		? {
+			sourceSha: { kind: 'input', message: 'Reviewed source SHA from plan' },
+			planId: { kind: 'input', message: 'Plan ID from preview' },
+		}
+		: {};
+}
+function reviewRelease<I extends object>(
+	{ review, operation, flags, repository, input, plan, prepare }: ReleaseReview<I>,
+	out: Out,
+): Promise<void> {
+	return Effect.runPromise(Effect.gen(function*() {
+		if (operation === review.prepare && (!flags.sourceSha || !flags.planId)) {
+			return yield* Effect.fail(failure(
+				`${review.subject} needs --sourceSha and --planId`,
+				'PLAN_REQUIRED',
+				`Run beepboop releases ${review.plan} first`,
+			));
+		}
+		const client = yield* Client.at(flags.server);
+		const request = {
+			repositoryId: (yield* enrolled(client, repository)).id,
+			stream: flags.stream,
+			...(yield* input),
+		};
+		if (operation === review.plan) return yield* emit(out, yield* plan(client, request));
+		if (flags.sourceSha && flags.planId) {
+			yield* emit(out, yield* prepare(client, { ...request, sourceSha: flags.sourceSha, planId: flags.planId }));
+		}
+	}));
+}
 let releases = group('releases').description('Preview and prepare releases through repository policy');
 for (const operation of ['plan', 'prepare'] as const) {
+	const reviewed = reviewFlags(singleReview);
 	releases = releases.command(
 		repository(
 			operation,
@@ -234,52 +289,28 @@ for (const operation of ['plan', 'prepare'] as const) {
 				? 'Preview a release without changing the repository'
 				: 'Prepare a release from a reviewed plan',
 		)
-			.flag('stream', flag.string().prompt({ kind: 'input', message: 'Release stream' }).required()).flag(
+			.flag('stream', releaseStream).flag(
 				'releaseVersion',
 				flag.string().prompt({ kind: 'input', message: 'Version or bump (major, minor, patch)' }).required(),
 			)
-			.flag(
-				'sourceSha',
-				flag.string({ pattern: shaPattern }).describe('Required for prepare: source SHA from plan'),
-			)
-			.flag('planId', flag.string().describe('Required for prepare: plan identity from plan'))
-			.interactive(() =>
-				operation === 'prepare'
-					? {
-						sourceSha: { kind: 'input', message: 'Reviewed source SHA from plan' },
-						planId: { kind: 'input', message: 'Plan ID from preview' },
-					}
-					: {}
-			)
+			.flag('sourceSha', reviewed.sourceSha)
+			.flag('planId', reviewed.planId)
+			.interactive(() => reviewPrompts(singleReview, operation))
 			.action(({ flags, args, out }) =>
-				Effect.runPromise(Effect.gen(function*() {
-					if (operation === 'prepare' && (!flags.sourceSha || !flags.planId)) {
-						return yield* Effect.fail(
-							failure('Prepare needs --sourceSha and --planId', 'PLAN_REQUIRED', 'Run beepboop releases plan first'),
-						);
-					}
-					const client = yield* Client.at(flags.server);
-					const request = {
-						repositoryId: (yield* enrolled(client, args.repository)).id,
-						stream: flags.stream,
-						version: yield* releaseVersion(flags.releaseVersion),
-					};
-					if (operation === 'plan') return yield* emit(out, yield* client.call(routes.releasesPlan, request));
-					if (flags.sourceSha && flags.planId) {
-						yield* emit(
-							out,
-							yield* client.call(routes.releasesPrepare, {
-								...request,
-								sourceSha: flags.sourceSha,
-								planId: flags.planId,
-							}),
-						);
-					}
-				}))
+				reviewRelease({
+					review: singleReview,
+					operation,
+					flags,
+					repository: args.repository,
+					input: releaseVersion(flags.releaseVersion).pipe(Effect.map(version => ({ version }))),
+					plan: (client, request) => client.call(routes.releasesPlan, request),
+					prepare: (client, request) => client.call(routes.releasesPrepare, request),
+				}, out)
 			),
 	);
 }
 for (const operation of ['plan-set', 'prepare-set'] as const) {
+	const reviewed = reviewFlags(setReview);
 	releases = releases.command(
 		repository(
 			operation,
@@ -287,53 +318,26 @@ for (const operation of ['plan-set', 'prepare-set'] as const) {
 				? 'Preview an independent monorepo release'
 				: 'Prepare an independent monorepo release from a reviewed plan',
 		)
-			.flag('stream', flag.string().prompt({ kind: 'input', message: 'Release stream' }).required())
+			.flag('stream', releaseStream)
 			.flag(
 				'plan',
 				flag.path({ type: 'file' }).prompt({ kind: 'input', message: 'Release plan JSON file' }).required().describe(
 					'Release plan JSON file',
 				),
 			)
-			.flag(
-				'sourceSha',
-				flag.string({ pattern: shaPattern }).describe('Required for prepare-set: source SHA from plan-set'),
-			)
-			.flag('planId', flag.string().describe('Required for prepare-set: plan identity from plan-set'))
-			.interactive(() =>
-				operation === 'prepare-set'
-					? {
-						sourceSha: { kind: 'input', message: 'Reviewed source SHA from plan' },
-						planId: { kind: 'input', message: 'Plan ID from preview' },
-					}
-					: {}
-			)
+			.flag('sourceSha', reviewed.sourceSha)
+			.flag('planId', reviewed.planId)
+			.interactive(() => reviewPrompts(setReview, operation))
 			.action(({ flags, args, out }) =>
-				Effect.runPromise(Effect.gen(function*() {
-					if (operation === 'prepare-set' && (!flags.sourceSha || !flags.planId)) {
-						return yield* Effect.fail(failure(
-							'prepare-set needs --sourceSha and --planId',
-							'PLAN_REQUIRED',
-							'Run beepboop releases plan-set first',
-						));
-					}
-					const client = yield* Client.at(flags.server);
-					const request = {
-						repositoryId: (yield* enrolled(client, args.repository)).id,
-						stream: flags.stream,
-						plan: yield* readJson(flags.plan),
-					};
-					if (operation === 'plan-set') return yield* emit(out, yield* client.call(routes.releasesPlanSet, request));
-					if (flags.sourceSha && flags.planId) {
-						yield* emit(
-							out,
-							yield* client.call(routes.releasesPrepareSet, {
-								...request,
-								sourceSha: flags.sourceSha,
-								planId: flags.planId,
-							}),
-						);
-					}
-				}))
+				reviewRelease({
+					review: setReview,
+					operation,
+					flags,
+					repository: args.repository,
+					input: readJson(flags.plan).pipe(Effect.map(plan => ({ plan }))),
+					plan: (client, request) => client.call(routes.releasesPlanSet, request),
+					prepare: (client, request) => client.call(routes.releasesPrepareSet, request),
+				}, out)
 			),
 	);
 }
@@ -498,19 +502,21 @@ const notifications = group('notifications').description('Send package releases 
 	.command(
 		base('list', 'List notification destinations and their packages').action(({ flags, out }) =>
 			Effect.runPromise(Effect.gen(function*() {
-				const response = yield* (yield* Client.at(flags.server)).call(routes.notificationsList, {});
-				if (out.jsonMode) return yield* emit(out, response);
-				const { destinations, subscriptions } = response;
-				out.table(destinations.map(destination => ({
-					id: destination.id,
-					name: destination.name,
-					kind: destination.kind,
-					secret: destination.credential,
-					'new packages': destination.subscribeNew ? 'yes' : 'no',
-					enabled: destination.enabled ? 'yes' : 'no',
-					packages: subscriptions.filter(row => row.destinationId === destination.id)
-						.map(row => `${row.registry}:${row.name}`).join(', '),
-				})));
+				yield* emitTable(
+					out,
+					yield* (yield* Client.at(flags.server)).call(routes.notificationsList, {}),
+					({ destinations, subscriptions }) =>
+						destinations.map(destination => ({
+							id: destination.id,
+							name: destination.name,
+							kind: destination.kind,
+							secret: destination.credential,
+							'new packages': destination.subscribeNew ? 'yes' : 'no',
+							enabled: destination.enabled ? 'yes' : 'no',
+							packages: subscriptions.filter(row => row.destinationId === destination.id)
+								.map(row => `${row.registry}:${row.name}`).join(', '),
+						})),
+				);
 			}))
 		),
 	)

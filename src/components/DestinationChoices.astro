@@ -1,0 +1,32 @@
+---
+import type { NotificationKind } from '@/contract/catalog';
+import { notificationKindLabels, notificationKinds } from '@/contract/catalog';
+
+interface Props {
+	secrets: readonly { alias: string }[];
+	kind?: NotificationKind;
+	credential?: string;
+}
+const { secrets, kind, credential } = Astro.props;
+---
+<label>
+	Type
+	<select name="kind">
+		{notificationKinds.map(option => (
+			<option value={option} selected={kind === option}>
+				{notificationKindLabels[option]}
+			</option>
+		))}
+	</select>
+</label>
+<label>
+	Webhook URL secret
+	<select name="credential" required>
+		{credential === undefined && <option value="">Choose a secret</option>}
+		{secrets.map(secret => (
+			<option value={secret.alias} selected={secret.alias === credential}>
+				{secret.alias}
+			</option>
+		))}
+	</select>
+</label>

@@ -1,8 +1,11 @@
 ---
 import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
+import Commit from '@/components/Commit.astro';
 import Field from '@/components/Field.astro';
+import RecoverForm from '@/components/RecoverForm.astro';
 import Time from '@/components/Time.astro';
+import { githubHref } from '@/contract/links';
 import { packageLabel } from '@/domain/package-label';
 import type { ViewOf } from '@/server/loaders.ts';
 import { releaseSetSummaries } from '@/server/releases';
@@ -36,9 +39,9 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 		</p>
 		<dl class="fields metadata">
 			<Field label="Source">
-				<code>{release.sourceSha.slice(0, 12)}</code>
-				<Arrow
-					href={`https://github.com/${release.repository}/commit/${release.sourceSha}`}
+				<Commit
+					repository={release.repository}
+					sha={release.sourceSha}
 					label="Open source commit on GitHub"
 				/>
 			</Field>
@@ -74,17 +77,13 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 		</div>
 		{release.error && <p class="notice">{release.error}</p>}
 		{release.complete !== release.total && (
-			<form
-				data-action="recover"
-				method="post"
-				action="/api/executions/recover"
+			<RecoverForm
+				id={release.recoveryId}
+				recovery="reconcile"
+				label={`Check coordination of ${release.repository} release set`}
 			>
-				<input type="hidden" name="id" value={release.recoveryId}>
-				<input type="hidden" name="action" value="reconcile">
-				<button aria-label={`Check coordination of ${release.repository} release set`}>
-					Check coordination
-				</button>
-			</form>
+				Check coordination
+			</RecoverForm>
 		)}
 		<details>
 			<summary>Coordination details</summary>
@@ -155,9 +154,9 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 				 <Field label="Package">{packageLabel(run.package.id)}</Field>
 			 )}
 			 <Field label="Commit">
-				 <code>{run.sourceSha.slice(0, 12)}</code>
-				 <Arrow
-					 href={`https://github.com/${run.repository}/commit/${run.sourceSha}`}
+				 <Commit
+					 repository={run.repository}
+					 sha={run.sourceSha}
 					 label="Open commit on GitHub"
 				 />
 			 </Field>
@@ -172,7 +171,7 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 				 <Field label="Workflow run">
 					 <code>{run.runId}</code>
 					 <Arrow
-						 href={`https://github.com/${run.repository}/actions/runs/${run.runId}`}
+						 href={githubHref(run.repository, 'actions', 'runs', String(run.runId))}
 						 label="Open workflow run on GitHub"
 					 />
 				 </Field>
@@ -233,7 +232,7 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 					 	: 'Approve publishing from commit'}
 					 <code>{run.sourceSha}</code>
 					 <Arrow
-						 href={`https://github.com/${run.repository}/commit/${run.sourceSha}`}
+						 href={githubHref(run.repository, 'commit', run.sourceSha)}
 						 label="Open commit on GitHub"
 					 />
 				 </p>
@@ -246,32 +245,22 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 			 </form>
 		 )}
 		 {card.retryable && (
-			 <form
-				 data-action="recover"
-				 method="post"
-				 action="/api/executions/recover"
-			 >
-				 <input type="hidden" name="id" value={run.id}>
-				 <input type="hidden" name="action" value="retry">
-				 <button aria-label={`Retry ${card.name}`}>Retry</button>
-			 </form>
+			 <RecoverForm id={run.id} recovery="retry" label={`Retry ${card.name}`}>
+				 Retry
+			 </RecoverForm>
 		 )}
 		 {card.reconcilable && (
-			 <form
-				 data-action="recover"
-				 method="post"
-				 action="/api/executions/recover"
+			 <RecoverForm
+				 id={run.id}
+				 recovery="reconcile"
+				 label={`Check workflow outcome of ${card.name}`}
 			 >
-				 <input type="hidden" name="id" value={run.id}>
-				 <input type="hidden" name="action" value="reconcile">
-				 <p>
+				 <p slot="detail">
 					 Check whether GitHub accepted the earlier request before attempting
 					 another dispatch.
 				 </p>
-				 <button aria-label={`Check workflow outcome of ${card.name}`}>
-					 Check workflow outcome
-				 </button>
-			 </form>
+				 Check workflow outcome
+			 </RecoverForm>
 		 )}
 		 {card.cancellable && (
 			 <form data-action="cancel" method="post" action="/api/executions/cancel">
@@ -288,7 +277,7 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 				 <dd>
 					 <code>{run.configurationSha}</code>
 					 <Arrow
-						 href={`https://github.com/${run.repository}/commit/${run.configurationSha}`}
+						 href={githubHref(run.repository, 'commit', run.configurationSha)}
 						 label="Open configuration commit on GitHub"
 					 />
 				 </dd>
@@ -299,7 +288,7 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 							<>
 								<code>{run.workflowSha}</code>
 								<Arrow
-									href={`https://github.com/${run.repository}/commit/${run.workflowSha}`}
+									href={githubHref(run.repository, 'commit', run.workflowSha)}
 									label="Open workflow commit on GitHub"
 								/>
 							</>

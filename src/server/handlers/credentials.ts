@@ -4,10 +4,9 @@ import { parseGrant, validCredential } from '@/automation/vault';
 import type { DomainError } from '@/contract/errors';
 import { conflict, notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
-import { requireReady } from '@/domain/repository';
 import { fromPromise } from '@/failure';
 import type { CredentialStore } from '@/persistence/d1/credentials';
-import { admin, elevated } from '@/server/handlers/kit';
+import { admin, elevated, readyRepository } from '@/server/handlers/kit';
 
 function stored(credentials: CredentialStore, alias: string): Effect.Effect<void, DomainError> {
 	return credentials.activeVersion(alias).pipe(
@@ -58,9 +57,7 @@ export const credentialEndpoints = {
 	credentialsGrant: elevated(routes.credentialsGrant, (input, { service, actor }) =>
 		Effect.gen(function*() {
 			const { repositoryId } = input.selection;
-			const repository = yield* service.store.repository(repositoryId);
-			if (!repository) return yield* notFound('repository', 'Repository is not enrolled', String(repositoryId));
-			const ready = yield* requireReady(repository);
+			const ready = yield* readyRepository(service, repositoryId, 'Repository is not enrolled');
 			const grant = yield* configuredGrant(ready, input.selection);
 			if ((yield* service.credentials.activeVersion(grant.alias)) === undefined) {
 				return yield* precondition('Store a value under this name before granting access');

@@ -6,8 +6,8 @@ import {
 	recommendedVersion,
 } from '@/automation/release-version';
 import type { Package } from '@/automation/types';
-import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
+import Commit from '@/components/Commit.astro';
 import { formatTime } from '@/contract/time';
 import type { Status } from '@/contract/views';
 import { readiness } from '@/domain/repository';
@@ -117,9 +117,10 @@ const preparations = data.executions.filter(e =>
 		 <article>
 			 <h2>Choose the next version</h2>
 			 <p>
-				 Releases <code>{repository.sha.slice(0, 12)}</code>
-				 <Arrow
-					 href={`https://github.com/${repository.name}/commit/${repository.sha}`}
+				 Releases
+				 <Commit
+					 repository={repository.name}
+					 sha={repository.sha}
 					 label="Open commit on GitHub"
 				 />. If a manifest needs the new version, Beepboop opens a preparation
 				 pull request for you to merge. Otherwise the release starts right away.

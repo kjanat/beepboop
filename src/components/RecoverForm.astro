@@ -1,0 +1,14 @@
+---
+interface Props {
+	id: string;
+	recovery: 'reconcile' | 'retry';
+	label: string;
+}
+const { id, recovery, label } = Astro.props;
+---
+<form data-action="recover" method="post" action="/api/executions/recover">
+	<input type="hidden" name="id" value={id}>
+	<input type="hidden" name="action" value={recovery}>
+	<slot name="detail" />
+	<button aria-label={label}><slot /></button>
+</form>

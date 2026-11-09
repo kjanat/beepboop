@@ -5,8 +5,10 @@ import { publishedOutsideRequired } from '@/automation/setup';
 import type { RepositoryRecord } from '@/automation/types';
 import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
+import Commit from '@/components/Commit.astro';
 import Field from '@/components/Field.astro';
 import Time from '@/components/Time.astro';
+import { githubHref } from '@/contract/links';
 import { packageLabel } from '@/domain/package-label';
 import { readiness } from '@/domain/repository';
 import type { ViewOf } from '@/server/loaders.ts';
@@ -80,7 +82,7 @@ function wingetDestination(repository: RepositoryRecord) {
 			<h2>
 				{row.name}
 				<Arrow
-					href={`https://github.com/${row.name}`}
+					href={githubHref(row.name)}
 					label={`Open ${row.name} on GitHub`}
 				/>
 			</h2>
@@ -100,7 +102,7 @@ function wingetDestination(repository: RepositoryRecord) {
 				<Field label="Repository">
 					{repository.name}
 					<Arrow
-						href={`https://github.com/${repository.name}`}
+						href={githubHref(repository.name)}
 						label={`Open ${repository.name} on GitHub`}
 					/>
 				</Field>
@@ -111,9 +113,9 @@ function wingetDestination(repository: RepositoryRecord) {
 						/></Field>
 				)}
 				<Field label="Commit">
-					<code>{repository.sha.slice(0, 12)}</code>
-					<Arrow
-						href={`https://github.com/${repository.name}/commit/${repository.sha}`}
+					<Commit
+						repository={repository.name}
+						sha={repository.sha}
 						label="Open inspected commit on GitHub"
 					/>
 				</Field>
@@ -195,9 +197,7 @@ function wingetDestination(repository: RepositoryRecord) {
 											<small>
 												{p.manifest}
 												<Arrow
-													href={`https://github.com/${repository.name}/blob/${repository.sha}/${
-														p.manifest.split('/').map(encodeURIComponent).join('/')
-													}`}
+													href={githubHref(repository.name, 'blob', repository.sha, p.manifest)}
 													label={`Open ${p.manifest} on GitHub`}
 												/>
 											</small>
@@ -238,9 +238,7 @@ function wingetDestination(repository: RepositoryRecord) {
 											<small>
 												{winget.policy.config}
 												<Arrow
-													href={`https://github.com/${repository.name}/blob/${repository.sha}/${
-														winget.policy.config.split('/').map(encodeURIComponent).join('/')
-													}`}
+													href={githubHref(repository.name, 'blob', repository.sha, winget.policy.config)}
 													label={`Open ${winget.policy.config} on GitHub`}
 												/>
 											</small>
@@ -269,9 +267,7 @@ function wingetDestination(repository: RepositoryRecord) {
 											<small>
 												{outcome.manifest}
 												<Arrow
-													href={`https://github.com/${repository.name}/blob/${repository.sha}/${
-														outcome.manifest.split('/').map(encodeURIComponent).join('/')
-													}`}
+													href={githubHref(repository.name, 'blob', repository.sha, outcome.manifest)}
 													label={`Open ${outcome.manifest} on GitHub`}
 												/>
 											</small>
@@ -302,9 +298,7 @@ function wingetDestination(repository: RepositoryRecord) {
 									<li>
 										{p.name}
 										<Arrow
-											href={`https://github.com/${repository.name}/blob/${repository.sha}/${
-												p.manifest.split('/').map(encodeURIComponent).join('/')
-											}`}
+											href={githubHref(repository.name, 'blob', repository.sha, p.manifest)}
 											label={`Open ${p.manifest} on GitHub`}
 										/>
 										({exclusionLabel(p.publication)})
@@ -324,7 +318,13 @@ function wingetDestination(repository: RepositoryRecord) {
 									<small>
 										{w.file}
 										<Arrow
-											href={`https://github.com/${repository.name}/blob/${repository.sha}/.github/workflows/${w.file}`}
+											href={githubHref(
+												repository.name,
+												'blob',
+												repository.sha,
+												'.github/workflows',
+												w.file,
+											)}
 											label={`Open ${w.file} on GitHub`}
 										/>
 									</small>
@@ -347,7 +347,13 @@ function wingetDestination(repository: RepositoryRecord) {
 											 <strong>
 												 {workflow.name || workflow.file}
 												 <Arrow
-													 href={`https://github.com/${repository.name}/blob/${repository.sha}/.github/workflows/${workflow.file}`}
+													 href={githubHref(
+													 	repository.name,
+													 	'blob',
+													 	repository.sha,
+													 	'.github/workflows',
+													 	workflow.file,
+													 )}
 													 label={`Open ${workflow.file} on GitHub`}
 												 />
 											 </strong>

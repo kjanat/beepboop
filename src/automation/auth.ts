@@ -17,7 +17,7 @@ import { decodeError } from '@/automation/store';
 import type { DomainError } from '@/contract/errors';
 import { decodeRequest, forbidden, precondition, unauthenticated } from '@/contract/errors';
 import { loginSecretPattern } from '@/contract/ids';
-import { fromJson, fromPromise, fromSync, recover, toDomainError } from '@/failure';
+import { errorPage, fromJson, fromPromise, fromSync, recover, toDomainError } from '@/failure';
 import { integer, record, sha, text } from '@/model';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { replaceDocument, sql } from '@/persistence/d1/database';
@@ -197,14 +197,14 @@ export interface LoginCompletion {
 	exchange(code: string, verifier: string): Effect.Effect<SessionTokens, DomainError>;
 	verify(access: string): Effect.Effect<string, DomainError>;
 }
-function escapeHtml(value: string): string {
-	return value.replace(/[&<>"']/g, (character) => `&#${character.charCodeAt(0)};`);
-}
 function loginFailed(reason: string): Response {
 	return new Response(
-		`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign-in failed · Beepboop</title></head><body><main><h1>Sign-in failed</h1><p>${
-			escapeHtml(reason)
-		}</p><p><a href="/auth/login">Sign in again</a></p></main></body></html>`,
+		errorPage({
+			title: 'Sign-in failed',
+			heading: 'Sign-in failed',
+			message: reason,
+			link: { href: '/auth/login', text: 'Sign in again' },
+		}),
 		{
 			status: 401,
 			headers: {

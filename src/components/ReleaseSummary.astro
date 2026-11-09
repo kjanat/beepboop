@@ -1,6 +1,7 @@
 ---
 import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
+import Commit from '@/components/Commit.astro';
 import Field from '@/components/Field.astro';
 import { packageLabel } from '@/domain/package-label';
 import type { releaseSummaries } from '@/server/releases.ts';
@@ -28,9 +29,9 @@ const { releases } = Astro.props;
 		</div>
 		<dl class="fields metadata">
 			<Field label="Commit">
-				<code>{release.commit.slice(0, 12)}</code>
-				<Arrow
-					href={`https://github.com/${release.repository}/commit/${release.commit}`}
+				<Commit
+					repository={release.repository}
+					sha={release.commit}
 					label="Open commit on GitHub"
 				/>
 			</Field>

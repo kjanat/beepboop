@@ -15,12 +15,11 @@ import type { DomainError } from '@/contract/errors';
 import { conflict, notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import type { ReadyRepository } from '@/domain/repository';
-import { requireReady } from '@/domain/repository';
 import { fromPromise } from '@/failure';
 import { semver } from '@/model';
 import { planIdentity } from '@/persistence/identity-keys';
 import type { AdminContext } from '@/server/handlers/kit';
-import { admin } from '@/server/handlers/kit';
+import { admin, readyRepository } from '@/server/handlers/kit';
 
 interface Selected {
 	repository: ReadyRepository;
@@ -28,11 +27,11 @@ interface Selected {
 }
 
 function ready(service: AutomationService, repositoryId: number): Effect.Effect<ReadyRepository, DomainError> {
-	return Effect.gen(function*() {
-		const repository = yield* service.store.repository(repositoryId);
-		if (!repository) return yield* notFound('repository', 'Repository not configured', String(repositoryId));
-		return yield* requireReady(repository);
-	});
+	return readyRepository(service, repositoryId, 'Repository not configured');
+}
+
+function reviewed<P extends object>({ plan, planId }: { plan: P; planId: string }): P & { planId: string } {
+	return { ...plan, planId };
 }
 
 function configured(
@@ -151,7 +150,7 @@ function setPlan(input: { repositoryId: number; stream: string; plan: unknown },
 export const releaseEndpoints = {
 	releasesPlan: admin(
 		routes.releasesPlan,
-		(input, context) => releasePlan(input, context).pipe(Effect.map(({ plan, planId }) => ({ ...plan, planId }))),
+		(input, context) => releasePlan(input, context).pipe(Effect.map(reviewed)),
 	),
 	releasesPrepare: admin(routes.releasesPrepare, (input, context) =>
 		Effect.gen(function*() {
@@ -192,7 +191,7 @@ export const releaseEndpoints = {
 		})),
 	releasesPlanSet: admin(
 		routes.releasesPlanSet,
-		(input, context) => setPlan(input, context).pipe(Effect.map(({ plan, planId }) => ({ ...plan, planId }))),
+		(input, context) => setPlan(input, context).pipe(Effect.map(reviewed)),
 	),
 	releasesPrepareSet: admin(routes.releasesPrepareSet, (input, context) =>
 		Effect.gen(function*() {

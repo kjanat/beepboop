@@ -2,17 +2,11 @@ import { Effect } from 'effect';
 import type { AutomationService } from '@/automation/service';
 import type { RepositoryRecord } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
-import { notFound } from '@/contract/errors';
 import { routes } from '@/contract/routes';
-import { admin } from '@/server/handlers/kit';
+import { admin, storedRepository } from '@/server/handlers/kit';
 
 function enrolled(service: AutomationService, id: number): Effect.Effect<RepositoryRecord, DomainError> {
-	return service.store.repository(id).pipe(
-		Effect.filterOrFail(
-			(repository): repository is RepositoryRecord => repository !== undefined,
-			() => notFound('repository', 'Repository not enrolled', String(id)),
-		),
-	);
+	return storedRepository(service, id, 'Repository not enrolled');
 }
 
 export const wingetEndpoints = {

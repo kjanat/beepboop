@@ -18,6 +18,10 @@ function select(ask: Ask, message: string, entries: SelectChoice[]): Effect.Effe
 		: Effect.fail(failure('No choices available', 'NO_CHOICES'));
 }
 
+function preferring(entries: SelectChoice[], value: string | undefined): SelectChoice[] {
+	return [...entries.filter(entry => entry.value === value), ...entries.filter(entry => entry.value !== value)];
+}
+
 function typedCommands(ask: Ask, packages: string, purpose: string): Effect.Effect<string, CLIError> {
 	return Effect.gen(function*() {
 		const lines: string[] = [];
@@ -129,10 +133,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				const selected = yield* select(
 					ask,
 					`${stream.name}: ${preparing ? 'prepare release changes' : 'publish packages'}`,
-					[
-						...entries.filter(entry => entry.value === preferred),
-						...entries.filter(entry => entry.value !== preferred),
-					],
+					preferring(entries, preferred),
 				);
 				if (selected === 'managed') return undefined;
 				const file = selected === 'same' ? stream.promote?.file ?? '' : selected === 'new'
@@ -167,10 +168,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 							? [{ value: 'preserve', label: 'Preserve current triggers and check compatibility in preview' }]
 							: []),
 					];
-					const trigger = yield* select(ask, `${file}: who starts this workflow?`, [
-						...entries.filter(entry => entry.value === prior),
-						...entries.filter(entry => entry.value !== prior),
-					]);
+					const trigger = yield* select(ask, `${file}: who starts this workflow?`, preferring(entries, prior));
 					triggers = trigger === 'dispatchOnly' ? 'dispatchOnly' : trigger === 'preserve' ? 'preserve' : 'review';
 				}
 				const integrated = preparing ? evidence?.preparationJobs.includes(job) : evidence?.reportingJobs.includes(job);
@@ -188,10 +186,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 						const step = yield* select(
 							ask,
 							`Existing step that publishes ${packageLabel(pkg.id)} (choose explicitly for each package)`,
-							[
-								...entries.filter(entry => entry.value === prior),
-								...entries.filter(entry => entry.value !== prior),
-							],
+							preferring(entries, prior),
 						);
 						if (step) publicationSteps[pkg.id] = step;
 					}
@@ -298,10 +293,11 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 						? [{ value: 'none', label: 'Keep the configured custom version policy' }]
 						: []),
 				];
-				const versioning = yield* select(ask, `${stream.name}: how package versions change`, [
-					...entries.filter(entry => entry.value === stream.versioning),
-					...entries.filter(entry => entry.value !== stream.versioning),
-				]);
+				const versioning = yield* select(
+					ask,
+					`${stream.name}: how package versions change`,
+					preferring(entries, stream.versioning),
+				);
 				stream.versioning = versioning === 'independent' ? 'independent' : versioning === 'none' ? 'none' : 'workspace';
 			}
 			for (const { choice, stream, role } of created) {

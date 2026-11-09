@@ -14,6 +14,9 @@ const browserModule = new URL('../../src/ui/browser/setup.ts', import.meta.url).
 const browser: { setup(form: HTMLFormElement, action: string): Effect.Effect<void, unknown> } = await import(
 	browserModule
 );
+const dom: {
+	find<T extends Element>(parent: Element | Window['document'], selector: string, type: { new(): T }): T | undefined;
+} = await import(new URL('../../src/ui/browser/dom.ts', import.meta.url).href);
 async function act(form: HTMLFormElement, action: string) {
 	await Effect.runPromise(browser.setup(form, action));
 }
@@ -61,8 +64,8 @@ function control<T extends Element>(parent: HTMLElement | Window['document'], ti
 	const label = [...parent.querySelectorAll('label')].find(label =>
 		[...label.childNodes].some(node => node.nodeType === 3 && node.textContent === title)
 	);
-	const control = label?.querySelector('input,select,textarea');
-	if (!(control instanceof type)) throw new Error(`Missing control: ${title}`);
+	const control = label && dom.find(label, 'input,select,textarea', type);
+	if (!control) throw new Error(`Missing control: ${title}`);
 	return control;
 }
 function change(control: HTMLInputElement | HTMLSelectElement, value: string) {
@@ -77,9 +80,9 @@ async function open(repository: string) {
 	return form;
 }
 function role(form: HTMLFormElement, name: string): HTMLElement {
-	const node = form.querySelector(`[data-workflow-role="${name}"]`);
-	if (!(node instanceof window.HTMLElement)) throw new Error(`Missing ${name} section`);
-	return node;
+	const section = dom.find(form, `[data-workflow-role="${name}"]`, window.HTMLElement);
+	if (!section) throw new Error(`Missing ${name} section`);
+	return section;
 }
 
 test('the dashboard asks for the security key only for a grant the server accepts', async () => {

@@ -1,4 +1,5 @@
 ---
+import RemoveForm from '@/components/RemoveForm.astro';
 import Time from '@/components/Time.astro';
 import type { ViewOf } from '@/server/loaders.ts';
 
@@ -43,16 +44,15 @@ const { data } = Astro.props;
 			</p>
 		</div>
 		{data.keys.length > 1 && (
-			<form
-				data-action="key-remove"
-				method="post"
-				action="/api/authenticators/remove"
+			<RemoveForm
+				action="key-remove"
+				endpoint="/api/authenticators/remove"
+				name="id"
+				value={key.id}
+				label={`Remove key ${key.label}`}
 			>
-				<input type="hidden" name="id" value={key.id}>
-				<button class="danger" aria-label={`Remove key ${key.label}`}>
-					Remove key
-				</button>
-			</form>
+				Remove key
+			</RemoveForm>
 		)}
 	</article>
 ))}
@@ -78,19 +78,15 @@ const { data } = Astro.props;
 						Signed in <Time value={session.created_at} />
 						<code>{session.id.slice(0, 12)}</code>
 					</span>
-					<form
-						data-action="cli-revoke"
-						method="post"
-						action="/api/cli-sessions/revoke"
+					<RemoveForm
+						action="cli-revoke"
+						endpoint="/api/cli-sessions/revoke"
+						name="id"
+						value={session.id}
+						label={`Revoke CLI login ${session.id.slice(0, 12)}`}
 					>
-						<input type="hidden" name="id" value={session.id}>
-						<button
-							class="danger"
-							aria-label={`Revoke CLI login ${session.id.slice(0, 12)}`}
-						>
-							Revoke
-						</button>
-					</form>
+						Revoke
+					</RemoveForm>
 				</li>
 			))}
 		</ul>

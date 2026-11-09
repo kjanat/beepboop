@@ -44,6 +44,19 @@ function escapeHtml(value: string): string {
 	return value.replace(/[&<>"']/g, character => `&#${character.charCodeAt(0)};`);
 }
 
+export interface ErrorPage {
+	title: string;
+	heading: string;
+	message: string;
+	link: { href: string; text: string };
+}
+
+export function errorPage({ title, heading, message, link }: ErrorPage): string {
+	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} · Beepboop</title></head><body><main><h1>${heading}</h1><p>${
+		escapeHtml(message)
+	}</p><p><a href="${link.href}">${link.text}</a></p></main></body></html>`;
+}
+
 function wantsDocument(request: Request, path: string): boolean {
 	return request.method === 'GET' && !path.startsWith('/api/')
 		&& (request.headers.get('accept') ?? '').includes('text/html');
@@ -68,9 +81,12 @@ export function failure(request: Request, error: unknown): Response {
 	if (wantsDocument(request, path)) {
 		headers.set('Content-Type', 'text/html; charset=utf-8');
 		return new Response(
-			`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${status} · Beepboop</title></head><body><main><h1>Request failed</h1><p>${
-				escapeHtml(message)
-			}</p><p><a href="/">Return to the dashboard</a></p></main></body></html>`,
+			errorPage({
+				title: String(status),
+				heading: 'Request failed',
+				message,
+				link: { href: '/', text: 'Return to the dashboard' },
+			}),
 			{ status, headers },
 		);
 	}

@@ -12,6 +12,8 @@ import {
 	find,
 	findAll,
 	listen,
+	node,
+	oneOf,
 	Refused,
 	refuse,
 	report,
@@ -71,12 +73,10 @@ function recovery(value: string | undefined): 'retry' | 'reconcile' {
 	return value === 'retry' ? 'retry' : 'reconcile';
 }
 function registry(value: string | undefined): Effect.Effect<WatchedRegistry, Refused> {
-	const found = watchedRegistries.find(name => name === value);
-	return found ? Effect.succeed(found) : refuse('Choose npm or JSR.');
+	return oneOf(watchedRegistries, value, 'Choose npm or JSR.');
 }
 function notificationKind(value: string | undefined): Effect.Effect<NotificationKind, Refused> {
-	const found = notificationKinds.find(kind => kind === value);
-	return found ? Effect.succeed(found) : refuse('Choose a destination type.');
+	return oneOf(notificationKinds, value, 'Choose a destination type.');
 }
 function storedVersions(form: HTMLFormElement): Effect.Effect<Record<string, number>, Refused> {
 	return dataset(z.record(z.string(), z.number()), form.dataset.versions, '{}');
@@ -170,11 +170,6 @@ window.addEventListener('pagehide', clearRevealed);
 document.addEventListener('visibilitychange', () => {
 	if (document.hidden) clearRevealed();
 });
-function node<K extends keyof HTMLElementTagNameMap>(tag: K, text: string): HTMLElementTagNameMap[K] {
-	const element = document.createElement(tag);
-	element.textContent = text;
-	return element;
-}
 function inspecting(form: HTMLFormElement, name: string): () => void {
 	const card = form.closest('article');
 	if (!card) return () => {};

@@ -14,6 +14,12 @@ export function element<T extends Element>(
 		: Effect.fail(new MissingElement({ message: `Missing dashboard element: ${selector}` }));
 }
 
+export function node<K extends keyof HTMLElementTagNameMap>(tag: K, text = ''): HTMLElementTagNameMap[K] {
+	const created = document.createElement(tag);
+	created.textContent = text;
+	return created;
+}
+
 export type FormField = HTMLInputElement | HTMLSelectElement;
 
 export function field(form: HTMLFormElement, name: string): Effect.Effect<FormField, MissingElement> {
@@ -65,6 +71,15 @@ export class FieldError extends Data.TaggedError('FieldError')<{
 export class Refused extends Data.TaggedError('Refused')<{ readonly message: string }> {}
 
 export const refuse = failWith(message => new Refused({ message }));
+
+export function oneOf<T extends string>(
+	values: readonly T[],
+	value: string | undefined,
+	message: string,
+): Effect.Effect<T, Refused> {
+	const found = values.find(candidate => candidate === value);
+	return found ? Effect.succeed(found) : refuse(message);
+}
 
 export function report<E>(program: Effect.Effect<void, E>, form?: HTMLFormElement): Effect.Effect<void> {
 	return program.pipe(Effect.catchCause(cause => Effect.sync(() => showError(Cause.squash(cause), form))));

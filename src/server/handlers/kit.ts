@@ -5,9 +5,10 @@ import { Authenticators, administrator, workflowIdentity } from '@/automation/au
 import type { AutomationBindings, AutomationService } from '@/automation/service';
 import type { RepositoryRecord } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
-import { decodeRequest, forbidden, securityKeyRequired } from '@/contract/errors';
+import { decodeRequest, forbidden, notFound, securityKeyRequired } from '@/contract/errors';
 import type { AnyRoute, Known, Route } from '@/contract/routes';
-import { readiness } from '@/domain/repository';
+import type { ReadyRepository } from '@/domain/repository';
+import { readiness, requireReady } from '@/domain/repository';
 import { fromSync } from '@/failure';
 
 export interface Context {
@@ -23,6 +24,27 @@ export interface WorkflowContext extends Context {
 }
 export interface EnrolledContext extends WorkflowContext {
 	enrollment: RepositoryRecord;
+}
+
+export function storedRepository(
+	service: AutomationService,
+	id: number,
+	missing: string,
+): Effect.Effect<RepositoryRecord, DomainError> {
+	return service.store.repository(id).pipe(
+		Effect.filterOrFail(
+			(repository): repository is RepositoryRecord => repository !== undefined,
+			() => notFound('repository', missing, String(id)),
+		),
+	);
+}
+
+export function readyRepository(
+	service: AutomationService,
+	id: number,
+	missing: string,
+): Effect.Effect<ReadyRepository, DomainError> {
+	return storedRepository(service, id, missing).pipe(Effect.flatMap(requireReady));
 }
 
 export interface Endpoint<R extends AnyRoute> {

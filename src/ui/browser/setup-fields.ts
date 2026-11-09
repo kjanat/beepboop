@@ -2,13 +2,9 @@ import { Result } from 'effect';
 import type { Selection } from '@/automation/setup-defaults';
 import { preparationReasons, suggestedCommands, suggestedWorkflowFile } from '@/automation/setup-defaults';
 import type { SetupPlan, SetupWorkflow } from '@/automation/setup-types';
-import { Refused } from '@/ui/browser/dom';
+import { node, Refused } from '@/ui/browser/dom';
 
-export function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = ''): HTMLElementTagNameMap[K] {
-	const node = document.createElement(tag);
-	node.textContent = text;
-	return node;
-}
+export const element = node;
 export function hint(parent: HTMLElement, message: string) {
 	const node = element('p', message);
 	node.className = 'hint';

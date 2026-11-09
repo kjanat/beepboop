@@ -20,3 +20,10 @@ export function emit(out: Out, value: unknown): Effect.Effect<void> {
 		out.log(text.trimEnd());
 	});
 }
+export function emitTable<T, R extends Record<string, unknown>>(
+	out: Out,
+	value: T,
+	rows: (value: T) => readonly R[],
+): Effect.Effect<void> {
+	return out.jsonMode ? emit(out, value) : Effect.sync(() => out.table(rows(value)));
+}

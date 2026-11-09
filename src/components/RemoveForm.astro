@@ -1,0 +1,15 @@
+---
+interface Props {
+	action: string;
+	endpoint: string;
+	name: string;
+	value: string;
+	label: string;
+	[data: `data-${string}`]: string | undefined;
+}
+const { action, endpoint, name, value, label, ...data } = Astro.props;
+---
+<form data-action={action} method="post" action={endpoint} {...data}>
+	<input type="hidden" name={name} value={value}>
+	<button class="danger" aria-label={label}><slot /></button>
+</form>

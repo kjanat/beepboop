@@ -1,0 +1,13 @@
+---
+import Arrow from '@/components/Arrow.astro';
+import { githubHref } from '@/contract/links';
+
+interface Props {
+	repository: string;
+	sha: string;
+	label: string;
+}
+const { repository, sha, label } = Astro.props;
+---
+<code>{sha.slice(0, 12)}</code>
+<Arrow href={githubHref(repository, 'commit', sha)} label={label} />
