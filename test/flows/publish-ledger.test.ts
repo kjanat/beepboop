@@ -168,39 +168,57 @@ function cargo(state: Cargo) {
 				command: `${argv[1]} ${name}`,
 				...(options.env?.CARGO_REGISTRY_TOKEN ? { token: options.env.CARGO_REGISTRY_TOKEN } : {}),
 			});
-			if (argv[1] === 'metadata') return { code: 0, output: JSON.stringify({ target_directory: target }) };
+			if (argv[1] === 'metadata') {
+				return {
+					code: 0,
+					stdout: JSON.stringify({ target_directory: target }),
+					output: JSON.stringify({ target_directory: target }),
+				};
+			}
 			if (argv[1] === 'package') {
-				if (state.broken?.includes(name)) return { code: 101, output: `error: failed to verify package ${name}` };
+				if (state.broken?.includes(name)) {
+					return {
+						code: 101,
+						stdout: `error: failed to verify package ${name}`,
+						output: `error: failed to verify package ${name}`,
+					};
+				}
 				mkdirSync(join(target, 'package'), { recursive: true });
 				writeFileSync(join(target, 'package', `${name}-1.1.0.crate`), crateBytes(name, '1.1.0'));
-				return { code: 0, output: `Packaged ${name}` };
+				return { code: 0, stdout: `Packaged ${name}`, output: `Packaged ${name}` };
 			}
 			const outcome = state.outcomes[name]?.shift() ?? 'ok';
 			const sum = createHash('sha256').update(readFileSync(join(target, 'package', `${name}-1.1.0.crate`)))
 				.digest('hex');
 			if (outcome === 'ok') {
 				registry.set(`${name}@1.1.0`, sum);
-				return { code: 0, output: `Uploaded ${name}` };
+				return { code: 0, stdout: `Uploaded ${name}`, output: `Uploaded ${name}` };
 			}
 			if (outcome === 'late') {
 				registry.set(`${name}@1.1.0`, sum);
-				return { code: 101, output: `error: timed out waiting for ${name}` };
+				return {
+					code: 101,
+					stdout: `error: timed out waiting for ${name}`,
+					output: `error: timed out waiting for ${name}`,
+				};
 			}
-			if (outcome === 'unlisted') return { code: 0, output: `Uploaded ${name}` };
+			if (outcome === 'unlisted') return { code: 0, stdout: `Uploaded ${name}`, output: `Uploaded ${name}` };
 			if (outcome === 'tomorrow') {
 				return {
 					code: 101,
+					stdout: '',
 					output: 'error: (status 429 Too Many Requests): Please try again after Tue, 10 Nov 2026 10:00:00 GMT',
 				};
 			}
 			if (outcome === '429') {
 				return {
 					code: 101,
+					stdout: '',
 					output:
 						'error: the remote server responded with an error (status 429 Too Many Requests): Please try again after Mon, 09 Nov 2026 10:00:00 GMT',
 				};
 			}
-			return { code: 101, output: `error: could not compile ${name}` };
+			return { code: 101, stdout: `error: could not compile ${name}`, output: `error: could not compile ${name}` };
 		});
 }
 
@@ -543,30 +561,32 @@ function bindings(state: Bindings, version: string): Runner['run'] {
 			state.commands.push({ command: flags.join(' '), cwd: options.cwd, env: options.env ?? {} });
 			const after = (flag: string) => argv[argv.indexOf(flag) + 1] ?? '';
 			if (argv[0] === 'uv' && argv[1] === 'build') {
-				if (state.empty) return { code: 0, output: 'Built nothing' };
+				if (state.empty) return { code: 0, stdout: 'Built nothing', output: 'Built nothing' };
 				writeFileSync(join(after('--out-dir'), `lint_py-${version}.tar.gz`), sdist(version));
 				writeFileSync(join(after('--out-dir'), `lint_py-${version}-py3-none-any.whl`), 'wheel\n');
-				return { code: 0, output: 'Successfully built' };
+				return { code: 0, stdout: 'Successfully built', output: 'Successfully built' };
 			}
 			if (argv[0] === 'uv' && (state.limited ?? 0) > 0) {
 				state.limited = (state.limited ?? 0) - 1;
-				return { code: 2, output: 'error: Upload failed with status code 429 Too Many Requests\nRetry-After: 45' };
+				return {
+					code: 2,
+					stdout: 'error: Upload failed with status code 429 Too Many Requests\nRetry-After: 45',
+					output: 'error: Upload failed with status code 429 Too Many Requests\nRetry-After: 45',
+				};
 			}
 			if (argv[0] === 'uv') {
 				pypi.set(`${python}@${version}`, createHash('sha256').update(sdist(version)).digest('hex'));
-				return { code: 0, output: 'Uploading lint_py' };
+				return { code: 0, stdout: 'Uploading lint_py', output: 'Uploading lint_py' };
 			}
 			if (argv[1] === 'pack') {
 				writeFileSync(join(after('--pack-destination'), `octo-lint-${version}.tgz`), 'tarball\n');
-				return {
-					code: 0,
-					output: `> @octo/lint@${version} prepack\n> tsc\n\n${
-						JSON.stringify([{ filename: `octo-lint-${version}.tgz`, integrity: integrity(version) }], null, 2)
-					}\n`,
-				};
+				const stdout = `> @octo/lint@${version} prepack\n> tsc\n\n${
+					JSON.stringify([{ filename: `octo-lint-${version}.tgz`, integrity: integrity(version) }], null, 2)
+				}\n`;
+				return { code: 0, stdout, output: `npm notice Tarball Contents\n${stdout}` };
 			}
 			world.npm.publish(npm, version, argv[argv.indexOf('--tag') + 1]);
-			return { code: 0, output: `+ ${npm}@${version}` };
+			return { code: 0, stdout: `+ ${npm}@${version}`, output: `+ ${npm}@${version}` };
 		});
 }
 const npmId = 'pkg:npm/%40octo/lint', pypiId = 'pkg:pypi/lint-py';
@@ -841,6 +861,66 @@ esac
 	});
 	expect(result._tag === 'Failure' && result.failure.message).toBe(
 		'1 required publication did not publish: pkg:cargo/lint-core@1.1.0',
+	);
+	const [record] = (await ledgerOf(repository, execution.id)).records;
+	expect([record?.digest, record?.status]).toEqual([
+		checksum('lint-core', '1.1.0'),
+		{ state: 'failed-retryable', holder: `${identity.runId}:1`, error: 'error: crates.io rejected lint-core' },
+	]);
+}, 60_000);
+
+test('the publish runtime installs the pinned toolchain and reads cargo metadata from stdout alone', async () => {
+	const { repository, begun } = await released({ main: [core] });
+	const { execution, identity } = started(begun, 'main');
+	const bin = join(target, 'bin'), checkout = join(target, 'checkout'), calls = join(target, 'calls');
+	mkdirSync(bin);
+	mkdirSync(checkout);
+	writeFileSync(join(checkout, 'rust-toolchain.toml'), '[toolchain]\nchannel = "1.99.1"\n');
+	writeFileSync(
+		join(bin, 'rustup'),
+		`#!/usr/bin/env bash
+echo "rustup $*" >> "$CALLS"
+echo "info: syncing channel updates for '1.99.1-x86_64-unknown-linux-gnu'"
+echo "info: downloading 8 components" >&2
+`,
+	);
+	writeFileSync(
+		join(bin, 'cargo'),
+		`#!/usr/bin/env bash
+echo "cargo $1" >> "$CALLS"
+case "$1" in
+  metadata)
+    echo "info: syncing channel updates for '1.99.1-x86_64-unknown-linux-gnu'" >&2
+    echo "warn: the missing active toolchain '1.99.1' has been auto-installed" >&2
+    printf '{"target_directory":"%s"}\\n' "$TARGET" ;;
+  package) mkdir -p "$TARGET/package"; printf 'lint-core 1.1.0\\n' > "$TARGET/package/lint-core-1.1.0.crate"; echo packaged ;;
+  publish) echo "error: crates.io rejected lint-core" >&2; exit 101 ;;
+esac
+`,
+	);
+	chmodSync(join(bin, 'rustup'), 0o755);
+	chmodSync(join(bin, 'cargo'), 0o755);
+	const write = process.stdout.write, error = process.stderr.write, cwd = process.cwd();
+	process.stdout.write = () => true;
+	process.stderr.write = () => true;
+	process.chdir(checkout);
+	const result = await withIdentity(world, identity, () => Effect.runPromise(Effect.result(main)), {
+		PATH: `${bin}:${process.env.PATH}`,
+		TARGET: target,
+		CALLS: calls,
+		RUNNER_TEMP: target,
+		EXECUTION_ID: execution.id,
+		SERVICE_ORIGIN: world.env.APPLICATION_ORIGIN,
+	}).finally(() => {
+		process.chdir(cwd);
+		process.stdout.write = write;
+		process.stderr.write = error;
+	});
+	expect(result._tag === 'Failure' && result.failure.message).toBe(
+		'1 required publication did not publish: pkg:cargo/lint-core@1.1.0',
+	);
+	expect(readFileSync(calls, 'utf8')).toBe(
+		'rustup toolchain install\ncargo metadata\ncargo package\ncargo publish\n',
 	);
 	const [record] = (await ledgerOf(repository, execution.id)).records;
 	expect([record?.digest, record?.status]).toEqual([

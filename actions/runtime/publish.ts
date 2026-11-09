@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ActionFailure, attempt, type Invalid, required } from '@root/actions/runtime/protocol.ts';
@@ -10,6 +10,7 @@ import { claimStep, type LedgerEntry, type LedgerPackage, nextStep, reportStep }
 
 export interface Command {
 	code: number;
+	stdout: string;
 	output: string;
 }
 export interface Runner {
@@ -19,6 +20,7 @@ export interface Runner {
 	call(path: `/api/workflow/${string}`, body: unknown): Effect.Effect<unknown, Invalid>;
 	run(command: string[], options: { cwd: string; env?: Record<string, string> }): Effect.Effect<Command, ActionFailure>;
 	sleep(milliseconds: number): Effect.Effect<void>;
+	exists(path: string): boolean;
 	now(): number;
 	log(line: string): void;
 }
@@ -55,15 +57,20 @@ const packed = z.tuple([tarball]).rest(tarball);
 function checked(runner: Runner, command: string[], cwd: string): Effect.Effect<string, ActionFailure> {
 	return runner.run(command, { cwd }).pipe(Effect.flatMap(result =>
 		result.code === 0
-			? Effect.succeed(result.output)
+			? Effect.succeed(result.stdout)
 			: fail(`${command.slice(0, 2).join(' ')} exited ${result.code}\n${result.output.trim()}`)
 	));
 }
 
-function build(runner: Runner, pkg: LedgerPackage): Effect.Effect<Artifact, ActionFailure> {
+function build(
+	runner: Runner,
+	pkg: LedgerPackage,
+	toolchain: Effect.Effect<void, ActionFailure>,
+): Effect.Effect<Artifact, ActionFailure> {
 	return Effect.gen(function*() {
 		const dir = dirname(pkg.manifest);
 		if (pkg.manager === 'cargo') {
+			yield* toolchain;
 			const metadata = yield* checked(runner, [
 				'cargo',
 				'metadata',
@@ -180,10 +187,16 @@ export function publishPackages(runner: Runner): Effect.Effect<LedgerEntry[], In
 			if (wait > 0) yield* runner.sleep(wait);
 			return true;
 		});
+	let installed = false;
+	const toolchain = Effect.gen(function*() {
+		if (installed || !['rust-toolchain.toml', 'rust-toolchain'].some(file => runner.exists(file))) return;
+		yield* checked(runner, ['rustup', 'toolchain', 'install'], '.');
+		installed = true;
+	});
 	const one = (pkg: LedgerPackage) =>
 		Effect.gen(function*() {
 			runner.log(`Building ${pkg.name} ${pkg.version}`);
-			const built = yield* Effect.result(build(runner, pkg));
+			const built = yield* Effect.result(build(runner, pkg, toolchain));
 			if (built._tag === 'Failure') {
 				const reported = yield* report(pkg, { outcome: 'failed', message: built.failure.message });
 				if (reported.kind === 'settled') runner.log(`${pkg.name} ${pkg.version}: ${show(reported.entry)}`);
@@ -262,16 +275,18 @@ export function command(argv: string[], options: { cwd: string; env?: Record<str
 				stdout: 'pipe',
 				stderr: 'pipe',
 			});
-			const chunks: string[] = [];
-			const drain = async (stream: ReadableStream<Uint8Array>, sink: NodeJS.WriteStream) => {
+			const chunks: string[] = [], out: string[] = [];
+			const drain = async (stream: ReadableStream<Uint8Array>, sink: NodeJS.WriteStream, own?: string[]) => {
 				const decoder = new TextDecoder();
 				for await (const chunk of stream) {
 					sink.write(chunk);
-					chunks.push(decoder.decode(chunk, { stream: true }));
+					const text = decoder.decode(chunk, { stream: true });
+					chunks.push(text);
+					own?.push(text);
 				}
 			};
-			await Promise.all([drain(child.stdout, process.stdout), drain(child.stderr, process.stderr)]);
-			return { code: await child.exited, output: chunks.join('') };
+			await Promise.all([drain(child.stdout, process.stdout, out), drain(child.stderr, process.stderr)]);
+			return { code: await child.exited, stdout: out.join(''), output: chunks.join('') };
 		},
 		catch: error => new ActionFailure({ message: error instanceof Error ? error.message : String(error) }),
 	});
@@ -293,6 +308,7 @@ export const main: Effect.Effect<void, Invalid> = Effect.gen(function*() {
 		call: (path, body) => call(origin, path, body),
 		run: command,
 		sleep: milliseconds => Effect.sleep(milliseconds),
+		exists: path => existsSync(path),
 		now: () => Date.now(),
 		log: line => console.log(line),
 	});

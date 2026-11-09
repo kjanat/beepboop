@@ -49,6 +49,7 @@ export async function publishWith(world: World, identity: RunIdentity, execution
 		call: (path, body) => workflowCall(world, path, body),
 		run: options.run,
 		sleep: milliseconds => Effect.sync(() => world.advance(milliseconds)),
+		exists: () => false,
 		now: () => Date.now(),
 		log: line => logs.push(line),
 	};

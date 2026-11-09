@@ -384,6 +384,10 @@ For each package the action:
    `npm publish --access public --tag <channel>`,
 4. reports the outcome.
 
+Before the first Cargo build, the action runs `rustup toolchain install` when
+the checkout has a `rust-toolchain.toml` or `rust-toolchain` file. It reads
+`cargo metadata` and `npm pack --json` from standard output only.
+
 npm publishes with `--provenance` when the workflow event names a public
 repository. The channel is the stream's `channels.stable`, or
 `channels.prerelease` for a prerelease version.

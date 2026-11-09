@@ -431,15 +431,21 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 				Effect.sync(() => {
 					const name = crateNames[argv[argv.indexOf('--manifest-path') + 1] ?? ''] ?? '';
 					const archive = join(scratch, 'package', `${name}-1.1.0.crate`);
-					if (argv[1] === 'metadata') return { code: 0, output: JSON.stringify({ target_directory: scratch }) };
+					if (argv[1] === 'metadata') {
+						return {
+							code: 0,
+							stdout: JSON.stringify({ target_directory: scratch }),
+							output: JSON.stringify({ target_directory: scratch }),
+						};
+					}
 					if (argv[1] === 'package') {
 						mkdirSync(join(scratch, 'package'), { recursive: true });
 						writeFileSync(archive, `${name} 1.1.0\n`);
-						return { code: 0, output: '' };
+						return { code: 0, stdout: '', output: '' };
 					}
 					order.push(name);
 					published.set(`${name}@1.1.0`, `crate:${createHash('sha256').update(readFileSync(archive)).digest('hex')}`);
-					return { code: 0, output: '' };
+					return { code: 0, stdout: '', output: '' };
 				}),
 		});
 		if (result._tag === 'Failure') throw new Error(result.failure.message);
