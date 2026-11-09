@@ -4,7 +4,7 @@ import type { Selection } from '@/automation/setup-defaults';
 import { preparationReasons, suggestedCommands, suggestedWorkflowFile } from '@/automation/setup-defaults';
 import type { SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '@/contract/setup';
-import { binaryTargets, setupWorkflow } from '@/contract/setup';
+import { binaryTargets, leftOut, setupWorkflow } from '@/contract/setup';
 import type { Editors, WorkflowField } from '@/contract/setup-fields';
 import { node, Refused } from '@/ui/browser/dom';
 
@@ -141,7 +141,8 @@ function binaryEditor(
 					ticked.set(build.name, input.checked);
 				});
 				label(list, buildLabel(build), input);
-				if (candidate?.reason) hint(list, candidate.reason);
+				const note = candidate && leftOut(candidate);
+				if (note) hint(list, note);
 			}
 			if (!targetsEdited) {
 				const chosen = offered.filter(entry => checked(entry.build));

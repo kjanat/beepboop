@@ -2,6 +2,14 @@ import { Effect, Result } from 'effect';
 import { publishable } from '@/automation/package-publication';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices, SetupPlan, Versioning } from '@/automation/setup-types';
+import {
+	approvalChoiceLabels,
+	approvalPolicies,
+	bumpChoiceLabels,
+	startChannels,
+	startChoiceLabels,
+	versionBumps,
+} from '@/contract/release-start';
 import { routes } from '@/contract/routes';
 import { setupStream } from '@/contract/setup';
 import type { ChoicesField, Editors, StreamField } from '@/contract/setup-fields';
@@ -19,6 +27,8 @@ export const streamEditors = {
 	required: 'control',
 	versioning: 'control',
 	approval: 'control',
+	start: 'control',
+	bump: 'control',
 	observe: 'control',
 	prepare: 'control',
 	promote: 'control',
@@ -33,6 +43,8 @@ const streamHelp: Record<StreamField, string> = {
 	required: '',
 	versioning: '',
 	approval: '',
+	start: '',
+	bump: '',
 	observe: '',
 	prepare: '',
 	promote: '',
@@ -121,12 +133,29 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 		], value.versioning);
 		versioning.dataset.field = 'versioning';
 		hint(groupAdvanced, 'Choose the actual version when preparing a release. Setup does not change package versions.');
-		const approval = select(groupAdvanced, 'When a merged release version publishes', [
-			['push', 'When a signed commit with passing checks reaches the default branch'],
-			['merge', 'When its version PR merges'],
-			['required', 'After you approve it'],
-		], value.approval ?? 'push');
+		const releasing = element('fieldset');
+		releasing.append(element('legend', 'How releases start and publish'));
+		const starts = startChannels.map(channel => {
+			const input = element('input');
+			input.type = 'checkbox';
+			input.value = channel;
+			input.dataset.field = 'start';
+			input.checked = value.start?.includes(channel) ?? false;
+			label(releasing, `Start a release from ${startChoiceLabels[channel].replaceAll('`', '')}`, input);
+			return { channel, input };
+		});
+		hint(releasing, 'A start approves the whole release. Nothing asks for approval after it.');
+		const bump = select(releasing, 'How a version bump reaches the default branch', [
+			['', 'Choose'],
+			...versionBumps.map((entry): [string, string] => [entry, bumpChoiceLabels[entry]]),
+		], value.bump ?? '');
+		bump.dataset.field = 'bump';
+		const approval = select(releasing, 'When a version raised without a start publishes', [
+			['', 'Choose'],
+			...approvalPolicies.map((entry): [string, string] => [entry, approvalChoiceLabels[entry]]),
+		], value.approval ?? '');
 		approval.dataset.field = 'approval';
+		body.append(releasing);
 		const advancedFields = jsonFields(streamFields, streamEditors).map(field =>
 			[field, jsonEditor(groupAdvanced, field, value[field], streamHelp[field])] as const
 		);
@@ -170,8 +199,13 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 					: versioning.value === 'none'
 					? 'none'
 					: 'workspace';
+				const chosenApproval = approvalPolicies.find(entry => entry === approval.value);
+				const chosenBump = versionBumps.find(entry => entry === bump.value);
+				const started = starts.filter(entry => entry.input.checked).map(entry => entry.channel);
 				const extra: Record<string, unknown> = {
-					approval: approval.value === 'required' ? 'required' : approval.value === 'merge' ? 'merge' : 'push',
+					...(chosenApproval ? { approval: chosenApproval } : {}),
+					...(chosenBump ? { bump: chosenBump } : {}),
+					...(started.length || value.start ? { start: started } : {}),
 				};
 				for (const [field, editor] of advancedFields) {
 					const entered = yield* editor.read();

@@ -258,17 +258,19 @@ and promotes through branch workflows and observes publication from a tag:
 }
 ```
 
-| Setting            | Use                                                                                                                                                                                                                                             |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `versioning`       | `workspace`, `independent`, or `none` for maintenance operations.                                                                                                                                                                               |
-| `packages`         | Package IDs to select, such as `pkg:cargo/example-core` or `pkg:npm/%40example/cli`. Independent streams can also select packages in the preparation request.                                                                                   |
-| `prepare.strategy` | `managed` lets Beepboop edit the versions. `workflow` runs your own preparation script.                                                                                                                                                         |
-| `needs`            | Operation names that must complete before this workflow starts.                                                                                                                                                                                 |
-| `publications`     | Report IDs that this operation needs to complete.                                                                                                                                                                                               |
-| `required`         | Publication IDs that the stream's release gate requires. An operation named `publish` uses this list by default.                                                                                                                                |
-| `credentials`      | Credential aliases that the stream requests. Access also needs an administrator grant.                                                                                                                                                          |
-| `concurrency`      | `queue`, or `supersede-pending` to cancel older undispatched operations.                                                                                                                                                                        |
-| `promote.approval` | `required` waits for your approval. `merge` releases the merge commit of a verified Beepboop preparation PR after its checks pass. `push` releases a verified default-branch commit with an unpublished manifest version after its checks pass. |
+| Setting            | Use                                                                                                                                                                                                                                                                                                                                       |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `versioning`       | `workspace`, `independent`, or `none` for maintenance operations.                                                                                                                                                                                                                                                                         |
+| `packages`         | Package IDs to select, such as `pkg:cargo/example-core` or `pkg:npm/%40example/cli`. Independent streams can also select packages in the preparation request.                                                                                                                                                                             |
+| `prepare.strategy` | `managed` lets Beepboop edit the versions. `workflow` runs your own preparation script.                                                                                                                                                                                                                                                   |
+| `needs`            | Operation names that must complete before this workflow starts.                                                                                                                                                                                                                                                                           |
+| `publications`     | Report IDs that this operation needs to complete.                                                                                                                                                                                                                                                                                         |
+| `required`         | Publication IDs that the stream's release gate requires. An operation named `publish` uses this list by default.                                                                                                                                                                                                                          |
+| `credentials`      | Credential aliases that the stream requests. Access also needs an administrator grant.                                                                                                                                                                                                                                                    |
+| `concurrency`      | `queue`, or `supersede-pending` to cancel older undispatched operations.                                                                                                                                                                                                                                                                  |
+| `promote.approval` | For a version raised without a start: `required` waits for your approval. `merge` releases the merge commit of a verified Beepboop preparation PR after its checks pass. `push` releases a verified default-branch commit with an unpublished manifest version after its checks pass. Without a value, a release waits for your approval. |
+| `start`            | Where a release can start: `{ "via": "action", "workflow": "start-release.yml" }`, `{ "via": "dashboard" }` and `{ "via": "cli" }`, in any combination. See [Start a release](#start-a-release).                                                                                                                                          |
+| `prepare.bump`     | `commit` pushes the version bump to the default branch as a signed Beepboop commit. `pr` opens a version PR. Without a value, Beepboop opens a version PR.                                                                                                                                                                                |
 
 You select versions manually, and they follow SemVer. Select packages that
 share a version source together. Dependencies name operations in the same
@@ -444,6 +446,52 @@ The action exits nonzero when a required package did not publish, after every
 package has its outcome. Beepboop stores each outcome on the execution. The
 workflow needs no `actions/report` step for these packages.
 
+## Start a release
+
+A start approves the whole release. After it, Beepboop runs the version bump,
+the publication, the binaries, the tags and the GitHub release without asking
+again. Failing checks or package metadata problems stop the release with a
+reason on the runs page. Each stream enables its starts in `start`:
+
+```json
+{
+  "streams": {
+    "main": {
+      "start": [
+        { "via": "action", "workflow": "start-release.yml" },
+        { "via": "dashboard" },
+        { "via": "cli" }
+      ],
+      "prepare": { "strategy": "managed", "bump": "commit" },
+      "promote": { "approval": "required", "workflow": { "file": "release.yml" } }
+    }
+  }
+}
+```
+
+- **GitHub Actions.** Run the **Start release** workflow, `start-release.yml`,
+  from the Actions tab, with a stream and `patch`, `minor`, `major` or a
+  version. Setup generates the workflow when you tick `action`. Its one step
+  runs `kjanat/beepboop/actions/release@v1`. The action proves the run with
+  GitHub OIDC and asks Beepboop to start the release. Beepboop accepts only a
+  `workflow_dispatch` run of the named file on the default branch, at the
+  commit Beepboop knows as the branch head.
+- **Dashboard.** Choose the stream and version on the Releases page and select
+  **Release**.
+- **CLI.** Run `beepboop release [patch|minor|major|VERSION]` in a checkout, or
+  pass `--repository owner/repo` and `--stream main`.
+
+With `"bump": "commit"`, Beepboop pushes `chore(release): <version>` to the
+default branch as a signed bot commit, and the release publishes that commit
+once its checks pass. When branch protection refuses the push, the
+preparation fails with GitHub's reason. Let the Beepboop app push to the
+branch, or set `"bump": "pr"`. With `"bump": "pr"`, Beepboop opens the version
+PR, and merging it continues the release without another approval.
+
+A start through a channel the stream does not list prepares the release as
+before, and the version follows `promote.approval`. A version raised on the
+default branch without a start also follows `promote.approval`.
+
 ## Prepare and promote
 
 Choose the stream and version in the dashboard and select **Release**. When the
@@ -534,10 +582,11 @@ any tool that the runner lacks.
    then opens the release PR.
 6. Review and merge the release PR.
 7. After the merge, Beepboop creates a promotion when the manifests carry an
-   unreleased version. Setup writes `"approval": "push"` unless the choices set
-   another approval. Beepboop then approves the promotion itself once the commit
-   has a verified signature and passing checks. With `"approval": "required"`,
-   approve the promotion in the dashboard, or run
+   unreleased version. A release that a start approved continues by itself.
+   Otherwise the promotion follows `promote.approval`, which setup writes only
+   when you tick it. With `"approval": "push"`, Beepboop approves the promotion
+   itself once the commit has a verified signature and passing checks. With
+   `"approval": "required"`, approve the promotion in the dashboard, or run
    `beepboop runs approve <execution-id> --sourceSha <merge-commit-sha>`.
    `beepboop runs list` prints the execution ID.
 8. Approval requires a verified commit signature, passing checks and a branch
@@ -1059,7 +1108,10 @@ when its unconditional `[dependencies]`, followed through workspace path
 dependencies, include `nix`, `uzers`, `users`, `termios`, `daemonize`, `fork`,
 `pty-process`, or `rustix` with a feature other than `std`, `alloc`, `core`,
 `net`, `event`, `use-libc` or `rustc-dep-of-std`. Setup then leaves out the
-Windows targets and names the dependencies in the PR. Target-specific
+Windows targets and names the dependencies in the PR. A ticked target stays
+ticked. When a build is expected to fail on it, the box reads
+`windows-amd64 (tool expected to fail)` and a note names the dependencies.
+Setup never unticks a target and never blocks on one. Target-specific
 dependencies such as `[target.'cfg(unix)'.dependencies]` do not count. Setup
 proposes builds only for a workflow whose binding has no `setup` object yet. A
 binding with one keeps its builds, including none.
@@ -1196,9 +1248,10 @@ to a `setup` object on the default branch, the next preview regenerates the
 workflow from it. Every change goes through a setup PR.
 
 **Edit release setup** on the Repositories page and the interactive
-`beepboop adopt` edit every field of the setup choices. The approval policy, the
-tag prefix and the binary builds and targets have their own controls. The CLI
-asks for them after **Customize**. Fields without a dedicated control,
+`beepboop adopt` edit every field of the setup choices. The starts, the version
+bump, the approval policy, the tag prefix and the binary builds and targets
+have their own controls. The CLI asks for the starts, the bump and the approval
+when `.github/beepboop.json` holds none, and for the rest after **Customize**. Fields without a dedicated control,
 `versionSource`, `versionFiles`, `needs`, `operations` and `credentials`, take
 JSON and are checked against the same schema. A new schema field fails the
 type check until both editors declare a control or a JSON field for it.
@@ -1230,7 +1283,12 @@ or merged setup PRs, and maintenance never approves or dispatches a release.
 
 The setup PR description lists each release stream with a checkbox for every
 publishable package, and for every proposed binary build and target. A release succeeds only when every ticked package
-publishes. The description lists versioning, the preparation and publication
+publishes. Each stream also lists its starts (`action`, `dashboard`, `cli`, tick
+any), its version bump (`commit` or `pr`, tick one) and its approval for a
+version raised without a start (`required`, `merge` or `push`, tick one).
+Beepboop ticks only what `.github/beepboop.json` already holds. A question
+without a tick gets a note that says what Beepboop does until you answer it,
+and setup writes no value for it. The description lists versioning, the preparation and publication
 workflows, and their trigger handover as text. Change those under
 Repositories, **Edit release setup**. Tick or untick boxes in the GitHub UI to
 change the proposal. Beepboop waits until 5 seconds pass without another edit.

@@ -1,4 +1,5 @@
 import { parse } from 'yaml';
+import { listed } from '@/automation/setup-summary';
 import type { Edit, Snapshot } from '@/automation/types';
 
 export const onboardingBranch = 'automation/onboarding';
@@ -123,8 +124,15 @@ function configurationChanges(before: Record<string, unknown>, after: Record<str
 	const paths = [...new Set([...old.keys(), ...next.keys()])].filter(path => old.get(path) !== next.get(path));
 	return paths.map(path => ({
 		text: `${next.has(path) ? old.has(path) ? 'changes' : 'adds' : 'removes'} \`${path}\``,
-		label: 'release configuration',
+		label: /(?:^|\.)setup\./.test(path) ? 'setup in beepboop.json' : 'release configuration',
 	}));
+}
+function buildJobs(source: string): Set<string> {
+	return new Set(
+		Object.keys(record(record(document(source)).jobs)).flatMap(job =>
+			job.startsWith('build-') ? [job.slice('build-'.length)] : []
+		),
+	);
 }
 export function describeEdits(edits: Edit[]): FileChanges[] {
 	return edits.map(edit => {
@@ -137,6 +145,12 @@ export function describeEdits(edits: Edit[]): FileChanges[] {
 }
 export function setupTitle(branch: string, edits: Edit[]): string {
 	if (branch === onboardingBranch) return 'chore: configure release automation';
+	const workflows = edits.filter(edit => edit.path.startsWith('.github/workflows/'));
+	const before = new Set(workflows.flatMap(edit => [...buildJobs(edit.before)]));
+	const after = new Set(workflows.flatMap(edit => [...buildJobs(edit.after)]));
+	const added = [...after].filter(name => !before.has(name)), removed = [...before].filter(name => !after.has(name));
+	if (added.length) return `chore: build ${listed(added)} release binaries`;
+	if (removed.length) return `chore: stop building ${listed(removed)} release binaries`;
 	const labels = [
 		...new Set(
 			describeEdits(edits).flatMap(file => file.changes.flatMap(change => change.label ? [change.label] : [])),

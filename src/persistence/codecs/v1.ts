@@ -24,6 +24,7 @@ import type {
 } from '@/automation/types';
 import { managerDestinationIds, managerNames } from '@/contract/catalog';
 import { diagnostic, isDiagnosticCode } from '@/contract/diagnostics';
+import { startChannel } from '@/contract/release-start';
 import { setupChoicesSchema } from '@/contract/setup';
 import { executionStates } from '@/contract/views';
 import { stringsSchema as strings } from '@/model';
@@ -221,7 +222,7 @@ const refPlan: z.ZodType<RefPlan> = z.object({
 	})),
 	publicKey: z.string().optional(),
 });
-const pullResult = z.object({ url: z.string(), head: z.string() });
+const pullResult = z.object({ url: z.string(), head: z.string(), kind: z.literal('commit').optional() });
 const executionSchema: z.ZodType<Execution> = z.object({
 	prepared: z.object({ edits: z.array(edit), head: z.string().optional(), result: pullResult.optional() }).optional(),
 	releaseSet: z.object({
@@ -273,7 +274,8 @@ const executionSchema: z.ZodType<Execution> = z.object({
 	draftRelease: z.object({ id: z.number(), tag: z.string() }).optional(),
 	titled: z.boolean().optional(),
 	dispatchedAt: z.number().optional(),
-	approvedBy: z.literal('merge').optional(),
+	approvedBy: z.enum(['merge', 'start']).optional(),
+	started: z.object({ via: startChannel, actor: z.string() }).optional(),
 	approvedAt: z.number().optional(),
 	publications: z.array(packagePublication),
 	artifacts: z.array(artifact),

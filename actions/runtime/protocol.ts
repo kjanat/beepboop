@@ -7,6 +7,7 @@ import { array, record, text } from '@/model.ts';
 import { attemptWith, awaitWith, failWith, rejectWith } from '@/refusal.ts';
 
 export const modes = [
+	'start',
 	'begin',
 	'prepared',
 	'report',
@@ -19,6 +20,7 @@ export const modes = [
 export type Mode = (typeof modes)[number];
 
 export const endpoints = {
+	start: { path: '/api/workflow/start', idempotent: true },
 	begin: { path: '/api/workflow/begin', idempotent: true },
 	prepared: { path: '/api/workflow/prepared', idempotent: true },
 	report: { path: '/api/workflow/report', idempotent: true },
@@ -89,6 +91,11 @@ export function requestBody(mode: Mode, environment: Environment, now = Date.now
 	const executionId = environment.EXECUTION_ID || environment.BEEPBOOP_EXECUTION_ID;
 	return Result.gen(function*() {
 		switch (mode) {
+			case 'start':
+				return {
+					stream: yield* required(environment, 'STREAM'),
+					version: yield* required(environment, 'RELEASE_VERSION'),
+				};
 			case 'begin':
 				return {
 					executionId,

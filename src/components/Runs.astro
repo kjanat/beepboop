@@ -6,6 +6,7 @@ import Field from '@/components/Field.astro';
 import RecoverForm from '@/components/RecoverForm.astro';
 import Time from '@/components/Time.astro';
 import { githubHref } from '@/contract/links';
+import { startLabels } from '@/contract/release-start';
 import { packageLabel } from '@/domain/package-label';
 import type { ViewOf } from '@/server/loaders.ts';
 import { releaseSetSummaries } from '@/server/releases';
@@ -132,7 +133,11 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 			 {card.approving
 			 	? card.automatic
 			 		? `${
-			 			run.approvedBy === 'merge' ? 'You merged the preparation PR. ' : ''
+			 			run.started
+			 				? `A start from ${startLabels[run.started.via]} approved this release. `
+			 				: run.approvedBy === 'merge'
+			 				? 'You merged the preparation PR. '
+			 				: ''
 			 		}Beepboop releases this commit once it is verified and its checks pass.`
 			 		: 'Waiting for your approval.'
 			 	: (run.state !== 'succeeded' && run.reason)

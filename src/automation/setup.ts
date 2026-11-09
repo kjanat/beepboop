@@ -13,7 +13,8 @@ import type { ReleaseGraph } from '@/automation/release-graph/graph';
 import { inferReleaseGraph } from '@/automation/release-graph/graph';
 import { completeTaggedStreams } from '@/automation/setup-completion';
 import { crateScript, refreshedCommands, suggestedCommands } from '@/automation/setup-defaults';
-import { streamSummary } from '@/automation/setup-summary';
+import { startWorkflow } from '@/automation/setup-start';
+import { listed, streamSummary } from '@/automation/setup-summary';
 import type {
 	SetupChoices,
 	SetupOption,
@@ -23,7 +24,7 @@ import type {
 	Versioning,
 	WorkflowEvidence,
 } from '@/automation/setup-types';
-import { triggerHandovers, versionings } from '@/automation/setup-types';
+import { approvals, triggerHandovers, versionings } from '@/automation/setup-types';
 import { integrateReleaseWorkflow, integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Package, RepositoryRecord, Snapshot } from '@/automation/types';
 import { isLockfile } from '@/contract/catalog';
@@ -31,8 +32,26 @@ import { blocking } from '@/contract/diagnostics';
 import type { DomainError } from '@/contract/errors';
 import { decodeRequest, precondition } from '@/contract/errors';
 import { sha256Hex } from '@/contract/ids';
-import type { BinaryBuild, BinaryCandidate, BinaryRelease, WorkflowSetupInput } from '@/contract/setup';
-import { binaryTargets, setupChoicesSchema, workflowSetup } from '@/contract/setup';
+import {
+	approvalChoiceLabels,
+	bumpChoiceLabels,
+	releaseStarts,
+	startChannels,
+	startChoiceLabels,
+	startWorkflowFile,
+	versionBump,
+	versionBumps,
+} from '@/contract/release-start';
+import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget, WorkflowSetupInput } from '@/contract/setup';
+import {
+	binaryTargets,
+	bumpable,
+	leftOut,
+	setupChoicesSchema,
+	startable,
+	unbuildable,
+	workflowSetup,
+} from '@/contract/setup';
 import { versionFileSchema } from '@/contract/version-files';
 import { configurationDrift } from '@/domain/configuration';
 import { packageMarkdown } from '@/domain/package-label';
@@ -297,10 +316,9 @@ function draftSetup(
 			inventory,
 			{ ...requested, streams: withDependencies(inventory, requested) },
 			raw,
-			resolved,
 		);
 		const chosen = input === undefined ? undefined : yield* decodeRequest(setupChoicesSchema, input);
-		const choices = chosen ? completeChoices(snapshot, inventory, chosen, raw, resolved) : proposal;
+		const choices = chosen ? completeChoices(snapshot, inventory, chosen, raw) : proposal;
 		const inferred = input === undefined || JSON.stringify(choices) === JSON.stringify(proposal);
 		const drafts = yield* drafted(snapshot, inventory, choices, raw, workflows, baseline, resolved);
 		const unlisted = (streams: SetupChoices['streams'], from: SetupChoices) =>
@@ -319,15 +337,44 @@ function draftSetup(
 					packageMarkdown(id)
 				}, which a selected package depends on and its registry does not have at this version.`
 			);
-		const built = new Set(
-			choices.streams.flatMap(stream => stream.promote?.binaries?.builds.map(build => build.name) ?? []),
-		);
-		const narrowed = candidates.flatMap(candidate =>
-			candidate.reason && built.has(candidate.build.name) ? [candidate.reason] : []
+		const narrowed: string[] = [], failing: string[] = [];
+		for (const stream of choices.streams) {
+			const release = stream.promote?.binaries;
+			for (const build of release?.builds ?? []) {
+				const candidate = candidates.find(entry => entry.build.name === build.name);
+				if (!candidate || !release) continue;
+				const ticked = unbuildable(candidate, release.targets);
+				const note = leftOut(candidate);
+				if (ticked.length) {
+					failing.push(
+						`${stream.name}: ${build.name} is expected to fail on ${ticked.join(', ')}: ${
+							candidate.reason ?? 'its dependencies do not support these targets'
+						}.`,
+					);
+				} else if (note) narrowed.push(note);
+			}
+		}
+		const unanswered = choices.streams.flatMap(stream => [
+			...(stream.promote && !stream.approval
+				? [
+					`${stream.name}: tick when a version raised without a start publishes. Until you do, Beepboop waits for your approval.`,
+				]
+				: []),
+			...(bumpable(stream) && !stream.bump
+				? [
+					`${stream.name}: tick how a version bump reaches the default branch. Until you do, Beepboop opens a version PR.`,
+				]
+				: []),
+		]);
+		const ineligible = choices.streams.flatMap(stream =>
+			!startable(stream) && stream.start?.length
+				? [`${stream.name}: only a stream with one shared version and a publishing workflow can start releases.`]
+				: []
 		);
 		const plan = {
 			...drafts,
-			notes: [...added, ...narrowed, ...drafts.notes],
+			blockers: [...ineligible, ...drafts.blockers],
+			notes: [...unanswered, ...added, ...failing, ...narrowed, ...drafts.notes],
 			...(candidates.length ? { binaryCandidates: candidates } : {}),
 		};
 		return inferred ? { ...plan, adoption: proposalMarkdown(graph, snapshot, plan) } : plan;
@@ -565,7 +612,11 @@ function drafted(
 				Object.assign(updated, {
 					[operation]: {
 						...parent,
-						...(operation === 'prepare' ? { strategy: 'managed' } : { approval: selection.approval ?? 'required' }),
+						...(operation === 'prepare'
+							? { strategy: 'managed' }
+							: selection.approval
+							? { approval: selection.approval }
+							: {}),
 						workflow: binding,
 					},
 				});
@@ -584,6 +635,10 @@ function drafted(
 				notes.push(...generated.notes);
 				const path = `.github/workflows/${workflow.file}`, before = snapshot.files[path] ?? '';
 				if (generated.content !== before) edits.push({ path, before, after: generated.content });
+			}
+			if (selection.bump) updated.prepare = { ...object(updated.prepare), bump: selection.bump };
+			if (selection.start) {
+				updated.start = selection.start.map(via => via === 'action' ? { via, workflow: startWorkflowFile } : { via });
 			}
 			for (const entry of selection.operations ?? []) {
 				const { name: operation, needs: _needs, needsJobs: _jobs, publications, ...workflow } = entry;
@@ -623,6 +678,15 @@ function drafted(
 				if (generated.content !== before) edits.push({ path, before, after: generated.content });
 			}
 		}
+		const dispatched = choices.streams.flatMap(stream => stream.start?.includes('action') ? [stream.name] : []);
+		if (dispatched.length) {
+			if (selectedFiles.has(startWorkflowFile)) {
+				blockers.push(`${startWorkflowFile}: one workflow cannot start releases and run a release role.`);
+			}
+			const path = `.github/workflows/${startWorkflowFile}`, before = snapshot.files[path] ?? '';
+			const after = startWorkflow(dispatched, choices.actionsRevision);
+			if (after !== before) edits.push({ path, before, after });
+		}
 		if (!choices.streams.length) blockers.push('Select at least one release stream.');
 		if (choices.actionsRevision) configuration.actionsRevision = choices.actionsRevision;
 		else delete configuration.actionsRevision;
@@ -658,17 +722,9 @@ function drafted(
 			? before
 			: formatJson(yield* Effect.fromResult(json(configuration)));
 		if (after !== before) edits.unshift({ path: '.github/beepboop.json', before, after });
-		notes.push(
-			'Set up registry access and trusted publishing in each registry. The setup PR publishes nothing.',
-		);
 		const prior = baseline.prior
 			? { url: baseline.prior.url, superseded: !!before && baseline.prior.content !== before }
 			: undefined;
-		if (prior?.superseded) {
-			notes.push(
-				'The earlier setup proposal differs from configuration now on the default branch. Review this replacement against the current source.',
-			);
-		}
 		if (baseline.workflowPermission === false && edits.some(edit => edit.path.startsWith('.github/workflows/'))) {
 			blockers.push(
 				'The GitHub App installation needs Workflows: write permission before this proposal can edit workflows. Update the app permission and approve the installation update, then preview again.',
@@ -729,7 +785,6 @@ function completeChoices(
 	inventory: Inventory,
 	choices: SetupChoices,
 	raw: Record<string, unknown>,
-	resolved?: Configuration,
 ): SetupChoices {
 	const context = {
 		inventory,
@@ -774,15 +829,20 @@ function completeChoices(
 						: {}),
 				};
 			};
-			const configured = object(object(object(raw.streams)[stream.name]).promote).approval;
+			const stored = object(object(raw.streams)[stream.name]);
+			const configured = object(stored.promote).approval;
 			const approval = stream.approval
-				?? (configured === 'required' || configured === 'merge' || configured === 'push'
-					? configured
-					: resolved?.streams[stream.name]?.promote.approval ?? 'push');
+				?? (configured === 'required' || configured === 'merge' || configured === 'push' ? configured : undefined);
+			const starts = releaseStarts.safeParse(stored.start);
+			const start = stream.start ?? (starts.success ? starts.data.map(entry => entry.via) : undefined);
+			const bumped = versionBump.safeParse(object(stored.prepare).bump);
+			const bump = stream.bump ?? (bumped.success ? bumped.data : undefined);
 			const prepare = complete('prepare', stream.prepare), promote = complete('promote', stream.promote);
 			return {
 				...stream,
-				...(promote ? { approval } : {}),
+				...(promote && approval ? { approval } : {}),
+				...(start ? { start } : {}),
+				...(bump ? { bump } : {}),
 				...(prepare ? { prepare } : {}),
 				...(promote ? { promote } : {}),
 			};
@@ -791,11 +851,6 @@ function completeChoices(
 	const canonical = setupChoicesSchema.safeParse(completed);
 	return canonical.success ? canonical.data : completed;
 }
-const approvalLabels = {
-	required: 'approval required',
-	merge: 'releases when its version PR merges',
-	push: 'releases when a signed commit with passing checks reaches the default branch',
-} as const;
 function withDependencies(inventory: Inventory, choices: SetupChoices): SetupChoices['streams'] {
 	const unreleased = (pkg: Package) =>
 		publishable(pkg)
@@ -854,6 +909,15 @@ export function setupOptions(plan: SetupPlan): SetupOption[] {
 			}));
 		}),
 		...versionings.map((value): SetupOption => ({ kind: 'versioning', stream: stream.name, value })),
+		...(stream.promote
+			? approvals.map((value): SetupOption => ({ kind: 'approval', stream: stream.name, value }))
+			: []),
+		...(startable(stream)
+			? startChannels.map((value): SetupOption => ({ kind: 'start', stream: stream.name, value }))
+			: []),
+		...(bumpable(stream)
+			? versionBumps.map((value): SetupOption => ({ kind: 'bump', stream: stream.name, value }))
+			: []),
 		...operations.flatMap(operation =>
 			stream[operation]
 				? triggerHandovers.map((value): SetupOption => ({ kind: 'triggers', stream: stream.name, operation, value }))
@@ -887,7 +951,7 @@ function optionId(option: SetupOption): string {
 		? [option.kind, option.stream, option.build.name]
 		: option.kind === 'target'
 		? [option.kind, option.stream, option.target]
-		: option.kind === 'versioning'
+		: option.kind === 'versioning' || option.kind === 'approval' || option.kind === 'start' || option.kind === 'bump'
 		? [option.kind, option.stream, option.value]
 		: option.kind === 'triggers'
 		? [option.kind, option.stream, option.operation, option.value]
@@ -898,6 +962,9 @@ function selected(option: SetupOption, choices: SetupChoices): boolean {
 	const stream = choices.streams.find(row => row.name === option.stream);
 	if (option.kind === 'workflow') return stream?.[option.operation]?.file === option.file;
 	if (option.kind === 'versioning') return stream?.versioning === option.value;
+	if (option.kind === 'approval') return stream?.approval === option.value;
+	if (option.kind === 'start') return stream?.start?.includes(option.value) ?? false;
+	if (option.kind === 'bump') return stream?.bump === option.value;
 	if (option.kind === 'triggers') return stream?.[option.operation]?.triggers === option.value;
 	if (option.kind === 'binary') {
 		return stream?.promote?.binaries?.builds.some(build => build.name === option.build.name) ?? false;
@@ -965,7 +1032,27 @@ export function bodyChoices(body: string, options: SetupOption[], base: SetupCho
 			const prepare = handover('prepare', binding('prepare')),
 				promote = built(handover('promote', binding('promote')));
 			const versions = own.flatMap(option => option.kind === 'versioning' && state(option) ? [option.value] : []);
+			const policies = own.flatMap(option => option.kind === 'approval' && state(option) ? [option.value] : []);
+			const approval = policies.find(value => value !== stream.approval) ?? policies[0];
+			const starting = own.flatMap(option => option.kind === 'start' ? [option] : []);
+			const starts = starting.filter(state).map(option => option.value);
+			const start = starting.length ? starts.length || stream.start ? starts : undefined : stream.start;
+			const bumps = own.flatMap(option => option.kind === 'bump' && state(option) ? [option.value] : []);
+			const bump = bumps.find(value => value !== stream.bump) ?? bumps[0];
+			const {
+				prepare: _prepare,
+				promote: _promote,
+				observe: _observe,
+				approval: _approval,
+				start: _start,
+				bump: _bump,
+				...kept
+			} = stream;
 			return {
+				...kept,
+				...(approval ? { approval } : {}),
+				...(start ? { start } : {}),
+				...(bump ? { bump } : {}),
 				name: stream.name,
 				packages,
 				versioning: versions.find(value => value !== stream.versioning) ?? versions[0] ?? stream.versioning,
@@ -1017,6 +1104,25 @@ export function setupBody(plan: SetupPlan, release = false): string {
 					: 'created by this PR and started only by Beepboop'
 			}`
 			: 'none';
+	function choiceLines(stream: string): string[] {
+		const own = options.filter(option => option.stream === stream);
+		const approvals = own.flatMap(option =>
+			option.kind === 'approval'
+				? [box('    ', option, `\`${option.value}\`: ${approvalChoiceLabels[option.value]}`)]
+				: []
+		);
+		const starts = own.flatMap(option =>
+			option.kind === 'start' ? [box('    ', option, `\`${option.value}\`: ${startChoiceLabels[option.value]}`)] : []
+		);
+		const bumps = own.flatMap(option =>
+			option.kind === 'bump' ? [box('    ', option, `\`${option.value}\`: ${bumpChoiceLabels[option.value]}`)] : []
+		);
+		return [
+			...(starts.length ? ['  - Start a release from, tick any. A start approves the whole release.', ...starts] : []),
+			...(bumps.length ? ['  - Version bump, tick one', ...bumps] : []),
+			...(approvals.length ? ['  - A version raised without a start publishes, tick one', ...approvals] : []),
+		];
+	}
 	function binaryLines(stream: string): string[] {
 		const own = options.filter(option => option.stream === stream);
 		const builds = own.flatMap(option =>
@@ -1025,7 +1131,19 @@ export function setupBody(plan: SetupPlan, release = false): string {
 				: []
 		);
 		if (!builds.length) return [];
-		const targets = own.flatMap(option => option.kind === 'target' ? [box('    ', option, option.target)] : []);
+		const release = plan.choices.streams.find(entry => entry.name === stream)?.promote?.binaries;
+		const failing = (target: BinaryTarget) =>
+			(release?.builds ?? []).flatMap(build => {
+				const candidate = plan.binaryCandidates?.find(entry => entry.build.name === build.name);
+				return candidate && unbuildable(candidate, [target]).length ? [build.name] : [];
+			});
+		const targets = own.flatMap(option => {
+			if (option.kind !== 'target') return [];
+			const names = failing(option.target);
+			return [
+				box('    ', option, names.length ? `${option.target} (${listed(names)} expected to fail)` : option.target),
+			];
+		});
 		return ['  - Release binaries', ...builds, '  - Binary targets', ...targets];
 	}
 	return `Configure releases from inspected commit [${plan.sourceSha}](https://github.com/${plan.repository}/commit/${plan.sourceSha}).\n\n`
@@ -1037,8 +1155,9 @@ export function setupBody(plan: SetupPlan, release = false): string {
 					: []
 			);
 			return [
-				`- **${stream.name}**; ${approvalLabels[stream.approval ?? 'required']}.`,
+				`- **${stream.name}**`,
 				...(packages.length ? ['  - Packages', ...packages] : []),
+				...choiceLines(stream.name),
 				`  - Versioning: ${versioningLabels[stream.versioning]}`,
 				`  - Preparation: ${workflow(stream.prepare)}`,
 				`  - Publication: ${workflow(stream.promote)}`,
@@ -1069,5 +1188,5 @@ export function setupBody(plan: SetupPlan, release = false): string {
 		+ `- [${release ? 'x' : ' '}] ${releaseMarker} Release after merge`
 		+ (plan.adoption?.length ? `\n\n${plan.adoption.join('\n').trimEnd()}` : '')
 		+ (plan.notes.length ? `\n\n${plan.notes.map(note => `- ${note}`).join('\n')}` : '')
-		+ '\n\nBeepboop keeps this proposal current when the default branch changes. Review all file changes before merging. Preparation and publication remain separate explicit operations.\n';
+		+ '\n';
 }

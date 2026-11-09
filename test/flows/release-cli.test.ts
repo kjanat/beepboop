@@ -618,3 +618,26 @@ test('workflow tag-derived bumps remain authoritative when registry packages are
 	await world.wait(1_000);
 	expect((await promotions()).map(execution => execution.id)).toEqual(existing);
 });
+
+test('release starts the release when the stream enables CLI starts, and says nothing waits for approval', async () => {
+	const repository = await seed();
+	const configuration = z.looseObject({ streams: z.looseObject({ main: z.looseObject({}) }) }).parse(
+		JSON.parse(widgetConfiguration()),
+	);
+	configuration.streams.main.start = [{ via: 'cli' }];
+	configuration.streams.main.prepare = { strategy: 'managed', bump: 'commit' };
+	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Start from the CLI');
+	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	const declined = await run(['release', 'patch', '--repository', repository.name], [false]);
+	expect(declined.stdout.join('')).toContain('Release start cancelled.');
+	const started = await run(['release', 'patch', '--repository', repository.name], [true]);
+	expect(started.exitCode).toBe(0);
+	const output = started.stdout.join('');
+	expect(output).toContain('Release ');
+	expect(output).toContain(
+		'Beepboop commits the version bump to main, then publishes once that commit is verified and its checks pass.',
+	);
+	expect(output).toContain('Failing checks or package metadata problems stop the release with a reason.');
+	expect(output).not.toContain('runs approve');
+	expect(prepareCalls()).toHaveLength(1);
+});

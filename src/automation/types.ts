@@ -4,6 +4,7 @@ import type { PackagePublication } from '@/automation/package-publication';
 import type { RefPlan } from '@/automation/refs';
 import type { ManagerName } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
+import type { StartChannel } from '@/contract/release-start';
 import type { ExecutionStateView } from '@/contract/views';
 import type { Configuration, WorkflowBinding } from '@/domain/configuration';
 import type { Access } from '@/domain/repository';
@@ -127,8 +128,20 @@ export interface SubscriptionDelivery {
 	repositoryId: number;
 	execution: Execution;
 }
+export interface PreparationResult {
+	url: string;
+	head: string;
+	kind?: 'commit';
+}
+export interface PreparedRelease extends PreparationResult {
+	started?: ReleaseStarted;
+}
+export interface ReleaseStarted {
+	via: StartChannel;
+	actor: string;
+}
 export interface Execution {
-	prepared?: { edits: Edit[]; head?: string; result?: { url: string; head: string } };
+	prepared?: { edits: Edit[]; head?: string; result?: PreparationResult };
 	releaseSet?: {
 		preparationId: string;
 		group: string;
@@ -144,7 +157,7 @@ export interface Execution {
 		title: string;
 		body: string;
 		head?: string;
-		result?: { url: string; head: string };
+		result?: PreparationResult;
 	};
 	resolvedInputs?: ResolvedInput[];
 	refPlan?: RefPlan;
@@ -178,7 +191,8 @@ export interface Execution {
 	draftRelease?: { id: number; tag: string };
 	titled?: boolean;
 	dispatchedAt?: number;
-	approvedBy?: 'merge';
+	approvedBy?: 'merge' | 'start';
+	started?: ReleaseStarted;
 	approvedAt?: number;
 	publications: Publication[];
 	artifacts: Artifact[];

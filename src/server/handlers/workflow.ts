@@ -6,13 +6,16 @@ import { issueWorkflowToken } from '@/automation/token';
 import type { Artifact, Edit, Execution, Publication } from '@/automation/types';
 import { isLockfile, reportableManagerNames } from '@/contract/catalog';
 import type { DomainError } from '@/contract/errors';
-import { decodeRequest, forbidden, precondition } from '@/contract/errors';
+import { conflict, decodeRequest, forbidden, precondition } from '@/contract/errors';
 import type { ClaimStep, NextStep, ReportStep } from '@/contract/ledger';
+import { startsFrom } from '@/contract/release-start';
 import { routes } from '@/contract/routes';
+import type { ReadyRepository } from '@/domain/repository';
 import { requireReady } from '@/domain/repository';
 import { fromPromise } from '@/failure';
 import type { EnrolledContext } from '@/server/handlers/kit';
 import { workflow, workflowToken } from '@/server/handlers/kit';
+import { beginRelease, releasePlan } from '@/server/handlers/releases';
 
 const outcomes = ['pending', 'succeeded', 'failed', 'uncertain', 'skipped', 'rate-limited'] as const;
 const reportedFields = z.object({
@@ -103,6 +106,45 @@ export const workflowEndpoints = {
 				execution: id => fromPromise(() => service.coordinator(identity.repositoryId).execution(id)),
 			}),
 	),
+	workflowStart: workflow(routes.workflowStart, (input, context) =>
+		Effect.gen(function*() {
+			const { identity, service } = context;
+			if (identity.event !== 'workflow_dispatch') {
+				return yield* forbidden('A release starts only from a workflow_dispatch run');
+			}
+			let repository = yield* requireReady(context.enrollment);
+			const branch = `refs/heads/${repository.defaultBranch}`;
+			if (identity.ref !== branch) return yield* forbidden(`Start the release from ${repository.defaultBranch}`);
+			const file = identity.workflowRef.startsWith(`${identity.repository}/.github/workflows/`)
+				? identity.workflowRef.slice(`${identity.repository}/.github/workflows/`.length, -`@${branch}`.length)
+				: undefined;
+			const permitted = (candidate: ReadyRepository) => {
+				const start = startsFrom(candidate.configuration.streams[input.stream]?.start, 'action');
+				return start?.via === 'action' && start.workflow === file
+					&& identity.workflowRef === `${identity.repository}/.github/workflows/${start.workflow}@${branch}`;
+			};
+			if (!permitted(repository)) {
+				return yield* forbidden(`${file ?? identity.workflowRef} cannot start releases of ${input.stream}`);
+			}
+			repository = yield* requireReady(yield* service.refresh(repository.name, repository.id));
+			if (repository.sha !== identity.sha) {
+				return yield* conflict(
+					'stale-revision',
+					`${repository.defaultBranch} moved after this run started. Run the workflow again.`,
+				);
+			}
+			if (!permitted(repository)) {
+				return yield* forbidden(`${file ?? identity.workflowRef} cannot start releases of ${input.stream}`);
+			}
+			const bump = (['patch', 'minor', 'major'] as const).find(kind => kind === input.version);
+			const { selection, plan, planId } = yield* releasePlan({
+				repositoryId: repository.id,
+				stream: input.stream,
+				version: bump ? { bump } : input.version,
+			}, context);
+			const actor = `github-actions:${identity.repository}#${identity.runId}`;
+			return yield* beginRelease(service, selection, input.stream, plan, planId, actor, { via: 'action', actor });
+		})),
 	workflowBegin: workflow(routes.workflowBegin, (input, context) =>
 		Effect.gen(function*() {
 			const id = input.executionId || (yield* Effect.gen(function*() {

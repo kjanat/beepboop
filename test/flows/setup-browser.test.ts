@@ -559,3 +559,34 @@ test('the dashboard proposes the crate binary for Unix targets and writes edited
 	expect(result.replace(/\s+/g, '')).toContain('"targets":["linux-amd64","linux-arm64","darwin-amd64","darwin-arm64"]');
 	expect(result).toContain('build-tool:');
 });
+
+test('the dashboard asks for starts, bump and approval without picking any, and writes the ticked ones', async () => {
+	const form = await open(toolRepository().name);
+	const bump = dom.find(form, '[data-field="bump"]', window.HTMLSelectElement);
+	const approval = dom.find(form, '[data-field="approval"]', window.HTMLSelectElement);
+	const starts = [...form.querySelectorAll('input[data-field="start"]')].filter(input =>
+		input instanceof window.HTMLInputElement
+	);
+	if (!bump || !approval) throw new Error('Missing release mode controls');
+	expect([bump.value, approval.value]).toEqual(['', '']);
+	expect(starts.map(input => [input.getAttribute('value'), input.checked])).toEqual([
+		['action', false],
+		['dashboard', false],
+		['cli', false],
+	]);
+	await act(form, 'preview');
+	const asked = form.querySelector('.setup-result')?.textContent ?? '';
+	expect(asked).not.toContain('"approval"');
+	expect(asked).not.toContain('"bump"');
+	for (const input of starts) {
+		if (input.getAttribute('value') !== 'dashboard') input.checked = true;
+	}
+	bump.value = 'commit';
+	approval.value = 'push';
+	await act(form, 'preview');
+	const result = (form.querySelector('.setup-result')?.textContent ?? '').replace(/\s+/g, '');
+	expect(result).toContain('"approval":"push"');
+	expect(result).toContain('"bump":"commit"');
+	expect(result).toContain('"start":[{"via":"action","workflow":"start-release.yml"},{"via":"cli"}]');
+	expect(result).toContain('kjanat/beepboop/actions/release@');
+});

@@ -1,0 +1,29 @@
+name: Release automation start
+description: Start a release with GitHub OIDC; Beepboop runs the version bump, publication, binaries, tags and GitHub release
+inputs:
+  service:
+    description: Release automation service origin
+    default: https://beepboop.kjanat.dev
+  stream:
+    description: Release stream
+    default: main
+  version:
+    description: patch, minor, major or a semantic version
+    required: true
+outputs:
+  result:
+    description: The started execution as JSON
+    value: ${{ steps.client.outputs.result }}
+runs:
+  using: composite
+  steps:
+    - name: Ensure Bun is available
+      id: bun
+      uses: $/actions/deps/bun
+    - id: client
+      shell: bash
+      env:
+        RELEASE_VERSION: ${{ inputs.version }}
+        SERVICE_ORIGIN: ${{ inputs.service }}
+        STREAM: ${{ inputs.stream }}
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.ts" start

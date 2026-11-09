@@ -73,6 +73,7 @@ export interface Repository {
 	labels: Set<string>;
 	releases: Release[];
 	signatures: boolean;
+	protectedBranches: Set<string>;
 	tagObjects: Map<string, { name: string; commit: string; verified: boolean }>;
 }
 
@@ -256,9 +257,18 @@ export class FakeGitHub {
 		});
 		this.route('PATCH', new RegExp(`^${repo}/git/refs/heads/(.+)$`), (match, _url, body) => {
 			const repository = this.repository(match[1]);
-			repository.refs.set(`heads/${decodeURIComponent(match[2] ?? '')}`, stringField(body, 'sha'));
+			const branch = decodeURIComponent(match[2] ?? '');
+			if (repository.protectedBranches.has(branch)) {
+				throw new HttpError(422, `Protected branch update failed for refs/heads/${branch}.`);
+			}
+			const current = repository.refs.get(`heads/${branch}`);
+			const target = stringField(body, 'sha');
+			if (current && body?.force !== true && !this.ancestry(repository, target, current)) {
+				throw new HttpError(422, 'Update is not a fast forward');
+			}
+			repository.refs.set(`heads/${branch}`, target);
 			for (const pull of repository.pulls) {
-				if (pull.head.ref === decodeURIComponent(match[2] ?? '')) pull.head.sha = stringField(body, 'sha');
+				if (pull.head.ref === branch) pull.head.sha = target;
 			}
 			return json({});
 		});
@@ -586,6 +596,7 @@ export class FakeGitHub {
 			labels: new Set(['release']),
 			releases: [],
 			signatures: false,
+			protectedBranches: new Set(),
 			tagObjects: new Map(),
 		};
 		this.repositories.set(name, repository);

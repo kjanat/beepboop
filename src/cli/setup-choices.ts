@@ -9,8 +9,16 @@ import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-
 import { failure } from '@/cli/output';
 import { workflowFilePattern } from '@/contract/catalog';
 import { identifierPattern } from '@/contract/ids';
+import {
+	approvalChoiceLabels,
+	approvalPolicies,
+	bumpChoiceLabels,
+	startChannels,
+	startChoiceLabels,
+	versionBumps,
+} from '@/contract/release-start';
 import type { BinaryBuild, BinaryRelease } from '@/contract/setup';
-import { actionsRevisionPattern, binaryTargets, setupStream } from '@/contract/setup';
+import { actionsRevisionPattern, binaryTargets, bumpable, leftOut, setupStream, startable } from '@/contract/setup';
 import type { ChoicesField, Editors, StreamField, WorkflowField } from '@/contract/setup-fields';
 import { jsonFields, streamFields } from '@/contract/setup-fields';
 import { packageLabel } from '@/domain/package-label';
@@ -24,6 +32,8 @@ export const streamEditors = {
 	required: 'control',
 	versioning: 'control',
 	approval: 'control',
+	start: 'control',
+	bump: 'control',
 	observe: 'control',
 	prepare: 'control',
 	promote: 'control',
@@ -305,7 +315,8 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				];
 				const builds: typeof offered = [];
 				for (const entry of offered) {
-					if (entry.candidate?.reason) out.log(entry.candidate.reason);
+					const note = entry.candidate && leftOut(entry.candidate);
+					if (note) out.log(note);
 					const wanted = yield* Effect.promise(() =>
 						ask({
 							kind: 'confirm',
@@ -334,21 +345,50 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				}
 				return { builds: builds.map(entry => entry.build), targets };
 			});
+		const releaseMode = (stream: SetupChoices['streams'][number], all: boolean) =>
+			Effect.gen(function*() {
+				if (startable(stream) && (all || !stream.start)) {
+					const [first, ...rest] = startChannels.map(value => ({
+						value,
+						label: startChoiceLabels[value].replaceAll('`', ''),
+					}));
+					if (first) {
+						const chosen: string[] = yield* Effect.promise(() =>
+							ask({
+								kind: 'multiselect',
+								message: `${stream.name}: start a release from (a start approves the whole release${
+									stream.start ? `; now ${stream.start.join(', ') || 'none'}` : ''
+								})`,
+								choices: [first, ...rest],
+							})
+						);
+						stream.start = startChannels.filter(value => chosen.includes(value));
+					}
+				}
+				if (bumpable(stream) && (all || !stream.bump)) {
+					const bump = yield* select(
+						ask,
+						`${stream.name}: how a version bump reaches the default branch`,
+						preferring(versionBumps.map(value => ({ value, label: bumpChoiceLabels[value] })), stream.bump),
+					);
+					stream.bump = bump === 'commit' ? 'commit' : 'pr';
+				}
+				if (stream.promote && (all || !stream.approval)) {
+					const approval = yield* select(
+						ask,
+						`${stream.name}: when a version raised without a start publishes`,
+						preferring(
+							approvalPolicies.map(value => ({ value, label: approvalChoiceLabels[value] })),
+							stream.approval,
+						),
+					);
+					stream.approval = approval === 'push' ? 'push' : approval === 'merge' ? 'merge' : 'required';
+				}
+			});
 		const advanced = (stream: SetupChoices['streams'][number]) =>
 			Effect.gen(function*() {
-				const approval = yield* select(
-					ask,
-					`${stream.name}: when a merged release version publishes`,
-					preferring([
-						{ value: 'push', label: 'When a signed commit with passing checks reaches the default branch' },
-						{ value: 'merge', label: 'When its version PR merges' },
-						{ value: 'required', label: 'After you approve it' },
-					], stream.approval ?? 'push'),
-				);
-				const entered: Record<string, unknown> = {
-					...stream,
-					approval: approval === 'required' ? 'required' : approval === 'merge' ? 'merge' : 'push',
-				};
+				yield* releaseMode(stream, true);
+				const entered: Record<string, unknown> = { ...stream };
 				for (const field of jsonFields(streamFields, streamEditors)) {
 					entered[field] = yield* jsonInput(ask, `${stream.name}: ${field}`, stream[field]);
 				}
@@ -418,6 +458,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				choices.streams.push(stream);
 				stream.promote = yield* chooseWorkflow(stream, 'promote', stream.promote, previousPackages);
 				stream.prepare = yield* chooseWorkflow(stream, 'prepare', stream.prepare, previousPackages);
+				yield* releaseMode(stream, false);
 			});
 		for (const proposed of plan.choices.streams) {
 			if (

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { managerNames } from '@/contract/catalog';
+import { releaseStart, versionBump } from '@/contract/release-start';
 import { versionFileSchema } from '@/contract/version-files';
 import type { Configuration } from '@/domain/configuration';
 import { stringsSchema as strings } from '@/model';
@@ -40,8 +41,10 @@ const stream = z.object({
 		strategy: z.enum(['managed', 'workflow']).optional(),
 		version: z.literal('manual'),
 		workflow: workflowBinding.optional(),
+		bump: versionBump.optional(),
 	}),
 	promote: z.object({ approval: z.enum(['required', 'merge', 'push']), workflow: workflowBinding.optional() }),
+	start: z.array(releaseStart).optional(),
 	workflows: z.record(z.string(), workflowBinding),
 	required: strings,
 	needs: z.record(z.string(), strings).optional(),

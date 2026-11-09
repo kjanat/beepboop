@@ -33,7 +33,11 @@ const run = (args: string[], answers?: unknown[]) => runCli(['repositories', ...
 
 const proposalPrompt = 'Open or refresh the setup PR with this proposal? Answer no to choose the setup yourself.';
 
-function defaults(overrides: Record<string, string> = {}, confirmations: Record<string, boolean> = {}) {
+function defaults(
+	overrides: Record<string, string> = {},
+	confirmations: Record<string, boolean> = {},
+	selections: Record<string, string[]> = {},
+) {
 	const prompts: ResolvedPromptConfig[] = [];
 	const prompter: PromptEngine = {
 		async promptOne(config) {
@@ -48,6 +52,7 @@ function defaults(overrides: Record<string, string> = {}, confirmations: Record<
 				};
 			}
 			if (config.kind === 'input') return { answered: true, value: overrides[config.message] ?? '' };
+			if (config.kind === 'multiselect') return { answered: true, value: selections[config.message] ?? [] };
 			throw new Error(`Unexpected prompt: ${config.message}`);
 		},
 	};
@@ -75,7 +80,10 @@ async function propose(repository: string, choices: unknown) {
 test('adopt enrolls a repository, reviews generated files and only opens a PR after confirmation', async () => {
 	const repository = widget(world.github, { configured: false });
 	const original = world.github.head(repository);
-	const declined = await run(['adopt', repository.name], [false, 'new', '', 'managed', false, false]);
+	const declined = await run(
+		['adopt', repository.name],
+		[false, 'new', '', 'managed', [], 'pr', 'required', false, false],
+	);
 	expect(declined.exitCode).toBe(0);
 	expect(declined.stdout.join('')).toContain('release-widget.yml');
 	expect(repository.pulls).toHaveLength(0);
@@ -84,7 +92,7 @@ test('adopt enrolls a repository, reviews generated files and only opens a PR af
 	);
 	const accepted = await run(
 		['adopt', `https://github.com/${repository.name}`],
-		[false, 'new', '', 'managed', false, true],
+		[false, 'new', '', 'managed', [], 'pr', 'required', false, true],
 	);
 	expect(accepted.exitCode).toBe(0);
 	expect(repository.pulls).toHaveLength(1);
@@ -115,9 +123,14 @@ test('Cargo adoption generates one workflow and advanced renaming keeps the shar
 			'',
 			'same',
 			'',
+			[],
+			'pr',
+			'required',
 			true,
 			false,
 			'workspace',
+			[],
+			'pr',
 			'push',
 			'',
 			'',
@@ -173,7 +186,7 @@ jobs:
 	});
 	const result = await run(
 		['adopt', repository.name],
-		[true, 'ship.yml', 'ship', 'publish_a', '', '', 'managed', false, true],
+		[true, 'ship.yml', 'ship', 'publish_a', '', '', 'managed', [], 'pr', 'required', false, true],
 	);
 	expect(result.exitCode).toBe(0);
 	const workflow = z.object({
@@ -208,7 +221,7 @@ for (const mixed of ['pypi', 'npm'] as const) {
 				? { 'bench/pyproject.toml': '[project]\nname = "mixed-bench"\nversion = "1.0.0"\n' }
 				: { 'js/package.json': '{"name":"mixed-js","version":"1.0.0"}' }),
 		});
-		const result = await run(['adopt', repository.name], [true, 'new', 'managed', false, true]);
+		const result = await run(['adopt', repository.name], [true, 'new', 'managed', [], 'pr', 'required', false, true]);
 		expect(result.stdout.join('')).not.toContain('Bash commands');
 		expect(result.exitCode).toBe(0);
 		const workflow = z.object({
@@ -260,7 +273,7 @@ test('generated npm targets require explicit commands instead of an npm publish 
 	});
 	const result = await run(
 		['adopt', repository.name],
-		[true, 'new', './scripts/generate-and-publish.sh', '', 'managed', false, true],
+		[true, 'new', './scripts/generate-and-publish.sh', '', 'managed', [], 'pr', 'required', false, true],
 	);
 	expect(result.exitCode).toBe(0);
 	const workflow = world.github.file(repository, '.github/workflows/release-generated.yml', 'automation/onboarding')
@@ -420,11 +433,12 @@ function lintProposal(repository: { name: string }, sha: string) {
 		`Proposed setup for ${repository.name} at ${sha}:`,
 		...lintSummary,
 		'The setup PR writes .github/beepboop.json, .github/workflows/prepare-release.yml, .github/workflows/release-lint.yml and .github/workflows/publish-crates.yml.',
+		'lint: tick when a version raised without a start publishes. Until you do, Beepboop waits for your approval.',
+		'lint: tick how a version bump reaches the default branch. Until you do, Beepboop opens a version PR.',
 		'lint (crates/cli/Cargo.toml) lacks README, description, license, a license file, repository. Beepboop holds its release until the package has them.',
 		'lint-core (crates/core/Cargo.toml) lacks README, description, license, a license file, repository. Beepboop holds its release until the package has them.',
 		'@octo/lint (bindings/js/package.json) lacks README, description, license, a license file, repository. Beepboop holds its release until the package has them.',
 		'publish-crates.yml: when the repository owner merges this PR, Beepboop grants it the stored crates-io secret for the crates operation.',
-		'Set up registry access and trusted publishing in each registry. The setup PR publishes nothing.',
 	];
 }
 
@@ -609,7 +623,7 @@ for (const scripted of [true, false]) {
 		world.github.push(repository, { 'README.md': '# Updated default branch\n' }, 'Change source after opening setup');
 		const result = scripted
 			? await run(['adopt', repository.name, '--choices', file, '--json'])
-			: await run(['adopt', repository.name], [false, 'new', '', 'managed', false, false]);
+			: await run(['adopt', repository.name], [false, 'new', '', 'managed', [], 'pr', 'required', false, false]);
 		expect(result.exitCode).toBe(0);
 		expect(world.github.resolve(repository, 'automation/onboarding').sha).toBe(head);
 		expect(repository.pulls).toEqual(before);
@@ -631,12 +645,15 @@ test('saved Cargo commands are kept for the same packages and regenerated after 
 			promote: { file: 'release.yml', job: 'publish', commands: "cargo publish --package 'crate-a' --locked" },
 		}],
 	});
-	const unchanged = await run(['adopt', repository.name], [false, true, 'new', '', 'managed', false, false]);
+	const unchanged = await run(
+		['adopt', repository.name],
+		[false, true, 'new', '', 'managed', [], 'pr', 'required', false, false],
+	);
 	expect(unchanged.exitCode).toBe(0);
 	expect(unchanged.stdout.join('')).toContain("cargo publish --package 'crate-a' --locked");
 	const changed = await run(
 		['adopt', repository.name],
-		[false, false, ['pkg:cargo/crate-b'], 'new', '', 'managed', false, true],
+		[false, false, ['pkg:cargo/crate-b'], 'new', '', 'managed', [], 'pr', 'required', false, true],
 	);
 	expect(changed.exitCode).toBe(0);
 	const source = world.github.file(repository, '.github/workflows/release.yml', 'automation/onboarding') ?? '';
@@ -676,7 +693,7 @@ test('changing publishing-step mappings regenerates commands for the newly unmap
 	});
 	const changed = await run(
 		['adopt', repository.name],
-		[false, true, 'ship.yml', '', 'publish_existing', '', 'managed', false, true],
+		[false, true, 'ship.yml', '', 'publish_existing', '', 'managed', [], 'pr', 'required', false, true],
 	);
 	expect(changed.exitCode).toBe(0);
 	const source = world.github.file(repository, '.github/workflows/ship.yml', 'automation/onboarding') ?? '';
@@ -706,7 +723,7 @@ test('automatic triggers default to review and retain an explicit saved handover
 	expect(
 		(await run(
 			['adopt', repository.name],
-			[false, false, 'ship.yml', 'dispatchOnly', 'publish_existing', 'managed', false, true],
+			[false, false, 'ship.yml', 'dispatchOnly', 'publish_existing', 'managed', [], 'pr', 'required', false, true],
 		))
 			.exitCode,
 	).toBe(0);
@@ -726,7 +743,8 @@ test('shared preparation does not ask for a second trigger handover', async () =
 		'Cargo.toml': '[package]\nname = "my-crate"\nversion = "1.0.0"\n',
 		'Cargo.lock': '# Lockfile\n',
 	});
-	expect((await run(['adopt', repository.name], ['new', '', 'same', '', false, true])).exitCode).toBe(0);
+	expect((await run(['adopt', repository.name], ['new', '', 'same', '', [], 'pr', 'required', false, true])).exitCode)
+		.toBe(0);
 	world.github.merge(repository, 1);
 	const source = world.github.file(repository, '.github/workflows/release-my-crate.yml') ?? '';
 	world.github.push(
@@ -810,7 +828,9 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 	) {
 		expect(messages).toContain(`main: build for ${target}?`);
 	}
-	expect(messages).toContain('main: when a merged release version publishes');
+	expect(messages).toContain('main: start a release from (a start approves the whole release)');
+	expect(messages).toContain('main: how a version bump reaches the default branch');
+	expect(messages).toContain('main: when a version raised without a start publishes');
 	for (const field of ['versionSource', 'versionFiles', 'needs', 'operations']) {
 		expect(messages).toContain(`main: ${field} as JSON (empty leaves it out)`);
 	}

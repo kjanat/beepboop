@@ -314,6 +314,9 @@
 								"managed",
 								"workflow"
 							]
+						},
+						"bump": {
+							"$ref": "#/$defs/versionBump"
 						}
 					},
 					"additionalProperties": false
@@ -335,6 +338,9 @@
 						}
 					},
 					"additionalProperties": false
+				},
+				"start": {
+					"$ref": "#/$defs/releaseStarts"
 				},
 				"workflows": {
 					"type": "object",
@@ -744,6 +750,66 @@
 			},
 			"additionalProperties": false,
 			"description": "Setup input that generates this workflow file. Change it through a setup update PR."
+		},
+		"versionBump": {
+			"type": "string",
+			"enum": [
+				"commit",
+				"pr"
+			],
+			"description": "How Beepboop applies a version bump: commit pushes a signed bot commit to the default branch, pr opens a version PR."
+		},
+		"releaseStarts": {
+			"type": "array",
+			"items": {
+				"oneOf": [
+					{
+						"type": "object",
+						"properties": {
+							"via": {
+								"type": "string",
+								"const": "action"
+							},
+							"workflow": {
+								"type": "string",
+								"pattern": "^[\\w-][\\w.-]*\\.ya?ml$"
+							}
+						},
+						"required": [
+							"via",
+							"workflow"
+						],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"via": {
+								"type": "string",
+								"const": "dashboard"
+							}
+						},
+						"required": [
+							"via"
+						],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"via": {
+								"type": "string",
+								"const": "cli"
+							}
+						},
+						"required": [
+							"via"
+						],
+						"additionalProperties": false
+					}
+				]
+			},
+			"description": "Where a release of this stream can start. A start approves the whole release: the version bump, publication, binaries, tags and the GitHub release run without another approval."
 		},
 		"subscription": {
 			"oneOf": [

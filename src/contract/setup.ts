@@ -8,6 +8,7 @@ import {
 	workflowFilePattern,
 } from '@/contract/catalog';
 import { credentialAliasPattern, githubSecretNamePattern, identifierPattern } from '@/contract/ids';
+import { startChannel, versionBump } from '@/contract/release-start';
 import { versionFileSchema } from '@/contract/version-files';
 
 export const binaryTargets = [
@@ -80,6 +81,12 @@ export interface BinaryCandidate {
 	targets: BinaryTarget[];
 	reason?: string;
 }
+export function leftOut(candidate: BinaryCandidate): string | undefined {
+	return candidate.reason && `${candidate.build.name} leaves out Windows: ${candidate.reason}.`;
+}
+export function unbuildable(candidate: BinaryCandidate, targets: readonly BinaryTarget[]): BinaryTarget[] {
+	return targets.filter(target => !candidate.targets.includes(target));
+}
 const workflow = z.object({
 	file: z.string().regex(workflowFilePattern),
 	job: z.string().optional(),
@@ -123,6 +130,8 @@ export const setupStream = z.object({
 	packages: z.array(z.string()),
 	versioning: z.enum(['workspace', 'independent', 'none']),
 	approval: z.enum(['required', 'merge', 'push']).optional(),
+	start: z.array(startChannel).optional(),
+	bump: versionBump.optional(),
 	required: z.array(z.string()),
 	versionSource: z.object({
 		kind: z.literal('tags'),
@@ -136,6 +145,13 @@ export const setupStream = z.object({
 	promote: workflow.optional(),
 	operations: z.array(operation).optional(),
 }).strict();
+type SetupStream = z.infer<typeof setupStream>;
+export function bumpable(stream: SetupStream): boolean {
+	return !!stream.promote && stream.versionSource?.kind !== 'tags';
+}
+export function startable(stream: SetupStream): boolean {
+	return bumpable(stream) && stream.versioning !== 'independent';
+}
 export const setupChoicesSchema = z.object({
 	streams: z.array(setupStream),
 	/** Full commit of the published Actions distribution, required for external actions. */

@@ -53,6 +53,7 @@ import {
 	reuse,
 	view,
 } from '@/automation/ledger';
+import { preparationBody } from '@/automation/managed';
 import {
 	canVerifyPublication,
 	discover,
@@ -95,6 +96,7 @@ import type {
 	Edit,
 	Execution,
 	Package,
+	PreparedRelease,
 	Publication,
 	PublishKind,
 	ReleaseReference,
@@ -187,6 +189,12 @@ function githubRelease(execution: Execution): { tag: string; prerelease: boolean
 function publishesGithubRelease(execution: Execution): boolean {
 	const key = selectorKey(`github-release:${execution.repository}`);
 	return execution.workflow?.publications?.some(id => selectorKey(id) === key) ?? false;
+}
+function committed(execution: Execution): boolean {
+	return execution.configuration.streams[execution.stream]?.prepare.bump === 'commit';
+}
+function versionMessage(execution: Execution): string {
+	return `chore(release): ${execution.version ?? 'release set'}`;
 }
 function moved(execution: Execution, head: { ref: string; sha: string }): string {
 	const release = execution.operation === 'prepare' || execution.operation === 'promote' || execution.releaseSet;
@@ -455,14 +463,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	execution(id: string): Promise<Execution | undefined> {
 		return Effect.runPromise(this.stored(id));
 	}
-	preparationResults(stream: string, version: string): Promise<{ url: string; head: string }[]> {
+	preparationResults(stream: string, version: string): Promise<PreparedRelease[]> {
 		return Effect.runPromise(
 			this.executions().pipe(Effect.map(executions =>
 				executions.flatMap(execution => {
 					const result = execution.prepared?.result ?? execution.managed?.result;
 					return result && execution.stream === stream && execution.version === version
 							&& execution.state === 'succeeded'
-						? [result]
+						? [{ ...result, ...(execution.started ? { started: execution.started } : {}) }]
 						: [];
 				})
 			)),
@@ -782,9 +790,21 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			);
 			const branch = `release/${execution.stream}/${execution.id}`;
 			const title = `chore(release): prepare ${execution.version ?? 'release set'}`;
-			const body =
-				`Source: ${execution.sourceSha}\nPreparation execution: ${execution.id}\n\nPromotion requires approval.`;
-			const result = prepared.head
+			const body = `Source: ${execution.sourceSha}\nPreparation execution: ${execution.id}\n\n${
+				preparationBody(execution)
+			}`;
+			const result = committed(execution)
+				? yield* gateway.commitVersion(
+					source,
+					versionMessage(execution),
+					ordered,
+					prepared.head,
+					head => {
+						prepared.head = head;
+						return this.put(execution);
+					},
+				)
+				: prepared.head
 				? yield* gateway.resumePreparation(source, branch, title, body, prepared.head)
 				: yield* gateway.pullRequest(
 					source,
@@ -1623,13 +1643,22 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (execution.reason !== waiting) yield* this.put({ ...execution, reason: waiting });
 				return false;
 			}
-			const problems = yield* this.approvalProblems(execution);
+			const { pending, failed } = yield* this.commitChecks(execution);
+			if (execution.approvedBy === 'start' && failed.length) {
+				yield* this.put({ ...execution, state: 'failed', reason: `The release stopped: ${failed.join('; ')}` });
+				return true;
+			}
+			const problems = [...failed, ...pending];
 			if (problems.length) {
 				const reason = `Releases when the commit is verified and its checks pass: ${problems.join('; ')}`;
 				if (execution.reason !== reason) yield* this.put({ ...execution, reason });
 				return false;
 			}
-			yield* this.store().audit('beepboop', 'promotion.approve', `${execution.id}:${execution.sourceSha}:push`);
+			yield* this.store().audit(
+				'beepboop',
+				'promotion.approve',
+				`${execution.id}:${execution.sourceSha}:${execution.approvedBy ?? 'push'}`,
+			);
 			const next: Execution = { ...execution, state: 'ready', approvedAt: Date.now() };
 			delete next.reason;
 			yield* this.supersedeVersion(next);
@@ -1771,11 +1800,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		});
 	}
 	private approvalProblems(execution: Execution): Effect.Effect<string[], DomainError> {
+		return this.commitChecks(execution).pipe(Effect.map(({ pending, failed }) => [...failed, ...pending]));
+	}
+	private commitChecks(execution: Execution): Effect.Effect<{ pending: string[]; failed: string[] }, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const gateway = this.gateway();
 			const token = yield* gateway.token(execution.repository, execution.repositoryId);
 			const base = `/repos/${execution.repository}`;
-			const problems: string[] = [];
+			const problems: string[] = [], pending: string[] = [];
 			const repository = yield* this.store().repository(execution.repositoryId);
 			const references = execution.configuration.streams[execution.stream]?.packages;
 			if (repository) {
@@ -1813,18 +1845,18 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const runId = /\/actions\/runs\/(\d+)\//.exec(String(run.details_url))?.[1];
 				return !(runId && releaseFiles.has(paths.get(runId) ?? ''));
 			});
-			if (!gating.length) problems.push('No checks have run on this commit');
+			if (!gating.length) pending.push('No checks have run on this commit');
 			for (const run of gating) {
-				if (run.status !== 'completed') problems.push(`${String(run.name)} is still running`);
+				if (run.status !== 'completed') pending.push(`${String(run.name)} is still running`);
 				else if (!['success', 'neutral', 'skipped'].includes(String(run.conclusion))) {
 					problems.push(`${String(run.name)} ${String(run.conclusion)}`);
 				}
 			}
 			const status = yield* gateway.read(commitStatusSchema, `${base}/commits/${execution.sourceSha}/status`, token);
 			if (Number(status.total_count) > 0 && status.state !== 'success') {
-				problems.push(`Commit status is ${String(status.state)}`);
+				(status.state === 'pending' ? pending : problems).push(`Commit status is ${String(status.state)}`);
 			}
-			return problems;
+			return { pending, failed: problems };
 		});
 	}
 	private refHead(
@@ -2444,7 +2476,19 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				execution.state = 'running';
 				execution.attempts++;
 				yield* this.put(execution);
-				operation.result = operation.head
+				const checkpoint = (head: string) => {
+					operation.head = head;
+					return this.put(execution);
+				};
+				operation.result = committed(execution)
+					? yield* gateway.commitVersion(
+						snapshot,
+						versionMessage(execution),
+						operation.plan.edits,
+						operation.head,
+						checkpoint,
+					)
+					: operation.head
 					? yield* gateway.resumePreparation(
 						snapshot,
 						operation.branch,
@@ -2459,10 +2503,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						operation.body,
 						operation.plan.edits,
 						undefined,
-						head => {
-							operation.head = head;
-							return this.put(execution);
-						},
+						checkpoint,
 						undefined,
 						undefined,
 						{ coAuthored: execution.initiatedBy !== undefined },
@@ -2470,7 +2511,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				execution.state = 'succeeded';
 				delete execution.reason;
 				yield* this.put(execution);
-			}).pipe(recover(error => this.put({ ...execution, state: 'uncertain', reason: decodeError(error) })));
+			}).pipe(
+				recover(error =>
+					this.put({
+						...execution,
+						state: committed(execution) && error.problem.code === 'precondition' ? 'failed' : 'uncertain',
+						reason: decodeError(error),
+					})
+				),
+			);
 		});
 	}
 	private dispatch(
@@ -2678,10 +2727,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					if (!blocked) delete current.reason;
 					yield* this.put(current);
 				}
+				if (blocked && current.approvedBy === 'start') {
+					yield* this.put({ ...current, state: 'failed', reason: blocked });
+					return 'continue' as const;
+				}
 				if (blocked) return 'continue' as const;
 				if (
 					current.configuration.streams[current.stream]?.promote.approval !== 'push'
-					&& current.approvedBy !== 'merge'
+					&& current.approvedBy === undefined
 				) return 'continue' as const;
 				return yield* this.approveFromPush(current, executions).pipe(
 					Effect.flatMap(approved =>

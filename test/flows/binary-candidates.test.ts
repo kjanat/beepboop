@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { binaryCandidates, unixDependencies } from '@/automation/binary-candidates';
 import { discover } from '@/automation/managers';
 import type { Snapshot } from '@/automation/types';
-import { binaryTargets } from '@/contract/setup';
+import { binaryTargets, leftOut } from '@/contract/setup';
 
 function snapshot(files: Record<string, string>, extra: string[] = []): Snapshot {
 	return {
@@ -40,7 +40,10 @@ test('an unconditional Unix-only dependency leaves out the Windows targets and s
 		'Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\n\n[dependencies]\nnix = "0.30"\n',
 	}, ['src/main.rs']);
 	expect(candidate?.targets).toEqual(['linux-amd64', 'linux-arm64', 'darwin-amd64', 'darwin-arm64']);
-	expect(candidate?.reason).toBe('tool leaves out Windows: tool depends on nix, which build only for Unix.');
+	expect(candidate?.reason).toBe('tool depends on nix, which build only for Unix');
+	expect(candidate && leftOut(candidate)).toBe(
+		'tool leaves out Windows: tool depends on nix, which build only for Unix.',
+	);
 });
 
 test('rustix limits targets only with features beyond its Windows support, and target dependencies stay out', () => {

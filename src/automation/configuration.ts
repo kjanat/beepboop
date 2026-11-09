@@ -19,6 +19,7 @@ import type { Diagnostic } from '@/contract/diagnostics';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { identifierPattern, shaPattern } from '@/contract/ids';
+import { releaseStarts, versionBumps } from '@/contract/release-start';
 import { actionsRevisionPattern, workflowSetup } from '@/contract/setup';
 import { versionFileSchema } from '@/contract/version-files';
 import { dependencyOrder } from '@/dependency-order';
@@ -206,6 +207,7 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 				'packages',
 				'prepare',
 				'promote',
+				'start',
 				'workflows',
 				'required',
 				'needs',
@@ -218,11 +220,15 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 		const prepare = yield* record(row.prepare ?? {}),
 			promote = yield* record(row.promote ?? {}),
 			channels = yield* record(row.channels ?? {});
-		yield* keys(prepare, ['version', 'workflow', 'strategy'], 'prepare');
+		yield* keys(prepare, ['version', 'workflow', 'strategy', 'bump'], 'prepare');
 		const strategy = prepare.strategy === undefined
 			? undefined
 			: yield* oneOf(prepare.strategy, ['managed', 'workflow'], 'Invalid preparation strategy');
 		yield* keys(promote, ['approval', 'workflow'], 'promote');
+		const bump = prepare.bump === undefined
+			? undefined
+			: yield* oneOf(prepare.bump, versionBumps, 'Invalid version bump');
+		const start = row.start === undefined ? undefined : yield* lift(() => releaseStarts.parse(row.start));
 		yield* keys(channels, ['stable', 'prerelease'], 'channels');
 		if (prepare.version !== undefined && prepare.version !== 'manual') {
 			return yield* invalid('Only manual version selection is supported');
@@ -268,6 +274,7 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 				...(strategy === undefined ? {} : { strategy }),
 				version: 'manual',
 				...(prepare.workflow ? { workflow: yield* binding(prepare.workflow) } : {}),
+				...(bump === undefined ? {} : { bump }),
 			},
 			promote: {
 				approval: yield* oneOf(
@@ -277,6 +284,7 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 				),
 				...(promote.workflow ? { workflow: yield* binding(promote.workflow) } : {}),
 			},
+			...(start === undefined ? {} : { start }),
 			workflows,
 			required: yield* packageReferences(row.required ?? []),
 			...(needs === undefined ? {} : { needs }),

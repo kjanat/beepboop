@@ -397,6 +397,14 @@ export const routes = {
 			bot: z.looseObject({ login: z.string(), id: z.number(), email: z.string() }).optional(),
 		}),
 	}),
+	workflowStart: route({
+		method: 'POST',
+		path: '/api/workflow/start',
+		auth: 'workflow',
+		idempotent: true,
+		request: z.object({ stream: z.string().min(1), version: z.string().min(1) }),
+		response: executionView,
+	}),
 	workflowBegin: route({
 		method: 'POST',
 		path: '/api/workflow/begin',

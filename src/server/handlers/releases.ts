@@ -9,10 +9,12 @@ import { planReleaseSet } from '@/automation/planning';
 import { planHookUpdates } from '@/automation/precommit';
 import { resolvePackageVersion } from '@/automation/release-version';
 import type { AutomationService } from '@/automation/service';
-import type { ReleasePlan, Snapshot, Stream } from '@/automation/types';
+import type { Execution, ReleasePlan, ReleaseStarted, Snapshot, Stream } from '@/automation/types';
 import { nextVersion, parseVersionRequest } from '@/automation/version';
 import type { DomainError } from '@/contract/errors';
 import { conflict, notFound, precondition } from '@/contract/errors';
+import type { StartChannel } from '@/contract/release-start';
+import { startsFrom } from '@/contract/release-start';
 import { routes } from '@/contract/routes';
 import type { ReadyRepository } from '@/domain/repository';
 import { fromPromise } from '@/failure';
@@ -21,7 +23,7 @@ import { planIdentity } from '@/persistence/identity-keys';
 import type { AdminContext } from '@/server/handlers/kit';
 import { admin, readyRepository } from '@/server/handlers/kit';
 
-interface Selected {
+export interface Selected {
 	repository: ReadyRepository;
 	stream: Stream;
 }
@@ -77,7 +79,7 @@ function latestTagVersion(service: AutomationService, repository: ReadyRepositor
 	);
 }
 
-function releasePlan(input: ReleaseInput, { service }: AdminContext) {
+export function releasePlan(input: ReleaseInput, { service }: Pick<AdminContext, 'service'>) {
 	return Effect.gen(function*() {
 		const selection = yield* configured(service, input.repositoryId, input.stream);
 		const { repository, stream } = selection;
@@ -147,6 +149,58 @@ function setPlan(input: { repositoryId: number; stream: string; plan: unknown },
 	});
 }
 
+export function beginRelease(
+	service: AutomationService,
+	selection: Selected,
+	name: string,
+	plan: ReleasePlan,
+	planId: string,
+	actor: string,
+	started?: ReleaseStarted,
+): Effect.Effect<Execution, DomainError> {
+	return Effect.gen(function*() {
+		const { repository, stream } = selection;
+		if (started && (stream.versionSource?.kind === 'tags' || stream.versioning === 'independent')) {
+			return yield* precondition(`${name} cannot start releases: it needs one shared version kept in its manifests`);
+		}
+		if (!plan.edits.length && !plan.requiresPreparation) {
+			const promotion = yield* createExecution(repository, {
+				stream: name,
+				operation: 'promote',
+				eventId: `release:${plan.version}:${plan.sourceSha}`,
+				sourceSha: plan.sourceSha,
+				version: plan.version,
+			});
+			promotion.initiatedBy = actor;
+			if (started) {
+				promotion.approvedBy = 'start';
+				promotion.started = started;
+			}
+			yield* service.store.audit(actor, 'release.prepare', promotion.id);
+			return yield* service.enqueue(repository, promotion);
+		}
+		const execution = yield* (
+			stream.prepare.workflow && stream.prepare.strategy === 'workflow'
+				? createExecution(repository, {
+					stream: name,
+					operation: 'prepare',
+					eventId: `plan:${planId}`,
+					sourceSha: repository.sha,
+					version: plan.version,
+				})
+				: createReleasePreparation(repository, name, plan, started)
+		);
+		execution.initiatedBy = actor;
+		if (started) execution.started = started;
+		yield* service.store.audit(actor, started ? 'release.start' : 'release.prepare', execution.id);
+		return yield* service.enqueue(repository, execution);
+	});
+}
+
+function channel(request: Request): StartChannel {
+	return request.headers.has('authorization') ? 'cli' : 'dashboard';
+}
+
 export const releaseEndpoints = {
 	releasesPlan: admin(
 		routes.releasesPlan,
@@ -155,39 +209,13 @@ export const releaseEndpoints = {
 	releasesPrepare: admin(routes.releasesPrepare, (input, context) =>
 		Effect.gen(function*() {
 			const { selection, plan, planId } = yield* releasePlan(input, context);
-			const { repository, stream } = selection;
-			const { service, actor } = context;
+			const { service, actor, request } = context;
 			if (input.sourceSha !== plan.sourceSha || input.planId !== planId) {
 				return yield* conflict('stale-plan', 'Release plan changed; preview it again');
 			}
-			if (!plan.edits.length && !plan.requiresPreparation) {
-				const promotion = yield* (
-					createExecution(repository, {
-						stream: input.stream,
-						operation: 'promote',
-						eventId: `release:${plan.version}:${plan.sourceSha}`,
-						sourceSha: plan.sourceSha,
-						version: plan.version,
-					})
-				);
-				promotion.initiatedBy = actor;
-				yield* service.store.audit(actor, 'release.prepare', promotion.id);
-				return yield* service.enqueue(repository, promotion);
-			}
-			const execution = yield* (
-				stream.prepare.workflow && stream.prepare.strategy === 'workflow'
-					? createExecution(repository, {
-						stream: input.stream,
-						operation: 'prepare',
-						eventId: `plan:${planId}`,
-						sourceSha: repository.sha,
-						version: plan.version,
-					})
-					: createReleasePreparation(repository, input.stream, plan)
-			);
-			execution.initiatedBy = actor;
-			yield* service.store.audit(actor, 'release.prepare', execution.id);
-			return yield* service.enqueue(repository, execution);
+			const via = channel(request);
+			const started = startsFrom(selection.stream.start, via) ? { via, actor } : undefined;
+			return yield* beginRelease(service, selection, input.stream, plan, planId, actor, started);
 		})),
 	releasesPlanSet: admin(
 		routes.releasesPlanSet,

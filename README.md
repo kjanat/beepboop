@@ -4,9 +4,10 @@
 
 Release automation for ~~your~~ *my* GitHub repositories.
 
-Beepboop finds the packages in a repository, opens a PR that bumps their
-versions, and starts your publishing workflows after you approve the merged
-commit. It signs the release tags, tracks every publication, and lets you retry
+Beepboop finds the packages in a repository, bumps their versions in a signed
+commit or a PR, and starts your publishing workflows. One start from GitHub
+Actions, the dashboard or the CLI approves the whole release, or each release
+waits for your approval, as each repository chooses. It signs the release tags, tracks every publication, and lets you retry
 failed jobs from one dashboard. Each repository keeps its settings in
 `.github/beepboop.json`. Presets share defaults across repositories.
 

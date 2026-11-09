@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { repositoryReference } from '@/automation/repository-name';
 import type { Client } from '@/cli/client';
 import { emit, failure } from '@/cli/output';
+import { releaseStart, startsFrom, versionBump } from '@/contract/release-start';
 import { routes } from '@/contract/routes';
 import { semverPattern } from '@/contract/semver';
 import { decodeWith } from '@/decode';
@@ -104,11 +105,16 @@ const streamSchema = z.looseObject({
 	packages: z.array(z.string()).optional(),
 	versionSource: z.object({ kind: z.literal('tags') }).optional(),
 	versionFiles: z.array(z.unknown()).optional(),
-	prepare: z.looseObject({ strategy: z.string().optional(), workflow: z.object({ file: z.string() }).optional() }),
+	prepare: z.looseObject({
+		strategy: z.string().optional(),
+		workflow: z.object({ file: z.string() }).optional(),
+		bump: versionBump.optional(),
+	}),
 	promote: z.looseObject({
 		approval: z.enum(['required', 'merge', 'push']),
 		workflow: z.object({ file: z.string() }).optional(),
 	}),
+	start: z.array(releaseStart).optional(),
 });
 const summarySchema = z.looseObject({
 	version: z.string().min(1),
@@ -279,25 +285,53 @@ export function releaseRepository(
 			for (const note of plan.diagnostics ?? []) out.log(note);
 			for (const edit of plan.edits) out.log(`\n${edit.path}\nCurrent:\n${edit.before}\nProposed:\n${edit.after}`);
 		}
+		const started = startsFrom(stream.start, 'cli') !== undefined;
+		const committing = stream.prepare.bump === 'commit';
+		const pending = plan.edits.length || plan.requiresPreparation;
 		if (
 			!options.yes
 			&& !(yield* prompt(() =>
-				ask({ kind: 'confirm', message: 'Prepare this release and open its version PR?', default: false })
+				ask({
+					kind: 'confirm',
+					message: started
+						? 'Start this release? The start approves it, and nothing asks for approval afterwards.'
+						: committing
+						? `Prepare this release and commit its version bump to ${repository.defaultBranch}?`
+						: 'Prepare this release and open its version PR?',
+					default: false,
+				})
 			))
-		) return out.log('Release preparation cancelled.');
+		) return out.log(started ? 'Release start cancelled.' : 'Release preparation cancelled.');
 		const preparation = yield* client.call(routes.releasesPrepare, {
 			...request,
 			sourceSha: summary.sourceSha,
 			planId: summary.planId,
 		});
 		if (out.jsonMode) return yield* emit(out, { ...preview, preparation });
-		out.log(`Preparation ${preparation.id}: ${preparation.state}`);
+		out.log(`${started ? 'Release' : 'Preparation'} ${preparation.id}: ${preparation.state}`);
+		if (started) {
+			out.log(
+				!pending
+					? 'Beepboop publishes once the commit is verified and its checks pass.'
+					: committing
+					? `Beepboop commits the version bump to ${repository.defaultBranch}, then publishes once that commit is verified and its checks pass.`
+					: 'Beepboop opens the version PR. Merging it continues the release without another approval.',
+			);
+			out.log(
+				'Failing checks or package metadata problems stop the release with a reason. Follow it with beepboop runs list.',
+			);
+			return;
+		}
 		out.log(
 			stream.prepare.workflow
 				? `Preparation runs in ${stream.prepare.workflow.file}. Follow it with beepboop runs list.`
 				: 'Beepboop will open the version PR. Follow it with beepboop runs list.',
 		);
-		out.log('Review and merge the preparation PR.');
+		out.log(
+			committing
+				? `Beepboop commits the version bump to ${repository.defaultBranch}.`
+				: 'Review and merge the preparation PR.',
+		);
 		if (stream.versionSource?.kind === 'tags') {
 			out.log(
 				'Preparation only: tag-based streams do not start publication after merge. Starting publication from this preparation is not supported yet.',

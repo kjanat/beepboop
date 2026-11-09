@@ -120,7 +120,7 @@ test('a repository whose stored choices are not in beepboop.json gets one setup 
 	await world.wait(16_000);
 	const update = repository.pulls.filter(pull => pull.state === 'open');
 	expect(update.map(pull => [pull.head.ref, pull.title])).toEqual([
-		['automation/setup-update', 'chore: update release setup (release configuration)'],
+		['automation/setup-update', 'chore: update release setup'],
 	]);
 	const migrated = configuration(repository, 'automation/setup-update');
 	expect(migrated.actionsRevision).toBe('v1');
@@ -302,4 +302,191 @@ test('binaries added to an existing shared ledger workflow upload after the crat
 	expect(index('download-artifact')).toBeGreaterThan(index('beepboop_publish'));
 	expect(index('beepboop_binaries')).toBeLessThan(index('beepboop_token'));
 	expect(index('beepboop_token')).toBeLessThan(index('publish-release'));
+});
+
+const releaseMode = z.object({
+	streams: z.object({
+		main: z.object({
+			prepare: z.looseObject({ bump: z.string().optional() }).optional(),
+			promote: z.looseObject({ approval: z.string().optional() }),
+			start: z.array(z.looseObject({ via: z.string() })).optional(),
+		}),
+	}),
+});
+function modeOf(repository: Repository, ref?: string) {
+	const { main } = releaseMode.parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', ref) ?? '{}'))
+		.streams;
+	return { approval: main.promote.approval, bump: main.prepare?.bump, start: main.start };
+}
+function crateChoices(mode: Partial<SetupChoices['streams'][number]> = {}): SetupChoices {
+	return {
+		streams: [{
+			name: 'main',
+			packages: ['pkg:cargo/tool'],
+			required: ['pkg:cargo/tool'],
+			versioning: 'workspace',
+			promote: {
+				file: 'release.yml',
+				job: 'publish',
+				triggers: 'review',
+				commands: "cargo publish --package 'tool' --locked",
+				publicationSteps: {},
+			},
+			...mode,
+		}],
+	};
+}
+const tick = (body: string, id: string) =>
+	body.replace(`- [ ] <!-- beepboop:choice:${id} -->`, `- [x] <!-- beepboop:choice:${id} -->`);
+
+test('a fresh setup ticks no approval, start or bump and writes none of them', async () => {
+	const repository = toolRepository();
+	const api = bearer(world, await world.cliSession());
+	const plan = await applyChoices(api, repository.name, crateChoices());
+	expect(plan.blockers).toEqual([]);
+	expect(plan.choices.streams[0]).not.toHaveProperty('approval');
+	expect(plan.choices.streams[0]).not.toHaveProperty('start');
+	expect(plan.choices.streams[0]).not.toHaveProperty('bump');
+	expect(modeOf(repository, 'automation/onboarding')).toEqual({
+		approval: undefined,
+		bump: undefined,
+		start: undefined,
+	});
+	expect(world.github.file(repository, '.github/workflows/start-release.yml', 'automation/onboarding')).toBeUndefined();
+	const body = repository.pulls[0]?.body ?? '';
+	for (
+		const id of ['start:main:action', 'start:main:dashboard', 'start:main:cli', 'bump:main:commit', 'bump:main:pr']
+	) {
+		expect(body).toContain(`- [ ] <!-- beepboop:choice:${id} -->`);
+	}
+	for (const value of ['required', 'merge', 'push']) {
+		expect(body).toContain(`- [ ] <!-- beepboop:choice:approval:main:${value} -->`);
+	}
+	expect(body).toContain(
+		'- main: tick when a version raised without a start publishes. Until you do, Beepboop waits for your approval.',
+	);
+	expect(body).toContain(
+		'- main: tick how a version bump reaches the default branch. Until you do, Beepboop opens a version PR.',
+	);
+	expect(body).not.toContain('Set up registry access');
+	expect(body).not.toContain('keeps this proposal current');
+	expect(body).not.toContain('The earlier setup proposal differs');
+});
+
+test('each choice ticked in the setup PR body is written as ticked, and push stays push after the merge', async () => {
+	const repository = toolRepository();
+	const api = bearer(world, await world.cliSession());
+	await applyChoices(api, repository.name, crateChoices());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const [pull] = repository.pulls;
+	if (!pull) throw new Error('Missing setup PR');
+	await editPull(
+		world,
+		repository,
+		pull,
+		['approval:main:push', 'start:main:action', 'start:main:cli', 'bump:main:commit'].reduce(tick, pull.body),
+	);
+	await world.wait(16_000);
+	expect(modeOf(repository, 'automation/onboarding')).toEqual({
+		approval: 'push',
+		bump: 'commit',
+		start: [{ via: 'action', workflow: 'start-release.yml' }, { via: 'cli' }],
+	});
+	expect(pull.body).toContain('- [x] <!-- beepboop:choice:approval:main:push -->');
+	expect(pull.body).toContain('- [ ] <!-- beepboop:choice:approval:main:required -->');
+	expect(pull.body).toContain('- [ ] <!-- beepboop:choice:start:main:dashboard -->');
+	expect(pull.body).not.toContain('Until you do');
+	const dispatch = z.object({
+		on: z.object({
+			workflow_dispatch: z.object({ inputs: z.object({ stream: z.looseObject({ options: z.array(z.string()) }) }) }),
+		}),
+		jobs: z.object({
+			start: z.object({
+				permissions: z.record(z.string(), z.string()),
+				steps: z.array(z.object({ uses: z.string(), with: z.record(z.string(), z.string()) })),
+			}),
+		}),
+	}).parse(parse(world.github.file(repository, '.github/workflows/start-release.yml', 'automation/onboarding') ?? ''));
+	expect(dispatch.on.workflow_dispatch.inputs.stream.options).toEqual(['main']);
+	expect(dispatch.jobs.start.permissions).toEqual({ 'id-token': 'write' });
+	expect(dispatch.jobs.start.steps).toEqual([{
+		uses: 'kjanat/beepboop/actions/release@v1',
+		with: { stream: '${{ inputs.stream }}', version: '${{ inputs.version }}' },
+	}]);
+	world.github.merge(repository, pull.number);
+	const plan = await previewSetup(api, repository.name);
+	expect(plan.edits).toEqual([]);
+	expect(plan.choices.streams[0]).toMatchObject({ approval: 'push', bump: 'commit', start: ['action', 'cli'] });
+});
+
+test('unticking every start writes an empty start list, and setup reads it back without asking again', async () => {
+	const repository = toolRepository();
+	const api = bearer(world, await world.cliSession());
+	await applyChoices(api, repository.name, crateChoices({ approval: 'required', bump: 'pr', start: [] }));
+	expect(modeOf(repository, 'automation/onboarding')).toEqual({ approval: 'required', bump: 'pr', start: [] });
+	world.github.merge(repository, 1);
+	const plan = await previewSetup(api, repository.name);
+	expect(plan.edits).toEqual([]);
+	expect(plan.notes.filter(note => note.includes('Until you do'))).toEqual([]);
+	expect(plan.choices.streams[0]).toMatchObject({ approval: 'required', bump: 'pr', start: [] });
+});
+
+test('a maintenance rebuild keeps the approval, starts and bump the default branch configures', async () => {
+	const repository = toolRepository();
+	const api = bearer(world, await world.cliSession());
+	await applyChoices(api, repository.name, crateChoices({ approval: 'push', bump: 'pr', start: ['dashboard'] }));
+	world.github.merge(repository, 1);
+	const source = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
+	const legacy = JSON.stringify(source, (key, value) => key === 'setup' ? undefined : value, '\t')
+		.replace('"approval": "push"', '"approval": "required"');
+	world.github.push(repository, { '.github/beepboop.json': `${legacy}\n` }, 'Require approval');
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	await world.wait(16_000);
+	const kept = { approval: 'required', bump: 'pr', start: [{ via: 'dashboard' }] };
+	expect(modeOf(repository, 'automation/setup-update')).toEqual(kept);
+	world.github.push(repository, { 'README.md': '# tool\n' }, 'Document the tool');
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	await world.wait(16_000);
+	expect(modeOf(repository, 'automation/setup-update')).toEqual(kept);
+	expect(repository.pulls.find(pull => pull.state === 'open')?.body).toContain(
+		'- [x] <!-- beepboop:choice:approval:main:required -->',
+	);
+});
+
+test('a ticked target that the binary is expected to fail on stays ticked with a note beside it', async () => {
+	const repository = engineRepository();
+	const api = bearer(world, await world.cliSession());
+	await applyChoices(api, repository.name, engineChoices);
+	world.github.merge(repository, 1);
+	const source = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
+	const legacy = JSON.stringify(source, (key, value) => key === 'setup' ? undefined : value, '\t');
+	world.github.push(repository, { '.github/beepboop.json': `${legacy}\n` }, 'Configuration from before setup input');
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	await world.wait(16_000);
+	const [pull] = repository.pulls.filter(entry => entry.state === 'open');
+	if (!pull) throw new Error('Missing migration PR');
+	expect(pull.title).toBe('chore: build engine release binaries');
+	expect(pull.body).toContain(
+		'- [ ] <!-- beepboop:choice:target:main:windows%2Damd64 --> windows-amd64 (engine expected to fail)',
+	);
+	expect(pull.body).toContain('engine leaves out Windows: engine-cli depends on uzers and rustix (fs, process)');
+	await editPull(world, repository, pull, tick(pull.body, 'target:main:windows%2Damd64'));
+	await world.wait(16_000);
+	expect(pull.body).toContain(
+		'- [x] <!-- beepboop:choice:target:main:windows%2Damd64 --> windows-amd64 (engine expected to fail)',
+	);
+	expect(pull.body).toContain(
+		'- main: engine is expected to fail on windows-amd64: engine-cli depends on uzers and rustix (fs, process), which build only for Unix.',
+	);
+	expect(pull.body).not.toContain('engine leaves out Windows');
+	const targets = z.object({
+		streams: z.object({
+			main: z.object({
+				promote: z.object({
+					workflow: z.object({ setup: z.object({ binaries: z.object({ targets: z.array(z.string()) }) }) }),
+				}),
+			}),
+		}),
+	}).parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', pull.head.ref) ?? '{}'));
+	expect(targets.streams.main.promote.workflow.setup.binaries.targets).toContain('windows-amd64');
 });

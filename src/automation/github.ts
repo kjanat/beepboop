@@ -31,7 +31,7 @@ import { marked, placeBlock, setupBlock, withStatus } from '@/automation/setup-b
 import { setupBranches } from '@/automation/setup-changes';
 import { buildSnapshot } from '@/automation/snapshot';
 import type { BotIdentity } from '@/automation/token';
-import type { Edit, Snapshot } from '@/automation/types';
+import type { Edit, PreparationResult, Snapshot } from '@/automation/types';
 import { legacyDiagnostic } from '@/contract/diagnostics';
 import type { DomainError } from '@/contract/errors';
 import { domainError, invalid, precondition, upstream } from '@/contract/errors';
@@ -560,32 +560,13 @@ export class RepositoryGateway {
 					}
 				}
 			}
-			const treeBase = setupEdits ? snapshot.sha : base;
-			const commit = yield* self.read(gitCommitSchema, `/repos/${name}/git/commits/${treeBase}`, token);
-			for (const edit of edits) {
-				const current = yield* self.file(name, edit.path, treeBase, token);
-				if ((current ?? '') !== edit.before) return yield* precondition(`File changed: ${edit.path}`);
-				if (
-					edit.path.startsWith('/')
-					|| edit.path.split('/').some((p) => p === '..' || p === '.git')
-				) {
-					return yield* precondition('Unsafe edit path');
-				}
-			}
-			const tree = yield* self.read(createdSchema, `/repos/${name}/git/trees`, token, 'POST', {
-				base_tree: commit.tree.sha,
-				tree: edits.map((edit) => ({
-					path: edit.path,
-					mode: '100644',
-					type: 'blob',
-					content: edit.after,
-				})),
-			});
-			const { sha: head } = yield* self.read(createdSchema, `/repos/${name}/git/commits`, token, 'POST', {
-				message: coAuthored ? `${title}\n\n${coAuthor}` : title,
-				tree: tree.sha,
-				parents: setupEdits ? [snapshot.sha] : [base],
-			});
+			const head = yield* self.editCommit(
+				name,
+				token,
+				setupEdits ? snapshot.sha : base,
+				edits,
+				coAuthored ? `${title}\n\n${coAuthor}` : title,
+			);
 			const rules = yield* self.read(
 				z.array(ruleSchema).nullable(),
 				`/repos/${name}/rules/branches/${encodeURIComponent(branch)}`,
@@ -621,6 +602,91 @@ export class RepositoryGateway {
 				});
 			}
 			return yield* self.finishPullRequest(snapshot, branch, title, body, head, token);
+		});
+	}
+	private editCommit(
+		name: string,
+		token: string,
+		base: string,
+		edits: Edit[],
+		message: string,
+	): Effect.Effect<string, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const commit = yield* self.read(gitCommitSchema, `/repos/${name}/git/commits/${base}`, token);
+			for (const edit of edits) {
+				const current = yield* self.file(name, edit.path, base, token);
+				if ((current ?? '') !== edit.before) return yield* precondition(`File changed: ${edit.path}`);
+				if (
+					edit.path.startsWith('/')
+					|| edit.path.split('/').some((p) => p === '..' || p === '.git')
+				) {
+					return yield* precondition('Unsafe edit path');
+				}
+			}
+			const tree = yield* self.read(createdSchema, `/repos/${name}/git/trees`, token, 'POST', {
+				base_tree: commit.tree.sha,
+				tree: edits.map((edit) => ({
+					path: edit.path,
+					mode: '100644',
+					type: 'blob',
+					content: edit.after,
+				})),
+			});
+			const { sha: head } = yield* self.read(createdSchema, `/repos/${name}/git/commits`, token, 'POST', {
+				message,
+				tree: tree.sha,
+				parents: [base],
+			});
+			return head;
+		});
+	}
+	/** Fast-forward the default branch to a signed bot commit that applies the version bump. */
+	commitVersion(
+		snapshot: Snapshot,
+		message: string,
+		edits: Edit[],
+		head: string | undefined,
+		checkpoint: (head: string) => Effect.Effect<void, DomainError>,
+	): Effect.Effect<PreparationResult, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const { name, id, defaultBranch } = snapshot.repository;
+			const token = yield* self.token(name, id, {
+				contents: 'write',
+				...(edits.some(edit => edit.path.startsWith('.github/workflows/')) ? { workflows: 'write' as const } : {}),
+			});
+			const branch = encodeURIComponent(defaultBranch);
+			let commit = head;
+			if (!commit) {
+				commit = yield* self.editCommit(name, token, snapshot.sha, edits, message);
+				yield* checkpoint(commit);
+			}
+			const current = yield* self.read(gitRefSchema, `/repos/${name}/git/ref/heads/${branch}`, token);
+			const landed = current.object.sha === commit
+				|| (current.object.sha !== snapshot.sha
+					&& (yield* self.read(comparisonSchema, `/repos/${name}/compare/${commit}...${current.object.sha}`, token))
+						.status === 'ahead');
+			if (!landed) {
+				if (current.object.sha !== snapshot.sha) {
+					return yield* precondition(
+						`${defaultBranch} moved to ${
+							current.object.sha.slice(0, 12)
+						} before the version commit landed. Start the release again.`,
+					);
+				}
+				yield* self.call(`/repos/${name}/git/refs/heads/${branch}`, token, 'PATCH', { sha: commit, force: false })
+					.pipe(
+						Effect.catchIf(
+							error => error.problem.code === 'precondition',
+							error =>
+								precondition(
+									`GitHub refused the version commit on ${defaultBranch}: ${error.message}. Let the Beepboop app push to ${defaultBranch}, or set prepare.bump to "pr".`,
+								),
+						),
+					);
+			}
+			return { url: `https://github.com/${name}/commit/${commit}`, head: commit, kind: 'commit' as const };
 		});
 	}
 	/** Bind release execution to the merged preparation pull request. */
@@ -686,6 +752,25 @@ export class RepositoryGateway {
 				token,
 			);
 			return comparison.status === 'identical' || comparison.status === 'ahead' ? pull.mergeSha : undefined;
+		});
+	}
+	contains(
+		repository: string,
+		repositoryId: number,
+		commit: string,
+		target: string,
+	): Effect.Effect<boolean, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const token = yield* self.token(repository, repositoryId, { contents: 'read' });
+			const comparison = yield* self.read(
+				comparisonSchema,
+				`/repos/${repository}/compare/${yield* Effect.fromResult(sha(commit))}...${yield* Effect.fromResult(
+					sha(target),
+				)}`,
+				token,
+			);
+			return comparison.status === 'identical' || comparison.status === 'ahead';
 		});
 	}
 	private mergeCommit(

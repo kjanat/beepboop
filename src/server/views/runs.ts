@@ -41,7 +41,7 @@ export function runCard(run: Execution, now: number) {
 	const required = run.releaseSet?.required ?? run.configuration.streams[run.stream]?.required ?? [];
 	const approving = run.state === 'awaiting-approval';
 	const automatic = approving
-		&& (run.configuration.streams[run.stream]?.promote.approval === 'push' || run.approvedBy === 'merge');
+		&& (run.configuration.streams[run.stream]?.promote.approval === 'push' || run.approvedBy !== undefined);
 	const missing = required.filter(id =>
 		!run.publications.some(p => matchesPublication(id, p) && p.outcome === 'succeeded')
 	);

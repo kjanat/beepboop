@@ -1,4 +1,5 @@
 import type { PackagePublication } from '@/automation/package-publication';
+import type { StartChannel, VersionBump } from '@/contract/release-start';
 import type { BinaryBuild, BinaryCandidate, BinaryTarget, SetupChoices } from '@/contract/setup';
 
 export type { SetupChoices } from '@/contract/setup';
@@ -6,6 +7,8 @@ export type { SetupChoices } from '@/contract/setup';
 export type SetupWorkflow = NonNullable<SetupChoices['streams'][number]['prepare']>;
 export type SetupOperation = NonNullable<SetupChoices['streams'][number]['operations']>[number];
 export type Versioning = SetupChoices['streams'][number]['versioning'];
+export type Approval = NonNullable<SetupChoices['streams'][number]['approval']>;
+export const approvals: readonly Approval[] = ['required', 'merge', 'push'];
 export type TriggerHandover = SetupWorkflow['triggers'];
 export const versionings: readonly Versioning[] = ['workspace', 'independent', 'none'];
 export const triggerHandovers: readonly TriggerHandover[] = ['review', 'dispatchOnly', 'preserve'];
@@ -13,6 +16,9 @@ export type SetupOption =
 	| { kind: 'package' | 'required'; stream: string; package: string }
 	| { kind: 'workflow'; stream: string; operation: 'prepare' | 'promote'; file: string; job?: string }
 	| { kind: 'versioning'; stream: string; value: Versioning }
+	| { kind: 'approval'; stream: string; value: Approval }
+	| { kind: 'start'; stream: string; value: StartChannel }
+	| { kind: 'bump'; stream: string; value: VersionBump }
 	| { kind: 'triggers'; stream: string; operation: 'prepare' | 'promote'; value: TriggerHandover }
 	| { kind: 'binary'; stream: string; build: BinaryBuild; targets: BinaryTarget[] }
 	| { kind: 'target'; stream: string; target: BinaryTarget };

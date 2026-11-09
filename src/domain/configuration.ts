@@ -21,6 +21,7 @@ import {
 import type { Diagnostic, DiagnosticCode } from '@/contract/diagnostics';
 import { isDiagnosticCode } from '@/contract/diagnostics';
 import { identifierPattern } from '@/contract/ids';
+import { releaseStarts, versionBump } from '@/contract/release-start';
 import { actionsRevisionPattern, workflowSetup } from '@/contract/setup';
 import { versionFileSchema } from '@/contract/version-files';
 import { dependencyOrder } from '@/dependency-order';
@@ -147,11 +148,13 @@ function streamSchema() {
 			version: z.literal('manual').optional(),
 			workflow: binding.optional(),
 			strategy: z.enum(['managed', 'workflow']).optional(),
+			bump: versionBump.optional(),
 		}).default({}),
 		promote: z.strictObject({
 			approval: z.enum(['required', 'merge', 'push']).default('required'),
 			workflow: binding.optional(),
 		}).default({ approval: 'required' }),
+		start: releaseStarts.optional(),
 		workflows: workflows.superRefine((value, ctx) => {
 			for (const name of reservedOperations) {
 				if (Object.hasOwn(value, name)) {
@@ -188,11 +191,13 @@ function streamSchema() {
 			...(stream.prepare.strategy === undefined ? {} : { strategy: stream.prepare.strategy }),
 			version: 'manual' as const,
 			...(stream.prepare.workflow ? { workflow: stream.prepare.workflow } : {}),
+			...(stream.prepare.bump ? { bump: stream.prepare.bump } : {}),
 		},
 		promote: {
 			approval: stream.promote.approval,
 			...(stream.promote.workflow ? { workflow: stream.promote.workflow } : {}),
 		},
+		...(stream.start ? { start: stream.start } : {}),
 		workflows: stream.workflows,
 		required: stream.required,
 		...(stream.needs === undefined ? {} : { needs: stream.needs }),

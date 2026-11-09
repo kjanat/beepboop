@@ -71,7 +71,13 @@ commit on the server. Beepboop releases the default branch as the server sees
 it. Local commits and uncommitted files stay out. After you confirm, the CLI
 passes the plan ID and source SHA to preparation. The server refuses a plan that
 changed since the preview. The output names the preparation and lists the merge
-and approval steps that follow. `beepboop release` never approves or publishes.
+and approval steps that follow.
+
+When the stream lists `{ "via": "cli" }` in `start`, the confirmation starts the
+release, and the start approves it. Beepboop then bumps the version, publishes
+and tags without another approval, and the output says how the bump reaches the
+default branch. See [Start a release](automation.md#start-a-release). Without
+that entry, `beepboop release` never approves or publishes.
 
 `--json` on its own previews and stops. Pass the version, and `--stream` when the
 repository has several streams. Add `--yes` to confirm the preview and start

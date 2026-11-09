@@ -73,7 +73,7 @@ function cargoCandidates(snapshot: Snapshot, pkg: Package): BinaryCandidate[] {
 		targets,
 		...(unix.length
 			? {
-				reason: `${name} leaves out Windows: ${pkg.name} depends on ${unix.join(' and ')}, which build only for Unix.`,
+				reason: `${pkg.name} depends on ${unix.join(' and ')}, which build only for Unix`,
 			}
 			: {}),
 	}));

@@ -1,20 +1,33 @@
 import { Effect } from 'effect';
 import { createExecution } from '@/automation/execution';
 import type { ReleaseSetPlan } from '@/automation/planning';
-import type { Execution, ReleasePlan } from '@/automation/types';
+import type { Execution, ReleasePlan, ReleaseStarted } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
+import { startLabels } from '@/contract/release-start';
 import type { ReadyRepository } from '@/domain/repository';
 import { executionId, planIdentity } from '@/persistence/identity-keys';
+
+export function preparationBody(execution: Pick<Execution, 'configuration' | 'stream' | 'started'>): string {
+	const { started } = execution;
+	if (started) return `A start from ${startLabels[started.via]} approved this release. Merging this PR continues it.`;
+	const approval = execution.configuration.streams[execution.stream]?.promote.approval;
+	return approval === 'merge'
+		? 'Merging this PR releases it.'
+		: approval === 'push'
+		? 'Beepboop releases the merge commit once it is verified and its checks pass.'
+		: 'Promotion requires approval.';
+}
 
 export function createReleasePreparation(
 	repository: ReadyRepository,
 	stream: string,
 	plan: ReleasePlan | ReleaseSetPlan,
+	started?: ReleaseStarted,
 ): Effect.Effect<Execution, DomainError> {
 	return Effect.gen(function*() {
 		if (!repository.configuration.streams[stream]?.prepare.workflow) {
-			return yield* createManagedPreparation(repository, stream, plan);
+			return yield* createManagedPreparation(repository, stream, plan, started);
 		}
 		if (plan.sourceSha !== repository.sha) return yield* precondition('Preparation source is not available');
 		const identity = yield* planIdentity(plan, repository);
@@ -26,6 +39,7 @@ export function createReleasePreparation(
 			version: 'version' in plan ? plan.version : undefined,
 		});
 		execution.plan = structuredClone(plan);
+		if (started) execution.started = started;
 		return execution;
 	});
 }
@@ -34,6 +48,7 @@ export function createManagedPreparation(
 	repository: ReadyRepository,
 	stream: string,
 	plan: ReleasePlan | ReleaseSetPlan,
+	started?: ReleaseStarted,
 ): Effect.Effect<Execution, DomainError> {
 	return Effect.gen(function*() {
 		const configuration = repository.configuration;
@@ -48,6 +63,7 @@ export function createManagedPreparation(
 			? plan.version
 			: plan.groups.map(group => `${group.id} ${group.version}`).join(', ');
 		const execution: Execution = {
+			...(started ? { started } : {}),
 			id,
 			repositoryId: repository.id,
 			repository: repository.name,
@@ -71,7 +87,9 @@ export function createManagedPreparation(
 				plan: structuredClone(plan),
 				branch: `release/${stream}/${identity}`,
 				title: `chore(release): prepare ${versions}`,
-				body: `Prepare ${versions}\n\nSource: ${plan.sourceSha}\nPlan: ${identity}\n\nPromotion requires approval.`,
+				body: `Prepare ${versions}\n\nSource: ${plan.sourceSha}\nPlan: ${identity}\n\n${
+					preparationBody({ configuration, stream, ...(started ? { started } : {}) })
+				}`,
 			},
 		};
 		return execution;

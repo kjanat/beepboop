@@ -54,6 +54,7 @@ const legacy = [
 	'POST /api/credentials/grant',
 	'POST /api/credentials/revoke',
 	'POST /api/workflow/token',
+	'POST /api/workflow/start',
 	'POST /api/workflow/begin',
 	'POST /api/workflow/prepared',
 	'POST /api/workflow/report',
@@ -351,6 +352,7 @@ test('a broken Worker configuration fails with a logged internal error', async (
 test('the Actions request builders produce bodies the server parses', async () => {
 	const { endpoints, modes, requestBody } = await import('@root/actions/runtime/protocol.ts');
 	const ids = {
+		start: 'workflowStart',
 		begin: 'workflowBegin',
 		prepared: 'workflowPrepared',
 		report: 'workflowReport',

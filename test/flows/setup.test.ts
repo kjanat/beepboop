@@ -1270,6 +1270,7 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 			packages,
 			required: packages,
 			versioning: 'workspace',
+			approval: 'required',
 			prepare: {
 				file: 'release-sql.yml',
 				job: 'prepare',
@@ -1284,7 +1285,7 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
 	);
 	expect(plan.blockers).toEqual([]);
-	expect(plan.choices.streams[0]?.approval).toBe('push');
+	expect(plan.choices.streams[0]?.approval).toBe('required');
 	expect(plan.choices.streams[0]?.promote?.credentials).toEqual({ CARGO_REGISTRY_TOKEN: 'crates-io' });
 	const configuration = z.object({
 		streams: z.object({
@@ -1295,7 +1296,7 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 		}),
 	}).parse(JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'));
 	expect(configuration.streams.main.credentials).toEqual(['crates-io']);
-	expect(configuration.streams.main.promote.approval).toBe('push');
+	expect(configuration.streams.main.promote.approval).toBe('required');
 	expect(configuration.streams.main.promote.workflow).toMatchObject({
 		refs: { phase: 'version', prefix: 'v' },
 		publications: ['pkg:cargo/sql-cli', 'pkg:cargo/sql', 'pkg:cargo/sql-parser', 'github-release:octo/sql'],

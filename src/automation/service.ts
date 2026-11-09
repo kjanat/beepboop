@@ -27,7 +27,14 @@ import { bodyChoices, releaseAfterMerge } from '@/automation/setup';
 import { currentOptions, maintainSetup, rebuildingStatus, setupEdits } from '@/automation/setup-maintenance';
 import { decodeError, Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
-import type { AutomationEvent, Execution, Package, RepositoryRecord, SubscriptionDelivery } from '@/automation/types';
+import type {
+	AutomationEvent,
+	Execution,
+	Package,
+	ReleaseStarted,
+	RepositoryRecord,
+	SubscriptionDelivery,
+} from '@/automation/types';
 import { parseGrant, Secrets, secretsLayer, Vault } from '@/automation/vault';
 import type { WinGetBindings } from '@/automation/winget';
 import { WinGetService } from '@/automation/winget';
@@ -252,6 +259,32 @@ export class AutomationService {
 			return repository;
 		});
 	}
+	private startedPreparation(
+		repository: RepositoryRecord,
+		stream: string,
+		version: string,
+		target: string,
+	): Effect.Effect<{ sha: string; started: ReleaseStarted } | undefined, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const results = yield* fromPromise(() => this.coordinator(repository.id).preparationResults(stream, version));
+			for (const { started, ...result } of results) {
+				if (!started) continue;
+				const sha = result.kind === 'commit'
+					? (yield* this.gateway.contains(repository.name, repository.id, result.head, target))
+						? result.head
+						: undefined
+					: yield* this.gateway.preparationMerge(repository.name, repository.id, result, target);
+				if (sha) return { sha, started };
+			}
+			return undefined;
+		}).pipe(
+			recover(error =>
+				logFailure('started-preparation.failed', error, { repository: repository.name, stream }).pipe(
+					Effect.as(undefined),
+				)
+			),
+		);
+	}
 	private mergedPreparation(
 		repository: RepositoryRecord,
 		stream: string,
@@ -261,6 +294,7 @@ export class AutomationService {
 		return Effect.gen({ self: this }, function*() {
 			const results = yield* fromPromise(() => this.coordinator(repository.id).preparationResults(stream, version));
 			for (const result of results) {
+				if (result.kind === 'commit') continue;
 				const merge = yield* this.gateway.preparationMerge(repository.name, repository.id, result, target).pipe(
 					recover(error =>
 						logFailure('preparation-merge.failed', error, { repository: repository.name, pull: result.url }).pipe(
@@ -302,13 +336,14 @@ export class AutomationService {
 				const packages = publishablePackages(repository.inventory.packages, stream.packages);
 				const version = unreleasedManifestVersion(packages);
 				if (!version || manifestProblems(repository.inventory, packages).length) continue;
-				const merge = stream.promote.approval === 'merge'
+				const started = yield* this.startedPreparation(repository, name, version, repository.sha);
+				const merge = !started && stream.promote.approval === 'merge'
 					? yield* this.mergedPreparation(repository, name, version, repository.sha)
 					: undefined;
 				const snapshot = yield* this.gateway.snapshot(
 					repository.name,
 					repository.id,
-					merge ?? repository.sha,
+					started?.sha ?? merge ?? repository.sha,
 					(stream.versionFiles ?? []).map(rule => rule.path),
 				);
 				const plan = yield* planRelease(
@@ -372,7 +407,10 @@ export class AutomationService {
 				if (yield* fromPromise(() => this.coordinator(repository.id).execution(promotion.id))) continue;
 				setupMerge ??= (yield* this.setupMerge(repository)) ?? null;
 				if (setupMerge?.sha === plan.sourceSha && !releaseAfterMerge(setupMerge.body)) continue;
-				if (merge) promotion.approvedBy = 'merge';
+				if (started) {
+					promotion.approvedBy = 'start';
+					promotion.started = started.started;
+				} else if (merge) promotion.approvedBy = 'merge';
 				yield* this.store.audit('beepboop', 'release.push', promotion.id);
 				yield* this.enqueue(repository, promotion);
 			}
