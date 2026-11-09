@@ -10,7 +10,10 @@ import type { Look } from '@/cli/look';
 import { lookOf, registryOf, step, table } from '@/cli/look';
 import { emit, failure } from '@/cli/output';
 import { chooseSetup } from '@/cli/setup-choices';
+import type { SetupFlagValues } from '@/cli/setup-flags';
+import { applySetupFlags, readSetupFlags } from '@/cli/setup-flags';
 import { routes } from '@/contract/routes';
+import { setupChoicesSchema } from '@/contract/setup';
 
 function parsePlan(value: unknown): Effect.Effect<SetupPlan, CLIError> {
 	return parseSetupPlan(value).pipe(Effect.mapError(error => failure(error.message, 'INVALID_PLAN')));
@@ -18,15 +21,18 @@ function parsePlan(value: unknown): Effect.Effect<SetupPlan, CLIError> {
 export function setupRepository(
 	client: Client,
 	repository: string,
-	flags: { choices?: string; plan?: string; apply: boolean; output?: string },
+	flags: Readonly<Record<string, unknown>> & { choices?: string; plan?: string; apply: boolean; output?: string },
 	ask: Ask,
 	out: Out,
 ): Effect.Effect<void, CLIError> {
 	return Effect.gen(function*() {
 		const look = lookOf(out);
+		const given = yield* readSetupFlags(flags);
 		if (flags.plan) {
-			if (!flags.apply || flags.choices) {
-				return yield* Effect.fail(failure('Use --plan with --apply, without --choices', 'INVALID_FLAGS'));
+			if (!flags.apply || flags.choices || given) {
+				return yield* Effect.fail(
+					failure('Use --plan with --apply, without --choices or setup flags', 'INVALID_FLAGS'),
+				);
 			}
 			const reviewed = yield* parsePlan(yield* readJson(flags.plan));
 			const requested = yield* repositoryReference(repository).pipe(
@@ -105,6 +111,24 @@ export function setupRepository(
 			);
 		const open = (plan: SetupPlan) =>
 			opened(plan).pipe(Effect.map(result => out.log(`Setup PR: ${look.link(result.url)}`)));
+		if (given && !flags.choices) {
+			const flagged = yield* applySetupFlags(initial.choices, given, initial);
+			const preview = yield* step(
+				out,
+				'Building the setup plan from your flags',
+				client.call(routes.setupPreview, { repository, choices: flagged }),
+				() => 'Setup plan is ready',
+			);
+			const plan = yield* parsePlan(preview);
+			const output = flags.output;
+			if (output) yield* Effect.promise(() => Bun.write(output, `${JSON.stringify(preview, null, 2)}\n`));
+			if (out.jsonMode) return yield* emit(out, preview);
+			describe(plan);
+			if (plan.blockers.length) return out.setExitCode(1);
+			if (output) return out.log(`Open the setup PR with: beepboop adopt ${repository} --plan ${output} --apply`);
+			if (!plan.edits.length) return out.log('Release setup already matches.');
+			return yield* open(plan);
+		}
 		if (!reviewing) {
 			describe(initial);
 			if (!initial.blockers.length && !initial.edits.length) return out.log('Release setup already matches.');
@@ -120,7 +144,7 @@ export function setupRepository(
 			} else if (!out.isTTY) return out.setExitCode(1);
 		}
 		const choices: unknown = flags.choices
-			? yield* readJson(flags.choices)
+			? given ? yield* chosenWithFlags(flags.choices, given, initial) : yield* readJson(flags.choices)
 			: out.jsonMode || flags.output
 			? initial.choices
 			: yield* chooseSetup(initial, ask, out);
@@ -167,6 +191,22 @@ export function setupRepository(
 			);
 			out.log(look.link(result.url));
 		}
+	});
+}
+
+function chosenWithFlags(file: string, given: SetupFlagValues, plan: SetupPlan) {
+	return Effect.gen(function*() {
+		const parsed = setupChoicesSchema.safeParse(yield* readJson(file));
+		if (!parsed.success) {
+			const [issue] = parsed.error.issues;
+			return yield* Effect.fail(
+				failure(
+					`--choices ${file}: ${issue ? `${issue.path.join('.')}: ${issue.message}` : parsed.error.message}`,
+					'INVALID_CHOICES',
+				),
+			);
+		}
+		return yield* applySetupFlags(parsed.data, given, plan);
 	});
 }
 

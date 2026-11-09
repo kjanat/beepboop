@@ -8,7 +8,7 @@ import {
 	workflowFilePattern,
 } from '@/contract/catalog';
 import { credentialAliasPattern, githubSecretNamePattern, identifierPattern } from '@/contract/ids';
-import { startChannel, versionBump } from '@/contract/release-start';
+import { approvalPolicies, startChannel, versionBump } from '@/contract/release-start';
 import { versionFileSchema } from '@/contract/version-files';
 
 export const binaryTargets = [
@@ -87,10 +87,12 @@ export function leftOut(candidate: BinaryCandidate): string | undefined {
 export function unbuildable(candidate: BinaryCandidate, targets: readonly BinaryTarget[]): BinaryTarget[] {
 	return targets.filter(target => !candidate.targets.includes(target));
 }
+export const workflowTriggers = ['review', 'dispatchOnly', 'preserve'] as const;
+export const streamVersionings = ['workspace', 'independent', 'none'] as const;
 const workflow = z.object({
 	file: z.string().regex(workflowFilePattern),
 	job: z.string().optional(),
-	triggers: z.enum(['review', 'dispatchOnly', 'preserve']).default('review'),
+	triggers: z.enum(workflowTriggers).default('review'),
 	commands: z.string().default(''),
 	/** Map publication identities to existing step IDs, for accurate outcome reporting. */
 	publicationSteps: z.record(z.string(), z.string()).default({}),
@@ -128,8 +130,8 @@ export const setupWorkflow = workflow;
 export const setupStream = z.object({
 	name: identifier,
 	packages: z.array(z.string()),
-	versioning: z.enum(['workspace', 'independent', 'none']),
-	approval: z.enum(['required', 'merge', 'push']).optional(),
+	versioning: z.enum(streamVersionings),
+	approval: z.enum(approvalPolicies).optional(),
 	start: z.array(startChannel).optional(),
 	bump: versionBump.optional(),
 	required: z.array(z.string()),

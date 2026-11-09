@@ -258,6 +258,37 @@ proposed files. It asks before it creates or refreshes the setup PR. Unresolved 
 apply. Merge the setup PR yourself, then run `repositories discover` to inspect
 the default branch again.
 
+Every setup choice field also has a flag. With setup flags, `adopt` applies the
+flags to the proposal, prints the plan and opens the setup PR without asking
+anything. A field without a flag keeps its proposed value, and a release option
+nobody chose stays unanswered in the setup PR:
+
+```sh
+beepboop adopt owner/repository --promote-file release.yml \
+  --start cli --start dashboard --bump commit --approval merge \
+  --binary tool --target linux-amd64 --target darwin-arm64
+```
+
+- `--stream` names the release group the other flags change. It is needed
+  when the proposal has several groups, and a new name adds a group.
+- `--package` and `--required` take a package name or PURL and repeat.
+  `--required` defaults to the `--package` list.
+- `--versioning`, `--start` (repeats), `--bump` and `--approval` take the values
+  shown in completion and help.
+- `--prepare-*` and `--promote-*` set the workflow fields: `file`, `job`,
+  `triggers`, `commands`, `tag-prefix`, `publication-steps`, `credentials` and,
+  for preparation, `binaries`. A new workflow gets the `prepare` or `publish`
+  job and the suggested commands unless you give them.
+- `--binary` (repeats) picks a discovered binary for the GitHub release.
+  `--target` (repeats) picks its targets. Without `--target`, the saved targets
+  stay. A release without saved targets gets the targets every chosen binary
+  can build.
+- `--version-source`, `--version-files`, `--observe`, `--needs`, `--operations`
+  and `--actions-revision` take the JSON or text the choices file uses.
+
+With `--choices`, a flag replaces that one field of the file. `--plan` refuses
+setup flags.
+
 For automation, pass a JSON choices file with `--choices choices.json` and save
 the preview with `--output setup-plan.json`. That command only previews. After
 you review the saved plan, apply it:

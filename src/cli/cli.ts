@@ -22,7 +22,9 @@ import {
 } from '@/cli/views';
 import { notificationKinds, watchedPackagePattern, watchedRegistries } from '@/contract/catalog';
 import { credentialAliasPattern, githubSecretNamePattern, shaPattern } from '@/contract/ids';
+import { approvalPolicies, startChannels, versionBumps } from '@/contract/release-start';
 import { routes } from '@/contract/routes';
+import { binaryTargets, streamVersionings, workflowTriggers } from '@/contract/setup';
 import { executionView as executionViewSchema } from '@/contract/views';
 
 const base = (name: string, description: string, promptServer = false) =>
@@ -123,6 +125,39 @@ const adoptCommand = (name: string, description: string, target: typeof reposito
 		.flag('output', flag.path().describe('Advanced: save the preview as JSON instead of opening the PR'))
 		.flag('plan', flag.path({ mustExist: true }).describe('Advanced: saved preview to apply with --apply'))
 		.flag('apply', flag.boolean().default(false).describe('Advanced: apply the exact saved --plan'))
+		.flag(
+			'stream',
+			flag.string().describe('Release group the setup flags change; needed when the proposal has several'),
+		)
+		.flag('package', flag.array(flag.string()).describe('Package to release, by name or package URL; repeat it'))
+		.flag('required', flag.array(flag.string()).describe('Package the release needs to publish; defaults to --package'))
+		.flag('versioning', flag.enum(streamVersionings).describe('How package versions change'))
+		.flag('start', flag.array(flag.enum(startChannels)).describe('Where a release can start; repeat it'))
+		.flag('bump', flag.enum(versionBumps).describe('How a version bump reaches the default branch'))
+		.flag('approval', flag.enum(approvalPolicies).describe('When a version raised without a start publishes'))
+		.flag('version-source', flag.string().describe('Advanced: versionSource as JSON'))
+		.flag('version-files', flag.string().describe('Advanced: versionFiles as JSON'))
+		.flag('observe', flag.string().describe('Advanced: observed workflows as JSON'))
+		.flag('needs', flag.string().describe('Advanced: package dependencies as JSON'))
+		.flag('operations', flag.string().describe('Advanced: extra operations as JSON'))
+		.flag('prepare-file', flag.string().describe('Preparation workflow file'))
+		.flag('prepare-job', flag.string().describe('Job in the preparation workflow'))
+		.flag('prepare-triggers', flag.enum(workflowTriggers).describe('Who starts the preparation workflow'))
+		.flag('prepare-commands', flag.string().describe('Bash commands of the preparation job'))
+		.flag('prepare-publication-steps', flag.string().describe('Advanced: preparation publicationSteps as JSON'))
+		.flag('prepare-credentials', flag.string().describe('Advanced: preparation credentials as JSON'))
+		.flag('prepare-tag-prefix', flag.string().describe('Version tag prefix of the preparation workflow'))
+		.flag('prepare-binaries', flag.string().describe('Advanced: preparation binaries as JSON'))
+		.flag('promote-file', flag.string().describe('Publishing workflow file'))
+		.flag('promote-job', flag.string().describe('Job in the publishing workflow'))
+		.flag('promote-triggers', flag.enum(workflowTriggers).describe('Who starts the publishing workflow'))
+		.flag('promote-commands', flag.string().describe('Bash commands of the publishing job'))
+		.flag('promote-publication-steps', flag.string().describe('Advanced: publicationSteps as JSON'))
+		.flag('promote-credentials', flag.string().describe('Advanced: publishing credentials as JSON'))
+		.flag('promote-tag-prefix', flag.string().describe('Version tag prefix of the publishing workflow'))
+		.flag('binary', flag.array(flag.string()).describe('Binary to build for the GitHub release; repeat it'))
+		.flag('target', flag.array(flag.enum(binaryTargets)).describe('Binary target to build; repeat it'))
+		.flag('actions-revision', flag.string().describe('Advanced: Actions version tag or full commit'))
 		.action(({ flags, args, ask, out }) =>
 			Effect.runPromise(Effect.gen(function*() {
 				const client = yield* Client.at(flags.server);
