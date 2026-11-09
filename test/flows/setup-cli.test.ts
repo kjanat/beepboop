@@ -13,7 +13,9 @@ import { z } from 'zod';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
+import { choicesEditors, streamEditors, workflowEditors } from '@/cli/setup-choices';
 import { routes } from '@/contract/routes';
+import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
 
 let world: World;
 let directory: string;
@@ -45,7 +47,7 @@ function defaults(overrides: Record<string, string> = {}, confirmations: Record<
 					value: confirmations[config.message] ?? (config.message === proposalPrompt ? false : config.default ?? true),
 				};
 			}
-			if (config.kind === 'input') return { answered: true, value: '' };
+			if (config.kind === 'input') return { answered: true, value: overrides[config.message] ?? '' };
 			throw new Error(`Unexpected prompt: ${config.message}`);
 		},
 	};
@@ -107,7 +109,27 @@ test('Cargo adoption generates one workflow and advanced renaming keeps the shar
 	});
 	const result = await run(
 		['adopt', repository.name],
-		[false, 'new', '', 'same', '', true, false, 'workspace', 'my-release.yml', '', true],
+		[
+			false,
+			'new',
+			'',
+			'same',
+			'',
+			true,
+			false,
+			'workspace',
+			'push',
+			'',
+			'',
+			'',
+			'',
+			'',
+			'',
+			'',
+			'my-release.yml',
+			'',
+			true,
+		],
 	);
 	expect(result.exitCode).toBe(0);
 	expect(result.stdout.join('')).toContain('Cargo.lock must be updated');
@@ -752,4 +774,60 @@ test('an inferred stream is adopted by observing its existing workflow', async (
 	expect(world.github.file(repository, '.github/workflows/release.yml', 'automation/onboarding')).toBe(
 		world.github.file(repository, '.github/workflows/release.yml'),
 	);
+});
+
+test('the CLI declares an editor for every setup choice field', () => {
+	expect(Object.keys(choicesEditors).sort()).toEqual([...choicesFields].sort());
+	expect(Object.keys(streamEditors).sort()).toEqual([...streamFields].sort());
+	expect(Object.keys(workflowEditors).sort()).toEqual([...workflowFields].sort());
+});
+
+test('interactive setup asks for each proposed binary, its targets and every advanced field', async () => {
+	const repository = world.github.create('octo/tool', {
+		'Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\nedition = "2024"\n\n[dependencies]\nnix = "0.30"\n',
+		'src/main.rs': 'fn main() {}\n',
+	});
+	const customize = 'Customize filenames, versioning, approval, release groups, advanced fields or Actions revision?';
+	const session = defaults(
+		{
+			'main: publishing workflow filename': 'release-tool.yml',
+			'main: version tag prefix (empty uses the default)': 'tool-v',
+		},
+		{
+			[proposalPrompt]: false,
+			[customize]: true,
+			'Add another release group?': false,
+			'Open or refresh the setup PR with these exact changes?': true,
+		},
+	);
+	const result = await app.execute(['adopt', repository.name], { prompter: session.prompter, isTTY: true, env: {} });
+	expect(result.stderr.join('')).toBe('');
+	expect(result.exitCode).toBe(0);
+	const messages = session.prompts.map(prompt => prompt.message);
+	expect(messages).toContain('main: build tool (Cargo, Cargo.toml) for the GitHub release?');
+	for (
+		const target of ['linux-amd64', 'linux-arm64', 'darwin-amd64', 'darwin-arm64', 'windows-amd64', 'windows-arm64']
+	) {
+		expect(messages).toContain(`main: build for ${target}?`);
+	}
+	expect(messages).toContain('main: when a merged release version publishes');
+	for (const field of ['versionSource', 'versionFiles', 'needs', 'operations']) {
+		expect(messages).toContain(`main: ${field} as JSON (empty leaves it out)`);
+	}
+	expect(messages).toContain('main: promote credentials as JSON (empty leaves it out)');
+	expect(result.stdout.join('')).toContain('tool leaves out Windows: tool depends on nix, which build only for Unix.');
+	const workflow = world.github.file(repository, '.github/workflows/release-tool.yml', 'automation/onboarding') ?? '';
+	expect(workflow).toContain('build-tool:');
+	expect(workflow).toContain('aarch64-apple-darwin');
+	expect(workflow).not.toContain('windows');
+	const configuration = JSON.parse(
+		world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}',
+	);
+	expect(
+		z.object({
+			streams: z.object({
+				main: z.object({ promote: z.object({ workflow: z.object({ setup: z.object({ tagPrefix: z.string() }) }) }) }),
+			}),
+		}).parse(configuration).streams.main.promote.workflow.setup.tagPrefix,
+	).toBe('tool-v');
 });

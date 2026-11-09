@@ -9,7 +9,64 @@ import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-
 import { failure } from '@/cli/output';
 import { workflowFilePattern } from '@/contract/catalog';
 import { identifierPattern } from '@/contract/ids';
+import type { BinaryBuild, BinaryRelease } from '@/contract/setup';
+import { actionsRevisionPattern, binaryTargets, setupStream } from '@/contract/setup';
+import type { ChoicesField, Editors, StreamField, WorkflowField } from '@/contract/setup-fields';
+import { jsonFields, streamFields } from '@/contract/setup-fields';
 import { packageLabel } from '@/domain/package-label';
+
+export const choicesEditors = { streams: 'control', actionsRevision: 'control' } as const satisfies Editors<
+	ChoicesField
+>;
+export const streamEditors = {
+	name: 'control',
+	packages: 'control',
+	required: 'control',
+	versioning: 'control',
+	approval: 'control',
+	observe: 'control',
+	prepare: 'control',
+	promote: 'control',
+	versionSource: 'json',
+	versionFiles: 'json',
+	needs: 'json',
+	operations: 'json',
+} as const satisfies Editors<StreamField>;
+export const workflowEditors = {
+	file: 'control',
+	job: 'control',
+	triggers: 'control',
+	commands: 'control',
+	publicationSteps: 'control',
+	tagPrefix: 'control',
+	binaries: 'control',
+	credentials: 'json',
+} as const satisfies Editors<WorkflowField>;
+
+function buildLabel(build: BinaryBuild): string {
+	return build.toolchain === 'cargo'
+		? `${build.name} (Cargo, ${build.manifest})`
+		: `${build.name} (Go, ${build.package === '.' ? build.module : `${build.module}/${build.package.slice(2)}`})`;
+}
+function validJson(value: string): boolean {
+	try {
+		JSON.parse(value);
+		return true;
+	} catch {
+		return false;
+	}
+}
+function jsonInput(ask: Ask, message: string, current: unknown): Effect.Effect<unknown> {
+	return Effect.promise(() =>
+		ask({
+			kind: 'input',
+			message: `${message} as JSON (empty leaves it out)`,
+			default: current === undefined ? '' : JSON.stringify(current),
+			empty: 'accept',
+			validate: value => !value.trim() || validJson(value) || 'Enter valid JSON.',
+		})
+	).pipe(Effect.map((value): unknown => value.trim() ? JSON.parse(value) : undefined));
+}
 
 function select(ask: Ask, message: string, entries: SelectChoice[]): Effect.Effect<string, CLIError> {
 	const [first, ...rest] = entries;
@@ -217,10 +274,11 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 					].filter(Boolean).join('\n')
 					: suggested;
 				const kept = previous?.file === file ? previous : undefined;
+				const binaries = preparing ? undefined : yield* chooseBinaries(stream, kept);
 				const choice: SetupWorkflow = {
 					...(kept?.credentials ? { credentials: kept.credentials } : {}),
 					...(kept?.tagPrefix ? { tagPrefix: kept.tagPrefix } : {}),
-					...(kept?.binaries ? { binaries: kept.binaries } : {}),
+					...(binaries ? { binaries } : {}),
 					file,
 					job,
 					triggers,
@@ -229,6 +287,111 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				};
 				if (selected === 'new') created.push({ choice, stream, role });
 				return choice;
+			});
+		const chooseBinaries = (
+			stream: SetupChoices['streams'][number],
+			previous: SetupWorkflow | undefined,
+		): Effect.Effect<BinaryRelease | undefined, CLIError> =>
+			Effect.gen(function*() {
+				const candidates = (plan.binaryCandidates ?? []).filter(candidate =>
+					stream.packages.includes(candidate.package)
+				);
+				const existing = previous?.binaries?.builds ?? [];
+				const offered = [
+					...existing.map(build => ({ build, candidate: candidates.find(entry => entry.build.name === build.name) })),
+					...candidates.filter(candidate => !existing.some(build => build.name === candidate.build.name)).map(
+						candidate => ({ build: candidate.build, candidate }),
+					),
+				];
+				const builds: typeof offered = [];
+				for (const entry of offered) {
+					if (entry.candidate?.reason) out.log(entry.candidate.reason);
+					const wanted = yield* Effect.promise(() =>
+						ask({
+							kind: 'confirm',
+							message: `${stream.name}: build ${buildLabel(entry.build)} for the GitHub release?`,
+							default: previous ? existing.some(build => build.name === entry.build.name) : true,
+						})
+					);
+					if (wanted) builds.push(entry);
+				}
+				if (!builds.length) return undefined;
+				const defaults = previous?.binaries?.targets
+					?? binaryTargets.filter(target => builds.every(entry => entry.candidate?.targets.includes(target) ?? true));
+				const targets: BinaryRelease['targets'] = [];
+				for (const target of binaryTargets) {
+					const wanted = yield* Effect.promise(() =>
+						ask({
+							kind: 'confirm',
+							message: `${stream.name}: build for ${target}?`,
+							default: defaults.includes(target),
+						})
+					);
+					if (wanted) targets.push(target);
+				}
+				if (!targets.length) {
+					return yield* Effect.fail(failure('Select at least one binary target', 'NO_TARGETS'));
+				}
+				return { builds: builds.map(entry => entry.build), targets };
+			});
+		const advanced = (stream: SetupChoices['streams'][number]) =>
+			Effect.gen(function*() {
+				const approval = yield* select(
+					ask,
+					`${stream.name}: when a merged release version publishes`,
+					preferring([
+						{ value: 'push', label: 'When a signed commit with passing checks reaches the default branch' },
+						{ value: 'merge', label: 'When its version PR merges' },
+						{ value: 'required', label: 'After you approve it' },
+					], stream.approval ?? 'push'),
+				);
+				const entered: Record<string, unknown> = {
+					...stream,
+					approval: approval === 'required' ? 'required' : approval === 'merge' ? 'merge' : 'push',
+				};
+				for (const field of jsonFields(streamFields, streamEditors)) {
+					entered[field] = yield* jsonInput(ask, `${stream.name}: ${field}`, stream[field]);
+				}
+				for (const role of ['prepare', 'promote'] as const) {
+					const current = stream[role];
+					if (!current) continue;
+					const tagPrefix = role === 'promote'
+						? yield* Effect.promise(() =>
+							ask({
+								kind: 'input',
+								message: `${stream.name}: version tag prefix (empty uses the default)`,
+								default: current.tagPrefix ?? '',
+								empty: 'accept',
+							})
+						)
+						: current.tagPrefix ?? '';
+					const credentials = yield* jsonInput(ask, `${stream.name}: ${role} credentials`, current.credentials);
+					const { tagPrefix: _prefix, credentials: _credentials, ...rest } = current;
+					entered[role] = {
+						...rest,
+						...(tagPrefix ? { tagPrefix } : {}),
+						...(credentials === undefined ? {} : { credentials }),
+					};
+				}
+				const parsed = setupStream.safeParse(entered);
+				if (!parsed.success) {
+					const [issue] = parsed.error.issues;
+					return yield* Effect.fail(
+						failure(
+							`${stream.name}: ${issue ? `${issue.path.join('.')}: ${issue.message}` : parsed.error.message}`,
+							'INVALID_CHOICE',
+						),
+					);
+				}
+				const { prepare, promote, ...fields } = parsed.data;
+				for (const field of jsonFields(streamFields, streamEditors)) delete stream[field];
+				Object.assign(stream, fields);
+				for (const [current, next] of [[stream.prepare, prepare], [stream.promote, promote]] as const) {
+					if (!current || !next) continue;
+					delete current.tagPrefix;
+					delete current.credentials;
+					Object.assign(current, next);
+				}
 			});
 		const configure = (stream: SetupChoices['streams'][number]) =>
 			Effect.gen(function*() {
@@ -270,7 +433,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 			yield* Effect.promise(() =>
 				ask({
 					kind: 'confirm',
-					message: 'Customize filenames, versioning, release groups or Actions revision?',
+					message: 'Customize filenames, versioning, approval, release groups, advanced fields or Actions revision?',
 					default: false,
 				})
 			)
@@ -303,6 +466,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 					preferring(entries, stream.versioning),
 				);
 				stream.versioning = versioning === 'independent' ? 'independent' : versioning === 'none' ? 'none' : 'workspace';
+				yield* advanced(stream);
 			}
 			for (const { choice, stream, role } of created) {
 				const before = choice.file;
@@ -324,8 +488,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 					message: 'Actions revision override (normally leave empty for the current compatible v1 release)',
 					default: choices.actionsRevision ?? '',
 					empty: 'accept',
-					validate: value =>
-						!value || /^(?:[a-f0-9]{40}|v\d+(?:\.\d+){0,2})$/.test(value) || 'Use a version tag or full commit SHA.',
+					validate: value => !value || actionsRevisionPattern.test(value) || 'Use a version tag or full commit SHA.',
 				})
 			);
 			if (revision) choices.actionsRevision = revision;

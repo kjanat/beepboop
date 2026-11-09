@@ -1192,6 +1192,14 @@ choices proposes no change while the generated files match them. After an edit
 to a `setup` object on the default branch, the next preview regenerates the
 workflow from it. Every change goes through a setup PR.
 
+**Edit release setup** on the Repositories page and the interactive
+`beepboop adopt` edit every field of the setup choices. The approval policy, the
+tag prefix and the binary builds and targets have their own controls. The CLI
+asks for them after **Customize**. Fields without a dedicated control,
+`versionSource`, `versionFiles`, `needs`, `operations` and `credentials`, take
+JSON and are checked against the same schema. A new schema field fails the
+type check until both editors declare a control or a JSON field for it.
+
 Repositories set up before this change keep their choices on the Beepboop
 server. On the next refresh without an open setup PR, Beepboop opens one setup
 update PR that writes those choices into the bindings. Beepboop opens that PR
@@ -1218,7 +1226,7 @@ or merged setup PRs, and maintenance never approves or dispatches a release.
 ### Edit the setup PR with checkboxes
 
 The setup PR description lists each release stream with a checkbox for every
-publishable package. A release succeeds only when every ticked package
+publishable package, and for every proposed binary build and target. A release succeeds only when every ticked package
 publishes. The description lists versioning, the preparation and publication
 workflows, and their trigger handover as text. Change those under
 Repositories, **Edit release setup**. Tick or untick boxes in the GitHub UI to

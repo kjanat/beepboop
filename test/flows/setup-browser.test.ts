@@ -10,6 +10,7 @@ import { Window } from 'happy-dom';
 import { z } from 'zod';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import { routes } from '@/contract/routes';
+import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
 
 // Browser modules are checked separately to keep DOM and Worker Element types apart.
 const browserModule = new URL('../../src/ui/browser/setup.ts', import.meta.url).href;
@@ -501,4 +502,60 @@ test('an inferred stream keeps its workflow until observation is cleared', async
 	expect(role(form, 'promote').hidden).toBe(false);
 	expect(role(form, 'promote').hasAttribute('disabled')).toBe(false);
 	await expect(act(form, 'preview')).rejects.toThrow('Select at least one package to release.');
+});
+
+const editorModules: [
+	{ choicesEditors: Record<string, string>; streamEditors: Record<string, string> },
+	{ workflowEditors: Record<string, string> },
+] = await Promise.all([
+	import(browserModule),
+	import(new URL('../../src/ui/browser/setup-fields.ts', import.meta.url).href),
+]);
+
+test('the dashboard declares an editor for every setup choice field', () => {
+	const [{ choicesEditors, streamEditors }, { workflowEditors }] = editorModules;
+	expect(Object.keys(choicesEditors).sort()).toEqual([...choicesFields].sort());
+	expect(Object.keys(streamEditors).sort()).toEqual([...streamFields].sort());
+	expect(Object.keys(workflowEditors).sort()).toEqual([...workflowFields].sort());
+});
+
+function toolRepository() {
+	return world.github.create('octo/tool', {
+		'Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\nedition = "2024"\n\n[dependencies]\nnix = "0.30"\n',
+		'src/main.rs': 'fn main() {}\n',
+	});
+}
+
+test('the dashboard renders a control for every stream and publication workflow field', async () => {
+	const form = await open(toolRepository().name);
+	for (const field of [...choicesFields.filter(field => field !== 'streams'), ...streamFields]) {
+		expect([field, form.querySelector(`[data-field~="${field}"]`) !== null]).toEqual([field, true]);
+	}
+	const publishing = role(form, 'promote');
+	for (const field of workflowFields) {
+		expect([field, publishing.querySelector(`[data-field~="${field}"]`) !== null]).toEqual([field, true]);
+	}
+});
+
+test('the dashboard proposes the crate binary for Unix targets and writes edited fields into the setup', async () => {
+	const form = await open(toolRepository().name);
+	const publishing = role(form, 'promote');
+	expect(control(publishing, 'tool (Cargo, Cargo.toml)', window.HTMLInputElement).checked).toBe(true);
+	expect(control(publishing, 'linux-amd64', window.HTMLInputElement).checked).toBe(true);
+	expect(control(publishing, 'windows-amd64', window.HTMLInputElement).checked).toBe(false);
+	expect(publishing.textContent).toContain('tool leaves out Windows: tool depends on nix, which build only for Unix.');
+	const prefix = control(publishing, 'Version tag prefix (optional)', window.HTMLInputElement);
+	prefix.value = 'tool-v';
+	const versionFiles = dom.find(form, '[data-field="versionFiles"]', window.HTMLTextAreaElement);
+	if (!versionFiles) throw new Error('Missing versionFiles editor');
+	versionFiles.value = '[{';
+	await expect(act(form, 'preview')).rejects.toThrow('versionFiles is not valid JSON.');
+	versionFiles.value = '{"path": 1}';
+	await expect(act(form, 'preview')).rejects.toThrow('versionFiles: Invalid input: expected array, received object');
+	versionFiles.value = '';
+	await act(form, 'preview');
+	const result = form.querySelector('.setup-result')?.textContent ?? '';
+	expect(result).toContain('"tagPrefix": "tool-v"');
+	expect(result.replace(/\s+/g, '')).toContain('"targets":["linux-amd64","linux-arm64","darwin-amd64","darwin-arm64"]');
+	expect(result).toContain('build-tool:');
 });

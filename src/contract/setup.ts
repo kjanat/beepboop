@@ -117,27 +117,27 @@ const operation = workflow.extend({
 		.optional(),
 	publications: z.array(z.string()).default([]),
 }).strict();
+export const setupWorkflow = workflow;
+export const setupStream = z.object({
+	name: identifier,
+	packages: z.array(z.string()),
+	versioning: z.enum(['workspace', 'independent', 'none']),
+	approval: z.enum(['required', 'merge', 'push']).optional(),
+	required: z.array(z.string()),
+	versionSource: z.object({
+		kind: z.literal('tags'),
+		prefix: z.string().regex(tagPrefixPattern).refine(validTagPrefix, 'Invalid tag prefix'),
+	}).strict()
+		.optional(),
+	versionFiles: z.array(versionFileSchema).optional(),
+	observe: z.array(observed).optional(),
+	needs: z.record(z.string(), z.array(z.string())).optional(),
+	prepare: workflow.optional(),
+	promote: workflow.optional(),
+	operations: z.array(operation).optional(),
+}).strict();
 export const setupChoicesSchema = z.object({
-	streams: z.array(
-		z.object({
-			name: identifier,
-			packages: z.array(z.string()),
-			versioning: z.enum(['workspace', 'independent', 'none']),
-			approval: z.enum(['required', 'merge', 'push']).optional(),
-			required: z.array(z.string()),
-			versionSource: z.object({
-				kind: z.literal('tags'),
-				prefix: z.string().regex(tagPrefixPattern).refine(validTagPrefix, 'Invalid tag prefix'),
-			}).strict()
-				.optional(),
-			versionFiles: z.array(versionFileSchema).optional(),
-			observe: z.array(observed).optional(),
-			needs: z.record(z.string(), z.array(z.string())).optional(),
-			prepare: workflow.optional(),
-			promote: workflow.optional(),
-			operations: z.array(operation).optional(),
-		}).strict(),
-	),
+	streams: z.array(setupStream),
 	/** Full commit of the published Actions distribution, required for external actions. */
 	actionsRevision: z.string().regex(actionsRevisionPattern).optional(),
 }).strict();

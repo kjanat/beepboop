@@ -3,10 +3,44 @@ import { publishable } from '@/automation/package-publication';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices, SetupPlan, Versioning } from '@/automation/setup-types';
 import { routes } from '@/contract/routes';
+import { setupStream } from '@/contract/setup';
+import type { ChoicesField, Editors, StreamField } from '@/contract/setup-fields';
+import { jsonFields, streamFields } from '@/contract/setup-fields';
 import { api } from '@/ui/browser/api';
 import { feedbackFor, find, Refused, refuse, show } from '@/ui/browser/dom';
+import { element, hint, issueText, jsonEditor, label, select, text, workflow } from '@/ui/browser/setup-fields';
 
-import { element, hint, label, select, text, workflow } from '@/ui/browser/setup-fields';
+export const choicesEditors = { streams: 'control', actionsRevision: 'control' } as const satisfies Editors<
+	ChoicesField
+>;
+export const streamEditors = {
+	name: 'control',
+	packages: 'control',
+	required: 'control',
+	versioning: 'control',
+	approval: 'control',
+	observe: 'control',
+	prepare: 'control',
+	promote: 'control',
+	versionSource: 'json',
+	versionFiles: 'json',
+	needs: 'json',
+	operations: 'json',
+} as const satisfies Editors<StreamField>;
+const streamHelp: Record<StreamField, string> = {
+	name: '',
+	packages: '',
+	required: '',
+	versioning: '',
+	approval: '',
+	observe: '',
+	prepare: '',
+	promote: '',
+	versionSource: 'Read versions from tags, for example {"kind": "tags", "prefix": "v"}.',
+	versionFiles: 'Other files that carry the version, each with a path, a format and a key.',
+	needs: 'Publications that must finish first, keyed by package reference.',
+	operations: 'Workflows that run after other operations, each with a name, file, needs and publications.',
+};
 
 const sessions = new WeakMap<
 	HTMLFormElement,
@@ -27,6 +61,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 	const advanced = element('details');
 	advanced.append(element('summary', 'Advanced settings'));
 	const revision = text(advanced, 'Actions revision override (optional)', plan.choices.actionsRevision ?? '');
+	revision.dataset.field = 'actionsRevision';
 	hint(
 		advanced,
 		'Normally leave this empty. Generated workflows use the current compatible v1 Actions release. Override it only when deliberately testing another revision.',
@@ -57,21 +92,23 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 			label(body, `${pkg.name} (${pkg.manifest})`, input);
 			return [{ input, pkg: { ...pkg, id } }];
 		});
+		body.dataset.field = 'packages required';
 		const observing = element('input');
+		observing.dataset.field = 'observe';
 		observing.type = 'checkbox';
 		observing.checked = !!value.observe?.length;
-		if (value.observe?.length) {
-			label(
-				body,
-				`Keep ${
-					value.observe.map(entry => entry.file).join(', ')
-				} with their own triggers; Beepboop observes their runs and publications`,
-				observing,
-			);
-		}
+		observing.disabled = !value.observe?.length;
+		label(
+			body,
+			`Keep ${
+				value.observe?.map(entry => entry.file).join(', ') || 'observed workflows'
+			} with their own triggers; Beepboop observes their runs and publications`,
+			observing,
+		).hidden = !value.observe?.length;
 		const groupAdvanced = element('details');
 		groupAdvanced.append(element('summary', 'Versioning and group settings'));
 		const name = text(groupAdvanced, 'Release group name', value.name);
+		name.dataset.field = 'name';
 		name.required = true;
 		name.pattern = '[a-z][a-z0-9\\-]{0,63}';
 		hint(groupAdvanced, 'A release group is a set of packages released together. Most repositories only need one.');
@@ -82,7 +119,17 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 				? [['none', 'Keep the configured custom version policy']] as [string, string][]
 				: []),
 		], value.versioning);
+		versioning.dataset.field = 'versioning';
 		hint(groupAdvanced, 'Choose the actual version when preparing a release. Setup does not change package versions.');
+		const approval = select(groupAdvanced, 'When a merged release version publishes', [
+			['push', 'When a signed commit with passing checks reaches the default branch'],
+			['merge', 'When its version PR merges'],
+			['required', 'After you approve it'],
+		], value.approval ?? 'push');
+		approval.dataset.field = 'approval';
+		const advancedFields = jsonFields(streamFields, streamEditors).map(field =>
+			[field, jsonEditor(groupAdvanced, field, value[field], streamHelp[field])] as const
+		);
 		const selection = () => ({
 			name: name.value,
 			packages: selected.filter(entry => entry.input.checked).map(entry => entry.pkg),
@@ -123,6 +170,19 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 					: versioning.value === 'none'
 					? 'none'
 					: 'workspace';
+				const extra: Record<string, unknown> = {
+					approval: approval.value === 'required' ? 'required' : approval.value === 'merge' ? 'merge' : 'push',
+				};
+				for (const [field, editor] of advancedFields) {
+					const entered = yield* editor.read();
+					if (entered !== undefined) extra[field] = entered;
+				}
+				const checked = (stream: Record<string, unknown>) => {
+					const parsed = setupStream.safeParse({ ...extra, ...stream });
+					return parsed.success
+						? Result.succeed(parsed.data)
+						: Result.fail(new Refused({ message: `${name.value}: ${issueText(parsed.error)}` }));
+				};
 				if (observing.checked && value.observe?.length) {
 					const observed = value.observe;
 					const unchecked = observed.every(entry => entry.publications.length === 0);
@@ -140,31 +200,29 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 							}),
 						);
 					}
-					return {
+					return yield* checked({
 						name: name.value,
 						packages,
 						required: value.required.filter(id => packages.includes(id)),
 						versioning: policy,
-						...(value.versionSource ? { versionSource: value.versionSource } : {}),
 						observe: value.observe.map(entry => ({
 							...entry,
 							publications: entry.publications.filter(id => packages.includes(id)),
 						})),
-					};
+					});
 				}
 				if (!packages.length) {
 					return yield* Result.fail(new Refused({ message: 'Select at least one package to release.' }));
 				}
 				const prepare = yield* preparing.read(), promote = yield* publishing.read();
-				return {
+				return yield* checked({
 					name: name.value,
 					packages,
 					required: packages,
 					versioning: policy,
-					...(value.versionSource ? { versionSource: value.versionSource } : {}),
 					...(prepare ? { prepare } : {}),
 					...(promote ? { promote } : {}),
-				};
+				});
 			})
 		);
 	};
