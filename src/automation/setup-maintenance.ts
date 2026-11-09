@@ -10,7 +10,7 @@ import { previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/aut
 import type { SetupChoices } from '@/automation/setup-types';
 import { decodeError, type Store } from '@/automation/store';
 import type { Edit, Snapshot } from '@/automation/types';
-import type { DomainError } from '@/contract/errors';
+import { type DomainError, precondition } from '@/contract/errors';
 import { sha256Hex } from '@/contract/ids';
 import { packageMarkdown } from '@/domain/package-label';
 import { fromJson, fromPromise, fromSync, toDomainError } from '@/failure';
@@ -29,6 +29,7 @@ export function setupEdits(saved: Record<string, unknown> | undefined): Edit[] {
 		: [];
 }
 
+const superseded = 'A newer setup edit replaced this rebuild';
 export function followsProposal(saved: Record<string, unknown> | undefined, body: string): boolean {
 	return saved?.inferred === true || (saved?.inferred === undefined && body.includes('\n## Release plan\n'));
 }
@@ -65,6 +66,13 @@ export function maintainSetup(
 			).join(
 				'\n',
 			);
+		const current = Effect.gen(function*() {
+			const now = yield* parse(
+				documentRow.nullable(),
+				yield* db.first('SELECT document FROM onboarding WHERE repository_id=?', id),
+			);
+			if (now?.document !== row.document) return yield* precondition(superseded);
+		});
 		const save = (next: Record<string, unknown>) =>
 			// Do not overwrite a newer explicit setup operation or another reconciliation's journal.
 			db.run(
@@ -94,6 +102,7 @@ export function maintainSetup(
 			if (!requested && saved.maintenanceFingerprint === fingerprint && saved.options !== undefined) return;
 			const applied = { choices: plan.choices, options: setupOptions(plan), inferred: plan.adoption !== undefined };
 			if (plan.blockers.length || !plan.edits.length) {
+				yield* current;
 				yield* gateway.setupStatus(
 					name,
 					id,
@@ -110,6 +119,7 @@ export function maintainSetup(
 			}
 			// Even an unchanged source may need a newer generator's output. An identical proposal needs no commit.
 			if (saved.sourceSha === snapshot.sha && sameEdits(previous, plan.edits)) {
+				yield* current;
 				yield* gateway.setupStatus(name, id, pull.number, `${summary}\n\nThe proposal is up to date.`, setupBody(plan));
 				yield* save({ ...saved, ...applied, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha });
 				return;
@@ -121,7 +131,7 @@ export function maintainSetup(
 				setupBody(plan),
 				plan.edits,
 				pull.head,
-				undefined,
+				() => current,
 				previous,
 				pull.number,
 				{ coAuthored: true },
@@ -152,6 +162,7 @@ export function maintainSetup(
 				`${name} ${snapshot.sha} ${result.url}`,
 			);
 		}).pipe(
+			Effect.catchIf(error => decodeError(error) === superseded, () => Effect.void),
 			Effect.tapError(error =>
 				gateway.setupStatus(
 					name,
@@ -163,5 +174,28 @@ export function maintainSetup(
 				)
 			),
 		);
+	});
+}
+export function currentOptions(
+	store: Store,
+	gateway: RepositoryGateway,
+	repository: { name: string; id: number },
+	choices: SetupChoices,
+): Effect.Effect<ReturnType<typeof setupOptions>, DomainError> {
+	return Effect.gen(function*() {
+		const snapshot = yield* gateway.snapshot(repository.name, repository.id);
+		const stored = yield* store.repository(repository.id);
+		const raw = yield* fromSync((): unknown => JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}'));
+		const resolved = yield* resolveConfiguration(raw, ref => gateway.preset(ref)).pipe(
+			Effect.mapError(error => error instanceof z.ZodError ? toDomainError(error) : error),
+		);
+		const plan = yield* previewSetup(
+			snapshot,
+			withRegistryStatus(discover(snapshot), stored?.inventory),
+			choices,
+			{ head: null },
+			resolved.configuration,
+		);
+		return setupOptions(plan);
 	});
 }

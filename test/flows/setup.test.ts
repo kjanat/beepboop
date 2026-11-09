@@ -7,6 +7,7 @@ import { pinned } from '@/automation/setup-actions';
 import { suggestedCommands } from '@/automation/setup-defaults';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices } from '@/automation/setup-types';
+import { botId, ownerId } from '@root/test/support/github.ts';
 import { bearer, field } from '@root/test/support/http.ts';
 import { publishWorkflow, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
 import { World } from '@root/test/support/world.ts';
@@ -1414,4 +1415,105 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 		"publish_crate 'sql'",
 		"publish_crate 'sql-cli'",
 	]);
+});
+
+async function gadgetSetup() {
+	const repository = widget(world.github, { configured: false });
+	world.github.push(
+		repository,
+		{ 'packages/gadget/package.json': '{"name":"gadget","version":"1.0.0"}' },
+		'Add gadget',
+	);
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const choices: SetupChoices = {
+		streams: [{
+			name: 'main',
+			packages: ['pkg:npm/widget'],
+			required: ['pkg:npm/widget'],
+			versioning: 'workspace',
+			promote: {
+				file: 'release.yml',
+				job: 'promote',
+				triggers: 'review',
+				commands: 'npm publish',
+				publicationSteps: {},
+			},
+		}],
+	};
+	const plan = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
+	);
+	const applied = await api('/api/repositories/setup/apply', {
+		repository: repository.name,
+		choices: plan.choices,
+		planId: plan.planId,
+		sourceSha: plan.sourceSha,
+		setupHead: plan.setupHead,
+	});
+	expect(applied.status).toBe(200);
+	const pull = repository.pulls[0];
+	if (!pull) throw new Error('No setup pull request');
+	return { repository, api, pull };
+}
+const configured = (repository: Parameters<typeof world.github.file>[0], ref: string) =>
+	z.object({ streams: z.object({ main: z.object({ packages: z.array(z.string()) }) }) }).parse(
+		JSON.parse(world.github.file(repository, '.github/beepboop.json', ref) ?? '{}'),
+	).streams.main.packages;
+
+test('a body edit ticks a package that the saved options from an older discovery did not offer', async () => {
+	const { repository, pull } = await gadgetSetup();
+	const row = z.object({ document: z.string() }).parse(
+		await world.db.prepare('SELECT document FROM onboarding WHERE repository_id=?').bind(repository.id).first(),
+	);
+	const saved = z.looseObject({ options: z.array(z.looseObject({ kind: z.string(), package: z.string().optional() })) })
+		.parse(JSON.parse(row.document));
+	saved.options = saved.options.filter(option => option.package !== 'pkg:npm/gadget');
+	await world.db.prepare('UPDATE onboarding SET document=? WHERE repository_id=?').bind(
+		JSON.stringify(saved),
+		repository.id,
+	).run();
+	const ticked = pull.body.replace(
+		/- \[ \] (<!-- beepboop:choice:package:main:pkg%3Anpm%2Fgadget -->)/,
+		'- [x] $1',
+	);
+	expect(ticked).not.toBe(pull.body);
+	const before = pull.body;
+	pull.body = ticked;
+	await world.webhook('pull_request', {
+		action: 'edited',
+		changes: { body: { from: before } },
+		sender: { id: ownerId },
+		pull_request: {
+			number: pull.number,
+			state: 'open',
+			body: ticked,
+			user: { id: botId },
+			head: { ref: 'automation/onboarding', sha: pull.head.sha, repo: { id: repository.id } },
+			base: { repo: { id: repository.id } },
+		},
+		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
+	});
+	await world.wait(8_000);
+	expect(configured(repository, 'automation/onboarding')).toEqual(['pkg:npm/widget', 'pkg:npm/gadget']);
+});
+
+test('a refresh that started before a newer setup edit neither pushes nor rewrites the PR', async () => {
+	const { repository, api, pull } = await gadgetSetup();
+	const head = pull.head.sha, body = pull.body;
+	world.github.push(repository, { 'README.md': '# widget\n\nMoved on.\n' }, 'Move the default branch');
+	world.network.serve('api.github.com', async request => {
+		if (new URL(request.url).pathname.includes('/rules/branches/')) {
+			await world.db.prepare("UPDATE onboarding SET document=json_set(document, '$.edit', 1) WHERE repository_id=?")
+				.bind(repository.id).run();
+		}
+		return world.github.handle(request);
+	});
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	expect(pull.head.sha).toBe(head);
+	expect(world.github.resolve(repository, 'automation/onboarding').sha).toBe(head);
+	expect(pull.body).toBe(body);
+	const audits = await world.db.prepare('SELECT action FROM audit WHERE action LIKE ?').bind('repository.setup.%')
+		.all();
+	expect(z.array(z.object({ action: z.string() })).parse(audits.results).map(row => row.action)).toEqual([]);
 });

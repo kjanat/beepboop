@@ -19,9 +19,8 @@ import { pollPackages } from '@/automation/package-watch';
 import { matchesRef } from '@/automation/policy';
 import { conflictMessage, moduleTagPrefixes, type RefState, tagConflict } from '@/automation/refs';
 import { manifestProblems, releasedVersion, unreleasedManifestVersion } from '@/automation/release-version';
-import { setupOptionsSchema } from '@/automation/schemas';
 import { bodyChoices } from '@/automation/setup';
-import { maintainSetup, setupEdits } from '@/automation/setup-maintenance';
+import { currentOptions, maintainSetup, setupEdits } from '@/automation/setup-maintenance';
 import { decodeError, Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
 import type { AutomationEvent, Execution, Package, RepositoryRecord, SubscriptionDelivery } from '@/automation/types';
@@ -615,9 +614,9 @@ export class AutomationService {
 			if (document === undefined) return;
 			const saved = yield* Effect.fromResult(record(yield* fromJson(document)));
 			if (saved.url !== `https://github.com/${repository.name}/pull/${pull.number}`) return;
-			const options = yield* fromSync(() => setupOptionsSchema.optional().parse(saved.options));
 			const base = yield* fromSync(() => setupChoicesSchema.optional().parse(saved.choices));
-			if (!options || !base) return;
+			if (!base) return;
+			const options = yield* currentOptions(this.store, this.gateway, repository, base);
 			const body = pull.body ?? '';
 			const choices = yield* fromSync(() => setupChoicesSchema.parse(bodyChoices(body, options, base)));
 			yield* fromPromise(() =>
