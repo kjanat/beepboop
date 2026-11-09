@@ -6,6 +6,7 @@ import type { Look, State } from '@/cli/look';
 import { lookOf, registryOf, table } from '@/cli/look';
 import { failure } from '@/cli/output';
 import { routes } from '@/contract/routes';
+import type { BinaryProgress } from '@/contract/views';
 
 const result = z.looseObject({ url: z.string(), head: z.string(), kind: z.literal('commit').optional() });
 const tracked = z.looseObject({
@@ -79,6 +80,76 @@ function publicationRows(look: Look, execution: Tracked) {
 	});
 }
 
+interface Stage {
+	label: string;
+	total: number;
+	done: number;
+	complete: boolean;
+	failed: boolean;
+	summary: string;
+}
+
+function stages(promotion: Tracked, binaries: BinaryProgress, finished: boolean): Stage[] {
+	const legs = binaries.legs;
+	const ended = legs.filter(leg => ['succeeded', 'failed', 'skipped'].includes(leg.state)).length;
+	const broken = legs.filter(leg => leg.state === 'failed').length;
+	const total = promotion.configuration?.streams[promotion.stream]?.required?.length
+		|| promotion.publications.length;
+	const published = promotion.publications.filter(publication => publication.outcome === 'succeeded').length;
+	const uploaded = binaries.assets.filter(asset => asset.uploaded).length;
+	return [
+		...(legs.length
+			? [{
+				label: 'Building binaries',
+				total: legs.length,
+				done: ended,
+				complete: ended === legs.length,
+				failed: broken > 0,
+				summary: broken ? `${broken} of ${legs.length} builds failed` : `Built ${legs.length} binaries`,
+			}]
+			: []),
+		{
+			label: 'Publishing',
+			total,
+			done: published,
+			complete: finished || (total > 0 && published >= total),
+			failed: false,
+			summary: `Published ${published} of ${total}`,
+		},
+		...(binaries.assets.length
+			? [{
+				label: 'Uploading assets',
+				total: binaries.assets.length,
+				done: uploaded,
+				complete: finished || uploaded === binaries.assets.length,
+				failed: false,
+				summary: `Uploaded ${uploaded} of ${binaries.assets.length} assets`,
+			}]
+			: []),
+	];
+}
+
+function binaryRows(look: Look, binaries: BinaryProgress) {
+	return binaries.legs.map(leg => {
+		const built: State = leg.state === 'succeeded'
+			? 'published'
+			: leg.state === 'failed'
+			? 'failed'
+			: leg.state === 'skipped'
+			? 'skipped'
+			: 'waiting';
+		const asset = binaries.assets.find(entry => entry.build === leg.build && entry.target === leg.target);
+		const upload: State = asset?.uploaded ? 'published' : 'waiting';
+		return {
+			binary: look.pkg(leg.build),
+			target: leg.target,
+			build: `${look.mark(built)} ${look.state(built, leg.state)}`,
+			asset: asset?.name ?? '',
+			upload: `${look.mark(upload)} ${look.state(upload, asset?.uploaded ? 'uploaded' : 'waiting')}`,
+		};
+	});
+}
+
 function snapshot(client: Client, followed: Followed): Effect.Effect<Tracked[], CLIError> {
 	return client.call(routes.executionsList, {}).pipe(
 		Effect.flatMap(rows =>
@@ -98,6 +169,7 @@ export function followRelease(client: Client, out: Out, followed: Followed): Eff
 		const look = lookOf(out);
 		const spinner = out.spinner(`Applying the ${look.version(followed.version)} version bump`);
 		let progress: ProgressHandle | undefined;
+		let phase: string | undefined;
 		let announced = false;
 		for (;;) {
 			yield* client.pause(followInterval);
@@ -135,28 +207,47 @@ export function followRelease(client: Client, out: Out, followed: Followed): Eff
 				spinner.update(`Dispatching ${promotion.workflow?.file ?? 'the release workflow'} for ${sha}`);
 				continue;
 			}
+			const binaries = yield* client.call(routes.executionsBinaries, {
+				id: promotion.id,
+				repositoryId: promotion.repositoryId,
+			});
+			const finished = promotion.state === 'succeeded';
+			const report = () => {
+				if (promotion.publications.length) table(out, publicationRows(look, promotion));
+				if (binaries.legs.length) table(out, binaryRows(look, binaries));
+				links(out, look, promotion);
+			};
 			if (promotion.state === 'failed' || promotion.state === 'cancelled') {
 				const reason = promotion.reason ?? `The release stopped: ${promotion.state}`;
 				if (progress) progress.fail(reason);
 				else spinner.fail(reason);
-				if (promotion.publications.length) table(out, publicationRows(look, promotion));
-				links(out, look, promotion);
+				report();
 				out.setExitCode(1);
 				return;
 			}
-			const total = promotion.configuration?.streams[promotion.stream]?.required?.length
-				|| promotion.publications.length;
-			const done = promotion.publications.filter(publication => publication.outcome === 'succeeded').length;
-			if (!progress) {
+			if (phase === undefined) {
 				const run = runUrl(promotion);
 				spinner.succeed(run ? `Release run ${look.link(run)}` : `Release of ${sha} started`);
-				progress = out.progress({ total, label: 'Publishing' });
 			}
-			progress.update(done);
-			if (promotion.state === 'succeeded') {
-				progress.done(`Released ${look.version(followed.version)} of ${look.pkg(followed.repository)}`);
-				table(out, publicationRows(look, promotion));
-				links(out, look, promotion);
+			const phases = stages(promotion, binaries, finished);
+			let index = phase === undefined ? 0 : phases.findIndex(stage => stage.label === phase);
+			for (; index < phases.length; index++) {
+				const stage = phases[index];
+				if (!stage) break;
+				if (phase !== stage.label) {
+					phase = stage.label;
+					progress = out.progress({ total: stage.total, label: stage.label });
+				}
+				progress?.update(stage.done);
+				if (!stage.complete) break;
+				if (stage.failed) progress?.fail(stage.summary);
+				else progress?.done(stage.summary);
+			}
+			if (finished) {
+				out.log(
+					`${look.mark('published')} Released ${look.version(followed.version)} of ${look.pkg(followed.repository)}`,
+				);
+				report();
 				return;
 			}
 		}

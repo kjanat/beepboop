@@ -327,10 +327,10 @@ export function releaseRepository(
 			out,
 			started ? 'Starting the release' : 'Preparing the release',
 			client.call(routes.releasesPrepare, { ...request, sourceSha: summary.sourceSha, planId: summary.planId }),
-			created => `${started ? 'Release' : 'Preparation'} ${created.id} is ${created.state}`,
+			created => `${started ? 'Release' : 'Preparation'} ${look.id(created.id)} is ${created.state}`,
 		);
 		if (out.jsonMode) return yield* emit(out, { ...preview, preparation });
-		out.log(`${started ? 'Release' : 'Preparation'} ${preparation.id}: ${preparation.state}`);
+		out.log(`${started ? 'Release' : 'Preparation'} ${look.id(preparation.id)}: ${preparation.state}`);
 		if (started) {
 			out.log(
 				!pending

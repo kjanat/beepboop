@@ -27,9 +27,10 @@ Proposed:
   "repository": "https://github.com/octo/example"
 }
 
-Release <id>: ready
+Release \x1B[34m<id>\x1B[39m: ready
 Beepboop commits the version bump to main, then publishes once that commit is verified and its checks pass.
 \x1B[2mFailing checks or package metadata problems stop the release with a reason.\x1B[22m
+\x1B[32m✔\x1B[39m Released \x1B[35m1.0.1\x1B[39m of \x1B[1m\x1B[36mocto/widget\x1B[39m\x1B[22m
 package  registry  version  state      
 -------  --------  -------  -----------
 \x1B[1m\x1B[36mwidget\x1B[39m\x1B[22m   npm       \x1B[35m1.0.1\x1B[39m    \x1B[32m✔\x1B[39m \x1B[32msucceeded\x1B[39m
@@ -67,6 +68,7 @@ Proposed:
 Release <id>: ready
 Beepboop commits the version bump to main, then publishes once that commit is verified and its checks pass.
 Failing checks or package metadata problems stop the release with a reason.
+✔ Released 1.0.1 of octo/widget
 package  registry  version  state      
 -------  --------  -------  -----------
 widget   npm       1.0.1    ✔ succeeded

@@ -11,6 +11,7 @@ export interface Look {
 	pkg(name: string): string;
 	version(version: string): string;
 	sha(sha: string): string;
+	id(id: string): string;
 	link(url: string, label?: string): string;
 	heading(text: string): string;
 	note(text: string): string;
@@ -31,12 +32,17 @@ export function look(colors: Colors, hyperlinks: boolean): Look {
 		mark: state => tint[state](marks[state]),
 		pkg: name => colors.bold(colors.cyan(name)),
 		version: version => colors.magenta(version),
-		sha: sha => colors.blue(sha),
+		sha: sha => colors.blue(short(sha)),
+		id: id => colors.blue(short(id)),
 		link: (url, label = url) =>
 			colors.underline(colors.blue(linked ? osc8(url, label) : label === url ? url : `${label} (${url})`)),
 		heading: text => colors.bold(text),
 		note: text => colors.dim(text),
 	};
+}
+
+export function short(value: string): string {
+	return /^[0-9a-f]{13,}$/.test(value) ? value.slice(0, 12) : value;
 }
 
 export function lookOf(out: Out): Look {

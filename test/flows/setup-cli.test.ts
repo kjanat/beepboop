@@ -430,7 +430,7 @@ const lintSummary = [
 
 function lintProposal(repository: { name: string }, sha: string) {
 	return [
-		`Proposed setup for ${repository.name} at ${sha}:`,
+		`Proposed setup for ${repository.name} at ${sha.slice(0, 12)}:`,
 		...lintSummary,
 		'package     registry   manifest                  release ',
 		'----------  ---------  ------------------------  --------',
@@ -485,9 +485,9 @@ test('one adopt in a terminal shows the proposal, asks once and opens the setup 
 	)
 		.toEqual([
 			['spinner:start', 'Inspecting octo/lint'],
-			['spinner:succeed', `Inspected octo/lint at ${world.github.head(repository)}`],
+			['spinner:succeed', `Inspected octo/lint at ${world.github.head(repository).slice(0, 12)}`],
 			['spinner:start', 'Building the setup plan'],
-			['spinner:succeed', `Setup plan for ${world.github.head(repository)} is ready`],
+			['spinner:succeed', `Setup plan for ${world.github.head(repository).slice(0, 12)} is ready`],
 			['spinner:start', 'Opening the setup PR'],
 			['spinner:succeed', 'Setup PR https://github.com/octo/lint/pull/1'],
 		]);

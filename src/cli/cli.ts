@@ -1,16 +1,28 @@
 #!/usr/bin/env bun
-import type { CLIError, InteractiveResult, Out } from '@kjanat/dreamcli';
+import type { CLIError, InteractiveResult, Out, SpinnerHandle } from '@kjanat/dreamcli';
 import { arg, cli, command, flag, group } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
+import { z } from 'zod';
 import { Client } from '@/cli/client';
 import type { SecurityKeyPrompts } from '@/cli/fido2/index';
 import { readJson } from '@/cli/json-file';
-import { emit, emitTable, failure } from '@/cli/output';
+import { lookOf, step } from '@/cli/look';
+import { emit, failure } from '@/cli/output';
 import { checkoutRepository, releaseRepository, releaseVersion } from '@/cli/release';
 import { setupRepository } from '@/cli/setup';
+import {
+	credentialTables,
+	executionTable,
+	executionView,
+	notificationTable,
+	planView,
+	repositoryTable,
+	repositoryView,
+} from '@/cli/views';
 import { notificationKinds, watchedPackagePattern, watchedRegistries } from '@/contract/catalog';
 import { credentialAliasPattern, githubSecretNamePattern, shaPattern } from '@/contract/ids';
 import { routes } from '@/contract/routes';
+import { executionView as executionViewSchema } from '@/contract/views';
 
 const base = (name: string, description: string, promptServer = false) =>
 	command(name).description(description)
@@ -33,10 +45,24 @@ const repository = (name: string, description: string) => base(name, description
 function enrolled(client: Client, repository: string) {
 	return client.call(routes.repositoriesResolve, { repository });
 }
+const sessionStatus = z.looseObject({ subject: z.string() });
 export const authStatus = base('status', 'Verify your saved session with the server').action(({ flags, out }) =>
 	Effect.runPromise(Effect.gen(function*() {
 		const client = yield* Client.at(flags.server);
-		yield* emit(out, yield* client.status());
+		const look = lookOf(out);
+		const status = yield* step(
+			out,
+			`Checking your session with ${client.origin}`,
+			client.status(),
+			() => 'Session is valid',
+		);
+		if (out.jsonMode) return yield* emit(out, status);
+		const parsed = sessionStatus.safeParse(status);
+		out.log(
+			`${look.mark('published')} Signed in to ${look.link(client.origin)}${
+				parsed.success ? ` as ${look.pkg(parsed.data.subject)}` : ''
+			}`,
+		);
 	}))
 );
 const auth = group('auth').description('Sign in, inspect your session, or revoke it')
@@ -50,9 +76,11 @@ const auth = group('auth').description('Sign in, inspect your session, or revoke
 			.action(({ flags, out }) =>
 				Effect.runPromise(Effect.gen(function*() {
 					const client = yield* Client.at(flags.server);
+					const look = lookOf(out);
+					let waiting: SpinnerHandle | undefined;
 					yield* client.login((url, code) =>
 						Effect.gen(function*() {
-							out.status(`Login page: ${url}\nConfirm code: ${code}`);
+							out.status(`Login page: ${look.link(url)}\nConfirm code: ${look.heading(code)}`);
 							if (!flags.browser) return;
 							const launcher = process.platform === 'darwin'
 								? ['open', url]
@@ -64,9 +92,12 @@ const auth = group('auth').description('Sign in, inspect your session, or revoke
 								catch: () => false,
 							}).pipe(Effect.orElseSucceed(() => false));
 							if (!opened) out.status('Could not open the browser. Open the login page above.');
-						})
-					);
-					out.log('Signed in.');
+						}).pipe(Effect.ensuring(Effect.sync(() => {
+							waiting = out.spinner('Waiting for you to approve this terminal in the browser');
+						})))
+					).pipe(Effect.tapError(() => Effect.sync(() => waiting?.fail('Login did not complete'))));
+					waiting?.succeed('Approved in the browser');
+					out.log(`${look.mark('published')} Signed in.`);
 				}))
 			),
 	)
@@ -75,8 +106,8 @@ const auth = group('auth').description('Sign in, inspect your session, or revoke
 		base('logout', 'Revoke this terminal session and remove its local credential').action(({ flags, out }) =>
 			Effect.runPromise(Effect.gen(function*() {
 				const client = yield* Client.at(flags.server);
-				yield* client.logout();
-				out.log('Signed out.');
+				yield* step(out, 'Revoking this terminal session', client.logout(), () => 'Session revoked');
+				out.log(`${lookOf(out).mark('published')} Signed out.`);
 			}))
 		),
 	);
@@ -104,16 +135,15 @@ const repositories = group('repositories').alias('repo').description('Inspect an
 	.command(
 		base('list', 'List enrolled repositories').action(({ flags, out }) =>
 			Effect.runPromise(Effect.gen(function*() {
-				yield* emitTable(
+				const client = yield* Client.at(flags.server);
+				yield* repositoryTable(
 					out,
-					yield* (yield* Client.at(flags.server)).call(routes.repositoriesList, {}),
-					rows =>
-						rows.map(row => ({
-							repository: row.name,
-							branch: row.defaultBranch,
-							streams: Object.keys(row.configuration?.streams ?? {}).join(', '),
-							problems: row.diagnostics.join('; '),
-						})),
+					yield* step(
+						out,
+						'Listing enrolled repositories',
+						client.call(routes.repositoriesList, {}),
+						rows => `${rows.length} ${rows.length === 1 ? 'repository' : 'repositories'}`,
+					),
 				);
 			}))
 		),
@@ -121,7 +151,16 @@ const repositories = group('repositories').alias('repo').description('Inspect an
 	.command(
 		repository('show', 'Show repository configuration, packages and workflows').action(({ flags, args, out }) =>
 			Effect.runPromise(Effect.gen(function*() {
-				yield* emit(out, yield* enrolled(yield* Client.at(flags.server), args.repository));
+				const look = lookOf(out);
+				yield* repositoryView(
+					out,
+					yield* step(
+						out,
+						`Reading ${look.pkg(args.repository)}`,
+						enrolled(yield* Client.at(flags.server), args.repository),
+						found => `Read ${look.pkg(found.name)} at ${look.sha(found.sha)}`,
+					),
+				);
 			}))
 		),
 	)
@@ -130,7 +169,16 @@ const repositories = group('repositories').alias('repo').description('Inspect an
 			({ flags, args, out }) =>
 				Effect.runPromise(Effect.gen(function*() {
 					const client = yield* Client.at(flags.server);
-					yield* emit(out, yield* client.call(routes.repositoriesDiscover, { repository: args.repository }));
+					const look = lookOf(out);
+					yield* repositoryView(
+						out,
+						yield* step(
+							out,
+							`Inspecting ${look.pkg(args.repository)} on GitHub`,
+							client.call(routes.repositoriesDiscover, { repository: args.repository }),
+							found => `Inspected ${look.pkg(found.name)} at ${look.sha(found.sha)}`,
+						),
+					);
 				})),
 		),
 	);
@@ -138,18 +186,15 @@ const runs = group('runs').description('Follow, approve, cancel and recover rele
 	.command(
 		base('list', 'List release operations').action(({ flags, out }) =>
 			Effect.runPromise(Effect.gen(function*() {
-				yield* emitTable(
+				const client = yield* Client.at(flags.server);
+				yield* executionTable(
 					out,
-					yield* (yield* Client.at(flags.server)).call(routes.executionsList, {}),
-					rows =>
-						rows.map(row => ({
-							id: row.id,
-							repository: row.repository,
-							stream: row.stream,
-							operation: row.operation,
-							version: row.version ?? '',
-							state: row.state,
-						})),
+					yield* step(
+						out,
+						'Listing release operations',
+						client.call(routes.executionsList, {}),
+						rows => `${rows.length} ${rows.length === 1 ? 'operation' : 'operations'}`,
+					),
 				);
 			}))
 		),
@@ -165,13 +210,19 @@ const runs = group('runs').description('Follow, approve, cancel and recover rele
 			.action(({ flags, args, out }) =>
 				Effect.runPromise(Effect.gen(function*() {
 					const client = yield* Client.at(flags.server);
-					yield* emit(
+					const look = lookOf(out);
+					yield* executionView(
 						out,
-						yield* client.call(routes.executionsApprove, {
-							id: args.id,
-							sourceSha: flags.sourceSha,
-							force: flags.force,
-						}),
+						yield* step(
+							out,
+							`Approving ${look.id(args.id)} at ${look.sha(flags.sourceSha)}`,
+							client.call(routes.executionsApprove, {
+								id: args.id,
+								sourceSha: flags.sourceSha,
+								force: flags.force,
+							}),
+							approved => `Approved ${look.id(approved.id)}`,
+						),
 					);
 				}))
 			),
@@ -182,7 +233,16 @@ const runs = group('runs').description('Follow, approve, cancel and recover rele
 			.action(({ flags, args, out }) =>
 				Effect.runPromise(Effect.gen(function*() {
 					const client = yield* Client.at(flags.server);
-					yield* emit(out, yield* client.call(routes.executionsCancel, { id: args.id }));
+					const look = lookOf(out);
+					yield* executionView(
+						out,
+						yield* step(
+							out,
+							`Cancelling ${look.id(args.id)}`,
+							client.call(routes.executionsCancel, { id: args.id }),
+							cancelled => `Cancelled ${look.id(cancelled.id)}`,
+						),
+					);
 				}))
 			),
 	)
@@ -195,7 +255,16 @@ const runs = group('runs').description('Follow, approve, cancel and recover rele
 			.action(({ flags, args, out }) =>
 				Effect.runPromise(Effect.gen(function*() {
 					const client = yield* Client.at(flags.server);
-					yield* emit(out, yield* client.call(routes.executionsRecover, { id: args.id, action: flags.action }));
+					const look = lookOf(out);
+					yield* executionView(
+						out,
+						yield* step(
+							out,
+							`${flags.action === 'retry' ? 'Retrying' : 'Reconciling'} ${look.id(args.id)}`,
+							client.call(routes.executionsRecover, { id: args.id, action: flags.action }),
+							recovered => `${look.id(recovered.id)} is ${recovered.state}`,
+						),
+					);
 				}))
 			),
 	);
@@ -232,6 +301,7 @@ interface ReleaseReview<I> {
 	flags: ReviewFlags;
 	repository: string;
 	input: Effect.Effect<I, CLIError>;
+	selection: string;
 	plan(client: Client, request: ReleaseRequest<I>): Effect.Effect<unknown, CLIError>;
 	prepare(
 		client: Client,
@@ -256,7 +326,7 @@ function reviewPrompts(review: Review, operation: string): InteractiveResult {
 		: {};
 }
 function reviewRelease<I extends object>(
-	{ review, operation, flags, repository, input, plan, prepare }: ReleaseReview<I>,
+	{ review, operation, flags, repository, input, selection, plan, prepare }: ReleaseReview<I>,
 	out: Out,
 ): Promise<void> {
 	return Effect.runPromise(Effect.gen(function*() {
@@ -268,14 +338,37 @@ function reviewRelease<I extends object>(
 			));
 		}
 		const client = yield* Client.at(flags.server);
-		const request = {
-			repositoryId: (yield* enrolled(client, repository)).id,
-			stream: flags.stream,
-			...(yield* input),
-		};
-		if (operation === review.plan) return yield* emit(out, yield* plan(client, request));
+		const look = lookOf(out);
+		const target = yield* step(
+			out,
+			`Reading ${look.pkg(repository)}`,
+			enrolled(client, repository),
+			found => `${look.pkg(found.name)} at ${look.sha(found.sha)}`,
+		);
+		const request = { repositoryId: target.id, stream: flags.stream, ...(yield* input) };
+		if (operation === review.plan) {
+			const planned = yield* step(
+				out,
+				`Planning ${target.name} / ${flags.stream} on the server`,
+				plan(client, request),
+				() => 'Plan is ready',
+			);
+			return yield* planView(
+				out,
+				planned,
+				(sourceSha, planId) =>
+					`beepboop releases ${review.prepare} ${target.name} --stream ${flags.stream} ${selection} --sourceSha ${sourceSha} --planId ${planId}`,
+			);
+		}
 		if (flags.sourceSha && flags.planId) {
-			yield* emit(out, yield* prepare(client, { ...request, sourceSha: flags.sourceSha, planId: flags.planId }));
+			const prepared = yield* step(
+				out,
+				`Preparing ${target.name} / ${flags.stream}`,
+				prepare(client, { ...request, sourceSha: flags.sourceSha, planId: flags.planId }),
+				() => 'Preparation is queued',
+			);
+			const view = executionViewSchema.safeParse(prepared);
+			yield* view.success ? executionView(out, view.data) : emit(out, prepared);
 		}
 	}));
 }
@@ -303,6 +396,7 @@ for (const operation of ['plan', 'prepare'] as const) {
 					flags,
 					repository: args.repository,
 					input: releaseVersion(flags.releaseVersion).pipe(Effect.map(version => ({ version }))),
+					selection: `--releaseVersion ${flags.releaseVersion}`,
 					plan: (client, request) => client.call(routes.releasesPlan, request),
 					prepare: (client, request) => client.call(routes.releasesPrepare, request),
 				}, out)
@@ -335,6 +429,7 @@ for (const operation of ['plan-set', 'prepare-set'] as const) {
 					flags,
 					repository: args.repository,
 					input: readJson(flags.plan).pipe(Effect.map(plan => ({ plan }))),
+					selection: `--plan ${flags.plan}`,
 					plan: (client, request) => client.call(routes.releasesPlanSet, request),
 					prepare: (client, request) => client.call(routes.releasesPrepareSet, request),
 				}, out)
@@ -351,12 +446,18 @@ releases = releases.command(
 		.action(({ flags, args, out }) =>
 			Effect.runPromise(Effect.gen(function*() {
 				const client = yield* Client.at(flags.server);
-				yield* emit(
+				const look = lookOf(out);
+				yield* executionTable(
 					out,
-					yield* client.call(routes.releasesStartSet, {
-						preparationId: args.preparationId,
-						sourceSha: flags.sourceSha,
-					}),
+					yield* step(
+						out,
+						`Starting the release set ${look.id(args.preparationId)} at ${look.sha(flags.sourceSha)}`,
+						client.call(routes.releasesStartSet, {
+							preparationId: args.preparationId,
+							sourceSha: flags.sourceSha,
+						}),
+						started => `Started ${started.length} ${started.length === 1 ? 'operation' : 'operations'}`,
+					),
 				);
 			}))
 		),
@@ -381,7 +482,24 @@ const secrets = group('secrets').description('Store secret values and list workf
 		base('list', 'List secret names and workflow access')
 			.action(({ flags, out }) =>
 				Effect.runPromise(Effect.gen(function*() {
-					yield* emit(out, yield* (yield* Client.at(flags.server)).call(routes.credentialsList, {}));
+					const client = yield* Client.at(flags.server);
+					const view = yield* step(
+						out,
+						'Listing secrets and workflow access',
+						client.call(routes.credentialsList, {}),
+						listed => `${listed.credentials.length} secrets, ${listed.grants.length} grants`,
+					);
+					const names = view.grants.length && !out.jsonMode
+						? new Map(
+							(yield* step(
+								out,
+								'Naming the granted repositories',
+								client.call(routes.repositoriesList, {}),
+								rows => `${rows.length} repositories`,
+							)).map(row => [row.id, row.name]),
+						)
+						: new Map<number, string>();
+					yield* credentialTables(out, view, names);
 				}))
 			),
 	)
@@ -396,8 +514,13 @@ const secrets = group('secrets').description('Store secret values and list workf
 			.action(({ flags, args, ask, out }) =>
 				Effect.runPromise(Effect.gen(function*() {
 					const client = yield* Client.at(flags.server);
-					const stored = (yield* client.call(routes.credentialsList, {})).credentials
-						.find(row => row.alias === args.alias && row.active === 1)?.version;
+					const look = lookOf(out);
+					const stored = (yield* step(
+						out,
+						`Reading the stored versions of ${look.pkg(args.alias)}`,
+						client.call(routes.credentialsList, {}),
+						() => `Read ${look.pkg(args.alias)}`,
+					)).credentials.find(row => row.alias === args.alias && row.active === 1)?.version;
 					const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 					if (
 						stored !== undefined && interactive
@@ -425,7 +548,9 @@ const secrets = group('secrets').description('Store secret values and list workf
 						securityKey(ask),
 					);
 					if (out.jsonMode) return yield* emit(out, { alias: args.alias, version });
-					out.log(`Saved ${args.alias} as version ${version}.`);
+					out.log(
+						`${look.mark('published')} Saved ${look.pkg(args.alias)} as version ${look.version(String(version))}.`,
+					);
 				}))
 			),
 	)
@@ -445,7 +570,13 @@ const secrets = group('secrets').description('Store secret values and list workf
 			.action(({ flags, args, ask, out }) =>
 				Effect.runPromise(Effect.gen(function*() {
 					const client = yield* Client.at(flags.server);
-					const target = yield* enrolled(client, args.repository);
+					const look = lookOf(out);
+					const target = yield* step(
+						out,
+						`Reading ${look.pkg(args.repository)}`,
+						enrolled(client, args.repository),
+						found => `${look.pkg(found.name)} has ${Object.keys(found.configuration?.streams ?? {}).length} streams`,
+					);
 					const streams = Object.keys(target.configuration?.streams ?? {});
 					const [only, ...more] = streams;
 					const stream = flags.stream ?? (only && !more.length ? only : undefined);
@@ -456,7 +587,7 @@ const secrets = group('secrets').description('Store secret values and list workf
 							'Pass --stream',
 						));
 					}
-					out.log(`Granting ${target.name} ${stream}/${flags.operation} access to ${args.alias}.`);
+					out.log(`Granting ${look.pkg(target.name)} ${stream}/${flags.operation} access to ${look.pkg(args.alias)}.`);
 					yield* client.elevatedCall(routes.credentialsGrant, proof => ({
 						proof,
 						selection: {
@@ -477,7 +608,11 @@ const secrets = group('secrets').description('Store secret values and list workf
 							operation: flags.operation,
 						});
 					}
-					out.log(`${target.name} ${stream}/${flags.operation} can use ${args.alias}.`);
+					out.log(
+						`${look.mark('published')} ${look.pkg(target.name)} ${stream}/${flags.operation} can use ${
+							look.pkg(args.alias)
+						}.`,
+					);
 				}))
 			),
 	)
@@ -487,14 +622,14 @@ const secrets = group('secrets').description('Store secret values and list workf
 			.action(({ flags, args, ask, out }) =>
 				Effect.runPromise(Effect.gen(function*() {
 					const client = yield* Client.at(flags.server);
-					yield* emit(
-						out,
-						yield* client.elevatedCall(
-							routes.credentialsRevoke,
-							proof => ({ grantId: args.grantId, proof }),
-							securityKey(ask),
-						),
+					const look = lookOf(out);
+					const result = yield* client.elevatedCall(
+						routes.credentialsRevoke,
+						proof => ({ grantId: args.grantId, proof }),
+						securityKey(ask),
 					);
+					if (out.jsonMode) return yield* emit(out, result);
+					out.log(`${look.mark('published')} Revoked grant ${look.id(args.grantId)}.`);
 				}))
 			),
 	);
@@ -502,20 +637,15 @@ const notifications = group('notifications').description('Send package releases 
 	.command(
 		base('list', 'List notification destinations and their packages').action(({ flags, out }) =>
 			Effect.runPromise(Effect.gen(function*() {
-				yield* emitTable(
+				const client = yield* Client.at(flags.server);
+				yield* notificationTable(
 					out,
-					yield* (yield* Client.at(flags.server)).call(routes.notificationsList, {}),
-					({ destinations, subscriptions }) =>
-						destinations.map(destination => ({
-							id: destination.id,
-							name: destination.name,
-							kind: destination.kind,
-							secret: destination.credential,
-							'new packages': destination.subscribeNew ? 'yes' : 'no',
-							enabled: destination.enabled ? 'yes' : 'no',
-							packages: subscriptions.filter(row => row.destinationId === destination.id)
-								.map(row => `${row.registry}:${row.name}`).join(', '),
-						})),
+					yield* step(
+						out,
+						'Listing notification destinations',
+						client.call(routes.notificationsList, {}),
+						view => `${view.destinations.length} destinations`,
+					),
 				);
 			}))
 		),
@@ -538,17 +668,24 @@ const notifications = group('notifications').description('Send package releases 
 			)
 			.action(({ flags, out }) =>
 				Effect.runPromise(Effect.gen(function*() {
-					const { id } = yield* (yield* Client.at(flags.server)).call(routes.notificationsSave, {
-						destination: {
-							name: flags.name,
-							kind: flags.kind,
-							credential: flags.secret,
-							subscribeNew: flags['subscribe-new'],
-							enabled: true,
-						},
-					});
+					const client = yield* Client.at(flags.server);
+					const look = lookOf(out);
+					const { id } = yield* step(
+						out,
+						`Adding the ${flags.kind} destination ${look.heading(flags.name)}`,
+						client.call(routes.notificationsSave, {
+							destination: {
+								name: flags.name,
+								kind: flags.kind,
+								credential: flags.secret,
+								subscribeNew: flags['subscribe-new'],
+								enabled: true,
+							},
+						}),
+						saved => `Added ${look.id(saved.id)}`,
+					);
 					if (out.jsonMode) return yield* emit(out, { id });
-					out.log(`Added destination ${id}.`);
+					out.log(`${look.mark('published')} Added destination ${look.id(id)}.`);
 				}))
 			),
 	)
@@ -567,14 +704,23 @@ const notifications = group('notifications').description('Send package releases 
 					if (!registry) {
 						return yield* Effect.fail(failure('Name the package as npm:name or jsr:@scope/name', 'INVALID_PACKAGE'));
 					}
-					yield* (yield* Client.at(flags.server)).call(routes.packagesSubscription, {
-						destinationId: args.destination,
-						registry,
-						name,
-						subscribed: true,
-					});
+					const client = yield* Client.at(flags.server);
+					const look = lookOf(out);
+					yield* step(
+						out,
+						`Subscribing ${look.id(args.destination)} to ${look.pkg(args.package)}`,
+						client.call(routes.packagesSubscription, {
+							destinationId: args.destination,
+							registry,
+							name,
+							subscribed: true,
+						}),
+						() => `Subscribed to ${look.pkg(args.package)}`,
+					);
 					if (out.jsonMode) return yield* emit(out, { destination: args.destination, registry, name });
-					out.log(`Subscribed ${args.destination} to ${registry}:${name}.`);
+					out.log(
+						`${look.mark('published')} Subscribed ${look.id(args.destination)} to ${look.pkg(`${registry}:${name}`)}.`,
+					);
 				}))
 			),
 	);

@@ -155,7 +155,7 @@ test('release resolves this checkout, previews server changes and hands the exac
 		expect(declined.exitCode).toBe(0);
 		expect(declined.stdout.join('')).toContain('widget');
 		expect(declined.stdout.join('')).toContain('1.0.1');
-		expect(declined.stdout.join('')).toContain(world.github.head(repository));
+		expect(declined.stdout.join('')).toContain(world.github.head(repository).slice(0, 12));
 		expect(declined.stdout.join('')).toContain('Local branch commits and uncommitted files are not included');
 		expect(prepareCalls()).toHaveLength(0);
 		const accepted = await run(['release', 'patch'], [true]);
@@ -184,7 +184,7 @@ test('command output stays in the command channel when the process runs in a ter
 	try {
 		const preview = await run(['release', 'patch', '--repository', repository.name, '--json']);
 		expect(JSON.parse(preview.stdout.join(''))).toHaveProperty('plan.version', '1.0.1');
-		const shown = await run(['repositories', 'show', repository.name]);
+		const shown = await run(['repositories', 'show', repository.name, '--json']);
 		expect(JSON.parse(Bun.stripANSI(shown.stdout.join('')))).toHaveProperty('name', repository.name);
 	} finally {
 		if (terminal) Object.defineProperty(process.stdout, 'isTTY', terminal);
@@ -473,6 +473,22 @@ test('an acceptable grant asks for the security key once and stores the grant', 
 	expect(elevated).toHaveBeenCalledTimes(1);
 	const rows = await world.db.prepare('SELECT alias FROM grants WHERE repository_id=?').bind(repository.id).all();
 	expect(rows.results).toEqual([{ alias: 'npm-token' }]);
+	expect(granted.stdout.join('')).toBe(
+		'Granting octo/widget main/promote access to npm-token.\n✔ octo/widget main/promote can use npm-token.\n',
+	);
+	expect(granted.activity).toContainEqual({ type: 'spinner:start', text: 'Reading octo/widget' });
+	const listed = await run(['secrets', 'list']);
+	expect(listed.activity).toContainEqual({ type: 'spinner:start', text: 'Naming the granted repositories' });
+	expect(listed.stdout.join('')).toMatch(/npm-token\s+octo\/widget\s+promote\s+runtime/);
+	const grant = /([0-9a-f-]{36})\s+npm-token/.exec(listed.stdout.join(''))?.[1] ?? '';
+	await world.elevate();
+	const revoked = await run(['secrets', 'revoke', grant]);
+	expect(revoked.stderr).toEqual([]);
+	expect(revoked.stdout.join('')).toBe(`✔ Revoked grant ${grant}.\n`);
+	await world.elevate();
+	const again = await run(['secrets', 'revoke', grant, '--json']);
+	expect(again.exitCode).not.toBe(0);
+	expect(JSON.parse(again.stdout.join(''))).toHaveProperty('error.message', 'Unknown grant');
 });
 
 test('managed manifest plans with custom version files promote after the preparation PR is merged', async () => {
@@ -693,7 +709,7 @@ test('release follows a started release through the bump, checks, dispatch and p
 	);
 	expect(output).toContain(`Run: https://github.com/octo/widget/actions/runs/${repository.runs.at(-1)?.id}\n`);
 	const dispatched = repository.runs.at(-1);
-	const commit = world.github.resolve(repository, repository.defaultBranch).sha;
+	const commit = world.github.resolve(repository, repository.defaultBranch).sha.slice(0, 12);
 	const activity = started.activity.map(event =>
 		'text' in event ? [event.type, event.text] : 'label' in event ? [event.type, event.label] : [event.type]
 	);
@@ -794,8 +810,9 @@ test('release shows the wait for checks and stops with the failing check', async
 	const head = world.github.head(repository);
 	expect(result.activity).toContainEqual({
 		type: 'spinner:update',
-		text:
-			`Waiting for checks on ${head}: Releases when the commit is verified and its checks pass: test is still running`,
+		text: `Waiting for checks on ${
+			head.slice(0, 12)
+		}: Releases when the commit is verified and its checks pass: test is still running`,
 	});
 	expect(result.activity).toContainEqual({ type: 'spinner:fail', text: 'The release stopped: test failure' });
 	expect(repository.runs).toEqual([]);
@@ -871,4 +888,183 @@ test('release reports a failed release run with its link', async () => {
 	expect(result.stdout.join('')).toContain(
 		`Run: https://github.com/octo/widget/actions/runs/${repository.runs.at(-1)?.id}`,
 	);
+});
+
+async function binaryStarts() {
+	const repository = await cliStarts();
+	const configuration = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
+	configuration.streams.main.promote.workflow.publications = ['pkg:npm/widget', 'github-release:octo/widget'];
+	configuration.streams.main.promote.workflow.setup = {
+		binaries: {
+			builds: [{ toolchain: 'cargo', name: 'widget', manifest: 'Cargo.toml' }],
+			targets: ['linux-amd64', 'darwin-arm64'],
+		},
+	};
+	const head = world.github.push(
+		repository,
+		{ '.github/beepboop.json': JSON.stringify(configuration) },
+		'Build release binaries',
+	);
+	passChecks(repository, head.sha);
+	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	return repository;
+}
+
+test('release follows each binary build leg and asset upload of a started release', async () => {
+	const repository = await binaryStarts();
+	const legs = ['Build widget (x86_64-unknown-linux-gnu)', 'Build widget (aarch64-apple-darwin)'];
+	const assets = ['widget-x86_64-unknown-linux-gnu', 'widget-aarch64-apple-darwin'];
+	const dispatched = () => {
+		const run = repository.runs.at(-1);
+		if (!run) throw new Error('The release dispatched no run');
+		return run;
+	};
+	const steps = [
+		() => world.wait(16_000),
+		async () => {
+			passChecks(repository, world.github.head(repository));
+			expect((await world.push(repository)).status).toBe(202);
+			await world.wait(16_000);
+		},
+		async () => {
+			const run = dispatched();
+			run.status = 'in_progress';
+			run.jobs = [
+				{ name: legs[0] ?? '', status: 'completed', conclusion: 'success' },
+				{ name: legs[1] ?? '', status: 'in_progress', conclusion: null },
+			];
+			await begin(
+				world,
+				runIdentity(repository, run, 'publish.yml'),
+				run.inputs.beepboop_execution_id ?? '',
+				'main',
+				'promote',
+			);
+		},
+		async () => {
+			const run = dispatched();
+			run.jobs = legs.map(name => ({ name, status: 'completed', conclusion: 'success' }));
+		},
+		async () => {
+			const run = dispatched();
+			const identity = runIdentity(repository, run, 'publish.yml');
+			world.npm.publish('widget', '1.0.1');
+			await runAction(world, 'report', identity, {
+				EXECUTION_ID: run.inputs.beepboop_execution_id ?? '',
+				PUBLICATIONS: JSON.stringify([
+					{ id: 'pkg:npm/widget', manager: 'npm', name: 'widget', version: '1.0.1', outcome: 'succeeded' },
+				]),
+			});
+			const draft = repository.releases.find(release => release.draft);
+			if (!draft) throw new Error('The release has no draft');
+			draft.assets = [assets[0] ?? ''];
+		},
+		async () => {
+			const run = dispatched();
+			const draft = repository.releases.find(release => release.draft);
+			if (!draft) throw new Error('The release has no draft');
+			draft.assets = [...assets];
+			world.github.recordTag(repository, 'v1.0.1', 'a'.repeat(40), world.github.head(repository), true);
+			await runAction(world, 'release', runIdentity(repository, run, 'publish.yml'), {
+				EXECUTION_ID: run.inputs.beepboop_execution_id ?? '',
+			});
+			run.status = 'completed';
+			run.conclusion = 'success';
+			await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
+			await world.wait(16_000);
+		},
+	];
+	spyOn(client, 'pause').mockImplementation(() =>
+		Effect.promise(async () => {
+			await (steps.shift() ?? (() => world.wait(16_000)))();
+		})
+	);
+	const result = await run(['release', 'patch', '--repository', repository.name], [true]);
+	expect(result.stderr).toEqual([]);
+	const progress = result.activity.flatMap(event =>
+		event.type === 'progress:start'
+			? [`start ${event.label} ${event.total}`]
+			: event.type === 'progress:update'
+			? [`update ${event.value}`]
+			: event.type === 'progress:done'
+			? [`done ${event.text ?? ''}`]
+			: []
+	);
+	expect(progress).toEqual([
+		'start Building binaries 2',
+		'update 1',
+		'update 2',
+		'done Built 2 binaries',
+		'start Publishing 1',
+		'update 0',
+		'update 1',
+		'done Published 1 of 1',
+		'start Uploading assets 2',
+		'update 1',
+		'update 2',
+		'done Uploaded 2 of 2 assets',
+	]);
+	const output = result.stdout.join('');
+	expect(output).toContain(
+		'binary  target        build        asset                            upload    \n'
+			+ '------  ------------  -----------  -------------------------------  ----------\n'
+			+ 'widget  linux-amd64   ✔ succeeded  widget-x86_64-unknown-linux-gnu  ✔ uploaded\n'
+			+ 'widget  darwin-arm64  ✔ succeeded  widget-aarch64-apple-darwin      ✔ uploaded\n',
+	);
+	expect(output).toContain('GitHub release: https://github.com/octo/widget/releases/tag/v1.0.1\n');
+	expect(result.exitCode).toBe(0);
+});
+
+test('a failed build leg shows in the binary progress and the binaries table', async () => {
+	const repository = await binaryStarts();
+	const steps = [
+		() => world.wait(16_000),
+		async () => {
+			passChecks(repository, world.github.head(repository));
+			expect((await world.push(repository)).status).toBe(202);
+			await world.wait(16_000);
+		},
+		async () => {
+			const run = repository.runs.at(-1);
+			if (!run) throw new Error('The release dispatched no run');
+			run.status = 'in_progress';
+			run.jobs = [
+				{ name: 'Build widget (x86_64-unknown-linux-gnu)', status: 'queued', conclusion: null },
+				{ name: 'Build widget (aarch64-apple-darwin)', status: 'in_progress', conclusion: null },
+			];
+			await begin(
+				world,
+				runIdentity(repository, run, 'publish.yml'),
+				run.inputs.beepboop_execution_id ?? '',
+				'main',
+				'promote',
+			);
+		},
+		async () => {
+			const run = repository.runs.at(-1);
+			if (!run) throw new Error('The release dispatched no run');
+			run.jobs = [
+				{ name: 'Build widget (x86_64-unknown-linux-gnu)', status: 'completed', conclusion: 'cancelled' },
+				{ name: 'Build widget (aarch64-apple-darwin)', status: 'completed', conclusion: 'failure' },
+			];
+			run.status = 'completed';
+			run.conclusion = 'failure';
+			await world.workflowRun(repository, run, 'failure', 'workflow_dispatch');
+			await world.wait(16_000);
+		},
+	];
+	spyOn(client, 'pause').mockImplementation(() =>
+		Effect.promise(async () => {
+			await (steps.shift() ?? (() => world.wait(16_000)))();
+		})
+	);
+	const result = await run(['release', 'patch', '--repository', repository.name], [true]);
+	expect(result.exitCode).toBe(1);
+	expect(result.activity).toContainEqual(
+		expect.objectContaining({ type: 'progress:start', label: 'Building binaries' }),
+	);
+	expect(result.activity).toContainEqual(expect.objectContaining({ type: 'progress:fail' }));
+	const output = result.stdout.join('');
+	expect(output).toContain('widget  linux-amd64   ○ skipped');
+	expect(output).toContain('widget  darwin-arm64  ✖ failed');
 });

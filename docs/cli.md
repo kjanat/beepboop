@@ -76,9 +76,11 @@ and approval steps that follow.
 When the stream lists `{ "via": "cli" }` in `start`, the confirmation starts the
 release, and the start approves it. Beepboop then bumps the version, publishes
 and tags without another approval. The command follows the release: a spinner
-shows the version bump, the wait for checks and the dispatch, a progress bar
-counts the publications, and a table lists each package's outcome with links to
-the run and the GitHub release. With a version PR, the command links the PR and
+shows the version bump, the wait for checks and the dispatch. Progress bars
+count the finished binary build legs, the publications and the uploaded release
+assets, and tables list each package's and each binary's outcome with links to
+the run and the GitHub release. Human output shortens commit SHAs and execution
+IDs to 12 characters; `--json` and link targets keep the full values. With a version PR, the command links the PR and
 stops, and merging it continues the release. A failing check or a refused bump
 ends the command with exit code 1 and the reason. `--json` prints the started
 release and returns at once. Spinners and progress bars stay off when the
