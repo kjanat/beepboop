@@ -227,6 +227,10 @@ test('eligible streams are inferred and ambiguous stream choices describe their 
 	const ambiguous = await run(['release', 'patch', '--repository', repository.name, '--json']);
 	expect(ambiguous.exitCode).not.toBe(0);
 	expect(ambiguous.stdout.join('')).toContain('STREAM_REQUIRED');
+	const headless = await app.execute(['release', 'patch', '--repository', repository.name], { isTTY: false, env: {} });
+	expect(headless.exitCode).not.toBe(0);
+	expect(headless.stderr.join('')).toContain('Choose a release stream: main, second');
+	expect(headless.stderr.join('')).toContain('Pass --stream NAME');
 	const prompts: string[] = [];
 	const prompter: PromptEngine = {
 		async promptOne(config) {
@@ -826,6 +830,21 @@ test('activity output stays out of piped output while the release is followed', 
 		expect(text).not.toContain('Reading octo/widget');
 		expect(text).not.toContain('Planning');
 	}
+});
+
+test('without a terminal the release asks nothing, requires a version and starts after the preview', async () => {
+	const repository = await seed();
+	const headless = (args: string[]) =>
+		app.execute(['release', ...args, '--repository', repository.name], { isTTY: false, env: {} });
+	const missing = await headless([]);
+	expect(missing.exitCode).not.toBe(0);
+	expect(missing.stderr.join('')).toContain('Choose a release version or bump');
+	expect(missing.stderr.join('')).toContain('Pass patch, minor, major or a semantic version');
+	expect(prepareCalls()).toHaveLength(0);
+	const started = await headless(['patch']);
+	expect([started.exitCode, started.stderr.join('')]).toEqual([0, '']);
+	expect(started.stdout.join('')).toContain('Release octo/widget / main → 1.0.1');
+	expect(prepareCalls()).toHaveLength(1);
 });
 
 test('release output carries color and links in a terminal and the same text without them', async () => {

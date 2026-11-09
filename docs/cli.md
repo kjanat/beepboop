@@ -88,10 +88,11 @@ output is not a terminal, and `NO_COLOR` turns off the colors and links. See [St
 that entry, `beepboop release` never approves or publishes.
 
 The confirmation defaults to no. `--yes` skips only the confirmation; the
-preview still prints. `--dry-run` plans on the server, prints the preview, or
-JSON with `--json`, and starts nothing. `--json` on its own also previews and
-stops. Pass the version, and `--stream` when the repository has several
-streams. Add `--yes` to start from a script:
+preview still prints. Without a terminal the CLI prints the preview and starts
+without asking, as with `--yes`. `--dry-run` plans on the server, prints the
+preview, or JSON with `--json`, and starts nothing. `--json` on its own also
+previews and stops. Pass the version, and `--stream` when the repository has
+several streams. Add `--yes` to start with `--json`:
 
 ```sh
 beepboop release patch --repository owner/repository --stream main --dry-run

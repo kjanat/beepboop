@@ -186,7 +186,7 @@ export function releaseRepository(
 					),
 				);
 			}
-			if (out.jsonMode) {
+			if (out.jsonMode || !out.isTTY) {
 				return yield* Effect.fail(failure(
 					`Choose a release stream: ${eligible.map(({ name }) => name).join(', ')}`,
 					'STREAM_REQUIRED',
@@ -225,7 +225,7 @@ export function releaseRepository(
 		}
 		let version = options.version;
 		if (!version) {
-			if (out.jsonMode) {
+			if (out.jsonMode || !out.isTTY) {
 				return yield* Effect.fail(failure(
 					'Choose a release version or bump',
 					'VERSION_REQUIRED',
@@ -316,6 +316,7 @@ export function releaseRepository(
 		if (options.dryRun) return out.log(look.note('Dry run: Beepboop started nothing.'));
 		if (
 			!options.yes
+			&& out.isTTY
 			&& !(yield* prompt(() =>
 				ask({
 					kind: 'confirm',
