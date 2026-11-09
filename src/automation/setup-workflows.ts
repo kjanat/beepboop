@@ -14,6 +14,7 @@ import {
 	refSteps,
 	releaseSteps,
 } from '@/automation/setup-binaries';
+import { crateOutcome } from '@/automation/setup-defaults';
 import type { SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
 import type { Package, Snapshot } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
@@ -94,12 +95,14 @@ export function integrateWorkflow(
 	packages: Package[],
 	actionsRevision?: string,
 	required: string[] = packages.map(packageId),
+	release = false,
 ): Result.Result<Integration, DomainError> {
 	const path = `.github/workflows/${choice.file}`, original = snapshot.files[path];
 	const document = parseDocument(original ?? `name: ${workflowName(stream, operation)}\non: {}\njobs: {}\n`);
 	if (document.errors.length) return Result.fail(precondition(`${choice.file}: invalid YAML`));
 	return Result.try({
-		try: () => integrate(document, snapshot, original, stream, operation, choice, packages, actionsRevision, required),
+		try: () =>
+			integrate(document, snapshot, original, stream, operation, choice, packages, actionsRevision, required, release),
 		catch: toDomainError,
 	});
 }
@@ -125,6 +128,7 @@ export function integrateReleaseWorkflow(
 	actionsRevision?: string,
 	required: string[] = packages.map(packageId),
 	published: Package[] = packages,
+	release = false,
 ): Result.Result<Integration, DomainError> {
 	return Result.gen(function*() {
 		const path = `.github/workflows/${promote.file}`;
@@ -168,6 +172,7 @@ export function integrateReleaseWorkflow(
 				operation === 'prepare' ? packages : published,
 				actionsRevision,
 				required,
+				operation === 'promote' && release,
 			);
 			source = result.content;
 			blockers.push(...result.blockers);
@@ -196,6 +201,7 @@ function integrate(
 	packages: Package[],
 	actionsRevision: string | undefined,
 	required: string[],
+	release: boolean,
 ): Integration {
 	const root = object(document.toJS({ maxAliasCount: 100 })), jobs = object(root.jobs);
 	const blockers: string[] = [], notes: string[] = [];
@@ -470,7 +476,9 @@ function integrate(
 				name: pkg.name,
 				version: `\u0024{{ fromJSON(steps.${id}.outputs.context).version }}`,
 				required: required.includes(packageId(pkg)),
-				outcome: `\u0024{{ steps.${step}.outcome == 'success' && 'succeeded' || 'failed' }}`,
+				outcome: step === 'beepboop_publish' && crateOutcome(choice.commands, pkg.name)
+					? `\u0024{{ steps.${step}.outputs['${pkg.name}'] == 'succeeded' && 'succeeded' || 'failed' }}`
+					: `\u0024{{ steps.${step}.outcome == 'success' && 'succeeded' || 'failed' }}`,
 			};
 		});
 		steps.push({
@@ -488,6 +496,16 @@ function integrate(
 	) {
 		const reportIndex = steps.findIndex(step => actionRole(step.uses) === 'report');
 		steps.splice(reportIndex < 0 ? steps.length : reportIndex, 0, ...refSteps(id, action));
+	}
+	const refs = steps.findIndex(step => typeof step.uses === 'string' && /\/actions\/publish-refs\b/.test(step.uses));
+	if (
+		operation === 'promote' && release && refs >= 0
+		&& !steps.some(step => typeof step.uses === 'string' && /\/actions\/publish-release\b/.test(step.uses))
+	) {
+		steps.splice(refs + 1, 0, {
+			uses: action('publish-release'),
+			with: { 'execution-id': `\u0024{{ steps.${id}.outputs.execution-id }}` },
+		});
 	}
 	if (aliases.length && !steps.some(step => step.id === 'beepboop_credentials')) {
 		fail('credentials need setup commands to receive them, or a beepboop_credentials step in the job');

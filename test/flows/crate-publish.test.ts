@@ -55,10 +55,24 @@ function publish(outcomes: Record<string, string[]>, published: string[] = []) {
 		'-c',
 		cratePublishCommands(['core', 'cli']),
 	], {
-		env: { PATH: `${stub}:${process.env.PATH}`, STUB: stub, GITHUB_REPOSITORY: 'octo/lint' },
+		env: {
+			PATH: `${stub}:${process.env.PATH}`,
+			STUB: stub,
+			GITHUB_REPOSITORY: 'octo/lint',
+			GITHUB_OUTPUT: join(stub, 'output'),
+		},
 	});
-	const log = existsSync(join(stub, 'log')) ? readFileSync(join(stub, 'log'), 'utf8').trim().split('\n') : [];
-	return { exitCode: result.exitCode, log, stdout: result.stdout.toString(), stderr: result.stderr.toString() };
+	const lines = (file: string) =>
+		existsSync(join(stub, file)) ? readFileSync(join(stub, file), 'utf8').trim().split('\n') : [];
+	const log = lines('log'), outputs = lines('output');
+	rmSync(join(stub, 'output'), { force: true });
+	return {
+		exitCode: result.exitCode,
+		log,
+		outputs,
+		stdout: result.stdout.toString(),
+		stderr: result.stderr.toString(),
+	};
 }
 
 test('crates already on crates.io are skipped and the rest publish in order', () => {
@@ -66,12 +80,19 @@ test('crates already on crates.io are skipped and the rest publish in order', ()
 	expect(result.exitCode).toBe(0);
 	expect(result.log).toEqual(['publish cli']);
 	expect(result.stdout).toContain('core 1.0.1 is on crates.io');
+	expect(result.outputs).toEqual(['core=succeeded', 'cli=succeeded']);
 });
 
 test('a rate limited crate waits until crates.io allows it and retries', () => {
 	const result = publish({ core: ['429', 'ok'], cli: ['ok'] });
 	expect(result.exitCode).toBe(0);
 	expect(result.log).toEqual(['publish core', 'sleep 105', 'publish core', 'publish cli']);
+});
+
+test('a crate that fails after an earlier one published reports each crate on its own', () => {
+	const result = publish({ core: ['ok'], cli: ['fail'] });
+	expect(result.exitCode).not.toBe(0);
+	expect(result.outputs).toEqual(['core=succeeded']);
 });
 
 test('a crate that keeps hitting the rate limit fails after five attempts', () => {
@@ -86,8 +107,10 @@ test('a failed publish stops the release unless crates.io has the version', () =
 	const failed = publish({ core: ['fail'], cli: ['ok'] });
 	expect(failed.exitCode).not.toBe(0);
 	expect(failed.log).toEqual(['publish core']);
+	expect(failed.outputs).toEqual([]);
 	rmSync(join(stub, 'log'));
 	const late = publish({ core: ['late'], cli: ['ok'] });
 	expect(late.exitCode).toBe(0);
 	expect(late.log).toEqual(['publish core', 'publish cli']);
+	expect(late.outputs).toEqual(['core=succeeded', 'cli=succeeded']);
 });

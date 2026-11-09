@@ -77,7 +77,6 @@ const workflow = z.object({
 	file: z.string().regex(workflowFilePattern),
 	job: z.string().optional(),
 	triggers: z.enum(['review', 'dispatchOnly', 'preserve']).default('review'),
-	/** Commands are explicit repository policy, never inferred from package names. */
 	commands: z.string().default(''),
 	/** Map publication identities to existing step IDs, for accurate outcome reporting. */
 	publicationSteps: z.record(z.string(), z.string()).default({}),
@@ -110,6 +109,7 @@ export const setupChoicesSchema = z.object({
 			name: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),
 			packages: z.array(z.string()),
 			versioning: z.enum(['workspace', 'independent', 'none']),
+			approval: z.enum(['required', 'merge', 'push']).optional(),
 			required: z.array(z.string()),
 			versionSource: z.object({
 				kind: z.literal('tags'),

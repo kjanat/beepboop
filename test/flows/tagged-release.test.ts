@@ -478,6 +478,7 @@ test('a Go module with its own released tags becomes its own stream', async () =
 		name: 'sdk',
 		packages: ['pkg:golang/github.com/octo/lint/sdk'],
 		versioning: 'workspace',
+		approval: 'push',
 		required: ['pkg:golang/github.com/octo/lint/sdk'],
 		versionSource: { kind: 'tags', prefix: 'sdk/v' },
 		prepare: {

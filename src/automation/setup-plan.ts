@@ -54,6 +54,7 @@ const setupPlan: z.ZodType<SetupPlan> = z.object({
 				name: z.string(),
 				packages: strings,
 				versioning: z.enum(['workspace', 'independent', 'none'], { error: 'Invalid versioning' }),
+				approval: z.enum(['required', 'merge', 'push']).optional(),
 				required: strings,
 				versionSource: z.object({ kind: z.literal('tags'), prefix: z.string() }).optional(),
 				versionFiles: z.array(versionFileSchema).optional(),

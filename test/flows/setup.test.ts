@@ -65,7 +65,7 @@ test('a discovered repository can preview, open and refresh its setup PR', async
 	expect(refreshed.status).toBe(200);
 	const next = await Effect.runPromise(parseSetupPlan(refreshed.body));
 	expect(next.blockers).toEqual([]);
-	expect(next.choices).toEqual(choices);
+	expect(next.choices).toEqual(plan.choices);
 	const reapplied = await api('/api/repositories/setup/apply', {
 		repository: repository.name,
 		choices: next.choices,
@@ -828,22 +828,28 @@ test('a tag prefix makes the publication workflow push its version tag with the 
 	expect(plan.blockers).toEqual([]);
 	const after = plan.edits.find(edit => edit.path === '.github/workflows/release-widget.yml')?.after ?? '';
 	const steps = binaryWorkflowSchema.parse(parse(after)).jobs.publish?.steps ?? [];
-	expect(steps.slice(-4).map(step => step.uses ?? step.id)).toEqual([
+	expect(steps.slice(-5).map(step => step.uses ?? step.id)).toEqual([
 		'beepboop_publish',
 		'kjanat/beepboop/actions/token@v1',
 		'kjanat/beepboop/actions/publish-refs@v1',
+		'kjanat/beepboop/actions/publish-release@v1',
 		'kjanat/beepboop/actions/report@v1',
 	]);
-	expect(steps.at(-3)).toEqual({
+	expect(steps.at(-2)?.with).toEqual({ 'execution-id': '${{ steps.beepboop.outputs.execution-id }}' });
+	expect(steps.at(-4)).toEqual({
 		id: 'beepboop_token',
 		uses: 'kjanat/beepboop/actions/token@v1',
 		with: { 'execution-id': '${{ steps.beepboop.outputs.execution-id }}', 'permission-contents': 'write' },
 	});
-	expect(steps.at(-2)?.with).toEqual({ token: '${{ steps.beepboop_token.outputs.token }}' });
+	expect(steps.at(-3)?.with).toEqual({ token: '${{ steps.beepboop_token.outputs.token }}' });
 	const configuration = z.object({
 		streams: z.record(z.string(), z.object({ promote: z.object({ workflow: z.record(z.string(), z.unknown()) }) })),
 	}).parse(JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'));
 	expect(configuration.streams.main?.promote.workflow.refs).toEqual({ phase: 'version', prefix: 'widget-v' });
+	expect(configuration.streams.main?.promote.workflow.publications).toEqual([
+		'pkg:npm/widget',
+		'github-release:octo/widget',
+	]);
 });
 
 test('a tag prefix adds ref publication before the report of an existing workflow, once', async () => {
@@ -1283,4 +1289,102 @@ test('a merged binary workflow suggests its publication job for the promote role
 		{ job: 'publish', stream: 'main', operation: 'promote' },
 	]);
 	expect(suggested.choices.streams[0]?.promote?.job).toBe('publish');
+});
+
+test('a refreshed crate setup publishes every selected crate in order, with a token, tags and a GitHub release', async () => {
+	const repository = world.github.create('octo/sql', {
+		'Cargo.toml':
+			'[workspace]\nmembers = ["crates/*", "vendor/parser"]\n\n[workspace.package]\nversion = "0.1.0"\n\n[workspace.dependencies]\nparser = { package = "sql-parser", path = "vendor/parser", version = "0.1.0" }\nsql = { path = "crates/sql", version = "0.1.0" }\n',
+		'Cargo.lock': '# Lockfile\n',
+		'crates/sql/Cargo.toml':
+			'[package]\nname = "sql"\nversion.workspace = true\n\n[dependencies]\nparser = { workspace = true }\n',
+		'crates/sql-cli/Cargo.toml':
+			'[package]\nname = "sql-cli"\nversion.workspace = true\n\n[dependencies]\nsql = { workspace = true }\n',
+		'vendor/parser/Cargo.toml': '[package]\nname = "sql-parser"\nversion.workspace = true\n',
+	});
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const packages = ['pkg:cargo/sql', 'pkg:cargo/sql-cli', 'pkg:cargo/sql-parser'];
+	const stale = suggestedCommands(
+		'promote',
+		{
+			name: 'main',
+			packages: [
+				{ id: 'pkg:cargo/sql', name: 'sql', manifest: 'crates/sql/Cargo.toml', manager: 'cargo' },
+				{ id: 'pkg:cargo/sql-cli', name: 'sql-cli', manifest: 'crates/sql-cli/Cargo.toml', manager: 'cargo' },
+			],
+		},
+		{ inventory: { packages: [] }, preparation: undefined },
+	);
+	const choices: SetupChoices = {
+		streams: [{
+			name: 'main',
+			packages,
+			required: packages,
+			versioning: 'workspace',
+			prepare: {
+				file: 'release-sql.yml',
+				job: 'prepare',
+				triggers: 'review',
+				commands: 'cargo check --workspace --all-targets\ncargo test --workspace',
+				publicationSteps: {},
+			},
+			promote: { file: 'release-sql.yml', job: 'publish', triggers: 'review', commands: stale, publicationSteps: {} },
+		}],
+	};
+	const plan = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
+	);
+	expect(plan.blockers).toEqual([]);
+	expect(plan.choices.streams[0]?.approval).toBe('push');
+	expect(plan.choices.streams[0]?.promote?.credentials).toEqual({ CARGO_REGISTRY_TOKEN: 'crates-io' });
+	const configuration = z.object({
+		streams: z.object({
+			main: z.object({
+				credentials: z.array(z.string()),
+				promote: z.object({ approval: z.string(), workflow: z.looseObject({ publications: z.array(z.string()) }) }),
+			}),
+		}),
+	}).parse(JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'));
+	expect(configuration.streams.main.credentials).toEqual(['crates-io']);
+	expect(configuration.streams.main.promote.approval).toBe('push');
+	expect(configuration.streams.main.promote.workflow).toMatchObject({
+		refs: { phase: 'version', prefix: 'v' },
+		publications: ['pkg:cargo/sql-cli', 'pkg:cargo/sql', 'pkg:cargo/sql-parser', 'github-release:octo/sql'],
+	});
+	const workflow = z.object({
+		jobs: z.object({
+			publish: z.object({
+				steps: z.array(
+					z.looseObject({
+						id: z.string().optional(),
+						uses: z.string().optional(),
+						run: z.string().optional(),
+						with: z.looseObject({ publications: z.string().optional() }).optional(),
+					}),
+				),
+			}),
+		}),
+	}).parse(parse(plan.edits.find(edit => edit.path === '.github/workflows/release-sql.yml')?.after ?? ''));
+	const steps = workflow.jobs.publish.steps;
+	const script = steps.find(step => step.id === 'beepboop_publish')?.run ?? '';
+	expect(script.split('\n').filter(line => line.startsWith('publish_crate '))).toEqual([
+		"publish_crate 'sql-parser'",
+		"publish_crate 'sql'",
+		"publish_crate 'sql-cli'",
+	]);
+	expect(steps.map(step => step.uses ?? step.id).filter(step => /publish-(?:refs|release)|report/.test(step ?? '')))
+		.toEqual([
+			'kjanat/beepboop/actions/publish-refs@v1',
+			'kjanat/beepboop/actions/publish-release@v1',
+			'kjanat/beepboop/actions/report@v1',
+		]);
+	const reported = z.array(z.object({ name: z.string(), outcome: z.string() })).parse(
+		JSON.parse(steps.find(step => step.with?.publications)?.with?.publications ?? '[]'),
+	);
+	expect(reported.map(entry => entry.outcome)).toEqual(
+		reported.map(entry =>
+			`\${{ steps.beepboop_publish.outputs['${entry.name}'] == 'succeeded' && 'succeeded' || 'failed' }}`
+		),
+	);
 });

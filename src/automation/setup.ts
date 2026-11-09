@@ -9,6 +9,7 @@ import { publishable } from '@/automation/package-publication';
 import { adoptionChoices, startCommand } from '@/automation/release-graph/adoption';
 import { inferReleaseGraph, type ReleaseGraph } from '@/automation/release-graph/graph';
 import { completeTaggedStreams } from '@/automation/setup-completion';
+import { refreshedCommands, suggestedCommands } from '@/automation/setup-defaults';
 import { streamSummary } from '@/automation/setup-summary';
 import {
 	type SetupChoices,
@@ -207,8 +208,16 @@ function draftSetup(
 		// Empty selections are allowed in suggestions, but cannot be applied.
 		const suggestion = suggested(snapshot, raw, workflows, inventory, graph, resolved);
 		const normalized = setupChoicesSchema.safeParse(suggestion);
-		const proposal = normalized.success ? normalized.data : suggestion;
-		const choices = input === undefined ? proposal : yield* decodeRequest(setupChoicesSchema, input);
+		const proposal = completeChoices(
+			snapshot,
+			inventory,
+			normalized.success ? normalized.data : suggestion,
+			raw,
+			resolved,
+		);
+		const choices = input === undefined
+			? proposal
+			: completeChoices(snapshot, inventory, yield* decodeRequest(setupChoicesSchema, input), raw, resolved);
 		const inferred = input === undefined || JSON.stringify(choices) === JSON.stringify(proposal);
 		const plan = yield* drafted(snapshot, inventory, choices, raw, workflows, baseline, resolved);
 		return inferred ? { ...plan, adoption: proposalMarkdown(graph, snapshot, plan) } : plan;
@@ -407,6 +416,8 @@ function drafted(
 				selectedFiles.add(workflow.file);
 				managers.add('workflow');
 				const parent = object(current[operation]), previousBinding = object(parent.workflow);
+				const releasing = operation === 'promote' && releases(snapshot, selection, workflow, previousBinding);
+				if (releasing) managers.add('github-release');
 				const inherited = object(resolved?.streams[selection.name]?.[operation].workflow);
 				const binding: Record<string, unknown> = {
 					...previousBinding,
@@ -414,7 +425,7 @@ function drafted(
 					ref: previousBinding.ref ?? inherited.ref ?? snapshot.repository.defaultBranch,
 					...(operation === 'promote'
 						? {
-							publications: workflow.binaries
+							publications: workflow.binaries || releasing
 								? [...reported, `github-release:${snapshot.repository.name}`]
 								: reported,
 						}
@@ -435,7 +446,7 @@ function drafted(
 				Object.assign(updated, {
 					[operation]: {
 						...parent,
-						...(operation === 'prepare' ? { strategy: 'managed' } : { approval: 'required' }),
+						...(operation === 'prepare' ? { strategy: 'managed' } : { approval: selection.approval ?? 'required' }),
 						workflow: binding,
 					},
 				});
@@ -448,6 +459,7 @@ function drafted(
 					operation === 'promote' ? promoted : selected,
 					choices.actionsRevision,
 					required,
+					releasing,
 				));
 				blockers.push(...generated.blockers);
 				notes.push(...generated.notes);
@@ -484,6 +496,7 @@ function drafted(
 					choices.actionsRevision,
 					required,
 					published,
+					releases(snapshot, selection, selection.promote, object(object(current.promote).workflow)),
 				));
 				blockers.push(...generated.blockers);
 				notes.push(...generated.notes);
@@ -566,6 +579,88 @@ function drafted(
 		};
 	});
 }
+function releases(
+	snapshot: Snapshot,
+	stream: SetupChoices['streams'][number],
+	workflow: SetupWorkflow | undefined,
+	previous: Record<string, unknown>,
+): boolean {
+	if (!workflow || workflow.binaries || stream.observe?.length || stream.versionSource) return false;
+	const release = `github-release:${snapshot.repository.name}`;
+	return Array.isArray(previous.publications) && previous.publications.includes(release)
+		|| !!workflow.tagPrefix && snapshot.files[`.github/workflows/${workflow.file}`] === undefined;
+}
+function completeChoices(
+	snapshot: Snapshot,
+	inventory: Inventory,
+	choices: SetupChoices,
+	raw: Record<string, unknown>,
+	resolved?: Configuration,
+): SetupChoices {
+	const context = {
+		inventory,
+		preparation: { lockfiles: snapshot.paths.filter(isLockfile), versionFileStreams: [], workflowStreams: [] },
+	};
+	const candidates = inventory.packages.filter(publishable).map(pkg => ({
+		id: packageId(pkg),
+		name: pkg.name,
+		manifest: pkg.manifest,
+		manager: pkg.manager,
+		...(pkg.versionSource ? { versionSource: pkg.versionSource } : {}),
+	}));
+	const completed = {
+		...choices,
+		streams: choices.streams.map(stream => {
+			const chosen = candidates.filter(pkg => stream.packages.includes(pkg.id));
+			const elsewhere = new Set([
+				...(stream.operations?.flatMap(entry => entry.publications) ?? []),
+				...(stream.observe?.flatMap(entry => entry.publications) ?? []),
+			]);
+			const complete = (operation: Operation, workflow: SetupWorkflow | undefined): SetupWorkflow | undefined => {
+				if (!workflow) return undefined;
+				const scope = {
+					name: stream.name,
+					packages: operation === 'prepare'
+						? chosen
+						: chosen.filter(pkg => !elsewhere.has(pkg.id) && !workflow.publicationSteps[pkg.id]),
+				};
+				const commands = refreshedCommands(operation, workflow.commands, scope, candidates, context);
+				const generated = commands !== '' && commands === suggestedCommands(operation, scope, context);
+				const fresh = snapshot.files[`.github/workflows/${workflow.file}`] === undefined;
+				return {
+					...workflow,
+					commands,
+					...(operation === 'promote' && generated && !workflow.credentials
+							&& scope.packages.some(pkg => pkg.manager === 'cargo')
+						? { credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' } }
+						: {}),
+					...(operation === 'promote' && fresh && !workflow.tagPrefix && !workflow.binaries && !stream.observe?.length
+						? { tagPrefix: stream.versionSource?.prefix ?? (stream.name === 'main' ? 'v' : `${stream.name}-v`) }
+						: {}),
+				};
+			};
+			const configured = object(object(object(raw.streams)[stream.name]).promote).approval;
+			const approval = stream.approval
+				?? (configured === 'required' || configured === 'merge' || configured === 'push'
+					? configured
+					: resolved?.streams[stream.name]?.promote.approval ?? 'push');
+			const prepare = complete('prepare', stream.prepare), promote = complete('promote', stream.promote);
+			return {
+				...stream,
+				...(promote ? { approval } : {}),
+				...(prepare ? { prepare } : {}),
+				...(promote ? { promote } : {}),
+			};
+		}),
+	};
+	const canonical = setupChoicesSchema.safeParse(completed);
+	return canonical.success ? canonical.data : completed;
+}
+const approvalLabels = {
+	required: 'approval required',
+	merge: 'releases when its version PR merges',
+	push: 'releases when a signed commit with passing checks reaches the default branch',
+} as const;
 type Operation = 'prepare' | 'promote';
 const operations: Operation[] = ['prepare', 'promote'];
 export function setupOptions(plan: SetupPlan): SetupOption[] {
@@ -719,7 +814,7 @@ export function setupBody(plan: SetupPlan): string {
 					: []
 			);
 			return [
-				`- **${stream.name}**; approval required.`,
+				`- **${stream.name}**; ${approvalLabels[stream.approval ?? 'required']}.`,
 				...(packages.length ? ['  - Packages', ...packages] : []),
 				`  - Versioning: ${versioningLabels[stream.versioning]}`,
 				`  - Preparation: ${workflow(stream.prepare)}`,

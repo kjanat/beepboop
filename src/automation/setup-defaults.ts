@@ -56,6 +56,7 @@ publish_crate() {
     status="$(crate_status "$crate" "$version")"
     if [ "$status" = 200 ]; then
       echo "$crate $version is on crates.io"
+      echo "$crate=succeeded" >> "$GITHUB_OUTPUT"
       return 0
     fi
     if [ "$status" != 404 ]; then
@@ -64,13 +65,17 @@ publish_crate() {
     fi
     if output="$(cargo publish --locked --package "$crate" 2>&1)"; then
       printf '%s\n' "$output"
+      echo "$crate=succeeded" >> "$GITHUB_OUTPUT"
       return 0
     fi
     printf '%s\n' "$output"
     case "$output" in
       *'status 429'*) ;;
       *)
-        [ "$(crate_status "$crate" "$version")" = 200 ] && return 0
+        if [ "$(crate_status "$crate" "$version")" = 200 ]; then
+          echo "$crate=succeeded" >> "$GITHUB_OUTPUT"
+          return 0
+        fi
         return 1
         ;;
     esac
@@ -87,7 +92,8 @@ publish_crate() {
 export function cratePublishCommands(names: string[]): string {
 	return [publishCrate, ...names.map(name => `publish_crate ${quote(name)}`)].join('\n');
 }
-export function suggestedCommands(role: 'prepare' | 'promote', selection: Selection, plan: SetupPlan): string {
+type Context = Pick<SetupPlan, 'inventory' | 'preparation'>;
+export function suggestedCommands(role: 'prepare' | 'promote', selection: Selection, plan: Context): string {
 	const commands = ungenerated(selection).length ? '' : managerCommands(role, selection, plan);
 	return role === 'prepare' && commands && plan.preparation?.lockfiles.some(path => /(?:^|\/)uv\.lock$/.test(path))
 		? `${commands}\nuv lock`
@@ -104,7 +110,7 @@ const generators: Record<
 	string,
 	{
 		covers(pkg: Selected): boolean;
-		commands(role: 'prepare' | 'promote', packages: Selected[], plan: SetupPlan): string;
+		commands(role: 'prepare' | 'promote', packages: Selected[], plan: Context): string;
 	}
 > = {
 	cargo: {
@@ -153,7 +159,7 @@ const generators: Record<
 export function ungenerated(selection: Selection): Selected[] {
 	return selection.packages.filter(pkg => !generators[pkg.manager ?? '']?.covers(pkg));
 }
-function managerCommands(role: 'prepare' | 'promote', selection: Selection, plan: SetupPlan): string {
+function managerCommands(role: 'prepare' | 'promote', selection: Selection, plan: Context): string {
 	const order = plan.inventory.publicationOrder ?? [];
 	const rank = (id: string) => order.includes(id) ? order.indexOf(id) : order.length;
 	const groups = new Map<string, Selected[]>();
@@ -163,4 +169,23 @@ function managerCommands(role: 'prepare' | 'promote', selection: Selection, plan
 	}
 	return [...groups].flatMap(([manager, packages]) => generators[manager]?.commands(role, packages, plan) ?? [])
 		.join('\n');
+}
+export function crateOutcome(commands: string, name: string): boolean {
+	return commands.startsWith(publishCrate) && commands.split('\n').includes(`publish_crate ${quote(name)}`);
+}
+export function refreshedCommands(
+	role: 'prepare' | 'promote',
+	commands: string,
+	selection: Selection,
+	candidates: Selection['packages'],
+	plan: Context,
+): string {
+	if (!commands) return commands;
+	const named = candidates.filter(pkg =>
+		[quote(pkg.name), quote(directory(pkg.manifest)), quote(`dist/${pkg.name}`)].some(token => commands.includes(token))
+	);
+	const generated = [selection.packages, named].some(packages =>
+		packages.length > 0 && suggestedCommands(role, { name: selection.name, packages }, plan) === commands
+	);
+	return generated ? suggestedCommands(role, selection, plan) || commands : commands;
 }
