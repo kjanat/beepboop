@@ -27,8 +27,10 @@ export function bearerRequest(world: World, token: string, outgoing: Outgoing): 
 	);
 }
 
-export function bearer(world: World, token: string) {
-	return async (path: string, body?: unknown): Promise<Reply> =>
+export type Api = (path: string, body?: unknown) => Promise<Reply>;
+
+export function bearer(world: World, token: string): Api {
+	return async (path, body) =>
 		reply(
 			await bearerRequest(
 				world,

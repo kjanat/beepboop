@@ -1,6 +1,8 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import type { Repository, Run } from '@root/test/support/github.ts';
+import { botId } from '@root/test/support/github.ts';
 import { withConsoleLog, withEnvironment } from '@root/test/support/process.ts';
 import type { RunIdentity, World } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
@@ -72,6 +74,20 @@ export function runAction(
 			});
 		});
 	});
+}
+
+export function runIdentity(repository: Repository, run: Pick<Run, 'id' | 'headSha'>, file: string): RunIdentity {
+	return { repository, runId: run.id, sha: run.headSha, file, actorId: botId };
+}
+
+export function begin(
+	world: World,
+	identity: RunIdentity,
+	executionId: string,
+	stream: string,
+	operation: string,
+): Promise<ActionResult> {
+	return runAction(world, 'begin', identity, { EXECUTION_ID: executionId, STREAM: stream, OPERATION: operation });
 }
 
 export function runRuntime(

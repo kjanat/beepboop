@@ -230,6 +230,19 @@ export class World {
 			repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
 		}, delivery);
 	}
+	workflowRun(
+		repository: Repository,
+		run: { id: number; path: string },
+		conclusion: string | null,
+		event: string,
+		action = 'completed',
+	): Promise<Response> {
+		return this.webhook('workflow_run', {
+			action,
+			workflow_run: { id: run.id, conclusion, event, path: run.path, head_repository: { id: repository.id } },
+			repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
+		});
+	}
 }
 
 export function eachWorld(bind: (world: World) => void): void {

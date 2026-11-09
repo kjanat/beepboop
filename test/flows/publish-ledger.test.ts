@@ -4,26 +4,32 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Command, Runner } from '@root/actions/runtime/publish.ts';
 import { main, publicRepository, publishPackages, requireAll } from '@root/actions/runtime/publish.ts';
-import { runAction } from '@root/test/support/actions.ts';
+import { begin, runIdentity } from '@root/test/support/actions.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
 import type { Repository } from '@root/test/support/github.ts';
-import { botId, ownerId } from '@root/test/support/github.ts';
 import type { Reply } from '@root/test/support/http.ts';
 import { bearer } from '@root/test/support/http.ts';
 import type { Publishing } from '@root/test/support/ledger.ts';
-import { publishWith, withIdentity, workflowCall } from '@root/test/support/ledger.ts';
+import {
+	cargoMetadata,
+	crateBytes,
+	crateChecksum,
+	packCrate,
+	publishWith,
+	withIdentity,
+	workflowCall,
+} from '@root/test/support/ledger.ts';
 import { silenced } from '@root/test/support/process.ts';
-import { npmIntegrity } from '@root/test/support/registries.ts';
-import { jsonFile, passChecks } from '@root/test/support/repositories.ts';
+import { crateResponse, npmIntegrity, pypiResponse } from '@root/test/support/registries.ts';
+import { promotions } from '@root/test/support/releases.ts';
+import { dispatchedPublishWorkflow, jsonFile, passChecks } from '@root/test/support/repositories.ts';
 import type { RunIdentity, World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
-import { z } from 'zod';
 import { ledgerSchema } from '@/automation/ledger';
 import { publishMinutes } from '@/automation/setup-workflows';
 import type { Execution } from '@/automation/types';
 import { publishWaitMinutes } from '@/contract/ledger';
-import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 
 let world: World;
 let target = '';
@@ -34,33 +40,17 @@ eachDirectory('beepboop-target-', created => {
 	target = created;
 });
 
-const ledgerWorkflow = (stream: string) => `name: Publish ${stream}
-run-name: \${{ inputs.beepboop_title || github.workflow }}
-on:
-  workflow_dispatch:
-    inputs:
-      beepboop_execution_id:
-        required: true
-        type: string
-      beepboop_title:
-        required: false
-        type: string
-permissions: { contents: read, id-token: write }
-jobs:
-  publish:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: kjanat/beepboop/actions/begin@actions
-        id: beepboop
-        with:
-          execution-id: \${{ inputs.beepboop_execution_id }}
-          stream: ${stream}
-          operation: promote
-      - uses: kjanat/beepboop/actions/publish@actions
+const ledgerWorkflow = (stream: string) =>
+	dispatchedPublishWorkflow(
+		`Publish ${stream}`,
+		stream,
+		'beepboop',
+		`      - uses: kjanat/beepboop/actions/publish@actions
         with:
           execution-id: \${{ steps.beepboop.outputs.execution-id }}
           credentials: '{"CARGO_REGISTRY_TOKEN":"crates-io"}'
-`;
+`,
+	);
 
 const core = 'pkg:cargo/lint-core', cli = 'pkg:cargo/lint';
 const manifests: Record<string, string> = {
@@ -133,28 +123,21 @@ function serveCrates() {
 	registryLag = 0;
 	registry.set('lint-core@1.0.0', 'c'.repeat(64));
 	registry.set('lint@1.0.0', 'c'.repeat(64));
-	world.network.serve('crates.io', request => {
-		const [, , , , name, version] = new URL(request.url).pathname.split('/');
-		if (!name) return new Response(null, { status: 404 });
-		if (!version) return Response.json({ crate: { max_version: '1.0.0' } });
-		if (registryDown > 0) {
-			registryDown--;
-			return new Response(null, { status: 503 });
-		}
-		const checksum = registry.get(`${name}@${version}`);
-		if (checksum && registryLag > 0) {
-			registryLag--;
-			return new Response(null, { status: 404 });
-		}
-		return checksum
-			? Response.json({ version: { crate: name, num: version, yanked: false, checksum } })
-			: new Response(null, { status: 404 });
-	});
+	world.network.serve('crates.io', request =>
+		crateResponse(request, (name, version) => {
+			if (registryDown > 0) {
+				registryDown--;
+				return new Response(null, { status: 503 });
+			}
+			const checksum = registry.get(`${name}@${version}`);
+			if (checksum && registryLag > 0) {
+				registryLag--;
+				return new Response(null, { status: 404 });
+			}
+			return checksum;
+		}));
 }
 
-function crateBytes(name: string, version: string) {
-	return `${name} ${version}\n`;
-}
 function checksum(name: string, version: string) {
 	return createHash('sha256').update(crateBytes(name, version)).digest('hex');
 }
@@ -173,13 +156,7 @@ function cargo(state: Cargo) {
 				command: `${argv[1]} ${name}`,
 				...(options.env?.CARGO_REGISTRY_TOKEN ? { token: options.env.CARGO_REGISTRY_TOKEN } : {}),
 			});
-			if (argv[1] === 'metadata') {
-				return {
-					code: 0,
-					stdout: JSON.stringify({ target_directory: target }),
-					output: JSON.stringify({ target_directory: target }),
-				};
-			}
+			if (argv[1] === 'metadata') return cargoMetadata(target);
 			if (argv[1] === 'package') {
 				if (state.broken?.includes(name)) {
 					return {
@@ -188,13 +165,11 @@ function cargo(state: Cargo) {
 						output: `error: failed to verify package ${name}`,
 					};
 				}
-				mkdirSync(join(target, 'package'), { recursive: true });
-				writeFileSync(join(target, 'package', `${name}-1.1.0.crate`), crateBytes(name, '1.1.0'));
+				packCrate(target, name, '1.1.0');
 				return { code: 0, stdout: `Packaged ${name}`, output: `Packaged ${name}` };
 			}
 			const outcome = state.outcomes[name]?.shift() ?? 'ok';
-			const sum = createHash('sha256').update(readFileSync(join(target, 'package', `${name}-1.1.0.crate`)))
-				.digest('hex');
+			const sum = crateChecksum(target, name, '1.1.0');
 			if (outcome === 'ok') {
 				registry.set(`${name}@1.1.0`, sum);
 				return { code: 0, stdout: `Uploaded ${name}`, output: `Uploaded ${name}` };
@@ -225,6 +200,20 @@ function cargo(state: Cargo) {
 			}
 			return { code: 101, stdout: `error: could not compile ${name}`, output: `error: could not compile ${name}` };
 		});
+}
+
+function fakeCargo(bin: string, trace: string, metadata: string): void {
+	writeFileSync(
+		join(bin, 'cargo'),
+		`#!/usr/bin/env bash
+${trace}case "$1" in
+  metadata)${metadata}printf '{"target_directory":"%s"}\\n' "$TARGET" ;;
+  package) mkdir -p "$TARGET/package"; printf 'lint-core 1.1.0\\n' > "$TARGET/package/lint-core-1.1.0.crate"; echo packaged ;;
+  publish) echo "error: crates.io rejected lint-core" >&2; exit 101 ;;
+esac
+`,
+	);
+	chmodSync(join(bin, 'cargo'), 0o755);
 }
 
 function publishing(identity: RunIdentity, executionId: string, options: Cargo | Omit<Publishing, 'scratch'>) {
@@ -259,10 +248,6 @@ async function grant(
 		}
 	}
 }
-async function promotions(api: (path: string) => Promise<Reply>): Promise<Execution[]> {
-	const listed = await api('/api/executions');
-	return z.array(z.unknown()).parse(listed.body).map(decodeExecutionV1).filter(entry => entry.operation === 'promote');
-}
 
 async function released(streams: Record<string, string[]>, layout = cargoLayout, version = '1.1.0') {
 	serveCrates();
@@ -279,18 +264,8 @@ async function released(streams: Record<string, string[]>, layout = cargoLayout,
 		const run = repository.runs.find(entry => entry.inputs.beepboop_execution_id === promotion.id);
 		if (!run) throw new Error(`No run for ${promotion.stream}: ${promotion.state} ${promotion.reason ?? ''}`);
 		run.status = 'in_progress';
-		const identity = {
-			repository,
-			runId: run.id,
-			sha: run.headSha,
-			file: `publish-${promotion.stream}.yml`,
-			actorId: botId,
-		};
-		await runAction(world, 'begin', identity, {
-			EXECUTION_ID: promotion.id,
-			STREAM: promotion.stream,
-			OPERATION: 'promote',
-		});
+		const identity = runIdentity(repository, run, `publish-${promotion.stream}.yml`);
+		await begin(world, identity, promotion.id, promotion.stream, 'promote');
 		begun.set(promotion.stream, { execution: promotion, identity });
 	}
 	return { repository, api, begun };
@@ -353,17 +328,7 @@ test('the ledger publishes crates in dependency order and hands the token only t
 	if (!run) throw new Error('Missing run');
 	run.status = 'completed';
 	run.conclusion = 'success';
-	await world.webhook('workflow_run', {
-		action: 'completed',
-		workflow_run: {
-			id: run.id,
-			conclusion: 'success',
-			event: 'workflow_dispatch',
-			path: run.path,
-			head_repository: { id: repository.id },
-		},
-		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
-	});
+	await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
 	await world.wait(2_000);
 	expect((await executionOf(repository, execution.id)).state).toBe('succeeded');
 }, 60_000);
@@ -460,7 +425,7 @@ test('a failed publish stays retryable and the next run attempt publishes it', a
 	if (!run) throw new Error('Missing run');
 	run.attempt = 2;
 	const retried = { ...identity, attempt: 2 };
-	await runAction(world, 'begin', retried, { EXECUTION_ID: execution.id, STREAM: 'main', OPERATION: 'promote' });
+	await begin(world, retried, execution.id, 'main', 'promote');
 	const second = await publishing(retried, execution.id, state);
 	if (second.result._tag === 'Failure') throw new Error(second.result.failure.message);
 	expect(states(second.result.success)).toEqual([
@@ -523,19 +488,19 @@ const pypi = new Map<string, string>();
 function servePypi() {
 	pypi.clear();
 	pypi.set('lint-py@1.0.0', 'd'.repeat(64));
-	world.network.serve('pypi.org', request => {
-		const [, , name, version] = new URL(request.url).pathname.split('/');
-		if (version === 'json') return Response.json({ info: { name, version: '1.0.0' } });
-		const sha = pypi.get(`${name}@${version}`);
-		if (!sha) return new Response(null, { status: 404 });
-		return Response.json({
-			info: { name, version, yanked: false },
-			urls: [
-				{ packagetype: 'bdist_wheel', yanked: false, digests: { sha256: 'b'.repeat(64) } },
-				{ packagetype: 'sdist', yanked: false, digests: { sha256: sha } },
-			],
-		});
-	});
+	world.network.serve('pypi.org', request =>
+		pypiResponse(request, name => ({
+			latest: '1.0.0',
+			files: version => {
+				const sha = pypi.get(`${name}@${version}`);
+				return sha
+					? [
+						{ packagetype: 'bdist_wheel', yanked: false, digests: { sha256: 'b'.repeat(64) } },
+						{ packagetype: 'sdist', yanked: false, digests: { sha256: sha } },
+					]
+					: undefined;
+			},
+		})));
 }
 const npm = '@octo/lint', python = 'lint-py';
 function sdist(version: string) {
@@ -717,17 +682,7 @@ test('a Retry-After beyond this run ends it with the publication rate limited fo
 	if (!run) throw new Error('Missing run');
 	run.status = 'completed';
 	run.conclusion = 'failure';
-	await world.webhook('workflow_run', {
-		action: 'completed',
-		workflow_run: {
-			id: run.id,
-			conclusion: 'failure',
-			event: 'workflow_dispatch',
-			path: run.path,
-			head_repository: { id: repository.id },
-		},
-		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
-	});
+	await world.workflowRun(repository, run, 'failure', 'workflow_dispatch');
 	await world.wait(2_000);
 	const waiting = await executionOf(repository, execution.id);
 	expect([waiting.state, waiting.notBefore, waiting.reason]).toEqual([
@@ -788,17 +743,7 @@ test('a crates.io slot hours away ends the run before publishing', async () => {
 	if (!run) throw new Error('Missing run');
 	run.status = 'completed';
 	run.conclusion = 'failure';
-	await world.webhook('workflow_run', {
-		action: 'completed',
-		workflow_run: {
-			id: run.id,
-			conclusion: 'failure',
-			event: 'workflow_dispatch',
-			path: run.path,
-			head_repository: { id: repository.id },
-		},
-		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
-	});
+	await world.workflowRun(repository, run, 'failure', 'workflow_dispatch');
 	await world.wait(2_000);
 	const waiting = await executionOf(repository, execution.id);
 	expect([waiting.state, waiting.notBefore]).toEqual(['ready', Date.parse('2026-11-04T11:32:00.000Z')]);
@@ -863,17 +808,7 @@ test('the publish runtime spawns the native tools and fails when a required publ
 	const { execution, identity } = started(begun, 'main');
 	const bin = join(target, 'bin');
 	mkdirSync(bin);
-	writeFileSync(
-		join(bin, 'cargo'),
-		`#!/usr/bin/env bash
-case "$1" in
-  metadata) printf '{"target_directory":"%s"}\\n' "$TARGET" ;;
-  package) mkdir -p "$TARGET/package"; printf 'lint-core 1.1.0\\n' > "$TARGET/package/lint-core-1.1.0.crate"; echo packaged ;;
-  publish) echo "error: crates.io rejected lint-core" >&2; exit 101 ;;
-esac
-`,
-	);
-	chmodSync(join(bin, 'cargo'), 0o755);
+	fakeCargo(bin, '', ' ');
 	const result = await silenced(() =>
 		withIdentity(world, identity, () => Effect.runPromise(Effect.result(main)), {
 			PATH: `${bin}:${process.env.PATH}`,
@@ -908,22 +843,15 @@ echo "info: syncing channel updates for '1.99.1-x86_64-unknown-linux-gnu'"
 echo "info: downloading 8 components" >&2
 `,
 	);
-	writeFileSync(
-		join(bin, 'cargo'),
-		`#!/usr/bin/env bash
-echo "cargo $1" >> "$CALLS"
-case "$1" in
-  metadata)
+	chmodSync(join(bin, 'rustup'), 0o755);
+	fakeCargo(
+		bin,
+		'echo "cargo $1" >> "$CALLS"\n',
+		`
     echo "info: syncing channel updates for '1.99.1-x86_64-unknown-linux-gnu'" >&2
     echo "warn: the missing active toolchain '1.99.1' has been auto-installed" >&2
-    printf '{"target_directory":"%s"}\\n' "$TARGET" ;;
-  package) mkdir -p "$TARGET/package"; printf 'lint-core 1.1.0\\n' > "$TARGET/package/lint-core-1.1.0.crate"; echo packaged ;;
-  publish) echo "error: crates.io rejected lint-core" >&2; exit 101 ;;
-esac
-`,
+    `,
 	);
-	chmodSync(join(bin, 'rustup'), 0o755);
-	chmodSync(join(bin, 'cargo'), 0o755);
 	const cwd = process.cwd();
 	process.chdir(checkout);
 	const result = await silenced(() =>

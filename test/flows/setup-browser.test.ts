@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { bearer } from '@root/test/support/http.ts';
 import { passChecks, plugin, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
+import { applySetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
@@ -70,9 +71,16 @@ function control<T extends Element>(parent: HTMLElement | Window['document'], ti
 	if (!control) throw new Error(`Missing control: ${title}`);
 	return control;
 }
+function changed(control: HTMLInputElement | HTMLSelectElement) {
+	control.dispatchEvent(new window.Event('change', { bubbles: true }));
+}
 function change(control: HTMLInputElement | HTMLSelectElement, value: string) {
 	control.value = value;
-	control.dispatchEvent(new window.Event('change', { bubbles: true }));
+	changed(control);
+}
+function toggle(input: HTMLInputElement, checked: boolean) {
+	input.checked = checked;
+	changed(input);
 }
 async function open(repository: string) {
 	const form = window.document.createElement('form');
@@ -229,11 +237,9 @@ jobs:
 
 	// A single-package suggestion must not become an explicit mapping after adding packages again.
 	const packageB = control(form, 'package-b (packages/b/package.json)', window.HTMLInputElement);
-	packageB.checked = false;
-	packageB.dispatchEvent(new window.Event('change', { bubbles: true }));
+	toggle(packageB, false);
 	expect(mapping('package-a').value).toBe('publish_a');
-	packageB.checked = true;
-	packageB.dispatchEvent(new window.Event('change', { bubbles: true }));
+	toggle(packageB, true);
 	expect(mapping('package-a').value).toBe('');
 	expect(mapping('package-b').value).toBe('');
 
@@ -344,10 +350,6 @@ test('generated npm targets require explicit commands, including alongside ordin
 	const targets = ['@octo/widget-linux-x64', '@octo/widget-darwin-arm64', '@octo/widget'].map(name =>
 		control(form, `${name} (npm/targets.json)`, window.HTMLInputElement)
 	);
-	const toggle = (input: HTMLInputElement, checked: boolean) => {
-		input.checked = checked;
-		input.dispatchEvent(new window.Event('change', { bubbles: true }));
-	};
 	expect(commands.value).toBe('');
 	expect(commands.required).toBe(true);
 	await expect(act(form, 'preview')).rejects.toThrow('Enter the shell commands that publish these packages.');
@@ -401,13 +403,7 @@ test('existing shared Go workflows do not require replacement preparation comman
 	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
 	expect(plan.blockers).toEqual([]);
 	expect(
-		(await api('/api/repositories/setup/apply', {
-			repository: repository.name,
-			choices: plan.choices,
-			planId: plan.planId,
-			sourceSha: plan.sourceSha,
-			setupHead: plan.setupHead,
-		})).status,
+		(await applySetup(api, repository.name, plan, plan.choices)).status,
 	).toBe(200);
 	world.github.merge(repository, 1);
 	const form = await open(repository.name);
@@ -432,8 +428,7 @@ test('an accidentally added release group can be disabled without losing existin
 	if (!add) throw new Error('Missing add group button');
 	add.click();
 	const enabled = control(form, 'Include this release group', window.HTMLInputElement);
-	enabled.checked = false;
-	enabled.dispatchEvent(new window.Event('change', { bubbles: true }));
+	toggle(enabled, false);
 	// happy-dom does not propagate fieldset disabling to descendant validity checks.
 	expect(enabled.closest('fieldset')?.querySelector('.setup-group-body')?.hasAttribute('disabled')).toBe(true);
 	await act(form, 'preview');
@@ -502,8 +497,7 @@ test('an inferred stream keeps its workflow until observation is cleared', async
 	await act(form, 'preview');
 	expect(form.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(false);
 	expect(form.querySelector('.setup-result')?.textContent).toContain('"mode": "observe"');
-	keep.checked = false;
-	keep.dispatchEvent(new window.Event('change', { bubbles: true }));
+	toggle(keep, false);
 	expect(role(form, 'promote').hidden).toBe(false);
 	expect(role(form, 'promote').hasAttribute('disabled')).toBe(false);
 	await expect(act(form, 'preview')).rejects.toThrow('Select at least one package to release.');

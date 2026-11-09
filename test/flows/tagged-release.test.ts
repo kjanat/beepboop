@@ -1,14 +1,17 @@
 import { expect, test } from 'bun:test';
-import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { commitAll, gitOutput, materialize, runAction, runRuntime } from '@root/test/support/actions.ts';
+import { begin, commitAll, materialize, runAction, runIdentity, runRuntime } from '@root/test/support/actions.ts';
 import type { Repository } from '@root/test/support/github.ts';
-import { botId, ownerId } from '@root/test/support/github.ts';
+import { botId, filesAt, ownerId } from '@root/test/support/github.ts';
 import { bearer, text } from '@root/test/support/http.ts';
-import { publishWith } from '@root/test/support/ledger.ts';
+import { cargoMetadata, crateChecksum, packCrate, publishWith } from '@root/test/support/ledger.ts';
+import { one } from '@root/test/support/lists.ts';
+import { crateResponse, pypiResponse } from '@root/test/support/registries.ts';
+import { approvePromotion, executions, prepareRelease } from '@root/test/support/releases.ts';
 import { passChecks } from '@root/test/support/repositories.ts';
+import { applySetup, discoverSetup, previewSetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
@@ -16,7 +19,6 @@ import { parse } from 'yaml';
 import { z } from 'zod';
 import { setupOptions } from '@/automation/setup';
 import { ledgerCommand } from '@/automation/setup-defaults';
-import { parseSetupPlan } from '@/automation/setup-plan';
 import { streamSummary } from '@/automation/setup-summary';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 
@@ -112,42 +114,26 @@ function lintRepository(workflow = releaseWorkflow): Repository {
 	});
 }
 
-function filesAt(repository: Repository, sha: string): Record<string, string> {
-	const tree = repository.trees.get(repository.commits.get(sha)?.tree ?? '');
-	if (!tree) throw new Error('Missing tree');
-	return Object.fromEntries(tree);
-}
-
-function one<T>(items: T[], label: string): T {
-	const [item] = items;
-	if (items.length !== 1 || item === undefined) throw new Error(`Expected one ${label}, found ${items.length}`);
-	return item;
-}
-
 async function completed(repository: Repository, run: { id: number; path: string }, event: string) {
-	await world.webhook('workflow_run', {
-		action: 'completed',
-		workflow_run: { id: run.id, conclusion: 'success', event, path: run.path, head_repository: { id: repository.id } },
-		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
-	});
+	await world.workflowRun(repository, run, 'success', event);
 	await world.wait(2_000);
+}
+
+function unpublished() {
+	world.network.serve('crates.io', () => new Response(null, { status: 404 }));
+	world.network.serve('pypi.org', () => new Response(null, { status: 404 }));
+	world.network.serve('proxy.golang.org', () => new Response(null, { status: 404 }));
 }
 
 const refPlan = z.object({ changes: z.array(z.object({ name: z.string(), commit: z.string() })) });
 
 test('one approval pushes the tags, then the tag workflow publishes, then the crates publish', async () => {
 	const published = new Map<string, string>();
-	world.network.serve('crates.io', request => {
-		const [, , , , name, version] = new URL(request.url).pathname.split('/');
-		if (!name) return new Response(null, { status: 404 });
-		if (!version) return Response.json({ crate: { max_version: '1.0.0' } });
-		const crate = published.get(`${name}@${version}`);
-		return crate?.startsWith('crate')
-			? Response.json({
-				version: { crate: name, num: version, yanked: false, checksum: crate.slice('crate:'.length) || 'c'.repeat(64) },
-			})
-			: new Response(null, { status: 404 });
-	});
+	world.network.serve('crates.io', request =>
+		crateResponse(request, (name, version) => {
+			const crate = published.get(`${name}@${version}`);
+			return crate?.startsWith('crate') ? crate.slice('crate:'.length) || 'c'.repeat(64) : undefined;
+		}));
 	world.network.serve('proxy.golang.org', request => {
 		const path = new URL(request.url).pathname;
 		if (path.endsWith('/@latest')) {
@@ -163,27 +149,24 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 	published.set('go@v1.0.0', 'module');
 	world.npm.publish('@octo/lint', '1.0.0');
 	published.set('lint-py@1.0.0', 'project');
-	world.network.serve('pypi.org', request => {
-		const [, , name, version] = new URL(request.url).pathname.split('/');
-		const known = [...published.keys()].filter(key => key.startsWith(`${name}@`)).map(key =>
-			key.slice(`${name}@`.length)
-		);
-		if (!name || !known.length) return new Response(null, { status: 404 });
-		if (version === 'json') return Response.json({ info: { name, version: known.at(-1) } });
-		return known.includes(version ?? '')
-			? Response.json({
-				info: { name, version, yanked: false },
-				urls: [{ packagetype: 'sdist', yanked: false, digests: { sha256: 'd'.repeat(64) } }],
-			})
-			: new Response(null, { status: 404 });
-	});
+	world.network.serve('pypi.org', request =>
+		pypiResponse(request, name => {
+			const known = [...published.keys()].filter(key => key.startsWith(`${name}@`)).map(key =>
+				key.slice(`${name}@`.length)
+			);
+			if (!name || !known.length) return undefined;
+			return {
+				latest: known.at(-1),
+				files: version =>
+					known.includes(version)
+						? [{ packagetype: 'sdist', yanked: false, digests: { sha256: 'd'.repeat(64) } }]
+						: undefined,
+			};
+		}));
 	const repository = lintRepository();
 	passChecks(repository, world.github.head(repository));
 	const api = bearer(world, await world.cliSession());
-	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
-	const plan = await Effect.runPromise(
-		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name })).body),
-	);
+	const plan = await discoverSetup(api, repository.name);
 	expect(plan.blockers).toEqual([]);
 	const [stream] = plan.choices.streams;
 	if (!stream) throw new Error('No proposed stream');
@@ -265,13 +248,7 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 		`        uses: kjanat/beepboop/actions/publish@v1\n        with:\n          execution-id: \${{ steps.beepboop.outputs.execution-id }}\n          credentials: '{"CARGO_REGISTRY_TOKEN":"crates-io"}'\n`,
 	);
 	expect(source('publish-crates.yml')).not.toContain('actions/report');
-	const applied = await api('/api/repositories/setup/apply', {
-		repository: repository.name,
-		choices: plan.choices,
-		planId: plan.planId,
-		sourceSha: plan.sourceSha,
-		setupHead: plan.setupHead,
-	});
+	const applied = await applySetup(api, repository.name, plan, plan.choices);
 	expect(applied.status).toBe(200);
 	const setup = world.github.merge(repository, 1);
 	const checkout = materialize(filesAt(repository, setup.sha));
@@ -280,32 +257,20 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 		world.github.relabel(repository, setup.sha, checkout.sha);
 		passChecks(repository, checkout.sha);
 		expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
-		const request = { repositoryId: repository.id, stream: stream.name, version: '1.1.0' };
-		const release = await api('/api/releases/plan', request);
-		expect(release.status).toBe(200);
-		const prepared = await api('/api/releases/prepare', {
-			...request,
-			sourceSha: text(release.body, 'sourceSha'),
-			planId: text(release.body, 'planId'),
+		const { plan: release, prepared } = await prepareRelease(api, {
+			repositoryId: repository.id,
+			stream: stream.name,
+			version: '1.1.0',
 		});
+		expect(release.status).toBe(200);
 		expect(prepared.status).toBe(200);
 		await world.wait(20_000);
 		const prepareRun = one(
 			repository.runs.filter(run => run.path === '.github/workflows/prepare-release.yml'),
 			'prepare run',
 		);
-		const prepareIdentity = {
-			repository,
-			runId: prepareRun.id,
-			sha: prepareRun.headSha,
-			file: 'prepare-release.yml',
-			actorId: botId,
-		};
-		const begun = await runAction(world, 'begin', prepareIdentity, {
-			EXECUTION_ID: text(prepared.body, 'id'),
-			STREAM: stream.name,
-			OPERATION: 'prepare',
-		});
+		const prepareIdentity = runIdentity(repository, prepareRun, 'prepare-release.yml');
+		const begun = await begin(world, prepareIdentity, text(prepared.body, 'id'), stream.name, 'prepare');
 		const context = begun.outputs.context ?? '';
 		const environment = join(scratch, 'env'), runner = join(scratch, 'runner');
 		writeFileSync(environment, '');
@@ -339,27 +304,18 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 		passChecks(repository, released);
 		expect((await world.push(repository)).status).toBe(202);
 		await world.wait(1_000);
-		const listed = await api('/api/executions');
-		const promotions = z.array(z.unknown()).parse(listed.body).map(decodeExecutionV1).filter(entry =>
-			entry.operation === 'promote'
-		);
-		const promotion = one(promotions, 'promotion');
+		const { promotion, approved } = await approvePromotion(api, released);
 		expect(promotion.state).toBe('awaiting-approval');
-		const approved = await api('/api/executions/approve', { id: promotion.id, sourceSha: released });
 		expect(text(approved.body, 'state')).toBe('ready');
 		await world.wait(16_000);
 
 		const runOf = (file: string) => {
 			const run = one(repository.runs.filter(entry => entry.path === `.github/workflows/${file}`), file);
-			return { run, identity: { repository, runId: run.id, sha: run.headSha, file, actorId: botId } };
+			return { run, identity: runIdentity(repository, run, file) };
 		};
 		const outcome = (state: string) => ({ outcome: state, required: true, version: '1.1.0' });
 		const tags = runOf('release-lint.yml');
-		await runAction(world, 'begin', tags.identity, {
-			EXECUTION_ID: promotion.id,
-			STREAM: stream.name,
-			OPERATION: 'promote',
-		});
+		await begin(world, tags.identity, promotion.id, stream.name, 'promote');
 		const planned = await runAction(world, 'refs-plan', tags.identity, { EXECUTION_ID: promotion.id });
 		const changes = refPlan.parse(JSON.parse(planned.outputs.result ?? '')).changes;
 		expect(changes.map(change => change.name)).toEqual(['lint-v1.1.0', 'go/v1.1.0']);
@@ -409,18 +365,12 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 
 		const crates = runOf('publish-crates.yml');
 		const crateExecution = one(
-			z.array(z.unknown()).parse((await api('/api/executions')).body).map(decodeExecutionV1).filter(entry =>
-				entry.operation === 'crates'
-			),
+			(await executions(api)).filter(entry => entry.operation === 'crates'),
 			'crates execution',
 		);
 		expect(crateExecution.version).toBe('1.1.0');
 		expect(crateExecution.sourceSha).toBe(released);
-		await runAction(world, 'begin', crates.identity, {
-			EXECUTION_ID: crateExecution.id,
-			STREAM: stream.name,
-			OPERATION: 'crates',
-		});
+		await begin(world, crates.identity, crateExecution.id, stream.name, 'crates');
 		const crateNames: Record<string, string> = {
 			'crates/core/Cargo.toml': 'lint-core',
 			'crates/cli/Cargo.toml': 'lint',
@@ -431,21 +381,13 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 			run: argv =>
 				Effect.sync(() => {
 					const name = crateNames[argv[argv.indexOf('--manifest-path') + 1] ?? ''] ?? '';
-					const archive = join(scratch, 'package', `${name}-1.1.0.crate`);
-					if (argv[1] === 'metadata') {
-						return {
-							code: 0,
-							stdout: JSON.stringify({ target_directory: scratch }),
-							output: JSON.stringify({ target_directory: scratch }),
-						};
-					}
+					if (argv[1] === 'metadata') return cargoMetadata(scratch);
 					if (argv[1] === 'package') {
-						mkdirSync(join(scratch, 'package'), { recursive: true });
-						writeFileSync(archive, `${name} 1.1.0\n`);
+						packCrate(scratch, name, '1.1.0');
 						return { code: 0, stdout: '', output: '' };
 					}
 					order.push(name);
-					published.set(`${name}@1.1.0`, `crate:${createHash('sha256').update(readFileSync(archive)).digest('hex')}`);
+					published.set(`${name}@1.1.0`, `crate:${crateChecksum(scratch, name, '1.1.0')}`);
 					return { code: 0, stdout: '', output: '' };
 				}),
 		});
@@ -456,16 +398,16 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 		await completed(repository, crates.run, 'workflow_dispatch');
 
 		const journal = await world.coordinator(repository).exportJournal();
-		const executions = journal.filter(entry => entry.key.startsWith('execution:')).map(entry =>
+		const journaled = journal.filter(entry => entry.key.startsWith('execution:')).map(entry =>
 			decodeExecutionV1(entry.value)
 		);
 		const outcomes = (operation: string) =>
-			executions.filter(entry => entry.operation === operation).flatMap(entry =>
+			journaled.filter(entry => entry.operation === operation).flatMap(entry =>
 				entry.publications.filter(publication => !publication.id.startsWith('refs:')).map(
 					publication => [publication.id, publication.version, publication.outcome],
 				)
 			).sort();
-		expect(executions.map(entry => [entry.operation, entry.state]).sort()).toEqual([
+		expect(journaled.map(entry => [entry.operation, entry.state]).sort()).toEqual([
 			['crates', 'succeeded'],
 			['prepare', 'succeeded'],
 			['promote', 'succeeded'],
@@ -492,9 +434,7 @@ test('a Go module with its own released tags becomes its own stream', async () =
 	world.github.push(repository, { 'sdk/go.mod': 'module github.com/octo/lint/sdk\n\ngo 1.26\n' }, 'Add the SDK');
 	repository.refs.set('tags/sdk/v0.3.0', world.github.head(repository));
 	const api = bearer(world, await world.cliSession());
-	const plan = await Effect.runPromise(
-		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name })).body),
-	);
+	const plan = await previewSetup(api, repository.name);
 	expect(plan.blockers).toEqual([]);
 	expect(plan.choices.streams.map(stream => [stream.name, stream.packages.filter(id => id.startsWith('pkg:golang/'))]))
 		.toEqual([
@@ -529,18 +469,9 @@ test('a Go module with its own released tags becomes its own stream', async () =
 async function mergedSetup(tamper: boolean, login = 'octo') {
 	const repository = lintRepository();
 	const api = bearer(world, await world.cliSession());
-	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
-	const plan = await Effect.runPromise(
-		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name })).body),
-	);
+	const plan = await discoverSetup(api, repository.name);
 	expect(plan.blockers).toEqual([]);
-	const applied = await api('/api/repositories/setup/apply', {
-		repository: repository.name,
-		choices: plan.choices,
-		planId: plan.planId,
-		sourceSha: plan.sourceSha,
-		setupHead: plan.setupHead,
-	});
+	const applied = await applySetup(api, repository.name, plan, plan.choices);
 	expect(applied.status).toBe(200);
 	await world.sealCredential('crates-io');
 	const foreign = {
@@ -609,17 +540,8 @@ test('a setup PR whose generated files changed before the merge grants nothing',
 test('an uncustomized setup PR follows the current proposal when the default branch changes', async () => {
 	const repository = lintRepository();
 	const api = bearer(world, await world.cliSession());
-	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
-	const plan = await Effect.runPromise(
-		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name })).body),
-	);
-	const applied = await api('/api/repositories/setup/apply', {
-		repository: repository.name,
-		choices: plan.choices,
-		planId: plan.planId,
-		sourceSha: plan.sourceSha,
-		setupHead: plan.setupHead,
-	});
+	const plan = await discoverSetup(api, repository.name);
+	const applied = await applySetup(api, repository.name, plan, plan.choices);
 	expect(applied.status).toBe(200);
 	world.github.push(repository, { 'sdk/go.mod': 'module github.com/octo/lint/sdk\n\ngo 1.26\n' }, 'Add the SDK');
 	expect((await world.push(repository)).status).toBe(202);
@@ -640,15 +562,10 @@ const passedBuild: NonNullable<Repository['runs'][number]['jobs']> = [
 ];
 
 async function stagedRelease() {
-	world.network.serve('crates.io', () => new Response(null, { status: 404 }));
-	world.network.serve('pypi.org', () => new Response(null, { status: 404 }));
-	world.network.serve('proxy.golang.org', () => new Response(null, { status: 404 }));
+	unpublished();
 	const repository = lintRepository(stagedWorkflow);
 	const api = bearer(world, await world.cliSession());
-	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
-	const plan = await Effect.runPromise(
-		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name })).body),
-	);
+	const plan = await discoverSetup(api, repository.name);
 	expect(plan.blockers).toEqual([]);
 	const [stream] = plan.choices.streams;
 	if (!stream) throw new Error('No proposed stream');
@@ -661,13 +578,7 @@ async function stagedRelease() {
 	const module = 'pkg:golang/github.com/octo/lint/go';
 	expect(stream.needs?.['pkg:cargo/lint-core']).toEqual([module]);
 	expect(stream.needs?.['pkg:cargo/lint']).toEqual([module, 'pkg:cargo/lint-core']);
-	const applied = await api('/api/repositories/setup/apply', {
-		repository: repository.name,
-		choices: plan.choices,
-		planId: plan.planId,
-		sourceSha: plan.sourceSha,
-		setupHead: plan.setupHead,
-	});
+	const applied = await applySetup(api, repository.name, plan, plan.choices);
 	expect(applied.status).toBe(200);
 	expect(one(repository.pulls, 'setup pull request').body).toContain(
 		'  - After jobs `plan`, `build`, `assemble` of `release`: `publish-crates.yml`',
@@ -702,27 +613,14 @@ async function stagedRelease() {
 	};
 	repository.runs.push(run);
 	const notify = async (action: string) => {
-		await world.webhook('workflow_run', {
-			action,
-			workflow_run: {
-				id: run.id,
-				conclusion: run.conclusion,
-				event: run.event,
-				path: run.path,
-				head_repository: { id: repository.id },
-			},
-			repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
-		});
+		await world.workflowRun(repository, run, run.conclusion, run.event, action);
 	};
 	await notify('in_progress');
 	await world.wait(2_000);
 	const crateRuns = () => repository.runs.filter(entry => entry.path === '.github/workflows/publish-crates.yml');
-	const executions = async () =>
-		z.array(z.unknown()).parse((await api('/api/executions')).body).map(decodeExecutionV1).filter(entry =>
-			entry.operation !== 'promote'
-		);
+	const unpromoted = async () => (await executions(api)).filter(entry => entry.operation !== 'promote');
 	expect(crateRuns()).toEqual([]);
-	return { repository, run, notify, crateRuns, executions };
+	return { repository, run, notify, crateRuns, executions: unpromoted };
 }
 
 test('the crates start once the build jobs pass while npm still runs', async () => {
@@ -814,9 +712,7 @@ for (const scenario of ['observed', 'unobserved', 'renamed'] as const) {
 			: 'crates that the tagged commit does not contain need a new version',
 		async () => {
 			const observed = scenario === 'observed';
-			world.network.serve('crates.io', () => new Response(null, { status: 404 }));
-			world.network.serve('pypi.org', () => new Response(null, { status: 404 }));
-			world.network.serve('proxy.golang.org', () => new Response(null, { status: 404 }));
+			unpublished();
 			const repository = lintRepository(stagedWorkflow);
 			world.npm.publish('@octo/lint', '1.0.0');
 			if (scenario === 'renamed') {
@@ -853,18 +749,9 @@ for (const scenario of ['observed', 'unobserved', 'renamed'] as const) {
 					: {}),
 			}, 'Document the tool');
 			const api = bearer(world, await world.cliSession());
-			expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
-			const plan = await Effect.runPromise(
-				parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name })).body),
-			);
+			const plan = await discoverSetup(api, repository.name);
 			expect(plan.blockers).toEqual([]);
-			const applied = await api('/api/repositories/setup/apply', {
-				repository: repository.name,
-				choices: plan.choices,
-				planId: plan.planId,
-				sourceSha: plan.sourceSha,
-				setupHead: plan.setupHead,
-			});
+			const applied = await applySetup(api, repository.name, plan, plan.choices);
 			expect(applied.status).toBe(200);
 			const merged = world.github.merge(repository, 1);
 			passChecks(repository, merged.sha);
@@ -880,31 +767,28 @@ for (const scenario of ['observed', 'unobserved', 'renamed'] as const) {
 					: stranded,
 			]);
 			await world.wait(16_000);
-			const executions = z.array(z.unknown()).parse((await api('/api/executions')).body).map(decodeExecutionV1);
-			expect(executions.filter(entry => entry.operation === 'promote')).toEqual([]);
+			const listed = await executions(api);
+			expect(listed.filter(entry => entry.operation === 'promote')).toEqual([]);
 			if (!observed) {
-				expect(executions).toEqual([]);
+				expect(listed).toEqual([]);
 				return;
 			}
-			const crates = one(executions.filter(entry => entry.operation === 'crates'), 'crates execution');
+			const crates = one(listed.filter(entry => entry.operation === 'crates'), 'crates execution');
 			expect([crates.version, crates.sourceSha, crates.dependencies]).toEqual(['1.0.0', tagged, []]);
 			const dispatched = one(
 				repository.runs.filter(entry => entry.path === '.github/workflows/publish-crates.yml'),
 				'crates run',
 			);
-			const begun = await runAction(
+			const begun = await begin(
 				world,
-				'begin',
-				{ repository, runId: dispatched.id, sha: dispatched.headSha, file: 'publish-crates.yml', actorId: botId },
-				{ EXECUTION_ID: crates.id, STREAM: 'lint', OPERATION: 'crates' },
+				runIdentity(repository, dispatched, 'publish-crates.yml'),
+				crates.id,
+				'lint',
+				'crates',
 			);
 			expect(JSON.parse(begun.outputs.context ?? '{}')).toMatchObject({ sourceSha: tagged, version: '1.0.0' });
 			expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
-			expect(
-				z.array(z.unknown()).parse((await api('/api/executions')).body).map(decodeExecutionV1).filter(entry =>
-					entry.operation === 'crates'
-				),
-			).toHaveLength(1);
+			expect((await executions(api)).filter(entry => entry.operation === 'crates')).toHaveLength(1);
 		},
 		60_000,
 	);
@@ -941,11 +825,12 @@ for (const rewritten of [false, true]) {
 			} else {
 				const dispatched = one(crateRuns(), 'crates run');
 				expect(dispatched.headSha).toBe(world.github.head(repository));
-				const begun = await runAction(
+				const begun = await begin(
 					world,
-					'begin',
-					{ repository, runId: dispatched.id, sha: dispatched.headSha, file: 'publish-crates.yml', actorId: botId },
-					{ EXECUTION_ID: crates.id, STREAM: 'lint', OPERATION: 'crates' },
+					runIdentity(repository, dispatched, 'publish-crates.yml'),
+					crates.id,
+					'lint',
+					'crates',
 				);
 				expect(JSON.parse(begun.outputs.context ?? '{}')).toMatchObject({ sourceSha: run.headSha });
 				expect(one((await executions()).filter(entry => entry.operation === 'crates'), 'crates execution').state)

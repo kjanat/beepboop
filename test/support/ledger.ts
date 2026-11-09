@@ -1,4 +1,7 @@
-import type { Runner } from '@root/actions/runtime/publish.ts';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import type { Command, Runner } from '@root/actions/runtime/publish.ts';
 import { publishPackages } from '@root/actions/runtime/publish.ts';
 import { call } from '@root/actions/runtime/session.ts';
 import { tokenHost, tokenRequest } from '@root/test/support/actions.ts';
@@ -47,4 +50,26 @@ export async function publishWith(world: World, identity: RunIdentity, execution
 		{ RUNNER_TEMP: options.scratch },
 	);
 	return { result, logs };
+}
+
+export function cargoMetadata(target: string): Command {
+	const metadata = JSON.stringify({ target_directory: target });
+	return { code: 0, stdout: metadata, output: metadata };
+}
+
+export function crateBytes(name: string, version: string): string {
+	return `${name} ${version}\n`;
+}
+
+export function crateArchive(target: string, name: string, version: string): string {
+	return join(target, 'package', `${name}-${version}.crate`);
+}
+
+export function packCrate(target: string, name: string, version: string): void {
+	mkdirSync(join(target, 'package'), { recursive: true });
+	writeFileSync(crateArchive(target, name, version), crateBytes(name, version));
+}
+
+export function crateChecksum(target: string, name: string, version: string): string {
+	return createHash('sha256').update(readFileSync(crateArchive(target, name, version))).digest('hex');
 }

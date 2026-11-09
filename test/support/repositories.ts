@@ -1,6 +1,8 @@
 import type { FakeGitHub, Repository } from '@root/test/support/github.ts';
+import { z } from 'zod';
 
-export const publishWorkflow = `name: Publish
+export function dispatchedPublishWorkflow(name: string, stream: string, step: string, steps: string): string {
+	return `name: ${name}
 run-name: \${{ inputs.beepboop_title || github.workflow }}
 on:
   workflow_dispatch:
@@ -17,17 +19,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: kjanat/beepboop/actions/begin@actions
-        id: release
+        id: ${step}
         with:
           execution-id: \${{ inputs.beepboop_execution_id }}
-          stream: main
+          stream: ${stream}
           operation: promote
-      - run: npm publish
+${steps}`;
+}
+
+export const publishWorkflow = dispatchedPublishWorkflow(
+	'Publish',
+	'main',
+	'release',
+	`      - run: npm publish
       - uses: kjanat/beepboop/actions/report@actions
         with:
           execution-id: \${{ steps.release.outputs.execution-id }}
           publications: '[{"id":"pkg:npm/widget","manager":"npm","name":"widget","version":"\${{ fromJSON(steps.release.outputs.context).version }}","outcome":"succeeded"}]'
-`;
+`,
+);
+
+export function workflowJob(on: string, steps: string, job = ''): string {
+	return `on: ${on}\njobs:\n  release:\n    runs-on: ubuntu-latest\n${job}    steps:\n${steps}`;
+}
+
+export function runWorkflow(on: string, ...runs: string[]): string {
+	return workflowJob(on, runs.map(run => `      - run: ${run}\n`).join(''));
+}
 
 export const ciWorkflow = `name: CI
 on:
@@ -67,6 +85,14 @@ export function widgetConfiguration(approval: 'required' | 'merge' | 'push' = 'r
 			},
 		},
 	}, '\t');
+}
+
+const promotedConfiguration = z.looseObject({
+	streams: z.looseObject({ main: z.looseObject({ promote: z.looseObject({ workflow: z.looseObject({}) }) }) }),
+});
+
+export function editableConfiguration() {
+	return promotedConfiguration.parse(JSON.parse(widgetConfiguration()));
 }
 
 export function widget(github: FakeGitHub, options: WidgetOptions = {}): Repository {

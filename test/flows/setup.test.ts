@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { botId, ownerId } from '@root/test/support/github.ts';
 import { bearer, field } from '@root/test/support/http.ts';
 import { publishWorkflow, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
+import { applySetup, discoverSetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Result } from 'effect';
@@ -56,13 +57,7 @@ test('a discovered repository can preview, open and refresh its setup PR', async
 	expect(preview.status).toBe(200);
 	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
 	expect(plan.blockers).toEqual([]);
-	const applied = await api('/api/repositories/setup/apply', {
-		repository: repository.name,
-		choices,
-		planId: plan.planId,
-		sourceSha: plan.sourceSha,
-		setupHead: plan.setupHead,
-	});
+	const applied = await applySetup(api, repository.name, plan, choices);
 	expect(applied.status).toBe(200);
 	expect(repository.pulls).toHaveLength(1);
 	const refreshed = await api('/api/repositories/setup/preview', { repository: repository.name });
@@ -70,13 +65,7 @@ test('a discovered repository can preview, open and refresh its setup PR', async
 	const next = await Effect.runPromise(parseSetupPlan(refreshed.body));
 	expect(next.blockers).toEqual([]);
 	expect(next.choices).toEqual(plan.choices);
-	const reapplied = await api('/api/repositories/setup/apply', {
-		repository: repository.name,
-		choices: next.choices,
-		planId: next.planId,
-		sourceSha: next.sourceSha,
-		setupHead: next.setupHead,
-	});
+	const reapplied = await applySetup(api, repository.name, next, next.choices);
 	expect(reapplied.status).toBe(200);
 	expect(repository.pulls).toHaveLength(1);
 });
@@ -104,13 +93,7 @@ for (const configured of [false, true]) {
 		const plan = await Effect.runPromise(parseSetupPlan(preview.body));
 		expect(plan.blockers).toEqual([]);
 		expect(plan.choices.streams[0]?.prepare).toBeUndefined();
-		const applied = await api('/api/repositories/setup/apply', {
-			repository: repository.name,
-			choices: plan.choices,
-			planId: plan.planId,
-			sourceSha: plan.sourceSha,
-			setupHead: plan.setupHead,
-		});
+		const applied = await applySetup(api, repository.name, plan, plan.choices);
 		expect(applied.status).toBe(200);
 		expect(repository.pulls).toHaveLength(1);
 		const edit = plan.edits.find(edit => edit.path === '.github/workflows/publish.yml');
@@ -220,13 +203,7 @@ for (const preparation of ['run: npm install', 'uses: octo/build-artifacts@v1'])
 			'publish.yml: steps before begin need explicit integration; prepare dependencies and build output after the approved checkout',
 		);
 		expect(plan.edits.find(edit => edit.path === '.github/workflows/publish.yml')).toBeUndefined();
-		const applied = await api('/api/repositories/setup/apply', {
-			repository: repository.name,
-			choices: plan.choices,
-			planId: plan.planId,
-			sourceSha: plan.sourceSha,
-			setupHead: plan.setupHead,
-		});
+		const applied = await applySetup(api, repository.name, plan, plan.choices);
 		expect(applied.status).toBe(422);
 		expect(repository.pulls).toHaveLength(0);
 	});
@@ -256,13 +233,7 @@ for (const versioning of ['workspace', 'independent', 'none'] as const) {
 		expect(plan.blockers).toEqual([
 			'main: select a preparation workflow; managed preparation needs a version stored in a file.',
 		]);
-		const applied = await api('/api/repositories/setup/apply', {
-			repository: repository.name,
-			choices: plan.choices,
-			planId: plan.planId,
-			sourceSha: plan.sourceSha,
-			setupHead: plan.setupHead,
-		});
+		const applied = await applySetup(api, repository.name, plan, plan.choices);
 		expect(applied.status).toBe(422);
 		expect(repository.pulls).toHaveLength(0);
 	});
@@ -304,13 +275,7 @@ test('tag-only packages with a version file can use managed preparation', async 
 	const setup = await Effect.runPromise(parseSetupPlan(preview.body));
 	expect(setup.blockers).toEqual([]);
 	expect(
-		(await api('/api/repositories/setup/apply', {
-			repository: repository.name,
-			choices: setup.choices,
-			planId: setup.planId,
-			sourceSha: setup.sourceSha,
-			setupHead: setup.setupHead,
-		})).status,
+		(await applySetup(api, repository.name, setup, setup.choices)).status,
 	).toBe(200);
 	world.github.merge(repository, 1);
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
@@ -340,13 +305,7 @@ test('managed setup still requires a workflow to regenerate lockfiles', async ()
 	const preview = await api('/api/repositories/setup/preview', { repository: repository.name });
 	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
 	expect(plan.blockers).toContain('main: select a preparation workflow to regenerate lockfiles.');
-	const applied = await api('/api/repositories/setup/apply', {
-		repository: repository.name,
-		choices: plan.choices,
-		planId: plan.planId,
-		sourceSha: plan.sourceSha,
-		setupHead: plan.setupHead,
-	});
+	const applied = await applySetup(api, repository.name, plan, plan.choices);
 	expect(applied.status).toBe(422);
 	expect(repository.pulls).toHaveLength(0);
 });
@@ -529,13 +488,7 @@ test('a publication workflow builds each binary in a platform matrix and release
 		publications: ['github-release:octo/signer'],
 		refs: { phase: 'version', prefix: 'v' },
 	});
-	const applied = await api('/api/repositories/setup/apply', {
-		repository: repository.name,
-		choices: plan.choices,
-		planId: plan.planId,
-		sourceSha: plan.sourceSha,
-		setupHead: plan.setupHead,
-	});
+	const applied = await applySetup(api, repository.name, plan, plan.choices);
 	expect(applied.status).toBe(200);
 	expect(repository.pulls).toHaveLength(1);
 });
@@ -660,13 +613,7 @@ test('setup writes the selected version files into the stream', async () => {
 	expect(configuration.streams.main?.versionFiles).toEqual([
 		{ path: 'tool/Cargo.toml', format: 'toml', key: ['package', 'version'], template: '{version}' },
 	]);
-	const applied = await api('/api/repositories/setup/apply', {
-		repository: repository.name,
-		choices: plan.choices,
-		planId: plan.planId,
-		sourceSha: plan.sourceSha,
-		setupHead: plan.setupHead,
-	});
+	const applied = await applySetup(api, repository.name, plan, plan.choices);
 	expect(applied.status).toBe(200);
 });
 
@@ -1151,13 +1098,7 @@ test('adoption leaves custom checkout refs for explicit integration', async () =
 	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
 	expect(plan.blockers).toContain('publish.yml: checkout the execution sourceSha after begin');
 	expect(plan.edits.find(edit => edit.path === '.github/workflows/publish.yml')).toBeUndefined();
-	const applied = await api('/api/repositories/setup/apply', {
-		repository: repository.name,
-		choices: plan.choices,
-		planId: plan.planId,
-		sourceSha: plan.sourceSha,
-		setupHead: plan.setupHead,
-	});
+	const applied = await applySetup(api, repository.name, plan, plan.choices);
 	expect(applied.status).toBe(422);
 	expect(repository.pulls).toHaveLength(0);
 });
@@ -1195,13 +1136,7 @@ test('configuration-only adoption does not request workflow write permission', a
 	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
 	expect(plan.blockers).toEqual([]);
 	expect(plan.edits.map(edit => edit.path)).toEqual(['.github/beepboop.json']);
-	const applied = await api('/api/repositories/setup/apply', {
-		repository: repository.name,
-		choices: plan.choices,
-		planId: plan.planId,
-		sourceSha: plan.sourceSha,
-		setupHead: plan.setupHead,
-	});
+	const applied = await applySetup(api, repository.name, plan, plan.choices);
 	expect(applied.status).toBe(200);
 	expect(repository.pulls).toHaveLength(1);
 });
@@ -1260,13 +1195,7 @@ for (const inherited of [false, true]) {
 		expect(proposed.streams.main.prepare.workflow.inputs).toEqual({ channel: 'stable', dryRun: false });
 		expect(proposed.streams.main.promote.workflow.inputs).toEqual({ channel: 'stable', retries: 0 });
 		expect(
-			(await api('/api/repositories/setup/apply', {
-				repository: repository.name,
-				choices: plan.choices,
-				planId: plan.planId,
-				sourceSha: plan.sourceSha,
-				setupHead: plan.setupHead,
-			})).status,
+			(await applySetup(api, repository.name, plan, plan.choices)).status,
 		).toBe(200);
 		world.github.merge(repository, 1);
 		const discovered = await api('/api/repositories/discover', { repository: repository.name });
@@ -1483,13 +1412,7 @@ test('an unticked dependency in the setup PR body stays unticked through edits a
 		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
 	);
 	expect(proposal.blockers).toEqual([]);
-	const applied = await api('/api/repositories/setup/apply', {
-		repository: repository.name,
-		choices: proposal.choices,
-		planId: proposal.planId,
-		sourceSha: proposal.sourceSha,
-		setupHead: proposal.setupHead,
-	});
+	const applied = await applySetup(api, repository.name, proposal, proposal.choices);
 	expect(applied.status).toBe(200);
 	const pull = repository.pulls[0];
 	if (!pull) throw new Error('No setup pull request');
@@ -1611,13 +1534,7 @@ async function gadgetSetup() {
 	const plan = await Effect.runPromise(
 		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
 	);
-	const applied = await api('/api/repositories/setup/apply', {
-		repository: repository.name,
-		choices: plan.choices,
-		planId: plan.planId,
-		sourceSha: plan.sourceSha,
-		setupHead: plan.setupHead,
-	});
+	const applied = await applySetup(api, repository.name, plan, plan.choices);
 	expect(applied.status).toBe(200);
 	const pull = repository.pulls[0];
 	if (!pull) throw new Error('No setup pull request');
@@ -1779,18 +1696,9 @@ test('a setup update gets its own branch, a title naming its changes and a chang
 	expect(workflow.getIn(['jobs', 'promote', 'timeout-minutes'])).toBe(publishMinutes(1));
 	workflow.deleteIn(['jobs', 'promote', 'timeout-minutes']);
 	world.github.push(repository, { [file]: workflow.toString() }, 'Drop the job timeout');
-	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
-	const plan = await Effect.runPromise(
-		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name })).body),
-	);
+	const plan = await discoverSetup(api, repository.name);
 	expect([plan.blockers, plan.edits.map(edit => edit.path)]).toEqual([[], [file]]);
-	const applied = await api('/api/repositories/setup/apply', {
-		repository: repository.name,
-		choices: plan.choices,
-		planId: plan.planId,
-		sourceSha: plan.sourceSha,
-		setupHead: plan.setupHead,
-	});
+	const applied = await applySetup(api, repository.name, plan, plan.choices);
 	expect(applied.status).toBe(200);
 	const update = repository.pulls.find(entry => entry.state === 'open');
 	if (!update) throw new Error('No setup update pull request');

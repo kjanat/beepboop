@@ -1,10 +1,20 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { commitAll, gitOutput, materialize, runAction, runRuntime } from '@root/test/support/actions.ts';
+import {
+	begin,
+	commitAll,
+	gitOutput,
+	materialize,
+	runAction,
+	runIdentity,
+	runRuntime,
+} from '@root/test/support/actions.ts';
 import type { Repository } from '@root/test/support/github.ts';
-import { botId, ownerId } from '@root/test/support/github.ts';
+import { filesAt } from '@root/test/support/github.ts';
 import { bearer, text } from '@root/test/support/http.ts';
+import { one } from '@root/test/support/lists.ts';
+import { approvePromotion, prepareRelease } from '@root/test/support/releases.ts';
 import { jsonFile, passChecks, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
 import type { SigningKey } from '@root/test/support/signing.ts';
 import type { World } from '@root/test/support/world.ts';
@@ -41,19 +51,6 @@ export type PackedRefPlan = z.infer<typeof refPlan>;
 export interface PackedSigning {
 	key: SigningKey;
 	signer?: TagSigner;
-}
-
-function one<T>(items: T[], label: string): T {
-	const [item] = items;
-	if (items.length !== 1 || item === undefined) throw new Error(`Expected one ${label}, found ${items.length}`);
-	return item;
-}
-
-function filesAt(repository: Repository, sha: string): Record<string, string> {
-	const commit = repository.commits.get(sha);
-	const tree = commit ? repository.trees.get(commit.tree) : undefined;
-	if (!tree) throw new Error('Missing tree');
-	return Object.fromEntries(tree);
 }
 
 export interface PackedRelease {
@@ -102,13 +99,7 @@ export async function packedRelease(
 		const api = bearer(world, await world.cliSession());
 		const discovered = await api('/api/repositories/discover', { repository: 'octo/widget' });
 		if (discovered.status !== 200) throw new Error(`Discover failed ${discovered.status}`);
-		const request = { repositoryId: repository.id, stream: 'main', version: '1.1.0' };
-		const plan = await api('/api/releases/plan', request);
-		const prepared = await api('/api/releases/prepare', {
-			...request,
-			sourceSha: text(plan.body, 'sourceSha'),
-			planId: text(plan.body, 'planId'),
-		});
+		const { prepared } = await prepareRelease(api, { repositoryId: repository.id, stream: 'main', version: '1.1.0' });
 		if (prepared.status !== 200) throw new Error(`Prepare failed ${prepared.status}`);
 		await world.wait(20_000);
 		const prepareRun = one(
@@ -116,18 +107,8 @@ export async function packedRelease(
 			'prepare run',
 		);
 		prepareRun.status = 'in_progress';
-		const prepareIdentity = {
-			repository,
-			runId: prepareRun.id,
-			sha: prepareRun.headSha,
-			file: 'prepare.yml',
-			actorId: botId,
-		};
-		const begun = await runAction(world, 'begin', prepareIdentity, {
-			EXECUTION_ID: text(prepared.body, 'id'),
-			STREAM: 'main',
-			OPERATION: 'prepare',
-		});
+		const prepareIdentity = runIdentity(repository, prepareRun, 'prepare.yml');
+		const begun = await begin(world, prepareIdentity, text(prepared.body, 'id'), 'main', 'prepare');
 		const releaseContext = begun.outputs.context ?? '';
 		const source = contextFields.parse(JSON.parse(releaseContext));
 		if (source.sourceSha !== gitOutput(checkout.dir, ['rev-parse', 'HEAD'])) {
@@ -155,17 +136,7 @@ export async function packedRelease(
 		await runAction(world, 'prepared', prepareIdentity, { PREPARED_FILE: file });
 		prepareRun.status = 'completed';
 		prepareRun.conclusion = 'success';
-		await world.webhook('workflow_run', {
-			action: 'completed',
-			workflow_run: {
-				id: prepareRun.id,
-				conclusion: 'success',
-				event: 'workflow_dispatch',
-				path: prepareRun.path,
-				head_repository: { id: repository.id },
-			},
-			repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
-		});
+		await world.workflowRun(repository, prepareRun, 'success', 'workflow_dispatch');
 		await world.wait(1_000);
 		const pull = one(repository.pulls, 'preparation pull request');
 		const released = commitAll(checkout.dir, 'Release 1.1.0');
@@ -174,15 +145,9 @@ export async function packedRelease(
 		passChecks(repository, released);
 		if ((await world.push(repository)).status !== 202) throw new Error('Push was refused');
 		await world.wait(1_000);
-		const listed = await api('/api/executions');
-		if (!Array.isArray(listed.body)) throw new Error('Expected an execution list');
-		const promotion = one(
-			listed.body.filter(entry => text(entry, 'operation') === 'promote'),
-			'promotion',
-		);
-		const promotionId = text(promotion, 'id');
-		if (text(promotion, 'sourceSha') !== released) throw new Error('Promotion source is not the packed checkout');
-		const approved = await api('/api/executions/approve', { id: promotionId, sourceSha: released });
+		const { promotion, approved } = await approvePromotion(api, released);
+		const promotionId = promotion.id;
+		if (promotion.sourceSha !== released) throw new Error('Promotion source is not the packed checkout');
 		if (text(approved.body, 'state') !== 'ready') throw new Error('Promotion stayed blocked');
 		await world.wait(16_000);
 		const promoteRun = one(
@@ -190,18 +155,8 @@ export async function packedRelease(
 			'promote run',
 		);
 		promoteRun.status = 'in_progress';
-		const promoteIdentity = {
-			repository,
-			runId: promoteRun.id,
-			sha: promoteRun.headSha,
-			file: 'publish.yml',
-			actorId: botId,
-		};
-		await runAction(world, 'begin', promoteIdentity, {
-			EXECUTION_ID: promotionId,
-			STREAM: 'main',
-			OPERATION: 'promote',
-		});
+		const promoteIdentity = runIdentity(repository, promoteRun, 'publish.yml');
+		await begin(world, promoteIdentity, promotionId, 'main', 'promote');
 		if (beforeRefs) await beforeRefs(promotionId);
 		const planned = await runAction(world, 'refs-plan', promoteIdentity, { EXECUTION_ID: promotionId });
 		const planBody = refPlan.parse(JSON.parse(planned.outputs.result ?? ''));
@@ -245,17 +200,7 @@ export async function packedRelease(
 		});
 		promoteRun.status = 'completed';
 		promoteRun.conclusion = 'success';
-		await world.webhook('workflow_run', {
-			action: 'completed',
-			workflow_run: {
-				id: promoteRun.id,
-				conclusion: 'success',
-				event: 'workflow_dispatch',
-				path: promoteRun.path,
-				head_repository: { id: repository.id },
-			},
-			repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
-		});
+		await world.workflowRun(repository, promoteRun, 'success', 'workflow_dispatch');
 		await world.wait(2_000);
 		return { repository, promotionId, plan: planBody, tags };
 	} finally {

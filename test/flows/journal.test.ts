@@ -2,8 +2,10 @@ import { expect, test } from 'bun:test';
 import { runAction } from '@root/test/support/actions.ts';
 import { call, cliTransport, discoveredWidget } from '@root/test/support/client.ts';
 import { botId } from '@root/test/support/github.ts';
+import { bearer, text } from '@root/test/support/http.ts';
 import { packedRelease } from '@root/test/support/packed-release.ts';
 import { loggedErrors } from '@root/test/support/process.ts';
+import { approvePromotion, prepareRelease } from '@root/test/support/releases.ts';
 import { passChecks } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
@@ -62,14 +64,14 @@ test('the change feed stays empty until something changes, and reindex rebuilds 
 	const send = cliTransport(world, token);
 	expect(await call(routes.changes, { since: 0 }, send)).toEqual({ cursor: 0, changes: [] });
 
-	const plan = await call(routes.releasesPlan, { repositoryId: repository.id, stream: 'main', version: '1.1.0' }, send);
-	const prepared = await call(
-		routes.releasesPrepare,
-		{ repositoryId: repository.id, stream: 'main', version: '1.1.0', sourceSha: plan.sourceSha, planId: plan.planId },
-		send,
-	);
+	const { prepared } = await prepareRelease(bearer(world, token), {
+		repositoryId: repository.id,
+		stream: 'main',
+		version: '1.1.0',
+	});
+	const preparedId = text(prepared.body, 'id');
 	const first = await call(routes.changes, { since: 0, repositoryId: repository.id }, send);
-	expect(first.changes.map(entry => [entry.entity, entry.id])).toEqual([['execution', prepared.id]]);
+	expect(first.changes.map(entry => [entry.entity, entry.id])).toEqual([['execution', preparedId]]);
 	world.db.reset();
 	expect(await call(routes.changes, { since: first.cursor }, send)).toEqual({ cursor: first.cursor, changes: [] });
 	expect(world.db.queries.filter(query => query.sql.includes('FROM changes')).length).toBe(1);
@@ -82,20 +84,18 @@ test('the change feed stays empty until something changes, and reindex rebuilds 
 	expect(await call(routes.executionsList, {}, send)).toEqual([]);
 	await world.elevate();
 	expect(await call(routes.adminReindex, { proof: 'proof' }, send)).toEqual({ queued: 1 });
-	expect((await call(routes.executionsList, {}, send)).map(entry => entry.id)).toEqual([prepared.id]);
+	expect((await call(routes.executionsList, {}, send)).map(entry => entry.id)).toEqual([preparedId]);
 	const rebuilt = await call(routes.changes, { since: first.cursor }, send);
 	expect(rebuilt.changes.map(entry => [entry.entity, entry.id, entry.revision])).toEqual([
-		['execution', prepared.id, 2],
+		['execution', preparedId, 2],
 	]);
 });
 
 test('a Beepboop-dispatched run gets a token while D1 holds no rows', async () => {
 	const token = await world.cliSession();
 	const repository = await discoveredWidget(world, token);
-	const send = cliTransport(world, token);
-	const request = { repositoryId: repository.id, stream: 'main', version: '1.1.0' };
-	const plan = await call(routes.releasesPlan, request, send);
-	await call(routes.releasesPrepare, { ...request, sourceSha: plan.sourceSha, planId: plan.planId }, send);
+	const api = bearer(world, token);
+	await prepareRelease(api, { repositoryId: repository.id, stream: 'main', version: '1.1.0' });
 	await world.wait(20_000);
 	const [pull] = repository.pulls;
 	if (!pull) throw new Error('No preparation pull request');
@@ -103,9 +103,7 @@ test('a Beepboop-dispatched run gets a token while D1 holds no rows', async () =
 	passChecks(repository, merged.sha);
 	await world.push(repository);
 	await world.wait(1_000);
-	const [promotion] = (await call(routes.executionsList, {}, send)).filter(entry => entry.operation === 'promote');
-	if (!promotion) throw new Error('No promotion');
-	await call(routes.executionsApprove, { id: promotion.id, repositoryId: repository.id, sourceSha: merged.sha }, send);
+	const { promotion } = await approvePromotion(api, merged.sha);
 	await world.wait(16_000);
 	const run = repository.runs.at(-1);
 	if (!run) throw new Error('No dispatched run');
@@ -183,19 +181,18 @@ test('a poisoned execution is quarantined while the rest of the journal advances
 	const token = await world.cliSession();
 	const repository = await discoveredWidget(world, token);
 	const send = cliTransport(world, token);
-	const plan = await call(routes.releasesPlan, { repositoryId: repository.id, stream: 'main', version: '1.1.0' }, send);
-	const prepared = await call(
-		routes.releasesPrepare,
-		{ repositoryId: repository.id, stream: 'main', version: '1.1.0', sourceSha: plan.sourceSha, planId: plan.planId },
-		send,
-	);
+	const { prepared } = await prepareRelease(bearer(world, token), {
+		repositoryId: repository.id,
+		stream: 'main',
+		version: '1.1.0',
+	});
 	const journal = world.coordinators.instance(String(repository.id)).storage;
 	await journal.put('execution:poisoned', { id: 'poisoned', repositoryId: repository.id, state: 'exploded' });
 
 	await world.wait(20_000);
 	expect(repository.pulls.length).toBe(1);
 	const listed = await call(routes.executionsList, {}, send);
-	expect(listed.map(execution => [execution.id, execution.state])).toEqual([[prepared.id, 'succeeded']]);
+	expect(listed.map(execution => [execution.id, execution.state])).toEqual([[text(prepared.body, 'id'), 'succeeded']]);
 	expect(journal.snapshot().get('quarantine:poisoned')).toEqual({
 		error: expect.stringContaining('expected'),
 		at: Date.parse('2026-11-04T09:00:15.000Z'),

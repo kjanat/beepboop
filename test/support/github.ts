@@ -76,6 +76,13 @@ export interface Repository {
 	tagObjects: Map<string, { name: string; commit: string; verified: boolean }>;
 }
 
+export function filesAt(repository: Repository, sha: string): Record<string, string> {
+	const commit = repository.commits.get(sha);
+	const tree = commit ? repository.trees.get(commit.tree) : undefined;
+	if (!tree) throw new Error('Missing tree');
+	return Object.fromEntries(tree);
+}
+
 function hash(value: unknown): string {
 	return new Bun.CryptoHasher('sha1').update(JSON.stringify(value)).digest('hex');
 }

@@ -1,12 +1,11 @@
 import { expect, test } from 'bun:test';
-import { runAction } from '@root/test/support/actions.ts';
+import { begin, runAction, runIdentity } from '@root/test/support/actions.ts';
 import { discoveredWidget } from '@root/test/support/client.ts';
-import { botId, ownerId } from '@root/test/support/github.ts';
-import type { Reply } from '@root/test/support/http.ts';
 import { bearer, text } from '@root/test/support/http.ts';
 import { packedRelease } from '@root/test/support/packed-release.ts';
 import { loggedErrors } from '@root/test/support/process.ts';
-import { passChecks, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
+import { approvePromotion, only, prepareRelease } from '@root/test/support/releases.ts';
+import { editableConfiguration, passChecks, widget } from '@root/test/support/repositories.ts';
 import { fakeSigner, signingKey } from '@root/test/support/signing.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
@@ -21,15 +20,6 @@ import { overview } from '@/server/views/overview';
 import { runCard } from '@/server/views/runs';
 
 let world: World;
-async function only(api: (path: string) => Promise<Reply>, operation: string): Promise<Execution> {
-	const listed = await api('/api/executions');
-	if (!Array.isArray(listed.body)) throw new Error('Expected an execution list');
-	const matches = listed.body.map(decodeExecutionV1).filter(execution => execution.operation === operation);
-	if (matches.length !== 1 || !matches[0]) {
-		throw new Error(`Expected one ${operation} execution, found ${matches.length}`);
-	}
-	return matches[0];
-}
 eachWorld(created => {
 	world = created;
 });
@@ -43,14 +33,12 @@ test('a managed release travels from discovery to a verified publication', async
 	expect(discovered.status).toBe(200);
 	expect(text(discovered.body, 'name')).toBe('octo/widget');
 
-	const request = { repositoryId: repository.id, stream: 'main', version: '1.1.0' };
-	const plan = await api('/api/releases/plan', request);
-	expect(plan.status).toBe(200);
-	const prepared = await api('/api/releases/prepare', {
-		...request,
-		sourceSha: text(plan.body, 'sourceSha'),
-		planId: text(plan.body, 'planId'),
+	const { plan, prepared } = await prepareRelease(api, {
+		repositoryId: repository.id,
+		stream: 'main',
+		version: '1.1.0',
 	});
+	expect(plan.status).toBe(200);
 	expect(prepared.status).toBe(200);
 	expect(text(prepared.body, 'state')).toBe('ready');
 	await world.wait(20_000);
@@ -77,12 +65,8 @@ test('a managed release travels from discovery to a verified publication', async
 	const run = repository.runs.at(-1);
 	if (!run) throw new Error('No workflow run');
 	run.status = 'in_progress';
-	const identity = { repository, runId: run.id, sha: run.headSha, file: 'publish.yml', actorId: botId };
-	const begun = await runAction(world, 'begin', identity, {
-		EXECUTION_ID: promotion.id,
-		STREAM: 'main',
-		OPERATION: 'promote',
-	});
+	const identity = runIdentity(repository, run, 'publish.yml');
+	const begun = await begin(world, identity, promotion.id, 'main', 'promote');
 	expect(begun.outputs['execution-id']).toBe(promotion.id);
 	expect(text(JSON.parse(begun.outputs.context ?? '{}'), 'state')).toBe('running');
 
@@ -97,17 +81,7 @@ test('a managed release travels from discovery to a verified publication', async
 
 	run.status = 'completed';
 	run.conclusion = 'success';
-	await world.webhook('workflow_run', {
-		action: 'completed',
-		workflow_run: {
-			id: run.id,
-			conclusion: 'success',
-			event: 'workflow_dispatch',
-			path: run.path,
-			head_repository: { id: repository.id },
-		},
-		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
-	});
+	await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
 	await world.wait(2_000);
 	expect((await only(api, 'promote')).state).toBe('succeeded');
 	const journal = await world.coordinator(repository).exportJournal();
@@ -136,13 +110,7 @@ async function finishedPromotion(outcome: 'pending' | 'skipped') {
 	const session = await world.cliSession();
 	const repository = await discoveredWidget(world, session);
 	const api = bearer(world, session);
-	const request = { repositoryId: repository.id, stream: 'main', version: '1.1.0' };
-	const plan = await api('/api/releases/plan', request);
-	await api('/api/releases/prepare', {
-		...request,
-		sourceSha: text(plan.body, 'sourceSha'),
-		planId: text(plan.body, 'planId'),
-	});
+	await prepareRelease(api, { repositoryId: repository.id, stream: 'main', version: '1.1.0' });
 	await world.wait(20_000);
 	const [pull] = repository.pulls;
 	if (!pull) throw new Error('No preparation pull request');
@@ -150,15 +118,14 @@ async function finishedPromotion(outcome: 'pending' | 'skipped') {
 	passChecks(repository, merged.sha);
 	await world.push(repository);
 	await world.wait(1_000);
-	const promotion = await only(api, 'promote');
+	const { promotion } = await approvePromotion(api, merged.sha);
 	expect(promotion.state).toBe('awaiting-approval');
-	await api('/api/executions/approve', { id: promotion.id, sourceSha: merged.sha });
 	await world.wait(16_000);
 	const run = repository.runs.at(-1);
 	if (!run) throw new Error('No workflow run');
 	run.status = 'in_progress';
-	const identity = { repository, runId: run.id, sha: run.headSha, file: 'publish.yml', actorId: botId };
-	await runAction(world, 'begin', identity, { EXECUTION_ID: promotion.id, STREAM: 'main', OPERATION: 'promote' });
+	const identity = runIdentity(repository, run, 'publish.yml');
+	await begin(world, identity, promotion.id, 'main', 'promote');
 	const token = await runAction(world, 'token', identity, {
 		EXECUTION_ID: promotion.id,
 		PERMISSIONS: '{"contents":"read"}',
@@ -172,17 +139,7 @@ async function finishedPromotion(outcome: 'pending' | 'skipped') {
 	});
 	run.status = 'completed';
 	run.conclusion = 'success';
-	await world.webhook('workflow_run', {
-		action: 'completed',
-		workflow_run: {
-			id: run.id,
-			conclusion: 'success',
-			event: 'workflow_dispatch',
-			path: run.path,
-			head_repository: { id: repository.id },
-		},
-		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
-	});
+	await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
 	await world.wait(2_000);
 	const entry = (await world.coordinator(repository).exportJournal()).find(entry =>
 		entry.key === `execution:${promotion.id}`
@@ -309,24 +266,14 @@ test('a stored blocked promotion decodes as verifying only when a recheck can se
 test('a promotion whose workflow branch was deleted fails with the missing ref named', async () => {
 	const repository = widget(world.github);
 	world.npm.publish('widget', '1.0.0');
-	const configuration = z.looseObject({
-		streams: z.looseObject({
-			main: z.looseObject({ promote: z.looseObject({ workflow: z.looseObject({}) }) }),
-		}),
-	}).parse(JSON.parse(widgetConfiguration()));
+	const configuration = editableConfiguration();
 	configuration.streams.main.promote.workflow.ref = 'release-line';
 	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Release from a branch');
 	passChecks(repository, world.github.head(repository));
 	const api = bearer(world, await world.cliSession());
 	await api('/api/repositories/discover', { repository: 'octo/widget' });
 
-	const request = { repositoryId: repository.id, stream: 'main', version: '1.1.0' };
-	const plan = await api('/api/releases/plan', request);
-	await api('/api/releases/prepare', {
-		...request,
-		sourceSha: text(plan.body, 'sourceSha'),
-		planId: text(plan.body, 'planId'),
-	});
+	await prepareRelease(api, { repositoryId: repository.id, stream: 'main', version: '1.1.0' });
 	await world.wait(20_000);
 	const [pull] = repository.pulls;
 	if (!pull) throw new Error('No preparation pull request');
@@ -335,8 +282,7 @@ test('a promotion whose workflow branch was deleted fails with the missing ref n
 	repository.refs.set('heads/release-line', merged.sha);
 	await world.push(repository);
 	await world.wait(1_000);
-	const promotion = await only(api, 'promote');
-	const approved = await api('/api/executions/approve', { id: promotion.id, sourceSha: merged.sha });
+	const { promotion, approved } = await approvePromotion(api, merged.sha);
 	expect(text(approved.body, 'state')).toBe('ready');
 
 	repository.refs.delete('heads/release-line');
@@ -352,13 +298,7 @@ test('a merge-approved release whose merge cannot be confirmed waits for approva
 	world.npm.publish('widget', '1.0.0');
 	const api = bearer(world, await world.cliSession());
 	await api('/api/repositories/discover', { repository: 'octo/widget' });
-	const request = { repositoryId: repository.id, stream: 'main', version: '1.1.0' };
-	const plan = await api('/api/releases/plan', request);
-	await api('/api/releases/prepare', {
-		...request,
-		sourceSha: text(plan.body, 'sourceSha'),
-		planId: text(plan.body, 'planId'),
-	});
+	await prepareRelease(api, { repositoryId: repository.id, stream: 'main', version: '1.1.0' });
 	await world.wait(20_000);
 	const [pull] = repository.pulls;
 	if (!pull) throw new Error('No preparation pull request');

@@ -6,7 +6,15 @@ import { gitOutput } from '@root/test/support/actions.ts';
 import { runCli, savedClient } from '@root/test/support/cli.ts';
 import { discoveredWidget } from '@root/test/support/client.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
-import { jsonFile, passChecks, publishWorkflow, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
+import { promotionsOf } from '@root/test/support/releases.ts';
+import {
+	editableConfiguration,
+	jsonFile,
+	passChecks,
+	publishWorkflow,
+	widget,
+	widgetConfiguration,
+} from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
@@ -50,12 +58,17 @@ function seed() {
 	return discoveredWidget(world, token);
 }
 const prepareCalls = () => requests.filter(request => request.path === '/api/releases/prepare');
+const streamRecord = z.record(z.string(), z.unknown());
+function widgetStreams() {
+	return z.looseObject({ streams: streamRecord }).parse(JSON.parse(widgetConfiguration()));
+}
+function withMain(configuration: ReturnType<typeof widgetStreams>, changes: Record<string, unknown>) {
+	return { ...streamRecord.parse(configuration.streams.main), ...changes };
+}
 
 async function delegated(packages = ['widget'], published: Record<string, string> = { widget: '1.2.3' }) {
 	const repository = widget(world.github);
-	const configuration = z.looseObject({
-		streams: z.looseObject({ main: z.looseObject({ promote: z.looseObject({ workflow: z.looseObject({}) }) }) }),
-	}).parse(JSON.parse(widgetConfiguration()));
+	const configuration = editableConfiguration();
 	configuration.streams.main.prepare = { strategy: 'workflow', workflow: { file: 'prepare.yml' } };
 	configuration.streams.main.packages = packages.map(name => `pkg:npm/${name}`);
 	configuration.streams.main.required = configuration.streams.main.packages;
@@ -195,17 +208,14 @@ test('JSON previews are read-only and explicit --yes supports unattended prepara
 test('eligible streams are inferred and ambiguous stream choices describe their packages', async () => {
 	const repository = widget(world.github);
 	world.npm.publish('widget', '1.0.0');
-	const configuration = z.looseObject({ streams: z.record(z.string(), z.unknown()) }).parse(
-		JSON.parse(widgetConfiguration()),
-	);
+	const configuration = widgetStreams();
 	configuration.streams.helper = { packages: ['pkg:npm/widget'], prepare: { strategy: 'managed' } };
 	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Add a helper stream');
 	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
 	expect((await run(['release', 'patch', '--repository', repository.name, '--json'])).exitCode).toBe(0);
-	configuration.streams.second = {
-		...z.record(z.string(), z.unknown()).parse(configuration.streams.main),
+	configuration.streams.second = withMain(configuration, {
 		promote: { approval: 'required', workflow: { file: 'second.yml', publications: ['pkg:npm/widget'] } },
-	};
+	});
 	world.github.push(repository, {
 		'.github/beepboop.json': JSON.stringify(configuration),
 		'.github/workflows/second.yml': publishWorkflow.replace('stream: main', 'stream: second'),
@@ -289,13 +299,8 @@ test('independent streams and already-prepared versions cannot accidentally init
 	expect(prepared.stdout.join('')).toContain('ALREADY_PREPARED');
 	expect(prepareCalls()).toHaveLength(0);
 	expect(await Effect.runPromise(client.call(routes.executionsList, {}))).toEqual(existing);
-	const configuration = z.looseObject({ streams: z.record(z.string(), z.unknown()) }).parse(
-		JSON.parse(widgetConfiguration()),
-	);
-	configuration.streams.main = {
-		...z.record(z.string(), z.unknown()).parse(configuration.streams.main),
-		versioning: 'independent',
-	};
+	const configuration = widgetStreams();
+	configuration.streams.main = withMain(configuration, { versioning: 'independent' });
 	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Use independent releases');
 	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
 	const independent = await run([
@@ -367,8 +372,7 @@ test('delegated manifest preparation can promote when its prepared versions reac
 	passChecks(repository, merged.sha);
 	expect((await world.push(repository)).status).toBe(202);
 	await world.wait(1_000);
-	const executions = await Effect.runPromise(client.call(routes.executionsList, {}));
-	expect(executions.filter(execution => execution.operation === 'promote')).toEqual([
+	expect(await promotions()).toEqual([
 		expect.objectContaining({ version: '1.2.4', sourceSha: merged.sha, state: 'awaiting-approval' }),
 	]);
 });
@@ -384,10 +388,7 @@ async function tagged(approval: 'required' | 'push' = 'required') {
 	}, 'Merge the workflow-prepared package version');
 	return { repository, before, merged };
 }
-const promotions = async () =>
-	(await Effect.runPromise(client.call(routes.executionsList, {}))).filter(execution =>
-		execution.operation === 'promote'
-	);
+const promotions = async () => promotionsOf(await Effect.runPromise(client.call(routes.executionsList, {})));
 
 test('a version whose tag targets another commit gets no promotion and a repository warning', async () => {
 	const { repository, before, merged } = await tagged();
@@ -496,8 +497,7 @@ test('managed manifest plans with custom version files promote after the prepara
 	passChecks(repository, merged.sha);
 	expect((await world.push(repository)).status).toBe(202);
 	await world.wait(1_000);
-	const executions = await Effect.runPromise(client.call(routes.executionsList, {}));
-	expect(executions.filter(execution => execution.operation === 'promote')).toEqual([
+	expect(await promotions()).toEqual([
 		expect.objectContaining({ version: '1.0.1', sourceSha: merged.sha, state: 'awaiting-approval' }),
 	]);
 });
@@ -543,8 +543,7 @@ test('a version-file-only preparation does not promise or create publication aft
 	world.github.merge(repository, pull.number);
 	expect((await world.push(repository)).status).toBe(202);
 	await world.wait(1_000);
-	const executions = await Effect.runPromise(client.call(routes.executionsList, {}));
-	expect(executions.filter(execution => execution.operation === 'promote')).toEqual([]);
+	expect(await promotions()).toEqual([]);
 });
 
 test('workflow bumps require a known baseline and explicit versions stay delegated', async () => {
@@ -604,8 +603,7 @@ test('workflow tag-derived bumps remain authoritative when registry packages are
 	expect(explicit.exitCode).toBe(0);
 	expect(planReview.parse(JSON.parse(explicit.stdout.join('')).plan).version).toBe('3.0.0');
 	expect(prepareCalls()).toHaveLength(0);
-	const existing = (await Effect.runPromise(client.call(routes.executionsList, {})))
-		.filter(execution => execution.operation === 'promote').map(execution => execution.id);
+	const existing = (await promotions()).map(execution => execution.id);
 	const prepared = await run(['release', 'minor', '--repository', repository.name], [true]);
 	expect(prepared.exitCode).toBe(0);
 	expect(prepared.stdout.join('')).toContain('tag-based streams do not start publication after merge');
@@ -618,8 +616,5 @@ test('workflow tag-derived bumps remain authoritative when registry packages are
 	passChecks(repository, merged.sha);
 	expect((await world.push(repository)).status).toBe(202);
 	await world.wait(1_000);
-	const executions = await Effect.runPromise(client.call(routes.executionsList, {}));
-	expect(executions.filter(execution => execution.operation === 'promote').map(execution => execution.id)).toEqual(
-		existing,
-	);
+	expect((await promotions()).map(execution => execution.id)).toEqual(existing);
 });

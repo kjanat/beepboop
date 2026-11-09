@@ -42,3 +42,40 @@ export class FakeNpm {
 		return Response.json({ name: match[1], version, dist: { integrity } });
 	}
 }
+
+export function crateResponse(
+	request: Request,
+	checksum: (name: string, version: string) => string | Response | undefined,
+): Response {
+	const [, , , , name, version] = new URL(request.url).pathname.split('/');
+	if (!name) return new Response(null, { status: 404 });
+	if (!version) return Response.json({ crate: { max_version: '1.0.0' } });
+	const found = checksum(name, version);
+	if (found instanceof Response) return found;
+	return found
+		? Response.json({ version: { crate: name, num: version, yanked: false, checksum: found } })
+		: new Response(null, { status: 404 });
+}
+
+export interface PypiFile {
+	packagetype: string;
+	yanked: boolean;
+	digests: { sha256: string };
+}
+
+export interface PypiProject {
+	latest: string | undefined;
+	files(version: string): PypiFile[] | undefined;
+}
+
+export function pypiResponse(
+	request: Request,
+	project: (name: string | undefined) => PypiProject | undefined,
+): Response {
+	const [, , name, version] = new URL(request.url).pathname.split('/');
+	const found = project(name);
+	if (!found) return new Response(null, { status: 404 });
+	if (version === 'json') return Response.json({ info: { name, version: found.latest } });
+	const urls = found.files(version ?? '');
+	return urls ? Response.json({ info: { name, version, yanked: false }, urls }) : new Response(null, { status: 404 });
+}

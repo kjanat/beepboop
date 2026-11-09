@@ -1,27 +1,19 @@
 import { expect, test } from 'bun:test';
-import { runAction } from '@root/test/support/actions.ts';
+import { begin, runAction, runIdentity } from '@root/test/support/actions.ts';
 import type { Repository } from '@root/test/support/github.ts';
-import { botId, ownerId } from '@root/test/support/github.ts';
-import type { Reply } from '@root/test/support/http.ts';
 import { bearer, field } from '@root/test/support/http.ts';
+import { promotions } from '@root/test/support/releases.ts';
 import { jsonFile, passChecks, widget } from '@root/test/support/repositories.ts';
+import { applySetup, previewSetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { Effect } from 'effect';
-import { parseSetupPlan } from '@/automation/setup-plan';
 import type { Execution } from '@/automation/types';
-import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 
 let world: World;
 eachWorld(created => {
 	world = created;
 });
 
-async function promotions(api: (path: string) => Promise<Reply>): Promise<Execution[]> {
-	const listed = await api('/api/executions');
-	if (!Array.isArray(listed.body)) throw new Error('Expected an execution list');
-	return listed.body.map(decodeExecutionV1).filter(execution => execution.operation === 'promote');
-}
 function manifest(name: string, version: string, dependencies?: Record<string, string>): string {
 	return jsonFile({ name, version, ...(dependencies ? { dependencies } : {}) });
 }
@@ -29,12 +21,8 @@ async function finish(repository: Repository, promotion: Execution, name: string
 	const run = repository.runs.find(entry => entry.inputs.beepboop_execution_id === promotion.id);
 	if (!run) throw new Error(`No run for ${promotion.stream}`);
 	run.status = 'in_progress';
-	const identity = { repository, runId: run.id, sha: run.headSha, file: 'publish.yml', actorId: botId };
-	await runAction(world, 'begin', identity, {
-		EXECUTION_ID: promotion.id,
-		STREAM: promotion.stream,
-		OPERATION: 'promote',
-	});
+	const identity = runIdentity(repository, run, 'publish.yml');
+	await begin(world, identity, promotion.id, promotion.stream, 'promote');
 	world.npm.publish(name, version);
 	await runAction(world, 'report', identity, {
 		EXECUTION_ID: promotion.id,
@@ -42,17 +30,7 @@ async function finish(repository: Repository, promotion: Execution, name: string
 	});
 	run.status = 'completed';
 	run.conclusion = 'success';
-	await world.webhook('workflow_run', {
-		action: 'completed',
-		workflow_run: {
-			id: run.id,
-			conclusion: 'success',
-			event: 'workflow_dispatch',
-			path: run.path,
-			head_repository: { id: repository.id },
-		},
-		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
-	});
+	await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
 	await world.wait(2_000);
 }
 
@@ -60,36 +38,24 @@ async function mergedSetup(release: boolean) {
 	const repository = widget(world.github, { configured: false });
 	const api = bearer(world, await world.cliSession());
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
-	const preview = await api('/api/repositories/setup/preview', {
-		repository: repository.name,
-		choices: {
-			streams: [{
-				name: 'main',
-				packages: ['pkg:npm/widget'],
-				required: ['pkg:npm/widget'],
-				versioning: 'workspace',
-				approval: 'push',
-				promote: {
-					file: 'release.yml',
-					job: 'promote',
-					triggers: 'review',
-					commands: 'npm publish',
-					publicationSteps: {},
-				},
-			}],
-		},
+	const plan = await previewSetup(api, repository.name, {
+		streams: [{
+			name: 'main',
+			packages: ['pkg:npm/widget'],
+			required: ['pkg:npm/widget'],
+			versioning: 'workspace',
+			approval: 'push',
+			promote: {
+				file: 'release.yml',
+				job: 'promote',
+				triggers: 'review',
+				commands: 'npm publish',
+				publicationSteps: {},
+			},
+		}],
 	});
-	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
 	expect(plan.blockers).toEqual([]);
-	expect(
-		(await api('/api/repositories/setup/apply', {
-			repository: repository.name,
-			choices: plan.choices,
-			planId: plan.planId,
-			sourceSha: plan.sourceSha,
-			setupHead: plan.setupHead,
-		})).status,
-	).toBe(200);
+	expect((await applySetup(api, repository.name, plan, plan.choices)).status).toBe(200);
 	const pull = repository.pulls[0];
 	if (!pull) throw new Error('No setup pull request');
 	const box = '- [ ] <!-- beepboop:release-after-merge --> Release after merge';
@@ -128,17 +94,7 @@ async function failedRelease(rerun = false) {
 	if (!promotion?.draftRelease || !run) throw new Error('Expected a dispatched release with a draft');
 	run.status = 'completed';
 	run.conclusion = 'failure';
-	await world.webhook('workflow_run', {
-		action: 'completed',
-		workflow_run: {
-			id: run.id,
-			conclusion: 'failure',
-			event: 'workflow_dispatch',
-			path: run.path,
-			head_repository: { id: repository.id },
-		},
-		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
-	});
+	await world.workflowRun(repository, run, 'failure', 'workflow_dispatch');
 	await world.wait(16_000);
 	const [failed] = await promotions(api);
 	expect(failed?.state).toBe('failed');

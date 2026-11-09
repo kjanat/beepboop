@@ -52,11 +52,21 @@ function defaults(overrides: Record<string, string> = {}, confirmations: Record<
 	return { prompts, prompter };
 }
 
+async function review(repository: string, choices: string, output: string): Promise<void> {
+	expect((await run(['adopt', repository, '--choices', choices, '--output', output, '--json'])).exitCode).toBe(0);
+}
+
+async function applyReview(repository: string, output: string) {
+	const applied = await run(['adopt', repository, '--plan', output, '--apply', '--json']);
+	expect(applied.exitCode).toBe(0);
+	return applied;
+}
+
 async function propose(repository: string, choices: unknown) {
 	const file = join(directory, 'choices.json'), output = join(directory, 'review.json');
 	await Bun.write(file, JSON.stringify(choices));
-	expect((await run(['adopt', repository, '--choices', file, '--output', output, '--json'])).exitCode).toBe(0);
-	expect((await run(['adopt', repository, '--plan', output, '--apply', '--json'])).exitCode).toBe(0);
+	await review(repository, file, output);
+	await applyReview(repository, output);
 	return file;
 }
 
@@ -252,8 +262,7 @@ test('scripted adoption previews choices and applies only the saved review, refu
 			}],
 		}),
 	);
-	const preview = await run(['adopt', repository.name, '--choices', choices, '--output', output, '--json']);
-	expect(preview.exitCode).toBe(0);
+	await review(repository.name, choices, output);
 	const plan = await Effect.runPromise(parseSetupPlan(await Bun.file(output).json()));
 	expect(plan.blockers).toEqual([]);
 	expect(repository.pulls).toHaveLength(0);
@@ -270,9 +279,8 @@ test('scripted adoption previews choices and applies only the saved review, refu
 	expect(stale.stderr.join('')).toContain(
 		`The default branch moved to ${world.github.head(repository)}. Preview again.`,
 	);
-	expect((await run(['adopt', repository.name, '--choices', choices, '--output', output, '--json'])).exitCode).toBe(0);
-	const applied = await run(['adopt', repository.name, '--plan', output, '--apply', '--json']);
-	expect(applied.exitCode).toBe(0);
+	await review(repository.name, choices, output);
+	const applied = await applyReview(repository.name, output);
 	expect(repository.pulls).toHaveLength(1);
 	expect(JSON.parse(applied.stdout.join(''))).toHaveProperty('url');
 });
@@ -339,13 +347,12 @@ test('a saved plan with version files, credentials, a tag prefix and observed wo
 	const repository = bindingsRepository();
 	const choices = join(directory, 'choices.json'), output = join(directory, 'plan.json');
 	await Bun.write(choices, JSON.stringify(bindingsChoices));
-	expect((await run(['adopt', repository.name, '--choices', choices, '--output', output, '--json'])).exitCode).toBe(0);
+	await review(repository.name, choices, output);
 	const plan = await Effect.runPromise(parseSetupPlan(await Bun.file(output).json()));
 	expect(plan.blockers).toEqual([]);
 	expect(plan.choices.streams[0]?.versionFiles).toHaveLength(2);
-	const applied = await run(['adopt', repository.name, '--plan', output, '--apply', '--json']);
+	const applied = await applyReview(repository.name, output);
 	expect(applied.stderr.join('')).toBe('');
-	expect(applied.exitCode).toBe(0);
 	expect(repository.pulls).toHaveLength(1);
 });
 
@@ -354,9 +361,8 @@ test('setup PRs and their refreshes are assigned to the owner with a review requ
 	const choices = join(directory, 'choices.json'), output = join(directory, 'plan.json');
 	await Bun.write(choices, JSON.stringify(bindingsChoices));
 	const apply = async () => {
-		expect((await run(['adopt', repository.name, '--choices', choices, '--output', output, '--json'])).exitCode)
-			.toBe(0);
-		expect((await run(['adopt', repository.name, '--plan', output, '--apply', '--json'])).exitCode).toBe(0);
+		await review(repository.name, choices, output);
+		await applyReview(repository.name, output);
 	};
 	await apply();
 	const [pull] = repository.pulls;
@@ -412,7 +418,7 @@ test('a saved preview prints the proposal and how to apply it', async () => {
 		'',
 	]);
 	expect(repository.pulls).toHaveLength(0);
-	expect((await run(['adopt', repository.name, '--plan', output, '--apply', '--json'])).exitCode).toBe(0);
+	await applyReview(repository.name, output);
 	expect(repository.pulls).toHaveLength(1);
 });
 
@@ -470,9 +476,8 @@ test('applying after the setup PR was closed unmerged opens a new setup PR', asy
 	const apply = async () => {
 		expect((await app.execute(['repositories', 'adopt', repository.name, '--output', output], { env: {} })).exitCode)
 			.toBe(0);
-		const applied = await run(['adopt', repository.name, '--plan', output, '--apply', '--json']);
+		const applied = await applyReview(repository.name, output);
 		expect(applied.stderr.join('')).toBe('');
-		expect(applied.exitCode).toBe(0);
 	};
 	await apply();
 	const [closed] = repository.pulls;
@@ -496,8 +501,8 @@ test('a closed setup PR drops its choices and a bare preview proposes afresh', a
 	const choices = join(directory, 'choices.json'), output = join(directory, 'plan.json');
 	const saved = { streams: [{ ...bindingsChoices.streams[0], versionFiles: [] }] };
 	await Bun.write(choices, JSON.stringify(saved));
-	expect((await run(['adopt', repository.name, '--choices', choices, '--output', output, '--json'])).exitCode).toBe(0);
-	expect((await run(['adopt', repository.name, '--plan', output, '--apply', '--json'])).exitCode).toBe(0);
+	await review(repository.name, choices, output);
+	await applyReview(repository.name, output);
 	const bare = async () => {
 		const result = await run(['adopt', repository.name, '--json']);
 		expect(result.exitCode).toBe(0);
@@ -515,7 +520,7 @@ test('a plan with choice fields this CLI does not know asks for an upgrade and s
 	const repository = bindingsRepository();
 	const choices = join(directory, 'choices.json'), output = join(directory, 'plan.json');
 	await Bun.write(choices, JSON.stringify(bindingsChoices));
-	expect((await run(['adopt', repository.name, '--choices', choices, '--output', output, '--json'])).exitCode).toBe(0);
+	await review(repository.name, choices, output);
 	const saved = z.object({ choices: z.object({ streams: z.array(z.record(z.string(), z.unknown())) }) }).passthrough()
 		.parse(await Bun.file(output).json());
 	const [stream] = saved.choices.streams;
@@ -533,7 +538,7 @@ test('apply names an outdated CLI when the choices it sends no longer match the 
 	const repository = bindingsRepository();
 	const choices = join(directory, 'choices.json'), output = join(directory, 'plan.json');
 	await Bun.write(choices, JSON.stringify(bindingsChoices));
-	expect((await run(['adopt', repository.name, '--choices', choices, '--output', output, '--json'])).exitCode).toBe(0);
+	await review(repository.name, choices, output);
 	const plan = await Effect.runPromise(parseSetupPlan(await Bun.file(output).json()));
 	const stripped = { streams: plan.choices.streams.map(({ versionFiles: _, ...stream }) => stream) };
 	const refused = await Effect.runPromise(Effect.flip(client.call(routes.setupApply, {
