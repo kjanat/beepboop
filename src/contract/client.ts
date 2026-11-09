@@ -2,7 +2,9 @@ import { Data, Effect } from 'effect';
 import type { z } from 'zod';
 import type { ApiError } from '@/contract/errors';
 import { errorEnvelope, securityKeyRequired } from '@/contract/errors';
+import { isJson } from '@/contract/http';
 import type { Route } from '@/contract/routes';
+import { awaitWith } from '@/refusal';
 
 export interface Outgoing {
 	method: 'GET' | 'POST';
@@ -23,15 +25,10 @@ export class Unreachable extends Data.TaggedError('Unreachable')<{
 
 export type Transport = (request: Outgoing) => Effect.Effect<Response, Unreachable>;
 
-export function send(run: () => Promise<Response>): Effect.Effect<Response, Unreachable> {
-	return Effect.tryPromise({
-		try: run,
-		catch: cause => new Unreachable({ message: cause instanceof Error ? cause.message : String(cause), cause }),
-	});
-}
+const reach = awaitWith((message, cause) => new Unreachable({ message, cause }));
 
-function json(response: Response): boolean {
-	return (response.headers.get('content-type') ?? '').split(';')[0]?.trim() === 'application/json';
+export function send(run: () => Promise<Response>): Effect.Effect<Response, Unreachable> {
+	return reach(run);
 }
 
 export function failureOf(response: Response): Effect.Effect<ApiFailure> {
@@ -40,7 +37,7 @@ export function failureOf(response: Response): Effect.Effect<ApiFailure> {
 		problem: undefined,
 		message: `Beepboop request failed (${response.status})`,
 	});
-	if (!json(response)) return Effect.succeed(fallback);
+	if (!isJson(response)) return Effect.succeed(fallback);
 	return Effect.promise((): Promise<unknown> => response.json().catch(() => undefined)).pipe(
 		Effect.map(body => {
 			const parsed = errorEnvelope.safeParse(body);
@@ -76,7 +73,7 @@ export function call<Q extends z.ZodType, S extends z.ZodType>(
 	return Effect.gen(function*() {
 		const response = yield* transport(outgoing(route, input));
 		if (!response.ok) return yield* yield* failureOf(response);
-		if (!json(response)) {
+		if (!isJson(response)) {
 			return yield* new ApiFailure({
 				status: response.status,
 				problem: undefined,

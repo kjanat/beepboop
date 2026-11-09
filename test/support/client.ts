@@ -4,6 +4,7 @@ import { Effect } from 'effect';
 import type { z } from 'zod';
 import type { Transport } from '@/contract/client';
 import { call as request, send } from '@/contract/client';
+import { bearerHeaders } from '@/contract/http';
 import type { Route } from '@/contract/routes';
 
 export function cliTransport(world: World, token: string): Transport {
@@ -12,7 +13,7 @@ export function cliTransport(world: World, token: string): Transport {
 			world.handle(
 				new Request(`${origin}${outgoing.path}`, {
 					method: outgoing.method,
-					headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+					headers: bearerHeaders(token),
 					...(outgoing.body === undefined ? {} : { body: outgoing.body }),
 				}),
 			)

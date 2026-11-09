@@ -4,9 +4,11 @@ import { env as runtimeEnv } from '@root/test/support/cloudflare-workers.ts';
 import { reply } from '@root/test/support/http.ts';
 import { widget } from '@root/test/support/repositories.ts';
 import { origin, World } from '@root/test/support/world.ts';
-import { Effect, Result } from 'effect';
+import { Effect, Fiber, Result } from 'effect';
+import { TestClock } from 'effect/testing';
 import { ApiFailure } from '@/contract/client';
 import { errorEnvelope } from '@/contract/errors';
+import { bearerHeaders } from '@/contract/http';
 import { routeIds, routes } from '@/contract/routes';
 import { rawRoutes, resolve } from '@/server/router';
 
@@ -264,7 +266,7 @@ test('a deployed CLI adds a notification destination without a security-key touc
 		await world.handle(
 			new Request(`${origin}/api/notifications/save`, {
 				method: 'POST',
-				headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+				headers: bearerHeaders(token),
 				body: JSON.stringify({
 					destination: {
 						name: 'Releases',
@@ -303,7 +305,7 @@ test('outages answer as retryable upstream errors and corrupt rows as internal e
 	const unicorn = await world.handle(
 		new Request(`${origin}/api/repositories/discover`, {
 			method: 'POST',
-			headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+			headers: bearerHeaders(token),
 			body: JSON.stringify({ repository: 'octo/widget' }),
 		}),
 	);
@@ -323,6 +325,40 @@ test('outages answer as retryable upstream errors and corrupt rows as internal e
 		.bind('broken', 'npm-token', repository.id, JSON.stringify({ id: 'broken', delivery: 'carrier-pigeon' })).run();
 	const corrupt = await refused(call(routes.credentialsList, {}, send));
 	expect([corrupt.status, corrupt.problem?.code]).toEqual([500, 'internal']);
+});
+
+test('workflow requests retry upstream failures on idempotent endpoints only', async () => {
+	const { retried } = await import('@root/actions/runtime/protocol.ts');
+	const upstream = () => Response.json({ error: 'GitHub is down', problem: { code: 'upstream' } }, { status: 502 });
+	const replies = (...responses: Response[]) =>
+		Effect.suspend(() => {
+			const next = responses.shift();
+			return next ? Effect.succeed(next) : Effect.die(new Error('No reply left'));
+		});
+	const settle = <A, E>(effect: Effect.Effect<A, E>) =>
+		Effect.runPromise(Effect.provide(
+			Effect.gen(function*() {
+				const fiber = yield* Effect.forkChild(Effect.result(effect));
+				yield* TestClock.adjust('3 seconds');
+				return yield* Fiber.join(fiber);
+			}),
+			TestClock.layer(),
+		));
+	const message = 'Beepboop request failed: HTTP 502 upstream: GitHub is down';
+
+	expect(await settle(retried(replies(upstream(), Response.json({ ok: true })), true, 3))).toEqual(
+		Result.succeed({ ok: true }),
+	);
+	const once = await settle(retried(replies(upstream(), Response.json({ ok: true })), false, 3));
+	expect(Result.isFailure(once) && once.failure.message).toBe(message);
+	const exhausted = await settle(retried(replies(upstream(), upstream()), true, 2));
+	expect(Result.isFailure(exhausted) && exhausted.failure.message).toBe(message);
+	const bare = await settle(retried(replies(new Response('ok')), true, 3));
+	expect(Result.isFailure(bare) && bare.failure.message).toBe('Beepboop answered HTTP 200 without JSON');
+	const garbled = await settle(
+		retried(replies(new Response('{', { headers: { 'Content-Type': 'application/json' } })), true, 3),
+	);
+	expect(Result.isFailure(garbled) && garbled.failure.message).toBe('Beepboop answered HTTP 200 with invalid JSON');
 });
 
 test('a broken Worker configuration fails with a logged internal error', async () => {

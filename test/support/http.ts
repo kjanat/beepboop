@@ -1,5 +1,6 @@
 import type { World } from '@root/test/support/world.ts';
 import { origin } from '@root/test/support/world.ts';
+import { bearerHeaders } from '@/contract/http';
 
 export interface Reply {
 	status: number;
@@ -21,7 +22,7 @@ export function bearer(world: World, token: string) {
 			await world.handle(
 				new Request(`${origin}${path}`, {
 					method: body === undefined ? 'GET' : 'POST',
-					headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+					headers: bearerHeaders(token),
 					...(body === undefined ? {} : { body: JSON.stringify(body) }),
 				}),
 			),

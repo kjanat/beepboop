@@ -17,3 +17,9 @@ export function rejectWith<E>(refusal: Refusal<E>): (message: string) => Result.
 export function attemptWith<E>(refusal: Refusal<E>): <A>(run: () => A) => Result.Result<A, E> {
 	return run => Result.try({ try: run, catch: error => refusal(errorMessage(error)) });
 }
+
+export function awaitWith<E>(
+	refusal: (message: string, cause: unknown) => E,
+): <A>(run: () => Promise<A>) => Effect.Effect<A, E> {
+	return run => Effect.tryPromise({ try: run, catch: error => refusal(errorMessage(error), error) });
+}

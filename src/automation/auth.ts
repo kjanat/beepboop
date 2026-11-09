@@ -11,6 +11,7 @@ import type { JWTVerifyGetKey } from 'jose';
 import { createRemoteJWKSet, errors, jwtVerify } from 'jose';
 import { z } from 'zod';
 import { cliAuthRoute, cliSubject } from '@/automation/cli-auth';
+import { logRecovered } from '@/automation/failure-log';
 import { documentRow } from '@/automation/schemas';
 import { decodeError } from '@/automation/store';
 import type { DomainError } from '@/contract/errors';
@@ -332,11 +333,7 @@ export function signOut(
 		}
 		const refresh = cookie(request, refreshCookie);
 		if (refresh && refresh.length <= 4096) {
-			yield* revoke(refresh).pipe(
-				recover(error =>
-					Effect.sync(() => console.error(JSON.stringify({ event: 'auth.revoke_failed', error: decodeError(error) })))
-				),
-			);
+			yield* revoke(refresh).pipe(logRecovered('auth.revoke_failed'));
 		}
 		return new Response(null, { status: 303, headers: sessionHeaders(undefined, '/auth/login') });
 	});

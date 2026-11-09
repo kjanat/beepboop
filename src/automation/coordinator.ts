@@ -13,6 +13,7 @@ import {
 	runTitle,
 	validatePublicationIdentity,
 } from '@/automation/execution';
+import { logFailure, logRecovered } from '@/automation/failure-log';
 import { RepositoryGateway } from '@/automation/github';
 import type { GitHubRelease, WorkflowRun } from '@/automation/github-resources';
 import {
@@ -241,8 +242,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			recover(error =>
 				Effect.sync(() => {
 					this.projectionRetryAt = Date.now() + projectionRetry;
-					console.error(JSON.stringify({ event: 'projection.failed', error: decodeError(error) }));
-				})
+				}).pipe(Effect.andThen(logFailure('projection.failed', error)))
 			),
 		);
 	}
@@ -314,11 +314,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return this.readJournal().pipe(Effect.map(journal => journal.executions));
 	}
 	private auditQuietly(action: string, target: string, failure: string): Effect.Effect<void> {
-		return this.store().audit('beepboop', action, target).pipe(
-			recover(error =>
-				Effect.sync(() => console.error(JSON.stringify({ event: failure, target, error: decodeError(error) })))
-			),
-		);
+		return this.store().audit('beepboop', action, target).pipe(logRecovered(failure, { target }));
 	}
 	private quarantine(id: string, error: string): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
@@ -576,7 +572,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					recover(error =>
 						Effect.gen({ self: this }, function*() {
 							yield* this.write(key, { ...(wake === true ? {} : wake), due: now + reconcileInterval });
-							console.error(JSON.stringify({ event: 'release-wake.failed', preparationId, error: decodeError(error) }));
+							yield* logFailure('release-wake.failed', error, { preparationId });
 						})
 					),
 				);

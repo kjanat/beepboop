@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Invalid } from '@root/actions/runtime/protocol.ts';
-import { ActionFailure, attempt, fail, required } from '@root/actions/runtime/protocol.ts';
+import { ActionFailure, attempt, attemptAsync, fail, required } from '@root/actions/runtime/protocol.ts';
 import { call, mask, serviceOrigin } from '@root/actions/runtime/session.ts';
 import { Effect } from 'effect';
 import { z } from 'zod';
@@ -266,28 +266,25 @@ export function publicRepository(path: string | undefined): boolean {
 const credentials = z.record(z.string().regex(/^[A-Z_][A-Z0-9_]*$/), z.string().min(1));
 
 export function command(argv: string[], options: { cwd: string; env?: Record<string, string> }) {
-	return Effect.tryPromise({
-		try: async (): Promise<Command> => {
-			const child = Bun.spawn(argv, {
-				cwd: options.cwd,
-				env: { ...process.env, ...options.env },
-				stdout: 'pipe',
-				stderr: 'pipe',
-			});
-			const chunks: string[] = [], out: string[] = [];
-			const drain = async (stream: ReadableStream<Uint8Array>, sink: NodeJS.WriteStream, own?: string[]) => {
-				const decoder = new TextDecoder();
-				for await (const chunk of stream) {
-					sink.write(chunk);
-					const text = decoder.decode(chunk, { stream: true });
-					chunks.push(text);
-					own?.push(text);
-				}
-			};
-			await Promise.all([drain(child.stdout, process.stdout, out), drain(child.stderr, process.stderr)]);
-			return { code: await child.exited, stdout: out.join(''), output: chunks.join('') };
-		},
-		catch: error => new ActionFailure({ message: error instanceof Error ? error.message : String(error) }),
+	return attemptAsync(async (): Promise<Command> => {
+		const child = Bun.spawn(argv, {
+			cwd: options.cwd,
+			env: { ...process.env, ...options.env },
+			stdout: 'pipe',
+			stderr: 'pipe',
+		});
+		const chunks: string[] = [], out: string[] = [];
+		const drain = async (stream: ReadableStream<Uint8Array>, sink: NodeJS.WriteStream, own?: string[]) => {
+			const decoder = new TextDecoder();
+			for await (const chunk of stream) {
+				sink.write(chunk);
+				const text = decoder.decode(chunk, { stream: true });
+				chunks.push(text);
+				own?.push(text);
+			}
+		};
+		await Promise.all([drain(child.stdout, process.stdout, out), drain(child.stderr, process.stderr)]);
+		return { code: await child.exited, stdout: out.join(''), output: chunks.join('') };
 	});
 }
 

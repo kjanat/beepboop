@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { NotificationKind, WatchedRegistry } from '@/contract/catalog';
 import { notificationKinds, watchedRegistries } from '@/contract/catalog';
 import { routes } from '@/contract/routes';
+import { awaitWith } from '@/refusal';
 import { api, elevatedApi } from '@/ui/browser/api';
 import {
 	element,
@@ -143,12 +144,7 @@ function fields(form: HTMLFormElement): Record<string, string> {
 		),
 	);
 }
-function browser<A>(run: () => Promise<A>): Effect.Effect<A, Refused> {
-	return Effect.tryPromise({
-		try: run,
-		catch: error => new Refused({ message: error instanceof Error ? error.message : String(error) }),
-	});
-}
+const browser = awaitWith(message => new Refused({ message }));
 function elevated(form: HTMLFormElement) {
 	return Effect.gen(function*() {
 		show('Touch your enrolled security key to approve this action.', form);

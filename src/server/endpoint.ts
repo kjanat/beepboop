@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import { Cause, Effect } from 'effect';
-import { decodeError } from '@/automation/store.ts';
-import { failure, recover } from '@/failure.ts';
+import { logRecovered } from '@/automation/failure-log.ts';
+import { failure } from '@/failure.ts';
 import { bindings } from '@/server/bindings.ts';
 import { knownOutage, outageLine, refreshOutage } from '@/server/github-status.ts';
 import { dispatch } from '@/server/router.ts';
@@ -18,11 +18,7 @@ export function serve(request: Request, defer?: (work: Promise<void>) => void): 
 			Effect.catchCause(cause => Effect.sync(() => failure(request, Cause.squash(cause)))),
 		);
 		if (!path.startsWith('/api/') && !path.startsWith('/auth/cli/')) return response;
-		const refreshed = refreshOutage.pipe(
-			recover(error =>
-				Effect.sync(() => console.error(JSON.stringify({ event: 'github-status.failed', error: decodeError(error) })))
-			),
-		);
+		const refreshed = refreshOutage.pipe(logRecovered('github-status.failed'));
 		if (defer) defer(Effect.runPromiseWith(yield* Effect.context())(refreshed));
 		else yield* refreshed;
 		const outage = knownOutage();

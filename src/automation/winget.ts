@@ -1,5 +1,6 @@
 import { Effect } from 'effect';
 import { z } from 'zod';
+import { logRecovered } from '@/automation/failure-log';
 import type { RepositoryGateway } from '@/automation/github';
 import {
 	checkRunsSchema,
@@ -541,15 +542,7 @@ export class WinGetService {
 					// Use the stable ID: reconciliation changes both state and updated_at.
 					after = row.id;
 					const saved = yield* fromSync(() => parseSubmission(row.document));
-					yield* self.reconcileOne(saved).pipe(
-						recover(error =>
-							Effect.sync(() =>
-								console.error(
-									JSON.stringify({ event: 'winget.status-failed', id: saved.plan.id, error: decodeError(error) }),
-								)
-							)
-						),
-					);
+					yield* self.reconcileOne(saved).pipe(logRecovered('winget.status-failed', { id: saved.plan.id }));
 				}
 			}
 		});

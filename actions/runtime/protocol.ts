@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { Data, Effect, Result } from 'effect';
 import type { DomainError } from '@/contract/errors.ts';
+import { isJson } from '@/contract/http.ts';
 import { parseRetryAfter } from '@/domain/http-date.ts';
 import { array, record, text } from '@/model.ts';
-import { attemptWith, failWith, rejectWith } from '@/refusal.ts';
+import { attemptWith, awaitWith, failWith, rejectWith } from '@/refusal.ts';
 
 export const modes = [
 	'begin',
@@ -38,6 +39,7 @@ function actionFailure(message: string): ActionFailure {
 export const fail = failWith(actionFailure);
 export const refuse = rejectWith(actionFailure);
 export const attempt = attemptWith(actionFailure);
+export const attemptAsync = awaitWith(actionFailure);
 
 export function parseMode(value: string | undefined): Result.Result<Mode, ActionFailure> {
 	const mode = modes.find(candidate => candidate === value);
@@ -128,10 +130,6 @@ export interface Failure {
 	retryable: boolean;
 }
 
-export function isJson(response: Response): boolean {
-	return (response.headers.get('content-type') ?? '').split(';')[0]?.trim() === 'application/json';
-}
-
 export function failureOf(response: Response): Effect.Effect<Failure> {
 	const prefix = `Beepboop request failed: HTTP ${response.status}`;
 	if (!isJson(response)) return Effect.succeed({ message: prefix, retryable: false });
@@ -151,30 +149,35 @@ export function failureOf(response: Response): Effect.Effect<Failure> {
 	);
 }
 
+export function retried<E>(
+	send: Effect.Effect<Response, E>,
+	idempotent: boolean,
+	attempts: number,
+): Effect.Effect<unknown, E | ActionFailure> {
+	const once = (attempt: number): Effect.Effect<unknown, E | ActionFailure> =>
+		Effect.gen(function*() {
+			const response = yield* send;
+			if (response.ok) {
+				if (!isJson(response)) return yield* fail(`Beepboop answered HTTP ${response.status} without JSON`);
+				return yield* Effect.tryPromise({
+					try: (): Promise<unknown> => response.json(),
+					catch: () => actionFailure(`Beepboop answered HTTP ${response.status} with invalid JSON`),
+				});
+			}
+			const failure = yield* failureOf(response);
+			if (!failure.retryable || !idempotent || attempt >= attempts) return yield* fail(failure.message);
+			yield* Effect.sleep(1000 * 2 ** (attempt - 1));
+			return yield* once(attempt + 1);
+		});
+	return once(1);
+}
+
 export function exchange<E>(
 	mode: Mode,
 	send: Effect.Effect<Response, E>,
 	attempts = 3,
 ): Effect.Effect<Record<string, unknown>, E | Invalid> {
-	const once = (attempt: number): Effect.Effect<Record<string, unknown>, E | Invalid> =>
-		Effect.gen(function*() {
-			const response = yield* send;
-			if (response.ok) {
-				if (!isJson(response)) {
-					return yield* new ActionFailure({ message: `Beepboop answered HTTP ${response.status} without JSON` });
-				}
-				const body = yield* Effect.tryPromise({
-					try: (): Promise<unknown> => response.json(),
-					catch: () => new ActionFailure({ message: `Beepboop answered HTTP ${response.status} with invalid JSON` }),
-				});
-				return yield* Effect.fromResult(record(body));
-			}
-			const failure = yield* failureOf(response);
-			if (!failure.retryable || !endpoints[mode].idempotent || attempt >= attempts) {
-				return yield* new ActionFailure({ message: failure.message });
-			}
-			yield* Effect.sleep(1000 * 2 ** (attempt - 1));
-			return yield* once(attempt + 1);
-		});
-	return once(1);
+	return retried(send, endpoints[mode].idempotent, attempts).pipe(
+		Effect.flatMap(body => Effect.fromResult(record(body))),
+	);
 }

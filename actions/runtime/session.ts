@@ -1,6 +1,7 @@
 import type { Invalid } from '@root/actions/runtime/protocol.ts';
-import { ActionFailure, attempt, fail, failureOf, isJson, required } from '@root/actions/runtime/protocol.ts';
+import { ActionFailure, attempt, attemptAsync, fail, required, retried } from '@root/actions/runtime/protocol.ts';
 import { Effect } from 'effect';
+import { bearerHeaders } from '@/contract/http.ts';
 import { record } from '@/model.ts';
 
 export function mask(value: string): Effect.Effect<void> {
@@ -10,10 +11,7 @@ export function mask(value: string): Effect.Effect<void> {
 }
 
 export function post(url: URL | string, init: RequestInit): Effect.Effect<Response, ActionFailure> {
-	return Effect.tryPromise({
-		try: () => fetch(url, { ...init, redirect: 'error' }),
-		catch: error => new ActionFailure({ message: error instanceof Error ? error.message : String(error) }),
-	});
+	return attemptAsync(() => fetch(url, { ...init, redirect: 'error' }));
 }
 
 export const serviceOrigin: Effect.Effect<URL, ActionFailure> = Effect.gen(function*() {
@@ -49,32 +47,32 @@ export function identityToken(origin: URL): Effect.Effect<string, Invalid> {
 	});
 }
 
+export function postJson(
+	origin: URL,
+	path: string,
+	token: string,
+	body: string,
+): Effect.Effect<Response, ActionFailure> {
+	return post(new URL(path, origin), {
+		method: 'POST',
+		headers: bearerHeaders(token),
+		body,
+		signal: AbortSignal.timeout(30000),
+	});
+}
+
 export function call(
 	origin: URL,
 	path: `/api/workflow/${string}`,
 	body: unknown,
 	attempts = 3,
 ): Effect.Effect<unknown, Invalid> {
-	const once = (count: number): Effect.Effect<unknown, Invalid> =>
+	return retried(
 		Effect.gen(function*() {
 			const token = yield* identityToken(origin);
-			const response = yield* post(new URL(path, origin), {
-				method: 'POST',
-				headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-				body: JSON.stringify(body),
-				signal: AbortSignal.timeout(30000),
-			});
-			if (response.ok) {
-				if (!isJson(response)) return yield* fail(`Beepboop answered HTTP ${response.status} without JSON`);
-				return yield* Effect.tryPromise({
-					try: (): Promise<unknown> => response.json(),
-					catch: () => new ActionFailure({ message: `Beepboop answered HTTP ${response.status} with invalid JSON` }),
-				});
-			}
-			const failure = yield* failureOf(response);
-			if (!failure.retryable || count >= attempts) return yield* fail(failure.message);
-			yield* Effect.sleep(1000 * 2 ** (count - 1));
-			return yield* once(count + 1);
-		});
-	return once(1);
+			return yield* postJson(origin, path, token, JSON.stringify(body));
+		}),
+		true,
+		attempts,
+	);
 }

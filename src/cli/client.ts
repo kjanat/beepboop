@@ -10,6 +10,7 @@ import { failure, signIn } from '@/cli/output';
 import type { ApiFailure, Transport, Unreachable } from '@/contract/client';
 import { call, elevatedCall, failureOf, send } from '@/contract/client';
 import type { ErrorCode } from '@/contract/errors';
+import { bearerHeaders } from '@/contract/http';
 import { cliTokenPattern, confirmationCode, loginSecret, sha256Hex } from '@/contract/ids';
 import type { Route } from '@/contract/routes';
 import { routes } from '@/contract/routes';
@@ -136,7 +137,7 @@ export class Client {
 			send(() =>
 				fetch(`${this.origin}${request.path}`, {
 					method: request.method,
-					headers: { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' },
+					headers: bearerHeaders(session.token),
 					...(request.body === undefined ? {} : { body: request.body }),
 					redirect: 'error',
 					signal: AbortSignal.timeout(30000),

@@ -6,6 +6,7 @@ import type { AuthBindings } from '@/automation/auth';
 import { resolveConfiguration } from '@/automation/configuration';
 import type { AutomationCoordinator } from '@/automation/coordinator';
 import { createExecution, deriveExecution } from '@/automation/execution';
+import { logFailure } from '@/automation/failure-log';
 import type { Credentials } from '@/automation/github';
 import { RepositoryGateway } from '@/automation/github';
 import { workflowRunsSchema } from '@/automation/github-resources';
@@ -262,15 +263,9 @@ export class AutomationService {
 			for (const result of results) {
 				const merge = yield* this.gateway.preparationMerge(repository.name, repository.id, result, target).pipe(
 					recover(error =>
-						Effect.sync(() => {
-							console.error(JSON.stringify({
-								event: 'preparation-merge.failed',
-								repository: repository.name,
-								pull: result.url,
-								error: decodeError(error),
-							}));
-							return undefined;
-						})
+						logFailure('preparation-merge.failed', error, { repository: repository.name, pull: result.url }).pipe(
+							Effect.as(undefined),
+						)
 					),
 				);
 				if (merge) return merge;

@@ -9,7 +9,7 @@ import {
 	requestBody,
 	required,
 } from '@root/actions/runtime/protocol.ts';
-import { identityToken, mask, post, serviceOrigin } from '@root/actions/runtime/session.ts';
+import { identityToken, mask, postJson, serviceOrigin } from '@root/actions/runtime/session.ts';
 import { Effect } from 'effect';
 import { record, text } from '@/model.ts';
 import { writeOutput } from '@/tooling/github-output.ts';
@@ -63,16 +63,6 @@ await Effect.runPromise(Effect.gen(function*() {
 	const origin = yield* serviceOrigin;
 	const token = yield* identityToken(origin);
 	const body = JSON.stringify(yield* Effect.fromResult(requestBody(mode, process.env)));
-	const result = yield* exchange(
-		mode,
-		Effect.suspend(() =>
-			post(new URL(endpoints[mode].path, origin), {
-				method: 'POST',
-				headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-				body,
-				signal: AbortSignal.timeout(30000),
-			})
-		),
-	);
+	const result = yield* exchange(mode, Effect.suspend(() => postJson(origin, endpoints[mode].path, token, body)));
 	yield* writeResult(mode, result);
 }));
