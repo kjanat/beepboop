@@ -1,4 +1,5 @@
 import { Context, Effect, Layer } from 'effect';
+import type { z } from 'zod';
 import type { DomainError } from '@/contract/errors';
 import { parseWith } from '@/decode';
 import { fromPromise, fromSync } from '@/failure';
@@ -42,6 +43,42 @@ export function sql(db: SqlDatabase): Sql {
 }
 
 export const parse = parseWith(fromSync);
+
+export function optionalColumn<S extends z.ZodType, T>(
+	schema: S,
+	pick: (row: z.output<S>) => T,
+): (row: unknown) => Effect.Effect<T | undefined, DomainError> {
+	return row => row === null ? Effect.undefined : parse(schema, row).pipe(Effect.map(pick));
+}
+
+export function replaceDocument(
+	db: Sql,
+	table: string,
+	key: string,
+	id: unknown,
+	previous: string,
+	next: unknown,
+): Effect.Effect<SqlResult, DomainError> {
+	return db.run(`UPDATE ${table} SET document=? WHERE ${key}=? AND document=?`, JSON.stringify(next), id, previous);
+}
+
+export function upsertDocument(
+	db: Sql,
+	table: string,
+	key: string,
+	columns: Record<string, unknown>,
+	document: unknown,
+): Effect.Effect<void, DomainError> {
+	const names = [...Object.keys(columns), 'document'];
+	const updates = names.filter(name => name !== key).map(name => `${name}=excluded.${name}`);
+	return db.run(
+		`INSERT INTO ${table}(${names.join(',')}) VALUES(${
+			names.map(() => '?').join(',')
+		}) ON CONFLICT(${key}) DO UPDATE SET ${updates.join(',')}`,
+		...Object.values(columns),
+		JSON.stringify(document),
+	).pipe(Effect.asVoid);
+}
 
 export class Database extends Context.Service<Database, Sql>()('beepboop/Database') {}
 

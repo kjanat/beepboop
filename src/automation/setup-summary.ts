@@ -1,13 +1,14 @@
 import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
+import { registryLabel } from '@/contract/catalog';
 import { publicationStages } from '@/domain/publication-stages';
 
 type Stream = SetupChoices['streams'][number];
 
 const registries: Record<string, string> = {
-	cargo: 'crates.io',
-	npm: 'npm',
-	jsr: 'JSR',
-	pypi: 'PyPI',
+	cargo: registryLabel('cargo'),
+	npm: registryLabel('npm'),
+	jsr: registryLabel('jsr'),
+	pypi: registryLabel('pypi'),
 	go: 'the Go module proxy',
 	vscode: 'the Visual Studio Marketplace',
 	oci: 'the container registry',

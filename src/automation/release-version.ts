@@ -5,6 +5,7 @@ import { nextVersion } from '@/automation/version';
 import { blocking } from '@/contract/diagnostics';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
+import { distinct } from '@/distinct';
 import { compareVersions } from '@/model';
 
 export function releasedVersion(pkg: Package): string | undefined {
@@ -14,7 +15,7 @@ export function releasedVersion(pkg: Package): string | undefined {
 }
 
 function unique(values: (string | undefined)[]): string[] {
-	return [...new Set(values.flatMap(value => value === undefined ? [] : [value]))];
+	return distinct(values.flatMap(value => value === undefined ? [] : [value]));
 }
 
 /** Resolve the shared release target from publication state, independently of file editing. */

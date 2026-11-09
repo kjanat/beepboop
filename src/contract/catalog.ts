@@ -196,6 +196,12 @@ export function isLockfile(path: string): boolean {
 export function managerSpec(name: ManagerName): ManagerSpec {
 	return managerCatalog[name];
 }
+type RegistryManager = {
+	[M in ManagerName]: (typeof managerCatalog)[M]['destinations'] extends undefined ? never : M;
+}[ManagerName];
+export function registryLabel(manager: RegistryManager): string {
+	return destinationLabels[managerCatalog[manager].destinations.primary];
+}
 export function destinationsOf(manager: ManagerName): ManagerDestinationId[] {
 	const mapped = managerSpec(manager).destinations;
 	return mapped ? [mapped.primary, ...mapped.secondary] : [];

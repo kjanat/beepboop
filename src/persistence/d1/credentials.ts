@@ -4,7 +4,7 @@ import { documentRow } from '@/automation/schemas';
 import type { DomainError } from '@/contract/errors';
 import { fromSync } from '@/failure';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
-import { parse, sql } from '@/persistence/d1/database';
+import { optionalColumn, parse, sql, upsertDocument } from '@/persistence/d1/database';
 
 const versionRow = z.object({ version: z.number().nullable() });
 const sealedRow = z.object({ version: z.number(), key_id: z.string(), iv: z.string(), ciphertext: z.string() });
@@ -47,11 +47,7 @@ export class CredentialStore {
 	}
 	activeVersion(alias: string): Effect.Effect<number | undefined, DomainError> {
 		return this.sql.first('SELECT version FROM credentials WHERE alias=? AND active=1', alias).pipe(
-			Effect.flatMap(row =>
-				row === null
-					? Effect.undefined
-					: parse(z.object({ version: z.number() }), row).pipe(Effect.map(parsed => parsed.version))
-			),
+			Effect.flatMap(optionalColumn(z.object({ version: z.number() }), row => row.version)),
 		);
 	}
 	sealed(alias: string): Effect.Effect<SealedCredential | undefined, DomainError> {
@@ -99,13 +95,13 @@ export class CredentialStore {
 		return this.sql.first('SELECT id FROM grants WHERE id=?', id).pipe(Effect.map(row => row !== null));
 	}
 	putGrant(grant: { id: string; alias: string; repositoryId: number }): Effect.Effect<void, DomainError> {
-		return this.sql.run(
-			'INSERT INTO grants(id,alias,repository_id,document) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET alias=excluded.alias,repository_id=excluded.repository_id,document=excluded.document',
-			grant.id,
-			grant.alias,
-			grant.repositoryId,
-			JSON.stringify(grant),
-		).pipe(Effect.asVoid);
+		return upsertDocument(
+			this.sql,
+			'grants',
+			'id',
+			{ id: grant.id, alias: grant.alias, repository_id: grant.repositoryId },
+			grant,
+		);
 	}
 	deleteGrant(id: string): Effect.Effect<void, DomainError> {
 		return this.sql.run('DELETE FROM grants WHERE id=?', id).pipe(Effect.asVoid);

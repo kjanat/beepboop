@@ -2,7 +2,7 @@ import { Effect } from 'effect';
 import { z } from 'zod';
 import type { DomainError } from '@/contract/errors';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
-import { parse, sql } from '@/persistence/d1/database';
+import { optionalColumn, parse, sql } from '@/persistence/d1/database';
 
 const subjectRow = z.object({ subject: z.string() });
 const sessionRow = z.object({ id: z.string(), created_at: z.number() });
@@ -15,9 +15,7 @@ export class CLISessionStore {
 	}
 	subject(hash: string): Effect.Effect<string | undefined, DomainError> {
 		return this.sql.first('SELECT subject FROM cli_sessions WHERE id=?', hash).pipe(
-			Effect.flatMap(row =>
-				row === null ? Effect.undefined : parse(subjectRow, row).pipe(Effect.map(parsed => parsed.subject))
-			),
+			Effect.flatMap(optionalColumn(subjectRow, row => row.subject)),
 		);
 	}
 	create(hash: string, subject: string): Effect.Effect<void, DomainError> {

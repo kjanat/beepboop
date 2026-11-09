@@ -20,7 +20,7 @@ import { loginSecretPattern } from '@/contract/ids';
 import { fromJson, fromPromise, fromSync, recover, toDomainError } from '@/failure';
 import { integer, record, sha, text } from '@/model';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
-import { sql } from '@/persistence/d1/database';
+import { replaceDocument, sql } from '@/persistence/d1/database';
 import { SessionStore } from '@/persistence/d1/sessions';
 
 const clientExtensionResults = z.object({}).catch({});
@@ -492,12 +492,10 @@ export class Authenticators {
 				})
 			);
 			if (!result.verified) return yield* precondition('Authentication failed');
-			const update = yield* this.sql.run(
-				'UPDATE authenticators SET document=? WHERE id=? AND document=?',
-				JSON.stringify({ ...saved, counter: result.authenticationInfo.newCounter }),
-				saved.id,
-				stored.document,
-			);
+			const update = yield* replaceDocument(this.sql, 'authenticators', 'id', saved.id, stored.document, {
+				...saved,
+				counter: result.authenticationInfo.newCounter,
+			});
 			if (update.meta.changes !== 1) return yield* precondition('Authenticator changed during verification');
 			const proof = crypto.randomUUID();
 			yield* this.sessions.open('elevation', proof, { subject, elevated: true }, 60000);

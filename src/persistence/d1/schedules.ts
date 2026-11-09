@@ -2,7 +2,7 @@ import { Effect } from 'effect';
 import { z } from 'zod';
 import type { DomainError } from '@/contract/errors';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
-import { parse, sql } from '@/persistence/d1/database';
+import { optionalColumn, sql } from '@/persistence/d1/database';
 
 const cursorRow = z.object({ last_tick: z.number() });
 
@@ -13,9 +13,7 @@ export class ScheduleStore {
 	}
 	cursor(key: string): Effect.Effect<number | undefined, DomainError> {
 		return this.sql.first('SELECT last_tick FROM schedules WHERE id=?', key).pipe(
-			Effect.flatMap(row =>
-				row === null ? Effect.undefined : parse(cursorRow, row).pipe(Effect.map(parsed => parsed.last_tick))
-			),
+			Effect.flatMap(optionalColumn(cursorRow, row => row.last_tick)),
 		);
 	}
 	start(key: string, tick: number): Effect.Effect<void, DomainError> {

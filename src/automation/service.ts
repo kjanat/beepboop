@@ -243,10 +243,10 @@ export class AutomationService {
 			yield* this.store.putRepository(repository);
 			yield* fromPromise(() => this.coordinator(id).setAccess(repository.access.kind === 'suspended'));
 			yield* this.releaseFromManifest(repository).pipe(
-				recover(error => this.store.audit('beepboop', 'release.push.failed', `${name}: ${decodeError(error)}`)),
+				this.store.auditFailure('beepboop', 'release.push.failed', name),
 			);
 			yield* maintainSetup(this.store, this.gateway, snapshot).pipe(
-				recover(error => this.store.audit('beepboop', 'repository.setup.failed', `${name}: ${decodeError(error)}`)),
+				this.store.auditFailure('beepboop', 'repository.setup.failed', name),
 			);
 			yield* this.winget().watch(repository);
 			return repository;
@@ -727,7 +727,7 @@ export class AutomationService {
 		return Effect.gen({ self: this }, function*() {
 			const refreshed = yield* this.refresh(repository.name, repository.id);
 			yield* this.winget().automatic(refreshed).pipe(
-				recover(error => this.store.audit('winget', 'winget.failed', `${repository.name}: ${decodeError(error)}`)),
+				this.store.auditFailure('winget', 'winget.failed', repository.name),
 			);
 			const coordinator = this.coordinator(repository.id);
 			yield* fromPromise(() => coordinator.wake());

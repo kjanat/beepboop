@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { distinct } from '@/distinct';
 
 export const diagnosticCodes = [
 	'invalid-manifest',
@@ -62,7 +63,7 @@ export function fileProblem(
 }
 
 export function messages(diagnostics: readonly Diagnostic[]): string[] {
-	return [...new Set(diagnostics.map(entry => entry.message))];
+	return distinct(diagnostics.map(entry => entry.message));
 }
 
 export function blocking(diagnostics: readonly Diagnostic[]): Diagnostic[] {

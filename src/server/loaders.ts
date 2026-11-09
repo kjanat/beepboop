@@ -4,6 +4,7 @@ import { packageWatches } from '@/automation/package-watch.ts';
 import type { AutomationBindings } from '@/automation/service.ts';
 import { AutomationService } from '@/automation/service.ts';
 import type { Readable, UnreadableExecution, UnreadableRepository } from '@/automation/store.ts';
+import { readableValues } from '@/automation/store.ts';
 import type { Execution, RepositoryRecord } from '@/automation/types.ts';
 import { parseGrant } from '@/automation/vault.ts';
 import type { DomainError } from '@/contract/errors';
@@ -41,7 +42,7 @@ interface Rows<T, U> {
 }
 function split<T, U extends { kind: 'unreadable' }>(rows: (Readable<T> | U)[]): Rows<T, U> {
 	return {
-		readable: rows.flatMap(row => row.kind === 'readable' ? [row.value] : []),
+		readable: readableValues(rows),
 		unreadable: rows.flatMap(row => row.kind === 'unreadable' ? [row] : []),
 	};
 }

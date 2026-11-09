@@ -19,7 +19,7 @@ import { sha256Hex } from '@/contract/ids';
 import { packageMarkdown } from '@/domain/package-label';
 import { fromJson, fromPromise, fromSync, toDomainError } from '@/failure';
 import { record } from '@/model';
-import { parse, sql } from '@/persistence/d1/database';
+import { parse, replaceDocument, sql } from '@/persistence/d1/database';
 
 const editsSchema = z.array(z.object({ path: z.string(), before: z.string(), after: z.string() }));
 export function sameEdits(left: Edit[], right: Edit[]): boolean {
@@ -91,12 +91,7 @@ export function maintainSetup(
 		});
 		const save = (next: Record<string, unknown>) =>
 			// Do not overwrite a newer explicit setup operation or another reconciliation's journal.
-			db.run(
-				'UPDATE onboarding SET document=? WHERE repository_id=? AND document=?',
-				JSON.stringify(next),
-				id,
-				row.document,
-			);
+			replaceDocument(db, 'onboarding', 'repository_id', id, row.document, next);
 		yield* Effect.gen(function*() {
 			const raw = yield* fromSync((): unknown => JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}'));
 			const resolved = yield* resolveConfiguration(raw, ref => gateway.preset(ref)).pipe(

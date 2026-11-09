@@ -19,7 +19,7 @@ import { precondition } from '@/contract/errors';
 import { sha256Hex } from '@/contract/ids';
 import { generateManifests, renderManifests, wingetConfiguration } from '@/distribution/winget/generate';
 import { readiness } from '@/domain/repository';
-import { fromPromise, fromSync, recover } from '@/failure';
+import { fromPromise, fromSync } from '@/failure';
 import { countSchema, decode, looseSchema, record, shaSchema, text, textSchema } from '@/model';
 import type { Sql } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
@@ -133,6 +133,16 @@ export class WinGetService {
 	constructor(readonly store: Store, readonly gateway: RepositoryGateway, readonly env: WinGetBindings) {}
 	setup(): boolean {
 		return !!this.env.WINGET_GITHUB_TOKEN && repositoryNamePattern.test(this.env.WINGET_FORK ?? '');
+	}
+	private verifiedFork(failure: string): Effect.Effect<{ token: string; fork: string }, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const token = yield* Effect.fromResult(text(self.env.WINGET_GITHUB_TOKEN));
+			const fork = yield* Effect.fromResult(text(self.env.WINGET_FORK));
+			const forkInfo = yield* self.gateway.read(forkRepository, `/repos/${fork}`, token);
+			if (!forkInfo.fork || forkInfo.parent?.full_name !== upstream) return yield* precondition(failure);
+			return { token, fork };
+		});
 	}
 	private policy(repo: RepositoryRecord) {
 		const state = readiness(repo);
@@ -288,12 +298,7 @@ export class WinGetService {
 			if (saved.state !== 'failed' || saved.number || saved.url || saved.head) {
 				return yield* precondition('The previous plan is already submitted or in progress; it cannot be replaced');
 			}
-			const token = yield* Effect.fromResult(text(self.env.WINGET_GITHUB_TOKEN));
-			const fork = yield* Effect.fromResult(text(self.env.WINGET_FORK));
-			const forkInfo = yield* self.gateway.read(forkRepository, `/repos/${fork}`, token);
-			if (!forkInfo.fork || forkInfo.parent?.full_name !== upstream) {
-				return yield* precondition('Cannot verify the previous submission fork');
-			}
+			const { token, fork } = yield* self.verifiedFork('Cannot verify the previous submission fork');
 			const old = saved.plan;
 			const branch = `winget/${old.packageIdentifier}/${old.version}/${old.digest.slice(0, 16)}`;
 			const pulls = yield* self.gateway.read(
@@ -362,12 +367,9 @@ export class WinGetService {
 				}
 				if (saved.state === 'merged' || saved.state === 'closed') return saved;
 				attempted = saved;
-				const token = yield* Effect.fromResult(text(self.env.WINGET_GITHUB_TOKEN));
-				const fork = yield* Effect.fromResult(text(self.env.WINGET_FORK));
-				const forkInfo = yield* self.gateway.read(forkRepository, `/repos/${fork}`, token);
-				if (!forkInfo.fork || forkInfo.parent?.full_name !== upstream) {
-					return yield* precondition('Configured repository must be a fork of microsoft/winget-pkgs');
-				}
+				const { token, fork } = yield* self.verifiedFork(
+					'Configured repository must be a fork of microsoft/winget-pkgs',
+				);
 				const baseBranch = (yield* self.gateway.read(upstreamRepository, `/repos/${upstream}`, token)).default_branch;
 				const branch = `winget/${plan.packageIdentifier}/${plan.version}/${plan.digest.slice(0, 16)}`;
 				const head = `${fork.split('/')[0]}:${branch}`;
@@ -570,7 +572,7 @@ export class WinGetService {
 				if (!existing || existing.state === 'failed' || existing.state === 'pending') {
 					yield* self.plan(repo, release.id).pipe(
 						Effect.flatMap(plan => self.submit(repo, release.id, plan.digest)),
-						recover(error => self.store.audit('winget', 'winget.failed', `${repo.name}: ${decodeError(error)}`)),
+						self.store.auditFailure('winget', 'winget.failed', repo.name),
 					);
 				}
 			}

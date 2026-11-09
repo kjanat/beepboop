@@ -126,9 +126,9 @@ function publishCommand(
 	};
 }
 
-const retryAfter =
-	/try again after ((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT)/i;
-const retryHeader = /retry-after:\s*(\d+|[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT)/i;
+const httpDate = String.raw`, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT`;
+const retryAfter = new RegExp(`try again after ((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)${httpDate})`, 'i');
+const retryHeader = new RegExp(String.raw`retry-after:\s*(\d+|[A-Z][a-z]{2}${httpDate})`, 'i');
 
 type Report =
 	| { outcome: 'published' }

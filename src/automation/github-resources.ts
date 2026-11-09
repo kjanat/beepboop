@@ -20,6 +20,7 @@ export const repositorySchema = z.object({
 });
 export const commitSchema = z.object({ sha: shaSchema, commit: z.object({ verification }) });
 export const gitObjectSchema = z.object({ sha: shaSchema, type: z.string() });
+export type GitObject = z.output<typeof gitObjectSchema>;
 export const gitRefSchema = z.object({ object: gitObjectSchema });
 export const gitTagSchema = z.object({
 	object: gitObjectSchema,

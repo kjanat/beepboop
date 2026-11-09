@@ -1,15 +1,16 @@
 import { Result } from 'effect';
 import { z } from 'zod';
 import type { Publication, PublishKind } from '@/automation/types';
+import { registryLabel } from '@/contract/catalog';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import type { LedgerEntry, LedgerManager, LedgerPackage } from '@/contract/ledger';
 import { ledgerManagers } from '@/contract/ledger';
 
 export const registries: Record<LedgerManager, string> = {
-	cargo: 'crates.io',
-	pypi: 'PyPI',
-	npm: 'npm',
+	cargo: registryLabel('cargo'),
+	pypi: registryLabel('pypi'),
+	npm: registryLabel('npm'),
 };
 export const leaseDuration = 15 * 60_000;
 export const rateLimitAttempts = 5;

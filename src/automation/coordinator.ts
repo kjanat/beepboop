@@ -1014,7 +1014,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (ref === null) return yield* precondition('Publish the release tag before the release');
 			const object = ref.object;
 			if (object.type !== 'tag') return yield* precondition('Release tag must be annotated');
-			const tagged = (yield* gateway.read(gitTagSchema, `${repository}/git/tags/${object.sha}`, read)).object;
+			const tagged = yield* gateway.peelTag(execution.repository, object, read);
 			if (tagged.type !== 'commit' || tagged.sha !== execution.sourceSha) {
 				return yield* precondition('Release tag points to another commit');
 			}
@@ -1489,10 +1489,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				`${base}/git/ref/tags/${encodeURIComponent(publication.version)}`,
 				token,
 			);
-			let target = tag.object;
-			if (target.type === 'tag') {
-				target = (yield* gateway.read(gitTagSchema, `${base}/git/tags/${target.sha}`, token)).object;
-			}
+			const target = yield* gateway.peelTag(execution.repository, tag.object, token);
 			const valid = release.draft === false
 				&& release.tag_name === publication.version
 				&& target.type === 'commit'
@@ -2157,9 +2154,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						token,
 					);
 					if (!tag) return undefined;
-					if (tag.object.type !== 'tag') return tag.object;
-					return (yield* gateway.read(gitTagSchema, `/repos/${repository.name}/git/tags/${tag.object.sha}`, token))
-						.object;
+					return yield* gateway.peelTag(repository.name, tag.object, token);
 				});
 			const tagLike = patterns.some(pattern => matchesRef(pattern, `refs/tags/${branch}`))
 				|| /^v?\d+\.\d+\.\d+/.test(branch);
@@ -2311,9 +2306,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return observedExecutions;
 		});
 	}
-	private tracking(now: number): Effect.Effect<void, DomainError> {
+	private drainObservations(
+		now: number,
+		kind: 'track' | 'observe',
+		retryDelay: number,
+		handle: (event: z.output<typeof observation>) => Effect.Effect<boolean, DomainError>,
+	): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			for (const [key, value] of yield* this.list({ prefix: 'track:' })) {
+			for (const [key, value] of yield* this.list({ prefix: `${kind}:` })) {
 				const parsed = observation.safeParse(value);
 				if (!parsed.success) {
 					yield* this.remove(key);
@@ -2321,60 +2321,26 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 				const event = parsed.data;
 				if ((event.due ?? 0) > now) continue;
-				yield* this.track(event).pipe(
+				yield* handle(event).pipe(
 					Effect.flatMap(done =>
 						done
 							? this.remove(key)
-							: this.write(key, { repositoryId: event.repositoryId, runId: event.runId, due: now + jobPollInterval })
+							: this.write(key, { repositoryId: event.repositoryId, runId: event.runId, due: now + retryDelay })
 					),
 					recover(error =>
 						(event.attempts ?? 0) + 1 >= observationAttempts
 							? this.remove(key).pipe(
 								Effect.andThen(
 									this.auditQuietly(
-										'track.dead',
+										`${kind}.dead`,
 										`run ${event.runId} after ${(event.attempts ?? 0) + 1} attempts: ${decodeError(error)}`,
-										'track.audit-failed',
+										`${kind}.audit-failed`,
 									),
 								),
 							)
 							: this.write(key, {
 								...event,
-								due: now + jobPollInterval,
-								attempts: (event.attempts ?? 0) + 1,
-								error: decodeError(error),
-							})
-					),
-				);
-			}
-		});
-	}
-	private observations(now: number): Effect.Effect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			for (const [key, value] of yield* this.list({ prefix: 'observe:' })) {
-				const parsed = observation.safeParse(value);
-				if (!parsed.success) {
-					yield* this.remove(key);
-					continue;
-				}
-				const event = parsed.data;
-				if ((event.due ?? 0) > now) continue;
-				yield* this.observe(event).pipe(
-					Effect.andThen(this.remove(key)),
-					recover(error =>
-						(event.attempts ?? 0) + 1 >= observationAttempts
-							? this.remove(key).pipe(
-								Effect.andThen(
-									this.auditQuietly(
-										'observe.dead',
-										`run ${event.runId} after ${(event.attempts ?? 0) + 1} attempts: ${decodeError(error)}`,
-										'observe.audit-failed',
-									),
-								),
-							)
-							: this.write(key, {
-								...event,
-								due: now + reconcileInterval,
+								due: now + retryDelay,
 								attempts: (event.attempts ?? 0) + 1,
 								error: decodeError(error),
 							})
@@ -2411,9 +2377,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					yield* maintainSetup(store, gateway, snapshot, { number: edit.number, choices: edit.choices });
 				}
 			}).pipe(
-				recover(error =>
-					store.audit('beepboop', 'repository.setup.failed', `${edit.repositoryId} ${edit.head}: ${decodeError(error)}`)
-				),
+				store.auditFailure('beepboop', 'repository.setup.failed', `${edit.repositoryId} ${edit.head}`),
 			);
 			const current = yield* this.setupEdit();
 			if (current?.due === edit.due) yield* this.remove('setup-edit');
@@ -2426,8 +2390,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			yield* Effect.all([
 				this.serialized(Effect.gen({ self: this }, function*() {
 					yield* this.deliverReleaseEvents(now);
-					yield* this.observations(now);
-					yield* this.tracking(now);
+					yield* this.drainObservations(
+						now,
+						'observe',
+						reconcileInterval,
+						event => Effect.as(this.observe(event), true),
+					);
+					yield* this.drainObservations(now, 'track', jobPollInterval, event => this.track(event));
 					const due = yield* this.read('reconcile-at');
 					if (due === undefined || ((yield* this.reconcileAt()) ?? Number.POSITIVE_INFINITY) <= now) {
 						yield* this.reconcile();

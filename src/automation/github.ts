@@ -1,6 +1,7 @@
 import { Context, Data, Effect, Layer, Schedule } from 'effect';
 import { importPKCS8, SignJWT } from 'jose';
 import { z } from 'zod';
+import type { GitObject } from '@/automation/github-resources';
 import {
 	accessTokenSchema,
 	appSchema,
@@ -144,6 +145,12 @@ export class RepositoryGateway {
 		body?: unknown,
 	): Effect.Effect<z.output<S>, DomainError> {
 		return this.call(path, token, method, body).pipe(Effect.flatMap(value => Effect.fromResult(decode(schema, value))));
+	}
+	peelTag(repository: string, object: GitObject, token: string): Effect.Effect<GitObject, DomainError> {
+		if (object.type !== 'tag') return Effect.succeed(object);
+		return this.read(gitTagSchema, `/repos/${repository}/git/tags/${object.sha}`, token).pipe(
+			Effect.map(tag => tag.object),
+		);
 	}
 	copyReleaseAsset(
 		repository: string,
@@ -297,7 +304,7 @@ export class RepositoryGateway {
 					const oid = reference.object.sha;
 					let target = reference.object;
 					for (let depth = 0; target.type === 'tag' && depth < 8; depth++) {
-						target = (yield* self.read(gitTagSchema, `/repos/${name}/git/tags/${target.sha}`, token)).object;
+						target = yield* self.peelTag(name, target, token);
 					}
 					if (target.type !== 'commit') return yield* precondition('Tag does not resolve to a commit');
 					result.push({ name: tag, oid, commit: target.sha });

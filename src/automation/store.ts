@@ -11,7 +11,7 @@ import type {
 } from '@/automation/types';
 import { DomainError, precondition } from '@/contract/errors';
 import type { Access } from '@/domain/repository';
-import { fromJson, fromSync } from '@/failure';
+import { fromJson, fromSync, recover } from '@/failure';
 import { record } from '@/model';
 import type { Enrollment, RepositoryRow } from '@/persistence/codecs/repository';
 import {
@@ -42,6 +42,22 @@ export interface UnreadableExecution {
 	error: string;
 }
 const executionRow = z.object({ id: z.string(), repository_id: z.number(), document: z.string() });
+export function readableValues<T>(entries: (Readable<T> | { kind: 'unreadable' })[]): T[] {
+	return entries.flatMap(entry => entry.kind === 'readable' ? [entry.value] : []);
+}
+function readEach<R, T, U>(
+	rows: R[],
+	decode: (row: R) => T,
+	unreadable: (row: R, error: string) => U,
+): (Readable<T> | U)[] {
+	return rows.map((row): Readable<T> | U => {
+		try {
+			return { kind: 'readable', value: decode(row) };
+		} catch (error) {
+			return unreadable(row, decodeError(error));
+		}
+	});
+}
 export function decodeError(error: unknown): string {
 	if (error instanceof DomainError) return error.detail ?? error.message;
 	if (error instanceof z.ZodError) return z.prettifyError(error);
@@ -95,19 +111,18 @@ export class Store {
 	}
 	readableRepositories(): Effect.Effect<RepositoryRecord[], DomainError> {
 		return this.readRepositories().pipe(
-			Effect.map(entries => entries.flatMap(entry => entry.kind === 'readable' ? [entry.value] : [])),
+			Effect.map(readableValues),
 		);
 	}
 	readRepositories(): Effect.Effect<(Readable<RepositoryRecord> | UnreadableRepository)[], DomainError> {
 		return this.repositoryRows().pipe(
 			Effect.map(rows =>
-				rows.map((row): Readable<RepositoryRecord> | UnreadableRepository => {
-					try {
-						return { kind: 'readable', value: decodeRepository(row) };
-					} catch (error) {
-						return { kind: 'unreadable', id: row.id, name: row.name, error: decodeError(error) };
-					}
-				})
+				readEach(rows, decodeRepository, (row, error): UnreadableRepository => ({
+					kind: 'unreadable',
+					id: row.id,
+					name: row.name,
+					error,
+				}))
 			),
 		);
 	}
@@ -143,9 +158,7 @@ export class Store {
 		).pipe(Effect.asVoid);
 	}
 	execution(id: string): Effect.Effect<Execution | undefined, DomainError> {
-		return this.sql.first('SELECT document FROM executions WHERE id=?', id).pipe(
-			Effect.flatMap(row => row ? fromSync(() => decodeExecutionV1(rowDocument(row))) : Effect.undefined),
-		);
+		return this.document('executions', id, decodeExecutionV1);
 	}
 	private executionRows(repositoryId?: number): Effect.Effect<z.output<typeof executionRow>[], DomainError> {
 		const rows = repositoryId === undefined
@@ -162,19 +175,27 @@ export class Store {
 		);
 	}
 	readExecutions(): Effect.Effect<(Readable<Execution> | UnreadableExecution)[], DomainError> {
-		return this.executionRows().pipe(Effect.map(rows =>
-			rows.map((row): Readable<Execution> | UnreadableExecution => {
-				try {
-					return { kind: 'readable', value: decodeExecutionV1(JSON.parse(row.document)) };
-				} catch (error) {
-					return { kind: 'unreadable', id: row.id, repositoryId: row.repository_id, error: decodeError(error) };
-				}
-			})
-		));
+		return this.executionRows().pipe(
+			Effect.map(rows =>
+				readEach(rows, row => decodeExecutionV1(JSON.parse(row.document)), (row, error): UnreadableExecution => ({
+					kind: 'unreadable',
+					id: row.id,
+					repositoryId: row.repository_id,
+					error,
+				}))
+			),
+		);
 	}
 	event(id: string): Effect.Effect<AutomationEvent | undefined, DomainError> {
-		return this.sql.first('SELECT document FROM release_events WHERE id=?', id).pipe(
-			Effect.flatMap(row => row ? fromSync(() => decodeEventV1(rowDocument(row))) : Effect.undefined),
+		return this.document('release_events', id, decodeEventV1);
+	}
+	private document<T>(
+		table: 'executions' | 'release_events',
+		id: string,
+		decode: (value: unknown) => T,
+	): Effect.Effect<T | undefined, DomainError> {
+		return this.sql.first(`SELECT document FROM ${table} WHERE id=?`, id).pipe(
+			Effect.flatMap(row => row ? fromSync(() => decode(rowDocument(row))) : Effect.undefined),
 		);
 	}
 	queueEvent(event: AutomationEvent, deliveries: SubscriptionDelivery[]): Effect.Effect<void, DomainError> {
@@ -226,5 +247,8 @@ export class Store {
 	}
 	audit(actor: string, action: string, target: string): Effect.Effect<void, DomainError> {
 		return this.auditLog.record(actor, action, target);
+	}
+	auditFailure(actor: string, action: string, name: string) {
+		return recover(error => this.audit(actor, action, `${name}: ${decodeError(error)}`));
 	}
 }
