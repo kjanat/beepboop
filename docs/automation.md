@@ -1047,8 +1047,24 @@ body. A retried publication leaves one copy.
 
 ### Binary builds
 
-A publication workflow can build binaries for its GitHub release. Add
-`binaries` to the stream's `promote` setup choice:
+A publication workflow can build binaries for its GitHub release. Setup
+proposes a build for each binary target of a discovered Cargo crate, `src/main.rs`
+or a `[[bin]]` entry, and for each Go `main.go` at a module root or below it.
+It skips Go directories named `internal`, `testdata`, `vendor` or `examples` and
+nested modules. The setup PR lists every build and every target as a checkbox
+under the publication workflow.
+
+Setup proposes all six targets unless the crate needs Unix. A crate needs Unix
+when its unconditional `[dependencies]`, followed through workspace path
+dependencies, include `nix`, `uzers`, `users`, `termios`, `daemonize`, `fork`,
+`pty-process`, or `rustix` with a feature other than `std`, `alloc`, `core`,
+`net`, `event`, `use-libc` or `rustc-dep-of-std`. Setup then leaves out the
+Windows targets and names the dependencies in the PR. Target-specific
+dependencies such as `[target.'cfg(unix)'.dependencies]` do not count. Setup
+proposes builds only for a workflow whose binding has no `setup` object yet. A
+binding with one keeps its builds, including none.
+
+The builds live in the binding's `setup.binaries`:
 
 ```json
 {

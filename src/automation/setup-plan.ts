@@ -4,7 +4,7 @@ import { publicationSchema } from '@/automation/package-publication';
 import type { SetupOperation, SetupPlan, SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
-import { binaries } from '@/contract/setup';
+import { binaries, binaryBuild, binaryTargets } from '@/contract/setup';
 import { versionFileSchema } from '@/contract/version-files';
 import { stringsSchema as strings } from '@/model';
 
@@ -92,6 +92,12 @@ const setupPlan: z.ZodType<SetupPlan> = z.object({
 	blockers: strings,
 	notes: strings,
 	adoption: strings.optional(),
+	binaryCandidates: z.array(z.object({
+		package: z.string(),
+		build: binaryBuild,
+		targets: z.array(z.enum(binaryTargets)),
+		reason: z.string().optional(),
+	})).optional(),
 	branchConflict: z.unknown().transform(value => value === true),
 	prior: z.object({ url: z.string(), superseded: z.boolean() }).optional(),
 });

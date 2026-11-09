@@ -1,5 +1,6 @@
 import { Effect, Result } from 'effect';
 import { z } from 'zod';
+import { binaryCandidates } from '@/automation/binary-candidates';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
 import { formatJson, json } from '@/automation/json';
 import { discover, versionsInFiles } from '@/automation/managers';
@@ -30,8 +31,8 @@ import { blocking } from '@/contract/diagnostics';
 import type { DomainError } from '@/contract/errors';
 import { decodeRequest, precondition } from '@/contract/errors';
 import { sha256Hex } from '@/contract/ids';
-import type { WorkflowSetupInput } from '@/contract/setup';
-import { setupChoicesSchema, workflowSetup } from '@/contract/setup';
+import type { BinaryBuild, BinaryCandidate, BinaryRelease, WorkflowSetupInput } from '@/contract/setup';
+import { binaryTargets, setupChoicesSchema, workflowSetup } from '@/contract/setup';
 import { versionFileSchema } from '@/contract/version-files';
 import { configurationDrift } from '@/domain/configuration';
 import { packageMarkdown } from '@/domain/package-label';
@@ -95,6 +96,7 @@ function suggested(
 	graph: ReleaseGraph,
 	resolved?: Configuration,
 	saved?: SetupChoices,
+	candidates: readonly BinaryCandidate[] = [],
 ): SetupChoices {
 	const configured = resolved?.streams ?? object(raw.streams);
 	const revision = resolved?.actionsRevision
@@ -226,10 +228,28 @@ function suggested(
 				]
 				: selected.filter(id => requirablePackage(inventory.packages.find(pkg => packageId(pkg) === id))),
 			prepare: choose('prepare'),
-			promote: choose('promote'),
+			promote: proposeBinaries(
+				choose('promote'),
+				workflowSetup.safeParse(object(object(current.promote).workflow).setup).success,
+				candidates.filter(candidate => selected.includes(candidate.package)),
+			),
 		});
 	}
 	return { streams, ...(revision ? { actionsRevision: revision } : {}) };
+}
+function proposeBinaries(
+	promote: SetupWorkflow | undefined,
+	held: boolean,
+	candidates: readonly BinaryCandidate[],
+): SetupWorkflow | undefined {
+	if (!promote || held || promote.binaries || !candidates.length) return promote;
+	return { ...promote, binaries: binaryRelease(candidates) };
+}
+export function binaryRelease(candidates: readonly BinaryCandidate[]): BinaryRelease {
+	return {
+		builds: candidates.map(candidate => candidate.build),
+		targets: binaryTargets.filter(target => candidates.every(candidate => candidate.targets.includes(target))),
+	};
 }
 export const branchConflictBlocker =
 	'Someone else committed to the setup branch, so Beepboop stopped updating it. Take over to replace their commits with this proposal.';
@@ -268,7 +288,8 @@ function draftSetup(
 		const workflows = yield* evidence(snapshot, inventory);
 		const graph = inferReleaseGraph(snapshot, inventory);
 		// Empty selections are allowed in suggestions, but cannot be applied.
-		const suggestion = suggested(snapshot, raw, workflows, inventory, graph, resolved, baseline.saved);
+		const candidates = binaryCandidates(snapshot, inventory);
+		const suggestion = suggested(snapshot, raw, workflows, inventory, graph, resolved, baseline.saved, candidates);
 		const normalized = setupChoicesSchema.safeParse(suggestion);
 		const requested = normalized.success ? normalized.data : suggestion;
 		const proposal = completeChoices(
@@ -298,7 +319,17 @@ function draftSetup(
 					packageMarkdown(id)
 				}, which a selected package depends on and its registry does not have at this version.`
 			);
-		const plan = { ...drafts, notes: [...added, ...drafts.notes] };
+		const built = new Set(
+			choices.streams.flatMap(stream => stream.promote?.binaries?.builds.map(build => build.name) ?? []),
+		);
+		const narrowed = candidates.flatMap(candidate =>
+			candidate.reason && built.has(candidate.build.name) ? [candidate.reason] : []
+		);
+		const plan = {
+			...drafts,
+			notes: [...added, ...narrowed, ...drafts.notes],
+			...(candidates.length ? { binaryCandidates: candidates } : {}),
+		};
 		return inferred ? { ...plan, adoption: proposalMarkdown(graph, snapshot, plan) } : plan;
 	});
 }
@@ -828,11 +859,34 @@ export function setupOptions(plan: SetupPlan): SetupOption[] {
 				? triggerHandovers.map((value): SetupOption => ({ kind: 'triggers', stream: stream.name, operation, value }))
 				: []
 		),
+		...binaryOptions(plan, stream),
 	]);
+}
+function binaryOptions(plan: SetupPlan, stream: SetupChoices['streams'][number]): SetupOption[] {
+	if (!stream.promote) return [];
+	const candidates = (plan.binaryCandidates ?? []).filter(candidate => stream.packages.includes(candidate.package));
+	const builds = [
+		...(stream.promote.binaries?.builds ?? []).map(build => ({
+			build,
+			targets: candidates.find(candidate => candidate.build.name === build.name)?.targets ?? [...binaryTargets],
+		})),
+		...candidates.filter(candidate =>
+			!stream.promote?.binaries?.builds.some(build => build.name === candidate.build.name)
+		),
+	];
+	if (!builds.length) return [];
+	return [
+		...builds.map(({ build, targets }): SetupOption => ({ kind: 'binary', stream: stream.name, build, targets })),
+		...binaryTargets.map((target): SetupOption => ({ kind: 'target', stream: stream.name, target })),
+	];
 }
 function optionId(option: SetupOption): string {
 	const parts = option.kind === 'workflow'
 		? [option.kind, option.stream, option.operation, option.file]
+		: option.kind === 'binary'
+		? [option.kind, option.stream, option.build.name]
+		: option.kind === 'target'
+		? [option.kind, option.stream, option.target]
 		: option.kind === 'versioning'
 		? [option.kind, option.stream, option.value]
 		: option.kind === 'triggers'
@@ -845,6 +899,10 @@ function selected(option: SetupOption, choices: SetupChoices): boolean {
 	if (option.kind === 'workflow') return stream?.[option.operation]?.file === option.file;
 	if (option.kind === 'versioning') return stream?.versioning === option.value;
 	if (option.kind === 'triggers') return stream?.[option.operation]?.triggers === option.value;
+	if (option.kind === 'binary') {
+		return stream?.promote?.binaries?.builds.some(build => build.name === option.build.name) ?? false;
+	}
+	if (option.kind === 'target') return stream?.promote?.binaries?.targets.includes(option.target) ?? false;
 	return (option.kind === 'package' ? stream?.packages : stream?.required)?.includes(option.package) ?? false;
 }
 export function bodyChoices(body: string, options: SetupOption[], base: SetupChoices): SetupChoices {
@@ -890,7 +948,22 @@ export function bodyChoices(body: string, options: SetupOption[], base: SetupCho
 				const value = ticked.find(value => value !== chosen.triggers) ?? ticked[0] ?? chosen.triggers;
 				return value === chosen.triggers ? chosen : { ...chosen, triggers: value };
 			};
-			const prepare = handover('prepare', binding('prepare')), promote = handover('promote', binding('promote'));
+			const built = (chosen: SetupWorkflow | undefined): SetupWorkflow | undefined => {
+				const offered = own.flatMap(option => option.kind === 'binary' ? [option] : []);
+				if (!chosen || !offered.length) return chosen;
+				const kept = offered.filter(state);
+				const builds = kept.map(option =>
+					chosen.binaries?.builds.find(build => build.name === option.build.name) ?? option.build
+				);
+				const ticked = own.flatMap(option => option.kind === 'target' && state(option) ? [option.target] : []);
+				const targets = ticked.length || chosen.binaries
+					? ticked
+					: binaryTargets.filter(target => kept.every(option => option.targets.includes(target)));
+				const { binaries: _binaries, ...rest } = chosen;
+				return builds.length && targets.length ? { ...rest, binaries: { builds, targets } } : rest;
+			};
+			const prepare = handover('prepare', binding('prepare')),
+				promote = built(handover('promote', binding('promote')));
 			const versions = own.flatMap(option => option.kind === 'versioning' && state(option) ? [option.value] : []);
 			return {
 				name: stream.name,
@@ -912,6 +985,11 @@ export function bodyChoices(body: string, options: SetupOption[], base: SetupCho
 		}),
 		...(base.actionsRevision ? { actionsRevision: base.actionsRevision } : {}),
 	};
+}
+function binaryOrigin(build: BinaryBuild): string {
+	return build.toolchain === 'cargo'
+		? `Cargo, \`${build.manifest}\``
+		: `Go, \`${build.package === '.' ? build.module : `${build.module}/${build.package.slice(2)}`}\``;
 }
 const versioningLabels: Record<Versioning, string> = {
 	workspace: 'One version for the stream',
@@ -939,6 +1017,17 @@ export function setupBody(plan: SetupPlan, release = false): string {
 					: 'created by this PR and started only by Beepboop'
 			}`
 			: 'none';
+	function binaryLines(stream: string): string[] {
+		const own = options.filter(option => option.stream === stream);
+		const builds = own.flatMap(option =>
+			option.kind === 'binary'
+				? [box('    ', option, `\`${option.build.name}\` (${binaryOrigin(option.build)})`)]
+				: []
+		);
+		if (!builds.length) return [];
+		const targets = own.flatMap(option => option.kind === 'target' ? [box('    ', option, option.target)] : []);
+		return ['  - Release binaries', ...builds, '  - Binary targets', ...targets];
+	}
 	return `Configure releases from inspected commit [${plan.sourceSha}](https://github.com/${plan.repository}/commit/${plan.sourceSha}).\n\n`
 		+ 'Tick or untick packages to change this proposal. Every ticked package must be published for a release to succeed. Beepboop rebuilds the proposal 5 seconds after the last edit.\n\n'
 		+ plan.choices.streams.map(stream => {
@@ -953,6 +1042,7 @@ export function setupBody(plan: SetupPlan, release = false): string {
 				`  - Versioning: ${versioningLabels[stream.versioning]}`,
 				`  - Preparation: ${workflow(stream.prepare)}`,
 				`  - Publication: ${workflow(stream.promote)}`,
+				...binaryLines(stream.name),
 				...(stream.operations ?? []).map(entry =>
 					`  - After ${
 						entry.needs.map(name => {

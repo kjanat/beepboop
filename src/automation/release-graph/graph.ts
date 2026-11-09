@@ -1,4 +1,5 @@
 import { parse as parseToml } from 'smol-toml';
+import { cargoBinaryNames } from '@/automation/binary-candidates';
 import { object } from '@/automation/managers/helpers';
 import { isPyproject, privateProject } from '@/automation/managers/pyproject';
 import { tagPrefix } from '@/automation/managers/tags';
@@ -270,24 +271,11 @@ function goreleaserConfigs(snapshot: Snapshot, text: string): string[] {
 	).map(([, source]) => source);
 }
 function cargoBinaries(snapshot: Snapshot): { name: string; manifest: string }[] {
-	return Object.entries(snapshot.files).flatMap(([path, source]) => {
-		if (!/(?:^|\/)Cargo\.toml$/.test(path) || !source) return [];
-		const directory = path.slice(0, -'Cargo.toml'.length);
-		try {
-			const document = object(parseToml(source));
-			const bins = (Array.isArray(document.bin) ? document.bin : []).map(object);
-			const declared = bins.flatMap(entry => typeof entry.name === 'string' ? [entry.name] : []);
-			const pkg = object(document.package);
-			const main = typeof pkg.name === 'string' && pkg.autobins !== false
-					&& !bins.some(entry => entry.path === 'src/main.rs')
-					&& snapshot.paths.includes(`${directory}src/main.rs`)
-				? [pkg.name]
-				: [];
-			return [...new Set([...declared, ...main])].map(binary => ({ name: binary, manifest: path }));
-		} catch {
-			return [];
-		}
-	});
+	return Object.keys(snapshot.files).flatMap(path =>
+		/(?:^|\/)Cargo\.toml$/.test(path)
+			? cargoBinaryNames(snapshot, path).map(binary => ({ name: binary, manifest: path }))
+			: []
+	);
 }
 function compatibilityNames(snapshot: Snapshot, text: string, binaries: readonly string[]): Map<string, string[]> {
 	const scripts = Object.entries(snapshot.files).filter(([path]) =>

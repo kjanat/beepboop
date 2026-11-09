@@ -1,12 +1,12 @@
 import { expect, test } from 'bun:test';
 import type { Repository } from '@root/test/support/github.ts';
 import { bearer } from '@root/test/support/http.ts';
-import { applyChoices, previewSetup } from '@root/test/support/setup.ts';
+import { applyChoices, editPull, previewSetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { z } from 'zod';
 import type { SetupChoices } from '@/automation/setup-types';
-import { binaries, workflowSetup } from '@/contract/setup';
+import { binaries, binaryTargets, workflowSetup } from '@/contract/setup';
 
 let world: World;
 eachWorld(created => {
@@ -134,4 +134,87 @@ test('a repository whose stored choices are not in beepboop.json gets one setup 
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
 	await world.wait(16_000);
 	expect(repository.pulls.filter(entry => entry.state === 'open')).toEqual([]);
+});
+
+function engineRepository(): Repository {
+	return world.github.create('octo/engine', {
+		'Cargo.toml':
+			'[workspace]\nmembers = ["crates/*"]\n\n[workspace.dependencies]\nengine = { path = "crates/engine", version = "1.0.0" }\nuzers = "0.12"\nrustix = { version = "1", features = ["fs", "process"] }\n',
+		'crates/engine/Cargo.toml':
+			'[package]\nname = "engine"\nversion = "1.0.0"\nedition = "2024"\n\n[dependencies]\nuzers.workspace = true\nrustix.workspace = true\n',
+		'crates/engine/src/lib.rs': '',
+		'crates/cli/Cargo.toml':
+			'[package]\nname = "engine-cli"\nversion = "1.0.0"\nedition = "2024"\n\n[[bin]]\nname = "engine"\npath = "src/main.rs"\n\n[dependencies]\nengine.workspace = true\n',
+		'crates/cli/src/main.rs': 'fn main() {}\n',
+	});
+}
+const engineChoices: SetupChoices = {
+	streams: [{
+		name: 'main',
+		packages: ['pkg:cargo/engine', 'pkg:cargo/engine-cli'],
+		required: ['pkg:cargo/engine', 'pkg:cargo/engine-cli'],
+		versioning: 'workspace',
+		promote: {
+			file: 'release.yml',
+			job: 'publish',
+			triggers: 'review',
+			commands: 'beepboop publish',
+			publicationSteps: {},
+		},
+	}],
+};
+const unixTargets = binaryTargets.filter(target => !target.startsWith('windows-'));
+
+test('the migration PR proposes each Cargo binary with the targets its dependencies build for', async () => {
+	const repository = engineRepository();
+	const api = bearer(world, await world.cliSession());
+	await applyChoices(api, repository.name, engineChoices);
+	world.github.merge(repository, 1);
+	const source = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
+	const legacy = JSON.stringify(source, (key, value) => key === 'setup' ? undefined : value, '\t');
+	world.github.push(repository, { '.github/beepboop.json': `${legacy}\n` }, 'Configuration from before setup input');
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	await world.wait(16_000);
+	const [pull] = repository.pulls.filter(entry => entry.state === 'open');
+	if (!pull) throw new Error('Missing migration PR');
+	expect(pull.body).toContain(
+		'  - Release binaries\n    - [x] <!-- beepboop:choice:binary:main:engine --> `engine` (Cargo, `crates/cli/Cargo.toml`)\n  - Binary targets\n',
+	);
+	for (const target of unixTargets) {
+		expect(pull.body).toContain(`- [x] <!-- beepboop:choice:target:main:${target.replace('-', '%2D')} -->`);
+	}
+	expect(pull.body).toContain('- [ ] <!-- beepboop:choice:target:main:windows%2Damd64 --> windows-amd64');
+	expect(pull.body).toContain(
+		'engine leaves out Windows: engine-cli depends on uzers and rustix (fs, process), which build only for Unix.',
+	);
+	expect(pull.body).toContain('- [ ] <!-- beepboop:release-after-merge --> Release after merge');
+	expect(configuration(repository, 'automation/setup-update').streams.main.promote.workflow.setup.binaries).toEqual({
+		builds: [{
+			toolchain: 'cargo',
+			name: 'engine',
+			manifest: 'crates/cli/Cargo.toml',
+			asset: '{name}-{rust.target}{ext}',
+		}],
+		targets: unixTargets,
+	});
+	const workflow = world.github.file(repository, '.github/workflows/release.yml', 'automation/setup-update') ?? '';
+	expect(workflow).toContain('build-engine:');
+	expect(workflow).not.toContain('windows');
+
+	await editPull(
+		world,
+		repository,
+		pull,
+		pull.body.replace(
+			'- [x] <!-- beepboop:choice:binary:main:engine -->',
+			'- [ ] <!-- beepboop:choice:binary:main:engine -->',
+		),
+	);
+	await world.wait(16_000);
+	expect(pull.body).toContain('- [ ] <!-- beepboop:choice:binary:main:engine -->');
+	expect(configuration(repository, 'automation/setup-update').streams.main.promote.workflow.setup.binaries)
+		.toBeUndefined();
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	await world.wait(16_000);
+	expect(pull.body).toContain('- [ ] <!-- beepboop:choice:binary:main:engine -->');
 });

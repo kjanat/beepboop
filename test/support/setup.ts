@@ -1,5 +1,8 @@
 import { expect } from 'bun:test';
+import type { Pull, Repository } from '@root/test/support/github.ts';
+import { botId, ownerId } from '@root/test/support/github.ts';
 import type { Api, Reply } from '@root/test/support/http.ts';
+import type { World } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
@@ -37,4 +40,23 @@ export async function applyChoices(api: Api, repository: string, choices: SetupC
 	expect(plan.blockers).toEqual([]);
 	expect((await applySetup(api, repository, plan, choices)).status).toBe(200);
 	return plan;
+}
+
+export function editPull(world: World, repository: Repository, pull: Pull, body: string): Promise<Response> {
+	const before = pull.body;
+	pull.body = body;
+	return world.webhook('pull_request', {
+		action: 'edited',
+		changes: { body: { from: before } },
+		sender: { id: ownerId },
+		pull_request: {
+			number: pull.number,
+			state: 'open',
+			body,
+			user: { id: botId },
+			head: { ref: pull.head.ref, sha: pull.head.sha, repo: { id: repository.id } },
+			base: { repo: { id: repository.id } },
+		},
+		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
+	});
 }

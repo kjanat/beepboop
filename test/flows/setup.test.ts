@@ -1,8 +1,7 @@
 import { expect, test } from 'bun:test';
-import { botId, ownerId } from '@root/test/support/github.ts';
 import { bearer, field } from '@root/test/support/http.ts';
 import { publishWorkflow, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
-import { applySetup, discoverSetup } from '@root/test/support/setup.ts';
+import { applySetup, discoverSetup, editPull } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Result } from 'effect';
@@ -1425,21 +1424,7 @@ test('an unticked dependency in the setup PR body stays unticked through edits a
 	const framed = (body: string) =>
 		body.startsWith('Written above.\n\n<!-- beepboop:setup:start -->\n')
 		&& body.endsWith('\n<!-- beepboop:setup:end -->\n\nCloses #26\n');
-	pull.body = unticked;
-	await world.webhook('pull_request', {
-		action: 'edited',
-		changes: { body: { from: before } },
-		sender: { id: ownerId },
-		pull_request: {
-			number: pull.number,
-			state: 'open',
-			body: unticked,
-			user: { id: botId },
-			head: { ref: 'automation/onboarding', sha: pull.head.sha, repo: { id: repository.id } },
-			base: { repo: { id: repository.id } },
-		},
-		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
-	});
+	await editPull(world, repository, pull, unticked);
 	await world.wait(1_000);
 	expect(pull.body).toContain(
 		'<!-- beepboop:setup-status -->\nBeepboop is rebuilding the proposal from your edit.\n<!-- /beepboop:setup-status -->',
@@ -1562,22 +1547,7 @@ test('a body edit ticks a package that the saved options from an older discovery
 		'- [x] $1',
 	);
 	expect(ticked).not.toBe(pull.body);
-	const before = pull.body;
-	pull.body = ticked;
-	await world.webhook('pull_request', {
-		action: 'edited',
-		changes: { body: { from: before } },
-		sender: { id: ownerId },
-		pull_request: {
-			number: pull.number,
-			state: 'open',
-			body: ticked,
-			user: { id: botId },
-			head: { ref: 'automation/onboarding', sha: pull.head.sha, repo: { id: repository.id } },
-			base: { repo: { id: repository.id } },
-		},
-		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
-	});
+	await editPull(world, repository, pull, ticked);
 	await world.wait(8_000);
 	expect(configured(repository, 'automation/onboarding')).toEqual(['pkg:npm/widget', 'pkg:npm/gadget']);
 });

@@ -1,5 +1,5 @@
 import type { PackagePublication } from '@/automation/package-publication';
-import type { SetupChoices } from '@/contract/setup';
+import type { BinaryBuild, BinaryCandidate, BinaryTarget, SetupChoices } from '@/contract/setup';
 
 export type { SetupChoices } from '@/contract/setup';
 
@@ -13,7 +13,9 @@ export type SetupOption =
 	| { kind: 'package' | 'required'; stream: string; package: string }
 	| { kind: 'workflow'; stream: string; operation: 'prepare' | 'promote'; file: string; job?: string }
 	| { kind: 'versioning'; stream: string; value: Versioning }
-	| { kind: 'triggers'; stream: string; operation: 'prepare' | 'promote'; value: TriggerHandover };
+	| { kind: 'triggers'; stream: string; operation: 'prepare' | 'promote'; value: TriggerHandover }
+	| { kind: 'binary'; stream: string; build: BinaryBuild; targets: BinaryTarget[] }
+	| { kind: 'target'; stream: string; target: BinaryTarget };
 export interface SetupEdit {
 	repositoryId: number;
 	number: number;
@@ -57,6 +59,7 @@ export interface SetupPlan {
 	blockers: string[];
 	notes: string[];
 	adoption?: string[];
+	binaryCandidates?: BinaryCandidate[];
 	branchConflict: boolean;
 	prior?: { url: string; superseded: boolean };
 }

@@ -43,7 +43,7 @@ const asset = z.string().regex(/^(?:[\w.-]|\{[\w.]+\})+$/).refine(
 		[...value.matchAll(/\{([\w.]+)\}/g)].every(([, key]) => assetPlaceholders.some(placeholder => placeholder === key)),
 	'Unknown asset placeholder',
 );
-const binaryBuild = z.discriminatedUnion('toolchain', [
+export const binaryBuild = z.discriminatedUnion('toolchain', [
 	z.object({
 		toolchain: z.literal('go'),
 		name: binaryName,
@@ -74,6 +74,12 @@ export const binaries = z.object({
 	).default([...binaryTargets]),
 }).strict();
 export type BinaryRelease = z.infer<typeof binaries>;
+export interface BinaryCandidate {
+	package: string;
+	build: BinaryBuild;
+	targets: BinaryTarget[];
+	reason?: string;
+}
 const workflow = z.object({
 	file: z.string().regex(workflowFilePattern),
 	job: z.string().optional(),
