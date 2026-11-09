@@ -385,11 +385,23 @@ right away, and its packages wait for those streams in the ledger.
 For each package the action:
 
 1. builds the artifact with `cargo package --locked`, `uv build` or `npm pack`,
-2. claims the package with the artifact's digest,
-3. runs `cargo publish --locked --no-verify`,
+2. checks the package contents and metadata,
+3. claims the package with the artifact's digest,
+4. runs `cargo publish --locked --no-verify`,
    `uv publish --check-url https://pypi.org/simple/` or
    `npm publish --access public --tag <channel>`,
-4. reports the outcome.
+5. reports the outcome.
+
+The contents check needs these items in each package:
+
+| Manager | README                                      | Metadata                                                                      |
+| ------- | ------------------------------------------- | ----------------------------------------------------------------------------- |
+| `cargo` | `cargo package --list` lists one            | `cargo metadata` has `description`, `license` or `license-file`, `repository` |
+| `npm`   | the `npm pack --json` file list has one     | the packed `package.json` has `description`, `license`, `repository`          |
+| `pypi`  | the sdist `PKG-INFO` has a long description | `PKG-INFO` has a license and a `Project-URL` or `Home-page`                   |
+
+A package that lacks an item fails before its claim. The failure names the
+package and each missing item, and the action publishes nothing for it.
 
 Before the first Cargo build, the action runs `rustup toolchain install` when
 the checkout has a `rust-toolchain.toml` or `rust-toolchain` file. It reads
@@ -528,7 +540,9 @@ any tool that the runner lacks.
    `beepboop runs list` prints the execution ID.
 8. Approval requires a verified commit signature, passing checks and a branch
    head that still points at that commit. `--force` approves despite a failed
-   signature or check.
+   signature or check. Approval also requires complete package metadata, as
+   described in [Package metadata](#package-metadata). `--force` does not
+   override that check.
 9. Beepboop dispatches the promote workflow on the default branch, and the job
    checks out the merge commit. Its `beepboop_publish` step runs
    `actions/publish`, which publishes the packages and reports each outcome.
@@ -540,6 +554,30 @@ any tool that the runner lacks.
     `actions/publish-release` after `actions/publish-refs`. It publishes the
     GitHub release for the tag. A promote choice with `binaries` also uploads
     the assets to the draft release first. See [Binary builds](#binary-builds).
+
+## Package metadata
+
+Discovery checks each publishable Cargo crate, npm package and Python project
+in the default branch:
+
+- A crate needs a README, `description`, `license` or `license-file`, and
+  `repository`. Cargo's `readme` field names the README. Without that field,
+  the crate directory needs `README.md`, `README.txt` or `README`. Beepboop
+  follows `field.workspace = true` to `[workspace.package]`.
+- An npm package needs a `README` file next to `package.json`, and
+  `description`, `license` and `repository` in `package.json`.
+- A Python project needs `readme`, `license` or `license-files`, and `urls` in
+  `[project]`, or the field in `dynamic`.
+
+A promotion for a stream with an incomplete package waits in
+`awaiting-approval`. Its reason on the runs page starts with `Fix the package
+metadata before this release:` and names each package, its manifest and the
+missing items. Approval refuses it, also with `--force`. A push that completes
+the metadata creates a promotion for the new commit.
+
+The setup PR lists the same problems for every selected package. The setup
+PR stays mergeable. `actions/publish` checks the built package again before it
+claims it. See [Publish through Beepboop](#publish-through-beepboop).
 
 ## Publication results
 

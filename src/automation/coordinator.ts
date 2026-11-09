@@ -74,6 +74,7 @@ import {
 	publishablePackages,
 	selectorKey,
 } from '@/automation/package-identity';
+import { metadataProblems } from '@/automation/package-metadata';
 import { publishable } from '@/automation/package-publication';
 import { matchesRef } from '@/automation/policy';
 import type { PublishBudget } from '@/automation/publish-budget';
@@ -169,6 +170,7 @@ const projectionRetry = 10_000;
 const dependencyPoll = 30_000;
 const verificationPoll = 15_000;
 const defaultRetryAfter = 60_000;
+const metadataReason = 'Fix the package metadata before this release: ';
 function wakeDue(wake: ReleaseWake): number {
 	return wake === true ? 0 : wake.due;
 }
@@ -1712,6 +1714,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			const conflict = yield* this.tagProblem(execution);
 			if (conflict) return yield* precondition(conflict);
+			const incomplete = yield* this.metadataBlocks(execution);
+			if (incomplete.length) return yield* precondition(incomplete.join('; '));
 			const problems = yield* this.approvalProblems(execution);
 			if (problems.length && !force) return yield* precondition(problems.join('; '));
 			yield* this.store().audit(
@@ -1733,8 +1737,18 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			const conflict = yield* this.tagProblem(execution);
 			if (conflict) return { problems: [], blocked: [`${conflict}. Release a new version.`] };
+			const incomplete = yield* this.metadataBlocks(execution);
+			if (incomplete.length) return { problems: [], blocked: incomplete };
 			return { problems: yield* this.approvalProblems(execution), blocked: [] };
 		}));
+	}
+	private metadataBlocks(execution: Execution): Effect.Effect<string[], DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const record = yield* this.store().repository(execution.repositoryId);
+			if (!record || execution.operation !== 'promote') return [];
+			const references = execution.configuration.streams[execution.stream]?.packages;
+			return metadataProblems(record.inventory, publishablePackages(record.inventory.packages, references));
+		});
 	}
 	private tagProblem(execution: Execution): Effect.Effect<string | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
@@ -2656,11 +2670,20 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (execution.state === 'succeeded') yield* this.captureReleaseEvent(execution);
 			if (!active.includes(execution) || execution.state === 'pending') return 'continue' as const;
 			if (execution.state === 'awaiting-approval') {
+				const incomplete = yield* this.metadataBlocks(execution);
+				const blocked = incomplete.length ? `${metadataReason}${incomplete.join('; ')}` : undefined;
+				let current = execution;
+				if (blocked !== execution.reason && (blocked || execution.reason?.startsWith(metadataReason))) {
+					current = { ...execution, ...(blocked ? { reason: blocked } : {}) };
+					if (!blocked) delete current.reason;
+					yield* this.put(current);
+				}
+				if (blocked) return 'continue' as const;
 				if (
-					execution.configuration.streams[execution.stream]?.promote.approval !== 'push'
-					&& execution.approvedBy !== 'merge'
+					current.configuration.streams[current.stream]?.promote.approval !== 'push'
+					&& current.approvedBy !== 'merge'
 				) return 'continue' as const;
-				return yield* this.approveFromPush(execution, executions).pipe(
+				return yield* this.approveFromPush(current, executions).pipe(
 					Effect.flatMap(approved =>
 						approved
 							? this.requestReconcile(Date.now()).pipe(Effect.as('stop' as const))
@@ -2669,7 +2692,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					recover(error =>
 						Effect.gen({ self: this }, function*() {
 							const reason = `Beepboop could not check this commit: ${decodeError(error)}`;
-							if (execution.reason !== reason) yield* this.put({ ...execution, reason });
+							if (current.reason !== reason) yield* this.put({ ...current, reason });
 							return 'continue' as const;
 						})
 					),

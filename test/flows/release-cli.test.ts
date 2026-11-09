@@ -9,7 +9,7 @@ import { eachDirectory } from '@root/test/support/directories.ts';
 import { promotionsOf } from '@root/test/support/releases.ts';
 import {
 	editableConfiguration,
-	jsonFile,
+	npmManifest,
 	passChecks,
 	publishWorkflow,
 	widget,
@@ -290,7 +290,7 @@ test('a stale source is refused after confirmation without silently replanning o
 test('independent streams and already-prepared versions cannot accidentally initiate promotion', async () => {
 	const repository = await seed();
 	world.github.push(repository, {
-		'package.json': jsonFile({ name: 'widget', version: '1.1.0' }),
+		'package.json': npmManifest('widget', '1.1.0'),
 	}, 'Versions already prepared');
 	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
 	const existing = await Effect.runPromise(client.call(routes.executionsList, {}));
@@ -367,7 +367,7 @@ test('delegated manifest preparation can promote when its prepared versions reac
 	expect(world.github.dispatches.map(dispatch => dispatch.file)).toEqual(['prepare.yml']);
 	// The repository workflow supplies these generated changes; the CLI does not run it locally.
 	const merged = world.github.push(repository, {
-		'package.json': jsonFile({ name: 'widget', version: '1.2.4' }),
+		'package.json': npmManifest('widget', '1.2.4'),
 	}, 'Merge the workflow-prepared package version');
 	passChecks(repository, merged.sha);
 	expect((await world.push(repository)).status).toBe(202);
@@ -384,7 +384,7 @@ async function tagged(approval: 'required' | 'push' = 'required') {
 	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Tag each release');
 	const before = world.github.head(repository);
 	const merged = world.github.push(repository, {
-		'package.json': jsonFile({ name: 'widget', version: '1.2.4' }),
+		'package.json': npmManifest('widget', '1.2.4'),
 	}, 'Merge the workflow-prepared package version');
 	return { repository, before, merged };
 }
@@ -611,7 +611,7 @@ test('workflow tag-derived bumps remain authoritative when registry packages are
 	expect(prepared.stdout.join('')).not.toContain('releases start');
 	expect(prepared.stdout.join('')).not.toContain('runs approve');
 	const merged = world.github.push(repository, {
-		'package.json': jsonFile({ name: 'widget', version: '2.5.0' }),
+		'package.json': npmManifest('widget', '2.5.0'),
 	}, 'Merge the tag-derived preparation');
 	passChecks(repository, merged.sha);
 	expect((await world.push(repository)).status).toBe(202);

@@ -1,13 +1,16 @@
 import { expect, test } from 'bun:test';
 import { begin, runAction, runIdentity } from '@root/test/support/actions.ts';
 import type { Repository } from '@root/test/support/github.ts';
-import { bearer, field } from '@root/test/support/http.ts';
+import type { Reply } from '@root/test/support/http.ts';
+import { bearer, field, text } from '@root/test/support/http.ts';
 import { promotions } from '@root/test/support/releases.ts';
-import { jsonFile, passChecks, widget } from '@root/test/support/repositories.ts';
+import { npmManifest, passChecks, widget } from '@root/test/support/repositories.ts';
 import { applySetup, previewSetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import type { Execution } from '@/automation/types';
+
+type Api = (path: string, body?: unknown) => Promise<Reply>;
 
 let world: World;
 eachWorld(created => {
@@ -15,7 +18,7 @@ eachWorld(created => {
 });
 
 function manifest(name: string, version: string, dependencies?: Record<string, string>): string {
-	return jsonFile({ name, version, ...(dependencies ? { dependencies } : {}) });
+	return npmManifest(name, version, dependencies ? { dependencies } : {});
 }
 async function finish(repository: Repository, promotion: Execution, name: string, version: string) {
 	const run = repository.runs.find(entry => entry.inputs.beepboop_execution_id === promotion.id);
@@ -170,23 +173,7 @@ test('a retried release deletes a stale bot draft for another commit and keeps o
 	expect(drafts().map(entry => [entry.id, entry.target])).toEqual([[kept, merged.sha]]);
 }, 60_000);
 
-test('a push release waits for its credential grant and dispatches once the grant exists', async () => {
-	const repository = widget(world.github, { approval: 'push' });
-	world.npm.publish('widget', '1.0.0');
-	const api = bearer(world, await world.cliSession());
-	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
-	const merged = world.github.push(repository, { 'package.json': manifest('widget', '1.1.0') }, 'Release 1.1.0');
-	passChecks(repository, merged.sha);
-	expect((await world.push(repository)).status).toBe(202);
-	await world.wait(60_000);
-	const [waiting] = await promotions(api);
-	expect([waiting?.state, waiting?.sourceSha, waiting?.reason]).toEqual([
-		'awaiting-approval',
-		merged.sha,
-		'Releases once npm-token has a runtime grant for publish.yml',
-	]);
-	expect(world.github.dispatches).toEqual([]);
-
+async function grantNpmToken(api: Api, repository: Repository) {
 	await world.elevate();
 	expect(
 		(await api('/api/credentials/replace', {
@@ -209,12 +196,80 @@ test('a push release waits for its credential grant and dispatches once the gran
 		},
 	});
 	expect(granted.status).toBe(200);
+}
+
+test('a push release waits for its credential grant and dispatches once the grant exists', async () => {
+	const repository = widget(world.github, { approval: 'push' });
+	world.npm.publish('widget', '1.0.0');
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const merged = world.github.push(repository, { 'package.json': manifest('widget', '1.1.0') }, 'Release 1.1.0');
+	passChecks(repository, merged.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(60_000);
+	const [waiting] = await promotions(api);
+	expect([waiting?.state, waiting?.sourceSha, waiting?.reason]).toEqual([
+		'awaiting-approval',
+		merged.sha,
+		'Releases once npm-token has a runtime grant for publish.yml',
+	]);
+	expect(world.github.dispatches).toEqual([]);
+
+	await grantNpmToken(api, repository);
 	await world.wait(16_000);
 	const [approved] = await promotions(api);
 	expect(approved?.reason).toBeUndefined();
 	expect(approved?.approvedAt).toBeNumber();
 	expect(world.github.dispatches.map(dispatch => dispatch.inputs.beepboop_execution_id)).toEqual([approved?.id]);
 }, 60_000);
+
+test(
+	'a promotion of a package without a license waits with the reason, refuses approval and releases once the license lands',
+	async () => {
+		const repository = widget(world.github, { approval: 'push' });
+		world.npm.publish('widget', '1.0.0');
+		const api = bearer(world, await world.cliSession());
+		expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+		await grantNpmToken(api, repository);
+		const unlicensed = world.github.push(
+			repository,
+			{ 'package.json': npmManifest('widget', '1.1.0', { license: undefined }) },
+			'Release 1.1.0',
+		);
+		passChecks(repository, unlicensed.sha);
+		expect((await world.push(repository)).status).toBe(202);
+		await world.wait(60_000);
+		const [blocked] = await promotions(api);
+		if (!blocked) throw new Error('Expected a promotion');
+		expect([blocked.state, blocked.sourceSha, blocked.reason]).toEqual([
+			'awaiting-approval',
+			unlicensed.sha,
+			'Fix the package metadata before this release: widget (package.json) lacks license',
+		]);
+		expect(world.github.dispatches).toEqual([]);
+		expect((await api('/api/executions/approval', { id: blocked.id })).body).toEqual({
+			problems: [],
+			blocked: ['widget (package.json) lacks license'],
+		});
+		const forced = await api('/api/executions/approve', { id: blocked.id, sourceSha: unlicensed.sha, force: true });
+		expect([forced.status, text(forced.body, 'error')]).toEqual([422, 'widget (package.json) lacks license']);
+
+		const licensed = world.github.push(
+			repository,
+			{ 'package.json': npmManifest('widget', '1.1.0') },
+			'Add the license',
+		);
+		passChecks(repository, licensed.sha);
+		expect((await world.push(repository)).status).toBe(202);
+		await world.wait(60_000);
+		const settled = new Map((await promotions(api)).map(promotion => [promotion.sourceSha, promotion]));
+		expect(settled.get(unlicensed.sha)?.state).toBe('cancelled');
+		const released = settled.get(licensed.sha);
+		expect([released?.reason, typeof released?.approvedAt]).toEqual([undefined, 'number']);
+		expect(world.github.dispatches.map(dispatch => dispatch.inputs.beepboop_execution_id)).toEqual([released?.id]);
+	},
+	60_000,
+);
 
 test('a promotion waits for the promotion of the same commit that publishes its dependency', async () => {
 	const promote = (name: string) => ({
@@ -230,6 +285,7 @@ test('a promotion waits for the promotion of the same commit that publishes its 
 			streams: { main: promote('widget'), cli: promote('gadget') },
 		}),
 		'packages/gadget/package.json': manifest('gadget', '1.0.0', { widget: '^1.0.0' }),
+		'packages/gadget/README.md': '# gadget\n',
 	}, 'Release the gadget CLI separately');
 	passChecks(repository, world.github.head(repository));
 	world.npm.publish('widget', '1.0.0');

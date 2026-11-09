@@ -52,9 +52,21 @@ export async function publishWith(world: World, identity: RunIdentity, execution
 	return { result, logs };
 }
 
-export function cargoMetadata(target: string): Command {
-	const metadata = JSON.stringify({ target_directory: target });
+export const crateFields = {
+	description: 'A test crate',
+	license: 'MIT',
+	repository: 'https://github.com/octo/example',
+};
+
+export function cargoMetadata(target: string, fields: Record<string, unknown> = crateFields): Command {
+	const packages = ['lint-core', 'lint'].map(name => ({ name, ...fields }));
+	const metadata = JSON.stringify({ target_directory: target, packages });
 	return { code: 0, stdout: metadata, output: metadata };
+}
+
+export function crateListing(readme = true): Command {
+	const listing = `Cargo.toml\nCargo.toml.orig\n${readme ? 'README.md\n' : ''}src/lib.rs\n`;
+	return { code: 0, stdout: listing, output: listing };
 }
 
 export function crateBytes(name: string, version: string): string {

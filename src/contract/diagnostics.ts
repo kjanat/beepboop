@@ -19,6 +19,7 @@ export const diagnosticCodes = [
 	'grant-missing',
 	'registry-setup',
 	'license-missing',
+	'package-metadata',
 	'legacy',
 	'invalid-configuration',
 	'configuration-drift',

@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type { Invalid } from '@root/actions/runtime/protocol.ts';
 import { ActionFailure, attempt, attemptAsync, fail, required } from '@root/actions/runtime/protocol.ts';
 import { call, mask, serviceOrigin } from '@root/actions/runtime/session.ts';
@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { githubSecretNamePattern } from '@/contract/ids.ts';
 import type { LedgerEntry, LedgerPackage } from '@/contract/ledger.ts';
 import { claimStep, nextStep, publishWaitMinutes, reportStep } from '@/contract/ledger.ts';
+import { filled, lacking, readmeFile } from '@/contract/package-metadata.ts';
 import { textSchema } from '@/model.ts';
 import { sha256Hex } from '@/sha256.ts';
 
@@ -31,6 +32,7 @@ export interface Runner {
 interface Artifact {
 	digest: string;
 	files: string[];
+	missing: string[];
 }
 
 const longestWait = publishWaitMinutes * 60_000;
@@ -49,9 +51,27 @@ function scratch(name: string): Effect.Effect<string, ActionFailure> {
 	);
 }
 
-const cargoMetadata = z.object({ target_directory: z.string() });
+const cargoMetadata = z.object({
+	target_directory: z.string(),
+	packages: z.array(z.object({
+		name: z.string(),
+		description: z.string().nullish(),
+		license: z.string().nullish(),
+		license_file: z.string().nullish(),
+		repository: z.string().nullish(),
+	})),
+});
+const npmManifest = z.object({
+	description: z.unknown(),
+	license: z.unknown(),
+	repository: z.union([z.string(), z.object({ url: z.unknown() })]).optional().catch(undefined),
+});
 const secretValues = z.record(z.string(), z.string());
-const tarball = z.object({ filename: z.string(), integrity: z.string() });
+const tarball = z.object({
+	filename: z.string(),
+	integrity: z.string(),
+	files: z.array(z.object({ path: z.string() })),
+});
 const packed = z.tuple([tarball]).rest(tarball);
 
 function checked(runner: Runner, command: string[], cwd: string): Effect.Effect<string, ActionFailure> {
@@ -60,6 +80,20 @@ function checked(runner: Runner, command: string[], cwd: string): Effect.Effect<
 			? Effect.succeed(result.stdout)
 			: fail(`${command.slice(0, 2).join(' ')} exited ${result.code}\n${result.output.trim()}`)
 	));
+}
+
+export function pythonMissing(metadata: string): string[] {
+	const [head = '', ...body] = metadata.replace(/\r\n/g, '\n').split('\n\n');
+	const headers = head.split('\n').flatMap(line => {
+		const match = /^([\w-]+):\s*(.*)$/.exec(line);
+		return match?.[1] && filled(match[2]) ? [match[1].toLowerCase()] : [];
+	});
+	const has = (...keys: string[]) => keys.some(key => headers.includes(key));
+	return lacking({
+		README: filled(body.join('\n\n')) || has('description'),
+		license: has('license', 'license-expression', 'license-file'),
+		urls: has('project-url', 'home-page', 'download-url'),
+	});
 }
 
 function build(
@@ -81,9 +115,17 @@ function build(
 				pkg.manifest,
 			], '.');
 			const target = yield* Effect.fromResult(attempt(() => cargoMetadata.parse(JSON.parse(metadata))));
+			const listed = yield* checked(runner, ['cargo', 'package', '--list', '--manifest-path', pkg.manifest], '.');
+			const own = target.packages.find(entry => entry.name === pkg.name);
+			const missing = lacking({
+				README: listed.split('\n').some(line => readmeFile.test(line.trim())),
+				description: filled(own?.description),
+				license: filled(own?.license) || filled(own?.license_file),
+				repository: filled(own?.repository),
+			});
 			yield* checked(runner, ['cargo', 'package', '--manifest-path', pkg.manifest, '--locked'], '.');
 			const file = join(target.target_directory, 'package', `${pkg.name}-${pkg.version}.crate`);
-			return { digest: yield* sha256(file), files: [file] };
+			return { digest: yield* sha256(file), files: [file], missing };
 		}
 		if (pkg.manager === 'pypi') {
 			const out = yield* scratch(pkg.name);
@@ -91,13 +133,30 @@ function build(
 			const files = yield* Effect.fromResult(attempt(() => readdirSync(out).sort().map(file => join(out, file))));
 			const sdist = files.find(file => file.endsWith('.tar.gz')) ?? files[0];
 			if (!sdist) return yield* fail(`uv build produced no distribution for ${pkg.name}`);
-			return { digest: yield* sha256(sdist), files };
+			const metadata = yield* checked(
+				runner,
+				sdist.endsWith('.tar.gz')
+					? ['tar', '-xzOf', sdist, `${basename(sdist, '.tar.gz')}/PKG-INFO`]
+					: ['unzip', '-p', sdist, '*.dist-info/METADATA'],
+				'.',
+			);
+			return { digest: yield* sha256(sdist), files, missing: pythonMissing(metadata) };
 		}
 		const out = yield* scratch(pkg.name);
 		const output = yield* checked(runner, ['npm', 'pack', '--json', '--pack-destination', out], dir);
 		const start = output.startsWith('[') ? 0 : output.lastIndexOf('\n[') + 1;
 		const [first] = yield* Effect.fromResult(attempt(() => packed.parse(JSON.parse(output.slice(start)))));
-		return { digest: first.integrity, files: [join(out, first.filename)] };
+		const file = join(out, first.filename);
+		const packaged = yield* checked(runner, ['tar', '-xzOf', file, 'package/package.json'], '.');
+		const manifest = yield* Effect.fromResult(attempt(() => npmManifest.parse(JSON.parse(packaged))));
+		const repository = manifest.repository;
+		const missing = lacking({
+			README: first.files.some(entry => readmeFile.test(entry.path)),
+			description: filled(manifest.description),
+			license: filled(manifest.license),
+			repository: typeof repository === 'string' ? filled(repository) : filled(repository?.url),
+		});
+		return { digest: first.integrity, files: [file], missing };
 	});
 }
 
@@ -204,6 +263,14 @@ export function publishPackages(runner: Runner): Effect.Effect<LedgerEntry[], In
 				return;
 			}
 			const artifact = built.success;
+			if (artifact.missing.length) {
+				const reported = yield* report(pkg, {
+					outcome: 'failed',
+					message: `The ${pkg.name} ${pkg.version} package lacks ${artifact.missing.join(', ')}`,
+				});
+				if (reported.kind === 'settled') runner.log(`${pkg.name} ${pkg.version}: ${show(reported.entry)}`);
+				return;
+			}
 			for (;;) {
 				const claimed = yield* claim(pkg, artifact.digest);
 				if (claimed.kind === 'publish') break;

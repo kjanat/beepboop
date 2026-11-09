@@ -398,6 +398,9 @@ function lintProposal(repository: { name: string }, sha: string) {
 		`Proposed setup for ${repository.name} at ${sha}:`,
 		...lintSummary,
 		'The setup PR writes .github/beepboop.json, .github/workflows/prepare-release.yml, .github/workflows/release-lint.yml and .github/workflows/publish-crates.yml.',
+		'lint (crates/cli/Cargo.toml) lacks README, description, license, repository. Beepboop holds its release until the package has them.',
+		'lint-core (crates/core/Cargo.toml) lacks README, description, license, repository. Beepboop holds its release until the package has them.',
+		'@octo/lint (bindings/js/package.json) lacks README, description, license, repository. Beepboop holds its release until the package has them.',
 		'publish-crates.yml: when the repository owner merges this PR, Beepboop grants it the stored crates-io secret for the crates operation.',
 		'Set up registry access and trusted publishing in each registry. The setup PR publishes nothing.',
 	];

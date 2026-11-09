@@ -4,6 +4,7 @@ import { managerRegistry } from '@/automation/managers/builtins';
 import type { Fetcher, ManagerRegistry, VerificationContext } from '@/automation/managers/registry';
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage, packageId, publishablePackages } from '@/automation/package-identity';
+import { metadataDiagnostics } from '@/automation/package-metadata';
 import { publishable } from '@/automation/package-publication';
 import { resolvePackageVersion } from '@/automation/release-version';
 import type { Inventory, Package, Publication, ReleasePlan, Snapshot } from '@/automation/types';
@@ -17,7 +18,9 @@ import type { VersionFile } from '@/contract/version-files';
 export { publicationOrder } from '@/automation/managers/order';
 
 export function discover(snapshot: Snapshot, enabled: ManagerName[] = managerRegistry.names()): Inventory {
-	return managerRegistry.discover(snapshot, enabled);
+	const inventory = managerRegistry.discover(snapshot, enabled);
+	inventory.diagnostics.push(...metadataDiagnostics(snapshot, inventory.packages));
+	return inventory;
 }
 
 export function selectedReleasePackages(

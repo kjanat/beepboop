@@ -68,6 +68,20 @@ export function jsonFile(value: unknown, indent: 2 | '\t' = 2): string {
 	return `${JSON.stringify(value, null, indent)}\n`;
 }
 
+export const npmMetadata = {
+	description: 'A test package',
+	license: 'MIT',
+	repository: 'https://github.com/octo/example',
+};
+export const crateMetadata =
+	'description = "A test crate"\nlicense = "MIT"\nrepository = "https://github.com/octo/example"\nreadme = "../../README.md"\n';
+export const pythonMetadata =
+	'readme = { text = "A test project", content-type = "text/plain" }\nlicense = "MIT"\nurls = { Repository = "https://github.com/octo/example" }\n';
+
+export function npmManifest(name: string, version: string, fields: Record<string, unknown> = {}): string {
+	return jsonFile({ name, version, ...npmMetadata, ...fields });
+}
+
 export function widgetConfiguration(approval: 'required' | 'merge' | 'push' = 'required'): string {
 	return jsonFile({
 		$schema: 'https://beepboop.kjanat.dev/schema/v1.json',
@@ -97,7 +111,7 @@ export function editableConfiguration() {
 
 export function widget(github: FakeGitHub, options: WidgetOptions = {}): Repository {
 	const files: Record<string, string> = {
-		'package.json': jsonFile({ name: 'widget', version: options.version ?? '1.0.0' }),
+		'package.json': npmManifest('widget', options.version ?? '1.0.0'),
 		'README.md': '# widget\n',
 		'.github/workflows/publish.yml': publishWorkflow,
 		'.github/workflows/ci.yml': ciWorkflow,

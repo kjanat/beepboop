@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Command, Runner } from '@root/actions/runtime/publish.ts';
-import { main, publicRepository, publishPackages, requireAll } from '@root/actions/runtime/publish.ts';
+import { main, publicRepository, publishPackages, pythonMissing, requireAll } from '@root/actions/runtime/publish.ts';
 import { begin, runIdentity } from '@root/test/support/actions.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
 import type { Repository } from '@root/test/support/github.ts';
@@ -14,6 +14,8 @@ import {
 	cargoMetadata,
 	crateBytes,
 	crateChecksum,
+	crateFields,
+	crateListing,
 	packCrate,
 	publishWith,
 	withIdentity,
@@ -22,7 +24,14 @@ import {
 import { silenced } from '@root/test/support/process.ts';
 import { crateResponse, npmIntegrity, pypiResponse } from '@root/test/support/registries.ts';
 import { promotions } from '@root/test/support/releases.ts';
-import { dispatchedPublishWorkflow, jsonFile, passChecks } from '@root/test/support/repositories.ts';
+import {
+	crateMetadata,
+	dispatchedPublishWorkflow,
+	npmManifest,
+	npmMetadata,
+	passChecks,
+	pythonMetadata,
+} from '@root/test/support/repositories.ts';
 import type { RunIdentity, World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
@@ -60,9 +69,9 @@ const manifests: Record<string, string> = {
 
 function manifestsAt(version: string): Record<string, string> {
 	return {
-		'crates/core/Cargo.toml': `[package]\nname = "lint-core"\nversion = "${version}"\n`,
+		'crates/core/Cargo.toml': `[package]\nname = "lint-core"\nversion = "${version}"\n${crateMetadata}`,
 		'crates/cli/Cargo.toml':
-			`[package]\nname = "lint"\nversion = "${version}"\n\n[dependencies]\nlint-core = { path = "../core", version = "${version}" }\n`,
+			`[package]\nname = "lint"\nversion = "${version}"\n${crateMetadata}\n[dependencies]\nlint-core = { path = "../core", version = "${version}" }\n`,
 	};
 }
 
@@ -77,6 +86,7 @@ const cargoLayout: Layout = {
 	files: version => ({
 		'Cargo.toml': '[workspace]\nmembers = ["crates/core", "crates/cli"]\n',
 		'Cargo.lock': '# Lockfile\n',
+		'README.md': '# lint\n',
 		...manifestsAt(version),
 	}),
 };
@@ -84,8 +94,9 @@ const bindingsLayout: Layout = {
 	managers: ['npm', 'pypi', 'workflow'],
 	secrets: { 'npm-token': 'npm-secret', 'pypi-token': 'pypi-secret' },
 	files: version => ({
-		'bindings/js/package.json': jsonFile({ name: '@octo/lint', version }),
-		'bindings/python/pyproject.toml': `[project]\nname = "lint-py"\nversion = "${version}"\n`,
+		'bindings/js/package.json': npmManifest('@octo/lint', version),
+		'bindings/js/README.md': '# lint\n',
+		'bindings/python/pyproject.toml': `[project]\nname = "lint-py"\nversion = "${version}"\n${pythonMetadata}`,
 	}),
 };
 
@@ -146,17 +157,20 @@ interface Cargo {
 	commands: { command: string; token?: string }[];
 	outcomes: Record<string, string[]>;
 	broken?: string[];
+	readmeless?: string[];
 }
 function cargo(state: Cargo) {
 	return (argv: string[], options: { cwd: string; env?: Record<string, string> }) =>
 		Effect.sync((): Command => {
 			const manifest = argv[argv.indexOf('--manifest-path') + 1] ?? '';
 			const name = manifests[manifest] ?? 'unknown';
+			const listing = argv[1] === 'package' && argv[2] === '--list';
 			state.commands.push({
-				command: `${argv[1]} ${name}`,
+				command: `${listing ? 'package --list' : argv[1]} ${name}`,
 				...(options.env?.CARGO_REGISTRY_TOKEN ? { token: options.env.CARGO_REGISTRY_TOKEN } : {}),
 			});
 			if (argv[1] === 'metadata') return cargoMetadata(target);
+			if (listing) return crateListing(!state.readmeless?.includes(name));
 			if (argv[1] === 'package') {
 				if (state.broken?.includes(name)) {
 					return {
@@ -206,10 +220,13 @@ function fakeCargo(bin: string, trace: string, metadata: string): void {
 	writeFileSync(
 		join(bin, 'cargo'),
 		`#!/usr/bin/env bash
-${trace}case "$1" in
-  metadata)${metadata}printf '{"target_directory":"%s"}\\n' "$TARGET" ;;
-  package) mkdir -p "$TARGET/package"; printf 'lint-core 1.1.0\\n' > "$TARGET/package/lint-core-1.1.0.crate"; echo packaged ;;
-  publish) echo "error: crates.io rejected lint-core" >&2; exit 101 ;;
+${trace}case "$1 $2" in
+  metadata*)${metadata}printf '{"target_directory":"%s","packages":[%s]}\\n' "$TARGET" '${
+		JSON.stringify({ name: 'lint-core', ...crateFields })
+	}' ;;
+  "package --list") printf 'Cargo.toml\\nREADME.md\\nsrc/lib.rs\\n' ;;
+  package*) mkdir -p "$TARGET/package"; printf 'lint-core 1.1.0\\n' > "$TARGET/package/lint-core-1.1.0.crate"; echo packaged ;;
+  publish*) echo "error: crates.io rejected lint-core" >&2; exit 101 ;;
 esac
 `,
 	);
@@ -303,9 +320,11 @@ test('the ledger publishes crates in dependency order and hands the token only t
 	]);
 	expect(state.commands).toEqual([
 		{ command: 'metadata lint-core' },
+		{ command: 'package --list lint-core' },
 		{ command: 'package lint-core' },
 		{ command: 'publish lint-core', token: 'crates-secret' },
 		{ command: 'metadata lint' },
+		{ command: 'package --list lint' },
 		{ command: 'package lint' },
 		{ command: 'publish lint', token: 'crates-secret' },
 	]);
@@ -506,10 +525,16 @@ const npm = '@octo/lint', python = 'lint-py';
 function sdist(version: string) {
 	return `lint-py ${version} sdist\n`;
 }
+function pkgInfo(version: string, readme: boolean) {
+	return `Metadata-Version: 2.4\nName: lint-py\nVersion: ${version}\nSummary: A test project\nProject-URL: Repository, https://github.com/octo/example\nLicense-Expression: MIT\nDescription-Content-Type: text/plain\n${
+		readme ? '\nA test project\n' : ''
+	}`;
+}
 interface Bindings {
 	commands: { command: string; cwd: string; env: Record<string, string> }[];
 	empty?: boolean;
 	limited?: number;
+	readmeless?: boolean;
 }
 function bindings(state: Bindings, version: string): Runner['run'] {
 	return (argv, options) =>
@@ -535,10 +560,23 @@ function bindings(state: Bindings, version: string): Runner['run'] {
 				pypi.set(`${python}@${version}`, createHash('sha256').update(sdist(version)).digest('hex'));
 				return { code: 0, stdout: 'Uploading lint_py', output: 'Uploading lint_py' };
 			}
+			if (argv[0] === 'tar' && argv[3] === 'package/package.json') {
+				const manifest = JSON.stringify({ name: npm, version, ...npmMetadata });
+				return { code: 0, stdout: manifest, output: manifest };
+			}
+			if (argv[0] === 'tar') {
+				const info = pkgInfo(version, !state.readmeless);
+				return { code: 0, stdout: info, output: info };
+			}
 			if (argv[1] === 'pack') {
 				writeFileSync(join(after('--pack-destination'), `octo-lint-${version}.tgz`), 'tarball\n');
+				const files = ['package.json', ...(state.readmeless ? [] : ['README.md']), 'index.js'].map(path => ({ path }));
 				const stdout = `> @octo/lint@${version} prepack\n> tsc\n\n${
-					JSON.stringify([{ filename: `octo-lint-${version}.tgz`, integrity: npmIntegrity(npm, version) }], null, 2)
+					JSON.stringify(
+						[{ filename: `octo-lint-${version}.tgz`, integrity: npmIntegrity(npm, version), files }],
+						null,
+						2,
+					)
 				}\n`;
 				return { code: 0, stdout, output: `npm notice Tarball Contents\n${stdout}` };
 			}
@@ -569,8 +607,10 @@ test('npm and PyPI packages publish through npm and uv and verify their integrit
 	const secrets = { NODE_AUTH_TOKEN: 'npm-secret', UV_PUBLISH_TOKEN: 'pypi-secret', ...npmAuth };
 	expect(state.commands).toEqual([
 		{ command: 'npm pack --json --pack-destination', cwd: 'bindings/js', env: {} },
+		{ command: 'tar -xzOf package/package.json', cwd: '.', env: {} },
 		{ command: 'npm publish --access public --tag latest --provenance', cwd: 'bindings/js', env: secrets },
 		{ command: 'uv build --project bindings/python --out-dir', cwd: '.', env: {} },
+		{ command: 'tar -xzOf lint_py-1.1.0/PKG-INFO', cwd: '.', env: {} },
 		{ command: 'uv publish --check-url https://pypi.org/simple/', cwd: '.', env: secrets },
 	]);
 	expect((await executionOf(repository, execution.id)).publications.map(p => [p.id, p.outcome, p.digest])).toEqual([
@@ -599,7 +639,9 @@ test('npm and PyPI versions the registries already have are reused or refused by
 	]);
 	expect(state.commands.map(entry => entry.command)).toEqual([
 		'npm pack --json --pack-destination',
+		'tar -xzOf package/package.json',
 		'uv build --project bindings/python --out-dir',
+		'tar -xzOf lint_py-1.1.0/PKG-INFO',
 	]);
 	const required = Effect.runSync(Effect.result(requireAll(result.success)));
 	expect(required._tag === 'Failure' && required.failure.message).toBe(
@@ -654,6 +696,79 @@ test('a crate that fails to package is reported failed and its dependent does no
 		['pkg:cargo/lint@1.1.0', 'failed-retryable', 'pkg:cargo/lint-core did not publish'],
 	]);
 }, 60_000);
+
+test('a crate packaged without a README fails before its claim and its dependent does not publish', async () => {
+	const { repository, begun } = await released({ main: [core, cli] });
+	const { execution, identity } = started(begun, 'main');
+	const state: Cargo = { commands: [], outcomes: {}, readmeless: ['lint-core'] };
+	const { result } = await publishing(identity, execution.id, state);
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual([
+		['pkg:cargo/lint-core@1.1.0', 'failed-retryable', 'The lint-core 1.1.0 package lacks README'],
+		['pkg:cargo/lint@1.1.0', 'failed-retryable', 'pkg:cargo/lint-core did not publish'],
+	]);
+	expect(state.commands.map(entry => entry.command)).toEqual([
+		'metadata lint-core',
+		'package --list lint-core',
+		'package lint-core',
+	]);
+	expect((await ledgerOf(repository, execution.id)).records[0]?.attempts.map(attempt => attempt.event)).toEqual([
+		'failed',
+	]);
+}, 60_000);
+
+test('cargo metadata without description, license or repository fails the crate and names each field', async () => {
+	const { begun } = await released({ main: [core] });
+	const { execution, identity } = started(begun, 'main');
+	const state: Cargo = { commands: [], outcomes: {} };
+	const run = cargo(state);
+	const { result } = await publishing(identity, execution.id, {
+		run: (argv, options) =>
+			argv[1] === 'metadata' ? Effect.succeed(cargoMetadata(target, { description: null })) : run(argv, options),
+	});
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual([
+		[
+			'pkg:cargo/lint-core@1.1.0',
+			'failed-retryable',
+			'The lint-core 1.1.0 package lacks description, license, repository',
+		],
+	]);
+}, 60_000);
+
+test('npm and PyPI packages built without a README fail before their claims', async () => {
+	servePypi();
+	world.npm.publish(npm, '1.0.0');
+	const { begun } = await released({ main: [npmId, pypiId] }, bindingsLayout);
+	const { execution, identity } = started(begun, 'main');
+	const state: Bindings = { commands: [], readmeless: true };
+	const { result } = await publishing(identity, execution.id, {
+		run: bindings(state, '1.1.0'),
+		credentials: bindingCredentials,
+	});
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual([
+		['pkg:npm/%40octo/lint@1.1.0', 'failed-retryable', 'The @octo/lint 1.1.0 package lacks README'],
+		['pkg:pypi/lint-py@1.1.0', 'failed-retryable', 'The lint-py 1.1.0 package lacks README'],
+	]);
+	expect(
+		state.commands.some(entry => entry.command.startsWith('npm publish') || entry.command.startsWith('uv publish')),
+	)
+		.toBe(false);
+}, 60_000);
+
+test('Python core metadata needs a long description, a license and a project URL', () => {
+	expect(pythonMissing(pkgInfo('1.1.0', true))).toEqual([]);
+	expect(pythonMissing('Metadata-Version: 2.1\nName: lint-py\nVersion: 1.1.0\nDescription: Lint bindings\n'))
+		.toEqual(['license', 'urls']);
+	expect(
+		pythonMissing(
+			'Metadata-Version: 2.1\r\nName: lint-py\r\nLicense: MIT\r\nHome-page: https://example.com\r\n\r\nLong text\r\n',
+		),
+	).toEqual([]);
+	expect(pythonMissing('Metadata-Version: 2.4\nName: lint-py\nLicense-File: LICENSE\nProject-URL: Docs, https://x\n'))
+		.toEqual(['README']);
+});
 
 test('a publish crates.io never lists fails after the verification polls run out', async () => {
 	const { begun } = await released({ main: [core] });
@@ -737,7 +852,11 @@ test('a crates.io slot hours away ends the run before publishing', async () => {
 	expect(result._tag === 'Failure' && result.failure.message).toBe(
 		'crates.io allows lint-core 1.1.0 at 2026-11-04T11:32:00.000Z; the next attempt is due after this run',
 	);
-	expect(state.commands.map(entry => entry.command)).toEqual(['metadata lint-core', 'package lint-core']);
+	expect(state.commands.map(entry => entry.command)).toEqual([
+		'metadata lint-core',
+		'package --list lint-core',
+		'package lint-core',
+	]);
 	expect((await ledgerOf(repository, execution.id)).records[0]?.status).toEqual({ state: 'planned' });
 	const run = repository.runs.find(entry => entry.id === identity.runId);
 	if (!run) throw new Error('Missing run');
@@ -768,6 +887,7 @@ test('a run resumes a crate it already claimed, and reports need a claim', async
 	expect(states(result.success)).toEqual([['pkg:cargo/lint-core@1.1.0', 'published']]);
 	expect(state.commands.map(entry => entry.command)).toEqual([
 		'metadata lint-core',
+		'package --list lint-core',
 		'package lint-core',
 		'publish lint-core',
 	]);
@@ -846,7 +966,7 @@ echo "info: downloading 8 components" >&2
 	chmodSync(join(bin, 'rustup'), 0o755);
 	fakeCargo(
 		bin,
-		'echo "cargo $1" >> "$CALLS"\n',
+		'echo "cargo $1 $2" >> "$CALLS"\n',
 		`
     echo "info: syncing channel updates for '1.99.1-x86_64-unknown-linux-gnu'" >&2
     echo "warn: the missing active toolchain '1.99.1' has been auto-installed" >&2
@@ -868,7 +988,7 @@ echo "info: downloading 8 components" >&2
 		'1 required publication did not publish: pkg:cargo/lint-core@1.1.0',
 	);
 	expect(readFileSync(calls, 'utf8')).toBe(
-		'rustup toolchain install\ncargo metadata\ncargo package\ncargo publish\n',
+		'rustup toolchain install\ncargo metadata --format-version\ncargo package --list\ncargo package --manifest-path\ncargo publish --manifest-path\n',
 	);
 	const [record] = (await ledgerOf(repository, execution.id)).records;
 	expect([record?.digest, record?.status]).toEqual([

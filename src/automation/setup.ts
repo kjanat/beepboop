@@ -285,7 +285,13 @@ function drafted(
 		const configuration = structuredClone(raw);
 		const streams = { ...object(configuration.streams) };
 		const edits: SetupPlan['edits'] = [], blockers: string[] = [], notes: string[] = [];
-		notes.push(...inventory.diagnostics.map(entry => `Discovery: ${entry.message}`));
+		const ticked = new Set(choices.streams.flatMap(stream => stream.packages));
+		for (const entry of inventory.diagnostics) {
+			if (entry.code !== 'package-metadata') notes.push(`Discovery: ${entry.message}`);
+			else if (entry.subject?.kind === 'package' && ticked.has(entry.subject.key)) {
+				notes.push(`${entry.message}. Beepboop holds its release until the package has them.`);
+			}
+		}
 		if (baseline.branchConflict) blockers.push(branchConflictBlocker);
 		const names = new Set<string>(), selectedFiles = new Set<string>();
 		const managers = new Set<string>(
