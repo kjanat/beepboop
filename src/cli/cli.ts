@@ -7,7 +7,7 @@ import { Client } from '@/cli/client';
 import type { SecurityKeyPrompts } from '@/cli/fido2/index';
 import { readJson } from '@/cli/json-file';
 import { lookOf, step } from '@/cli/look';
-import { emit, failure } from '@/cli/output';
+import { emit, failure, prompted, unprompted } from '@/cli/output';
 import { checkoutRepository, releaseRepository, releaseVersion } from '@/cli/release';
 import { setupRepository } from '@/cli/setup';
 import { stdin } from '@/cli/stdin';
@@ -570,23 +570,25 @@ const secrets = group('secrets').description('Store secret values and list workf
 						() => `Read ${look.pkg(args.alias)}`,
 					)).credentials.find(row => row.alias === args.alias && row.active === 1)?.version;
 					const piped = yield* Effect.promise(() => stdin.piped());
-					const interactive = piped === null && out.isTTY;
-					if (
-						stored !== undefined && interactive
-						&& !(yield* Effect.promise(() =>
-							ask({
-								kind: 'confirm',
-								message: `Overwrite secret ${args.alias} (version ${stored})?`,
-								default: false,
-							})
-						))
-					) {
-						return yield* Effect.fail(failure('Secret left unchanged', 'ABORTED'));
-					}
 					const value = piped === null
-						? interactive
-							? yield* Effect.promise(() => ask({ kind: 'password', message: `Value for ${args.alias}` }))
-							: ''
+						? yield* unprompted(
+							Effect.gen(function*() {
+								if (
+									stored !== undefined
+									&& !(yield* prompted(() =>
+										ask({
+											kind: 'confirm',
+											message: `Overwrite secret ${args.alias} (version ${stored})?`,
+											default: false,
+										})
+									))
+								) {
+									return yield* Effect.fail(failure('Secret left unchanged', 'ABORTED'));
+								}
+								return yield* prompted(() => ask({ kind: 'password', message: `Value for ${args.alias}` }));
+							}),
+							() => Effect.succeed(''),
+						)
 						: piped.replace(/\r?\n$/, '');
 					if (!value) {
 						return yield* Effect.fail(

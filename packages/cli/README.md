@@ -30,8 +30,8 @@ versions and source commit, then confirm preparation. Plan IDs and source SHAs
 are carried automatically. The server's default branch is the release source;
 uncommitted local changes are not included. Use `--repository` and `--stream` to
 override resolution, `--json` for a prompt-free preview, or `--yes` to skip the
-confirmation. Without a terminal the CLI starts after the preview without
-asking. Publication still follows repository policy.
+confirmation. When stdin is not a terminal the CLI starts after the preview
+without asking. Publication still follows repository policy.
 
 For scripts, preview explicit choices and apply the reviewed plan separately:
 

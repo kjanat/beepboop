@@ -32,7 +32,7 @@ redirects on requests that carry credentials.
 
 Repository and run lists print tables. Add `--json` to get the full API records.
 Plans and other structured responses print as JSON. Every command has `--help`.
-In an interactive terminal the CLI prompts for a missing repository, stream,
+When stdin is a terminal the CLI prompts for a missing repository, stream,
 version, plan or approval. Arguments you pass skip their prompts, and scripts
 must pass every required input. `auth login --server URL --no-browser` prints
 the login link and leaves the browser closed.
@@ -88,8 +88,9 @@ output is not a terminal, and `NO_COLOR` turns off the colors and links. See [St
 that entry, `beepboop release` never approves or publishes.
 
 The confirmation defaults to no. `--yes` skips only the confirmation; the
-preview still prints. Without a terminal the CLI prints the preview and starts
-without asking, as with `--yes`. `--dry-run` plans on the server, prints the
+preview still prints. When stdin is not a terminal the CLI prints the preview
+and starts without asking, as with `--yes`. Piped output alone still asks.
+`--dry-run` plans on the server, prints the
 preview, or JSON with `--json`, and starts nothing. `--json` on its own also
 previews and stops. Pass the version, and `--stream` when the repository has
 several streams. Add `--yes` to start with `--json`:
@@ -222,8 +223,8 @@ Your shell configuration must run `compinit` after that directory joins
 
 Run `beepboop adopt` in a checkout to set up its releases. The CLI reads the
 GitHub repository from the `origin` remote, enrolls it, prints the proposal and
-opens or refreshes the setup PR. In a terminal it asks once before it opens the
-PR, and the default answer is yes. Without a terminal it opens the PR right
+opens or refreshes the setup PR. When stdin is a terminal it asks once before it
+opens the PR, and the default answer is yes. Otherwise it opens the PR right
 away. A proposal with unresolved requirements opens nothing and exits with
 status 1. Install the Beepboop GitHub App on the repository first.
 

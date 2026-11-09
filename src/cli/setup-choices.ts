@@ -7,7 +7,7 @@ import { preparationReasons, suggestedCommands, suggestedWorkflowFile, ungenerat
 import { streamSummary } from '@/automation/setup-summary';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import { lookOf } from '@/cli/look';
-import { failure } from '@/cli/output';
+import { failure, prompted } from '@/cli/output';
 import { workflowFilePattern } from '@/contract/catalog';
 import { identifierPattern } from '@/contract/ids';
 import {
@@ -67,8 +67,8 @@ function validJson(value: string): boolean {
 		return false;
 	}
 }
-function jsonInput(ask: Ask, message: string, current: unknown): Effect.Effect<unknown> {
-	return Effect.promise(() =>
+function jsonInput(ask: Ask, message: string, current: unknown): Effect.Effect<unknown, CLIError> {
+	return prompted(() =>
 		ask({
 			kind: 'input',
 			message: `${message} as JSON (empty leaves it out)`,
@@ -82,7 +82,7 @@ function jsonInput(ask: Ask, message: string, current: unknown): Effect.Effect<u
 function select(ask: Ask, message: string, entries: SelectChoice[]): Effect.Effect<string, CLIError> {
 	const [first, ...rest] = entries;
 	return first
-		? Effect.promise(() => ask({ kind: 'select', message, choices: [first, ...rest] }))
+		? prompted(() => ask({ kind: 'select', message, choices: [first, ...rest] }))
 		: Effect.fail(failure('No choices available', 'NO_CHOICES'));
 }
 
@@ -94,7 +94,7 @@ function typedCommands(ask: Ask, packages: string, purpose: string): Effect.Effe
 	return Effect.gen(function*() {
 		const lines: string[] = [];
 		for (;;) {
-			const line = yield* Effect.promise(() =>
+			const line = yield* prompted(() =>
 				ask({
 					kind: 'input',
 					message: lines.length
@@ -162,10 +162,10 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				if (current.length) {
 					out.log(`${name}: ${current.map(id => look.pkg(packageLabel(id))).join(', ')}`);
 					if (
-						yield* Effect.promise(() => ask({ kind: 'confirm', message: 'Use these packages?', default: true }))
+						yield* prompted(() => ask({ kind: 'confirm', message: 'Use these packages?', default: true }))
 					) return [...current];
 				}
-				return yield* Effect.promise(() =>
+				return yield* prompted(() =>
 					ask({ kind: 'multiselect', message: `${name}: packages to release`, min: 1, choices: [only, ...more] })
 				);
 			});
@@ -319,7 +319,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				for (const entry of offered) {
 					const note = entry.candidate && leftOut(entry.candidate);
 					if (note) out.log(look.state('skipped', note));
-					const wanted = yield* Effect.promise(() =>
+					const wanted = yield* prompted(() =>
 						ask({
 							kind: 'confirm',
 							message: `${stream.name}: build ${buildLabel(entry.build)} for the GitHub release?`,
@@ -333,7 +333,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 					?? binaryTargets.filter(target => builds.every(entry => entry.candidate?.targets.includes(target) ?? true));
 				const targets: BinaryRelease['targets'] = [];
 				for (const target of binaryTargets) {
-					const wanted = yield* Effect.promise(() =>
+					const wanted = yield* prompted(() =>
 						ask({
 							kind: 'confirm',
 							message: `${stream.name}: build for ${target}?`,
@@ -355,7 +355,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 						label: startChoiceLabels[value].replaceAll('`', ''),
 					}));
 					if (first) {
-						const chosen: string[] = yield* Effect.promise(() =>
+						const chosen: string[] = yield* prompted(() =>
 							ask({
 								kind: 'multiselect',
 								message: `${stream.name}: start a release from (a start approves the whole release${
@@ -398,7 +398,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 					const current = stream[role];
 					if (!current) continue;
 					const tagPrefix = role === 'promote'
-						? yield* Effect.promise(() =>
+						? yield* prompted(() =>
 							ask({
 								kind: 'input',
 								message: `${stream.name}: version tag prefix (empty uses the default)`,
@@ -440,7 +440,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				const previousPackages = [...stream.packages];
 				if (stream.observe?.length) {
 					out.log(`Release group ${stream.name}:\n${streamSummary(stream, plan).map(line => `- ${line}`).join('\n')}`);
-					const observe = yield* Effect.promise(() =>
+					const observe = yield* prompted(() =>
 						ask({
 							kind: 'confirm',
 							message: `${stream.name}: use this setup? Answer no to pick the packages and workflows yourself.`,
@@ -465,7 +465,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 		for (const proposed of plan.choices.streams) {
 			if (
 				plan.choices.streams.length > 1
-				&& !(yield* Effect.promise(() =>
+				&& !(yield* prompted(() =>
 					ask({ kind: 'confirm', message: `Include release group ${proposed.name}?`, default: true })
 				))
 			) continue;
@@ -473,7 +473,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 		}
 		if (!choices.streams.length) return yield* Effect.fail(failure('Select at least one release group', 'NO_GROUPS'));
 		if (
-			yield* Effect.promise(() =>
+			yield* prompted(() =>
 				ask({
 					kind: 'confirm',
 					message: 'Customize filenames, versioning, approval, release groups, advanced fields or Actions revision?',
@@ -482,9 +482,9 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 			)
 		) {
 			while (
-				yield* Effect.promise(() => ask({ kind: 'confirm', message: 'Add another release group?', default: false }))
+				yield* prompted(() => ask({ kind: 'confirm', message: 'Add another release group?', default: false }))
 			) {
-				const name = yield* Effect.promise(() =>
+				const name = yield* prompted(() =>
 					ask({
 						kind: 'input',
 						message: 'Release group name',
@@ -513,7 +513,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 			}
 			for (const { choice, stream, role } of created) {
 				const before = choice.file;
-				choice.file = yield* Effect.promise(() =>
+				choice.file = yield* prompted(() =>
 					ask({
 						kind: 'input',
 						message: `${stream.name}: ${role === 'prepare' ? 'preparation' : 'publishing'} workflow filename`,
@@ -525,7 +525,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				);
 				if (role === 'promote' && stream.prepare?.file === before) stream.prepare.file = choice.file;
 			}
-			const revision = yield* Effect.promise(() =>
+			const revision = yield* prompted(() =>
 				ask({
 					kind: 'input',
 					message: 'Actions revision override (normally leave empty for the current compatible v1 release)',

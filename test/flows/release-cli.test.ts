@@ -832,19 +832,50 @@ test('activity output stays out of piped output while the release is followed', 
 	}
 });
 
-test('without a terminal the release asks nothing, requires a version and starts after the preview', async () => {
+test('without terminal input the release asks nothing, requires a version and starts after the preview', async () => {
 	const repository = await seed();
-	const headless = (args: string[]) =>
-		app.execute(['release', ...args, '--repository', repository.name], { isTTY: false, env: {} });
-	const missing = await headless([]);
+	const headless = (args: string[], isTTY: boolean) =>
+		app.execute(['release', ...args, '--repository', repository.name], { isTTY, env: {} });
+	const missing = await headless([], false);
 	expect(missing.exitCode).not.toBe(0);
 	expect(missing.stderr.join('')).toContain('Choose a release version or bump');
 	expect(missing.stderr.join('')).toContain('Pass patch, minor, major or a semantic version');
 	expect(prepareCalls()).toHaveLength(0);
-	const started = await headless(['patch']);
+	const started = await headless(['patch'], true);
 	expect([started.exitCode, started.stderr.join('')]).toEqual([0, '']);
 	expect(started.stdout.join('')).toContain('Release octo/widget / main → 1.0.1');
 	expect(prepareCalls()).toHaveLength(1);
+});
+
+test('terminal input with piped output still asks before the release starts', async () => {
+	const repository = await seed();
+	const prompts: string[] = [];
+	const prompter: PromptEngine = {
+		async promptOne(config) {
+			prompts.push(config.message);
+			return { answered: true, value: false };
+		},
+	};
+	const piped = await app.execute(['release', 'patch', '--repository', repository.name], {
+		prompter,
+		isTTY: false,
+		env: {},
+	});
+	expect([piped.exitCode, piped.stderr.join('')]).toEqual([0, '']);
+	expect(prompts).toEqual(['Prepare this release and open its version PR?']);
+	expect(piped.stdout.join('')).toContain('Release preparation cancelled.');
+	expect(prepareCalls()).toHaveLength(0);
+});
+
+test('without terminal input a cli start releases and approves its publication without asking', async () => {
+	const repository = await cliStarts();
+	releaseRun(repository);
+	const started = await app.execute(['release', 'patch', '--repository', repository.name], { isTTY: false, env: {} });
+	expect([started.exitCode, started.stderr.join('')]).toEqual([0, '']);
+	expect(started.stdout.join('')).toContain('Released 1.0.1 of octo/widget');
+	expect(prepareCalls()).toHaveLength(1);
+	const promoted = (await promotions()).filter(execution => execution.version === '1.0.1');
+	expect(promoted.map(execution => [execution.state, execution.approvedBy])).toEqual([['succeeded', 'start']]);
 });
 
 test('release output carries color and links in a terminal and the same text without them', async () => {

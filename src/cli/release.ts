@@ -1,12 +1,11 @@
 import type { Ask, CLIError, Out } from '@kjanat/dreamcli';
-import { isCLIError } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 import { z } from 'zod';
 import { repositoryReference } from '@/automation/repository-name';
 import type { Client } from '@/cli/client';
 import { followRelease } from '@/cli/follow';
 import { lookOf, registryOf, step, table } from '@/cli/look';
-import { emit, failure } from '@/cli/output';
+import { emit, failure, prompted, unprompted } from '@/cli/output';
 import { releaseStart, startsFrom, versionBump } from '@/contract/release-start';
 import { routes } from '@/contract/routes';
 import { semverPattern } from '@/contract/semver';
@@ -89,16 +88,6 @@ export function checkoutRepository(cwd: string): Effect.Effect<string, CLIError>
 			));
 		}
 		return repository;
-	});
-}
-
-function prompt<A>(run: () => Promise<A>): Effect.Effect<A, CLIError> {
-	return Effect.tryPromise({
-		try: run,
-		catch: error =>
-			isCLIError(error)
-				? error
-				: failure(error instanceof Error ? error.message : 'Could not read release input', 'PROMPT_FAILED'),
 	});
 }
 
@@ -186,20 +175,22 @@ export function releaseRepository(
 					),
 				);
 			}
-			if (out.jsonMode || !out.isTTY) {
-				return yield* Effect.fail(failure(
-					`Choose a release stream: ${eligible.map(({ name }) => name).join(', ')}`,
-					'STREAM_REQUIRED',
-					'Pass --stream NAME',
-				));
-			}
+			const required = failure(
+				`Choose a release stream: ${eligible.map(({ name }) => name).join(', ')}`,
+				'STREAM_REQUIRED',
+				'Pass --stream NAME',
+			);
+			if (out.jsonMode) return yield* Effect.fail(required);
 			const [first, ...rest] = eligible.map(({ name, stream }) => ({
 				value: name,
 				label: `${name}: ${stream.packages?.map(packageLabel).join(', ') || 'packages selected by repository policy'}`,
 			}));
 			if (!first) return yield* Effect.fail(failure('No release streams available', 'NO_STREAMS'));
-			selected = yield* prompt(() =>
-				ask({ kind: 'select', message: `Which release stream in ${repository.name}?`, choices: [first, ...rest] })
+			selected = yield* unprompted(
+				prompted(() =>
+					ask({ kind: 'select', message: `Which release stream in ${repository.name}?`, choices: [first, ...rest] })
+				),
+				() => Effect.fail(required),
 			);
 		}
 		const found = streams.find(({ name }) => name === selected);
@@ -225,27 +216,29 @@ export function releaseRepository(
 		}
 		let version = options.version;
 		if (!version) {
-			if (out.jsonMode || !out.isTTY) {
-				return yield* Effect.fail(failure(
-					'Choose a release version or bump',
-					'VERSION_REQUIRED',
-					'Pass patch, minor, major or a semantic version',
-				));
-			}
-			version = yield* prompt(() =>
-				ask({
-					kind: 'select',
-					message: 'What version should be released?',
-					choices: [
-						{ value: 'patch', label: 'Patch: fixes and small changes' },
-						{ value: 'minor', label: 'Minor: new features' },
-						{ value: 'major', label: 'Major: breaking changes' },
-						{ value: 'explicit', label: 'Set an explicit version' },
-					],
-				})
+			const required = failure(
+				'Choose a release version or bump',
+				'VERSION_REQUIRED',
+				'Pass patch, minor, major or a semantic version',
+			);
+			if (out.jsonMode) return yield* Effect.fail(required);
+			version = yield* unprompted(
+				prompted(() =>
+					ask({
+						kind: 'select',
+						message: 'What version should be released?',
+						choices: [
+							{ value: 'patch', label: 'Patch: fixes and small changes' },
+							{ value: 'minor', label: 'Minor: new features' },
+							{ value: 'major', label: 'Major: breaking changes' },
+							{ value: 'explicit', label: 'Set an explicit version' },
+						],
+					})
+				),
+				() => Effect.fail(required),
 			);
 			if (version === 'explicit') {
-				version = yield* prompt(() =>
+				version = yield* prompted(() =>
 					ask({
 						kind: 'input',
 						message: 'Release version (for example 0.1.0)',
@@ -316,17 +309,19 @@ export function releaseRepository(
 		if (options.dryRun) return out.log(look.note('Dry run: Beepboop started nothing.'));
 		if (
 			!options.yes
-			&& out.isTTY
-			&& !(yield* prompt(() =>
-				ask({
-					kind: 'confirm',
-					message: started
-						? 'Start this release? The start approves it, and nothing asks for approval afterwards.'
-						: committing
-						? `Prepare this release and commit its version bump to ${repository.defaultBranch}?`
-						: 'Prepare this release and open its version PR?',
-					default: false,
-				})
+			&& !(yield* unprompted(
+				prompted(() =>
+					ask({
+						kind: 'confirm',
+						message: started
+							? 'Start this release? The start approves it, and nothing asks for approval afterwards.'
+							: committing
+							? `Prepare this release and commit its version bump to ${repository.defaultBranch}?`
+							: 'Prepare this release and open its version PR?',
+						default: false,
+					})
+				),
+				() => Effect.succeed(true),
 			))
 		) return out.log(started ? 'Release start cancelled.' : 'Release preparation cancelled.');
 		const preparation = yield* step(
