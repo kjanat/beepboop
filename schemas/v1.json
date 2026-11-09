@@ -87,6 +87,11 @@
 				"config"
 			],
 			"additionalProperties": false
+		},
+		"actionsRevision": {
+			"description": "Published Actions version or full commit that setup pins in generated workflows",
+			"type": "string",
+			"pattern": "^(?:[a-f0-9]{40}|v\\d+(?:\\.\\d+){0,2})$"
 		}
 	},
 	"additionalProperties": false,
@@ -581,12 +586,164 @@
 						],
 						"additionalProperties": false
 					}
+				},
+				"setup": {
+					"$ref": "#/$defs/workflowSetup"
 				}
 			},
 			"required": [
 				"file"
 			],
 			"additionalProperties": false
+		},
+		"workflowSetup": {
+			"type": "object",
+			"properties": {
+				"job": {
+					"type": "string"
+				},
+				"triggers": {
+					"default": "review",
+					"type": "string",
+					"enum": [
+						"review",
+						"dispatchOnly",
+						"preserve"
+					]
+				},
+				"commands": {
+					"default": "",
+					"type": "string"
+				},
+				"publicationSteps": {
+					"default": {},
+					"type": "object",
+					"propertyNames": {
+						"type": "string"
+					},
+					"additionalProperties": {
+						"type": "string"
+					}
+				},
+				"credentials": {
+					"type": "object",
+					"propertyNames": {
+						"type": "string",
+						"pattern": "^[A-Z_][A-Z0-9_]*$"
+					},
+					"additionalProperties": {
+						"type": "string",
+						"pattern": "^[\\w-]{1,64}$"
+					}
+				},
+				"tagPrefix": {
+					"type": "string",
+					"pattern": "^(?:[A-Za-z0-9._-]+\\/)*[A-Za-z0-9._-]*$"
+				},
+				"binaries": {
+					"type": "object",
+					"properties": {
+						"builds": {
+							"minItems": 1,
+							"type": "array",
+							"items": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"toolchain": {
+												"type": "string",
+												"const": "go"
+											},
+											"name": {
+												"type": "string",
+												"pattern": "^[A-Za-z0-9][\\w.-]*$"
+											},
+											"module": {
+												"type": "string",
+												"pattern": "^(?:\\.|[\\w.-]+(?:\\/[\\w.-]+)*)$"
+											},
+											"package": {
+												"default": ".",
+												"type": "string",
+												"pattern": "^\\.(?:\\/[\\w.-]+)*$"
+											},
+											"asset": {
+												"default": "{name}-{go.os}-{go.arch}{ext}",
+												"type": "string",
+												"pattern": "^(?:[\\w.-]|\\{[\\w.]+\\})+$"
+											}
+										},
+										"required": [
+											"toolchain",
+											"name",
+											"module"
+										],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"toolchain": {
+												"type": "string",
+												"const": "cargo"
+											},
+											"name": {
+												"type": "string",
+												"pattern": "^[A-Za-z0-9][\\w.-]*$"
+											},
+											"manifest": {
+												"type": "string",
+												"pattern": "^(?:[\\w.-]+\\/)*Cargo\\.toml$"
+											},
+											"asset": {
+												"default": "{name}-{rust.target}{ext}",
+												"type": "string",
+												"pattern": "^(?:[\\w.-]|\\{[\\w.]+\\})+$"
+											}
+										},
+										"required": [
+											"toolchain",
+											"name",
+											"manifest"
+										],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"targets": {
+							"default": [
+								"linux-amd64",
+								"linux-arm64",
+								"darwin-amd64",
+								"darwin-arm64",
+								"windows-amd64",
+								"windows-arm64"
+							],
+							"minItems": 1,
+							"type": "array",
+							"items": {
+								"type": "string",
+								"enum": [
+									"linux-amd64",
+									"linux-arm64",
+									"darwin-amd64",
+									"darwin-arm64",
+									"windows-amd64",
+									"windows-arm64"
+								]
+							}
+						}
+					},
+					"required": [
+						"builds"
+					],
+					"additionalProperties": false
+				}
+			},
+			"additionalProperties": false,
+			"description": "Setup input that generates this workflow file. Change it through a setup update PR."
 		},
 		"subscription": {
 			"oneOf": [

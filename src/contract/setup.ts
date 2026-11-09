@@ -87,6 +87,13 @@ const workflow = z.object({
 	tagPrefix: z.string().regex(tagPrefixPattern).refine(validTagPrefix, 'Invalid tag prefix').optional(),
 	binaries: binaries.optional(),
 }).strict();
+export const workflowSetup = workflow.omit({ file: true }).meta({
+	id: 'workflowSetup',
+	description: 'Setup input that generates this workflow file. Change it through a setup update PR.',
+});
+export type WorkflowSetup = z.output<typeof workflowSetup>;
+export type WorkflowSetupInput = z.input<typeof workflowSetup>;
+export const actionsRevisionPattern = /^(?:[a-f0-9]{40}|v\d+(?:\.\d+){0,2})$/;
 const observed = z.object({
 	name: identifier,
 	file: z.string().regex(workflowFilePattern),
@@ -126,6 +133,6 @@ export const setupChoicesSchema = z.object({
 		}).strict(),
 	),
 	/** Full commit of the published Actions distribution, required for external actions. */
-	actionsRevision: z.string().regex(/^(?:[a-f0-9]{40}|v\d+(?:\.\d+){0,2})$/).optional(),
+	actionsRevision: z.string().regex(actionsRevisionPattern).optional(),
 }).strict();
 export type SetupChoices = z.infer<typeof setupChoicesSchema>;

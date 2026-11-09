@@ -1,4 +1,5 @@
 import { Effect, Result } from 'effect';
+import { z } from 'zod';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
 import { formatJson, json } from '@/automation/json';
 import { discover, versionsInFiles } from '@/automation/managers';
@@ -29,7 +30,9 @@ import { blocking } from '@/contract/diagnostics';
 import type { DomainError } from '@/contract/errors';
 import { decodeRequest, precondition } from '@/contract/errors';
 import { sha256Hex } from '@/contract/ids';
-import { setupChoicesSchema } from '@/contract/setup';
+import type { WorkflowSetupInput } from '@/contract/setup';
+import { setupChoicesSchema, workflowSetup } from '@/contract/setup';
+import { versionFileSchema } from '@/contract/version-files';
 import { configurationDrift } from '@/domain/configuration';
 import { packageMarkdown } from '@/domain/package-label';
 import { publicationStages } from '@/domain/publication-stages';
@@ -91,8 +94,12 @@ function suggested(
 	inventory: Inventory,
 	graph: ReleaseGraph,
 	resolved?: Configuration,
+	saved?: SetupChoices,
 ): SetupChoices {
 	const configured = resolved?.streams ?? object(raw.streams);
+	const revision = resolved?.actionsRevision
+		?? (typeof raw.actionsRevision === 'string' ? raw.actionsRevision : undefined)
+		?? saved?.actionsRevision;
 	const names = new Set([...Object.keys(configured), ...workflows.flatMap(w => w.roles.map(role => role.stream))]);
 	if (!names.size) {
 		const adopted = adoptionChoices(graph, inventory, snapshot.repository.name);
@@ -123,15 +130,31 @@ function suggested(
 		const source = object(current.versionSource);
 		const versionSource: SetupChoices['streams'][number]['versionSource'] =
 			source.kind === 'tags' && typeof source.prefix === 'string' ? { kind: 'tags', prefix: source.prefix } : undefined;
-		const selected = packages.length || observe.length
+		const selected = Array.isArray(current.packages) || observe.length
 			? covered
 			: inventory.packages.filter(pkg =>
 				publishable(pkg) && (
 					names.size === 1 || pkg.manifest.split('/').slice(0, -1).includes(name)
 				)
 			).map(packageId);
-		const choose = (operation: 'prepare' | 'promote') => {
+		const previous = saved?.streams.find(stream => stream.name === name);
+		const generator = (binding: Record<string, unknown>, before: SetupWorkflow | undefined) => {
+			const stored = workflowSetup.safeParse(binding.setup);
+			if (stored.success) return stored.data;
+			if (!before || before.file !== binding.file) return undefined;
+			const { file: _file, ...input } = before;
+			return input;
+		};
+		const choose = (operation: 'prepare' | 'promote'): SetupWorkflow | undefined => {
 			const binding = object(object(current[operation]).workflow);
+			const input = typeof binding.file === 'string' ? generator(binding, previous?.[operation]) : undefined;
+			if (typeof binding.file === 'string' && input) {
+				const role = workflows.find(w => w.file === binding.file)?.roles.find(entry =>
+					entry.stream === name && entry.operation === operation
+				);
+				const job = input.job ?? role?.job;
+				return { ...input, file: binding.file, ...(job === undefined ? {} : { job }) };
+			}
 			const matches = workflows.filter(w => w.roles.some(role => role.stream === name && role.operation === operation));
 			const evidence = typeof binding.file === 'string'
 				? workflows.find(w => w.file === binding.file)
@@ -147,10 +170,47 @@ function suggested(
 				publicationSteps: {},
 			};
 		};
+		const operations = Object.entries(object(current.workflows)).flatMap(([operation, value]) => {
+			const binding = object(value);
+			if (binding.mode === 'observe' || typeof binding.file !== 'string') return [];
+			const before = previous?.operations?.find(entry => entry.name === operation);
+			const input = generator(binding, before);
+			const needs = Array.isArray(binding.needs) ? binding.needs.map(String) : [];
+			const [first, ...rest] = needs;
+			if (!input || first === undefined) return [];
+			const needsJobs = object(binding.needsJobs);
+			return [{
+				...input,
+				name: operation,
+				file: binding.file,
+				needs: [first, ...rest],
+				...(Object.keys(needsJobs).length
+					? {
+						needsJobs: Object.fromEntries(
+							Object.entries(needsJobs).map(([key, jobs]) => [key, Array.isArray(jobs) ? jobs.map(String) : []]),
+						),
+					}
+					: {}),
+				publications: Array.isArray(binding.publications)
+					? binding.publications.map(id => selectorKey(String(id), inventory.packages))
+					: [],
+			}];
+		});
+		const needs = object(current.needs);
+		const versionFiles = z.array(versionFileSchema).safeParse(current.versionFiles);
 		streams.push({
 			name,
 			...(observe.length ? { observe } : {}),
 			...(versionSource ? { versionSource } : {}),
+			...(versionFiles.success && versionFiles.data.length ? { versionFiles: versionFiles.data } : {}),
+			...(Object.keys(needs).length
+				? {
+					needs: Object.fromEntries(
+						Object.entries(needs).map(([key, values]) => [key, Array.isArray(values) ? values.map(String) : []]),
+					),
+				}
+				: {}),
+			...(operations.length ? { operations } : {}),
 			packages: selected,
 			versioning: current.versioning === 'independent' || current.versioning === 'none'
 				? current.versioning
@@ -169,7 +229,7 @@ function suggested(
 			promote: choose('promote'),
 		});
 	}
-	return { streams };
+	return { streams, ...(revision ? { actionsRevision: revision } : {}) };
 }
 export const branchConflictBlocker =
 	'Someone else committed to the setup branch, so Beepboop stopped updating it. Take over to replace their commits with this proposal.';
@@ -179,6 +239,7 @@ export interface SetupBaseline {
 	branchConflict?: boolean;
 	prior?: { url: string; content?: string; sourceSha?: string };
 	presetShas?: Record<string, string>;
+	saved?: SetupChoices;
 }
 export function previewSetup(
 	snapshot: Snapshot,
@@ -207,7 +268,7 @@ function draftSetup(
 		const workflows = yield* evidence(snapshot, inventory);
 		const graph = inferReleaseGraph(snapshot, inventory);
 		// Empty selections are allowed in suggestions, but cannot be applied.
-		const suggestion = suggested(snapshot, raw, workflows, inventory, graph, resolved);
+		const suggestion = suggested(snapshot, raw, workflows, inventory, graph, resolved, baseline.saved);
 		const normalized = setupChoicesSchema.safeParse(suggestion);
 		const requested = normalized.success ? normalized.data : suggestion;
 		const proposal = completeChoices(
@@ -384,6 +445,7 @@ function drafted(
 			}
 			for (const entry of selection.operations ?? []) {
 				const previous = object(object(current.workflows)[entry.name]);
+				const { name: _name, needs: _needs, needsJobs: _jobs, publications: _publications, ...generator } = entry;
 				const operation: Record<string, unknown> = {
 					...previous,
 					file: entry.file,
@@ -391,6 +453,7 @@ function drafted(
 					publications: entry.publications,
 					needs: entry.needs,
 					...(entry.needsJobs ? { needsJobs: entry.needsJobs } : {}),
+					setup: workflowInput(generator),
 				};
 				if (!entry.needsJobs) delete operation.needsJobs;
 				bindings[entry.name] = operation;
@@ -445,6 +508,7 @@ function drafted(
 				const inherited = object(resolved?.streams[selection.name]?.[operation].workflow);
 				const binding: Record<string, unknown> = {
 					...previousBinding,
+					setup: workflowInput(workflow),
 					file: workflow.file,
 					ref: previousBinding.ref ?? inherited.ref ?? snapshot.repository.defaultBranch,
 					...(operation === 'promote'
@@ -529,6 +593,8 @@ function drafted(
 			}
 		}
 		if (!choices.streams.length) blockers.push('Select at least one release stream.');
+		if (choices.actionsRevision) configuration.actionsRevision = choices.actionsRevision;
+		else delete configuration.actionsRevision;
 		configuration.$schema ??= 'https://beepboop.kjanat.dev/schema/v1.json';
 		configuration.streams = streams;
 		configuration.managers = [...managers].sort();
@@ -602,6 +668,19 @@ function drafted(
 			...(prior ? { prior } : {}),
 		};
 	});
+}
+/** The repository configuration keeps each generated workflow's setup input next to its binding. */
+export function workflowInput(workflow: SetupWorkflow): WorkflowSetupInput {
+	const { file: _file, triggers, commands, publicationSteps, job, credentials, tagPrefix, binaries } = workflow;
+	return {
+		...(job === undefined ? {} : { job }),
+		...(triggers === 'review' ? {} : { triggers }),
+		...(commands ? { commands } : {}),
+		...(Object.keys(publicationSteps).length ? { publicationSteps } : {}),
+		...(credentials === undefined ? {} : { credentials }),
+		...(tagPrefix === undefined ? {} : { tagPrefix }),
+		...(binaries === undefined ? {} : { binaries }),
+	};
 }
 function releases(
 	snapshot: Snapshot,

@@ -21,6 +21,7 @@ import {
 import type { Diagnostic, DiagnosticCode } from '@/contract/diagnostics';
 import { isDiagnosticCode } from '@/contract/diagnostics';
 import { identifierPattern } from '@/contract/ids';
+import { actionsRevisionPattern, workflowSetup } from '@/contract/setup';
 import { versionFileSchema } from '@/contract/version-files';
 import { dependencyOrder } from '@/dependency-order';
 import { textSchema as nonempty } from '@/model';
@@ -87,6 +88,7 @@ function bindingSchema() {
 		platform: platformSchema.optional(),
 		outputs: z.array(outputSchema).optional(),
 		artifactInputs: z.array(inputSchema).optional(),
+		setup: workflowSetup.optional(),
 	});
 	const checked = shape.superRefine((binding, ctx) => {
 		if (
@@ -126,6 +128,7 @@ function bindingSchema() {
 		...(binding.ref === undefined ? {} : { ref: binding.ref }),
 		inputs: binding.inputs ?? {},
 		required: binding.required !== false,
+		...(binding.setup ? { setup: binding.setup } : {}),
 	})).meta({ id: 'workflow' });
 }
 
@@ -310,6 +313,9 @@ export const configurationSchema = z.strictObject({
 	streams: z.record(identifier, streamSchema()).default({}),
 	subscriptions: z.array(subscriptionSchema()).default([]),
 	winget: winget.optional(),
+	actionsRevision: z.string().regex(actionsRevisionPattern).optional().describe(
+		'Published Actions version or full commit that setup pins in generated workflows',
+	),
 }).superRefine((configuration, ctx) => {
 	for (const [name, stream] of Object.entries(configuration.streams)) graph(stream, ['streams', name], ctx);
 	const ids = new Set<string>();
@@ -329,6 +335,7 @@ export const configurationSchema = z.strictObject({
 	});
 }).transform(configuration => ({
 	...(configuration.winget === undefined ? {} : { winget: configuration.winget }),
+	...(configuration.actionsRevision === undefined ? {} : { actionsRevision: configuration.actionsRevision }),
 	extends: configuration.extends,
 	managers: configuration.managers,
 	streams: configuration.streams,

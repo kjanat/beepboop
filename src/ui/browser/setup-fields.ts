@@ -149,11 +149,16 @@ export function workflow(
 					}),
 				);
 			}
+			const chosen = selectedJob();
+			const kept = initial?.file === editor.file() ? initial : undefined;
 			return Result.succeed({
+				...(kept?.credentials ? { credentials: kept.credentials } : {}),
+				...(kept?.tagPrefix ? { tagPrefix: kept.tagPrefix } : {}),
+				...(kept?.binaries ? { binaries: kept.binaries } : {}),
 				file: editor.file(),
-				job: selectedJob(),
+				job: chosen,
 				triggers: triggers.disabled ? 'review' : triggers.value === 'dispatchOnly' ? 'dispatchOnly' : 'review',
-				commands: commands.disabled ? '' : commands.value,
+				commands: commands.disabled ? kept?.job === chosen ? kept.commands : '' : commands.value,
 				publicationSteps: Object.fromEntries(
 					[...mappingControls].filter(([, control]) => control.value).map(([id, control]) => [id, control.value]),
 				),

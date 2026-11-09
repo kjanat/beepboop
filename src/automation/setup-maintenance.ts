@@ -3,12 +3,13 @@ import { z } from 'zod';
 import { resolveConfiguration } from '@/automation/configuration';
 import type { RepositoryGateway } from '@/automation/github';
 import { discover } from '@/automation/managers';
+import { object } from '@/automation/managers/helpers';
 import { packageId } from '@/automation/package-identity';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
 import { documentRow } from '@/automation/schemas';
 import { previewSetup, releaseAfterMerge, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import { marked } from '@/automation/setup-body';
-import { changeSummary, setupTitle } from '@/automation/setup-changes';
+import { changeSummary, setupBranch, setupTitle } from '@/automation/setup-changes';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Store } from '@/automation/store';
 import { decodeError } from '@/automation/store';
@@ -16,6 +17,7 @@ import type { Edit, Snapshot } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { sha256Hex } from '@/contract/ids';
+import { setupChoicesSchema } from '@/contract/setup';
 import { packageMarkdown } from '@/domain/package-label';
 import { fromJson, fromPromise, fromSync, toDomainError } from '@/failure';
 import { record } from '@/model';
@@ -46,6 +48,10 @@ export function rebuildingStatus(body: string): string {
 	);
 	return status ? `${status}\n\n${rebuilding}` : rebuilding;
 }
+export function savedSetup(saved: Record<string, unknown> | undefined): { saved?: SetupChoices } {
+	const parsed = setupChoicesSchema.safeParse(saved?.choices);
+	return parsed.success ? { saved: parsed.data } : {};
+}
 export function followsProposal(saved: Record<string, unknown> | undefined, body: string): boolean {
 	return saved?.inferred === true || (saved?.inferred === undefined && body.includes('\n## Release plan\n'));
 }
@@ -67,6 +73,7 @@ export function maintainSetup(
 		if (!row) return;
 		const saved = yield* Effect.fromResult(record(yield* fromJson(row.document)));
 		const pull = yield* gateway.openSetupPull(name, id);
+		if (!pull && !requested) return yield* migrateSetup(store, gateway, snapshot, saved, row.document);
 		if (!pull || (requested && pull.number !== requested.number)) return;
 		const generatedFiles = yield* gateway.generatedFiles(name, id, pull.head);
 		if (!generatedFiles && saved.head !== pull.head) return;
@@ -104,6 +111,7 @@ export function maintainSetup(
 					: undefined);
 			const workflowPermission = yield* gateway.canEditWorkflows(name, id);
 			const plan = yield* previewSetup(snapshot, inventory, choices, {
+				...savedSetup(saved),
 				head: pull.head,
 				workflowPermission,
 				presetShas: resolved.presetShas,
@@ -199,6 +207,73 @@ export function maintainSetup(
 				)
 			),
 		);
+	});
+}
+/** A binding without setup input predates repository-held setup; the stored choices fill it once. */
+export function setupMissing(raw: unknown, saved: SetupChoices): boolean {
+	const streams = object(object(raw).streams);
+	const lacking = (binding: unknown, file: string | undefined) =>
+		file !== undefined && object(binding).file === file && object(binding).setup === undefined;
+	return (saved.actionsRevision !== undefined && object(raw).actionsRevision === undefined)
+		|| saved.streams.some(stream => {
+			const current = object(streams[stream.name]);
+			return lacking(object(current.prepare).workflow, stream.prepare?.file)
+				|| lacking(object(current.promote).workflow, stream.promote?.file)
+				|| (stream.operations ?? []).some(entry => lacking(object(current.workflows)[entry.name], entry.file));
+		});
+}
+function migrateSetup(
+	store: Store,
+	gateway: RepositoryGateway,
+	snapshot: Snapshot,
+	saved: Record<string, unknown>,
+	document: string,
+): Effect.Effect<void, DomainError> {
+	return Effect.gen(function*() {
+		const { name, id } = snapshot.repository;
+		const source = snapshot.files['.github/beepboop.json'];
+		const choices = savedSetup(saved).saved;
+		if (source === undefined || !choices || saved.migration === 'proposed') return;
+		const raw = yield* fromSync((): unknown => JSON.parse(source));
+		if (!setupMissing(raw, choices)) return;
+		const resolved = yield* resolveConfiguration(raw, ref => gateway.preset(ref)).pipe(
+			Effect.mapError(error => error instanceof z.ZodError ? toDomainError(error) : error),
+		);
+		const stored = yield* store.repository(id);
+		const branch = setupBranch(snapshot);
+		const head = yield* gateway.setupHead(name, id, branch);
+		const plan = yield* previewSetup(snapshot, withRegistryStatus(discover(snapshot), stored?.inventory), undefined, {
+			saved: choices,
+			head,
+			workflowPermission: yield* gateway.canEditWorkflows(name, id),
+			presetShas: resolved.presetShas,
+		}, resolved.configuration);
+		if (plan.blockers.length || !plan.edits.length) return;
+		const result = yield* gateway.pullRequest(
+			snapshot,
+			branch,
+			setupTitle(branch, plan.edits),
+			`${changeSummary(branch, plan.edits, snapshot.repository.defaultBranch)}${setupBody(plan)}`,
+			plan.edits,
+			head ?? undefined,
+			undefined,
+			[],
+			undefined,
+			{ coAuthored: true },
+		);
+		yield* replaceDocument(sql(store.db), 'onboarding', 'repository_id', id, document, {
+			...saved,
+			...result,
+			sourceSha: snapshot.sha,
+			content: plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? source,
+			choices: plan.choices,
+			options: setupOptions(plan),
+			inferred: plan.adoption !== undefined,
+			edits: plan.edits,
+			migration: 'proposed',
+			maintenanceFingerprint: undefined,
+		});
+		yield* store.audit('beepboop', 'repository.setup.migrated', `${name} ${snapshot.sha} ${result.url}`);
 	});
 }
 export function currentOptions(

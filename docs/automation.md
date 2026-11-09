@@ -1142,6 +1142,45 @@ Package selections and publication records use
 [structured PURL identities](package-identities.md). Beepboop also accepts
 `manager:name` references in saved configurations and workflow reports.
 
+### Setup input in beepboop.json
+
+`.github/beepboop.json` holds the complete setup. Each workflow binding that
+setup generates carries a `setup` object with the input that generates its
+file: `job`, `triggers`, `commands`, `publicationSteps`, `credentials`,
+`tagPrefix` and `binaries`. A top-level `actionsRevision` records an Actions
+revision override. `schemas/v1.json` validates both.
+
+```json
+{
+  "streams": {
+    "main": {
+      "promote": {
+        "workflow": {
+          "file": "release.yml",
+          "setup": {
+            "job": "publish",
+            "binaries": {
+              "builds": [{ "toolchain": "cargo", "name": "tool", "manifest": "Cargo.toml" }],
+              "targets": ["linux-amd64", "darwin-arm64"]
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Setup reads these objects from the default branch. A preview without new
+choices proposes no change while the generated files match them. After an edit
+to a `setup` object on the default branch, the next preview regenerates the
+workflow from it. Every change goes through a setup PR.
+
+Repositories set up before this change keep their choices on the Beepboop
+server. On the next refresh without an open setup PR, Beepboop opens one setup
+update PR that writes those choices into the bindings. Beepboop opens that PR
+once. A closed migration PR stays closed.
+
 ### Automatic setup PR maintenance
 
 For an enrolled repository with an open setup PR, Beepboop recomputes the

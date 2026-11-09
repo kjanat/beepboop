@@ -216,11 +216,15 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 						),
 					].filter(Boolean).join('\n')
 					: suggested;
+				const kept = previous?.file === file ? previous : undefined;
 				const choice: SetupWorkflow = {
+					...(kept?.credentials ? { credentials: kept.credentials } : {}),
+					...(kept?.tagPrefix ? { tagPrefix: kept.tagPrefix } : {}),
+					...(kept?.binaries ? { binaries: kept.binaries } : {}),
 					file,
 					job,
 					triggers,
-					commands,
+					commands: integrated && kept?.job === job ? kept.commands : commands,
 					publicationSteps,
 				};
 				if (selected === 'new') created.push({ choice, stream, role });

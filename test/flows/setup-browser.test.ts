@@ -414,7 +414,7 @@ test('existing shared Go workflows do not require replacement preparation comman
 		window.HTMLTextAreaElement,
 	);
 	expect(control(preparing, 'How should release changes be prepared?', window.HTMLSelectElement).value).toBe('same');
-	expect(commands.value).toBe('');
+	expect(commands.value).toBe('go test ./...');
 	expect(commands.required).toBe(false);
 	expect(commands.disabled).toBe(true);
 	await act(form, 'preview');

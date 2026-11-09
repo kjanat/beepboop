@@ -19,6 +19,7 @@ import type { Diagnostic } from '@/contract/diagnostics';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { identifierPattern, shaPattern } from '@/contract/ids';
+import { actionsRevisionPattern, workflowSetup } from '@/contract/setup';
 import { versionFileSchema } from '@/contract/version-files';
 import { dependencyOrder } from '@/dependency-order';
 import {
@@ -101,9 +102,11 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 				'platform',
 				'outputs',
 				'artifactInputs',
+				'setup',
 			],
 			'workflow',
 		);
+		const setup = data.setup === undefined ? undefined : yield* lift(() => workflowSetup.parse(data.setup));
 		const schedule = data.schedule === undefined ? undefined : yield* text(data.schedule);
 		if (schedule !== undefined) {
 			if (!fiveFieldCron(schedule)) return yield* invalid(utcCronMessage);
@@ -186,6 +189,7 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 			...(ref === undefined ? {} : { ref }),
 			inputs,
 			required: data.required !== false,
+			...(setup === undefined ? {} : { setup }),
 		};
 	});
 }
@@ -357,7 +361,15 @@ function subscription(raw: unknown, streams: Record<string, Stream>): Parsed<Con
 export function parseRepositoryConfiguration(value: unknown): Parsed<Configuration> {
 	return Result.gen(function*() {
 		const data = yield* record(value);
-		yield* keys(data, ['$schema', 'extends', 'managers', 'streams', 'subscriptions', 'winget'], 'configuration');
+		yield* keys(
+			data,
+			['$schema', 'extends', 'managers', 'streams', 'subscriptions', 'winget', 'actionsRevision'],
+			'configuration',
+		);
+		const actionsRevision = data.actionsRevision === undefined ? undefined : yield* text(data.actionsRevision);
+		if (actionsRevision !== undefined && !actionsRevisionPattern.test(actionsRevision)) {
+			return yield* invalid('Invalid Actions revision');
+		}
 		const managers = data.managers === undefined
 			? [...managerNames]
 			: yield* Result.all((yield* strings(data.managers)).map(name => oneOf(name, managerNames, 'Unknown manager')));
@@ -375,6 +387,7 @@ export function parseRepositoryConfiguration(value: unknown): Parsed<Configurati
 		}
 		return {
 			...(data.winget === undefined ? {} : { winget: yield* winGetPolicy(data.winget) }),
+			...(actionsRevision === undefined ? {} : { actionsRevision }),
 			extends: yield* strings(data.extends ?? []),
 			managers,
 			streams,

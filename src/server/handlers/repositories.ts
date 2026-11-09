@@ -6,7 +6,7 @@ import { encodeRepository } from '@/automation/package-identity';
 import { repositoryName, repositoryReference } from '@/automation/repository-name';
 import { branchConflictBlocker, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import { changeSummary, setupBranch, setupTitle } from '@/automation/setup-changes';
-import { followsProposal, sameEdits, setupEdits } from '@/automation/setup-maintenance';
+import { followsProposal, sameEdits, savedSetup, setupEdits } from '@/automation/setup-maintenance';
 import type { DomainError } from '@/contract/errors';
 import { conflict, domainError, invalid, notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
@@ -159,6 +159,7 @@ function setupReview(input: { repository: string; choices?: unknown }, context: 
 		const choices = input.choices ?? (proposed ? saved?.choices : undefined);
 		const workflowPermission = yield* service.gateway.canEditWorkflows(name, id);
 		const plan = yield* previewSetup(snapshot, inventory, choices, {
+			...savedSetup(saved),
 			head,
 			workflowPermission,
 			branchConflict,
