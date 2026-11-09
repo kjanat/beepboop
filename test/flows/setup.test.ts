@@ -12,6 +12,7 @@ import { cratePublishCommands, ledgerCommand, suggestedCommands } from '@/automa
 import { rebuildingStatus } from '@/automation/setup-maintenance';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices } from '@/automation/setup-types';
+import { publishMinutes } from '@/automation/setup-workflows';
 
 const checkout = pinned('checkout');
 let world: World;
@@ -1057,6 +1058,24 @@ test('setup moves OIDC out of earlier build jobs and pins their release steps', 
 	const replanned = await Effect.runPromise(parseSetupPlan(rerun.body));
 	expect(replanned.blockers).toEqual([]);
 	expect(replanned.edits.find(edit => edit.path === '.github/workflows/release.yml')).toBeUndefined();
+	const limits = (source: string) =>
+		Object.fromEntries(
+			Object.entries(
+				z.object({ jobs: z.record(z.string(), z.looseObject({ 'timeout-minutes': z.number().optional() })) })
+					.parse(parse(source)).jobs,
+			).map(([name, job]) => [name, job['timeout-minutes']]),
+		);
+	expect(limits(after)).toEqual({ begin: 10, 'build-signer': 240, 'build-tool': 240, publish: publishMinutes(0) });
+	const longer = parseDocument(after);
+	longer.setIn(['jobs', 'build-tool', 'timeout-minutes'], 300);
+	world.github.push(repository, { '.github/workflows/release.yml': longer.toString() }, 'Allow longer builds');
+	const kept = await Effect.runPromise(
+		parseSetupPlan(
+			(await api('/api/repositories/setup/preview', { repository: repository.name, choices: binaryChoices() })).body,
+		),
+	);
+	expect(kept.blockers).toEqual([]);
+	expect(kept.edits.find(edit => edit.path === '.github/workflows/release.yml')).toBeUndefined();
 });
 
 test('binary builds refuse ref publication that runs before the upload', async () => {
@@ -1146,7 +1165,8 @@ test('configuration-only adoption does not request workflow write permission', a
 	const repository = widget(world.github, { configured: false });
 	const workflow = publishWorkflow.replace(
 		'    steps:\n',
-		`    steps:
+		`    timeout-minutes: 15
+    steps:
       - uses: actions/checkout@v7
 `,
 	).replace(
@@ -1371,12 +1391,24 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 	const identity = { '${{ insert }}': "${{ fromJSON(steps.beepboop_token.outputs.gitId || '{}') }}" };
 	expect(steps.find(step => step.id === 'beepboop_refs')?.env).toEqual(identity);
 	const generated = plan.edits.find(edit => edit.path === '.github/workflows/release-sql.yml')?.after ?? '';
+	const timeouts = (source: string) => {
+		const jobs = z.object({ jobs: z.record(z.string(), z.looseObject({ 'timeout-minutes': z.number().optional() })) })
+			.parse(parse(source)).jobs;
+		return [jobs.prepare?.['timeout-minutes'], jobs.publish?.['timeout-minutes']];
+	};
+	expect(timeouts(generated)).toEqual([120, publishMinutes(3)]);
+	expect(publishMinutes(3)).toBe(210);
 	const refsEnv = ['jobs', 'publish', 'steps', steps.findIndex(step => step.id === 'beepboop_refs'), 'env'];
 	const strict = { '${{ insert }}': '${{ fromJSON(steps.beepboop_token.outputs.gitId) }}', LANG: 'C' };
 	for (const env of [undefined, strict]) {
 		const kept = parseDocument(generated);
-		if (env) kept.setIn(refsEnv, env);
-		else kept.deleteIn(refsEnv);
+		if (env) {
+			kept.setIn(refsEnv, env);
+			kept.setIn(['jobs', 'publish', 'timeout-minutes'], 90);
+		} else {
+			kept.deleteIn(refsEnv);
+			kept.deleteIn(['jobs', 'publish', 'timeout-minutes']);
+		}
 		world.github.push(repository, { '.github/workflows/release-sql.yml': kept.toString() }, 'Change the tag identity');
 		const repaired = await Effect.runPromise(
 			parseSetupPlan(
@@ -1384,13 +1416,14 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 			),
 		);
 		expect(repaired.blockers).toEqual([]);
+		const after = repaired.edits.find(edit => edit.path === '.github/workflows/release-sql.yml')?.after ?? '';
 		const repairedSteps = z.object({
 			jobs: z.object({ publish: z.object({ steps: z.array(z.looseObject({ id: z.string().optional() })) }) }),
-		}).parse(parse(repaired.edits.find(edit => edit.path === '.github/workflows/release-sql.yml')?.after ?? ''))
-			.jobs.publish.steps;
+		}).parse(parse(after)).jobs.publish.steps;
 		expect(repairedSteps.find(step => step.id === 'beepboop_refs')?.env).toEqual(
 			env ? { LANG: 'C', ...identity } : identity,
 		);
+		expect(timeouts(after)).toEqual([120, env ? 90 : 210]);
 	}
 	const without = structuredClone(choices);
 	const stream = without.streams[0];

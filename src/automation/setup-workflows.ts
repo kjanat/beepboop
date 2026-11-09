@@ -20,9 +20,13 @@ import type { SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
 import type { Package, Snapshot } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
-import { ledgerManagers } from '@/contract/ledger';
+import { ledgerManagers, publishWaitMinutes } from '@/contract/ledger';
 import { toDomainError } from '@/failure';
 
+const prepareMinutes = 120;
+export function publishMinutes(packages: number): number {
+	return Math.min(360, publishWaitMinutes + 60 * packages);
+}
 export function actionRole(value: unknown): string | undefined {
 	if (typeof value !== 'string') return;
 	return /^(?:(?:\$|\.)\/actions\/|kjanat\/beepboop\/actions\/)(begin|prepare|report|publish)(?:@[\w./-]+)?$/.exec(
@@ -574,7 +578,11 @@ function integrate(
 	if (binaries && jobsMap) {
 		const begin = { uses: action('begin'), id, with: { 'execution-id': executionInput, stream, operation } };
 		const builds = binaryJobs(binaries, begin, id);
-		for (const name of Object.keys(builds)) jobsMap.delete(name);
+		for (const [name, build] of Object.entries(builds)) {
+			const kept = object(jobs[name])['timeout-minutes'];
+			if (kept !== undefined) build['timeout-minutes'] = kept;
+			jobsMap.delete(name);
+		}
 		jobsMap.items.unshift(
 			...Object.entries(builds).map(([name, build]) => {
 				const pair = document.createPair(name, build, { aliasDuplicateObjects: false });
@@ -595,6 +603,12 @@ function integrate(
 			'id-token': 'write',
 			attestations: 'write',
 		});
+	}
+	if (!blockers.length && job['timeout-minutes'] === undefined) {
+		document.setIn(
+			['jobs', jobName, 'timeout-minutes'],
+			operation === 'prepare' ? prepareMinutes : publishMinutes(packages.length),
+		);
 	}
 	const unchanged = original !== undefined
 		&& isDeepStrictEqual(parseDocument(original).toJS({ maxAliasCount: 100 }), document.toJS({ maxAliasCount: 100 }));

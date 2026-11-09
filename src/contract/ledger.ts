@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const ledgerManagers = ['cargo', 'pypi', 'npm'] as const;
+export const publishWaitMinutes = 30;
 export type LedgerManager = (typeof ledgerManagers)[number];
 
 export const ledgerStates = [

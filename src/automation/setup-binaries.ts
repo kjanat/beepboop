@@ -169,6 +169,7 @@ export function binaryJobs(
 			name: `Build ${build.name} (${label})`,
 			needs: [beginJobId],
 			'runs-on': runner,
+			'timeout-minutes': 240,
 			permissions: { contents: 'read' },
 			strategy: { 'fail-fast': true, matrix: { include } },
 			steps: [
@@ -208,6 +209,7 @@ echo "name=\${TEMPLATE//\\{version\\}/\${VERSION}}" >> "\${GITHUB_OUTPUT}"
 		[beginJobId, {
 			name: 'Begin release',
 			'runs-on': 'ubuntu-latest',
+			'timeout-minutes': 10,
 			permissions: { contents: 'read', 'id-token': 'write' },
 			outputs: { sourceSha: expression(`${context}.sourceSha`), version: expression(`${context}.version`) },
 			steps: [{ uses: pinned('checkout'), with: { 'persist-credentials': false } }, begin],
