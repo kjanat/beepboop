@@ -457,6 +457,135 @@ test('a maintenance rebuild keeps the approval, starts and bump the default bran
 	);
 });
 
+test('a rebuild keeps the needs and the GitHub release publication of an observed workflow', async () => {
+	const repository = world.github.create('octo/tool', {
+		'Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\nedition = "2024"\n',
+		'src/main.rs': 'fn main() {}\n',
+		'.github/workflows/github-release.yml':
+			'name: GitHub release\non: { push: { tags: [\'v*\'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: gh release create "$GITHUB_REF_NAME"\n',
+	});
+	const api = bearer(world, await world.cliSession());
+	const observed = {
+		name: 'release',
+		file: 'github-release.yml',
+		ref: 'refs/tags/v*',
+		publications: ['pkg:github/octo/tool'],
+		needs: ['promote'],
+	};
+	const choices = crateChoices({ observe: [observed] });
+	const plan = await applyChoices(api, repository.name, choices);
+	const workflows = z.object({
+		streams: z.object({ main: z.object({ workflows: z.record(z.string(), z.looseObject({})) }) }),
+	});
+	const binding = (ref?: string) =>
+		workflows.parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', ref) ?? '{}')).streams.main
+			.workflows.release;
+	expect(binding('automation/onboarding')).toMatchObject({
+		publications: ['pkg:github/octo/tool'],
+		needs: ['promote'],
+	});
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const [pull] = repository.pulls;
+	if (!pull) throw new Error('Missing setup PR');
+	await editPull(world, repository, pull, tick(pull.body, 'approval:main:required'));
+	await world.wait(16_000);
+	expect(modeOf(repository, 'automation/onboarding').approval).toBe('required');
+	expect(binding('automation/onboarding')).toMatchObject({
+		publications: ['pkg:github/octo/tool'],
+		needs: ['promote'],
+	});
+	world.github.merge(repository, pull.number);
+	const reread = await previewSetup(api, repository.name);
+	expect(reread.edits).toEqual([]);
+	expect(reread.choices.streams[0]?.observe).toEqual([observed]);
+	expect(plan.choices.streams[0]?.observe).toEqual([observed]);
+});
+
+test('unticking a package drops it from the observed workflow that publishes it', async () => {
+	const repository = world.github.create('octo/tool', {
+		'Cargo.toml': '[workspace]\nmembers = ["tool", "extra"]\n',
+		'tool/Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\nedition = "2024"\n',
+		'tool/src/main.rs': 'fn main() {}\n',
+		'extra/Cargo.toml': '[package]\nname = "extra"\nversion = "1.0.0"\nedition = "2024"\n',
+		'extra/src/lib.rs': '\n',
+		'.github/workflows/github-release.yml':
+			"name: GitHub release\non: { push: { tags: ['v*'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: cargo publish --package extra\n",
+	});
+	const api = bearer(world, await world.cliSession());
+	await applyChoices(
+		api,
+		repository.name,
+		crateChoices({
+			packages: ['pkg:cargo/tool', 'pkg:cargo/extra'],
+			observe: [{
+				name: 'release',
+				file: 'github-release.yml',
+				ref: 'refs/tags/v*',
+				publications: ['pkg:github/octo/tool', 'pkg:cargo/extra'],
+			}],
+		}),
+	);
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const [pull] = repository.pulls;
+	if (!pull) throw new Error('Missing setup PR');
+	const extra = '- [x] <!-- beepboop:choice:package:main:pkg%3Acargo%2Fextra -->';
+	expect(pull.body).toContain(extra);
+	await editPull(world, repository, pull, pull.body.replace(extra, extra.replace('[x]', '[ ]')));
+	await world.wait(16_000);
+	const stored = z.object({
+		streams: z.object({
+			main: z.object({ packages: z.array(z.string()), workflows: z.record(z.string(), z.looseObject({})) }),
+		}),
+	}).parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'));
+	expect(stored.streams.main.packages).toEqual(['pkg:cargo/tool']);
+	expect(stored.streams.main.workflows.release).toMatchObject({ publications: ['pkg:github/octo/tool'] });
+});
+
+for (const name of ['octo/tool', 'Octo/Tool']) {
+	test(`setup proposes no binaries when an observed workflow already publishes the GitHub release of ${name}`, async () => {
+		const repository = world.github.create(name, {
+			'Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\nedition = "2024"\n',
+			'src/main.rs': 'fn main() {}\n',
+			'.github/workflows/github-release.yml':
+				'name: GitHub release\non: { push: { tags: [\'v*\'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: gh release create "$GITHUB_REF_NAME"\n',
+		});
+		const api = bearer(world, await world.cliSession());
+		await applyChoices(
+			api,
+			repository.name,
+			crateChoices({
+				observe: [{
+					name: 'release',
+					file: 'github-release.yml',
+					ref: 'refs/tags/v*',
+					publications: [`pkg:github/${name}`],
+				}],
+			}),
+		);
+		world.github.merge(repository, 1);
+		const source = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
+		const legacy = (publications: string[]) =>
+			`${
+				JSON.stringify(
+					source,
+					(key, value) =>
+						key === 'setup'
+							? undefined
+							: key === 'publications' && value[0]?.startsWith('pkg:github')
+							? publications
+							: value,
+					'\t',
+				)
+			}\n`;
+		world.github.push(repository, { '.github/beepboop.json': legacy([`pkg:github/${name}`]) }, 'Drop setup inputs');
+		const observed = await previewSetup(api, repository.name);
+		expect(observed.choices.streams[0]?.promote?.binaries).toBeUndefined();
+		world.github.push(repository, { '.github/beepboop.json': legacy([]) }, 'Stop observing the GitHub release');
+		const unobserved = await previewSetup(api, repository.name);
+		expect(unobserved.choices.streams[0]?.promote?.binaries?.builds.map(build => build.name)).toEqual(['tool']);
+	});
+}
+
 test('a ticked target that the binary is expected to fail on stays ticked with a note beside it', async () => {
 	const repository = engineRepository();
 	const api = bearer(world, await world.cliSession());

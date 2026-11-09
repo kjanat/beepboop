@@ -140,6 +140,7 @@ function suggested(
 		const observe = Object.entries(object(current.workflows)).flatMap(([binding, value]) => {
 			const workflow = object(value);
 			if (workflow.mode !== 'observe' || typeof workflow.file !== 'string') return [];
+			const needs = Array.isArray(workflow.needs) ? workflow.needs.map(String) : [];
 			return [{
 				name: binding,
 				file: workflow.file,
@@ -147,6 +148,7 @@ function suggested(
 				publications: Array.isArray(workflow.publications)
 					? workflow.publications.map(id => selectorKey(String(id), inventory.packages))
 					: covered,
+				...(needs.length ? { needs } : {}),
 			}];
 		});
 		const source = object(current.versionSource);
@@ -250,7 +252,10 @@ function suggested(
 			prepare: choose('prepare'),
 			promote: proposeBinaries(
 				choose('promote'),
-				workflowSetup.safeParse(object(object(current.promote).workflow).setup).success,
+				workflowSetup.safeParse(object(object(current.promote).workflow).setup).success
+					|| observe.some(entry =>
+						entry.publications.includes(selectorKey(`pkg:github/${snapshot.repository.name}`, inventory.packages))
+					),
 				candidates.filter(candidate => selected.includes(candidate.package)),
 			),
 		});
@@ -508,17 +513,15 @@ function drafted(
 				Object.entries(object(current.workflows)).filter(([, value]) => object(value).mode !== 'observe'),
 			);
 			for (const entry of selection.observe ?? []) {
-				const previous = Object.entries(object(object(current.workflows)[entry.name])).filter(([field]) =>
-					field !== 'ref'
-				);
 				const observed: Record<string, unknown> = {
-					...Object.fromEntries(previous),
+					...object(object(current.workflows)[entry.name]),
 					file: entry.file,
 					mode: 'observe',
 					...(entry.ref ? { ref: entry.ref } : {}),
 					publications: entry.publications,
 					...(entry.needs?.length ? { needs: entry.needs } : {}),
 				};
+				if (!entry.ref) delete observed.ref;
 				if (!entry.needs?.length) delete observed.needs;
 				bindings[entry.name] = observed;
 			}
@@ -1063,7 +1066,10 @@ export function bodyChoices(body: string, options: SetupOption[], base: SetupCho
 					? {
 						observe: stream.observe.map(entry => ({
 							...entry,
-							publications: entry.publications.filter(id => packages.includes(id)),
+							publications: entry.publications.filter(id =>
+								packages.includes(id)
+								|| !own.some(option => option.kind === 'package' && option.package === id)
+							),
 						})),
 					}
 					: {}),

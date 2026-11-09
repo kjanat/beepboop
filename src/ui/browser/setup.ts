@@ -176,11 +176,13 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 			publishing.refresh();
 			preparing.refresh();
 		});
+		const kept = (role: string | undefined) =>
+			!observing.checked || role === 'prepare' && !!value.prepare || role === 'promote' && !!value.promote;
 		const pickers = () => [...body.querySelectorAll<HTMLFieldSetElement>('fieldset[data-workflow-role]')];
 		const showPickers = () => {
 			for (const picker of pickers()) {
-				picker.hidden = observing.checked;
-				picker.disabled = observing.checked;
+				picker.hidden = !kept(picker.dataset.workflowRole);
+				picker.disabled = !kept(picker.dataset.workflowRole);
 			}
 		};
 		observing.addEventListener('change', showPickers);
@@ -193,7 +195,11 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 		readers.push(() =>
 			Result.gen(function*() {
 				if (!enabled.checked) return undefined;
-				const packages = selection().packages.map(pkg => pkg.id);
+				const ticked = selection().packages.map(pkg => pkg.id);
+				const packages = [
+					...value.packages.filter(id => ticked.includes(id)),
+					...ticked.filter(id => !value.packages.includes(id)),
+				];
 				const policy: Versioning = versioning.value === 'independent'
 					? 'independent'
 					: versioning.value === 'none'
@@ -217,8 +223,15 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 						? Result.succeed(parsed.data)
 						: Result.fail(new Refused({ message: `${name.value}: ${issueText(parsed.error)}` }));
 				};
-				if (observing.checked && value.observe?.length) {
-					const observed = value.observe;
+				const watched = (observed: NonNullable<typeof value.observe>) =>
+					observed.map(entry => ({
+						...entry,
+						publications: entry.publications.filter(id =>
+							packages.includes(id) || !selected.some(offered => offered.pkg.id === id)
+						),
+					}));
+				const observed = observing.checked && value.observe?.length ? value.observe : undefined;
+				if (observed && !value.promote) {
 					const unchecked = observed.every(entry => entry.publications.length === 0);
 					const unobserved = packages.filter(id =>
 						!observed.some(entry => entry.publications.includes(id)) && !(unchecked && value.packages.includes(id))
@@ -234,28 +247,20 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 							}),
 						);
 					}
-					return yield* checked({
-						name: name.value,
-						packages,
-						required: value.required.filter(id => packages.includes(id)),
-						versioning: policy,
-						observe: value.observe.map(entry => ({
-							...entry,
-							publications: entry.publications.filter(id => packages.includes(id)),
-						})),
-					});
 				}
-				if (!packages.length) {
+				if (!observed && !packages.length) {
 					return yield* Result.fail(new Refused({ message: 'Select at least one package to release.' }));
 				}
-				const prepare = yield* preparing.read(), promote = yield* publishing.read();
+				const prepare = kept('prepare') ? yield* preparing.read() : undefined;
+				const promote = kept('promote') ? yield* publishing.read() : undefined;
 				return yield* checked({
 					name: name.value,
 					packages,
-					required: packages,
+					required: observed ? value.required.filter(id => packages.includes(id)) : packages,
 					versioning: policy,
 					...(prepare ? { prepare } : {}),
 					...(promote ? { promote } : {}),
+					...(observed ? { observe: watched(observed) } : {}),
 				});
 			})
 		);
