@@ -9,12 +9,13 @@ import { workflowEvents } from '@/automation/release-graph/calls';
 import { annotatePins, pinned, renderWorkflow } from '@/automation/setup-actions';
 import {
 	assetConflicts,
+	assetSteps,
 	beginJobId,
-	begunSource,
 	binaryJobs,
 	buildJobId,
 	expression,
 	gitIdentity,
+	ownedBinaryJob,
 	refSteps,
 	releaseSteps,
 } from '@/automation/setup-binaries';
@@ -154,8 +155,9 @@ export function integrateReleaseWorkflow(
 		const existing = snapshot.files[path] !== undefined;
 		const raw = yield* Result.try({ try: () => object(yamlData(document)), catch: toDomainError });
 		const jobs = object(raw.jobs);
+		const built = Object.keys(jobs).filter(name => ownedBinaryJob(name, object(jobs[name])));
 		if (
-			existing && (Object.keys(jobs).length !== 2
+			existing && (Object.keys(jobs).length - built.length !== 2
 				|| object(jobs[prepareJob]).if !== gate('prepare') || object(jobs[publishJob]).if !== gate('promote')
 				|| Object.keys(object(raw.on)).some(event => event !== 'workflow_dispatch'))
 		) {
@@ -194,6 +196,9 @@ export function integrateReleaseWorkflow(
 		});
 		combined.setIn(['jobs', prepareJob, 'if'], gate('prepare'));
 		combined.setIn(['jobs', publishJob, 'if'], gate('promote'));
+		for (const name of promote.binaries ? [beginJobId, ...promote.binaries.builds.map(buildJobId)] : []) {
+			combined.setIn(['jobs', name, 'if'], gate('promote'));
+		}
 		return { content: renderWorkflow(combined), blockers, notes };
 	});
 }
@@ -236,17 +241,20 @@ function integrate(
 		return { content: original ?? '', blockers, notes };
 	}
 	for (const name of binaryJobIds) {
-		const steps = object(jobs[name]).steps;
-		const owned = Array.isArray(steps)
-			&& steps.map(object).some(step =>
-				actionRole(step.uses) === 'begin' || (name !== beginJobId && object(step.with).ref === begunSource)
-			);
-		if (jobs[name] !== undefined && !owned) fail(`job ${name} already exists and is not a Beepboop binary build`);
+		if (jobs[name] !== undefined && !ownedBinaryJob(name, object(jobs[name]))) {
+			fail(`job ${name} already exists and is not a Beepboop binary build`);
+		}
 	}
 	for (const conflict of binaries ? assetConflicts(binaries) : []) fail(conflict);
-	const needs = jobNeeds(job.needs);
+	const stale = binaries || operation !== 'promote'
+		? []
+		: Object.keys(jobs).filter(name => name !== jobName && ownedBinaryJob(name, object(jobs[name])));
+	for (const name of stale) document.deleteIn(['jobs', name]);
+	const needs = jobNeeds(job.needs).filter(need => typeof need !== 'string' || !stale.includes(need));
+	if (stale.length && !needs.length) document.deleteIn(['jobs', jobName, 'needs']);
+	else if (stale.length) document.setIn(['jobs', jobName, 'needs'], needs);
 	const buildNeeds = needs.length > 0 && needs.every(need => typeof need === 'string' && buildJobs.includes(need));
-	if (job.uses || job.strategy || (job.needs && !buildNeeds) || job.if || job.container) {
+	if (job.uses || job.strategy || (needs.length && !buildNeeds) || job.if || job.container) {
 		fail(
 			'reusable, matrix, dependent, conditional or container jobs require explicit workflow integration before setup',
 		);
@@ -305,6 +313,14 @@ function integrate(
 	}
 	if (!original) document.setIn(['jobs', jobName, 'runs-on'], 'ubuntu-latest');
 	let steps = Array.isArray(job.steps) ? job.steps.map(object) : [];
+	const uploaded = steps.findIndex(step => step.id === 'beepboop_binaries');
+	if (!binaries && operation === 'promote' && uploaded >= 0) {
+		const download = steps.findIndex(step =>
+			typeof step.uses === 'string' && /^actions\/download-artifact@/.test(step.uses)
+		);
+		const start = download >= 0 && download < uploaded ? download : uploaded;
+		steps.splice(start, uploaded - start + 1);
+	}
 	if (steps.filter(step => actionRole(step.uses) === 'begin').length > 1) {
 		fail('multiple begin steps need manual integration');
 	}
@@ -439,24 +455,25 @@ function integrate(
 			!prepareSteps.some(step => object(step.with).mode === 'apply' && object(step.with).context === context)
 			|| !prepareSteps.some(step => object(step.with).mode === 'submit' && object(step.with).context === context)
 		) fail('preparation needs apply and submit steps using the begin context');
-	} else if (binaries && steps.some(step => actionRole(step.uses) === 'report')) {
+	} else if (binaries && steps.some(step => ['report', 'publish'].includes(actionRole(step.uses) ?? ''))) {
 		const uses = (pattern: RegExp) => steps.findIndex(step => typeof step.uses === 'string' && pattern.test(step.uses));
 		const download = uses(/^actions\/download-artifact@/), release = uses(/\/actions\/publish-release\b/);
+		const tagging = steps.findIndex(step =>
+			typeof step.uses === 'string' && /\/actions\/(?:token|publish-refs|publish-release)\b/.test(step.uses)
+		);
+		const report = steps.findIndex(step => actionRole(step.uses) === 'report');
 		if (steps.some(step => step.id === 'beepboop_binaries')) {
 			if (download >= 0 && download < release) {
 				steps.splice(download, release - download + 1, ...releaseSteps(id, action));
 			}
+		} else if (tagging >= 0) {
+			steps.splice(tagging, 0, ...assetSteps(id));
 		} else {
-			if (
-				steps.some(step => typeof step.uses === 'string' && /\/actions\/publish-(?:refs|release)\b/.test(step.uses))
-			) {
-				fail('publish-refs and publish-release need to follow the binary upload; remove them before setup');
-			}
-			steps.splice(steps.findIndex(step => actionRole(step.uses) === 'report'), 0, ...releaseSteps(id, action));
+			const published = steps.findIndex(step => actionRole(step.uses) === 'publish');
+			steps.splice(report >= 0 ? report : published + 1, 0, ...releaseSteps(id, action));
 		}
 	} else if (!steps.some(step => ['report', 'publish'].includes(actionRole(step.uses) ?? ''))) {
 		if (!original && !choice.commands.trim() && !binaries && !choice.tagPrefix) fail('supply publication commands');
-		if (binaries) steps.push(...releaseSteps(id, action));
 		const ledger = choice.commands.trim() === ledgerCommand;
 		if (choice.commands.trim()) {
 			if (steps.some(step => step.id === 'beepboop_publish')) fail('step ID beepboop_publish is already used');
@@ -474,7 +491,8 @@ function integrate(
 					: commandSteps({ id: 'beepboop_publish', name: 'Publish selected packages', run: choice.commands })),
 			);
 		}
-		if (choice.tagPrefix && !binaries) steps.push(...refSteps(id, action));
+		if (binaries) steps.push(...releaseSteps(id, action));
+		else if (choice.tagPrefix) steps.push(...refSteps(id, action));
 		const tagged = (pkg: Package) => pkg.manager === 'go' && (binaries !== undefined || choice.tagPrefix !== undefined);
 		const recorded = (pkg: Package) =>
 			ledger && !choice.publicationSteps[packageId(pkg)] && ledgerManagers.some(manager => manager === pkg.manager);

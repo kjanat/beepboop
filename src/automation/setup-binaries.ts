@@ -1,3 +1,4 @@
+import { object } from '@/automation/managers/helpers';
 import { pinned } from '@/automation/setup-actions';
 import type { AssetPlaceholder, BinaryBuild, BinaryRelease, BinaryTarget } from '@/contract/setup';
 
@@ -219,6 +220,13 @@ echo "name=\${TEMPLATE//\\{version\\}/\${VERSION}}" >> "\${GITHUB_OUTPUT}"
 }
 
 export function releaseSteps(id: string, action: (name: string) => string): Record<string, unknown>[] {
+	return [
+		...assetSteps(id),
+		...refSteps(id, action),
+		{ uses: action('publish-release'), with: { 'execution-id': expression(`steps.${id}.outputs.execution-id`) } },
+	];
+}
+export function assetSteps(id: string): Record<string, unknown>[] {
 	const sbom = `dist/${expression('github.event.repository.name')}.spdx.json`;
 	return [
 		{ uses: pinned('download'), with: { path: 'dist', 'merge-multiple': true } },
@@ -252,9 +260,15 @@ export function releaseSteps(id: string, action: (name: string) => string): Reco
 			},
 			run: `gh release upload "\${TAG}" -- *\n`,
 		},
-		...refSteps(id, action),
-		{ uses: action('publish-release'), with: { 'execution-id': expression(`steps.${id}.outputs.execution-id`) } },
 	];
+}
+export function ownedBinaryJob(name: string, job: Record<string, unknown>): boolean {
+	const steps = Array.isArray(job.steps) ? job.steps.map(object) : [];
+	return (name === beginJobId || name.startsWith('build-'))
+		&& steps.some(step =>
+			(typeof step.uses === 'string' && /\/actions\/begin\b/.test(step.uses))
+			|| (name !== beginJobId && object(step.with).ref === begunSource)
+		);
 }
 
 /** Tags pushed with `github.token` start no workflows, so the push uses the App installation token. */

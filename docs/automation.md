@@ -1092,7 +1092,7 @@ matrix job per build. The `begin` job alone holds `id-token: write`. It runs
 a native runner for each target. Each build job has only `contents: read`. It
 checks out the approved commit, builds it and uploads its file as an artifact.
 
-The publication job then runs these steps:
+The publication job publishes its packages first, then runs these steps:
 
 1. It downloads every artifact and writes `checksums.txt`.
 2. It generates an SPDX SBOM named `<repository>.spdx.json` with
@@ -1106,13 +1106,16 @@ The publication job then runs these steps:
 The workflow binding lists `github-release:<owner>/<repo>` in `publications`
 and declares `refs` with `phase: "version"`.
 
-In an existing workflow, setup adds the `begin` and build jobs, makes the
-selected job wait for the builds and inserts the release steps before its
-`report` step. A job that already carries the name `begin` or a build job's name
-must be a Beepboop binary build. Any existing `publish-refs` or
-`publish-release` step must run after the upload. When the job already uploads
-binaries, setup replaces its generated release steps, from the artifact
-download through `publish-release`.
+In an existing workflow, setup adds the `begin` and build jobs and makes the
+selected job wait for the builds. It inserts the upload steps before the job's
+first `token`, `publish-refs` or `publish-release` step. Without those, it adds
+the release steps before the `report` step, or after the `actions/publish`
+step. In a workflow that shares preparation and publication, the `begin` and
+build jobs run only for `beepboop_operation: publish`. A job that already
+carries the name `begin` or a build job's name must be a Beepboop binary build.
+When the job already uploads binaries, setup replaces its generated release
+steps, from the artifact download through `publish-release`. Unticking every
+build removes the `begin` and build jobs and the upload steps.
 
 Setup pins every third-party action it writes to a full commit SHA and adds the
 release version as a comment, for example

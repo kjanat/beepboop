@@ -1025,7 +1025,7 @@ test('setup moves OIDC out of earlier build jobs and pins their release steps', 
 	expect(kept.edits.find(edit => edit.path === '.github/workflows/release.yml')).toBeUndefined();
 });
 
-test('binary builds refuse ref publication that runs before the upload', async () => {
+test('binary builds upload their files before an existing ref publication', async () => {
 	const repository = binaryRepository();
 	const workflow = publishWorkflow.replace(
 		'      - run: npm publish\n',
@@ -1038,9 +1038,14 @@ test('binary builds refuse ref publication that runs before the upload', async (
 		choices: binaryChoices(),
 	});
 	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
-	expect(plan.blockers).toContain(
-		'release.yml: publish-refs and publish-release need to follow the binary upload; remove them before setup',
+	expect(plan.blockers).toEqual([]);
+	const after = plan.edits.find(edit => edit.path === '.github/workflows/release.yml')?.after ?? '';
+	const steps = binaryWorkflowSchema.parse(parse(after)).jobs.publish?.steps ?? [];
+	const at = (match: (step: (typeof steps)[number]) => boolean) => steps.findIndex(match);
+	expect(at(step => step.uses === 'kjanat/beepboop/actions/publish-refs@v1')).toBeGreaterThan(
+		at(step => step.id === 'beepboop_binaries'),
 	);
+	expect(at(step => step.id === 'beepboop_binaries')).toBeGreaterThan(at(step => step.run === 'npm publish'));
 });
 
 test('binary builds belong to the publication job alone', async () => {

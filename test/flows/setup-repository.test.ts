@@ -4,6 +4,7 @@ import { bearer } from '@root/test/support/http.ts';
 import { applyChoices, editPull, previewSetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
+import { parse } from 'yaml';
 import { z } from 'zod';
 import type { SetupChoices } from '@/automation/setup-types';
 import { binaries, binaryTargets, workflowSetup } from '@/contract/setup';
@@ -217,4 +218,88 @@ test('the migration PR proposes each Cargo binary with the targets its dependenc
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
 	await world.wait(16_000);
 	expect(pull.body).toContain('- [ ] <!-- beepboop:choice:binary:main:engine -->');
+});
+
+const sharedJobs = z.object({
+	jobs: z.record(
+		z.string(),
+		z.looseObject({
+			if: z.string().optional(),
+			needs: z.array(z.string()).optional(),
+			steps: z.array(z.looseObject({ id: z.string().optional(), uses: z.string().optional() })),
+		}),
+	),
+});
+function sharedChoices(withBinaries: boolean): SetupChoices {
+	const [stream] = engineChoices.streams;
+	if (!stream?.promote) throw new Error('Missing engine stream');
+	return {
+		streams: [{
+			...stream,
+			prepare: {
+				file: 'release.yml',
+				job: 'prepare',
+				triggers: 'review',
+				commands: 'cargo test',
+				publicationSteps: {},
+			},
+			promote: {
+				...stream.promote,
+				tagPrefix: 'v',
+				...(withBinaries
+					? {
+						binaries: binaries.parse({
+							builds: [{ toolchain: 'cargo', name: 'engine', manifest: 'crates/cli/Cargo.toml' }],
+							targets: unixTargets,
+						}),
+					}
+					: {}),
+			},
+		}],
+	};
+}
+
+test('a shared release workflow gates its binary jobs, uploads before the tag and drops them when unticked', async () => {
+	const repository = engineRepository();
+	const api = bearer(world, await world.cliSession());
+	await applyChoices(api, repository.name, sharedChoices(true));
+	world.github.merge(repository, 1);
+	const source = world.github.file(repository, '.github/workflows/release.yml') ?? '';
+	const { jobs } = sharedJobs.parse(parse(source));
+	const publish = "${{ inputs.beepboop_operation == 'publish' }}";
+	expect([jobs.begin?.if, jobs['build-engine']?.if, jobs.publish?.if]).toEqual([publish, publish, publish]);
+	expect(jobs.prepare?.if).toBe("${{ inputs.beepboop_operation == 'prepare' }}");
+	const order = (jobs.publish?.steps ?? []).map(step => step.id ?? step.uses ?? '');
+	const index = (name: string) => order.findIndex(entry => entry.includes(name));
+	expect(index('beepboop_publish')).toBeLessThan(index('beepboop_binaries'));
+	expect(index('beepboop_binaries')).toBeLessThan(index('beepboop_token'));
+	expect(index('beepboop_token')).toBeLessThan(index('publish-release'));
+	expect((await previewSetup(api, repository.name)).edits).toEqual([]);
+
+	const unticked = await previewSetup(api, repository.name, sharedChoices(false));
+	expect(unticked.blockers).toEqual([]);
+	const regenerated = unticked.edits.find(edit => edit.path === '.github/workflows/release.yml')?.after ?? '';
+	const remaining = sharedJobs.parse(parse(regenerated)).jobs;
+	expect(Object.keys(remaining).sort()).toEqual(['prepare', 'publish']);
+	expect(remaining.publish?.needs).toBeUndefined();
+	expect(remaining.publish?.steps.some(step => step.id === 'beepboop_binaries')).toBe(false);
+});
+
+test('binaries added to an existing shared ledger workflow upload after the crates and before the tag', async () => {
+	const repository = engineRepository();
+	const api = bearer(world, await world.cliSession());
+	await applyChoices(api, repository.name, sharedChoices(false));
+	world.github.merge(repository, 1);
+	const plan = await previewSetup(api, repository.name, sharedChoices(true));
+	expect(plan.blockers).toEqual([]);
+	const after = plan.edits.find(edit => edit.path === '.github/workflows/release.yml')?.after ?? '';
+	const { jobs } = sharedJobs.parse(parse(after));
+	const publish = "${{ inputs.beepboop_operation == 'publish' }}";
+	expect([jobs.begin?.if, jobs['build-engine']?.if]).toEqual([publish, publish]);
+	expect(jobs.publish?.needs).toEqual(['build-engine']);
+	const order = (jobs.publish?.steps ?? []).map(step => step.id ?? step.uses ?? '');
+	const index = (name: string) => order.findIndex(entry => entry.includes(name));
+	expect(index('download-artifact')).toBeGreaterThan(index('beepboop_publish'));
+	expect(index('beepboop_binaries')).toBeLessThan(index('beepboop_token'));
+	expect(index('beepboop_token')).toBeLessThan(index('publish-release'));
 });
