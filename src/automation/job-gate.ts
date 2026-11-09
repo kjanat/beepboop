@@ -22,6 +22,10 @@ export interface RunJob {
 export type GateState = 'ready' | 'blocked' | 'waiting';
 type JobStatus = 'passed' | 'failed' | 'pending';
 
+export function jobNeeds<T>(needs: T | T[] | undefined): T[] {
+	return needs === undefined ? [] : Array.isArray(needs) ? needs : [needs];
+}
+
 export function workflowJobs(source: string): WorkflowJobs | undefined {
 	const document = parseDocument(source);
 	if (document.errors.length) return undefined;
@@ -33,7 +37,7 @@ export function workflowJobs(source: string): WorkflowJobs | undefined {
 			const condition = typeof job.if === 'string' ? job.if : '';
 			return [key, {
 				...(name.includes('${{') ? {} : { display: name }),
-				needs: typeof job.needs === 'string' ? [job.needs] : job.needs ?? [],
+				needs: jobNeeds(job.needs),
 				plain: !/\b(?:always|failure|cancelled)\s*\(|\.result\b/.test(condition),
 			}];
 		}),

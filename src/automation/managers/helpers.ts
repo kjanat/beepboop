@@ -1,4 +1,5 @@
 import { Result } from 'effect';
+import type { Document } from 'yaml';
 import { parseDocument } from 'yaml';
 import { escapeRegExp } from '@/automation/release-graph/shell';
 import type { DomainError } from '@/contract/errors';
@@ -38,8 +39,18 @@ export function editTomlVersion(
 	}).join('\n');
 	return count === 1 ? after : undefined;
 }
+export function yamlDocument(source: string): Document.Parsed {
+	return parseDocument(source, { uniqueKeys: true });
+}
+export function validYaml(source: string, message: string): Result.Result<Document.Parsed, DomainError> {
+	const document = yamlDocument(source);
+	return document.errors.length ? Result.fail(precondition(message)) : Result.succeed(document);
+}
+export function yamlData(document: Document): unknown {
+	return document.toJS({ maxAliasCount: 100 });
+}
 export function yaml(source: string): Result.Result<Record<string, unknown>, DomainError> {
-	const doc = parseDocument(source, { uniqueKeys: true });
-	if (doc.errors.length) return Result.fail(precondition('Invalid YAML'));
-	return Result.try({ try: () => object(doc.toJS({ maxAliasCount: 100 })), catch: toDomainError });
+	return validYaml(source, 'Invalid YAML').pipe(
+		Result.flatMap(document => Result.try({ try: () => object(yamlData(document)), catch: toDomainError })),
+	);
 }

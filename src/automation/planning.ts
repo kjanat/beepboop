@@ -1,6 +1,6 @@
 import { Effect, Result } from 'effect';
 import { z } from 'zod';
-import { applyVersionFiles } from '@/automation/editors';
+import { applyVersionFiles, fileEdits } from '@/automation/editors';
 import { planRelease, publicationOrder } from '@/automation/managers';
 import { inputSchema, nameSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { matchesPackage, selectorKey } from '@/automation/package-identity';
@@ -120,12 +120,10 @@ export function planReleaseSet(
 			versionFiles,
 			Object.fromEntries([...groups.values()].map(group => [group.id, group.version])),
 		);
-		const edits: Edit[] = [];
-		for (const path of Object.keys(files).sort()) {
-			const before = snapshot.files[path], after = files[path];
-			if (before === undefined || after === undefined) return yield* precondition('Missing planned manifest');
-			if (before !== after) edits.push({ path, before, after });
-		}
+		const edits = yield* fileEdits(
+			snapshot.files,
+			Object.entries(files).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0),
+		);
 		const ordering = publicationOrder(
 			inventory.packages.filter(p => [...selected].some(reference => matchesPackage(reference, p))),
 		);

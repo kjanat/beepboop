@@ -1,6 +1,7 @@
 import { Effect, Result } from 'effect';
 import type { Scalar } from 'yaml';
-import { isMap, isScalar, isSeq, parseDocument } from 'yaml';
+import { isMap, isScalar, isSeq } from 'yaml';
+import { validYaml } from '@/automation/managers/helpers';
 import type { Edit, ReleaseReference, Snapshot } from '@/automation/types';
 import { hookConfig } from '@/contract/catalog';
 import type { DomainError } from '@/contract/errors';
@@ -19,8 +20,7 @@ interface Entry {
 }
 function entries(source: string): Result.Result<Entry[], DomainError> {
 	return Result.gen(function*() {
-		const doc = parseDocument(source, { uniqueKeys: true });
-		if (doc.errors.length) return yield* Result.fail(precondition('Invalid pre-commit configuration'));
+		const doc = yield* validYaml(source, 'Invalid pre-commit configuration');
 		const repos = doc.get('repos', true);
 		if (!isSeq(repos)) return yield* Result.fail(precondition('Expected pre-commit repos sequence'));
 		const found: Entry[] = [];

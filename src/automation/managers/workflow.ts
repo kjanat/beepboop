@@ -2,6 +2,7 @@ import { Result } from 'effect';
 import { object, yaml } from '@/automation/managers/helpers';
 import type { Adapter } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
+import { workflowEvents } from '@/automation/release-graph/calls';
 import { actionRole, workflowEvidence } from '@/automation/setup-workflows';
 import { fileProblem } from '@/contract/diagnostics';
 export const workflowManager: Adapter<'workflow'> = {
@@ -21,11 +22,7 @@ export const workflowManager: Adapter<'workflow'> = {
 			}
 			const { evidence, workflow } = parsed.success;
 			const trigger = workflow.on;
-			const events = typeof trigger === 'string'
-				? [trigger]
-				: Array.isArray(trigger)
-				? trigger.map(String)
-				: Object.keys(object(trigger));
+			const events = workflowEvents(workflow);
 			const jobs = object(workflow.jobs);
 			const push = object(object(trigger).push);
 			const createsRelease = Object.values(jobs).some(job => {

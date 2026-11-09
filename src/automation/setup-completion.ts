@@ -1,8 +1,9 @@
 import { gateJobs, workflowJobs } from '@/automation/job-gate';
+import { slug, unusedName } from '@/automation/naming';
 import { packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import type { ReleaseGraph } from '@/automation/release-graph/graph';
-import { ledgerCommand } from '@/automation/setup-defaults';
+import { ledgerCommand, shellQuote } from '@/automation/setup-defaults';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Inventory, Package, Snapshot } from '@/automation/types';
 import { isLockfile } from '@/contract/catalog';
@@ -19,16 +20,12 @@ const lockCommands: [RegExp, string][] = [
 	[/(?:^|\/)uv\.lock$/, 'uv lock'],
 ];
 
-function quote(value: string): string {
-	return `'${value.replaceAll("'", "'\\''")}'`;
-}
 function within(path: string, command: string): string {
 	const parent = parentDirectory(path);
-	return parent ? `(cd ${quote(parent)} && ${command})` : command;
+	return parent ? `(cd ${shellQuote(parent)} && ${command})` : command;
 }
 function unusedFile(base: string, taken: string[]): string {
-	let file = `${base}.yml`, index = 2;
-	while (taken.includes(file)) file = `${base}-${index++}.yml`;
+	const file = unusedName(`${base}.yml`, index => `${base}-${index}.yml`, name => taken.includes(name));
 	taken.push(file);
 	return file;
 }
@@ -174,9 +171,12 @@ export function completeTaggedStreams(
 	const names = new Set(streams.map(entry => entry.name));
 	const independent = modules.filter(released).map((pkg): Stream => {
 		const prefix = modulePrefix(pkg);
-		const base = prefix.replace(/\/?v$/, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'go';
-		let name = /^[a-z]/.test(base) ? base.slice(0, 64) : `go-${base}`.slice(0, 64), index = 2;
-		while (names.has(name)) name = `${base}-${index++}`;
+		const base = slug(prefix.replace(/\/?v$/, '')) || 'go';
+		const name = unusedName(
+			/^[a-z]/.test(base) ? base.slice(0, 64) : `go-${base}`.slice(0, 64),
+			index => `${base}-${index}`,
+			taken => names.has(taken),
+		);
 		names.add(name);
 		return {
 			name,

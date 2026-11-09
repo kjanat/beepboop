@@ -26,13 +26,18 @@ function withoutComment(line: string): string {
 	return line;
 }
 const heredoc = /<<-?\s*(['"]?)([A-Za-z_]\w*)\1/;
-const interpreter = /^(?:sudo\s+)?(?:bash|sh|zsh|dash)\b/;
+export function posixShell(command: string): boolean {
+	return /^(?:bash|sh|zsh|dash)\b/.test(command);
+}
+function logicalLines(text: string): string[] {
+	return text.replace(/\\\r?\n\s*/g, ' ').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+}
 export function lines(text: string): string[] {
 	const found: string[] = [];
 	let delimiter: { word: string; run: boolean } | undefined;
-	for (const raw of text.replace(/\\\r?\n\s*/g, ' ').split(/\r?\n/)) {
+	for (const raw of logicalLines(text)) {
 		if (delimiter) {
-			if (raw.trim() === delimiter.word) delimiter = undefined;
+			if (raw === delimiter.word) delimiter = undefined;
 			else if (delimiter.run) {
 				const body = withoutComment(raw).trim();
 				if (body) found.push(body);
@@ -43,7 +48,9 @@ export function lines(text: string): string[] {
 		if (!line) continue;
 		found.push(line);
 		const opened = heredoc.exec(line);
-		if (opened && !line.includes('<<<')) delimiter = { word: opened[2] ?? '', run: interpreter.test(line) };
+		if (opened && !line.includes('<<<')) {
+			delimiter = { word: opened[2] ?? '', run: posixShell(line.replace(/^sudo\s+/, '')) };
+		}
 	}
 	return found;
 }
@@ -142,9 +149,7 @@ export function escapeRegExp(value: string): string {
 }
 
 export function isolatedLines(recipe: string): string {
-	return recipe.replace(/\\\r?\n\s*/g, ' ').split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line =>
-		line.startsWith('#') ? line : `(${line})`
-	).join('\n');
+	return logicalLines(recipe).map(line => line.startsWith('#') ? line : `(${line})`).join('\n');
 }
 
 export function globMatches(pattern: string, name: string): boolean {

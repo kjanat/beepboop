@@ -2,8 +2,10 @@ import { isDeepStrictEqual } from 'node:util';
 import { Result } from 'effect';
 import type { Document } from 'yaml';
 import { isMap, isNode, parseDocument, visit } from 'yaml';
-import { object, yaml } from '@/automation/managers/helpers';
+import { jobNeeds } from '@/automation/job-gate';
+import { object, yaml, yamlData } from '@/automation/managers/helpers';
 import { packageId } from '@/automation/package-identity';
+import { workflowEvents } from '@/automation/release-graph/calls';
 import { annotatePins, pinned, renderWorkflow } from '@/automation/setup-actions';
 import {
 	assetConflicts,
@@ -11,6 +13,7 @@ import {
 	begunSource,
 	binaryJobs,
 	buildJobId,
+	expression,
 	gitIdentity,
 	refSteps,
 	releaseSteps,
@@ -38,15 +41,10 @@ export function workflowEvidence(file: string, source: string): Result.Result<Wo
 	return yaml(source).pipe(Result.map(document => evidenceOf(file, document)));
 }
 function evidenceOf(file: string, document: Record<string, unknown>): WorkflowEvidence {
-	const trigger = document.on;
 	const result: WorkflowEvidence = {
 		file,
 		jobs: Object.keys(object(document.jobs)),
-		events: typeof trigger === 'string'
-			? [trigger]
-			: Array.isArray(trigger)
-			? trigger.map(String)
-			: Object.keys(object(trigger)),
+		events: workflowEvents(document),
 		steps: [],
 		roles: [],
 		preparationJobs: [],
@@ -91,9 +89,8 @@ function evidenceOf(file: string, document: Record<string, unknown>): WorkflowEv
 	);
 	return result;
 }
-// GitHub expression, evaluated by Actions rather than JavaScript.
-const executionInput = '$' + '{{ inputs.beepboop_execution_id }}';
-const runName = '$' + '{{ inputs.beepboop_title || github.workflow }}';
+const executionInput = expression('inputs.beepboop_execution_id');
+const runName = expression('inputs.beepboop_title || github.workflow');
 
 /** Patch only selected jobs and the dispatch contract; leave other YAML nodes and comments intact. */
 export function integrateWorkflow(
@@ -155,7 +152,7 @@ export function integrateReleaseWorkflow(
 		const document = parseDocument(snapshot.files[path] ?? 'name: Release\non: {}\njobs: {}\n');
 		if (document.errors.length) return fail('invalid YAML');
 		const existing = snapshot.files[path] !== undefined;
-		const raw = yield* Result.try({ try: () => object(document.toJS({ maxAliasCount: 100 })), catch: toDomainError });
+		const raw = yield* Result.try({ try: () => object(yamlData(document)), catch: toDomainError });
 		const jobs = object(raw.jobs);
 		if (
 			existing && (Object.keys(jobs).length !== 2
@@ -212,7 +209,7 @@ function integrate(
 	required: string[],
 	release: boolean,
 ): Integration {
-	const root = object(document.toJS({ maxAliasCount: 100 })), jobs = object(root.jobs);
+	const root = object(yamlData(document)), jobs = object(root.jobs);
 	const blockers: string[] = [], notes: string[] = [];
 	const fail = (message: string) => blockers.push(`${choice.file}: ${message}`);
 	const jobName = choice.job || (Object.keys(jobs).length === 1 ? Object.keys(jobs)[0] : undefined)
@@ -247,7 +244,7 @@ function integrate(
 		if (jobs[name] !== undefined && !owned) fail(`job ${name} already exists and is not a Beepboop binary build`);
 	}
 	for (const conflict of binaries ? assetConflicts(binaries) : []) fail(conflict);
-	const needs = Array.isArray(job.needs) ? job.needs : job.needs === undefined ? [] : [job.needs];
+	const needs = jobNeeds(job.needs);
 	const buildNeeds = needs.length > 0 && needs.every(need => typeof need === 'string' && buildJobs.includes(need));
 	if (job.uses || job.strategy || (job.needs && !buildNeeds) || job.if || job.container) {
 		fail(
@@ -255,11 +252,7 @@ function integrate(
 		);
 		return { content: original ?? '', blockers, notes };
 	}
-	const events = typeof root.on === 'string'
-		? [root.on]
-		: Array.isArray(root.on)
-		? root.on.map(String)
-		: Object.keys(object(root.on));
+	const events = workflowEvents(root);
 	if (events.some(event => event !== 'workflow_dispatch') && choice.triggers !== 'dispatchOnly') {
 		fail(
 			'choose dispatch-only triggers to hand publication control to Beepboop; preserving automatic publication requires a separate workflow',
@@ -612,6 +605,6 @@ function integrate(
 		);
 	}
 	const unchanged = original !== undefined
-		&& isDeepStrictEqual(parseDocument(original).toJS({ maxAliasCount: 100 }), document.toJS({ maxAliasCount: 100 }));
+		&& isDeepStrictEqual(yamlData(parseDocument(original)), yamlData(document));
 	return { content: unchanged ? original : annotatePins(renderWorkflow(document)), blockers, notes };
 }

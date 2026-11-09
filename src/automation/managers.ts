@@ -1,5 +1,5 @@
 import { Effect } from 'effect';
-import { alreadyPrepared, applyVersionFiles } from '@/automation/editors';
+import { alreadyPrepared, applyVersionFiles, fileEdits } from '@/automation/editors';
 import { managerRegistry } from '@/automation/managers/builtins';
 import type { Fetcher, ManagerRegistry, VerificationContext } from '@/automation/managers/registry';
 import { tagPrefix } from '@/automation/managers/tags';
@@ -77,12 +77,7 @@ export function planRelease(
 		yield* applyVersionFiles(snapshot, files, versionFiles, { release: version });
 		for (const [path, after] of Object.entries(files)) if (after !== snapshot.files[path]) changed.set(path, after);
 
-		const edits: ReleasePlan['edits'] = [];
-		for (const [path, after] of changed) {
-			const before = snapshot.files[path];
-			if (before === undefined) return yield* precondition('Missing planned manifest');
-			if (before !== after) edits.push({ path, before, after });
-		}
+		const edits = yield* fileEdits(snapshot.files, changed);
 		const requiresPreparation = edits.length > 0
 			&& Object.keys(snapshot.files).some(isLockfile);
 		if (requiresPreparation) {

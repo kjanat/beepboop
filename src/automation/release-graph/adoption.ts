@@ -1,8 +1,10 @@
 import { latestTag } from '@/automation/managers/tags';
+import { slug, unusedName } from '@/automation/naming';
 import { packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import { staticGuard } from '@/automation/release-graph/bindings';
 import type { ReleaseGraph, StreamProposal, StreamWorkflow, Target } from '@/automation/release-graph/graph';
+import { code } from '@/automation/release-graph/graph';
 import { escapeRegExp } from '@/automation/release-graph/shell';
 import type { Destination } from '@/automation/release-graph/workflows';
 import { literalPrefix } from '@/automation/release-graph/workflows';
@@ -28,18 +30,14 @@ const labels: Record<Destination, string> = {
 	'zed-extensions': 'Zed extension registry',
 	docs: 'documentation',
 };
-function code(value: string): string {
-	return `\`${value}\``;
-}
 function list(values: string[]): string {
 	return values.map(code).join(', ');
 }
 function bindingName(file: string, taken: Set<string>): string {
-	const stem = file.replace(/\.ya?ml$/, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+	const stem = slug(file.replace(/\.ya?ml$/, ''));
 	let name = identifierPattern.test(stem) && stem !== 'prepare' && stem !== 'promote' ? stem : `observe-${stem}`;
 	name = name.slice(0, 64);
-	let candidate = name, index = 2;
-	while (taken.has(candidate)) candidate = `${name.slice(0, 60)}-${index++}`;
+	const candidate = unusedName(name, index => `${name.slice(0, 60)}-${index}`, used => taken.has(used));
 	taken.add(candidate);
 	return candidate;
 }

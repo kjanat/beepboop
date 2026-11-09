@@ -1,3 +1,4 @@
+import { slug, unusedName } from '@/automation/naming';
 import type { SetupPlan } from '@/automation/setup-types';
 import { parentDirectory } from '@/relative-path';
 
@@ -19,8 +20,8 @@ export function preparationReasons(plan: SetupPlan, selection: Selection): strin
 	) reasons.push('These packages take their versions from Git tags and need a preparation job.');
 	return reasons;
 }
-function slug(value: string) {
-	return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 70) || 'packages';
+function fileSlug(value: string) {
+	return slug(value).slice(0, 70) || 'packages';
 }
 export function suggestedWorkflowFile(
 	role: 'prepare' | 'promote',
@@ -28,21 +29,21 @@ export function suggestedWorkflowFile(
 	plan: SetupPlan,
 	reserved: string[] = [],
 ): string {
-	const group = selection.name === 'main' ? '' : `-${slug(selection.name)}`;
+	const group = selection.name === 'main' ? '' : `-${fileSlug(selection.name)}`;
 	const base = `${role === 'prepare' ? 'prepare' : 'release'}-${
-		slug(
+		fileSlug(
 			selection.packages.length === 1
 				? selection.packages[0]?.name ?? selection.name
 				: plan.repository.split('/')[1] ?? selection.name,
 		)
 	}${group}`;
-	let proposed = `${base}.yml`, index = 2;
-	while (plan.workflows.some(w => w.file === proposed) || reserved.includes(proposed)) {
-		proposed = `${base}-${index++}.yml`;
-	}
-	return proposed;
+	return unusedName(
+		`${base}.yml`,
+		index => `${base}-${index}.yml`,
+		proposed => plan.workflows.some(w => w.file === proposed) || reserved.includes(proposed),
+	);
 }
-function quote(value: string) {
+export function shellQuote(value: string): string {
 	return `'${value.replaceAll("'", "'\\''")}'`;
 }
 const publishCrate = String.raw`crate_status() {
@@ -91,7 +92,7 @@ publish_crate() {
   return 1
 }`;
 export function cratePublishCommands(names: string[]): string {
-	return [publishCrate, ...names.map(name => `publish_crate ${quote(name)}`)].join('\n');
+	return [publishCrate, ...names.map(name => `publish_crate ${shellQuote(name)}`)].join('\n');
 }
 export const ledgerCommand = 'beepboop publish';
 type Context = Pick<SetupPlan, 'inventory' | 'preparation'>;
@@ -135,7 +136,7 @@ const generators: Record<
 			return [
 				...new Set(packages.map(pkg => {
 					const dir = parentDirectory(pkg.manifest);
-					return dir ? `(cd ${quote(dir)} &&\n${command}\n)` : command;
+					return dir ? `(cd ${shellQuote(dir)} &&\n${command}\n)` : command;
 				})),
 			].join('\n');
 		},
@@ -145,7 +146,9 @@ const generators: Record<
 		commands: packages =>
 			packages.map(pkg => {
 				const dir = parentDirectory(pkg.manifest);
-				return `uv build${dir ? ` --project ${quote(dir)}` : ''} --out-dir "$RUNNER_TEMP"/dist/${quote(pkg.name)}`;
+				return `uv build${dir ? ` --project ${shellQuote(dir)}` : ''} --out-dir "$RUNNER_TEMP"/dist/${
+					shellQuote(pkg.name)
+				}`;
 			}).join('\n'),
 	},
 };
@@ -167,7 +170,7 @@ function managerCommands(selection: Selection, plan: Context): string {
 		.join('\n');
 }
 export function crateOutcome(commands: string, name: string): boolean {
-	return commands.startsWith(publishCrate) && commands.split('\n').includes(`publish_crate ${quote(name)}`);
+	return commands.startsWith(publishCrate) && commands.split('\n').includes(`publish_crate ${shellQuote(name)}`);
 }
 export function refreshedCommands(
 	role: 'prepare' | 'promote',
@@ -179,7 +182,7 @@ export function refreshedCommands(
 	if (!commands) return commands;
 	if (crateScript(commands)) return suggestedCommands(role, selection, plan) || commands;
 	const named = candidates.filter(pkg =>
-		[quote(pkg.name), quote(parentDirectory(pkg.manifest)), quote(`dist/${pkg.name}`)].some(token =>
+		[shellQuote(pkg.name), shellQuote(parentDirectory(pkg.manifest)), shellQuote(`dist/${pkg.name}`)].some(token =>
 			commands.includes(token)
 		)
 	);

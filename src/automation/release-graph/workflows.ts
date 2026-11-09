@@ -28,6 +28,7 @@ import {
 	executed,
 	globMatches,
 	isolatedLines,
+	posixShell,
 	walkDirectories,
 	within,
 } from '@/automation/release-graph/shell';
@@ -243,7 +244,7 @@ function topLevel(source: string, path: string): string {
 	return shellScript.test(source) || /\.(?:ba|z|da|k)?sh$/.test(path) ? shellTopLevel(source) : source;
 }
 function executable(run: string, shell: unknown): string {
-	return typeof shell === 'string' && !/^(?:bash|sh|zsh|dash)\b/.test(shell) ? run : shellTopLevel(run);
+	return typeof shell === 'string' && !posixShell(shell) ? run : shellTopLevel(run);
 }
 function shellTopLevel(source: string): string {
 	const kept: string[] = [];
@@ -314,6 +315,18 @@ type TaskKind = (typeof taskKinds)[number];
 type TaskTable = { tasks: Map<TaskKind, Map<string, Task>>; present: Set<TaskKind> };
 const taskTables = new WeakMap<Snapshot, Map<string, TaskTable>>();
 const cargoAliases = new WeakMap<Snapshot, Map<string, Task>>();
+function jsoncObject(source: string): Record<string, unknown> | undefined {
+	const errors: ParseError[] = [];
+	const value = object(parseJsonc(source, errors, { allowTrailingComma: true }));
+	return errors.length ? undefined : value;
+}
+function tomlObject(source: string): Record<string, unknown> | undefined {
+	try {
+		return object(parseToml(source));
+	} catch {
+		return undefined;
+	}
+}
 function taskTable(snapshot: Snapshot, directory: string): TaskTable {
 	const cached = taskTables.get(snapshot) ?? new Map<string, TaskTable>();
 	taskTables.set(snapshot, cached);
@@ -332,9 +345,8 @@ function taskTable(snapshot: Snapshot, directory: string): TaskTable {
 		if (source === undefined) continue;
 		const kind: TaskKind = name === 'package.json' ? 'package' : 'deno';
 		present.add(kind);
-		const errors: ParseError[] = [];
-		const manifest = object(parseJsonc(source, errors, { allowTrailingComma: true }));
-		if (errors.length) continue;
+		const manifest = jsoncObject(source);
+		if (!manifest) continue;
 		for (const [task, body] of Object.entries({ ...object(manifest.scripts), ...object(manifest.tasks) })) {
 			const command = typeof body === 'string' ? body : object(body).command;
 			if (typeof command === 'string') add(kind, task, { body: command, source: path });
@@ -362,12 +374,8 @@ function taskTable(snapshot: Snapshot, directory: string): TaskTable {
 		const source = snapshot.files[path];
 		if (source === undefined) continue;
 		present.add('mise');
-		let config: Record<string, unknown>;
-		try {
-			config = object(parseToml(source));
-		} catch {
-			continue;
-		}
+		const config = tomlObject(source);
+		if (!config) continue;
 		for (const [task, definition] of Object.entries(object(config.tasks))) {
 			const run = typeof definition === 'string' ? definition : object(definition).run;
 			const depends = ['depends', 'depends_post'].flatMap(key => {
@@ -408,12 +416,8 @@ function aliasTable(snapshot: Snapshot): Map<string, Task> {
 	for (const path of ['.cargo/config.toml', '.cargo/config']) {
 		const source = snapshot.files[path];
 		if (!source) continue;
-		let config: Record<string, unknown>;
-		try {
-			config = object(parseToml(source));
-		} catch {
-			continue;
-		}
+		const config = tomlObject(source);
+		if (!config) continue;
 		for (const [name, alias] of Object.entries(object(config.alias))) {
 			const body = Array.isArray(alias) ? alias.map(String).join(' ') : typeof alias === 'string' ? alias : '';
 			if (body && !aliases.has(name)) aliases.set(name, { body: `cargo ${body}`, source: path });
@@ -447,9 +451,8 @@ function workspaceDirectories(snapshot: Snapshot): Map<string, string> {
 	const found = new Map<string, string>();
 	for (const [path, source] of Object.entries(snapshot.files)) {
 		if (!/(?:^|\/)package\.json$/.test(path) || path.includes('node_modules/')) continue;
-		const errors: ParseError[] = [];
-		const manifest = object(parseJsonc(source, errors, { allowTrailingComma: true }));
-		if (errors.length || typeof manifest.name !== 'string') continue;
+		const manifest = jsoncObject(source);
+		if (!manifest || typeof manifest.name !== 'string') continue;
 		found.set(manifest.name, path.replace(/\/?package\.json$/, ''));
 	}
 	packageDirectories.set(snapshot, found);
@@ -459,10 +462,9 @@ export function declaredWorkspaces(snapshot: Snapshot): string[] {
 	const patterns: string[] = [];
 	const source = snapshot.files['package.json'];
 	if (source !== undefined) {
-		const errors: ParseError[] = [];
-		const declared = object(parseJsonc(source, errors, { allowTrailingComma: true })).workspaces;
+		const declared = jsoncObject(source)?.workspaces;
 		const list = Array.isArray(declared) ? declared : object(declared).packages;
-		if (!errors.length && Array.isArray(list)) {
+		if (Array.isArray(list)) {
 			patterns.push(...list.filter((entry): entry is string => typeof entry === 'string'));
 		}
 	}

@@ -72,7 +72,7 @@ const platforms: Record<BinaryTarget, Platform> = {
 };
 
 // GitHub expressions, evaluated by Actions rather than JavaScript.
-const expression = (value: string) => `\${{ ${value} }}`;
+export const expression = (value: string) => `\${{ ${value} }}`;
 const matrix = (key: string) => expression(`matrix.${key}`);
 
 export const beginJobId = 'begin';

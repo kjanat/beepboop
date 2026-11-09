@@ -2,6 +2,7 @@ import { parse as parseToml } from 'smol-toml';
 import { object } from '@/automation/managers/helpers';
 import { isPyproject, privateProject } from '@/automation/managers/pyproject';
 import { tagPrefix } from '@/automation/managers/tags';
+import { slug, unusedName } from '@/automation/naming';
 import { packageId } from '@/automation/package-identity';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
 import {
@@ -102,14 +103,11 @@ const entryEvents = ['push', 'release', 'workflow_dispatch', 'schedule', 'workfl
 const downstreamDestinations: readonly Destination[] = ['aur', 'homebrew', 'scoop', 'winget', 'zed-extensions'];
 const optionalDestinations: readonly Destination[] = [...downstreamDestinations, 'docs', 'oci-artifact'];
 
-function code(value: string): string {
+export function code(value: string): string {
 	return `\`${value}\``;
 }
-function slug(value: string): string {
-	return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63) || 'main';
-}
 function identifier(value: string): string {
-	const result = slug(value);
+	const result = slug(value).slice(0, 63) || 'main';
 	return /^[a-z]/.test(result) ? result : `release-${result}`.slice(0, 63);
 }
 
@@ -1264,11 +1262,10 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 			}
 		}
 		const base = streamName(key, heads, snapshot.repository.name);
-		let name = base;
-		for (let index = 2; used.has(name); index++) {
+		const name = unusedName(base, index => {
 			const suffix = `-${index}`;
-			name = `${base.slice(0, 63 - suffix.length).replace(/-+$/, '')}${suffix}`;
-		}
+			return `${base.slice(0, 63 - suffix.length).replace(/-+$/, '')}${suffix}`;
+		}, taken => used.has(taken));
 		used.add(name);
 		const roles: StreamWorkflow[] = memberFiles.map(file => {
 			const workflow = graph.byFile.get(file);

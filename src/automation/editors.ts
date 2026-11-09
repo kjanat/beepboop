@@ -1,7 +1,8 @@
 import { Effect } from 'effect';
 import { parse as parseToml } from 'smol-toml';
-import { isScalar, parseDocument } from 'yaml';
-import type { ReleasePlan, Snapshot } from '@/automation/types';
+import { isScalar } from 'yaml';
+import { validYaml, yamlData, yamlDocument } from '@/automation/managers/helpers';
+import type { Edit, ReleasePlan, Snapshot } from '@/automation/types';
 import { isLockfile } from '@/contract/catalog';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
@@ -55,8 +56,7 @@ function edit(source: string, rule: VersionFile, version: string): Effect.Effect
 			return result;
 		}
 		if (rule.format === 'json') yield* fromSync((): unknown => JSON.parse(source));
-		const document = parseDocument(source, { uniqueKeys: true });
-		if (document.errors.length) return yield* precondition('Invalid version document');
+		const document = yield* Effect.fromResult(validYaml(source, 'Invalid version document'));
 		const node = document.getIn(rule.key, true);
 		if (!isScalar(node) || typeof node.value !== 'string' || !node.range) {
 			return yield* precondition('Version field must be a scalar string');
@@ -65,11 +65,8 @@ function edit(source: string, rule: VersionFile, version: string): Effect.Effect
 			return yield* precondition('Version field cannot use anchors, tags, or block scalars');
 		}
 		const result = source.slice(0, node.range[0]) + JSON.stringify(value) + source.slice(node.range[1]);
-		const updated = parseDocument(result, { uniqueKeys: true });
-		if (updated.errors.length) return yield* precondition('Version edit produced invalid syntax');
-		const data = yield* fromSync((): unknown =>
-			rule.format === 'json' ? JSON.parse(result) : updated.toJS({ maxAliasCount: 100 })
-		);
+		const updated = yield* Effect.fromResult(validYaml(result, 'Version edit produced invalid syntax'));
+		const data = yield* fromSync((): unknown => rule.format === 'json' ? JSON.parse(result) : yamlData(updated));
 		if ((yield* valueAt(data, rule.key)) !== value) {
 			return yield* precondition('Version edit did not update the selected field');
 		}
@@ -87,7 +84,7 @@ function currentValue(source: string, rule: VersionFile): Effect.Effect<unknown,
 			? parseToml(source)
 			: rule.format === 'json'
 			? JSON.parse(source)
-			: parseDocument(source, { uniqueKeys: true }).toJS({ maxAliasCount: 100 })
+			: yamlData(yamlDocument(source))
 	).pipe(Effect.flatMap(data => valueAt(data, rule.key)));
 }
 
@@ -122,6 +119,21 @@ export function applyVersionFiles(
 	});
 }
 
+export function fileEdits(
+	original: Readonly<Record<string, string>>,
+	files: Iterable<readonly [string, string]>,
+): Effect.Effect<Edit[], DomainError> {
+	return Effect.gen(function*() {
+		const edits: Edit[] = [];
+		for (const [path, after] of files) {
+			const before = original[path];
+			if (before === undefined) return yield* precondition('Missing planned manifest');
+			if (before !== after) edits.push({ path, before, after });
+		}
+		return edits;
+	});
+}
+
 export function planVersionFiles(
 	snapshot: Snapshot,
 	target: unknown,
@@ -131,10 +143,7 @@ export function planVersionFiles(
 		const version = (yield* Effect.fromResult(semver(target))).replace(/^v/, '');
 		const files = { ...snapshot.files };
 		yield* applyVersionFiles(snapshot, files, rules, { release: version });
-		const edits = Object.entries(files).flatMap(([path, after]) => {
-			const before = snapshot.files[path];
-			return before === undefined || before === after ? [] : [{ path, before, after }];
-		});
+		const edits = yield* fileEdits(snapshot.files, Object.entries(files));
 		const requiresPreparation = edits.length > 0
 			&& Object.keys(files).some(isLockfile);
 		return planned(snapshot, version, edits, requiresPreparation);
