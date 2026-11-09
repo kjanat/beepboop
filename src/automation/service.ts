@@ -20,7 +20,7 @@ import { matchesRef } from '@/automation/policy';
 import { conflictMessage, moduleTagPrefixes, type RefState, tagConflict } from '@/automation/refs';
 import { manifestProblems, releasedVersion, unreleasedManifestVersion } from '@/automation/release-version';
 import { bodyChoices, releaseAfterMerge } from '@/automation/setup';
-import { currentOptions, maintainSetup, setupEdits } from '@/automation/setup-maintenance';
+import { currentOptions, maintainSetup, rebuildingStatus, setupEdits } from '@/automation/setup-maintenance';
 import { decodeError, Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
 import type { AutomationEvent, Execution, Package, RepositoryRecord, SubscriptionDelivery } from '@/automation/types';
@@ -633,12 +633,15 @@ export class AutomationService {
 			const options = yield* currentOptions(this.store, this.gateway, repository, base);
 			const body = pull.body ?? '';
 			const choices = yield* fromSync(() => setupChoicesSchema.parse(bodyChoices(body, options, base)));
-			yield* fromPromise(() =>
+			const scheduled = yield* fromPromise(() =>
 				this.coordinator(repository.id).setupEdited(
 					{ repositoryId: repository.id, number: pull.number, head: pull.head.sha, body, choices },
 					JSON.stringify(choices) !== JSON.stringify(base),
 				)
 			);
+			if (scheduled) {
+				yield* this.gateway.setupStatus(repository.name, repository.id, pull.number, rebuildingStatus(body));
+			}
 		});
 	}
 	event(event: AutomationEvent): Effect.Effect<void, DomainError> {

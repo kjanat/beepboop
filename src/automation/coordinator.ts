@@ -2370,13 +2370,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			Effect.flatMap(value => value === undefined ? Effect.undefined : fromSync(() => decodeSetupEditV1(value))),
 		);
 	}
-	setupEdited(edit: Omit<SetupEdit, 'due'>, changed: boolean): Promise<void> {
+	setupEdited(edit: Omit<SetupEdit, 'due'>, changed: boolean): Promise<boolean> {
 		return Effect.runPromise(Effect.gen({ self: this }, function*() {
 			const previous = yield* this.setupEdit();
-			if (previous ? previous.number === edit.number && previous.body === edit.body : !changed) return;
+			if (previous ? previous.number === edit.number && previous.body === edit.body : !changed) return false;
 			const due = Date.now() + 5000;
 			yield* this.write('setup-edit', { ...edit, due });
 			yield* this.arm(due);
+			return true;
 		}));
 	}
 	private rebuildSetup(): Effect.Effect<void, DomainError> {

@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { mergeConfiguration } from '@/automation/configuration';
 import { pinned } from '@/automation/setup-actions';
 import { cratePublishCommands, ledgerCommand, suggestedCommands } from '@/automation/setup-defaults';
+import { rebuildingStatus } from '@/automation/setup-maintenance';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices } from '@/automation/setup-types';
 import { botId, ownerId } from '@root/test/support/github.ts';
@@ -1469,7 +1470,12 @@ test('an unticked dependency in the setup PR body stays unticked through edits a
 		},
 		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
 	});
-	await world.wait(8_000);
+	await world.wait(1_000);
+	expect(pull.body).toContain(
+		'<!-- beepboop:setup-status -->\nBeepboop is rebuilding the proposal from your edit.\n<!-- /beepboop:setup-status -->',
+	);
+	await world.wait(7_000);
+	expect(pull.body).not.toContain('Beepboop is rebuilding the proposal from your edit.');
 	const untickedBox = /- \[ \] <!-- beepboop:choice:package:main:pkg%3Acargo%2Fsql%2Dparser -->/;
 	expect(configured(repository, 'automation/onboarding')).toEqual(['pkg:cargo/sql']);
 	expect(pull.body).toMatch(untickedBox);
@@ -1592,6 +1598,15 @@ test('a body edit ticks a package that the saved options from an older discovery
 	});
 	await world.wait(8_000);
 	expect(configured(repository, 'automation/onboarding')).toEqual(['pkg:npm/widget', 'pkg:npm/gadget']);
+});
+
+test('the rebuilding status replaces the settled line once', () => {
+	const section = (status: string) =>
+		`Proposal\n\n<!-- beepboop:setup-status -->\n${status}\n<!-- /beepboop:setup-status -->`;
+	const rebuilding = 'Inspected abc.\n\nBeepboop is rebuilding the proposal from your edit.';
+	expect(rebuildingStatus(section('Inspected abc.\n\nThe proposal is up to date.'))).toBe(rebuilding);
+	expect(rebuildingStatus(section(rebuilding))).toBe(rebuilding);
+	expect(rebuildingStatus('Proposal')).toBe('Beepboop is rebuilding the proposal from your edit.');
 });
 
 test('a setup rebuild keeps a ticked Release after merge box', async () => {

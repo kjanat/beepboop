@@ -30,6 +30,18 @@ export function setupEdits(saved: Record<string, unknown> | undefined): Edit[] {
 }
 
 const superseded = 'A newer setup edit replaced this rebuild';
+const settled = 'The proposal is up to date.';
+const rebuilding = 'Beepboop is rebuilding the proposal from your edit.';
+export function rebuildingStatus(body: string): string {
+	const start = '<!-- beepboop:setup-status -->\n', end = '\n<!-- /beepboop:setup-status -->';
+	const from = body.indexOf(start), to = body.indexOf(end, from);
+	if (from < 0 || to < 0) return rebuilding;
+	const status = [settled, rebuilding].reduce(
+		(text, line) => text.endsWith(line) ? text.slice(0, -line.length).trimEnd() : text,
+		body.slice(from + start.length, to),
+	);
+	return status ? `${status}\n\n${rebuilding}` : rebuilding;
+}
 export function followsProposal(saved: Record<string, unknown> | undefined, body: string): boolean {
 	return saved?.inferred === true || (saved?.inferred === undefined && body.includes('\n## Release plan\n'));
 }
@@ -124,7 +136,7 @@ export function maintainSetup(
 					name,
 					id,
 					pull.number,
-					summary,
+					`${summary}\n\n${settled}`,
 					setupBody(plan, releaseAfterMerge(pull.body)),
 				);
 				yield* save({ ...saved, ...applied, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha });
