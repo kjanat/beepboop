@@ -26,6 +26,10 @@ for (
 	]
 ) delete process.env[name];
 
+// ansispeck turns color on for CI and FORCE_COLOR, and dreamcli's execute() reads it from the process (kjanat/dreamcli#198).
+for (const name of ['CI', 'FORCE_COLOR', 'CLICOLOR_FORCE', 'FORCE_HYPERLINKS']) delete process.env[name];
+process.env.NO_COLOR = '1';
+
 mock.module('cloudflare:workers', () => workers);
 mock.module('astro:middleware', () => ({ defineMiddleware: <T>(handler: T) => handler }));
 plugin(astroPlugin);
