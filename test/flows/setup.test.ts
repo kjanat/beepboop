@@ -8,13 +8,22 @@ import { Effect, Result } from 'effect';
 import { parse, parseDocument } from 'yaml';
 import { z } from 'zod';
 import { mergeConfiguration } from '@/automation/configuration';
+import { bodyChoices, releaseAfterMerge, setupBody, setupOptions } from '@/automation/setup';
 import { pinned } from '@/automation/setup-actions';
-import { describeEdits, setupTitle } from '@/automation/setup-changes';
+import {
+	behaviourChanges,
+	changeDetails,
+	describeEdits,
+	onboardingBranch,
+	setupTitle,
+	updateBranch,
+} from '@/automation/setup-changes';
 import { cratePublishCommands, ledgerCommand, suggestedCommands } from '@/automation/setup-defaults';
 import { rebuildingStatus } from '@/automation/setup-maintenance';
 import { parseSetupPlan } from '@/automation/setup-plan';
-import type { SetupChoices } from '@/automation/setup-types';
+import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
 import { publishMinutes } from '@/automation/setup-workflows';
+import { setupChoicesSchema } from '@/contract/setup';
 
 const checkout = pinned('checkout');
 let world: World;
@@ -1594,7 +1603,7 @@ test('a setup update describes each changed file', () => {
 				{ text: 'job `publish`: sets `timeout-minutes` to 90, which stops a hung run', label: 'job timeouts' },
 				{
 					text:
-						"job `publish`, step `beepboop_refs`: inserts the token step's gitId with a fallback for a skipped token step",
+						'job `publish`, step `beepboop_refs`: reads the git identity from the token step and uses an empty identity when that step is skipped',
 					label: 'gitId fallback',
 				},
 				{ text: 'job `publish`: adds step `beepboop_token`' },
@@ -1662,6 +1671,169 @@ test('a setup update describes each changed file', () => {
 	]);
 });
 
+test('a setup update body leads with old and new values, then held packages, choices and the folded file list', () => {
+	const configuration = (rshellcheck: Record<string, unknown>, managers: string[]) =>
+		JSON.stringify({
+			streams: {
+				rshellcheck: { packages: ['pkg:npm/%40kjanat/rshellcheck'], ...rshellcheck },
+				go: {
+					packages: ['pkg:golang/example.com/go'],
+					promote: { workflow: { file: 'release-go.yml', publications: ['pkg:golang/example.com/go'] } },
+				},
+			},
+			managers,
+		});
+	const before = configuration({
+		credentials: ['npm-token'],
+		workflows: {
+			release: {
+				file: 'release.yml',
+				publications: ['pkg:npm/%40kjanat/rshellcheck', 'pkg:github/octo/shellcheck'],
+				needs: ['promote'],
+			},
+		},
+		promote: { approval: 'required', workflow: { file: 'release-rshellcheck.yml', publications: [] } },
+	}, ['npm']);
+	const after = configuration({
+		credentials: ['npm-token', 'crates-io'],
+		workflows: { release: { file: 'release.yml', publications: ['pkg:npm/%40kjanat/rshellcheck'] } },
+		promote: {
+			approval: 'merge',
+			workflow: {
+				file: 'release-rshellcheck.yml',
+				publications: ['github-release:octo/shellcheck'],
+				setup: { job: 'promote' },
+			},
+		},
+		prepare: { bump: 'pr' },
+		start: [{ via: 'action', workflow: 'start-release.yml' }, { via: 'cli' }],
+	}, ['github-release', 'npm']);
+	const promoteOnly = 'jobs:\n  promote:\n    steps: []\n';
+	const binaries = {
+		path: '.github/workflows/release-rshellcheck.yml',
+		before: promoteOnly,
+		after: `jobs:\n  build-rshellcheck:\n    steps: []\n${promoteOnly.slice('jobs:\n'.length)}`,
+	};
+	const edits = [
+		{ path: '.github/beepboop.json', before, after },
+		binaries,
+		{ path: '.github/workflows/start-release.yml', before: '', after: 'jobs: {}\n' },
+	];
+	const changes = [
+		'- `rshellcheck`',
+		'  - `credentials` changes.',
+		'  - `workflows.release.publications`: removes `pkg:github/octo/shellcheck`.',
+		'  - `workflows.release.needs`: `promote` → none.',
+		'  - Approval: `required` → `merge`. Merging a version PR now publishes the release with no approval in Beepboop.',
+		'  - `promote.workflow.publications`: adds `github-release:octo/shellcheck`. This workflow now publishes the GitHub release.',
+		'  - Version bump: none → `pr`. Beepboop opens a version PR, and merging it continues the release.',
+		'  - Release starts: none → `action` (`start-release.yml`), `cli`. A start approves the whole release.',
+		'- Repository',
+		'  - `managers`: adds `github-release`.',
+		'  - `.github/beepboop.json` records the setup input that generates its workflows.',
+		'- Workflows',
+		'  - `release-rshellcheck.yml` builds the `rshellcheck` release binaries.',
+		'  - Adds `.github/workflows/start-release.yml`.',
+	];
+	expect(behaviourChanges(edits)).toEqual(changes);
+	expect(setupTitle(updateBranch, edits)).toBe('chore: update release setup');
+	expect(setupTitle(updateBranch, [binaries])).toBe('chore: build rshellcheck release binaries');
+	const flipped = after.replace('"approval":"merge"', '"approval":"required"');
+	expect(setupTitle(updateBranch, [{ path: '.github/beepboop.json', before: flipped, after }, binaries])).toBe(
+		'chore: update release setup (release binaries, approval)',
+	);
+	const unrecorded = after.replace(',"setup":{"job":"promote"}', '');
+	expect(unrecorded).not.toBe(after);
+	expect(setupTitle(updateBranch, [{ path: '.github/beepboop.json', before: unrecorded, after }, binaries])).toBe(
+		'chore: build rshellcheck release binaries',
+	);
+	const evidence = (file: string) => ({
+		file,
+		jobs: ['promote'],
+		steps: [],
+		events: ['workflow_dispatch'],
+		roles: [],
+		preparationJobs: [],
+		reportingJobs: [],
+		prepares: false,
+		reports: false,
+		publishes: true,
+	});
+	const held =
+		'@kjanat/rshellcheck (npm/package.json) lacks a license file. Beepboop holds its release until the package has them.';
+	const plan: SetupPlan = {
+		repository: 'octo/shellcheck',
+		sourceSha: 'a'.repeat(40),
+		planId: 'plan',
+		setupHead: null,
+		choices: setupChoicesSchema.parse({
+			streams: [
+				{
+					name: 'rshellcheck',
+					packages: ['pkg:npm/%40kjanat/rshellcheck'],
+					required: ['pkg:npm/%40kjanat/rshellcheck'],
+					versioning: 'workspace',
+					approval: 'merge',
+					bump: 'pr',
+					start: ['action', 'cli'],
+					promote: { file: 'release-rshellcheck.yml', job: 'promote' },
+				},
+				{
+					name: 'go',
+					packages: ['pkg:golang/example.com/go'],
+					required: ['pkg:golang/example.com/go'],
+					versioning: 'workspace',
+					versionSource: { kind: 'tags', prefix: 'go/v' },
+					promote: { file: 'release-go.yml', job: 'promote' },
+				},
+			],
+		}),
+		inventory: {
+			packages: [
+				{ name: '@kjanat/rshellcheck', manifest: 'npm/package.json', publication: { kind: 'registry' } },
+				{ name: 'example.com/go', manifest: 'go/go.mod', publication: { kind: 'registry' } },
+			],
+		},
+		packageIds: ['pkg:npm/%40kjanat/rshellcheck', 'pkg:golang/example.com/go'],
+		workflows: [evidence('release-rshellcheck.yml'), evidence('release-go.yml')],
+		edits,
+		blockers: [],
+		notes: [held, 'Discovery: @kjanat/rshellcheck declares no repository'],
+		branchConflict: false,
+	};
+	const body = setupBody(plan, { branch: updateBranch, defaultBranch: 'master' });
+	expect(body.slice(0, body.indexOf('### Choices'))).toBe(
+		`Beepboop inspected [\`${'a'.repeat(12)}\`](https://github.com/octo/shellcheck/commit/${
+			'a'.repeat(40)
+		}), the head of \`master\`.\n\n### What changes\n\n${
+			changes.join('\n')
+		}\n\n### Held packages\n\n- \`@kjanat/rshellcheck\` (\`npm/package.json\`) lacks a license file. Beepboop holds its release until the package has them.\n\n`,
+	);
+	expect(body).toContain('  - How the version bump reaches `master`. Tick one.\n');
+	expect(body).toContain(
+		'  - `go` takes its version from `go/v` tags. Beepboop raises no version for it, so it offers no start or version bump.\n',
+	);
+	expect(body.match(/Existing triggers stay on/g)).toHaveLength(1);
+	expect(body).toContain(
+		'Existing triggers stay on `release-rshellcheck.yml` and `release-go.yml`. Beepboop reports a trigger that conflicts with its dispatch.',
+	);
+	expect(body).toContain('- Discovery: `@kjanat/rshellcheck` declares no repository');
+	expect(body).not.toMatch(/(?:^|[\s(])@kjanat\//m);
+	expect(body.endsWith(`${changeDetails(edits)}\n`)).toBe(true);
+	expect(body.indexOf('Release after merge')).toBeLessThan(body.indexOf('- Discovery'));
+	expect(bodyChoices(body, setupOptions(plan), plan.choices).streams[0]).toMatchObject({
+		approval: 'merge',
+		bump: 'pr',
+		start: ['action', 'cli'],
+	});
+	expect(releaseAfterMerge(body)).toBe(false);
+	expect(releaseAfterMerge(setupBody(plan, { branch: updateBranch, defaultBranch: 'master', release: true }))).toBe(
+		true,
+	);
+	const onboarding = setupBody({ ...plan, notes: [] }, { branch: onboardingBranch, defaultBranch: 'master' });
+	expect([onboarding.includes('### What changes'), onboarding.includes('<details>')]).toEqual([false, false]);
+});
+
 test('a setup update gets its own branch, a title naming its changes and a change list', async () => {
 	const { repository, api, pull } = await gadgetSetup();
 	expect([pull.head.ref, pull.title]).toEqual(['automation/onboarding', 'chore: configure release automation']);
@@ -1678,19 +1850,31 @@ test('a setup update gets its own branch, a title naming its changes and a chang
 	expect(applied.status).toBe(200);
 	const update = repository.pulls.find(entry => entry.state === 'open');
 	if (!update) throw new Error('No setup update pull request');
-	const expected = [
-		'automation/setup-update',
-		'chore: update release setup (job timeouts)',
-		`<!-- beepboop:setup:start -->\nChanges against the release setup on \`main\`:\n\n- \`${file}\`\n  - job \`promote\`: sets \`timeout-minutes\` to ${
-			publishMinutes(1)
-		}, which stops a hung run\n\nConfigure releases`,
-	];
-	expect([update.head.ref, update.title, update.body.slice(0, expected[2]?.length)]).toEqual(expected);
+	const described = () => {
+		const sha = world.github.head(repository);
+		const opening =
+			`<!-- beepboop:setup:start -->\nBeepboop inspected [\`${
+				sha.slice(0, 12)
+			}\`](https://github.com/${repository.name}/commit/${sha}), the head of \`main\`.\n\n`
+			+ '### What changes\n\n- Workflows\n  - Jobs get timeouts that stop a hung run.\n\n### Choices\n\n';
+		const details =
+			`<details>\n<summary>Every changed file and path</summary>\n\n- \`${file}\`\n  - job \`promote\`: sets \`timeout-minutes\` to ${
+				publishMinutes(1)
+			}, which stops a hung run\n\n</details>\n`;
+		expect([update.head.ref, update.title, update.body.slice(0, opening.length)]).toEqual([
+			'automation/setup-update',
+			'chore: update release setup (job timeouts)',
+			opening,
+		]);
+		expect(update.body).toContain(details);
+		expect(update.body.indexOf('Release after merge')).toBeLessThan(update.body.indexOf('<details>'));
+	};
+	described();
 	world.github.push(repository, { 'README.md': '# widget\n\nMoved on.\n' }, 'Move the default branch');
 	const head = update.head.sha;
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
 	expect(update.head.sha).not.toBe(head);
-	expect([update.head.ref, update.title, update.body.slice(0, expected[2]?.length)]).toEqual(expected);
+	described();
 	expect(repository.pulls.filter(entry => entry.state === 'open')).toEqual([update]);
 });
 

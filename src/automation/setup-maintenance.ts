@@ -9,7 +9,7 @@ import { exclusionLabel, publishable } from '@/automation/package-publication';
 import { documentRow } from '@/automation/schemas';
 import { previewSetup, releaseAfterMerge, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import { marked } from '@/automation/setup-body';
-import { changeSummary, setupBranch, setupTitle } from '@/automation/setup-changes';
+import { setupBranch, setupTitle } from '@/automation/setup-changes';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Store } from '@/automation/store';
 import { decodeError } from '@/automation/store';
@@ -124,9 +124,11 @@ export function maintainSetup(
 			const applied = { choices: plan.choices, options: setupOptions(plan), inferred: plan.adoption !== undefined };
 			const proposal = {
 				title: setupTitle(pull.branch, plan.edits),
-				body: `${changeSummary(pull.branch, plan.edits, snapshot.repository.defaultBranch)}${
-					setupBody(plan, releaseAfterMerge(pull.body))
-				}`,
+				body: setupBody(plan, {
+					branch: pull.branch,
+					defaultBranch: snapshot.repository.defaultBranch,
+					release: releaseAfterMerge(pull.body),
+				}),
 			};
 			if (plan.blockers.length || !plan.edits.length) {
 				yield* current;
@@ -253,7 +255,7 @@ function migrateSetup(
 			snapshot,
 			branch,
 			setupTitle(branch, plan.edits),
-			`${changeSummary(branch, plan.edits, snapshot.repository.defaultBranch)}${setupBody(plan)}`,
+			setupBody(plan, { branch, defaultBranch: snapshot.repository.defaultBranch }),
 			plan.edits,
 			head ?? undefined,
 			undefined,

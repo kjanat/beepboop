@@ -53,7 +53,8 @@ function stepChange(
 	const gitId = changed.includes('env') && JSON.stringify(after.env ?? {}).includes('outputs.gitId');
 	if (gitId) {
 		return [{
-			text: `job \`${job}\`, step \`${key}\`: inserts the token step's gitId with a fallback for a skipped token step`,
+			text:
+				`job \`${job}\`, step \`${key}\`: reads the git identity from the token step and uses an empty identity when that step is skipped`,
 			label: 'gitId fallback',
 		}];
 	}
@@ -110,22 +111,150 @@ function workflowChanges(before: Record<string, unknown>, after: Record<string, 
 	}
 	return changes;
 }
-function leaves(value: unknown, prefix = ''): Map<string, string> {
-	const out = new Map<string, string>();
+function leaves(value: unknown, prefix = ''): Map<string, unknown> {
+	const out = new Map<string, unknown>();
 	if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
 		for (const [key, child] of Object.entries(value)) {
 			for (const [path, leaf] of leaves(child, prefix ? `${prefix}.${key}` : key)) out.set(path, leaf);
 		}
-	} else out.set(prefix, JSON.stringify(value));
+	} else out.set(prefix, value);
 	return out;
 }
-function configurationChanges(before: Record<string, unknown>, after: Record<string, unknown>): Change[] {
+interface LeafChange {
+	path: string;
+	before: unknown;
+	after: unknown;
+}
+function leafChanges(before: Record<string, unknown>, after: Record<string, unknown>): LeafChange[] {
 	const old = leaves(before), next = leaves(after);
-	const paths = [...new Set([...old.keys(), ...next.keys()])].filter(path => old.get(path) !== next.get(path));
-	return paths.map(path => ({
-		text: `${next.has(path) ? old.has(path) ? 'changes' : 'adds' : 'removes'} \`${path}\``,
-		label: /(?:^|\.)setup\./.test(path) ? 'setup in beepboop.json' : 'release configuration',
+	return [...new Set([...old.keys(), ...next.keys()])]
+		.filter(path => !same(old.get(path), next.get(path)))
+		.map(path => ({ path, before: old.get(path), after: next.get(path) }));
+}
+const setupPath = /(?:^|\.)setup(?:\.|$)/;
+const labelled: { pattern: RegExp; label: string }[] = [
+	{ pattern: /^streams\.[^.]+\.promote\.approval$/, label: 'approval' },
+	{ pattern: /^streams\.[^.]+\.start$/, label: 'release starts' },
+	{ pattern: /^streams\.[^.]+\.prepare\.bump$/, label: 'version bump' },
+	{ pattern: /(?:^|\.)publications$|^managers$/, label: 'publications' },
+	{ pattern: /^streams\.[^.]+\.workflows\.[^.]+\.needs(?:Jobs)?$/, label: 'workflow order' },
+];
+function configurationLabel(path: string): string {
+	if (setupPath.test(path)) return 'setup in beepboop.json';
+	return labelled.find(entry => entry.pattern.test(path))?.label ?? 'release configuration';
+}
+function configurationChanges(before: Record<string, unknown>, after: Record<string, unknown>): Change[] {
+	return leafChanges(before, after).map(({ path, before, after }) => ({
+		text: `${after === undefined ? 'removes' : before === undefined ? 'adds' : 'changes'} \`${path}\``,
+		label: configurationLabel(path),
 	}));
+}
+function item(value: unknown): string {
+	const entry = record(value);
+	if (typeof entry.via === 'string') {
+		return `\`${entry.via}\`${typeof entry.workflow === 'string' ? ` (\`${entry.workflow}\`)` : ''}`;
+	}
+	return `\`${typeof value === 'string' ? value : JSON.stringify(value)}\``;
+}
+function shown(value: unknown): string {
+	if (value === undefined) return 'none';
+	if (Array.isArray(value)) return value.length ? value.map(item).join(', ') : 'none';
+	return item(value);
+}
+function valueChange(before: unknown, after: unknown): string {
+	if (Array.isArray(before) && Array.isArray(after)) {
+		const missing = (from: unknown[], to: unknown[]) => from.filter(value => !to.some(other => same(value, other)));
+		const added = missing(after, before), removed = missing(before, after);
+		const parts = [
+			...(added.length ? [`adds ${added.map(item).join(', ')}`] : []),
+			...(removed.length ? [`removes ${removed.map(item).join(', ')}`] : []),
+		];
+		return parts.length ? parts.join(' and ') : 'reorders its entries';
+	}
+	return `${shown(before)} → ${shown(after)}`;
+}
+const approvalEffects: Record<string, string> = {
+	required: 'A version raised without a start waits for your approval in Beepboop.',
+	merge: 'Merging a version PR now publishes the release with no approval in Beepboop.',
+	push: 'A signed commit with passing checks that raises the version now publishes it with no approval.',
+};
+const bumpEffects: Record<string, string> = {
+	commit: 'Beepboop pushes a signed commit to the default branch.',
+	pr: 'Beepboop opens a version PR, and merging it continues the release.',
+};
+function effect(path: string, after: unknown): string | undefined {
+	if (path.endsWith('.promote.approval') && typeof after === 'string') return approvalEffects[after];
+	if (path.endsWith('.prepare.bump') && typeof after === 'string') return bumpEffects[after];
+	if (/\.start$/.test(path) && Array.isArray(after) && after.length) return 'A start approves the whole release.';
+	if (
+		path.endsWith('publications') && Array.isArray(after)
+		&& after.some(value => typeof value === 'string' && value.startsWith('github-release:'))
+	) return 'This workflow now publishes the GitHub release.';
+	return undefined;
+}
+const subjects: { pattern: RegExp; label: string }[] = [
+	{ pattern: /^promote\.approval$/, label: 'Approval' },
+	{ pattern: /^start$/, label: 'Release starts' },
+	{ pattern: /^prepare\.bump$/, label: 'Version bump' },
+];
+function behaviour({ path, before, after }: LeafChange): string {
+	const rest = path.replace(/^streams\.[^.]+\./, '');
+	const subject = subjects.find(entry => entry.pattern.test(rest))?.label ?? `\`${rest}\``;
+	if (path.split('.').includes('credentials')) return `${subject} changes.`;
+	const consequence = effect(path, after);
+	return `${subject}: ${valueChange(before, after)}.${consequence ? ` ${consequence}` : ''}`;
+}
+const workflowEffects: Record<string, string> = {
+	'job timeouts': 'Jobs get timeouts that stop a hung run.',
+	'gitId fallback': 'The ref-publishing step keeps its git identity when the token step is skipped.',
+	'action references': 'Workflow steps move to newer Beepboop action references.',
+};
+export function behaviourChanges(edits: Edit[]): string[] {
+	const groups = new Map<string, string[]>();
+	const add = (group: string, line: string) => groups.set(group, [...(groups.get(group) ?? []), line]);
+	for (const edit of edits) {
+		if (edit.path === configurationPath) {
+			for (const change of leafChanges(record(document(edit.before)), record(document(edit.after)))) {
+				if (setupPath.test(change.path)) continue;
+				const stream = /^streams\.([^.]+)\./.exec(change.path)?.[1];
+				add(stream ? `\`${stream}\`` : 'Repository', behaviour(change));
+			}
+			continue;
+		}
+		if (!edit.before) {
+			add('Workflows', `Adds \`${edit.path}\`.`);
+			continue;
+		}
+		const file = edit.path.split('/').at(-1) ?? edit.path;
+		const before = buildJobs(edit.before), after = buildJobs(edit.after);
+		const built = [...after].filter(name => !before.has(name)), dropped = [...before].filter(name => !after.has(name));
+		if (built.length) {
+			add('Workflows', `\`${file}\` builds the ${listed(built.map(name => `\`${name}\``))} release binaries.`);
+		}
+		if (dropped.length) {
+			add(
+				'Workflows',
+				`\`${file}\` stops building the ${listed(dropped.map(name => `\`${name}\``))} release binaries.`,
+			);
+		}
+	}
+	const labels = new Set(
+		describeEdits(edits.filter(edit => edit.path !== configurationPath && edit.before)).flatMap(file =>
+			file.changes.flatMap(change => change.label ? [change.label] : [])
+		),
+	);
+	for (const label of labels) {
+		const line = workflowEffects[label];
+		if (line) add('Workflows', line);
+	}
+	const configuration = edits.find(edit => edit.path === configurationPath);
+	if (
+		configuration
+		&& leafChanges(record(document(configuration.before)), record(document(configuration.after))).some(change =>
+			setupPath.test(change.path)
+		)
+	) add('Repository', '`.github/beepboop.json` records the setup input that generates its workflows.');
+	return [...groups].flatMap(([group, lines]) => [`- ${group}`, ...lines.map(line => `  - ${line}`)]);
 }
 function buildJobs(source: string): Set<string> {
 	return new Set(
@@ -149,21 +278,24 @@ export function setupTitle(branch: string, edits: Edit[]): string {
 	const before = new Set(workflows.flatMap(edit => [...buildJobs(edit.before)]));
 	const after = new Set(workflows.flatMap(edit => [...buildJobs(edit.after)]));
 	const added = [...after].filter(name => !before.has(name)), removed = [...before].filter(name => !after.has(name));
-	if (added.length) return `chore: build ${listed(added)} release binaries`;
-	if (removed.length) return `chore: stop building ${listed(removed)} release binaries`;
 	const labels = [
 		...new Set(
 			describeEdits(edits).flatMap(file => file.changes.flatMap(change => change.label ? [change.label] : [])),
 		),
 	];
-	const title = `chore: update release setup (${labels.join(', ')})`;
-	return labels.length && title.length <= longestTitle ? title : 'chore: update release setup';
+	if (!labels.some(label => !upkeep.has(label))) {
+		if (added.length) return `chore: build ${listed(added)} release binaries`;
+		if (removed.length) return `chore: stop building ${listed(removed)} release binaries`;
+	}
+	const named = [...(added.length || removed.length ? ['release binaries'] : []), ...labels];
+	const title = `chore: update release setup (${named.join(', ')})`;
+	return named.length && title.length <= longestTitle ? title : 'chore: update release setup';
 }
-export function changeSummary(branch: string, edits: Edit[], defaultBranch: string): string {
-	if (branch === onboardingBranch) return '';
-	return `Changes against the release setup on \`${defaultBranch}\`:\n\n${
+const upkeep = new Set(['setup in beepboop.json', 'job timeouts', 'gitId fallback', 'action references']);
+export function changeDetails(edits: Edit[]): string {
+	return `<details>\n<summary>Every changed file and path</summary>\n\n${
 		describeEdits(edits).map(file =>
 			`- \`${file.path}\`\n${file.changes.map(change => `  - ${change.text}`).join('\n')}`
 		).join('\n')
-	}\n\n`;
+	}\n\n</details>`;
 }

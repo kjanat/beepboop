@@ -1281,11 +1281,19 @@ or merged setup PRs, and maintenance never approves or dispatches a release.
 
 ### Edit the setup PR with checkboxes
 
+The setup PR description names the inspected default-branch head. A setup
+update PR then lists what changes in release behaviour, each change with its
+old and new value. Packages that Beepboop holds for missing files follow, then
+the choices. Every changed file and configuration path sits in a folded list at
+the end.
+
 The setup PR description lists each release stream with a checkbox for every
 publishable package, and for every proposed binary build and target. A release succeeds only when every ticked package
 publishes. Each stream also lists its starts (`action`, `dashboard`, `cli`, tick
 any), its version bump (`commit` or `pr`, tick one) and its approval for a
-version raised without a start (`required`, `merge` or `push`, tick one).
+version raised without a start (`required`, `merge` or `push`, tick one). A
+stream that takes its version from tags, or versions packages independently,
+says why it offers no start or bump.
 Beepboop ticks only what `.github/beepboop.json` already holds. A question
 without a tick gets a note that says what Beepboop does until you answer it,
 and setup writes no value for it. The description lists versioning, the preparation and publication
@@ -1299,7 +1307,7 @@ and below those markers stays as you wrote it, so a closing keyword such as
 line that Beepboop's last version of it did not contain, below the end marker. As with automatic maintenance, unresolved choices and edited
 setup-branch files appear on the PR, and Beepboop leaves the branch as it is.
 
-The description ends with an unticked **Release after merge** box. Beepboop
+The choices end with an unticked **Release after merge** box. Beepboop
 reads it from the merged PR. Ticked, the merge commit releases its unpublished
 version under the configured approval. Unticked, Beepboop starts no release for
 the merge commit. Later default-branch commits release under the configured
