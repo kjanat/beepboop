@@ -5,6 +5,7 @@ import type { WorkflowIdentity } from '@/automation/auth';
 import { base64, bytes } from '@/automation/auth';
 import type { RepositoryGateway } from '@/automation/github';
 import { matchesRef } from '@/automation/policy';
+import { repositoryNamePattern } from '@/automation/repository-name';
 import type { Store } from '@/automation/store';
 import { workflowFilePattern } from '@/contract/catalog';
 import type { DomainError } from '@/contract/errors';
@@ -29,14 +30,13 @@ export type Grant =
 	| (GrantFields & { delivery: 'runtime' })
 	| (GrantFields & { delivery: 'repository'; secretName: string })
 	| (GrantFields & { delivery: 'environment'; environment: string; secretName: string });
-const nonempty = z.string().min(1);
 const secretPublicKey = z.object({ key: textSchema, key_id: textSchema });
 const grantFields = {
-	id: nonempty,
+	id: textSchema,
 	alias: z.string().regex(/^[\w-]+$/),
 	repositoryId: z.number().int().positive(),
-	repository: z.string().regex(/^[\w.-]+\/[\w.-]+$/),
-	operation: nonempty,
+	repository: z.string().regex(repositoryNamePattern),
+	operation: textSchema,
 	workflow: z.string().regex(workflowFilePattern),
 	ref: z.string().startsWith('refs/'),
 };
@@ -45,10 +45,10 @@ const grantSchema = z.discriminatedUnion('delivery', [
 	z.object({
 		...grantFields,
 		delivery: z.literal('runtime'),
-		environment: nonempty.optional(),
-		secretName: nonempty.optional(),
+		environment: textSchema.optional(),
+		secretName: textSchema.optional(),
 	}),
-	z.object({ ...grantFields, delivery: z.literal('repository'), environment: nonempty.optional(), secretName }),
+	z.object({ ...grantFields, delivery: z.literal('repository'), environment: textSchema.optional(), secretName }),
 	z.object({
 		...grantFields,
 		delivery: z.literal('environment'),

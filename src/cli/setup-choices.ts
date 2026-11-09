@@ -8,6 +8,7 @@ import { streamSummary } from '@/automation/setup-summary';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import { failure } from '@/cli/output';
 import { workflowFilePattern } from '@/contract/catalog';
+import { identifierPattern } from '@/contract/ids';
 import { packageLabel } from '@/domain/package-label';
 
 function select(ask: Ask, message: string, entries: SelectChoice[]): Effect.Effect<string, CLIError> {
@@ -283,7 +284,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 						kind: 'input',
 						message: 'Release group name',
 						validate: value =>
-							/^[a-z][a-z0-9-]{0,63}$/.test(value) && !choices.streams.some(stream => stream.name === value)
+							identifierPattern.test(value) && !choices.streams.some(stream => stream.name === value)
 							|| 'Use a unique name with lowercase letters, numbers and hyphens.',
 					})
 				);

@@ -8,7 +8,7 @@ import type { Destination } from '@/automation/release-graph/workflows';
 import { literalPrefix } from '@/automation/release-graph/workflows';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Inventory, Snapshot } from '@/automation/types';
-import { identifierPattern } from '@/domain/configuration';
+import { identifierPattern } from '@/contract/ids';
 
 const labels: Record<Destination, string> = {
 	npm: 'npm',

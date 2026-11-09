@@ -7,8 +7,10 @@ import { ActionFailure, attempt, attemptAsync, fail, required } from '@root/acti
 import { call, mask, serviceOrigin } from '@root/actions/runtime/session.ts';
 import { Effect } from 'effect';
 import { z } from 'zod';
+import { githubSecretNamePattern } from '@/contract/ids.ts';
 import type { LedgerEntry, LedgerPackage } from '@/contract/ledger.ts';
 import { claimStep, nextStep, publishWaitMinutes, reportStep } from '@/contract/ledger.ts';
+import { textSchema } from '@/model.ts';
 
 export interface Command {
 	code: number;
@@ -263,7 +265,7 @@ export function publicRepository(path: string | undefined): boolean {
 	return parsed._tag === 'Success' && !parsed.success.repository.private;
 }
 
-const credentials = z.record(z.string().regex(/^[A-Z_][A-Z0-9_]*$/), z.string().min(1));
+const credentials = z.record(z.string().regex(githubSecretNamePattern), textSchema);
 
 export function command(argv: string[], options: { cwd: string; env?: Record<string, string> }) {
 	return attemptAsync(async (): Promise<Command> => {

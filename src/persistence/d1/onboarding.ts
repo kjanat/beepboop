@@ -1,10 +1,8 @@
 import { Effect } from 'effect';
-import { z } from 'zod';
+import { documentRow } from '@/automation/schemas';
 import type { DomainError } from '@/contract/errors';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
-
-const documentRow = z.object({ document: z.string() });
 
 export class OnboardingStore {
 	private readonly sql: Sql;

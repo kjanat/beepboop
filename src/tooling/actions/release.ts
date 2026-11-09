@@ -5,6 +5,8 @@ import { Effect } from 'effect';
 import { parse } from 'yaml';
 import { z } from 'zod';
 import type { RefChange } from '@/automation/refs';
+import { repositoryNamePattern } from '@/automation/repository-name';
+import { shaPattern } from '@/contract/ids';
 import { compareVersions, looseSchema } from '@/model';
 import { attempt, parse as decode, main, refuse, ToolFailure } from '@/tooling/runtime';
 
@@ -72,8 +74,8 @@ function bump(previous: Map<string, Contract>, next: Map<string, Contract>): Bum
 await main(Effect.gen(function*() {
 	const distribution = process.env.DISTRIBUTION_COMMIT ?? '';
 	const repository = process.env.GITHUB_REPOSITORY ?? '';
-	if (!/^[a-f0-9]{40}$/.test(distribution)) return yield* refuse('DISTRIBUTION_COMMIT must be a full commit SHA');
-	if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) return yield* refuse('GITHUB_REPOSITORY is required');
+	if (!shaPattern.test(distribution)) return yield* refuse('DISTRIBUTION_COMMIT must be a full commit SHA');
+	if (!repositoryNamePattern.test(repository)) return yield* refuse('GITHUB_REPOSITORY is required');
 
 	const tags = new Map<string, { oid: string; commit: string }>();
 	for (const line of (yield* git('ls-remote', '--tags', 'origin', 'refs/tags/v*')).split('\n').filter(Boolean)) {

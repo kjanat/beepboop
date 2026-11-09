@@ -2,16 +2,15 @@ import { chmod } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Effect } from 'effect';
 import { build } from 'tsdown';
-import { z } from 'zod';
+import { packageManifest } from '@/tooling/cli/manifest';
 import { attemptPromise, main, parse, readJson, refuse } from '@/tooling/runtime';
 
 const root = resolve(import.meta.dir, '../../..');
 const directory = resolve(root, 'packages/cli');
-const manifest = z.object({ name: z.string(), version: z.string() });
 
 await main(Effect.gen(function*() {
-	const npm = yield* parse(manifest, yield* readJson(`${directory}/package.json`));
-	const jsr = yield* parse(manifest, yield* readJson(`${directory}/jsr.json`));
+	const npm = yield* parse(packageManifest, yield* readJson(`${directory}/package.json`));
+	const jsr = yield* parse(packageManifest, yield* readJson(`${directory}/jsr.json`));
 	if (npm.name !== jsr.name || npm.version !== jsr.version) {
 		return yield* refuse('npm and JSR must share a name and version');
 	}

@@ -1,11 +1,11 @@
 import { z } from 'zod';
 import type { WatchedRegistry } from '@/contract/catalog';
-import { notificationKinds, watchedRegistries } from '@/contract/catalog';
+import { jsrPackageNamePattern, notificationKinds, watchedRegistries } from '@/contract/catalog';
 import { credentialAliasPattern } from '@/contract/ids';
 
 const packageNames: Record<WatchedRegistry, RegExp> = {
 	npm: /^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/,
-	jsr: /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/,
+	jsr: jsrPackageNamePattern,
 };
 export const watchInput = z.object({ registry: z.enum(watchedRegistries), name: z.string().trim().min(1).max(214) })
 	.refine(input => packageNames[input.registry].test(input.name), { message: 'Invalid package name', path: ['name'] });

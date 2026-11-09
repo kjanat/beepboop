@@ -3,9 +3,9 @@ import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs'
 import { managerNames } from '@/contract/catalog';
 import { versionFileSchema } from '@/contract/version-files';
 import type { Configuration } from '@/domain/configuration';
+import { stringsSchema as strings } from '@/model';
 
 const managerName = z.enum(managerNames);
-const strings = z.array(z.string());
 
 const refPolicy = z.object({
 	phase: z.enum(['version', 'aliases']),

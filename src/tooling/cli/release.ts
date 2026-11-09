@@ -4,6 +4,7 @@ import { Effect } from 'effect';
 import { z } from 'zod';
 import { packageId } from '@/automation/package-identity';
 import { looseSchema } from '@/model';
+import { packageManifest } from '@/tooling/cli/manifest';
 import { writeOutput } from '@/tooling/github-output';
 import {
 	attempt,
@@ -19,7 +20,6 @@ import {
 
 const root = resolve(import.meta.dir, '../../..');
 const directory = join(root, 'packages/cli');
-const manifest = z.object({ name: z.string(), version: z.string() });
 const npmVersion = z.object({ dist: z.object({ integrity: looseSchema }).nullish() });
 const jsrPackage = z.object({ versions: z.record(z.string(), z.unknown()).nullish() });
 const jsrVersion = z.object({ yanked: looseSchema });
@@ -50,9 +50,9 @@ function checksum(path: string): Effect.Effect<string | undefined, ToolFailure> 
 }
 
 await main(Effect.gen(function*() {
-	const npm = yield* parse(manifest, yield* readJson(join(directory, 'package.json')));
+	const npm = yield* parse(packageManifest, yield* readJson(join(directory, 'package.json')));
 	const jsr = yield* parse(
-		manifest.extend({ publish: z.object({ include: z.array(z.string()) }) }),
+		packageManifest.extend({ publish: z.object({ include: z.array(z.string()) }) }),
 		yield* readJson(join(directory, 'jsr.json')),
 	);
 	const context = yield* parse(

@@ -69,6 +69,7 @@ export const goreleaserConfig = /^(?:\.config\/)?\.?goreleaser[^/]*\.ya?ml$/;
 export const hookConfig = /(?:^|\/)\.pre-commit-config\.ya?ml$/;
 const packageJson = /(?:^|\/)package\.json$/;
 export const jsrManifest = /(?:^|\/)(?:jsr|deno)\.jsonc?$/;
+export const jsrPackageNamePattern = /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/;
 export const npmTargets = /(?:^|\/)npm\/targets\.json$/;
 
 export interface ManagerDestinations {

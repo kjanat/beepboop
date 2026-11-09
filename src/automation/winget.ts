@@ -9,6 +9,7 @@ import {
 	gitCommitSchema,
 	gitRefSchema,
 } from '@/automation/github-resources';
+import { repositoryNamePattern } from '@/automation/repository-name';
 import { documentRow } from '@/automation/schemas';
 import type { Store } from '@/automation/store';
 import { decodeError } from '@/automation/store';
@@ -132,7 +133,7 @@ function planDigest(value: unknown): Effect.Effect<string, DomainError> {
 export class WinGetService {
 	constructor(readonly store: Store, readonly gateway: RepositoryGateway, readonly env: WinGetBindings) {}
 	setup(): boolean {
-		return !!this.env.WINGET_GITHUB_TOKEN && /^[\w.-]+\/[\w.-]+$/.test(this.env.WINGET_FORK ?? '');
+		return !!this.env.WINGET_GITHUB_TOKEN && repositoryNamePattern.test(this.env.WINGET_FORK ?? '');
 	}
 	private policy(repo: RepositoryRecord) {
 		const state = readiness(repo);

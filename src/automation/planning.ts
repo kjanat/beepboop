@@ -2,7 +2,7 @@ import { Effect } from 'effect';
 import { z } from 'zod';
 import { applyVersionFiles } from '@/automation/editors';
 import { planRelease, publicationOrder } from '@/automation/managers';
-import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
+import { inputSchema, nameSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { matchesPackage, selectorKey } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import type { Edit, Inventory, Snapshot } from '@/automation/types';
@@ -12,18 +12,17 @@ import type { DomainError } from '@/contract/errors';
 import { decodeRequest, precondition } from '@/contract/errors';
 import type { VersionFile } from '@/contract/version-files';
 
-const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
 const operation = z.strictObject({
-	id,
-	group: id,
-	needs: z.array(id).default([]),
+	id: nameSchema,
+	group: nameSchema,
+	needs: z.array(nameSchema).default([]),
 	platform: platformSchema.optional(),
 	inputs: z.array(inputSchema).default([]),
 	outputs: z.array(outputSchema).default([]),
 });
 export const releaseSetRequest = z.strictObject({
 	groups: z.array(z.strictObject({
-		id,
+		id: nameSchema,
 		packages: z.array(z.string().min(1)).min(1),
 		version: z.unknown(),
 	})).min(1),

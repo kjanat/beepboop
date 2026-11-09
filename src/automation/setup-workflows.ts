@@ -20,6 +20,7 @@ import type { SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
 import type { Package, Snapshot } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
+import { identifierPattern } from '@/contract/ids';
 import { ledgerManagers, publishWaitMinutes } from '@/contract/ledger';
 import { toDomainError } from '@/failure';
 
@@ -63,8 +64,8 @@ function evidenceOf(file: string, document: Record<string, unknown>): WorkflowEv
 				result.steps.push({ job, id: step.id, label: String(step.name ?? step.id) });
 			}
 			if (
-				role === 'begin' && typeof inputs.stream === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(inputs.stream)
-				&& typeof inputs.operation === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(inputs.operation)
+				role === 'begin' && typeof inputs.stream === 'string' && identifierPattern.test(inputs.stream)
+				&& typeof inputs.operation === 'string' && identifierPattern.test(inputs.operation)
 			) {
 				result.roles.push({ job, stream: inputs.stream, operation: inputs.operation });
 			}

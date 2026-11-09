@@ -7,7 +7,7 @@ import {
 	validTagPrefix,
 	workflowFilePattern,
 } from '@/contract/catalog';
-import { credentialAliasPattern } from '@/contract/ids';
+import { credentialAliasPattern, githubSecretNamePattern, identifierPattern } from '@/contract/ids';
 import { versionFileSchema } from '@/contract/version-files';
 
 export const binaryTargets = [
@@ -19,6 +19,7 @@ export const binaryTargets = [
 	'windows-arm64',
 ] as const;
 export type BinaryTarget = (typeof binaryTargets)[number];
+const identifier = z.string().regex(identifierPattern);
 const directory = z.string().regex(/^(?:\.|[\w.-]+(?:\/[\w.-]+)*)$/).refine(
 	value => !value.split('/').includes('..'),
 	'Invalid directory',
@@ -81,32 +82,32 @@ const workflow = z.object({
 	/** Map publication identities to existing step IDs, for accurate outcome reporting. */
 	publicationSteps: z.record(z.string(), z.string()).default({}),
 	/** Environment variable name to stored credential alias, for the setup commands step. */
-	credentials: z.record(z.string().regex(/^[A-Z_][A-Z0-9_]*$/), z.string().regex(credentialAliasPattern)).optional(),
+	credentials: z.record(z.string().regex(githubSecretNamePattern), z.string().regex(credentialAliasPattern)).optional(),
 	/** Prefix of the version tag the publication workflow pushes, such as `v` or `cli-v`. */
 	tagPrefix: z.string().regex(tagPrefixPattern).refine(validTagPrefix, 'Invalid tag prefix').optional(),
 	binaries: binaries.optional(),
 }).strict();
 const observed = z.object({
-	name: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),
+	name: identifier,
 	file: z.string().regex(workflowFilePattern),
 	ref: z.string().regex(refPattern).refine(validRef, 'Invalid workflow ref').optional(),
 	publications: z.array(z.string()).default([]),
-	needs: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)).optional(),
+	needs: z.array(identifier).optional(),
 }).strict();
 const operation = workflow.extend({
-	name: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/).refine(
+	name: identifier.refine(
 		name => name !== 'prepare' && name !== 'promote',
 		'prepare and promote are reserved operation names',
 	),
-	needs: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)).min(1),
-	needsJobs: z.record(z.string().regex(/^[a-z][a-z0-9-]{0,63}$/), z.array(z.string().regex(jobKeyPattern)).min(1))
+	needs: z.array(identifier).min(1),
+	needsJobs: z.record(identifier, z.array(z.string().regex(jobKeyPattern)).min(1))
 		.optional(),
 	publications: z.array(z.string()).default([]),
 }).strict();
 export const setupChoicesSchema = z.object({
 	streams: z.array(
 		z.object({
-			name: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),
+			name: identifier,
 			packages: z.array(z.string()),
 			versioning: z.enum(['workspace', 'independent', 'none']),
 			approval: z.enum(['required', 'merge', 'push']).optional(),

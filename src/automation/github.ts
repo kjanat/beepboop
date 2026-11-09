@@ -25,6 +25,7 @@ import {
 import type { Fetcher, VerificationContext } from '@/automation/managers/registry';
 import { parsePresetReference } from '@/automation/preset';
 import type { RefState } from '@/automation/refs';
+import { repositoryNamePattern } from '@/automation/repository-name';
 import { marked, placeBlock, setupBlock, withStatus } from '@/automation/setup-body';
 import { setupBranches } from '@/automation/setup-changes';
 import { buildSnapshot } from '@/automation/snapshot';
@@ -194,7 +195,7 @@ export class RepositoryGateway {
 	): Effect.Effect<string, DomainError> {
 		const self = this;
 		return Effect.gen(function*() {
-			if (!/^[\w.-]+\/[\w.-]+$/.test(name)) return yield* precondition('Invalid repository');
+			if (!repositoryNamePattern.test(name)) return yield* precondition('Invalid repository');
 			const jwt = yield* self.appToken();
 			const installation = yield* self.read(installationSchema, `/repos/${name}/installation`, jwt);
 			if (installation.account.id !== self.ownerId) {
@@ -325,7 +326,7 @@ export class RepositoryGateway {
 	installation(name: string): Effect.Effect<'active' | 'suspended' | 'uninstalled', DomainError> {
 		const self = this;
 		return Effect.gen(function*() {
-			if (!/^[\w.-]+\/[\w.-]+$/.test(name)) return yield* precondition('Invalid repository');
+			if (!repositoryNamePattern.test(name)) return yield* precondition('Invalid repository');
 			const found = yield* self.call(`/repos/${name}/installation`, yield* self.appToken());
 			if (found === null) return 'uninstalled';
 			const installation = yield* Effect.fromResult(decode(installationSchema, found));

@@ -2,7 +2,7 @@ import { Effect } from 'effect';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 
-const fullName = /^[\w.-]+\/[\w.-]+$/;
+export const repositoryNamePattern = /^[\w.-]+\/[\w.-]+$/;
 
 export interface RepositoryReference {
 	owner?: string;
@@ -16,7 +16,7 @@ export function repositoryReference(input: string): Effect.Effect<RepositoryRefe
 	const parts = value.replace(/\.git$/, '').split('/');
 	if (parts.length === 1 && parts[0] && /^[\w.-]+$/.test(parts[0])) return Effect.succeed({ name: parts[0] });
 	const [owner, name] = parts;
-	if (parts.length === 2 && fullName.test(value.replace(/\.git$/, '')) && owner && name) {
+	if (parts.length === 2 && repositoryNamePattern.test(value.replace(/\.git$/, '')) && owner && name) {
 		return Effect.succeed({ owner, name });
 	}
 	return Effect.fail(precondition('Enter a repository as name, owner/name or a GitHub URL'));

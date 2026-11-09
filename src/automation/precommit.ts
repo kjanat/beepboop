@@ -5,6 +5,7 @@ import type { Edit, ReleaseReference, Snapshot } from '@/automation/types';
 import { hookConfig } from '@/contract/catalog';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
+import { shaPattern } from '@/contract/ids';
 
 export interface HookReference {
 	repository: string;
@@ -61,9 +62,9 @@ export function planHookUpdates(snapshot: Snapshot, release: ReleaseReference): 
 			);
 			let after = before;
 			for (const { rev, range } of updates.sort((a, b) => b.range[0] - a.range[0])) {
-				const target = /^[a-f0-9]{40}$/.test(String(rev.value)) ? release.commit : release.tag;
+				const target = shaPattern.test(String(rev.value)) ? release.commit : release.tag;
 				if (!target) return yield* precondition('Hook update requires an upstream version tag');
-				if (!/^[a-f0-9]{40}$/.test(release.commit)) return yield* precondition('Invalid upstream release commit');
+				if (!shaPattern.test(release.commit)) return yield* precondition('Invalid upstream release commit');
 				const original = before.slice(range[0], range[1]);
 				const replacement = original.startsWith("'")
 					? `'${target.replaceAll("'", "''")}'`

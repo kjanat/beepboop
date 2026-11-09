@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 export const exclusionReasons = [
 	'private',
 	'vscode-extension',
@@ -12,6 +14,14 @@ export type PackagePublication = { kind: 'registry' } | { kind: 'excluded'; reas
 export const registry: PackagePublication = { kind: 'registry' };
 export function excluded(reason: ExclusionReason): PackagePublication {
 	return { kind: 'excluded', reason };
+}
+export function publicationSchema(
+	errors: { publication?: string; reason?: string } = {},
+): z.ZodType<PackagePublication> {
+	return z.discriminatedUnion('kind', [
+		z.object({ kind: z.literal('registry') }),
+		z.object({ kind: z.literal('excluded'), reason: z.enum(exclusionReasons, { error: errors.reason }) }),
+	], { error: errors.publication });
 }
 export function publishable(pkg: { publication: PackagePublication }): boolean {
 	return pkg.publication.kind === 'registry';

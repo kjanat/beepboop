@@ -1,14 +1,13 @@
 import { Effect } from 'effect';
 import { z } from 'zod';
-import type { PackagePublication } from '@/automation/package-publication';
-import { exclusionReasons } from '@/automation/package-publication';
+import { publicationSchema } from '@/automation/package-publication';
 import type { SetupOperation, SetupPlan, SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { binaries } from '@/contract/setup';
 import { versionFileSchema } from '@/contract/version-files';
+import { stringsSchema as strings } from '@/model';
 
-const strings = z.array(z.string());
 const workflowShape = z.object({
 	file: z.string(),
 	job: z.string().optional(),
@@ -26,11 +25,10 @@ const operation: z.ZodType<SetupOperation> = workflowShape.extend({
 	needsJobs: z.record(z.string(), strings).optional(),
 	publications: strings,
 }).strict();
-const publication: z.ZodType<PackagePublication> = z.discriminatedUnion('kind', [
-	z.object({ kind: z.literal('registry') }).transform((): PackagePublication => ({ kind: 'registry' })),
-	z.object({ kind: z.literal('excluded'), reason: z.enum(exclusionReasons, { error: 'Invalid exclusion reason' }) })
-		.transform(({ reason }): PackagePublication => ({ kind: 'excluded', reason })),
-], { error: 'Invalid package publication' });
+const publication = publicationSchema({
+	publication: 'Invalid package publication',
+	reason: 'Invalid exclusion reason',
+});
 const evidence: z.ZodType<WorkflowEvidence> = z.object({
 	file: z.string(),
 	jobs: strings,

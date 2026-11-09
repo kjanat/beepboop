@@ -11,6 +11,7 @@ export type Parsed<A> = Result.Result<A, DomainError>;
 export const invalid = rejectWith(precondition);
 
 export const textSchema = z.string().min(1);
+export const stringsSchema = z.array(z.string());
 export const countSchema = z.int().positive();
 export const shaSchema = z.string().regex(shaPattern);
 export const looseSchema = z.unknown().optional();
@@ -32,9 +33,8 @@ export function text(value: unknown): Parsed<string> {
 	return typeof value === 'string' && value.length > 0 ? Result.succeed(value) : invalid('Expected nonempty string');
 }
 export function integer(value: unknown): Parsed<number> {
-	return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1
-		? Result.succeed(value)
-		: invalid('Expected positive integer');
+	const parsed = countSchema.safeParse(value);
+	return parsed.success ? Result.succeed(parsed.data) : invalid('Expected positive integer');
 }
 export function array(value: unknown): Parsed<unknown[]> {
 	return Array.isArray(value) ? Result.succeed(value) : invalid('Expected array');

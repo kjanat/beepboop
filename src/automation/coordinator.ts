@@ -99,6 +99,7 @@ import type {
 import { parseGrant, runtimeGrant } from '@/automation/vault';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
+import { sha256DigestPattern } from '@/contract/ids';
 import type { ClaimStep, LedgerManager, NextStep, PublishReport, ReportStep } from '@/contract/ledger';
 import { ledgerManagers } from '@/contract/ledger';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
@@ -1504,7 +1505,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			for (const artifact of artifacts) {
 				if (artifact.runId !== identity.runId) return yield* precondition('Artifact producer mismatch');
-				if (!/^sha256:[a-f0-9]{64}$/.test(artifact.digest) || !(Date.parse(artifact.expiresAt) > Date.now())) {
+				if (!sha256DigestPattern.test(artifact.digest) || !(Date.parse(artifact.expiresAt) > Date.now())) {
 					return yield* precondition('Artifact has no usable digest or has expired');
 				}
 				const gateway = this.gateway();

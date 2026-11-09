@@ -6,11 +6,11 @@ import { z } from 'zod';
 import { repositoryReference } from '@/automation/repository-name';
 import type { Client } from '@/cli/client';
 import { emit, failure } from '@/cli/output';
-import { shaPattern } from '@/contract/ids';
 import { routes } from '@/contract/routes';
 import { semverPattern } from '@/contract/semver';
 import { decodeWith } from '@/decode';
 import { packageLabel } from '@/domain/package-label';
+import { shaSchema } from '@/model';
 
 const bumps = ['patch', 'minor', 'major'] as const;
 export function releaseVersion(value: string): Effect.Effect<string | { bump: typeof bumps[number] }, CLIError> {
@@ -121,7 +121,7 @@ const streamSchema = z.looseObject({
 });
 const summarySchema = z.looseObject({
 	version: z.string().min(1),
-	sourceSha: z.string().regex(shaPattern),
+	sourceSha: shaSchema,
 	planId: z.string().min(1),
 	packages: z.array(z.object({ name: z.string(), manager: z.string(), version: z.string().optional() })).optional(),
 	blockers: z.array(z.string()).optional(),

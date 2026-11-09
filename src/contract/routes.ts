@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { changesResponse } from '@/contract/changes';
-import { shaPattern } from '@/contract/ids';
 import {
 	claimStep,
 	nextStep,
@@ -21,6 +20,7 @@ import {
 	securityChallenge,
 	securityProof,
 } from '@/contract/views';
+import { shaSchema as sha, textSchema as text } from '@/model';
 
 export type Method = 'GET' | 'POST';
 export type Auth = 'admin' | 'elevated' | 'workflow' | 'workflow-token';
@@ -39,9 +39,7 @@ function route<const Q extends z.ZodType, const R extends z.ZodType>(definition:
 }
 
 const id = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
-const text = z.string().min(1);
-const sha = z.string().regex(shaPattern);
-const proof = z.string().min(1).optional();
+const proof = text.optional();
 const none = z.object({});
 const executionRef = z.object({ id: text, repositoryId: id.optional() });
 

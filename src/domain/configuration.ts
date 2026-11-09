@@ -15,13 +15,13 @@ import {
 } from '@/contract/catalog';
 import type { Diagnostic, DiagnosticCode } from '@/contract/diagnostics';
 import { isDiagnosticCode } from '@/contract/diagnostics';
+import { identifierPattern } from '@/contract/ids';
 import { versionFileSchema } from '@/contract/version-files';
+import { textSchema as nonempty } from '@/model';
 import { purl } from '@/package-url';
 
-export const identifierPattern = /^[a-z][a-z0-9-]{0,63}$/;
 export const reservedOperations = ['prepare', 'promote'] as const;
 export type ReservedOperation = (typeof reservedOperations)[number];
-const nonempty = z.string().min(1);
 const identifier = z.string().regex(identifierPattern);
 
 function issue(ctx: z.RefinementCtx, code: DiagnosticCode, message: string, path: (string | number)[]): void {

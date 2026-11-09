@@ -6,6 +6,8 @@ import type { Invalid } from '@root/actions/runtime/protocol.ts';
 import { ActionFailure, attempt, refuse } from '@root/actions/runtime/protocol.ts';
 import { Effect, Result } from 'effect';
 import type { RefChange, RefPlan } from '@/automation/refs.ts';
+import { repositoryNamePattern } from '@/automation/repository-name.ts';
+import { shaPattern } from '@/contract/ids.ts';
 import { array, boolean, record, text } from '@/model.ts';
 
 interface Git {
@@ -104,7 +106,7 @@ function publish(plan: RefPlan, git: Git, remote: string): Effect.Effect<void, A
 		const refspecs: string[] = [];
 		for (const change of plan.changes) {
 			if (
-				!/^[a-f0-9]{40}$/.test(change.commit) || change.expected !== null && !/^[a-f0-9]{40}$/.test(change.expected)
+				!shaPattern.test(change.commit) || change.expected !== null && !shaPattern.test(change.expected)
 			) return yield* new ActionFailure({ message: 'Invalid ref object' });
 			const ref = `refs/tags/${change.name}`;
 			yield* git.read('check-ref-format', ref);
@@ -173,7 +175,7 @@ if (import.meta.main) {
 		const plan = yield* Effect.fromResult(
 			attempt((): unknown => JSON.parse(REF_PLAN)).pipe(Result.flatMap(parsePlan)),
 		);
-		if (!/^[\w.-]+\/[\w.-]+$/.test(plan.repository)) return yield* Effect.fromResult(refuse('Invalid destination'));
+		if (!repositoryNamePattern.test(plan.repository)) return yield* Effect.fromResult(refuse('Invalid destination'));
 		yield* publishRefs(plan, GITHUB_WORKSPACE, `https://github.com/${plan.repository}.git`, REF_TOKEN);
 	}));
 }

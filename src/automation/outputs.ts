@@ -3,14 +3,15 @@ import { z } from 'zod';
 import type { Artifact, Execution } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
+import { sha256DigestPattern } from '@/contract/ids';
 
-const name = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
+export const nameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
 export const outputSchema = z.strictObject({
-	id: name,
+	id: nameSchema,
 	kind: z.enum(['archive', 'binary', 'manifest', 'package', 'checksums']),
 });
-export const inputSchema = z.strictObject({ operation: name, output: name });
-export const platformSchema = z.strictObject({ os: name, arch: name, abi: name.optional() });
+export const inputSchema = z.strictObject({ operation: nameSchema, output: nameSchema });
+export const platformSchema = z.strictObject({ os: nameSchema, arch: nameSchema, abi: nameSchema.optional() });
 export type OutputDeclaration = z.infer<typeof outputSchema>;
 export type InputDeclaration = z.infer<typeof inputSchema>;
 export type Platform = z.infer<typeof platformSchema>;
@@ -51,7 +52,7 @@ export function resolveInputs(
 		const artifact = artifacts[0];
 		if (
 			!declaration || artifacts.length !== 1 || !artifact || artifact.runId !== producer.runId
-			|| !/^sha256:[a-f0-9]{64}$/.test(artifact.digest)
+			|| !sha256DigestPattern.test(artifact.digest)
 			|| !(Date.parse(artifact.expiresAt) > now)
 		) {
 			return Effect.fail(precondition(`Output is unavailable: ${input.operation}/${input.output}`));

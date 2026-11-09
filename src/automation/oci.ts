@@ -1,6 +1,7 @@
 import { Effect } from 'effect';
 import type { Fetcher } from '@/automation/managers/registry';
 import type { Outcome, Publication } from '@/automation/types';
+import { sha256DigestPattern } from '@/contract/ids';
 import { fromPromise } from '@/failure';
 import { record } from '@/model';
 
@@ -43,7 +44,7 @@ export function verifyImage(publication: Publication, request: Fetcher = fetch):
 		if (response.status === 404) return result('pending');
 		if (!response.ok) return result('uncertain');
 		const digest = response.headers.get('docker-content-digest');
-		if (!digest || !/^sha256:[a-f0-9]{64}$/.test(digest) || !publication.digest || publication.digest !== digest) {
+		if (!digest || !sha256DigestPattern.test(digest) || !publication.digest || publication.digest !== digest) {
 			return result('failed');
 		}
 		// Verify the bytes as well as the registry's digest header.

@@ -9,6 +9,7 @@ import { jobKeyPattern, managerNames, validRef, validTagPrefix, workflowFilePatt
 import type { Diagnostic } from '@/contract/diagnostics';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
+import { identifierPattern, shaPattern } from '@/contract/ids';
 import { versionFileSchema } from '@/contract/version-files';
 import { configurationDrift, configurationSchema } from '@/domain/configuration';
 import { toDomainError } from '@/failure';
@@ -31,7 +32,6 @@ function packageReferences(value: unknown): Parsed<string[]> {
 		));
 	});
 }
-const identifier = /^[a-z][a-z0-9-]{0,63}$/;
 function keys(data: Record<string, unknown>, allowed: string[], context: string): Parsed<void> {
 	const unknown = Object.keys(data).find(key => !allowed.includes(key));
 	return unknown === undefined ? Result.void : invalid(`${context}: unknown field ${unknown}`);
@@ -147,7 +147,7 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 			needsJobs = {};
 			for (const [operation, jobs] of Object.entries(yield* record(data.needsJobs))) {
 				const names = yield* strings(jobs);
-				if (!identifier.test(operation) || !names.length || names.some(name => !jobKeyPattern.test(name))) {
+				if (!identifierPattern.test(operation) || !names.length || names.some(name => !jobKeyPattern.test(name))) {
 					return yield* invalid('Invalid needsJobs');
 				}
 				needsJobs[operation] = names;
@@ -175,7 +175,7 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 }
 function stream(name: string, raw: unknown): Parsed<Stream> {
 	return Result.gen(function*() {
-		if (!identifier.test(name)) return yield* invalid('Invalid stream name');
+		if (!identifierPattern.test(name)) return yield* invalid('Invalid stream name');
 		const row = yield* record(raw);
 		yield* keys(
 			row,
@@ -215,7 +215,7 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 		const concurrency = yield* oneOf(row.concurrency ?? 'queue', ['queue', 'supersede-pending'], 'Invalid concurrency');
 		const workflows: Record<string, WorkflowBinding> = {};
 		for (const [operation, value] of Object.entries(yield* record(row.workflows ?? {}))) {
-			if (!identifier.test(operation)) return yield* invalid('Invalid operation name');
+			if (!identifierPattern.test(operation)) return yield* invalid('Invalid operation name');
 			workflows[operation] = yield* binding(value);
 		}
 		let versionSource: Stream['versionSource'];
@@ -325,7 +325,7 @@ function subscription(raw: unknown, streams: Record<string, Stream>): Parsed<Con
 			kind = yield* text(row.event),
 			stream = yield* text(row.stream),
 			operation = yield* text(row.operation);
-		if (!identifier.test(id)) return yield* invalid('Invalid subscription');
+		if (!identifierPattern.test(id)) return yield* invalid('Invalid subscription');
 		const event = yield* oneOf(kind, ['release', 'package.version.changed', 'workflow_run'], 'Invalid subscription');
 		if (!streams[stream]?.workflows[operation]) return yield* invalid('Subscription references an unknown operation');
 		if (event === 'workflow_run' && (typeof row.workflow !== 'string' || !workflowFilePattern.test(row.workflow))) {
@@ -431,7 +431,7 @@ export function resolveConfiguration(
 				}
 				const loaded = cache.get(reference) ?? (yield* load(reference));
 				cache.set(reference, loaded);
-				if (!/^[a-f0-9]{40}$/.test(loaded.sha)) return yield* precondition('Preset must resolve to a commit');
+				if (!shaPattern.test(loaded.sha)) return yield* precondition('Preset must resolve to a commit');
 				presetShas[reference] = loaded.sha;
 				const nested = yield* visit(loaded.value, [...stack, reference]);
 				resolved = yield* Effect.fromResult(mergeConfiguration(resolved, nested));

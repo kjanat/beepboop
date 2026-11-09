@@ -5,8 +5,7 @@ import type { ResolvedInput } from '@/automation/outputs';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import type { StoredInventory, StoredPackage, StoredRepository } from '@/automation/package-identity';
 import { identifyExecution, identifyRepository, normalizePublication } from '@/automation/package-identity';
-import type { PackagePublication } from '@/automation/package-publication';
-import { exclusionReasons } from '@/automation/package-publication';
+import { publicationSchema } from '@/automation/package-publication';
 import type { ReleaseSetPlan } from '@/automation/planning';
 import type { RefPlan } from '@/automation/refs';
 import type { SetupEdit } from '@/automation/setup-types';
@@ -27,11 +26,11 @@ import { managerDestinationIds, managerNames } from '@/contract/catalog';
 import { diagnostic, isDiagnosticCode } from '@/contract/diagnostics';
 import { setupChoicesSchema } from '@/contract/setup';
 import { executionStates } from '@/contract/views';
+import { stringsSchema as strings } from '@/model';
 import type { PackageIdentity } from '@/package-url';
 import { storedBinding, storedConfiguration } from '@/persistence/codecs/configuration';
 
 const managerName = z.enum(managerNames);
-const strings = z.array(z.string());
 const shas = z.record(z.string(), z.string());
 const storedDiagnostic = diagnostic.extend({
 	code: z.string().transform(code => isDiagnosticCode(code) ? code : 'legacy'),
@@ -45,10 +44,7 @@ const identity: z.ZodType<PackageIdentity> = z.object({
 	qualifiers: z.record(z.string(), z.string()).optional(),
 	subpath: z.string().optional(),
 });
-const publication: z.ZodType<PackagePublication> = z.discriminatedUnion('kind', [
-	z.object({ kind: z.literal('registry') }),
-	z.object({ kind: z.literal('excluded'), reason: z.enum(exclusionReasons) }),
-]);
+const publication = publicationSchema();
 const registryState = z.discriminatedUnion('state', [
 	z.object({ state: z.literal('published'), version: z.string() }),
 	z.object({ state: z.literal('missing') }),

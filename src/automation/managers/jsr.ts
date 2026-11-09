@@ -8,13 +8,12 @@ import { latestVersion, unpublished } from '@/automation/managers/verification';
 import { identityOf } from '@/automation/package-identity';
 import { registry } from '@/automation/package-publication';
 import type { Outcome, Publication } from '@/automation/types';
-import { jsrManifest } from '@/contract/catalog';
+import { jsrManifest, jsrPackageNamePattern } from '@/contract/catalog';
 import { fileProblem } from '@/contract/diagnostics';
 import type { DomainError } from '@/contract/errors';
 import { domainError, upstream } from '@/contract/errors';
 import { fromPromise, fromSync } from '@/failure';
 
-const packageName = /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/;
 const precedence = ['jsr.json', 'jsr.jsonc', 'deno.json', 'deno.jsonc'];
 function rank(path: string): number {
 	return precedence.indexOf(path.slice(path.lastIndexOf('/') + 1));
@@ -22,7 +21,7 @@ function rank(path: string): number {
 const licenseTerm = String.raw`\(?(?!UNLICENSED\b|LicenseRef-)[A-Za-z0-9][A-Za-z0-9.+-]*\)?`;
 const spdxLicense = new RegExp(`^${licenseTerm}(?: (?:AND|OR|WITH) ${licenseTerm})*$`);
 export function jsrLatest(name: string, request: Fetcher): Effect.Effect<RegistryVersion> {
-	if (!packageName.test(name)) return Effect.die(new Error('Invalid JSR package name'));
+	if (!jsrPackageNamePattern.test(name)) return Effect.die(new Error('Invalid JSR package name'));
 	return latestVersion(request, `https://jsr.io/${name}/meta.json`, body => {
 		const metadata = object(body);
 		const [scope, bare] = name.slice(1).split('/');
@@ -51,7 +50,7 @@ export function setUpJsrPackage(
 	token: string,
 ): Effect.Effect<void, DomainError, Registry> {
 	return Effect.gen(function*() {
-		if (!packageName.test(name)) return yield* setupRefused(`Invalid JSR package name ${name}`);
+		if (!jsrPackageNamePattern.test(name)) return yield* setupRefused(`Invalid JSR package name ${name}`);
 		const registry = yield* Registry;
 		const [scope, bare] = name.slice(1).split('/');
 		const [owner, repo] = repository.split('/');
@@ -111,7 +110,7 @@ export const jsrManager: Adapter<'jsr'> = {
 			const deno = /(?:^|\/)deno\.jsonc?$/.test(path);
 			if (deno && !errors.length && manifest.name === undefined) continue;
 			inventory.managers = ['jsr'];
-			if (errors.length || typeof manifest.name !== 'string' || !packageName.test(manifest.name)) {
+			if (errors.length || typeof manifest.name !== 'string' || !jsrPackageNamePattern.test(manifest.name)) {
 				inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', `invalid JSR manifest`));
 				continue;
 			}
@@ -149,7 +148,7 @@ export const jsrManager: Adapter<'jsr'> = {
 	},
 	latest: (pkg, request) => jsrLatest(pkg.name, request),
 	verifyPublication(publication, request) {
-		if (!packageName.test(publication.name) || !/^[0-9A-Za-z.+-]+$/.test(publication.version)) {
+		if (!jsrPackageNamePattern.test(publication.name) || !/^[0-9A-Za-z.+-]+$/.test(publication.version)) {
 			return Effect.succeed({ ...publication, outcome: 'failed' });
 		}
 		const url = `https://jsr.io/${publication.name}/${publication.version}_meta.json`;

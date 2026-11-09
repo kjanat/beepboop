@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { textSchema as text } from '@/model';
 
 export const ledgerManagers = ['cargo', 'pypi', 'npm'] as const;
 export const publishWaitMinutes = 30;
@@ -14,8 +15,6 @@ export const ledgerStates = [
 	'failed-permanent',
 ] as const;
 export type LedgerState = (typeof ledgerStates)[number];
-
-const text = z.string().min(1);
 
 export const ledgerPackage = z.object({
 	purl: text,

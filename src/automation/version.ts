@@ -1,7 +1,8 @@
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
-import { compareVersions, record, semver, text } from '@/model';
+import { semVer } from '@/contract/version';
+import { compareVersions, invalid, record, text } from '@/model';
 
 export type VersionRequest =
 	| { version: string }
@@ -10,7 +11,12 @@ export type VersionRequest =
 	| { bump: 'next' | 'stable' };
 
 function release(value: unknown): Effect.Effect<string, DomainError> {
-	return Effect.fromResult(semver(value)).pipe(Effect.map(version => version.replace(/^v/, '')));
+	return Effect.fromResult(
+		text(value).pipe(Result.flatMap(input => {
+			const parsed = semVer.safeParse(input);
+			return parsed.success ? Result.succeed(parsed.data) : invalid('Invalid value format');
+		})),
+	);
 }
 
 export function parseVersionRequest(value: unknown): Effect.Effect<VersionRequest, DomainError> {

@@ -1,6 +1,6 @@
 import { join, resolve } from 'node:path';
 import { Effect } from 'effect';
-import { z } from 'zod';
+import { packageManifest } from '@/tooling/cli/manifest';
 import type { ToolFailure } from '@/tooling/runtime';
 import { attemptPromise, capture, main, parse, readJson, refuse, temporaryDirectory } from '@/tooling/runtime';
 
@@ -13,7 +13,7 @@ function expect(condition: boolean, message: string): Effect.Effect<void, ToolFa
 
 await main(Effect.scoped(Effect.gen(function*() {
 	const manifest = yield* parse(
-		z.object({ name: z.string(), version: z.string() }),
+		packageManifest,
 		yield* readJson(`${directory}/package.json`),
 	);
 	const temporary = yield* temporaryDirectory('beepboop-package-');
