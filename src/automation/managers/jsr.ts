@@ -1,7 +1,7 @@
 import { Effect } from 'effect';
 import type { ParseError } from 'jsonc-parser';
 import { applyEdits, modify, parse } from 'jsonc-parser';
-import { directory, object } from '@/automation/managers/helpers';
+import { object } from '@/automation/managers/helpers';
 import type { Adapter, Fetcher, RegistryVersion } from '@/automation/managers/registry';
 import { emptyInventory, Registry } from '@/automation/managers/registry';
 import { latestVersion, unpublished } from '@/automation/managers/verification';
@@ -14,6 +14,7 @@ import type { DomainError } from '@/contract/errors';
 import { domainError, upstream } from '@/contract/errors';
 import { sha256Hex } from '@/contract/ids';
 import { fromPromise, fromSync } from '@/failure';
+import { parentDirectory } from '@/relative-path';
 
 const precedence = ['jsr.json', 'jsr.jsonc', 'deno.json', 'deno.jsonc'];
 function rank(path: string): number {
@@ -100,7 +101,7 @@ export const jsrManager: Adapter<'jsr'> = {
 		const inventory = emptyInventory();
 		const manifests = new Map<string, string>();
 		for (const path of Object.keys(snapshot.files).filter(path => jsrManifest.test(path))) {
-			const dir = directory(path);
+			const dir = parentDirectory(path);
 			const chosen = manifests.get(dir);
 			if (!chosen || rank(path) < rank(chosen)) manifests.set(dir, path);
 		}

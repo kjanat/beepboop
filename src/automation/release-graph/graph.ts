@@ -15,6 +15,7 @@ import { escapeRegExp, globMatches, packDirectories, within } from '@/automation
 import type { Destination, Job, StepEffect, Workflow } from '@/automation/release-graph/workflows';
 import { declaredWorkspaces, inWorkspaces, literalPrefix, workflowModels } from '@/automation/release-graph/workflows';
 import type { Inventory, Package, Snapshot } from '@/automation/types';
+import { parentDirectory } from '@/relative-path';
 
 export type EvidenceStatus = 'declared' | 'inferred' | 'conflicting' | 'unresolved';
 export interface Evidence {
@@ -386,7 +387,7 @@ const scripted = /\b(?:npm|pnpm|yarn|bun)\b[^\n]*\s(?:run|run-script)(?:\s|$)/;
 const installing =
 	/\b(?:npx|bunx|pnpm\s+(?:dlx|add|i|install)|yarn\s+(?:dlx|add)|npm\s+(?:view|info|show|install|i|ci|add|exec|x))\b/;
 function directoryOf(pkg: Package): string {
-	return pkg.manifest.split('/').slice(0, -1).join('/');
+	return parentDirectory(pkg.manifest);
 }
 function defaultMembers(snapshot: Snapshot, directory: string): string[] {
 	const source = snapshot.files[directory ? `${directory}/Cargo.toml` : 'Cargo.toml'];
@@ -674,7 +675,7 @@ function targetsOf(
 					),
 				];
 				const located = projects.filter(project => {
-					const directory = escapeRegExp(project.path.split('/').slice(0, -1).join('/'));
+					const directory = escapeRegExp(parentDirectory(project.path));
 					return directory !== '' && new RegExp(
 						`(?:(?:\\bcd|(?<![\\w-])(?:--directory|--project|-C))\\s+["']?(?:\\./)?${directory}/?["']?(?:\\s|$|[;&)])|(?<![\\w./-])${directory}/(?:dist|pyproject\\.toml)\\b)`,
 						'm',

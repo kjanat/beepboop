@@ -1,3 +1,5 @@
+import { object } from '@/automation/managers/helpers';
+
 export const ownerId = 6353477;
 export const ownerLogin = 'octo';
 export const appId = '1000';
@@ -89,12 +91,6 @@ class HttpError extends Error {
 
 function json(value: unknown, status = 200): Response {
 	return Response.json(value, { status });
-}
-
-function fields(value: unknown): Record<string, unknown> {
-	return typeof value === 'object' && value !== null && !Array.isArray(value)
-		? Object.fromEntries(Object.entries(value))
-		: {};
 }
 
 function stringField(value: Record<string, unknown>, name: string): string {
@@ -227,7 +223,7 @@ export class FakeGitHub {
 			const base = repository.trees.get(stringField(body, 'base_tree'));
 			if (!base) throw new HttpError(422, 'Unknown base tree');
 			const files = new Map(base);
-			for (const entry of Array.isArray(body.tree) ? body.tree.map(fields) : []) {
+			for (const entry of Array.isArray(body.tree) ? body.tree.map(object) : []) {
 				files.set(stringField(entry, 'path'), stringField(entry, 'content'));
 			}
 			return json({ sha: this.tree(repository, files) }, 201);
@@ -308,7 +304,7 @@ export class FakeGitHub {
 			return json(this.pullJson(repository, pull));
 		});
 		this.route('POST', /^\/graphql$/, (_match, _url, body) => {
-			const variables = fields(body.variables);
+			const variables = object(body.variables);
 			const repository = this.repository(`${stringField(variables, 'owner')}/${stringField(variables, 'name')}`);
 			const pull = this.pull(repository, Number(variables.number));
 			const nodes = (pull.edits ?? []).map(edit => ({ editor: { login: edit.editor }, diff: edit.body }));
@@ -410,7 +406,7 @@ export class FakeGitHub {
 			}
 			const ref = stringField(body, 'ref').replace(/^refs\/(heads|tags)\//, '');
 			const inputs = Object.fromEntries(
-				Object.entries(fields(body.inputs)).map(([key, value]) => [key, String(value)]),
+				Object.entries(object(body.inputs)).map(([key, value]) => [key, String(value)]),
 			);
 			this.dispatches.push({ repository: repository.name, file, ref, inputs });
 			repository.runs.push({
@@ -536,7 +532,7 @@ export class FakeGitHub {
 	async handle(request: Request): Promise<Response> {
 		const url = new URL(request.url);
 		const text = request.method === 'GET' ? '' : await request.text();
-		const body = text ? fields(JSON.parse(text)) : {};
+		const body = text ? object(JSON.parse(text)) : {};
 		for (const [method, pattern, handler] of this.routes) {
 			if (method !== request.method) continue;
 			const match = pattern.exec(url.pathname);

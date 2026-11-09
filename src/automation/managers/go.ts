@@ -1,5 +1,5 @@
 import { Effect } from 'effect';
-import { directory, object } from '@/automation/managers/helpers';
+import { object } from '@/automation/managers/helpers';
 import type { Adapter, Fetcher } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestTag, majorSuffix, tagSource } from '@/automation/managers/tags';
@@ -9,6 +9,7 @@ import type { Outcome, Package, Publication } from '@/automation/types';
 import { fileProblem } from '@/contract/diagnostics';
 import { fromPromise } from '@/failure';
 import { packageIdentity } from '@/package-url';
+import { parentDirectory } from '@/relative-path';
 
 const pseudoVersion =
 	/^v[0-9]+\.(?:0\.0-|\d+\.\d+-(?:[^+]*\.)?0\.)\d{14}-[A-Za-z0-9]+(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
@@ -69,7 +70,7 @@ function codeRoot(split: ModulePath, dir: string, repository: string, vanity: st
 		return root.toLowerCase() === repository ? root : undefined;
 	}
 	if (vanity !== undefined) return vanity;
-	const base = split.suffix && (dir === split.suffix || dir.endsWith(`/${split.suffix}`)) ? directory(dir) : dir;
+	const base = split.suffix && (dir === split.suffix || dir.endsWith(`/${split.suffix}`)) ? parentDirectory(dir) : dir;
 	if (!base) return split.prefix;
 	return split.prefix.endsWith(`/${base}`) ? split.prefix.slice(0, -base.length - 1) : undefined;
 }
@@ -157,7 +158,7 @@ export const goManager: Adapter<'go'> = {
 		const vanityRoot = rootModule ? splitModulePath(rootModule.mod.module)?.prefix : undefined;
 		const repository = `github.com/${snapshot.repository.name}`.toLowerCase();
 		for (const { path, mod } of modules) {
-			const dir = directory(path);
+			const dir = parentDirectory(path);
 			const split = splitModulePath(mod.module);
 			const root = split && codeRoot(split, dir, repository, vanityRoot);
 			const codeDir = !split || root === undefined

@@ -16,6 +16,7 @@ import { attempt, refuse, required } from '@root/actions/runtime/protocol.ts';
 import { Effect, Result } from 'effect';
 import { checkoutAt } from '@/git.ts';
 import { array, record, string, strings, text } from '@/model.ts';
+import { hasPathSegment } from '@/relative-path.ts';
 
 interface PlannedEdit {
 	path: string;
@@ -54,7 +55,7 @@ function preparation(source: string): Result.Result<Preparation, Invalid> {
 }
 
 function safe(root: string, path: string): Result.Result<string, ActionFailure> {
-	if (isAbsolute(path) || path.split(/[\\/]/).some(part => part === '..' || part === '.git')) {
+	if (isAbsolute(path) || hasPathSegment(path, ['..', '.git'])) {
 		return refuse('Unsafe release edit path');
 	}
 	return attempt(() => {

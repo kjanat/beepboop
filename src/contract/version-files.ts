@@ -1,9 +1,8 @@
 import { z } from 'zod';
+import { unsafeRelativePath } from '@/relative-path';
 
 export function safeVersionPath(path: string): boolean {
-	return path.length > 0 && !path.startsWith('/') && !path.includes('\\')
-		&& !path.split('/').some(part => !part || part === '.' || part === '..' || part === '.git')
-		&& !/^[A-Za-z]:/.test(path);
+	return !path.includes('\\') && !unsafeRelativePath(path, ['', '.', '..', '.git']);
 }
 const common = {
 	path: z.string().refine(safeVersionPath, 'Expected a repository-relative path'),

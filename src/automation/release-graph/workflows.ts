@@ -2,7 +2,7 @@ import { Result } from 'effect';
 import type { ParseError } from 'jsonc-parser';
 import { parse as parseJsonc } from 'jsonc-parser';
 import { parse as parseToml } from 'smol-toml';
-import { object, yaml } from '@/automation/managers/helpers';
+import { glob, object, yaml } from '@/automation/managers/helpers';
 import { bindInputs, bindStep, disabled, expandStep, staticGuard } from '@/automation/release-graph/bindings';
 import {
 	actionBindings,
@@ -473,15 +473,7 @@ export function declaredWorkspaces(snapshot: Snapshot): string[] {
 	return patterns;
 }
 export function inWorkspaces(patterns: readonly string[], directory: string): boolean {
-	const matches = (pattern: string) =>
-		new RegExp(
-			`^${
-				escapeRegExp(pattern.replace(/^\.\//, '').replace(/\/$/, '')).replaceAll('\\*\\*', '.*').replaceAll(
-					'\\*',
-					'[^/]*',
-				)
-			}$`,
-		).test(directory);
+	const matches = (pattern: string) => glob(pattern.replace(/^\.\//, '').replace(/\/$/, ''), directory);
 	return patterns.some(pattern => !pattern.startsWith('!') && matches(pattern))
 		&& !patterns.some(pattern => pattern.startsWith('!') && matches(pattern.slice(1)));
 }

@@ -1,7 +1,7 @@
 import { Result } from 'effect';
-import { directory } from '@/automation/managers/helpers';
 import { goreleaserConfig } from '@/contract/catalog';
 import { compareVersions, semver } from '@/model';
+import { parentDirectory } from '@/relative-path';
 
 export const majorSuffix = /^v(?:[2-9]|[1-9][0-9]+)$/;
 
@@ -28,10 +28,10 @@ export function tagQueries(paths: readonly string[]): string[] {
 	for (const path of paths) {
 		if (goreleaserConfig.test(path)) prefixes.add('');
 		if (path !== 'go.mod' && !path.endsWith('/go.mod')) continue;
-		const dir = directory(path);
+		const dir = parentDirectory(path);
 		prefixes.add(dir ? `${dir}/` : '');
 		if (majorSuffix.test(dir.slice(dir.lastIndexOf('/') + 1))) {
-			const parent = directory(dir);
+			const parent = parentDirectory(dir);
 			prefixes.add(parent ? `${parent}/` : '');
 		}
 	}

@@ -1,5 +1,6 @@
 import { Result } from 'effect';
 import { parseDocument } from 'yaml';
+import { escapeRegExp } from '@/automation/release-graph/shell';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { toDomainError } from '@/failure';
@@ -7,20 +8,9 @@ import { record } from '@/model';
 export function object(value: unknown): Record<string, unknown> {
 	return Result.getOrElse(record(value), () => ({}));
 }
-function glob(pattern: string, path: string): boolean {
-	const expression = pattern
-		.split('**')
-		.map((part) =>
-			part
-				.split('*')
-				.map((p) => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
-				.join('[^/]*')
-		)
-		.join('.*');
+export function glob(pattern: string, path: string): boolean {
+	const expression = pattern.split('**').map(part => part.split('*').map(escapeRegExp).join('[^/]*')).join('.*');
 	return new RegExp(`^${expression}$`).test(path);
-}
-export function directory(path: string): string {
-	return path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
 }
 export function inWorkspace(path: string, members: string[], exclusions: string[]): boolean {
 	return (

@@ -20,6 +20,7 @@ import { isLockfile, managerNames, managerSpec } from '@/contract/catalog';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { safeVersionPath } from '@/contract/version-files';
+import { parentDirectory } from '@/relative-path';
 
 export interface TreeEntry {
 	path: string;
@@ -232,7 +233,7 @@ function referencedScripts(
 			path.startsWith(`${action}/`)
 			&& (script.test(path) || /^(?:action\.ya?ml|Dockerfile)$/.test(path.slice(action.length + 1)))
 		)
-			|| taskFile.test(path) && directories.includes(path.split('/').slice(0, -1).join('/'))
+			|| taskFile.test(path) && directories.includes(parentDirectory(path))
 			|| modules.includes(path)
 			|| script.test(path) && parents.has(path)
 			|| script.test(path)
@@ -273,7 +274,7 @@ export function buildSnapshot(
 			const member = workspaceMembers(path => read.get(path), [...read.keys()]);
 			const claimed = blobs.filter(path =>
 				!requested.has(path) && excluded.test(path) && (marker(path) || content(path))
-				&& member(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '')
+				&& member(parentDirectory(path))
 			);
 			if (!claimed.length) break;
 			if (requested.size + claimed.length > 400) return yield* precondition('Discovery file limit exceeded');

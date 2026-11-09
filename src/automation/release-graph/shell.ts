@@ -1,3 +1,5 @@
+import { walkRelative } from '@/relative-path';
+
 const dryRun =
 	/--dry-run(?![\w-]|=(?:false|0)\b)|\bnpm_config_dry_run=["']?(?:true|1)\b|\bcargo\s+(?:\+\S+\s+)?publish\b[^\n;&|]*\s-[a-z]*n[a-z]*\b/i;
 const rehearsalRegistry =
@@ -132,13 +134,7 @@ export function executed(command: string): string[] {
 
 export function within(directory: string, change: string): string {
 	if (change.startsWith('/') || change.includes('$')) return directory;
-	const parts = directory ? directory.split('/') : [];
-	for (const part of change.split('/')) {
-		if (!part || part === '.') continue;
-		if (part === '..') parts.pop();
-		else parts.push(part);
-	}
-	return parts.join('/');
+	return walkRelative(directory, change).path;
 }
 
 export function escapeRegExp(value: string): string {

@@ -20,6 +20,7 @@ import {
 	versionManifest,
 } from '@/distribution/winget/schema';
 import { fromSync } from '@/failure';
+import { unsafeRelativePath } from '@/relative-path';
 
 const metadata = defaultLocaleManifest.omit({
 	PackageIdentifier: true,
@@ -146,10 +147,9 @@ export function generateManifests(options: GenerateOptions): Effect.Effect<Manif
 				...(config.installer.InstallationMetadata?.Files ?? []),
 			]
 		) {
-			if (
-				/^[\\/]|^[A-Za-z]:/.test(file.RelativeFilePath)
-				|| file.RelativeFilePath.split(/[\\/]/).some(part => part === '..')
-			) return yield* precondition('Unsafe installer relative path');
+			if (unsafeRelativePath(file.RelativeFilePath, ['..'])) {
+				return yield* precondition('Unsafe installer relative path');
+			}
 		}
 		if (
 			config.installer.InstallerType === 'zip'

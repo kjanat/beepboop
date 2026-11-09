@@ -6,6 +6,7 @@ import { ledgerCommand } from '@/automation/setup-defaults';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Inventory, Package, Snapshot } from '@/automation/types';
 import { isLockfile } from '@/contract/catalog';
+import { parentDirectory } from '@/relative-path';
 
 type Stream = SetupChoices['streams'][number];
 
@@ -22,8 +23,8 @@ function quote(value: string): string {
 	return `'${value.replaceAll("'", "'\\''")}'`;
 }
 function within(path: string, command: string): string {
-	const directory = path.split('/').slice(0, -1).join('/');
-	return directory ? `(cd ${quote(directory)} && ${command})` : command;
+	const parent = parentDirectory(path);
+	return parent ? `(cd ${quote(parent)} && ${command})` : command;
 }
 function unusedFile(base: string, taken: string[]): string {
 	let file = `${base}.yml`, index = 2;

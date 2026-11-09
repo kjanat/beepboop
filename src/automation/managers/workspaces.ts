@@ -1,6 +1,7 @@
 import { Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
-import { directory, inWorkspace, object, yaml } from '@/automation/managers/helpers';
+import { inWorkspace, object, yaml } from '@/automation/managers/helpers';
+import { parentDirectory, walkRelative } from '@/relative-path';
 
 type Read = (path: string) => string | undefined;
 
@@ -13,13 +14,8 @@ function strings(value: unknown): string[] {
 	return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
 }
 function resolve(base: string, relative: string): string | undefined {
-	const parts = base ? base.split('/') : [];
-	for (const part of relative.split('/')) {
-		if (!part || part === '.') continue;
-		if (part !== '..') parts.push(part);
-		else if (!parts.pop()) return undefined;
-	}
-	return parts.join('/');
+	const { path, escaped } = walkRelative(base, relative);
+	return escaped ? undefined : path;
 }
 function pathDependencies(manifest: Record<string, unknown>, shared: Record<string, unknown>): string[] {
 	const tables = [manifest, ...Object.values(object(manifest.target)).map(object)].flatMap(table =>
@@ -44,7 +40,7 @@ export function cargoMembers(read: Read, paths: readonly string[]): (path: strin
 	const shared = object(workspace.dependencies);
 	const explicit = (path: string) => inWorkspace(path, members, exclude);
 	const implicit = new Set<string>();
-	const queue = paths.filter(path => path === 'Cargo.toml' || path.endsWith('/Cargo.toml')).map(directory).filter(
+	const queue = paths.filter(path => path === 'Cargo.toml' || path.endsWith('/Cargo.toml')).map(parentDirectory).filter(
 		path => path === '' || explicit(path),
 	);
 	for (let index = 0; index < queue.length; index++) {

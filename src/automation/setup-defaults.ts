@@ -1,4 +1,5 @@
 import type { SetupPlan } from '@/automation/setup-types';
+import { parentDirectory } from '@/relative-path';
 
 export interface Selection {
 	name: string;
@@ -103,9 +104,6 @@ export function suggestedCommands(role: 'prepare' | 'promote', selection: Select
 		: commands;
 }
 type Selected = Selection['packages'][number];
-function directory(manifest: string): string {
-	return manifest.split('/').slice(0, -1).join('/');
-}
 function npmPackage(pkg: Selected): boolean {
 	return pkg.manager === 'npm' && /(?:^|\/)package\.json$/.test(pkg.manifest);
 }
@@ -136,7 +134,7 @@ const generators: Record<
 			const command = `${install}\nnpm run test --if-present`;
 			return [
 				...new Set(packages.map(pkg => {
-					const dir = directory(pkg.manifest);
+					const dir = parentDirectory(pkg.manifest);
 					return dir ? `(cd ${quote(dir)} &&\n${command}\n)` : command;
 				})),
 			].join('\n');
@@ -146,7 +144,7 @@ const generators: Record<
 		covers: pkg => /(?:^|\/)pyproject\.toml$/.test(pkg.manifest),
 		commands: packages =>
 			packages.map(pkg => {
-				const dir = directory(pkg.manifest);
+				const dir = parentDirectory(pkg.manifest);
 				return `uv build${dir ? ` --project ${quote(dir)}` : ''} --out-dir "$RUNNER_TEMP"/dist/${quote(pkg.name)}`;
 			}).join('\n'),
 	},
@@ -181,7 +179,9 @@ export function refreshedCommands(
 	if (!commands) return commands;
 	if (crateScript(commands)) return suggestedCommands(role, selection, plan) || commands;
 	const named = candidates.filter(pkg =>
-		[quote(pkg.name), quote(directory(pkg.manifest)), quote(`dist/${pkg.name}`)].some(token => commands.includes(token))
+		[quote(pkg.name), quote(parentDirectory(pkg.manifest)), quote(`dist/${pkg.name}`)].some(token =>
+			commands.includes(token)
+		)
 	);
 	const generated = [selection.packages, named].some(packages =>
 		packages.length > 0 && suggestedCommands(role, { name: selection.name, packages }, plan) === commands

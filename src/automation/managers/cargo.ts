@@ -1,6 +1,6 @@
 import { Effect, Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
-import { directory, object } from '@/automation/managers/helpers';
+import { object } from '@/automation/managers/helpers';
 import type { Adapter } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
@@ -9,6 +9,7 @@ import { excluded, registry } from '@/automation/package-publication';
 import { fileProblem } from '@/contract/diagnostics';
 import { precondition } from '@/contract/errors';
 import { packageIdentity } from '@/package-url';
+import { parentDirectory } from '@/relative-path';
 export const cargoManager: Adapter<'cargo'> = {
 	name: 'cargo',
 	identity: pkg => packageIdentity({ type: 'cargo', name: pkg.name, version: pkg.version }),
@@ -53,7 +54,7 @@ export const cargoManager: Adapter<'cargo'> = {
 		const member = cargoMembers(path => snapshot.files[path], Object.keys(snapshot.files));
 		for (const [path, source] of Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b))) {
 			if (path !== 'Cargo.toml' && !path.endsWith('/Cargo.toml')) continue;
-			if (path !== 'Cargo.toml' && !member(directory(path))) continue;
+			if (path !== 'Cargo.toml' && !member(parentDirectory(path))) continue;
 			const parsed = Result.try(() => object(parseToml(source)));
 			const manifest = Result.isSuccess(parsed) ? parsed.success : undefined;
 			const pkg = object(manifest?.package);
@@ -85,7 +86,7 @@ export const cargoManager: Adapter<'cargo'> = {
 				versionSource: inherited
 					? 'Cargo.toml#workspace.package.version'
 					: `${path}#package.version`,
-				publication: patched.has(directory(path))
+				publication: patched.has(parentDirectory(path))
 					? excluded('upstream-patch')
 					: publish === false
 					? excluded('publish-disabled')
