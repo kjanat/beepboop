@@ -470,8 +470,9 @@ reason on the runs page. Each stream enables its starts in `start`:
 ```
 
 - **GitHub Actions.** Run the **Start release** workflow, `start-release.yml`,
-  from the Actions tab, with a stream and `patch`, `minor`, `major` or a
-  version. Setup generates the workflow when you tick `action`. Its one step
+  from the Actions tab. Pick a stream and a `patch`, `minor` or `major` bump,
+  or type a version, which replaces the bump. Setup generates the workflow when
+  you tick `action`. Its one step
   runs `kjanat/beepboop/actions/release@v1`. The action proves the run with
   GitHub OIDC and asks Beepboop to start the release. Beepboop accepts only a
   `workflow_dispatch` run of the named file on the default branch, at the

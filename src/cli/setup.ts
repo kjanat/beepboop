@@ -8,7 +8,7 @@ import type { Client } from '@/cli/client';
 import { readJson } from '@/cli/json-file';
 import type { Look } from '@/cli/look';
 import { lookOf, registryOf, step, table } from '@/cli/look';
-import { emit, failure } from '@/cli/output';
+import { emit, failure, prompted, unprompted } from '@/cli/output';
 import { chooseSetup } from '@/cli/setup-choices';
 import type { SetupFlagValues } from '@/cli/setup-flags';
 import { applySetupFlags, readSetupFlags } from '@/cli/setup-flags';
@@ -133,21 +133,25 @@ export function setupRepository(
 			describe(initial);
 			if (!initial.blockers.length && !initial.edits.length) return out.log('Release setup already matches.');
 			if (!initial.blockers.length) {
-				const accepted = !out.isTTY || (yield* Effect.promise(() =>
-					ask({
-						kind: 'confirm',
-						message: 'Open or refresh the setup PR with this proposal? Answer no to choose the setup yourself.',
-						default: true,
-					})
-				));
+				const accepted = yield* unprompted(
+					prompted(() =>
+						ask({
+							kind: 'confirm',
+							message: 'Open or refresh the setup PR with this proposal? Answer no to choose the setup yourself.',
+							default: true,
+						})
+					),
+					() => Effect.succeed(true),
+				);
 				if (accepted) return yield* open(initial);
-			} else if (!out.isTTY) return out.setExitCode(1);
+			}
 		}
 		const choices: unknown = flags.choices
 			? given ? yield* chosenWithFlags(flags.choices, given, initial) : yield* readJson(flags.choices)
 			: out.jsonMode || flags.output
 			? initial.choices
-			: yield* chooseSetup(initial, ask, out);
+			: yield* unprompted(chooseSetup(initial, ask, out), () => Effect.undefined);
+		if (choices === undefined) return out.setExitCode(1);
 		const preview = yield* step(
 			out,
 			'Building the setup plan from your choices',
@@ -173,7 +177,7 @@ export function setupRepository(
 		if (!plan.edits.length) return out.log('Release setup already matches.');
 		if (
 			!flags.choices
-			&& (yield* Effect.promise(() =>
+			&& (yield* prompted(() =>
 				ask({ kind: 'confirm', message: 'Open or refresh the setup PR with these exact changes?', default: false })
 			))
 		) {

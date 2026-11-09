@@ -214,14 +214,21 @@ test('secrets set reads the value from stdin, shows its read spinner and keeps n
 	const prompted = await runCli(['secrets', 'set', 'npm-token'], [true, 'typed']);
 	expect(prompted.exitCode).toBe(0);
 	expect(prompted.stdout.join('')).toBe('✔ Saved npm-token as version 3.\n');
-	const untyped = await app.execute(['secrets', 'set', 'empty-token'], { isTTY: false, env: {} });
+	const redirected = await app.execute(['secrets', 'set', 'npm-token'], {
+		answers: [true, 'retyped'],
+		isTTY: false,
+		env: {},
+	});
+	expect([redirected.exitCode, redirected.stderr.join('')]).toEqual([0, '']);
+	expect(redirected.stdout.join('')).toBe('✔ Saved npm-token as version 4.\n');
+	const untyped = await app.execute(['secrets', 'set', 'empty-token'], { isTTY: true, env: {} });
 	expect(untyped.exitCode).not.toBe(0);
 	expect(untyped.stderr.join('')).toContain('Secret value is empty');
 	piped.mockResolvedValue('\n');
 	const empty = await app.execute(['secrets', 'set', 'empty-token'], { isTTY: false, env: {} });
 	expect(empty.exitCode).not.toBe(0);
 	expect(empty.stderr.join('')).toContain('Secret value is empty');
-	expect(piped).toHaveBeenCalledTimes(6);
+	expect(piped).toHaveBeenCalledTimes(7);
 });
 
 test('the stdin reader returns piped bytes and nothing for a terminal', async () => {

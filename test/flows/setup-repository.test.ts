@@ -398,7 +398,7 @@ test('each choice ticked in the setup PR body is written as ticked, and push sta
 	expect(pull.body).not.toContain('Until you do');
 	const dispatch = z.object({
 		on: z.object({
-			workflow_dispatch: z.object({ inputs: z.object({ stream: z.looseObject({ options: z.array(z.string()) }) }) }),
+			workflow_dispatch: z.object({ inputs: z.record(z.string(), z.record(z.string(), z.unknown())) }),
 		}),
 		jobs: z.object({
 			start: z.object({
@@ -407,11 +407,15 @@ test('each choice ticked in the setup PR body is written as ticked, and push sta
 			}),
 		}),
 	}).parse(parse(world.github.file(repository, '.github/workflows/start-release.yml', 'automation/onboarding') ?? ''));
-	expect(dispatch.on.workflow_dispatch.inputs.stream.options).toEqual(['main']);
+	expect(dispatch.on.workflow_dispatch.inputs).toEqual({
+		stream: { description: 'Release stream', type: 'choice', options: ['main'], default: 'main' },
+		bump: { description: 'Version bump', type: 'choice', options: ['patch', 'minor', 'major'], default: 'patch' },
+		version: { description: 'Semantic version; replaces the bump when set', type: 'string' },
+	});
 	expect(dispatch.jobs.start.permissions).toEqual({ 'id-token': 'write' });
 	expect(dispatch.jobs.start.steps).toEqual([{
 		uses: 'kjanat/beepboop/actions/release@v1',
-		with: { stream: '${{ inputs.stream }}', version: '${{ inputs.version }}' },
+		with: { stream: '${{ inputs.stream }}', version: '${{ inputs.version || inputs.bump }}' },
 	}]);
 	world.github.merge(repository, pull.number);
 	const plan = await previewSetup(api, repository.name);

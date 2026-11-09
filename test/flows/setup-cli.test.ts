@@ -521,9 +521,19 @@ test('one adopt without arguments or a terminal opens the setup PR for the check
 	expect(result.exitCode).toBe(0);
 	expect(result.stdout.join('')).toContain('Setup PR: https://github.com/octo/lint/pull/1\n');
 	expect(repository.pulls).toHaveLength(1);
-	const again = await app.execute(['repo', 'adopt', repository.name], { isTTY: false, env: {} });
-	expect(again.exitCode).toBe(0);
+	const again = await app.execute(['repo', 'adopt', repository.name], { isTTY: true, env: {} });
+	expect([again.exitCode, again.stderr.join('')]).toEqual([0, '']);
 	expect(again.stdout.join('')).toContain('Setup PR: https://github.com/octo/lint/pull/1\n');
+	const prompts: string[] = [];
+	const prompter: PromptEngine = {
+		async promptOne(config) {
+			prompts.push(config.message);
+			return { answered: true, value: true };
+		},
+	};
+	const piped = await app.execute(['repo', 'adopt', repository.name], { prompter, isTTY: false, env: {} });
+	expect([piped.exitCode, piped.stderr.join('')]).toEqual([0, '']);
+	expect(prompts).toEqual(['Open or refresh the setup PR with this proposal? Answer no to choose the setup yourself.']);
 	expect(repository.pulls).toHaveLength(1);
 });
 
@@ -779,6 +789,10 @@ test('shared preparation does not ask for a second trigger handover', async () =
 	expect(result.exitCode).toBe(1);
 	expect(session.prompts.filter(prompt => prompt.message.includes('who starts this workflow'))).toHaveLength(1);
 	expect(result.stdout.join('')).toContain('shared workflows need separate preparation and publication jobs');
+	const headless = await app.execute(['repositories', 'adopt', repository.name], { isTTY: true, env: {} });
+	expect([headless.exitCode, headless.stderr.join('')]).toEqual([1, '']);
+	expect(headless.stdout.join('')).toContain('shared workflows need separate preparation and publication jobs');
+	expect(repository.pulls).toHaveLength(1);
 });
 
 test('an inferred stream is adopted by observing its existing workflow', async () => {
