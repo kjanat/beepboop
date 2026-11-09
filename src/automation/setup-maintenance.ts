@@ -124,7 +124,7 @@ export function maintainSetup(
 					name,
 					id,
 					pull.number,
-					`${summary}\n\nThe proposal is up to date.`,
+					summary,
 					setupBody(plan, releaseAfterMerge(pull.body)),
 				);
 				yield* save({ ...saved, ...applied, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha });
