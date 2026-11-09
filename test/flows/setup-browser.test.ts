@@ -471,10 +471,13 @@ test('an observed stream rejects a package its workflows do not publish', async 
 	await expect(act(form, 'preview')).rejects.toThrow('not published by the observed workflows');
 });
 
-test('an observed workflow keeps its needs and publications the dashboard offers no box for', async () => {
+test('an observed workflow keeps its needs, its publications without a box and the optional packages', async () => {
 	const repository = world.github.create('octo/tool', {
-		'Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\nedition = "2024"\n',
-		'src/main.rs': 'fn main() {}\n',
+		'Cargo.toml': '[workspace]\nmembers = ["tool", "extra"]\n',
+		'tool/Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\nedition = "2024"\n',
+		'tool/src/main.rs': 'fn main() {}\n',
+		'extra/Cargo.toml': '[package]\nname = "extra"\nversion = "1.0.0"\nedition = "2024"\n',
+		'extra/src/lib.rs': '\n',
 		'.github/workflows/github-release.yml':
 			'name: GitHub release\non: { push: { tags: [\'v*\'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: gh release create "$GITHUB_REF_NAME"\n',
 	});
@@ -482,14 +485,14 @@ test('an observed workflow keeps its needs and publications the dashboard offers
 	await applyChoices(api, repository.name, {
 		streams: [{
 			name: 'main',
-			packages: ['pkg:cargo/tool'],
+			packages: ['pkg:cargo/tool', 'pkg:cargo/extra'],
 			required: ['pkg:cargo/tool'],
 			versioning: 'workspace',
 			promote: {
 				file: 'release.yml',
 				job: 'publish',
 				triggers: 'review',
-				commands: "cargo publish --package 'tool' --locked",
+				commands: "cargo publish --package 'tool' --locked\ncargo publish --package 'extra' --locked",
 				publicationSteps: {},
 			},
 			observe: [{
@@ -503,6 +506,9 @@ test('an observed workflow keeps its needs and publications the dashboard offers
 	});
 	world.github.merge(repository, 1);
 	passChecks(repository, world.github.head(repository));
+	const stored = z.object({ streams: z.object({ main: z.object({ required: z.array(z.string()) }).loose() }) });
+	expect(stored.parse(JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}')).streams.main.required)
+		.toEqual(['pkg:cargo/tool']);
 	const form = await open('octo/tool');
 	expect(role(form, 'promote').hidden).toBe(false);
 	await act(form, 'preview');

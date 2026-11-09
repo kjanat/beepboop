@@ -194,7 +194,11 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 		readers.push(() =>
 			Result.gen(function*() {
 				if (!enabled.checked) return undefined;
-				const packages = selection().packages.map(pkg => pkg.id);
+				const ticked = selection().packages.map(pkg => pkg.id);
+				const packages = [
+					...value.packages.filter(id => ticked.includes(id)),
+					...ticked.filter(id => !value.packages.includes(id)),
+				];
 				const policy: Versioning = versioning.value === 'independent'
 					? 'independent'
 					: versioning.value === 'none'
@@ -254,14 +258,15 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 					return yield* Result.fail(new Refused({ message: 'Select at least one package to release.' }));
 				}
 				const prepare = yield* preparing.read(), promote = yield* publishing.read();
+				const observed = observing.checked && !!value.observe?.length;
 				return yield* checked({
 					name: name.value,
 					packages,
-					required: packages,
+					required: observed ? value.required.filter(id => packages.includes(id)) : packages,
 					versioning: policy,
 					...(prepare ? { prepare } : {}),
 					...(promote ? { promote } : {}),
-					...(observing.checked && value.observe?.length ? { observe: kept(value.observe) } : {}),
+					...(observed && value.observe ? { observe: kept(value.observe) } : {}),
 				});
 			})
 		);
