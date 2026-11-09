@@ -18,7 +18,9 @@ import { World } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import { z } from 'zod';
 import { ledgerSchema } from '@/automation/ledger';
+import { publishMinutes } from '@/automation/setup-workflows';
 import type { Execution } from '@/automation/types';
+import { publishWaitMinutes } from '@/contract/ledger';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 
 let world: World;
@@ -124,10 +126,11 @@ function repositoryWith(layout: Layout, streams: Record<string, string[]>): Repo
 }
 
 const registry = new Map<string, string>();
-let registryDown = 0;
+let registryDown = 0, registryLag = 0;
 function serveCrates() {
 	registry.clear();
 	registryDown = 0;
+	registryLag = 0;
 	registry.set('lint-core@1.0.0', 'c'.repeat(64));
 	registry.set('lint@1.0.0', 'c'.repeat(64));
 	world.network.serve('crates.io', request => {
@@ -139,6 +142,10 @@ function serveCrates() {
 			return new Response(null, { status: 503 });
 		}
 		const checksum = registry.get(`${name}@${version}`);
+		if (checksum && registryLag > 0) {
+			registryLag--;
+			return new Response(null, { status: 404 });
+		}
 		return checksum
 			? Response.json({ version: { crate: name, num: version, yanked: false, checksum } })
 			: new Response(null, { status: 404 });
@@ -741,6 +748,42 @@ test('a Retry-After beyond this run ends it with the publication rate limited fo
 		Date.parse('2026-11-10T10:00:00.000Z'),
 		'Registry rate limit until 2026-11-10T10:00:00.000Z',
 	]);
+}, 60_000);
+
+test(
+	'a publish after a long slot wait still waits for crates.io to list it and stays inside the job timeout',
+	async () => {
+		const { repository, begun } = await released({ main: [core] });
+		const { execution, identity } = started(begun, 'main');
+		await world.budgets.instance('crates-io').storage.put('arrival:update', Date.now() + 29 * 60_000);
+		const state: Cargo = { commands: [], outcomes: {} };
+		const start = Date.now();
+		registryLag = 4;
+		const { result, logs } = await publishing(identity, execution.id, state);
+		if (result._tag === 'Failure') throw new Error(result.failure.message);
+		expect(states(result.success)).toEqual([['pkg:cargo/lint-core@1.1.0', 'published']]);
+		expect(logs.filter(line => line.startsWith('crates.io has not confirmed lint-core 1.1.0 yet')).length)
+			.toBeGreaterThan(0);
+		expect(Date.now() - start).toBeLessThan(publishMinutes(1) * 60_000);
+		expect((await ledgerOf(repository, execution.id)).records[0]?.status.state).toBe('published');
+	},
+	60_000,
+);
+
+test('waits across packages share one budget, so a run ends before the publish job timeout', async () => {
+	const { begun } = await released({ main: [core, cli] });
+	const { execution, identity } = started(begun, 'main');
+	const budget = world.budgets.instance('crates-io').storage;
+	await budget.put('arrival:update', Date.now() + 20 * 60_000);
+	const state: Cargo = {
+		commands: [],
+		outcomes: { 'lint-core': ['ok'], lint: ['429'] },
+	};
+	const start = Date.now();
+	const { result } = await publishing(identity, execution.id, state);
+	expect(result._tag).toBe('Failure');
+	expect(Date.now() - start).toBeLessThan(publishMinutes(2) * 60_000);
+	expect(Date.now() - start).toBeLessThanOrEqual(publishWaitMinutes * 60_000 + 60_000);
 }, 60_000);
 
 test('a crates.io slot hours away ends the run before publishing', async () => {

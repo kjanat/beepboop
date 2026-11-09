@@ -8,7 +8,7 @@ import { call, mask, serviceOrigin } from '@root/actions/runtime/session.ts';
 import { Effect } from 'effect';
 import { z } from 'zod';
 import type { LedgerEntry, LedgerPackage } from '@/contract/ledger.ts';
-import { claimStep, nextStep, reportStep } from '@/contract/ledger.ts';
+import { claimStep, nextStep, publishWaitMinutes, reportStep } from '@/contract/ledger.ts';
 
 export interface Command {
 	code: number;
@@ -31,7 +31,7 @@ interface Artifact {
 	files: string[];
 }
 
-const longestWait = 30 * 60_000;
+const longestWait = publishWaitMinutes * 60_000;
 const verificationPolls = 20;
 const packageAttempts = 8;
 
@@ -181,14 +181,15 @@ export function publishPackages(runner: Runner): Effect.Effect<LedgerEntry[], In
 		secrets = env;
 		return env;
 	});
-	const pause = (until: number, reason: string) =>
+	const deadline = runner.now() + longestWait;
+	const sleep = (until: number, reason: string) =>
 		Effect.gen(function*() {
 			const wait = until - runner.now();
-			if (wait > longestWait) return false;
 			runner.log(`${reason}; waiting ${Math.ceil(Math.max(0, wait) / 1000)}s`);
 			if (wait > 0) yield* runner.sleep(wait);
-			return true;
 		});
+	const pause = (until: number, reason: string) =>
+		until > deadline ? Effect.succeed(false) : sleep(until, reason).pipe(Effect.as(true));
 	let installed = false;
 	const toolchain = Effect.gen(function*() {
 		if (installed || !['rust-toolchain.toml', 'rust-toolchain'].some(file => runner.exists(file))) return;
@@ -226,7 +227,7 @@ export function publishPackages(runner: Runner): Effect.Effect<LedgerEntry[], In
 				}
 				if (poll >= verificationPolls) {
 					outcome = { outcome: 'failed', message: `The registry did not list ${pkg.name} ${pkg.version} in time` };
-				} else yield* pause(reported.until, reported.reason);
+				} else yield* sleep(reported.until, reported.reason);
 			}
 		});
 	return Effect.gen(function*() {
