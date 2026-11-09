@@ -1391,9 +1391,9 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 		),
 	);
 	expect(partial.blockers).toEqual([]);
-	expect(partial.choices.streams[0]?.packages).toEqual([...stream.packages, 'pkg:cargo/sql-parser']);
+	expect(partial.choices.streams[0]?.packages).toEqual(stream.packages);
 	expect(partial.notes).toContain(
-		'main: adds `sql-parser` on crates.io, which a selected package depends on and its registry does not have at this version.',
+		'main: a selected package depends on `sql-parser` on crates.io, and its registry does not have this version. Publish it first.',
 	);
 	const partialScript = z.object({
 		jobs: z.object({
@@ -1402,10 +1402,90 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 	}).parse(parse(partial.edits.find(edit => edit.path === '.github/workflows/release-sql.yml')?.after ?? ''))
 		.jobs.publish.steps.find(step => step.id === 'beepboop_publish')?.run ?? '';
 	expect(partialScript.split('\n').filter(line => line.startsWith('publish_crate '))).toEqual([
-		"publish_crate 'sql-parser'",
 		"publish_crate 'sql'",
 		"publish_crate 'sql-cli'",
 	]);
+});
+
+test('an unticked dependency in the setup PR body stays unticked through edits and refreshes', async () => {
+	world.network.serve('crates.io', () => new Response(null, { status: 404 }));
+	const repository = world.github.create('octo/sql', {
+		'Cargo.toml':
+			'[workspace]\nmembers = ["crates/*", "vendor/parser"]\n\n[workspace.package]\nversion = "0.1.0"\n\n[workspace.dependencies]\nparser = { package = "sql-parser", path = "vendor/parser", version = "0.1.0" }\n',
+		'Cargo.lock': '# Lockfile\n',
+		'crates/sql/Cargo.toml':
+			'[package]\nname = "sql"\nversion.workspace = true\n\n[dependencies]\nparser = { workspace = true }\n',
+		'vendor/parser/Cargo.toml': '[package]\nname = "sql-parser"\nversion.workspace = true\n',
+	});
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const packages = ['pkg:cargo/sql', 'pkg:cargo/sql-parser'];
+	const choices: SetupChoices = {
+		streams: [{
+			name: 'main',
+			packages,
+			required: packages,
+			versioning: 'workspace',
+			prepare: {
+				file: 'release-sql.yml',
+				job: 'prepare',
+				triggers: 'review',
+				commands: 'cargo test --workspace',
+				publicationSteps: {},
+			},
+			promote: {
+				file: 'release-sql.yml',
+				job: 'publish',
+				triggers: 'review',
+				commands: cratePublishCommands(['sql-parser', 'sql']),
+				publicationSteps: {},
+			},
+		}],
+	};
+	const proposal = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
+	);
+	expect(proposal.blockers).toEqual([]);
+	const applied = await api('/api/repositories/setup/apply', {
+		repository: repository.name,
+		choices: proposal.choices,
+		planId: proposal.planId,
+		sourceSha: proposal.sourceSha,
+		setupHead: proposal.setupHead,
+	});
+	expect(applied.status).toBe(200);
+	const pull = repository.pulls[0];
+	if (!pull) throw new Error('No setup pull request');
+	const box = /- \[[ x]\] (<!-- beepboop:choice:package:main:pkg%3Acargo%2Fsql%2Dparser -->)/;
+	expect(pull.body).toMatch(/- \[x\] <!-- beepboop:choice:package:main:pkg%3Acargo%2Fsql%2Dparser -->/);
+	const before = pull.body;
+	const unticked = before.replace(box, '- [ ] $1');
+	pull.body = unticked;
+	await world.webhook('pull_request', {
+		action: 'edited',
+		changes: { body: { from: before } },
+		sender: { id: ownerId },
+		pull_request: {
+			number: pull.number,
+			state: 'open',
+			body: unticked,
+			user: { id: botId },
+			head: { ref: 'automation/onboarding', sha: pull.head.sha, repo: { id: repository.id } },
+			base: { repo: { id: repository.id } },
+		},
+		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
+	});
+	await world.wait(8_000);
+	const untickedBox = /- \[ \] <!-- beepboop:choice:package:main:pkg%3Acargo%2Fsql%2Dparser -->/;
+	expect(configured(repository, 'automation/onboarding')).toEqual(['pkg:cargo/sql']);
+	expect(pull.body).toMatch(untickedBox);
+	expect(pull.body).toContain(
+		'main: a selected package depends on `sql-parser` on crates.io, and its registry does not have this version. Publish it first.',
+	);
+	world.github.push(repository, { 'README.md': '# sql\n' }, 'Add a readme');
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	expect(configured(repository, 'automation/onboarding')).toEqual(['pkg:cargo/sql']);
+	expect(pull.body).toMatch(untickedBox);
 });
 
 test('a saved crate script becomes beepboop publish once the selection adds an npm package', async () => {

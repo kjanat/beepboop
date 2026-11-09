@@ -208,29 +208,34 @@ function draftSetup(
 		// Empty selections are allowed in suggestions, but cannot be applied.
 		const suggestion = suggested(snapshot, raw, workflows, inventory, graph, resolved);
 		const normalized = setupChoicesSchema.safeParse(suggestion);
+		const requested = normalized.success ? normalized.data : suggestion;
 		const proposal = completeChoices(
 			snapshot,
 			inventory,
-			normalized.success ? normalized.data : suggestion,
+			{ ...requested, streams: withDependencies(inventory, requested) },
 			raw,
 			resolved,
 		);
-		const choices = input === undefined
-			? proposal
-			: completeChoices(snapshot, inventory, yield* decodeRequest(setupChoicesSchema, input), raw, resolved);
+		const chosen = input === undefined ? undefined : yield* decodeRequest(setupChoicesSchema, input);
+		const choices = chosen ? completeChoices(snapshot, inventory, chosen, raw, resolved) : proposal;
 		const inferred = input === undefined || JSON.stringify(choices) === JSON.stringify(proposal);
 		const drafts = yield* drafted(snapshot, inventory, choices, raw, workflows, baseline, resolved);
-		const requested = input === undefined ? normalized.success ? normalized.data : suggestion : undefined;
-		const added = choices.streams.flatMap(stream => {
-			const before =
-				(requested ?? (setupChoicesSchema.safeParse(input).data))?.streams.find(entry => entry.name === stream.name)
-					?.packages ?? stream.packages;
-			return stream.packages.filter(id => !before.includes(id)).map(id =>
-				`${stream.name}: adds ${
+		const unlisted = (streams: SetupChoices['streams'], from: SetupChoices) =>
+			streams.flatMap(stream => {
+				const before = from.streams.find(entry => entry.name === stream.name)?.packages ?? stream.packages;
+				return stream.packages.filter(id => !before.includes(id)).map(id => ({ stream: stream.name, id }));
+			});
+		const added = chosen
+			? unlisted(withDependencies(inventory, choices), choices).map(({ stream, id }) =>
+				`${stream}: a selected package depends on ${
+					packageMarkdown(id)
+				}, and its registry does not have this version. Publish it first.`
+			)
+			: unlisted(choices.streams, requested).map(({ stream, id }) =>
+				`${stream}: adds ${
 					packageMarkdown(id)
 				}, which a selected package depends on and its registry does not have at this version.`
 			);
-		});
 		const plan = { ...drafts, notes: [...added, ...drafts.notes] };
 		return inferred ? { ...plan, adoption: proposalMarkdown(graph, snapshot, plan) } : plan;
 	});
@@ -622,7 +627,7 @@ function completeChoices(
 	}));
 	const completed = {
 		...choices,
-		streams: withDependencies(inventory, choices).map(stream => {
+		streams: choices.streams.map(stream => {
 			const chosen = candidates.filter(pkg => stream.packages.includes(pkg.id));
 			const elsewhere = new Set([
 				...(stream.operations?.flatMap(entry => entry.publications) ?? []),
