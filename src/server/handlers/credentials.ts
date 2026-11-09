@@ -1,7 +1,8 @@
 import { Effect } from 'effect';
 import { configuredGrant } from '@/automation/access';
 import { parseGrant, validCredential } from '@/automation/vault';
-import { conflict, type DomainError, notFound, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { conflict, notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import { requireReady } from '@/domain/repository';
 import { fromPromise } from '@/failure';

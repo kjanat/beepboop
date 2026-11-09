@@ -1,4 +1,5 @@
-import { ActionFailure, attempt, failureOf, type Invalid, isJson, required } from '@root/actions/runtime/protocol.ts';
+import type { Invalid } from '@root/actions/runtime/protocol.ts';
+import { ActionFailure, attempt, failureOf, isJson, required } from '@root/actions/runtime/protocol.ts';
 import { Effect } from 'effect';
 import { record } from '@/model.ts';
 

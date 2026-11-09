@@ -1,16 +1,12 @@
 import { z } from 'zod';
 import type { Channel, ChannelOutcome, RegistryOutcome } from '@/automation/destinations';
 import { completion } from '@/automation/execution';
-import { inputSchema, outputSchema, platformSchema, type ResolvedInput } from '@/automation/outputs';
-import {
-	identifyExecution,
-	identifyRepository,
-	normalizePublication,
-	type StoredInventory,
-	type StoredPackage,
-	type StoredRepository,
-} from '@/automation/package-identity';
-import { exclusionReasons, type PackagePublication } from '@/automation/package-publication';
+import type { ResolvedInput } from '@/automation/outputs';
+import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
+import type { StoredInventory, StoredPackage, StoredRepository } from '@/automation/package-identity';
+import { identifyExecution, identifyRepository, normalizePublication } from '@/automation/package-identity';
+import type { PackagePublication } from '@/automation/package-publication';
+import { exclusionReasons } from '@/automation/package-publication';
 import type { ReleaseSetPlan } from '@/automation/planning';
 import type { RefPlan } from '@/automation/refs';
 import type { SetupEdit } from '@/automation/setup-types';

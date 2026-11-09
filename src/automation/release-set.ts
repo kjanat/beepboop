@@ -4,7 +4,8 @@ import { discover } from '@/automation/managers';
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage, packageId, selectorKey } from '@/automation/package-identity';
 import type { Execution, Inventory, Snapshot } from '@/automation/types';
-import { type DomainError, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
 import { fromSync } from '@/failure';
 import { executionId } from '@/persistence/identity-keys';
 

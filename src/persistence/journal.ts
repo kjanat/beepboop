@@ -1,6 +1,7 @@
 import { Effect, Semaphore } from 'effect';
 import { z } from 'zod';
-import { type ProjectedEntity, projectedEntities } from '@/contract/changes';
+import type { ProjectedEntity } from '@/contract/changes';
+import { projectedEntities } from '@/contract/changes';
 import type { DomainError } from '@/contract/errors';
 import { fromPromise, fromSync } from '@/failure';
 import type { Projection } from '@/persistence/d1/projection';

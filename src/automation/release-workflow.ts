@@ -1,4 +1,5 @@
-import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
+import type { WorkflowEvent, WorkflowStep } from 'cloudflare:workers';
+import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { Cause, Effect } from 'effect';
 import type { AutomationCoordinator } from '@/automation/coordinator';
 

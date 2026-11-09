@@ -1,6 +1,7 @@
 import { Result } from 'effect';
 import { parseDocument } from 'yaml';
-import { type DomainError, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
 import { toDomainError } from '@/failure';
 import { record } from '@/model';
 export function object(value: unknown): Record<string, unknown> {

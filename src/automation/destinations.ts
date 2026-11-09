@@ -1,10 +1,6 @@
 import type { WinGetSubmission } from '@/automation/winget';
-import {
-	channelDestinationIds,
-	destinationLabels,
-	type ManagerDestinationId,
-	type RegistryDestinationId,
-} from '@/contract/catalog';
+import type { ManagerDestinationId, RegistryDestinationId } from '@/contract/catalog';
+import { channelDestinationIds, destinationLabels } from '@/contract/catalog';
 
 export type ManifestDestinationId = 'winget';
 export type Destination =

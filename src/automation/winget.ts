@@ -9,14 +9,17 @@ import {
 	gitRefSchema,
 } from '@/automation/github-resources';
 import { documentRow } from '@/automation/schemas';
-import { decodeError, type Store } from '@/automation/store';
+import type { Store } from '@/automation/store';
+import { decodeError } from '@/automation/store';
 import type { RepositoryRecord } from '@/automation/types';
-import { type DomainError, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
 import { generateManifests, renderManifests, wingetConfiguration } from '@/distribution/winget/generate';
 import { readiness } from '@/domain/repository';
 import { fromPromise, fromSync, recover } from '@/failure';
 import { countSchema, decode, looseSchema, record, shaSchema, text, textSchema } from '@/model';
-import { parse, type Sql, sql } from '@/persistence/d1/database';
+import type { Sql } from '@/persistence/d1/database';
+import { parse, sql } from '@/persistence/d1/database';
 
 const releaseListing = z.array(
 	z.object({

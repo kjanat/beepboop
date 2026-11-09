@@ -1,7 +1,8 @@
 import { Effect } from 'effect';
 import type { AutomationService } from '@/automation/service';
 import type { RepositoryRecord } from '@/automation/types';
-import { type DomainError, notFound } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { notFound } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import { admin } from '@/server/handlers/kit';
 

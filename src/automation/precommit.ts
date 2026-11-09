@@ -1,8 +1,10 @@
 import { Effect, Result } from 'effect';
-import { isMap, isScalar, isSeq, parseDocument, type Scalar } from 'yaml';
+import type { Scalar } from 'yaml';
+import { isMap, isScalar, isSeq, parseDocument } from 'yaml';
 import type { Edit, ReleaseReference, Snapshot } from '@/automation/types';
 import { hookConfig } from '@/contract/catalog';
-import { type DomainError, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
 
 export interface HookReference {
 	repository: string;

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { Effect } from 'effect';
-import { AutomationService } from '@/automation/service';
 import { widget } from '@root/test/support/repositories.ts';
 import { World } from '@root/test/support/world.ts';
+import { Effect } from 'effect';
+import { AutomationService } from '@/automation/service';
 
 const trailer = 'Co-authored-by: kjanat <6353477+kjanat@users.noreply.github.com>';
 

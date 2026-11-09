@@ -2,7 +2,8 @@ import { Effect } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
 import { expectedRunTitle } from '@/automation/execution';
 import type { Execution } from '@/automation/types';
-import { type DomainError, forbidden, invalid } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { forbidden, invalid } from '@/contract/errors';
 import { record } from '@/model';
 
 export type TokenPermissions = Record<string, 'read' | 'write'>;

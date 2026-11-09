@@ -1,5 +1,6 @@
 import { Result } from 'effect';
-import { InvalidPackageUrl, type PackageIdentity, parsePackageIdentity } from '@/package-url';
+import type { PackageIdentity } from '@/package-url';
+import { InvalidPackageUrl, parsePackageIdentity } from '@/package-url';
 
 /** Repair qualifier-key casing explicitly; strict parsing never silently accepts invalid keys. */
 export function normalizePackage(input: PackageIdentity | string): Result.Result<PackageIdentity, InvalidPackageUrl> {

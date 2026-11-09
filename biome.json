@@ -5,6 +5,8 @@
 			"src/**",
 			"scripts/**",
 			"actions/**",
+			"test/**",
+			"!test/fixtures",
 			"*.json",
 			"!worker-configuration.d.ts",
 			"!**/dist",
@@ -18,7 +20,21 @@
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"preset": "recommended"
+			"preset": "recommended",
+			"style": {
+				"useImportType": {
+					"level": "error",
+					"options": {
+						"style": "separatedType"
+					}
+				},
+				"useExportType": {
+					"level": "error",
+					"options": {
+						"style": "separatedType"
+					}
+				}
+			}
 		}
 	},
 	"assist": {
@@ -30,12 +46,38 @@
 	},
 	"overrides": [
 		{
-			"includes": ["**/*.astro"],
+			"includes": [
+				"**/*.astro"
+			],
 			"linter": {
 				"rules": {
 					"correctness": {
 						"noUnusedImports": "off",
 						"noUnusedVariables": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": [
+				"test/**"
+			],
+			"linter": {
+				"rules": {
+					"preset": "none",
+					"style": {
+						"useImportType": {
+							"level": "error",
+							"options": {
+								"style": "separatedType"
+							}
+						},
+						"useExportType": {
+							"level": "error",
+							"options": {
+								"style": "separatedType"
+							}
+						}
 					}
 				}
 			}

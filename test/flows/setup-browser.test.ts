@@ -1,19 +1,14 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
-import { Effect } from 'effect';
-import {
-	Window,
-	type Element,
-	type HTMLElement,
-	type HTMLFormElement,
-	type HTMLInputElement,
-	type HTMLSelectElement,
-} from 'happy-dom';
-import { z } from 'zod';
-import { parseSetupPlan } from '@/automation/setup-plan';
-import { routes } from '@/contract/routes';
 import { bearer } from '@root/test/support/http.ts';
 import { passChecks, plugin, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
 import { origin, World } from '@root/test/support/world.ts';
+import { Effect } from 'effect';
+import type { Element, HTMLElement, HTMLFormElement, HTMLInputElement, HTMLSelectElement } from 'happy-dom';
+import { Window } from 'happy-dom';
+import { z } from 'zod';
+import { parseSetupPlan } from '@/automation/setup-plan';
+import { routes } from '@/contract/routes';
+
 // Browser modules are checked separately to keep DOM and Worker Element types apart.
 const browserModule = new URL('../../src/ui/browser/setup.ts', import.meta.url).href;
 const browser: { setup(form: HTMLFormElement, action: string): Effect.Effect<void, unknown> } = await import(

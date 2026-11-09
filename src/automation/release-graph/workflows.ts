@@ -1,5 +1,6 @@
 import { Result } from 'effect';
-import { type ParseError, parse as parseJsonc } from 'jsonc-parser';
+import type { ParseError } from 'jsonc-parser';
+import { parse as parseJsonc } from 'jsonc-parser';
 import { parse as parseToml } from 'smol-toml';
 import { object, yaml } from '@/automation/managers/helpers';
 import { bindInputs, bindStep, disabled, expandStep, staticGuard } from '@/automation/release-graph/bindings';

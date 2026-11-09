@@ -1,16 +1,8 @@
 import { join, resolve } from 'node:path';
 import { Effect } from 'effect';
 import { z } from 'zod';
-import {
-	attemptPromise,
-	capture,
-	main,
-	parse,
-	readJson,
-	refuse,
-	type ToolFailure,
-	temporaryDirectory,
-} from '@/tooling/runtime';
+import type { ToolFailure } from '@/tooling/runtime';
+import { attemptPromise, capture, main, parse, readJson, refuse, temporaryDirectory } from '@/tooling/runtime';
 
 const root = resolve(import.meta.dir, '../../..');
 const directory = resolve(root, 'packages/cli');

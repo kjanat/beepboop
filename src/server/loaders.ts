@@ -1,7 +1,8 @@
 import { Effect } from 'effect';
 import { Authenticators } from '@/automation/auth.ts';
 import { packageWatches } from '@/automation/package-watch.ts';
-import { type AutomationBindings, AutomationService } from '@/automation/service.ts';
+import type { AutomationBindings } from '@/automation/service.ts';
+import { AutomationService } from '@/automation/service.ts';
 import type { Readable, UnreadableExecution, UnreadableRepository } from '@/automation/store.ts';
 import type { Execution, RepositoryRecord } from '@/automation/types.ts';
 import { parseGrant } from '@/automation/vault.ts';

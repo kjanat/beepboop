@@ -1,6 +1,7 @@
 import { Result } from 'effect';
 import { z } from 'zod';
-import { type DomainError, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
 import { shaPattern } from '@/contract/ids';
 import { compare, semverPattern } from '@/contract/semver';
 

@@ -1,7 +1,8 @@
-import { Effect } from 'effect';
-import { publishPackages, type Runner } from '@root/actions/runtime/publish.ts';
+import type { Runner } from '@root/actions/runtime/publish.ts';
+import { publishPackages } from '@root/actions/runtime/publish.ts';
 import { call } from '@root/actions/runtime/session.ts';
 import type { RunIdentity, World } from '@root/test/support/world.ts';
+import { Effect } from 'effect';
 
 export const tokenHost = 'pipelines.actions.githubusercontent.com';
 

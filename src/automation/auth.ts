@@ -7,16 +7,19 @@ import {
 	verifyRegistrationResponse,
 } from '@simplewebauthn/server';
 import { Effect, Result } from 'effect';
-import { createRemoteJWKSet, errors, type JWTVerifyGetKey, jwtVerify } from 'jose';
+import type { JWTVerifyGetKey } from 'jose';
+import { createRemoteJWKSet, errors, jwtVerify } from 'jose';
 import { z } from 'zod';
 import { cliAuthRoute, cliSubject } from '@/automation/cli-auth';
 import { documentRow } from '@/automation/schemas';
 import { decodeError } from '@/automation/store';
-import { type DomainError, decodeRequest, forbidden, precondition, unauthenticated } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { decodeRequest, forbidden, precondition, unauthenticated } from '@/contract/errors';
 import { loginSecretPattern } from '@/contract/ids';
 import { fromJson, fromPromise, fromSync, recover, toDomainError } from '@/failure';
 import { integer, record, sha, text } from '@/model';
-import { type Sql, type SqlDatabase, sql } from '@/persistence/d1/database';
+import type { Sql, SqlDatabase } from '@/persistence/d1/database';
+import { sql } from '@/persistence/d1/database';
 import { SessionStore } from '@/persistence/d1/sessions';
 
 const clientExtensionResults = z.object({}).catch({});

@@ -1,10 +1,6 @@
 import { Result } from 'effect';
-import {
-	preparationReasons,
-	type Selection,
-	suggestedCommands,
-	suggestedWorkflowFile,
-} from '@/automation/setup-defaults';
+import type { Selection } from '@/automation/setup-defaults';
+import { preparationReasons, suggestedCommands, suggestedWorkflowFile } from '@/automation/setup-defaults';
 import type { SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import { Refused } from '@/ui/browser/dom';
 

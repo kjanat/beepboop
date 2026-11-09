@@ -1,7 +1,8 @@
 import { Effect, Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
 import { object } from '@/automation/managers/helpers';
-import { type Adapter, emptyInventory } from '@/automation/managers/registry';
+import type { Adapter } from '@/automation/managers/registry';
+import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion } from '@/automation/managers/verification';
 import { excluded, registry } from '@/automation/package-publication';
 import type { Outcome, Publication } from '@/automation/types';

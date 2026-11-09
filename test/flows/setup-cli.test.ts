@@ -1,8 +1,10 @@
+import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import type { PromptEngine, ResolvedPromptConfig } from '@kjanat/dreamcli';
+import { plugin, widget } from '@root/test/support/repositories.ts';
+import { origin, World } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import { parse } from 'yaml';
 import { z } from 'zod';
@@ -10,8 +12,6 @@ import { parseSetupPlan } from '@/automation/setup-plan';
 import { app } from '@/cli/cli';
 import { Client } from '@/cli/client';
 import { routes } from '@/contract/routes';
-import { plugin, widget } from '@root/test/support/repositories.ts';
-import { origin, World } from '@root/test/support/world.ts';
 
 let world: World;
 let directory: string;

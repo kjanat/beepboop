@@ -7,26 +7,27 @@ import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage, packageId, selectorKey } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import { adoptionChoices, startCommand } from '@/automation/release-graph/adoption';
-import { inferReleaseGraph, type ReleaseGraph } from '@/automation/release-graph/graph';
+import type { ReleaseGraph } from '@/automation/release-graph/graph';
+import { inferReleaseGraph } from '@/automation/release-graph/graph';
 import { completeTaggedStreams } from '@/automation/setup-completion';
 import { crateScript, refreshedCommands, suggestedCommands } from '@/automation/setup-defaults';
 import { streamSummary } from '@/automation/setup-summary';
-import {
-	type SetupChoices,
-	type SetupOption,
-	type SetupPlan,
-	type SetupWorkflow,
-	type TriggerHandover,
-	triggerHandovers,
-	type Versioning,
-	versionings,
-	type WorkflowEvidence,
+import type {
+	SetupChoices,
+	SetupOption,
+	SetupPlan,
+	SetupWorkflow,
+	TriggerHandover,
+	Versioning,
+	WorkflowEvidence,
 } from '@/automation/setup-types';
+import { triggerHandovers, versionings } from '@/automation/setup-types';
 import { integrateReleaseWorkflow, integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Package, RepositoryRecord, Snapshot } from '@/automation/types';
 import { isLockfile } from '@/contract/catalog';
 import { blocking } from '@/contract/diagnostics';
-import { type DomainError, decodeRequest, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { decodeRequest, precondition } from '@/contract/errors';
 import { sha256Hex } from '@/contract/ids';
 import { setupChoicesSchema } from '@/contract/setup';
 import { configurationDrift } from '@/domain/configuration';

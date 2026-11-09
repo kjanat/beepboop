@@ -1,23 +1,24 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { Effect, Result } from 'effect';
 import { join } from 'node:path';
 import { Validator } from '@cfworker/json-schema';
+import type { Reply } from '@root/test/support/http.ts';
+import { bearer, field } from '@root/test/support/http.ts';
+import { passChecks, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
+import { World } from '@root/test/support/world.ts';
+import { Effect, Result } from 'effect';
 import { z } from 'zod';
-import { executionId, planIdentity, releaseEventId } from '@/persistence/identity-keys';
 import { parseRepositoryConfiguration } from '@/automation/configuration';
 import { identityOf, parseIdentity, parseReleaseIdentity, releaseIdentity } from '@/automation/package-identity';
 import { configurationDrift, configurationSchema } from '@/domain/configuration';
 import { validateAgainst } from '@/domain/validate';
+import { record } from '@/model';
 import { packageIdentity, parsePackageIdentity, purlDefinitions } from '@/package-url';
 import { storedConfiguration } from '@/persistence/codecs/configuration';
-import { record } from '@/model';
 import { decodeRepositoryV1 } from '@/persistence/codecs/v1';
+import { executionId, planIdentity, releaseEventId } from '@/persistence/identity-keys';
 import { assertCurrent, schemaPath } from '@/tooling/schema/render';
-import { bearer, field, type Reply } from '@root/test/support/http.ts';
-import { passChecks, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
-import { World } from '@root/test/support/world.ts';
 
 let world: World;
 beforeEach(async () => {

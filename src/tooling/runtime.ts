@@ -1,7 +1,8 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Data, Effect, type Scope } from 'effect';
+import type { Scope } from 'effect';
+import { Data, Effect } from 'effect';
 import type { z } from 'zod';
 
 export class ToolFailure

@@ -1,5 +1,6 @@
 import { Effect } from 'effect';
-import { type DomainError, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
 import { fromPromise } from '@/failure';
 
 const MAX_BODY = 1_048_576;

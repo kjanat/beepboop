@@ -3,7 +3,8 @@
 import { Effect } from 'effect';
 import { stringify } from 'yaml';
 import * as z from 'zod';
-import { type DomainError, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
 import { plainText } from '@/distribution/winget/notes';
 import type {
 	DefaultLocaleManifest,

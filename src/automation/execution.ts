@@ -12,7 +12,8 @@ import type {
 	WorkflowBinding,
 } from '@/automation/types';
 import { managerSpec } from '@/contract/catalog';
-import { type DomainError, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
 import type { ReadyRepository } from '@/domain/repository';
 import { toDomainError } from '@/failure';
 import { executionId } from '@/persistence/identity-keys';

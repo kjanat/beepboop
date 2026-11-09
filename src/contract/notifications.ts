@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { notificationKinds, type WatchedRegistry, watchedRegistries } from '@/contract/catalog';
+import type { WatchedRegistry } from '@/contract/catalog';
+import { notificationKinds, watchedRegistries } from '@/contract/catalog';
 import { credentialAliasPattern } from '@/contract/ids';
 
 const packageNames: Record<WatchedRegistry, RegExp> = {

@@ -1,10 +1,10 @@
 import { Result } from 'effect';
+import type { ManagerDestinationId } from '@/contract/catalog';
 import {
 	destinationLabels,
 	destinationOfPurlType,
 	isManagerName,
 	legacyJsrIdentity,
-	type ManagerDestinationId,
 	managerSpec,
 } from '@/contract/catalog';
 import { parsePackageIdentity } from '@/package-url';

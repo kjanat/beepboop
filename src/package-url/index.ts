@@ -1,6 +1,7 @@
 import { Data, Result } from 'effect';
 import { PackageURL } from 'packageurl-js';
-import { type ComponentDefinition, parseTypeDefinition, type TypeDefinition } from '@/package-url/definition';
+import type { ComponentDefinition, TypeDefinition } from '@/package-url/definition';
+import { parseTypeDefinition } from '@/package-url/definition';
 import definitions from '@/package-url/definitions';
 
 export type { ComponentDefinition, TypeDefinition } from '@/package-url/definition';

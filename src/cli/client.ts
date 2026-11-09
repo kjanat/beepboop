@@ -4,20 +4,15 @@ import { join } from 'node:path';
 import type { CLIError } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 import type { z } from 'zod';
-import { type SecurityKeyPrompts, securityKeyAssertion } from '@/cli/fido2/index';
+import type { SecurityKeyPrompts } from '@/cli/fido2/index';
+import { securityKeyAssertion } from '@/cli/fido2/index';
 import { failure, signIn } from '@/cli/output';
-import {
-	type ApiFailure,
-	call,
-	elevatedCall,
-	failureOf,
-	send,
-	type Transport,
-	type Unreachable,
-} from '@/contract/client';
+import type { ApiFailure, Transport, Unreachable } from '@/contract/client';
+import { call, elevatedCall, failureOf, send } from '@/contract/client';
 import type { ErrorCode } from '@/contract/errors';
 import { cliTokenPattern, confirmationCode, loginSecret, sha256Hex } from '@/contract/ids';
-import { type Route, routes } from '@/contract/routes';
+import type { Route } from '@/contract/routes';
+import { routes } from '@/contract/routes';
 
 const codes = {
 	unauthenticated: 'SESSION_REVOKED',

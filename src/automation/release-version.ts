@@ -1,8 +1,10 @@
 import { Effect } from 'effect';
 import type { Inventory, Package } from '@/automation/types';
-import { nextVersion, type VersionRequest } from '@/automation/version';
+import type { VersionRequest } from '@/automation/version';
+import { nextVersion } from '@/automation/version';
 import { blocking } from '@/contract/diagnostics';
-import { type DomainError, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
 import { compareVersions } from '@/model';
 
 export function releasedVersion(pkg: Package): string | undefined {

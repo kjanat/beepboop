@@ -1,12 +1,9 @@
-import { dlopen, FFIType, type Pointer, ptr, read, toArrayBuffer } from 'bun:ffi';
-import { Effect, type Scope } from 'effect';
-import {
-	type Assertion,
-	type AssertionRequest,
-	type Authenticator,
-	SecurityKeyError,
-	securityKeyFailure,
-} from '@/cli/fido2/types';
+import type { Pointer } from 'bun:ffi';
+import { dlopen, FFIType, ptr, read, toArrayBuffer } from 'bun:ffi';
+import type { Scope } from 'effect';
+import { Effect } from 'effect';
+import type { Assertion, AssertionRequest, Authenticator } from '@/cli/fido2/types';
+import { SecurityKeyError, securityKeyFailure } from '@/cli/fido2/types';
 
 const CLIENT_DATA_VERSION = 1;
 const CREDENTIAL_VERSION = 1;

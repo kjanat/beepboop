@@ -1,10 +1,10 @@
 import { expect, test } from 'bun:test';
 import { Result } from 'effect';
+import type { LedgerRecord } from '@/automation/ledger';
 import {
 	availability,
 	claim,
 	fail,
-	type LedgerRecord,
 	leaseDuration,
 	publicationOf,
 	publish,

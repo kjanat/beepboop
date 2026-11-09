@@ -1,7 +1,7 @@
-import { plugin } from 'bun';
 import { mock } from 'bun:test';
 import { astroPlugin } from '@root/test/support/astro.ts';
 import * as workers from '@root/test/support/cloudflare-workers.ts';
+import { plugin } from 'bun';
 
 // Git hooks export GIT_DIR and GIT_INDEX_FILE, which would redirect the tests' temporary repositories.
 for (

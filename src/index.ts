@@ -1,6 +1,7 @@
 import { handle } from '@astrojs/cloudflare/handler';
 import { Cause, Effect } from 'effect';
-import { type AutomationBindings, AutomationService } from '@/automation/service.ts';
+import type { AutomationBindings } from '@/automation/service.ts';
+import { AutomationService } from '@/automation/service.ts';
 import { failure } from '@/failure.ts';
 import { parseBindings } from '@/server/bindings.ts';
 

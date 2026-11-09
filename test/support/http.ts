@@ -1,4 +1,5 @@
-import { origin, type World } from '@root/test/support/world.ts';
+import type { World } from '@root/test/support/world.ts';
+import { origin } from '@root/test/support/world.ts';
 
 export interface Reply {
 	status: number;

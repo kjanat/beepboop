@@ -2,7 +2,8 @@ import type { DeliveryState, NotificationDelivery } from '@/automation/notificat
 import type { ExecutionState, Publication, RepositoryRecord } from '@/automation/types.ts';
 import type { WinGetSubmission } from '@/automation/winget.ts';
 import type { Status, Tone } from '@/contract/views';
-import { type Readiness, readiness } from '@/domain/repository';
+import type { Readiness } from '@/domain/repository';
+import { readiness } from '@/domain/repository';
 import type { ReleaseSetState, releaseSummaries } from '@/server/releases.ts';
 
 export const executionTone = {

@@ -13,7 +13,8 @@ import {
 	validTagPrefix,
 	workflowFilePattern,
 } from '@/contract/catalog';
-import { type Diagnostic, type DiagnosticCode, isDiagnosticCode } from '@/contract/diagnostics';
+import type { Diagnostic, DiagnosticCode } from '@/contract/diagnostics';
+import { isDiagnosticCode } from '@/contract/diagnostics';
 import { versionFileSchema } from '@/contract/version-files';
 import { purl } from '@/package-url';
 

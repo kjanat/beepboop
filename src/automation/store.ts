@@ -13,20 +13,20 @@ import { DomainError, precondition } from '@/contract/errors';
 import type { Access } from '@/domain/repository';
 import { fromJson, fromSync } from '@/failure';
 import { record } from '@/model';
+import type { Enrollment, RepositoryRow } from '@/persistence/codecs/repository';
 import {
 	decodeEnrollment,
 	decodeRepository,
-	type Enrollment,
 	encodeAccess,
 	enrollmentColumns,
 	enrollmentRow,
-	type RepositoryRow,
 	repositoryColumns,
 	repositoryRow,
 } from '@/persistence/codecs/repository';
 import { decodeDeliveryV1, decodeEventV1, decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { AuditStore } from '@/persistence/d1/audit';
-import { parse, type Sql, type SqlDatabase, sql } from '@/persistence/d1/database';
+import type { Sql, SqlDatabase } from '@/persistence/d1/database';
+import { parse, sql } from '@/persistence/d1/database';
 
 export type Readable<T> = { kind: 'readable'; value: T };
 export interface UnreadableRepository {

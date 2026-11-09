@@ -1,9 +1,11 @@
 import { Effect } from 'effect';
 import type { z } from 'zod';
-import { Authenticators, administrator, type WorkflowIdentity, workflowIdentity } from '@/automation/auth';
+import type { WorkflowIdentity } from '@/automation/auth';
+import { Authenticators, administrator, workflowIdentity } from '@/automation/auth';
 import type { AutomationBindings, AutomationService } from '@/automation/service';
 import type { RepositoryRecord } from '@/automation/types';
-import { type DomainError, decodeRequest, forbidden, securityKeyRequired } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { decodeRequest, forbidden, securityKeyRequired } from '@/contract/errors';
 import type { AnyRoute, Known, Route } from '@/contract/routes';
 import { readiness } from '@/domain/repository';
 import { fromSync } from '@/failure';

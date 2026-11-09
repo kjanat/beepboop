@@ -1,8 +1,10 @@
 import { Result } from 'effect';
 import { z } from 'zod';
 import type { Publication, PublishKind } from '@/automation/types';
-import { type DomainError, precondition } from '@/contract/errors';
-import { type LedgerEntry, type LedgerManager, type LedgerPackage, ledgerManagers } from '@/contract/ledger';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
+import type { LedgerEntry, LedgerManager, LedgerPackage } from '@/contract/ledger';
+import { ledgerManagers } from '@/contract/ledger';
 
 export const registries: Record<LedgerManager, string> = {
 	cargo: 'crates.io',

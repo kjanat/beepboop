@@ -1,9 +1,12 @@
 import { Result } from 'effect';
-import { excluded, type PackagePublication, registry } from '@/automation/package-publication';
+import type { PackagePublication } from '@/automation/package-publication';
+import { excluded, registry } from '@/automation/package-publication';
 import type { Execution, Inventory, Package, Publication, RepositoryRecord } from '@/automation/types';
 import { identifiedManagers, legacyJsrIdentity } from '@/contract/catalog';
-import { blocking, type Diagnostic, legacyDiagnostic, messages } from '@/contract/diagnostics';
-import { InvalidPackageUrl, type PackageIdentity, packageIdentity, parsePackageIdentity, purl } from '@/package-url';
+import type { Diagnostic } from '@/contract/diagnostics';
+import { blocking, legacyDiagnostic, messages } from '@/contract/diagnostics';
+import type { PackageIdentity } from '@/package-url';
+import { InvalidPackageUrl, packageIdentity, parsePackageIdentity, purl } from '@/package-url';
 
 type PackageRecord = Pick<Package, 'manager' | 'name' | 'version' | 'identity'>;
 /** Legacy records acquire a typed identity at the boundary; adapters stay independent of purl types. */

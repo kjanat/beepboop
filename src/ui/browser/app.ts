@@ -1,6 +1,7 @@
 import { Cause, Effect } from 'effect';
 import { z } from 'zod';
-import { type NotificationKind, notificationKinds, type WatchedRegistry, watchedRegistries } from '@/contract/catalog';
+import type { NotificationKind, WatchedRegistry } from '@/contract/catalog';
+import { notificationKinds, watchedRegistries } from '@/contract/catalog';
 import { routes } from '@/contract/routes';
 import { api, elevatedApi } from '@/ui/browser/api';
 import {

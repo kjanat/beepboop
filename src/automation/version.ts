@@ -1,5 +1,6 @@
 import { Effect } from 'effect';
-import { type DomainError, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
 import { compareVersions, record, semver, text } from '@/model';
 
 export type VersionRequest =

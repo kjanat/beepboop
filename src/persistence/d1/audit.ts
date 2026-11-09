@@ -2,7 +2,8 @@ import { Effect } from 'effect';
 import { z } from 'zod';
 import type { DomainError } from '@/contract/errors';
 import { auditActor } from '@/domain/audit';
-import { parse, type Sql, type SqlDatabase, sql } from '@/persistence/d1/database';
+import type { Sql, SqlDatabase } from '@/persistence/d1/database';
+import { parse, sql } from '@/persistence/d1/database';
 
 const activityRow = z.object({
 	id: z.string(),

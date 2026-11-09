@@ -17,7 +17,8 @@ import { escapeRegExp, within } from '@/automation/release-graph/shell';
 import { literalPrefix } from '@/automation/release-graph/workflows';
 import type { Snapshot } from '@/automation/types';
 import { isLockfile, managerNames, managerSpec } from '@/contract/catalog';
-import { type DomainError, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
 import { safeVersionPath } from '@/contract/version-files';
 
 export interface TreeEntry {

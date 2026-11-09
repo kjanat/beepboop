@@ -1,4 +1,5 @@
-import { CLIError, type Out } from '@kjanat/dreamcli';
+import type { Out } from '@kjanat/dreamcli';
+import { CLIError } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 
 export function failure(message: string, code: string, suggest?: string): CLIError {

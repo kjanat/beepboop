@@ -2,7 +2,8 @@ import { Effect } from 'effect';
 import { createExecution } from '@/automation/execution';
 import type { ReleaseSetPlan } from '@/automation/planning';
 import type { Execution, ReleasePlan } from '@/automation/types';
-import { type DomainError, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
 import type { ReadyRepository } from '@/domain/repository';
 import { executionId, planIdentity } from '@/persistence/identity-keys';
 

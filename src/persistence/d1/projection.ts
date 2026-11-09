@@ -1,7 +1,8 @@
 import { Effect } from 'effect';
 import type { ProjectedEntity } from '@/contract/changes';
 import type { DomainError } from '@/contract/errors';
-import { type SqlDatabase, type SqlStatement, sql } from '@/persistence/d1/database';
+import type { SqlDatabase, SqlStatement } from '@/persistence/d1/database';
+import { sql } from '@/persistence/d1/database';
 
 interface Common {
 	id: string;

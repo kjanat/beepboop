@@ -3,12 +3,15 @@ import { z } from 'zod';
 import type { Fetcher } from '@/automation/managers/registry';
 import type { Store } from '@/automation/store';
 import type { Vault } from '@/automation/vault';
-import { type NotificationKind, notificationKinds, type WatchedRegistry, watchedRegistries } from '@/contract/catalog';
-import { type DomainError, precondition } from '@/contract/errors';
+import type { NotificationKind, WatchedRegistry } from '@/contract/catalog';
+import { notificationKinds, watchedRegistries } from '@/contract/catalog';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
 import { watchedPackageHref } from '@/contract/links';
 import type { DestinationInput } from '@/contract/notifications';
 import { fromPromise, fromSync } from '@/failure';
-import { parse, type Sql, sql } from '@/persistence/d1/database';
+import type { Sql } from '@/persistence/d1/database';
+import { parse, sql } from '@/persistence/d1/database';
 
 export const deliveryStates = ['pending', 'delivered', 'failed'] as const;
 export type DeliveryState = (typeof deliveryStates)[number];

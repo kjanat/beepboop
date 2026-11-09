@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { botId, ownerId } from '@root/test/support/github.ts';
+import { bearer, field } from '@root/test/support/http.ts';
+import { publishWorkflow, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
+import { World } from '@root/test/support/world.ts';
 import { Effect, Result } from 'effect';
 import { parse, parseDocument } from 'yaml';
 import { z } from 'zod';
@@ -8,10 +12,6 @@ import { cratePublishCommands, ledgerCommand, suggestedCommands } from '@/automa
 import { rebuildingStatus } from '@/automation/setup-maintenance';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices } from '@/automation/setup-types';
-import { botId, ownerId } from '@root/test/support/github.ts';
-import { bearer, field } from '@root/test/support/http.ts';
-import { publishWorkflow, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
-import { World } from '@root/test/support/world.ts';
 
 const checkout = pinned('checkout');
 let world: World;

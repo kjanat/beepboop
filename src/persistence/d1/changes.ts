@@ -3,7 +3,8 @@ import { z } from 'zod';
 import type { ChangesResponse } from '@/contract/changes';
 import { change } from '@/contract/changes';
 import type { DomainError } from '@/contract/errors';
-import { parse, type Sql, type SqlDatabase, sql } from '@/persistence/d1/database';
+import type { Sql, SqlDatabase } from '@/persistence/d1/database';
+import { parse, sql } from '@/persistence/d1/database';
 
 const page = 500;
 const changeRow = z.object({

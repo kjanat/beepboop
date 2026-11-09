@@ -1,8 +1,10 @@
+import type { World } from '@root/test/support/world.ts';
+import { origin } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import type { z } from 'zod';
-import { call as request, send, type Transport } from '@/contract/client';
+import type { Transport } from '@/contract/client';
+import { call as request, send } from '@/contract/client';
 import type { Route } from '@/contract/routes';
-import { origin, type World } from '@root/test/support/world.ts';
 
 export function cliTransport(world: World, token: string): Transport {
 	return outgoing =>

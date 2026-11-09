@@ -3,9 +3,11 @@ import { hidAuthenticator } from '@/cli/fido2/ctap';
 import { linuxTransport } from '@/cli/fido2/linux';
 import { macosTransport } from '@/cli/fido2/macos';
 import { sha256 } from '@/cli/fido2/pin';
-import { type Authenticator, SecurityKeyError } from '@/cli/fido2/types';
+import type { Authenticator } from '@/cli/fido2/types';
+import { SecurityKeyError } from '@/cli/fido2/types';
 import { windowsAuthenticator } from '@/cli/fido2/windows';
-import { array, type Parsed, record, text } from '@/model';
+import type { Parsed } from '@/model';
+import { array, record, text } from '@/model';
 
 interface RequestOptions {
 	challenge: string;

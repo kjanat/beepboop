@@ -1,6 +1,8 @@
-import { dlopen, FFIType, JSCallback, type Pointer, ptr, toArrayBuffer } from 'bun:ffi';
+import type { Pointer } from 'bun:ffi';
+import { dlopen, FFIType, JSCallback, ptr, toArrayBuffer } from 'bun:ffi';
 import { Effect, Result } from 'effect';
-import { type HidDevice, type HidTransport, SecurityKeyError, securityKeyFailure } from '@/cli/fido2/types';
+import type { HidDevice, HidTransport } from '@/cli/fido2/types';
+import { SecurityKeyError, securityKeyFailure } from '@/cli/fido2/types';
 
 const IOKIT_PATH = '/System/Library/Frameworks/IOKit.framework/IOKit';
 const CORE_FOUNDATION_PATH = '/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation';

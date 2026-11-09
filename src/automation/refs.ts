@@ -1,8 +1,10 @@
 import { Effect } from 'effect';
 import { matchesPackage } from '@/automation/package-identity';
 import type { Package } from '@/automation/types';
-import { type DomainError, precondition } from '@/contract/errors';
-import { compare, isPrerelease, parseTag, type SemVer, semVer, tagFor } from '@/contract/version';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
+import type { SemVer } from '@/contract/version';
+import { compare, isPrerelease, parseTag, semVer, tagFor } from '@/contract/version';
 import { fromSync } from '@/failure';
 
 export interface RefPolicy {

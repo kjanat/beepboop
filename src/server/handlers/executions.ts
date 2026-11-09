@@ -1,7 +1,8 @@
 import { Effect } from 'effect';
 import type { AutomationService } from '@/automation/service';
 import type { Execution } from '@/automation/types';
-import { type DomainError, notFound } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { notFound } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import { fromPromise } from '@/failure';
 import { admin } from '@/server/handlers/kit';

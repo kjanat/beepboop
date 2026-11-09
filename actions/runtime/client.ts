@@ -1,10 +1,10 @@
 import { appendFileSync } from 'node:fs';
+import type { Mode } from '@root/actions/runtime/protocol.ts';
 import {
 	ActionFailure,
 	attempt,
 	endpoints,
 	exchange,
-	type Mode,
 	parseMode,
 	requestBody,
 	required,

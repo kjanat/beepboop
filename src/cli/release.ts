@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { type Ask, type CLIError, isCLIError, type Out } from '@kjanat/dreamcli';
+import type { Ask, CLIError, Out } from '@kjanat/dreamcli';
+import { isCLIError } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 import { z } from 'zod';
 import { repositoryReference } from '@/automation/repository-name';

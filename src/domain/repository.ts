@@ -1,7 +1,9 @@
 import { Effect } from 'effect';
 import type { Configuration, RepositoryRecord } from '@/automation/types';
-import { blocking, type Diagnostic } from '@/contract/diagnostics';
-import { type DomainError, domainError, precondition } from '@/contract/errors';
+import type { Diagnostic } from '@/contract/diagnostics';
+import { blocking } from '@/contract/diagnostics';
+import type { DomainError } from '@/contract/errors';
+import { domainError, precondition } from '@/contract/errors';
 
 export type Access = { kind: 'active' } | { kind: 'suspended'; since: number };
 

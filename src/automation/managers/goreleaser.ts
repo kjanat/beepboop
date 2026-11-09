@@ -8,7 +8,8 @@ import { latestTag, tagSource } from '@/automation/managers/tags';
 import { excluded, registry } from '@/automation/package-publication';
 import type { Outcome, Publication, Snapshot } from '@/automation/types';
 import { goreleaserConfig } from '@/contract/catalog';
-import { type Diagnostic, fileProblem } from '@/contract/diagnostics';
+import type { Diagnostic } from '@/contract/diagnostics';
+import { fileProblem } from '@/contract/diagnostics';
 import { packageIdentity } from '@/package-url';
 
 function cargoName(snapshot: Snapshot): unknown {

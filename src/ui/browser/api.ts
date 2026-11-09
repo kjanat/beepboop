@@ -1,6 +1,7 @@
 import { Data, Effect } from 'effect';
 import type { z } from 'zod';
-import { ApiFailure, call, elevatedCall, send, type Transport, type Unreachable } from '@/contract/client';
+import type { Transport, Unreachable } from '@/contract/client';
+import { ApiFailure, call, elevatedCall, send } from '@/contract/client';
 import type { Route } from '@/contract/routes';
 
 export class SessionExpired extends Data.TaggedError('SessionExpired')<{ readonly message: string }> {}

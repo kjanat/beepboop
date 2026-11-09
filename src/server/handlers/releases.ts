@@ -10,13 +10,16 @@ import { resolvePackageVersion } from '@/automation/release-version';
 import type { AutomationService } from '@/automation/service';
 import type { ReleasePlan, Snapshot, Stream } from '@/automation/types';
 import { nextVersion, parseVersionRequest } from '@/automation/version';
-import { conflict, type DomainError, notFound, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { conflict, notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
-import { type ReadyRepository, requireReady } from '@/domain/repository';
+import type { ReadyRepository } from '@/domain/repository';
+import { requireReady } from '@/domain/repository';
 import { fromPromise } from '@/failure';
 import { compareVersions, semver } from '@/model';
 import { planIdentity } from '@/persistence/identity-keys';
-import { type AdminContext, admin } from '@/server/handlers/kit';
+import type { AdminContext } from '@/server/handlers/kit';
+import { admin } from '@/server/handlers/kit';
 
 interface Selected {
 	repository: ReadyRepository;

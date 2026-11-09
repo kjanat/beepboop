@@ -1,4 +1,5 @@
-import { type PackageIdentity, packageIdentity, purlDefinitions } from '@/package-url';
+import type { PackageIdentity } from '@/package-url';
+import { packageIdentity, purlDefinitions } from '@/package-url';
 import type { TypeDefinition } from '@/package-url/definition';
 
 export interface PackageMetadata {

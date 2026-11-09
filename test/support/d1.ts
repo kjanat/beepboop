@@ -1,4 +1,5 @@
-import { Database, type SQLQueryBindings } from 'bun:sqlite';
+import type { SQLQueryBindings } from 'bun:sqlite';
+import { Database } from 'bun:sqlite';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { SqlDatabase, SqlResult, SqlStatement } from '@/persistence/d1/database';

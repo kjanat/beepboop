@@ -3,7 +3,8 @@ import icon from '@root/assets/beepboop-icon.png';
 import Arrow from '@/components/Arrow.astro';
 import Field from '@/components/Field.astro';
 import type { GitHubOutage } from '@/server/github-status.ts';
-import { type Section, sectionPages, sections } from '@/server/sections.ts';
+import type { Section } from '@/server/sections.ts';
+import { sectionPages, sections } from '@/server/sections.ts';
 import '@/styles/dashboard.css';
 
 interface Props {

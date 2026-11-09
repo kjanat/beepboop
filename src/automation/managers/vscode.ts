@@ -1,7 +1,8 @@
 import { Effect, Result } from 'effect';
 import { z } from 'zod';
 import { object } from '@/automation/managers/helpers';
-import { type Adapter, emptyInventory, type RegistryVersion } from '@/automation/managers/registry';
+import type { Adapter, RegistryVersion } from '@/automation/managers/registry';
+import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, unpublished } from '@/automation/managers/verification';
 import { identityOf, parseExtension } from '@/automation/package-identity';
 import { excluded, registry } from '@/automation/package-publication';

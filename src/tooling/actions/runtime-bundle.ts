@@ -1,7 +1,8 @@
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { Effect } from 'effect';
-import { attemptPromise, refuse, type ToolFailure } from '@/tooling/runtime';
+import type { ToolFailure } from '@/tooling/runtime';
+import { attemptPromise, refuse } from '@/tooling/runtime';
 
 const root = resolve(import.meta.dir, '../../..');
 export const entrypoints = ['client', 'prepare', 'publish', 'refs'] as const;

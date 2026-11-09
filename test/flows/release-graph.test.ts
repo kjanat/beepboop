@@ -1,21 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { bearer } from '@root/test/support/http.ts';
+import { World } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import { z } from 'zod';
 import { discover } from '@/automation/managers';
 import { packageId } from '@/automation/package-identity';
-import { buildSnapshot } from '@/automation/snapshot';
 import { adoptionChoices, adoptionMarkdown } from '@/automation/release-graph/adoption';
-import {
-	inferReleaseGraph,
-	type ReleaseGraph,
-	type StreamProposal,
-	type Target,
-} from '@/automation/release-graph/graph';
-import { type Destination, workflowModels } from '@/automation/release-graph/workflows';
+import type { ReleaseGraph, StreamProposal, Target } from '@/automation/release-graph/graph';
+import { inferReleaseGraph } from '@/automation/release-graph/graph';
+import type { Destination } from '@/automation/release-graph/workflows';
+import { workflowModels } from '@/automation/release-graph/workflows';
 import { parseSetupPlan } from '@/automation/setup-plan';
+import { buildSnapshot } from '@/automation/snapshot';
 import type { Snapshot } from '@/automation/types';
-import { bearer } from '@root/test/support/http.ts';
-import { World } from '@root/test/support/world.ts';
 
 const snapshotSchema = z.object({
 	repository: z.object({ id: z.number(), name: z.string(), defaultBranch: z.string() }),

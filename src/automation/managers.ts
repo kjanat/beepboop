@@ -8,8 +8,10 @@ import { publishable } from '@/automation/package-publication';
 import { resolvePackageVersion } from '@/automation/release-version';
 import type { Inventory, Package, Publication, ReleasePlan, Snapshot } from '@/automation/types';
 import { parseVersionRequest } from '@/automation/version';
-import { isLockfile, type ManagerName } from '@/contract/catalog';
-import { type DomainError, precondition } from '@/contract/errors';
+import type { ManagerName } from '@/contract/catalog';
+import { isLockfile } from '@/contract/catalog';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
 import type { VersionFile } from '@/contract/version-files';
 
 export { publicationOrder } from '@/automation/managers/order';

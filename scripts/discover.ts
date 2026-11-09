@@ -9,7 +9,8 @@ import { inferReleaseGraph } from '@/automation/release-graph/graph';
 import { buildSnapshot } from '@/automation/snapshot';
 import type { DomainError } from '@/contract/errors';
 import { toDomainError } from '@/failure';
-import { attempt, main, parse, refuse, type ToolFailure } from '@/tooling/runtime';
+import type { ToolFailure } from '@/tooling/runtime';
+import { attempt, main, parse, refuse } from '@/tooling/runtime';
 
 function command(args: string[]): Effect.Effect<string, ToolFailure> {
 	return attempt(() => Bun.spawnSync(args)).pipe(

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { z } from 'zod';
 import { bearer } from '@root/test/support/http.ts';
 import { World } from '@root/test/support/world.ts';
+import { z } from 'zod';
 
 let world: World;
 beforeEach(async () => {

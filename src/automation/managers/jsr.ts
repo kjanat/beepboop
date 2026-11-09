@@ -1,20 +1,17 @@
 import { Effect } from 'effect';
-import { applyEdits, modify, type ParseError, parse } from 'jsonc-parser';
+import type { ParseError } from 'jsonc-parser';
+import { applyEdits, modify, parse } from 'jsonc-parser';
 import { directory, object } from '@/automation/managers/helpers';
-import {
-	type Adapter,
-	emptyInventory,
-	type Fetcher,
-	Registry,
-	type RegistryVersion,
-} from '@/automation/managers/registry';
+import type { Adapter, Fetcher, RegistryVersion } from '@/automation/managers/registry';
+import { emptyInventory, Registry } from '@/automation/managers/registry';
 import { latestVersion, unpublished } from '@/automation/managers/verification';
 import { identityOf } from '@/automation/package-identity';
 import { registry } from '@/automation/package-publication';
 import type { Outcome, Publication } from '@/automation/types';
 import { jsrManifest } from '@/contract/catalog';
 import { fileProblem } from '@/contract/diagnostics';
-import { type DomainError, domainError, upstream } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { domainError, upstream } from '@/contract/errors';
 import { fromPromise, fromSync } from '@/failure';
 
 const packageName = /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/;

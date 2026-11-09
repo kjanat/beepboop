@@ -2,13 +2,8 @@ import { isDeepStrictEqual } from 'node:util';
 import type { Ask, CLIError, Out, SelectChoice } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 import { publishable } from '@/automation/package-publication';
-import {
-	preparationReasons,
-	type Selection,
-	suggestedCommands,
-	suggestedWorkflowFile,
-	ungenerated,
-} from '@/automation/setup-defaults';
+import type { Selection } from '@/automation/setup-defaults';
+import { preparationReasons, suggestedCommands, suggestedWorkflowFile, ungenerated } from '@/automation/setup-defaults';
 import { streamSummary } from '@/automation/setup-summary';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import { failure } from '@/cli/output';

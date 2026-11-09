@@ -1,21 +1,20 @@
 import { Context, Effect, Layer, Result } from 'effect';
-import {
-	type Channel,
-	type ChannelOutcome,
-	channelKey,
-	isChannelOutcome,
-	type RegistryOutcome,
-} from '@/automation/destinations';
+import type { Channel, ChannelOutcome, RegistryOutcome } from '@/automation/destinations';
+import { channelKey, isChannelOutcome } from '@/automation/destinations';
 import { checkChannel, pkgbuildChannels } from '@/automation/managers/channels';
 import { publicationOrder } from '@/automation/managers/order';
 import { packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import type { Inventory, Package, Publication, Snapshot } from '@/automation/types';
-import { destinationsOf, type ManagerDestinationId, type ManagerName, managerSpec } from '@/contract/catalog';
-import { type Diagnostic, fileProblem } from '@/contract/diagnostics';
-import { type DomainError, precondition } from '@/contract/errors';
+import type { ManagerDestinationId, ManagerName } from '@/contract/catalog';
+import { destinationsOf, managerSpec } from '@/contract/catalog';
+import type { Diagnostic } from '@/contract/diagnostics';
+import { fileProblem } from '@/contract/diagnostics';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
 import { fromPromise } from '@/failure';
-import { InvalidPackageUrl, type PackageIdentity, parsePackageIdentity } from '@/package-url';
+import type { PackageIdentity } from '@/package-url';
+import { InvalidPackageUrl, parsePackageIdentity } from '@/package-url';
 
 export interface Manager {
 	readonly name: ManagerName;

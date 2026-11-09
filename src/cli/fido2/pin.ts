@@ -8,8 +8,10 @@ import {
 	randomBytes,
 } from 'node:crypto';
 import { Result } from 'effect';
-import { bytes, type CborMap } from '@/cli/fido2/cbor';
-import { type SecurityKeyError, securityKeyFailure } from '@/cli/fido2/types';
+import type { CborMap } from '@/cli/fido2/cbor';
+import { bytes } from '@/cli/fido2/cbor';
+import type { SecurityKeyError } from '@/cli/fido2/types';
+import { securityKeyFailure } from '@/cli/fido2/types';
 
 export interface PinProtocol {
 	readonly version: 1 | 2;

@@ -8,7 +8,8 @@ import { publishable } from '@/automation/package-publication';
 import type { Edit, Inventory, Snapshot } from '@/automation/types';
 import { parseVersionRequest } from '@/automation/version';
 import { isLockfile } from '@/contract/catalog';
-import { type DomainError, decodeRequest, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { decodeRequest, precondition } from '@/contract/errors';
 import type { VersionFile } from '@/contract/version-files';
 
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);

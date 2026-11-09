@@ -5,12 +5,14 @@ import { matchesRef } from '@/automation/policy';
 import { issueWorkflowToken } from '@/automation/token';
 import type { Artifact, Edit, Execution, Publication } from '@/automation/types';
 import { isLockfile, reportableManagerNames } from '@/contract/catalog';
-import { type DomainError, decodeRequest, forbidden, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { decodeRequest, forbidden, precondition } from '@/contract/errors';
 import type { ClaimStep, NextStep, ReportStep } from '@/contract/ledger';
 import { routes } from '@/contract/routes';
 import { requireReady } from '@/domain/repository';
 import { fromPromise } from '@/failure';
-import { type EnrolledContext, workflow, workflowToken } from '@/server/handlers/kit';
+import type { EnrolledContext } from '@/server/handlers/kit';
+import { workflow, workflowToken } from '@/server/handlers/kit';
 
 const outcomes = ['pending', 'succeeded', 'failed', 'uncertain', 'skipped', 'rate-limited'] as const;
 const reportedFields = z.object({

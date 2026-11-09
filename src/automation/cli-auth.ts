@@ -1,6 +1,7 @@
 import { Effect } from 'effect';
 import type { AuthBindings } from '@/automation/auth';
-import { type DomainError, unauthenticated } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { unauthenticated } from '@/contract/errors';
 import { cliToken, cliTokenPattern, confirmationCode, loginSecretPattern, sha256Hex } from '@/contract/ids';
 import { fromJson, fromPromise } from '@/failure';
 import { record, string } from '@/model';

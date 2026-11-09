@@ -1,6 +1,7 @@
 import { Data, Effect } from 'effect';
 import type { z } from 'zod';
-import { type ApiError, errorEnvelope, securityKeyRequired } from '@/contract/errors';
+import type { ApiError } from '@/contract/errors';
+import { errorEnvelope, securityKeyRequired } from '@/contract/errors';
 import type { Route } from '@/contract/routes';
 
 export interface Outgoing {

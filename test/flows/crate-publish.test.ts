@@ -1,7 +1,7 @@
+import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { cratePublishCommands } from '@/automation/setup-defaults';
 
 let stub = '';

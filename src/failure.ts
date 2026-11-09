@@ -1,7 +1,8 @@
 import { Cause, Effect } from 'effect';
 import { z } from 'zod';
 import { legacyDiagnostic } from '@/contract/diagnostics';
-import { type ApiError, DomainError, envelope, messageOf, statusOf } from '@/contract/errors';
+import type { ApiError } from '@/contract/errors';
+import { DomainError, envelope, messageOf, statusOf } from '@/contract/errors';
 import { InvalidPackageUrl } from '@/package-url';
 
 interface Classified {

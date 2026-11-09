@@ -1,6 +1,7 @@
 import { closeSync, constants, openSync, readdirSync, readFileSync, readSync, writeSync } from 'node:fs';
 import { Data, Effect } from 'effect';
-import { closeAll, type HidDevice, type HidTransport, SecurityKeyError, securityKeyFailure } from '@/cli/fido2/types';
+import type { HidDevice, HidTransport } from '@/cli/fido2/types';
+import { closeAll, SecurityKeyError, securityKeyFailure } from '@/cli/fido2/types';
 
 // FIDO CTAPHID devices declare usage page 0xF1D0 as the bytes 06 D0 F1, from the FIDO HID specification.
 const fidoUsagePage = [0x06, 0xd0, 0xf1];

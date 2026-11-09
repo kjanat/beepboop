@@ -1,7 +1,8 @@
 import { Effect } from 'effect';
 import { z } from 'zod';
 import { configurationSchema } from '@/domain/configuration';
-import { attempt, format, readText, refuse, type ToolFailure } from '@/tooling/runtime';
+import type { ToolFailure } from '@/tooling/runtime';
+import { attempt, format, readText, refuse } from '@/tooling/runtime';
 
 export const schemaPath = new URL('../../../schemas/v1.json', import.meta.url).pathname;
 

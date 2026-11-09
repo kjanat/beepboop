@@ -14,6 +14,7 @@ import {
 	validatePublicationIdentity,
 } from '@/automation/execution';
 import { RepositoryGateway } from '@/automation/github';
+import type { GitHubRelease, WorkflowRun } from '@/automation/github-resources';
 import {
 	artifactSchema,
 	checkRunsSchema,
@@ -21,25 +22,24 @@ import {
 	commitStatusSchema,
 	comparisonSchema,
 	dispatchSchema,
-	type GitHubRelease,
 	gitRefSchema,
 	gitTagSchema,
 	releaseNotesSchema,
 	releaseSchema,
-	type WorkflowRun,
 	workflowJobsSchema,
 	workflowRunSchema,
 	workflowRunsSchema,
 } from '@/automation/github-resources';
-import { type InboxEvent, inboxEntry } from '@/automation/inbox';
-import { gateState, type RunJob, resolvable, type WorkflowJobs, workflowJobs } from '@/automation/job-gate';
+import type { InboxEvent } from '@/automation/inbox';
+import { inboxEntry } from '@/automation/inbox';
+import type { RunJob, WorkflowJobs } from '@/automation/job-gate';
+import { gateState, resolvable, workflowJobs } from '@/automation/job-gate';
+import type { Ledger, LedgerRecord } from '@/automation/ledger';
 import {
 	availability,
 	claim,
 	entry,
 	fail,
-	type Ledger,
-	type LedgerRecord,
 	label,
 	ledgerSchema,
 	pacedPublication,
@@ -75,21 +75,14 @@ import {
 import { publishable } from '@/automation/package-publication';
 import { matchesRef } from '@/automation/policy';
 import type { PublishBudget } from '@/automation/publish-budget';
-import {
-	conflictMessage,
-	moduleTagPrefixes,
-	planRefs,
-	type RefPlan,
-	type TagSigner,
-	tagConflict,
-	tagObject,
-	tagPayload,
-} from '@/automation/refs';
+import type { RefPlan, TagSigner } from '@/automation/refs';
+import { conflictMessage, moduleTagPrefixes, planRefs, tagConflict, tagObject, tagPayload } from '@/automation/refs';
 import { releaseNotes } from '@/automation/release-notes';
 import { compileReleaseSet } from '@/automation/release-set';
 import { manifestProblems } from '@/automation/release-version';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
-import { type AutomationBindings, AutomationService } from '@/automation/service';
+import type { AutomationBindings } from '@/automation/service';
+import { AutomationService } from '@/automation/service';
 import { maintainSetup } from '@/automation/setup-maintenance';
 import type { SetupEdit } from '@/automation/setup-types';
 import { decodeError, Store } from '@/automation/store';
@@ -103,18 +96,14 @@ import type {
 	ReleaseReference,
 } from '@/automation/types';
 import { parseGrant, runtimeGrant } from '@/automation/vault';
-import { type DomainError, precondition } from '@/contract/errors';
-import {
-	type ClaimStep,
-	type LedgerManager,
-	ledgerManagers,
-	type NextStep,
-	type PublishReport,
-	type ReportStep,
-} from '@/contract/ledger';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
+import type { ClaimStep, LedgerManager, NextStep, PublishReport, ReportStep } from '@/contract/ledger';
+import { ledgerManagers } from '@/contract/ledger';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
 import { parseRetryAfter } from '@/domain/http-date';
-import { type ReadyRepository, readiness } from '@/domain/repository';
+import type { ReadyRepository } from '@/domain/repository';
+import { readiness } from '@/domain/repository';
 import { fromPromise, fromSync, recover, retryable, toDomainError } from '@/failure';
 import { sha } from '@/model';
 import { purl } from '@/package-url';
@@ -123,7 +112,8 @@ import { CredentialStore } from '@/persistence/d1/credentials';
 import type { SqlDatabase } from '@/persistence/d1/database';
 import { ProjectionStore } from '@/persistence/d1/projection';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
-import { type Committed, earliest, Journal } from '@/persistence/journal';
+import type { Committed } from '@/persistence/journal';
+import { earliest, Journal } from '@/persistence/journal';
 
 export interface CoordinatorBindings extends AutomationBindings {
 	DB: SqlDatabase;

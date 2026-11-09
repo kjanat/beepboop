@@ -5,13 +5,15 @@ import { goreleaserManager } from '@/automation/managers/goreleaser';
 import { jsrManager } from '@/automation/managers/jsr';
 import { npmManager } from '@/automation/managers/npm';
 import { pypiManager } from '@/automation/managers/pypi';
-import { type Adapter, emptyInventory, ManagerRegistry } from '@/automation/managers/registry';
+import type { Adapter } from '@/automation/managers/registry';
+import { emptyInventory, ManagerRegistry } from '@/automation/managers/registry';
 import { vscodeManager } from '@/automation/managers/vscode';
 import { workflowManager } from '@/automation/managers/workflow';
 import { verifyImage } from '@/automation/oci';
 import { discoverHooks } from '@/automation/precommit';
 import type { Inventory, Snapshot } from '@/automation/types';
-import { type ManagerName, managerSpec } from '@/contract/catalog';
+import type { ManagerName } from '@/contract/catalog';
+import { managerSpec } from '@/contract/catalog';
 
 function workflowDetected<M extends ManagerName>(name: M): (snapshot: Snapshot) => Inventory {
 	return snapshot => {

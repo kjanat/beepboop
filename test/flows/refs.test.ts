@@ -2,7 +2,8 @@ import { expect, test } from 'bun:test';
 import { Effect, Exit } from 'effect';
 import { packageId } from '@/automation/package-identity';
 import { registry } from '@/automation/package-publication';
-import { moduleTagPrefixes, planRefs, type RefPolicy } from '@/automation/refs';
+import type { RefPolicy } from '@/automation/refs';
+import { moduleTagPrefixes, planRefs } from '@/automation/refs';
 import type { Package } from '@/automation/types';
 
 const commit = 'a'.repeat(40), other = 'b'.repeat(40), oid = 'c'.repeat(40);

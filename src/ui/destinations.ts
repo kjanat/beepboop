@@ -1,14 +1,11 @@
-import {
-	type Channel,
-	type ChannelOutcome,
-	channelKey,
-	isChannelOutcome,
-	type ManifestOutcome,
-	type RegistryOutcome,
-	type RegistryState,
-	registryDestination,
-	winget,
+import type {
+	Channel,
+	ChannelOutcome,
+	ManifestOutcome,
+	RegistryOutcome,
+	RegistryState,
 } from '@/automation/destinations';
+import { channelKey, isChannelOutcome, registryDestination, winget } from '@/automation/destinations';
 import type { Inventory, Package } from '@/automation/types';
 import type { WinGetSubmission } from '@/automation/winget';
 import { managerSpec } from '@/contract/catalog';

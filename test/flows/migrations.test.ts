@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test';
+import { TestD1 } from '@root/test/support/d1.ts';
 import { Effect } from 'effect';
 import { AuditStore } from '@/persistence/d1/audit';
 import { SessionStore } from '@/persistence/d1/sessions';
-import { TestD1 } from '@root/test/support/d1.ts';
 
 const now = Date.now();
 const later = now + 600_000;

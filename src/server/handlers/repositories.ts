@@ -6,12 +6,14 @@ import { encodeRepository } from '@/automation/package-identity';
 import { repositoryName, repositoryReference } from '@/automation/repository-name';
 import { branchConflictBlocker, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import { followsProposal, sameEdits, setupEdits } from '@/automation/setup-maintenance';
-import { conflict, type DomainError, domainError, invalid, notFound, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { conflict, domainError, invalid, notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import { configurationDiagnostics } from '@/domain/configuration';
 import { fromJson } from '@/failure';
 import { record } from '@/model';
-import { admin, type Context } from '@/server/handlers/kit';
+import type { Context } from '@/server/handlers/kit';
+import { admin } from '@/server/handlers/kit';
 
 function reference(input: string) {
 	return repositoryReference(input).pipe(Effect.mapError(error => invalid(error.message, ['repository'])));

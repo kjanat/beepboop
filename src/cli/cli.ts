@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
-import { arg, type CLIError, cli, command, flag, group } from '@kjanat/dreamcli';
+import type { CLIError } from '@kjanat/dreamcli';
+import { arg, cli, command, flag, group } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 import { Client } from '@/cli/client';
 import type { SecurityKeyPrompts } from '@/cli/fido2/index';

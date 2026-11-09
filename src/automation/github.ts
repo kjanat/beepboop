@@ -30,7 +30,8 @@ import { buildSnapshot } from '@/automation/snapshot';
 import type { BotIdentity } from '@/automation/token';
 import type { Edit, Snapshot } from '@/automation/types';
 import { legacyDiagnostic } from '@/contract/diagnostics';
-import { type DomainError, domainError, invalid, precondition, upstream } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { domainError, invalid, precondition, upstream } from '@/contract/errors';
 import { fromPromise, fromSync } from '@/failure';
 import { decode, sha, textSchema } from '@/model';
 

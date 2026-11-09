@@ -1,6 +1,7 @@
 import { publishable } from '@/automation/package-publication';
 import type { RepositoryRecord } from '@/automation/types';
-import { type WatchedRegistry, watchedRegistries } from '@/contract/catalog';
+import type { WatchedRegistry } from '@/contract/catalog';
+import { watchedRegistries } from '@/contract/catalog';
 import { readiness } from '@/domain/repository';
 
 export interface WatchedPackage {
