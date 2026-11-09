@@ -26,6 +26,7 @@ import type { Fetcher, VerificationContext } from '@/automation/managers/registr
 import { parsePresetReference } from '@/automation/preset';
 import type { RefState } from '@/automation/refs';
 import { marked, placeBlock, setupBlock, withStatus } from '@/automation/setup-body';
+import { setupBranches } from '@/automation/setup-changes';
 import { buildSnapshot } from '@/automation/snapshot';
 import type { BotIdentity } from '@/automation/token';
 import type { Edit, Snapshot } from '@/automation/types';
@@ -494,13 +495,13 @@ export class RepositoryGateway {
 			}, { concurrency: 'unbounded' });
 		});
 	}
-	setupHead(name: string, id: number): Effect.Effect<string | null, DomainError> {
+	setupHead(name: string, id: number, branch: string): Effect.Effect<string | null, DomainError> {
 		const self = this;
 		return Effect.gen(function*() {
 			const token = yield* self.token(name, id);
 			const ref = yield* self.read(
 				gitRefSchema.nullable(),
-				`/repos/${name}/git/ref/heads/automation/onboarding`,
+				`/repos/${name}/git/ref/heads/${branch}`,
 				token,
 			);
 			return ref ? ref.object.sha : null;
@@ -747,24 +748,33 @@ export class RepositoryGateway {
 	openSetupPull(
 		name: string,
 		id: number,
-	): Effect.Effect<{ number: number; head: string; url: string; body: string } | undefined, DomainError> {
+	): Effect.Effect<
+		{ number: number; head: string; branch: string; url: string; body: string } | undefined,
+		DomainError
+	> {
 		const self = this;
 		return Effect.gen(function*() {
 			const token = yield* self.token(name, id, { contents: 'read', pull_requests: 'read' });
-			const rows = yield* self.read(
-				z.array(pullSchema),
-				`/repos/${name}/pulls?state=open&head=${encodeURIComponent(`${name.split('/')[0]}:automation/onboarding`)}`,
-				token,
-			);
+			const rows: z.output<typeof pullSchema>[] = [];
+			for (const branch of setupBranches) {
+				rows.push(
+					...yield* self.read(
+						z.array(pullSchema),
+						`/repos/${name}/pulls?state=open&head=${encodeURIComponent(`${name.split('/')[0]}:${branch}`)}`,
+						token,
+					),
+				);
+			}
 			if (rows.length > 1) return yield* precondition('Multiple open setup pull requests');
 			const pull = rows[0];
 			if (!pull) return;
-			if (pull.head.repo.id !== id || pull.head.ref !== 'automation/onboarding') {
+			if (pull.head.repo.id !== id || !setupBranches.includes(pull.head.ref)) {
 				return yield* precondition('Setup pull request repository mismatch');
 			}
 			return {
 				number: pull.number,
 				head: pull.head.sha,
+				branch: pull.head.ref,
 				url: pull.html_url,
 				body: typeof pull.body === 'string' ? pull.body : '',
 			};
@@ -782,7 +792,7 @@ export class RepositoryGateway {
 			if (!/^[1-9][0-9]*$/.test(number)) return undefined;
 			const token = yield* self.token(name, id, { contents: 'read', pull_requests: 'read' });
 			const pull = yield* self.read(pullSchema, `/repos/${name}/pulls/${number}`, token);
-			if (pull.merged !== true || pull.head.repo.id !== id || pull.head.ref !== 'automation/onboarding') {
+			if (pull.merged !== true || pull.head.repo.id !== id || !setupBranches.includes(pull.head.ref)) {
 				return undefined;
 			}
 			const sha = yield* self.mergeCommit(name, number, token);
@@ -795,18 +805,25 @@ export class RepositoryGateway {
 		id: number,
 		number: number,
 		status: string,
-		proposal?: string,
+		proposal?: { title: string; body: string },
 	): Effect.Effect<void, DomainError> {
 		const self = this;
 		return Effect.gen(function*() {
 			const token = yield* self.token(name, id, { pull_requests: 'write' });
 			const pull = yield* self.read(pullSchema, `/repos/${name}/pulls/${number}`, token);
-			if (pull.state !== 'open' || pull.head.ref !== 'automation/onboarding' || pull.head.repo.id !== id) return;
+			if (pull.state !== 'open' || !setupBranches.includes(pull.head.ref) || pull.head.repo.id !== id) return;
 			const current = typeof pull.body === 'string' ? pull.body : '';
 			const body = proposal === undefined
 				? withStatus(current, status)
-				: placeBlock(current, setupBlock(proposal, status), yield* self.previousRender(name, number, current, token));
-			if (body !== current) yield* self.call(`/repos/${name}/pulls/${number}`, token, 'PATCH', { body });
+				: placeBlock(
+					current,
+					setupBlock(proposal.body, status),
+					yield* self.previousRender(name, number, current, token),
+				);
+			const title = proposal && proposal.title !== pull.title ? { title: proposal.title } : {};
+			if (body !== current || 'title' in title) {
+				yield* self.call(`/repos/${name}/pulls/${number}`, token, 'PATCH', { body, ...title });
+			}
 		});
 	}
 	private previousRender(
@@ -878,7 +895,8 @@ export class RepositoryGateway {
 				`/repos/${name}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`,
 				token,
 			)).filter(pull => pull.merged !== true && typeof pull.merged_at !== 'string');
-			const pulls = branch === 'automation/onboarding' ? unmerged.filter(pull => pull.state === 'open') : unmerged;
+			const setup = setupBranches.includes(branch);
+			const pulls = setup ? unmerged.filter(pull => pull.state === 'open') : unmerged;
 			if (pulls.length > 1) {
 				return yield* precondition(`Several unmerged pull requests use ${branch}; keep one of them`);
 			}
@@ -887,7 +905,6 @@ export class RepositoryGateway {
 					`The preparation PR #${pulls[0].number} was closed without merging. Reopen it to continue this release.`,
 				);
 			}
-			const setup = branch === 'automation/onboarding';
 			const existing = pulls[0];
 			const previousBody = typeof existing?.body === 'string' ? existing.body : '';
 			const pull = existing

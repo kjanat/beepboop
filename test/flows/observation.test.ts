@@ -697,7 +697,7 @@ test('editing an adopted stream clears publications and leaves observation', asy
 				z.string(),
 				z.object({ workflows: z.record(z.string(), z.object({ mode: z.string() }).loose()).optional() }).loose(),
 			),
-		}).parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'));
+		}).parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/setup-update') ?? '{}'));
 	const apply = async (choices: SetupChoices) => {
 		const preview = await Effect.runPromise(
 			parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),

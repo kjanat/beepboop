@@ -8,6 +8,7 @@ import { parse, parseDocument } from 'yaml';
 import { z } from 'zod';
 import { mergeConfiguration } from '@/automation/configuration';
 import { pinned } from '@/automation/setup-actions';
+import { describeEdits, setupTitle } from '@/automation/setup-changes';
 import { cratePublishCommands, ledgerCommand, suggestedCommands } from '@/automation/setup-defaults';
 import { rebuildingStatus } from '@/automation/setup-maintenance';
 import { parseSetupPlan } from '@/automation/setup-plan';
@@ -1671,6 +1672,142 @@ test('the rebuilding status replaces the settled line once', () => {
 	expect(rebuildingStatus(section('Inspected abc.\n\nThe proposal is up to date.'))).toBe(rebuilding);
 	expect(rebuildingStatus(section(rebuilding))).toBe(rebuilding);
 	expect(rebuildingStatus('Proposal')).toBe('Beepboop is rebuilding the proposal from your edit.');
+});
+
+test('a setup update describes each changed file', () => {
+	const workflow = (publishStep: string, timeout: string) =>
+		`jobs:\n  publish:\n${timeout}    steps:\n      - uses: actions/checkout@v7\n${publishStep}  old:\n    steps: []\n`;
+	const before = workflow(
+		'      - id: beepboop_refs\n        uses: kjanat/beepboop/actions/publish-refs@v1\n        env:\n          "${{ insert }}": ${{ fromJSON(steps.beepboop_token.outputs.gitId) }}\n      - run: echo done\n',
+		'',
+	);
+	const after = workflow(
+		'      - id: beepboop_refs\n        uses: kjanat/beepboop/actions/publish-refs@v1\n        env:\n          "${{ insert }}": ${{ fromJSON(steps.beepboop_token.outputs.gitId || \'{}\') }}\n      - id: beepboop_token\n        uses: kjanat/beepboop/actions/token@v2\n',
+		'    timeout-minutes: 90\n',
+	).replace('  old:\n    steps: []\n', '  new:\n    steps: []\n');
+	const edits = [
+		{ path: '.github/workflows/release.yml', before, after },
+		{
+			path: '.github/beepboop.json',
+			before: '{"streams":{"main":{"packages":[]}}}',
+			after: '{"streams":{"main":{"packages":["a"]}}}',
+		},
+		{ path: '.github/workflows/prepare.yml', before: '', after: 'jobs: {}\n' },
+	];
+	expect(describeEdits(edits)).toEqual([
+		{
+			path: '.github/workflows/release.yml',
+			changes: [
+				{ text: 'job `publish`: sets `timeout-minutes` to 90, which stops a hung run', label: 'job timeouts' },
+				{
+					text:
+						"job `publish`, step `beepboop_refs`: inserts the token step's gitId with a fallback for a skipped token step",
+					label: 'gitId fallback',
+				},
+				{ text: 'job `publish`: adds step `beepboop_token`' },
+				{ text: 'job `publish`: removes step `echo done`' },
+				{ text: 'adds job `new`' },
+				{ text: 'removes job `old`' },
+			],
+		},
+		{
+			path: '.github/beepboop.json',
+			changes: [{ text: 'changes `streams.main.packages`', label: 'release configuration' }],
+		},
+		{ path: '.github/workflows/prepare.yml', changes: [{ text: 'adds the file' }] },
+	]);
+	expect(setupTitle('automation/setup-update', edits)).toBe('chore: update release setup');
+	expect(setupTitle('automation/setup-update', edits.slice(0, 1))).toBe(
+		'chore: update release setup (job timeouts, gitId fallback)',
+	);
+	expect(setupTitle('automation/setup-update', edits.slice(2))).toBe('chore: update release setup');
+	expect(setupTitle('automation/onboarding', edits)).toBe('chore: configure release automation');
+	const uses = describeEdits([{
+		path: '.github/workflows/x.yml',
+		before: 'jobs:\n  a:\n    steps:\n      - id: s\n        uses: o/a@v1\n',
+		after: 'jobs:\n  a:\n    steps:\n      - id: s\n        uses: o/a@v2\n',
+	}]);
+	expect(uses[0]?.changes).toEqual([{ text: 'job `a`, step `s`: uses `o/a@v2`', label: 'action references' }]);
+	const step = (fields: string) => `jobs:\n  a:\n    steps:\n      - id: s\n${fields}      - id: t\n`;
+	expect(describeEdits([
+		{ path: 'a.yml', before: 'on: push\njobs: {}\n', after: 'on: workflow_dispatch\njobs: {}\n' },
+		{
+			path: 'b.yml',
+			before: 'jobs:\n  a:\n    timeout-minutes: 5\n    env: {}\n',
+			after: 'jobs:\n  a:\n    if: true\n',
+		},
+		{ path: 'c.yml', before: step('        run: x\n'), after: step('        run: y\n        shell: bash\n') },
+		{
+			path: 'd.yml',
+			before: 'jobs:\n  a:\n    steps:\n      - id: s\n      - id: t\n',
+			after: 'jobs:\n  a:\n    steps:\n      - id: t\n      - id: s\n',
+		},
+		{ path: 'e.yml', before: 'jobs: {}\n', after: 'jobs: {}\n\n' },
+		{ path: 'f.yml', before: 'a: [', after: 'a: 1\n' },
+		{ path: 'g.json', before: '{"a":1,"b":2}', after: '{"b":2,"c":3}' },
+	])).toEqual([
+		{ path: 'a.yml', changes: [{ text: 'changes `on`' }] },
+		{
+			path: 'b.yml',
+			changes: [
+				{ text: 'job `a`: removes `timeout-minutes`, which stops a hung run', label: 'job timeouts' },
+				{ text: 'job `a`: removes `env`' },
+				{ text: 'job `a`: adds `if`' },
+			],
+		},
+		{ path: 'c.yml', changes: [{ text: 'job `a`, step `s`: changes `run`, `shell`' }] },
+		{ path: 'd.yml', changes: [{ text: 'job `a`: reorders its steps' }] },
+		{ path: 'e.yml', changes: [{ text: 'changes formatting' }] },
+		{ path: 'f.yml', changes: [{ text: 'changes the file' }] },
+		{
+			path: 'g.json',
+			changes: [
+				{ text: 'removes `a`', label: 'release configuration' },
+				{ text: 'adds `c`', label: 'release configuration' },
+			],
+		},
+	]);
+});
+
+test('a setup update gets its own branch, a title naming its changes and a change list', async () => {
+	const { repository, api, pull } = await gadgetSetup();
+	expect([pull.head.ref, pull.title]).toEqual(['automation/onboarding', 'chore: configure release automation']);
+	const merged = world.github.merge(repository, pull.number);
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const file = '.github/workflows/release.yml';
+	const workflow = parseDocument(world.github.file(repository, file, merged.sha) ?? '');
+	expect(workflow.getIn(['jobs', 'promote', 'timeout-minutes'])).toBe(publishMinutes(1));
+	workflow.deleteIn(['jobs', 'promote', 'timeout-minutes']);
+	world.github.push(repository, { [file]: workflow.toString() }, 'Drop the job timeout');
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const plan = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name })).body),
+	);
+	expect([plan.blockers, plan.edits.map(edit => edit.path)]).toEqual([[], [file]]);
+	const applied = await api('/api/repositories/setup/apply', {
+		repository: repository.name,
+		choices: plan.choices,
+		planId: plan.planId,
+		sourceSha: plan.sourceSha,
+		setupHead: plan.setupHead,
+	});
+	expect(applied.status).toBe(200);
+	const update = repository.pulls.find(entry => entry.state === 'open');
+	if (!update) throw new Error('No setup update pull request');
+	const expected = [
+		'automation/setup-update',
+		'chore: update release setup (job timeouts)',
+		`<!-- beepboop:setup:start -->\nChanges against the release setup on \`main\`:\n\n- \`${file}\`\n  - job \`promote\`: sets \`timeout-minutes\` to ${
+			publishMinutes(1)
+		}, which stops a hung run\n\nConfigure releases`,
+	];
+	expect([update.head.ref, update.title, update.body.slice(0, expected[2]?.length)]).toEqual(expected);
+	world.github.push(repository, { 'README.md': '# widget\n\nMoved on.\n' }, 'Move the default branch');
+	const head = update.head.sha;
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	expect(update.head.sha).not.toBe(head);
+	expect([update.head.ref, update.title, update.body.slice(0, expected[2]?.length)]).toEqual(expected);
+	expect(repository.pulls.filter(entry => entry.state === 'open')).toEqual([update]);
 });
 
 test('a setup rebuild keeps a ticked Release after merge box', async () => {

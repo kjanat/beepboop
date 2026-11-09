@@ -8,6 +8,7 @@ import { exclusionLabel, publishable } from '@/automation/package-publication';
 import { documentRow } from '@/automation/schemas';
 import { previewSetup, releaseAfterMerge, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import { marked } from '@/automation/setup-body';
+import { changeSummary, setupTitle } from '@/automation/setup-changes';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Store } from '@/automation/store';
 import { decodeError } from '@/automation/store';
@@ -118,6 +119,12 @@ export function maintainSetup(
 			);
 			if (!requested && saved.maintenanceFingerprint === fingerprint && saved.options !== undefined) return;
 			const applied = { choices: plan.choices, options: setupOptions(plan), inferred: plan.adoption !== undefined };
+			const proposal = {
+				title: setupTitle(pull.branch, plan.edits),
+				body: `${changeSummary(pull.branch, plan.edits, snapshot.repository.defaultBranch)}${
+					setupBody(plan, releaseAfterMerge(pull.body))
+				}`,
+			};
 			if (plan.blockers.length || !plan.edits.length) {
 				yield* current;
 				yield* gateway.setupStatus(
@@ -129,7 +136,7 @@ export function maintainSetup(
 							? `Automatic update needs attention:\n${plan.blockers.map(message => `- ${message}`).join('\n')}`
 							: 'The default branch already matches the proposed setup.'
 					}`,
-					setupBody(plan, releaseAfterMerge(pull.body)),
+					proposal,
 				);
 				yield* save({ ...saved, ...applied, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha });
 				return;
@@ -142,16 +149,16 @@ export function maintainSetup(
 					id,
 					pull.number,
 					`${summary}\n\n${settled}`,
-					setupBody(plan, releaseAfterMerge(pull.body)),
+					proposal,
 				);
 				yield* save({ ...saved, ...applied, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha });
 				return;
 			}
 			const result = yield* gateway.pullRequest(
 				snapshot,
-				'automation/onboarding',
-				'chore: configure release automation',
-				setupBody(plan, releaseAfterMerge(pull.body)),
+				pull.branch,
+				proposal.title,
+				proposal.body,
 				plan.edits,
 				pull.head,
 				() => current,

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { onboardingBranch, updateBranch } from '@/automation/setup-changes';
 
 export const setupPullEdit = z.object({
 	action: z.literal('edited'),
@@ -10,7 +11,7 @@ export const setupPullEdit = z.object({
 		body: z.string().nullable(),
 		user: z.object({ id: z.number() }),
 		head: z.object({
-			ref: z.literal('automation/onboarding'),
+			ref: z.enum([onboardingBranch, updateBranch]),
 			sha: z.string().regex(/^[a-f0-9]{40}$/),
 			repo: z.object({ id: z.number() }),
 		}),
@@ -27,7 +28,7 @@ export const setupPullMerge = z.object({
 		merge_commit_sha: z.string().regex(/^[a-f0-9]{40}$/),
 		user: z.object({ id: z.number() }),
 		merged_by: z.object({ id: z.number(), login: z.string() }),
-		head: z.object({ ref: z.literal('automation/onboarding'), repo: z.object({ id: z.number() }) }),
+		head: z.object({ ref: z.enum([onboardingBranch, updateBranch]), repo: z.object({ id: z.number() }) }),
 		base: z.object({ repo: z.object({ id: z.number() }) }),
 	}),
 });

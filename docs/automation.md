@@ -109,6 +109,13 @@ branch. The dashboard also links earlier proposals. That list includes
 proposals that the configuration on the default branch has replaced. Merge the
 setup PR yourself, then refresh inspection.
 
+The first setup PR uses the branch `automation/onboarding` and the title
+`chore: configure release automation`. Once `.github/beepboop.json` exists on
+the default branch, a setup PR uses `automation/setup-update`. Its title names
+the kinds of change, such as `chore: update release setup (job timeouts)`, and
+its description opens with each changed file and what changes in it against
+the default branch.
+
 The authenticated API has two setup routes.
 `POST /api/repositories/setup/preview` takes `repository` and optional
 `choices`. `POST /api/repositories/setup/apply` takes the same choices plus the

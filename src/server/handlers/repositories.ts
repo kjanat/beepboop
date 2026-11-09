@@ -5,6 +5,7 @@ import { discover } from '@/automation/managers';
 import { encodeRepository } from '@/automation/package-identity';
 import { repositoryName, repositoryReference } from '@/automation/repository-name';
 import { branchConflictBlocker, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
+import { changeSummary, setupBranch, setupTitle } from '@/automation/setup-changes';
 import { followsProposal, sameEdits, setupEdits } from '@/automation/setup-maintenance';
 import type { DomainError } from '@/contract/errors';
 import { conflict, domainError, invalid, notFound, precondition } from '@/contract/errors';
@@ -65,7 +66,9 @@ export const repositoryEndpoints = {
 	setupApply: admin(routes.setupApply, (input, context) =>
 		Effect.gen(function*() {
 			const { service, actor } = context;
-			const { plan, head, snapshot, saved, previous, branchConflict, id } = yield* setupReview(input, context);
+			const { plan, head, snapshot, saved, previous, branchConflict, id, branch } = yield* setupReview(input, context);
+			const title = setupTitle(branch, plan.edits);
+			const body = `${changeSummary(branch, plan.edits, snapshot.repository.defaultBranch)}${setupBody(plan)}`;
 			if (input.sourceSha !== plan.sourceSha) {
 				return yield* conflict('stale-plan', `The default branch moved to ${snapshot.sha}. Preview again.`);
 			}
@@ -85,16 +88,16 @@ export const repositoryEndpoints = {
 			const result = head && !takeOver && saved?.sourceSha === snapshot.sha && sameEdits(previous, plan.edits)
 				? yield* service.gateway.refreshPullRequest(
 					snapshot,
-					'automation/onboarding',
-					'chore: configure release automation',
-					setupBody(plan),
+					branch,
+					title,
+					body,
 					head,
 				)
 				: yield* service.gateway.pullRequest(
 					snapshot,
-					'automation/onboarding',
-					'chore: configure release automation',
-					setupBody(plan),
+					branch,
+					title,
+					body,
 					plan.edits,
 					head ?? undefined,
 					undefined,
@@ -144,7 +147,8 @@ function setupReview(input: { repository: string; choices?: unknown }, context: 
 		const inventory = withRegistryStatus(discover(snapshot), stored?.inventory);
 		const document = yield* service.onboarding.document(id);
 		const saved = document === undefined ? undefined : yield* Effect.fromResult(record(yield* fromJson(document)));
-		const head = yield* service.gateway.setupHead(name, id);
+		const branch = setupBranch(snapshot);
+		const head = yield* service.gateway.setupHead(name, id, branch);
 		const branchFiles = head ? yield* service.gateway.generatedFiles(name, id, head) : undefined;
 		const branchConflict = !!head && saved?.head !== head && !branchFiles;
 		const previous = branchFiles ?? setupEdits(saved);
@@ -163,6 +167,6 @@ function setupReview(input: { repository: string; choices?: unknown }, context: 
 				? { prior: { url: saved.url, content: typeof saved.content === 'string' ? saved.content : undefined } }
 				: {}),
 		}, resolved.configuration);
-		return { id, snapshot, saved, head, branchConflict, previous, plan };
+		return { id, snapshot, saved, head, branchConflict, previous, plan, branch };
 	});
 }

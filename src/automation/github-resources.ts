@@ -53,6 +53,7 @@ export const pullSchema = z.object({
 	state: looseSchema,
 	merged: looseSchema,
 	merged_at: looseSchema,
+	title: looseSchema,
 	body: looseSchema,
 	assignees: z.array(z.object({ login: z.string() })).nullish(),
 	requested_reviewers: z.array(z.object({ login: z.string() })).nullish(),
