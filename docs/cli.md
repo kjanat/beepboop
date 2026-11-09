@@ -153,8 +153,8 @@ beepboop secrets revoke GRANT_ID
 ```
 
 `secrets list` prints secret names, versions, grants and deliveries. Values stay
-on the server. `secrets set` reads the value from stdin, or from a hidden prompt in a
-terminal, and asks before it overwrites a stored version.
+on the server. `secrets set` reads the value from `--value`, from stdin, or from a
+hidden prompt in a terminal, and asks before it overwrites a stored version.
 
 `set`, `grant` and `revoke` each need a touch of a registered security key. The
 CLI talks to the key directly over HID on Linux and macOS and through Windows

@@ -94,10 +94,12 @@ const auth = group('auth').description('Sign in, inspect your session, or revoke
 							if (!opened) out.status('Could not open the browser. Open the login page above.');
 						}).pipe(Effect.ensuring(Effect.sync(() => {
 							waiting = out.spinner('Waiting for you to approve this terminal in the browser');
-						})))
-					).pipe(Effect.tapError(() => Effect.sync(() => waiting?.fail('Login did not complete'))));
+						}))), () => Effect.sync(() => waiting?.update('Still waiting for your approval in the browser'))).pipe(
+							Effect.tapError(() => Effect.sync(() => waiting?.fail('Login did not complete'))),
+						);
 					waiting?.succeed('Approved in the browser');
-					out.log(`${look.mark('published')} Signed in.`);
+					if (out.jsonMode) return yield* emit(out, { server: client.origin, signedIn: true });
+					out.log(`${look.mark('published')} Signed in to ${look.link(client.origin)}.`);
 				}))
 			),
 	)
@@ -511,6 +513,12 @@ const secrets = group('secrets').description('Store secret values and list workf
 					'Secret name: 1-64 letters, numbers, underscores or hyphens',
 				),
 			)
+			.flag(
+				'value',
+				flag.string().stdin({ when: 'missing', trim: true }).sensitive().describe(
+					'Secret value; read from stdin when piped, otherwise asked for at a hidden prompt',
+				),
+			)
 			.action(({ flags, args, ask, out }) =>
 				Effect.runPromise(Effect.gen(function*() {
 					const client = yield* Client.at(flags.server);
@@ -521,7 +529,7 @@ const secrets = group('secrets').description('Store secret values and list workf
 						client.call(routes.credentialsList, {}),
 						() => `Read ${look.pkg(args.alias)}`,
 					)).credentials.find(row => row.alias === args.alias && row.active === 1)?.version;
-					const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+					const interactive = flags.value === undefined && out.isTTY;
 					if (
 						stored !== undefined && interactive
 						&& !(yield* Effect.promise(() =>
@@ -534,9 +542,10 @@ const secrets = group('secrets').description('Store secret values and list workf
 					) {
 						return yield* Effect.fail(failure('Secret left unchanged', 'ABORTED'));
 					}
-					const value = process.stdin.isTTY
-						? yield* Effect.promise(() => ask({ kind: 'password', message: `Value for ${args.alias}` }))
-						: (yield* Effect.promise(() => Bun.stdin.text())).replace(/\r?\n$/, '');
+					const value = flags.value
+						?? (interactive
+							? yield* Effect.promise(() => ask({ kind: 'password', message: `Value for ${args.alias}` }))
+							: '');
 					if (!value) {
 						return yield* Effect.fail(
 							failure('Secret value is empty', 'EMPTY_VALUE', 'Pipe the value on stdin or type it at the prompt'),

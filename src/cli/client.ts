@@ -195,6 +195,7 @@ export class Client {
 	}
 	login(
 		show: (url: string, code: string) => Effect.Effect<void>,
+		pending: () => Effect.Effect<void> = () => Effect.void,
 		signal = AbortSignal.timeout(300000),
 	): Effect.Effect<void, CLIError> {
 		return Effect.gen({ self: this }, function*() {
@@ -209,7 +210,8 @@ export class Client {
 				);
 				warnOutage(response);
 				if (response.status === 202) {
-					yield* Effect.sleep('1500 millis');
+					yield* pending();
+					yield* this.pause(1500);
 					continue;
 				}
 				if (response.status === 401 || response.status === 404) {

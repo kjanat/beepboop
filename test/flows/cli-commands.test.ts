@@ -1,10 +1,12 @@
-import { beforeEach, expect, test } from 'bun:test';
+import { beforeEach, expect, spyOn, test } from 'bun:test';
+import { join } from 'node:path';
 import { runCli, savedClient } from '@root/test/support/cli.ts';
 import { call, cliTransport, discoveredWidget } from '@root/test/support/client.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
+import { z } from 'zod';
 import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
 import { routes } from '@/contract/routes';
@@ -150,4 +152,161 @@ test('secrets and notifications list as tables, and adding and subscribing repor
 	expect(listed.tty).toContain('Releases');
 	expect(listed.tty).toContain('npm:widget');
 	expect(listed.parsed).toHaveProperty('destinations', [expect.objectContaining({ name: 'Releases' })]);
+});
+
+test('auth login shows the wait for browser approval, then signs in, as JSON and piped', async () => {
+	const fresh = await world.cliSession();
+	let answers = 0;
+	world.network.serve(new URL(origin).host, request =>
+		new URL(request.url).pathname === '/auth/cli/token'
+			? (answers++ % 2 === 0 ? new Response(null, { status: 202 }) : Response.json({ token: fresh }))
+			: world.handle(request));
+	const pauses = spyOn(client, 'pause').mockReturnValue(Effect.void);
+	const tty = await runCli(['auth', 'login', '--browser=false']);
+	expect([tty.exitCode, tty.stderr.join('')]).toEqual([
+		0,
+		expect.stringMatching(/^Login page: https:\/\/\S+\/auth\/cli\/authorize\?challenge=\S+\nConfirm code: \S+\n$/),
+	]);
+	expect(tty.activity).toEqual([
+		{ type: 'spinner:start', text: 'Waiting for you to approve this terminal in the browser' },
+		{ type: 'spinner:update', text: 'Still waiting for your approval in the browser' },
+		{ type: 'spinner:succeed', text: 'Approved in the browser' },
+	]);
+	expect(tty.stdout.join('')).toBe(`✔ Signed in to ${origin}.\n`);
+	expect(pauses).toHaveBeenCalledWith(1500);
+	const json = await runCli(['auth', 'login', '--browser=false', '--json']);
+	expect(JSON.parse(json.stdout.join(''))).toEqual({ server: origin, signedIn: true });
+	expect(json.stderr.join('')).not.toContain('Waiting for you');
+	const piped = await app.execute(['auth', 'login', '--browser=false'], { isTTY: false, env: {} });
+	expect(piped.exitCode).toBe(0);
+	expect([...piped.stdout, ...piped.stderr].join('')).not.toContain('Waiting for you');
+	expect(piped.stdout.join('')).toBe(`✔ Signed in to ${origin}.\n`);
+});
+
+test('secrets set reads the value from stdin, shows its read spinner and keeps none open for the security key', async () => {
+	let open = 0;
+	const elevated = spyOn(client, 'elevated').mockImplementation(() =>
+		Effect.promise(async () => {
+			open = 0;
+			await world.elevate();
+			return 'proof';
+		})
+	);
+	const saved = await app.execute(['secrets', 'set', 'npm-token'], { isTTY: true, env: {}, stdinData: 'secret\n' });
+	expect([saved.exitCode, saved.stderr.join('')]).toEqual([0, '']);
+	expect(saved.stdout.join('')).toBe('✔ Saved npm-token as version 1.\n');
+	expect(saved.activity).toEqual([
+		{ type: 'spinner:start', text: 'Reading the stored versions of npm-token' },
+		{ type: 'spinner:succeed', text: 'Read npm-token' },
+	]);
+	expect(elevated).toHaveBeenCalledTimes(1);
+	expect(open).toBe(0);
+	const replaced = await app.execute(['secrets', 'set', 'npm-token', '--json'], {
+		isTTY: true,
+		env: {},
+		stdinData: 'rotated\n',
+	});
+	expect(JSON.parse(replaced.stdout.join(''))).toEqual({ alias: 'npm-token', version: 2 });
+	const piped = await app.execute(['secrets', 'set', 'other-token'], { isTTY: false, env: {}, stdinData: 'value' });
+	expect(piped.stdout.join('')).toBe('✔ Saved other-token as version 1.\n');
+	expect(piped.stderr.join('')).toBe('');
+	const prompted = await runCli(['secrets', 'set', 'npm-token'], [true, 'typed']);
+	expect(prompted.exitCode).toBe(0);
+	expect(prompted.stdout.join('')).toBe('✔ Saved npm-token as version 3.\n');
+	const empty = await app.execute(['secrets', 'set', 'empty-token'], { isTTY: false, env: {} });
+	expect(empty.exitCode).not.toBe(0);
+	expect(empty.stderr.join('')).toContain('Secret value is empty');
+});
+
+async function independent() {
+	const repository = await discoveredWidget(world, token);
+	world.npm.publish('gadget', '2.0.0');
+	world.github.push(repository, {
+		'packages/gadget/package.json': JSON.stringify({
+			name: 'gadget',
+			version: '2.0.0',
+			description: 'A second package',
+			license: 'MIT',
+			repository: 'https://github.com/octo/example',
+		}),
+		'packages/gadget/README.md': '# gadget\n',
+		'packages/gadget/LICENSE': 'MIT\n',
+		'.github/beepboop.json': JSON.stringify({
+			managers: ['npm', 'workflow'],
+			streams: {
+				main: {
+					versioning: 'independent',
+					packages: ['pkg:npm/widget', 'pkg:npm/gadget'],
+					required: ['pkg:npm/widget', 'pkg:npm/gadget'],
+					prepare: { strategy: 'managed' },
+					promote: {
+						approval: 'required',
+						workflow: { file: 'publish.yml', publications: ['pkg:npm/widget', 'pkg:npm/gadget'] },
+					},
+				},
+			},
+		}),
+	}, 'Release the packages independently');
+	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	const plan = join(directory, 'release-plan.json');
+	await Bun.write(
+		plan,
+		JSON.stringify({
+			groups: [
+				{ id: 'widget', packages: ['pkg:npm/widget'], version: { bump: 'minor' } },
+			],
+			operations: [{ id: 'promote', group: 'widget' }],
+		}),
+	);
+	return { repository, plan };
+}
+
+test('releases plan-set, prepare-set and start show the release set with spinners, tables and JSON', async () => {
+	const { repository, plan } = await independent();
+	const args = ['releases', 'plan-set', repository.name, '--stream', 'main', '--plan', plan];
+	const planned = await modes(args, 'Reading octo/widget');
+	expect(planned.tty).toContain('Release set from ');
+	expect(planned.tty).toContain(
+		'group   version  packages      \n------  -------  --------------\nwidget  1.1.0    pkg:npm/widget\n',
+	);
+	const reviewed = z.object({ sourceSha: z.string(), planId: z.string() }).parse(planned.parsed);
+	expect(planned.tty).toContain(
+		`Prepare it with: beepboop releases prepare-set octo/widget --stream main --plan ${plan} --sourceSha ${reviewed.sourceSha} --planId ${reviewed.planId}\n`,
+	);
+	const prepared = await runCli([
+		'releases',
+		'prepare-set',
+		...args.slice(2),
+		'--sourceSha',
+		reviewed.sourceSha,
+		'--planId',
+		reviewed.planId,
+	]);
+	expect([prepared.exitCode, prepared.stderr.join('')]).toEqual([0, '']);
+	expect(prepared.activity).toContainEqual({ type: 'spinner:start', text: 'Preparing octo/widget / main' });
+	const preparation = /[◷✔] \S+ ([0-9a-f]{12}) octo\/widget \/ main prepare/.exec(prepared.stdout.join(''))?.[1];
+	expect(preparation).toBeDefined();
+	await world.wait(16_000);
+	const [pull] = repository.pulls;
+	if (!pull) throw new Error('The release set opened no PR');
+	const merged = world.github.merge(repository, pull.number);
+	const id = (await Effect.runPromise(client.call(routes.executionsList, {})))
+		.find(row => row.operation === 'prepare')?.id ?? '';
+	expect(preparation).toBe(id.slice(0, 12));
+	const startArgs = ['releases', 'start', id, '--sourceSha', merged.sha];
+	const started = await runCli(startArgs);
+	expect([started.exitCode, started.stderr.join('')]).toEqual([0, '']);
+	expect(started.activity).toContainEqual({
+		type: 'spinner:start',
+		text: `Starting the release set ${id.slice(0, 12)} at ${merged.sha.slice(0, 12)}`,
+	});
+	expect(started.stdout.join('')).toMatch(
+		/^id {12}repository {3}stream {2}operation {2}version {2}commit {8}state\s*\n/,
+	);
+	expect(started.stdout.join('')).toContain('octo/widget  main    promote    1.1.0    ');
+	const json = await runCli([...startArgs, '--json']);
+	expect(Array.isArray(JSON.parse(json.stdout.join('')))).toBe(true);
+	const piped = await app.execute(startArgs, { isTTY: false, env: {} });
+	expect(piped.exitCode).toBe(0);
+	expect([...piped.stdout, ...piped.stderr].join('')).not.toContain('Starting the release set');
 });
