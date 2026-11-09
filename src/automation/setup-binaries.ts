@@ -272,5 +272,5 @@ export function refSteps(id: string, action: (name: string) => string): Record<s
 	];
 }
 export function gitIdentity(tokenStep: string): Record<string, string> {
-	return { [expression('insert')]: expression(`fromJSON(steps.${tokenStep}.outputs.gitId)`) };
+	return { [expression('insert')]: expression(`fromJSON(steps.${tokenStep}.outputs.gitId || '{}')`) };
 }

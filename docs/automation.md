@@ -791,11 +791,13 @@ resolves them from the configured App and its GitHub bot user. Use those outputs
 for the Git author and committer identity, and use the installation token to
 authenticate the push. The `gitId` output holds the same identity as a JSON
 object of `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` and
-`GIT_COMMITTER_EMAIL`. Insert it into a step environment:
+`GIT_COMMITTER_EMAIL`. Insert it into a step environment. GitHub evaluates a
+step's `env` even when an earlier failure skips the step, so fall back to an
+empty object:
 
 ```yaml
 env:
-  "${{ insert }}": ${{ fromJSON(steps.beepboop.outputs.gitId) }}
+  "${{ insert }}": ${{ fromJSON(steps.beepboop.outputs.gitId || '{}') }}
 ```
 
 The audit log records every token that Beepboop issues.

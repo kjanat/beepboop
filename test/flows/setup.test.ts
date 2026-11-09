@@ -1368,22 +1368,30 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 	});
 	expect(steps.map(step => step.uses ?? step.id).filter(step => /publish-(?:refs|release)|report/.test(step ?? '')))
 		.toEqual(['kjanat/beepboop/actions/publish-refs@v1', 'kjanat/beepboop/actions/publish-release@v1']);
-	const identity = { '${{ insert }}': '${{ fromJSON(steps.beepboop_token.outputs.gitId) }}' };
+	const identity = { '${{ insert }}': "${{ fromJSON(steps.beepboop_token.outputs.gitId || '{}') }}" };
 	expect(steps.find(step => step.id === 'beepboop_refs')?.env).toEqual(identity);
-	const kept = parseDocument(plan.edits.find(edit => edit.path === '.github/workflows/release-sql.yml')?.after ?? '');
-	kept.deleteIn(['jobs', 'publish', 'steps', steps.findIndex(step => step.id === 'beepboop_refs'), 'env']);
-	world.github.push(repository, { '.github/workflows/release-sql.yml': kept.toString() }, 'Drop the tag identity');
-	const repaired = await Effect.runPromise(
-		parseSetupPlan(
-			(await api('/api/repositories/setup/preview', { repository: repository.name, choices: plan.choices })).body,
-		),
-	);
-	expect(repaired.blockers).toEqual([]);
-	const repairedSteps = z.object({
-		jobs: z.object({ publish: z.object({ steps: z.array(z.looseObject({ id: z.string().optional() })) }) }),
-	}).parse(parse(repaired.edits.find(edit => edit.path === '.github/workflows/release-sql.yml')?.after ?? ''))
-		.jobs.publish.steps;
-	expect(repairedSteps.find(step => step.id === 'beepboop_refs')?.env).toEqual(identity);
+	const generated = plan.edits.find(edit => edit.path === '.github/workflows/release-sql.yml')?.after ?? '';
+	const refsEnv = ['jobs', 'publish', 'steps', steps.findIndex(step => step.id === 'beepboop_refs'), 'env'];
+	const strict = { '${{ insert }}': '${{ fromJSON(steps.beepboop_token.outputs.gitId) }}', LANG: 'C' };
+	for (const env of [undefined, strict]) {
+		const kept = parseDocument(generated);
+		if (env) kept.setIn(refsEnv, env);
+		else kept.deleteIn(refsEnv);
+		world.github.push(repository, { '.github/workflows/release-sql.yml': kept.toString() }, 'Change the tag identity');
+		const repaired = await Effect.runPromise(
+			parseSetupPlan(
+				(await api('/api/repositories/setup/preview', { repository: repository.name, choices: plan.choices })).body,
+			),
+		);
+		expect(repaired.blockers).toEqual([]);
+		const repairedSteps = z.object({
+			jobs: z.object({ publish: z.object({ steps: z.array(z.looseObject({ id: z.string().optional() })) }) }),
+		}).parse(parse(repaired.edits.find(edit => edit.path === '.github/workflows/release-sql.yml')?.after ?? ''))
+			.jobs.publish.steps;
+		expect(repairedSteps.find(step => step.id === 'beepboop_refs')?.env).toEqual(
+			env ? { LANG: 'C', ...identity } : identity,
+		);
+	}
 	const without = structuredClone(choices);
 	const stream = without.streams[0];
 	if (!stream) throw new Error('stream expected');

@@ -527,10 +527,13 @@ function integrate(
 			entry.id === source && typeof entry.uses === 'string'
 			&& /^(?:(?:\$|\.)\/actions\/|kjanat\/beepboop\/actions\/)token(?:@[\w./-]+)?$/.test(entry.uses)
 		);
-		const identified = Object.keys(env).some(key =>
-			/^\$\{\{\s*insert\s*\}\}$/.test(key) || key === 'GIT_COMMITTER_NAME'
-		);
-		return source && issued && !identified ? { ...step, env: { ...env, ...gitIdentity(source) } } : step;
+		const insert = (key: string) => /^\$\{\{\s*insert\s*\}\}$/.test(key);
+		const stale = (key: string) =>
+			insert(key) && /^\$\{\{\s*fromJSON\(steps\.[A-Za-z_][\w-]*\.outputs\.gitId\)\s*\}\}$/.test(String(env[key]));
+		const identified = Object.keys(env).some(key => (insert(key) && !stale(key)) || key === 'GIT_COMMITTER_NAME');
+		if (!source || !issued || identified) return step;
+		const kept = Object.fromEntries(Object.entries(env).filter(([key]) => !stale(key)));
+		return { ...step, env: { ...kept, ...gitIdentity(source) } };
 	});
 	const refs = steps.findIndex(step => typeof step.uses === 'string' && /\/actions\/publish-refs\b/.test(step.uses));
 	if (
