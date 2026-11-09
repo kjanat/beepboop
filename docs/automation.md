@@ -1107,8 +1107,11 @@ publishes. The description lists versioning, the preparation and publication
 workflows, and their trigger handover as text. Change those under
 Repositories, **Edit release setup**. Tick or untick boxes in the GitHub UI to
 change the proposal. Beepboop waits until 5 seconds pass without another edit.
-It then rebuilds the proposal once from the boxes and rewrites the whole
-description. As with automatic maintenance, unresolved choices and edited
+It then rebuilds the proposal once from the boxes and rewrites the text between
+`<!-- beepboop:setup:start -->` and `<!-- beepboop:setup:end -->`. Text above
+and below those markers stays as you wrote it, so a closing keyword such as
+`Closes #26` belongs there. A description from before the markers keeps every
+line that Beepboop's last version of it did not contain, below the end marker. As with automatic maintenance, unresolved choices and edited
 setup-branch files appear on the PR, and Beepboop leaves the branch as it is.
 
 The description ends with an unticked **Release after merge** box. Beepboop

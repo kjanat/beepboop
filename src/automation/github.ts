@@ -25,6 +25,7 @@ import {
 import type { Fetcher, VerificationContext } from '@/automation/managers/registry';
 import { parsePresetReference } from '@/automation/preset';
 import type { RefState } from '@/automation/refs';
+import { marked, placeBlock, setupBlock, withStatus } from '@/automation/setup-body';
 import { buildSnapshot } from '@/automation/snapshot';
 import type { BotIdentity } from '@/automation/token';
 import type { Edit, Snapshot } from '@/automation/types';
@@ -37,6 +38,17 @@ type Permission = Record<string, 'read' | 'write'>;
 const coAuthor = 'Co-authored-by: kjanat <6353477+kjanat@users.noreply.github.com>';
 const ownerLogins = new Map<number, string>();
 const botIdentities = new Map<string, BotIdentity>();
+const contentEditsSchema = z.object({
+	data: z.object({
+		repository: z.object({
+			pullRequest: z.object({
+				userContentEdits: z.object({
+					nodes: z.array(z.object({ editor: z.object({ login: z.string() }).nullable(), diff: z.string().nullable() })),
+				}),
+			}),
+		}),
+	}),
+});
 function detailOf(body: string): string {
 	try {
 		const parsed: unknown = JSON.parse(body);
@@ -789,16 +801,38 @@ export class RepositoryGateway {
 			const token = yield* self.token(name, id, { pull_requests: 'write' });
 			const pull = yield* self.read(pullSchema, `/repos/${name}/pulls/${number}`, token);
 			if (pull.state !== 'open' || pull.head.ref !== 'automation/onboarding' || pull.head.repo.id !== id) return;
-			const start = '<!-- beepboop:setup-status -->', end = '<!-- /beepboop:setup-status -->';
 			const current = typeof pull.body === 'string' ? pull.body : '';
-			const section = `${start}\n${status}\n${end}`;
-			const from = current.indexOf(start), to = current.indexOf(end, from);
-			const body = proposal !== undefined
-				? `${proposal}\n\n${section}`
-				: from >= 0 && to >= from
-				? current.slice(0, from) + section + current.slice(to + end.length)
-				: `${current}\n\n${section}`;
+			const body = proposal === undefined
+				? withStatus(current, status)
+				: placeBlock(current, setupBlock(proposal, status), yield* self.previousRender(name, number, current, token));
 			if (body !== current) yield* self.call(`/repos/${name}/pulls/${number}`, token, 'PATCH', { body });
+		});
+	}
+	private previousRender(
+		name: string,
+		number: number,
+		current: string,
+		token: string,
+	): Effect.Effect<string, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			if (marked(current) || !current.trim()) return current;
+			const [owner = '', repository = ''] = name.split('/');
+			const { data } = yield* self.read(
+				contentEditsSchema,
+				'/graphql',
+				token,
+				'POST',
+				{
+					query:
+						'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){userContentEdits(first:100){nodes{editor{login} diff}}}}}',
+					variables: { owner, name: repository, number },
+				},
+			);
+			const edits = data.repository.pullRequest.userContentEdits.nodes;
+			const bot = (yield* self.botIdentity).login.replace(/\[bot\]$/, '');
+			const render = edits.find(edit => edit.editor?.login === bot && typeof edit.diff === 'string');
+			return typeof render?.diff === 'string' ? render.diff : current;
 		});
 	}
 	/** Refresh setup documentation without creating an empty commit or overwriting branch edits. */
@@ -852,11 +886,23 @@ export class RepositoryGateway {
 					`The preparation PR #${pulls[0].number} was closed without merging. Reopen it to continue this release.`,
 				);
 			}
-			const pull = pulls[0]
-				? yield* self.read(pullSchema, `/repos/${name}/pulls/${pulls[0].number}`, token, 'PATCH', { title, body })
+			const setup = branch === 'automation/onboarding';
+			const existing = pulls[0];
+			const previousBody = typeof existing?.body === 'string' ? existing.body : '';
+			const pull = existing
+				? yield* self.read(pullSchema, `/repos/${name}/pulls/${existing.number}`, token, 'PATCH', {
+					title,
+					body: setup
+						? placeBlock(
+							previousBody,
+							setupBlock(body),
+							yield* self.previousRender(name, existing.number, previousBody, token),
+						)
+						: body,
+				})
 				: yield* self.read(pullSchema, `/repos/${name}/pulls`, token, 'POST', {
 					title,
-					body,
+					body: setup ? `${setupBlock(body)}\n` : body,
 					head: branch,
 					base: snapshot.repository.defaultBranch,
 				});

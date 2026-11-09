@@ -27,6 +27,7 @@ export interface Pull {
 	assignees: string[];
 	reviewers: string[];
 	author?: string;
+	edits?: { editor: string; body: string }[];
 }
 export interface Run {
 	id: number;
@@ -300,8 +301,18 @@ export class FakeGitHub {
 			const repository = this.repository(match[1]);
 			const pull = this.pull(repository, Number(match[2]));
 			if (typeof body.title === 'string') pull.title = body.title;
-			if (typeof body.body === 'string') pull.body = body.body;
+			if (typeof body.body === 'string' && body.body !== pull.body) {
+				pull.body = body.body;
+				pull.edits = [{ editor: appSlug, body: body.body }, ...(pull.edits ?? [])];
+			}
 			return json(this.pullJson(repository, pull));
+		});
+		this.route('POST', /^\/graphql$/, (_match, _url, body) => {
+			const variables = fields(body.variables);
+			const repository = this.repository(`${stringField(variables, 'owner')}/${stringField(variables, 'name')}`);
+			const pull = this.pull(repository, Number(variables.number));
+			const nodes = (pull.edits ?? []).map(edit => ({ editor: { login: edit.editor }, diff: edit.body }));
+			return json({ data: { repository: { pullRequest: { userContentEdits: { nodes } } } } });
 		});
 		this.route('GET', new RegExp(`^${repo}/issues/(\\d+)/events$`), match => {
 			const repository = this.repository(match[1]);

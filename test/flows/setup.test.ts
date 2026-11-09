@@ -1454,7 +1454,12 @@ test('an unticked dependency in the setup PR body stays unticked through edits a
 	const box = /- \[[ x]\] (<!-- beepboop:choice:package:main:pkg%3Acargo%2Fsql%2Dparser -->)/;
 	expect(pull.body).toMatch(/- \[x\] <!-- beepboop:choice:package:main:pkg%3Acargo%2Fsql%2Dparser -->/);
 	const before = pull.body;
-	const unticked = before.replace(box, '- [ ] $1');
+	expect(before.startsWith('<!-- beepboop:setup:start -->\n')).toBe(true);
+	expect(before.endsWith('\n<!-- beepboop:setup:end -->\n')).toBe(true);
+	const unticked = `Written above.\n\n${before.replace(box, '- [ ] $1')}\nCloses #26\n`;
+	const framed = (body: string) =>
+		body.startsWith('Written above.\n\n<!-- beepboop:setup:start -->\n')
+		&& body.endsWith('\n<!-- beepboop:setup:end -->\n\nCloses #26\n');
 	pull.body = unticked;
 	await world.webhook('pull_request', {
 		action: 'edited',
@@ -1474,8 +1479,10 @@ test('an unticked dependency in the setup PR body stays unticked through edits a
 	expect(pull.body).toContain(
 		'<!-- beepboop:setup-status -->\nBeepboop is rebuilding the proposal from your edit.\n<!-- /beepboop:setup-status -->',
 	);
+	expect(framed(pull.body)).toBe(true);
 	await world.wait(7_000);
 	expect(pull.body).not.toContain('Beepboop is rebuilding the proposal from your edit.');
+	expect(framed(pull.body)).toBe(true);
 	const untickedBox = /- \[ \] <!-- beepboop:choice:package:main:pkg%3Acargo%2Fsql%2Dparser -->/;
 	expect(configured(repository, 'automation/onboarding')).toEqual(['pkg:cargo/sql']);
 	expect(pull.body).toMatch(untickedBox);
@@ -1486,6 +1493,22 @@ test('an unticked dependency in the setup PR body stays unticked through edits a
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
 	expect(configured(repository, 'automation/onboarding')).toEqual(['pkg:cargo/sql']);
 	expect(pull.body).toMatch(untickedBox);
+	expect(framed(pull.body)).toBe(true);
+	world.github.push(repository, { 'README.md': '# sql\n\nUsage.\n' }, 'Document usage');
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	expect(pull.body).toMatch(untickedBox);
+	expect(framed(pull.body)).toBe(true);
+});
+
+test('a setup PR body from before the markers keeps the lines its owner added', async () => {
+	const { repository, api, pull } = await gadgetSetup();
+	const legacy = pull.body.replace('<!-- beepboop:setup:start -->\n', '').replace('\n<!-- beepboop:setup:end -->', '');
+	pull.edits = [{ editor: 'beepboop-test', body: legacy }];
+	pull.body = `Closes #26\n\n${legacy.replace('Change versioning', 'Owner note.\n\nChange versioning')}`;
+	world.github.push(repository, { 'README.md': '# widget\n\nMoved on.\n' }, 'Move the default branch');
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	expect(pull.body.startsWith('<!-- beepboop:setup:start -->\n')).toBe(true);
+	expect(pull.body.endsWith('\n<!-- beepboop:setup:end -->\n\nCloses #26\n\nOwner note.\n')).toBe(true);
 });
 
 test('a saved crate script becomes beepboop publish', async () => {
