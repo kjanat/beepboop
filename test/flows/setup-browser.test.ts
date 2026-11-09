@@ -515,6 +515,40 @@ test('an observed workflow keeps its needs, its publications without a box and t
 	expect(form.querySelector('.setup-result')?.textContent).toContain('No file changes needed.');
 });
 
+test('an observed stream with only a preparation workflow gets no publishing workflow', async () => {
+	const repository = world.github.create('octo/tool', {
+		'Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\nedition = "2024"\n',
+		'Cargo.lock': '# Lockfile\n',
+		'src/main.rs': 'fn main() {}\n',
+		'.github/workflows/github-release.yml':
+			"name: Release\non: { push: { tags: ['v*'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: cargo publish\n",
+	});
+	const api = bearer(world, await world.cliSession());
+	await applyChoices(api, repository.name, {
+		streams: [{
+			name: 'main',
+			packages: ['pkg:cargo/tool'],
+			required: ['pkg:cargo/tool'],
+			versioning: 'workspace',
+			prepare: {
+				file: 'prepare.yml',
+				job: 'prepare',
+				triggers: 'review',
+				commands: 'cargo update --workspace',
+				publicationSteps: {},
+			},
+			observe: [{ name: 'release', file: 'github-release.yml', ref: 'refs/tags/v*', publications: ['pkg:cargo/tool'] }],
+		}],
+	});
+	world.github.merge(repository, 1);
+	passChecks(repository, world.github.head(repository));
+	const form = await open('octo/tool');
+	expect(role(form, 'prepare').hidden).toBe(false);
+	expect(role(form, 'promote').hidden).toBe(true);
+	await act(form, 'preview');
+	expect(form.querySelector('.setup-result')?.textContent).toContain('No file changes needed.');
+});
+
 test('an observed branch publisher without publication checks keeps its proposed packages', async () => {
 	const repository = world.github.create('octo/branchy', {
 		'package.json': JSON.stringify({ name: 'branchy', version: '1.0.0' }),
