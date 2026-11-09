@@ -1,12 +1,12 @@
 import { Effect, Result } from 'effect';
 import { z } from 'zod';
 import { object } from '@/automation/managers/helpers';
+import { packageManifests } from '@/automation/managers/package-json';
 import type { Adapter, RegistryVersion } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
-import { latestVersion, unpublished } from '@/automation/managers/verification';
+import { latestVersion, publicationResult, registryRequest, unpublished } from '@/automation/managers/verification';
 import { identityOf, parseExtension } from '@/automation/package-identity';
 import { excluded, registry } from '@/automation/package-publication';
-import type { Outcome, Publication } from '@/automation/types';
 import { fileProblem } from '@/contract/diagnostics';
 import { fromPromise } from '@/failure';
 
@@ -48,17 +48,13 @@ export const vscodeManager: Adapter<'vscode'> = {
 	},
 	verifyPublication(publication, request) {
 		const url = `https://marketplace.visualstudio.com/items?itemName=${encodeURIComponent(publication.name)}`;
-		const result = (outcome: Outcome): Publication => ({ ...publication, outcome, url });
+		const result = publicationResult(publication, url);
 		return Effect.gen(function*() {
-			const response = yield* fromPromise(() =>
-				request(gallery, {
-					method: 'POST',
-					redirect: 'manual',
-					signal: AbortSignal.timeout(15_000),
-					headers: { 'User-Agent': 'beepboop release verification', ...galleryHeaders },
-					body: galleryQuery(publication.name, false),
-				})
-			);
+			const response = yield* registryRequest(request, gallery, {
+				method: 'POST',
+				headers: galleryHeaders,
+				body: galleryQuery(publication.name, false),
+			});
 			if (!response.ok) return result('uncertain');
 			const versions = marketplaceVersions(yield* fromPromise((): Promise<unknown> => response.json()));
 			if (!versions) return result('uncertain');
@@ -81,14 +77,7 @@ export const vscodeManager: Adapter<'vscode'> = {
 	},
 	discover(snapshot) {
 		const inventory = emptyInventory();
-		for (const [path, source] of Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b))) {
-			if (path !== 'package.json' && !path.endsWith('/package.json')) continue;
-			const parsed = Result.try(() => object(JSON.parse(source)));
-			if (Result.isFailure(parsed)) {
-				inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', `cannot safely discover configuration`));
-				continue;
-			}
-			const manifest = parsed.success;
+		for (const { path, manifest } of packageManifests(snapshot, inventory.diagnostics)) {
 			if (typeof object(manifest.engines).vscode !== 'string') continue;
 			inventory.managers = ['vscode'];
 			if (typeof manifest.publisher !== 'string' || !identifier.test(manifest.publisher)) {

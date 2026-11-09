@@ -5,8 +5,9 @@ import { object, yaml } from '@/automation/managers/helpers';
 import type { Adapter, RegistryVersion, VerificationContext } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestTag, tagSource } from '@/automation/managers/tags';
+import { publicationResult } from '@/automation/managers/verification';
 import { excluded, registry } from '@/automation/package-publication';
-import type { Outcome, Publication, Snapshot } from '@/automation/types';
+import type { Publication, Snapshot } from '@/automation/types';
 import { goreleaserConfig } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
 import { fileProblem } from '@/contract/diagnostics';
@@ -90,7 +91,7 @@ function verifyRelease(
 	if (!context) return Effect.succeed({ ...publication, outcome: 'uncertain' });
 	const tag = `v${publication.version.replace(/^v/, '')}`;
 	const url = `https://github.com/${context.repository}/releases/tag/${encodeURIComponent(tag)}`;
-	const result = (outcome: Outcome): Publication => ({ ...publication, outcome, url });
+	const result = publicationResult(publication, url);
 	return context.github(`/repos/${context.repository}/releases/tags/${encodeURIComponent(tag)}`).pipe(
 		Effect.map(found => {
 			if (found === null) return result('pending');

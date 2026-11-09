@@ -3,9 +3,9 @@ import { object } from '@/automation/managers/helpers';
 import type { Adapter, Fetcher } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestTag, majorSuffix, tagSource } from '@/automation/managers/tags';
-import { latestVersion } from '@/automation/managers/verification';
+import { latestVersion, publicationResult, registryRequest, unconfirmed } from '@/automation/managers/verification';
 import { excluded, registry } from '@/automation/package-publication';
-import type { Outcome, Package, Publication } from '@/automation/types';
+import type { Package, Publication } from '@/automation/types';
 import { fileProblem } from '@/contract/diagnostics';
 import { fromPromise } from '@/failure';
 import { packageIdentity } from '@/package-url';
@@ -80,22 +80,12 @@ export function escapeModule(value: string): string {
 function verifyModule(publication: Publication, request: Fetcher): Effect.Effect<Publication> {
 	const version = `v${publication.version.replace(/^v/, '')}`;
 	const url = `https://proxy.golang.org/${escapeModule(publication.name)}/@v/${escapeModule(version)}.info`;
-	const result = (outcome: Outcome, digest?: string): Publication => ({
-		...publication,
-		outcome,
-		url,
-		...(digest === undefined ? {} : { digest }),
-	});
+	const result = publicationResult(publication, url);
 	return Effect.gen(function*() {
-		const response = yield* fromPromise(() =>
-			request(url, {
-				redirect: 'manual',
-				signal: AbortSignal.timeout(15_000),
-				headers: { 'User-Agent': 'beepboop release verification' },
-			})
-		);
-		if (response.status === 404 || response.status === 410) return result('pending');
-		if (!response.ok) return result('uncertain');
+		const response = yield* registryRequest(request, url);
+		if (response.status === 410) return result('pending');
+		const missing = unconfirmed(response);
+		if (missing) return result(missing);
 		const info = object(yield* fromPromise((): Promise<unknown> => response.json()));
 		const hash = object(info.Origin).Hash;
 		if (info.Version !== version || (publication.digest && typeof hash === 'string' && hash !== publication.digest)) {

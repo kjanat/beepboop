@@ -1,6 +1,6 @@
 import { Effect, Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
-import { object } from '@/automation/managers/helpers';
+import { editTomlVersion, object } from '@/automation/managers/helpers';
 import type { Adapter } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
@@ -29,10 +29,7 @@ export const cargoManager: Adapter<'cargo'> = {
 		}`;
 		return verifyRegistry(publication, request, url, body => {
 			const entry = object(object(body).version);
-			return {
-				matches: entry.crate === publication.name && entry.num === publication.version && entry.yanked === false,
-				digest: entry.checksum,
-			};
+			return { name: entry.crate, version: entry.num, withdrawn: entry.yanked !== false, digest: entry.checksum };
 		});
 	},
 
@@ -112,21 +109,8 @@ export const cargoManager: Adapter<'cargo'> = {
 		const [path, key] = source.split('#');
 		if (!path || !key) return Effect.fail(precondition('Invalid version source'));
 		const section = key.slice(0, -'.version'.length);
-		let current = '',
-			count = 0;
-		const after = before
-			.split('\n')
-			.map((line) => {
-				const heading = line.match(/^\s*\[([^\]]+)\]/);
-				if (heading) current = heading[1] ?? '';
-				if (current === section && /^\s*version\s*=\s*["']/.test(line)) {
-					count++;
-					return line.replace(/(version\s*=\s*)["'][^"']*["']/, `$1"${version}"`);
-				}
-				return line;
-			})
-			.join('\n');
-		return count === 1 ? Effect.succeed(after) : Effect.fail(precondition(`Cannot safely edit ${source}`));
+		const after = editTomlVersion(before, heading => heading === section, version);
+		return after === undefined ? Effect.fail(precondition(`Cannot safely edit ${source}`)) : Effect.succeed(after);
 	},
 	updateDependencies({ snapshot, packages, version, changed }) {
 		// Update internal Cargo dependencies in every manifest, including unpublished consumers.

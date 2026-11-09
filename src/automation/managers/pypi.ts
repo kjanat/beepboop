@@ -1,11 +1,11 @@
 import { Effect, Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
-import { object } from '@/automation/managers/helpers';
+import { editTomlVersion, object } from '@/automation/managers/helpers';
+import { isPyproject, privateProject } from '@/automation/managers/pyproject';
 import type { Adapter } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
-import { latestVersion } from '@/automation/managers/verification';
+import { latestVersion, publicationResult, registryRequest, unconfirmed } from '@/automation/managers/verification';
 import { excluded, registry } from '@/automation/package-publication';
-import type { Outcome, Publication } from '@/automation/types';
 import { fileProblem } from '@/contract/diagnostics';
 import { precondition } from '@/contract/errors';
 import { fromPromise } from '@/failure';
@@ -24,7 +24,7 @@ export const pypiManager: Adapter<'pypi'> = {
 	discover(snapshot) {
 		const inventory = emptyInventory();
 		for (const [path, source] of Object.entries(snapshot.files)) {
-			if (!/(?:^|\/)pyproject\.toml$/.test(path) || path.startsWith('.github/')) continue;
+			if (!isPyproject(path)) continue;
 			const document = Result.try(() => object(parseToml(source)));
 			if (Result.isFailure(document)) {
 				inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', 'invalid TOML'));
@@ -37,9 +37,7 @@ export const pypiManager: Adapter<'pypi'> = {
 				inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', 'invalid Python project name'));
 				continue;
 			}
-			const classifiers = Array.isArray(project.classifiers) ? project.classifiers : [];
-			const hidden = object(object(document.success.tool).uv).package === false
-				|| classifiers.includes('Private :: Do Not Upload');
+			const hidden = privateProject(document.success);
 			inventory.packages.push({
 				manager: 'pypi',
 				name: normalizedProject(project.name),
@@ -54,17 +52,10 @@ export const pypiManager: Adapter<'pypi'> = {
 	},
 	ownsVersionSource: source => /(?:^|\/)pyproject\.toml#project\.version$/.test(source),
 	editVersion({ before, version }) {
-		let section = '', count = 0;
-		const after = before.split('\n').map(line => {
-			const heading = /^\s*\[([^\]]+)\]/.exec(line);
-			if (heading) section = heading[1]?.trim() ?? '';
-			if (section === 'project' && /^\s*version\s*=\s*["']/.test(line)) {
-				count++;
-				return line.replace(/(version\s*=\s*)["'][^"']*["']/, `$1"${version}"`);
-			}
-			return line;
-		}).join('\n');
-		return count === 1 ? Effect.succeed(after) : Effect.fail(precondition('Cannot safely edit [project].version'));
+		const after = editTomlVersion(before, heading => heading.trim() === 'project', version);
+		return after === undefined
+			? Effect.fail(precondition('Cannot safely edit [project].version'))
+			: Effect.succeed(after);
 	},
 	latest: (pkg, request) =>
 		latestVersion(
@@ -76,25 +67,14 @@ export const pypiManager: Adapter<'pypi'> = {
 		const url = `https://pypi.org/pypi/${encodeURIComponent(publication.name)}/${
 			encodeURIComponent(publication.version)
 		}/json`;
-		const result = (outcome: Outcome, digest?: string): Publication => ({
-			...publication,
-			outcome,
-			url,
-			...(digest === undefined ? {} : { digest }),
-		});
+		const result = publicationResult(publication, url);
 		if (!projectName.test(publication.name) || !projectVersion.test(publication.version)) {
 			return Effect.succeed(result('failed'));
 		}
 		return Effect.gen(function*() {
-			const response = yield* fromPromise(() =>
-				request(url, {
-					redirect: 'manual',
-					signal: AbortSignal.timeout(15_000),
-					headers: { Accept: 'application/json', 'User-Agent': 'beepboop release verification' },
-				})
-			);
-			if (response.status === 404) return result('pending');
-			if (!response.ok) return result('uncertain');
+			const response = yield* registryRequest(request, url, { headers: { Accept: 'application/json' } });
+			const missing = unconfirmed(response);
+			if (missing) return result(missing);
 			const body = object(yield* fromPromise((): Promise<unknown> => response.json()));
 			const info = object(body.info);
 			const files = Array.isArray(body.urls) ? body.urls.map(object) : [];

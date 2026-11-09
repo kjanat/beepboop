@@ -1,8 +1,9 @@
-import { Effect, Result } from 'effect';
+import { Effect } from 'effect';
 import { planVersionFiles } from '@/automation/editors';
 import { createExecution } from '@/automation/execution';
 import { createReleasePreparation } from '@/automation/managed';
 import { planRelease, selectedReleasePackages, versionsInFiles } from '@/automation/managers';
+import { latestTag } from '@/automation/managers/tags';
 import { matchesPackage } from '@/automation/package-identity';
 import { planReleaseSet } from '@/automation/planning';
 import { planHookUpdates } from '@/automation/precommit';
@@ -16,7 +17,7 @@ import { routes } from '@/contract/routes';
 import type { ReadyRepository } from '@/domain/repository';
 import { requireReady } from '@/domain/repository';
 import { fromPromise } from '@/failure';
-import { compareVersions, semver } from '@/model';
+import { semver } from '@/model';
 import { planIdentity } from '@/persistence/identity-keys';
 import type { AdminContext } from '@/server/handlers/kit';
 import { admin } from '@/server/handlers/kit';
@@ -71,15 +72,9 @@ interface ReleaseInput {
 	packages?: string[] | undefined;
 }
 
-function tagVersions(service: AutomationService, repository: ReadyRepository, prefix: string) {
+function latestTagVersion(service: AutomationService, repository: ReadyRepository, prefix: string) {
 	return service.gateway.tagRefs(repository.name, repository.id).pipe(
-		Effect.map(refs =>
-			refs.flatMap(ref => {
-				if (!ref.name.startsWith(prefix)) return [];
-				const version = semver(ref.name.slice(prefix.length));
-				return Result.isSuccess(version) ? [version.success.replace(/^v/, '')] : [];
-			}).sort(compareVersions)
-		),
+		Effect.map(refs => latestTag(refs.map(ref => ref.name), prefix)),
 	);
 }
 
@@ -104,9 +99,8 @@ function releasePlan(input: ReleaseInput, { service }: AdminContext) {
 		}
 		let target: unknown = input.version;
 		if (stream.versionSource?.kind === 'tags') {
-			const versions = yield* tagVersions(service, repository, stream.versionSource.prefix);
+			const latest = yield* latestTagVersion(service, repository, stream.versionSource.prefix);
 			const request = yield* parseVersionRequest(input.version);
-			const latest = versions.at(-1);
 			if (!latest && !('version' in request)) {
 				return yield* precondition('Select an explicit version for the first release');
 			}

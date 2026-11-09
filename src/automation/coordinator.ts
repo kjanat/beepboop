@@ -95,6 +95,7 @@ import type {
 	Execution,
 	Package,
 	Publication,
+	PublishKind,
 	ReleaseReference,
 } from '@/automation/types';
 import { parseGrant, runtimeGrant } from '@/automation/vault';
@@ -609,11 +610,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const target = execution.package;
 			if (!target) return yield* precondition('Paced operation has no package');
 			if (!execution.reservation) {
-				const repository = yield* this.store().repository(execution.repositoryId);
-				const status = repository?.inventory.packages.find(pkg => matchesPackage(target.id, pkg))?.publicationStatus;
-				const reservation = status === 'missing' ? 'new' : 'update';
-				const allowedAt = yield* fromPromise(() => this.env.PUBLISH_BUDGET.getByName('crates-io').reserve(reservation));
-				yield* this.put({ ...execution, reservation, notBefore: Math.max(execution.notBefore ?? 0, allowedAt) });
+				const { kind, allowedAt } = yield* this.reserveCrate(
+					execution.repositoryId,
+					pkg => matchesPackage(target.id, pkg),
+				);
+				yield* this.put({
+					...execution,
+					reservation: kind,
+					notBefore: Math.max(execution.notBefore ?? 0, allowedAt),
+				});
 			}
 			return Math.max(0, ((yield* this.get(id)).notBefore ?? 0) - Date.now());
 		}));
@@ -1194,15 +1199,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 				if (blocked) return { kind: 'wait' as const, until: blocked.until, reason: blocked.reason };
 				const found = yield* this.registry(execution, { ...record, digest });
-				if (found.outcome === 'succeeded') {
-					return yield* this.settled(ledger, reuse({ ...record, digest }, holder, found.url ?? '', now));
-				}
-				if (found.outcome === 'failed') {
-					return yield* this.settled(
-						ledger,
-						fail(record, holder, `${registries[record.manager]} has a different ${label(record)}`, true, now),
-					);
-				}
+				const verified = yield* this.verified(
+					ledger,
+					record,
+					holder,
+					found,
+					url => reuse({ ...record, digest }, holder, url, now),
+					now,
+				);
+				if (verified) return verified;
 				if (found.outcome !== 'pending') {
 					return {
 						kind: 'wait' as const,
@@ -1211,9 +1216,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					};
 				}
 				if (record.manager === 'cargo' && !record.reservation) {
-					const inventory = (yield* this.store().repository(execution.repositoryId))?.inventory;
-					const kind = reservation(inventory?.packages.find(pkg => packageId(pkg) === record.id)?.publicationStatus);
-					const allowedAt = yield* fromPromise(() => this.env.PUBLISH_BUDGET.getByName('crates-io').reserve(kind));
+					const { kind, allowedAt } = yield* this.reserveCrate(
+						execution.repositoryId,
+						pkg => packageId(pkg) === record.id,
+					);
 					record = { ...record, reservation: kind, notBefore: allowedAt };
 					yield* this.settleRecord(ledger, record);
 					const paced = availability(record, holder, now);
@@ -1248,15 +1254,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				return yield* this.settled(ledger, rateLimit(record, holder, until, now));
 			}
 			const found = yield* this.registry(execution, record);
-			if (found.outcome === 'succeeded') {
-				return yield* this.settled(ledger, publish(record, holder, found.url ?? '', now));
-			}
-			if (found.outcome === 'failed') {
-				return yield* this.settled(
-					ledger,
-					fail(record, holder, `${registries[record.manager]} has a different ${label(record)}`, true, now),
-				);
-			}
+			const verified = yield* this.verified(
+				ledger,
+				record,
+				holder,
+				found,
+				url => publish(record, holder, url, now),
+				now,
+			);
+			if (verified) return verified;
 			if (report.outcome === 'failed') {
 				return yield* this.settled(ledger, fail(record, holder, report.message, false, now));
 			}
@@ -1397,6 +1403,34 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				)
 			),
 		);
+	}
+	private verified(
+		ledger: Ledger,
+		record: LedgerRecord,
+		holder: string,
+		found: Publication,
+		accept: (url: string) => LedgerRecord,
+		now: number,
+	): Effect.Effect<Extract<ReportStep, { kind: 'settled' }> | undefined, DomainError> {
+		if (found.outcome === 'succeeded') return this.settled(ledger, accept(found.url ?? ''));
+		if (found.outcome === 'failed') {
+			return this.settled(
+				ledger,
+				fail(record, holder, `${registries[record.manager]} has a different ${label(record)}`, true, now),
+			);
+		}
+		return Effect.undefined;
+	}
+	private reserveCrate(
+		repositoryId: number,
+		matches: (pkg: Package) => boolean,
+	): Effect.Effect<{ kind: PublishKind; allowedAt: number }, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const inventory = (yield* this.store().repository(repositoryId))?.inventory;
+			const kind = reservation(inventory?.packages.find(matches)?.publicationStatus);
+			const allowedAt = yield* fromPromise(() => this.env.PUBLISH_BUDGET.getByName('crates-io').reserve(kind));
+			return { kind, allowedAt };
+		});
 	}
 	private settleRecord(ledger: Ledger, record: LedgerRecord): Effect.Effect<Ledger, DomainError> {
 		return Effect.gen({ self: this }, function*() {

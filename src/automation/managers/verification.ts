@@ -1,51 +1,88 @@
 import { Effect, Result } from 'effect';
 import type { Fetcher, RegistryVersion } from '@/automation/managers/registry';
-import type { Publication } from '@/automation/types';
+import type { Outcome, Publication } from '@/automation/types';
+import type { DomainError } from '@/contract/errors';
 import { fromPromise } from '@/failure';
 import { semver } from '@/model';
 
+export interface RegistryRequest {
+	method?: 'POST';
+	headers?: Record<string, string>;
+	body?: string;
+}
+export interface RegistryEntry {
+	name: unknown;
+	version: unknown;
+	digest: unknown;
+	withdrawn?: boolean;
+}
+export function registryRequest(
+	request: Fetcher,
+	url: string,
+	init: RegistryRequest = {},
+): Effect.Effect<Response, DomainError> {
+	return fromPromise(() =>
+		request(url, {
+			redirect: 'manual',
+			signal: AbortSignal.timeout(15_000),
+			...(init.method ? { method: init.method } : {}),
+			...(init.body === undefined ? {} : { body: init.body }),
+			headers: { 'User-Agent': 'beepboop release verification', ...init.headers },
+		})
+	);
+}
+export function unconfirmed(response: Response): Outcome | undefined {
+	if (response.status === 404) return 'pending';
+	if (!response.ok) return 'uncertain';
+	return undefined;
+}
+export function publicationResult(
+	publication: Publication,
+	url: string,
+): (outcome: Outcome, digest?: string) => Publication {
+	return (outcome, digest) => ({
+		...publication,
+		outcome,
+		url,
+		...(digest === undefined ? {} : { digest }),
+	});
+}
 /** Transport handling is shared; registry response semantics belong to each adapter. */
 export function verifyRegistry(
 	publication: Publication,
 	request: Fetcher,
 	url: string,
-	decode: (body: unknown) => { matches: boolean; digest: unknown },
+	decode: (body: unknown) => RegistryEntry,
 	channel?: string,
 ): Effect.Effect<Publication> {
+	const result = publicationResult(publication, url);
 	return Effect.gen(function*() {
-		const response = yield* fromPromise(() =>
-			request(url, {
-				redirect: 'manual',
-				signal: AbortSignal.timeout(15_000),
-				headers: { 'User-Agent': 'beepboop release verification' },
-			})
-		);
-		if (response.status === 404) return { ...publication, outcome: 'pending' as const, url };
-		if (!response.ok) return { ...publication, outcome: 'uncertain' as const, url };
+		const response = yield* registryRequest(request, url);
+		const missing = unconfirmed(response);
+		if (missing) return result(missing);
 		const body: unknown = yield* fromPromise(() => response.json());
-		const { matches, digest } = decode(body);
-		if (!matches || typeof digest !== 'string' || !digest || (publication.digest && publication.digest !== digest)) {
-			return { ...publication, outcome: 'failed' as const, url };
+		const entry = decode(body);
+		const digest = entry.digest;
+		if (
+			entry.name !== publication.name || entry.version !== publication.version || entry.withdrawn === true
+			|| typeof digest !== 'string' || !digest || (publication.digest && publication.digest !== digest)
+		) {
+			return result('failed');
 		}
 		if (channel) {
 			const tagged = yield* fromPromise(() =>
 				request(channel, { redirect: 'manual', signal: AbortSignal.timeout(15_000) })
 			);
-			if (!tagged.ok) return { ...publication, outcome: 'pending' as const, url };
+			if (!tagged.ok) return result('pending');
 			const tags: unknown = yield* fromPromise(() => tagged.json());
 			if (!tags || typeof tags !== 'object' || Reflect.get(tags, publication.channel ?? '') !== publication.version) {
-				return { ...publication, outcome: 'pending' as const, url };
+				return result('pending');
 			}
 		}
-		return { ...publication, outcome: 'succeeded' as const, digest, url };
-	}).pipe(Effect.catchCause(() => Effect.succeed({ ...publication, outcome: 'uncertain' as const, url })));
+		return result('succeeded', digest);
+	}).pipe(Effect.catchCause(() => Effect.succeed(result('uncertain'))));
 }
 export const unpublished: unique symbol = Symbol('unpublished');
-export interface RegistryQuery {
-	method: 'POST';
-	headers: Record<string, string>;
-	body: string;
-}
 export class LookupFailure {
 	constructor(readonly reason: string) {}
 }
@@ -53,7 +90,7 @@ export function latestVersion(
 	request: Fetcher,
 	url: string,
 	decode: (body: unknown) => unknown,
-	query?: RegistryQuery,
+	query?: RegistryRequest,
 ): Effect.Effect<RegistryVersion> {
 	return lookup(
 		request,
@@ -73,17 +110,10 @@ function lookup(
 	request: Fetcher,
 	url: string,
 	read: (response: Response) => Effect.Effect<unknown, unknown>,
-	query?: RegistryQuery,
+	query?: RegistryRequest,
 ): Effect.Effect<RegistryVersion> {
 	return Effect.gen(function*() {
-		const response = yield* fromPromise(() =>
-			request(url, {
-				redirect: 'manual',
-				signal: AbortSignal.timeout(15_000),
-				...(query ? { method: query.method, body: query.body } : {}),
-				headers: { 'User-Agent': 'beepboop release verification', ...query?.headers },
-			})
-		);
+		const response = yield* registryRequest(request, url, query);
 		if (response.status === 404) return { kind: 'missing', url } satisfies RegistryVersion;
 		if (!response.ok) return { kind: 'failed', url, reason: `HTTP ${response.status}` } satisfies RegistryVersion;
 		const version = yield* read(response);

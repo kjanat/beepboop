@@ -18,6 +18,26 @@ export function inWorkspace(path: string, members: string[], exclusions: string[
 		&& !exclusions.some((pattern) => glob(pattern, path))
 	);
 }
+export function jsonIndent(source: string): string {
+	return source.match(/\n([\t ]+)"/)?.[1] ?? '  ';
+}
+export function editTomlVersion(
+	before: string,
+	inSection: (heading: string) => boolean,
+	version: string,
+): string | undefined {
+	let current = '', count = 0;
+	const after = before.split('\n').map(line => {
+		const heading = /^\s*\[([^\]]+)\]/.exec(line);
+		if (heading) current = heading[1] ?? '';
+		if (inSection(current) && /^\s*version\s*=\s*["']/.test(line)) {
+			count++;
+			return line.replace(/(version\s*=\s*)["'][^"']*["']/, `$1"${version}"`);
+		}
+		return line;
+	}).join('\n');
+	return count === 1 ? after : undefined;
+}
 export function yaml(source: string): Result.Result<Record<string, unknown>, DomainError> {
 	const doc = parseDocument(source, { uniqueKeys: true });
 	if (doc.errors.length) return Result.fail(precondition('Invalid YAML'));

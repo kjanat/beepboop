@@ -1,5 +1,6 @@
 import { parse as parseToml } from 'smol-toml';
 import { object } from '@/automation/managers/helpers';
+import { isPyproject, privateProject } from '@/automation/managers/pyproject';
 import { tagPrefix } from '@/automation/managers/tags';
 import { packageId } from '@/automation/package-identity';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
@@ -251,20 +252,11 @@ function streamKey(graph: Graph, workflow: Workflow, seen = new Set<string>()): 
 
 function pyprojects(snapshot: Snapshot): { path: string; name: string; private: boolean }[] {
 	return Object.entries(snapshot.files).flatMap(([path, source]) => {
-		if (!/(?:^|\/)pyproject\.toml$/.test(path) || path.startsWith('.github/') || !source) return [];
+		if (!isPyproject(path) || !source) return [];
 		try {
 			const document = object(parseToml(source));
-			const project = object(document.project);
-			const classifiers = Array.isArray(project.classifiers) ? project.classifiers : [];
-			const name = project.name;
-			return typeof name === 'string'
-				? [{
-					path,
-					name,
-					private: object(object(document.tool).uv).package === false
-						|| classifiers.includes('Private :: Do Not Upload'),
-				}]
-				: [];
+			const name = object(document.project).name;
+			return typeof name === 'string' ? [{ path, name, private: privateProject(document) }] : [];
 		} catch {
 			return [];
 		}

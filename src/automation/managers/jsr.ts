@@ -1,13 +1,12 @@
 import { Effect } from 'effect';
 import type { ParseError } from 'jsonc-parser';
 import { applyEdits, modify, parse } from 'jsonc-parser';
-import { object } from '@/automation/managers/helpers';
+import { jsonIndent, object } from '@/automation/managers/helpers';
 import type { Adapter, Fetcher, RegistryVersion } from '@/automation/managers/registry';
 import { emptyInventory, Registry } from '@/automation/managers/registry';
-import { latestVersion, unpublished } from '@/automation/managers/verification';
+import { latestVersion, publicationResult, unconfirmed, unpublished } from '@/automation/managers/verification';
 import { identityOf } from '@/automation/package-identity';
 import { registry } from '@/automation/package-publication';
-import type { Outcome, Publication } from '@/automation/types';
 import { jsrManifest, jsrPackageNamePattern } from '@/contract/catalog';
 import { fileProblem } from '@/contract/diagnostics';
 import type { DomainError } from '@/contract/errors';
@@ -138,7 +137,7 @@ export const jsrManager: Adapter<'jsr'> = {
 	},
 	ownsVersionSource: source => /(?:^|\/)(?:jsr|deno)\.jsonc?#version$/.test(source),
 	editVersion({ before, version }) {
-		const indent = before.match(/\n([\t ]+)"/)?.[1] ?? '  ';
+		const indent = jsonIndent(before);
 		return fromSync(() =>
 			applyEdits(
 				before,
@@ -159,24 +158,19 @@ export const jsrManager: Adapter<'jsr'> = {
 			signal: AbortSignal.timeout(15_000),
 			headers: { Accept: 'application/json' },
 		};
-		const result = (outcome: Outcome, digest?: string): Publication => ({
-			...publication,
-			outcome,
-			url,
-			...(digest === undefined ? {} : { digest }),
-		});
+		const result = publicationResult(publication, url);
 		return Effect.gen(function*() {
 			const metadata = yield* fromPromise(() => request(`https://jsr.io/${publication.name}/meta.json`, options));
-			if (metadata.status === 404) return result('pending');
-			if (!metadata.ok) return result('uncertain');
+			const absent = unconfirmed(metadata);
+			if (absent) return result(absent);
 			const body = object(yield* fromPromise((): Promise<unknown> => metadata.json()));
 			const [scope, name] = publication.name.slice(1).split('/');
 			if (body.scope !== scope || body.name !== name) return result('failed');
 			if (!Object.hasOwn(object(body.versions), publication.version)) return result('pending');
 			if (object(object(body.versions)[publication.version]).yanked === true) return result('failed');
 			const response = yield* fromPromise(() => request(url, options));
-			if (response.status === 404) return result('pending');
-			if (!response.ok) return result('uncertain');
+			const missing = unconfirmed(response);
+			if (missing) return result(missing);
 			const bytes = yield* fromPromise(() => response.arrayBuffer());
 			const version = object(JSON.parse(new TextDecoder().decode(bytes)));
 			const files = Object.values(object(version.manifest));
