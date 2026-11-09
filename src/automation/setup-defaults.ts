@@ -184,8 +184,14 @@ export function refreshedCommands(
 	const named = candidates.filter(pkg =>
 		[quote(pkg.name), quote(directory(pkg.manifest)), quote(`dist/${pkg.name}`)].some(token => commands.includes(token))
 	);
-	const generated = [selection.packages, named].some(packages =>
-		packages.length > 0 && suggestedCommands(role, { name: selection.name, packages }, plan) === commands
-	);
+	const generated = crateScript(commands)
+		|| [selection.packages, named].some(packages =>
+			packages.length > 0 && suggestedCommands(role, { name: selection.name, packages }, plan) === commands
+		);
 	return generated ? suggestedCommands(role, selection, plan) || commands : commands;
+}
+function crateScript(commands: string): boolean {
+	const end = commands.lastIndexOf('\n}\n');
+	return commands.startsWith('crate_status() {\n') && commands.includes('\npublish_crate() {\n') && end >= 0
+		&& commands.slice(end + 3).split('\n').every(line => /^publish_crate '[^']+'$/.test(line));
 }

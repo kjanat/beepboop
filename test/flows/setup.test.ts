@@ -1315,7 +1315,7 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 			],
 		},
 		{ inventory: { packages: [] }, preparation: undefined },
-	);
+	).split('\n').filter(line => !line.includes('GITHUB_OUTPUT')).join('\n');
 	const choices: SetupChoices = {
 		streams: [{
 			name: 'main',
