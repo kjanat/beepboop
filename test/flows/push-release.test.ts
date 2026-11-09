@@ -129,6 +129,78 @@ test('merging a setup PR with Release after merge ticked releases its version', 
 	]);
 }, 60_000);
 
+async function failedRelease(rerun = false) {
+	const { repository, api, merged } = await mergedSetup(true);
+	const [promotion] = await promotions(api);
+	const run = repository.runs.find(entry => entry.inputs.beepboop_execution_id === promotion?.id);
+	if (!promotion?.draftRelease || !run) throw new Error('Expected a dispatched release with a draft');
+	run.status = 'completed';
+	run.conclusion = 'failure';
+	await world.webhook('workflow_run', {
+		action: 'completed',
+		workflow_run: {
+			id: run.id,
+			conclusion: 'failure',
+			event: 'workflow_dispatch',
+			path: run.path,
+			head_repository: { id: repository.id },
+		},
+		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
+	});
+	await world.wait(16_000);
+	const [failed] = await promotions(api);
+	expect(failed?.state).toBe('failed');
+	if (!rerun) run.headSha = 'e'.repeat(40);
+	const retry = async () => {
+		expect((await api('/api/executions/recover', { id: promotion.id, action: 'retry' })).status).toBe(200);
+		await world.wait(16_000);
+		const [retried] = await promotions(api);
+		expect(repository.runs.filter(entry => entry.inputs.beepboop_execution_id === promotion.id).length)
+			.toBe(rerun ? 1 : 2);
+		return retried;
+	};
+	const drafts = () => repository.releases.filter(release => release.draft && release.tag === 'v1.0.0');
+	return { repository, merged, run, draft: promotion.draftRelease, retry, drafts };
+}
+
+test('a retry that re-runs the failed jobs of the same run keeps the recorded draft', async () => {
+	const { merged, run, draft, retry, drafts } = await failedRelease(true);
+	const retried = await retry();
+	expect([run.attempt, retried?.runId, retried?.draftRelease]).toEqual([2, run.id, draft]);
+	expect(drafts().map(release => [release.id, release.target])).toEqual([[draft.id, merged.sha]]);
+}, 60_000);
+
+test('a retried release reuses the draft its execution recorded', async () => {
+	const { merged, draft, retry, drafts } = await failedRelease();
+	const retried = await retry();
+	expect(retried?.draftRelease).toEqual(draft);
+	expect(drafts().map(release => [release.id, release.target])).toEqual([[draft.id, merged.sha]]);
+}, 60_000);
+
+test('a retried release adopts a bot draft with the same tag and commit when its own draft is gone', async () => {
+	const { merged, draft, retry, drafts } = await failedRelease();
+	const [release] = drafts();
+	if (!release) throw new Error('Expected the draft release');
+	release.id = draft.id + 500;
+	const retried = await retry();
+	expect(retried?.draftRelease).toEqual({ id: draft.id + 500, tag: 'v1.0.0' });
+	expect(drafts().map(entry => [entry.id, entry.target])).toEqual([[draft.id + 500, merged.sha]]);
+}, 60_000);
+
+test('a retried release deletes a stale bot draft for another commit and keeps one draft', async () => {
+	const { repository, merged, draft, retry, drafts } = await failedRelease();
+	const [release] = drafts();
+	if (!release) throw new Error('Expected the draft release');
+	release.id = draft.id + 500;
+	release.target = 'f'.repeat(40);
+	const retried = await retry();
+	const kept = retried?.draftRelease?.id;
+	if (kept === undefined) throw new Error('Expected a draft on the retried release');
+	expect(repository.releases.includes(release)).toBe(false);
+	expect([kept === draft.id, kept === release.id]).toEqual([false, false]);
+	expect(drafts().map(entry => [entry.id, entry.target])).toEqual([[kept, merged.sha]]);
+}, 60_000);
+
 test('a push release waits for its credential grant and dispatches once the grant exists', async () => {
 	const repository = widget(world.github, { approval: 'push' });
 	world.npm.publish('widget', '1.0.0');
