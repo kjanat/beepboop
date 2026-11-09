@@ -5,7 +5,7 @@ import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { runAction } from '@root/test/support/actions.ts';
 import { botId, ownerId, type Repository } from '@root/test/support/github.ts';
-import { bearer, type Reply } from '@root/test/support/http.ts';
+import { bearer, field, type Reply } from '@root/test/support/http.ts';
 import { passChecks, widget } from '@root/test/support/repositories.ts';
 import { World } from '@root/test/support/world.ts';
 
@@ -168,6 +168,27 @@ test('a retry that re-runs the failed jobs of the same run keeps the recorded dr
 	const retried = await retry();
 	expect([run.attempt, retried?.runId, retried?.draftRelease]).toEqual([2, run.id, draft]);
 	expect(drafts().map(release => [release.id, release.target])).toEqual([[draft.id, merged.sha]]);
+}, 60_000);
+
+test('a retry refuses to run once the workflow branch has moved past the release commit', async () => {
+	const { repository, merged, run, draft } = await failedRelease(true);
+	const api = bearer(world, await world.cliSession());
+	const file = '.github/workflows/release.yml';
+	const workflow = world.github.file(repository, file, merged.sha) ?? '';
+	const moved = world.github.push(repository, { [file]: `${workflow}# changed\n` }, 'Change the release workflow');
+	const [promotion] = await promotions(api);
+	if (!promotion) throw new Error('Expected the failed release');
+	const refused = await api('/api/executions/recover', { id: promotion.id, action: 'retry' });
+	expect([refused.status, field(refused.body, 'error')]).toEqual([
+		422,
+		`main is at ${moved.sha.slice(0, 12)} but this execution builds ${
+			merged.sha.slice(0, 12)
+		}; prepare the release again`,
+	]);
+	await world.wait(16_000);
+	const [kept] = await promotions(api);
+	expect([kept?.state, kept?.draftRelease, run.attempt]).toEqual(['failed', draft, 1]);
+	expect(repository.runs.filter(entry => entry.inputs.beepboop_execution_id === promotion.id).length).toBe(1);
 }, 60_000);
 
 test('a retried release reuses the draft its execution recorded', async () => {
