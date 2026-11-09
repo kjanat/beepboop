@@ -199,7 +199,10 @@ that file with a single `promote` job:
   [Publish a new crate for the first time](#publish-a-new-crate-for-the-first-time).
 - `tagPrefix` adds `actions/token` and `actions/publish-refs` steps after
   `beepboop_publish`. They push the tag `v<version>` with a Beepboop App token.
-  That push starts `release.yml`, and Beepboop observes the run.
+  The `gitId` output of `actions/token` sets the App bot as the tagger. That
+  push starts `release.yml`, and Beepboop observes the run. Setup adds the same
+  identity to a kept `actions/publish-refs` step whose token comes from
+  `actions/token`.
 
 Setup never writes `"each": "package"`. A promotion from `beepboop release`
 dispatches `publish-crates.yml` once, and `actions/publish` publishes every
@@ -919,6 +922,8 @@ A workflow binding can declare `refs` with `phase` set to `"version"` or
 `signed` (default false). Ref operations require promotion approval. A ref
 operation must be the promotion operation or depend on it. Use
 `actions/publish-refs` after `begin`, and pass the repository token as `token`.
+Git needs a tagger identity for an annotated tag. Insert the `gitId` output of
+`actions/token` into the step environment.
 
 When the Worker has the `SIGNER` service binding to the `Signer` entrypoint of
 gpg-signing-service, Beepboop signs every new version tag regardless of

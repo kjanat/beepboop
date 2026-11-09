@@ -266,7 +266,11 @@ export function refSteps(id: string, action: (name: string) => string): Record<s
 		{
 			id: 'beepboop_refs',
 			uses: action('publish-refs'),
+			env: gitIdentity('beepboop_token'),
 			with: { token: expression('steps.beepboop_token.outputs.token') },
 		},
 	];
+}
+export function gitIdentity(tokenStep: string): Record<string, string> {
+	return { [expression('insert')]: expression(`fromJSON(steps.${tokenStep}.outputs.gitId)`) };
 }

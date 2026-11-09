@@ -11,6 +11,7 @@ import {
 	begunSource,
 	binaryJobs,
 	buildJobId,
+	gitIdentity,
 	refSteps,
 	releaseSteps,
 } from '@/automation/setup-binaries';
@@ -517,6 +518,20 @@ function integrate(
 		const reportIndex = steps.findIndex(step => actionRole(step.uses) === 'report');
 		steps.splice(reportIndex < 0 ? steps.length : reportIndex, 0, ...refSteps(id, action));
 	}
+	steps = steps.map(step => {
+		if (typeof step.uses !== 'string' || !/\/actions\/publish-refs\b/.test(step.uses)) return step;
+		const env = object(step.env);
+		const source = /^\$\{\{\s*steps\.([A-Za-z_][\w-]*)\.outputs\.token\s*\}\}$/.exec(String(object(step.with).token))
+			?.[1];
+		const issued = steps.some(entry =>
+			entry.id === source && typeof entry.uses === 'string'
+			&& /^(?:(?:\$|\.)\/actions\/|kjanat\/beepboop\/actions\/)token(?:@[\w./-]+)?$/.test(entry.uses)
+		);
+		const identified = Object.keys(env).some(key =>
+			/^\$\{\{\s*insert\s*\}\}$/.test(key) || key === 'GIT_COMMITTER_NAME'
+		);
+		return source && issued && !identified ? { ...step, env: { ...env, ...gitIdentity(source) } } : step;
+	});
 	const refs = steps.findIndex(step => typeof step.uses === 'string' && /\/actions\/publish-refs\b/.test(step.uses));
 	if (
 		operation === 'promote' && release && refs >= 0
