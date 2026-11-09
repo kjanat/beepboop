@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { githubSecretNamePattern } from '@/contract/ids.ts';
 import type { LedgerEntry, LedgerPackage } from '@/contract/ledger.ts';
 import { claimStep, nextStep, publishWaitMinutes, reportStep } from '@/contract/ledger.ts';
-import { filled, lacking, readmeFile } from '@/contract/package-metadata.ts';
+import { filled, lacking, licenseFile, readmeFile } from '@/contract/package-metadata.ts';
 import { textSchema } from '@/model.ts';
 import { sha256Hex } from '@/sha256.ts';
 
@@ -82,7 +82,7 @@ function checked(runner: Runner, command: string[], cwd: string): Effect.Effect<
 	));
 }
 
-export function pythonMissing(metadata: string): string[] {
+export function pythonMissing(metadata: string, licensed: boolean): string[] {
 	const [head = '', ...body] = metadata.replace(/\r\n/g, '\n').split('\n\n');
 	const headers = head.split('\n').flatMap(line => {
 		const match = /^([\w-]+):\s*(.*)$/.exec(line);
@@ -92,7 +92,18 @@ export function pythonMissing(metadata: string): string[] {
 	return lacking({
 		README: filled(body.join('\n\n')) || has('description'),
 		license: has('license', 'license-expression', 'license-file'),
+		'a license file': licensed,
 		urls: has('project-url', 'home-page', 'download-url'),
+	});
+}
+
+export function distributionLicensed(file: string, entries: readonly string[]): boolean {
+	if (!file.endsWith('.tar.gz')) {
+		return entries.some(entry => /\.dist-info\/(?:licenses\/[^/]|(?:licen[cs]e|copying)[^/]*$)/i.test(entry));
+	}
+	return entries.some(entry => {
+		const inner = entry.slice(entry.indexOf('/') + 1);
+		return licenseFile.test(inner) || /^LICENSES\/[^/]/.test(inner);
 	});
 }
 
@@ -117,10 +128,14 @@ function build(
 			const target = yield* Effect.fromResult(attempt(() => cargoMetadata.parse(JSON.parse(metadata))));
 			const listed = yield* checked(runner, ['cargo', 'package', '--list', '--manifest-path', pkg.manifest], '.');
 			const own = target.packages.find(entry => entry.name === pkg.name);
+			const lines = listed.split('\n').map(line => line.trim());
 			const missing = lacking({
-				README: listed.split('\n').some(line => readmeFile.test(line.trim())),
+				README: lines.some(line => readmeFile.test(line)),
 				description: filled(own?.description),
 				license: filled(own?.license) || filled(own?.license_file),
+				'a license file': lines.some(line =>
+					licenseFile.test(line) || (own?.license_file && [own.license_file, basename(own.license_file)].includes(line))
+				),
 				repository: filled(own?.repository),
 			});
 			yield* checked(runner, ['cargo', 'package', '--manifest-path', pkg.manifest, '--locked'], '.');
@@ -140,7 +155,14 @@ function build(
 					: ['unzip', '-p', sdist, '*.dist-info/METADATA'],
 				'.',
 			);
-			return { digest: yield* sha256(sdist), files, missing: pythonMissing(metadata) };
+			const listings = yield* Effect.forEach(
+				files,
+				file =>
+					checked(runner, file.endsWith('.tar.gz') ? ['tar', '-tzf', file] : ['unzip', '-Z1', file], '.').pipe(
+						Effect.map(listing => distributionLicensed(file, listing.split('\n').map(line => line.trim()))),
+					),
+			);
+			return { digest: yield* sha256(sdist), files, missing: pythonMissing(metadata, listings.includes(true)) };
 		}
 		const out = yield* scratch(pkg.name);
 		const output = yield* checked(runner, ['npm', 'pack', '--json', '--pack-destination', out], dir);
@@ -154,6 +176,7 @@ function build(
 			README: first.files.some(entry => readmeFile.test(entry.path)),
 			description: filled(manifest.description),
 			license: filled(manifest.license),
+			'a license file': first.files.some(entry => licenseFile.test(entry.path)),
 			repository: typeof repository === 'string' ? filled(repository) : filled(repository?.url),
 		});
 		return { digest: first.integrity, files: [file], missing };

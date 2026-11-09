@@ -1,4 +1,5 @@
 export const readmeFile = /^readme(?:\.[^/]*)?$/i;
+export const licenseFile = /^(?:licen[cs]e|copying)[^/]*$/i;
 
 export function filled(value: unknown): boolean {
 	return typeof value === 'string' && value.trim() !== '';

@@ -64,8 +64,9 @@ export function cargoMetadata(target: string, fields: Record<string, unknown> = 
 	return { code: 0, stdout: metadata, output: metadata };
 }
 
-export function crateListing(readme = true): Command {
-	const listing = `Cargo.toml\nCargo.toml.orig\n${readme ? 'README.md\n' : ''}src/lib.rs\n`;
+export function crateListing(omitted: readonly string[] = []): Command {
+	const files = ['Cargo.toml', 'Cargo.toml.orig', 'LICENSE', 'README.md', 'src/lib.rs'];
+	const listing = files.filter(file => !omitted.includes(file)).map(file => `${file}\n`).join('');
 	return { code: 0, stdout: listing, output: listing };
 }
 

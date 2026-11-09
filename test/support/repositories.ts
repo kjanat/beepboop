@@ -74,7 +74,8 @@ export const npmMetadata = {
 	repository: 'https://github.com/octo/example',
 };
 export const crateMetadata =
-	'description = "A test crate"\nlicense = "MIT"\nrepository = "https://github.com/octo/example"\nreadme = "../../README.md"\n';
+	'description = "A test crate"\nlicense-file = "../../LICENSE"\nrepository = "https://github.com/octo/example"\nreadme = "../../README.md"\n';
+export const licenseText = 'MIT License\n';
 export const pythonMetadata =
 	'readme = { text = "A test project", content-type = "text/plain" }\nlicense = "MIT"\nurls = { Repository = "https://github.com/octo/example" }\n';
 
@@ -113,6 +114,7 @@ export function widget(github: FakeGitHub, options: WidgetOptions = {}): Reposit
 	const files: Record<string, string> = {
 		'package.json': npmManifest('widget', options.version ?? '1.0.0'),
 		'README.md': '# widget\n',
+		LICENSE: licenseText,
 		'.github/workflows/publish.yml': publishWorkflow,
 		'.github/workflows/ci.yml': ciWorkflow,
 	};

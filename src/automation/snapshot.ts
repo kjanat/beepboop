@@ -306,6 +306,16 @@ export function buildSnapshot(
 		const releaseEvents = workflowDocuments(read).some(({ document }) => workflowEvents(document).includes('release'));
 		const queries = releaseEvents ? [...prefixes, ''] : prefixes;
 		const tags = queries.length ? [...new Set(yield* source.tags(queries))].sort() : undefined;
-		return { repository: source.repository, sha: source.sha, files, paths: blobs, ...(tags ? { tags } : {}) };
+		const links = source.entries.filter(entry => entry.type === 'blob' && entry.mode === '120000').map(entry =>
+			entry.path
+		);
+		return {
+			repository: source.repository,
+			sha: source.sha,
+			files,
+			paths: blobs,
+			...(links.length ? { links } : {}),
+			...(tags ? { tags } : {}),
+		};
 	});
 }

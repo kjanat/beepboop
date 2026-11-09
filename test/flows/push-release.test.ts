@@ -4,7 +4,7 @@ import type { Repository } from '@root/test/support/github.ts';
 import type { Reply } from '@root/test/support/http.ts';
 import { bearer, field, text } from '@root/test/support/http.ts';
 import { promotions } from '@root/test/support/releases.ts';
-import { npmManifest, passChecks, widget } from '@root/test/support/repositories.ts';
+import { licenseText, npmManifest, passChecks, widget } from '@root/test/support/repositories.ts';
 import { applySetup, previewSetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
@@ -286,6 +286,7 @@ test('a promotion waits for the promotion of the same commit that publishes its 
 		}),
 		'packages/gadget/package.json': manifest('gadget', '1.0.0', { widget: '^1.0.0' }),
 		'packages/gadget/README.md': '# gadget\n',
+		'packages/gadget/LICENSE': licenseText,
 	}, 'Release the gadget CLI separately');
 	passChecks(repository, world.github.head(repository));
 	world.npm.publish('widget', '1.0.0');

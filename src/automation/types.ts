@@ -15,6 +15,7 @@ export interface Snapshot {
 	sha: string;
 	files: Record<string, string>;
 	paths: string[];
+	links?: string[];
 	tags?: string[];
 }
 export interface Package {

@@ -10,7 +10,13 @@ import { cargoMetadata, crateChecksum, crateListing, packCrate, publishWith } fr
 import { one } from '@root/test/support/lists.ts';
 import { crateResponse, pypiResponse } from '@root/test/support/registries.ts';
 import { approvePromotion, executions, prepareRelease } from '@root/test/support/releases.ts';
-import { crateMetadata, npmManifest, passChecks, pythonMetadata } from '@root/test/support/repositories.ts';
+import {
+	crateMetadata,
+	licenseText,
+	npmManifest,
+	passChecks,
+	pythonMetadata,
+} from '@root/test/support/repositories.ts';
 import { applySetup, discoverSetup, previewSetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
@@ -105,11 +111,14 @@ function lintRepository(workflow = releaseWorkflow): Repository {
 		'Cargo.toml': '[workspace]\nmembers = ["crates/core", "crates/cli"]\n\n[workspace.package]\nversion = "1.0.0"\n',
 		'Cargo.lock': '# Lockfile\n',
 		'README.md': '# lint\n',
+		LICENSE: licenseText,
 		'crates/core/Cargo.toml': `[package]\nname = "lint-core"\nversion.workspace = true\n${crateMetadata}`,
 		'crates/cli/Cargo.toml':
 			`[package]\nname = "lint"\nversion.workspace = true\n${crateMetadata}\n[dependencies]\nlint-core = { path = "../core", version = "1.0.0" }\n`,
 		'bindings/js/package.json': npmManifest('@octo/lint', '1.0.0'),
 		'bindings/js/README.md': '# lint\n',
+		'bindings/js/LICENSE': licenseText,
+		'bindings/python/LICENSE': licenseText,
 		'bindings/python/pyproject.toml': `[project]\nname = "lint-py"\nversion = "1.0.0"\n${pythonMetadata}`,
 		'go/go.mod': 'module github.com/octo/lint/go\n\ngo 1.26\n',
 		'.github/workflows/release.yml': workflow,

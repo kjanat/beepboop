@@ -394,11 +394,13 @@ For each package the action:
 
 The contents check needs these items in each package:
 
-| Manager | README                                      | Metadata                                                                      |
-| ------- | ------------------------------------------- | ----------------------------------------------------------------------------- |
-| `cargo` | `cargo package --list` lists one            | `cargo metadata` has `description`, `license` or `license-file`, `repository` |
-| `npm`   | the `npm pack --json` file list has one     | the packed `package.json` has `description`, `license`, `repository`          |
-| `pypi`  | the sdist `PKG-INFO` has a long description | `PKG-INFO` has a license and a `Project-URL` or `Home-page`                   |
+| Manager | README                                      | License file                                                                      | Metadata                                                                      |
+| ------- | ------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `cargo` | `cargo package --list` lists one            | `cargo package --list` lists `LICENSE*`, `LICENCE*`, `COPYING*` or `license-file` | `cargo metadata` has `description`, `license` or `license-file`, `repository` |
+| `npm`   | the `npm pack --json` file list has one     | the `npm pack --json` file list has `LICENSE*`, `LICENCE*` or `COPYING*`          | the packed `package.json` has `description`, `license`, `repository`          |
+| `pypi`  | the sdist `PKG-INFO` has a long description | the sdist root or `LICENSES/`, or the wheel `.dist-info/licenses/`, has one       | `PKG-INFO` has a license and a `Project-URL` or `Home-page`                   |
+
+File name patterns ignore case.
 
 A package that lacks an item fails before its claim. The failure names the
 package and each missing item, and the action publishes nothing for it.
@@ -560,14 +562,22 @@ any tool that the runner lacks.
 Discovery checks each publishable Cargo crate, npm package and Python project
 in the default branch:
 
-- A crate needs a README, `description`, `license` or `license-file`, and
-  `repository`. Cargo's `readme` field names the README. Without that field,
-  the crate directory needs `README.md`, `README.txt` or `README`. Beepboop
-  follows `field.workspace = true` to `[workspace.package]`.
-- An npm package needs a `README` file next to `package.json`, and
-  `description`, `license` and `repository` in `package.json`.
+- A crate needs a README, `description`, `license` or `license-file`, a
+  license file and `repository`. Cargo's `readme` field names the README.
+  Without that field, the crate directory needs `README.md`, `README.txt` or
+  `README`. The license file is the `license-file` path, or a `LICENSE*`,
+  `LICENCE*` or `COPYING*` file in the crate directory. Beepboop follows
+  `field.workspace = true` to `[workspace.package]`.
+- An npm package needs a `README` file and a license file next to
+  `package.json`, and `description`, `license` and `repository` in
+  `package.json`.
 - A Python project needs `readme`, `license` or `license-files`, and `urls` in
-  `[project]`, or the field in `dynamic`.
+  `[project]`, or the field in `dynamic`. Its license file is `license.file`, a
+  `license-files` match, a file in `LICENSES/`, or a license file next to
+  `pyproject.toml`.
+
+A symlink counts as the file it names. A missing license file reads `lacks a
+license file`.
 
 A promotion for a stream with an incomplete package waits in
 `awaiting-approval`. Its reason on the runs page starts with `Fix the package

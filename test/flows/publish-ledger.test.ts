@@ -3,7 +3,14 @@ import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Command, Runner } from '@root/actions/runtime/publish.ts';
-import { main, publicRepository, publishPackages, pythonMissing, requireAll } from '@root/actions/runtime/publish.ts';
+import {
+	distributionLicensed,
+	main,
+	publicRepository,
+	publishPackages,
+	pythonMissing,
+	requireAll,
+} from '@root/actions/runtime/publish.ts';
 import { begin, runIdentity } from '@root/test/support/actions.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
 import type { Repository } from '@root/test/support/github.ts';
@@ -27,6 +34,7 @@ import { promotions } from '@root/test/support/releases.ts';
 import {
 	crateMetadata,
 	dispatchedPublishWorkflow,
+	licenseText,
 	npmManifest,
 	npmMetadata,
 	passChecks,
@@ -87,6 +95,7 @@ const cargoLayout: Layout = {
 		'Cargo.toml': '[workspace]\nmembers = ["crates/core", "crates/cli"]\n',
 		'Cargo.lock': '# Lockfile\n',
 		'README.md': '# lint\n',
+		LICENSE: licenseText,
 		...manifestsAt(version),
 	}),
 };
@@ -96,6 +105,8 @@ const bindingsLayout: Layout = {
 	files: version => ({
 		'bindings/js/package.json': npmManifest('@octo/lint', version),
 		'bindings/js/README.md': '# lint\n',
+		'bindings/js/LICENSE': licenseText,
+		'bindings/python/LICENSE': licenseText,
 		'bindings/python/pyproject.toml': `[project]\nname = "lint-py"\nversion = "${version}"\n${pythonMetadata}`,
 	}),
 };
@@ -157,7 +168,7 @@ interface Cargo {
 	commands: { command: string; token?: string }[];
 	outcomes: Record<string, string[]>;
 	broken?: string[];
-	readmeless?: string[];
+	stripped?: Record<string, string[]>;
 }
 function cargo(state: Cargo) {
 	return (argv: string[], options: { cwd: string; env?: Record<string, string> }) =>
@@ -170,7 +181,7 @@ function cargo(state: Cargo) {
 				...(options.env?.CARGO_REGISTRY_TOKEN ? { token: options.env.CARGO_REGISTRY_TOKEN } : {}),
 			});
 			if (argv[1] === 'metadata') return cargoMetadata(target);
-			if (listing) return crateListing(!state.readmeless?.includes(name));
+			if (listing) return crateListing(state.stripped?.[name]);
 			if (argv[1] === 'package') {
 				if (state.broken?.includes(name)) {
 					return {
@@ -224,7 +235,7 @@ ${trace}case "$1 $2" in
   metadata*)${metadata}printf '{"target_directory":"%s","packages":[%s]}\\n' "$TARGET" '${
 		JSON.stringify({ name: 'lint-core', ...crateFields })
 	}' ;;
-  "package --list") printf 'Cargo.toml\\nREADME.md\\nsrc/lib.rs\\n' ;;
+  "package --list") printf 'Cargo.toml\\nLICENSE\\nREADME.md\\nsrc/lib.rs\\n' ;;
   package*) mkdir -p "$TARGET/package"; printf 'lint-core 1.1.0\\n' > "$TARGET/package/lint-core-1.1.0.crate"; echo packaged ;;
   publish*) echo "error: crates.io rejected lint-core" >&2; exit 101 ;;
 esac
@@ -534,7 +545,7 @@ interface Bindings {
 	commands: { command: string; cwd: string; env: Record<string, string> }[];
 	empty?: boolean;
 	limited?: number;
-	readmeless?: boolean;
+	stripped?: string[];
 }
 function bindings(state: Bindings, version: string): Runner['run'] {
 	return (argv, options) =>
@@ -564,13 +575,30 @@ function bindings(state: Bindings, version: string): Runner['run'] {
 				const manifest = JSON.stringify({ name: npm, version, ...npmMetadata });
 				return { code: 0, stdout: manifest, output: manifest };
 			}
+			if (argv[0] === 'tar' && argv[1] === '-tzf') {
+				const listing = ['PKG-INFO', 'pyproject.toml', 'LICENSE'].filter(file => !state.stripped?.includes(file))
+					.map(file => `lint_py-${version}/${file}\n`).join('');
+				return { code: 0, stdout: listing, output: listing };
+			}
+			if (argv[0] === 'unzip') {
+				const info = `lint_py-${version}.dist-info`;
+				const listing = [
+					'lint_py/__init__.py',
+					`${info}/METADATA`,
+					...(state.stripped?.includes('LICENSE') ? [] : [`${info}/licenses/LICENSE`]),
+				].map(file => `${file}\n`).join('');
+				return { code: 0, stdout: listing, output: listing };
+			}
 			if (argv[0] === 'tar') {
-				const info = pkgInfo(version, !state.readmeless);
+				const info = pkgInfo(version, !state.stripped?.includes('README.md'));
 				return { code: 0, stdout: info, output: info };
 			}
 			if (argv[1] === 'pack') {
 				writeFileSync(join(after('--pack-destination'), `octo-lint-${version}.tgz`), 'tarball\n');
-				const files = ['package.json', ...(state.readmeless ? [] : ['README.md']), 'index.js'].map(path => ({ path }));
+				const files = ['package.json', 'LICENSE', 'README.md', 'index.js'].filter(path =>
+					!state.stripped?.includes(path)
+				)
+					.map(path => ({ path }));
 				const stdout = `> @octo/lint@${version} prepack\n> tsc\n\n${
 					JSON.stringify(
 						[{ filename: `octo-lint-${version}.tgz`, integrity: npmIntegrity(npm, version), files }],
@@ -611,6 +639,8 @@ test('npm and PyPI packages publish through npm and uv and verify their integrit
 		{ command: 'npm publish --access public --tag latest --provenance', cwd: 'bindings/js', env: secrets },
 		{ command: 'uv build --project bindings/python --out-dir', cwd: '.', env: {} },
 		{ command: 'tar -xzOf lint_py-1.1.0/PKG-INFO', cwd: '.', env: {} },
+		{ command: 'unzip -Z1', cwd: '.', env: {} },
+		{ command: 'tar -tzf', cwd: '.', env: {} },
 		{ command: 'uv publish --check-url https://pypi.org/simple/', cwd: '.', env: secrets },
 	]);
 	expect((await executionOf(repository, execution.id)).publications.map(p => [p.id, p.outcome, p.digest])).toEqual([
@@ -642,6 +672,8 @@ test('npm and PyPI versions the registries already have are reused or refused by
 		'tar -xzOf package/package.json',
 		'uv build --project bindings/python --out-dir',
 		'tar -xzOf lint_py-1.1.0/PKG-INFO',
+		'unzip -Z1',
+		'tar -tzf',
 	]);
 	const required = Effect.runSync(Effect.result(requireAll(result.success)));
 	expect(required._tag === 'Failure' && required.failure.message).toBe(
@@ -700,7 +732,7 @@ test('a crate that fails to package is reported failed and its dependent does no
 test('a crate packaged without a README fails before its claim and its dependent does not publish', async () => {
 	const { repository, begun } = await released({ main: [core, cli] });
 	const { execution, identity } = started(begun, 'main');
-	const state: Cargo = { commands: [], outcomes: {}, readmeless: ['lint-core'] };
+	const state: Cargo = { commands: [], outcomes: {}, stripped: { 'lint-core': ['README.md'] } };
 	const { result } = await publishing(identity, execution.id, state);
 	if (result._tag === 'Failure') throw new Error(result.failure.message);
 	expect(states(result.success)).toEqual([
@@ -741,7 +773,7 @@ test('npm and PyPI packages built without a README fail before their claims', as
 	world.npm.publish(npm, '1.0.0');
 	const { begun } = await released({ main: [npmId, pypiId] }, bindingsLayout);
 	const { execution, identity } = started(begun, 'main');
-	const state: Bindings = { commands: [], readmeless: true };
+	const state: Bindings = { commands: [], stripped: ['README.md'] };
 	const { result } = await publishing(identity, execution.id, {
 		run: bindings(state, '1.1.0'),
 		credentials: bindingCredentials,
@@ -757,18 +789,85 @@ test('npm and PyPI packages built without a README fail before their claims', as
 		.toBe(false);
 }, 60_000);
 
-test('Python core metadata needs a long description, a license and a project URL', () => {
-	expect(pythonMissing(pkgInfo('1.1.0', true))).toEqual([]);
-	expect(pythonMissing('Metadata-Version: 2.1\nName: lint-py\nVersion: 1.1.0\nDescription: Lint bindings\n'))
+test('Python core metadata needs a long description, a license, a license file and a project URL', () => {
+	expect(pythonMissing(pkgInfo('1.1.0', true), true)).toEqual([]);
+	expect(pythonMissing(pkgInfo('1.1.0', true), false)).toEqual(['a license file']);
+	expect(pythonMissing('Metadata-Version: 2.1\nName: lint-py\nVersion: 1.1.0\nDescription: Lint bindings\n', true))
 		.toEqual(['license', 'urls']);
 	expect(
 		pythonMissing(
 			'Metadata-Version: 2.1\r\nName: lint-py\r\nLicense: MIT\r\nHome-page: https://example.com\r\n\r\nLong text\r\n',
+			true,
 		),
 	).toEqual([]);
-	expect(pythonMissing('Metadata-Version: 2.4\nName: lint-py\nLicense-File: LICENSE\nProject-URL: Docs, https://x\n'))
-		.toEqual(['README']);
+	expect(
+		pythonMissing('Metadata-Version: 2.4\nName: lint-py\nLicense-File: LICENSE\nProject-URL: Docs, https://x\n', true),
+	).toEqual(['README']);
 });
+
+test('a Python distribution ships a license file at the sdist root, in LICENSES/ or in the wheel dist-info', () => {
+	expect(distributionLicensed('lint_py-1.1.0.tar.gz', ['lint_py-1.1.0/PKG-INFO', 'lint_py-1.1.0/LICENSE.txt'])).toBe(
+		true,
+	);
+	expect(distributionLicensed('lint_py-1.1.0.tar.gz', ['lint_py-1.1.0/LICENSES/MIT.txt'])).toBe(true);
+	expect(distributionLicensed('lint_py-1.1.0.tar.gz', ['lint_py-1.1.0/src/lint_py/LICENSE'])).toBe(false);
+	expect(distributionLicensed('lint_py-1.1.0-py3-none-any.whl', ['lint_py-1.1.0.dist-info/licenses/LICENSE'])).toBe(
+		true,
+	);
+	expect(distributionLicensed('lint_py-1.1.0-py3-none-any.whl', ['lint_py-1.1.0.dist-info/COPYING'])).toBe(true);
+	expect(
+		distributionLicensed('lint_py-1.1.0-py3-none-any.whl', ['lint_py/LICENSE', 'lint_py-1.1.0.dist-info/METADATA']),
+	)
+		.toBe(false);
+});
+
+test('a crate with only the license field and no license file fails before its claim', async () => {
+	const { begun } = await released({ main: [core] });
+	const { execution, identity } = started(begun, 'main');
+	const state: Cargo = { commands: [], outcomes: {}, stripped: { 'lint-core': ['LICENSE'] } };
+	const { result } = await publishing(identity, execution.id, state);
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual([
+		['pkg:cargo/lint-core@1.1.0', 'failed-retryable', 'The lint-core 1.1.0 package lacks a license file'],
+	]);
+	expect(state.commands.some(entry => entry.command.startsWith('publish'))).toBe(false);
+}, 60_000);
+
+test('a crate whose license-file path is in the package passes without a LICENSE file', async () => {
+	const { begun } = await released({ main: [core] });
+	const { execution, identity } = started(begun, 'main');
+	const state: Cargo = { commands: [], outcomes: {} };
+	const run = cargo(state);
+	const listing = 'Cargo.toml\nREADME.md\nlegal/TERMS.txt\nsrc/lib.rs\n';
+	const { result } = await publishing(identity, execution.id, {
+		run: (argv, options) =>
+			argv[1] === 'metadata'
+				? Effect.succeed(cargoMetadata(target, { ...crateFields, license: null, license_file: 'legal/TERMS.txt' }))
+				: argv[2] === '--list'
+				? Effect.succeed({ code: 0, stdout: listing, output: listing })
+				: run(argv, options),
+		credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' },
+	});
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual([['pkg:cargo/lint-core@1.1.0', 'published']]);
+}, 60_000);
+
+test('npm and PyPI packages built without a license file fail before their claims', async () => {
+	servePypi();
+	world.npm.publish(npm, '1.0.0');
+	const { begun } = await released({ main: [npmId, pypiId] }, bindingsLayout);
+	const { execution, identity } = started(begun, 'main');
+	const state: Bindings = { commands: [], stripped: ['LICENSE'] };
+	const { result } = await publishing(identity, execution.id, {
+		run: bindings(state, '1.1.0'),
+		credentials: bindingCredentials,
+	});
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual([
+		['pkg:npm/%40octo/lint@1.1.0', 'failed-retryable', 'The @octo/lint 1.1.0 package lacks a license file'],
+		['pkg:pypi/lint-py@1.1.0', 'failed-retryable', 'The lint-py 1.1.0 package lacks a license file'],
+	]);
+}, 60_000);
 
 test('a publish crates.io never lists fails after the verification polls run out', async () => {
 	const { begun } = await released({ main: [core] });
