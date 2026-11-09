@@ -201,7 +201,14 @@ test('a finished run whose registry publication appears late is verified without
 	expect(releaseSummaries([{ ...unreported, version: '1.2.0' }], [record]).map(release => release.verified)).toEqual([
 		0,
 	]);
-	expect(runCard(finished, Date.now())).toMatchObject({ release: undefined, publications: [{ href: undefined }] });
+	expect(runCard(finished, Date.now())).toMatchObject({
+		release: undefined,
+		publications: [{ outcome: 'pending', href: 'https://www.npmjs.com/package/widget' }],
+	});
+	const failed = finished.publications.map(publication => ({ ...publication, outcome: 'failed' as const }));
+	expect(runCard({ ...finished, publications: failed }, Date.now()).publications.map(p => p.href)).toEqual([
+		'https://www.npmjs.com/package/widget',
+	]);
 	expect(runCard(settled, Date.now())).toMatchObject({
 		release: { tag: 'v1.1.0', href: 'https://github.com/octo/widget/releases/tag/v1.1.0' },
 		publications: [{ href: 'https://www.npmjs.com/package/widget/v/1.1.0' }],
