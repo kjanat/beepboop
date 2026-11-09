@@ -21,8 +21,8 @@
 			"rangeStrategy": "pin"
 		},
 		{
-			"matchPackageNames": ["typescript", "@effect/tsgo"],
-			"groupName": "TypeScript and Effect tsgo",
+			"matchPackageNames": ["typescript", "oxlint", "@effect/tsgo"],
+			"groupName": "TypeScript, oxlint and Effect tsgo",
 			"minimumReleaseAge": "7 days",
 			"rangeStrategy": "pin",
 			"internalChecksFilter": "strict",
