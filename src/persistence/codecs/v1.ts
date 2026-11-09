@@ -108,6 +108,7 @@ const discoveredWorkflow: z.ZodType<DiscoveredWorkflow> = z.object({
 	tagPatterns: strings.optional(),
 	branchPatterns: strings.optional(),
 	createsRelease: z.boolean().optional(),
+	ledger: z.boolean().optional(),
 	file: z.string(),
 	name: z.string(),
 	events: strings,

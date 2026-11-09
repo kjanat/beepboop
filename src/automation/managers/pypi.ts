@@ -102,6 +102,9 @@ export const pypiManager: Adapter<'pypi'> = {
 			}
 			if (!files.length) return result('pending');
 			if (info.yanked === true || files.every(file => file.yanked === true)) return result('failed');
+			if (publication.digest && !files.some(file => object(file.digests).sha256 === publication.digest)) {
+				return result('failed');
+			}
 			const digest = object(files.find(file => file.packagetype === 'sdist')?.digests ?? files[0]?.digests).sha256;
 			return result('succeeded', typeof digest === 'string' ? digest : undefined);
 		}).pipe(Effect.catchCause(() => Effect.succeed(result('uncertain'))));

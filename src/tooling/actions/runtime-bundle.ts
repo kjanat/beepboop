@@ -4,7 +4,7 @@ import { Effect } from 'effect';
 import { attemptPromise, refuse, type ToolFailure } from '@/tooling/runtime';
 
 const root = resolve(import.meta.dir, '../../..');
-export const entrypoints = ['client', 'prepare', 'refs'] as const;
+export const entrypoints = ['client', 'prepare', 'publish', 'refs'] as const;
 
 export function bundleRuntime(output: string): Effect.Effect<void, ToolFailure> {
 	return Effect.gen(function*() {

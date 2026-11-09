@@ -130,7 +130,7 @@ export interface Failure {
 	retryable: boolean;
 }
 
-function isJson(response: Response): boolean {
+export function isJson(response: Response): boolean {
 	return (response.headers.get('content-type') ?? '').split(';')[0]?.trim() === 'application/json';
 }
 

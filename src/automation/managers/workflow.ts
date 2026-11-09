@@ -2,7 +2,7 @@ import { Result } from 'effect';
 import { object, yaml } from '@/automation/managers/helpers';
 import type { Adapter } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
-import { workflowEvidence } from '@/automation/setup-workflows';
+import { actionRole, workflowEvidence } from '@/automation/setup-workflows';
 import { fileProblem } from '@/contract/diagnostics';
 export const workflowManager: Adapter<'workflow'> = {
 	name: 'workflow',
@@ -37,6 +37,10 @@ export const workflowManager: Adapter<'workflow'> = {
 						|| (typeof run === 'string' && /\bgh release create\b/.test(run));
 				});
 			});
+			const ledger = Object.values(jobs).some(job => {
+				const steps = object(job).steps;
+				return Array.isArray(steps) && steps.some(step => actionRole(object(step).uses) === 'publish');
+			});
 			const localActions = [
 				...source.matchAll(/uses:\s*["']?((?:\.\/|\$\/)[^\s"']+)/g),
 			].flatMap((m) => m[1] ?? []);
@@ -44,6 +48,7 @@ export const workflowManager: Adapter<'workflow'> = {
 				...(Array.isArray(push.tags) ? { tagPatterns: push.tags.map(String) } : {}),
 				...(Array.isArray(push.branches) ? { branchPatterns: push.branches.map(String) } : {}),
 				...(createsRelease ? { createsRelease } : {}),
+				...(ledger ? { ledger } : {}),
 				file: path.slice('.github/workflows/'.length),
 				name: String(workflow.name ?? path),
 				events,

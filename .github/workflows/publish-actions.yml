@@ -56,9 +56,9 @@ jobs:
           git read-tree "${GITHUB_SHA}"
           bundle_dir="${index_dir}/runtime"
           bun src/tooling/actions/bundle.ts "${bundle_dir}"
-          for entry in client prepare refs; do
-            blob=$(git hash-object -w "${bundle_dir}/${entry}.ts")
-            git update-index --cacheinfo "100644,${blob},actions/runtime/${entry}.ts"
+          for bundled in "${bundle_dir}"/*.ts; do
+            blob=$(git hash-object -w "${bundled}")
+            git update-index --cacheinfo "100644,${blob},actions/runtime/${bundled##*/}"
           done
           tree=$(git write-tree)
           parents=(-p "${GITHUB_SHA}")

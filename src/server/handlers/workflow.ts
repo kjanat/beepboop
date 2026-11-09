@@ -6,6 +6,7 @@ import { issueWorkflowToken } from '@/automation/token';
 import type { Artifact, Edit, Execution, Publication } from '@/automation/types';
 import { isLockfile, reportableManagerNames } from '@/contract/catalog';
 import { type DomainError, decodeRequest, forbidden, precondition } from '@/contract/errors';
+import type { ClaimStep, NextStep, ReportStep } from '@/contract/ledger';
 import { routes } from '@/contract/routes';
 import { requireReady } from '@/domain/repository';
 import { fromPromise } from '@/failure';
@@ -188,6 +189,27 @@ export const workflowEndpoints = {
 				)
 			);
 		})),
+	workflowPublishNext: workflow(
+		routes.workflowPublishNext,
+		(input, { identity, service }) =>
+			fromPromise((): Promise<NextStep> =>
+				service.coordinator(identity.repositoryId).publishNext(input.executionId, identity)
+			),
+	),
+	workflowPublishClaim: workflow(
+		routes.workflowPublishClaim,
+		(input, { identity, service }) =>
+			fromPromise((): Promise<ClaimStep> =>
+				service.coordinator(identity.repositoryId).publishClaim(input.executionId, identity, input.purl, input.digest)
+			),
+	),
+	workflowPublishReport: workflow(
+		routes.workflowPublishReport,
+		(input, { identity, service }) =>
+			fromPromise((): Promise<ReportStep> =>
+				service.coordinator(identity.repositoryId).publishReport(input.executionId, identity, input)
+			),
+	),
 	workflowCredentials: workflow(routes.workflowCredentials, (input, context) =>
 		Effect.gen(function*() {
 			const execution = yield* bound(context, input.executionId);

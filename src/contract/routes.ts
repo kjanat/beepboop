@@ -1,6 +1,14 @@
 import { z } from 'zod';
 import { changesResponse } from '@/contract/changes';
 import { shaPattern } from '@/contract/ids';
+import {
+	claimStep,
+	nextStep,
+	publishClaimRequest,
+	publishNextRequest,
+	publishReportRequest,
+	reportStep,
+} from '@/contract/ledger';
 import { destinationInput, subscriptionInput, watchInput } from '@/contract/notifications';
 import {
 	acknowledged,
@@ -455,6 +463,30 @@ export const routes = {
 		idempotent: true,
 		request: z.object({ executionId: text }),
 		response: z.unknown(),
+	}),
+	workflowPublishNext: route({
+		method: 'POST',
+		path: '/api/workflow/publish/next',
+		auth: 'workflow',
+		idempotent: true,
+		request: publishNextRequest,
+		response: nextStep,
+	}),
+	workflowPublishClaim: route({
+		method: 'POST',
+		path: '/api/workflow/publish/claim',
+		auth: 'workflow',
+		idempotent: true,
+		request: publishClaimRequest,
+		response: claimStep,
+	}),
+	workflowPublishReport: route({
+		method: 'POST',
+		path: '/api/workflow/publish/report',
+		auth: 'workflow',
+		idempotent: true,
+		request: publishReportRequest,
+		response: reportStep,
 	}),
 } as const;
 

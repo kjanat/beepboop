@@ -23,7 +23,9 @@ import { toDomainError } from '@/failure';
 
 export function actionRole(value: unknown): string | undefined {
 	if (typeof value !== 'string') return;
-	return /^(?:(?:\$|\.)\/actions\/|kjanat\/beepboop\/actions\/)(begin|prepare|report)(?:@[\w./-]+)?$/.exec(value)?.[1];
+	return /^(?:(?:\$|\.)\/actions\/|kjanat\/beepboop\/actions\/)(begin|prepare|report|publish)(?:@[\w./-]+)?$/.exec(
+		value,
+	)?.[1];
 }
 export function workflowEvidence(file: string, source: string): Result.Result<WorkflowEvidence, DomainError> {
 	return yaml(source).pipe(Result.map(document => evidenceOf(file, document)));
@@ -64,7 +66,7 @@ function evidenceOf(file: string, document: Record<string, unknown>): WorkflowEv
 				result.prepares = true;
 				if (!result.preparationJobs.includes(job)) result.preparationJobs.push(job);
 			}
-			if (role === 'report') {
+			if (role === 'report' || role === 'publish') {
 				result.reports = true;
 				if (!result.reportingJobs.includes(job)) result.reportingJobs.push(job);
 			}

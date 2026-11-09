@@ -39,6 +39,7 @@ export interface DiscoveredWorkflow {
 	tagPatterns?: string[];
 	branchPatterns?: string[];
 	createsRelease?: boolean;
+	ledger?: boolean;
 	file: string;
 	name: string;
 	events: string[];

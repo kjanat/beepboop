@@ -90,6 +90,9 @@ test('the route table answers every path the old router answered, and nothing el
 		'POST /api/repositories/resolve',
 		'GET /api/v1/changes',
 		'POST /api/v1/admin/reindex',
+		'POST /api/workflow/publish/next',
+		'POST /api/workflow/publish/claim',
+		'POST /api/workflow/publish/report',
 	]);
 	expect(legacy.filter(entry => !served.has(entry))).toEqual([]);
 	for (const entry of legacy) {

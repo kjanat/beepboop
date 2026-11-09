@@ -34,6 +34,24 @@ import {
 import { type InboxEvent, inboxEntry } from '@/automation/inbox';
 import { gateState, type RunJob, resolvable, type WorkflowJobs, workflowJobs } from '@/automation/job-gate';
 import {
+	availability,
+	claim,
+	entry,
+	fail,
+	type Ledger,
+	type LedgerRecord,
+	label,
+	ledgerSchema,
+	publicationOf,
+	publish,
+	rateLimit,
+	registries,
+	released,
+	reservation,
+	reuse,
+	view,
+} from '@/automation/ledger';
+import {
 	canVerifyPublication,
 	discover,
 	observedVersion,
@@ -49,6 +67,7 @@ import {
 	matchesPublication,
 	packageId,
 	parseIdentity,
+	parseReleaseIdentity,
 	publicationIdentity,
 	selectorKey,
 } from '@/automation/package-identity';
@@ -73,13 +92,31 @@ import { type AutomationBindings, AutomationService } from '@/automation/service
 import { maintainSetup } from '@/automation/setup-maintenance';
 import type { SetupEdit } from '@/automation/setup-types';
 import { decodeError, Store } from '@/automation/store';
-import type { Artifact, AutomationEvent, Edit, Execution, Publication, ReleaseReference } from '@/automation/types';
+import type {
+	Artifact,
+	AutomationEvent,
+	Edit,
+	Execution,
+	Package,
+	Publication,
+	ReleaseReference,
+} from '@/automation/types';
 import { parseGrant, runtimeGrant } from '@/automation/vault';
 import { type DomainError, precondition } from '@/contract/errors';
+import {
+	type ClaimStep,
+	type LedgerManager,
+	ledgerManagers,
+	type NextStep,
+	type PublishReport,
+	type ReportStep,
+} from '@/contract/ledger';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
+import { parseRetryAfter } from '@/domain/http-date';
 import { type ReadyRepository, readiness } from '@/domain/repository';
 import { fromPromise, fromSync, recover, retryable, toDomainError } from '@/failure';
 import { sha } from '@/model';
+import { purl } from '@/package-url';
 import { decodeEventV1, decodeExecutionV1, decodeSetupEditV1 } from '@/persistence/codecs/v1';
 import { CredentialStore } from '@/persistence/d1/credentials';
 import type { SqlDatabase } from '@/persistence/d1/database';
@@ -134,6 +171,9 @@ const access = z.object({ suspended: z.boolean() });
 const reconcileInterval = 60_000;
 const settleInterval = 15_000;
 const projectionRetry = 10_000;
+const dependencyPoll = 30_000;
+const verificationPoll = 15_000;
+const defaultRetryAfter = 60_000;
 function wakeDue(wake: ReleaseWake): number {
 	return wake === true ? 0 : wake.due;
 }
@@ -1122,6 +1162,278 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	): Promise<Execution> {
 		return this.serial(this.recordReport(id, identity, publications, artifacts));
 	}
+	publishNext(id: string, identity: WorkflowIdentity): Promise<NextStep> {
+		return this.serial(Effect.gen({ self: this }, function*() {
+			const { execution, holder } = yield* this.publishing(id, identity);
+			let ledger = yield* this.ledgerOf(execution);
+			const now = Date.now();
+			const ledgers = yield* this.ledgers(), executions = yield* this.executions();
+			const waits: { until: number; reason: string }[] = [];
+			for (const purl of ledger.records.map(record => record.purl)) {
+				const record = ledger.records.find(entry => entry.purl === purl);
+				if (!record) continue;
+				const open = availability(record, holder, now);
+				if (open.kind === 'settled') continue;
+				if (open.kind === 'held') return { kind: 'publish' as const, package: view(record) };
+				if (open.kind === 'wait') {
+					waits.push(open);
+					continue;
+				}
+				const blocked = this.blocker(execution, record, holder, ledgers, executions, now);
+				if (blocked?.kind === 'failed') {
+					ledger = yield* this.settleRecord(ledger, fail(record, holder, blocked.reason, false, now));
+				} else if (blocked) waits.push({ until: blocked.until, reason: blocked.reason });
+				else return { kind: 'publish' as const, package: view(record) };
+			}
+			const [wait] = waits.sort((a, b) => a.until - b.until);
+			return wait ? { kind: 'wait' as const, ...wait } : { kind: 'done' as const, entries: ledger.records.map(entry) };
+		}));
+	}
+	publishClaim(id: string, identity: WorkflowIdentity, purl: string, digest: string): Promise<ClaimStep> {
+		return this.serial(Effect.gen({ self: this }, function*() {
+			const { execution, holder } = yield* this.publishing(id, identity);
+			const ledger = yield* this.ledgerOf(execution);
+			let record = yield* this.recordOf(ledger, purl);
+			const now = Date.now();
+			const open = availability(record, holder, now);
+			if (open.kind === 'settled') return { kind: 'settled' as const, entry: entry(record) };
+			if (open.kind === 'wait') return { kind: 'wait' as const, until: open.until, reason: open.reason };
+			if (open.kind === 'open') {
+				const blocked = this.blocker(execution, record, holder, yield* this.ledgers(), yield* this.executions(), now);
+				if (blocked?.kind === 'failed') {
+					return yield* this.settled(ledger, fail(record, holder, blocked.reason, false, now));
+				}
+				if (blocked) return { kind: 'wait' as const, until: blocked.until, reason: blocked.reason };
+				const found = yield* this.registry(execution, { ...record, digest });
+				if (found.outcome === 'succeeded') {
+					return yield* this.settled(ledger, reuse({ ...record, digest }, holder, found.url ?? '', now));
+				}
+				if (found.outcome === 'failed') {
+					return yield* this.settled(
+						ledger,
+						fail(record, holder, `${registries[record.manager]} has a different ${label(record)}`, true, now),
+					);
+				}
+				if (found.outcome !== 'pending') {
+					return {
+						kind: 'wait' as const,
+						until: now + verificationPoll,
+						reason: `${registries[record.manager]} could not confirm whether it has ${label(record)}`,
+					};
+				}
+				if (record.manager === 'cargo' && !record.reservation) {
+					const inventory = (yield* this.store().repository(execution.repositoryId))?.inventory;
+					const kind = reservation(inventory?.packages.find(pkg => packageId(pkg) === record.id)?.publicationStatus);
+					const allowedAt = yield* fromPromise(() => this.env.PUBLISH_BUDGET.getByName('crates-io').reserve(kind));
+					record = { ...record, reservation: kind, notBefore: allowedAt };
+					yield* this.settleRecord(ledger, record);
+					const paced = availability(record, holder, now);
+					if (paced.kind === 'wait') return { kind: 'wait' as const, until: paced.until, reason: paced.reason };
+				}
+			}
+			const claimed = yield* Effect.fromResult(claim(record, holder, digest, now));
+			yield* this.settleRecord(ledger, claimed);
+			return { kind: 'publish' as const, package: view(claimed) };
+		}));
+	}
+	publishReport(id: string, identity: WorkflowIdentity, report: PublishReport): Promise<ReportStep> {
+		return this.serial(Effect.gen({ self: this }, function*() {
+			const { execution, holder } = yield* this.publishing(id, identity);
+			const ledger = yield* this.ledgerOf(execution);
+			const record = yield* this.recordOf(ledger, report.purl);
+			const now = Date.now();
+			const open = availability(record, holder, now);
+			if (open.kind === 'settled') return { kind: 'settled' as const, entry: entry(record) };
+			if (report.outcome === 'failed' && open.kind === 'open') {
+				return yield* this.settled(ledger, fail(record, holder, report.message, false, now));
+			}
+			if (open.kind !== 'held') return yield* precondition(`This run does not hold ${label(record)}`);
+			if (report.outcome === 'rate-limited') {
+				const until = parseRetryAfter(report.retryAfter ?? '', now) ?? now + defaultRetryAfter;
+				if (record.manager === 'cargo') {
+					yield* fromPromise(() => this.env.PUBLISH_BUDGET.getByName('crates-io').defer(until));
+				}
+				return yield* this.settled(ledger, rateLimit(record, holder, until, now));
+			}
+			const found = yield* this.registry(execution, record);
+			if (found.outcome === 'succeeded') {
+				return yield* this.settled(ledger, publish(record, holder, found.url ?? '', now));
+			}
+			if (found.outcome === 'failed') {
+				return yield* this.settled(
+					ledger,
+					fail(record, holder, `${registries[record.manager]} has a different ${label(record)}`, true, now),
+				);
+			}
+			if (report.outcome === 'failed') {
+				return yield* this.settled(ledger, fail(record, holder, report.message, false, now));
+			}
+			return {
+				kind: 'wait' as const,
+				until: now + verificationPoll,
+				reason: `${registries[record.manager]} has not confirmed ${label(record)} yet`,
+			};
+		}));
+	}
+	private publishing(
+		id: string,
+		identity: WorkflowIdentity,
+	): Effect.Effect<{ execution: Execution; holder: string }, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const execution = yield* this.get(id);
+			if (
+				execution.repositoryId !== identity.repositoryId || execution.runId !== identity.runId
+				|| execution.runAttempt !== identity.attempt || execution.workflowSha !== identity.workflowSha
+				|| execution.state !== 'running'
+			) return yield* precondition('Publication identity mismatch');
+			return { execution, holder: `${identity.runId}:${identity.attempt}` };
+		});
+	}
+	private ledgers(): Effect.Effect<Ledger[], DomainError> {
+		return this.list({ prefix: 'ledger:' }).pipe(
+			Effect.flatMap(entries => fromSync(() => [...entries.values()].map(value => ledgerSchema.parse(value)))),
+		);
+	}
+	private ledgerOf(execution: Execution): Effect.Effect<Ledger, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const stored = yield* this.read(`ledger:${execution.id}`);
+			if (stored !== undefined) return yield* fromSync(() => ledgerSchema.parse(stored));
+			const repository = yield* this.store().repository(execution.repositoryId);
+			if (!repository) return yield* precondition('Repository is not enrolled');
+			const version = execution.version;
+			if (!version) return yield* precondition('The execution has no version to publish');
+			const stream = execution.configuration.streams[execution.stream];
+			const selected = execution.workflow?.publications ?? stream?.packages ?? [];
+			const required = execution.workflow?.publications ?? stream?.required ?? [];
+			const inventory = repository.inventory.packages;
+			const order = repository.inventory.publicationOrder;
+			const rank = (id: string) => order.includes(id) ? order.indexOf(id) : order.length;
+			const candidates = inventory.filter((pkg): pkg is Package & { manager: LedgerManager } =>
+				publishable(pkg) && ledgerManagers.some(manager => manager === pkg.manager)
+				&& selected.some(reference => matchesPackage(reference, pkg))
+			).sort((a, b) => rank(packageId(a)) - rank(packageId(b)));
+			const ledger: Ledger = {
+				executionId: execution.id,
+				sourceSha: execution.sourceSha,
+				records: candidates.map(pkg => ({
+					purl: purl(publicationIdentity(pkg, version)),
+					id: packageId(pkg),
+					manager: pkg.manager,
+					name: pkg.name,
+					version,
+					manifest: pkg.manifest,
+					required: required.some(reference => matchesPackage(reference, pkg)),
+					dependencies: pkg.dependencies.flatMap(name =>
+						inventory.filter(other => other.manager === pkg.manager && other.name === name && publishable(other))
+							.map(packageId)
+					),
+					...(pkg.manager === 'npm' && stream
+						? { channel: isPrerelease(semVer.parse(version)) ? stream.channels.prerelease : stream.channels.stable }
+						: {}),
+					status: { state: 'planned' as const },
+					attempts: [],
+				})),
+			};
+			yield* this.write(`ledger:${execution.id}`, ledger);
+			return ledger;
+		});
+	}
+	private recordOf(ledger: Ledger, purl: string): Effect.Effect<LedgerRecord, DomainError> {
+		const record = ledger.records.find(entry => entry.purl === purl);
+		return record ? Effect.succeed(record) : Effect.fail(precondition(`${purl} is not in this execution's plan`));
+	}
+	private blocker(
+		execution: Execution,
+		record: LedgerRecord,
+		holder: string,
+		ledgers: Ledger[],
+		executions: Execution[],
+		now: number,
+	): { kind: 'failed'; reason: string } | { kind: 'pending'; reason: string; until: number } | undefined {
+		const live = (id: string) =>
+			executions.some(other => other.id === id && !['succeeded', 'cancelled', 'failed'].includes(other.state));
+		for (const dependency of record.dependencies) {
+			const records = ledgers.filter(other => other.sourceSha === execution.sourceSha).flatMap(other =>
+				other.records.filter(candidate => candidate.id === dependency).map(candidate => ({ other, candidate }))
+			);
+			if (records.some(({ candidate }) => released(candidate))) continue;
+			if (
+				executions.some(other =>
+					other.repositoryId === execution.repositoryId && other.sourceSha === execution.sourceSha
+					&& other.publications.some(p => p.outcome === 'succeeded' && matchesPublication(dependency, p))
+				)
+			) continue;
+			const reason = `${label(record)} waits for ${dependency}`;
+			const pending = records.filter(({ other, candidate }) =>
+				candidate.status.state !== 'failed-permanent'
+				&& !(candidate.status.state === 'failed-retryable' && candidate.status.holder === holder)
+				&& live(other.executionId)
+			).map(({ candidate }) =>
+				candidate.status.state === 'rate-limited'
+					? candidate.status.retryAfter
+					: Math.max(candidate.notBefore ?? 0, now + dependencyPoll)
+			);
+			if (pending.length) return { kind: 'pending', reason, until: Math.min(...pending) };
+			if (records.length) return { kind: 'failed', reason: `${dependency} did not publish` };
+			if (
+				executions.some(other =>
+					other.id !== execution.id && other.repositoryId === execution.repositoryId
+					&& other.sourceSha === execution.sourceSha && live(other.id)
+					&& (other.workflow?.publications ?? []).some(reference => selectorKey(reference) === dependency)
+				)
+			) return { kind: 'pending', reason, until: now + dependencyPoll };
+		}
+		return undefined;
+	}
+	private registry(execution: Execution, record: LedgerRecord): Effect.Effect<Publication, DomainError> {
+		return Effect.fromResult(parseReleaseIdentity(record.purl)).pipe(
+			Effect.mapError(toDomainError),
+			Effect.flatMap(identity =>
+				verifyPublication(
+					{
+						identity,
+						id: record.id,
+						manager: record.manager,
+						name: record.name,
+						version: record.version,
+						required: record.required,
+						...(record.digest ? { digest: record.digest } : {}),
+						outcome: 'succeeded',
+					},
+					fetch,
+					this.gateway().verification(execution.repository, execution.repositoryId),
+				)
+			),
+		);
+	}
+	private settleRecord(ledger: Ledger, record: LedgerRecord): Effect.Effect<Ledger, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const next = {
+				...ledger,
+				records: ledger.records.map(entry => entry.purl === record.purl ? record : entry),
+			};
+			yield* this.write(`ledger:${ledger.executionId}`, next);
+			const publication = publicationOf(record);
+			if (!publication) return next;
+			const execution = yield* this.get(ledger.executionId);
+			const identity = yield* Effect.fromResult(parseReleaseIdentity(record.purl)).pipe(Effect.mapError(toDomainError));
+			yield* this.put({
+				...execution,
+				publications: yield* mergePublications(execution.publications, [{ ...publication, identity }]),
+			});
+			return next;
+		});
+	}
+	private settled(
+		ledger: Ledger,
+		record: LedgerRecord,
+	): Effect.Effect<Extract<ReportStep, { kind: 'settled' }>, DomainError> {
+		return this.settleRecord(ledger, record).pipe(Effect.as({
+			kind: 'settled' as const,
+			entry: entry(record),
+			...(record.status.state === 'rate-limited' ? { until: record.status.retryAfter } : {}),
+		}));
+	}
 	private releaseIdentity(
 		execution: Execution,
 		publication: Publication,
@@ -1332,6 +1644,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Effect.gen({ self: this }, function*() {
 			const record = yield* this.store().repository(execution.repositoryId);
 			if (!record) return undefined;
+			const file = execution.workflow?.file;
+			if (record.inventory.workflows.some(workflow => workflow.file === file && workflow.ledger)) return undefined;
 			const packagesOf = (candidate: Execution) => {
 				const references = candidate.configuration.streams[candidate.stream]?.packages;
 				return record.inventory.packages.filter(pkg =>

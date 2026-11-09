@@ -349,6 +349,70 @@ use the run name `Release operation ${{ inputs.beepboop_execution_id }}`.
 job. The context holds the requested version and the source commit. Calls from
 the same observed run, stream and operation attach to the same execution.
 
+## Publish through Beepboop
+
+`actions/publish` publishes an execution's Cargo, PyPI and npm packages and
+records each one in Beepboop's publication ledger. Call it after `begin` and the
+checkout of `context.sourceSha`:
+
+```yaml
+- uses: kjanat/beepboop/actions/publish@v1
+  with:
+    execution-id: ${{ steps.beepboop.outputs.execution-id }}
+    credentials: '{"CARGO_REGISTRY_TOKEN":"crates-io"}'
+```
+
+Beepboop plans the binding's `publications`, or the stream's `packages` when
+the binding lists none. It hands out each package after the packages it depends
+on in the repository have published, also when another stream releases them
+from the same commit. A promotion whose workflow calls `actions/publish` does
+not wait for the promotions of those streams. Its packages wait in the ledger
+instead.
+
+For each package the action:
+
+1. builds the artifact with `cargo package --locked`, `uv build` or `npm pack`,
+2. claims the package with the artifact's digest,
+3. runs `cargo publish --locked --no-verify`,
+   `uv publish --check-url https://pypi.org/simple/` or
+   `npm publish --access public --tag <channel>`,
+4. reports the outcome.
+
+npm publishes with `--provenance` when the workflow event names a public
+repository. The channel is the stream's `channels.stable`, or
+`channels.prerelease` for a prerelease version.
+
+Beepboop checks the registry before each claim and after each report. It
+compares the crates.io checksum, the PyPI sha256 or the npm integrity with the
+claimed digest. A registry error never counts as proof that a version is
+missing.
+
+| State              | Meaning                                                                         |
+| ------------------ | ------------------------------------------------------------------------------- |
+| `planned`          | Waits for its turn.                                                             |
+| `claimed`          | A run holds a 15-minute lease and publishes it.                                 |
+| `published`        | The registry lists the claimed digest after the publish.                        |
+| `reused`           | The registry already listed the claimed digest.                                 |
+| `rate-limited`     | The registry refused it until the `Retry-After` time.                           |
+| `failed-retryable` | The build, the publish or a dependency failed. The next run attempt retries it. |
+| `failed-permanent` | The registry lists a different digest.                                          |
+
+`credentials` maps environment variables to granted aliases. The action fetches
+the values through the grant check and passes them to the publish command only.
+`NODE_AUTH_TOKEN` or `NPM_TOKEN` also authenticates npm to registry.npmjs.org.
+Without a credential, uv and npm use trusted publishing.
+
+Claims for crates draw from the crates.io budget in
+[Paced publishing](#paced-publishing). A 429 response moves that budget past its
+`Retry-After` time, and the action waits for it. A wait longer than 30 minutes
+ends the run. A rate-limited package then publishes in the run that Beepboop
+dispatches after the `Retry-After` time. After five rate limits in one run, the
+package fails for that run.
+
+The action exits nonzero when a required package did not publish, after every
+package has its outcome. Beepboop records each outcome on the execution, so the
+workflow needs no `actions/report` step for these packages.
+
 ## Prepare and promote
 
 Choose the stream and version in the dashboard and select **Release**. When the
