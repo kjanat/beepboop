@@ -42,6 +42,7 @@ import {
 	type LedgerRecord,
 	label,
 	ledgerSchema,
+	pacedPublication,
 	publicationOf,
 	publish,
 	rateLimit,
@@ -1228,7 +1229,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					record = { ...record, reservation: kind, notBefore: allowedAt };
 					yield* this.settleRecord(ledger, record);
 					const paced = availability(record, holder, now);
-					if (paced.kind === 'wait') return { kind: 'wait' as const, until: paced.until, reason: paced.reason };
+					if (paced.kind === 'wait') {
+						yield* this.recordPublication(execution.id, record, pacedPublication(record, paced.until));
+						return { kind: 'wait' as const, until: paced.until, reason: paced.reason };
+					}
 				}
 			}
 			const claimed = yield* Effect.fromResult(claim(record, holder, digest, now));
@@ -1414,14 +1418,22 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			};
 			yield* this.write(`ledger:${ledger.executionId}`, next);
 			const publication = publicationOf(record);
-			if (!publication) return next;
-			const execution = yield* this.get(ledger.executionId);
+			if (publication) yield* this.recordPublication(ledger.executionId, record, publication);
+			return next;
+		});
+	}
+	private recordPublication(
+		executionId: string,
+		record: LedgerRecord,
+		publication: Publication,
+	): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const execution = yield* this.get(executionId);
 			const identity = yield* Effect.fromResult(parseReleaseIdentity(record.purl)).pipe(Effect.mapError(toDomainError));
 			yield* this.put({
 				...execution,
 				publications: yield* mergePublications(execution.publications, [{ ...publication, identity }]),
 			});
-			return next;
 		});
 	}
 	private settled(

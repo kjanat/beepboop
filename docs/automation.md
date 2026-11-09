@@ -406,11 +406,11 @@ the values through the grant check and passes them to the publish command only.
 Without a credential, uv and npm use trusted publishing.
 
 Claims for crates draw from the crates.io budget in
-[Paced publishing](#paced-publishing). A 429 response moves that budget past its
-`Retry-After` time, and the action waits for it. A wait longer than 30 minutes
-ends the run. Beepboop dispatches a new run after the `Retry-After` time, and
-that run publishes the rate-limited package. After five rate limits in one run, the
-package fails for that run.
+[Paced publishing](#paced-publishing). The action waits for its crates.io slot.
+A 429 response moves that budget past its `Retry-After` time, and the action
+waits for that time too. A wait longer than 30 minutes ends the run. Beepboop
+dispatches a new run at the end of the wait, and that run publishes the package.
+After five rate limits in one run, the package fails for that run.
 
 The action exits nonzero when a required package did not publish, after every
 package has its outcome. Beepboop stores each outcome on the execution. The

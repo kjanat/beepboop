@@ -238,6 +238,18 @@ export function publicationOf(record: LedgerRecord): Publication | undefined {
 	}
 }
 
+export function pacedPublication(record: LedgerRecord, until: number): Publication {
+	return {
+		id: record.id,
+		manager: record.manager,
+		name: record.name,
+		version: record.version,
+		required: record.required,
+		outcome: 'rate-limited',
+		retryAfter: new Date(until).toISOString(),
+	};
+}
+
 export function reservation(publicationStatus: string | undefined): PublishKind {
 	return publicationStatus === 'missing' ? 'new' : 'update';
 }

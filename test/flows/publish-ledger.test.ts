@@ -736,6 +736,24 @@ test('a crates.io slot hours away ends the run before publishing', async () => {
 	);
 	expect(state.commands.map(entry => entry.command)).toEqual(['metadata lint-core', 'package lint-core']);
 	expect((await ledgerOf(repository, execution.id)).records[0]?.status).toEqual({ state: 'planned' });
+	const run = repository.runs.find(entry => entry.id === identity.runId);
+	if (!run) throw new Error('Missing run');
+	run.status = 'completed';
+	run.conclusion = 'failure';
+	await world.webhook('workflow_run', {
+		action: 'completed',
+		workflow_run: {
+			id: run.id,
+			conclusion: 'failure',
+			event: 'workflow_dispatch',
+			path: run.path,
+			head_repository: { id: repository.id },
+		},
+		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
+	});
+	await world.wait(2_000);
+	const waiting = await executionOf(repository, execution.id);
+	expect([waiting.state, waiting.notBefore]).toEqual(['ready', Date.parse('2026-11-04T11:32:00.000Z')]);
 }, 60_000);
 
 test('a run resumes a crate it already claimed, and reports need a claim', async () => {
