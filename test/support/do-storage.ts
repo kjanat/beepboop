@@ -9,8 +9,8 @@ function unsupported(name: string): never {
 	throw new Error(`DurableObjectStorage.${name} is not used by Beepboop`);
 }
 
-function cloned(value: unknown): ReturnType<typeof deserialize> {
-	return deserialize(serialize(value));
+export function cloned(value: unknown): ReturnType<typeof deserialize> {
+	return value === undefined ? undefined : deserialize(serialize(value));
 }
 
 class Entries {

@@ -1,21 +1,21 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { expect, test } from 'bun:test';
 import { runAction } from '@root/test/support/actions.ts';
 import type { Repository } from '@root/test/support/github.ts';
 import { botId, ownerId } from '@root/test/support/github.ts';
 import type { Reply } from '@root/test/support/http.ts';
 import { bearer, field } from '@root/test/support/http.ts';
-import { passChecks, widget } from '@root/test/support/repositories.ts';
-import { World } from '@root/test/support/world.ts';
+import { jsonFile, passChecks, widget } from '@root/test/support/repositories.ts';
+import type { World } from '@root/test/support/world.ts';
+import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 
 let world: World;
-beforeEach(async () => {
-	world = await World.create();
+eachWorld(created => {
+	world = created;
 });
-afterEach(() => world.dispose());
 
 async function promotions(api: (path: string) => Promise<Reply>): Promise<Execution[]> {
 	const listed = await api('/api/executions');
@@ -23,17 +23,7 @@ async function promotions(api: (path: string) => Promise<Reply>): Promise<Execut
 	return listed.body.map(decodeExecutionV1).filter(execution => execution.operation === 'promote');
 }
 function manifest(name: string, version: string, dependencies?: Record<string, string>): string {
-	return `${JSON.stringify({ name, version, ...(dependencies ? { dependencies } : {}) }, null, 2)}\n`;
-}
-async function elevate() {
-	await world.db.prepare('INSERT INTO sessions(id,kind,document,expires_at) VALUES(?,?,?,?)')
-		.bind(
-			'proof',
-			'elevation',
-			JSON.stringify({ subject: world.env.ADMIN_SUBJECT, elevated: true }),
-			Date.now() + 60_000,
-		)
-		.run();
+	return jsonFile({ name, version, ...(dependencies ? { dependencies } : {}) });
 }
 async function finish(repository: Repository, promotion: Execution, name: string, version: string) {
 	const run = repository.runs.find(entry => entry.inputs.beepboop_execution_id === promotion.id);
@@ -241,7 +231,7 @@ test('a push release waits for its credential grant and dispatches once the gran
 	]);
 	expect(world.github.dispatches).toEqual([]);
 
-	await elevate();
+	await world.elevate();
 	expect(
 		(await api('/api/credentials/replace', {
 			alias: 'npm-token',
@@ -251,7 +241,7 @@ test('a push release waits for its credential grant and dispatches once the gran
 		}))
 			.status,
 	).toBe(200);
-	await elevate();
+	await world.elevate();
 	const granted = await api('/api/credentials/grant', {
 		proof: 'proof',
 		selection: {

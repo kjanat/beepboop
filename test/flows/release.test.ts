@@ -1,12 +1,15 @@
-import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
+import { expect, test } from 'bun:test';
 import { runAction } from '@root/test/support/actions.ts';
+import { discoveredWidget } from '@root/test/support/client.ts';
 import { botId, ownerId } from '@root/test/support/github.ts';
 import type { Reply } from '@root/test/support/http.ts';
 import { bearer, text } from '@root/test/support/http.ts';
 import { packedRelease } from '@root/test/support/packed-release.ts';
+import { loggedErrors } from '@root/test/support/process.ts';
 import { passChecks, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
 import { fakeSigner, signingKey } from '@root/test/support/signing.ts';
-import { World } from '@root/test/support/world.ts';
+import type { World } from '@root/test/support/world.ts';
+import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import { z } from 'zod';
 import { Store } from '@/automation/store';
@@ -27,10 +30,9 @@ async function only(api: (path: string) => Promise<Reply>, operation: string): P
 	}
 	return matches[0];
 }
-beforeEach(async () => {
-	world = await World.create();
+eachWorld(created => {
+	world = created;
 });
-afterEach(() => world.dispose());
 
 test('a managed release travels from discovery to a verified publication', async () => {
 	const repository = widget(world.github);
@@ -131,10 +133,9 @@ test('a managed release travels from discovery to a verified publication', async
 });
 
 async function finishedPromotion(outcome: 'pending' | 'skipped') {
-	const repository = widget(world.github);
-	world.npm.publish('widget', '1.0.0');
-	const api = bearer(world, await world.cliSession());
-	await api('/api/repositories/discover', { repository: 'octo/widget' });
+	const session = await world.cliSession();
+	const repository = await discoveredWidget(world, session);
+	const api = bearer(world, session);
 	const request = { repositoryId: repository.id, stream: 'main', version: '1.1.0' };
 	const plan = await api('/api/releases/plan', request);
 	await api('/api/releases/prepare', {
@@ -371,16 +372,10 @@ test('a merge-approved release whose merge cannot be confirmed waits for approva
 				? Response.json({ message: 'Resource not accessible by integration' }, { status: 403 })
 				: world.github.handle(request),
 	);
-	const logged = spyOn(console, 'error').mockImplementation(() => {});
+	const logged = loggedErrors();
 	expect((await world.push(repository)).status).toBe(202);
 	await world.wait(1_000);
-	const events = logged.mock.calls.flatMap(([line]): unknown[] => {
-		if (typeof line !== 'string') return [];
-		const parsed: unknown = JSON.parse(line);
-		return [parsed];
-	});
-	logged.mockRestore();
-	expect(events).toEqual([{
+	expect(logged.events()).toEqual([{
 		event: 'preparation-merge.failed',
 		repository: 'octo/widget',
 		pull: `https://github.com/octo/widget/pull/${pull.number}`,

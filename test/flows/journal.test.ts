@@ -1,45 +1,34 @@
-import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
+import { expect, test } from 'bun:test';
 import { runAction } from '@root/test/support/actions.ts';
-import { call, cliTransport } from '@root/test/support/client.ts';
-import { botId, ownerId } from '@root/test/support/github.ts';
+import { call, cliTransport, discoveredWidget } from '@root/test/support/client.ts';
+import { botId } from '@root/test/support/github.ts';
 import { packedRelease } from '@root/test/support/packed-release.ts';
-import { passChecks, widget } from '@root/test/support/repositories.ts';
-import { origin, World } from '@root/test/support/world.ts';
+import { loggedErrors } from '@root/test/support/process.ts';
+import { passChecks } from '@root/test/support/repositories.ts';
+import type { World } from '@root/test/support/world.ts';
+import { eachWorld } from '@root/test/support/world.ts';
 import { z } from 'zod';
 import { routes } from '@/contract/routes';
 
 let world: World;
-beforeEach(async () => {
-	world = await World.create();
+eachWorld(created => {
+	world = created;
 });
-afterEach(() => world.dispose());
-
-function transport(token: string) {
-	return cliTransport(world, token);
-}
 
 function errors() {
-	const spy = spyOn(console, 'error').mockImplementation(() => {});
+	const logged = loggedErrors();
 	return {
-		events(): unknown[] {
-			const lines = spy.mock.calls.flatMap(([first]): unknown[] => {
-				if (typeof first !== 'string' || !first.startsWith('{')) return [];
-				const parsed: unknown = JSON.parse(first);
-				return [parsed];
-			});
-			spy.mockRestore();
-			return lines.filter(line => z.object({ event: z.string() }).safeParse(line).data?.event !== 'request.failed');
-		},
+		events: () =>
+			logged.events().filter(line => z.object({ event: z.string() }).safeParse(line).data?.event !== 'request.failed'),
 	};
 }
 
 const changeRows = z.array(z.object({ entity: z.string(), id: z.string(), revision: z.number() }));
 
 test('a D1 outage keeps the outbox, and the next alarm projects it', async () => {
-	const repository = widget(world.github);
-	world.npm.publish('widget', '1.0.0');
-	const send = transport(await world.cliSession());
-	await call(routes.repositoriesDiscover, { repository: 'octo/widget' }, send);
+	const token = await world.cliSession();
+	const repository = await discoveredWidget(world, token);
+	const send = cliTransport(world, token);
 	const plan = await call(routes.releasesPlan, { repositoryId: repository.id, stream: 'main', version: '1.1.0' }, send);
 
 	world.db.failBatch = new Error('D1_ERROR: Network connection lost.');
@@ -68,10 +57,9 @@ test('a D1 outage keeps the outbox, and the next alarm projects it', async () =>
 });
 
 test('the change feed stays empty until something changes, and reindex rebuilds a lost projection', async () => {
-	const repository = widget(world.github);
-	world.npm.publish('widget', '1.0.0');
-	const send = transport(await world.cliSession());
-	await call(routes.repositoriesDiscover, { repository: 'octo/widget' }, send);
+	const token = await world.cliSession();
+	const repository = await discoveredWidget(world, token);
+	const send = cliTransport(world, token);
 	expect(await call(routes.changes, { since: 0 }, send)).toEqual({ cursor: 0, changes: [] });
 
 	const plan = await call(routes.releasesPlan, { repositoryId: repository.id, stream: 'main', version: '1.1.0' }, send);
@@ -92,14 +80,7 @@ test('the change feed stays empty until something changes, and reindex rebuilds 
 
 	await world.db.prepare('DELETE FROM executions').run();
 	expect(await call(routes.executionsList, {}, send)).toEqual([]);
-	await world.db.prepare('INSERT INTO sessions(id,kind,document,expires_at) VALUES(?,?,?,?)')
-		.bind(
-			'proof',
-			'elevation',
-			JSON.stringify({ subject: world.env.ADMIN_SUBJECT, elevated: true }),
-			Date.now() + 60_000,
-		)
-		.run();
+	await world.elevate();
 	expect(await call(routes.adminReindex, { proof: 'proof' }, send)).toEqual({ queued: 1 });
 	expect((await call(routes.executionsList, {}, send)).map(entry => entry.id)).toEqual([prepared.id]);
 	const rebuilt = await call(routes.changes, { since: first.cursor }, send);
@@ -109,10 +90,9 @@ test('the change feed stays empty until something changes, and reindex rebuilds 
 });
 
 test('a Beepboop-dispatched run gets a token while D1 holds no rows', async () => {
-	const repository = widget(world.github);
-	world.npm.publish('widget', '1.0.0');
-	const send = transport(await world.cliSession());
-	await call(routes.repositoriesDiscover, { repository: 'octo/widget' }, send);
+	const token = await world.cliSession();
+	const repository = await discoveredWidget(world, token);
+	const send = cliTransport(world, token);
 	const request = { repositoryId: repository.id, stream: 'main', version: '1.1.0' };
 	const plan = await call(routes.releasesPlan, request, send);
 	await call(routes.releasesPrepare, { ...request, sourceSha: plan.sourceSha, planId: plan.planId }, send);
@@ -145,10 +125,9 @@ test('a Beepboop-dispatched run gets a token while D1 holds no rows', async () =
 });
 
 test('an outage retries in the inbox for eight attempts, and other failures dead-letter at once', async () => {
-	const repository = widget(world.github);
-	world.npm.publish('widget', '1.0.0');
-	const send = transport(await world.cliSession());
-	await call(routes.repositoriesDiscover, { repository: 'octo/widget' }, send);
+	const token = await world.cliSession();
+	const repository = await discoveredWidget(world, token);
+	const send = cliTransport(world, token);
 	const storage = world.coordinators.instance(String(repository.id)).storage;
 	const inbox = () => [...storage.snapshot()].filter(([key]) => key.startsWith('inbox'));
 	const github = (request: Request) => world.github.handle(request);
@@ -167,10 +146,7 @@ test('an outage retries in the inbox for eight attempts, and other failures dead
 	expect((await call(routes.repositoriesList, {}, send)).map(entry => entry.sha)).toEqual([docs.sha]);
 
 	world.network.serve('api.github.com', outage);
-	await world.webhook('push', {
-		ref: `refs/heads/${repository.defaultBranch}`,
-		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
-	}, '00000000-0000-4000-8000-00000000dead');
+	await world.push(repository, '00000000-0000-4000-8000-00000000dead');
 	await world.wait(60_000 * 2 ** 8);
 	expect(inbox().map(([key, entry]) => [key, z.looseObject({ attempts: z.number() }).parse(entry).attempts])).toEqual([
 		['inbox-dead:00000000-0000-4000-8000-00000000dead', 8],
@@ -178,17 +154,11 @@ test('an outage retries in the inbox for eight attempts, and other failures dead
 
 	world.network.serve('api.github.com', github);
 	world.github.suspend();
-	await world.webhook('push', {
-		ref: `refs/heads/${repository.defaultBranch}`,
-		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
-	}, '00000000-0000-4000-8000-0000000000ff');
+	await world.push(repository, '00000000-0000-4000-8000-0000000000ff');
 	await world.wait(1_000);
 	const logged = errors();
 	world.db.failWrites = new Error('D1_ERROR: Network connection lost.');
-	await world.webhook('push', {
-		ref: `refs/heads/${repository.defaultBranch}`,
-		repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
-	}, '00000000-0000-4000-8000-0000000000fe');
+	await world.push(repository, '00000000-0000-4000-8000-0000000000fe');
 	await world.wait(1_000);
 	world.db.failWrites = undefined;
 	expect(logged.events()).toEqual([{
@@ -210,10 +180,9 @@ test('an outage retries in the inbox for eight attempts, and other failures dead
 });
 
 test('a poisoned execution is quarantined while the rest of the journal advances', async () => {
-	const repository = widget(world.github);
-	world.npm.publish('widget', '1.0.0');
-	const send = transport(await world.cliSession());
-	await call(routes.repositoriesDiscover, { repository: 'octo/widget' }, send);
+	const token = await world.cliSession();
+	const repository = await discoveredWidget(world, token);
+	const send = cliTransport(world, token);
 	const plan = await call(routes.releasesPlan, { repositoryId: repository.id, stream: 'main', version: '1.1.0' }, send);
 	const prepared = await call(
 		routes.releasesPrepare,

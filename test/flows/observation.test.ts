@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { expect, test } from 'bun:test';
 import type { Repository } from '@root/test/support/github.ts';
 import { ownerId } from '@root/test/support/github.ts';
 import { bearer } from '@root/test/support/http.ts';
-import { World } from '@root/test/support/world.ts';
+import type { World } from '@root/test/support/world.ts';
+import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import { z } from 'zod';
 import { parseSetupPlan } from '@/automation/setup-plan';
@@ -11,10 +12,9 @@ import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 
 let world: World;
-beforeEach(async () => {
-	world = await World.create();
+eachWorld(created => {
+	world = created;
 });
-afterEach(() => world.dispose());
 
 function workflow(on: string, run: string): string {
 	return `name: Release\non: ${on}\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ${run}\n`;

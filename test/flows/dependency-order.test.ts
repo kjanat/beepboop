@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { publishWorkflow } from '@root/test/support/repositories.ts';
+import { jsonFile, publishWorkflow } from '@root/test/support/repositories.ts';
 import { Effect } from 'effect';
 import { discover } from '@/automation/managers';
 import { publicationOrder } from '@/automation/managers/order';
@@ -26,7 +26,7 @@ function npm(
 
 function snapshot(version: string): Snapshot {
 	const files = {
-		'package.json': `${JSON.stringify({ name: 'widget', version }, null, 2)}\n`,
+		'package.json': jsonFile({ name: 'widget', version }),
 		'.github/workflows/publish.yml': publishWorkflow,
 	};
 	return {

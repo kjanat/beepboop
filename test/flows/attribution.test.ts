@@ -1,16 +1,16 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { expect, test } from 'bun:test';
 import { widget } from '@root/test/support/repositories.ts';
-import { World } from '@root/test/support/world.ts';
+import type { World } from '@root/test/support/world.ts';
+import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import { AutomationService } from '@/automation/service';
 
 const trailer = 'Co-authored-by: kjanat <6353477+kjanat@users.noreply.github.com>';
 
 let world: World;
-beforeEach(async () => {
-	world = await World.create();
+eachWorld(created => {
+	world = created;
 });
-afterEach(() => world.dispose());
 
 test('a pull request commit carries the administrator trailer only for work that followed their action', async () => {
 	const repository = widget(world.github, { configured: false });

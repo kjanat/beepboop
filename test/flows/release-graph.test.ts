@@ -1,6 +1,7 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { bearer } from '@root/test/support/http.ts';
-import { World } from '@root/test/support/world.ts';
+import type { World } from '@root/test/support/world.ts';
+import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import { z } from 'zod';
 import { discover } from '@/automation/managers';
@@ -3274,10 +3275,9 @@ describe('release streams', () => {
 
 describe('adoption PR', () => {
 	let world: World;
-	beforeEach(async () => {
-		world = await World.create();
+	eachWorld(created => {
+		world = created;
 	});
-	afterEach(() => world.dispose());
 
 	test('a simple plugin release is adopted without entering workflows, and regenerates identically', async () => {
 		const { snapshot } = await load('dprint-plugin-svg');

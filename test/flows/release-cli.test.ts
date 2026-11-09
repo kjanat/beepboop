@@ -1,28 +1,33 @@
-import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { beforeEach, expect, spyOn, test } from 'bun:test';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { PromptEngine } from '@kjanat/dreamcli';
 import { gitOutput } from '@root/test/support/actions.ts';
-import { passChecks, publishWorkflow, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
-import { origin, World } from '@root/test/support/world.ts';
+import { runCli, savedClient } from '@root/test/support/cli.ts';
+import { discoveredWidget } from '@root/test/support/client.ts';
+import { eachDirectory } from '@root/test/support/directories.ts';
+import { jsonFile, passChecks, publishWorkflow, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
+import type { World } from '@root/test/support/world.ts';
+import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import { z } from 'zod';
 import { app } from '@/cli/cli';
-import { Client } from '@/cli/client';
+import type { Client } from '@/cli/client';
 import { checkoutRepository } from '@/cli/release';
 import { routes } from '@/contract/routes';
 import { planReview } from '@/contract/views';
 
-let world: World, directory: string, client: Client;
+let world: World, directory: string, client: Client, token: string;
 const requests: { path: string; body: unknown }[] = [];
 const plans: z.output<typeof planReview>[] = [];
+eachWorld(created => {
+	world = created;
+});
+eachDirectory('beepboop-release-', created => {
+	directory = created;
+});
 beforeEach(async () => {
-	world = await World.create();
-	directory = await mkdtemp(join(tmpdir(), 'beepboop-release-'));
-	client = await Effect.runPromise(Client.at(origin, directory));
-	await Effect.runPromise(client.save({ token: await world.cliSession() }));
-	spyOn(Client, 'at').mockReturnValue(Effect.succeed(client));
+	({ client, token } = await savedClient(world, directory));
 	requests.length = 0;
 	plans.length = 0;
 	world.network.serve(new URL(origin).host, async request => {
@@ -33,11 +38,7 @@ beforeEach(async () => {
 		return response;
 	});
 });
-afterEach(async () => {
-	world.dispose();
-	await rm(directory, { recursive: true, force: true });
-});
-const run = (args: string[], answers?: unknown[]) => app.execute(args, { answers, isTTY: true, env: {} });
+const run = runCli;
 async function checkout(remotes: Record<string, string>) {
 	const dir = join(directory, crypto.randomUUID());
 	await mkdir(dir);
@@ -45,11 +46,8 @@ async function checkout(remotes: Record<string, string>) {
 	for (const [name, url] of Object.entries(remotes)) gitOutput(dir, ['remote', 'add', name, url]);
 	return dir;
 }
-async function seed() {
-	const repository = widget(world.github);
-	world.npm.publish('widget', '1.0.0');
-	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
-	return repository;
+function seed() {
+	return discoveredWidget(world, token);
 }
 const prepareCalls = () => requests.filter(request => request.path === '/api/releases/prepare');
 
@@ -282,7 +280,7 @@ test('a stale source is refused after confirmation without silently replanning o
 test('independent streams and already-prepared versions cannot accidentally initiate promotion', async () => {
 	const repository = await seed();
 	world.github.push(repository, {
-		'package.json': `${JSON.stringify({ name: 'widget', version: '1.1.0' }, null, 2)}\n`,
+		'package.json': jsonFile({ name: 'widget', version: '1.1.0' }),
 	}, 'Versions already prepared');
 	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
 	const existing = await Effect.runPromise(client.call(routes.executionsList, {}));
@@ -364,7 +362,7 @@ test('delegated manifest preparation can promote when its prepared versions reac
 	expect(world.github.dispatches.map(dispatch => dispatch.file)).toEqual(['prepare.yml']);
 	// The repository workflow supplies these generated changes; the CLI does not run it locally.
 	const merged = world.github.push(repository, {
-		'package.json': `${JSON.stringify({ name: 'widget', version: '1.2.4' }, null, 2)}\n`,
+		'package.json': jsonFile({ name: 'widget', version: '1.2.4' }),
 	}, 'Merge the workflow-prepared package version');
 	passChecks(repository, merged.sha);
 	expect((await world.push(repository)).status).toBe(202);
@@ -382,7 +380,7 @@ async function tagged(approval: 'required' | 'push' = 'required') {
 	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Tag each release');
 	const before = world.github.head(repository);
 	const merged = world.github.push(repository, {
-		'package.json': `${JSON.stringify({ name: 'widget', version: '1.2.4' }, null, 2)}\n`,
+		'package.json': jsonFile({ name: 'widget', version: '1.2.4' }),
 	}, 'Merge the workflow-prepared package version');
 	return { repository, before, merged };
 }
@@ -463,17 +461,8 @@ test('a grant the server would refuse fails before any security-key prompt', asy
 
 test('an acceptable grant asks for the security key once and stores the grant', async () => {
 	const repository = await seed();
-	await world.db.prepare(
-		'INSERT INTO credentials(alias,version,key_id,ciphertext,iv,active,created_at) VALUES(?,?,?,?,?,1,?)',
-	).bind('npm-token', 1, 'v1', 'sealed', 'iv', Date.now()).run();
-	await world.db.prepare('INSERT INTO sessions(id,kind,document,expires_at) VALUES(?,?,?,?)')
-		.bind(
-			'proof',
-			'elevation',
-			JSON.stringify({ subject: world.env.ADMIN_SUBJECT, elevated: true }),
-			Date.now() + 60_000,
-		)
-		.run();
+	await world.sealCredential('npm-token');
+	await world.elevate();
 	const elevated = spyOn(client, 'elevated').mockReturnValue(Effect.succeed('proof'));
 	const granted = await run(['secrets', 'grant', repository.name, 'npm-token']);
 	expect(granted.exitCode).toBe(0);
@@ -624,7 +613,7 @@ test('workflow tag-derived bumps remain authoritative when registry packages are
 	expect(prepared.stdout.join('')).not.toContain('releases start');
 	expect(prepared.stdout.join('')).not.toContain('runs approve');
 	const merged = world.github.push(repository, {
-		'package.json': `${JSON.stringify({ name: 'widget', version: '2.5.0' }, null, 2)}\n`,
+		'package.json': jsonFile({ name: 'widget', version: '2.5.0' }),
 	}, 'Merge the tag-derived preparation');
 	passChecks(repository, merged.sha);
 	expect((await world.push(repository)).status).toBe(202);

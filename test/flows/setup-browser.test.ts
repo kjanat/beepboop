@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { bearer } from '@root/test/support/http.ts';
 import { passChecks, plugin, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
-import { origin, World } from '@root/test/support/world.ts';
+import type { World } from '@root/test/support/world.ts';
+import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import type { Element, HTMLElement, HTMLFormElement, HTMLInputElement, HTMLSelectElement } from 'happy-dom';
 import { Window } from 'happy-dom';
@@ -31,8 +32,10 @@ const globals = [
 	'HTMLButtonElement',
 ] as const;
 const descriptors = new Map<string, PropertyDescriptor | undefined>();
+eachWorld(created => {
+	world = created;
+});
 beforeEach(async () => {
-	world = await World.create();
 	window = new Window({ url: `${origin}/repositories` });
 	for (const key of globals) {
 		descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
@@ -52,7 +55,6 @@ beforeEach(async () => {
 	}, { preconnect: fetch.preconnect }));
 });
 afterEach(async () => {
-	world.dispose();
 	await window.happyDOM.close();
 	for (const [key, descriptor] of descriptors) {
 		if (descriptor) Object.defineProperty(globalThis, key, descriptor);
@@ -113,17 +115,8 @@ test('the dashboard asks for the security key only for a grant the server accept
 
 	world.github.push(unconfigured, { '.github/beepboop.json': widgetConfiguration() }, 'Configure releases');
 	await session('/api/repositories/discover', { repository: unconfigured.name });
-	await world.db.prepare(
-		'INSERT INTO credentials(alias,version,key_id,ciphertext,iv,active,created_at) VALUES(?,?,?,?,?,1,?)',
-	).bind('npm-token', 1, 'v1', 'sealed', 'iv', Date.now()).run();
-	await world.db.prepare('INSERT INTO sessions(id,kind,document,expires_at) VALUES(?,?,?,?)')
-		.bind(
-			'proof',
-			'elevation',
-			JSON.stringify({ subject: world.env.ADMIN_SUBJECT, elevated: true }),
-			Date.now() + 60_000,
-		)
-		.run();
+	await world.sealCredential('npm-token');
+	await world.elevate();
 	expect(await Effect.runPromise(api.elevatedApi(routes.credentialsGrant, grant(unconfigured.id), prove))).toEqual({
 		granted: true,
 	});

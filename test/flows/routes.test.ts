@@ -1,14 +1,14 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { call, cliTransport } from '@root/test/support/client.ts';
+import { expect, test } from 'bun:test';
+import { call, cliTransport, discoveredWidget } from '@root/test/support/client.ts';
 import { env as runtimeEnv } from '@root/test/support/cloudflare-workers.ts';
-import { reply } from '@root/test/support/http.ts';
+import { bearer, bearerRequest, reply } from '@root/test/support/http.ts';
 import { widget } from '@root/test/support/repositories.ts';
-import { origin, World } from '@root/test/support/world.ts';
+import type { World } from '@root/test/support/world.ts';
+import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect, Fiber, Result } from 'effect';
 import { TestClock } from 'effect/testing';
 import { ApiFailure } from '@/contract/client';
 import { errorEnvelope } from '@/contract/errors';
-import { bearerHeaders } from '@/contract/http';
 import { routeIds, routes } from '@/contract/routes';
 import { rawRoutes, resolve } from '@/server/router';
 
@@ -64,14 +64,9 @@ const legacy = [
 ] as const;
 
 let world: World;
-beforeEach(async () => {
-	world = await World.create();
+eachWorld(created => {
+	world = created;
 });
-afterEach(() => world.dispose());
-
-function transport(token: string) {
-	return cliTransport(world, token);
-}
 
 async function refused(work: Promise<unknown>): Promise<ApiFailure> {
 	try {
@@ -126,7 +121,7 @@ test('the route table answers every path the old router answered, and nothing el
 test('contract calls round-trip through the server for a discovered repository', async () => {
 	const repository = widget(world.github);
 	world.npm.publish('widget', '1.0.0');
-	const send = transport(await world.cliSession());
+	const send = cliTransport(world, await world.cliSession());
 
 	expect(await call(routes.repositoriesList, {}, send)).toEqual([]);
 	const discovered = await call(routes.repositoriesDiscover, { repository: 'widget' }, send);
@@ -174,23 +169,15 @@ test('contract calls round-trip through the server for a discovered repository',
 });
 
 test('elevated routes check the request before they spend the security-key proof', async () => {
-	const repository = widget(world.github);
-	world.npm.publish('widget', '1.0.0');
-	const send = transport(await world.cliSession());
-	await call(routes.repositoriesDiscover, { repository: 'octo/widget' }, send);
+	const token = await world.cliSession();
+	const repository = await discoveredWidget(world, token);
+	const send = cliTransport(world, token);
 
 	const legacyClient = await refused(call(routes.credentialsReplace, { alias: 'npm-token', value: 'secret' }, send));
 	expect([legacyClient.status, legacyClient.problem?.code]).toEqual([403, 'forbidden']);
 	expect(legacyClient.message).toBe('This action needs a security-key touch; upgrade the beepboop CLI');
 
-	await world.db.prepare('INSERT INTO sessions(id,kind,document,expires_at) VALUES(?,?,?,?)')
-		.bind(
-			'proof',
-			'elevation',
-			JSON.stringify({ subject: world.env.ADMIN_SUBJECT, elevated: true }),
-			Date.now() + 60_000,
-		)
-		.run();
+	await world.elevate();
 	const guidance = await refused(call(routes.credentialsGrant, {
 		proof: 'proof',
 		selection: {
@@ -247,38 +234,23 @@ test('elevated routes check the request before they spend the security-key proof
 
 test('a deployed CLI adds a notification destination without a security-key touch', async () => {
 	const token = await world.cliSession();
-	const send = transport(token);
-	await world.db.prepare('INSERT INTO sessions(id,kind,document,expires_at) VALUES(?,?,?,?)')
-		.bind(
-			'proof',
-			'elevation',
-			JSON.stringify({ subject: world.env.ADMIN_SUBJECT, elevated: true }),
-			Date.now() + 60_000,
-		)
-		.run();
+	const send = cliTransport(world, token);
+	await world.elevate();
 	await call(
 		routes.credentialsReplace,
 		{ alias: 'release-hook', value: 'https://hooks.example/release', proof: 'proof', expectedVersion: null },
 		send,
 	);
 
-	const saved = await reply(
-		await world.handle(
-			new Request(`${origin}/api/notifications/save`, {
-				method: 'POST',
-				headers: bearerHeaders(token),
-				body: JSON.stringify({
-					destination: {
-						name: 'Releases',
-						kind: 'http',
-						credential: 'release-hook',
-						subscribeNew: false,
-						enabled: true,
-					},
-				}),
-			}),
-		),
-	);
+	const saved = await bearer(world, token)('/api/notifications/save', {
+		destination: {
+			name: 'Releases',
+			kind: 'http',
+			credential: 'release-hook',
+			subscribeNew: false,
+			enabled: true,
+		},
+	});
 	expect(saved.status).toBe(200);
 	const listed = await call(routes.notificationsList, {}, send);
 	expect(listed.destinations.map(destination => destination.name)).toEqual(['Releases']);
@@ -288,7 +260,7 @@ test('outages answer as retryable upstream errors and corrupt rows as internal e
 	const { failureOf } = await import('@root/actions/runtime/protocol.ts');
 	const repository = widget(world.github);
 	const token = await world.cliSession();
-	const send = transport(token);
+	const send = cliTransport(world, token);
 
 	world.network.serve('api.github.com', () => {
 		throw new TypeError('Connection reset by peer');
@@ -302,13 +274,11 @@ test('outages answer as retryable upstream errors and corrupt rows as internal e
 				? Response.json({ message: 'Unicorn' }, { status: 502 })
 				: world.github.handle(request),
 	);
-	const unicorn = await world.handle(
-		new Request(`${origin}/api/repositories/discover`, {
-			method: 'POST',
-			headers: bearerHeaders(token),
-			body: JSON.stringify({ repository: 'octo/widget' }),
-		}),
-	);
+	const unicorn = await bearerRequest(world, token, {
+		method: 'POST',
+		path: '/api/repositories/discover',
+		body: JSON.stringify({ repository: 'octo/widget' }),
+	});
 	expect(unicorn.status).toBe(502);
 	expect(await Effect.runPromise(failureOf(unicorn))).toEqual({
 		message: expect.stringContaining('HTTP 502 upstream'),

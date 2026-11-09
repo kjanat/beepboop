@@ -1,12 +1,17 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { withConsoleLog, withEnvironment } from '@root/test/support/process.ts';
 import type { RunIdentity, World } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import { git } from '@/git';
 import { bundleRuntime } from '@/tooling/actions/runtime-bundle';
 
-const tokenHost = 'pipelines.actions.githubusercontent.com';
+export const tokenHost = 'pipelines.actions.githubusercontent.com';
+export const tokenRequest = {
+	ACTIONS_ID_TOKEN_REQUEST_URL: `https://${tokenHost}/token?api-version=2.0`,
+	ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'request-token',
+};
 let invocation = 0;
 
 function outputs(file: string): Record<string, string> {
@@ -24,15 +29,23 @@ export interface ActionResult {
 	logs: string[];
 }
 
-export async function runAction(
+async function withRuntime<A>(prefix: string, work: (directory: string) => Promise<A>): Promise<A> {
+	const directory = mkdtempSync(join(tmpdir(), prefix));
+	try {
+		await Effect.runPromise(bundleRuntime(join(directory, 'runtime')));
+		return await work(directory);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+}
+
+export function runAction(
 	world: World,
 	mode: string,
 	run: RunIdentity,
 	variables: Record<string, string>,
 ): Promise<ActionResult> {
-	const directory = mkdtempSync(join(tmpdir(), 'beepboop-action-'));
-	try {
-		await Effect.runPromise(bundleRuntime(join(directory, 'runtime')));
+	return withRuntime('beepboop-action-', async directory => {
 		const client = join(directory, 'runtime', 'client.ts');
 		const output = join(directory, 'output'), environment = join(directory, 'env');
 		writeFileSync(output, '');
@@ -44,40 +57,28 @@ export async function runAction(
 			}
 			return Response.json({ value: token });
 		});
-		const saved = { env: { ...process.env }, argv: [...process.argv] };
 		const logs: string[] = [];
-		const log = console.log;
-		Object.assign(process.env, {
+		return withEnvironment({
 			SERVICE_ORIGIN: world.env.APPLICATION_ORIGIN,
-			ACTIONS_ID_TOKEN_REQUEST_URL: `https://${tokenHost}/token?api-version=2.0`,
-			ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'request-token',
+			...tokenRequest,
 			GITHUB_OUTPUT: output,
 			GITHUB_ENV: environment,
 			...variables,
+		}, () => {
+			process.argv[2] = mode;
+			return withConsoleLog((...values: unknown[]) => logs.push(values.map(String).join(' ')), async () => {
+				await import(`${client}?run=${++invocation}`);
+				return { outputs: outputs(output), environment: readFileSync(environment, 'utf8'), logs };
+			});
 		});
-		process.argv[2] = mode;
-		console.log = (...values: unknown[]) => logs.push(values.map(String).join(' '));
-		try {
-			await import(`${client}?run=${++invocation}`);
-			return { outputs: outputs(output), environment: readFileSync(environment, 'utf8'), logs };
-		} finally {
-			console.log = log;
-			for (const key of Object.keys(process.env)) if (!(key in saved.env)) delete process.env[key];
-			Object.assign(process.env, saved.env);
-			process.argv.splice(0, process.argv.length, ...saved.argv);
-		}
-	} finally {
-		rmSync(directory, { recursive: true, force: true });
-	}
+	});
 }
 
-export async function runRuntime(
+export function runRuntime(
 	entry: 'prepare' | 'refs',
 	env: Record<string, string>,
 ): Promise<void> {
-	const directory = mkdtempSync(join(tmpdir(), 'beepboop-runtime-'));
-	try {
-		await Effect.runPromise(bundleRuntime(join(directory, 'runtime')));
+	return withRuntime('beepboop-runtime-', async directory => {
 		const result = Bun.spawnSync(['bun', '--no-install', join(directory, 'runtime', `${entry}.ts`)], {
 			cwd: directory,
 			env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', ...env },
@@ -87,9 +88,7 @@ export async function runRuntime(
 		const stdout = result.stdout.toString();
 		const stderr = result.stderr.toString();
 		if (result.exitCode !== 0) throw new Error(`${entry} exited ${result.exitCode}\n${stdout}${stderr}`);
-	} finally {
-		rmSync(directory, { recursive: true, force: true });
-	}
+	});
 }
 
 export function materialize(files: Record<string, string>): { dir: string; sha: string } {

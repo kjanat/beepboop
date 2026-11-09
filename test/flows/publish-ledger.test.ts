@@ -1,21 +1,22 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Command, Runner } from '@root/actions/runtime/publish.ts';
 import { main, publicRepository, publishPackages, requireAll } from '@root/actions/runtime/publish.ts';
 import { runAction } from '@root/test/support/actions.ts';
+import { eachDirectory } from '@root/test/support/directories.ts';
 import type { Repository } from '@root/test/support/github.ts';
 import { botId, ownerId } from '@root/test/support/github.ts';
 import type { Reply } from '@root/test/support/http.ts';
 import { bearer } from '@root/test/support/http.ts';
 import type { Publishing } from '@root/test/support/ledger.ts';
 import { publishWith, withIdentity, workflowCall } from '@root/test/support/ledger.ts';
+import { silenced } from '@root/test/support/process.ts';
 import { npmIntegrity } from '@root/test/support/registries.ts';
-import { passChecks } from '@root/test/support/repositories.ts';
-import type { RunIdentity } from '@root/test/support/world.ts';
-import { World } from '@root/test/support/world.ts';
+import { jsonFile, passChecks } from '@root/test/support/repositories.ts';
+import type { RunIdentity, World } from '@root/test/support/world.ts';
+import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import { z } from 'zod';
 import { ledgerSchema } from '@/automation/ledger';
@@ -26,13 +27,11 @@ import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 
 let world: World;
 let target = '';
-beforeEach(async () => {
-	world = await World.create();
-	target = mkdtempSync(join(tmpdir(), 'beepboop-target-'));
+eachWorld(created => {
+	world = created;
 });
-afterEach(() => {
-	world.dispose();
-	rmSync(target, { recursive: true, force: true });
+eachDirectory('beepboop-target-', created => {
+	target = created;
 });
 
 const ledgerWorkflow = (stream: string) => `name: Publish ${stream}
@@ -95,7 +94,7 @@ const bindingsLayout: Layout = {
 	managers: ['npm', 'pypi', 'workflow'],
 	secrets: { 'npm-token': 'npm-secret', 'pypi-token': 'pypi-secret' },
 	files: version => ({
-		'bindings/js/package.json': `${JSON.stringify({ name: '@octo/lint', version }, null, 2)}\n`,
+		'bindings/js/package.json': jsonFile({ name: '@octo/lint', version }),
 		'bindings/python/pyproject.toml': `[project]\nname = "lint-py"\nversion = "${version}"\n`,
 	}),
 };
@@ -239,16 +238,6 @@ function publishing(identity: RunIdentity, executionId: string, options: Cargo |
 	);
 }
 
-async function elevate() {
-	await world.db.prepare('INSERT INTO sessions(id,kind,document,expires_at) VALUES(?,?,?,?)')
-		.bind(
-			'proof',
-			'elevation',
-			JSON.stringify({ subject: world.env.ADMIN_SUBJECT, elevated: true }),
-			Date.now() + 60_000,
-		)
-		.run();
-}
 async function grant(
 	api: (path: string, body?: unknown) => Promise<Reply>,
 	repository: Repository,
@@ -256,11 +245,11 @@ async function grant(
 	secrets: Record<string, string>,
 ) {
 	for (const [alias, value] of Object.entries(secrets)) {
-		await elevate();
+		await world.elevate();
 		expect((await api('/api/credentials/replace', { alias, value, proof: 'proof', expectedVersion: null })).status)
 			.toBe(200);
 		for (const name of streams) {
-			await elevate();
+			await world.elevate();
 			expect(
 				(await api('/api/credentials/grant', {
 					proof: 'proof',
@@ -885,19 +874,15 @@ esac
 `,
 	);
 	chmodSync(join(bin, 'cargo'), 0o755);
-	const write = process.stdout.write, error = process.stderr.write;
-	process.stdout.write = () => true;
-	process.stderr.write = () => true;
-	const result = await withIdentity(world, identity, () => Effect.runPromise(Effect.result(main)), {
-		PATH: `${bin}:${process.env.PATH}`,
-		TARGET: target,
-		RUNNER_TEMP: target,
-		EXECUTION_ID: execution.id,
-		SERVICE_ORIGIN: world.env.APPLICATION_ORIGIN,
-	}).finally(() => {
-		process.stdout.write = write;
-		process.stderr.write = error;
-	});
+	const result = await silenced(() =>
+		withIdentity(world, identity, () => Effect.runPromise(Effect.result(main)), {
+			PATH: `${bin}:${process.env.PATH}`,
+			TARGET: target,
+			RUNNER_TEMP: target,
+			EXECUTION_ID: execution.id,
+			SERVICE_ORIGIN: world.env.APPLICATION_ORIGIN,
+		})
+	);
 	expect(result._tag === 'Failure' && result.failure.message).toBe(
 		'1 required publication did not publish: pkg:cargo/lint-core@1.1.0',
 	);
@@ -939,22 +924,18 @@ esac
 	);
 	chmodSync(join(bin, 'rustup'), 0o755);
 	chmodSync(join(bin, 'cargo'), 0o755);
-	const write = process.stdout.write, error = process.stderr.write, cwd = process.cwd();
-	process.stdout.write = () => true;
-	process.stderr.write = () => true;
+	const cwd = process.cwd();
 	process.chdir(checkout);
-	const result = await withIdentity(world, identity, () => Effect.runPromise(Effect.result(main)), {
-		PATH: `${bin}:${process.env.PATH}`,
-		TARGET: target,
-		CALLS: calls,
-		RUNNER_TEMP: target,
-		EXECUTION_ID: execution.id,
-		SERVICE_ORIGIN: world.env.APPLICATION_ORIGIN,
-	}).finally(() => {
-		process.chdir(cwd);
-		process.stdout.write = write;
-		process.stderr.write = error;
-	});
+	const result = await silenced(() =>
+		withIdentity(world, identity, () => Effect.runPromise(Effect.result(main)), {
+			PATH: `${bin}:${process.env.PATH}`,
+			TARGET: target,
+			CALLS: calls,
+			RUNNER_TEMP: target,
+			EXECUTION_ID: execution.id,
+			SERVICE_ORIGIN: world.env.APPLICATION_ORIGIN,
+		})
+	).finally(() => process.chdir(cwd));
 	expect(result._tag === 'Failure' && result.failure.message).toBe(
 		'1 required publication did not publish: pkg:cargo/lint-core@1.1.0',
 	);

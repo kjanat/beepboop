@@ -1,14 +1,10 @@
-import { deserialize, serialize } from 'bun:jsc';
-import { durableObjectState, MemoryStorage } from '@root/test/support/do-storage.ts';
+import type { deserialize } from 'bun:jsc';
+import { cloned, durableObjectState, MemoryStorage } from '@root/test/support/do-storage.ts';
 
 export interface RpcCall {
 	object: string;
 	method: string;
 	at: number;
-}
-
-function cloned(value: unknown): ReturnType<typeof deserialize> {
-	return value === undefined ? undefined : deserialize(serialize(value));
 }
 
 function stub(name: string, target: object, calls: RpcCall[]): ReturnType<typeof deserialize> {

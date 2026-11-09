@@ -5,7 +5,7 @@ import { commitAll, gitOutput, materialize, runAction, runRuntime } from '@root/
 import type { Repository } from '@root/test/support/github.ts';
 import { botId, ownerId } from '@root/test/support/github.ts';
 import { bearer, text } from '@root/test/support/http.ts';
-import { passChecks, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
+import { jsonFile, passChecks, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
 import type { SigningKey } from '@root/test/support/signing.ts';
 import type { World } from '@root/test/support/world.ts';
 import { z } from 'zod';
@@ -89,7 +89,7 @@ export async function packedRelease(
 	};
 	if (signing?.signer) world.env.SIGNER = signing.signer;
 	const pushed = world.github.push(repository, {
-		'.github/beepboop.json': `${JSON.stringify(configuration, null, '\t')}\n`,
+		'.github/beepboop.json': jsonFile(configuration, '\t'),
 		'.github/workflows/prepare.yml': prepareWorkflow,
 	}, 'Prepare in the workflow');
 	const checkout = materialize(filesAt(repository, pushed.sha));

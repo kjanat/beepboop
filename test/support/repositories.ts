@@ -46,34 +46,32 @@ export interface WidgetOptions {
 	version?: string;
 }
 
+export function jsonFile(value: unknown, indent: 2 | '\t' = 2): string {
+	return `${JSON.stringify(value, null, indent)}\n`;
+}
+
 export function widgetConfiguration(approval: 'required' | 'merge' | 'push' = 'required'): string {
-	return `${
-		JSON.stringify(
-			{
-				$schema: 'https://beepboop.kjanat.dev/schema/v1.json',
-				managers: ['npm', 'workflow'],
-				streams: {
-					main: {
-						packages: ['pkg:npm/widget'],
-						required: ['pkg:npm/widget'],
-						credentials: ['npm-token'],
-						prepare: { strategy: 'managed' },
-						promote: {
-							approval,
-							workflow: { file: 'publish.yml', publications: ['pkg:npm/widget'] },
-						},
-					},
+	return jsonFile({
+		$schema: 'https://beepboop.kjanat.dev/schema/v1.json',
+		managers: ['npm', 'workflow'],
+		streams: {
+			main: {
+				packages: ['pkg:npm/widget'],
+				required: ['pkg:npm/widget'],
+				credentials: ['npm-token'],
+				prepare: { strategy: 'managed' },
+				promote: {
+					approval,
+					workflow: { file: 'publish.yml', publications: ['pkg:npm/widget'] },
 				},
 			},
-			null,
-			'\t',
-		)
-	}\n`;
+		},
+	}, '\t');
 }
 
 export function widget(github: FakeGitHub, options: WidgetOptions = {}): Repository {
 	const files: Record<string, string> = {
-		'package.json': `${JSON.stringify({ name: 'widget', version: options.version ?? '1.0.0' }, null, 2)}\n`,
+		'package.json': jsonFile({ name: 'widget', version: options.version ?? '1.0.0' }),
 		'README.md': '# widget\n',
 		'.github/workflows/publish.yml': publishWorkflow,
 		'.github/workflows/ci.yml': ciWorkflow,

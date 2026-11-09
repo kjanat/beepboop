@@ -1,12 +1,14 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { expect, test } from 'bun:test';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Validator } from '@cfworker/json-schema';
+import { discoveredWidget } from '@root/test/support/client.ts';
 import type { Reply } from '@root/test/support/http.ts';
 import { bearer, field } from '@root/test/support/http.ts';
-import { passChecks, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
-import { World } from '@root/test/support/world.ts';
+import { jsonFile, passChecks, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
+import type { World } from '@root/test/support/world.ts';
+import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Result } from 'effect';
 import { z } from 'zod';
 import { parseRepositoryConfiguration } from '@/automation/configuration';
@@ -21,10 +23,9 @@ import { executionId, planIdentity, releaseEventId } from '@/persistence/identit
 import { assertCurrent, schemaPath } from '@/tooling/schema/render';
 
 let world: World;
-beforeEach(async () => {
-	world = await World.create();
+eachWorld(created => {
+	world = created;
 });
-afterEach(() => world.dispose());
 
 const storedDocument = z.object({
 	diagnostics: z.array(z.string()),
@@ -347,7 +348,7 @@ test('schema:check refuses a hand-edited schema file', async () => {
 		}),
 	}).parse(await Bun.file(schemaPath).json());
 	published.properties.managers.items.enum.push('homebrew');
-	await Bun.write(edited, `${JSON.stringify(published, null, '\t')}\n`);
+	await Bun.write(edited, jsonFile(published, '\t'));
 	try {
 		await expect(Effect.runPromise(assertCurrent(edited))).rejects.toThrow('The configuration schema is stale');
 	} finally {
@@ -551,10 +552,9 @@ function withRetiredKeys(document: unknown): z.output<typeof retiredKeys> {
 }
 
 test('stored rows and journal entries with keys this version does not know still read and release', async () => {
-	const repository = widget(world.github);
-	world.npm.publish('widget', '1.0.0');
-	const api = bearer(world, await world.cliSession());
-	await api('/api/repositories/discover', { repository: 'octo/widget' });
+	const token = await world.cliSession();
+	const repository = await discoveredWidget(world, token);
+	const api = bearer(world, token);
 	await world.db.prepare('UPDATE repositories SET document=? WHERE id=?')
 		.bind(JSON.stringify(withRetiredKeys(JSON.parse(await storedRow(repository.id)))), repository.id).run();
 	await world.db.prepare('INSERT INTO grants(id,alias,repository_id,document) VALUES(?,?,?,?)').bind(

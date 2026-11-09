@@ -1,5 +1,6 @@
 import type { World } from '@root/test/support/world.ts';
 import { origin } from '@root/test/support/world.ts';
+import type { Outgoing } from '@/contract/client';
 import { bearerHeaders } from '@/contract/http';
 
 export interface Reply {
@@ -16,15 +17,25 @@ export async function reply(response: Response): Promise<Reply> {
 	return { status: response.status, body, bytes: new TextEncoder().encode(text).byteLength, headers: response.headers };
 }
 
+export function bearerRequest(world: World, token: string, outgoing: Outgoing): Promise<Response> {
+	return world.handle(
+		new Request(`${origin}${outgoing.path}`, {
+			method: outgoing.method,
+			headers: bearerHeaders(token),
+			...(outgoing.body === undefined ? {} : { body: outgoing.body }),
+		}),
+	);
+}
+
 export function bearer(world: World, token: string) {
 	return async (path: string, body?: unknown): Promise<Reply> =>
 		reply(
-			await world.handle(
-				new Request(`${origin}${path}`, {
-					method: body === undefined ? 'GET' : 'POST',
-					headers: bearerHeaders(token),
-					...(body === undefined ? {} : { body: JSON.stringify(body) }),
-				}),
+			await bearerRequest(
+				world,
+				token,
+				body === undefined
+					? { method: 'GET', path, body: undefined }
+					: { method: 'POST', path, body: JSON.stringify(body) },
 			),
 		);
 }

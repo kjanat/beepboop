@@ -1,12 +1,14 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { beforeEach, expect, test } from 'bun:test';
+import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { eachDirectory } from '@root/test/support/directories.ts';
 import { cratePublishCommands } from '@/automation/setup-defaults';
 
 let stub = '';
+eachDirectory('crate-publish-', created => {
+	stub = created;
+});
 beforeEach(() => {
-	stub = mkdtempSync(join(tmpdir(), 'crate-publish-'));
 	const tool = (name: string, body: string) => {
 		writeFileSync(join(stub, name), `#!/usr/bin/env bash\n${body}`);
 		chmodSync(join(stub, name), 0o755);
@@ -39,7 +41,6 @@ if [ -e "$STUB/published-$crate" ]; then echo 200; else echo 404; fi
 	tool('sleep', 'echo "sleep $1" >> "$STUB/log"\n');
 	tool('date', 'case "$*" in *-d*) echo 1000 ;; *) echo 900 ;; esac\n');
 });
-afterEach(() => rmSync(stub, { recursive: true, force: true }));
 
 function publish(outcomes: Record<string, string[]>, published: string[] = []) {
 	for (const [crate, lines] of Object.entries(outcomes)) {

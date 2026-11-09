@@ -1,34 +1,33 @@
-import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { beforeEach, expect, spyOn, test } from 'bun:test';
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { PromptEngine, ResolvedPromptConfig } from '@kjanat/dreamcli';
+import { runCli, savedClient } from '@root/test/support/cli.ts';
+import { eachDirectory } from '@root/test/support/directories.ts';
 import { plugin, widget } from '@root/test/support/repositories.ts';
-import { origin, World } from '@root/test/support/world.ts';
+import type { World } from '@root/test/support/world.ts';
+import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import { parse } from 'yaml';
 import { z } from 'zod';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import { app } from '@/cli/cli';
-import { Client } from '@/cli/client';
+import type { Client } from '@/cli/client';
 import { routes } from '@/contract/routes';
 
 let world: World;
 let directory: string;
 let client: Client;
+eachWorld(created => {
+	world = created;
+});
+eachDirectory('beepboop-adopt-', created => {
+	directory = created;
+});
 beforeEach(async () => {
-	world = await World.create();
-	directory = await mkdtemp(join(tmpdir(), 'beepboop-adopt-'));
-	client = await Effect.runPromise(Client.at(origin, directory));
-	await Effect.runPromise(client.save({ token: await world.cliSession() }));
-	spyOn(Client, 'at').mockReturnValue(Effect.succeed(client));
+	({ client } = await savedClient(world, directory));
 });
-afterEach(async () => {
-	world.dispose();
-	await rm(directory, { recursive: true, force: true });
-});
-const run = (args: string[], answers?: unknown[]) =>
-	app.execute(['repositories', ...args], { answers, isTTY: true, env: {} });
+const run = (args: string[], answers?: unknown[]) => runCli(['repositories', ...args], answers);
 
 const proposalPrompt = 'Open or refresh the setup PR with this proposal? Answer no to choose the setup yourself.';
 

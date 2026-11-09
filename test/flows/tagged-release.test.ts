@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,7 +9,8 @@ import { botId, ownerId } from '@root/test/support/github.ts';
 import { bearer, text } from '@root/test/support/http.ts';
 import { publishWith } from '@root/test/support/ledger.ts';
 import { passChecks } from '@root/test/support/repositories.ts';
-import { World } from '@root/test/support/world.ts';
+import type { World } from '@root/test/support/world.ts';
+import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import { parse } from 'yaml';
 import { z } from 'zod';
@@ -20,10 +21,9 @@ import { streamSummary } from '@/automation/setup-summary';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 
 let world: World;
-beforeEach(async () => {
-	world = await World.create();
+eachWorld(created => {
+	world = created;
 });
-afterEach(() => world.dispose());
 
 const releaseWorkflow = `name: Release
 on:
@@ -542,9 +542,7 @@ async function mergedSetup(tamper: boolean, login = 'octo') {
 		setupHead: plan.setupHead,
 	});
 	expect(applied.status).toBe(200);
-	await world.db.prepare(
-		'INSERT INTO credentials(alias,version,key_id,ciphertext,iv,active,created_at) VALUES(?,?,?,?,?,1,?)',
-	).bind('crates-io', 1, 'v1', 'sealed', 'iv', Date.now()).run();
+	await world.sealCredential('crates-io');
 	const foreign = {
 		id: 'foreign',
 		alias: 'crates-io',

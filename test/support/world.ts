@@ -1,4 +1,4 @@
-import { mock, setSystemTime, spyOn } from 'bun:test';
+import { afterEach, beforeEach, mock, setSystemTime, spyOn } from 'bun:test';
 import { env as runtimeEnv } from '@root/test/support/cloudflare-workers.ts';
 import { TestD1 } from '@root/test/support/d1.ts';
 import type { Repository } from '@root/test/support/github.ts';
@@ -148,6 +148,21 @@ export class World {
 			.bind(await sha256Hex(token), adminSubject, Date.now()).run();
 		return token;
 	}
+	async elevate(): Promise<void> {
+		await this.db.prepare('INSERT INTO sessions(id,kind,document,expires_at) VALUES(?,?,?,?)')
+			.bind(
+				'proof',
+				'elevation',
+				JSON.stringify({ subject: this.env.ADMIN_SUBJECT, elevated: true }),
+				Date.now() + 60_000,
+			)
+			.run();
+	}
+	async sealCredential(alias: string): Promise<void> {
+		await this.db.prepare(
+			'INSERT INTO credentials(alias,version,key_id,ciphertext,iv,active,created_at) VALUES(?,?,?,?,?,1,?)',
+		).bind(alias, 1, 'v1', 'sealed', 'iv', Date.now()).run();
+	}
 	async adminCookie(): Promise<string> {
 		const access = await new SignJWT({ mode: 'access', type: 'user' })
 			.setProtectedHeader({ alg: 'ES256', kid: 'openauth' })
@@ -209,10 +224,21 @@ export class World {
 			}),
 		);
 	}
-	push(repository: Repository): Promise<Response> {
+	push(repository: Repository, delivery?: ReturnType<typeof crypto.randomUUID>): Promise<Response> {
 		return this.webhook('push', {
 			ref: `refs/heads/${repository.defaultBranch}`,
 			repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
-		});
+		}, delivery);
 	}
+}
+
+export function eachWorld(bind: (world: World) => void): void {
+	let current: World | undefined;
+	beforeEach(async () => {
+		current = await World.create();
+		bind(current);
+	});
+	afterEach(() => {
+		if (current) current.dispose();
+	});
 }

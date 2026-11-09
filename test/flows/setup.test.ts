@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { expect, test } from 'bun:test';
 import { botId, ownerId } from '@root/test/support/github.ts';
 import { bearer, field } from '@root/test/support/http.ts';
 import { publishWorkflow, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
-import { World } from '@root/test/support/world.ts';
+import type { World } from '@root/test/support/world.ts';
+import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Result } from 'effect';
 import { parse, parseDocument } from 'yaml';
 import { z } from 'zod';
@@ -17,10 +18,9 @@ import { publishMinutes } from '@/automation/setup-workflows';
 
 const checkout = pinned('checkout');
 let world: World;
-beforeEach(async () => {
-	world = await World.create();
+eachWorld(created => {
+	world = created;
 });
-afterEach(() => world.dispose());
 
 test('a discovered repository can preview, open and refresh its setup PR', async () => {
 	const repository = widget(world.github, { configured: false });
