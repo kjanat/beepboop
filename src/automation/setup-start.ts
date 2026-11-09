@@ -11,11 +11,13 @@ export function startWorkflow(streams: readonly string[], actionsRevision: strin
 				workflow_dispatch: {
 					inputs: {
 						stream: { description: 'Release stream', type: 'choice', options: [...streams], default: first },
-						version: {
-							description: 'patch, minor, major or a semantic version',
-							required: true,
+						bump: {
+							description: 'Version bump',
+							type: 'choice',
+							options: ['patch', 'minor', 'major'],
 							default: 'patch',
 						},
+						version: { description: 'Semantic version; replaces the bump when set', type: 'string' },
 					},
 				},
 			},
@@ -26,7 +28,7 @@ export function startWorkflow(streams: readonly string[], actionsRevision: strin
 					permissions: { 'id-token': 'write' },
 					steps: [{
 						uses: `kjanat/beepboop/actions/release@${actionsRevision ?? 'v1'}`,
-						with: { stream: expression('inputs.stream'), version: expression('inputs.version') },
+						with: { stream: expression('inputs.stream'), version: expression('inputs.version || inputs.bump') },
 					}],
 				},
 			},
