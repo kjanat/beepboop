@@ -5,7 +5,7 @@ import { discover } from '@/automation/managers';
 import { encodeRepository } from '@/automation/package-identity';
 import { repositoryName, repositoryReference } from '@/automation/repository-name';
 import { branchConflictBlocker, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
-import { changeSummary, setupBranch, setupTitle } from '@/automation/setup-changes';
+import { setupBranch, setupTitle } from '@/automation/setup-changes';
 import { followsProposal, sameEdits, savedSetup, setupEdits } from '@/automation/setup-maintenance';
 import type { DomainError } from '@/contract/errors';
 import { conflict, domainError, invalid, notFound, precondition } from '@/contract/errors';
@@ -68,7 +68,7 @@ export const repositoryEndpoints = {
 			const { service, actor } = context;
 			const { plan, head, snapshot, saved, previous, branchConflict, id, branch } = yield* setupReview(input, context);
 			const title = setupTitle(branch, plan.edits);
-			const body = `${changeSummary(branch, plan.edits, snapshot.repository.defaultBranch)}${setupBody(plan)}`;
+			const body = setupBody(plan, { branch, defaultBranch: snapshot.repository.defaultBranch });
 			if (input.sourceSha !== plan.sourceSha) {
 				return yield* conflict('stale-plan', `The default branch moved to ${snapshot.sha}. Preview again.`);
 			}

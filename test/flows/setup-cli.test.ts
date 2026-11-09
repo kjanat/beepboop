@@ -500,10 +500,24 @@ test('one adopt in a terminal shows the proposal, asks once and opens the setup 
 	);
 	expect(body).toContain(
 		`## Release plan\n\n### Stream \`lint\`\n\n${
-			lintSummary.slice(1).join('\n')
+			lintSummary.slice(1).join('\n').replaceAll(' @octo/lint', ' `@octo/lint`')
 		}\n- Start a release with \`beepboop release\` in a checkout or from the dashboard.`,
 	);
-	expect(body).toContain('`release-lint.yml`, created by this PR and started only by Beepboop');
+	expect(body).toContain('  - Publication: `release-lint.yml`, new in this PR\n');
+	expect(body).toContain(
+		'Only Beepboop dispatches `prepare-release.yml`, `release-lint.yml` and `publish-crates.yml`, which this PR creates.',
+	);
+	expect(body).toContain(
+		'### Held packages\n\n- `lint` (`crates/cli/Cargo.toml`) lacks README, description, license, a license file, repository. Beepboop holds its release until the package has them.\n',
+	);
+	expect(body).toContain('- `@octo/lint` (`bindings/js/package.json`) lacks README');
+	expect(body).not.toMatch(/(?:^|[\s(])@octo\//m);
+	const order = ['### Held packages', '### Choices', 'Release after merge', '## Release plan'].map(text =>
+		body.indexOf(text)
+	);
+	expect(order.every((index, position) => index > (order[position - 1] ?? -1))).toBe(true);
+	expect(body).not.toContain('### What changes');
+	expect(body).not.toContain('<details>');
 	expect(body).not.toContain('git tag');
 	expect(body).not.toMatch(/`lint(?:-core)?`: .*no release workflow publishes it/);
 });
