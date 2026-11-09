@@ -219,7 +219,19 @@ function draftSetup(
 			? proposal
 			: completeChoices(snapshot, inventory, yield* decodeRequest(setupChoicesSchema, input), raw, resolved);
 		const inferred = input === undefined || JSON.stringify(choices) === JSON.stringify(proposal);
-		const plan = yield* drafted(snapshot, inventory, choices, raw, workflows, baseline, resolved);
+		const drafts = yield* drafted(snapshot, inventory, choices, raw, workflows, baseline, resolved);
+		const requested = input === undefined ? normalized.success ? normalized.data : suggestion : undefined;
+		const added = choices.streams.flatMap(stream => {
+			const before =
+				(requested ?? (setupChoicesSchema.safeParse(input).data))?.streams.find(entry => entry.name === stream.name)
+					?.packages ?? stream.packages;
+			return stream.packages.filter(id => !before.includes(id)).map(id =>
+				`${stream.name}: adds ${
+					packageMarkdown(id)
+				}, which a selected package depends on and its registry does not have at this version.`
+			);
+		});
+		const plan = { ...drafts, notes: [...added, ...drafts.notes] };
 		return inferred ? { ...plan, adoption: proposalMarkdown(graph, snapshot, plan) } : plan;
 	});
 }
@@ -610,7 +622,7 @@ function completeChoices(
 	}));
 	const completed = {
 		...choices,
-		streams: choices.streams.map(stream => {
+		streams: withDependencies(inventory, choices).map(stream => {
 			const chosen = candidates.filter(pkg => stream.packages.includes(pkg.id));
 			const elsewhere = new Set([
 				...(stream.operations?.flatMap(entry => entry.publications) ?? []),
@@ -661,6 +673,32 @@ const approvalLabels = {
 	merge: 'releases when its version PR merges',
 	push: 'releases when a signed commit with passing checks reaches the default branch',
 } as const;
+function withDependencies(inventory: Inventory, choices: SetupChoices): SetupChoices['streams'] {
+	const unreleased = (pkg: Package) =>
+		publishable(pkg)
+		&& (pkg.publicationStatus === 'missing'
+			|| (pkg.publicationStatus === 'published' && pkg.published !== pkg.version));
+	const streamed = new Set(choices.streams.flatMap(stream => stream.packages));
+	return choices.streams.map(stream => {
+		const packages = [...stream.packages];
+		for (let index = 0; index < packages.length; index++) {
+			const pkg = inventory.packages.find(candidate => packageId(candidate) === packages[index]);
+			for (const name of pkg?.dependencies ?? []) {
+				const dependency = inventory.packages.find(other =>
+					other.manager === pkg?.manager && other.name === name && unreleased(other)
+				);
+				const id = dependency && packageId(dependency);
+				if (!id || streamed.has(id)) continue;
+				streamed.add(id);
+				packages.push(id);
+			}
+		}
+		const added = packages.filter(id => !stream.packages.includes(id));
+		return added.length
+			? { ...stream, packages, required: [...stream.required, ...added.filter(id => !stream.required.includes(id))] }
+			: stream;
+	});
+}
 type Operation = 'prepare' | 'promote';
 const operations: Operation[] = ['prepare', 'promote'];
 export function setupOptions(plan: SetupPlan): SetupOption[] {

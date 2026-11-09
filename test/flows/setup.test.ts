@@ -1292,6 +1292,7 @@ test('a merged binary workflow suggests its publication job for the promote role
 });
 
 test('a refreshed crate setup publishes every selected crate in order, with a token, tags and a GitHub release', async () => {
+	world.network.serve('crates.io', () => new Response(null, { status: 404 }));
 	const repository = world.github.create('octo/sql', {
 		'Cargo.toml':
 			'[workspace]\nmembers = ["crates/*", "vendor/parser"]\n\n[workspace.package]\nversion = "0.1.0"\n\n[workspace.dependencies]\nparser = { package = "sql-parser", path = "vendor/parser", version = "0.1.0" }\nsql = { path = "crates/sql", version = "0.1.0" }\n',
@@ -1387,4 +1388,30 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 			`\${{ steps.beepboop_publish.outputs['${entry.name}'] == 'succeeded' && 'succeeded' || 'failed' }}`
 		),
 	);
+	const without = structuredClone(choices);
+	const stream = without.streams[0];
+	if (!stream) throw new Error('stream expected');
+	stream.packages = ['pkg:cargo/sql', 'pkg:cargo/sql-cli'];
+	stream.required = ['pkg:cargo/sql', 'pkg:cargo/sql-cli'];
+	const partial = await Effect.runPromise(
+		parseSetupPlan(
+			(await api('/api/repositories/setup/preview', { repository: repository.name, choices: without })).body,
+		),
+	);
+	expect(partial.blockers).toEqual([]);
+	expect(partial.choices.streams[0]?.packages).toEqual([...stream.packages, 'pkg:cargo/sql-parser']);
+	expect(partial.notes).toContain(
+		'main: adds `sql-parser` on crates.io, which a selected package depends on and its registry does not have at this version.',
+	);
+	const partialScript = z.object({
+		jobs: z.object({
+			publish: z.object({ steps: z.array(z.object({ id: z.string().optional(), run: z.string().optional() })) }),
+		}),
+	}).parse(parse(partial.edits.find(edit => edit.path === '.github/workflows/release-sql.yml')?.after ?? ''))
+		.jobs.publish.steps.find(step => step.id === 'beepboop_publish')?.run ?? '';
+	expect(partialScript.split('\n').filter(line => line.startsWith('publish_crate '))).toEqual([
+		"publish_crate 'sql-parser'",
+		"publish_crate 'sql'",
+		"publish_crate 'sql-cli'",
+	]);
 });
