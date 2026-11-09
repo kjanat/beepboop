@@ -7,6 +7,7 @@ import { packageId } from '@/automation/package-identity';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
 import { documentRow } from '@/automation/schemas';
 import { previewSetup, releaseAfterMerge, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
+import { marked } from '@/automation/setup-body';
 import type { SetupChoices } from '@/automation/setup-types';
 import { decodeError, type Store } from '@/automation/store';
 import type { Edit, Snapshot } from '@/automation/types';
@@ -110,7 +111,9 @@ export function maintainSetup(
 				presetShas: resolved.presetShas,
 				prior: { url: pull.url, content: typeof saved.content === 'string' ? saved.content : undefined },
 			}, resolved.configuration);
-			const fingerprint = yield* fromPromise(() => sha256Hex(JSON.stringify({ plan, head: pull.head })));
+			const fingerprint = yield* fromPromise(() =>
+				sha256Hex(JSON.stringify({ plan, head: pull.head, marked: marked(pull.body) }))
+			);
 			if (!requested && saved.maintenanceFingerprint === fingerprint && saved.options !== undefined) return;
 			const applied = { choices: plan.choices, options: setupOptions(plan), inferred: plan.adoption !== undefined };
 			if (plan.blockers.length || !plan.edits.length) {

@@ -1502,10 +1502,10 @@ test('an unticked dependency in the setup PR body stays unticked through edits a
 
 test('a setup PR body from before the markers keeps the lines its owner added', async () => {
 	const { repository, api, pull } = await gadgetSetup();
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
 	const legacy = pull.body.replace('<!-- beepboop:setup:start -->\n', '').replace('\n<!-- beepboop:setup:end -->', '');
 	pull.edits = [{ editor: 'beepboop-test', body: legacy }];
 	pull.body = `Closes #26\n\n${legacy.replace('Change versioning', 'Owner note.\n\nChange versioning')}`;
-	world.github.push(repository, { 'README.md': '# widget\n\nMoved on.\n' }, 'Move the default branch');
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
 	expect(pull.body.startsWith('<!-- beepboop:setup:start -->\n')).toBe(true);
 	expect(pull.body.endsWith('\n<!-- beepboop:setup:end -->\n\nCloses #26\n\nOwner note.\n')).toBe(true);
