@@ -9,7 +9,7 @@ import { publishable } from '@/automation/package-publication';
 import { adoptionChoices, startCommand } from '@/automation/release-graph/adoption';
 import { inferReleaseGraph, type ReleaseGraph } from '@/automation/release-graph/graph';
 import { completeTaggedStreams } from '@/automation/setup-completion';
-import { refreshedCommands, suggestedCommands } from '@/automation/setup-defaults';
+import { crateScript, refreshedCommands, suggestedCommands } from '@/automation/setup-defaults';
 import { streamSummary } from '@/automation/setup-summary';
 import {
 	type SetupChoices,
@@ -637,7 +637,8 @@ function completeChoices(
 						: chosen.filter(pkg => !elsewhere.has(pkg.id) && !workflow.publicationSteps[pkg.id]),
 				};
 				const commands = refreshedCommands(operation, workflow.commands, scope, candidates, context);
-				const generated = commands !== '' && commands === suggestedCommands(operation, scope, context);
+				const generated = commands !== ''
+					&& (commands === suggestedCommands(operation, scope, context) || crateScript(commands));
 				const fresh = snapshot.files[`.github/workflows/${workflow.file}`] === undefined;
 				return {
 					...workflow,

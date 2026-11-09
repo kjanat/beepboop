@@ -4,7 +4,7 @@ import { parse, parseDocument } from 'yaml';
 import { z } from 'zod';
 import { mergeConfiguration } from '@/automation/configuration';
 import { pinned } from '@/automation/setup-actions';
-import { suggestedCommands } from '@/automation/setup-defaults';
+import { cratePublishCommands, ledgerCommand, suggestedCommands } from '@/automation/setup-defaults';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices } from '@/automation/setup-types';
 import { botId, ownerId } from '@root/test/support/github.ts';
@@ -361,7 +361,7 @@ test('a uv lockfile needs a preparation workflow that runs uv lock', async () =>
 	expect(suggestedCommands('prepare', { name: 'main', packages: [widgetPackage] }, plan)).toBe(
 		'npm install\nnpm run test --if-present\nuv lock',
 	);
-	expect(suggestedCommands('promote', { name: 'main', packages: [widgetPackage] }, plan)).toBe('npm publish');
+	expect(suggestedCommands('promote', { name: 'main', packages: [widgetPackage] }, plan)).toBe(ledgerCommand);
 });
 
 const binaryWorkflowSchema = z.object({
@@ -1307,17 +1307,8 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 	const api = bearer(world, await world.cliSession());
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
 	const packages = ['pkg:cargo/sql', 'pkg:cargo/sql-cli', 'pkg:cargo/sql-parser'];
-	const stale = suggestedCommands(
-		'promote',
-		{
-			name: 'main',
-			packages: [
-				{ id: 'pkg:cargo/sql', name: 'sql', manifest: 'crates/sql/Cargo.toml', manager: 'cargo' },
-				{ id: 'pkg:cargo/sql-cli', name: 'sql-cli', manifest: 'crates/sql-cli/Cargo.toml', manager: 'cargo' },
-			],
-		},
-		{ inventory: { packages: [] }, preparation: undefined },
-	).split('\n').filter(line => !line.includes('GITHUB_OUTPUT')).join('\n');
+	const stale = cratePublishCommands(['sql', 'sql-cli']).split('\n').filter(line => !line.includes('GITHUB_OUTPUT'))
+		.join('\n');
 	const choices: SetupChoices = {
 		streams: [{
 			name: 'main',
@@ -1415,6 +1406,37 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 		"publish_crate 'sql'",
 		"publish_crate 'sql-cli'",
 	]);
+});
+
+test('a saved crate script becomes beepboop publish once the selection adds an npm package', async () => {
+	const repository = world.github.create('octo/mixed', {
+		'Cargo.toml': '[package]\nname = "mixed-cli"\nversion = "1.0.0"\nedition = "2024"\n',
+		'js/package.json': '{"name":"mixed-js","version":"1.0.0"}',
+	});
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const promote = (packages: string[]) => ({
+		streams: [{
+			name: 'main',
+			packages,
+			required: packages,
+			versioning: 'workspace' as const,
+			promote: {
+				file: 'release-mixed.yml',
+				triggers: 'review' as const,
+				commands: cratePublishCommands(['mixed-cli']),
+				publicationSteps: {},
+			},
+		}],
+	});
+	const preview = async (choices: SetupChoices) =>
+		Effect.runPromise(
+			parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
+		);
+	const crates = await preview(promote(['pkg:cargo/mixed-cli']));
+	expect(crates.choices.streams[0]?.promote?.commands).toBe(cratePublishCommands(['mixed-cli']));
+	const mixed = await preview(promote(['pkg:cargo/mixed-cli', 'pkg:npm/mixed-js']));
+	expect(mixed.choices.streams[0]?.promote?.commands).toBe(ledgerCommand);
 });
 
 async function gadgetSetup() {

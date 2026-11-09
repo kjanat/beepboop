@@ -92,9 +92,12 @@ publish_crate() {
 export function cratePublishCommands(names: string[]): string {
 	return [publishCrate, ...names.map(name => `publish_crate ${quote(name)}`)].join('\n');
 }
+export const ledgerCommand = 'beepboop publish';
 type Context = Pick<SetupPlan, 'inventory' | 'preparation'>;
 export function suggestedCommands(role: 'prepare' | 'promote', selection: Selection, plan: Context): string {
-	const commands = ungenerated(selection).length ? '' : managerCommands(role, selection, plan);
+	if (ungenerated(selection).length) return '';
+	if (role === 'promote') return selection.packages.length ? ledgerCommand : '';
+	const commands = managerCommands(selection, plan);
 	return role === 'prepare' && commands && plan.preparation?.lockfiles.some(path => /(?:^|\/)uv\.lock$/.test(path))
 		? `${commands}\nuv lock`
 		: commands;
@@ -110,19 +113,16 @@ const generators: Record<
 	string,
 	{
 		covers(pkg: Selected): boolean;
-		commands(role: 'prepare' | 'promote', packages: Selected[], plan: Context): string;
+		commands(packages: Selected[], plan: Context): string;
 	}
 > = {
 	cargo: {
 		covers: () => true,
-		commands: (role, packages) =>
-			role === 'prepare'
-				? 'cargo check --workspace --all-targets\ncargo test --workspace'
-				: cratePublishCommands(packages.map(pkg => pkg.name)),
+		commands: () => 'cargo check --workspace --all-targets\ncargo test --workspace',
 	},
 	npm: {
 		covers: npmPackage,
-		commands: (role, packages, plan) => {
+		commands: (packages, plan) => {
 			const lockfiles = plan.preparation?.lockfiles ?? [];
 			const install = lockfiles.some(path => path.endsWith('bun.lock'))
 				? 'bun install'
@@ -133,7 +133,7 @@ const generators: Record<
 				: lockfiles.some(path => path.endsWith('package-lock.json'))
 				? 'npm install --package-lock-only\nnpm ci'
 				: 'npm install';
-			const command = role === 'promote' ? 'npm publish' : `${install}\nnpm run test --if-present`;
+			const command = `${install}\nnpm run test --if-present`;
 			return [
 				...new Set(packages.map(pkg => {
 					const dir = directory(pkg.manifest);
@@ -144,30 +144,28 @@ const generators: Record<
 	},
 	pypi: {
 		covers: pkg => /(?:^|\/)pyproject\.toml$/.test(pkg.manifest),
-		commands: (role, packages) =>
+		commands: packages =>
 			packages.map(pkg => {
 				const dir = directory(pkg.manifest);
-				const build = `uv build${dir ? ` --project ${quote(dir)}` : ''}`;
-				return role === 'prepare'
-					? `${build} --out-dir "$RUNNER_TEMP"/dist/${quote(pkg.name)}`
-					: `${build} --out-dir ${quote(`dist/${pkg.name}`)}\nuv publish --check-url https://pypi.org/simple/ ${
-						quote(`dist/${pkg.name}/*`)
-					}`;
+				return `uv build${dir ? ` --project ${quote(dir)}` : ''} --out-dir "$RUNNER_TEMP"/dist/${quote(pkg.name)}`;
 			}).join('\n'),
 	},
 };
 export function ungenerated(selection: Selection): Selected[] {
 	return selection.packages.filter(pkg => !generators[pkg.manager ?? '']?.covers(pkg));
 }
-function managerCommands(role: 'prepare' | 'promote', selection: Selection, plan: Context): string {
+function ordered(packages: Selected[], plan: Context): Selected[] {
 	const order = plan.inventory.publicationOrder ?? [];
 	const rank = (id: string) => order.includes(id) ? order.indexOf(id) : order.length;
+	return [...packages].sort((left, right) => rank(left.id) - rank(right.id));
+}
+function managerCommands(selection: Selection, plan: Context): string {
 	const groups = new Map<string, Selected[]>();
-	for (const pkg of [...selection.packages].sort((left, right) => rank(left.id) - rank(right.id))) {
+	for (const pkg of ordered(selection.packages, plan)) {
 		const manager = pkg.manager ?? '';
 		groups.set(manager, [...(groups.get(manager) ?? []), pkg]);
 	}
-	return [...groups].flatMap(([manager, packages]) => generators[manager]?.commands(role, packages, plan) ?? [])
+	return [...groups].flatMap(([manager, packages]) => generators[manager]?.commands(packages, plan) ?? [])
 		.join('\n');
 }
 export function crateOutcome(commands: string, name: string): boolean {
@@ -181,16 +179,21 @@ export function refreshedCommands(
 	plan: Context,
 ): string {
 	if (!commands) return commands;
+	if (crateScript(commands)) {
+		const crates = selection.packages.filter(pkg => pkg.manager === 'cargo');
+		return crates.length && crates.length === selection.packages.length
+			? cratePublishCommands(ordered(crates, plan).map(pkg => pkg.name))
+			: suggestedCommands(role, selection, plan) || commands;
+	}
 	const named = candidates.filter(pkg =>
 		[quote(pkg.name), quote(directory(pkg.manifest)), quote(`dist/${pkg.name}`)].some(token => commands.includes(token))
 	);
-	const generated = crateScript(commands)
-		|| [selection.packages, named].some(packages =>
-			packages.length > 0 && suggestedCommands(role, { name: selection.name, packages }, plan) === commands
-		);
+	const generated = [selection.packages, named].some(packages =>
+		packages.length > 0 && suggestedCommands(role, { name: selection.name, packages }, plan) === commands
+	);
 	return generated ? suggestedCommands(role, selection, plan) || commands : commands;
 }
-function crateScript(commands: string): boolean {
+export function crateScript(commands: string): boolean {
 	const end = commands.lastIndexOf('\n}\n');
 	return commands.startsWith('crate_status() {\n') && commands.includes('\npublish_crate() {\n') && end >= 0
 		&& commands.slice(end + 3).split('\n').every(line => /^publish_crate '[^']+'$/.test(line));

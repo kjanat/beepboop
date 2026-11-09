@@ -129,7 +129,9 @@ export function workflow(
 	);
 	hint(
 		commandBox,
-		'Write shell commands, one per line. GitHub Actions runs them in Bash after checking out the approved commit. Do not paste workflow YAML here.',
+		`Write shell commands, one per line. GitHub Actions runs them in Bash after checking out the approved commit.${
+			preparing ? '' : ' A lone beepboop publish line publishes Cargo, npm and PyPI packages through Beepboop.'
+		} Do not paste workflow YAML here.`,
 	);
 	const commandNotice = hint(commandBox, '');
 	controls.append(commandBox);

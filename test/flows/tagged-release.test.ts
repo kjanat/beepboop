@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,12 +7,13 @@ import { Effect } from 'effect';
 import { parse } from 'yaml';
 import { z } from 'zod';
 import { setupOptions } from '@/automation/setup';
-import { cratePublishCommands } from '@/automation/setup-defaults';
+import { ledgerCommand } from '@/automation/setup-defaults';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import { streamSummary } from '@/automation/setup-summary';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { commitAll, gitOutput, materialize, runAction, runRuntime } from '@root/test/support/actions.ts';
 import { botId, ownerId, type Repository } from '@root/test/support/github.ts';
+import { publishWith } from '@root/test/support/ledger.ts';
 import { bearer, text } from '@root/test/support/http.ts';
 import { passChecks } from '@root/test/support/repositories.ts';
 import { World } from '@root/test/support/world.ts';
@@ -138,8 +140,11 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 		const [, , , , name, version] = new URL(request.url).pathname.split('/');
 		if (!name) return new Response(null, { status: 404 });
 		if (!version) return Response.json({ crate: { max_version: '1.0.0' } });
-		return published.get(`${name}@${version}`) === 'crate'
-			? Response.json({ version: { crate: name, num: version, yanked: false, checksum: 'c'.repeat(64) } })
+		const crate = published.get(`${name}@${version}`);
+		return crate?.startsWith('crate')
+			? Response.json({
+				version: { crate: name, num: version, yanked: false, checksum: crate.slice('crate:'.length) || 'c'.repeat(64) },
+			})
 			: new Response(null, { status: 404 });
 	});
 	world.network.serve('proxy.golang.org', request => {
@@ -213,7 +218,7 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 		name: 'crates',
 		file: 'publish-crates.yml',
 		triggers: 'review',
-		commands: cratePublishCommands(['lint-core', 'lint']),
+		commands: ledgerCommand,
 		publicationSteps: {},
 		credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' },
 		needs: ['release'],
@@ -247,7 +252,7 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 			.parse(parse(plan.edits.find(edit => edit.path === `.github/workflows/${file}`)?.after ?? ''))
 			.jobs[job]?.steps.flatMap(step => step.id?.startsWith('beepboop_') ? [step.id] : []);
 	expect(stepIds('release-lint.yml', 'promote')).toEqual(['beepboop_token', 'beepboop_refs']);
-	expect(stepIds('publish-crates.yml', 'crates')).toEqual(['beepboop_credentials', 'beepboop_publish']);
+	expect(stepIds('publish-crates.yml', 'crates')).toEqual(['beepboop_publish']);
 	const source = (file: string) => plan.edits.find(edit => edit.path === `.github/workflows/${file}`)?.after ?? '';
 	expect(
 		['release-lint.yml', 'publish-crates.yml'].map(file =>
@@ -255,10 +260,10 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 		),
 	)
 		.toEqual(['Publish lint', 'Publish lint crates']);
-	expect(source('publish-crates.yml')).toContain('        run: |\n          crate_status() {\n');
 	expect(source('publish-crates.yml')).toContain(
-		"          publish_crate 'lint-core'\n          publish_crate 'lint'\n",
+		`        uses: kjanat/beepboop/actions/publish@v1\n        with:\n          execution-id: \${{ steps.beepboop.outputs.execution-id }}\n          credentials: '{"CARGO_REGISTRY_TOKEN":"crates-io"}'\n`,
 	);
+	expect(source('publish-crates.yml')).not.toContain('actions/report');
 	const applied = await api('/api/repositories/setup/apply', {
 		repository: repository.name,
 		choices: plan.choices,
@@ -415,15 +420,30 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 			STREAM: stream.name,
 			OPERATION: 'crates',
 		});
-		published.set('lint-core@1.1.0', 'crate');
-		published.set('lint@1.1.0', 'crate');
-		await runAction(world, 'report', crates.identity, {
-			EXECUTION_ID: crateExecution.id,
-			PUBLICATIONS: JSON.stringify([
-				{ id: 'pkg:cargo/lint-core', manager: 'cargo', name: 'lint-core', ...outcome('succeeded') },
-				{ id: 'pkg:cargo/lint', manager: 'cargo', name: 'lint', ...outcome('succeeded') },
-			]),
+		const crateNames: Record<string, string> = {
+			'crates/core/Cargo.toml': 'lint-core',
+			'crates/cli/Cargo.toml': 'lint',
+		};
+		const order: string[] = [];
+		const { result } = await publishWith(world, crates.identity, crateExecution.id, {
+			scratch,
+			run: argv =>
+				Effect.sync(() => {
+					const name = crateNames[argv[argv.indexOf('--manifest-path') + 1] ?? ''] ?? '';
+					const archive = join(scratch, 'package', `${name}-1.1.0.crate`);
+					if (argv[1] === 'metadata') return { code: 0, output: JSON.stringify({ target_directory: scratch }) };
+					if (argv[1] === 'package') {
+						mkdirSync(join(scratch, 'package'), { recursive: true });
+						writeFileSync(archive, `${name} 1.1.0\n`);
+						return { code: 0, output: '' };
+					}
+					order.push(name);
+					published.set(`${name}@1.1.0`, `crate:${createHash('sha256').update(readFileSync(archive)).digest('hex')}`);
+					return { code: 0, output: '' };
+				}),
 		});
+		if (result._tag === 'Failure') throw new Error(result.failure.message);
+		expect(order).toEqual(['lint-core', 'lint']);
 		crates.run.status = 'completed';
 		crates.run.conclusion = 'success';
 		await completed(repository, crates.run, 'workflow_dispatch');

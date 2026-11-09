@@ -16,8 +16,8 @@ import {
 	requireAll,
 	type Runner,
 } from '@root/actions/runtime/publish.ts';
-import { call } from '@root/actions/runtime/session.ts';
 import { runAction } from '@root/test/support/actions.ts';
+import { type Publishing, publishWith, withIdentity, workflowCall } from '@root/test/support/ledger.ts';
 import { botId, ownerId, type Repository } from '@root/test/support/github.ts';
 import { bearer, type Reply } from '@root/test/support/http.ts';
 import { passChecks } from '@root/test/support/repositories.ts';
@@ -204,43 +204,15 @@ function cargo(state: Cargo) {
 		});
 }
 
-const tokenHost = 'pipelines.actions.githubusercontent.com';
-interface Publishing {
-	run: Runner['run'];
-	credentials?: Record<string, string>;
-	provenance?: boolean;
-}
-async function publishing(identity: RunIdentity, executionId: string, options: Cargo | Publishing) {
-	world.network.serve(tokenHost, async () => Response.json({ value: await world.runToken(identity) }));
-	const saved = { ...process.env };
-	Object.assign(process.env, {
-		ACTIONS_ID_TOKEN_REQUEST_URL: `https://${tokenHost}/token?api-version=2.0`,
-		ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'request-token',
-		RUNNER_TEMP: target,
-	});
-	const logs: string[] = [];
-	const runner: Runner = {
+function publishing(identity: RunIdentity, executionId: string, options: Cargo | Omit<Publishing, 'scratch'>) {
+	return publishWith(
+		world,
+		identity,
 		executionId,
-		credentials: 'run' in options
-			? (options.credentials ?? {})
-			: { CARGO_REGISTRY_TOKEN: 'crates-io' },
-		provenance: 'run' in options ? options.provenance === true : false,
-		call: (path, body) => call(new URL(world.env.APPLICATION_ORIGIN), path, body),
-		run: 'run' in options ? options.run : cargo(options),
-		sleep: milliseconds => Effect.sync(() => world.advance(milliseconds)),
-		now: () => Date.now(),
-		log: line => logs.push(line),
-	};
-	const log = console.log;
-	console.log = () => undefined;
-	try {
-		const result = await Effect.runPromise(Effect.result(publishPackages(runner)));
-		return { result, logs, runner };
-	} finally {
-		console.log = log;
-		for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
-		Object.assign(process.env, saved);
-	}
+		'run' in options
+			? { ...options, scratch: target }
+			: { run: cargo(options), scratch: target, credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' } },
+	);
 }
 
 async function elevate() {
@@ -512,20 +484,10 @@ test('a stream waits in the ledger for the stream of the same commit that publis
 		'publish-main.yml',
 	]);
 	const main = started(begun, 'main'), dependent = started(begun, 'cli');
-	world.network.serve(tokenHost, async () => Response.json({ value: await world.runToken(dependent.identity) }));
-	Object.assign(process.env, {
-		ACTIONS_ID_TOKEN_REQUEST_URL: `https://${tokenHost}/token?api-version=2.0`,
-		ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'request-token',
-	});
-	const log = console.log;
-	console.log = () => undefined;
-	const waiting = await Effect.runPromise(
-		call(new URL(world.env.APPLICATION_ORIGIN), '/api/workflow/publish/next', { executionId: dependent.execution.id }),
-	).finally(() => {
-		console.log = log;
-	});
-	delete process.env.ACTIONS_ID_TOKEN_REQUEST_URL;
-	delete process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+	const waiting = await withIdentity(world, dependent.identity, () =>
+		Effect.runPromise(
+			workflowCall(world, '/api/workflow/publish/next', { executionId: dependent.execution.id }),
+		));
 	expect(waiting).toEqual({
 		kind: 'wait',
 		until: Date.now() + 30_000,
@@ -779,27 +741,13 @@ test('a crates.io slot hours away ends the run before publishing', async () => {
 test('a run resumes a crate it already claimed, and reports need a claim', async () => {
 	const { begun } = await released({ main: [core] });
 	const { execution, identity } = started(begun, 'main');
-	world.network.serve(tokenHost, async () => Response.json({ value: await world.runToken(identity) }));
-	Object.assign(process.env, {
-		ACTIONS_ID_TOKEN_REQUEST_URL: `https://${tokenHost}/token?api-version=2.0`,
-		ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'request-token',
+	const [unclaimed, claimed] = await withIdentity(world, identity, async () => {
+		const purl = 'pkg:cargo/lint-core@1.1.0';
+		const report = { executionId: execution.id, purl, outcome: 'published' };
+		const first = await Effect.runPromise(Effect.result(workflowCall(world, '/api/workflow/publish/report', report)));
+		const claim = { executionId: execution.id, purl, digest: checksum('lint-core', '1.1.0') };
+		return [first, await Effect.runPromise(workflowCall(world, '/api/workflow/publish/claim', claim))] as const;
 	});
-	const origin = new URL(world.env.APPLICATION_ORIGIN);
-	const log = console.log;
-	console.log = () => undefined;
-	const unclaimed = await Effect.runPromise(Effect.result(call(origin, '/api/workflow/publish/report', {
-		executionId: execution.id,
-		purl: 'pkg:cargo/lint-core@1.1.0',
-		outcome: 'published',
-	})));
-	const claimed = await Effect.runPromise(call(origin, '/api/workflow/publish/claim', {
-		executionId: execution.id,
-		purl: 'pkg:cargo/lint-core@1.1.0',
-		digest: checksum('lint-core', '1.1.0'),
-	}));
-	console.log = log;
-	delete process.env.ACTIONS_ID_TOKEN_REQUEST_URL;
-	delete process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
 	expect(unclaimed._tag === 'Failure' && unclaimed.failure.message).toContain('This run does not hold lint-core 1.1.0');
 	expect(claimed).toMatchObject({ kind: 'publish', package: { purl: 'pkg:cargo/lint-core@1.1.0' } });
 
@@ -860,33 +808,22 @@ esac
 `,
 	);
 	chmodSync(join(bin, 'cargo'), 0o755);
-	world.network.serve(tokenHost, async () => Response.json({ value: await world.runToken(identity) }));
-	const saved = { ...process.env };
-	Object.assign(process.env, {
+	const write = process.stdout.write, error = process.stderr.write;
+	process.stdout.write = () => true;
+	process.stderr.write = () => true;
+	const result = await withIdentity(world, identity, () => Effect.runPromise(Effect.result(main)), {
 		PATH: `${bin}:${process.env.PATH}`,
 		TARGET: target,
 		RUNNER_TEMP: target,
 		EXECUTION_ID: execution.id,
 		SERVICE_ORIGIN: world.env.APPLICATION_ORIGIN,
-		ACTIONS_ID_TOKEN_REQUEST_URL: `https://${tokenHost}/token?api-version=2.0`,
-		ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'request-token',
-	});
-	const log = console.log, write = process.stdout.write, error = process.stderr.write;
-	console.log = () => undefined;
-	process.stdout.write = () => true;
-	process.stderr.write = () => true;
-	try {
-		const result = await Effect.runPromise(Effect.result(main));
-		expect(result._tag === 'Failure' && result.failure.message).toBe(
-			'1 required publication did not publish: pkg:cargo/lint-core@1.1.0',
-		);
-	} finally {
-		console.log = log;
+	}).finally(() => {
 		process.stdout.write = write;
 		process.stderr.write = error;
-		for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
-		Object.assign(process.env, saved);
-	}
+	});
+	expect(result._tag === 'Failure' && result.failure.message).toBe(
+		'1 required publication did not publish: pkg:cargo/lint-core@1.1.0',
+	);
 	const [record] = (await ledgerOf(repository, execution.id)).records;
 	expect([record?.digest, record?.status]).toEqual([
 		checksum('lint-core', '1.1.0'),

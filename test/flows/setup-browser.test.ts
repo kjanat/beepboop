@@ -142,7 +142,10 @@ test('new publishing workflows get editable filenames, jobs and triggers automat
 	expect(control(publishing, 'Which job publishes these packages?', window.HTMLSelectElement).disabled).toBe(true);
 	expect(control(publishing, 'Who starts this workflow?', window.HTMLSelectElement).disabled).toBe(true);
 	expect(control(publishing, 'Shell commands that publish the selected packages', window.HTMLTextAreaElement).value)
-		.toBe('npm publish');
+		.toBe('beepboop publish');
+	expect(publishing.textContent).toContain(
+		'A lone beepboop publish line publishes Cargo, npm and PyPI packages through Beepboop.',
+	);
 	expect(publishing.textContent).toContain('Do not paste workflow YAML');
 	filename.value = 'release-my-way.yml';
 	filename.dispatchEvent(new window.Event('input', { bubbles: true }));
@@ -284,7 +287,7 @@ test('Cargo setup creates one workflow with preparation and publishing jobs', as
 		?? '';
 	expect(workflow).toContain("inputs.beepboop_operation == 'prepare'");
 	expect(workflow).toContain("inputs.beepboop_operation == 'publish'");
-	expect(workflow).toContain("publish_crate 'my-crate'");
+	expect(workflow).toContain('uses: kjanat/beepboop/actions/publish@v1');
 	const binding = z.object({ file: z.string(), inputs: z.object({ beepboop_operation: z.string() }) });
 	const configuration = z.object({
 		streams: z.object({
@@ -362,7 +365,7 @@ test('generated npm targets require explicit commands, including alongside ordin
 	expect(commands.required).toBe(true);
 	for (const target of targets) toggle(target, false);
 	toggle(ordinary, true);
-	expect(commands.value).toBe("(cd 'packages/ordinary' &&\nnpm publish\n)");
+	expect(commands.value).toBe('beepboop publish');
 	for (const target of targets) toggle(target, true);
 	expect(commands.value).toBe('');
 

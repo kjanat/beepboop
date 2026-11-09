@@ -2,7 +2,7 @@ import { gateJobs, workflowJobs } from '@/automation/job-gate';
 import { packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import type { ReleaseGraph } from '@/automation/release-graph/graph';
-import { cratePublishCommands } from '@/automation/setup-defaults';
+import { ledgerCommand } from '@/automation/setup-defaults';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Inventory, Package, Snapshot } from '@/automation/types';
 import { isLockfile } from '@/contract/catalog';
@@ -127,7 +127,7 @@ export function completeTaggedStreams(
 	if (!starter) { for (const id of moduleIds) depend(id, crates.map(packageId)); }
 	const publish = {
 		triggers: 'review' as const,
-		commands: cratePublishCommands(crates.map(pkg => pkg.name)),
+		commands: ledgerCommand,
 		publicationSteps: {},
 		credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' },
 	};

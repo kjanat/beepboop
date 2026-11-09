@@ -14,11 +14,12 @@ import {
 	refSteps,
 	releaseSteps,
 } from '@/automation/setup-binaries';
-import { crateOutcome } from '@/automation/setup-defaults';
+import { crateOutcome, ledgerCommand } from '@/automation/setup-defaults';
 import type { SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
 import type { Package, Snapshot } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
+import { ledgerManagers } from '@/contract/ledger';
 import { toDomainError } from '@/failure';
 
 export function actionRole(value: unknown): string | undefined {
@@ -454,16 +455,31 @@ function integrate(
 			}
 			steps.splice(steps.findIndex(step => actionRole(step.uses) === 'report'), 0, ...releaseSteps(id, action));
 		}
-	} else if (!steps.some(step => actionRole(step.uses) === 'report')) {
+	} else if (!steps.some(step => ['report', 'publish'].includes(actionRole(step.uses) ?? ''))) {
 		if (!original && !choice.commands.trim() && !binaries && !choice.tagPrefix) fail('supply publication commands');
 		if (binaries) steps.push(...releaseSteps(id, action));
+		const ledger = choice.commands.trim() === ledgerCommand;
 		if (choice.commands.trim()) {
 			if (steps.some(step => step.id === 'beepboop_publish')) fail('step ID beepboop_publish is already used');
-			steps.push(...commandSteps({ id: 'beepboop_publish', name: 'Publish selected packages', run: choice.commands }));
+			steps.push(
+				...(ledger
+					? [...(mise ? [{ uses: pinned('mise') }] : []), {
+						id: 'beepboop_publish',
+						name: 'Publish selected packages',
+						uses: action('publish'),
+						with: {
+							'execution-id': `\${{ steps.${id}.outputs.execution-id }}`,
+							...(aliases.length ? { credentials: JSON.stringify(credentials) } : {}),
+						},
+					}]
+					: commandSteps({ id: 'beepboop_publish', name: 'Publish selected packages', run: choice.commands })),
+			);
 		}
 		if (choice.tagPrefix && !binaries) steps.push(...refSteps(id, action));
 		const tagged = (pkg: Package) => pkg.manager === 'go' && (binaries !== undefined || choice.tagPrefix !== undefined);
-		const publications = packages.map(pkg => {
+		const recorded = (pkg: Package) =>
+			ledger && !choice.publicationSteps[packageId(pkg)] && ledgerManagers.some(manager => manager === pkg.manager);
+		const publications = packages.filter(pkg => !recorded(pkg)).map(pkg => {
 			const step = choice.publicationSteps[packageId(pkg)]
 				?? (tagged(pkg) ? 'beepboop_refs' : choice.commands.trim() ? 'beepboop_publish' : '');
 			if (
@@ -483,14 +499,16 @@ function integrate(
 					: `\u0024{{ steps.${step}.outcome == 'success' && 'succeeded' || 'failed' }}`,
 			};
 		});
-		steps.push({
-			uses: action('report'),
-			if: `\u0024{{ !cancelled() && steps.${id}.outcome == 'success' }}`,
-			with: {
-				'execution-id': `\u0024{{ steps.${id}.outputs.execution-id }}`,
-				publications: `${JSON.stringify(publications, null, 2)}\n`,
-			},
-		});
+		if (!ledger || publications.length) {
+			steps.push({
+				uses: action('report'),
+				if: `\u0024{{ !cancelled() && steps.${id}.outcome == 'success' }}`,
+				with: {
+					'execution-id': `\u0024{{ steps.${id}.outputs.execution-id }}`,
+					publications: `${JSON.stringify(publications, null, 2)}\n`,
+				},
+			});
+		}
 	}
 	if (
 		operation === 'promote' && choice.tagPrefix && !binaries
@@ -509,7 +527,9 @@ function integrate(
 			with: { 'execution-id': `\u0024{{ steps.${id}.outputs.execution-id }}` },
 		});
 	}
-	if (aliases.length && !steps.some(step => step.id === 'beepboop_credentials')) {
+	if (
+		aliases.length && !steps.some(step => step.id === 'beepboop_credentials' || actionRole(step.uses) === 'publish')
+	) {
 		fail('credentials need setup commands to receive them, or a beepboop_credentials step in the job');
 	}
 	const report = steps.find(step => actionRole(step.uses) === 'report');

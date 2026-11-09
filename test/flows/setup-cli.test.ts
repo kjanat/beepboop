@@ -79,7 +79,7 @@ test('adopt enrolls a repository, reviews generated files and only opens a PR af
 	expect(repository.pulls).toHaveLength(1);
 	expect(world.github.head(repository)).toBe(original);
 	expect(world.github.file(repository, '.github/workflows/release-widget.yml', 'automation/onboarding')).toContain(
-		'run: npm publish',
+		'uses: kjanat/beepboop/actions/publish@v1',
 	);
 	expect(accepted.stdout.join('')).toContain('/pull/1');
 	expect(world.github.resolve(repository, 'automation/onboarding').message).toContain(
@@ -103,7 +103,8 @@ test('Cargo adoption generates one workflow and advanced renaming keeps the shar
 	expect(result.exitCode).toBe(0);
 	expect(result.stdout.join('')).toContain('Cargo.lock must be updated');
 	const source = world.github.file(repository, '.github/workflows/my-release.yml', 'automation/onboarding') ?? '';
-	expect(source).toContain("publish_crate 'my-crate'");
+	expect(source).toContain('uses: kjanat/beepboop/actions/publish@v1');
+	expect(source).toContain(`credentials: '{"CARGO_REGISTRY_TOKEN":"crates-io"}'`);
 	expect(source).toContain("inputs.beepboop_operation == 'prepare'");
 	expect(source).toContain("inputs.beepboop_operation == 'publish'");
 	expect(world.github.file(repository, '.github/workflows/release-my-crate.yml', 'automation/onboarding'))
@@ -151,6 +152,7 @@ jobs:
 					z.object({
 						id: z.string().optional(),
 						run: z.string().optional(),
+						uses: z.string().optional(),
 						with: z.object({ publications: z.string().optional() }).passthrough().optional(),
 					}).passthrough(),
 				),
@@ -158,12 +160,13 @@ jobs:
 		}),
 	}).parse(parse(world.github.file(repository, '.github/workflows/ship.yml', 'automation/onboarding') ?? ''));
 	const steps = workflow.jobs.ship.steps;
-	expect(steps.find(step => step.id === 'beepboop_publish')?.run).toBe("(cd 'packages/b' &&\nnpm publish\n)\n");
+	expect(steps.find(step => step.id === 'beepboop_publish')?.uses).toBe('kjanat/beepboop/actions/publish@v1');
 	const publications = z.array(z.object({ name: z.string(), outcome: z.string() })).parse(
 		JSON.parse(steps.find(step => step.with?.publications)?.with?.publications ?? '[]'),
 	);
-	expect(publications.find(pkg => pkg.name === 'package-a')?.outcome).toContain('steps.publish_a.outcome');
-	expect(publications.find(pkg => pkg.name === 'package-b')?.outcome).toContain('steps.beepboop_publish.outcome');
+	expect(publications.map(pkg => [pkg.name, pkg.outcome])).toEqual([
+		['package-a', "${{ steps.publish_a.outcome == 'success' && 'succeeded' || 'failed' }}"],
+	]);
 });
 
 for (const mixed of ['pypi', 'npm'] as const) {
@@ -179,18 +182,24 @@ for (const mixed of ['pypi', 'npm'] as const) {
 		expect(result.exitCode).toBe(0);
 		const workflow = z.object({
 			jobs: z.object({
-				publish: z.object({ steps: z.array(z.object({ id: z.string().optional(), run: z.string().optional() })) }),
+				publish: z.object({
+					steps: z.array(z.looseObject({ id: z.string().optional(), uses: z.string().optional() })),
+				}),
 			}),
 		}).parse(
 			parse(world.github.file(repository, '.github/workflows/release-mixed.yml', 'automation/onboarding') ?? ''),
 		);
-		const script = workflow.jobs.publish.steps.find(step => step.id === 'beepboop_publish')?.run ?? '';
-		expect(script).toContain("publish_crate 'mixed-cli'\n");
-		expect(script).toEndWith(
-			mixed === 'pypi'
-				? "uv build --project 'bench' --out-dir 'dist/mixed-bench'\nuv publish --check-url https://pypi.org/simple/ 'dist/mixed-bench/*'\n"
-				: "(cd 'js' &&\nnpm publish\n)\n",
-		);
+		const steps = workflow.jobs.publish.steps;
+		expect(steps.find(step => step.id === 'beepboop_publish')).toEqual({
+			id: 'beepboop_publish',
+			name: 'Publish selected packages',
+			uses: 'kjanat/beepboop/actions/publish@v1',
+			with: {
+				'execution-id': '${{ steps.beepboop.outputs.execution-id }}',
+				credentials: '{"CARGO_REGISTRY_TOKEN":"crates-io"}',
+			},
+		});
+		expect(steps.map(step => step.uses).filter(uses => uses?.includes('actions/report'))).toEqual([]);
 	});
 }
 
@@ -602,8 +611,17 @@ test('saved Cargo commands are kept for the same packages and regenerated after 
 	);
 	expect(changed.exitCode).toBe(0);
 	const source = world.github.file(repository, '.github/workflows/release.yml', 'automation/onboarding') ?? '';
-	expect(source).toContain("publish_crate 'crate-b'");
+	expect(source).toContain('uses: kjanat/beepboop/actions/publish@v1');
 	expect(source).not.toContain("'crate-a'");
+	const configured = z.object({
+		streams: z.object({
+			main: z.object({ promote: z.object({ workflow: z.object({ publications: z.array(z.string()) }) }) }),
+		}),
+	}).parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'));
+	expect(configured.streams.main.promote.workflow.publications).toEqual([
+		'pkg:cargo/crate-b',
+		'github-release:octo/crates',
+	]);
 });
 
 test('changing publishing-step mappings regenerates commands for the newly unmapped packages', async () => {
@@ -633,8 +651,10 @@ test('changing publishing-step mappings regenerates commands for the newly unmap
 	);
 	expect(changed.exitCode).toBe(0);
 	const source = world.github.file(repository, '.github/workflows/ship.yml', 'automation/onboarding') ?? '';
-	expect(source).toContain("cd 'packages/a'");
+	expect(source).toContain('uses: kjanat/beepboop/actions/publish@v1');
 	expect(source).not.toContain('cd packages/b');
+	expect(source).toContain('"name": "package-b"');
+	expect(source).not.toContain('"name": "package-a"');
 });
 
 test('automatic triggers default to review and retain an explicit saved handover', async () => {

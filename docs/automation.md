@@ -40,9 +40,12 @@ When the repository has a `mise.toml`, `.mise.toml` or `.config/mise.toml`,
 setup adds a `jdx/mise-action` step before the step that runs the commands. A
 job that already uses `jdx/mise-action` keeps its own step.
 
-Command boxes take Bash shell commands. Beepboop suggests Cargo and npm
-commands, and you can edit them. For an existing publishing job, you can select
-its publishing steps instead of adding commands. Trigger replacement choices
+Command boxes take Bash shell commands. For Cargo, npm and PyPI packages,
+Beepboop suggests preparation commands, and `beepboop publish` as the
+publication command. `beepboop publish` becomes an `actions/publish` step, as
+[Publish through Beepboop](#publish-through-beepboop) describes. You can edit
+every suggestion. For a publishing job in the repository's workflows, you can
+map each package to one of its steps. Trigger replacement choices
 appear only for existing workflows with automatic triggers.
 [Adopt from the command line](#adopt-from-the-command-line) shows the same
 choices as a JSON file.
@@ -165,7 +168,7 @@ that file with a single `promote` job:
       },
       "promote": {
         "file": "publish-crates.yml",
-        "commands": "cargo publish --package 'example-core'\ncargo publish --package 'example'",
+        "commands": "beepboop publish",
         "credentials": { "CARGO_REGISTRY_TOKEN": "crates-io" },
         "tagPrefix": "v"
       }
@@ -182,15 +185,16 @@ that file with a single `promote` job:
   packages.
 - `promote.file` names a new file. Setup creates it with
   `workflow_dispatch` inputs, `id-token: write`, the `begin` step and both
-  checkouts. A `beepboop_publish` step runs `commands`, and a `report` step
+  checkouts. For `beepboop publish`, the `beepboop_publish` step runs
+  `actions/publish`, which publishes every selected package and reports each
+  outcome. Other `commands` run as Bash in that step, and a `report` step
   submits the results.
-- `commands` is Bash for that one step. For a selection of only Cargo
-  packages, setup suggests one `cargo publish --package` line per crate in
-  publication order.
+- `commands` is Bash for that one step, or `beepboop publish`. Setup suggests
+  `beepboop publish` for a selection of only Cargo, npm and PyPI packages.
 - `publicationSteps` maps a PURL to the `id` of the step that publishes it, for
-  example `{"pkg:cargo/example-core": "publish_core"}`. In a new file, every
-  package reports the outcome of `beepboop_publish`, and the map can stay empty.
-  Use it for an existing dispatch-only job with its own `run` steps.
+  example `{"pkg:cargo/example-core": "publish_core"}`. In a new file the map
+  can stay empty. Use it for a dispatch-only job that has its own `run` steps.
+  The `report` step submits the outcome of each mapped step.
 - `credentials` delivers a stored token to `beepboop_publish`. See
   [Publish a new crate for the first time](#publish-a-new-crate-for-the-first-time).
 - `tagPrefix` adds `actions/token` and `actions/publish-refs` steps after
@@ -198,16 +202,16 @@ that file with a single `promote` job:
   That push starts `release.yml`, and Beepboop observes the run.
 
 Setup never writes `"each": "package"`. A promotion from `beepboop release`
-dispatches `publish-crates.yml` once, and its commands publish every crate.
-Beepboop paces only per-package runs against the crates.io budget. A single
-run that publishes more than five new crates can hit the crates.io burst limit.
+dispatches `publish-crates.yml` once, and `actions/publish` publishes every
+crate in that run. Each crate claims a slot from the crates.io budget. Bash
+`commands` claim no slots. A Bash run that publishes more than five new crates
+can hit the crates.io burst limit.
 `each` applies only to operations of a release set, which
 `beepboop releases plan-set`, `prepare-set` and `start` run. Use it for an
-`independent` stream whose crates release separately, or for many new crates
-that need crates.io pacing. Each run then publishes one crate after the crates
-it depends on. For that case, add `"each": "package"` to the binding in
-`.github/beepboop.json` by hand and add the `package` input from
-[Paced publishing](#paced-publishing).
+`independent` stream whose crates release separately. Each run then publishes
+one crate after the crates it depends on. For that case, add
+`"each": "package"` to the binding in `.github/beepboop.json` by hand and add
+the `package` input from [Paced publishing](#paced-publishing).
 
 ## Configure release streams
 
@@ -352,7 +356,7 @@ the same observed run, stream and operation attach to the same execution.
 ## Publish through Beepboop
 
 `actions/publish` publishes an execution's Cargo, PyPI and npm packages and
-records each one in Beepboop's publication ledger. Call it after `begin` and the
+tracks each one in Beepboop's publication ledger. Call it after `begin` and the
 checkout of `context.sourceSha`:
 
 ```yaml
@@ -365,9 +369,8 @@ checkout of `context.sourceSha`:
 Beepboop plans the binding's `publications`, or the stream's `packages` when
 the binding lists none. It hands out each package after the packages it depends
 on in the repository have published, also when another stream releases them
-from the same commit. A promotion whose workflow calls `actions/publish` does
-not wait for the promotions of those streams. Its packages wait in the ledger
-instead.
+from the same commit. A promotion whose workflow calls `actions/publish` starts
+right away, and its packages wait for those streams in the ledger.
 
 For each package the action:
 
@@ -384,8 +387,8 @@ repository. The channel is the stream's `channels.stable`, or
 
 Beepboop checks the registry before each claim and after each report. It
 compares the crates.io checksum, the PyPI sha256 or the npm integrity with the
-claimed digest. A registry error never counts as proof that a version is
-missing.
+claimed digest. Only a 404 response proves that a version is missing. Beepboop
+treats any other registry error as unknown and asks again.
 
 | State              | Meaning                                                                         |
 | ------------------ | ------------------------------------------------------------------------------- |
@@ -405,12 +408,12 @@ Without a credential, uv and npm use trusted publishing.
 Claims for crates draw from the crates.io budget in
 [Paced publishing](#paced-publishing). A 429 response moves that budget past its
 `Retry-After` time, and the action waits for it. A wait longer than 30 minutes
-ends the run. A rate-limited package then publishes in the run that Beepboop
-dispatches after the `Retry-After` time. After five rate limits in one run, the
+ends the run. Beepboop dispatches a new run after the `Retry-After` time, and
+that run publishes the rate-limited package. After five rate limits in one run, the
 package fails for that run.
 
 The action exits nonzero when a required package did not publish, after every
-package has its outcome. Beepboop records each outcome on the execution, so the
+package has its outcome. Beepboop stores each outcome on the execution. The
 workflow needs no `actions/report` step for these packages.
 
 ## Prepare and promote
@@ -503,24 +506,26 @@ any tool that the runner lacks.
    then opens the release PR.
 6. Review and merge the release PR.
 7. After the merge, Beepboop creates a promotion when the manifests carry an
-   unreleased version. Setup writes `"approval": "required"`. Approve the
-   promotion in the dashboard, or run
+   unreleased version. Setup writes `"approval": "push"` unless the choices set
+   another approval. Beepboop then approves the promotion itself once the commit
+   has a verified signature and passing checks. With `"approval": "required"`,
+   approve the promotion in the dashboard, or run
    `beepboop runs approve <execution-id> --sourceSha <merge-commit-sha>`.
    `beepboop runs list` prints the execution ID.
 8. Approval requires a verified commit signature, passing checks and a branch
    head that still points at that commit. `--force` approves despite a failed
    signature or check.
 9. Beepboop dispatches the promote workflow on the default branch, and the job
-   checks out the merge commit. Its `beepboop_publish` step publishes the
-   packages. `actions/token` then issues
-   an App token, and `actions/publish-refs` pushes the version tag. When the
-   Worker has the `SIGNER` binding, Beepboop signs that tag. The `report` step
-   submits the results, and Beepboop completes the release after it verifies
-   them.
-10. Setup adds `actions/publish-release` only to a promote choice with
-    `binaries`. That choice uploads the assets to the draft release, pushes the
-    tag and then publishes the GitHub release. See
-    [Binary builds](#binary-builds).
+   checks out the merge commit. Its `beepboop_publish` step runs
+   `actions/publish`, which publishes the packages and reports each outcome.
+   `actions/token` then issues an App token, and `actions/publish-refs` pushes
+   the version tag. When the Worker has the `SIGNER` binding, Beepboop signs
+   that tag. Beepboop completes the release after the run, once it has verified
+   every required publication.
+10. In a new promote workflow with a `tagPrefix`, setup adds
+    `actions/publish-release` after `actions/publish-refs`. It publishes the
+    GitHub release for the tag. A promote choice with `binaries` also uploads
+    the assets to the draft release first. See [Binary builds](#binary-builds).
 
 ## Publication results
 
@@ -678,11 +683,13 @@ with the `publish-new` and `publish-update` scopes, then follow these steps:
 1. Store the token with
    `printf %s "$TOKEN" | beepboop secrets set crates-io`.
 2. Add `"credentials": { "CARGO_REGISTRY_TOKEN": "crates-io" }` to the
-   `promote` workflow choice. Setup adds `crates-io` to the stream's
-   `credentials` list. It inserts a `beepboop_credentials` step that runs
-   `actions/credentials` before `beepboop_publish`. It sets
-   `CARGO_REGISTRY_TOKEN` on `beepboop_publish` from that step's `values`
-   output. The preview notes print the grant command.
+   `promote` workflow choice. Setup adds this mapping for generated crate
+   publishing itself. It adds `crates-io` to the stream's `credentials` list.
+   With `beepboop publish`, setup passes the mapping to `actions/publish` as
+   its `credentials` input. With Bash `commands`, setup inserts a
+   `beepboop_credentials` step that runs `actions/credentials` before
+   `beepboop_publish`, and sets `CARGO_REGISTRY_TOKEN` on `beepboop_publish`
+   from that step's `values` output. The preview notes print the grant command.
 3. Merge the setup PR. A runtime grant requires the alias in the merged
    `credentials` list.
 4. Grant the promote workflow access:
@@ -695,7 +702,8 @@ with the `publish-new` and `publish-update` scopes, then follow these steps:
 configured stream. `--delivery` defaults to `runtime`. A runtime grant covers
 the operation's workflow file and ref, and the job's GitHub environment. Pass
 `--environment <name>` when the publishing job sets `environment:`.
-`actions/credentials` then fetches the value during the run.
+`actions/publish` or `actions/credentials` then fetches the value during the
+run.
 
 The other two deliveries copy the value into a GitHub secret:
 
@@ -704,9 +712,10 @@ The other two deliveries copy the value into a GitHub secret:
 - `--delivery environment --environment release --secretName CARGO_REGISTRY_TOKEN`
   targets an environment secret.
 
-Copy the value with **Copy latest value to GitHub** on the Secrets page. The
-generated `beepboop_credentials` step reads only runtime grants. A workflow with
-a copied secret reads `${{ secrets.CARGO_REGISTRY_TOKEN }}` itself.
+Copy the value with **Copy latest value to GitHub** on the Secrets page.
+`actions/publish` and the generated `beepboop_credentials` step read only
+runtime grants. A workflow with a copied secret reads
+`${{ secrets.CARGO_REGISTRY_TOKEN }}` itself.
 
 After the first release, set up trusted publishing on crates.io. Open the
 crate's **Settings**, then **Trusted Publishing**, and add a GitHub publisher:
@@ -715,21 +724,23 @@ crate's **Settings**, then **Trusted Publishing**, and add a GitHub publisher:
 - the workflow filename, such as `publish-crates.yml`
 - the job's environment, if the job sets one
 
-Then edit the promote workflow. Replace the `beepboop_credentials` step with a
-`rust-lang/crates-io-auth-action@v1` step, and set `CARGO_REGISTRY_TOKEN` from
-its `token` output:
+Then edit the promote workflow. Add a `rust-lang/crates-io-auth-action@v1`
+step before `beepboop_publish`, remove the `credentials` input, and set
+`CARGO_REGISTRY_TOKEN` from the auth step's `token` output:
 
 ```yaml
 - uses: rust-lang/crates-io-auth-action@v1
   id: auth
 - id: beepboop_publish
   name: Publish selected packages
-  run: |
-    cargo publish --package 'example-core'
-    cargo publish --package 'example'
+  uses: kjanat/beepboop/actions/publish@v1
+  with:
+    execution-id: ${{ steps.beepboop.outputs.execution-id }}
   env:
     CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 ```
+
+The build commands of `actions/publish` see this variable too.
 
 The generated job already has `id-token: write`. `beepboop secrets list` prints
 the grant ID. Remove the grant with `beepboop secrets revoke <grant-id>`, and
