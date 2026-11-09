@@ -16,7 +16,7 @@ import { discover, planRelease, resolvePublished, versionsInFiles } from '@/auto
 import { jsrTokenAlias, jsrTokenRefused, setUpJsrPackage } from '@/automation/managers/jsr';
 import { registryLayer } from '@/automation/managers/registry';
 import { Notifications } from '@/automation/notifications';
-import { matchesPackage, packageId } from '@/automation/package-identity';
+import { matchesPackage, packageId, publishablePackages } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import { pollPackages } from '@/automation/package-watch';
 import { matchesRef } from '@/automation/policy';
@@ -299,9 +299,7 @@ export class AutomationService {
 			const tagged: Diagnostic[] = [];
 			for (const [name, stream] of Object.entries(repository.configuration.streams)) {
 				if (!stream.promote.workflow || stream.versionSource?.kind === 'tags') continue;
-				const packages = repository.inventory.packages.filter(pkg =>
-					publishable(pkg) && (!stream.packages || stream.packages.some(reference => matchesPackage(reference, pkg)))
-				);
+				const packages = publishablePackages(repository.inventory.packages, stream.packages);
 				const version = unreleasedManifestVersion(packages);
 				if (!version || manifestProblems(repository.inventory, packages).length) continue;
 				const merge = stream.promote.approval === 'merge'

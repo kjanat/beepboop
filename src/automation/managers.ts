@@ -3,7 +3,7 @@ import { alreadyPrepared, applyVersionFiles } from '@/automation/editors';
 import { managerRegistry } from '@/automation/managers/builtins';
 import type { Fetcher, ManagerRegistry, VerificationContext } from '@/automation/managers/registry';
 import { tagPrefix } from '@/automation/managers/tags';
-import { matchesPackage, packageId } from '@/automation/package-identity';
+import { matchesPackage, packageId, publishablePackages } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import { resolvePackageVersion } from '@/automation/release-version';
 import type { Inventory, Package, Publication, ReleasePlan, Snapshot } from '@/automation/types';
@@ -28,9 +28,7 @@ export function selectedReleasePackages(
 		if (selected?.some(name => !inventory.packages.some(pkg => publishable(pkg) && matchesPackage(name, pkg)))) {
 			return yield* precondition('Unknown selected publishable package');
 		}
-		const packages = inventory.packages.filter(pkg =>
-			publishable(pkg) && (!selected || selected.some(reference => matchesPackage(reference, pkg)))
-		);
+		const packages = publishablePackages(inventory.packages, selected);
 		if (!packages.length) return yield* precondition('No selected publishable packages');
 		if (new Set(packages.map(packageId)).size !== packages.length) {
 			return yield* precondition('Duplicate selected package identity');

@@ -1,3 +1,4 @@
+import type { CronExpression } from 'cron-parser';
 import { CronExpressionParser } from 'cron-parser';
 import { Result } from 'effect';
 import { z } from 'zod';
@@ -5,18 +6,23 @@ import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs'
 import { parseReleaseIdentity } from '@/automation/package-identity';
 import { presetReferencePattern } from '@/automation/preset';
 import {
+	defaultWinGetTagPrefix,
 	jobKeyPattern,
 	managerNames,
 	refPattern,
+	relativeWinGetConfig,
 	tagPrefixPattern,
 	validRef,
 	validTagPrefix,
+	winGetConfigPattern,
+	winGetTagPrefixPattern,
 	workflowFilePattern,
 } from '@/contract/catalog';
 import type { Diagnostic, DiagnosticCode } from '@/contract/diagnostics';
 import { isDiagnosticCode } from '@/contract/diagnostics';
 import { identifierPattern } from '@/contract/ids';
 import { versionFileSchema } from '@/contract/version-files';
+import { dependencyOrder } from '@/dependency-order';
 import { textSchema as nonempty } from '@/model';
 import { purl } from '@/package-url';
 
@@ -41,10 +47,17 @@ export const packageReference = nonempty.transform((value, ctx) => {
 });
 const packageReferences = z.array(packageReference);
 
-const cron = nonempty.refine(value => {
-	if (value.trim().split(/\s+/).length !== 5) return false;
-	return Result.isSuccess(Result.try(() => CronExpressionParser.parse(value, { tz: 'UTC' })));
-}, 'Schedules use five-field UTC cron');
+export const utcCronMessage = 'Schedules use five-field UTC cron';
+export function fiveFieldCron(value: string): boolean {
+	return value.trim().split(/\s+/).length === 5;
+}
+export function parseUtcCron(value: string): CronExpression {
+	return CronExpressionParser.parse(value, { tz: 'UTC' });
+}
+const cron = nonempty.refine(
+	value => fiveFieldCron(value) && Result.isSuccess(Result.try(() => parseUtcCron(value))),
+	utcCronMessage,
+);
 
 const refPolicy = z.strictObject({
 	phase: z.enum(['version', 'aliases']),
@@ -220,11 +233,9 @@ function subscriptionSchema() {
 }
 
 const winget = z.strictObject({
-	config: z.string().regex(/^[\w./-]+\.json$/).refine(
-		value => !value.startsWith('/') && !value.split('/').includes('..'),
-		'Invalid WinGet configuration path',
-	).meta({ description: 'Path to WinGet package JSON in the release commit' }),
-	tagPrefix: z.string().regex(/^[\w.-]*$/).default('v'),
+	config: z.string().regex(winGetConfigPattern).refine(relativeWinGetConfig, 'Invalid WinGet configuration path')
+		.meta({ description: 'Path to WinGet package JSON in the release commit' }),
+	tagPrefix: z.string().regex(winGetTagPrefixPattern).default(defaultWinGetTagPrefix),
 	automatic: z.boolean().default(false),
 }).transform(({ config, tagPrefix, automatic }) => ({ config, tagPrefix, automatic }));
 
@@ -243,27 +254,24 @@ function graph(stream: Stream, path: (string | number)[], ctx: z.RefinementCtx):
 	const operationsOf = operations(stream);
 	const where = (name: string): (string | number)[] =>
 		reservedOperations.some(reserved => reserved === name) ? [...path, name, 'workflow'] : [...path, 'workflows', name];
-	const done = new Set<string>(), visiting = new Set<string>(), reported = new Set<string>();
-	const visit = (name: string): void => {
-		if (done.has(name)) return;
-		if (visiting.has(name)) {
-			if (!reported.has('cycle')) issue(ctx, 'cycle', 'Operation dependency cycle', where(name));
-			reported.add('cycle');
-			return;
-		}
-		const operation = operationsOf.get(name);
-		if (!operation) return;
-		visiting.add(name);
-		for (const dependency of operation.needs ?? []) {
-			if (!operationsOf.has(dependency)) {
-				issue(ctx, 'unknown-reference', `Unknown dependency ${dependency}`, [...where(name), 'needs']);
-			} else visit(dependency);
-		}
-		visiting.delete(name);
-		done.add(name);
-	};
-	for (const name of operationsOf.keys()) visit(name);
-	if (reported.has('cycle')) return;
+	let cyclic = false;
+	dependencyOrder(
+		operationsOf.keys(),
+		(name, dependent): Result.Result<readonly string[] | undefined> => {
+			const operation = operationsOf.get(name);
+			if (operation) return Result.succeed(operation.needs ?? []);
+			if (dependent !== undefined) {
+				issue(ctx, 'unknown-reference', `Unknown dependency ${name}`, [...where(dependent), 'needs']);
+			}
+			return Result.succeed(undefined);
+		},
+		name => {
+			if (!cyclic) issue(ctx, 'cycle', 'Operation dependency cycle', where(name));
+			cyclic = true;
+			return Result.void;
+		},
+	);
+	if (cyclic) return;
 	const approved = (name: string): boolean =>
 		name === 'promote' || (operationsOf.get(name)?.needs ?? []).some(approved);
 	for (const [name, operation] of operationsOf) {

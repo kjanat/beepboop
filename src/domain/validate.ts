@@ -1,6 +1,5 @@
 import { Result } from 'effect';
-import { matchesPackage, parseReleaseIdentity } from '@/automation/package-identity';
-import { publishable } from '@/automation/package-publication';
+import { matchesPackage, parseReleaseIdentity, publishablePackages } from '@/automation/package-identity';
 import type { Configuration, Inventory, Snapshot, Stream } from '@/automation/types';
 import type { Diagnostic, DiagnosticSubject } from '@/contract/diagnostics';
 import { operations as operationsOf } from '@/domain/configuration';
@@ -126,9 +125,7 @@ export function validateAgainst(
 				);
 			}
 		}
-		const selected = inventory.packages.filter(pkg =>
-			publishable(pkg) && (!stream.packages || stream.packages.some(reference => matchesPackage(reference, pkg)))
-		);
+		const selected = publishablePackages(inventory.packages, stream.packages);
 		const declared = operations.flatMap(([operation, binding]) => [
 			...(binding.publications ?? []),
 			...(binding.refs ? [`refs:${operation}`] : []),

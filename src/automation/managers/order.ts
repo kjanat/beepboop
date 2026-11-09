@@ -1,33 +1,34 @@
+import { Result } from 'effect';
 import { packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import type { Package } from '@/automation/types';
+import { dependencyOrder } from '@/dependency-order';
 
 export type PublicationOrder = { kind: 'ordered'; order: string[] } | { kind: 'cycle'; message: string };
 
 export function publicationOrder(packages: Package[]): PublicationOrder {
 	const byName = new Map(packages.map((p) => [packageId(p), p]));
-	const visiting = new Set<string>(),
-		visited = new Set<string>(),
-		order: string[] = [];
-	function visit(key: string): string | undefined {
-		if (visited.has(key)) return undefined;
-		if (visiting.has(key)) return key;
-		const pkg = byName.get(key);
-		if (!pkg) return undefined;
-		visiting.add(key);
-		for (const name of [...pkg.dependencies].sort()) {
-			const dependency = packages.find(candidate => candidate.manager === pkg.manager && candidate.name === name);
-			const cycle = dependency ? visit(packageId(dependency)) : undefined;
-			if (cycle !== undefined) return cycle;
-		}
-		visiting.delete(key);
-		visited.add(key);
-		if (publishable(pkg)) order.push(key);
-		return undefined;
+	const ordered = dependencyOrder(
+		[...byName.keys()].sort(),
+		(key): Result.Result<string[] | undefined> => {
+			const pkg = byName.get(key);
+			return Result.succeed(
+				pkg && [...pkg.dependencies].sort().flatMap(name => {
+					const dependency = packages.find(candidate => candidate.manager === pkg.manager && candidate.name === name);
+					return dependency ? [packageId(dependency)] : [];
+				}),
+			);
+		},
+		key => Result.fail(key),
+	);
+	if (Result.isFailure(ordered)) {
+		return { kind: 'cycle', message: `Publication dependency cycle at ${ordered.failure}` };
 	}
-	for (const key of [...byName.keys()].sort()) {
-		const cycle = visit(key);
-		if (cycle !== undefined) return { kind: 'cycle', message: `Publication dependency cycle at ${cycle}` };
-	}
-	return { kind: 'ordered', order };
+	return {
+		kind: 'ordered',
+		order: ordered.success.filter(key => {
+			const pkg = byName.get(key);
+			return pkg !== undefined && publishable(pkg);
+		}),
+	};
 }

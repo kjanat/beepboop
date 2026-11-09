@@ -1,6 +1,6 @@
 import { Result } from 'effect';
 import type { PackagePublication } from '@/automation/package-publication';
-import { excluded, registry } from '@/automation/package-publication';
+import { excluded, publishable, registry } from '@/automation/package-publication';
 import type { Execution, Inventory, Package, Publication, RepositoryRecord } from '@/automation/types';
 import { identifiedManagers, legacyJsrIdentity } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
@@ -76,6 +76,15 @@ export function matchesPackage(reference: string, pkg: PackageRecord): boolean {
 	if (!reference.startsWith('pkg:')) return reference === `${pkg.manager}:${pkg.name}`;
 	const identity = releaseIdentity(reference);
 	return identity.version ? purl(identity) === packagePurl(pkg) : packageKey(identity) === packageId(pkg);
+}
+export function soleMatch<P extends PackageRecord>(reference: string, packages: readonly P[]): P | undefined {
+	const matches = packages.filter(pkg => matchesPackage(reference, pkg));
+	return matches.length === 1 ? matches[0] : undefined;
+}
+export function publishablePackages(packages: Package[], references?: readonly string[]): Package[] {
+	return packages.filter(pkg =>
+		publishable(pkg) && (!references || references.some(reference => matchesPackage(reference, pkg)))
+	);
 }
 export function matchesPublication(reference: string, publication: Publication): boolean {
 	return reference === publication.id

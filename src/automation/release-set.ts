@@ -1,12 +1,14 @@
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 import { deriveExecution } from '@/automation/execution';
 import { discover } from '@/automation/managers';
 import { tagPrefix } from '@/automation/managers/tags';
-import { matchesPackage, packageId, selectorKey } from '@/automation/package-identity';
+import { packageId, selectorKey, soleMatch } from '@/automation/package-identity';
 import type { Execution, Inventory, Snapshot } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
+import { dependencyOrder } from '@/dependency-order';
 import { fromSync } from '@/failure';
+import { invalid } from '@/model';
 import { executionId } from '@/persistence/identity-keys';
 
 function expandPackages(
@@ -30,11 +32,10 @@ function expandPackages(
 			return index < 0 ? inventory.publicationOrder.length : index;
 		};
 		const selected = yield* Effect.forEach(targets, reference => {
-			const matches = inventory.packages.filter(pkg => matchesPackage(reference, pkg));
-			const [pkg] = matches;
-			return matches.length !== 1 || !pkg
-				? Effect.fail(precondition(`Per-package target is ambiguous or missing: ${reference}`))
-				: Effect.succeed({ reference, pkg, id: packageId(pkg) });
+			const pkg = soleMatch(reference, inventory.packages);
+			return pkg
+				? Effect.succeed({ reference, pkg, id: packageId(pkg) })
+				: Effect.fail(precondition(`Per-package target is ambiguous or missing: ${reference}`));
 		});
 		selected.sort((a, b) => order(a.id) - order(b.id) || a.id.localeCompare(b.id));
 		const identified = yield* Effect.forEach(
@@ -86,12 +87,8 @@ export function compileReleaseSet(preparation: Execution, snapshot: Snapshot): E
 		const inventory = yield* fromSync(() => discover(snapshot, preparation.configuration.managers));
 		for (const group of plan.groups) {
 			for (const name of group.packages) {
-				const matches = inventory.packages.filter(pkg => matchesPackage(name, pkg));
-				const [match] = matches;
-				if (
-					matches.length !== 1 || !match
-					|| (tagPrefix(match.versionSource) === undefined && match.version !== group.version)
-				) {
+				const match = soleMatch(name, inventory.packages);
+				if (!match || (tagPrefix(match.versionSource) === undefined && match.version !== group.version)) {
 					return yield* precondition(`Prepared package version mismatch: ${name}`);
 				}
 			}
@@ -157,23 +154,19 @@ export function compileReleaseSet(preparation: Execution, snapshot: Snapshot): E
 			operations.push(execution);
 		}
 		const bindings = new Map(operations.map(op => [op.operation, op.workflow]));
-		const visited = new Set<string>(), visiting = new Set<string>();
-		const visit = (name: string): Effect.Effect<void, DomainError> =>
-			Effect.gen(function*() {
-				if (visited.has(name)) return;
-				if (visiting.has(name)) return yield* precondition('Combined operation dependency cycle');
-				visiting.add(name);
+		yield* Effect.fromResult(dependencyOrder(
+			names,
+			name => {
 				const binding = bindings.get(name);
 				for (const input of binding?.artifactInputs ?? []) {
 					if (!bindings.get(input.operation)?.outputs?.some(output => output.id === input.output)) {
-						return yield* precondition('Missing producer output');
+						return invalid('Missing producer output');
 					}
 				}
-				for (const dependency of binding?.needs ?? []) yield* visit(dependency);
-				visiting.delete(name);
-				visited.add(name);
-			});
-		for (const name of names) yield* visit(name);
+				return Result.succeed(binding?.needs ?? []);
+			},
+			() => invalid('Combined operation dependency cycle'),
+		));
 		const assigned = new Set<string>();
 		for (const group of plan.groups) {
 			const members = operations.filter(op => op.releaseSet?.group === group.id);

@@ -71,6 +71,7 @@ import {
 	parseIdentity,
 	parseReleaseIdentity,
 	publicationIdentity,
+	publishablePackages,
 	selectorKey,
 } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
@@ -1647,9 +1648,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (record.inventory.workflows.some(workflow => workflow.file === file && workflow.ledger)) return undefined;
 			const packagesOf = (candidate: Execution) => {
 				const references = candidate.configuration.streams[candidate.stream]?.packages;
-				return record.inventory.packages.filter(pkg =>
-					publishable(pkg) && (!references || references.some(reference => matchesPackage(reference, pkg)))
-				);
+				return publishablePackages(record.inventory.packages, references);
 			};
 			const needed = new Set(
 				packagesOf(execution).flatMap(pkg => pkg.dependencies.map(name => `${pkg.manager}:${name}`)),
@@ -2213,11 +2212,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					) {
 						return yield* precondition('Producer inventory is incomplete');
 					}
-					const observed = inventory.packages.filter(
+					const observed = publishablePackages(inventory.packages, stream.packages).filter(
 						(p) =>
 							(Boolean(version) || (manifestVersions && tagPrefix(p.versionSource) === undefined))
-							&& publishable(p)
-							&& (!stream.packages || stream.packages.some(reference => matchesPackage(reference, p)))
 							&& (binding.publications === undefined
 								|| binding.publications.some(reference => matchesPackage(reference, p))),
 					);

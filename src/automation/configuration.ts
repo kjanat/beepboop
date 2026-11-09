@@ -1,17 +1,33 @@
-import { CronExpressionParser } from 'cron-parser';
 import { Effect, Result } from 'effect';
 import { z } from 'zod';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { parseReleaseIdentity } from '@/automation/package-identity';
 import { parsePresetReference } from '@/automation/preset';
 import type { Configuration, Stream, WorkflowBinding } from '@/automation/types';
-import { jobKeyPattern, managerNames, validRef, validTagPrefix, workflowFilePattern } from '@/contract/catalog';
+import {
+	defaultWinGetTagPrefix,
+	jobKeyPattern,
+	managerNames,
+	relativeWinGetConfig,
+	validRef,
+	validTagPrefix,
+	winGetConfigPattern,
+	winGetTagPrefixPattern,
+	workflowFilePattern,
+} from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { identifierPattern, shaPattern } from '@/contract/ids';
 import { versionFileSchema } from '@/contract/version-files';
-import { configurationDrift, configurationSchema } from '@/domain/configuration';
+import { dependencyOrder } from '@/dependency-order';
+import {
+	configurationDrift,
+	configurationSchema,
+	fiveFieldCron,
+	parseUtcCron,
+	utcCronMessage,
+} from '@/domain/configuration';
 import { toDomainError } from '@/failure';
 import { array, invalid, oneOf, record, strings, text } from '@/model';
 import { purl } from '@/package-url';
@@ -49,11 +65,11 @@ function winGetPolicy(value: unknown): Parsed<NonNullable<Configuration['winget'
 			return yield* invalid('Unknown WinGet setting');
 		}
 		const config = yield* text(row.config);
-		if (!/^[\w./-]+\.json$/.test(config) || config.startsWith('/') || config.split('/').includes('..')) {
+		if (!winGetConfigPattern.test(config) || !relativeWinGetConfig(config)) {
 			return yield* invalid('Invalid WinGet configuration path');
 		}
-		const tagPrefix = row.tagPrefix === undefined ? 'v' : String(row.tagPrefix);
-		if (!/^[\w.-]*$/.test(tagPrefix)) return yield* invalid('Invalid WinGet tag prefix');
+		const tagPrefix = row.tagPrefix === undefined ? defaultWinGetTagPrefix : String(row.tagPrefix);
+		if (!winGetTagPrefixPattern.test(tagPrefix)) return yield* invalid('Invalid WinGet tag prefix');
 		if (row.automatic !== undefined && typeof row.automatic !== 'boolean') {
 			return yield* invalid('Invalid WinGet automatic setting');
 		}
@@ -90,8 +106,8 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 		);
 		const schedule = data.schedule === undefined ? undefined : yield* text(data.schedule);
 		if (schedule !== undefined) {
-			if (schedule.trim().split(/\s+/).length !== 5) return yield* invalid('Schedules use five-field UTC cron');
-			yield* lift(() => CronExpressionParser.parse(schedule, { tz: 'UTC' }));
+			if (!fiveFieldCron(schedule)) return yield* invalid(utcCronMessage);
+			yield* lift(() => parseUtcCron(schedule));
 		}
 		const mode = data.mode === undefined
 			? undefined
@@ -275,20 +291,14 @@ function operationGraph(stream: Stream): Parsed<void> {
 			prepare: stream.prepare.workflow,
 			promote: stream.promote.workflow,
 		};
-		const done = new Set<string>(),
-			visiting = new Set<string>();
-		const visit = (name: string): Parsed<void> =>
-			Result.gen(function*() {
-				if (done.has(name)) return;
-				if (visiting.has(name)) return yield* invalid('Operation dependency cycle');
+		yield* dependencyOrder(
+			Object.entries(operations).flatMap(([name, operation]) => operation ? [name] : []),
+			name => {
 				const operation = operations[name];
-				if (!operation) return yield* invalid(`Unknown dependency ${name}`);
-				visiting.add(name);
-				for (const dependency of operation.needs ?? []) yield* visit(dependency);
-				visiting.delete(name);
-				done.add(name);
-			});
-		for (const [name, operation] of Object.entries(operations)) if (operation) yield* visit(name);
+				return operation ? Result.succeed(operation.needs ?? []) : invalid(`Unknown dependency ${name}`);
+			},
+			() => invalid('Operation dependency cycle'),
+		);
 		const approved = (name: string): boolean => name === 'promote' || (operations[name]?.needs ?? []).some(approved);
 		for (const [name, operation] of Object.entries(operations)) {
 			for (const input of operation?.artifactInputs ?? []) {

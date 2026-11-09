@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 import { z } from 'zod';
 import { applyVersionFiles } from '@/automation/editors';
 import { planRelease, publicationOrder } from '@/automation/managers';
@@ -11,6 +11,8 @@ import { isLockfile } from '@/contract/catalog';
 import type { DomainError } from '@/contract/errors';
 import { decodeRequest, precondition } from '@/contract/errors';
 import type { VersionFile } from '@/contract/version-files';
+import { dependencyOrder } from '@/dependency-order';
+import { invalid } from '@/model';
 
 const operation = z.strictObject({
 	id: nameSchema,
@@ -41,31 +43,27 @@ export interface ReleaseSetPlan {
 }
 
 function ordered(operations: Map<string, PlannedOperation>): Effect.Effect<PlannedOperation[], DomainError> {
-	return Effect.gen(function*() {
-		const order: PlannedOperation[] = [];
-		const visiting = new Set<string>();
-		const visited = new Set<string>();
-		const visit = (name: string): Effect.Effect<void, DomainError> =>
-			Effect.gen(function*() {
-				if (visited.has(name)) return;
-				if (visiting.has(name)) return yield* precondition(`Operation dependency cycle: ${name}`);
-				const op = operations.get(name);
-				if (!op) return yield* precondition(`Unknown operation dependency: ${name}`);
-				visiting.add(name);
-				for (const input of op.inputs) {
-					if (!operations.get(input.operation)?.outputs.some(output => output.id === input.output)) {
-						return yield* precondition(`Unknown output: ${input.operation}/${input.output}`);
-					}
+	const order = dependencyOrder(
+		[...operations.keys()].sort(),
+		name => {
+			const op = operations.get(name);
+			if (!op) return invalid(`Unknown operation dependency: ${name}`);
+			for (const input of op.inputs) {
+				if (!operations.get(input.operation)?.outputs.some(output => output.id === input.output)) {
+					return invalid(`Unknown output: ${input.operation}/${input.output}`);
 				}
-				op.needs = [...new Set([...op.needs, ...op.inputs.map(input => input.operation)])].sort();
-				for (const dependency of op.needs) yield* visit(dependency);
-				visiting.delete(name);
-				visited.add(name);
-				order.push(op);
-			});
-		for (const name of [...operations.keys()].sort()) yield* visit(name);
-		return order;
-	});
+			}
+			op.needs = [...new Set([...op.needs, ...op.inputs.map(input => input.operation)])].sort();
+			return Result.succeed(op.needs);
+		},
+		name => invalid(`Operation dependency cycle: ${name}`),
+	);
+	return Effect.fromResult(order).pipe(Effect.map(names =>
+		names.flatMap(name => {
+			const op = operations.get(name);
+			return op ? [op] : [];
+		})
+	));
 }
 
 /** Resolve all versions against the same revision before composing any edits. */

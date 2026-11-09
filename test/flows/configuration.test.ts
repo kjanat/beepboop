@@ -11,7 +11,7 @@ import { Effect, Result } from 'effect';
 import { z } from 'zod';
 import { parseRepositoryConfiguration } from '@/automation/configuration';
 import { identityOf, parseIdentity, parseReleaseIdentity, releaseIdentity } from '@/automation/package-identity';
-import { configurationDrift, configurationSchema } from '@/domain/configuration';
+import { configurationDrift, configurationSchema, issueMessage } from '@/domain/configuration';
 import { validateAgainst } from '@/domain/validate';
 import { record } from '@/model';
 import { packageIdentity, parsePackageIdentity, purlDefinitions } from '@/package-url';
@@ -690,4 +690,48 @@ test('the parser and schema agree on job gates', () => {
 	const legacy = parseRepositoryConfiguration(document({ release: ['plan'] }));
 	if (Result.isFailure(legacy)) throw new Error('The parser rejected a valid job gate');
 	expect(configurationDrift(document({ release: ['plan'] }), legacy.success)).toEqual([]);
+});
+
+test('the parser and schema agree on operation dependencies, schedules and WinGet settings', () => {
+	const document = (workflows: Record<string, unknown>, winget?: unknown) => ({
+		streams: { main: { promote: { workflow: { file: 'publish.yml' } }, workflows } },
+		...(winget === undefined ? {} : { winget }),
+	});
+	for (
+		const [value, valid] of [
+			[document({ build: { file: 'build.yml', needs: ['promote'] } }), true],
+			[document({ build: { file: 'build.yml', needs: ['missing'] } }), false],
+			[document({ a: { file: 'a.yml', needs: ['b'] }, b: { file: 'b.yml', needs: ['a'] } }), false],
+			[document({ nightly: { file: 'nightly.yml', schedule: '0 6 * * 1' } }), true],
+			[document({ nightly: { file: 'nightly.yml', schedule: '0 6 * *' } }), false],
+			[document({ nightly: { file: 'nightly.yml', schedule: '0 25 * * *' } }), false],
+			[document({}, { config: 'winget/widget.json' }), true],
+			[document({}, { config: 'winget/widget.json', tagPrefix: 'release-' }), true],
+			[document({}, { config: '/winget/widget.json' }), false],
+			[document({}, { config: 'winget/../widget.json' }), false],
+			[document({}, { config: 'winget/widget.yaml' }), false],
+			[document({}, { config: 'winget/widget.json', tagPrefix: 'a/v' }), false],
+		] as const
+	) {
+		expect(Result.isSuccess(parseRepositoryConfiguration(value))).toBe(valid);
+		expect(configurationSchema.safeParse(value).success).toBe(valid);
+	}
+
+	const fourFields = parseRepositoryConfiguration(document({ nightly: { file: 'n.yml', schedule: '0 6 * *' } }));
+	expect(Result.isFailure(fourFields) && fourFields.failure.message).toBe('Schedules use five-field UTC cron');
+	const winget = { config: 'winget/widget.json', tagPrefix: 'v', automatic: false };
+	expect(configurationSchema.parse(document({}, { config: 'winget/widget.json' })).winget).toEqual(winget);
+	const legacy = parseRepositoryConfiguration(document({}, { config: 'winget/widget.json' }));
+	expect(Result.isSuccess(legacy) && legacy.success.winget).toEqual(winget);
+
+	const broken = document({ a: { file: 'a.yml', needs: ['b', 'missing'] }, b: { file: 'b.yml', needs: ['a'] } });
+	const legacyBroken = parseRepositoryConfiguration(broken);
+	expect(Result.isFailure(legacyBroken) && legacyBroken.failure.message).toBe('Operation dependency cycle');
+	const schema = configurationSchema.safeParse(broken);
+	expect(schema.success ? [] : schema.error.issues.map(issueMessage)).toEqual([
+		'streams.main.workflows.a: Operation dependency cycle',
+		'streams.main.workflows.a.needs: Unknown dependency missing',
+	]);
+	const unknown = parseRepositoryConfiguration(document({ build: { file: 'build.yml', needs: ['missing'] } }));
+	expect(Result.isFailure(unknown) && unknown.failure.message).toBe('Unknown dependency missing');
 });
