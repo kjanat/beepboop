@@ -1,7 +1,7 @@
 import { Effect } from 'effect';
 import type { Fetcher } from '@/automation/managers/registry';
 import type { Outcome, Publication } from '@/automation/types';
-import { sha256DigestPattern } from '@/contract/ids';
+import { sha256DigestPattern, sha256Hex } from '@/contract/ids';
 import { fromPromise } from '@/failure';
 import { record } from '@/model';
 
@@ -50,8 +50,7 @@ export function verifyImage(publication: Publication, request: Fetcher = fetch):
 		// Verify the bytes as well as the registry's digest header.
 		const content = yield* fromPromise(() => response.arrayBuffer());
 		if (content.byteLength > 4 * 1024 * 1024) return result('failed');
-		const sum = yield* fromPromise(() => crypto.subtle.digest('SHA-256', content));
-		const hash = Array.from(new Uint8Array(sum), (b) => b.toString(16).padStart(2, '0')).join('');
+		const hash = yield* fromPromise(() => sha256Hex(content));
 		if (digest !== `sha256:${hash}`) return result('failed');
 		if (publication.channel) {
 			const channel = yield* verifyImage({ ...publication, version: publication.channel, channel: undefined }, request);

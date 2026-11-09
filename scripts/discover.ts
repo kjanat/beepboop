@@ -22,15 +22,25 @@ function command(args: string[]): Effect.Effect<string, ToolFailure> {
 	);
 }
 
+function ghApi(
+	path: string,
+	failure: (stderr: string) => Effect.Effect<null, ToolFailure>,
+): Effect.Effect<unknown, ToolFailure> {
+	return attempt(() => Bun.spawnSync(['gh', 'api', path])).pipe(
+		Effect.flatMap((result): Effect.Effect<unknown, ToolFailure> =>
+			result.exitCode === 0
+				? attempt((): unknown => JSON.parse(new TextDecoder().decode(result.stdout)))
+				: failure(new TextDecoder().decode(result.stderr))
+		),
+	);
+}
+
 const options = process.argv.slice(2).filter(value => value !== '--snapshot');
 const fromGitHub = Effect.gen(function*() {
 	const [name, ref] = (options[1] ?? '').split('@');
 	if (!name || !/^\w[\w.-]*\/[\w.-]+$/.test(name)) return yield* refuse('Expected owner/repository[@ref]');
 	const gh = <T extends z.ZodType>(path: string, schema: T) =>
-		command(['gh', 'api', path]).pipe(
-			Effect.flatMap(output => attempt((): unknown => JSON.parse(output))),
-			Effect.flatMap(value => parse(schema, value)),
-		);
+		ghApi(path, () => refuse('Could not read repository revision')).pipe(Effect.flatMap(value => parse(schema, value)));
 	const metadata = yield* gh(`repos/${name}`, z.object({ id: z.number(), default_branch: z.string() }));
 	const { sha } = yield* gh(
 		`repos/${name}/commits/${encodeURIComponent(ref || metadata.default_branch)}`,
@@ -91,16 +101,8 @@ const fromCheckout = Effect.gen(function*() {
 });
 
 function githubApi(path: string): Effect.Effect<unknown, DomainError> {
-	return attempt(() => Bun.spawnSync(['gh', 'api', path])).pipe(
-		Effect.flatMap((result): Effect.Effect<unknown, ToolFailure> =>
-			result.exitCode === 0
-				? attempt((): unknown => JSON.parse(new TextDecoder().decode(result.stdout)))
-				: new TextDecoder().decode(result.stderr).includes('HTTP 404')
-				? Effect.succeed(null)
-				: refuse(`gh api ${path} failed`)
-		),
-		Effect.mapError(toDomainError),
-	);
+	return ghApi(path, stderr => stderr.includes('HTTP 404') ? Effect.succeed(null) : refuse(`gh api ${path} failed`))
+		.pipe(Effect.mapError(toDomainError));
 }
 
 await main(

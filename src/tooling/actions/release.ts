@@ -1,4 +1,3 @@
-import { spawnSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { publishRefs } from '@root/actions/runtime/refs.ts';
 import { Effect } from 'effect';
@@ -7,6 +6,7 @@ import { z } from 'zod';
 import type { RefChange } from '@/automation/refs';
 import { repositoryNamePattern } from '@/automation/repository-name';
 import { shaPattern } from '@/contract/ids';
+import { git as runGit } from '@/git';
 import { compareVersions, looseSchema } from '@/model';
 import { attempt, parse as decode, main, refuse, ToolFailure } from '@/tooling/runtime';
 
@@ -22,11 +22,9 @@ interface Contract {
 }
 
 function git(...args: string[]): Effect.Effect<string, ToolFailure> {
-	return attempt(() => spawnSync('git', args, { encoding: 'utf8' })).pipe(
+	return attempt(() => runGit(args)).pipe(
 		Effect.flatMap(result =>
-			result.status === 0
-				? Effect.succeed(result.stdout.trim())
-				: refuse(`git ${args.join(' ')} failed: ${result.stderr.trim()}`)
+			result.ok ? Effect.succeed(result.stdout) : refuse(`git ${args.join(' ')} failed: ${result.stderr.trim()}`)
 		),
 	);
 }

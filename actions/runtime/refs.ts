@@ -8,6 +8,7 @@ import { Effect, Result } from 'effect';
 import type { RefChange, RefPlan } from '@/automation/refs.ts';
 import { repositoryNamePattern } from '@/automation/repository-name.ts';
 import { shaPattern } from '@/contract/ids.ts';
+import { git } from '@/git.ts';
 import { array, boolean, record, text } from '@/model.ts';
 
 interface Git {
@@ -25,17 +26,17 @@ function createGit(root: string, token?: string, keyring?: string): Git {
 	}
 	if (keyring) env.GNUPGHOME = keyring;
 	const run = (input: string | undefined, args: string[]) =>
-		Effect.sync(() => spawnSync('git', args, { cwd: root, env, encoding: 'utf8', input }));
+		Effect.sync(() => git(args, { cwd: root, env, ...(input === undefined ? {} : { input }) }));
 	const output = (input: string | undefined, args: string[]) =>
 		run(input, args).pipe(Effect.flatMap(result =>
-			result.status === 0
-				? Effect.succeed(result.stdout.trim())
+			result.ok
+				? Effect.succeed(result.stdout)
 				: Effect.fail(new ActionFailure({ message: `Git ${args[0]} failed; inspect the repository and ref plan` }))
 		));
 	return {
 		read: (...args) => output(undefined, args),
 		write: (input, ...args) => output(input, args),
-		exists: ref => run(undefined, ['rev-parse', '--verify', ref]).pipe(Effect.map(result => result.status === 0)),
+		exists: ref => run(undefined, ['rev-parse', '--verify', ref]).pipe(Effect.map(result => result.ok)),
 	};
 }
 

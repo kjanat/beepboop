@@ -1,13 +1,12 @@
-import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { parseArgs } from 'node:util';
 import { Effect } from 'effect';
 import { compile } from 'json-schema-to-typescript';
 import { z } from 'zod';
 import { parseTypeDefinition } from '@/package-url/definition';
+import { definitionFiles } from '@/tooling/purl/definition-files';
 import {
-	attempt,
 	attemptPromise,
+	checkArguments,
 	format,
 	main,
 	parse,
@@ -21,16 +20,8 @@ const root = resolve(import.meta.dir, '../../package-url');
 const banner =
 	'/* Generated from pinned upstream PURL data and local extensions by bun run purl:generate. Do not edit. */';
 
-function definitionFiles(directory: string): Effect.Effect<string[], ToolFailure> {
-	return attemptPromise(() => readdir(`${root}/${directory}`)).pipe(
-		Effect.map(names => names.filter(name => name.endsWith('-definition.json')).sort()),
-	);
-}
-
 await main(Effect.gen(function*() {
-	const { values: { check } } = yield* attempt(() =>
-		parseArgs({ args: Bun.argv.slice(2), options: { check: { type: 'boolean' } }, strict: true })
-	);
+	const { values: { check } } = yield* checkArguments(false);
 	const emit = (path: string, source: string) =>
 		Effect.gen(function*() {
 			const output = yield* format(path, source).pipe(Effect.catch(() => refuse('Cannot format generated types')));
@@ -45,8 +36,8 @@ await main(Effect.gen(function*() {
 		compile(schema, 'TypeDefinition', { bannerComment: banner, style: { singleQuote: true, useTabs: true } })
 	);
 	yield* emit(`${root}/definition.generated.ts`, definitionTypes);
-	const names = yield* definitionFiles('definitions');
-	const extensions = yield* definitionFiles('extensions');
+	const names = yield* definitionFiles(`${root}/definitions`);
+	const extensions = yield* definitionFiles(`${root}/extensions`);
 	if (extensions.some(name => names.includes(name))) {
 		return yield* refuse('A local PURL extension now exists upstream; reconcile its definition before generating');
 	}

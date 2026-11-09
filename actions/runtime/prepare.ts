@@ -14,6 +14,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { ActionFailure, Invalid } from '@root/actions/runtime/protocol.ts';
 import { attempt, refuse, required } from '@root/actions/runtime/protocol.ts';
 import { Effect, Result } from 'effect';
+import { checkoutAt } from '@/git.ts';
 import { array, record, string, strings, text } from '@/model.ts';
 
 interface PlannedEdit {
@@ -87,10 +88,7 @@ function prepare(environment: NodeJS.ProcessEnv): Result.Result<void, Invalid> {
 		const { id, sourceSha, edits, lockfiles } = yield* preparation(yield* required(environment, 'RELEASE_CONTEXT'));
 		const workspace = yield* required(environment, 'GITHUB_WORKSPACE');
 		const root = yield* attempt(() => realpathSync(workspace));
-		const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });
-		if (revision.status !== 0 || revision.stdout.trim() !== sourceSha) {
-			return yield* refuse('Checkout must match the planned source commit');
-		}
+		if (!checkoutAt(root, sourceSha)) return yield* refuse('Checkout must match the planned source commit');
 		if (environment.PREPARATION_MODE === 'apply') {
 			for (const edit of edits) {
 				const target = yield* safe(root, edit.path);

@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -11,6 +10,7 @@ import { githubSecretNamePattern } from '@/contract/ids.ts';
 import type { LedgerEntry, LedgerPackage } from '@/contract/ledger.ts';
 import { claimStep, nextStep, publishWaitMinutes, reportStep } from '@/contract/ledger.ts';
 import { textSchema } from '@/model.ts';
+import { sha256Hex } from '@/sha256.ts';
 
 export interface Command {
 	code: number;
@@ -38,7 +38,7 @@ const verificationPolls = 20;
 const packageAttempts = 8;
 
 function sha256(path: string): Effect.Effect<string, ActionFailure> {
-	return Effect.fromResult(attempt(() => createHash('sha256').update(readFileSync(path)).digest('hex')));
+	return Effect.fromResult(attempt(() => sha256Hex(readFileSync(path))));
 }
 
 function scratch(name: string): Effect.Effect<string, ActionFailure> {

@@ -16,6 +16,7 @@ import { decodeError } from '@/automation/store';
 import type { RepositoryRecord } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
+import { sha256Hex } from '@/contract/ids';
 import { generateManifests, renderManifests, wingetConfiguration } from '@/distribution/winget/generate';
 import { readiness } from '@/domain/repository';
 import { fromPromise, fromSync, recover } from '@/failure';
@@ -126,9 +127,7 @@ export interface WinGetBindings {
 }
 const upstream = 'microsoft/winget-pkgs';
 function planDigest(value: unknown): Effect.Effect<string, DomainError> {
-	return fromPromise(() => crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value)))).pipe(
-		Effect.map(digest => [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('')),
-	);
+	return fromPromise(() => sha256Hex(JSON.stringify(value)));
 }
 export class WinGetService {
 	constructor(readonly store: Store, readonly gateway: RepositoryGateway, readonly env: WinGetBindings) {}

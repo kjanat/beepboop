@@ -1,8 +1,7 @@
 import { join, resolve } from 'node:path';
-import { parseArgs } from 'node:util';
 import { Effect } from 'effect';
 import { bundleRuntime, entrypoints } from '@/tooling/actions/runtime-bundle';
-import { attempt, main, refuse, temporaryDirectory } from '@/tooling/runtime';
+import { attempt, checkArguments, main, refuse, temporaryDirectory } from '@/tooling/runtime';
 
 const verify = Effect.scoped(Effect.gen(function*() {
 	const output = yield* temporaryDirectory('beepboop-actions-');
@@ -25,14 +24,7 @@ const verify = Effect.scoped(Effect.gen(function*() {
 }));
 
 await main(Effect.gen(function*() {
-	const { values, positionals } = yield* attempt(() =>
-		parseArgs({
-			args: Bun.argv.slice(2),
-			options: { check: { type: 'boolean' } },
-			allowPositionals: true,
-			strict: true,
-		})
-	);
+	const { values, positionals } = yield* checkArguments(true);
 	if (values.check) return yield* verify;
 	const [output] = positionals;
 	if (!output) return yield* refuse('Expected an output directory or --check');

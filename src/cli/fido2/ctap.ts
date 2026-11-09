@@ -3,9 +3,10 @@ import { Effect, Result } from 'effect';
 import type { CborMap, CborValue } from '@/cli/fido2/cbor';
 import { bytes, decode, encode, map } from '@/cli/fido2/cbor';
 import type { PinProtocol } from '@/cli/fido2/pin';
-import { pinProtocol, sha256 } from '@/cli/fido2/pin';
+import { pinProtocol } from '@/cli/fido2/pin';
 import type { Assertion, AssertionRequest, Authenticator, HidDevice, HidTransport } from '@/cli/fido2/types';
 import { closeAll, SecurityKeyError } from '@/cli/fido2/types';
+import { sha256 } from '@/sha256';
 
 // CTAPHID command bytes and CTAP2 status codes, from CTAP 2.1 sections 8.1.9 and 8.2.
 const command = { init: 0x06, cbor: 0x10, keepalive: 0x3b, error: 0x3f } as const;

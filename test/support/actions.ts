@@ -1,9 +1,9 @@
-import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { RunIdentity, World } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
+import { git } from '@/git';
 import { bundleRuntime } from '@/tooling/actions/runtime-bundle';
 
 const tokenHost = 'pipelines.actions.githubusercontent.com';
@@ -94,40 +94,28 @@ export async function runRuntime(
 
 export function materialize(files: Record<string, string>): { dir: string; sha: string } {
 	const dir = mkdtempSync(join(tmpdir(), 'beepboop-checkout-'));
-	const git = (...args: string[]) => {
-		const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
-		if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed\n${result.stderr}`);
-		return result.stdout.trim();
-	};
-	git('init', '-b', 'main');
-	git('config', 'user.email', 'bot@example.com');
-	git('config', 'user.name', 'Beepboop');
-	git('config', 'commit.gpgsign', 'false');
-	git('config', 'tag.gpgsign', 'false');
-	git('config', 'core.hooksPath', '/dev/null');
+	gitOutput(dir, ['init', '-b', 'main']);
+	gitOutput(dir, ['config', 'user.email', 'bot@example.com']);
+	gitOutput(dir, ['config', 'user.name', 'Beepboop']);
+	gitOutput(dir, ['config', 'commit.gpgsign', 'false']);
+	gitOutput(dir, ['config', 'tag.gpgsign', 'false']);
+	gitOutput(dir, ['config', 'core.hooksPath', '/dev/null']);
 	for (const [path, content] of Object.entries(files)) {
 		const target = join(dir, path);
 		mkdirSync(dirname(target), { recursive: true });
 		writeFileSync(target, content);
 	}
-	git('add', '-A');
-	git('commit', '-m', 'Initial commit');
-	return { dir, sha: git('rev-parse', 'HEAD') };
+	return { dir, sha: commitAll(dir, 'Initial commit') };
 }
 
 export function commitAll(dir: string, message: string): string {
-	const git = (...args: string[]) => {
-		const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
-		if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed\n${result.stderr}`);
-		return result.stdout.trim();
-	};
-	git('add', '-A');
-	git('commit', '-m', message);
-	return git('rev-parse', 'HEAD');
+	gitOutput(dir, ['add', '-A']);
+	gitOutput(dir, ['commit', '-m', message]);
+	return gitOutput(dir, ['rev-parse', 'HEAD']);
 }
 
 export function gitOutput(dir: string, args: string[]): string {
-	const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
-	if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed\n${result.stderr}`);
-	return result.stdout.trim();
+	const result = git(args, { cwd: dir });
+	if (!result.ok) throw new Error(`git ${args.join(' ')} failed\n${result.stderr}`);
+	return result.stdout;
 }

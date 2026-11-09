@@ -1,4 +1,3 @@
-import { execFile } from 'node:child_process';
 import type { Ask, CLIError, Out } from '@kjanat/dreamcli';
 import { isCLIError } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
@@ -10,6 +9,7 @@ import { routes } from '@/contract/routes';
 import { semverPattern } from '@/contract/semver';
 import { decodeWith } from '@/decode';
 import { packageLabel } from '@/domain/package-label';
+import { git } from '@/git';
 import { shaSchema } from '@/model';
 
 const bumps = ['patch', 'minor', 'major'] as const;
@@ -20,27 +20,18 @@ export function releaseVersion(value: string): Effect.Effect<string | { bump: ty
 		: Effect.fail(failure('Choose patch, minor, major or an explicit semantic version', 'INVALID_VERSION'));
 }
 
-function git(cwd: string, args: string[]): Effect.Effect<string, CLIError> {
-	return Effect.tryPromise({
-		try: signal =>
-			new Promise<string>((resolve, reject) => {
-				execFile(
-					'git',
-					['-C', cwd, ...args],
-					{ encoding: 'utf8', timeout: 10_000, maxBuffer: 1024 * 1024, signal },
-					(error, stdout) => {
-						if (error) reject(error);
-						else resolve(stdout.trim());
-					},
-				);
-			}),
-		catch: () =>
-			failure(
-				'Could not read the current Git checkout',
-				'GIT_RESOLUTION_FAILED',
-				'Run this in a Git checkout or pass --repository owner/repository',
-			),
-	});
+function checkoutGit(cwd: string, args: string[]): Effect.Effect<string, CLIError> {
+	return Effect.sync(() => git(['-C', cwd, ...args], { timeout: 10_000, maxBuffer: 1024 * 1024 })).pipe(
+		Effect.flatMap(result =>
+			result.ok
+				? Effect.succeed(result.stdout)
+				: Effect.fail(failure(
+					'Could not read the current Git checkout',
+					'GIT_RESOLUTION_FAILED',
+					'Run this in a Git checkout or pass --repository owner/repository',
+				))
+		),
+	);
 }
 
 function remoteRepository(remote: string): Effect.Effect<string | undefined> {
@@ -60,7 +51,7 @@ function remoteRepository(remote: string): Effect.Effect<string | undefined> {
 
 export function checkoutRepository(cwd: string): Effect.Effect<string, CLIError> {
 	return Effect.gen(function*() {
-		const remotes = (yield* git(cwd, ['remote'])).split('\n').filter(Boolean);
+		const remotes = (yield* checkoutGit(cwd, ['remote'])).split('\n').filter(Boolean);
 		if (!remotes.length) {
 			return yield* Effect.fail(failure(
 				'This checkout has no Git remotes',
@@ -71,7 +62,7 @@ export function checkoutRepository(cwd: string): Effect.Effect<string, CLIError>
 		const preferred = remotes.includes('origin') ? ['origin'] : remotes;
 		const repositories = new Map<string, string>();
 		for (const remote of preferred) {
-			const urls = (yield* git(cwd, ['remote', 'get-url', '--all', remote])).split('\n').filter(Boolean);
+			const urls = (yield* checkoutGit(cwd, ['remote', 'get-url', '--all', remote])).split('\n').filter(Boolean);
 			for (const url of urls) {
 				const repository = yield* remoteRepository(url);
 				if (repository) repositories.set(repository.toLowerCase(), repository);

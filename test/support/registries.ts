@@ -4,11 +4,15 @@ export interface NpmPackage {
 	tags: Record<string, string>;
 }
 
+export function npmIntegrity(name: string, version: string): string {
+	return `sha512-${Buffer.from(`${name}@${version}`).toString('base64')}`;
+}
+
 export class FakeNpm {
 	readonly packages = new Map<string, NpmPackage>();
 	publish(name: string, version: string, tag = 'latest'): string {
 		const entry: NpmPackage = this.packages.get(name) ?? { versions: new Map(), tags: {} };
-		const integrity = `sha512-${Buffer.from(`${name}@${version}`).toString('base64')}`;
+		const integrity = npmIntegrity(name, version);
 		entry.versions.set(version, integrity);
 		entry.tags[tag] = version;
 		if (tag === 'latest') entry.latest = version;

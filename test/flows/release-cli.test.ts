@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PromptEngine } from '@kjanat/dreamcli';
+import { gitOutput } from '@root/test/support/actions.ts';
 import { passChecks, publishWorkflow, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
 import { origin, World } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
@@ -37,16 +38,11 @@ afterEach(async () => {
 	await rm(directory, { recursive: true, force: true });
 });
 const run = (args: string[], answers?: unknown[]) => app.execute(args, { answers, isTTY: true, env: {} });
-function git(cwd: string, ...args: string[]) {
-	const result = Bun.spawnSync(['git', '-C', cwd, ...args], { env: process.env, stdout: 'pipe', stderr: 'pipe' });
-	if (result.exitCode !== 0) throw new Error(result.stderr.toString());
-	return result.stdout.toString().trim();
-}
 async function checkout(remotes: Record<string, string>) {
 	const dir = join(directory, crypto.randomUUID());
 	await mkdir(dir);
-	git(dir, 'init');
-	for (const [name, url] of Object.entries(remotes)) git(dir, 'remote', 'add', name, url);
+	gitOutput(dir, ['init']);
+	for (const [name, url] of Object.entries(remotes)) gitOutput(dir, ['remote', 'add', name, url]);
 	return dir;
 }
 async function seed() {

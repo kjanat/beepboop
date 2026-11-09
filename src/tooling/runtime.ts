@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { parseArgs } from 'node:util';
 import type { Scope } from 'effect';
 import { Data, Effect } from 'effect';
 import { parseWith } from '@/decode';
@@ -48,33 +49,43 @@ export interface Command {
 	readonly stdin?: string;
 }
 
+function spawn(args: string[], options: Command, stdin: 'inherit' | 'ignore', stdout: 'inherit' | 'pipe') {
+	return Bun.spawn(args, {
+		cwd: options.cwd,
+		env: options.env,
+		stdin: options.stdin === undefined ? stdin : new Blob([options.stdin]),
+		stdout,
+		stderr: 'inherit',
+	});
+}
+
+function exited<A>(
+	output: () => Promise<{ code: number; value: A }>,
+	failure: (value: A) => string,
+): Effect.Effect<A, ToolFailure> {
+	return attemptPromise(output).pipe(
+		Effect.flatMap(({ code, value }) => code === 0 ? Effect.succeed(value) : refuse(failure(value))),
+	);
+}
+
 export function run(args: string[], options: Command = {}): Effect.Effect<void, ToolFailure> {
-	return attemptPromise(() =>
-		Bun.spawn(args, {
-			cwd: options.cwd,
-			env: options.env,
-			stdin: options.stdin === undefined ? 'inherit' : new Blob([options.stdin]),
-			stdout: 'inherit',
-			stderr: 'inherit',
-		}).exited
-	).pipe(Effect.flatMap(code => code === 0 ? Effect.void : refuse(`${args[0]} failed`)));
+	return exited(
+		async () => ({ code: await spawn(args, options, 'inherit', 'inherit').exited, value: undefined }),
+		() => `${args[0]} failed`,
+	);
 }
 
 export function capture(args: string[], options: Command = {}): Effect.Effect<string, ToolFailure> {
-	return attemptPromise(async () => {
-		const child = Bun.spawn(args, {
-			cwd: options.cwd,
-			env: options.env,
-			stdin: options.stdin === undefined ? 'ignore' : new Blob([options.stdin]),
-			stdout: 'pipe',
-			stderr: 'inherit',
-		});
-		const [stdout, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
-		return { stdout, code };
-	}).pipe(
-		Effect.flatMap(({ stdout, code }) =>
-			code === 0 ? Effect.succeed(stdout) : refuse(`${args.join(' ')} failed: ${stdout}`.trim())
-		),
+	return exited(async () => {
+		const child = spawn(args, options, 'ignore', 'pipe');
+		const [value, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+		return { code, value };
+	}, stdout => `${args.join(' ')} failed: ${stdout}`.trim());
+}
+
+export function checkArguments(allowPositionals: boolean) {
+	return attempt(() =>
+		parseArgs({ args: Bun.argv.slice(2), options: { check: { type: 'boolean' } }, allowPositionals, strict: true })
 	);
 }
 

@@ -2,6 +2,7 @@ import { Effect } from 'effect';
 import type { RepositoryGateway } from '@/automation/github';
 import { repositorySchema } from '@/automation/github-resources';
 import type { Publication } from '@/automation/types';
+import { sha256Hex } from '@/contract/ids';
 import { fromJson, fromPromise } from '@/failure';
 import { record } from '@/model';
 
@@ -15,8 +16,7 @@ export function verifyManifest(publication: Publication, gateway: RepositoryGate
 		const branch = (yield* gateway.read(repositorySchema, `/repos/${repository}`, '')).default_branch;
 		const content = yield* gateway.file(repository, path, branch, '');
 		if (content === null) return { ...publication, outcome: 'pending' as const };
-		const digest = yield* fromPromise(() => crypto.subtle.digest('SHA-256', new TextEncoder().encode(content)));
-		const hash = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+		const hash = yield* fromPromise(() => sha256Hex(content));
 		const version = path.endsWith('.json')
 			? (yield* Effect.fromResult(record(yield* fromJson(content)))).version
 			: content.match(/^\s*version\s+["']([^"']+)["']/m)?.[1];

@@ -1,14 +1,20 @@
-import { cp, readdir, rm } from 'node:fs/promises';
+import { cp, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { Effect } from 'effect';
+import { git as runGit } from '@/git';
 import source from '@/package-url/source.json';
-import { attempt, attemptPromise, capture, main, refuse, run, temporaryDirectory } from '@/tooling/runtime';
+import { definitionFiles } from '@/tooling/purl/definition-files';
+import { attempt, attemptPromise, main, refuse, run, temporaryDirectory } from '@/tooling/runtime';
 
 const root = resolve(import.meta.dir, '../../package-url');
 
 function git(args: string[], cwd?: string) {
-	return capture(['git', ...args], cwd === undefined ? {} : { cwd }).pipe(Effect.map(output => output.trim()));
+	return attempt(() => runGit(args, { stderr: 'inherit', ...(cwd === undefined ? {} : { cwd }) })).pipe(
+		Effect.flatMap(result =>
+			result.ok ? Effect.succeed(result.stdout) : refuse(`git ${args.join(' ')} failed: ${result.stdout}`.trim())
+		),
+	);
 }
 
 const clone = Effect.gen(function*() {
@@ -27,15 +33,12 @@ await main(Effect.scoped(Effect.gen(function*() {
 	if (revision !== source.revision) {
 		return yield* refuse(`Expected pinned revision ${source.revision}, got ${revision}`);
 	}
-	const files = (yield* attemptPromise(() => readdir(join(checkout, 'types'))))
-		.filter(name => name.endsWith('-definition.json')).sort();
+	const files = yield* definitionFiles(join(checkout, 'types'));
 	for (const filename of files) {
 		yield* attemptPromise(() => cp(join(checkout, 'types', filename), join(root, 'definitions', filename)));
 	}
-	for (const filename of yield* attemptPromise(() => readdir(join(root, 'definitions')))) {
-		if (filename.endsWith('-definition.json') && !files.includes(filename)) {
-			yield* attemptPromise(() => rm(join(root, 'definitions', filename)));
-		}
+	for (const filename of yield* definitionFiles(join(root, 'definitions'))) {
+		if (!files.includes(filename)) yield* attemptPromise(() => rm(join(root, 'definitions', filename)));
 	}
 	yield* attemptPromise(() =>
 		cp(join(checkout, 'schemas/purl-type-definition.schema-1.1.json'), join(root, 'type-definition.schema.json'))

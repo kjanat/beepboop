@@ -12,6 +12,7 @@ import type { Reply } from '@root/test/support/http.ts';
 import { bearer } from '@root/test/support/http.ts';
 import type { Publishing } from '@root/test/support/ledger.ts';
 import { publishWith, withIdentity, workflowCall } from '@root/test/support/ledger.ts';
+import { npmIntegrity } from '@root/test/support/registries.ts';
 import { passChecks } from '@root/test/support/repositories.ts';
 import type { RunIdentity } from '@root/test/support/world.ts';
 import { World } from '@root/test/support/world.ts';
@@ -551,9 +552,6 @@ const npm = '@octo/lint', python = 'lint-py';
 function sdist(version: string) {
 	return `lint-py ${version} sdist\n`;
 }
-function integrity(version: string) {
-	return `sha512-${Buffer.from(`${npm}@${version}`).toString('base64')}`;
-}
 interface Bindings {
 	commands: { command: string; cwd: string; env: Record<string, string> }[];
 	empty?: boolean;
@@ -586,7 +584,7 @@ function bindings(state: Bindings, version: string): Runner['run'] {
 			if (argv[1] === 'pack') {
 				writeFileSync(join(after('--pack-destination'), `octo-lint-${version}.tgz`), 'tarball\n');
 				const stdout = `> @octo/lint@${version} prepack\n> tsc\n\n${
-					JSON.stringify([{ filename: `octo-lint-${version}.tgz`, integrity: integrity(version) }], null, 2)
+					JSON.stringify([{ filename: `octo-lint-${version}.tgz`, integrity: npmIntegrity(npm, version) }], null, 2)
 				}\n`;
 				return { code: 0, stdout, output: `npm notice Tarball Contents\n${stdout}` };
 			}
@@ -622,7 +620,7 @@ test('npm and PyPI packages publish through npm and uv and verify their integrit
 		{ command: 'uv publish --check-url https://pypi.org/simple/', cwd: '.', env: secrets },
 	]);
 	expect((await executionOf(repository, execution.id)).publications.map(p => [p.id, p.outcome, p.digest])).toEqual([
-		[npmId, 'succeeded', integrity('1.1.0')],
+		[npmId, 'succeeded', npmIntegrity(npm, '1.1.0')],
 		[pypiId, 'succeeded', createHash('sha256').update(sdist('1.1.0')).digest('hex')],
 	]);
 	expect(Effect.runSync(Effect.result(requireAll(result.success)))._tag).toBe('Success');

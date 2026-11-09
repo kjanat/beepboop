@@ -2,12 +2,12 @@ import { Effect, Result } from 'effect';
 import { hidAuthenticator } from '@/cli/fido2/ctap';
 import { linuxTransport } from '@/cli/fido2/linux';
 import { macosTransport } from '@/cli/fido2/macos';
-import { sha256 } from '@/cli/fido2/pin';
 import type { Authenticator } from '@/cli/fido2/types';
 import { SecurityKeyError } from '@/cli/fido2/types';
 import { windowsAuthenticator } from '@/cli/fido2/windows';
 import type { Parsed } from '@/model';
 import { array, record, text } from '@/model';
+import { sha256 } from '@/sha256';
 
 interface RequestOptions {
 	challenge: string;

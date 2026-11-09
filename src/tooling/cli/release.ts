@@ -3,7 +3,9 @@ import { join, resolve } from 'node:path';
 import { Effect } from 'effect';
 import { z } from 'zod';
 import { packageId } from '@/automation/package-identity';
+import { checkoutAt } from '@/git';
 import { looseSchema } from '@/model';
+import { sha256Hex } from '@/sha256';
 import { packageManifest } from '@/tooling/cli/manifest';
 import { writeOutput } from '@/tooling/github-output';
 import {
@@ -45,7 +47,7 @@ function checksum(path: string): Effect.Effect<string | undefined, ToolFailure> 
 	return attemptPromise(async () => {
 		const file = Bun.file(join(directory, path));
 		if (!await file.exists()) return undefined;
-		return `sha256-${new Bun.CryptoHasher('sha256').update(await file.arrayBuffer()).digest('hex')}`;
+		return `sha256-${sha256Hex(await file.bytes())}`;
 	});
 }
 
@@ -64,10 +66,7 @@ await main(Effect.gen(function*() {
 		}),
 		yield* attempt((): unknown => JSON.parse(process.env.RELEASE_CONTEXT ?? '{}')),
 	);
-	const revision = Bun.spawnSync(['git', 'rev-parse', 'HEAD'], { cwd: directory });
-	if (revision.exitCode !== 0 || revision.stdout.toString().trim() !== context.sourceSha) {
-		return yield* refuse('Checkout is not the approved commit');
-	}
+	if (!checkoutAt(directory, context.sourceSha)) return yield* refuse('Checkout is not the approved commit');
 	if (
 		context.operation !== 'promote' || context.stream !== 'cli' || context.version !== npm.version
 		|| npm.version !== jsr.version || npm.name !== jsr.name

@@ -1,17 +1,10 @@
-import {
-	createCipheriv,
-	createDecipheriv,
-	createECDH,
-	createHash,
-	createHmac,
-	hkdfSync,
-	randomBytes,
-} from 'node:crypto';
+import { createCipheriv, createDecipheriv, createECDH, createHmac, hkdfSync, randomBytes } from 'node:crypto';
 import { Result } from 'effect';
 import type { CborMap } from '@/cli/fido2/cbor';
 import { bytes } from '@/cli/fido2/cbor';
 import type { SecurityKeyError } from '@/cli/fido2/types';
 import { attemptSecurityKey } from '@/cli/fido2/types';
+import { sha256 } from '@/sha256';
 
 export interface PinProtocol {
 	readonly version: 1 | 2;
@@ -36,10 +29,6 @@ function aes(
 
 function hmac(key: Uint8Array, message: Uint8Array): Uint8Array {
 	return new Uint8Array(createHmac('sha256', key).update(message).digest());
-}
-
-export function sha256(data: Uint8Array): Uint8Array {
-	return new Uint8Array(createHash('sha256').update(data).digest());
 }
 
 export function pinProtocol(version: 1 | 2, authenticatorKey: CborMap): Result.Result<PinProtocol, SecurityKeyError> {

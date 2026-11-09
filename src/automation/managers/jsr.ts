@@ -12,6 +12,7 @@ import { jsrManifest, jsrPackageNamePattern } from '@/contract/catalog';
 import { fileProblem } from '@/contract/diagnostics';
 import type { DomainError } from '@/contract/errors';
 import { domainError, upstream } from '@/contract/errors';
+import { sha256Hex } from '@/contract/ids';
 import { fromPromise, fromSync } from '@/failure';
 
 const precedence = ['jsr.json', 'jsr.jsonc', 'deno.json', 'deno.jsonc'];
@@ -184,8 +185,7 @@ export const jsrManager: Adapter<'jsr'> = {
 			) {
 				return result('failed');
 			}
-			const hash = yield* fromPromise(() => crypto.subtle.digest('SHA-256', bytes));
-			const digest = `sha256-${Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('')}`;
+			const digest = `sha256-${yield* fromPromise(() => sha256Hex(bytes))}`;
 			return result(publication.digest && publication.digest !== digest ? 'failed' : 'succeeded', digest);
 		}).pipe(Effect.catchCause(() => Effect.succeed(result('uncertain'))));
 	},
