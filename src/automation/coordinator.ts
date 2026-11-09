@@ -87,6 +87,7 @@ import { manifestProblems } from '@/automation/release-version';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
 import type { AutomationBindings } from '@/automation/service';
 import { AutomationService } from '@/automation/service';
+import { binaryLegs } from '@/automation/setup-binaries';
 import { maintainSetup } from '@/automation/setup-maintenance';
 import type { SetupEdit } from '@/automation/setup-types';
 import { decodeError, Store } from '@/automation/store';
@@ -108,6 +109,7 @@ import { sha256DigestPattern } from '@/contract/ids';
 import type { ClaimStep, LedgerManager, NextStep, PublishReport, ReportStep } from '@/contract/ledger';
 import { ledgerManagers } from '@/contract/ledger';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
+import type { BinaryProgress } from '@/contract/views';
 import { parseRetryAfter } from '@/domain/http-date';
 import type { ReadyRepository } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
@@ -1758,6 +1760,61 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return next;
 		}));
 	}
+	binaryProgress(id: string): Promise<BinaryProgress> {
+		return Effect.runPromise(Effect.gen({ self: this }, function*() {
+			const execution = yield* this.get(id);
+			const release = execution.workflow?.setup?.binaries;
+			if (!release || !execution.version) return { legs: [], assets: [] };
+			const legs = binaryLegs(release, execution.version);
+			const gateway = this.gateway();
+			const token = yield* gateway.token(execution.repository, execution.repositoryId, { actions: 'read' });
+			const jobs = execution.runId
+				? (yield* this.runJobs(
+					execution.repository,
+					{ id: execution.runId, run_attempt: execution.runAttempt ?? 1 },
+					token,
+				))
+				: [];
+			const draft = execution.draftRelease;
+			const uploaded = new Set(
+				draft
+					? (yield* gateway.read(
+						releaseSchema.nullable(),
+						`/repos/${execution.repository}/releases/${draft.id}`,
+						token,
+					))?.assets.map(asset => asset.name) ?? []
+					: [],
+			);
+			return {
+				legs: legs.map(leg => {
+					const job = jobs.find(entry => entry.name === leg.job);
+					const state = !job || job.status === 'queued' || job.status === 'waiting'
+						? 'waiting' as const
+						: job.status !== 'completed'
+						? 'running' as const
+						: job.conclusion === 'success'
+						? 'succeeded' as const
+						: job.conclusion === 'skipped' || job.conclusion === 'cancelled'
+						? 'skipped' as const
+						: 'failed' as const;
+					return {
+						build: leg.build,
+						target: leg.target,
+						job: leg.job,
+						state,
+						...(job?.started_at ? { startedAt: job.started_at } : {}),
+						...(job?.completed_at ? { completedAt: job.completed_at } : {}),
+					};
+				}),
+				assets: legs.map(leg => ({
+					build: leg.build,
+					target: leg.target,
+					name: leg.asset,
+					uploaded: uploaded.has(leg.asset),
+				})),
+			};
+		}));
+	}
 	approvalReadiness(id: string): Promise<{ problems: string[]; blocked: string[] }> {
 		return Effect.runPromise(Effect.gen({ self: this }, function*() {
 			const execution = yield* this.get(id);
@@ -2109,7 +2166,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return !(yield* this.openGates(repository, run, token, this.observeRunOf(repository, run, token, false)));
 		});
 	}
-	private runJobs(repository: string, run: WorkflowRun, token: string): Effect.Effect<RunJob[], DomainError> {
+	private runJobs(
+		repository: string,
+		run: Pick<WorkflowRun, 'id' | 'run_attempt'>,
+		token: string,
+	): Effect.Effect<RunJob[], DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const jobs: RunJob[] = [];
 			for (let page = 1;; page++) {

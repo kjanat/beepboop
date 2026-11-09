@@ -22,6 +22,13 @@ function execution(
 
 export const executionEndpoints = {
 	executionsList: admin(routes.executionsList, (_, { service }) => service.store.executions()),
+	executionsBinaries: admin(
+		routes.executionsBinaries,
+		(input, { service }) =>
+			execution(service, input.id, input.repositoryId).pipe(
+				Effect.flatMap(found => fromPromise(() => service.coordinator(found.repositoryId).binaryProgress(found.id))),
+			),
+	),
 	executionsApproval: admin(
 		routes.executionsApproval,
 		(input, { service }) =>

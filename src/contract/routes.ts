@@ -12,6 +12,7 @@ import { destinationInput, subscriptionInput, watchInput } from '@/contract/noti
 import {
 	acknowledged,
 	approvalReadiness,
+	binaryProgress,
 	credentialsView,
 	executionView,
 	notificationsView,
@@ -209,6 +210,14 @@ export const routes = {
 			planId: z.string(),
 		}),
 		response: executionView,
+	}),
+	executionsBinaries: route({
+		method: 'POST',
+		path: '/api/executions/binaries',
+		auth: 'admin',
+		idempotent: true,
+		request: executionRef,
+		response: binaryProgress,
 	}),
 	executionsApproval: route({
 		method: 'POST',

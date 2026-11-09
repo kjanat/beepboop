@@ -34,6 +34,7 @@ const legacy = [
 	'POST /api/releases/prepare-set',
 	'POST /api/releases/plan',
 	'POST /api/releases/prepare',
+	'POST /api/executions/binaries',
 	'POST /api/executions/approval',
 	'POST /api/cli-sessions/revoke',
 	'POST /api/cli-sessions/revoke-all',

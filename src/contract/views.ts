@@ -47,6 +47,19 @@ export const repositoryView = z.looseObject({
 });
 export type RepositoryView = z.output<typeof repositoryView>;
 
+export const binaryProgress = z.object({
+	legs: z.array(z.object({
+		build: z.string(),
+		target: z.string(),
+		job: z.string(),
+		state: z.enum(['waiting', 'running', 'succeeded', 'failed', 'skipped']),
+		startedAt: z.string().optional(),
+		completedAt: z.string().optional(),
+	})),
+	assets: z.array(z.object({ build: z.string(), target: z.string(), name: z.string(), uploaded: z.boolean() })),
+});
+export type BinaryProgress = z.output<typeof binaryProgress>;
+
 export const planReview = z.looseObject({
 	sourceSha: z.string(),
 	planId: z.string(),

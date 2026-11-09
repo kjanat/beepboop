@@ -18,6 +18,8 @@ export interface RunJob {
 	name: string;
 	status: string;
 	conclusion: string | null;
+	started_at?: string | null | undefined;
+	completed_at?: string | null | undefined;
 }
 export type GateState = 'ready' | 'blocked' | 'waiting';
 type JobStatus = 'passed' | 'failed' | 'pending';

@@ -85,6 +85,27 @@ export function assetName(build: BinaryBuild, target: BinaryTarget): string {
 	return build.asset.replace(/\{([\w.]+)\}/g, (_, key: string) => names[key] ?? '');
 }
 
+export interface BinaryLeg {
+	build: string;
+	target: BinaryTarget;
+	job: string;
+	asset: string;
+}
+export function binaryLegs(release: BinaryRelease, version: string): BinaryLeg[] {
+	return release.builds.flatMap(build =>
+		release.targets.map(target => {
+			const names = platforms[target].names;
+			const label = build.toolchain === 'go' ? `${names['go.os']}/${names['go.arch']}` : names['rust.target'];
+			return {
+				build: build.name,
+				target,
+				job: `Build ${build.name} (${label})`,
+				asset: assetName(build, target).replaceAll('{version}', version),
+			};
+		})
+	);
+}
+
 export function assetConflicts(release: BinaryRelease): string[] {
 	const seen = new Map<string, string>(), conflicts: string[] = [];
 	for (const build of release.builds) {

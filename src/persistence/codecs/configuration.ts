@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { managerNames } from '@/contract/catalog';
 import { releaseStart, versionBump } from '@/contract/release-start';
+import { workflowSetup } from '@/contract/setup';
 import { versionFileSchema } from '@/contract/version-files';
 import type { Configuration } from '@/domain/configuration';
 import { stringsSchema as strings } from '@/model';
@@ -29,6 +30,7 @@ const binding = {
 	ref: z.string().optional(),
 	inputs: z.record(z.string(), z.union([z.string(), z.boolean(), z.number()])).default({}),
 	required: z.boolean().default(true),
+	setup: workflowSetup.optional(),
 };
 const workflowBinding = z.object(binding);
 const stream = z.object({
