@@ -275,17 +275,26 @@ function setSteps(document: Document, jobName: string, steps: Record<string, unk
 		if (index >= 0 && index < nodes.length) taken.add(index);
 		return index >= 0 && index < nodes.length ? index : undefined;
 	});
-	const lost = new Set(nodes.flatMap((node, at) => taken.has(at) ? [] : anchorsAndAliases(node).anchors));
+	const outside = new Set<string>();
+	visit(document, {
+		Node(_, entry) {
+			if (entry === sequence) return visit.SKIP;
+			if (!isAlias(entry) && isNode(entry) && entry.anchor) outside.add(entry.anchor);
+		},
+	});
 	let settled = false;
 	while (!settled) {
 		settled = true;
+		const defined = new Set(outside);
+		for (const index of matches) {
+			if (index !== undefined) { for (const name of anchorsAndAliases(nodes[index]).anchors) defined.add(name); }
+		}
 		for (const [position, index] of matches.entries()) {
 			if (index === undefined) continue;
-			const { anchors, aliases } = anchorsAndAliases(nodes[index]);
-			if (!aliases.some(name => lost.has(name))) continue;
-			matches[position] = undefined;
-			for (const name of anchors) lost.add(name);
-			settled = false;
+			if (!anchorsAndAliases(nodes[index]).aliases.every(name => defined.has(name))) {
+				matches[position] = undefined;
+				settled = false;
+			}
 		}
 	}
 	sequence.items = steps.map((step, position) => {

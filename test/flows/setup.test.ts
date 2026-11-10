@@ -2430,3 +2430,53 @@ jobs:
 	expect(after).toContain('actions/publish@');
 	expect(after.endsWith('\n')).toBe(false);
 });
+
+test('integrating a workflow keeps a step that aliases an anchor in a dispatch input default', async () => {
+	const repository = widget(world.github, { configured: false });
+	world.github.push(repository, {
+		'.github/workflows/ship.yml': `name: Ship
+on:
+  workflow_dispatch:
+    inputs:
+      tool_version:
+        description: Tool version
+        required: false
+        default: &tool_version '1.2.3'
+jobs:
+  ship:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: acme/tool@v1
+        with:
+          version: *tool_version
+      - id: publish_existing
+        run: npm publish
+`,
+	}, 'Add ship workflow');
+	const api = bearer(world, await world.cliSession());
+	const choices: SetupChoices = {
+		streams: [{
+			name: 'main',
+			packages: ['pkg:npm/widget'],
+			required: ['pkg:npm/widget'],
+			versioning: 'workspace',
+			promote: {
+				file: 'ship.yml',
+				job: 'ship',
+				triggers: 'review',
+				commands: '',
+				publicationSteps: { 'pkg:npm/widget': 'publish_existing' },
+			},
+		}],
+	};
+	const plan = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
+	);
+	expect(plan.blockers).toEqual([]);
+	const after = plan.edits.find(edit => edit.path === '.github/workflows/ship.yml')?.after ?? '';
+	expect(after).toContain('beepboop_execution_id');
+	const { jobs } = z.object({
+		jobs: z.object({ ship: z.object({ steps: z.array(z.looseObject({ uses: z.string().optional() })) }) }),
+	}).parse(parse(after));
+	expect(jobs.ship.steps.find(step => step.uses === 'acme/tool@v1')).toMatchObject({ with: { version: '1.2.3' } });
+});
