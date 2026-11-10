@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A setup rewrite of an already integrated workflow keeps the trailing comments of the steps it does not change, such as `# v5.2.7` after a pinned `uses`, and ends the file with the same final newline as the original.
 - Generated release workflows build Cargo binaries with `cargo auditable build`, so the SBOM lists the crates each binary was built with. The SBOM names the repository and release version, gives every file SHA1 and SHA256 digests, and lists no packages or CPEs guessed from asset file names. https://github.com/kjanat/beepboop/pull/72
 - A setup rebuild replaces the per-crate `cargo publish --locked --package 'name'` lines an earlier generator wrote with `beepboop publish`, so a rerun skips published crates, retries rate limits and reports each crate. Commands that differ from those lines stay as written.
 - A setup rebuild refreshes the commands of every extra operation workflow, not only the preparation and publishing ones. Plain per-crate `cargo publish --locked --package 'name'` lines in such a workflow, for example shellcheck-rs's `publish-crates.yml`, become `beepboop publish` with the crates.io credential.

@@ -1390,6 +1390,8 @@ type PlainVariant = {
 	publishEnv?: string;
 	reportWith?: string;
 	publications?: string;
+	untouched?: string;
+	ending?: string;
 };
 const rewrittenPlain = async (variant: PlainVariant = {}) => {
 	const repository = lintRepository();
@@ -1452,7 +1454,15 @@ ${variant.reportWith ?? ''}          publications: ${
 	expect(plainWorkflow).toContain("cargo publish --locked --package 'lint'");
 	expect(plainWorkflow).toContain('beepboop_credentials');
 	expect(plainWorkflow).not.toContain('actions/publish@');
-	world.github.push(repository, { '.github/workflows/publish-crates.yml': plainWorkflow }, 'Integrate crates workflow');
+	const seeded = variant.untouched
+		? plainWorkflow.replace(
+			'      - id: beepboop_credentials',
+			`      - ${variant.untouched}\n      - id: beepboop_credentials`,
+		)
+		: plainWorkflow;
+	expect(seeded).toContain(variant.untouched ?? 'cargo publish');
+	const content = variant.ending === undefined ? seeded : `${seeded.trimEnd()}${variant.ending}`;
+	world.github.push(repository, { '.github/workflows/publish-crates.yml': content }, 'Integrate crates workflow');
 	const plan = await Effect.runPromise(
 		parseSetupPlan(
 			(await api('/api/repositories/setup/preview', { repository: repository.name, choices: lintChoices(plainLines) }))
@@ -1477,6 +1487,20 @@ test('an integrated operation workflow with plain crate lines is rewritten to th
 		with: { credentials: JSON.stringify({ CARGO_REGISTRY_TOKEN: 'crates-io' }) },
 	});
 	expect(publishStep(rewritten)).not.toHaveProperty('env');
+});
+
+const pinnedStep = 'uses: acme/tool@0123456789abcdef0123456789abcdef01234567 # v9.9.9';
+
+test('the rewrite keeps the trailing comment of a step it does not change', async () => {
+	const rewritten = await rewrittenPlain({ untouched: pinnedStep });
+	expect(rewritten).toContain(`- ${pinnedStep}\n`);
+	expect(publishStep(rewritten)).toMatchObject({ uses: 'kjanat/beepboop/actions/publish@v1' });
+});
+
+test.each(['\n', ''])('the rewrite ends the workflow like the original (%j)', async ending => {
+	const rewritten = await rewrittenPlain({ ending });
+	expect(publishStep(rewritten)).toMatchObject({ uses: 'kjanat/beepboop/actions/publish@v1' });
+	expect(rewritten.slice(rewritten.trimEnd().length)).toBe(ending);
 });
 
 test('the rewritten publish step keeps its own environment', async () => {
@@ -2333,4 +2357,60 @@ test('a package ticked again in an observed stream becomes required again', () =
 		streams: [{ ...stream, packages: [npm, go] }],
 	}).streams[0];
 	expect(unticked).toMatchObject({ packages: [npm], required: [npm] });
+});
+
+test('a shared preparation and publication workflow keeps step comments and its missing final newline', async () => {
+	const repository = lintRepository();
+	const api = bearer(world, await world.cliSession());
+	const gate = (operation: string) => `\${{ inputs.beepboop_operation == '${operation}' }}`;
+	const existing = `name: Release
+on:
+  workflow_dispatch:
+    inputs:
+      beepboop_operation:
+        type: choice
+        options: [prepare, publish]
+        default: publish
+jobs:
+  prepare:
+    if: ${gate('prepare')}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: acme/tool@0123456789abcdef0123456789abcdef01234567 # v9.9.9
+  publish:
+    if: ${gate('publish')}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ready`;
+	world.github.push(repository, { '.github/workflows/release.yml': existing }, 'Add shared workflow');
+	const choices: SetupChoices = {
+		streams: [{
+			name: 'main',
+			packages: lintCrates,
+			required: lintCrates,
+			versioning: 'workspace',
+			prepare: {
+				file: 'release.yml',
+				job: 'prepare',
+				triggers: 'review',
+				commands: 'cargo check --workspace',
+				publicationSteps: {},
+			},
+			promote: {
+				file: 'release.yml',
+				job: 'publish',
+				triggers: 'review',
+				commands: ledgerCommand,
+				publicationSteps: {},
+			},
+		}],
+	};
+	const plan = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
+	);
+	expect(plan.blockers).toEqual([]);
+	const after = plan.edits.find(edit => edit.path === '.github/workflows/release.yml')?.after ?? '';
+	expect(after).toContain('- uses: acme/tool@0123456789abcdef0123456789abcdef01234567 # v9.9.9\n');
+	expect(after).toContain('actions/publish@');
+	expect(after.endsWith('\n')).toBe(false);
 });

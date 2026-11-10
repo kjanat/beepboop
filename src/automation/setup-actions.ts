@@ -42,6 +42,12 @@ export function renderWorkflow(document: Document): string {
 	return document.toString({ lineWidth: 0 });
 }
 
+export function matchEnding(rendered: string, original: string | undefined): string {
+	if (original === undefined) return rendered;
+	const body = rendered.replace(/\n+$/, '');
+	return original.endsWith('\n') ? `${body}\n` : body;
+}
+
 export function annotatePins(source: string): string {
 	const document = parseDocument(source);
 	visit(document, {
