@@ -1,3 +1,4 @@
+import { newestActiveFirst } from '@/automation/execution-order.ts';
 import { readiness } from '@/domain/repository';
 import type { ViewOf } from '@/server/loaders.ts';
 import { activeStates, needingUser, releaseSummaries } from '@/server/releases.ts';
@@ -6,7 +7,7 @@ export function overview({ repositories, executions }: ViewOf<'overview'>) {
 	const needing = needingUser(executions.readable);
 	const waiting = executions.readable
 		.filter(run => needing.has(run.id))
-		.sort((a, b) => b.updatedAt - a.updatedAt);
+		.sort(newestActiveFirst);
 	const running = executions.readable.filter(e => activeStates.includes(e.state)).length;
 	const setup = repositories.readable.filter(r => readiness(r).kind !== 'ready').length
 		+ repositories.unreadable.length;

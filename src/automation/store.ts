@@ -1,5 +1,6 @@
 import { Effect } from 'effect';
 import { z } from 'zod';
+import { executionOrderSql } from '@/automation/execution-order';
 import { encodeRepository, identifyRepository } from '@/automation/package-identity';
 import { documentRow, rowDocument } from '@/automation/schemas';
 import type {
@@ -165,9 +166,9 @@ export class Store {
 	}
 	private executionRows(repositoryId?: number): Effect.Effect<z.output<typeof executionRow>[], DomainError> {
 		const rows = repositoryId === undefined
-			? this.sql.all('SELECT id, repository_id, document FROM executions ORDER BY updated_at DESC LIMIT 200')
+			? this.sql.all(`SELECT id, repository_id, document FROM executions ORDER BY ${executionOrderSql} LIMIT 200`)
 			: this.sql.all(
-				'SELECT id, repository_id, document FROM executions WHERE repository_id=? ORDER BY updated_at DESC LIMIT 200',
+				`SELECT id, repository_id, document FROM executions WHERE repository_id=? ORDER BY ${executionOrderSql} LIMIT 200`,
 				repositoryId,
 			);
 		return rows.pipe(Effect.flatMap(rows => parse(z.array(executionRow), rows)));
@@ -204,7 +205,7 @@ export class Store {
 		const limit = Math.min(filter.limit ?? 200, 200);
 		const page = (offset: number, found: Execution[]): Effect.Effect<Execution[], DomainError> =>
 			this.sql.all(
-				`SELECT id, repository_id, document FROM executions${where} ORDER BY updated_at DESC, id LIMIT ? OFFSET ?`,
+				`SELECT id, repository_id, document FROM executions${where} ORDER BY ${executionOrderSql} LIMIT ? OFFSET ?`,
 				...values,
 				executionPage,
 				offset,
