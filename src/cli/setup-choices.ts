@@ -5,7 +5,7 @@ import { publishable } from '@/automation/package-publication';
 import type { Selection } from '@/automation/setup-defaults';
 import { preparationReasons, suggestedCommands, suggestedWorkflowFile, ungenerated } from '@/automation/setup-defaults';
 import { streamSummary } from '@/automation/setup-summary';
-import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
+import type { SetupChoices, SetupPlan, SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
 import { lookOf } from '@/cli/look';
 import { failure, prompted } from '@/cli/output';
 import { workflowFilePattern } from '@/contract/catalog';
@@ -79,6 +79,10 @@ function validJson(value: string): boolean {
 	} catch {
 		return false;
 	}
+}
+function obstaclesOf(evidence: WorkflowEvidence | undefined, job: string): string[] | undefined {
+	const obstacles = evidence?.jobObstacles;
+	return obstacles && Object.hasOwn(obstacles, job) ? obstacles[job] : undefined;
 }
 function jsonInput(ask: Ask, message: string, current: unknown): Effect.Effect<unknown, CLIError> {
 	return prompted(() =>
@@ -236,7 +240,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				const usable = sharedTriggers
 					? []
 					: evidence?.jobs.filter(name =>
-						(selected === 'same' || !evidence.jobObstacles?.[name] || evidence.preparationJobs.includes(name)
+						(selected === 'same' || !obstaclesOf(evidence, name) || evidence.preparationJobs.includes(name)
 							|| evidence.reportingJobs.includes(name)) && name !== taken
 					)
 						?? [];
@@ -251,7 +255,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 								: excluded.map(name =>
 									name === taken
 										? `${name} already publishes`
-										: `${name} is ${evidence.jobObstacles?.[name]?.join(', ')}`
+										: `${name} is ${obstaclesOf(evidence, name)?.join(', ')}`
 								).join('; ')
 						}. Choose another workflow, or create a dedicated workflow.`,
 					));
@@ -270,7 +274,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 							excluded.map(name =>
 								name === taken
 									? `${name} (already the publishing job)`
-									: `${name} (${evidence?.jobObstacles?.[name]?.join(', ')})`
+									: `${name} (${obstaclesOf(evidence, name)?.join(', ')})`
 							).join('; ')
 						}.`,
 					));

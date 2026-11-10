@@ -43,7 +43,7 @@ export function workflowEvidence(file: string, source: string): Result.Result<Wo
 }
 /** Why setup cannot patch a job in place; integrate refuses the same jobs. */
 export function jobObstacles(jobs: Record<string, unknown>): Record<string, string[]> {
-	const result: Record<string, string[]> = {};
+	const result: Record<string, string[]> = Object.create(null);
 	for (const [name, value] of Object.entries(jobs)) {
 		const job = object(value);
 		const needs = jobNeeds(job.needs).filter(need =>

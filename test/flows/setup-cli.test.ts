@@ -12,6 +12,7 @@ import { Effect } from 'effect';
 import { parse } from 'yaml';
 import { z } from 'zod';
 import { parseSetupPlan } from '@/automation/setup-plan';
+import { jobObstacles } from '@/automation/setup-workflows';
 import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
 import { choicesEditors, streamEditors, workflowEditors } from '@/cli/setup-choices';
@@ -993,4 +994,29 @@ test('a dispatch-only workflow whose only job is a dependent matrix names why it
 	const session = stubborn('publish.yml');
 	const result = await app.execute(['adopt', 'octo/vw'], { prompter: session.prompter, isTTY: true, env: {} });
 	expect(result.stdout.join('')).toContain('publish is matrix');
+});
+
+for (const name of ['constructor', 'toString', '__proto__']) {
+	test(`a patchable job named ${name} is offered`, async () => {
+		world.github.create('octo/vw', {
+			'package.json': '{"name":"vw-pkg","version":"1.0.0"}',
+			'.github/workflows/publish.yml':
+				`name: Publish\non: workflow_dispatch\njobs:\n  "${name}":\n    runs-on: ubuntu-latest\n    steps:\n      - run: bun run repo release publish\n`,
+		});
+		const session = stubborn('publish.yml');
+		const result = await app.execute(['adopt', 'octo/vw'], { prompter: session.prompter, isTTY: true, env: {} });
+		expect(result.stderr.join('')).toBe('');
+		expect(result.stdout.join('')).toContain(`publish.yml, ${name} job`);
+		expect(result.stdout.join('')).not.toContain('not offered');
+	});
+}
+
+test('job obstacles are recorded as own properties, including for inherited names', () => {
+	const jobs: Record<string, unknown> = { constructor: { steps: [] }, toString: { needs: ['constructor'], steps: [] } };
+	Object.defineProperty(jobs, '__proto__', { value: { strategy: { matrix: {} } }, enumerable: true });
+	const obstacles = jobObstacles(jobs);
+	expect(Object.keys(obstacles).sort()).toEqual(['__proto__', 'toString']);
+	expect(Object.hasOwn(obstacles, 'constructor')).toBe(false);
+	expect(Object.getOwnPropertyDescriptor(obstacles, '__proto__')?.value).toEqual(['matrix']);
+	expect(Object.getOwnPropertyDescriptor(obstacles, 'toString')?.value).toEqual(['needs constructor']);
 });
