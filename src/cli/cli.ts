@@ -27,6 +27,7 @@ import { approvalPolicies, startChannels, versionBumps } from '@/contract/releas
 import { routes } from '@/contract/routes';
 import { binaryTargets, streamVersionings, workflowTriggers } from '@/contract/setup';
 import {
+	companionModulesSentence,
 	existingTriggerChoices,
 	existingTriggersQuestion,
 	mustPublishSentence,
@@ -161,6 +162,7 @@ const adoptCommand = (name: string, description: string, target: typeof reposito
 		.flag('approval', flag.enum(approvalPolicies).deprecated('Use --publish-when'))
 		.flag('version-source', flag.string().describe('Advanced: versionSource as JSON'))
 		.flag('version-files', flag.string().describe('Advanced: versionFiles as JSON'))
+		.flag('companion-module', flag.array(flag.string()).describe(`${companionModulesSentence.slice(0, -1)}; repeat it`))
 		.flag('observe', flag.string().describe('Advanced: observed workflows as JSON'))
 		.flag('needs', flag.string().describe('Advanced: package dependencies as JSON'))
 		.flag('operations', flag.string().describe('Advanced: extra operations as JSON'))

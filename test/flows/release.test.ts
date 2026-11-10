@@ -565,6 +565,16 @@ test('the signer binding signs the version tag without a signed ref policy', asy
 	}
 }, 30_000);
 
+test('a companion module tag is pushed on the release commit beside the version tag', async () => {
+	const { plan, tags } = await packedRelease(world, undefined, undefined, false, 'github.com/octo/widget/go');
+	const promotion = await only(bearer(world, await world.cliSession()), 'promote');
+	expect(promotion.state).toBe('succeeded');
+	expect(plan.changes.map(change => change.name)).toEqual(['v1.1.0', 'go/v1.1.0']);
+	expect(new Set(plan.changes.map(change => change.commit)).size).toBe(1);
+	expect(Object.keys(tags)).toEqual(['v1.1.0', 'go/v1.1.0']);
+	expect(tags['go/v1.1.0']).toContain('tag go/v1.1.0');
+}, 30_000);
+
 test('signed version tags fall back to the runner key without a signer binding', async () => {
 	const key = signingKey('Beepboop <bot@example.com>');
 	try {

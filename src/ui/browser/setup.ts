@@ -8,6 +8,7 @@ import { setupStream } from '@/contract/setup';
 import type { ChoicesField, Editors, StreamField } from '@/contract/setup-fields';
 import { jsonFields, streamFields } from '@/contract/setup-fields';
 import {
+	companionModulesSentence,
 	publishWhenNames,
 	publishWhenQuestion,
 	publishWhenSentences,
@@ -44,6 +45,7 @@ export const streamEditors = {
 	promote: 'control',
 	versionSource: 'json',
 	versionFiles: 'json',
+	companionModules: 'json',
 	needs: 'json',
 	operations: 'json',
 } as const satisfies Editors<StreamField>;
@@ -61,6 +63,7 @@ const streamHelp: Record<StreamField, string> = {
 	promote: '',
 	versionSource: 'Read versions from tags, for example {"kind": "tags", "prefix": "v"}.',
 	versionFiles: 'Other files that carry the version, each with a path, a format and a key.',
+	companionModules: companionModulesSentence,
 	needs: 'Publications that must finish first, keyed by package reference.',
 	operations: 'Workflows that run after other operations, each with a name, file, needs and publications.',
 };

@@ -263,6 +263,7 @@ and promotes through branch workflows and observes publication from a tag:
 | `versionScope`           | Which packages share a version. `one-for-stream`: every package in the release group gets the same version. `per-package`: each package gets its own version. `none`: the release group carries no version, for maintenance operations.                                                                                                                                                                                                                                  |
 | `packages`               | Package IDs to select, such as `pkg:cargo/example-core` or `pkg:npm/%40example/cli`. Independent streams can also select packages in the preparation request.                                                                                                                                                                                                                                                                                                            |
 | `prepare.strategy`       | `managed` lets Beepboop edit the versions. `workflow` runs your own preparation script.                                                                                                                                                                                                                                                                                                                                                                                  |
+| `companionModules`       | Go modules whose version tag the stream also pushes on the release commit, such as `go/v1.2.3` beside `tool-v1.2.3`. See [Version selection and release refs](#version-selection-and-release-refs).                                                                                                                                                                                                                                                                      |
 | `needs`                  | Operation names that must complete before this workflow starts.                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `publications`           | Report IDs that this operation needs to complete.                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `mustPublish`            | Packages that must publish for the release to count as successful. An operation named `publish` uses this list by default.                                                                                                                                                                                                                                                                                                                                               |
@@ -1067,6 +1068,24 @@ operations they distribute.
 A version operation also tags every Go module that the stream lists in
 `packages`. Each tag uses the module's own prefix, such as `go/v1.2.3` for a
 module in `go/`.
+
+`companionModules` lists Go modules whose tag the stream pushes on the release
+commit without releasing the module: `"companionModules":
+["pkg:golang/github.com/example/tool/go"]` on a stream tagged `tool-v` pushes
+`tool-v1.2.3` and `go/v1.2.3` together. The module keeps its own stream, its
+own `versionSource` and its own release workflow, and a release of that stream
+pushes the same tag again on the same commit. Use it when a script or an
+installer needs `go/v<version>` on the commit that carries `tool-v<version>`.
+Listing the module in `packages` of the stream instead releases both as one
+stream. Discovery blocks a `companionModules` entry that matches no package and
+warns about an entry that is not a Go module versioned by tags, or that
+`packages` already lists. A version tag that already points at another commit
+stops the release, as for every other tag.
+
+Adoption proposes `companionModules` when a Go module's tags carry the same
+versions as another stream's tags, or when one file builds both tag names. The
+setup notes name the module, the evidence, and both options, and change
+nothing until you choose one.
 
 Setup writes `refs` with `phase: "version"` for binary releases and for a
 promote setup choice with `tagPrefix`, such as `"tagPrefix": "cli-v"`. The

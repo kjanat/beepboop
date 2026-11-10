@@ -307,6 +307,13 @@
 						"$ref": "#/$defs/packageReference"
 					}
 				},
+				"companionModules": {
+					"description": "Go modules whose version tag is pushed on the release commit together with the stream tag, such as go/v1.2.3 beside cli-v1.2.3. Each module keeps its own stream.",
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/packageReference"
+					}
+				},
 				"prepare": {
 					"type": "object",
 					"properties": {

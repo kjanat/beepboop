@@ -54,7 +54,7 @@ export function streamSummary(
 		const tags = promote.tagPrefix
 			? [
 				`${promote.tagPrefix}<version>`,
-				...own.flatMap(id => {
+				...[...new Set([...own, ...(stream.companionModules ?? [])])].flatMap(id => {
 					const source = packages.get(id)?.manager === 'go' ? packages.get(id)?.versionSource ?? '' : '';
 					const prefix = source.startsWith('tags:') ? source.slice('tags:'.length) : '';
 					return prefix && prefix !== promote.tagPrefix ? [`${prefix}<version>`] : [];

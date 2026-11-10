@@ -26,6 +26,7 @@ export const diagnosticCodes = [
 	'lookup-failed',
 	'unconfigured',
 	'version-tagged',
+	'companion-module',
 ] as const;
 export type DiagnosticCode = (typeof diagnosticCodes)[number];
 
