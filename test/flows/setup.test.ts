@@ -1384,7 +1384,8 @@ const lintRepository = () =>
 		'crates/cli/Cargo.toml': '[package]\nname = "lint"\nversion.workspace = true\n',
 	});
 
-test('an integrated operation workflow with plain crate lines is rewritten to the ledger step', async () => {
+type PlainVariant = { publishIf?: string; reportWith?: string; publications?: string };
+const rewrittenPlain = async (variant: PlainVariant = {}) => {
 	const repository = lintRepository();
 	const api = bearer(world, await world.cliSession());
 	const generated = await Effect.runPromise(
@@ -1402,14 +1403,15 @@ test('an integrated operation workflow with plain crate lines is rewritten to th
 		/ {6}- id: beepboop_publish\n {8}name: Publish selected packages\n {8}uses: [^\n]+\n {8}with:\n(?: {10}[^\n]+\n)+/,
 		`      - id: beepboop_publish
         name: Publish selected packages
-        run: |
+${variant.publishIf ? `        if: ${variant.publishIf}\n` : ''}        run: |
           cargo publish --locked --package 'lint-core'
           cargo publish --locked --package 'lint'
       - uses: kjanat/beepboop/actions/report@v1
         if: \${{ !cancelled() && steps.beepboop.outcome == 'success' }}
         with:
           execution-id: \${{ steps.beepboop.outputs.execution-id }}
-          publications: |
+${variant.reportWith ?? ''}          publications: ${
+	variant.publications?.concat('\n') ?? `|
             [
               {
                 "id": "pkg:cargo/lint-core",
@@ -1428,7 +1430,8 @@ test('an integrated operation workflow with plain crate lines is rewritten to th
                 "outcome": "\${{ steps.beepboop_publish.outcome == 'success' && 'succeeded' || 'failed' }}"
               }
             ]
-`,
+`
+}`,
 	);
 	expect(plainWorkflow).toContain("cargo publish --locked --package 'lint'");
 	expect(plainWorkflow).not.toContain('actions/publish@');
@@ -1440,11 +1443,36 @@ test('an integrated operation workflow with plain crate lines is rewritten to th
 		),
 	);
 	expect(plan.blockers).toEqual([]);
-	const rewritten = plan.edits.find(edit => edit.path === '.github/workflows/publish-crates.yml')?.after ?? '';
+	return plan.edits.find(edit => edit.path === '.github/workflows/publish-crates.yml')?.after ?? '';
+};
+
+test('an integrated operation workflow with plain crate lines is rewritten to the ledger step', async () => {
+	const rewritten = await rewrittenPlain();
 	expect(rewritten).toContain('kjanat/beepboop/actions/publish@v1');
 	expect(rewritten).toContain('CARGO_REGISTRY_TOKEN');
 	expect(rewritten).not.toContain('cargo publish');
 	expect(rewritten).not.toContain('actions/report@');
+});
+
+test('the rewritten publish step keeps its condition', async () => {
+	const rewritten = await rewrittenPlain({ publishIf: "${{ inputs.publish != 'false' }}" });
+	const publish = z.object({ jobs: z.record(z.string(), z.object({ steps: z.array(z.looseObject({})) })) }).parse(
+		parse(rewritten),
+	).jobs.crates?.steps.find(step => step.id === 'beepboop_publish');
+	expect(publish).toMatchObject({ if: "${{ inputs.publish != 'false' }}", uses: 'kjanat/beepboop/actions/publish@v1' });
+});
+
+test('the rewrite keeps a report step that still reports artifacts', async () => {
+	const rewritten = await rewrittenPlain({ reportWith: '          artifacts: "[]"\n' });
+	expect(rewritten).toContain('actions/report@');
+	expect(rewritten).toContain('artifacts:');
+	expect(rewritten).not.toContain('cargo publish');
+});
+
+test('the rewrite leaves a report step with runtime publications as written', async () => {
+	const rewritten = await rewrittenPlain({ publications: '"${{ steps.results.outputs.publications }}"' });
+	expect(rewritten).toContain('steps.results.outputs.publications');
+	expect(rewritten).toContain('kjanat/beepboop/actions/publish@v1');
 });
 
 test("the adoption text states each stream's own publishWhen", async () => {

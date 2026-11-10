@@ -222,6 +222,18 @@ export function integrateReleaseWorkflow(
 		return { content: renderWorkflow(combined), blockers, notes };
 	});
 }
+function publicationEntries(value: unknown): { id?: unknown }[] | undefined {
+	if (value === undefined || value === '') return [];
+	if (typeof value !== 'string') return undefined;
+	try {
+		const parsed: unknown = JSON.parse(value);
+		return Array.isArray(parsed) && parsed.every(entry => typeof entry === 'object' && entry !== null)
+			? parsed
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
 function integrate(
 	document: Document.Parsed,
 	snapshot: Snapshot,
@@ -485,6 +497,7 @@ function integrate(
 					return [{
 						id: 'beepboop_publish',
 						name: 'Publish selected packages',
+						...(step.if === undefined ? {} : { if: step.if }),
 						uses: action('publish'),
 						with: {
 							'execution-id': `\${{ steps.${id}.outputs.execution-id }}`,
@@ -494,10 +507,12 @@ function integrate(
 				}
 				if (step.id === 'beepboop_credentials') return [];
 				if (actionRole(step.uses) !== 'report') return [step];
-				const results = JSON.parse(String(object(step.with).publications || '[]')) as { id?: string }[];
+				const reported = object(step.with);
+				const results = publicationEntries(reported.publications);
+				if (!results) return [step];
 				const kept = results.filter(entry => !(typeof entry.id === 'string' && recorded.has(entry.id)));
-				return kept.length
-					? [{ ...step, with: { ...object(step.with), publications: `${JSON.stringify(kept, null, 2)}\n` } }]
+				return kept.length || reported.artifacts
+					? [{ ...step, with: { ...reported, publications: `${JSON.stringify(kept, null, 2)}\n` } }]
 					: [];
 			});
 		}
