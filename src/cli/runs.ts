@@ -66,3 +66,14 @@ export function slimRun(run: ExecutionView) {
 		publications,
 	};
 }
+
+export function serverFilter(repository: string | undefined, filters: RunFilters) {
+	return {
+		...(repository === undefined ? {} : { repository }),
+		...(filters.stream === undefined ? {} : { stream: filters.stream }),
+		...(filters.operation === undefined ? {} : { operation: filters.operation }),
+		...(filters.state.length ? { states: filters.state.join(',') } : {}),
+		...(filters.version === undefined ? {} : { version: filters.version }),
+		...(filters.limit === undefined || filters.limit < 1 ? {} : { limit: filters.limit }),
+	};
+}

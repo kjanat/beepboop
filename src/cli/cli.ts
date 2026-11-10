@@ -9,7 +9,7 @@ import { readJson } from '@/cli/json-file';
 import { lookOf, step } from '@/cli/look';
 import { emit, failure, prompted, unprompted } from '@/cli/output';
 import { checkoutRepository, releaseRepository, releaseVersion } from '@/cli/release';
-import { filterRuns, listedRepository, slimRun } from '@/cli/runs';
+import { filterRuns, listedRepository, serverFilter, slimRun } from '@/cli/runs';
 import { setupRepository } from '@/cli/setup';
 import { stdin } from '@/cli/stdin';
 import {
@@ -291,7 +291,7 @@ const runs = group('runs').description('Follow, publish, cancel and recover rele
 						yield* step(
 							out,
 							'Listing release operations',
-							client.call(routes.executionsList, {}),
+							client.call(routes.executionsList, serverFilter(repository, filters)),
 							rows => `${rows.length} ${rows.length === 1 ? 'operation' : 'operations'}`,
 						),
 						repository,

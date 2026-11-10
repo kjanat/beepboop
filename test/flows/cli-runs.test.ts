@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
 import { filterRuns, slimRun } from '@/cli/runs';
+import type { executionFilter } from '@/contract/routes';
 import { routes } from '@/contract/routes';
 import type { ExecutionView } from '@/contract/views';
 
@@ -154,4 +155,59 @@ test('filterRuns and slimRun compare repositories without case and keep only pub
 		updatedAt: 1,
 		publications: [{ id: 'pkg:npm/tool', outcome: 'succeeded' }],
 	});
+});
+
+async function crowded() {
+	const run = await prepared();
+	const row = z.object({ document: z.string(), updated_at: z.number() }).parse(
+		await world.db.prepare('SELECT document, updated_at FROM executions WHERE id=?').bind(run.id).first(),
+	);
+	const statement = world.db.prepare(
+		'INSERT INTO executions(id,repository_id,state,document,updated_at) VALUES(?,?,?,?,?)',
+	);
+	await world.db.batch(
+		Array.from({ length: 205 }, (_, index) => {
+			const document = JSON.stringify({
+				...JSON.parse(row.document),
+				id: `decoy-${index}`,
+				repositoryId: 777,
+				repository: 'octo/other',
+			});
+			return statement.bind(`decoy-${index}`, 777, 'succeeded', document, row.updated_at + 1 + index);
+		}),
+	);
+	return run;
+}
+
+test('the server filters before its 200-row limit, so busy repositories cannot hide a quiet one', async () => {
+	const run = await crowded();
+	const everything = await Effect.runPromise(client.call(routes.executionsList, {}));
+	expect(everything).toHaveLength(200);
+	expect(everything.map(entry => entry.id)).not.toContain(run.id);
+	const chosen = await Effect.runPromise(client.call(routes.executionsList, { repository: 'OCTO/Widget' }));
+	expect(chosen.map(entry => entry.id)).toEqual([run.id]);
+	const other = await Effect.runPromise(client.call(routes.executionsList, { stream: 'main', limit: 3 }));
+	expect(other).toHaveLength(3);
+	const outside = join(directory, 'plain');
+	await mkdir(outside);
+	expect(ids(await listed(['--repository', 'octo/widget'], outside))).toEqual([run.id]);
+	expect(ids(await listed(['--repository', 'octo/widget', '--state', 'succeeded'], outside))).toEqual([]);
+});
+
+test('the server applies stream, operation, state and version filters in SQL and rejects unknown states', async () => {
+	const run = await crowded();
+	const list = (input: z.input<typeof executionFilter>) =>
+		Effect.runPromise(client.call(routes.executionsList, input)).then(rows => rows.map(entry => entry.id));
+	expect(await list({ repository: 'octo/widget', stream: 'main', operation: run.operation, version: '1.0.1' })).toEqual(
+		[
+			run.id,
+		],
+	);
+	expect(await list({ repository: 'octo/widget', stream: 'nope' })).toEqual([]);
+	expect(await list({ repository: 'octo/widget', operation: 'promote' })).toEqual([]);
+	expect(await list({ repository: 'octo/widget', version: '9.9.9' })).toEqual([]);
+	expect(await list({ repository: 'octo/widget', states: `failed,${run.state}` })).toEqual([run.id]);
+	expect(await list({ repository: 'octo/widget', states: 'failed' })).toEqual([]);
+	expect(await list({ stream: 'main', states: 'succeeded', limit: 2 })).toHaveLength(2);
+	await expect(list({ states: 'sideways' })).rejects.toThrow();
 });

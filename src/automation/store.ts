@@ -10,6 +10,7 @@ import type {
 	SubscriptionDelivery,
 } from '@/automation/types';
 import { DomainError, precondition } from '@/contract/errors';
+import type { ExecutionFilter } from '@/contract/routes';
 import type { Access } from '@/domain/repository';
 import { fromJson, fromSync, recover } from '@/failure';
 import { record } from '@/model';
@@ -171,6 +172,38 @@ export class Store {
 	}
 	executions(repositoryId?: number): Effect.Effect<Execution[], DomainError> {
 		return this.executionRows(repositoryId).pipe(
+			Effect.flatMap(rows => fromSync(() => rows.map(row => decodeExecutionV1(JSON.parse(row.document))))),
+		);
+	}
+	filteredExecutions(filter: ExecutionFilter): Effect.Effect<Execution[], DomainError> {
+		const conditions: string[] = [], values: (string | number)[] = [];
+		if (filter.repository !== undefined) {
+			conditions.push('repository_id IN (SELECT id FROM repositories WHERE LOWER(name)=LOWER(?))');
+			values.push(filter.repository);
+		}
+		for (
+			const [column, value] of [
+				['stream', filter.stream],
+				['operation', filter.operation],
+				['version', filter.version],
+			] as const
+		) {
+			if (value === undefined) continue;
+			conditions.push(`json_extract(document,'$.${column}')=?`);
+			values.push(value);
+		}
+		if (filter.states !== undefined) {
+			const states = filter.states.split(',');
+			conditions.push(`state IN (${states.map(() => '?').join(',')})`);
+			values.push(...states);
+		}
+		const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
+		return this.sql.all(
+			`SELECT id, repository_id, document FROM executions${where} ORDER BY updated_at DESC LIMIT ?`,
+			...values,
+			Math.min(filter.limit ?? 200, 200),
+		).pipe(
+			Effect.flatMap(rows => parse(z.array(executionRow), rows)),
 			Effect.flatMap(rows => fromSync(() => rows.map(row => decodeExecutionV1(JSON.parse(row.document))))),
 		);
 	}
