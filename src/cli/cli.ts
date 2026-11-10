@@ -9,6 +9,7 @@ import { readJson } from '@/cli/json-file';
 import { lookOf, step } from '@/cli/look';
 import { emit, failure, prompted, unprompted } from '@/cli/output';
 import { checkoutRepository, releaseRepository, releaseVersion } from '@/cli/release';
+import { listedRepository, serverFilter, slimRun } from '@/cli/runs';
 import { setupRepository } from '@/cli/setup';
 import { stdin } from '@/cli/stdin';
 import {
@@ -39,7 +40,7 @@ import {
 	versionScopeQuestion,
 	versionScopes,
 } from '@/contract/setup-terms';
-import { executionView as executionViewSchema } from '@/contract/views';
+import { executionStates, executionView as executionViewSchema } from '@/contract/views';
 
 const base = (name: string, description: string, promptServer = false) =>
 	command(name).description(description)
@@ -253,20 +254,48 @@ const repositories = group('repositories').alias('repo').description('Inspect an
 	);
 const runs = group('runs').description('Follow, publish, cancel and recover release operations')
 	.command(
-		base('list', 'List release operations').action(({ flags, out }) =>
-			Effect.runPromise(Effect.gen(function*() {
-				const client = yield* Client.at(flags.server);
-				yield* executionTable(
-					out,
-					yield* step(
+		base('list', 'List release operations; in a Git checkout only that repository, unless --all')
+			.example('beepboop runs list', "This checkout's repository, or every repository outside a checkout")
+			.example('beepboop runs list --all --state failed --state blocked', 'Failed and blocked runs everywhere')
+			.example('beepboop runs list --repository owner/name --stream main --limit 5', 'The latest runs of one stream')
+			.flag(
+				'repository',
+				flag.string().env('BEEPBOOP_REPOSITORY').describe(
+					'Repository: name, owner/name or GitHub URL; default the checkout',
+				),
+			)
+			.flag(
+				'all',
+				flag.boolean().default(false).describe('List every repository, ignoring the checkout and --repository'),
+			)
+			.flag('stream', flag.string().describe('Only this release stream'))
+			.flag('operation', flag.string().describe('Only this operation, such as prepare or promote'))
+			.flag('state', flag.array(flag.enum(executionStates)).describe('Only these states; repeat it'))
+			.flag('releaseVersion', flag.string().describe('Only this version'))
+			.flag('limit', flag.number().int().min(1).max(200).describe('Show at most this many runs, 1 to 200'))
+			.flag('full', flag.boolean().default(false).describe('With --json, print whole records instead of the summary'))
+			.action(({ flags, out }) =>
+				Effect.runPromise(Effect.gen(function*() {
+					const client = yield* Client.at(flags.server);
+					const filters = {
+						repository: flags.repository,
+						all: flags.all,
+						stream: flags.stream,
+						operation: flags.operation,
+						state: flags.state ?? [],
+						version: flags.releaseVersion,
+						limit: flags.limit,
+					};
+					const repository = yield* listedRepository(client, filters);
+					const found = yield* step(
 						out,
 						'Listing release operations',
-						client.call(routes.executionsList, {}),
+						client.call(routes.executionsList, serverFilter(repository, filters)),
 						rows => `${rows.length} ${rows.length === 1 ? 'operation' : 'operations'}`,
-					),
-				);
-			}))
-		),
+					);
+					yield* executionTable(out, found, flags.full ? found : found.map(slimRun));
+				}))
+			),
 	)
 	.command(
 		base('publish', 'Publish a release waiting for you, from the exact reviewed source commit')

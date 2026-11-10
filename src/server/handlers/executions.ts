@@ -21,7 +21,13 @@ function execution(
 }
 
 export const executionEndpoints = {
-	executionsList: admin(routes.executionsList, (_, { service }) => service.store.executions()),
+	executionsList: admin(
+		routes.executionsList,
+		(input, { service }) =>
+			Object.values(input).some(value => value !== undefined)
+				? service.store.filteredExecutions(input)
+				: service.store.executions(),
+	),
 	executionsBinaries: admin(
 		routes.executionsBinaries,
 		(input, { service }) =>

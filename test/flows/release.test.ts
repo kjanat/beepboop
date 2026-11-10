@@ -444,6 +444,40 @@ test('a stored blocked promotion decodes as verifying only when a recheck can se
 	expect(decodeExecutionV1({ ...stored, state: 'blocked', workflow }).state).toBe('blocked');
 });
 
+test('the state filter matches the state a stored blocked run decodes to and keeps the limit correct', async () => {
+	const { stored, finished } = await finishedPromotion('pending');
+	const workflow = { ...z.record(z.string(), z.unknown()).parse(stored['workflow']), publications: ['pkg:npm/other'] };
+	const { approvedAt: _approvedAt, ...unapproved } = stored;
+	const legacy = [
+		{ id: finished.id, document: { ...stored, state: 'blocked' }, updatedAt: 3_000 },
+		{
+			id: 'legacy-approval',
+			document: { ...unapproved, id: 'legacy-approval', operation: 'promote', attempts: 0, state: 'blocked' },
+			updatedAt: 2_000,
+		},
+		{
+			id: 'legacy-blocked',
+			document: { ...stored, id: 'legacy-blocked', state: 'blocked', workflow },
+			updatedAt: 1_000,
+		},
+	];
+	for (const row of legacy) {
+		await world.db.prepare(
+			'INSERT INTO executions(id,repository_id,state,document,updated_at) VALUES(?,?,?,?,?) '
+				+ 'ON CONFLICT(id) DO UPDATE SET state=excluded.state, document=excluded.document, updated_at=excluded.updated_at',
+		).bind(row.id, finished.repositoryId, 'blocked', JSON.stringify(row.document), row.updatedAt).run();
+	}
+	const store = new Store(world.db);
+	const found = async (states: string, limit?: number) =>
+		(await Effect.runPromise(store.filteredExecutions({ states, ...(limit === undefined ? {} : { limit }) })))
+			.map(execution => [execution.id, execution.state]);
+	expect(await found('verifying')).toEqual([[finished.id, 'verifying']]);
+	expect(await found('awaiting-approval')).toEqual([['legacy-approval', 'awaiting-approval']]);
+	expect(await found('blocked')).toEqual([['legacy-blocked', 'blocked']]);
+	expect(await found('blocked', 1)).toEqual([['legacy-blocked', 'blocked']]);
+	expect(await found('verifying,awaiting-approval', 1)).toEqual([[finished.id, 'verifying']]);
+});
+
 test('a promotion whose workflow branch was deleted fails with the missing ref named', async () => {
 	const repository = widget(world.github);
 	world.npm.publish('widget', '1.0.0');

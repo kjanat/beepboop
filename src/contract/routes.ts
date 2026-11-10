@@ -14,6 +14,7 @@ import {
 	approvalReadiness,
 	binaryProgress,
 	credentialsView,
+	executionStates,
 	executionView,
 	notificationsView,
 	planReview,
@@ -43,6 +44,18 @@ const id = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const proof = text.optional();
 const none = z.object({});
 const executionRef = z.object({ id: text, repositoryId: id.optional() });
+export const executionFilter = z.object({
+	repository: text.optional(),
+	stream: text.optional(),
+	operation: text.optional(),
+	states: text.refine(
+		value => value.split(',').every(state => (executionStates as readonly string[]).includes(state)),
+		'Unknown execution state',
+	).optional(),
+	version: text.optional(),
+	limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+export type ExecutionFilter = z.output<typeof executionFilter>;
 
 export const routes = {
 	wingetList: route({
@@ -66,7 +79,7 @@ export const routes = {
 		path: '/api/executions',
 		auth: 'admin',
 		idempotent: true,
-		request: none,
+		request: executionFilter,
 		response: z.array(executionView),
 	}),
 	notificationsList: route({

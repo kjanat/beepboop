@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { bearer, field } from '@root/test/support/http.ts';
 import { publishWorkflow, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
 import { applySetup, discoverSetup, editPull } from '@root/test/support/setup.ts';
@@ -1293,6 +1293,63 @@ test('a merged binary workflow suggests its publication job for the promote role
 		{ job: 'publish', stream: 'main', operation: 'promote' },
 	]);
 	expect(suggested.choices.streams[0]?.promote?.job).toBe('publish');
+});
+
+describe('a saved plain crate publish script', () => {
+	const crates = ['pkg:cargo/lint-core', 'pkg:cargo/lint'];
+	const promoteCommands = async (commands: string) => {
+		const repository = world.github.create('octo/lint', {
+			'Cargo.toml': '[workspace]\nmembers = ["crates/*"]\n\n[workspace.package]\nversion = "0.1.0"\n',
+			'Cargo.lock': '# Lockfile\n',
+			'crates/core/Cargo.toml': '[package]\nname = "lint-core"\nversion.workspace = true\n',
+			'crates/cli/Cargo.toml': '[package]\nname = "lint"\nversion.workspace = true\n',
+		});
+		const api = bearer(world, await world.cliSession());
+		const choices: SetupChoices = {
+			streams: [{
+				name: 'main',
+				packages: crates,
+				required: crates,
+				versioning: 'workspace',
+				prepare: {
+					file: 'release-lint.yml',
+					job: 'prepare',
+					triggers: 'review',
+					commands: 'cargo check --workspace --all-targets\ncargo test --workspace',
+					publicationSteps: {},
+				},
+				promote: { file: 'release-lint.yml', job: 'publish', triggers: 'review', commands, publicationSteps: {} },
+			}],
+		};
+		const plan = await Effect.runPromise(
+			parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
+		);
+		expect(plan.blockers).toEqual([]);
+		return plan.choices.streams[0]?.promote?.commands;
+	};
+	for (
+		const commands of [
+			"cargo publish --locked --package 'lint-core'\ncargo publish --locked --package 'lint'",
+			"cargo publish --locked --package 'lint'\ncargo publish --locked --package 'lint-core'",
+		]
+	) {
+		test(`is regenerated as ${ledgerCommand}: ${commands.split('\n')[0]}`, async () => {
+			expect(await promoteCommands(commands)).toBe(ledgerCommand);
+		});
+	}
+	for (
+		const commands of [
+			"cargo publish --locked --package 'lint-core'",
+			"cargo publish --package 'lint-core' --locked\ncargo publish --package 'lint' --locked",
+			'cargo publish --locked --package lint-core\ncargo publish --locked --package lint',
+			"cargo publish --locked --package 'lint-core'\ncargo publish --locked --package 'lint' --dry-run",
+			"cargo publish --locked --package 'lint-core'\nsleep 30\ncargo publish --locked --package 'lint'",
+		]
+	) {
+		test(`stays as the owner wrote it: ${commands.replaceAll('\n', ' | ')}`, async () => {
+			expect(await promoteCommands(commands)).toBe(commands);
+		});
+	}
 });
 
 test('a refreshed crate setup publishes every selected crate in order, with a token, tags and a GitHub release', async () => {

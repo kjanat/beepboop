@@ -82,7 +82,8 @@ test('repositories list, show and discover render tables and keep JSON for scrip
 test('runs list, cancel and recover show each operation with its state', async () => {
 	const { prepared } = await preparation();
 	const short = prepared.id.slice(0, 12);
-	const listed = await modes(['runs', 'list'], 'Listing release operations');
+	const cwd = spyOn(process, 'cwd').mockReturnValue(directory);
+	const listed = await modes(['runs', 'list'], 'Listing release operations').finally(() => cwd.mockRestore());
 	expect(listed.tty).toContain(`${short}  octo/widget  main    prepare    1.0.1`);
 	expect(listed.parsed).toEqual([expect.objectContaining({ id: prepared.id })]);
 	const cancelled = await runCli(['runs', 'cancel', prepared.id]);
