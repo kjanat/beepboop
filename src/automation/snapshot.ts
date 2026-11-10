@@ -50,6 +50,7 @@ export const releaseEvidence: readonly RegExp[] = [
 	/(?:^|\/)\.cargo\/config(?:\.toml)?$/,
 	/^README\.md$/,
 	/(?:^|\/)\.?mise(?:\.[\w-]+)?\.toml$/,
+	/^\.tool-versions$/,
 	/^(?:\.mise\/tasks|mise-tasks|\.config\/mise\/tasks)\/[^/]+$/,
 ];
 const contents: readonly RegExp[] = [

@@ -417,7 +417,8 @@ function integrate(
 	);
 	if (approvedIndex < 0) fail('checkout the execution sourceSha after begin');
 	const credentials = choice.credentials ?? {}, aliases = [...new Set(Object.values(credentials))];
-	const mise = ['mise.toml', '.mise.toml', '.config/mise.toml'].some(path => snapshot.files[path] !== undefined)
+	const mise =
+		['mise.toml', '.mise.toml', '.config/mise.toml', '.tool-versions'].some(path => snapshot.files[path] !== undefined)
 		&& !steps.some(step => typeof step.uses === 'string' && step.uses.startsWith('jdx/mise-action@'));
 	const commandSteps = (step: Record<string, unknown>): Record<string, unknown>[] => {
 		const toolchain = mise ? [{ uses: pinned('mise') }] : [];

@@ -743,26 +743,28 @@ test('generated workflows keep every expression on one line', async () => {
 	]);
 });
 
-test('setup installs the mise toolchain before the setup commands', async () => {
-	const repository = widget(world.github, { configured: false });
-	const api = bearer(world, await world.cliSession());
-	const choices = credentialChoices('release-widget.yml', 'npm publish');
-	const stepsOf = async () => {
-		const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
-		const plan = await Effect.runPromise(parseSetupPlan(preview.body));
-		expect(plan.blockers).toEqual([]);
-		const after = plan.edits.find(edit => edit.path === '.github/workflows/release-widget.yml')?.after ?? '';
-		return (binaryWorkflowSchema.parse(parse(after)).jobs.publish?.steps ?? []).map(step => step.uses ?? step.id);
-	};
-	expect(await stepsOf()).not.toContain(pinned('mise'));
-	world.github.push(repository, { 'mise.toml': '[tools]\nnode = "24"\n' }, 'Pin the toolchain');
-	const steps = await stepsOf();
-	expect(steps.slice(steps.indexOf(pinned('mise')), steps.indexOf('beepboop_publish') + 1)).toEqual([
-		pinned('mise'),
-		'kjanat/beepboop/actions/credentials@v1',
-		'beepboop_publish',
-	]);
-});
+for (const [file, content] of [['mise.toml', '[tools]\nnode = "24"\n'], ['.tool-versions', 'nodejs 24\n']] as const) {
+	test(`setup installs the mise toolchain from ${file} before the setup commands`, async () => {
+		const repository = widget(world.github, { configured: false });
+		const api = bearer(world, await world.cliSession());
+		const choices = credentialChoices('release-widget.yml', 'npm publish');
+		const stepsOf = async () => {
+			const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
+			const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+			expect(plan.blockers).toEqual([]);
+			const after = plan.edits.find(edit => edit.path === '.github/workflows/release-widget.yml')?.after ?? '';
+			return (binaryWorkflowSchema.parse(parse(after)).jobs.publish?.steps ?? []).map(step => step.uses ?? step.id);
+		};
+		expect(await stepsOf()).not.toContain(pinned('mise'));
+		world.github.push(repository, { [file]: content }, 'Pin the toolchain');
+		const steps = await stepsOf();
+		expect(steps.slice(steps.indexOf(pinned('mise')), steps.indexOf('beepboop_publish') + 1)).toEqual([
+			pinned('mise'),
+			'kjanat/beepboop/actions/credentials@v1',
+			'beepboop_publish',
+		]);
+	});
+}
 
 test('setup refuses credentials that no setup command receives', async () => {
 	const repository = widget(world.github, { configured: false });
