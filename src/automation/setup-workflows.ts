@@ -41,6 +41,25 @@ export function actionRole(value: unknown): string | undefined {
 export function workflowEvidence(file: string, source: string): Result.Result<WorkflowEvidence, DomainError> {
 	return yaml(source).pipe(Result.map(document => evidenceOf(file, document)));
 }
+/** Why setup cannot patch a job in place; integrate refuses the same jobs. */
+export function jobObstacles(jobs: Record<string, unknown>): Record<string, string[]> {
+	const result: Record<string, string[]> = {};
+	for (const [name, value] of Object.entries(jobs)) {
+		const job = object(value);
+		const needs = jobNeeds(job.needs).filter(need =>
+			typeof need !== 'string' || !ownedBinaryJob(need, object(jobs[need]))
+		);
+		const reasons = [
+			...(job.uses ? ['reusable workflow call'] : []),
+			...(job.strategy ? ['matrix'] : []),
+			...(needs.length ? [`needs ${needs.map(String).join(', ')}`] : []),
+			...(job.if ? ['conditional'] : []),
+			...(job.container ? ['container'] : []),
+		];
+		if (reasons.length) result[name] = reasons;
+	}
+	return result;
+}
 function evidenceOf(file: string, document: Record<string, unknown>): WorkflowEvidence {
 	const result: WorkflowEvidence = {
 		file,
@@ -50,6 +69,7 @@ function evidenceOf(file: string, document: Record<string, unknown>): WorkflowEv
 		roles: [],
 		preparationJobs: [],
 		reportingJobs: [],
+		jobObstacles: jobObstacles(object(document.jobs)),
 		prepares: false,
 		reports: false,
 		publishes: false,

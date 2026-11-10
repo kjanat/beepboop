@@ -187,6 +187,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 			role: 'prepare' | 'promote',
 			previous?: SetupWorkflow,
 			previousPackages: readonly string[] = [],
+			rejected: ReadonlySet<string> = new Set(),
 		): Effect.Effect<SetupWorkflow | undefined, CLIError> =>
 			Effect.gen(function*() {
 				const preparing = role === 'prepare', selectedPackages = selection(stream);
@@ -210,7 +211,10 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 						: []),
 					...(canShare ? [{ value: 'same', label: 'Add a preparation job to the publishing workflow' }] : []),
 					{ value: 'new', label: preparing ? 'Create a separate preparation workflow' : 'Create a release workflow' },
-					...plan.workflows.map(w => ({ value: w.file, label: `${w.file} (${w.events.join(', ')})` })),
+					...plan.workflows.filter(w => !rejected.has(w.file)).map(w => ({
+						value: w.file,
+						label: `${w.file} (${w.events.join(', ')})`,
+					})),
 				];
 				const selected = yield* select(
 					ask,
@@ -223,18 +227,66 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 					: selected;
 				const evidence = plan.workflows.find(w => w.file === file);
 				const roles = evidence?.roles.filter(entry => entry.stream === stream.name && entry.operation === role) ?? [];
-				const inferred = previous?.file === file && previous.job && (!evidence || evidence.jobs.includes(previous.job))
+				const taken = preparing && selected !== 'same' && file === stream.promote?.file
+					? stream.promote.job
+					: undefined;
+				const sharedTriggers = selected !== 'same' && !!evidence && evidence.jobs.length > 1 && !evidence.prepares
+					&& !evidence.reports
+					&& evidence.events.some(event => event !== 'workflow_dispatch');
+				const usable = sharedTriggers
+					? []
+					: evidence?.jobs.filter(name =>
+						(selected === 'same' || !evidence.jobObstacles?.[name] || evidence.preparationJobs.includes(name)
+							|| evidence.reportingJobs.includes(name)) && name !== taken
+					)
+						?? [];
+				const excluded = evidence?.jobs.filter(name => !usable.includes(name)) ?? [];
+				if (evidence && !usable.length) {
+					out.log(look.note(
+						`${file} has no job Beepboop can add this step to: ${
+							sharedTriggers
+								? `its ${
+									evidence.events.join(', ')
+								} triggers are shared by ${evidence.jobs.length} jobs, and replacing them would affect the others`
+								: excluded.map(name =>
+									name === taken
+										? `${name} already publishes`
+										: `${name} is ${evidence.jobObstacles?.[name]?.join(', ')}`
+								).join('; ')
+						}. Choose another workflow, or create a dedicated workflow.`,
+					));
+					if (rejected.has(file)) {
+						return yield* Effect.fail(failure(
+							`${file} has no usable job`,
+							'NO_USABLE_WORKFLOW',
+							'Create a dedicated workflow for this step',
+						));
+					}
+					return yield* chooseWorkflow(stream, role, previous, previousPackages, new Set([...rejected, file]));
+				}
+				if (excluded.length) {
+					out.log(look.note(
+						`${file}: not offered, ${
+							excluded.map(name =>
+								name === taken
+									? `${name} (already the publishing job)`
+									: `${name} (${evidence?.jobObstacles?.[name]?.join(', ')})`
+							).join('; ')
+						}.`,
+					));
+				}
+				const inferred = previous?.file === file && previous.job && (!evidence || usable.includes(previous.job))
 					? previous.job
-					: roles.length === 1
+					: roles.length === 1 && (!evidence || usable.includes(roles[0]?.job ?? ''))
 					? roles[0]?.job
-					: evidence?.jobs.length === 1
-					? evidence.jobs[0]
+					: usable.length === 1
+					? usable[0]
 					: undefined;
 				const job = inferred ?? (evidence
 					? yield* select(
 						ask,
 						`Which job in ${file} ${preparing ? 'prepares the release' : 'publishes these packages'}?`,
-						evidence.jobs.map(value => ({ value })),
+						usable.map(value => ({ value })),
 					)
 					: preparing
 					? 'prepare'

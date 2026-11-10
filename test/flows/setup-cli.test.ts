@@ -915,3 +915,82 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 	).toBe('tool-v');
 	expect(configuration).toMatchObject({ streams: { main: { prepare: { versionPrMerge: 'merge' } } } });
 });
+
+const dependentMatrixPublish =
+	'name: Publish\non:\n  release:\n    types: [published]\njobs:\n  validate:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo validate\n  publish:\n    needs: [validate]\n    strategy:\n      matrix:\n        package: [a, b]\n    runs-on: ubuntu-latest\n    steps:\n      - run: bun run repo release publish\n';
+
+function vwShaped() {
+	return world.github.create('octo/vw', {
+		'package.json': '{"name":"vw-pkg","version":"1.0.0"}',
+		'.github/workflows/publish.yml': dependentMatrixPublish,
+	});
+}
+
+function stubborn(file: string, limit = 40) {
+	const asked: { message: string; choices: string[] }[] = [];
+	const prompter: PromptEngine = {
+		async promptOne(config) {
+			if (asked.length >= limit) throw new Error('Unbounded prompting');
+			if (config.kind === 'select') {
+				asked.push({ message: config.message, choices: config.choices.map(choice => choice.value) });
+				const offered = config.choices.map(choice => choice.value);
+				return { answered: true, value: config.message === 'main: publish packages' ? file : offered[0] };
+			}
+			if (config.kind === 'confirm') {
+				return { answered: true, value: config.message === proposalPrompt ? false : config.default ?? true };
+			}
+			if (config.kind === 'input') return { answered: true, value: '' };
+			return { answered: true, value: [] };
+		},
+	};
+	return { asked, prompter };
+}
+
+test('a workflow with no usable job is withdrawn after its first pick, and repeated picks end in bounded prompts', async () => {
+	vwShaped();
+	const session = stubborn('publish.yml');
+	const result = await app.execute(['adopt', 'octo/vw'], { prompter: session.prompter, isTTY: true, env: {} });
+	expect(result.exitCode).not.toBe(0);
+	expect(result.stdout.join('')).toContain('publish.yml has no job Beepboop can add this step to');
+	expect(result.stderr.join('')).toContain('Too many invalid prompt answers');
+	const asks = session.asked.filter(entry => entry.message === 'main: publish packages');
+	const [first, ...later] = asks.map(entry => entry.choices.includes('publish.yml'));
+	expect([first, later.length > 0, later.some(Boolean)]).toEqual([true, true, false]);
+	expect(session.asked.length).toBeLessThan(15);
+});
+
+test('a dependent matrix publish job is explained and steers to a generated release workflow', async () => {
+	vwShaped();
+	const answers = stubborn('publish.yml');
+	let retried = false;
+	const prompter: PromptEngine = {
+		async promptOne(config) {
+			if (config.kind === 'select' && config.message === 'main: publish packages' && answers.asked.length > 0) {
+				retried = true;
+				answers.asked.push({ message: config.message, choices: config.choices.map(choice => choice.value) });
+				return { answered: true, value: 'new' };
+			}
+			return answers.prompter.promptOne(config);
+		},
+	};
+	const result = await app.execute(['adopt', 'octo/vw'], { prompter, isTTY: true, env: {} });
+	expect(retried).toBe(true);
+	const output = result.stdout.join('');
+	expect(output).toContain('publish.yml has no job Beepboop can add this step to');
+	expect(output).toContain('its release triggers are shared by 2 jobs');
+	expect(output).toContain('release-vw-pkg.yml, publish job (generated)');
+	expect(output).not.toContain('require explicit workflow integration');
+});
+
+test('a dispatch-only workflow whose only job is a dependent matrix names why it is not offered', async () => {
+	world.github.create('octo/vw', {
+		'package.json': '{"name":"vw-pkg","version":"1.0.0"}',
+		'.github/workflows/publish.yml': dependentMatrixPublish
+			.replace('on:\n  release:\n    types: [published]\n', 'on: workflow_dispatch\n')
+			.replace(/  validate:[\s\S]*?  publish:\n/, '  publish:\n')
+			.replace('    needs: [validate]\n', ''),
+	});
+	const session = stubborn('publish.yml');
+	const result = await app.execute(['adopt', 'octo/vw'], { prompter: session.prompter, isTTY: true, env: {} });
+	expect(result.stdout.join('')).toContain('publish is matrix');
+});

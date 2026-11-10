@@ -40,6 +40,7 @@ export interface WorkflowEvidence {
 	roles: { job: string; stream: string; operation: string }[];
 	preparationJobs: string[];
 	reportingJobs: string[];
+	jobObstacles?: Record<string, string[]>;
 	prepares: boolean;
 	reports: boolean;
 	publishes: boolean;
