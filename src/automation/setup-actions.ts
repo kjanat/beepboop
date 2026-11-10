@@ -1,4 +1,4 @@
-import type { Document } from 'yaml';
+import type { Document, Scalar } from 'yaml';
 import { isScalar, parseDocument, visit } from 'yaml';
 
 interface Pin {
@@ -42,8 +42,20 @@ export function renderWorkflow(document: Document): string {
 	return document.toString({ lineWidth: 0 });
 }
 
+function endsInKeptBlock(rendered: string): boolean {
+	const scalars: Scalar[] = [];
+	visit(parseDocument(rendered), {
+		Scalar(_, scalar) {
+			scalars.push(scalar);
+		},
+	});
+	const last = scalars.at(-1);
+	return (last?.type === 'BLOCK_LITERAL' || last?.type === 'BLOCK_FOLDED')
+		&& typeof last.value === 'string' && last.value.endsWith('\n\n');
+}
+
 export function matchEnding(rendered: string, original: string | undefined): string {
-	if (original === undefined) return rendered;
+	if (original === undefined || endsInKeptBlock(rendered)) return rendered;
 	const body = rendered.replace(/\n+$/, '');
 	return original.endsWith('\n') ? `${body}\n` : body;
 }

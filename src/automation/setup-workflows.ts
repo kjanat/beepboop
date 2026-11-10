@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { Result } from 'effect';
 import type { Document } from 'yaml';
-import { isMap, isNode, isSeq, parseDocument, visit } from 'yaml';
+import { isAlias, isMap, isNode, isSeq, parseDocument, visit } from 'yaml';
 import { jobNeeds } from '@/automation/job-gate';
 import { object, yaml, yamlData } from '@/automation/managers/helpers';
 import { packageId } from '@/automation/package-identity';
@@ -251,6 +251,17 @@ function publicationEntries(value: unknown): { id?: unknown }[] | undefined {
 		return undefined;
 	}
 }
+function anchorsAndAliases(node: unknown): { anchors: string[]; aliases: string[] } {
+	const found: { anchors: string[]; aliases: string[] } = { anchors: [], aliases: [] };
+	if (!isNode(node)) return found;
+	visit(node, {
+		Node(_, entry) {
+			if (isAlias(entry)) found.aliases.push(entry.source);
+			else if (isNode(entry) && entry.anchor) found.anchors.push(entry.anchor);
+		},
+	});
+	return found;
+}
 function setSteps(document: Document, jobName: string, steps: Record<string, unknown>[], previous: unknown): void {
 	const path = ['jobs', jobName, 'steps'];
 	const sequence = document.getIn(path, true);
@@ -259,11 +270,27 @@ function setSteps(document: Document, jobName: string, steps: Record<string, unk
 		return;
 	}
 	const nodes = sequence.items, taken = new Set<number>();
-	sequence.items = steps.map(step => {
+	const matches = steps.map(step => {
 		const index = previous.findIndex((entry, at) => !taken.has(at) && isDeepStrictEqual(entry, step));
-		if (index < 0 || index >= nodes.length) return document.createNode(step);
-		taken.add(index);
-		return nodes[index];
+		if (index >= 0 && index < nodes.length) taken.add(index);
+		return index >= 0 && index < nodes.length ? index : undefined;
+	});
+	const lost = new Set(nodes.flatMap((node, at) => taken.has(at) ? [] : anchorsAndAliases(node).anchors));
+	let settled = false;
+	while (!settled) {
+		settled = true;
+		for (const [position, index] of matches.entries()) {
+			if (index === undefined) continue;
+			const { anchors, aliases } = anchorsAndAliases(nodes[index]);
+			if (!aliases.some(name => lost.has(name))) continue;
+			matches[position] = undefined;
+			for (const name of anchors) lost.add(name);
+			settled = false;
+		}
+	}
+	sequence.items = steps.map((step, position) => {
+		const index = matches[position];
+		return index === undefined ? document.createNode(step) : nodes[index];
 	});
 }
 function integrate(

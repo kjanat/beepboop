@@ -1391,6 +1391,7 @@ type PlainVariant = {
 	reportWith?: string;
 	publications?: string;
 	untouched?: string;
+	envAnchor?: boolean;
 	ending?: string;
 };
 const rewrittenPlain = async (variant: PlainVariant = {}) => {
@@ -1419,7 +1420,7 @@ const rewrittenPlain = async (variant: PlainVariant = {}) => {
 ${variant.publishIf ? `        if: ${variant.publishIf}\n` : ''}${variant.publishKeys ?? ''}        run: |
           cargo publish --locked --package 'lint-core'
           cargo publish --locked --package 'lint'
-        env:
+        env:${variant.envAnchor ? ' &publish_env' : ''}
 ${
 	variant.publishEnv
 		?? ''
@@ -1454,11 +1455,11 @@ ${variant.reportWith ?? ''}          publications: ${
 	expect(plainWorkflow).toContain("cargo publish --locked --package 'lint'");
 	expect(plainWorkflow).toContain('beepboop_credentials');
 	expect(plainWorkflow).not.toContain('actions/publish@');
+	const anchor = variant.envAnchor
+		? '      - uses: kjanat/beepboop/actions/report@v1'
+		: '      - id: beepboop_credentials';
 	const seeded = variant.untouched
-		? plainWorkflow.replace(
-			'      - id: beepboop_credentials',
-			`      - ${variant.untouched}\n      - id: beepboop_credentials`,
-		)
+		? plainWorkflow.replace(anchor, `      - ${variant.untouched}\n${anchor}`)
 		: plainWorkflow;
 	expect(seeded).toContain(variant.untouched ?? 'cargo publish');
 	const content = variant.ending === undefined ? seeded : `${seeded.trimEnd()}${variant.ending}`;
@@ -1495,6 +1496,21 @@ test('the rewrite keeps the trailing comment of a step it does not change', asyn
 	const rewritten = await rewrittenPlain({ untouched: pinnedStep });
 	expect(rewritten).toContain(`- ${pinnedStep}\n`);
 	expect(publishStep(rewritten)).toMatchObject({ uses: 'kjanat/beepboop/actions/publish@v1' });
+});
+
+test('an untouched step aliasing the replaced step keeps working', async () => {
+	const rewritten = await rewrittenPlain({
+		envAnchor: true,
+		untouched: 'uses: acme/tool@0123456789abcdef0123456789abcdef01234567\n        env: *publish_env',
+	});
+	expect(rewritten).toContain('uses: acme/tool@0123456789abcdef0123456789abcdef01234567\n');
+	expect(rewritten).toContain('CARGO_REGISTRY_TOKEN:');
+	expect(publishStep(rewritten)).toMatchObject({ uses: 'kjanat/beepboop/actions/publish@v1' });
+});
+
+test('a kept block scalar at the end of the file keeps its trailing newlines', async () => {
+	const rewritten = await rewrittenPlain({ ending: '\nnotes: |+\n  line\n\n' });
+	expect(rewritten.endsWith('notes: |+\n  line\n\n')).toBe(true);
 });
 
 test.each(['\n', ''])('the rewrite ends the workflow like the original (%j)', async ending => {
