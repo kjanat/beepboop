@@ -6,6 +6,7 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { parse } from 'yaml';
 import { z } from 'zod';
+import { optionId } from '@/automation/setup';
 import type { SetupChoices } from '@/automation/setup-types';
 import { binaries, binaryTargets, workflowSetup } from '@/contract/setup';
 
@@ -182,7 +183,9 @@ test('the migration PR proposes each Cargo binary with the targets its dependenc
 		'  - Release binaries\n    - [x] <!-- beepboop:choice:binary:main:engine --> `engine` (Cargo, `crates/cli/Cargo.toml`)\n  - Binary targets\n',
 	);
 	for (const target of unixTargets) {
-		expect(pull.body).toContain(`- [x] <!-- beepboop:choice:target:main:${target.replace('-', '%2D')} -->`);
+		expect(pull.body).toContain(
+			`- [x] <!-- beepboop:choice:${optionId({ kind: 'target', stream: 'main', target })} -->`,
+		);
 	}
 	expect(pull.body).toContain('- [ ] <!-- beepboop:choice:target:main:windows%2Damd64 --> windows-amd64');
 	expect(pull.body).toContain(

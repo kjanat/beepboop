@@ -958,7 +958,7 @@ function binaryOptions(plan: SetupPlan, stream: SetupChoices['streams'][number])
 		...binaryTargets.map((target): SetupOption => ({ kind: 'target', stream: stream.name, target })),
 	];
 }
-function optionId(option: SetupOption): string {
+export function optionId(option: SetupOption): string {
 	const parts = option.kind === 'workflow'
 		? [option.kind, option.stream, option.operation, option.file]
 		: option.kind === 'binary'
