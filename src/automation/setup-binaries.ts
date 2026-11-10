@@ -123,6 +123,8 @@ export function buildJobId(build: BinaryBuild): string {
 	return `build-${build.name.toLowerCase().replace(/[^a-z0-9-]+/g, '-')}`;
 }
 
+const cargoAuditable = '0.7.7';
+
 interface Toolchain {
 	label: string;
 	runner: string;
@@ -167,11 +169,11 @@ function toolchain(build: BinaryBuild, targets: readonly BinaryTarget[]): Toolch
 			ext: platforms[target].names.ext,
 			asset: assetName(build, target),
 		})),
-		setup: [],
+		setup: [{ uses: pinned('install'), with: { tool: `cargo-auditable@${cargoAuditable}`, fallback: 'none' } }],
 		build: {
 			env: { MANIFEST: build.manifest, BINARY: build.name, TARGET: matrix('target'), EXT: matrix('ext') },
 			run: `rustup target add "\${TARGET}"
-cargo build --manifest-path "\${MANIFEST}" --release --locked --bin "\${BINARY}" --target "\${TARGET}"
+cargo auditable build --manifest-path "\${MANIFEST}" --release --locked --bin "\${BINARY}" --target "\${TARGET}"
 target="$(cargo metadata --manifest-path "\${MANIFEST}" --format-version 1 --no-deps | jq -r .target_directory)"
 cp "\${target}/\${TARGET}/release/\${BINARY}\${EXT}" "dist/\${ASSET}"
 `,
@@ -259,6 +261,12 @@ export function assetSteps(id: string): Record<string, unknown>[] {
 		},
 		{
 			uses: pinned('sbom'),
+			env: {
+				SYFT_SOURCE_NAME: expression('github.event.repository.name'),
+				SYFT_SOURCE_VERSION: expression(`fromJSON(steps.${id}.outputs.context).version`),
+				SYFT_FILE_METADATA_SELECTION: 'all',
+				SYFT_SELECT_CATALOGERS: '-pe-package',
+			},
 			with: {
 				path: 'dist',
 				format: 'spdx-json',

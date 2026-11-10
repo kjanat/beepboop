@@ -457,6 +457,14 @@ test('a publication workflow builds each binary in a platform matrix and release
 		MODULE: 'client',
 		PACKAGE: './cmd/signer',
 	});
+	expect(jobs['build-signer']?.steps.some(step => step.uses === pinned('install'))).toBe(false);
+	expect(jobs['build-tool']?.steps[1]).toEqual({
+		uses: pinned('install'),
+		with: { tool: 'cargo-auditable@0.7.7', fallback: 'none' },
+	});
+	expect(jobs['build-tool']?.steps.find(step => step.name === 'Build tool')?.run).toContain(
+		'cargo auditable build --manifest-path "${MANIFEST}" --release --locked --bin "${BINARY}" --target "${TARGET}"\n',
+	);
 	expect(jobs.publish?.needs).toEqual(['build-signer', 'build-tool']);
 	expect(jobs.publish?.permissions).toEqual({ contents: 'write', 'id-token': 'write', attestations: 'write' });
 	expect(jobs.publish?.steps.map(step => step.uses ?? step.id ?? step.name)).toEqual([
@@ -475,12 +483,19 @@ test('a publication workflow builds each binary in a platform matrix and release
 		'kjanat/beepboop/actions/report@v1',
 	]);
 	const sbom = '${{ github.event.repository.name }}';
-	expect(jobs.publish?.steps.find(step => step.uses === pinned('sbom'))?.with).toEqual({
+	const sbomStep = jobs.publish?.steps.find(step => step.uses === pinned('sbom'));
+	expect(sbomStep?.with).toEqual({
 		path: 'dist',
 		format: 'spdx-json',
 		'output-file': `dist/${sbom}.spdx.json`,
 		'upload-artifact': false,
 		'upload-release-assets': false,
+	});
+	expect(sbomStep?.env).toEqual({
+		SYFT_SOURCE_NAME: sbom,
+		SYFT_SOURCE_VERSION: '${{ fromJSON(steps.beepboop.outputs.context).version }}',
+		SYFT_FILE_METADATA_SELECTION: 'all',
+		SYFT_SELECT_CATALOGERS: '-pe-package',
 	});
 	expect(jobs.publish?.steps.filter(step => step.uses === pinned('attest')).map(step => step.with)).toEqual([
 		{ 'subject-checksums': 'dist/checksums.txt' },

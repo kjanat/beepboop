@@ -99,6 +99,43 @@ test('an edit of the setup input on the default branch regenerates the workflow'
 	expect(plan.edits[0]?.after).not.toContain('aarch64-apple-darwin');
 });
 
+test('a release workflow from the previous generator gets auditable builds and a described SBOM', async () => {
+	const repository = toolRepository();
+	const api = bearer(world, await world.cliSession());
+	await applyChoices(api, repository.name, toolChoices());
+	world.github.merge(repository, 1);
+	const current = world.github.file(repository, '.github/workflows/release.yml') ?? '';
+	const workflow = z.object({
+		jobs: z.record(
+			z.string(),
+			z.looseObject({ steps: z.array(z.looseObject({ uses: z.string().optional(), env: z.unknown().optional() })) }),
+		),
+	});
+	const generated = workflow.parse(parse(current));
+	const install = generated.jobs['build-tool']?.steps.find(step => step.uses?.startsWith('taiki-e/install-action@'));
+	expect(install).toBeDefined();
+	const previous = current
+		.replace(/ {6}- uses: taiki-e\/install-action@.*\n {8}with:\n(?: {10}.*\n)+/, '')
+		.replace('cargo auditable build', 'cargo build')
+		.replace(/ {8}env:\n {10}SYFT_SOURCE_NAME:.*\n(?: {10}SYFT_.*\n)+/, '');
+	expect(previous).not.toContain('install-action');
+	expect(previous).not.toContain('SYFT_');
+	world.github.push(repository, { '.github/workflows/release.yml': previous }, 'Release with the previous generator');
+	const plan = await previewSetup(api, repository.name);
+	expect(plan.blockers).toEqual([]);
+	expect(plan.edits.map(edit => edit.path)).toEqual(['.github/workflows/release.yml']);
+	expect(plan.edits[0]?.after).toBe(current);
+	await applyChoices(api, repository.name, plan.choices);
+	const updated = world.github.file(repository, '.github/workflows/release.yml', 'automation/setup-update') ?? '';
+	expect(updated).toBe(current);
+	const parsed = workflow.parse(parse(updated));
+	expect(parsed.jobs['build-tool']?.steps).toContainEqual(install);
+	expect(parsed.jobs.publish?.steps.find(step => step.uses?.startsWith('anchore/sbom-action@'))?.env).toMatchObject({
+		SYFT_FILE_METADATA_SELECTION: 'all',
+		SYFT_SELECT_CATALOGERS: '-pe-package',
+	});
+});
+
 test('a repository whose stored choices are not in beepboop.json gets one setup update PR that moves them', async () => {
 	const repository = toolRepository();
 	const api = bearer(world, await world.cliSession());
