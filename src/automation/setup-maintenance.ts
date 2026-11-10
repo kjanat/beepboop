@@ -4,7 +4,7 @@ import { resolveConfiguration } from '@/automation/configuration';
 import type { RepositoryGateway } from '@/automation/github';
 import { discover } from '@/automation/managers';
 import { object } from '@/automation/managers/helpers';
-import { packageId } from '@/automation/package-identity';
+import { packageId, selectorKey } from '@/automation/package-identity';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
 import { documentRow } from '@/automation/schemas';
 import { previewSetup, releaseAfterMerge, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
@@ -13,7 +13,7 @@ import { setupBranch, setupTitle } from '@/automation/setup-changes';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Store } from '@/automation/store';
 import { decodeError } from '@/automation/store';
-import type { Edit, Snapshot } from '@/automation/types';
+import type { Edit, Inventory, Snapshot } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { sha256Hex } from '@/contract/ids';
@@ -51,6 +51,39 @@ export function rebuildingStatus(body: string): string {
 export function savedSetup(saved: Record<string, unknown> | undefined): { saved?: SetupChoices } {
 	const parsed = setupChoicesSchema.safeParse(saved?.choices);
 	return parsed.success ? { saved: parsed.data } : {};
+}
+function storedObservation(choices: unknown, raw: unknown, inventory: Inventory): unknown {
+	const parsed = setupChoicesSchema.safeParse(choices);
+	if (!parsed.success) return choices;
+	const streams = object(object(raw).streams);
+	const boxed = new Set(inventory.packages.filter(publishable).map(packageId));
+	return {
+		...parsed.data,
+		streams: parsed.data.streams.map(stream => {
+			const workflows = object(object(streams[stream.name]).workflows);
+			return stream.observe
+				? {
+					...stream,
+					observe: stream.observe.map(entry => {
+						const binding = object(workflows[entry.name]);
+						if (binding.mode !== 'observe') return entry;
+						const needs = Array.isArray(binding.needs) ? binding.needs.map(String) : [];
+						const stored = Array.isArray(binding.publications)
+							? binding.publications.map(id => selectorKey(String(id), inventory.packages))
+							: [];
+						return {
+							...entry,
+							publications: [
+								...stored.filter(id => entry.publications.includes(id) || !boxed.has(id)),
+								...entry.publications.filter(id => !stored.includes(id)),
+							],
+							...(!entry.needs?.length && needs.length ? { needs } : {}),
+						};
+					}),
+				}
+				: stream;
+		}),
+	};
 }
 export function followsProposal(saved: Record<string, unknown> | undefined, body: string): boolean {
 	return saved?.inferred === true || (saved?.inferred === undefined && body.includes('\n## Release plan\n'));
@@ -110,7 +143,7 @@ export function maintainSetup(
 					? saved.choices
 					: undefined);
 			const workflowPermission = yield* gateway.canEditWorkflows(name, id);
-			const plan = yield* previewSetup(snapshot, inventory, choices, {
+			const plan = yield* previewSetup(snapshot, inventory, storedObservation(choices, raw, inventory), {
 				...savedSetup(saved),
 				head: pull.head,
 				workflowPermission,
