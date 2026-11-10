@@ -23,6 +23,11 @@ const pins = {
 	attest: { repository: 'actions/attest', sha: '1e69f48acb82d1966a394da916b4c1698aa569d6', version: 'v4.2.2' },
 	sbom: { repository: 'anchore/sbom-action', sha: '66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c', version: 'v0.24.3' },
 	mise: { repository: 'jdx/mise-action', sha: 'f5be966e4a917d54244728e6a5fdcd1d93a35e6c', version: 'v5.2.6' },
+	install: {
+		repository: 'taiki-e/install-action',
+		sha: '1e29709c0ec63babbe8f266397a465f29a825f91',
+		version: 'v2.87.31',
+	},
 } as const satisfies Record<string, Pin>;
 
 export type PinnedAction = keyof typeof pins;

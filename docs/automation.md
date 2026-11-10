@@ -1161,14 +1161,20 @@ The builds live in the binding's `setup.binaries`:
 matrix job per build. The `begin` job alone holds `id-token: write`. It runs
 `begin` and outputs the release commit and version. Go builds cross-compile on
 `ubuntu-latest` with `CGO_ENABLED=0` and set `main.version`. Cargo builds run on
-a native runner for each target. Each build job has only `contents: read`. It
+a native runner for each target with `cargo auditable build`, which embeds the
+crates each binary was built with. `taiki-e/install-action` installs
+`cargo-auditable` from its checksummed release. Each build job has only
+`contents: read`. It
 checks out the release commit, builds it and uploads its file as an artifact.
 
 The publication job publishes its packages first, then runs these steps:
 
 1. It downloads every artifact and writes `checksums.txt`.
 2. It generates an SPDX SBOM named `<repository>.spdx.json` with
-   `anchore/sbom-action`.
+   `anchore/sbom-action`. The SBOM describes the repository at the release
+   version, lists the crates and Go modules embedded in each binary, and
+   records SHA-1 and SHA-256 digests for every file. Syft's Windows PE
+   cataloger stays off, so asset file names do not become packages.
 3. It attests build provenance and the SBOM for every checksummed file with
    `actions/attest`.
 4. It uploads the files to the draft release.
