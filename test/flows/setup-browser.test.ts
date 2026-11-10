@@ -560,7 +560,7 @@ test('a package ticked for an observed stream with its own publishing workflow i
 	control(form, 'extra (extra/Cargo.toml)', window.HTMLInputElement).checked = true;
 	await act(form, 'preview');
 	expect(form.querySelector('.setup-result')?.textContent).toContain(
-		'"required": ["pkg:cargo/tool", "pkg:cargo/extra"]',
+		'"mustPublish": ["pkg:cargo/tool", "pkg:cargo/extra"]',
 	);
 });
 
