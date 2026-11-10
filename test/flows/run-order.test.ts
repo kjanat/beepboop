@@ -10,6 +10,7 @@ import { Store } from '@/automation/store';
 import type { Client } from '@/cli/client';
 import type { executionFilter } from '@/contract/routes';
 import { routes } from '@/contract/routes';
+import { loaders } from '@/server/loaders';
 
 let world: World, directory: string, client: Client, token: string;
 eachWorld(created => {
@@ -158,4 +159,52 @@ test('a malformed stored document stays an unreadable row and does not break ord
 		'unreadable:malformed',
 	]);
 	expect(await listed({ stream: 'main' })).toEqual(['new-running', 'old-cancelled']);
+});
+
+test('a corrupt blocked row outside the requested page does not fail a limited list', async () => {
+	const base = await template();
+	await insert(base, [['new-running', 'running', 2_000, 3_000]]);
+	const statement = world.db.prepare(
+		'INSERT INTO executions(id,repository_id,state,document,updated_at) VALUES(?,?,?,?,?)',
+	);
+	await world.db.batch([
+		statement.bind('blocked-garbage', base.repositoryId, 'blocked', '{not json', 1),
+		statement.bind('blocked-invalid', base.repositoryId, 'blocked', '{}', 2),
+	]);
+	expect(await listed({ limit: 1 })).toEqual(['new-running']);
+	expect(await listed({ limit: 1, states: 'running,blocked' })).toEqual(['new-running']);
+});
+
+test('runs that tie on state and creation time keep the same order inside and after the 200 row limit', async () => {
+	const base = await template();
+	await insert(base, [
+		['a', 'pending', 1, 10],
+		['z', 'pending', 1, 20],
+		...Array.from({ length: 199 }, (_, index): Row => [
+			`newer-${String(index).padStart(3, '0')}`,
+			'pending',
+			10 + index,
+			10 + index,
+		]),
+	]);
+	const everything = await listed({});
+	expect(everything).toHaveLength(200);
+	expect(everything.at(-1)).toBe('a');
+	expect(everything).not.toContain('z');
+	expect(await listed({ stream: 'main' })).toEqual(everything);
+});
+
+test('the releases page still receives a fresh succeeded run when 200 unfinished runs exist', async () => {
+	const base = await template();
+	await insert(base, [
+		['done', 'succeeded', 1, 1],
+		...Array.from({ length: 200 }, (_, index): Row => [
+			`running-${String(index).padStart(3, '0')}`,
+			'running',
+			10 + index,
+			10 + index,
+		]),
+	]);
+	const data = await Effect.runPromise(loaders.releases({ env: world.env, actor: 'admin' }));
+	expect(data.executions.map(entry => entry.id)).toEqual(['done']);
 });

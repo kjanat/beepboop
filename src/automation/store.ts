@@ -71,6 +71,13 @@ function rowOrder(row: ExecutionRow): Listed {
 		};
 	}
 }
+function rowState(row: ExecutionRow): string | undefined {
+	try {
+		return decodeExecutionV1(JSON.parse(row.document)).state;
+	} catch {
+		return undefined;
+	}
+}
 function rankRows(rows: ExecutionRow[]): ExecutionRow[] {
 	return rows.map(row => ({ row, order: rowOrder(row) })).sort((a, b) => listOrder(a.order, b.order)).map(entry =>
 		entry.row
@@ -257,28 +264,43 @@ export class Store {
 			values.push(...stored);
 		}
 		const limit = Math.min(filter.limit ?? 200, 200);
-		const decode = (rows: ExecutionRow[]) =>
-			fromSync(() => rows.map(row => decodeExecutionV1(JSON.parse(row.document)))).pipe(
-				Effect.map(decoded =>
-					wanted === undefined ? decoded : decoded.filter(execution => wanted.includes(execution.state))
-				),
-			);
-		const page = (offset: number, found: Execution[]): Effect.Effect<Execution[], DomainError> =>
+		const page = (offset: number, found: ExecutionRow[]): Effect.Effect<ExecutionRow[], DomainError> =>
 			this.settledRows(conditions, values, offset).pipe(
-				Effect.flatMap(rows =>
-					decode(rows).pipe(Effect.flatMap(kept => {
-						const collected = [...found, ...kept];
-						return rows.length < executionPage || collected.length >= limit
-							? Effect.succeed(collected)
-							: page(offset + executionPage, collected);
-					}))
-				),
+				Effect.flatMap(rows => {
+					const collected = [...found, ...rows];
+					return rows.length < executionPage || collected.length >= limit
+						? Effect.succeed(collected)
+						: page(offset + executionPage, collected);
+				}),
 			);
 		return Effect.gen({ self: this }, function*() {
-			const blocked = yield* decode(yield* this.blockedRows(conditions, values));
-			const settled = yield* page(0, []);
-			return [...blocked, ...settled].sort(newestActiveFirst).slice(0, limit);
+			const blocked = yield* this.blockedRows(conditions, values);
+			const matching = wanted === undefined ? blocked : blocked.filter(row => {
+				const state = rowState(row);
+				return state !== undefined && wanted.includes(state);
+			});
+			const selected = rankRows([...(yield* page(0, [])), ...matching]).slice(0, limit);
+			const decoded = yield* fromSync(() => selected.map(row => decodeExecutionV1(JSON.parse(row.document))));
+			return decoded.sort(newestActiveFirst);
 		});
+	}
+	succeededExecutions(): Effect.Effect<Execution[], DomainError> {
+		return this.sql.all(
+			`SELECT ${executionColumns} FROM executions WHERE state='succeeded' ORDER BY ${executionOrderSql} LIMIT ?`,
+			executionPage,
+		).pipe(
+			Effect.flatMap(rows => parse(z.array(executionRow), rows)),
+			Effect.map(rows =>
+				readableValues(
+					readEach(
+						rows,
+						row => decodeExecutionV1(JSON.parse(row.document)),
+						(): { kind: 'unreadable' } => ({ kind: 'unreadable' }),
+					),
+				)
+					.sort(newestActiveFirst)
+			),
+		);
 	}
 	readExecutions(): Effect.Effect<(Readable<Execution> | UnreadableExecution)[], DomainError> {
 		return this.executionRows().pipe(

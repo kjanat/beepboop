@@ -34,4 +34,4 @@ export function validJson(path: string): string {
 
 export const executionOrderSql = `state IN (${unfinishedStates.map(state => `'${state}'`).join(',')}) DESC, ${
 	validJson('$.createdAt')
-} DESC, updated_at DESC, id`;
+} DESC, id`;

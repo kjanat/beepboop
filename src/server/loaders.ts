@@ -126,11 +126,11 @@ export const loaders = {
 	},
 	releases: ({ env }) => {
 		const service = new AutomationService(env);
-		return Effect.all([repositories(service), executions(service)], concurrent).pipe(
-			Effect.map(([repositoryRows, executionRows]) => ({
+		return Effect.all([repositories(service), service.store.succeededExecutions()], concurrent).pipe(
+			Effect.map(([repositoryRows, succeeded]) => ({
 				section: 'releases' as const,
 				repositories: repositoryRows.readable,
-				executions: executionRows.readable,
+				executions: succeeded,
 			})),
 		);
 	},
