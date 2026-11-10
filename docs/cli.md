@@ -123,12 +123,22 @@ beepboop releases plan kjanat/actionlint --stream main --releaseVersion 2.1.0
 beepboop releases prepare kjanat/actionlint --stream main --releaseVersion 2.1.0 \
   --sourceSha REVIEWED_SOURCE_SHA --planId REVIEWED_PLAN_ID
 beepboop runs list
+beepboop runs list --all --state failed --state blocked
 beepboop runs publish EXECUTION_ID --sourceSha REVIEWED_SOURCE_SHA
 beepboop runs publish EXECUTION_ID --sourceSha REVIEWED_SOURCE_SHA --force
 beepboop runs cancel EXECUTION_ID
 beepboop runs recover EXECUTION_ID
 beepboop runs recover EXECUTION_ID --action retry
 ```
+
+`runs list` shows the runs of the current checkout's repository, read from the
+`origin` remote as `release` does. Outside a checkout it shows every
+repository. `--repository NAME` or `BEEPBOOP_REPOSITORY` picks one, and `--all`
+shows every repository whatever the checkout says. `--stream`, `--operation`,
+`--releaseVersion` and `--limit` narrow the list, and `--state` can repeat. `--json`
+prints a summary per run (id, repository, stream, operation, state, version,
+source commit, update time and each publication's id and outcome); add `--full`
+for the whole record.
 
 Pass the exact `sourceSha` and `planId` from the preview. The server rejects a
 preparation whose plan changed. `runs publish` names one reviewed commit, and

@@ -496,6 +496,15 @@ test('completion scripts list every setup flag and the values of each single-val
 	}
 });
 
+test('completion scripts list the runs list flags', () => {
+	for (const shell of shells) {
+		const script = generateCompletion(app.schema, shell);
+		for (const flag of ['repository', 'all', 'stream', 'operation', 'state', 'releaseVersion', 'limit', 'full']) {
+			expect([shell, flag, script.includes(flag)]).toEqual([shell, flag, true]);
+		}
+	}
+});
+
 test.failing('completion scripts list the values of repeatable enum flags (kjanat/dreamcli#199)', () => {
 	for (const shell of shells) {
 		for (const [flag, values] of [['start-from', startChannels], ['target', binaryTargets]] as const) {
