@@ -42,7 +42,7 @@ export const submissionTone = {
 export const releaseSetTone = {
 	succeeded: 'ok',
 	'needs attention': 'warn',
-	'awaiting approval': 'waiting',
+	'waiting for you to publish': 'waiting',
 	'in progress': 'active',
 } as const satisfies Record<ReleaseSetState, Tone>;
 

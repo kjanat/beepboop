@@ -294,7 +294,7 @@ test('the overview counts only runs that still need the user and shows each vers
 	});
 	const headings = [...html.matchAll(/<h2[^>]*>([^<]+)<\/h2>/g)].map(match => match[1]);
 	expect(headings.slice(0, 2)).toEqual(['Needs your attention', 'Recent releases']);
-	expect(html).toContain('<li>Publish</li>');
+	expect(html).toContain('<li>Publish commit</li>');
 	expect(html).not.toContain('Approve commit');
 	expect(html).toContain('Publication run');
 	expect(html).toContain('Preparation run');

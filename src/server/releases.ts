@@ -57,7 +57,7 @@ export function releaseSummaries(executions: Execution[], repositories: Reposito
 	}).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-export type ReleaseSetState = 'succeeded' | 'needs attention' | 'awaiting approval' | 'in progress';
+export type ReleaseSetState = 'succeeded' | 'needs attention' | 'waiting for you to publish' | 'in progress';
 
 /** Group the operations of one frozen monorepo release, including independent versions. */
 export function releaseSetSummaries(executions: Execution[]) {
@@ -80,7 +80,7 @@ export function releaseSetSummaries(executions: Execution[]) {
 			: attention
 			? 'needs attention'
 			: runs.some(run => run.state === 'awaiting-approval')
-			? 'awaiting approval'
+			? 'waiting for you to publish'
 			: 'in progress';
 		return {
 			id,
