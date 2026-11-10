@@ -5,6 +5,7 @@ import type { Status, Tone } from '@/contract/views';
 import type { Readiness } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
 import type { ReleaseSetState, releaseSummaries } from '@/server/releases.ts';
+import { activeStates, publishesAutomatically, runStateLabel } from '@/server/releases.ts';
 
 export const executionTone = {
 	pending: 'waiting',
@@ -41,7 +42,7 @@ export const submissionTone = {
 export const releaseSetTone = {
 	succeeded: 'ok',
 	'needs attention': 'warn',
-	'awaiting approval': 'waiting',
+	'waiting for you to publish': 'waiting',
 	'in progress': 'active',
 } as const satisfies Record<ReleaseSetState, Tone>;
 
@@ -61,11 +62,27 @@ export function deliveryStatus(delivery: NotificationDelivery): Status {
 }
 
 export function releaseStatus(release: ReturnType<typeof releaseSummaries>[number]): Status {
+	const { latest } = release;
+	if (publishesAutomatically(latest)) return { tone: 'active', label: 'Publishing once its checks pass' };
+	if (latest.state === 'awaiting-approval') return { tone: 'warn', label: 'Waiting for you to publish' };
 	if (release.attention) return { tone: 'warn', label: 'Needs attention' };
 	if (release.publications.length && release.verified === release.publications.length) {
 		return { tone: 'ok', label: 'Required publications verified' };
 	}
-	return { tone: 'active', label: 'In progress' };
+	if (activeStates.includes(latest.state)) return { tone: 'active', label: 'In progress' };
+	if (latest.state === 'pending') return { tone: 'waiting', label: 'Waiting to start' };
+	if (latest.state === 'succeeded' && latest.operation === 'prepare') {
+		return { tone: 'waiting', label: 'Prepared, no publication run yet' };
+	}
+	return { tone: executionTone[latest.state], label: runStateLabel(latest) };
+}
+
+export function runLabel(operation: string): string {
+	return operation === 'prepare'
+		? 'Preparation run'
+		: operation === 'promote'
+		? 'Publication run'
+		: `${operation} run`;
 }
 
 const repositoryStatuses = {

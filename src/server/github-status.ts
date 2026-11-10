@@ -1,5 +1,7 @@
 import { Effect, Option, Semaphore } from 'effect';
 import { checkGitHub } from 'github-up/browser';
+import { z } from 'zod';
+import { listed } from '@/automation/setup-summary';
 import type { DomainError } from '@/contract/errors';
 import { fromPromise } from '@/failure';
 
@@ -43,19 +45,53 @@ const check: Effect.Effect<GitHubOutage | undefined, DomainError> = Effect.gen(f
 		Effect.timeoutOption('3 seconds'),
 		Effect.map(Option.getOrUndefined),
 	);
-	if (result?.kind !== 'ok') return undefined;
-	const { summary } = result;
-	const components = summary.components
-		.filter(component => !component.group && component.status !== 'operational')
-		.map(component => ({ name: component.name, status: component.status.replaceAll('_', ' ') }));
-	const incidents = summary.incidents.map(incident => ({
-		name: incident.name,
-		status: incident.status,
-		url: incident.shortlink,
-	}));
-	if (!components.length && !incidents.length) return undefined;
-	return { description: summary.status.description, incidents, components, page, source };
+	return result?.kind === 'ok' ? outageFrom(result.summary) : undefined;
 });
+
+const reliedOn: ReadonlySet<string> = new Set([
+	'Git Operations',
+	'API Requests',
+	'Webhooks',
+	'Pull Requests',
+	'Actions',
+	'Packages',
+	'Pages',
+]);
+const scoped = z.looseObject({ components: z.array(z.looseObject({ name: z.string() })).optional() });
+
+export interface StatusSummary {
+	components: readonly { name: string; status: string; group: boolean }[];
+	incidents: readonly { name: string; status: string; shortlink: string }[];
+}
+
+export function outageFrom(summary: StatusSummary): GitHubOutage | undefined {
+	const components = summary.components
+		.filter(component => !component.group && component.status !== 'operational' && reliedOn.has(component.name))
+		.map(component => ({ name: component.name, status: component.status.replaceAll('_', ' ') }));
+	const affecting = summary.incidents.flatMap(incident => {
+		if (incident.status === 'resolved' || incident.status === 'postmortem') return [];
+		const named = scoped.safeParse(incident).data?.components?.map(component => component.name) ?? [];
+		const relied = named.filter(name => reliedOn.has(name));
+		return named.length && !relied.length ? [] : [{ incident, relied }];
+	});
+	if (!components.length && !affecting.length) return undefined;
+	const names = [
+		...new Set([...components.map(component => component.name), ...affecting.flatMap(entry => entry.relied)]),
+	];
+	return {
+		description: names.length
+			? `GitHub reports problems with ${listed(names)}`
+			: 'GitHub reports an incident without naming the services it affects',
+		incidents: affecting.map(({ incident }) => ({
+			name: incident.name,
+			status: incident.status,
+			url: incident.shortlink,
+		})),
+		components,
+		page,
+		source,
+	};
+}
 
 export function outageLine(outage: GitHubOutage): string {
 	const parts = [
@@ -64,7 +100,7 @@ export function outageLine(outage: GitHubOutage): string {
 			? [`affected: ${outage.components.map(component => `${component.name} ${component.status}`).join(', ')}`]
 			: []),
 	];
-	return `GitHub ${outage.description}: ${parts.join('; ')}. ${outage.page} (${outage.source})`.replace(
+	return `${outage.description}: ${parts.join('; ')}. ${outage.page} (${outage.source})`.replace(
 		/[^\x20-\x7e]/g,
 		' ',
 	);

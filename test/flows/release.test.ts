@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { join } from 'node:path';
 import { begin, runAction, runIdentity } from '@root/test/support/actions.ts';
 import { discoveredWidget } from '@root/test/support/client.ts';
 import { bearer, text } from '@root/test/support/http.ts';
@@ -8,16 +9,22 @@ import { approvePromotion, only, prepareRelease } from '@root/test/support/relea
 import { editableConfiguration, passChecks, widget } from '@root/test/support/repositories.ts';
 import { fakeSigner, signingKey } from '@root/test/support/signing.ts';
 import type { World } from '@root/test/support/world.ts';
-import { eachWorld } from '@root/test/support/world.ts';
+import { eachWorld, origin } from '@root/test/support/world.ts';
+import { experimental_AstroContainer } from 'astro/container';
 import { Effect } from 'effect';
+import { Window } from 'happy-dom';
 import { z } from 'zod';
 import { Store } from '@/automation/store';
 import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
-import { releaseSetSummaries, releaseSummaries } from '@/server/releases';
+import { needsUser, releaseSetSummaries, releaseSummaries, runStateLabel } from '@/server/releases';
 import { overview } from '@/server/views/overview';
 import { runCard } from '@/server/views/runs';
+import { releaseStatus } from '@/server/views/tone';
+
+type Component = Parameters<experimental_AstroContainer['renderToString']>[0];
+const componentModule = z.object({ default: z.custom<Component>(value => typeof value === 'function') });
 
 let world: World;
 eachWorld(created => {
@@ -230,6 +237,149 @@ test('a finished run whose registry publication appears late is verified without
 		'https://www.npmjs.com/package/@kjanat/beepboop/v/0.1.0',
 		'https://jsr.io/@kjanat/beepboop@0.1.0',
 	]);
+});
+
+test('the overview counts only runs that still need the user and shows each version as one release', async () => {
+	const { finished, repository } = await finishedPromotion('pending');
+	const record = await Effect.runPromise(new Store(world.db).repository(repository.id));
+	if (!record) throw new Error('No stored repository');
+	const run = (id: string, at: number, changes: Partial<Execution>): Execution => ({
+		...finished,
+		id,
+		createdAt: at,
+		updatedAt: at,
+		...changes,
+	});
+	const prepared = { operation: 'prepare', publications: [], sourceSha: 'a'.repeat(40) };
+	const published = finished.publications.map(publication => ({ ...publication, outcome: 'succeeded' as const }));
+	const readable = [
+		run('prepare-failed', 1, { ...prepared, state: 'failed' }),
+		run('prepare-done', 2, { ...prepared, state: 'succeeded' }),
+		run('promote-cancelled', 3, { state: 'cancelled' }),
+		run('promote-done', 4, { state: 'succeeded', publications: published }),
+		run('abandoned', 5, { version: '1.0.9', state: 'cancelled' }),
+		run('waiting', 6, { version: '2.0.0', state: 'awaiting-approval' }),
+		run('next-prepared', 7, { ...prepared, version: '2.1.0', state: 'succeeded' }),
+		run('next-running', 8, { version: '2.2.0', state: 'running' }),
+	];
+	const view = overview({
+		section: 'overview',
+		repositories: { readable: [], unreadable: [] },
+		executions: { readable, unreadable: [] },
+	});
+	expect([view.attention, view.waiting.map(entry => entry.id), view.running]).toEqual([
+		2,
+		['waiting', 'abandoned'],
+		1,
+	]);
+	const statuses = Object.fromEntries(
+		view.releases.map(
+			release => [release.version, [release.runs.map(entry => entry.id), releaseStatus(release).label]],
+		),
+	);
+	expect(statuses).toEqual({
+		[finished.version ?? '']: [
+			['prepare-failed', 'prepare-done', 'promote-cancelled', 'promote-done'],
+			'Required publications verified',
+		],
+		'1.0.9': [['abandoned'], 'Needs attention'],
+		'2.0.0': [['waiting'], 'Waiting for you to publish'],
+		'2.1.0': [['next-prepared'], 'Prepared, no publication run yet'],
+		'2.2.0': [['next-running'], 'In progress'],
+	});
+	expect(view.releases.find(release => release.version === finished.version)?.commit).toBe(finished.sourceSha);
+	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Overview.astro'));
+	const container = await experimental_AstroContainer.create();
+	const html = await container.renderToString(componentModule.parse(loaded).default, {
+		props: {
+			data: {
+				section: 'overview',
+				repositories: { readable: [record], unreadable: [] },
+				executions: { readable, unreadable: [] },
+			},
+		},
+		request: new Request(`${origin}/`),
+	});
+	const page = new Window();
+	page.document.body.innerHTML = html;
+	const texts = (selector: string) =>
+		[...page.document.querySelectorAll(selector)].map(element => element.textContent.trim());
+	expect(texts('h2').slice(0, 2)).toEqual(['Needs your attention', 'Recent releases']);
+	expect(texts('.release-path li')).toContain('Publish commit');
+	expect(texts('.release-path li')).not.toContain('Approve commit');
+	const text = page.document.body.textContent;
+	expect(text).toContain('Publication run');
+	expect(text).toContain('Preparation run');
+	expect(text).toContain('waiting for you to publish');
+	expect(texts('*')).not.toContain('promote');
+	await page.happyDOM.close();
+});
+
+test('a later run replaces a failed run only for the same release target', async () => {
+	const { finished } = await finishedPromotion('pending');
+	const run = (id: string, at: number, changes: Partial<Execution>): Execution => ({
+		...finished,
+		id,
+		createdAt: at,
+		updatedAt: at,
+		state: 'failed',
+		...changes,
+	});
+	const set = (group: string) => ({ preparationId: 'set', group, required: [] });
+	const plan = (id: string) => ({
+		lockfiles: [],
+		sourceSha: 'a'.repeat(40),
+		groups: [{ id, packages: [`pkg:npm/${id}`], version: '1.0.0' }],
+		operations: [],
+		publicationOrder: [],
+		edits: [],
+		diagnostics: [],
+		requiresPreparation: true,
+	});
+	const prepare = (id: string, at: number, group: string, state: Execution['state']) =>
+		run(id, at, { operation: 'prepare', version: undefined, plan: plan(group), publications: [], state });
+	const readable = [
+		run('a-failed', 1, { releaseSet: set('a') }),
+		run('b-done', 2, { releaseSet: set('b'), state: 'succeeded' }),
+		prepare('x-failed', 3, 'x', 'failed'),
+		prepare('y-done', 4, 'y', 'succeeded'),
+		prepare('z-failed', 5, 'z', 'failed'),
+		prepare('z-done', 6, 'z', 'succeeded'),
+	];
+	expect(readable.filter(entry => needsUser(entry, readable)).map(entry => entry.id)).toEqual([
+		'a-failed',
+		'x-failed',
+	]);
+});
+
+test('a run that publishes once its checks pass is not waiting for the user', async () => {
+	const { finished } = await finishedPromotion('pending');
+	const waiting = { ...finished, id: 'waiting', state: 'awaiting-approval' as const };
+	const started = { ...waiting, id: 'started', approvedBy: 'start' as const };
+	const streams = finished.configuration.streams;
+	const stream = streams[finished.stream];
+	if (!stream) throw new Error('No stream');
+	const pushed = {
+		...waiting,
+		id: 'pushed',
+		configuration: {
+			...finished.configuration,
+			streams: {
+				...streams,
+				[finished.stream]: { ...stream, promote: { ...stream.promote, approval: 'push' as const } },
+			},
+		},
+	};
+	const runs = [waiting, started, pushed];
+	expect(runs.map(entry => [entry.id, needsUser(entry, runs), runStateLabel(entry)])).toEqual([
+		['waiting', true, 'waiting for you to publish'],
+		['started', false, 'publishing once its checks pass'],
+		['pushed', false, 'publishing once its checks pass'],
+	]);
+	const [release] = releaseSummaries([started]);
+	if (!release) throw new Error('No release');
+	expect(releaseStatus(release).label).toBe('Publishing once its checks pass');
+	expect(runCard(started, Date.now()).automatic).toBe(true);
 });
 
 test('a registry outage during verification is retried once the registry answers again', async () => {

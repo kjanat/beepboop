@@ -1,19 +1,29 @@
 ---
+import Arrow from '@/components/Arrow.astro';
+import Badge from '@/components/Badge.astro';
 import ReleaseSummary from '@/components/ReleaseSummary.astro';
 import type { ViewOf } from '@/server/loaders.ts';
+import { runStateLabel } from '@/server/releases.ts';
 import { overview } from '@/server/views/overview.ts';
+import { executionTone, runLabel } from '@/server/views/tone.ts';
 
 interface Props {
 	data: ViewOf<'overview'>;
 }
-const { attention, running, setup, unconnected, releases } = overview(
-	Astro.props.data,
-);
+const {
+	attention,
+	waiting,
+	unreadable,
+	running,
+	setup,
+	unconnected,
+	releases,
+} = overview(Astro.props.data);
 ---
 <ol class="release-path" aria-label="Release process">
 	<li>Prepare changes</li>
 	<li>Review & merge</li>
-	<li>Approve commit</li>
+	<li>Publish commit</li>
 	<li>Verify publications</li>
 </ol>
 <div class="overview-grid">
@@ -42,8 +52,36 @@ const { attention, running, setup, unconnected, releases } = overview(
 	</article>
 ) : (
 	 <>
+		 {attention > 0 && (
+			 <section class="attention" aria-labelledby="attention-heading">
+				 <h2 id="attention-heading">Needs your attention</h2>
+				 <ul class="run-links">
+					 {waiting.map(run => (
+						 <li class="run-link">
+							 {run.repository} / {run.stream}
+							 {run.version ? ` ${run.version}` : ''}: {runLabel(run.operation)}
+							 <Badge
+								 tone={executionTone[run.state]}
+								 label={runStateLabel(run)}
+							 />
+							 <Arrow
+								 href={`/runs#${run.id}`}
+								 label={`Show the ${runLabel(run.operation).toLowerCase()}`}
+							 />
+						 </li>
+					 ))}
+					 {unreadable > 0 && (
+						 <li class="run-link">
+							 {unreadable} stored {unreadable === 1 ? 'run' : 'runs'} could not
+							 be read
+							 <Arrow href="/runs" label="Show release runs" />
+						 </li>
+					 )}
+				 </ul>
+			 </section>
+		 )}
 		 <div class="section-heading">
-			 <h2>{attention ? 'Needs your attention' : 'Recent releases'}</h2>
+			 <h2>Recent releases</h2>
 			 <a class="button primary" href="/releases">Prepare a release</a>
 		 </div>
 		 <ReleaseSummary releases={releases} />
