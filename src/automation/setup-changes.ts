@@ -8,6 +8,8 @@ import {
 	publishWhenSentences,
 	startFromEffect,
 	versionLandsSentences,
+	versionPrMergeSentences,
+	versionPrMerges,
 } from '@/contract/setup-terms';
 
 export const onboardingBranch = 'automation/onboarding';
@@ -152,6 +154,7 @@ const labelled: { pattern: RegExp; label: string }[] = [
 	{ pattern: /^streams\.[^.]+\.promote\.publishWhen$/, label: 'publishWhen' },
 	{ pattern: /^streams\.[^.]+\.startFrom$/, label: 'startFrom' },
 	{ pattern: /^streams\.[^.]+\.prepare\.versionLands$/, label: 'versionLands' },
+	{ pattern: /^streams\.[^.]+\.prepare\.versionPrMerge$/, label: 'versionPrMerge' },
 	{ pattern: /(?:^|\.)publications$|^managers$/, label: 'publications' },
 	{ pattern: /^streams\.[^.]+\.workflows\.[^.]+\.needs(?:Jobs)?$/, label: 'workflow order' },
 ];
@@ -197,6 +200,10 @@ function effect(path: string, after: unknown): string | undefined {
 	if (path.endsWith('.prepare.versionLands')) {
 		const bump = Object.entries(bumpOfVersionLands).find(([name]) => name === after)?.[1];
 		return bump && versionLandsSentences[bump];
+	}
+	if (path.endsWith('.prepare.versionPrMerge')) {
+		const merge = versionPrMerges.find(value => value === after);
+		return merge && versionPrMergeSentences[merge];
 	}
 	if (/\.startFrom$/.test(path) && Array.isArray(after) && after.length) return startFromEffect;
 	if (

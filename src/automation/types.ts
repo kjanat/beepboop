@@ -5,6 +5,7 @@ import type { RefPlan } from '@/automation/refs';
 import type { ManagerName } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
 import type { StartChannel } from '@/contract/release-start';
+import type { AutoMergeMethod } from '@/contract/setup-terms';
 import type { ExecutionStateView } from '@/contract/views';
 import type { Configuration, WorkflowBinding } from '@/domain/configuration';
 import type { Access } from '@/domain/repository';
@@ -128,10 +129,14 @@ export interface SubscriptionDelivery {
 	repositoryId: number;
 	execution: Execution;
 }
+export type AutoMerge =
+	| { method: AutoMergeMethod; state: 'enabled' }
+	| { method: AutoMergeMethod; state: 'refused'; note: string };
 export interface PreparationResult {
 	url: string;
 	head: string;
 	kind?: 'commit';
+	autoMerge?: AutoMerge;
 }
 export interface PreparedRelease extends PreparationResult {
 	started?: ReleaseStarted;

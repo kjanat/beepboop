@@ -6,6 +6,7 @@ import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { startChannel, versionBump } from '@/contract/release-start';
 import { binaries, binaryBuild, binaryTargets } from '@/contract/setup';
+import { versionPrMerge } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
 import { stringsSchema as strings } from '@/model';
 
@@ -56,6 +57,7 @@ const setupPlan: z.ZodType<SetupPlan> = z.object({
 				approval: z.enum(['required', 'merge', 'push']).optional(),
 				start: z.array(startChannel).optional(),
 				bump: versionBump.optional(),
+				versionPrMerge: versionPrMerge.optional(),
 				required: strings,
 				versionSource: z.object({ kind: z.literal('tags'), prefix: z.string() }).optional(),
 				versionFiles: z.array(versionFileSchema).optional(),

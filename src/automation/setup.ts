@@ -56,6 +56,10 @@ import {
 	versionLandsNames,
 	versionLandsQuestion,
 	versionLandsSentences,
+	versionPrMerge,
+	versionPrMergeQuestion,
+	versionPrMergeSentences,
+	versionPrMerges,
 	versionScopeNames,
 	versionScopeSentences,
 } from '@/contract/setup-terms';
@@ -649,6 +653,9 @@ function drafted(
 				if (generated.content !== before) edits.push({ path, before, after: generated.content });
 			}
 			if (selection.bump) updated.prepare = { ...object(updated.prepare), bump: selection.bump };
+			if (selection.versionPrMerge) {
+				updated.prepare = { ...object(updated.prepare), versionPrMerge: selection.versionPrMerge };
+			}
 			if (selection.start) {
 				updated.start = selection.start.map(via => via === 'action' ? { via, workflow: startWorkflowFile } : { via });
 			}
@@ -851,12 +858,15 @@ function completeChoices(
 			const start = stream.start ?? (starts.success ? starts.data.map(entry => entry.via) : undefined);
 			const bumped = versionBump.safeParse(object(stored.prepare).bump);
 			const bump = stream.bump ?? (bumped.success ? bumped.data : undefined);
+			const merged = versionPrMerge.safeParse(object(stored.prepare).versionPrMerge);
+			const merge = stream.versionPrMerge ?? (merged.success ? merged.data : undefined);
 			const prepare = complete('prepare', stream.prepare), promote = complete('promote', stream.promote);
 			return {
 				...stream,
 				...(promote && approval ? { approval } : {}),
 				...(start ? { start } : {}),
 				...(bump ? { bump } : {}),
+				...(merge ? { versionPrMerge: merge } : {}),
 				...(prepare ? { prepare } : {}),
 				...(promote ? { promote } : {}),
 			};
@@ -932,6 +942,9 @@ export function setupOptions(plan: SetupPlan): SetupOption[] {
 		...(bumpable(stream)
 			? versionBumps.map((value): SetupOption => ({ kind: 'bump', stream: stream.name, value }))
 			: []),
+		...(bumpable(stream)
+			? versionPrMerges.map((value): SetupOption => ({ kind: 'versionPrMerge', stream: stream.name, value }))
+			: []),
 		...operations.flatMap(operation =>
 			stream[operation]
 				? triggerHandovers.map((value): SetupOption => ({ kind: 'triggers', stream: stream.name, operation, value }))
@@ -966,6 +979,7 @@ function optionId(option: SetupOption): string {
 		: option.kind === 'target'
 		? [option.kind, option.stream, option.target]
 		: option.kind === 'versioning' || option.kind === 'approval' || option.kind === 'start' || option.kind === 'bump'
+				|| option.kind === 'versionPrMerge'
 		? [option.kind, option.stream, option.value]
 		: option.kind === 'triggers'
 		? [option.kind, option.stream, option.operation, option.value]
@@ -979,6 +993,7 @@ function selected(option: SetupOption, choices: SetupChoices): boolean {
 	if (option.kind === 'approval') return stream?.approval === option.value;
 	if (option.kind === 'start') return stream?.start?.includes(option.value) ?? false;
 	if (option.kind === 'bump') return stream?.bump === option.value;
+	if (option.kind === 'versionPrMerge') return (stream?.versionPrMerge ?? 'manual') === option.value;
 	if (option.kind === 'triggers') return stream?.[option.operation]?.triggers === option.value;
 	if (option.kind === 'binary') {
 		return stream?.promote?.binaries?.builds.some(build => build.name === option.build.name) ?? false;
@@ -1053,6 +1068,9 @@ export function bodyChoices(body: string, options: SetupOption[], base: SetupCho
 			const start = starting.length ? starts.length || stream.start ? starts : undefined : stream.start;
 			const bumps = own.flatMap(option => option.kind === 'bump' && state(option) ? [option.value] : []);
 			const bump = bumps.find(value => value !== stream.bump) ?? bumps[0];
+			const merges = own.flatMap(option => option.kind === 'versionPrMerge' && state(option) ? [option.value] : []);
+			const merge = merges.find(value => value !== (stream.versionPrMerge ?? 'manual')) ?? merges[0]
+				?? stream.versionPrMerge;
 			const {
 				prepare: _prepare,
 				promote: _promote,
@@ -1060,6 +1078,7 @@ export function bodyChoices(body: string, options: SetupOption[], base: SetupCho
 				approval: _approval,
 				start: _start,
 				bump: _bump,
+				versionPrMerge: _merge,
 				...kept
 			} = stream;
 			return {
@@ -1067,6 +1086,7 @@ export function bodyChoices(body: string, options: SetupOption[], base: SetupCho
 				...(approval ? { approval } : {}),
 				...(start ? { start } : {}),
 				...(bump ? { bump } : {}),
+				...(merge && (merge !== 'manual' || stream.versionPrMerge) ? { versionPrMerge: merge } : {}),
 				name: stream.name,
 				packages,
 				versioning: versions.find(value => value !== stream.versioning) ?? versions[0] ?? stream.versioning,
@@ -1161,11 +1181,17 @@ export function setupBody(plan: SetupPlan, context: SetupBodyContext): string {
 				? [box('    ', option, `\`${versionLandsNames[option.value]}\`: ${versionLandsSentences[option.value]}`)]
 				: []
 		);
+		const merges = own.flatMap(option =>
+			option.kind === 'versionPrMerge'
+				? [box('    ', option, `\`${option.value}\`: ${versionPrMergeSentences[option.value]}`)]
+				: []
+		);
 		return [
 			...(starts.length ? [`  - \`startFrom\`: ${startFromQuestion}. Tick any of these.`, ...starts] : []),
 			...(bumps.length
 				? [`  - \`versionLands\`: ${versionLandsQuestion}, here \`${defaultBranch}\`. Tick one.`, ...bumps]
 				: []),
+			...(merges.length ? [`  - \`versionPrMerge\`: ${versionPrMergeQuestion}. Tick one.`, ...merges] : []),
 			...(approvals.length ? [`  - \`publishWhen\`: ${publishWhenQuestion}. Tick one.`, ...approvals] : []),
 		];
 	}

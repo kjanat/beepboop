@@ -27,6 +27,9 @@ import {
 	versionLandsNames,
 	versionLandsQuestion,
 	versionLandsSentences,
+	versionPrMergeQuestion,
+	versionPrMergeSentences,
+	versionPrMerges,
 	versionScopeNames,
 	versionScopeQuestion,
 	versionScopeSentences,
@@ -44,6 +47,7 @@ export const streamEditors = {
 	approval: 'control',
 	start: 'control',
 	bump: 'control',
+	versionPrMerge: 'control',
 	observe: 'control',
 	prepare: 'control',
 	promote: 'control',
@@ -395,6 +399,21 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 						),
 					);
 					stream.bump = bump === 'commit' ? 'commit' : 'pr';
+				}
+				if (bumpable(stream) && all && stream.bump !== 'commit') {
+					const merge = yield* select(
+						ask,
+						`${stream.name}: versionPrMerge. ${versionPrMergeQuestion}`,
+						preferring(
+							versionPrMerges.map(value => ({
+								value,
+								label: `${value}: ${versionPrMergeSentences[value].replaceAll('`', '')}`,
+							})),
+							stream.versionPrMerge ?? 'manual',
+						),
+					);
+					const chosen = versionPrMerges.find(value => value === merge);
+					if (chosen && (chosen !== 'manual' || stream.versionPrMerge)) stream.versionPrMerge = chosen;
 				}
 				if (stream.promote && (all || !stream.approval)) {
 					const approval = yield* select(

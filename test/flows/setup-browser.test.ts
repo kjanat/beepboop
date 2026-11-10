@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import { routes } from '@/contract/routes';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
-import { existingTriggersQuestion } from '@/contract/setup-terms';
+import { existingTriggersQuestion, versionPrMergeSentences, versionPrMerges } from '@/contract/setup-terms';
 
 // Browser modules are checked separately to keep DOM and Worker Element types apart.
 const browserModule = new URL('../../src/ui/browser/setup.ts', import.meta.url).href;
@@ -674,4 +674,21 @@ test('the dashboard asks for starts, bump and approval without picking any, and 
 	expect(result).toContain('"versionLands":"via-direct-commit"');
 	expect(result).toContain('"startFrom":[{"via":"action","workflow":"start-release.yml"},{"via":"cli"}]');
 	expect(result).toContain('kjanat/beepboop/actions/release@');
+});
+
+test('the dashboard selects versionPrMerge manual and writes the method chosen in its select', async () => {
+	const form = await open(toolRepository().name);
+	const merging = dom.find(form, '[data-field="versionPrMerge"]', window.HTMLSelectElement);
+	if (!merging) throw new Error('Missing versionPrMerge select');
+	expect([...merging.options].map(option => [option.value, option.textContent])).toEqual(
+		versionPrMerges.map(value => [value, `${value}: ${versionPrMergeSentences[value].replaceAll('`', '')}`]),
+	);
+	expect(merging.value).toBe('manual');
+	await act(form, 'preview');
+	expect(form.querySelector('.setup-result')?.textContent ?? '').not.toContain('versionPrMerge');
+	merging.value = 'rebase';
+	await act(form, 'preview');
+	expect((form.querySelector('.setup-result')?.textContent ?? '').replace(/\s+/g, '')).toContain(
+		'"prepare":{"versionPrMerge":"rebase"}',
+	);
 });

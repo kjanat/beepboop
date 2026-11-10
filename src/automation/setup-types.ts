@@ -1,6 +1,7 @@
 import type { PackagePublication } from '@/automation/package-publication';
 import type { StartChannel, VersionBump } from '@/contract/release-start';
 import type { BinaryBuild, BinaryCandidate, BinaryTarget, SetupChoices } from '@/contract/setup';
+import type { VersionPrMerge } from '@/contract/setup-terms';
 
 export type { SetupChoices } from '@/contract/setup';
 
@@ -19,6 +20,7 @@ export type SetupOption =
 	| { kind: 'approval'; stream: string; value: Approval }
 	| { kind: 'start'; stream: string; value: StartChannel }
 	| { kind: 'bump'; stream: string; value: VersionBump }
+	| { kind: 'versionPrMerge'; stream: string; value: VersionPrMerge }
 	| { kind: 'triggers'; stream: string; operation: 'prepare' | 'promote'; value: TriggerHandover }
 	| { kind: 'binary'; stream: string; build: BinaryBuild; targets: BinaryTarget[] }
 	| { kind: 'target'; stream: string; target: BinaryTarget };

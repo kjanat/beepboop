@@ -41,6 +41,23 @@ export const versionLandsSentences: Record<VersionBump, string> = {
 };
 export const versionLandsQuestion = 'How a new version reaches the default branch';
 
+export const versionPrMerges = ['manual', 'squash', 'merge', 'rebase'] as const;
+export type VersionPrMerge = typeof versionPrMerges[number];
+export type AutoMergeMethod = Exclude<VersionPrMerge, 'manual'>;
+export const autoMergeMethods = ['squash', 'merge', 'rebase'] as const satisfies readonly AutoMergeMethod[];
+const versionPrMergeWarning =
+	'With `publishWhen: version-pr-merged`, the release then publishes with nobody touching it.';
+export const versionPrMergeSentences: Record<VersionPrMerge, string> = {
+	manual: 'You merge the version PR yourself.',
+	squash:
+		`Beepboop turns on GitHub auto-merge, and GitHub squashes the version PR into one commit once its checks pass. ${versionPrMergeWarning}`,
+	merge:
+		`Beepboop turns on GitHub auto-merge, and GitHub merges the version PR with a merge commit once its checks pass. ${versionPrMergeWarning}`,
+	rebase:
+		`Beepboop turns on GitHub auto-merge, and GitHub rebases the version PR onto the default branch once its checks pass. ${versionPrMergeWarning}`,
+};
+export const versionPrMergeQuestion = 'Who merges the version PR';
+
 export const startFromSentences: Record<StartChannel, string> = {
 	action: `The Start release workflow in GitHub Actions (${startWorkflowFile}) starts the release.`,
 	dashboard: 'The Release button in the Beepboop dashboard starts the release.',
@@ -93,6 +110,7 @@ export const mustPublishSentence = 'Packages that must publish for the release t
 export const publishWhen = z.enum(publishWhens);
 export const versionLands = z.enum(versionLandings);
 export const versionScope = z.enum(versionScopes);
+export const versionPrMerge = z.enum(versionPrMerges);
 export const existingTriggers = z.enum(existingTriggerChoices);
 
 function described<K extends string>(
@@ -106,6 +124,11 @@ function described<K extends string>(
 export const publishWhenDescription = described(publishWhenQuestion, publishWhenNames, publishWhenSentences);
 export const versionLandsDescription = described(versionLandsQuestion, versionLandsNames, versionLandsSentences);
 export const versionScopeDescription = described(versionScopeQuestion, versionScopeNames, versionScopeSentences);
+export const versionPrMergeDescription = described(
+	versionPrMergeQuestion,
+	{ manual: 'manual', squash: 'squash', merge: 'merge', rebase: 'rebase' },
+	versionPrMergeSentences,
+);
 export const existingTriggersDescription = described(
 	existingTriggersQuestion,
 	existingTriggersNames,

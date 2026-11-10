@@ -9,7 +9,12 @@ import {
 } from '@/contract/catalog';
 import { credentialAliasPattern, githubSecretNamePattern, identifierPattern } from '@/contract/ids';
 import { approvalPolicies, startChannel, versionBump } from '@/contract/release-start';
-import { existingTriggers, existingTriggersDescription, triggersOfExistingTriggers } from '@/contract/setup-terms';
+import {
+	existingTriggers,
+	existingTriggersDescription,
+	triggersOfExistingTriggers,
+	versionPrMerge,
+} from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
 
 export const binaryTargets = [
@@ -141,6 +146,7 @@ export const setupStream = z.object({
 	approval: z.enum(approvalPolicies).optional(),
 	start: z.array(startChannel).optional(),
 	bump: versionBump.optional(),
+	versionPrMerge: versionPrMerge.optional(),
 	required: z.array(z.string()),
 	versionSource: z.object({
 		kind: z.literal('tags'),

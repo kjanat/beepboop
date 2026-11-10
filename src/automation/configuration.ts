@@ -28,6 +28,7 @@ import {
 	publishWhens,
 	versioningOfVersionScope,
 	versionLandings,
+	versionPrMerges,
 	versionScopes,
 } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
@@ -232,7 +233,7 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 		const prepare = yield* record(row.prepare ?? {}),
 			promote = yield* record(row.promote ?? {}),
 			channels = yield* record(row.channels ?? {});
-		yield* keys(prepare, ['version', 'workflow', 'strategy', 'versionLands', 'bump'], 'prepare');
+		yield* keys(prepare, ['version', 'workflow', 'strategy', 'versionLands', 'bump', 'versionPrMerge'], 'prepare');
 		const strategy = prepare.strategy === undefined
 			? undefined
 			: yield* oneOf(prepare.strategy, ['managed', 'workflow'], 'Invalid preparation strategy');
@@ -242,6 +243,9 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 			: prepare.bump === undefined
 			? undefined
 			: yield* oneOf(prepare.bump, versionBumps, 'Invalid bump, the earlier name of versionLands');
+		const versionPrMerge = prepare.versionPrMerge === undefined
+			? undefined
+			: yield* oneOf(prepare.versionPrMerge, versionPrMerges, 'Invalid versionPrMerge');
 		const starts = row.startFrom ?? row.start;
 		const start = starts === undefined ? undefined : yield* lift(() => releaseStarts.parse(starts));
 		yield* keys(channels, ['stable', 'prerelease'], 'channels');
@@ -292,6 +296,7 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 				version: 'manual',
 				...(prepare.workflow ? { workflow: yield* binding(prepare.workflow) } : {}),
 				...(bump === undefined ? {} : { bump }),
+				...(versionPrMerge === undefined ? {} : { versionPrMerge }),
 			},
 			promote: {
 				approval: promote.publishWhen !== undefined
