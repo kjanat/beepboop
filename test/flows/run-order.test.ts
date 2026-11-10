@@ -36,18 +36,18 @@ async function template() {
 	return { repositoryId: repository.id, document: z.record(z.string(), z.unknown()).parse(JSON.parse(row.document)) };
 }
 
-type Row = [id: string, state: string, createdAt: number, updatedAt: number];
+type Row = [id: string, state: string, createdAt: number, updatedAt: number, changes?: Record<string, unknown>];
 
 async function insert(base: Awaited<ReturnType<typeof template>>, rows: Row[]) {
 	const statement = world.db.prepare(
 		'INSERT INTO executions(id,repository_id,state,document,updated_at) VALUES(?,?,?,?,?)',
 	);
-	await world.db.batch(rows.map(([id, state, createdAt, updatedAt]) =>
+	await world.db.batch(rows.map(([id, state, createdAt, updatedAt, changes]) =>
 		statement.bind(
 			id,
 			base.repositoryId,
 			state,
-			JSON.stringify({ ...base.document, id, state, createdAt, updatedAt }),
+			JSON.stringify({ ...base.document, id, state, createdAt, updatedAt, ...changes }),
 			updatedAt,
 		)
 	));
@@ -95,4 +95,45 @@ test('unfinished runs are chosen before the 200 row limit, whatever finished run
 	expect(everything[1]).toBe('finished-204');
 	expect(await listed({ stream: 'main', limit: 1 })).toEqual(['long-running']);
 	expect(await listed({ stream: 'main', states: 'succeeded', limit: 1 })).toEqual(['finished-204']);
+});
+
+test('legacy blocked rows rank by the state they decode to and stay inside the 200 row limit', async () => {
+	const base = await template();
+	const { approvedAt: _approvedAt, runId: _runId, ...plain } = base.document;
+	const legacy = { ...base, document: plain };
+	await insert(legacy, [
+		['legacy-awaiting', 'blocked', 5, 5, { operation: 'promote', attempts: 0 }],
+		['legacy-stuck', 'blocked', 6, 6, { operation: 'prepare', attempts: 1 }],
+		...Array.from({ length: 205 }, (_, index): Row => [
+			`finished-${String(index).padStart(3, '0')}`,
+			'succeeded',
+			10 + index,
+			100 + index,
+		]),
+	]);
+	const everything = await listed({});
+	expect(everything).toHaveLength(200);
+	expect(everything[0]).toBe('legacy-awaiting');
+	expect(everything[1]).toBe('finished-204');
+	expect(everything.at(-1)).toBe('legacy-stuck');
+	expect(await listed({ stream: 'main', limit: 1 })).toEqual(['legacy-awaiting']);
+	const read = await Effect.runPromise(new Store(world.db).readExecutions());
+	expect(read.flatMap(entry => entry.kind === 'readable' ? [entry.value.id] : [])).toEqual(everything);
+});
+
+test('a malformed stored document stays an unreadable row and does not break ordering or filters', async () => {
+	const base = await template();
+	await insert(base, [
+		['old-cancelled', 'cancelled', 1_000, 9_000],
+		['new-running', 'running', 2_000, 3_000],
+	]);
+	await world.db.prepare('INSERT INTO executions(id,repository_id,state,document,updated_at) VALUES(?,?,?,?,?)')
+		.bind('malformed', base.repositoryId, 'running', '{not json', 10_000).run();
+	const read = await Effect.runPromise(new Store(world.db).readExecutions());
+	expect(read.map(entry => entry.kind === 'readable' ? entry.value.id : `unreadable:${entry.id}`)).toEqual([
+		'new-running',
+		'old-cancelled',
+		'unreadable:malformed',
+	]);
+	expect(await listed({ stream: 'main' })).toEqual(['new-running', 'old-cancelled']);
 });

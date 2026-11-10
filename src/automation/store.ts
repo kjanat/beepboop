@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
 import { z } from 'zod';
-import { executionOrderSql } from '@/automation/execution-order';
+import { executionOrderSql, newestActiveFirst, validJson } from '@/automation/execution-order';
 import { encodeRepository, identifyRepository } from '@/automation/package-identity';
 import { documentRow, rowDocument } from '@/automation/schemas';
 import type {
@@ -176,6 +176,7 @@ export class Store {
 	executions(repositoryId?: number): Effect.Effect<Execution[], DomainError> {
 		return this.executionRows(repositoryId).pipe(
 			Effect.flatMap(rows => fromSync(() => rows.map(row => decodeExecutionV1(JSON.parse(row.document))))),
+			Effect.map(decoded => decoded.sort(newestActiveFirst)),
 		);
 	}
 	filteredExecutions(filter: ExecutionFilter): Effect.Effect<Execution[], DomainError> {
@@ -192,7 +193,7 @@ export class Store {
 			] as const
 		) {
 			if (value === undefined) continue;
-			conditions.push(`json_extract(document,'$.${column}')=?`);
+			conditions.push(`${validJson(`$.${column}`)}=?`);
 			values.push(value);
 		}
 		const wanted = filter.states?.split(',');
@@ -216,7 +217,7 @@ export class Store {
 					const kept = wanted === undefined ? decoded : decoded.filter(execution => wanted.includes(execution.state));
 					const collected = [...found, ...kept];
 					return decoded.length < executionPage || collected.length >= limit
-						? Effect.succeed(collected.slice(0, limit))
+						? Effect.succeed(collected.sort(newestActiveFirst).slice(0, limit))
 						: page(offset + executionPage, collected);
 				}),
 			);
@@ -224,14 +225,25 @@ export class Store {
 	}
 	readExecutions(): Effect.Effect<(Readable<Execution> | UnreadableExecution)[], DomainError> {
 		return this.executionRows().pipe(
-			Effect.map(rows =>
-				readEach(rows, row => decodeExecutionV1(JSON.parse(row.document)), (row, error): UnreadableExecution => ({
-					kind: 'unreadable',
-					id: row.id,
-					repositoryId: row.repository_id,
-					error,
-				}))
-			),
+			Effect.map(rows => {
+				const entries = readEach(
+					rows,
+					row => decodeExecutionV1(JSON.parse(row.document)),
+					(row, error): UnreadableExecution => ({
+						kind: 'unreadable',
+						id: row.id,
+						repositoryId: row.repository_id,
+						error,
+					}),
+				);
+				return [
+					...readableValues(entries).sort(newestActiveFirst).map((value): Readable<Execution> => ({
+						kind: 'readable',
+						value,
+					})),
+					...entries.flatMap(entry => entry.kind === 'unreadable' ? [entry] : []),
+				];
+			}),
 		);
 	}
 	event(id: string): Effect.Effect<AutomationEvent | undefined, DomainError> {

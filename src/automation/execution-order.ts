@@ -28,6 +28,12 @@ export function newestActiveFirst(a: Execution, b: Execution): number {
 	return listOrder(listed(a), listed(b));
 }
 
-export const executionOrderSql = `state IN (${
-	unfinishedStates.map(state => `'${state}'`).join(',')
-}) DESC, json_extract(document,'$.createdAt') DESC, updated_at DESC, id`;
+const storedUnfinishedStates: readonly string[] = [...unfinishedStates, 'blocked'];
+
+export function validJson(path: string): string {
+	return `CASE WHEN json_valid(document) THEN json_extract(document,'${path}') END`;
+}
+
+export const executionOrderSql = `state IN (${storedUnfinishedStates.map(state => `'${state}'`).join(',')}) DESC, ${
+	validJson('$.createdAt')
+} DESC, updated_at DESC, id`;
