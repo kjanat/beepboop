@@ -408,8 +408,11 @@ function proposalMarkdown(
 		lines.push(`### Stream \`${stream.name}\``, '', ...streamSummary(stream, plan).map(line => `- ${line}`));
 		const proposal = graph.streams.find(entry => entry.id === stream.name);
 		if (stream.promote) {
+			const policy = stream.approval ?? 'required';
 			lines.push(
-				`- Start a release with \`beepboop release\` in a checkout or from the dashboard. Beepboop opens the version PR. After you merge it, \`publishWhen: ${publishWhenNames.required}\` applies until you tick another: ${publishWhenSentences.required}`,
+				`- Start a release with \`beepboop release\` in a checkout or from the dashboard. Beepboop opens the version PR. After you merge it, \`publishWhen: ${
+					publishWhenNames[policy]
+				}\` applies${stream.approval ? '' : ' until you tick another'}: ${publishWhenSentences[policy]}`,
 			);
 		} else if (proposal) lines.push(`- ${startCommand(proposal, snapshot)}`);
 		lines.push('');

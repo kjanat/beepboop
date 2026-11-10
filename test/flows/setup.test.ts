@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { bearer, field } from '@root/test/support/http.ts';
-import { publishWorkflow, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
+import {
+	jsonFile,
+	licenseText,
+	npmManifest,
+	publishWorkflow,
+	widget,
+	widgetConfiguration,
+} from '@root/test/support/repositories.ts';
 import { applySetup, discoverSetup, editPull } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
@@ -1339,6 +1346,138 @@ test('an operation workflow holding plain crate lines is regenerated like the pr
 	const workflow = plan.edits.find(edit => edit.path === '.github/workflows/publish-crates.yml')?.after ?? '';
 	expect(workflow).toContain('kjanat/beepboop/actions/publish@v1');
 	expect(workflow).not.toContain('cargo publish');
+});
+
+const lintCrates = ['pkg:cargo/lint-core', 'pkg:cargo/lint'];
+const plainLines = "cargo publish --locked --package 'lint-core'\ncargo publish --locked --package 'lint'";
+const lintChoices = (commands: string): SetupChoices => ({
+	streams: [{
+		name: 'main',
+		packages: lintCrates,
+		required: lintCrates,
+		versioning: 'workspace',
+		prepare: {
+			file: 'prepare-lint.yml',
+			job: 'prepare',
+			triggers: 'review',
+			commands: 'cargo check --workspace --all-targets\ncargo test --workspace',
+			publicationSteps: {},
+		},
+		promote: { file: 'release-lint.yml', job: 'publish', triggers: 'review', commands: '', publicationSteps: {} },
+		operations: [{
+			name: 'crates',
+			file: 'publish-crates.yml',
+			job: 'crates',
+			triggers: 'review',
+			commands,
+			publicationSteps: {},
+			needs: ['promote'],
+			publications: lintCrates,
+		}],
+	}],
+});
+const lintRepository = () =>
+	world.github.create('octo/lint', {
+		'Cargo.toml': '[workspace]\nmembers = ["crates/*"]\n\n[workspace.package]\nversion = "0.1.0"\n',
+		'Cargo.lock': '# Lockfile\n',
+		'crates/core/Cargo.toml': '[package]\nname = "lint-core"\nversion.workspace = true\n',
+		'crates/cli/Cargo.toml': '[package]\nname = "lint"\nversion.workspace = true\n',
+	});
+
+test('an integrated operation workflow with plain crate lines is rewritten to the ledger step', async () => {
+	const repository = lintRepository();
+	const api = bearer(world, await world.cliSession());
+	const generated = await Effect.runPromise(
+		parseSetupPlan(
+			(await api('/api/repositories/setup/preview', {
+				repository: repository.name,
+				choices: lintChoices(ledgerCommand),
+			}))
+				.body,
+		),
+	);
+	const ledger = generated.edits.find(edit => edit.path === '.github/workflows/publish-crates.yml')?.after ?? '';
+	expect(ledger).toContain('kjanat/beepboop/actions/publish@');
+	const plainWorkflow = ledger.replace(
+		/ {6}- id: beepboop_publish\n {8}name: Publish selected packages\n {8}uses: [^\n]+\n {8}with:\n(?: {10}[^\n]+\n)+/,
+		`      - id: beepboop_publish
+        name: Publish selected packages
+        run: |
+          cargo publish --locked --package 'lint-core'
+          cargo publish --locked --package 'lint'
+      - uses: kjanat/beepboop/actions/report@v1
+        if: \${{ !cancelled() && steps.beepboop.outcome == 'success' }}
+        with:
+          execution-id: \${{ steps.beepboop.outputs.execution-id }}
+          publications: |
+            [
+              {
+                "id": "pkg:cargo/lint-core",
+                "manager": "cargo",
+                "name": "lint-core",
+                "version": "\${{ fromJSON(steps.beepboop.outputs.context).version }}",
+                "required": true,
+                "outcome": "\${{ steps.beepboop_publish.outcome == 'success' && 'succeeded' || 'failed' }}"
+              },
+              {
+                "id": "pkg:cargo/lint",
+                "manager": "cargo",
+                "name": "lint",
+                "version": "\${{ fromJSON(steps.beepboop.outputs.context).version }}",
+                "required": true,
+                "outcome": "\${{ steps.beepboop_publish.outcome == 'success' && 'succeeded' || 'failed' }}"
+              }
+            ]
+`,
+	);
+	expect(plainWorkflow).toContain("cargo publish --locked --package 'lint'");
+	expect(plainWorkflow).not.toContain('actions/publish@');
+	world.github.push(repository, { '.github/workflows/publish-crates.yml': plainWorkflow }, 'Integrate crates workflow');
+	const plan = await Effect.runPromise(
+		parseSetupPlan(
+			(await api('/api/repositories/setup/preview', { repository: repository.name, choices: lintChoices(plainLines) }))
+				.body,
+		),
+	);
+	expect(plan.blockers).toEqual([]);
+	const rewritten = plan.edits.find(edit => edit.path === '.github/workflows/publish-crates.yml')?.after ?? '';
+	expect(rewritten).toContain('kjanat/beepboop/actions/publish@v1');
+	expect(rewritten).toContain('CARGO_REGISTRY_TOKEN');
+	expect(rewritten).not.toContain('cargo publish');
+	expect(rewritten).not.toContain('actions/report@');
+});
+
+test("the adoption text states each stream's own publishWhen", async () => {
+	const stream = (name: string, approval: 'required' | 'merge') => ({
+		packages: [`pkg:npm/${name}`],
+		required: [`pkg:npm/${name}`],
+		credentials: ['npm-token'],
+		prepare: { strategy: 'managed' },
+		promote: { approval, workflow: { file: `publish-${name}.yml`, publications: [`pkg:npm/${name}`] } },
+	});
+	const repository = world.github.create('octo/pair', {
+		'packages/alpha/package.json': npmManifest('alpha', '1.0.0'),
+		'packages/beta/package.json': npmManifest('beta', '1.0.0'),
+		'README.md': '# pair\n',
+		LICENSE: licenseText,
+		'.github/workflows/publish-alpha.yml': publishWorkflow,
+		'.github/workflows/publish-beta.yml': publishWorkflow,
+		'.github/beepboop.json': jsonFile({
+			$schema: 'https://beepboop.kjanat.dev/schema/v1.json',
+			managers: ['npm', 'workflow'],
+			streams: { alpha: stream('alpha', 'merge'), beta: stream('beta', 'required') },
+		}),
+	});
+	const api = bearer(world, await world.cliSession());
+	const plan = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name })).body),
+	);
+	const adoption = (plan.adoption ?? []).join('\n');
+	const section = (name: string) =>
+		adoption.slice(adoption.indexOf(`### Stream \`${name}\``)).split('### Stream')[1] ?? '';
+	expect(section('alpha')).toContain('`publishWhen: version-pr-merged` applies:');
+	expect(section('alpha')).not.toContain('`approved-in-beepboop`');
+	expect(section('beta')).toContain('`publishWhen: approved-in-beepboop` applies');
 });
 
 describe('a saved plain crate publish script', () => {

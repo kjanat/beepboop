@@ -19,7 +19,7 @@ import {
 	refSteps,
 	releaseSteps,
 } from '@/automation/setup-binaries';
-import { crateOutcome, ledgerCommand } from '@/automation/setup-defaults';
+import { crateOutcome, ledgerCommand, plainCrateNames } from '@/automation/setup-defaults';
 import type { SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
 import type { Package, Snapshot } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
@@ -465,6 +465,43 @@ function integrate(
 			},
 		];
 	};
+	const plainStep = operation !== 'prepare' && choice.commands.trim() === ledgerCommand
+		? steps.findIndex(step =>
+			step.id === 'beepboop_publish' && typeof step.run === 'string' && plainCrateNames(step.run)
+		)
+		: -1;
+	if (plainStep >= 0) {
+		const crates = packages.filter(pkg => pkg.manager === 'cargo').map(pkg => pkg.name).sort();
+		const named = plainCrateNames(String(steps[plainStep]?.run))?.sort();
+		if (named && crates.length === named.length && crates.every((name, index) => name === named[index])) {
+			const recorded = new Set(
+				packages.filter(pkg =>
+					!choice.publicationSteps[packageId(pkg)] && ledgerManagers.some(manager => manager === pkg.manager)
+				)
+					.map(packageId),
+			);
+			steps = steps.flatMap((step, index) => {
+				if (index === plainStep) {
+					return [{
+						id: 'beepboop_publish',
+						name: 'Publish selected packages',
+						uses: action('publish'),
+						with: {
+							'execution-id': `\${{ steps.${id}.outputs.execution-id }}`,
+							...(aliases.length ? { credentials: JSON.stringify(credentials) } : {}),
+						},
+					}];
+				}
+				if (step.id === 'beepboop_credentials') return [];
+				if (actionRole(step.uses) !== 'report') return [step];
+				const results = JSON.parse(String(object(step.with).publications || '[]')) as { id?: string }[];
+				const kept = results.filter(entry => !(typeof entry.id === 'string' && recorded.has(entry.id)));
+				return kept.length
+					? [{ ...step, with: { ...object(step.with), publications: `${JSON.stringify(kept, null, 2)}\n` } }]
+					: [];
+			});
+		}
+	}
 	if (operation === 'prepare') {
 		const prepareSteps = steps.filter(step => actionRole(step.uses) === 'prepare');
 		if (!prepareSteps.length) {
