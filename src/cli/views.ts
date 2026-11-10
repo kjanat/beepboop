@@ -104,8 +104,8 @@ export function repositoryView(out: Out, repository: RepositoryView) {
 	});
 }
 
-export function executionTable(out: Out, executions: readonly ExecutionView[]) {
-	return rows(out, executions, look =>
+export function executionTable(out: Out, executions: readonly ExecutionView[], json: unknown = executions) {
+	return rows(out, json, look =>
 		executions.map(row => ({
 			id: look.id(row.id),
 			repository: look.pkg(row.repository),
