@@ -222,6 +222,23 @@ export function integrateReleaseWorkflow(
 		return { content: renderWorkflow(combined), blockers, notes };
 	});
 }
+const migratableKeys = ['id', 'name', 'run', 'if', 'env', 'continue-on-error', 'timeout-minutes'];
+const carriedKeys = ['if', 'continue-on-error', 'timeout-minutes'];
+function migratedSettings(
+	step: Record<string, unknown>,
+	credentialNames: string[],
+): Record<string, unknown> | undefined {
+	if (Object.keys(step).some(key => !migratableKeys.includes(key))) return undefined;
+	const entries = Object.entries(object(step.env));
+	const fromCredentials = (value: unknown) =>
+		typeof value === 'string' && value.includes('steps.beepboop_credentials.');
+	if (!entries.every(([name, value]) => !fromCredentials(value) || credentialNames.includes(name))) return undefined;
+	const env = entries.filter(([, value]) => !fromCredentials(value));
+	return {
+		...Object.fromEntries(carriedKeys.flatMap(key => step[key] === undefined ? [] : [[key, step[key]]])),
+		...(env.length ? { env: Object.fromEntries(env) } : {}),
+	};
+}
 function publicationEntries(value: unknown): { id?: unknown }[] | undefined {
 	if (value === undefined || value === '') return [];
 	if (typeof value !== 'string') return undefined;
@@ -482,7 +499,8 @@ function integrate(
 			step.id === 'beepboop_publish' && typeof step.run === 'string' && plainCrateNames(step.run)
 		)
 		: -1;
-	if (plainStep >= 0) {
+	const carried = plainStep >= 0 ? migratedSettings(object(steps[plainStep]), Object.keys(credentials)) : undefined;
+	if (plainStep >= 0 && carried) {
 		const crates = packages.filter(pkg => pkg.manager === 'cargo').map(pkg => pkg.name).sort();
 		const named = plainCrateNames(String(steps[plainStep]?.run))?.sort();
 		if (named && crates.length === named.length && crates.every((name, index) => name === named[index])) {
@@ -497,7 +515,7 @@ function integrate(
 					return [{
 						id: 'beepboop_publish',
 						name: 'Publish selected packages',
-						...(step.if === undefined ? {} : { if: step.if }),
+						...carried,
 						uses: action('publish'),
 						with: {
 							'execution-id': `\${{ steps.${id}.outputs.execution-id }}`,

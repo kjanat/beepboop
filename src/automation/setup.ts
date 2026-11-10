@@ -395,22 +395,29 @@ function draftSetup(
 			notes: [...unanswered, ...added, ...failing, ...narrowed, ...drafts.notes],
 			...(candidates.length ? { binaryCandidates: candidates } : {}),
 		};
-		return inferred ? { ...plan, adoption: proposalMarkdown(graph, snapshot, plan) } : plan;
+		return inferred ? { ...plan, adoption: proposalMarkdown(graph, snapshot, plan, resolved) } : plan;
 	});
 }
 function proposalMarkdown(
 	graph: ReleaseGraph,
 	snapshot: Snapshot,
 	plan: Omit<SetupPlan, 'planId'>,
+	resolved?: Configuration,
 ): string[] {
 	const lines = ['## Release plan', ''];
 	for (const stream of plan.choices.streams) {
 		lines.push(`### Stream \`${stream.name}\``, '', ...streamSummary(stream, plan).map(line => `- ${line}`));
 		const proposal = graph.streams.find(entry => entry.id === stream.name);
 		if (stream.promote) {
-			const policy = stream.approval ?? 'required';
+			const inherited = resolved?.streams[stream.name];
+			const policy = stream.approval ?? inherited?.promote.approval ?? 'required';
+			const bump = stream.bump ?? inherited?.prepare.bump ?? 'pr';
+			const landing = bump === 'commit'
+				? 'Beepboop pushes a signed commit with the new version to the default branch.'
+				: 'Beepboop opens the version PR.';
+			const after = bump === 'commit' ? 'Then' : 'After you merge it,';
 			lines.push(
-				`- Start a release with \`beepboop release\` in a checkout or from the dashboard. Beepboop opens the version PR. After you merge it, \`publishWhen: ${
+				`- Start a release with \`beepboop release\` in a checkout or from the dashboard. ${landing} ${after} \`publishWhen: ${
 					publishWhenNames[policy]
 				}\` applies${stream.approval ? '' : ' until you tick another'}: ${publishWhenSentences[policy]}`,
 			);
