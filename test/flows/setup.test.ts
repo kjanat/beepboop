@@ -208,7 +208,7 @@ for (const preparation of ['run: npm install', 'uses: octo/build-artifacts@v1'])
 		const preview = await api('/api/repositories/setup/preview', { repository: repository.name });
 		const plan = await Effect.runPromise(parseSetupPlan(preview.body));
 		expect(plan.blockers).toContain(
-			'publish.yml: steps before begin need explicit integration; prepare dependencies and build output after the approved checkout',
+			'publish.yml: steps before begin need explicit integration; prepare dependencies and build output after the planned checkout',
 		);
 		expect(plan.edits.find(edit => edit.path === '.github/workflows/publish.yml')).toBeUndefined();
 		const applied = await applySetup(api, repository.name, plan, plan.choices);
@@ -1095,6 +1095,28 @@ test('setup preserves a configured workflow preparation strategy', async () => {
 	expect(plan.blockers).toContain('main: select a preparation workflow for the configured workflow strategy.');
 });
 
+test('setup names existingTriggers when a workflow Beepboop dispatches also runs on tags', async () => {
+	const repository = widget(world.github, { configured: false });
+	world.github.push(repository, {
+		'.github/workflows/publish.yml': publishWorkflow.replace('on:\n', "on:\n  push:\n    tags: ['v*']\n"),
+	}, 'Publish on tags');
+	const api = bearer(world, await world.cliSession());
+	const choices: SetupChoices = {
+		streams: [{
+			name: 'main',
+			packages: ['pkg:npm/widget'],
+			required: ['pkg:npm/widget'],
+			versioning: 'workspace',
+			promote: { file: 'publish.yml', job: 'publish', triggers: 'review', commands: '', publicationSteps: {} },
+		}],
+	};
+	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toContain(
+		'publish.yml: set existingTriggers to replace-with-dispatch to hand publication control to Beepboop; preserving automatic publication requires a separate workflow',
+	);
+});
+
 test('adoption leaves custom checkout refs for explicit integration', async () => {
 	const repository = widget(world.github, { configured: false });
 	const workflow = publishWorkflow.replace(
@@ -1300,12 +1322,12 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 		streams: z.object({
 			main: z.object({
 				credentials: z.array(z.string()),
-				promote: z.object({ approval: z.string(), workflow: z.looseObject({ publications: z.array(z.string()) }) }),
+				promote: z.object({ publishWhen: z.string(), workflow: z.looseObject({ publications: z.array(z.string()) }) }),
 			}),
 		}),
 	}).parse(JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'));
 	expect(configuration.streams.main.credentials).toEqual(['crates-io']);
-	expect(configuration.streams.main.promote.approval).toBe('required');
+	expect(configuration.streams.main.promote.publishWhen).toBe('approved-in-beepboop');
 	expect(configuration.streams.main.promote.workflow).toMatchObject({
 		refs: { phase: 'version', prefix: 'v' },
 		publications: ['pkg:cargo/sql-cli', 'pkg:cargo/sql', 'pkg:cargo/sql-parser', 'github-release:octo/sql'],
@@ -1470,7 +1492,7 @@ test('a setup PR body from before the markers keeps the lines its owner added', 
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
 	const legacy = pull.body.replace('<!-- beepboop:setup:start -->\n', '').replace('\n<!-- beepboop:setup:end -->', '');
 	pull.edits = [{ editor: 'beepboop-test', body: legacy }];
-	pull.body = `Closes #26\n\n${legacy.replace('Change versioning', 'Owner note.\n\nChange versioning')}`;
+	pull.body = `Closes #26\n\n${legacy.replace('Change `versionScope`', 'Owner note.\n\nChange `versionScope`')}`;
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
 	expect(pull.body.startsWith('<!-- beepboop:setup:start -->\n')).toBe(true);
 	expect(pull.body.endsWith('\n<!-- beepboop:setup:end -->\n\nCloses #26\n\nOwner note.\n')).toBe(true);
@@ -1698,15 +1720,15 @@ test('a setup update body leads with old and new values, then held packages, cho
 		credentials: ['npm-token', 'crates-io'],
 		workflows: { release: { file: 'release.yml', publications: ['pkg:npm/%40kjanat/rshellcheck'] } },
 		promote: {
-			approval: 'merge',
+			publishWhen: 'version-pr-merged',
 			workflow: {
 				file: 'release-rshellcheck.yml',
 				publications: ['github-release:octo/shellcheck'],
 				setup: { job: 'promote' },
 			},
 		},
-		prepare: { bump: 'pr' },
-		start: [{ via: 'action', workflow: 'start-release.yml' }, { via: 'cli' }],
+		prepare: { versionLands: 'via-version-pr' },
+		startFrom: [{ via: 'action', workflow: 'start-release.yml' }, { via: 'cli' }],
 	}, ['github-release', 'npm']);
 	const promoteOnly = 'jobs:\n  promote:\n    steps: []\n';
 	const binaries = {
@@ -1724,12 +1746,13 @@ test('a setup update body leads with old and new values, then held packages, cho
 		'  - `credentials` changes.',
 		'  - `workflows.release.publications`: removes `pkg:github/octo/shellcheck`.',
 		'  - `workflows.release.needs`: `promote` → none.',
-		'  - Approval: `required` → `merge`. Merging a version PR now publishes the release with no approval in Beepboop.',
+		'  - `promote.publishWhen`: `approved-in-beepboop` → `version-pr-merged`. Merging the version PR publishes it once the checks pass. Nobody publishes it in Beepboop.',
 		'  - `promote.workflow.publications`: adds `github-release:octo/shellcheck`. This workflow now publishes the GitHub release.',
-		'  - Version bump: none → `pr`. Beepboop opens a version PR, and merging it continues the release.',
-		'  - Release starts: none → `action` (`start-release.yml`), `cli`. A start approves the whole release.',
+		'  - `prepare.versionLands`: none → `via-version-pr`. Beepboop opens a version PR, and merging it puts the new version on the default branch.',
+		'  - `startFrom`: none → `action` (`start-release.yml`), `cli`. Starting a release also publishes it, and nothing asks again.',
 		'- Repository',
 		'  - `managers`: adds `github-release`.',
+		'  - Renames the settings to their current names: `publishWhen`, `versionLands`, `startFrom`, `mustPublish`, `versionScope` and `existingTriggers`.',
 		'  - `.github/beepboop.json` records the setup input that generates its workflows.',
 		'- Workflows',
 		'  - `release-rshellcheck.yml` builds the `rshellcheck` release binaries.',
@@ -1738,9 +1761,10 @@ test('a setup update body leads with old and new values, then held packages, cho
 	expect(behaviourChanges(edits)).toEqual(changes);
 	expect(setupTitle(updateBranch, edits)).toBe('chore: update release setup');
 	expect(setupTitle(updateBranch, [binaries])).toBe('chore: build rshellcheck release binaries');
-	const flipped = after.replace('"approval":"merge"', '"approval":"required"');
+	const flipped = after.replace('"publishWhen":"version-pr-merged"', '"publishWhen":"approved-in-beepboop"');
+	expect(flipped).not.toBe(after);
 	expect(setupTitle(updateBranch, [{ path: '.github/beepboop.json', before: flipped, after }, binaries])).toBe(
-		'chore: update release setup (release binaries, approval)',
+		'chore: update release setup (release binaries, publishWhen)',
 	);
 	const unrecorded = after.replace(',"setup":{"job":"promote"}', '');
 	expect(unrecorded).not.toBe(after);
@@ -1809,13 +1833,15 @@ test('a setup update body leads with old and new values, then held packages, cho
 			changes.join('\n')
 		}\n\n### Held packages\n\n- \`@kjanat/rshellcheck\` (\`npm/package.json\`) lacks a license file. Beepboop holds its release until the package has them.\n\n`,
 	);
-	expect(body).toContain('  - How the version bump reaches `master`. Tick one.\n');
 	expect(body).toContain(
-		'  - `go` takes its version from `go/v` tags. Beepboop raises no version for it, so it offers no start or version bump.\n',
+		'  - `versionLands`: How a new version reaches the default branch, here `master`. Tick one.\n',
 	);
-	expect(body.match(/Existing triggers stay on/g)).toHaveLength(1);
 	expect(body).toContain(
-		'Existing triggers stay on `release-rshellcheck.yml` and `release-go.yml`. Beepboop reports a trigger that conflicts with its dispatch.',
+		'  - `go` takes its version from `go/v` tags. Beepboop raises no version for it, so it offers no `startFrom` or `versionLands`.\n',
+	);
+	expect(body.match(/existingTriggers: keep-and-report/g)).toHaveLength(1);
+	expect(body).toContain(
+		'- `release-rshellcheck.yml` and `release-go.yml`, `existingTriggers: keep-and-report`: The workflow keeps its existing triggers. Beepboop reports a trigger that conflicts with its dispatch.',
 	);
 	expect(body).toContain('- Discovery: `@kjanat/rshellcheck` declares no repository');
 	expect(body).not.toMatch(/(?:^|[\s(])@kjanat\//m);

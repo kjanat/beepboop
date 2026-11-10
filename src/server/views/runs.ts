@@ -12,9 +12,13 @@ export function waitingUntil(run: Execution, now: number): string | undefined {
 		: undefined;
 }
 
+export function stateLabel(state: Execution['state']): string {
+	return state === 'awaiting-approval' ? 'waiting for you to publish' : state;
+}
+
 export function progress(run: Execution, now: number): string {
 	const until = waitingUntil(run, now);
-	return until ? `waiting until ${until}` : run.state;
+	return until ? `waiting until ${until}` : stateLabel(run.state);
 }
 
 function publicationName(run: Execution, publication: Execution['publications'][number]): string {
@@ -25,8 +29,9 @@ function publicationName(run: Execution, publication: Execution['publications'][
 
 function publicationHref(run: Execution, publication: Execution['publications'][number]): string | undefined {
 	const destination = managerSpec(publication.manager).destinations?.primary;
-	if (publication.outcome !== 'succeeded' || !destination) return undefined;
-	return registryHref(destination, publication.name, publication.version, run.repository);
+	if (!destination) return undefined;
+	const version = publication.outcome === 'succeeded' ? publication.version : undefined;
+	return registryHref(destination, publication.name, version, run.repository);
 }
 
 function releaseLink(run: Execution): { tag: string; href: string } | undefined {

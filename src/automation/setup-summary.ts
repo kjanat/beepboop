@@ -66,7 +66,7 @@ export function streamSummary(
 			...(tags.length ? [`pushes the ${tags.length === 1 ? 'tag' : 'tags'} ${listed(tags)}`] : []),
 		];
 		lines.push(
-			`After you approve a release, ${named(promote.file)} ${
+			`When a release publishes, ${named(promote.file)} ${
 				steps.length ? steps.join(', then ') : 'runs the publishing commands'
 			}.`,
 		);

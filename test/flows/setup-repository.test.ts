@@ -306,17 +306,20 @@ test('binaries added to an existing shared ledger workflow upload after the crat
 
 const releaseMode = z.object({
 	streams: z.object({
-		main: z.object({
-			prepare: z.looseObject({ bump: z.string().optional() }).optional(),
-			promote: z.looseObject({ approval: z.string().optional() }),
-			start: z.array(z.looseObject({ via: z.string() })).optional(),
+		main: z.looseObject({
+			prepare: z.looseObject({ versionLands: z.string().optional() }).optional(),
+			promote: z.looseObject({ publishWhen: z.string().optional() }),
+			startFrom: z.array(z.looseObject({ via: z.string() })).optional(),
 		}),
 	}),
 });
 function modeOf(repository: Repository, ref?: string) {
 	const { main } = releaseMode.parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', ref) ?? '{}'))
 		.streams;
-	return { approval: main.promote.approval, bump: main.prepare?.bump, start: main.start };
+	for (const legacy of ['start', 'versioning', 'required']) expect(main).not.toHaveProperty(legacy);
+	expect(main.promote).not.toHaveProperty('approval');
+	expect(main.prepare ?? {}).not.toHaveProperty('bump');
+	return { publishWhen: main.promote.publishWhen, versionLands: main.prepare?.versionLands, startFrom: main.startFrom };
 }
 function crateChoices(mode: Partial<SetupChoices['streams'][number]> = {}): SetupChoices {
 	return {
@@ -348,9 +351,9 @@ test('a fresh setup ticks no approval, start or bump and writes none of them', a
 	expect(plan.choices.streams[0]).not.toHaveProperty('start');
 	expect(plan.choices.streams[0]).not.toHaveProperty('bump');
 	expect(modeOf(repository, 'automation/onboarding')).toEqual({
-		approval: undefined,
-		bump: undefined,
-		start: undefined,
+		publishWhen: undefined,
+		versionLands: undefined,
+		startFrom: undefined,
 	});
 	expect(world.github.file(repository, '.github/workflows/start-release.yml', 'automation/onboarding')).toBeUndefined();
 	const body = repository.pulls[0]?.body ?? '';
@@ -363,10 +366,10 @@ test('a fresh setup ticks no approval, start or bump and writes none of them', a
 		expect(body).toContain(`- [ ] <!-- beepboop:choice:approval:main:${value} -->`);
 	}
 	expect(body).toContain(
-		'- main: tick when a version raised without a start publishes. Until you do, Beepboop waits for your approval.',
+		'- main: tick `publishWhen`. Until you do, it is `approved-in-beepboop`: You publish it: the Publish button in Beepboop or `beepboop runs publish`. Approving or merging the version PR on GitHub does not publish.',
 	);
 	expect(body).toContain(
-		'- main: tick how a version bump reaches the default branch. Until you do, Beepboop opens a version PR.',
+		'- main: tick `versionLands`. Until you do, it is `via-version-pr`: Beepboop opens a version PR, and merging it puts the new version on the default branch.',
 	);
 	expect(body).not.toContain('Set up registry access');
 	expect(body).not.toContain('keeps this proposal current');
@@ -388,9 +391,9 @@ test('each choice ticked in the setup PR body is written as ticked, and push sta
 	);
 	await world.wait(16_000);
 	expect(modeOf(repository, 'automation/onboarding')).toEqual({
-		approval: 'push',
-		bump: 'commit',
-		start: [{ via: 'action', workflow: 'start-release.yml' }, { via: 'cli' }],
+		publishWhen: 'version-commit-pushed',
+		versionLands: 'via-direct-commit',
+		startFrom: [{ via: 'action', workflow: 'start-release.yml' }, { via: 'cli' }],
 	});
 	expect(pull.body).toContain('- [x] <!-- beepboop:choice:approval:main:push -->');
 	expect(pull.body).toContain('- [ ] <!-- beepboop:choice:approval:main:required -->');
@@ -427,7 +430,11 @@ test('unticking every start writes an empty start list, and setup reads it back 
 	const repository = toolRepository();
 	const api = bearer(world, await world.cliSession());
 	await applyChoices(api, repository.name, crateChoices({ approval: 'required', bump: 'pr', start: [] }));
-	expect(modeOf(repository, 'automation/onboarding')).toEqual({ approval: 'required', bump: 'pr', start: [] });
+	expect(modeOf(repository, 'automation/onboarding')).toEqual({
+		publishWhen: 'approved-in-beepboop',
+		versionLands: 'via-version-pr',
+		startFrom: [],
+	});
 	world.github.merge(repository, 1);
 	const plan = await previewSetup(api, repository.name);
 	expect(plan.edits).toEqual([]);
@@ -442,11 +449,15 @@ test('a maintenance rebuild keeps the approval, starts and bump the default bran
 	world.github.merge(repository, 1);
 	const source = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
 	const legacy = JSON.stringify(source, (key, value) => key === 'setup' ? undefined : value, '\t')
-		.replace('"approval": "push"', '"approval": "required"');
+		.replace('"publishWhen": "version-commit-pushed"', '"approval": "required"');
 	world.github.push(repository, { '.github/beepboop.json': `${legacy}\n` }, 'Require approval');
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
 	await world.wait(16_000);
-	const kept = { approval: 'required', bump: 'pr', start: [{ via: 'dashboard' }] };
+	const kept = {
+		publishWhen: 'approved-in-beepboop',
+		versionLands: 'via-version-pr',
+		startFrom: [{ via: 'dashboard' }],
+	};
 	expect(modeOf(repository, 'automation/setup-update')).toEqual(kept);
 	world.github.push(repository, { 'README.md': '# tool\n' }, 'Document the tool');
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
@@ -489,7 +500,7 @@ test('a rebuild keeps the needs and the GitHub release publication of an observe
 	if (!pull) throw new Error('Missing setup PR');
 	await editPull(world, repository, pull, tick(pull.body, 'approval:main:required'));
 	await world.wait(16_000);
-	expect(modeOf(repository, 'automation/onboarding').approval).toBe('required');
+	expect(modeOf(repository, 'automation/onboarding').publishWhen).toBe('approved-in-beepboop');
 	expect(binding('automation/onboarding')).toMatchObject({
 		publications: ['pkg:github/octo/tool'],
 		needs: ['promote'],

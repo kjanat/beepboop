@@ -1746,12 +1746,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const execution = yield* this.get(id);
 			const commit = yield* Effect.fromResult(sha(commitSha));
 			if (execution.state !== 'awaiting-approval' || execution.sourceSha !== commit) {
-				return yield* precondition('Approval does not match promotion target');
+				return yield* precondition('This release is not waiting for you to publish that commit');
 			}
 			const token = yield* this.gateway().token(execution.repository, execution.repositoryId);
 			const head = yield* this.refHead(execution, token);
 			if (head && head.sha !== execution.sourceSha) {
-				return yield* precondition(`${head.ref} is at ${head.sha.slice(0, 12)}. Approve the release for that commit.`);
+				return yield* precondition(`${head.ref} is at ${head.sha.slice(0, 12)}. Publish the release for that commit.`);
 			}
 			const conflict = yield* this.tagProblem(execution);
 			if (conflict) return yield* precondition(conflict);
@@ -1829,7 +1829,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Effect.runPromise(Effect.gen({ self: this }, function*() {
 			const execution = yield* this.get(id);
 			if (execution.state !== 'awaiting-approval') {
-				return { problems: [], blocked: ['This promotion is not waiting for approval'] };
+				return { problems: [], blocked: ['This release is not waiting for you to publish it'] };
 			}
 			const conflict = yield* this.tagProblem(execution);
 			if (conflict) return { problems: [], blocked: [`${conflict}. Release a new version.`] };

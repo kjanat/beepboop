@@ -9,6 +9,12 @@ import type { BinaryBuild } from '@/contract/setup';
 import { binaryTargets, setupChoicesSchema, setupStream } from '@/contract/setup';
 import type { ChoicesField, StreamField, WorkflowField } from '@/contract/setup-fields';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
+import {
+	approvalOfPublishWhen,
+	bumpOfVersionLands,
+	triggersOfExistingTriggers,
+	versioningOfVersionScope,
+} from '@/contract/setup-terms';
 import { packageLabel } from '@/domain/package-label';
 
 type Stream = SetupChoices['streams'][number];
@@ -49,8 +55,34 @@ const fixedNames: Readonly<Record<string, readonly string[]>> = {
 	streams: ['stream'],
 	name: ['stream'],
 	packages: ['package'],
+	required: ['must-publish', 'required'],
+	versioning: ['version-scope', 'versioning'],
+	start: ['start-from', 'start'],
+	bump: ['version-lands', 'bump'],
+	approval: ['publish-when', 'approval'],
+	'prepare.triggers': ['prepare-existing-triggers', 'prepare-triggers'],
+	'promote.triggers': ['promote-existing-triggers', 'promote-triggers'],
 	'promote.binaries': ['binary', 'target'],
 };
+const deprecatedNames = new Set([
+	'required',
+	'versioning',
+	'start',
+	'bump',
+	'approval',
+	'prepare-triggers',
+	'promote-triggers',
+]);
+const currentValues: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+	versioning: versioningOfVersionScope,
+	bump: bumpOfVersionLands,
+	approval: approvalOfPublishWhen,
+	triggers: triggersOfExistingTriggers,
+};
+function internal(field: string, value: unknown): unknown {
+	const values = currentValues[field];
+	return typeof value === 'string' && values && Object.hasOwn(values, value) ? values[value] : value;
+}
 const roles = ['prepare', 'promote'] as const;
 
 export interface SetupFlagPath {
@@ -139,7 +171,9 @@ function flagOf(path: readonly PropertyKey[]): string {
 	const [field, entry] = path.map(String);
 	const nested = entry && (field === 'prepare' || field === 'promote') ? `${field}.${entry}` : field ?? '';
 	const found = setupFlagPaths.find(candidate => candidate.path === nested);
-	return found ? found.names.map(name => `--${name}`).join(' and ') : nested;
+	return found
+		? found.names.filter(name => !deprecatedNames.has(name)).map(name => `--${name}`).join(' and ')
+		: nested;
 }
 
 function binaries(
@@ -283,13 +317,13 @@ export function applySetupFlags(
 			};
 			for (const entry of streamPaths) {
 				if (entry.kind === 'stream' || entry.kind === 'binaries') continue;
-				const [name] = entry.names;
-				if (name === undefined || !values.has(name)) continue;
+				const name = entry.names.find(candidate => values.has(candidate));
+				if (name === undefined) continue;
 				const [field, nested] = entry.path.split('.');
 				const role = roles.find(candidate => candidate === field);
 				const given = entry.kind === 'packages'
 					? yield* packageIds(plan, name, strings(name) ?? [])
-					: value(name);
+					: internal(nested ?? field ?? '', value(name));
 				if (role && nested) {
 					roleEntries[role] = { ...roleEntries[role], [nested]: given };
 					continue;
@@ -297,7 +331,9 @@ export function applySetupFlags(
 				if (field) entered[field] = given;
 			}
 			const packages = list.safeParse(entered.packages).data ?? current.packages;
-			if (values.has('package') && !values.has('required')) entered.required = [...packages];
+			if (values.has('package') && !values.has('must-publish') && !values.has('required')) {
+				entered.required = [...packages];
+			}
 			const builds = strings('binary'), targets = strings('target');
 			if (builds || targets) {
 				if (!roleEntries.promote) {

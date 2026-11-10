@@ -5,18 +5,17 @@ import type { Execution, ReleasePlan, ReleaseStarted } from '@/automation/types'
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { startLabels } from '@/contract/release-start';
+import { publishWhenNames, publishWhenSentences } from '@/contract/setup-terms';
 import type { ReadyRepository } from '@/domain/repository';
 import { executionId, planIdentity } from '@/persistence/identity-keys';
 
 export function preparationBody(execution: Pick<Execution, 'configuration' | 'stream' | 'started'>): string {
 	const { started } = execution;
-	if (started) return `A start from ${startLabels[started.via]} approved this release. Merging this PR continues it.`;
-	const approval = execution.configuration.streams[execution.stream]?.promote.approval;
-	return approval === 'merge'
-		? 'Merging this PR releases it.'
-		: approval === 'push'
-		? 'Beepboop releases the merge commit once it is verified and its checks pass.'
-		: 'Promotion requires approval.';
+	if (started) {
+		return `Started from ${startLabels[started.via]}. Merging this PR publishes the release, and nothing asks again.`;
+	}
+	const policy = execution.configuration.streams[execution.stream]?.promote.approval ?? 'required';
+	return `\`publishWhen: ${publishWhenNames[policy]}\`: ${publishWhenSentences[policy]}`;
 }
 
 export function createReleasePreparation(

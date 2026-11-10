@@ -2,6 +2,7 @@ import { Effect, Result } from 'effect';
 import { z } from 'zod';
 import { binaryCandidates } from '@/automation/binary-candidates';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
+import { legacyConfiguration, readableConfiguration } from '@/automation/configuration-names';
 import { formatJson, json } from '@/automation/json';
 import { discover, versionsInFiles } from '@/automation/managers';
 import { object } from '@/automation/managers/helpers';
@@ -22,7 +23,6 @@ import type {
 	SetupPlan,
 	SetupWorkflow,
 	TriggerHandover,
-	Versioning,
 	WorkflowEvidence,
 } from '@/automation/setup-types';
 import { approvals, triggerHandovers, versionings } from '@/automation/setup-types';
@@ -33,16 +33,7 @@ import { blocking } from '@/contract/diagnostics';
 import type { DomainError } from '@/contract/errors';
 import { decodeRequest, precondition } from '@/contract/errors';
 import { sha256Hex } from '@/contract/ids';
-import {
-	approvalChoiceLabels,
-	bumpChoiceLabels,
-	releaseStarts,
-	startChannels,
-	startChoiceLabels,
-	startWorkflowFile,
-	versionBump,
-	versionBumps,
-} from '@/contract/release-start';
+import { releaseStarts, startChannels, startWorkflowFile, versionBump, versionBumps } from '@/contract/release-start';
 import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget, WorkflowSetupInput } from '@/contract/setup';
 import {
 	binaryTargets,
@@ -53,6 +44,21 @@ import {
 	unbuildable,
 	workflowSetup,
 } from '@/contract/setup';
+import {
+	existingTriggersNames,
+	existingTriggersQuestion,
+	existingTriggersSentences,
+	publishWhenNames,
+	publishWhenQuestion,
+	publishWhenSentences,
+	startFromQuestion,
+	startFromSentences,
+	versionLandsNames,
+	versionLandsQuestion,
+	versionLandsSentences,
+	versionScopeNames,
+	versionScopeSentences,
+} from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
 import { configurationDrift } from '@/domain/configuration';
 import { packageMarkdown } from '@/domain/package-label';
@@ -89,7 +95,7 @@ export function withRegistryStatus(inventory: Inventory, stored: Inventory | und
 }
 /** Suggestions are editable policy, never permission to apply or publish. */
 function storedConfiguration(snapshot: Snapshot): Effect.Effect<Record<string, unknown>, DomainError> {
-	return fromSync(() => object(JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}')));
+	return fromSync(() => object(legacyConfiguration(JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}'))));
 }
 function evidence(snapshot: Snapshot, inventory: Inventory): Effect.Effect<WorkflowEvidence[], DomainError> {
 	return Effect.forEach(
@@ -363,18 +369,20 @@ function draftSetup(
 		const unanswered = choices.streams.flatMap(stream => [
 			...(stream.promote && !stream.approval
 				? [
-					`${stream.name}: tick when a version raised without a start publishes. Until you do, Beepboop waits for your approval.`,
+					`${stream.name}: tick \`publishWhen\`. Until you do, it is \`${publishWhenNames.required}\`: ${publishWhenSentences.required}`,
 				]
 				: []),
 			...(bumpable(stream) && !stream.bump
 				? [
-					`${stream.name}: tick how a version bump reaches the default branch. Until you do, Beepboop opens a version PR.`,
+					`${stream.name}: tick \`versionLands\`. Until you do, it is \`${versionLandsNames.pr}\`: ${versionLandsSentences.pr}`,
 				]
 				: []),
 		]);
 		const ineligible = choices.streams.flatMap(stream =>
 			!startable(stream) && stream.start?.length
-				? [`${stream.name}: only a stream with one shared version and a publishing workflow can start releases.`]
+				? [
+					`${stream.name}: only a release group with \`versionScope: ${versionScopeNames.workspace}\` and a publishing workflow can use \`startFrom\`.`,
+				]
 				: []
 		);
 		const plan = {
@@ -397,7 +405,7 @@ function proposalMarkdown(
 		const proposal = graph.streams.find(entry => entry.id === stream.name);
 		if (stream.promote) {
 			lines.push(
-				'- Start a release with `beepboop release` in a checkout or from the dashboard. Beepboop opens the version PR, and after you merge it, it asks you to approve the release.',
+				`- Start a release with \`beepboop release\` in a checkout or from the dashboard. Beepboop opens the version PR. After you merge it, \`publishWhen: ${publishWhenNames.required}\` applies until you tick another: ${publishWhenSentences.required}`,
 			);
 		} else if (proposal) lines.push(`- ${startCommand(proposal, snapshot)}`);
 		lines.push('');
@@ -721,10 +729,12 @@ function drafted(
 			blockers.push(validated.failure.message);
 		}
 		const before = snapshot.files['.github/beepboop.json'] ?? '';
+		const written = readableConfiguration(configuration);
+		const stored = yield* fromSync((): unknown => JSON.parse(before || '{}'));
 		// Do not reformat an unchanged configuration simply to make a PR.
-		const after = JSON.stringify(raw) === JSON.stringify(configuration)
+		const after = JSON.stringify(stored) === JSON.stringify(written)
 			? before
-			: formatJson(yield* Effect.fromResult(json(configuration)));
+			: formatJson(yield* Effect.fromResult(json(written)));
 		if (after !== before) edits.unshift({ path: '.github/beepboop.json', before, after });
 		const prior = baseline.prior
 			? { url: baseline.prior.url, superseded: !!before && baseline.prior.content !== before }
@@ -1085,18 +1095,14 @@ function binaryOrigin(build: BinaryBuild): string {
 		? `Cargo, \`${build.manifest}\``
 		: `Go, \`${build.package === '.' ? build.module : `${build.module}/${build.package.slice(2)}`}\``;
 }
-const versioningLabels: Record<Versioning, string> = {
-	workspace: 'One version for the stream',
-	independent: 'Independent package versions',
-	none: 'No version',
-};
-const triggerSentences: Record<TriggerHandover | 'new', (files: string) => string> = {
-	review: files => `Existing triggers stay on ${files}. Beepboop reports a trigger that conflicts with its dispatch.`,
-	dispatchOnly: files => `Beepboop replaces the existing triggers on ${files} with its own dispatch.`,
-	preserve: files =>
-		`Existing triggers stay on ${files}. Beepboop blocks the setup when a trigger cannot work with its dispatch.`,
-	new: files => `Only Beepboop dispatches ${files}, which this PR creates.`,
-};
+function triggerSentence(handover: TriggerHandover | 'new', files: string[]): string {
+	const them = files.length === 1 ? 'it' : 'them';
+	return handover === 'new'
+		? `${listed(files)}: this PR creates ${them}, and only Beepboop dispatches ${them}.`
+		: `${listed(files)}, \`existingTriggers: ${existingTriggersNames[handover]}\`: ${
+			existingTriggersSentences[handover]
+		}`;
+}
 const heldNote = 'Beepboop holds its release until the package has them.';
 const releaseMarker = '<!-- beepboop:release-after-merge -->';
 export function releaseAfterMerge(body: string): boolean {
@@ -1113,13 +1119,13 @@ function noteMarkdown(plan: SetupPlan, note: string): string {
 }
 function fixedStream(stream: SetupChoices['streams'][number]): string | undefined {
 	if (!stream.promote) {
-		return `\`${stream.name}\` has no publishing workflow, so it has no starts, version bump or approval.`;
+		return `\`${stream.name}\` has no publishing workflow, so it has no \`startFrom\`, \`versionLands\` or \`publishWhen\`.`;
 	}
 	if (stream.versionSource?.kind === 'tags') {
-		return `\`${stream.name}\` takes its version from \`${stream.versionSource.prefix}\` tags. Beepboop raises no version for it, so it offers no start or version bump.`;
+		return `\`${stream.name}\` takes its version from \`${stream.versionSource.prefix}\` tags. Beepboop raises no version for it, so it offers no \`startFrom\` or \`versionLands\`.`;
 	}
 	if (!startable(stream)) {
-		return `\`${stream.name}\` versions each package on its own. A start releases one version for the whole stream, so it offers no start.`;
+		return `\`${stream.name}\` versions each package on its own. Starting a release raises one version for the whole release group, so it offers no \`startFrom\`.`;
 	}
 	return undefined;
 }
@@ -1144,21 +1150,23 @@ export function setupBody(plan: SetupPlan, context: SetupBodyContext): string {
 		const own = options.filter(option => option.stream === stream);
 		const approvals = own.flatMap(option =>
 			option.kind === 'approval'
-				? [box('    ', option, `\`${option.value}\`: ${approvalChoiceLabels[option.value]}`)]
+				? [box('    ', option, `\`${publishWhenNames[option.value]}\`: ${publishWhenSentences[option.value]}`)]
 				: []
 		);
 		const starts = own.flatMap(option =>
-			option.kind === 'start' ? [box('    ', option, `\`${option.value}\`: ${startChoiceLabels[option.value]}`)] : []
+			option.kind === 'start' ? [box('    ', option, `\`${option.value}\`: ${startFromSentences[option.value]}`)] : []
 		);
 		const bumps = own.flatMap(option =>
-			option.kind === 'bump' ? [box('    ', option, `\`${option.value}\`: ${bumpChoiceLabels[option.value]}`)] : []
+			option.kind === 'bump'
+				? [box('    ', option, `\`${versionLandsNames[option.value]}\`: ${versionLandsSentences[option.value]}`)]
+				: []
 		);
 		return [
-			...(starts.length
-				? ['  - Where a release can start. Tick any of these. A start approves the whole release.', ...starts]
+			...(starts.length ? [`  - \`startFrom\`: ${startFromQuestion}. Tick any of these.`, ...starts] : []),
+			...(bumps.length
+				? [`  - \`versionLands\`: ${versionLandsQuestion}, here \`${defaultBranch}\`. Tick one.`, ...bumps]
 				: []),
-			...(bumps.length ? [`  - How the version bump reaches \`${defaultBranch}\`. Tick one.`, ...bumps] : []),
-			...(approvals.length ? ['  - When a version raised without a start publishes. Tick one.', ...approvals] : []),
+			...(approvals.length ? [`  - \`publishWhen\`: ${publishWhenQuestion}. Tick one.`, ...approvals] : []),
 		];
 	}
 	function binaryLines(stream: string): string[] {
@@ -1196,7 +1204,7 @@ export function setupBody(plan: SetupPlan, context: SetupBodyContext): string {
 			...(packages.length ? ['  - Packages', ...packages] : []),
 			...(fixed ? [`  - ${fixed}`] : []),
 			...choiceLines(stream.name),
-			`  - Versioning: ${versioningLabels[stream.versioning]}`,
+			`  - \`versionScope: ${versionScopeNames[stream.versioning]}\`: ${versionScopeSentences[stream.versioning]}`,
 			`  - Preparation: ${workflow(stream.prepare)}`,
 			`  - Publication: ${workflow(stream.promote)}`,
 			...binaryLines(stream.name),
@@ -1223,7 +1231,7 @@ export function setupBody(plan: SetupPlan, context: SetupBodyContext): string {
 	}).join('\n');
 	const grouped = new Map<TriggerHandover | 'new', string[]>();
 	for (const [file, handover] of handovers) grouped.set(handover, [...(grouped.get(handover) ?? []), `\`${file}\``]);
-	const triggers = [...grouped].map(([handover, files]) => triggerSentences[handover](listed(files)));
+	const triggers = [...grouped].map(([handover, files]) => triggerSentence(handover, files));
 	const update = branch !== onboardingBranch;
 	const changes = update ? behaviourChanges(plan.edits) : [];
 	const held = plan.notes.filter(note => note.endsWith(heldNote));
@@ -1234,10 +1242,10 @@ export function setupBody(plan: SetupPlan, context: SetupBodyContext): string {
 		...(changes.length ? [`### What changes\n\n${changes.join('\n')}`] : []),
 		...(held.length ? [`### Held packages\n\n${held.map(note => `- ${noteMarkdown(plan, note)}`).join('\n')}`] : []),
 		'### Choices',
-		'Tick or untick packages to change this proposal. Every ticked package must be published for a release to succeed. Beepboop rebuilds the proposal 5 seconds after the last edit.',
+		'Tick or untick packages to change this proposal. Every ticked package is in `mustPublish`: it must publish for the release to count as successful. Beepboop rebuilds the proposal 5 seconds after the last edit.',
 		streams,
-		...(triggers.length ? [triggers.join(' ')] : []),
-		'Change versioning, workflows and triggers in Beepboop under Repositories, Edit release setup.',
+		...(triggers.length ? [`${existingTriggersQuestion}:\n\n${triggers.map(line => `- ${line}`).join('\n')}`] : []),
+		'Change `versionScope`, workflows and `existingTriggers` in Beepboop under Repositories, Edit release setup.',
 		`Tick this box to release the current version when this PR merges.\n\n- [${
 			release ? 'x' : ' '
 		}] ${releaseMarker} Release after merge`,

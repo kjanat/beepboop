@@ -9,6 +9,7 @@ import { emit, failure, prompted, unprompted } from '@/cli/output';
 import { releaseStart, startsFrom, versionBump } from '@/contract/release-start';
 import { routes } from '@/contract/routes';
 import { semverPattern } from '@/contract/semver';
+import { publishWhenNames, publishWhenSentences, startFromEffect } from '@/contract/setup-terms';
 import { decodeWith } from '@/decode';
 import { packageLabel } from '@/domain/package-label';
 import { git } from '@/git';
@@ -263,17 +264,25 @@ export function releaseRepository(
 			return yield* Effect.fail(failure(
 				`Version ${summary.version} is already prepared at ${summary.sourceSha}`,
 				'ALREADY_PREPARED',
-				`Approve its publication with beepboop runs approve, or add the cli start to ${selected} to start it here`,
+				`Publish it with beepboop runs publish, or add cli to startFrom of ${selected} to start it here`,
 			));
 		}
 		const preview = { repository: repository.name, stream: selected, defaultBranch: repository.defaultBranch, plan };
 		if (out.jsonMode && (options.dryRun || !options.yes)) return yield* emit(out, preview);
+		const policy = stream.promote.approval;
+		const after = committing
+			? `After Beepboop commits it to ${repository.defaultBranch}`
+			: 'After the version PR merges';
+		const publishing = `\`publishWhen: ${publishWhenNames[policy]}\`: ${publishWhenSentences[policy]}`;
 		if (!out.jsonMode) {
 			out.log(
 				look.heading(
 					`Release ${look.pkg(repository.name)} / ${selected} → ${look.version(summary.version)}`,
 				),
 			);
+			if (!started && pending && stream.versionSource?.kind !== 'tags') {
+				out.log(`This prepares ${look.version(summary.version)}. ${after}, ${publishing}`);
+			}
 			out.log(`Source: ${repository.defaultBranch} at ${look.sha(summary.sourceSha)}`);
 			out.log(
 				look.note(
@@ -314,7 +323,7 @@ export function releaseRepository(
 					ask({
 						kind: 'confirm',
 						message: started
-							? 'Start this release? The start approves it, and nothing asks for approval afterwards.'
+							? `Start this release? ${startFromEffect}`
 							: committing
 							? `Prepare this release and commit its version bump to ${repository.defaultBranch}?`
 							: 'Prepare this release and open its version PR?',
@@ -338,7 +347,7 @@ export function releaseRepository(
 					? 'Beepboop publishes once the commit is verified and its checks pass.'
 					: committing
 					? `Beepboop commits the version bump to ${repository.defaultBranch}, then publishes once that commit is verified and its checks pass.`
-					: 'Beepboop opens the version PR. Merging it continues the release without another approval.',
+					: 'Beepboop opens the version PR. Merging it publishes the release, and nothing asks again.',
 			);
 			out.log(
 				look.note('Failing checks or package metadata problems stop the release with a reason.'),
@@ -373,10 +382,8 @@ export function releaseRepository(
 			'After merge, Beepboop creates a publication run when package manifests and configured version files match an unreleased version. Follow it with beepboop runs list.',
 		);
 		if (stream.versionFiles?.length) out.log('Version files alone do not start publication.');
-		if (stream.promote.approval === 'required') {
-			out.log(
-				'If a publication run is created, approve it with beepboop runs approve EXECUTION_ID --sourceSha MERGED_COMMIT_SHA.',
-			);
-		} else out.log(`Any publication run follows the configured ${stream.promote.approval} approval policy.`);
+		if (policy === 'required') {
+			out.log('Publish the run with beepboop runs publish EXECUTION_ID --sourceSha MERGED_COMMIT_SHA.');
+		}
 	});
 }

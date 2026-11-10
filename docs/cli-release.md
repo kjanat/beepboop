@@ -53,13 +53,13 @@ files. The dashboard flow below remains available.
 3. Review and merge the PR. Beepboop detects the prepared package versions on
    the default-branch push and creates the promotion. Inspect it with
    `beepboop runs list` (or `bun run beepboop runs list` without linking), then
-   approve that promotion in Beepboop. Approval checks the exact merged commit's
-   signature and CI results.
+   publish that promotion in Beepboop. Publishing checks the exact merged
+   commit's signature and CI results.
 4. Beepboop dispatches `publish-cli.yml`. `actions/begin` authenticates the
-   execution, then the workflow checks out its approved source SHA and checks
+   execution, then the workflow checks out its reviewed source SHA and checks
    that both package versions match the execution. The workflow commit must also
-   match the approved source so provenance identifies the code actually built;
-   if master moved, refresh and approve the current commit. It rebuilds and tests the
+   match the reviewed source so provenance identifies the code actually built;
+   if master moved, refresh and publish the current commit. It rebuilds and tests the
    installable package before publishing.
 5. npm publishes with provenance and its trusted-publisher transport. Stable
    versions use `latest`; prereleases use `next`. JSR publishes via OIDC. Both

@@ -681,7 +681,7 @@ export class RepositoryGateway {
 							error => error.problem.code === 'precondition',
 							error =>
 								precondition(
-									`GitHub refused the version commit on ${defaultBranch}: ${error.message}. Let the Beepboop app push to ${defaultBranch}, or set prepare.bump to "pr".`,
+									`GitHub refused the version commit on ${defaultBranch}: ${error.message}. Let the Beepboop app push to ${defaultBranch}, or set prepare.versionLands to "via-version-pr".`,
 								),
 						),
 					);

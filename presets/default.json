@@ -1,12 +1,12 @@
 {
 	"streams": {
 		"main": {
-			"versioning": "workspace",
+			"versionScope": "one-for-stream",
 			"prepare": {
 				"version": "manual"
 			},
 			"promote": {
-				"approval": "required"
+				"publishWhen": "approved-in-beepboop"
 			},
 			"concurrency": "queue",
 			"channels": {
