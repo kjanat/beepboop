@@ -30,8 +30,9 @@ function publicationName(run: Execution, publication: Execution['publications'][
 
 function publicationHref(run: Execution, publication: Execution['publications'][number]): string | undefined {
 	const destination = managerSpec(publication.manager).destinations?.primary;
-	if (publication.outcome !== 'succeeded' || !destination) return undefined;
-	return registryHref(destination, publication.name, publication.version, run.repository);
+	if (!destination) return undefined;
+	const version = publication.outcome === 'succeeded' ? publication.version : undefined;
+	return registryHref(destination, publication.name, version, run.repository);
 }
 
 function releaseLink(run: Execution): { tag: string; href: string } | undefined {
