@@ -17,7 +17,7 @@ import { Store } from '@/automation/store';
 import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
-import { releaseSetSummaries, releaseSummaries } from '@/server/releases';
+import { needsUser, releaseSetSummaries, releaseSummaries, runStateLabel } from '@/server/releases';
 import { overview } from '@/server/views/overview';
 import { runCard } from '@/server/views/runs';
 import { releaseStatus } from '@/server/views/tone';
@@ -307,6 +307,73 @@ test('the overview counts only runs that still need the user and shows each vers
 	expect(html).toContain('Preparation run');
 	expect(html).toContain('waiting for you to publish');
 	expect(html).not.toMatch(/>\s*promote\s*</);
+});
+
+test('a later run replaces a failed run only for the same release target', async () => {
+	const { finished } = await finishedPromotion('pending');
+	const run = (id: string, at: number, changes: Partial<Execution>): Execution => ({
+		...finished,
+		id,
+		createdAt: at,
+		updatedAt: at,
+		state: 'failed',
+		...changes,
+	});
+	const set = (group: string) => ({ preparationId: 'set', group, required: [] });
+	const plan = (id: string) => ({
+		lockfiles: [],
+		sourceSha: 'a'.repeat(40),
+		groups: [{ id, packages: [`pkg:npm/${id}`], version: '1.0.0' }],
+		operations: [],
+		publicationOrder: [],
+		edits: [],
+		diagnostics: [],
+		requiresPreparation: true,
+	});
+	const prepare = (id: string, at: number, group: string, state: Execution['state']) =>
+		run(id, at, { operation: 'prepare', version: undefined, plan: plan(group), publications: [], state });
+	const readable = [
+		run('a-failed', 1, { releaseSet: set('a') }),
+		run('b-done', 2, { releaseSet: set('b'), state: 'succeeded' }),
+		prepare('x-failed', 3, 'x', 'failed'),
+		prepare('y-done', 4, 'y', 'succeeded'),
+		prepare('z-failed', 5, 'z', 'failed'),
+		prepare('z-done', 6, 'z', 'succeeded'),
+	];
+	expect(readable.filter(entry => needsUser(entry, readable)).map(entry => entry.id)).toEqual([
+		'a-failed',
+		'x-failed',
+	]);
+});
+
+test('a run that publishes once its checks pass is not waiting for the user', async () => {
+	const { finished } = await finishedPromotion('pending');
+	const waiting = { ...finished, id: 'waiting', state: 'awaiting-approval' as const };
+	const started = { ...waiting, id: 'started', approvedBy: 'start' as const };
+	const streams = finished.configuration.streams;
+	const stream = streams[finished.stream];
+	if (!stream) throw new Error('No stream');
+	const pushed = {
+		...waiting,
+		id: 'pushed',
+		configuration: {
+			...finished.configuration,
+			streams: {
+				...streams,
+				[finished.stream]: { ...stream, promote: { ...stream.promote, approval: 'push' as const } },
+			},
+		},
+	};
+	const runs = [waiting, started, pushed];
+	expect(runs.map(entry => [entry.id, needsUser(entry, runs), runStateLabel(entry)])).toEqual([
+		['waiting', true, 'waiting for you to publish'],
+		['started', false, 'publishing once its checks pass'],
+		['pushed', false, 'publishing once its checks pass'],
+	]);
+	const [release] = releaseSummaries([started]);
+	if (!release) throw new Error('No release');
+	expect(releaseStatus(release).label).toBe('Publishing once its checks pass');
+	expect(runCard(started, Date.now()).automatic).toBe(true);
 });
 
 test('a registry outage during verification is retried once the registry answers again', async () => {

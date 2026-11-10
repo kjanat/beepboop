@@ -3,12 +3,9 @@ import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
 import ReleaseSummary from '@/components/ReleaseSummary.astro';
 import type { ViewOf } from '@/server/loaders.ts';
+import { runStateLabel } from '@/server/releases.ts';
 import { overview } from '@/server/views/overview.ts';
-import {
-	executionTone,
-	runLabel,
-	runStateLabels,
-} from '@/server/views/tone.ts';
+import { executionTone, runLabel } from '@/server/views/tone.ts';
 
 interface Props {
 	data: ViewOf<'overview'>;
@@ -65,7 +62,7 @@ const {
 							 {run.version ? ` ${run.version}` : ''}: {runLabel(run.operation)}
 							 <Badge
 								 tone={executionTone[run.state]}
-								 label={runStateLabels[run.state]}
+								 label={runStateLabel(run)}
 							 />
 							 <Arrow
 								 href={`/runs#${run.id}`}

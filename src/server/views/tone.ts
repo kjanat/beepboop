@@ -5,7 +5,7 @@ import type { Status, Tone } from '@/contract/views';
 import type { Readiness } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
 import type { ReleaseSetState, releaseSummaries } from '@/server/releases.ts';
-import { activeStates } from '@/server/releases.ts';
+import { activeStates, publishesAutomatically, runStateLabel } from '@/server/releases.ts';
 
 export const executionTone = {
 	pending: 'waiting',
@@ -63,6 +63,7 @@ export function deliveryStatus(delivery: NotificationDelivery): Status {
 
 export function releaseStatus(release: ReturnType<typeof releaseSummaries>[number]): Status {
 	const { latest } = release;
+	if (publishesAutomatically(latest)) return { tone: 'active', label: 'Publishing once its checks pass' };
 	if (latest.state === 'awaiting-approval') return { tone: 'warn', label: 'Waiting for you to publish' };
 	if (release.attention) return { tone: 'warn', label: 'Needs attention' };
 	if (release.publications.length && release.verified === release.publications.length) {
@@ -73,22 +74,8 @@ export function releaseStatus(release: ReturnType<typeof releaseSummaries>[numbe
 	if (latest.state === 'succeeded' && latest.operation === 'prepare') {
 		return { tone: 'waiting', label: 'Prepared, no publication run yet' };
 	}
-	return { tone: executionTone[latest.state], label: runStateLabels[latest.state] };
+	return { tone: executionTone[latest.state], label: runStateLabel(latest) };
 }
-
-export const runStateLabels = {
-	pending: 'waiting to start',
-	'awaiting-approval': 'waiting for you to publish',
-	blocked: 'blocked',
-	ready: 'ready',
-	dispatching: 'starting',
-	running: 'running',
-	verifying: 'checking the registries',
-	succeeded: 'succeeded',
-	failed: 'failed',
-	cancelled: 'cancelled',
-	uncertain: 'outcome unknown',
-} as const satisfies Record<ExecutionState, string>;
 
 export function runLabel(operation: string): string {
 	return operation === 'prepare'

@@ -5,6 +5,7 @@ import { githubHref, registryHref } from '@/contract/links';
 import { formatTime } from '@/contract/time';
 import { defaultTagPolicy, semVer, tagFor } from '@/contract/version';
 import { packageDisplayName } from '@/server/package-name.ts';
+import { publishesAutomatically, runStateLabel } from '@/server/releases.ts';
 
 export function waitingUntil(run: Execution, now: number): string | undefined {
 	return run.notBefore !== undefined && run.notBefore > now && ['pending', 'ready'].includes(run.state)
@@ -12,13 +13,9 @@ export function waitingUntil(run: Execution, now: number): string | undefined {
 		: undefined;
 }
 
-export function stateLabel(state: Execution['state']): string {
-	return state === 'awaiting-approval' ? 'waiting for you to publish' : state;
-}
-
 export function progress(run: Execution, now: number): string {
 	const until = waitingUntil(run, now);
-	return until ? `waiting until ${until}` : stateLabel(run.state);
+	return until ? `waiting until ${until}` : runStateLabel(run);
 }
 
 function publicationName(run: Execution, publication: Execution['publications'][number]): string {
@@ -45,8 +42,7 @@ function releaseLink(run: Execution): { tag: string; href: string } | undefined 
 export function runCard(run: Execution, now: number) {
 	const required = run.releaseSet?.required ?? run.configuration.streams[run.stream]?.required ?? [];
 	const approving = run.state === 'awaiting-approval';
-	const automatic = approving
-		&& (run.configuration.streams[run.stream]?.promote.approval === 'push' || run.approvedBy !== undefined);
+	const automatic = publishesAutomatically(run);
 	const missing = required.filter(id =>
 		!run.publications.some(p => matchesPublication(id, p) && p.outcome === 'succeeded')
 	);

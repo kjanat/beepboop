@@ -5,12 +5,12 @@ import Commit from '@/components/Commit.astro';
 import Field from '@/components/Field.astro';
 import { packageLabel } from '@/domain/package-label';
 import type { releaseSummaries } from '@/server/releases.ts';
+import { runStateLabel } from '@/server/releases.ts';
 import {
 	executionTone,
 	publicationTone,
 	releaseStatus,
 	runLabel,
-	runStateLabels,
 } from '@/server/views/tone.ts';
 
 interface Props {
@@ -65,7 +65,7 @@ const { releases } = Astro.props;
 					{runLabel(run.operation)}
 					<Badge
 						tone={executionTone[run.state]}
-						label={runStateLabels[run.state]}
+						label={runStateLabel(run)}
 					/>
 					<Arrow
 						href={`/runs#${run.id}`}

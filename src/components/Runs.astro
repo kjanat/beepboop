@@ -9,8 +9,8 @@ import { githubHref } from '@/contract/links';
 import { startLabels } from '@/contract/release-start';
 import { packageLabel } from '@/domain/package-label';
 import type { ViewOf } from '@/server/loaders.ts';
-import { releaseSetSummaries } from '@/server/releases';
-import { progress, runCard, stateLabel } from '@/server/views/runs.ts';
+import { releaseSetSummaries, runStateLabel } from '@/server/releases';
+import { progress, runCard } from '@/server/views/runs.ts';
 import {
 	executionTone,
 	publicationTone,
@@ -127,7 +127,7 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 					 {run.version ? `Version ${run.version}` : 'Workflow operation'}
 				 </h2>
 			 </div>
-			 <Badge tone={executionTone[run.state]} label={stateLabel(run.state)} />
+			 <Badge tone={executionTone[run.state]} label={runStateLabel(run)} />
 		 </div>
 		 <p>
 			 {card.approving
