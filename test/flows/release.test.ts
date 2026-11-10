@@ -18,7 +18,7 @@ import { Store } from '@/automation/store';
 import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
-import { needsUser, releaseSetSummaries, releaseSummaries, runStateLabel } from '@/server/releases';
+import { needingUser, releaseSetSummaries, releaseSummaries, runStateLabel } from '@/server/releases';
 import { overview } from '@/server/views/overview';
 import { runCard } from '@/server/views/runs';
 import { releaseStatus } from '@/server/views/tone';
@@ -346,7 +346,7 @@ test('a later run replaces a failed run only for the same release target', async
 		prepare('z-failed', 5, 'z', 'failed'),
 		prepare('z-done', 6, 'z', 'succeeded'),
 	];
-	expect(readable.filter(entry => needsUser(entry, readable)).map(entry => entry.id)).toEqual([
+	expect(readable.filter(entry => needingUser(readable).has(entry.id)).map(entry => entry.id)).toEqual([
 		'a-failed',
 		'x-failed',
 	]);
@@ -371,7 +371,7 @@ test('a run that publishes once its checks pass is not waiting for the user', as
 		},
 	};
 	const runs = [waiting, started, pushed];
-	expect(runs.map(entry => [entry.id, needsUser(entry, runs), runStateLabel(entry)])).toEqual([
+	expect(runs.map(entry => [entry.id, needingUser(runs).has(entry.id), runStateLabel(entry)])).toEqual([
 		['waiting', true, 'waiting for you to publish'],
 		['started', false, 'publishing once its checks pass'],
 		['pushed', false, 'publishing once its checks pass'],
@@ -380,6 +380,30 @@ test('a run that publishes once its checks pass is not waiting for the user', as
 	if (!release) throw new Error('No release');
 	expect(releaseStatus(release).label).toBe('Publishing once its checks pass');
 	expect(runCard(started, Date.now()).automatic).toBe(true);
+});
+
+test('a newer active run decides the release badge over earlier verified publications', async () => {
+	const { finished } = await finishedPromotion('pending');
+	const published = finished.publications.map(publication => ({ ...publication, outcome: 'succeeded' as const }));
+	const done = { ...finished, id: 'done', state: 'succeeded' as const, publications: published, createdAt: 1 };
+	const rerun = { ...finished, id: 'rerun', state: 'running' as const, publications: [], createdAt: 2 };
+	const [release] = releaseSummaries([done, rerun]);
+	if (!release) throw new Error('No release');
+	expect([release.latest.id, release.verified, releaseStatus(release).label]).toEqual(['rerun', 1, 'In progress']);
+});
+
+test('runs created in the same millisecond have one order whatever the input order', async () => {
+	const { finished } = await finishedPromotion('pending');
+	const failed = { ...finished, id: 'a-failed', state: 'failed' as const, createdAt: 5 };
+	const retried = { ...finished, id: 'b-running', state: 'running' as const, createdAt: 5 };
+	for (const input of [[failed, retried], [retried, failed]]) {
+		const [release] = releaseSummaries(input);
+		expect([release?.latest.id, release?.runs.map(run => run.id), [...needingUser(input)]]).toEqual([
+			'b-running',
+			['a-failed', 'b-running'],
+			[],
+		]);
+	}
 });
 
 test('a registry outage during verification is retried once the registry answers again', async () => {

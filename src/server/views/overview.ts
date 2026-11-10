@@ -1,10 +1,11 @@
 import { readiness } from '@/domain/repository';
 import type { ViewOf } from '@/server/loaders.ts';
-import { activeStates, needsUser, releaseSummaries } from '@/server/releases.ts';
+import { activeStates, needingUser, releaseSummaries } from '@/server/releases.ts';
 
 export function overview({ repositories, executions }: ViewOf<'overview'>) {
+	const needing = needingUser(executions.readable);
 	const waiting = executions.readable
-		.filter(run => needsUser(run, executions.readable))
+		.filter(run => needing.has(run.id))
 		.sort((a, b) => b.updatedAt - a.updatedAt);
 	const running = executions.readable.filter(e => activeStates.includes(e.state)).length;
 	const setup = repositories.readable.filter(r => readiness(r).kind !== 'ready').length
@@ -16,6 +17,6 @@ export function overview({ repositories, executions }: ViewOf<'overview'>) {
 		running,
 		setup,
 		unconnected: !repositories.readable.length && !repositories.unreadable.length,
-		releases: releaseSummaries(executions.readable, repositories.readable).slice(0, 10),
+		releases: releaseSummaries(executions.readable, repositories.readable, needing).slice(0, 10),
 	};
 }
