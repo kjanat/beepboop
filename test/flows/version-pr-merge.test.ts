@@ -116,6 +116,84 @@ test('a repository that disallows auto-merge keeps the version PR open with a no
 	expect(runCard(preparation, Date.now()).autoMerge).toBe(note);
 });
 
+function intercept(answer: (path: string, body: string) => Response | undefined) {
+	world.network.serve('api.github.com', async request => {
+		const path = new URL(request.url).pathname;
+		const body = request.method === 'POST' ? await request.clone().text() : '';
+		return answer(path, body) ?? world.github.handle(request);
+	});
+}
+const autoMergeCall = (path: string, body: string) =>
+	path === '/graphql' && body.includes('enablePullRequestAutoMerge');
+
+test('an HTTP 403 from GitHub refuses auto-merge with a note on the version PR', async () => {
+	intercept((path, body) =>
+		autoMergeCall(path, body)
+			? Response.json({ message: 'Resource not accessible by integration' }, { status: 403 })
+			: undefined
+	);
+	const { repository, api } = await managed('squash');
+	const note =
+		'Beepboop could not turn on squash auto-merge for this version PR. GitHub said: GitHub HTTP 403 on POST /graphql: Resource not accessible by integration. The PR stays open until you merge it.';
+	const pull = one(repository.pulls, 'version PR');
+	expect([pull.state, pull.autoMerge, pull.comments]).toEqual(['open', undefined, [note]]);
+	const preparation = await only(api, 'prepare');
+	expect([preparation.state, preparation.managed?.result?.autoMerge]).toEqual([
+		'succeeded',
+		{ method: 'squash', state: 'refused', note },
+	]);
+});
+
+const rateLimits = {
+	'GraphQL RATE_LIMITED with HTTP 200': () =>
+		Response.json({
+			data: { enablePullRequestAutoMerge: null },
+			errors: [{ type: 'RATE_LIMITED', message: 'API rate limit exceeded for installation ID 1.' }],
+		}),
+	'HTTP 403 secondary rate limit': () =>
+		Response.json({ message: 'You have exceeded a secondary rate limit. Please wait a few minutes.' }, { status: 403 }),
+};
+for (const [kind, limit] of Object.entries(rateLimits)) {
+	test(`an auto-merge request hit by a ${kind} is retried and never recorded as refused`, async () => {
+		let limited = true;
+		intercept((path, body) => {
+			if (!limited || !autoMergeCall(path, body)) return undefined;
+			limited = false;
+			return limit();
+		});
+		const { repository, api } = await managed('squash');
+		expect(limited).toBe(false);
+		const waiting = await only(api, 'prepare');
+		expect([waiting.state, waiting.managed?.result?.autoMerge]).toEqual(['uncertain', undefined]);
+		expect(waiting.reason).toMatch(/rate limit/i);
+		await world.wait(4 * 60_000);
+		const pull = one(repository.pulls, 'version PR');
+		expect([pull.state, pull.autoMerge, pull.comments]).toEqual(['open', 'SQUASH', undefined]);
+		const preparation = await only(api, 'prepare');
+		expect([preparation.state, preparation.managed?.result?.autoMerge]).toEqual([
+			'succeeded',
+			{ method: 'squash', state: 'enabled' },
+		]);
+	});
+}
+
+test('a refusal note that GitHub does not accept still records the refusal', async () => {
+	intercept(path =>
+		/^\/repos\/octo\/widget\/issues\/\d+\/comments$/.test(path)
+			? Response.json({ message: 'Server Error' }, { status: 500 })
+			: undefined
+	);
+	const { repository, api } = await managed('squash', false);
+	const note =
+		'Beepboop could not turn on squash auto-merge for this version PR. GitHub said: Pull request Auto merge is not allowed for this repository. The PR stays open until you merge it.';
+	expect(one(repository.pulls, 'version PR').comments).toBeUndefined();
+	const preparation = await only(api, 'prepare');
+	expect([preparation.state, preparation.managed?.result?.autoMerge]).toEqual([
+		'succeeded',
+		{ method: 'squash', state: 'refused', note },
+	]);
+});
+
 test('the setup PR describes a versionPrMerge change with the sentence of its new value', () => {
 	const document = (prepare: Record<string, unknown>) =>
 		`${JSON.stringify({ streams: { main: { packages: ['npm:widget'], prepare } } }, null, '\t')}\n`;

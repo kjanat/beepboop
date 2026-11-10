@@ -60,8 +60,12 @@ const autoMergeSchema = z.object({
 			pullRequest: z.object({ autoMergeRequest: z.object({ mergeMethod: z.string() }).nullable() }),
 		}).nullable(),
 	}).nullable().optional(),
-	errors: z.array(z.object({ message: z.string() })).optional(),
+	errors: z.array(z.object({ type: z.string().optional(), message: z.string() })).optional(),
 });
+// GitHub signals a rate limit by GraphQL error type RATE_LIMITED with HTTP 200, or by HTTP 403 or 429 naming the limit.
+function rateLimited(message: string, type?: string): boolean {
+	return type === 'RATE_LIMITED' || /rate limit|HTTP 429/i.test(message);
+}
 function preparationPullNumber(repository: string, url: string): Effect.Effect<string, DomainError> {
 	return Effect.gen(function*() {
 		const parsed = yield* fromSync(() => new URL(url));
@@ -1003,16 +1007,22 @@ export class RepositoryGateway {
 			}).pipe(
 				Effect.catchIf(
 					error => error.problem.code === 'precondition' || error.problem.code === 'forbidden',
-					error => Effect.succeed({ data: null, errors: [{ message: error.message }] }),
+					error =>
+						Effect.succeed<z.output<typeof autoMergeSchema>>({ data: null, errors: [{ message: error.message }] }),
 				),
 			);
 			if (response.data?.enablePullRequestAutoMerge?.pullRequest.autoMergeRequest) {
 				return { method, state: 'enabled' as const };
 			}
 			const reason = response.errors?.map(error => error.message).join('; ') || 'GitHub returned no auto-merge request';
+			if (response.errors?.some(error => rateLimited(error.message, error.type))) {
+				return yield* upstream('github', `GitHub rate-limited auto-merge for ${repository}#${number}: ${reason}`);
+			}
 			const note =
 				`Beepboop could not turn on ${method} auto-merge for this version PR. GitHub said: ${reason}. The PR stays open until you merge it.`;
-			yield* self.call(`/repos/${repository}/issues/${number}/comments`, token, 'POST', { body: note });
+			yield* self.call(`/repos/${repository}/issues/${number}/comments`, token, 'POST', { body: note }).pipe(
+				Effect.ignore,
+			);
 			return { method, state: 'refused' as const, note };
 		});
 	}
