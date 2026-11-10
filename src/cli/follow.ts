@@ -194,7 +194,7 @@ export function followRelease(client: Client, out: Out, followed: Followed): Eff
 					announced = true;
 					if (prepared.kind !== 'commit') {
 						spinner.succeed(`Version PR ${look.link(prepared.url)}`);
-						out.log('Merging the version PR continues the release without another approval.');
+						out.log('Merging the version PR publishes the release, and nothing asks again.');
 						return;
 					}
 					spinner.update(

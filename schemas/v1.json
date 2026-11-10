@@ -99,8 +99,17 @@
 		"stream": {
 			"type": "object",
 			"properties": {
+				"versionScope": {
+					"description": "Which packages share a version. one-for-stream: Every package in the release group gets the same version. per-package: Each package gets its own version. none: The release group carries no version.",
+					"type": "string",
+					"enum": [
+						"one-for-stream",
+						"per-package",
+						"none"
+					]
+				},
 				"versioning": {
-					"default": "workspace",
+					"deprecated": true,
 					"type": "string",
 					"enum": [
 						"workspace",
@@ -315,7 +324,16 @@
 								"workflow"
 							]
 						},
+						"versionLands": {
+							"description": "How a new version reaches the default branch. via-version-pr: Beepboop opens a version PR, and merging it puts the new version on the default branch. via-direct-commit: Beepboop pushes a signed commit with the new version straight to the default branch.",
+							"type": "string",
+							"enum": [
+								"via-version-pr",
+								"via-direct-commit"
+							]
+						},
 						"bump": {
+							"deprecated": true,
 							"$ref": "#/$defs/versionBump"
 						}
 					},
@@ -324,8 +342,17 @@
 				"promote": {
 					"type": "object",
 					"properties": {
+						"publishWhen": {
+							"description": "When a version on the default branch publishes. approved-in-beepboop: You publish it: the Publish button in Beepboop or `beepboop runs publish`. Approving or merging the version PR on GitHub does not publish. version-pr-merged: Merging the version PR publishes it once the checks pass. Nobody publishes it in Beepboop. version-commit-pushed: A signed commit that raises the version publishes it once the checks pass, with no review.",
+							"type": "string",
+							"enum": [
+								"approved-in-beepboop",
+								"version-pr-merged",
+								"version-commit-pushed"
+							]
+						},
 						"approval": {
-							"default": "required",
+							"deprecated": true,
 							"type": "string",
 							"enum": [
 								"required",
@@ -339,7 +366,11 @@
 					},
 					"additionalProperties": false
 				},
+				"startFrom": {
+					"$ref": "#/$defs/releaseStarts"
+				},
 				"start": {
+					"deprecated": true,
 					"$ref": "#/$defs/releaseStarts"
 				},
 				"workflows": {
@@ -352,7 +383,15 @@
 						"$ref": "#/$defs/workflow"
 					}
 				},
+				"mustPublish": {
+					"description": "Packages that must publish for the release to count as successful.",
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/packageReference"
+					}
+				},
 				"required": {
+					"deprecated": true,
 					"type": "array",
 					"items": {
 						"$ref": "#/$defs/packageReference"
@@ -603,19 +642,11 @@
 			"additionalProperties": false
 		},
 		"workflowSetup": {
+			"description": "Setup input that generates this workflow file. Change it through a setup update PR.",
 			"type": "object",
 			"properties": {
 				"job": {
 					"type": "string"
-				},
-				"triggers": {
-					"default": "review",
-					"type": "string",
-					"enum": [
-						"review",
-						"dispatchOnly",
-						"preserve"
-					]
 				},
 				"commands": {
 					"default": "",
@@ -746,10 +777,27 @@
 						"builds"
 					],
 					"additionalProperties": false
+				},
+				"existingTriggers": {
+					"description": "What happens to the existing triggers of a workflow Beepboop runs. keep-and-report: The workflow keeps its existing triggers. Beepboop reports a trigger that conflicts with its dispatch. replace-with-dispatch: Beepboop replaces the workflow's existing triggers with its own dispatch. keep-and-block-conflicts: The workflow keeps its existing triggers. Beepboop blocks the setup when a trigger cannot work with its dispatch.",
+					"type": "string",
+					"enum": [
+						"keep-and-report",
+						"replace-with-dispatch",
+						"keep-and-block-conflicts"
+					]
+				},
+				"triggers": {
+					"deprecated": true,
+					"type": "string",
+					"enum": [
+						"review",
+						"dispatchOnly",
+						"preserve"
+					]
 				}
 			},
-			"additionalProperties": false,
-			"description": "Setup input that generates this workflow file. Change it through a setup update PR."
+			"additionalProperties": false
 		},
 		"versionBump": {
 			"type": "string",
@@ -757,7 +805,7 @@
 				"commit",
 				"pr"
 			],
-			"description": "How Beepboop applies a version bump: commit pushes a signed bot commit to the default branch, pr opens a version PR."
+			"description": "Earlier name of versionLands: commit pushes a signed bot commit to the default branch, pr opens a version PR."
 		},
 		"releaseStarts": {
 			"type": "array",
@@ -809,7 +857,7 @@
 					}
 				]
 			},
-			"description": "Where a release of this stream can start. A start approves the whole release: the version bump, publication, binaries, tags and the GitHub release run without another approval."
+			"description": "Where a release of this stream starts. Starting a release also publishes it: the version bump, publication, binaries, tags and the GitHub release run, and nothing asks again."
 		},
 		"subscription": {
 			"oneOf": [

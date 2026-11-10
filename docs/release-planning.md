@@ -91,7 +91,7 @@ Each planned operation ID must match a configured operation in the stream.
 Operations receive their group's version and the merged source SHA. Configured
 workflow dependencies are combined with the plan's dependencies; the plan cannot
 remove a promotion gate. Include every configured dependency in the plan, including
-`promote` where required. Promotion stays blocked until explicitly approved.
+`promote` where required. Promotion stays blocked until `publishWhen` publishes it.
 
 Beepboop verifies the preparation PR's merged status, head, target branch, and
 merge commit. The target must contain every planned file edit and package version.
@@ -198,7 +198,7 @@ preparation plan. Lockfile regeneration still runs in a preparation workflow.
 Starting a new release set creates one Cloudflare Workflow instance, identified
 by `release-<preparation ID>`. Its named operation steps follow the reviewed
 release graph. GitHub Actions continues to own builds, matrices, packaging, and
-publishing; Cloudflare Workflows waits for operation progress and approvals.
+publishing; Cloudflare Workflows waits for operation progress and publishing.
 Independent operations in the same release set may run together. Dependencies
 still require successful producer operations, and another release cannot take
 over a stream with an active run.
@@ -206,14 +206,14 @@ The Release runs page groups all operations, versions, and results under the
 monorepo release, with links to individual operations and GitHub runs.
 
 The existing Durable Object journal owns dispatch intent, repository concurrency,
-approval checks, and publication verification. The Cloudflare Workflow calls it
+publish checks, and publication verification. The Cloudflare Workflow calls it
 through RPC. An interrupted or retried step reconciles the stored intent before
 contacting GitHub again. An ambiguous dispatch is never automatically dispatched
 a second time. Operations managed by this Workflow are excluded from the legacy
 alarm dispatcher; existing releases continue on their original path.
 
-Signed GitHub webhooks, approvals, and reports persist wake-up notifications in
-the journal before delivery to the Workflow. Event payloads cannot approve or
+Signed GitHub webhooks, publish actions, and reports persist wake-up notifications in
+the journal before delivery to the Workflow. Event payloads cannot publish or
 complete an operation: each resumed step reads authoritative execution state.
 An hourly reconciliation handles missed notifications and delayed publications.
 Failed GitHub runs wait for the existing **Retry failed jobs** action. **Check

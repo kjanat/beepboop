@@ -9,6 +9,7 @@ import {
 } from '@/contract/catalog';
 import { credentialAliasPattern, githubSecretNamePattern, identifierPattern } from '@/contract/ids';
 import { approvalPolicies, startChannel, versionBump } from '@/contract/release-start';
+import { existingTriggers, existingTriggersDescription, triggersOfExistingTriggers } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
 
 export const binaryTargets = [
@@ -102,7 +103,13 @@ const workflow = z.object({
 	tagPrefix: z.string().regex(tagPrefixPattern).refine(validTagPrefix, 'Invalid tag prefix').optional(),
 	binaries: binaries.optional(),
 }).strict();
-export const workflowSetup = workflow.omit({ file: true }).meta({
+export const workflowSetup = workflow.omit({ file: true, triggers: true }).extend({
+	existingTriggers: existingTriggers.optional().describe(existingTriggersDescription),
+	triggers: z.enum(workflowTriggers).optional().meta({ deprecated: true }),
+}).transform(({ existingTriggers: handover, triggers, ...rest }) => ({
+	...rest,
+	triggers: handover ? triggersOfExistingTriggers[handover] : triggers ?? 'review',
+})).meta({
 	id: 'workflowSetup',
 	description: 'Setup input that generates this workflow file. Change it through a setup update PR.',
 });

@@ -25,6 +25,18 @@ import { credentialAliasPattern, githubSecretNamePattern, shaPattern } from '@/c
 import { approvalPolicies, startChannels, versionBumps } from '@/contract/release-start';
 import { routes } from '@/contract/routes';
 import { binaryTargets, streamVersionings, workflowTriggers } from '@/contract/setup';
+import {
+	existingTriggerChoices,
+	existingTriggersQuestion,
+	mustPublishSentence,
+	publishWhenQuestion,
+	publishWhens,
+	startFromQuestion,
+	versionLandings,
+	versionLandsQuestion,
+	versionScopeQuestion,
+	versionScopes,
+} from '@/contract/setup-terms';
 import { executionView as executionViewSchema } from '@/contract/views';
 
 const base = (name: string, description: string, promptServer = false) =>
@@ -130,11 +142,19 @@ const adoptCommand = (name: string, description: string, target: typeof reposito
 			flag.string().describe('Release group the setup flags change; needed when the proposal has several'),
 		)
 		.flag('package', flag.array(flag.string()).describe('Package to release, by name or package URL; repeat it'))
-		.flag('required', flag.array(flag.string()).describe('Package the release needs to publish; defaults to --package'))
-		.flag('versioning', flag.enum(streamVersionings).describe('How package versions change'))
-		.flag('start', flag.array(flag.enum(startChannels)).describe('Where a release can start; repeat it'))
-		.flag('bump', flag.enum(versionBumps).describe('How a version bump reaches the default branch'))
-		.flag('approval', flag.enum(approvalPolicies).describe('When a version raised without a start publishes'))
+		.flag(
+			'must-publish',
+			flag.array(flag.string()).describe(`${mustPublishSentence.slice(0, -1)}; repeat it; defaults to --package`),
+		)
+		.flag('version-scope', flag.enum(versionScopes).describe(versionScopeQuestion))
+		.flag('start-from', flag.array(flag.enum(startChannels)).describe(`${startFromQuestion}; repeat it`))
+		.flag('version-lands', flag.enum(versionLandings).describe(versionLandsQuestion))
+		.flag('publish-when', flag.enum(publishWhens).describe(publishWhenQuestion))
+		.flag('required', flag.array(flag.string()).deprecated('Use --must-publish'))
+		.flag('versioning', flag.enum(streamVersionings).deprecated('Use --version-scope'))
+		.flag('start', flag.array(flag.enum(startChannels)).deprecated('Use --start-from'))
+		.flag('bump', flag.enum(versionBumps).deprecated('Use --version-lands'))
+		.flag('approval', flag.enum(approvalPolicies).deprecated('Use --publish-when'))
 		.flag('version-source', flag.string().describe('Advanced: versionSource as JSON'))
 		.flag('version-files', flag.string().describe('Advanced: versionFiles as JSON'))
 		.flag('observe', flag.string().describe('Advanced: observed workflows as JSON'))
@@ -142,7 +162,11 @@ const adoptCommand = (name: string, description: string, target: typeof reposito
 		.flag('operations', flag.string().describe('Advanced: extra operations as JSON'))
 		.flag('prepare-file', flag.string().describe('Preparation workflow file'))
 		.flag('prepare-job', flag.string().describe('Job in the preparation workflow'))
-		.flag('prepare-triggers', flag.enum(workflowTriggers).describe('Who starts the preparation workflow'))
+		.flag(
+			'prepare-existing-triggers',
+			flag.enum(existingTriggerChoices).describe(`Preparation workflow: ${existingTriggersQuestion}`),
+		)
+		.flag('prepare-triggers', flag.enum(workflowTriggers).deprecated('Use --prepare-existing-triggers'))
 		.flag('prepare-commands', flag.string().describe('Bash commands of the preparation job'))
 		.flag('prepare-publication-steps', flag.string().describe('Advanced: preparation publicationSteps as JSON'))
 		.flag('prepare-credentials', flag.string().describe('Advanced: preparation credentials as JSON'))
@@ -150,7 +174,11 @@ const adoptCommand = (name: string, description: string, target: typeof reposito
 		.flag('prepare-binaries', flag.string().describe('Advanced: preparation binaries as JSON'))
 		.flag('promote-file', flag.string().describe('Publishing workflow file'))
 		.flag('promote-job', flag.string().describe('Job in the publishing workflow'))
-		.flag('promote-triggers', flag.enum(workflowTriggers).describe('Who starts the publishing workflow'))
+		.flag(
+			'promote-existing-triggers',
+			flag.enum(existingTriggerChoices).describe(`Publishing workflow: ${existingTriggersQuestion}`),
+		)
+		.flag('promote-triggers', flag.enum(workflowTriggers).deprecated('Use --promote-existing-triggers'))
 		.flag('promote-commands', flag.string().describe('Bash commands of the publishing job'))
 		.flag('promote-publication-steps', flag.string().describe('Advanced: publicationSteps as JSON'))
 		.flag('promote-credentials', flag.string().describe('Advanced: publishing credentials as JSON'))
@@ -220,7 +248,7 @@ const repositories = group('repositories').alias('repo').description('Inspect an
 				})),
 		),
 	);
-const runs = group('runs').description('Follow, approve, cancel and recover release operations')
+const runs = group('runs').description('Follow, publish, cancel and recover release operations')
 	.command(
 		base('list', 'List release operations').action(({ flags, out }) =>
 			Effect.runPromise(Effect.gen(function*() {
@@ -238,13 +266,14 @@ const runs = group('runs').description('Follow, approve, cancel and recover rele
 		),
 	)
 	.command(
-		base('approve', 'Approve the exact reviewed source commit')
+		base('publish', 'Publish a release waiting for you, from the exact reviewed source commit')
+			.alias('approve')
 			.arg('id', arg.string().prompt({ kind: 'input', message: 'Execution ID' }).required()).flag(
 				'sourceSha',
 				flag.string({ pattern: shaPattern }).prompt({ kind: 'input', message: 'Reviewed source commit SHA' })
 					.required(),
 			)
-			.flag('force', flag.boolean().default(false).describe('Approve even when the signature or checks fail'))
+			.flag('force', flag.boolean().default(false).describe('Publish even when the signature or checks fail'))
 			.action(({ flags, args, out }) =>
 				Effect.runPromise(Effect.gen(function*() {
 					const client = yield* Client.at(flags.server);
@@ -253,13 +282,13 @@ const runs = group('runs').description('Follow, approve, cancel and recover rele
 						out,
 						yield* step(
 							out,
-							`Approving ${look.id(args.id)} at ${look.sha(flags.sourceSha)}`,
+							`Publishing ${look.id(args.id)} at ${look.sha(flags.sourceSha)}`,
 							client.call(routes.executionsApprove, {
 								id: args.id,
 								sourceSha: flags.sourceSha,
 								force: flags.force,
 							}),
-							approved => `Approved ${look.id(approved.id)}`,
+							published => `Publishing ${look.id(published.id)} started`,
 						),
 					);
 				}))
@@ -308,10 +337,10 @@ const runs = group('runs').description('Follow, approve, cancel and recover rele
 	);
 const release = base('release', 'Release this Git checkout: preview a version on the server, confirm, then act')
 	.example('beepboop release', 'Ask for the stream (when several) and version, preview, confirm (default no)')
-	.example('beepboop release patch', 'cli start: bump, then publish; the start approves the publication')
-	.example('beepboop release 1.2.0', 'cli start, 1.2.0 already on the default branch: publish it')
-	.example('beepboop release minor', 'No cli start, bump commit: commit the version bump')
-	.example('beepboop release major', 'No cli start, bump pr: open the version PR')
+	.example('beepboop release patch', 'cli in startFrom: bump, then publish; nothing asks again')
+	.example('beepboop release 1.2.0', 'cli in startFrom, 1.2.0 already on the default branch: publish it')
+	.example('beepboop release minor', 'No cli in startFrom, via-direct-commit: commit the new version')
+	.example('beepboop release major', 'No cli in startFrom, via-version-pr: open the version PR')
 	.example('beepboop release patch --yes', 'Skip only the confirmation')
 	.example('beepboop release patch --dry-run', 'Print the preview (packages, version file diffs), start nothing')
 	.arg('version', arg.string().optional().describe('patch, minor, major or an explicit semantic version'))

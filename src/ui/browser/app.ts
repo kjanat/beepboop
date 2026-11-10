@@ -342,7 +342,7 @@ each('form[data-action="approve"]', form =>
 		const override = () => {
 			force.value = 'true';
 			if (!approve) return;
-			approve.textContent = automatic ? 'Release now anyway' : 'Approve anyway';
+			approve.textContent = `${automatic ? 'Release now' : approve.textContent?.trim() ?? 'Publish'} anyway`;
 			approve.hidden = false;
 		};
 		yield* Effect.forkDetach(

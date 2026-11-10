@@ -87,7 +87,9 @@ function observed(context: EnrolledContext, stream: string, operation: string, v
 				observed: true,
 			})
 		);
-		if (execution.operation === 'promote') return yield* precondition('Promotion must be approved before registration');
+		if (execution.operation === 'promote') {
+			return yield* precondition('The release must be published in Beepboop before registration');
+		}
 		if (!execution.workflow) return yield* precondition('Operation is not a workflow');
 		if (!matchesRef(execution.workflow.ref, identity.ref)) {
 			return yield* precondition('Observed run does not match configured ref');
@@ -204,7 +206,7 @@ export const workflowEndpoints = {
 					return yield* precondition('Prepared file is outside the release plan');
 				}
 				if (planned && file.after !== planned.after) {
-					return yield* precondition('Prepared manifest differs from the approved plan');
+					return yield* precondition('Prepared manifest differs from the reviewed plan');
 				}
 				const before = (yield* gateway.file(execution.repository, file.path, execution.sourceSha, token)) ?? '';
 				edits.push({ path: file.path, before, after: file.after });

@@ -9,9 +9,10 @@ import { eachWorld } from '@root/test/support/world.ts';
 import { z } from 'zod';
 import { app } from '@/cli/cli';
 import { choicesFlagKinds, setupFlagPaths, streamFlagKinds, workflowFlagKinds } from '@/cli/setup-flags';
-import { approvalPolicies, startChannels, versionBumps } from '@/contract/release-start';
-import { binaryTargets, setupChoicesSchema, streamVersionings, workflowTriggers } from '@/contract/setup';
+import { startChannels } from '@/contract/release-start';
+import { binaryTargets, setupChoicesSchema } from '@/contract/setup';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
+import { existingTriggerChoices, publishWhens, versionLandings, versionScopes } from '@/contract/setup-terms';
 
 let world: World;
 let directory: string;
@@ -89,16 +90,31 @@ const cases: {
 		read: c => [main(c).packages, main(c).required],
 		value: [[id], [id]],
 	},
-	{ flags: ['required'], args: ['--required', id], read: c => main(c).required, value: [id] },
-	{ flags: ['versioning'], args: ['--versioning', 'independent'], read: c => main(c).versioning, value: 'independent' },
+	{ flags: ['must-publish'], args: ['--must-publish', id], read: c => main(c).required, value: [id] },
 	{
-		flags: ['start'],
-		args: ['--start', 'cli', '--start', 'dashboard'],
+		flags: ['version-scope'],
+		args: ['--version-scope', 'per-package'],
+		read: c => main(c).versioning,
+		value: 'independent',
+	},
+	{
+		flags: ['start-from'],
+		args: ['--start-from', 'cli', '--start-from', 'dashboard'],
 		read: c => main(c).start,
 		value: ['cli', 'dashboard'],
 	},
-	{ flags: ['bump'], args: ['--bump', 'commit'], read: c => main(c).bump, value: 'commit' },
-	{ flags: ['approval'], args: ['--approval', 'merge'], read: c => main(c).approval, value: 'merge' },
+	{
+		flags: ['version-lands'],
+		args: ['--version-lands', 'via-direct-commit'],
+		read: c => main(c).bump,
+		value: 'commit',
+	},
+	{
+		flags: ['publish-when'],
+		args: ['--publish-when', 'version-pr-merged'],
+		read: c => main(c).approval,
+		value: 'merge',
+	},
 	{
 		flags: ['version-source'],
 		args: ['--version-source', '{"kind":"tags","prefix":"tool-v"}'],
@@ -110,14 +126,14 @@ const cases: {
 	{ flags: ['needs'], args: ['--needs', '{}'], read: c => main(c).needs, value: {} },
 	{ flags: ['operations'], args: ['--operations', '[]'], read: c => main(c).operations, value: [] },
 	{
-		flags: ['prepare-file', 'prepare-job', 'prepare-triggers', 'prepare-commands', 'prepare-tag-prefix'],
+		flags: ['prepare-file', 'prepare-job', 'prepare-existing-triggers', 'prepare-commands', 'prepare-tag-prefix'],
 		args: [
 			'--prepare-file',
 			'prepare-tool.yml',
 			'--prepare-job',
 			'prep',
-			'--prepare-triggers',
-			'dispatchOnly',
+			'--prepare-existing-triggers',
+			'replace-with-dispatch',
 			'--prepare-commands',
 			'cargo check',
 			'--prepare-tag-prefix',
@@ -148,14 +164,14 @@ const cases: {
 		value: [{}, { CARGO_REGISTRY_TOKEN: 'crates-io' }, { builds: [build], targets: ['linux-amd64'] }],
 	},
 	{
-		flags: ['promote-file', 'promote-job', 'promote-triggers', 'promote-commands', 'promote-tag-prefix'],
+		flags: ['promote-file', 'promote-job', 'promote-existing-triggers', 'promote-commands', 'promote-tag-prefix'],
 		args: [
 			'--promote-file',
 			'publish-tool.yml',
 			'--promote-job',
 			'ship',
-			'--promote-triggers',
-			'dispatchOnly',
+			'--promote-existing-triggers',
+			'replace-with-dispatch',
 			'--promote-commands',
 			'cargo publish',
 			'--promote-tag-prefix',
@@ -195,8 +211,54 @@ test('every setup flag sets its field in the previewed plan', async () => {
 		expect([entry.flags, entry.read(plan.choices)]).toEqual([entry.flags, entry.value]);
 		expect(entry.read(proposal.choices)).not.toEqual(entry.value);
 	}
-	const covered = new Set(cases.flatMap(entry => entry.flags));
+	const covered = new Set([...cases, ...legacyCases].flatMap(entry => entry.flags));
 	expect(setupFlagPaths.flatMap(entry => entry.names).filter(name => !covered.has(name))).toEqual([]);
+});
+
+const legacyCases: typeof cases = [
+	{ flags: ['required'], args: ['--required', id], read: c => main(c).required, value: [id] },
+	{ flags: ['versioning'], args: ['--versioning', 'independent'], read: c => main(c).versioning, value: 'independent' },
+	{ flags: ['start'], args: ['--start', 'cli'], read: c => main(c).start, value: ['cli'] },
+	{ flags: ['bump'], args: ['--bump', 'commit'], read: c => main(c).bump, value: 'commit' },
+	{ flags: ['approval'], args: ['--approval', 'merge'], read: c => main(c).approval, value: 'merge' },
+	{
+		flags: ['prepare-triggers'],
+		args: ['--prepare-file', 'prepare-tool.yml', '--prepare-job', 'prep', '--prepare-triggers', 'dispatchOnly'],
+		read: c => main(c).prepare?.triggers,
+		value: 'dispatchOnly',
+	},
+	{
+		flags: ['promote-triggers'],
+		args: ['--promote-triggers', 'dispatchOnly'],
+		read: c => main(c).promote?.triggers,
+		value: 'dispatchOnly',
+	},
+];
+
+test('each earlier flag name still sets its field and warns about its current name', async () => {
+	tool();
+	const renamed: Record<string, string> = {
+		required: 'must-publish',
+		versioning: 'version-scope',
+		start: 'start-from',
+		bump: 'version-lands',
+		approval: 'publish-when',
+		'prepare-triggers': 'prepare-existing-triggers',
+		'promote-triggers': 'promote-existing-triggers',
+	};
+	for (const entry of legacyCases) {
+		const result = await app.execute(['adopt', 'octo/tool', '--json', ...promote, ...entry.args], {
+			isTTY: false,
+			env: {},
+		});
+		const [flag = ''] = entry.flags;
+		expect([flag, result.exitCode, result.stderr.join('')]).toEqual([
+			flag,
+			0,
+			expect.stringContaining(`Use --${renamed[flag]}`),
+		]);
+		expect(entry.read(previewed.parse(JSON.parse(result.stdout.join(''))).choices)).toEqual(entry.value);
+	}
 });
 
 test('every setup schema field has a declared adopt flag', () => {
@@ -221,7 +283,7 @@ test('every setup schema field has a declared adopt flag', () => {
 
 test('setup flags reject values outside their enums and invalid JSON', async () => {
 	tool();
-	const bump = await app.execute(['adopt', 'octo/tool', '--bump', 'sideways'], { isTTY: false, env: {} });
+	const bump = await app.execute(['adopt', 'octo/tool', '--version-lands', 'sideways'], { isTTY: false, env: {} });
 	expect(bump.exitCode).not.toBe(0);
 	expect(bump.stderr.join('')).toContain('sideways');
 	const target = await app.execute(['adopt', 'octo/tool', '--binary', 'tool', '--target', 'plan9-amd64'], {
@@ -256,11 +318,19 @@ test('flags given with --choices override only their fields', async () => {
 	const stream = { ...main(proposal.choices), approval: 'required', bump: 'pr', start: ['dashboard'] };
 	const file = join(directory, 'choices.json');
 	await Bun.write(file, JSON.stringify({ ...proposal.choices, streams: [stream] }));
-	const plan = await preview(['--choices', file, '--bump', 'commit', '--start', 'cli']);
+	const plan = await preview(['--choices', file, '--version-lands', 'via-direct-commit', '--start-from', 'cli']);
 	expect(main(plan.choices)).toEqual(main(setupChoicesSchema.parse({
 		streams: [{ ...stream, bump: 'commit', start: ['cli'] }],
 	})));
-	const refused = await app.execute(['adopt', 'octo/tool', '--plan', file, '--apply', '--bump', 'commit'], {
+	const refused = await app.execute([
+		'adopt',
+		'octo/tool',
+		'--plan',
+		file,
+		'--apply',
+		'--version-lands',
+		'via-version-pr',
+	], {
 		isTTY: false,
 		env: {},
 	});
@@ -271,29 +341,53 @@ test('flags given with --choices override only their fields', async () => {
 test('a fully flagged adopt in a terminal asks no question and opens the setup PR', async () => {
 	const repository = tool();
 	const result = await app.execute(
-		['adopt', 'octo/tool', ...promote, '--start', 'cli', '--bump', 'commit', '--approval', 'merge', '--binary', 'tool'],
+		[
+			'adopt',
+			'octo/tool',
+			...promote,
+			'--start-from',
+			'cli',
+			'--version-lands',
+			'via-direct-commit',
+			'--publish-when',
+			'version-pr-merged',
+			'--binary',
+			'tool',
+		],
 		{ prompter: silent, isTTY: true, env: {} },
 	);
 	expect([result.exitCode, result.stderr.join('')]).toEqual([0, '']);
 	expect(result.stdout.join('')).toContain('Setup PR: https://github.com/octo/tool/pull/1');
 	const body = repository.pulls[0]?.body ?? '';
-	expect(body).not.toContain('tick when a version raised without a start publishes');
-	expect(body).not.toContain('tick how a version bump reaches the default branch');
+	expect(body).not.toContain('tick `publishWhen`');
+	expect(body).not.toContain('tick `versionLands`');
 	const configuration = z.object({
 		streams: z.object({
 			main: z.object({
-				start: z.array(z.looseObject({ via: z.string() })),
-				prepare: z.looseObject({ bump: z.string() }),
-				promote: z.looseObject({ approval: z.string() }),
+				startFrom: z.array(z.looseObject({ via: z.string() })),
+				prepare: z.looseObject({ versionLands: z.string() }),
+				promote: z.looseObject({ publishWhen: z.string() }),
 			}),
 		}),
 	}).parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'));
-	expect(configuration.streams.main.start.map(start => start.via)).toEqual(['cli']);
-	expect(configuration.streams.main.prepare.bump).toBe('commit');
-	expect(configuration.streams.main.promote.approval).toBe('merge');
+	expect(configuration.streams.main.startFrom.map(start => start.via)).toEqual(['cli']);
+	expect(configuration.streams.main.prepare.versionLands).toBe('via-direct-commit');
+	expect(configuration.streams.main.promote.publishWhen).toBe('version-pr-merged');
 	world.github.merge(repository, 1);
 	const again = await app.execute(
-		['adopt', 'octo/tool', ...promote, '--start', 'cli', '--bump', 'commit', '--approval', 'merge', '--binary', 'tool'],
+		[
+			'adopt',
+			'octo/tool',
+			...promote,
+			'--start-from',
+			'cli',
+			'--version-lands',
+			'via-direct-commit',
+			'--publish-when',
+			'version-pr-merged',
+			'--binary',
+			'tool',
+		],
 		{ prompter: silent, isTTY: true, env: {} },
 	);
 	expect([again.exitCode, again.stderr.join('')]).toEqual([0, '']);
@@ -304,7 +398,15 @@ test('a fully flagged adopt in a terminal asks no question and opens the setup P
 test('flagged adopt saves a reviewable plan and stops on blockers', async () => {
 	const repository = tool();
 	const output = join(directory, 'plan.json');
-	const saved = await app.execute(['adopt', 'octo/tool', ...promote, '--bump', 'commit', '--output', output], {
+	const saved = await app.execute([
+		'adopt',
+		'octo/tool',
+		...promote,
+		'--version-lands',
+		'via-direct-commit',
+		'--output',
+		output,
+	], {
 		prompter: silent,
 		isTTY: true,
 		env: {},
@@ -313,7 +415,7 @@ test('flagged adopt saves a reviewable plan and stops on blockers', async () => 
 	expect(saved.stdout.join('')).toContain(`Open the setup PR with: beepboop adopt octo/tool --plan ${output} --apply`);
 	expect(main(previewed.parse(await Bun.file(output).json()).choices).bump).toBe('commit');
 	expect(repository.pulls).toHaveLength(0);
-	const blocked = await app.execute(['adopt', 'octo/tool', '--bump', 'commit'], {
+	const blocked = await app.execute(['adopt', 'octo/tool', '--version-lands', 'via-direct-commit'], {
 		prompter: silent,
 		isTTY: true,
 		env: {},
@@ -325,14 +427,14 @@ test('flagged adopt saves a reviewable plan and stops on blockers', async () => 
 
 test('fields given by no flag stay unanswered in the setup PR', async () => {
 	const repository = tool();
-	const result = await app.execute(['adopt', 'octo/tool', ...promote, '--bump', 'commit'], {
+	const result = await app.execute(['adopt', 'octo/tool', ...promote, '--version-lands', 'via-direct-commit'], {
 		prompter: silent,
 		isTTY: true,
 		env: {},
 	});
 	expect([result.exitCode, result.stderr.join('')]).toEqual([0, '']);
 	expect(result.stdout.join('')).toContain(
-		'main: tick when a version raised without a start publishes. Until you do, Beepboop waits for your approval.',
+		'main: tick `publishWhen`. Until you do, it is `approved-in-beepboop`: You publish it: the Publish button in Beepboop or `beepboop runs publish`. Approving or merging the version PR on GitHub does not publish.',
 	);
 	const configuration = JSON.parse(
 		world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}',
@@ -366,14 +468,14 @@ function offered(shell: (typeof shells)[number], flag: string): string[] {
 test('completion scripts list every setup flag and the values of each single-value enum flag', () => {
 	for (const shell of shells) {
 		const script = generateCompletion(app.schema, shell);
-		for (const flag of setupFlagPaths.flatMap(entry => entry.names)) expect(script).toContain(`-${flag}`);
+		for (const flag of setupFlagPaths.flatMap(entry => entry.names.slice(0, 1))) expect(script).toContain(`-${flag}`);
 		for (
 			const [flag, values] of [
-				['versioning', streamVersionings],
-				['bump', versionBumps],
-				['approval', approvalPolicies],
-				['prepare-triggers', workflowTriggers],
-				['promote-triggers', workflowTriggers],
+				['version-scope', versionScopes],
+				['version-lands', versionLandings],
+				['publish-when', publishWhens],
+				['prepare-existing-triggers', existingTriggerChoices],
+				['promote-existing-triggers', existingTriggerChoices],
 			] as const
 		) {
 			expect([shell, flag, offered(shell, flag)]).toEqual([shell, flag, [...values]]);
@@ -383,7 +485,7 @@ test('completion scripts list every setup flag and the values of each single-val
 
 test.failing('completion scripts list the values of repeatable enum flags (kjanat/dreamcli#199)', () => {
 	for (const shell of shells) {
-		for (const [flag, values] of [['start', startChannels], ['target', binaryTargets]] as const) {
+		for (const [flag, values] of [['start-from', startChannels], ['target', binaryTargets]] as const) {
 			expect([shell, flag, offered(shell, flag)]).toEqual([shell, flag, [...values]]);
 		}
 	}
@@ -402,10 +504,16 @@ test('setup flags name what they cannot resolve', async () => {
 		file,
 		JSON.stringify({ streams: [main(proposal.choices), { ...main(proposal.choices), name: 'second' }] }),
 	);
-	await refused(['octo/tool', '--choices', file, '--bump', 'commit'], 'Name the release group these flags change');
+	await refused(
+		['octo/tool', '--choices', file, '--version-lands', 'via-direct-commit'],
+		'Name the release group these flags change',
+	);
 	const broken = join(directory, 'broken.json');
 	await Bun.write(broken, JSON.stringify({ streams: 'all' }));
-	await refused(['octo/tool', '--choices', broken, '--bump', 'commit'], `--choices ${broken}: streams:`);
+	await refused(
+		['octo/tool', '--choices', broken, '--version-lands', 'via-direct-commit'],
+		`--choices ${broken}: streams:`,
+	);
 	await refused(['octo/tool', ...promote, '--target', 'linux-amd64'], '--target needs --binary');
 	await refused(['octo/tool', '--actions-revision', 'latest'], '--actions-revision:');
 	world.github.create('octo/twin', {

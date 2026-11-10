@@ -126,7 +126,9 @@ test('a start from the dashboard opens the version PR, and its merge publishes w
 	await world.wait(16_000);
 	const [pull] = repository.pulls;
 	if (!pull) throw new Error('No version PR');
-	expect(pull.body).toContain('A start from the dashboard approved this release. Merging this PR continues it.');
+	expect(pull.body).toContain(
+		'Started from the dashboard. Merging this PR publishes the release, and nothing asks again.',
+	);
 	const merged = world.github.merge(repository, pull.number);
 	passChecks(repository, merged.sha);
 	expect((await world.push(repository)).status).toBe(202);

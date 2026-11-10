@@ -5,9 +5,10 @@
 Release automation for ~~your~~ *my* GitHub repositories.
 
 Beepboop finds the packages in a repository, bumps their versions in a signed
-commit or a PR, and starts your publishing workflows. One start from GitHub
-Actions, the dashboard or the CLI approves the whole release, or each release
-waits for your approval, as each repository chooses. It signs the release tags, tracks every publication, and lets you retry
+commit or a PR, and starts your publishing workflows. Each repository
+chooses where a release starts (GitHub Actions, the dashboard or the CLI) and
+what publishes a version: the Publish button in Beepboop, merging the version
+PR, or a signed version commit. It signs the release tags, tracks every publication, and lets you retry
 failed jobs from one dashboard. Each repository keeps its settings in
 `.github/beepboop.json`. Presets share defaults across repositories.
 
@@ -23,7 +24,7 @@ failed jobs from one dashboard. Each repository keeps its settings in
 4. Connect your preparation and promotion workflows with the
    [Actions integration](docs/automation.md#connect-a-workflow).
 5. Choose a version. Review the preparation PR and merge it.
-6. Approve promotion of the merged commit. The dashboard shows each build and
+6. Publish the merged commit with the Publish button. The dashboard shows each build and
    publication. Retry a failed job from its execution page.
 
 Beepboop discovers Cargo, npm, JSR, Go and VS Code extension packages,

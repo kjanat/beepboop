@@ -1,5 +1,6 @@
 import { Effect, Result } from 'effect';
 import { z } from 'zod';
+import { legacyConfiguration } from '@/automation/configuration-names';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { parseReleaseIdentity } from '@/automation/package-identity';
 import { parsePresetReference } from '@/automation/preset';
@@ -21,6 +22,14 @@ import { precondition } from '@/contract/errors';
 import { identifierPattern, shaPattern } from '@/contract/ids';
 import { releaseStarts, versionBumps } from '@/contract/release-start';
 import { actionsRevisionPattern, workflowSetup } from '@/contract/setup';
+import {
+	approvalOfPublishWhen,
+	bumpOfVersionLands,
+	publishWhens,
+	versioningOfVersionScope,
+	versionLandings,
+	versionScopes,
+} from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
 import { dependencyOrder } from '@/dependency-order';
 import {
@@ -201,14 +210,17 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 		yield* keys(
 			row,
 			[
+				'versionScope',
 				'versioning',
 				'versionFiles',
 				'versionSource',
 				'packages',
 				'prepare',
 				'promote',
+				'startFrom',
 				'start',
 				'workflows',
+				'mustPublish',
 				'required',
 				'needs',
 				'credentials',
@@ -220,24 +232,29 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 		const prepare = yield* record(row.prepare ?? {}),
 			promote = yield* record(row.promote ?? {}),
 			channels = yield* record(row.channels ?? {});
-		yield* keys(prepare, ['version', 'workflow', 'strategy', 'bump'], 'prepare');
+		yield* keys(prepare, ['version', 'workflow', 'strategy', 'versionLands', 'bump'], 'prepare');
 		const strategy = prepare.strategy === undefined
 			? undefined
 			: yield* oneOf(prepare.strategy, ['managed', 'workflow'], 'Invalid preparation strategy');
-		yield* keys(promote, ['approval', 'workflow'], 'promote');
-		const bump = prepare.bump === undefined
+		yield* keys(promote, ['publishWhen', 'approval', 'workflow'], 'promote');
+		const bump = prepare.versionLands !== undefined
+			? bumpOfVersionLands[yield* oneOf(prepare.versionLands, versionLandings, 'Invalid versionLands')]
+			: prepare.bump === undefined
 			? undefined
-			: yield* oneOf(prepare.bump, versionBumps, 'Invalid version bump');
-		const start = row.start === undefined ? undefined : yield* lift(() => releaseStarts.parse(row.start));
+			: yield* oneOf(prepare.bump, versionBumps, 'Invalid bump, the earlier name of versionLands');
+		const starts = row.startFrom ?? row.start;
+		const start = starts === undefined ? undefined : yield* lift(() => releaseStarts.parse(starts));
 		yield* keys(channels, ['stable', 'prerelease'], 'channels');
 		if (prepare.version !== undefined && prepare.version !== 'manual') {
 			return yield* invalid('Only manual version selection is supported');
 		}
-		const versioning = yield* oneOf(
-			row.versioning ?? 'workspace',
-			['workspace', 'independent', 'none'],
-			'Invalid versioning',
-		);
+		const versioning = row.versionScope !== undefined
+			? versioningOfVersionScope[yield* oneOf(row.versionScope, versionScopes, 'Invalid versionScope')]
+			: yield* oneOf(
+				row.versioning ?? 'workspace',
+				['workspace', 'independent', 'none'],
+				'Invalid versioning, the earlier name of versionScope',
+			);
 		const concurrency = yield* oneOf(row.concurrency ?? 'queue', ['queue', 'supersede-pending'], 'Invalid concurrency');
 		const workflows: Record<string, WorkflowBinding> = {};
 		for (const [operation, value] of Object.entries(yield* record(row.workflows ?? {}))) {
@@ -277,16 +294,18 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 				...(bump === undefined ? {} : { bump }),
 			},
 			promote: {
-				approval: yield* oneOf(
-					promote.approval ?? 'required',
-					['required', 'merge', 'push'],
-					'Invalid promotion approval',
-				),
+				approval: promote.publishWhen !== undefined
+					? approvalOfPublishWhen[yield* oneOf(promote.publishWhen, publishWhens, 'Invalid publishWhen')]
+					: yield* oneOf(
+						promote.approval ?? 'required',
+						['required', 'merge', 'push'],
+						'Invalid approval, the earlier name of publishWhen',
+					),
 				...(promote.workflow ? { workflow: yield* binding(promote.workflow) } : {}),
 			},
 			...(start === undefined ? {} : { start }),
 			workflows,
-			required: yield* packageReferences(row.required ?? []),
+			required: yield* packageReferences(row.mustPublish ?? row.required ?? []),
 			...(needs === undefined ? {} : { needs }),
 			credentials: yield* strings(row.credentials ?? []),
 			channels: {
@@ -324,7 +343,7 @@ function operationGraph(stream: Stream): Parsed<void> {
 				}
 			}
 			if (operation?.refs && !approved(name)) {
-				return yield* invalid('Ref publication requires promotion approval in its dependencies');
+				return yield* invalid('Ref publication must run after the publishing workflow (promote)');
 			}
 		}
 	});
@@ -453,7 +472,7 @@ export function resolveConfiguration(
 	const visit = (raw: unknown, stack: string[]): Effect.Effect<Record<string, unknown>, DomainError> =>
 		Effect.gen(function*() {
 			if (stack.length > 16) return yield* precondition('Preset nesting limit exceeded');
-			const data = yield* Effect.fromResult(record(raw));
+			const data = yield* Effect.fromResult(record(legacyConfiguration(raw)));
 			let resolved: Record<string, unknown> = {};
 			for (const reference of yield* Effect.fromResult(strings(data.extends ?? []))) {
 				if (!parsePresetReference(reference)) return yield* precondition('Invalid preset reference');
