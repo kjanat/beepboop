@@ -1489,6 +1489,15 @@ test('the rewritten publish step keeps its own environment', async () => {
 	expect(rewritten).not.toContain('beepboop_credentials');
 });
 
+test('the credential step stays while another step still reads its outputs', async () => {
+	const rewritten = await rewrittenPlain({ publishIf: "${{ steps.beepboop_credentials.outputs.values != '' }}" });
+	expect(rewritten).toContain('id: beepboop_credentials');
+	expect(publishStep(rewritten)).toMatchObject({
+		uses: 'kjanat/beepboop/actions/publish@v1',
+		with: { credentials: JSON.stringify({ CARGO_REGISTRY_TOKEN: 'crates-io' }) },
+	});
+});
+
 test('a publish step with a setting an action step cannot take stays as written', async () => {
 	const rewritten = await rewrittenPlain({ publishKeys: '        working-directory: crates\n' });
 	expect(rewritten).toBe('');

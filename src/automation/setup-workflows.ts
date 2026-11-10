@@ -510,7 +510,7 @@ function integrate(
 				)
 					.map(packageId),
 			);
-			steps = steps.flatMap((step, index) => {
+			const migrated = steps.flatMap((step, index) => {
 				if (index === plainStep) {
 					return [{
 						id: 'beepboop_publish',
@@ -523,7 +523,6 @@ function integrate(
 						},
 					}];
 				}
-				if (step.id === 'beepboop_credentials') return [];
 				if (actionRole(step.uses) !== 'report') return [step];
 				const reported = object(step.with);
 				const results = publicationEntries(reported.publications);
@@ -533,6 +532,10 @@ function integrate(
 					? [{ ...step, with: { ...reported, publications: `${JSON.stringify(kept, null, 2)}\n` } }]
 					: [];
 			});
+			steps = migrated.filter(step =>
+				step.id !== 'beepboop_credentials'
+				|| migrated.some(other => other !== step && JSON.stringify(other).includes('steps.beepboop_credentials.'))
+			);
 		}
 	}
 	if (operation === 'prepare') {
