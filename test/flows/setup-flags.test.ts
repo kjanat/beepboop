@@ -496,12 +496,40 @@ test('completion scripts list every setup flag and the values of each single-val
 	}
 });
 
-test('completion scripts list the runs list flags', () => {
+function runsListFlags(script: string, shell: (typeof shells)[number]): string[] {
+	if (shell === 'bash') {
+		const section = /\n\t\t"runs list"\)\n([\s\S]*?)\n\t\t\t;;/.exec(script)?.[1] ?? '';
+		return /compgen -W '([^']*)'/.exec(section)?.[1]?.split(' ').map(flag => flag.slice(2)) ?? [];
+	}
+	if (shell === 'zsh') {
+		const section = /\n_beepboop_runs_list\(\) \{\n([\s\S]*?)\n\}/.exec(script)?.[1] ?? '';
+		return [...section.matchAll(/^\s*'--([\w-]+)[[:]/gm)].map(match => match[1] ?? '');
+	}
+	return [...script.matchAll(/^complete -c beepboop -n "__beepboop_completions_path_is 'runs list'" -l (\S+) /gm)].map(
+		match => match[1] ?? '',
+	);
+}
+
+const runsListOptions = ['repository', 'all', 'stream', 'operation', 'state', 'releaseVersion', 'limit', 'full'];
+
+test('completion scripts list the runs list flags in the runs list section', () => {
 	for (const shell of shells) {
-		const script = generateCompletion(app.schema, shell);
-		for (const flag of ['repository', 'all', 'stream', 'operation', 'state', 'releaseVersion', 'limit', 'full']) {
-			expect([shell, flag, script.includes(flag)]).toEqual([shell, flag, true]);
-		}
+		const flags = runsListFlags(generateCompletion(app.schema, shell), shell);
+		for (const flag of runsListOptions) expect([shell, flag, flags.includes(flag)]).toEqual([shell, flag, true]);
+	}
+});
+
+test('a flag that only another command offers is not found in the runs list section', () => {
+	const scripts = {
+		bash:
+			`\n\t\t"adopt")\n\t\t\tCOMPREPLY=($(compgen -W '--stream' -- "$cur"))\n\t\t\t;;\n\t\t"runs list")\n\t\t\tCOMPREPLY=($(compgen -W '--server' -- "$cur"))\n\t\t\t;;\n`,
+		zsh:
+			`\n_beepboop_adopt() {\n\t_arguments \\\n\t\t'--stream[Release stream]:value:'\n}\n\n_beepboop_runs_list() {\n\t_arguments \\\n\t\t'--server[Server]:value:'\n}\n`,
+		fish:
+			`complete -c beepboop -n "__beepboop_completions_path_is 'adopt'" -l stream -d 'Release stream' -r -f\ncomplete -c beepboop -n "__beepboop_completions_path_is 'runs list'" -l server -d 'Server' -r -f\n`,
+	} as const;
+	for (const shell of shells) {
+		expect([shell, runsListFlags(scripts[shell], shell)]).toEqual([shell, ['server']]);
 	}
 });
 

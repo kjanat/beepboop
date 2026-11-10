@@ -74,6 +74,6 @@ export function serverFilter(repository: string | undefined, filters: RunFilters
 		...(filters.operation === undefined ? {} : { operation: filters.operation }),
 		...(filters.state.length ? { states: filters.state.join(',') } : {}),
 		...(filters.version === undefined ? {} : { version: filters.version }),
-		...(filters.limit === undefined || filters.limit < 1 ? {} : { limit: filters.limit }),
+		...(filters.limit === undefined ? {} : { limit: filters.limit }),
 	};
 }

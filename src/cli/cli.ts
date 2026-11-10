@@ -272,7 +272,7 @@ const runs = group('runs').description('Follow, publish, cancel and recover rele
 			.flag('operation', flag.string().describe('Only this operation, such as prepare or promote'))
 			.flag('state', flag.array(flag.enum(executionStates)).describe('Only these states; repeat it'))
 			.flag('releaseVersion', flag.string().describe('Only this version'))
-			.flag('limit', flag.number().describe('Show at most this many runs'))
+			.flag('limit', flag.number().int().min(1).max(200).describe('Show at most this many runs, 1 to 200'))
 			.flag('full', flag.boolean().default(false).describe('With --json, print whole records instead of the summary'))
 			.action(({ flags, out }) =>
 				Effect.runPromise(Effect.gen(function*() {

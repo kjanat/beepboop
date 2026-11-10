@@ -135,7 +135,7 @@ beepboop runs recover EXECUTION_ID --action retry
 `origin` remote as `release` does. Outside a checkout it shows every
 repository. `--repository NAME` or `BEEPBOOP_REPOSITORY` picks one, and `--all`
 shows every repository whatever the checkout says. `--stream`, `--operation`,
-`--releaseVersion` and `--limit` narrow the list, and `--state` can repeat. `--json`
+`--releaseVersion` and `--limit` (1 to 200) narrow the list, and `--state` can repeat. `--json`
 prints a summary per run (id, repository, stream, operation, state, version,
 source commit, update time and each publication's id and outcome); add `--full`
 for the whole record.

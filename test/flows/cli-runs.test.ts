@@ -93,7 +93,12 @@ test('runs list filters by stream, operation, state, version and limit', async (
 	expect(await only('--releaseVersion', '9.9.9')).toEqual([]);
 	expect(await only('--state', run.state, '--state', 'failed')).toEqual([run.id]);
 	expect(await only('--state', 'failed')).toEqual([]);
-	expect(await only('--limit', '0')).toEqual([]);
+	expect(await only('--limit', '1')).toEqual([run.id]);
+	for (const limit of ['0', '-1', '1.5', '201', 'many']) {
+		const refused = await runCli(['runs', 'list', `--limit=${limit}`, '--server', 'http://127.0.0.1:1']);
+		expect([limit, refused.exitCode === 0]).toEqual([limit, false]);
+		expect(refused.stderr.join('')).toContain(`Invalid number value '${limit}' for flag --limit`);
+	}
 	const bad = await runCli(['runs', 'list', '--state', 'sideways']);
 	expect(bad.exitCode).not.toBe(0);
 	expect(bad.stderr.join('')).toContain('sideways');
