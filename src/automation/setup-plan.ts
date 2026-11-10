@@ -39,6 +39,7 @@ const evidence: z.ZodType<WorkflowEvidence> = z.object({
 	roles: z.array(z.object({ job: z.string(), stream: z.string(), operation: z.string() })),
 	preparationJobs: strings,
 	reportingJobs: strings,
+	jobObstacles: z.record(z.string(), strings).optional(),
 	prepares: z.boolean(),
 	reports: z.boolean(),
 	publishes: z.boolean(),
