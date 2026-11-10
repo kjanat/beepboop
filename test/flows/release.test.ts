@@ -12,6 +12,7 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
 import { experimental_AstroContainer } from 'astro/container';
 import { Effect } from 'effect';
+import { Window } from 'happy-dom';
 import { z } from 'zod';
 import { Store } from '@/automation/store';
 import type { Execution } from '@/automation/types';
@@ -299,14 +300,19 @@ test('the overview counts only runs that still need the user and shows each vers
 		},
 		request: new Request(`${origin}/`),
 	});
-	const headings = [...html.matchAll(/<h2[^>]*>([^<]+)<\/h2>/g)].map(match => match[1]);
-	expect(headings.slice(0, 2)).toEqual(['Needs your attention', 'Recent releases']);
-	expect(html).toContain('<li>Publish commit</li>');
-	expect(html).not.toContain('Approve commit');
-	expect(html).toContain('Publication run');
-	expect(html).toContain('Preparation run');
-	expect(html).toContain('waiting for you to publish');
-	expect(html).not.toMatch(/>\s*promote\s*</);
+	const page = new Window();
+	page.document.body.innerHTML = html;
+	const texts = (selector: string) =>
+		[...page.document.querySelectorAll(selector)].map(element => element.textContent.trim());
+	expect(texts('h2').slice(0, 2)).toEqual(['Needs your attention', 'Recent releases']);
+	expect(texts('.release-path li')).toContain('Publish commit');
+	expect(texts('.release-path li')).not.toContain('Approve commit');
+	const text = page.document.body.textContent;
+	expect(text).toContain('Publication run');
+	expect(text).toContain('Preparation run');
+	expect(text).toContain('waiting for you to publish');
+	expect(texts('*')).not.toContain('promote');
+	await page.happyDOM.close();
 });
 
 test('a later run replaces a failed run only for the same release target', async () => {

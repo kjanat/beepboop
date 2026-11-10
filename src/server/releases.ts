@@ -62,9 +62,9 @@ export function releaseSummaries(executions: Execution[], repositories: Reposito
 		if (group) group.push(execution);
 		else groups.set(identity, [execution]);
 	}
-	return [...groups.values()].map(([head, ...rest]) => {
-		const latest = rest.reduce((last, run) => run.createdAt >= last.createdAt ? run : last, head);
-		const runs = [head, ...rest].sort((a, b) => a.createdAt - b.createdAt);
+	return [...groups.values()].map(group => {
+		const runs = group.sort((a, b) => a.createdAt - b.createdAt);
+		const latest = runs[runs.length - 1] ?? runs[0];
 		const required = latest.releaseSet?.required ?? latest.configuration.streams[latest.stream]?.required ?? [];
 		const publications = required.map(id => {
 			const reports = runs.flatMap(run => run.publications.filter(publication => matchesPublication(id, publication)));
