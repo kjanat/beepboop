@@ -581,7 +581,7 @@ test('a setup update whose saved choices lost observed needs and publications ge
 	await lose();
 	await editPull(world, repository, pull, tick(pull.body, 'approval:main:required'));
 	await world.wait(16_000);
-	expect(modeOf(repository, pull.head.ref).approval).toBe('required');
+	expect(modeOf(repository, pull.head.ref).publishWhen).toBe('approved-in-beepboop');
 	kept();
 });
 
