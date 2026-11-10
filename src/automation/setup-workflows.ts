@@ -263,7 +263,7 @@ function integrate(
 	const events = workflowEvents(root);
 	if (events.some(event => event !== 'workflow_dispatch') && choice.triggers !== 'dispatchOnly') {
 		fail(
-			'choose dispatch-only triggers to hand publication control to Beepboop; preserving automatic publication requires a separate workflow',
+			'set existingTriggers to replace-with-dispatch to hand publication control to Beepboop; preserving automatic publication requires a separate workflow',
 		);
 	}
 	if (

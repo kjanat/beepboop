@@ -1095,6 +1095,28 @@ test('setup preserves a configured workflow preparation strategy', async () => {
 	expect(plan.blockers).toContain('main: select a preparation workflow for the configured workflow strategy.');
 });
 
+test('setup names existingTriggers when a workflow Beepboop dispatches also runs on tags', async () => {
+	const repository = widget(world.github, { configured: false });
+	world.github.push(repository, {
+		'.github/workflows/publish.yml': publishWorkflow.replace('on:\n', "on:\n  push:\n    tags: ['v*']\n"),
+	}, 'Publish on tags');
+	const api = bearer(world, await world.cliSession());
+	const choices: SetupChoices = {
+		streams: [{
+			name: 'main',
+			packages: ['pkg:npm/widget'],
+			required: ['pkg:npm/widget'],
+			versioning: 'workspace',
+			promote: { file: 'publish.yml', job: 'publish', triggers: 'review', commands: '', publicationSteps: {} },
+		}],
+	};
+	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
+	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
+	expect(plan.blockers).toContain(
+		'publish.yml: set existingTriggers to replace-with-dispatch to hand publication control to Beepboop; preserving automatic publication requires a separate workflow',
+	);
+});
+
 test('adoption leaves custom checkout refs for explicit integration', async () => {
 	const repository = widget(world.github, { configured: false });
 	const workflow = publishWorkflow.replace(
