@@ -263,7 +263,7 @@ function integrate(
 	const events = workflowEvents(root);
 	if (events.some(event => event !== 'workflow_dispatch') && choice.triggers !== 'dispatchOnly') {
 		fail(
-			'choose dispatch-only triggers to hand publication control to Beepboop; preserving automatic publication requires a separate workflow',
+			'set existingTriggers to replace-with-dispatch to hand publication control to Beepboop; preserving automatic publication requires a separate workflow',
 		);
 	}
 	if (
@@ -280,7 +280,7 @@ function integrate(
 		}
 	}
 	if (events.some(event => event !== 'workflow_dispatch') && choice.triggers === 'dispatchOnly') {
-		notes.push(`${choice.file}: replaces ${events.join(', ')} triggers with approved dispatches.`);
+		notes.push(`${choice.file}: replaces ${events.join(', ')} triggers with Beepboop dispatches.`);
 	}
 	const existingId = object(inputs.beepboop_execution_id), existingTitle = object(inputs.beepboop_title);
 	document.set('run-name', runName);
@@ -381,7 +381,7 @@ function integrate(
 		const checkouts = steps.filter(step => typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@'));
 		if (steps.slice(0, beginIndex).some(step => !checkouts.includes(step))) {
 			fail(
-				'steps before begin need explicit integration; prepare dependencies and build output after the approved checkout',
+				'steps before begin need explicit integration; prepare dependencies and build output after the planned checkout',
 			);
 			return { content: original ?? '', blockers, notes };
 		}
@@ -407,7 +407,7 @@ function integrate(
 				uses: pinned('checkout'),
 				with: { ...object(checkout.with), ref: sourceRef, 'persist-credentials': false },
 			});
-			notes.push(`${choice.file}: checks out the approved execution commit after the existing begin step.`);
+			notes.push(`${choice.file}: checks out the planned release commit after the existing begin step.`);
 		}
 	}
 	const integratedBeginIndex = steps.findIndex(step => actionRole(step.uses) === 'begin');

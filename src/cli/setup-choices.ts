@@ -10,18 +10,27 @@ import { lookOf } from '@/cli/look';
 import { failure, prompted } from '@/cli/output';
 import { workflowFilePattern } from '@/contract/catalog';
 import { identifierPattern } from '@/contract/ids';
-import {
-	approvalChoiceLabels,
-	approvalPolicies,
-	bumpChoiceLabels,
-	startChannels,
-	startChoiceLabels,
-	versionBumps,
-} from '@/contract/release-start';
+import { approvalPolicies, startChannels, versionBumps } from '@/contract/release-start';
 import type { BinaryBuild, BinaryRelease } from '@/contract/setup';
 import { actionsRevisionPattern, binaryTargets, bumpable, leftOut, setupStream, startable } from '@/contract/setup';
 import type { ChoicesField, Editors, StreamField, WorkflowField } from '@/contract/setup-fields';
 import { jsonFields, streamFields } from '@/contract/setup-fields';
+import {
+	existingTriggersNames,
+	existingTriggersQuestion,
+	existingTriggersSentences,
+	publishWhenNames,
+	publishWhenQuestion,
+	publishWhenSentences,
+	startFromQuestion,
+	startFromSentences,
+	versionLandsNames,
+	versionLandsQuestion,
+	versionLandsSentences,
+	versionScopeNames,
+	versionScopeQuestion,
+	versionScopeSentences,
+} from '@/contract/setup-terms';
 import { packageLabel } from '@/domain/package-label';
 
 export const choicesEditors = { streams: 'control', actionsRevision: 'control' } as const satisfies Editors<
@@ -230,14 +239,20 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				let triggers: SetupWorkflow['triggers'] = 'review';
 				if (selected !== 'same' && evidence?.events.some(event => event !== 'workflow_dispatch')) {
 					const prior = previous?.file === file ? previous.triggers : 'review';
+					const entry = (value: SetupWorkflow['triggers']) => ({
+						value,
+						label: `${existingTriggersNames[value]}: ${existingTriggersSentences[value]}`,
+					});
 					const entries = [
-						{ value: 'review', label: 'Keep current triggers and check compatibility in preview' },
-						{ value: 'dispatchOnly', label: 'Beepboop only (replace current automatic triggers)' },
-						...(prior === 'preserve'
-							? [{ value: 'preserve', label: 'Preserve current triggers and check compatibility in preview' }]
-							: []),
+						entry('review'),
+						entry('dispatchOnly'),
+						...(prior === 'preserve' ? [entry('preserve')] : []),
 					];
-					const trigger = yield* select(ask, `${file}: who starts this workflow?`, preferring(entries, prior));
+					const trigger = yield* select(
+						ask,
+						`${file}: existingTriggers. ${existingTriggersQuestion}`,
+						preferring(entries, prior),
+					);
 					triggers = trigger === 'dispatchOnly' ? 'dispatchOnly' : trigger === 'preserve' ? 'preserve' : 'review';
 				}
 				const integrated = preparing ? evidence?.preparationJobs.includes(job) : evidence?.reportingJobs.includes(job);
@@ -352,15 +367,15 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				if (startable(stream) && (all || !stream.start)) {
 					const [first, ...rest] = startChannels.map(value => ({
 						value,
-						label: startChoiceLabels[value].replaceAll('`', ''),
+						label: `${value}: ${startFromSentences[value].replaceAll('`', '')}`,
 					}));
 					if (first) {
 						const chosen: string[] = yield* prompted(() =>
 							ask({
 								kind: 'multiselect',
-								message: `${stream.name}: start a release from (a start approves the whole release${
+								message: `${stream.name}: startFrom. ${startFromQuestion}${
 									stream.start ? `; now ${stream.start.join(', ') || 'none'}` : ''
-								})`,
+								}`,
 								choices: [first, ...rest],
 							})
 						);
@@ -370,17 +385,26 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				if (bumpable(stream) && (all || !stream.bump)) {
 					const bump = yield* select(
 						ask,
-						`${stream.name}: how a version bump reaches the default branch`,
-						preferring(versionBumps.map(value => ({ value, label: bumpChoiceLabels[value] })), stream.bump),
+						`${stream.name}: versionLands. ${versionLandsQuestion}`,
+						preferring(
+							versionBumps.map(value => ({
+								value,
+								label: `${versionLandsNames[value]}: ${versionLandsSentences[value].replaceAll('`', '')}`,
+							})),
+							stream.bump,
+						),
 					);
 					stream.bump = bump === 'commit' ? 'commit' : 'pr';
 				}
 				if (stream.promote && (all || !stream.approval)) {
 					const approval = yield* select(
 						ask,
-						`${stream.name}: when a version raised without a start publishes`,
+						`${stream.name}: publishWhen. ${publishWhenQuestion}`,
 						preferring(
-							approvalPolicies.map(value => ({ value, label: approvalChoiceLabels[value] })),
+							approvalPolicies.map(value => ({
+								value,
+								label: `${publishWhenNames[value]}: ${publishWhenSentences[value].replaceAll('`', '')}`,
+							})),
 							stream.approval,
 						),
 					);
@@ -476,7 +500,8 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 			yield* prompted(() =>
 				ask({
 					kind: 'confirm',
-					message: 'Customize filenames, versioning, approval, release groups, advanced fields or Actions revision?',
+					message:
+						'Customize filenames, versionScope, publishWhen, release groups, advanced fields or Actions revision?',
 					default: false,
 				})
 			)
@@ -496,16 +521,18 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				yield* configure({ name, packages: [], required: [], versioning: 'workspace' });
 			}
 			for (const stream of choices.streams) {
+				const entry = (value: SetupChoices['streams'][number]['versioning']) => ({
+					value,
+					label: `${versionScopeNames[value]}: ${versionScopeSentences[value]}`,
+				});
 				const entries = [
-					{ value: 'workspace', label: 'Give selected packages the same version' },
-					{ value: 'independent', label: 'Version each package separately' },
-					...(stream.versioning === 'none'
-						? [{ value: 'none', label: 'Keep the configured custom version policy' }]
-						: []),
+					entry('workspace'),
+					entry('independent'),
+					...(stream.versioning === 'none' ? [entry('none')] : []),
 				];
 				const versioning = yield* select(
 					ask,
-					`${stream.name}: how package versions change`,
+					`${stream.name}: versionScope. ${versionScopeQuestion}`,
 					preferring(entries, stream.versioning),
 				);
 				stream.versioning = versioning === 'independent' ? 'independent' : versioning === 'none' ? 'none' : 'workspace';

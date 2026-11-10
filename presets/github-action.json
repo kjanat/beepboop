@@ -6,7 +6,7 @@
 	"streams": {
 		"main": {
 			"promote": {
-				"approval": "required",
+				"publishWhen": "approved-in-beepboop",
 				"workflow": {
 					"file": "release.yml",
 					"refs": {

@@ -33,7 +33,7 @@ redirects on requests that carry credentials.
 Repository and run lists print tables. Add `--json` to get the full API records.
 Plans and other structured responses print as JSON. Every command has `--help`.
 When stdin is a terminal the CLI prompts for a missing repository, stream,
-version, plan or approval. Arguments you pass skip their prompts, and scripts
+version, plan or confirmation. Arguments you pass skip their prompts, and scripts
 must pass every required input. `auth login --server URL --no-browser` prints
 the login link and leaves the browser closed.
 
@@ -42,7 +42,7 @@ The root `--version` flag prints the CLI version.
 
 The package is `@kjanat/beepboop` on npm and JSR. Install it with
 `bun add --global @kjanat/beepboop`. [How Beepboop releases its CLI](cli-release.md)
-walks through the preparation, approval and publication of that package.
+walks through the preparation and publication of that package.
 
 ## Release preparation and execution
 
@@ -70,22 +70,25 @@ The preview shows the package versions, the file changes and the exact source
 commit on the server. Beepboop releases the default branch as the server sees
 it. Local commits and uncommitted files stay out. After you confirm, the CLI
 passes the plan ID and source SHA to preparation. The server refuses a plan that
-changed since the preview. The output names the preparation and lists the merge
-and approval steps that follow.
+changed since the preview. Before it starts, the preview says how the prepared
+version publishes: for example, "This prepares 0.2.0. After the version PR
+merges, `publishWhen: approved-in-beepboop`: You publish it". The output then
+names the preparation and lists the steps that follow.
 
-When the stream lists `{ "via": "cli" }` in `start`, the confirmation starts the
-release, and the start approves it. Beepboop then bumps the version, publishes
-and tags without another approval. The command follows the release: a spinner
+When the stream lists `{ "via": "cli" }` in `startFrom`, the confirmation starts
+the release, and starting it also publishes it. Beepboop then bumps the version,
+publishes and tags, and nothing asks again. The command follows the release: a spinner
 shows the version bump, the wait for checks and the dispatch. Progress bars
 count the finished binary build legs, the publications and the uploaded release
 assets, and tables list each package's and each binary's outcome with links to
 the run and the GitHub release. Human output shortens commit SHAs and execution
 IDs to 12 characters; `--json` and link targets keep the full values. With a version PR, the command links the PR and
-stops, and merging it continues the release. A failing check or a refused bump
+stops, and merging it publishes the release. A failing check or a refused bump
 ends the command with exit code 1 and the reason. `--json` prints the started
 release and returns at once. Spinners and progress bars stay off when the
 output is not a terminal, and `NO_COLOR` turns off the colors and links. See [Start a release](automation.md#start-a-release). Without
-that entry, `beepboop release` never approves or publishes.
+that entry, `beepboop release` only prepares the version, and
+`promote.publishWhen` decides when it publishes.
 
 The confirmation defaults to no. `--yes` skips only the confirmation; the
 preview still prints. When stdin is not a terminal the CLI prints the preview
@@ -100,9 +103,9 @@ beepboop release patch --repository owner/repository --stream main --dry-run
 beepboop release patch --repository owner/repository --stream main --yes --json
 ```
 
-When the default branch already carries the version, a stream with the cli
-start publishes it after the same single confirmation. A promotion that waits
-for approval takes the start as its approval. Without the cli start,
+When the default branch already carries the version, a stream with `cli` in
+`startFrom` publishes it after the same single confirmation, including a
+promotion that waits for you to publish it. Without `cli` in `startFrom`,
 `beepboop release` refuses a version that is prepared already. It handles only
 shared-version streams. Independent package versions use `plan-set` and
 `prepare-set` below.
@@ -111,8 +114,8 @@ For a stream whose `versionSource` reads tags, the flow ends at preparation.
 Merging the preparation PR starts no publication run, and the CLI has no
 shared-version counterpart to `releases start`.
 
-The lower-level commands split preview, preparation and approval into separate
-steps. Take stream names from `repositories show`. The CLI looks up the
+The lower-level commands split preview, preparation and publishing into
+separate steps. Take stream names from `repositories show`. The CLI looks up the
 repository by its enrolled name.
 
 ```sh
@@ -120,21 +123,21 @@ beepboop releases plan kjanat/actionlint --stream main --releaseVersion 2.1.0
 beepboop releases prepare kjanat/actionlint --stream main --releaseVersion 2.1.0 \
   --sourceSha REVIEWED_SOURCE_SHA --planId REVIEWED_PLAN_ID
 beepboop runs list
-beepboop runs approve EXECUTION_ID --sourceSha REVIEWED_SOURCE_SHA
-beepboop runs approve EXECUTION_ID --sourceSha REVIEWED_SOURCE_SHA --force
+beepboop runs publish EXECUTION_ID --sourceSha REVIEWED_SOURCE_SHA
+beepboop runs publish EXECUTION_ID --sourceSha REVIEWED_SOURCE_SHA --force
 beepboop runs cancel EXECUTION_ID
 beepboop runs recover EXECUTION_ID
 beepboop runs recover EXECUTION_ID --action retry
 ```
 
 Pass the exact `sourceSha` and `planId` from the preview. The server rejects a
-preparation whose plan changed. An approval names one reviewed commit.
-`--force` approves when the signature or checks fail, and the audit log records
-each failure it overrode. `--force` cannot approve a version whose tag already
-targets another commit. `runs cancel` cancels the operation and its running
+preparation whose plan changed. `runs publish` names one reviewed commit, and
+`runs approve` is its earlier name. `--force` publishes when the signature or
+checks fail, and the audit log records each failure it overrode. `--force`
+cannot publish a version whose tag already targets another commit. `runs cancel` cancels the operation and its running
 workflow. `runs recover` reconciles by default. Pass
-`--action retry` to retry. The server applies its usual approval and dispatch
-rules.
+`--action retry` to retry. The server applies its usual publishing and
+dispatch rules.
 
 Independent monorepo releases take a JSON plan, described in
 [release planning](release-planning.md):
@@ -272,18 +275,22 @@ nobody chose stays unanswered in the setup PR:
 
 ```sh
 beepboop adopt owner/repository --promote-file release.yml \
-  --start cli --start dashboard --bump commit --approval merge \
+  --start-from cli --start-from dashboard --version-lands via-direct-commit \
+  --publish-when version-pr-merged \
   --binary tool --target linux-amd64 --target darwin-arm64
 ```
 
 - `--stream` names the release group the other flags change. It is needed
   when the proposal has several groups, and a new name adds a group.
-- `--package` and `--required` take a package name or PURL and repeat.
-  `--required` defaults to the `--package` list.
-- `--versioning`, `--start` (repeats), `--bump` and `--approval` take the values
-  shown in completion and help.
+- `--package` and `--must-publish` take a package name or PURL and repeat.
+  `--must-publish` defaults to the `--package` list.
+- `--version-scope`, `--start-from` (repeats), `--version-lands` and
+  `--publish-when` take the values of `versionScope`, `startFrom`,
+  `versionLands` and `publishWhen` in `.github/beepboop.json`, shown in
+  completion and help.
 - `--prepare-*` and `--promote-*` set the workflow fields: `file`, `job`,
-  `triggers`, `commands`, `tag-prefix`, `publication-steps`, `credentials` and,
+  `existing-triggers`, `commands`, `tag-prefix`, `publication-steps`,
+  `credentials` and,
   for preparation, `binaries`. A new workflow gets the `prepare` or `publish`
   job and the suggested commands unless you give them.
 - `--binary` (repeats) picks a discovered binary for the GitHub release.
@@ -294,7 +301,9 @@ beepboop adopt owner/repository --promote-file release.yml \
   and `--actions-revision` take the JSON or text the choices file uses.
 
 With `--choices`, a flag replaces that one field of the file. `--plan` refuses
-setup flags.
+setup flags. The earlier flags `--required`, `--versioning`, `--start`, `--bump`,
+`--approval`, `--prepare-triggers` and `--promote-triggers` still work with their
+earlier values and print the current flag name.
 
 For automation, pass a JSON choices file with `--choices choices.json` and save
 the preview with `--output setup-plan.json`. That command only previews. After
@@ -313,8 +322,11 @@ choices, generated files, preset revisions or setup branch changed after the
 preview. The dashboard goes through the same API and validation.
 
 A choices file holds `streams` and an optional `actionsRevision`, which is a
-release tag or a full commit of the published Actions. Each stream has these
-fields:
+release tag or a full commit of the published Actions. The choices file is the
+setup API and keeps its field names and values: `versioning` is `versionScope`,
+`required` is `mustPublish`, `start` is `startFrom`, `bump` (`pr`, `commit`) is
+`versionLands`, `approval` (`required`, `merge`, `push`) is `publishWhen` and a
+workflow's `triggers` is `existingTriggers`. Each stream has these fields:
 
 - `name`, `packages` (PURLs), `versioning` (`workspace`, `independent` or
   `none`) and `required`.

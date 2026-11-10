@@ -1,7 +1,7 @@
 # @kjanat/beepboop
 
 Authenticated CLI for [Beepboop](https://beepboop.kjanat.dev): inspect repositories,
-prepare releases, approve operations and follow publication results.
+prepare releases, publish them and follow publication results.
 
 Requires **Bun 1.4.4 or later**.
 

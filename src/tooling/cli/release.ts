@@ -66,16 +66,18 @@ await main(Effect.gen(function*() {
 		}),
 		yield* attempt((): unknown => JSON.parse(process.env.RELEASE_CONTEXT ?? '{}')),
 	);
-	if (!checkoutAt(directory, context.sourceSha)) return yield* refuse('Checkout is not the approved commit');
+	if (!checkoutAt(directory, context.sourceSha)) return yield* refuse('Checkout is not the planned release commit');
 	if (
 		context.operation !== 'promote' || context.stream !== 'cli' || context.version !== npm.version
 		|| npm.version !== jsr.version || npm.name !== jsr.name
 	) {
-		return yield* refuse('Publication requires an approved CLI release with matching npm and JSR versions');
+		return yield* refuse(
+			'Publication requires a promote operation of the cli stream with matching npm and JSR versions',
+		);
 	}
 	if (process.env.GITHUB_SHA !== context.sourceSha) {
 		return yield* refuse(
-			'Workflow commit differs from the approved source; refresh and approve the current commit before publishing provenance',
+			'Workflow commit differs from the planned source; refresh and publish the current commit before publishing provenance',
 		);
 	}
 	const channel = npm.version.includes('-') ? 'next' : 'latest';

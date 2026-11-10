@@ -12,9 +12,13 @@ export function waitingUntil(run: Execution, now: number): string | undefined {
 		: undefined;
 }
 
+export function stateLabel(state: Execution['state']): string {
+	return state === 'awaiting-approval' ? 'waiting for you to publish' : state;
+}
+
 export function progress(run: Execution, now: number): string {
 	const until = waitingUntil(run, now);
-	return until ? `waiting until ${until}` : run.state;
+	return until ? `waiting until ${until}` : stateLabel(run.state);
 }
 
 function publicationName(run: Execution, publication: Execution['publications'][number]): string {

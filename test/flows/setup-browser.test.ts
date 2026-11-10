@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import { routes } from '@/contract/routes';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
+import { existingTriggersQuestion } from '@/contract/setup-terms';
 
 // Browser modules are checked separately to keep DOM and Worker Element types apart.
 const browserModule = new URL('../../src/ui/browser/setup.ts', import.meta.url).href;
@@ -140,7 +141,9 @@ test('new publishing workflows get editable filenames, jobs and triggers automat
 	const filename = control(publishing, 'Workflow file (you can rename it)', window.HTMLInputElement);
 	expect(filename.value).toBe('release-widget.yml');
 	expect(control(publishing, 'Which job publishes these packages?', window.HTMLSelectElement).disabled).toBe(true);
-	expect(control(publishing, 'Who starts this workflow?', window.HTMLSelectElement).disabled).toBe(true);
+	expect(control(publishing, `existingTriggers: ${existingTriggersQuestion}`, window.HTMLSelectElement).disabled).toBe(
+		true,
+	);
 	expect(control(publishing, 'Shell commands that publish the selected packages', window.HTMLTextAreaElement).value)
 		.toBe('beepboop publish');
 	expect(publishing.textContent).toContain(
@@ -205,7 +208,9 @@ jobs:
 	expect(control(publishing, 'Publishing step for widget', window.HTMLSelectElement).value).toBe('publish');
 	expect(control(publishing, 'Shell commands that publish the selected packages', window.HTMLTextAreaElement).disabled)
 		.toBe(true);
-	expect(control(publishing, 'Who starts this workflow?', window.HTMLSelectElement).disabled).toBe(false);
+	expect(control(publishing, `existingTriggers: ${existingTriggersQuestion}`, window.HTMLSelectElement).disabled).toBe(
+		false,
+	);
 	change(control(publishing, 'Publishing workflow', window.HTMLSelectElement), 'publish.yml');
 	expect(job.disabled).toBe(true);
 	expect(publishing.textContent).toContain('Using the publish job');
@@ -506,8 +511,10 @@ test('an observed workflow keeps its needs, its publications without a box and t
 	});
 	world.github.merge(repository, 1);
 	passChecks(repository, world.github.head(repository));
-	const stored = z.object({ streams: z.object({ main: z.object({ required: z.array(z.string()) }).loose() }) });
-	expect(stored.parse(JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}')).streams.main.required)
+	const stored = z.object({ streams: z.object({ main: z.object({ mustPublish: z.array(z.string()) }).loose() }) });
+	expect(
+		stored.parse(JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}')).streams.main.mustPublish,
+	)
 		.toEqual(['pkg:cargo/tool']);
 	const form = await open('octo/tool');
 	expect(role(form, 'promote').hidden).toBe(false);
@@ -663,8 +670,8 @@ test('the dashboard asks for starts, bump and approval without picking any, and 
 	approval.value = 'push';
 	await act(form, 'preview');
 	const result = (form.querySelector('.setup-result')?.textContent ?? '').replace(/\s+/g, '');
-	expect(result).toContain('"approval":"push"');
-	expect(result).toContain('"bump":"commit"');
-	expect(result).toContain('"start":[{"via":"action","workflow":"start-release.yml"},{"via":"cli"}]');
+	expect(result).toContain('"publishWhen":"version-commit-pushed"');
+	expect(result).toContain('"versionLands":"via-direct-commit"');
+	expect(result).toContain('"startFrom":[{"via":"action","workflow":"start-release.yml"},{"via":"cli"}]');
 	expect(result).toContain('kjanat/beepboop/actions/release@');
 });

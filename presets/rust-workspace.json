@@ -6,7 +6,7 @@
 	],
 	"streams": {
 		"main": {
-			"versioning": "workspace"
+			"versionScope": "one-for-stream"
 		}
 	}
 }

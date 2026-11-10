@@ -161,7 +161,7 @@ test('release resolves this checkout, previews server changes and hands the exac
 		const accepted = await run(['release', 'patch'], [true]);
 		expect(accepted.exitCode).toBe(0);
 		expect(accepted.stdout.join('')).toContain('Preparation ');
-		expect(accepted.stdout.join('')).toContain('runs approve');
+		expect(accepted.stdout.join('')).toContain('runs publish');
 		expect(prepareCalls()).toHaveLength(1);
 		expect(prepareCalls()[0]?.body).toEqual({
 			repositoryId: repository.id,
@@ -341,9 +341,12 @@ for (const [bump, version] of [['patch', '1.2.4'], ['minor', '1.3.0'], ['major',
 		expect(prepared.stdout.join('')).toContain(`→ ${version}`);
 		expect(prepared.stdout.join('')).toContain('Preparation runs in prepare.yml');
 		expect(prepared.stdout.join('')).toContain(
+			`This prepares ${version}. After the version PR merges, \`publishWhen: approved-in-beepboop\`: You publish it`,
+		);
+		expect(prepared.stdout.join('')).toContain(
 			'when package manifests and configured version files match an unreleased version',
 		);
-		expect(prepared.stdout.join('')).toContain('If a publication run is created, approve it');
+		expect(prepared.stdout.join('')).toContain('Publish the run with beepboop runs publish EXECUTION_ID');
 		expect(prepared.stdout.join('')).not.toContain('releases start');
 		expect(prepareCalls()[0]?.body).toEqual({
 			repositoryId: repository.id,
@@ -431,9 +434,14 @@ test('no approval overrides a version tag on another commit, and the CLI cancels
 		problems: [],
 		blocked: [`${conflict}. Release a new version.`],
 	});
-	const forced = await run(['runs', 'approve', promotion.id, '--sourceSha', merged.sha, '--force']);
-	expect(forced.exitCode).not.toBe(0);
-	expect(forced.stderr.join('')).toContain(conflict);
+	for (const command of ['publish', 'approve']) {
+		const forced = await run(['runs', command, promotion.id, '--sourceSha', merged.sha, '--force']);
+		expect([command, forced.exitCode === 0, forced.stderr.join('')]).toEqual([
+			command,
+			false,
+			expect.stringContaining(conflict),
+		]);
+	}
 	expect((await promotions())[0]?.state).toBe('awaiting-approval');
 	const cancelled = await run(['runs', 'cancel', promotion.id, '--json']);
 	expect(cancelled.exitCode).toBe(0);
@@ -509,7 +517,7 @@ test('managed manifest plans with custom version files promote after the prepara
 	const prepared = await run(['release', 'patch', '--repository', repository.name], [true]);
 	expect(prepared.exitCode).toBe(0);
 	expect(prepared.stdout.join('')).toContain('Version files alone do not start publication');
-	expect(prepared.stdout.join('')).toContain('If a publication run is created, approve it');
+	expect(prepared.stdout.join('')).toContain('Publish the run with beepboop runs publish EXECUTION_ID');
 	expect(prepared.stdout.join('')).not.toContain('releases start');
 	expect(plans.at(-1)?.edits.map(edit => edit.path).sort()).toEqual(['VERSION', 'package.json']);
 	await world.wait(20_000);
@@ -632,7 +640,7 @@ test('workflow tag-derived bumps remain authoritative when registry packages are
 	expect(prepared.stdout.join('')).toContain('tag-based streams do not start publication after merge');
 	expect(prepared.stdout.join('')).toContain('Starting publication from this preparation is not supported yet');
 	expect(prepared.stdout.join('')).not.toContain('releases start');
-	expect(prepared.stdout.join('')).not.toContain('runs approve');
+	expect(prepared.stdout.join('')).not.toContain('runs publish');
 	const merged = world.github.push(repository, {
 		'package.json': npmManifest('widget', '2.5.0'),
 	}, 'Merge the tag-derived preparation');
@@ -707,7 +715,7 @@ test('release follows a started release through the bump, checks, dispatch and p
 		'Beepboop commits the version bump to main, then publishes once that commit is verified and its checks pass.',
 	);
 	expect(output).toContain('Failing checks or package metadata problems stop the release with a reason.');
-	expect(output).not.toContain('runs approve');
+	expect(output).not.toContain('runs publish');
 	expect(output).toContain(
 		'package  registry  version  state      \n-------  --------  -------  -----------\nwidget   npm       1.0.1    ✔ succeeded\n',
 	);
@@ -805,12 +813,12 @@ test('an already raised version with the cli start publishes once after one conf
 		},
 	});
 	expect([started.exitCode, started.stderr.join('')]).toEqual([0, '']);
-	expect(prompts).toEqual(['Start this release? The start approves it, and nothing asks for approval afterwards.']);
+	expect(prompts).toEqual(['Start this release? Starting a release also publishes it, and nothing asks again.']);
 	const output = started.stdout.join('');
 	expect(output).toContain('main already carries 1.0.1. Starting publishes it.');
 	expect(output).toContain('Beepboop publishes once the commit is verified and its checks pass.');
 	expect(output).toContain('Released 1.0.1 of octo/widget');
-	expect(output).not.toContain('runs approve');
+	expect(output).not.toContain('runs publish');
 	expect(started.activity).toContainEqual({ type: 'spinner:start', text: 'Starting the release of 1.0.1' });
 	expect(prepareCalls()).toHaveLength(1);
 	expect(world.github.dispatches.filter(dispatch => dispatch.file === 'publish.yml')).toHaveLength(1);
@@ -876,6 +884,22 @@ test('without terminal input a cli start releases and approves its publication w
 	expect(prepareCalls()).toHaveLength(1);
 	const promoted = (await promotions()).filter(execution => execution.version === '1.0.1');
 	expect(promoted.map(execution => [execution.state, execution.approvedBy])).toEqual([['succeeded', 'start']]);
+});
+
+test('a release without a cli start says up front how the prepared version publishes', async () => {
+	const repository = await seed();
+	const configuration = widgetStreams();
+	configuration.streams.main = withMain(configuration, {
+		prepare: { strategy: 'managed', bump: 'commit' },
+		promote: { ...z.looseObject({}).parse(withMain(configuration, {}).promote), approval: 'merge' },
+	});
+	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Publish on merge');
+	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	const preview = await run(['release', 'patch', '--repository', repository.name, '--dry-run']);
+	expect(preview.exitCode).toBe(0);
+	expect(preview.stdout.join('')).toContain(
+		'This prepares 1.0.1. After Beepboop commits it to main, `publishWhen: version-pr-merged`: Merging the version PR publishes it once the checks pass.',
+	);
 });
 
 test('release output carries color and links in a terminal and the same text without them', async () => {
@@ -960,7 +984,7 @@ test('release links the version PR of a started release and stops following for 
 		type: 'spinner:succeed',
 		text: `Version PR https://github.com/octo/widget/pull/${repository.pulls[0]?.number}`,
 	});
-	expect(result.stdout.join('')).toContain('Merging the version PR continues the release without another approval.');
+	expect(result.stdout.join('')).toContain('Merging the version PR publishes the release, and nothing asks again.');
 });
 
 test('release stops with the reason when the version bump fails', async () => {
