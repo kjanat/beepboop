@@ -1,6 +1,14 @@
 import { Effect } from 'effect';
 import { z } from 'zod';
-import { executionOrderSql, newestActiveFirst, validJson } from '@/automation/execution-order';
+import type { Listed } from '@/automation/execution-order';
+import {
+	executionOrderSql,
+	listed,
+	listOrder,
+	newestActiveFirst,
+	unfinishedStates,
+	validJson,
+} from '@/automation/execution-order';
 import { encodeRepository, identifyRepository } from '@/automation/package-identity';
 import { documentRow, rowDocument } from '@/automation/schemas';
 import type {
@@ -43,7 +51,31 @@ export interface UnreadableExecution {
 	repositoryId: number;
 	error: string;
 }
-const executionRow = z.object({ id: z.string(), repository_id: z.number(), document: z.string() });
+const executionRow = z.object({
+	id: z.string(),
+	repository_id: z.number(),
+	state: z.string(),
+	document: z.string(),
+	created: z.number().nullable().catch(null),
+});
+type ExecutionRow = z.output<typeof executionRow>;
+const executionColumns = `id, repository_id, state, document, ${validJson('$.createdAt')} AS created`;
+function rowOrder(row: ExecutionRow): Listed {
+	try {
+		return listed(decodeExecutionV1(JSON.parse(row.document)));
+	} catch {
+		return {
+			unfinished: unfinishedStates.some(state => state === row.state),
+			createdAt: row.created ?? Number.NEGATIVE_INFINITY,
+			id: row.id,
+		};
+	}
+}
+function rankRows(rows: ExecutionRow[]): ExecutionRow[] {
+	return rows.map(row => ({ row, order: rowOrder(row) })).sort((a, b) => listOrder(a.order, b.order)).map(entry =>
+		entry.row
+	);
+}
 const executionPage = 200;
 const legacyBlockedOutcomes: readonly string[] = ['blocked', 'awaiting-approval', 'verifying'];
 export function readableValues<T>(entries: (Readable<T> | { kind: 'unreadable' })[]): T[] {
@@ -164,14 +196,36 @@ export class Store {
 	execution(id: string): Effect.Effect<Execution | undefined, DomainError> {
 		return this.document('executions', id, decodeExecutionV1);
 	}
-	private executionRows(repositoryId?: number): Effect.Effect<z.output<typeof executionRow>[], DomainError> {
-		const rows = repositoryId === undefined
-			? this.sql.all(`SELECT id, repository_id, document FROM executions ORDER BY ${executionOrderSql} LIMIT 200`)
-			: this.sql.all(
-				`SELECT id, repository_id, document FROM executions WHERE repository_id=? ORDER BY ${executionOrderSql} LIMIT 200`,
-				repositoryId,
-			);
-		return rows.pipe(Effect.flatMap(rows => parse(z.array(executionRow), rows)));
+	private settledRows(
+		conditions: string[],
+		values: (string | number)[],
+		offset: number,
+	): Effect.Effect<ExecutionRow[], DomainError> {
+		return this.sql.all(
+			`SELECT ${executionColumns} FROM executions WHERE ${
+				[...conditions, "state<>'blocked'"].join(' AND ')
+			} ORDER BY ${executionOrderSql} LIMIT ? OFFSET ?`,
+			...values,
+			executionPage,
+			offset,
+		).pipe(Effect.flatMap(rows => parse(z.array(executionRow), rows)));
+	}
+	private blockedRows(conditions: string[], values: (string | number)[]): Effect.Effect<ExecutionRow[], DomainError> {
+		return this.sql.all(
+			`SELECT ${executionColumns} FROM executions WHERE ${
+				[...conditions, "state='blocked'"].join(' AND ')
+			} ORDER BY ${executionOrderSql}`,
+			...values,
+		).pipe(Effect.flatMap(rows => parse(z.array(executionRow), rows)));
+	}
+	private executionRows(repositoryId?: number): Effect.Effect<ExecutionRow[], DomainError> {
+		const conditions = repositoryId === undefined ? ['1=1'] : ['repository_id=?'];
+		const values = repositoryId === undefined ? [] : [repositoryId];
+		return Effect.gen({ self: this }, function*() {
+			const settled = yield* this.settledRows(conditions, values, 0);
+			const blocked = yield* this.blockedRows(conditions, values);
+			return rankRows([...settled, ...blocked]).slice(0, executionPage);
+		});
 	}
 	executions(repositoryId?: number): Effect.Effect<Execution[], DomainError> {
 		return this.executionRows(repositoryId).pipe(
@@ -180,7 +234,7 @@ export class Store {
 		);
 	}
 	filteredExecutions(filter: ExecutionFilter): Effect.Effect<Execution[], DomainError> {
-		const conditions: string[] = [], values: (string | number)[] = [];
+		const conditions: string[] = ['1=1'], values: (string | number)[] = [];
 		if (filter.repository !== undefined) {
 			conditions.push('repository_id IN (SELECT id FROM repositories WHERE LOWER(name)=LOWER(?))');
 			values.push(filter.repository);
@@ -202,26 +256,29 @@ export class Store {
 			conditions.push(`state IN (${stored.map(() => '?').join(',')})`);
 			values.push(...stored);
 		}
-		const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
 		const limit = Math.min(filter.limit ?? 200, 200);
-		const page = (offset: number, found: Execution[]): Effect.Effect<Execution[], DomainError> =>
-			this.sql.all(
-				`SELECT id, repository_id, document FROM executions${where} ORDER BY ${executionOrderSql} LIMIT ? OFFSET ?`,
-				...values,
-				executionPage,
-				offset,
-			).pipe(
-				Effect.flatMap(rows => parse(z.array(executionRow), rows)),
-				Effect.flatMap(rows => fromSync(() => rows.map(row => decodeExecutionV1(JSON.parse(row.document))))),
-				Effect.flatMap(decoded => {
-					const kept = wanted === undefined ? decoded : decoded.filter(execution => wanted.includes(execution.state));
-					const collected = [...found, ...kept];
-					return decoded.length < executionPage || collected.length >= limit
-						? Effect.succeed(collected.sort(newestActiveFirst).slice(0, limit))
-						: page(offset + executionPage, collected);
-				}),
+		const decode = (rows: ExecutionRow[]) =>
+			fromSync(() => rows.map(row => decodeExecutionV1(JSON.parse(row.document)))).pipe(
+				Effect.map(decoded =>
+					wanted === undefined ? decoded : decoded.filter(execution => wanted.includes(execution.state))
+				),
 			);
-		return page(0, []);
+		const page = (offset: number, found: Execution[]): Effect.Effect<Execution[], DomainError> =>
+			this.settledRows(conditions, values, offset).pipe(
+				Effect.flatMap(rows =>
+					decode(rows).pipe(Effect.flatMap(kept => {
+						const collected = [...found, ...kept];
+						return rows.length < executionPage || collected.length >= limit
+							? Effect.succeed(collected)
+							: page(offset + executionPage, collected);
+					}))
+				),
+			);
+		return Effect.gen({ self: this }, function*() {
+			const blocked = yield* decode(yield* this.blockedRows(conditions, values));
+			const settled = yield* page(0, []);
+			return [...blocked, ...settled].sort(newestActiveFirst).slice(0, limit);
+		});
 	}
 	readExecutions(): Effect.Effect<(Readable<Execution> | UnreadableExecution)[], DomainError> {
 		return this.executionRows().pipe(

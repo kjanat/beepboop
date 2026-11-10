@@ -115,8 +115,30 @@ test('legacy blocked rows rank by the state they decode to and stay inside the 2
 	expect(everything).toHaveLength(200);
 	expect(everything[0]).toBe('legacy-awaiting');
 	expect(everything[1]).toBe('finished-204');
-	expect(everything.at(-1)).toBe('legacy-stuck');
+	expect(everything).not.toContain('legacy-stuck');
 	expect(await listed({ stream: 'main', limit: 1 })).toEqual(['legacy-awaiting']);
+	const read = await Effect.runPromise(new Store(world.db).readExecutions());
+	expect(read.flatMap(entry => entry.kind === 'readable' ? [entry.value.id] : [])).toEqual(everything);
+});
+
+test('blocked runs that stay blocked do not push an older pending run out of the 200 row limit', async () => {
+	const base = await template();
+	const { approvedAt: _approvedAt, runId: _runId, ...plain } = base.document;
+	await insert({ ...base, document: plain }, [
+		['older-pending', 'pending', 1, 1],
+		...Array.from({ length: 201 }, (_, index): Row => [
+			`blocked-${String(index).padStart(3, '0')}`,
+			'blocked',
+			10 + index,
+			10 + index,
+			{ operation: 'prepare', attempts: 1 },
+		]),
+	]);
+	const everything = await listed({});
+	expect(everything).toHaveLength(200);
+	expect(everything[0]).toBe('older-pending');
+	expect(await listed({ stream: 'main', limit: 1 })).toEqual(['older-pending']);
+	expect(await listed({ states: 'pending,blocked', limit: 2 })).toEqual(['older-pending', 'blocked-200']);
 	const read = await Effect.runPromise(new Store(world.db).readExecutions());
 	expect(read.flatMap(entry => entry.kind === 'readable' ? [entry.value.id] : [])).toEqual(everything);
 });

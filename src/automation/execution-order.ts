@@ -15,7 +15,7 @@ export interface Listed {
 	id: string;
 }
 
-function listed(run: Execution): Listed {
+export function listed(run: Execution): Listed {
 	return { unfinished: unfinishedStates.includes(run.state), createdAt: run.createdAt, id: run.id };
 }
 
@@ -28,12 +28,10 @@ export function newestActiveFirst(a: Execution, b: Execution): number {
 	return listOrder(listed(a), listed(b));
 }
 
-const storedUnfinishedStates: readonly string[] = [...unfinishedStates, 'blocked'];
-
 export function validJson(path: string): string {
 	return `CASE WHEN json_valid(document) THEN json_extract(document,'${path}') END`;
 }
 
-export const executionOrderSql = `state IN (${storedUnfinishedStates.map(state => `'${state}'`).join(',')}) DESC, ${
+export const executionOrderSql = `state IN (${unfinishedStates.map(state => `'${state}'`).join(',')}) DESC, ${
 	validJson('$.createdAt')
 } DESC, updated_at DESC, id`;
