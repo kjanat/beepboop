@@ -180,7 +180,9 @@ export function refreshedCommands(
 	plan: Context,
 ): string {
 	if (!commands) return commands;
-	if (crateScript(commands)) return suggestedCommands(role, selection, plan) || commands;
+	if (crateScript(commands) || plainCrateLines(commands, selection)) {
+		return suggestedCommands(role, selection, plan) || commands;
+	}
 	const named = candidates.filter(pkg =>
 		[shellQuote(pkg.name), shellQuote(parentDirectory(pkg.manifest)), shellQuote(`dist/${pkg.name}`)].some(token =>
 			commands.includes(token)
@@ -190,6 +192,15 @@ export function refreshedCommands(
 		packages.length > 0 && suggestedCommands(role, { name: selection.name, packages }, plan) === commands
 	);
 	return generated ? suggestedCommands(role, selection, plan) || commands : commands;
+}
+const plainCrateLine = /^cargo publish --locked --package '([^']+)'$/;
+function plainCrateLines(commands: string, selection: Selection): boolean {
+	const lines = commands.split('\n');
+	const named = lines.map(line => plainCrateLine.exec(line)?.[1]);
+	const crates = selection.packages.filter(pkg => pkg.manager === 'cargo').map(pkg => pkg.name);
+	return named.every((name): name is string => name !== undefined)
+		&& new Set(named).size === named.length
+		&& named.length === crates.length && crates.every(name => named.includes(name));
 }
 export function crateScript(commands: string): boolean {
 	const end = commands.lastIndexOf('\n}\n');
