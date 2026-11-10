@@ -522,6 +522,48 @@ test('an observed workflow keeps its needs, its publications without a box and t
 	expect(form.querySelector('.setup-result')?.textContent).toContain('No file changes needed.');
 });
 
+test('a package ticked for an observed stream with its own publishing workflow is required', async () => {
+	const repository = world.github.create('octo/tool', {
+		'Cargo.toml': '[workspace]\nmembers = ["tool", "extra"]\n',
+		'tool/Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\nedition = "2024"\n',
+		'tool/src/main.rs': 'fn main() {}\n',
+		'extra/Cargo.toml': '[package]\nname = "extra"\nversion = "1.0.0"\nedition = "2024"\n',
+		'extra/src/lib.rs': '\n',
+		'.github/workflows/github-release.yml':
+			'name: GitHub release\non: { push: { tags: [\'v*\'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: gh release create "$GITHUB_REF_NAME"\n',
+	});
+	const api = bearer(world, await world.cliSession());
+	await applyChoices(api, repository.name, {
+		streams: [{
+			name: 'main',
+			packages: ['pkg:cargo/tool'],
+			required: ['pkg:cargo/tool'],
+			versioning: 'workspace',
+			promote: {
+				file: 'release.yml',
+				job: 'publish',
+				triggers: 'review',
+				commands: "cargo publish --package 'tool' --locked",
+				publicationSteps: {},
+			},
+			observe: [{
+				name: 'release',
+				file: 'github-release.yml',
+				ref: 'refs/tags/v*',
+				publications: ['pkg:github/octo/tool'],
+			}],
+		}],
+	});
+	world.github.merge(repository, 1);
+	passChecks(repository, world.github.head(repository));
+	const form = await open('octo/tool');
+	control(form, 'extra (extra/Cargo.toml)', window.HTMLInputElement).checked = true;
+	await act(form, 'preview');
+	expect(form.querySelector('.setup-result')?.textContent).toContain(
+		'"required": ["pkg:cargo/tool", "pkg:cargo/extra"]',
+	);
+});
+
 test('an observed stream with only a preparation workflow gets no publishing workflow', async () => {
 	const repository = world.github.create('octo/tool', {
 		'Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\nedition = "2024"\n',

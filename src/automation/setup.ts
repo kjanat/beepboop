@@ -1070,7 +1070,12 @@ export function bodyChoices(body: string, options: SetupOption[], base: SetupCho
 				name: stream.name,
 				packages,
 				versioning: versions.find(value => value !== stream.versioning) ?? versions[0] ?? stream.versioning,
-				required: stream.observe ? stream.required.filter(id => packages.includes(id)) : packages,
+				required: stream.observe
+					? [
+						...stream.required.filter(id => packages.includes(id)),
+						...packages.filter(id => !stream.packages.includes(id) && !stream.required.includes(id)),
+					]
+					: packages,
 				...(stream.versionSource ? { versionSource: stream.versionSource } : {}),
 				...(stream.observe
 					? {

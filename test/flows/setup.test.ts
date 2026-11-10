@@ -1935,3 +1935,28 @@ test('a refresh that started before a newer setup edit neither pushes nor rewrit
 		.all();
 	expect(z.array(z.object({ action: z.string() })).parse(audits.results).map(row => row.action)).toEqual([]);
 });
+
+test('a package ticked again in an observed stream becomes required again', () => {
+	const go = 'pkg:golang/github.com/kjanat/shellcheck-rs/bindings/wasm/go';
+	const npm = 'pkg:npm/%40kjanat/rshellcheck';
+	const stream: SetupChoices['streams'][number] = {
+		name: 'rshellcheck',
+		packages: [npm],
+		required: [npm],
+		versioning: 'workspace',
+		observe: [{ name: 'release', file: 'release.yml', publications: [npm] }],
+	};
+	const options: Parameters<typeof bodyChoices>[1] = [npm, go].map(id => ({
+		kind: 'package',
+		stream: 'rshellcheck',
+		package: id,
+	}));
+	const box = (id: string) =>
+		`- [x] <!-- beepboop:choice:package:rshellcheck:${encodeURIComponent(id).replaceAll('-', '%2D')} -->`;
+	const chosen = bodyChoices(`${box(npm)}\n${box(go)}\n`, options, { streams: [stream] }).streams[0];
+	expect(chosen).toMatchObject({ packages: [npm, go], required: [npm, go] });
+	const unticked = bodyChoices(`${box(npm)}\n${box(go).replace('[x]', '[ ]')}\n`, options, {
+		streams: [{ ...stream, packages: [npm, go] }],
+	}).streams[0];
+	expect(unticked).toMatchObject({ packages: [npm], required: [npm] });
+});
