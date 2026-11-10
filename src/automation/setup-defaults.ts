@@ -194,13 +194,16 @@ export function refreshedCommands(
 	return generated ? suggestedCommands(role, selection, plan) || commands : commands;
 }
 const plainCrateLine = /^cargo publish --locked --package '([^']+)'$/;
+export function plainCrateNames(commands: string): string[] | undefined {
+	const named = commands.trim().split('\n').map(line => plainCrateLine.exec(line)?.[1]);
+	return named.every((name): name is string => name !== undefined) && new Set(named).size === named.length
+		? named
+		: undefined;
+}
 function plainCrateLines(commands: string, selection: Selection): boolean {
-	const lines = commands.split('\n');
-	const named = lines.map(line => plainCrateLine.exec(line)?.[1]);
+	const named = plainCrateNames(commands);
 	const crates = selection.packages.filter(pkg => pkg.manager === 'cargo').map(pkg => pkg.name);
-	return named.every((name): name is string => name !== undefined)
-		&& new Set(named).size === named.length
-		&& named.length === crates.length && crates.every(name => named.includes(name));
+	return named !== undefined && named.length === crates.length && crates.every(name => named.includes(name));
 }
 export function crateScript(commands: string): boolean {
 	const end = commands.lastIndexOf('\n}\n');

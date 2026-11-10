@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { bearer, field } from '@root/test/support/http.ts';
-import { publishWorkflow, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
+import {
+	jsonFile,
+	licenseText,
+	npmManifest,
+	publishWorkflow,
+	widget,
+	widgetConfiguration,
+} from '@root/test/support/repositories.ts';
 import { applySetup, discoverSetup, editPull } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
@@ -1339,6 +1346,253 @@ test('an operation workflow holding plain crate lines is regenerated like the pr
 	const workflow = plan.edits.find(edit => edit.path === '.github/workflows/publish-crates.yml')?.after ?? '';
 	expect(workflow).toContain('kjanat/beepboop/actions/publish@v1');
 	expect(workflow).not.toContain('cargo publish');
+});
+
+const lintCrates = ['pkg:cargo/lint-core', 'pkg:cargo/lint'];
+const plainLines = "cargo publish --locked --package 'lint-core'\ncargo publish --locked --package 'lint'";
+const lintChoices = (commands: string): SetupChoices => ({
+	streams: [{
+		name: 'main',
+		packages: lintCrates,
+		required: lintCrates,
+		versioning: 'workspace',
+		prepare: {
+			file: 'prepare-lint.yml',
+			job: 'prepare',
+			triggers: 'review',
+			commands: 'cargo check --workspace --all-targets\ncargo test --workspace',
+			publicationSteps: {},
+		},
+		promote: { file: 'release-lint.yml', job: 'publish', triggers: 'review', commands: '', publicationSteps: {} },
+		operations: [{
+			name: 'crates',
+			file: 'publish-crates.yml',
+			job: 'crates',
+			triggers: 'review',
+			commands,
+			publicationSteps: {},
+			needs: ['promote'],
+			publications: lintCrates,
+		}],
+	}],
+});
+const lintRepository = () =>
+	world.github.create('octo/lint', {
+		'Cargo.toml': '[workspace]\nmembers = ["crates/*"]\n\n[workspace.package]\nversion = "0.1.0"\n',
+		'Cargo.lock': '# Lockfile\n',
+		'crates/core/Cargo.toml': '[package]\nname = "lint-core"\nversion.workspace = true\n',
+		'crates/cli/Cargo.toml': '[package]\nname = "lint"\nversion.workspace = true\n',
+	});
+
+type PlainVariant = {
+	publishIf?: string;
+	publishKeys?: string;
+	publishEnv?: string;
+	reportWith?: string;
+	publications?: string;
+};
+const rewrittenPlain = async (variant: PlainVariant = {}) => {
+	const repository = lintRepository();
+	const api = bearer(world, await world.cliSession());
+	const generated = await Effect.runPromise(
+		parseSetupPlan(
+			(await api('/api/repositories/setup/preview', {
+				repository: repository.name,
+				choices: lintChoices(ledgerCommand),
+			}))
+				.body,
+		),
+	);
+	const ledger = generated.edits.find(edit => edit.path === '.github/workflows/publish-crates.yml')?.after ?? '';
+	expect(ledger).toContain('kjanat/beepboop/actions/publish@');
+	const plainWorkflow = ledger.replace(
+		/ {6}- id: beepboop_publish\n {8}name: Publish selected packages\n {8}uses: [^\n]+\n {8}with:\n(?: {10}[^\n]+\n)+/,
+		`      - id: beepboop_credentials
+        uses: kjanat/beepboop/actions/credentials@v1
+        with:
+          execution-id: \${{ steps.beepboop.outputs.execution-id }}
+          aliases: '["crates-io"]'
+      - id: beepboop_publish
+        name: Publish selected packages
+${variant.publishIf ? `        if: ${variant.publishIf}\n` : ''}${variant.publishKeys ?? ''}        run: |
+          cargo publish --locked --package 'lint-core'
+          cargo publish --locked --package 'lint'
+        env:
+${
+	variant.publishEnv
+		?? ''
+}          CARGO_REGISTRY_TOKEN: \${{ fromJSON(steps.beepboop_credentials.outputs.values)['crates-io'] }}
+      - uses: kjanat/beepboop/actions/report@v1
+        if: \${{ !cancelled() && steps.beepboop.outcome == 'success' }}
+        with:
+          execution-id: \${{ steps.beepboop.outputs.execution-id }}
+${variant.reportWith ?? ''}          publications: ${
+	variant.publications?.concat('\n') ?? `|
+            [
+              {
+                "id": "pkg:cargo/lint-core",
+                "manager": "cargo",
+                "name": "lint-core",
+                "version": "\${{ fromJSON(steps.beepboop.outputs.context).version }}",
+                "required": true,
+                "outcome": "\${{ steps.beepboop_publish.outcome == 'success' && 'succeeded' || 'failed' }}"
+              },
+              {
+                "id": "pkg:cargo/lint",
+                "manager": "cargo",
+                "name": "lint",
+                "version": "\${{ fromJSON(steps.beepboop.outputs.context).version }}",
+                "required": true,
+                "outcome": "\${{ steps.beepboop_publish.outcome == 'success' && 'succeeded' || 'failed' }}"
+              }
+            ]
+`
+}`,
+	);
+	expect(plainWorkflow).toContain("cargo publish --locked --package 'lint'");
+	expect(plainWorkflow).toContain('beepboop_credentials');
+	expect(plainWorkflow).not.toContain('actions/publish@');
+	world.github.push(repository, { '.github/workflows/publish-crates.yml': plainWorkflow }, 'Integrate crates workflow');
+	const plan = await Effect.runPromise(
+		parseSetupPlan(
+			(await api('/api/repositories/setup/preview', { repository: repository.name, choices: lintChoices(plainLines) }))
+				.body,
+		),
+	);
+	expect(plan.blockers).toEqual([]);
+	return plan.edits.find(edit => edit.path === '.github/workflows/publish-crates.yml')?.after ?? '';
+};
+
+const publishStep = (workflow: string) =>
+	z.object({ jobs: z.record(z.string(), z.object({ steps: z.array(z.looseObject({})) })) }).parse(parse(workflow))
+		.jobs.crates?.steps.find(step => step.id === 'beepboop_publish');
+
+test('an integrated operation workflow with plain crate lines is rewritten to the ledger step', async () => {
+	const rewritten = await rewrittenPlain();
+	expect(rewritten).not.toContain('beepboop_credentials');
+	expect(rewritten).not.toContain('cargo publish');
+	expect(rewritten).not.toContain('actions/report@');
+	expect(publishStep(rewritten)).toMatchObject({
+		uses: 'kjanat/beepboop/actions/publish@v1',
+		with: { credentials: JSON.stringify({ CARGO_REGISTRY_TOKEN: 'crates-io' }) },
+	});
+	expect(publishStep(rewritten)).not.toHaveProperty('env');
+});
+
+test('the rewritten publish step keeps its own environment', async () => {
+	const rewritten = await rewrittenPlain({ publishEnv: '          RUSTFLAGS: -D warnings\n' });
+	expect(publishStep(rewritten)).toMatchObject({
+		uses: 'kjanat/beepboop/actions/publish@v1',
+		env: { RUSTFLAGS: '-D warnings' },
+	});
+	expect(rewritten).not.toContain('CARGO_REGISTRY_TOKEN: ${{');
+	expect(rewritten).not.toContain('beepboop_credentials');
+});
+
+test('the credential step stays while another step still reads its outputs', async () => {
+	const rewritten = await rewrittenPlain({ publishIf: "${{ steps.beepboop_credentials.outputs.values != '' }}" });
+	expect(rewritten).toContain('id: beepboop_credentials');
+	expect(publishStep(rewritten)).toMatchObject({
+		uses: 'kjanat/beepboop/actions/publish@v1',
+		with: { credentials: JSON.stringify({ CARGO_REGISTRY_TOKEN: 'crates-io' }) },
+	});
+});
+
+test('a publish step with a setting an action step cannot take stays as written', async () => {
+	const rewritten = await rewrittenPlain({ publishKeys: '        working-directory: crates\n' });
+	expect(rewritten).toBe('');
+});
+
+test('the rewritten publish step keeps its condition', async () => {
+	const rewritten = await rewrittenPlain({ publishIf: "${{ inputs.publish != 'false' }}" });
+	expect(publishStep(rewritten)).toMatchObject({
+		if: "${{ inputs.publish != 'false' }}",
+		uses: 'kjanat/beepboop/actions/publish@v1',
+	});
+});
+
+test('the rewrite keeps a report step that still reports artifacts', async () => {
+	const rewritten = await rewrittenPlain({ reportWith: '          artifacts: "[]"\n' });
+	expect(rewritten).toContain('actions/report@');
+	expect(rewritten).toContain('artifacts:');
+	expect(rewritten).not.toContain('cargo publish');
+});
+
+test('the rewrite leaves a report step with runtime publications as written', async () => {
+	const rewritten = await rewrittenPlain({ publications: '"${{ steps.results.outputs.publications }}"' });
+	expect(rewritten).toContain('steps.results.outputs.publications');
+	expect(rewritten).toContain('kjanat/beepboop/actions/publish@v1');
+});
+
+test("the adoption text states each stream's own publishWhen", async () => {
+	const stream = (name: string, approval: 'required' | 'merge') => ({
+		packages: [`pkg:npm/${name}`],
+		required: [`pkg:npm/${name}`],
+		credentials: ['npm-token'],
+		prepare: { strategy: 'managed' },
+		promote: { approval, workflow: { file: `publish-${name}.yml`, publications: [`pkg:npm/${name}`] } },
+	});
+	const repository = world.github.create('octo/pair', {
+		'packages/alpha/package.json': npmManifest('alpha', '1.0.0'),
+		'packages/beta/package.json': npmManifest('beta', '1.0.0'),
+		'README.md': '# pair\n',
+		LICENSE: licenseText,
+		'.github/workflows/publish-alpha.yml': publishWorkflow,
+		'.github/workflows/publish-beta.yml': publishWorkflow,
+		'.github/beepboop.json': jsonFile({
+			$schema: 'https://beepboop.kjanat.dev/schema/v1.json',
+			managers: ['npm', 'workflow'],
+			streams: { alpha: stream('alpha', 'merge'), beta: stream('beta', 'required') },
+		}),
+	});
+	const api = bearer(world, await world.cliSession());
+	const plan = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name })).body),
+	);
+	const adoption = (plan.adoption ?? []).join('\n');
+	const section = (name: string) =>
+		adoption.slice(adoption.indexOf(`### Stream \`${name}\``)).split('### Stream')[1] ?? '';
+	expect(section('alpha')).toContain('`publishWhen: version-pr-merged` applies:');
+	expect(section('alpha')).not.toContain('`approved-in-beepboop`');
+	expect(section('beta')).toContain('`publishWhen: approved-in-beepboop` applies');
+});
+
+const releaseText = async (setup: { stream: Record<string, unknown>; preset?: boolean }) => {
+	const repository = widget(world.github, { configured: false });
+	const configuration = { managers: ['npm', 'workflow'], streams: { main: setup.stream } };
+	if (setup.preset) world.github.create('octo/presets', { 'release.json': JSON.stringify(configuration) });
+	world.github.push(repository, {
+		'.github/beepboop.json': JSON.stringify(
+			setup.preset ? { extends: ['github>octo/presets:release'] } : configuration,
+		),
+	}, 'Configure release');
+	const api = bearer(world, await world.cliSession());
+	const plan = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name })).body),
+	);
+	return (plan.adoption ?? []).join('\n');
+};
+const widgetStream = (prepare: Record<string, unknown>, approval: string) => ({
+	packages: ['pkg:npm/widget'],
+	required: ['pkg:npm/widget'],
+	prepare: { strategy: 'managed', ...prepare },
+	promote: { publishWhen: approval, workflow: { file: 'publish.yml', publications: ['pkg:npm/widget'] } },
+});
+
+test('the adoption text uses the publishWhen a preset supplies', async () => {
+	const text = await releaseText({ stream: widgetStream({}, 'version-pr-merged'), preset: true });
+	expect(text).toContain('`publishWhen: version-pr-merged` applies');
+	expect(text).not.toContain('approved-in-beepboop');
+});
+
+test('the adoption text describes a direct-commit release without a version PR', async () => {
+	const text = await releaseText({
+		stream: widgetStream({ versionLands: 'via-direct-commit' }, 'version-commit-pushed'),
+	});
+	expect(text).toContain('Beepboop pushes a signed commit with the new version to the default branch. Then');
+	expect(text).toContain('`publishWhen: version-commit-pushed` applies');
+	expect(text).toContain('Beepboop pushes the version commit itself.');
+	expect(text).not.toContain('version PR');
 });
 
 describe('a saved plain crate publish script', () => {

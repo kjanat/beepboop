@@ -109,10 +109,14 @@ export function streamSummary(
 			} in the version PR.`,
 		);
 	} else if (stream.packages.length) {
-		lines.push('Beepboop opens the version PR itself.');
+		lines.push(
+			stream.bump === 'commit' ? 'Beepboop pushes the version commit itself.' : 'Beepboop opens the version PR itself.',
+		);
 	}
 	const versionFiles = stream.versionFiles?.map(file => file.path) ?? [];
-	if (versionFiles.length) lines.push(`The version PR also updates ${listed(versionFiles)}.`);
+	if (versionFiles.length) {
+		lines.push(`The version ${stream.bump === 'commit' ? 'commit' : 'PR'} also updates ${listed(versionFiles)}.`);
+	}
 	const needs = stream.needs ?? {};
 	if (Object.keys(needs).length) {
 		const ids = [...stream.packages, ...(stream.observe ?? []).flatMap(entry => entry.publications)];

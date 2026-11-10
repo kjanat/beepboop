@@ -19,7 +19,7 @@ import {
 	refSteps,
 	releaseSteps,
 } from '@/automation/setup-binaries';
-import { crateOutcome, ledgerCommand } from '@/automation/setup-defaults';
+import { crateOutcome, ledgerCommand, plainCrateNames } from '@/automation/setup-defaults';
 import type { SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
 import type { Package, Snapshot } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
@@ -221,6 +221,35 @@ export function integrateReleaseWorkflow(
 		}
 		return { content: renderWorkflow(combined), blockers, notes };
 	});
+}
+const migratableKeys = ['id', 'name', 'run', 'if', 'env', 'continue-on-error', 'timeout-minutes'];
+const carriedKeys = ['if', 'continue-on-error', 'timeout-minutes'];
+function migratedSettings(
+	step: Record<string, unknown>,
+	credentialNames: string[],
+): Record<string, unknown> | undefined {
+	if (Object.keys(step).some(key => !migratableKeys.includes(key))) return undefined;
+	const entries = Object.entries(object(step.env));
+	const fromCredentials = (value: unknown) =>
+		typeof value === 'string' && value.includes('steps.beepboop_credentials.');
+	if (!entries.every(([name, value]) => !fromCredentials(value) || credentialNames.includes(name))) return undefined;
+	const env = entries.filter(([, value]) => !fromCredentials(value));
+	return {
+		...Object.fromEntries(carriedKeys.flatMap(key => step[key] === undefined ? [] : [[key, step[key]]])),
+		...(env.length ? { env: Object.fromEntries(env) } : {}),
+	};
+}
+function publicationEntries(value: unknown): { id?: unknown }[] | undefined {
+	if (value === undefined || value === '') return [];
+	if (typeof value !== 'string') return undefined;
+	try {
+		const parsed: unknown = JSON.parse(value);
+		return Array.isArray(parsed) && parsed.every(entry => typeof entry === 'object' && entry !== null)
+			? parsed
+			: undefined;
+	} catch {
+		return undefined;
+	}
 }
 function integrate(
 	document: Document.Parsed,
@@ -465,6 +494,50 @@ function integrate(
 			},
 		];
 	};
+	const plainStep = operation !== 'prepare' && choice.commands.trim() === ledgerCommand
+		? steps.findIndex(step =>
+			step.id === 'beepboop_publish' && typeof step.run === 'string' && plainCrateNames(step.run)
+		)
+		: -1;
+	const carried = plainStep >= 0 ? migratedSettings(object(steps[plainStep]), Object.keys(credentials)) : undefined;
+	if (plainStep >= 0 && carried) {
+		const crates = packages.filter(pkg => pkg.manager === 'cargo').map(pkg => pkg.name).sort();
+		const named = plainCrateNames(String(steps[plainStep]?.run))?.sort();
+		if (named && crates.length === named.length && crates.every((name, index) => name === named[index])) {
+			const recorded = new Set(
+				packages.filter(pkg =>
+					!choice.publicationSteps[packageId(pkg)] && ledgerManagers.some(manager => manager === pkg.manager)
+				)
+					.map(packageId),
+			);
+			const migrated = steps.flatMap((step, index) => {
+				if (index === plainStep) {
+					return [{
+						id: 'beepboop_publish',
+						name: 'Publish selected packages',
+						...carried,
+						uses: action('publish'),
+						with: {
+							'execution-id': `\${{ steps.${id}.outputs.execution-id }}`,
+							...(aliases.length ? { credentials: JSON.stringify(credentials) } : {}),
+						},
+					}];
+				}
+				if (actionRole(step.uses) !== 'report') return [step];
+				const reported = object(step.with);
+				const results = publicationEntries(reported.publications);
+				if (!results) return [step];
+				const kept = results.filter(entry => !(typeof entry.id === 'string' && recorded.has(entry.id)));
+				return kept.length || reported.artifacts
+					? [{ ...step, with: { ...reported, publications: `${JSON.stringify(kept, null, 2)}\n` } }]
+					: [];
+			});
+			steps = migrated.filter(step =>
+				step.id !== 'beepboop_credentials'
+				|| migrated.some(other => other !== step && JSON.stringify(other).includes('steps.beepboop_credentials.'))
+			);
+		}
+	}
 	if (operation === 'prepare') {
 		const prepareSteps = steps.filter(step => actionRole(step.uses) === 'prepare');
 		if (!prepareSteps.length) {
