@@ -2,6 +2,7 @@ import { beforeEach, expect, spyOn, test } from 'bun:test';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { PromptEngine, ResolvedPromptConfig } from '@kjanat/dreamcli';
+import { gitOutput } from '@root/test/support/actions.ts';
 import { runCli, savedClient } from '@root/test/support/cli.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
 import { plugin, widget } from '@root/test/support/repositories.ts';
@@ -536,7 +537,7 @@ test('one adopt without arguments or a terminal opens the setup PR for the check
 	const checkout = join(directory, 'checkout');
 	await mkdir(checkout);
 	for (const args of [['init', '-q'], ['remote', 'add', 'origin', 'git@github.com:octo/lint.git']]) {
-		expect(Bun.spawnSync(['git', '-C', checkout, ...args]).exitCode).toBe(0);
+		gitOutput(checkout, args);
 	}
 	const cwd = spyOn(process, 'cwd').mockReturnValue(checkout);
 	const result = await app.execute(['adopt'], { isTTY: false, env: {} }).finally(() => cwd.mockRestore());

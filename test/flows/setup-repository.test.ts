@@ -543,6 +543,118 @@ test('a rebuild keeps the needs and the GitHub release publication of an observe
 	expect(plan.choices.streams[0]?.observe).toEqual([observed]);
 });
 
+test('a setup update whose saved choices lost observed needs and publications gets them back', async () => {
+	const repository = world.github.create('octo/tool', {
+		'Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\nedition = "2024"\n',
+		'src/main.rs': 'fn main() {}\n',
+		'.github/workflows/github-release.yml':
+			'name: GitHub release\non: { push: { tags: [\'v*\'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: gh release create "$GITHUB_REF_NAME"\n',
+	});
+	const api = bearer(world, await world.cliSession());
+	await applyChoices(
+		api,
+		repository.name,
+		crateChoices({
+			observe: [{
+				name: 'release',
+				file: 'github-release.yml',
+				ref: 'refs/tags/v*',
+				publications: ['pkg:github/octo/tool'],
+				needs: ['promote'],
+			}],
+		}),
+	);
+	world.github.merge(repository, 1);
+	const source = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
+	const legacy = JSON.stringify(source, (key, value) => key === 'setup' ? undefined : value, '\t');
+	world.github.push(repository, { '.github/beepboop.json': `${legacy}\n` }, 'Drop setup inputs');
+	const discover = async () =>
+		expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	await discover();
+	await world.wait(16_000);
+	const pull = repository.pulls.find(entry => entry.state === 'open');
+	if (!pull) throw new Error('Missing setup update PR');
+	const document = z.looseObject({
+		choices: z.looseObject({
+			streams: z.array(z.looseObject({ observe: z.array(z.looseObject({})).optional() })),
+		}),
+	});
+	const lose = async () => {
+		const row = z.object({ document: z.string() }).parse(
+			await world.db.prepare('SELECT document FROM onboarding WHERE repository_id=?').bind(repository.id).first(),
+		);
+		const { observationsKept: _kept, ...saved } = document.parse(JSON.parse(row.document));
+		saved.inferred = false;
+		for (const stream of saved.choices.streams) {
+			stream.observe = stream.observe?.map(({ needs: _needs, ...entry }) => ({ ...entry, publications: [] }));
+		}
+		await world.db.prepare('UPDATE onboarding SET document=? WHERE repository_id=?').bind(
+			JSON.stringify(saved),
+			repository.id,
+		).run();
+	};
+	const workflows = z.object({
+		streams: z.object({ main: z.object({ workflows: z.record(z.string(), z.looseObject({})) }) }),
+	});
+	const binding = () =>
+		workflows.parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', pull.head.ref) ?? '{}')).streams
+			.main.workflows.release;
+	const kept = () => {
+		expect(binding()).toMatchObject({ publications: ['pkg:github/octo/tool'], needs: ['promote'] });
+		expect(pull.body).not.toContain('pkg:github/octo/tool');
+		expect(pull.body).not.toContain('workflows.release.needs');
+	};
+	await lose();
+	world.github.push(repository, { 'README.md': '# tool\n' }, 'Document the tool');
+	await discover();
+	await world.wait(16_000);
+	kept();
+	await lose();
+	await editPull(world, repository, pull, tick(pull.body, 'approval:main:required'));
+	await world.wait(16_000);
+	expect(modeOf(repository, pull.head.ref).publishWhen).toBe('approved-in-beepboop');
+	kept();
+});
+
+test('a maintenance rebuild keeps observed needs and publications that explicit choices removed', async () => {
+	const repository = world.github.create('octo/tool', {
+		'Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\nedition = "2024"\n',
+		'src/main.rs': 'fn main() {}\n',
+		'.github/workflows/github-release.yml':
+			'name: GitHub release\non: { push: { tags: [\'v*\'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: gh release create "$GITHUB_REF_NAME"\n',
+	});
+	const api = bearer(world, await world.cliSession());
+	const observed = (entry: Partial<NonNullable<SetupChoices['streams'][number]['observe']>[number]>) =>
+		crateChoices({
+			observe: [{ name: 'release', file: 'github-release.yml', ref: 'refs/tags/v*', publications: [], ...entry }],
+		});
+	await applyChoices(api, repository.name, observed({ publications: ['pkg:github/octo/tool'], needs: ['promote'] }));
+	world.github.merge(repository, 1);
+	const source = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
+	const legacy = JSON.stringify(source, (key, value) => key === 'setup' ? undefined : value, '\t');
+	world.github.push(repository, { '.github/beepboop.json': `${legacy}\n` }, 'Drop setup inputs');
+	const discover = async () =>
+		expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	await discover();
+	await world.wait(16_000);
+	const pull = repository.pulls.find(entry => entry.state === 'open');
+	if (!pull) throw new Error('Missing setup update PR');
+	await applyChoices(api, repository.name, observed({}));
+	const workflows = z.object({
+		streams: z.object({ main: z.object({ workflows: z.record(z.string(), z.looseObject({})) }) }),
+	});
+	const binding = () =>
+		workflows.parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', pull.head.ref) ?? '{}')).streams
+			.main.workflows.release;
+	expect(binding()).toMatchObject({ publications: [] });
+	expect(binding()).not.toHaveProperty('needs');
+	world.github.push(repository, { 'README.md': '# tool\n' }, 'Document the tool');
+	await discover();
+	await world.wait(16_000);
+	expect(binding()).toMatchObject({ publications: [] });
+	expect(binding()).not.toHaveProperty('needs');
+});
+
 test('unticking a package drops it from the observed workflow that publishes it', async () => {
 	const repository = world.github.create('octo/tool', {
 		'Cargo.toml': '[workspace]\nmembers = ["tool", "extra"]\n',
