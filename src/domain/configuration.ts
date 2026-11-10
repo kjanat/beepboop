@@ -23,6 +23,18 @@ import { isDiagnosticCode } from '@/contract/diagnostics';
 import { identifierPattern } from '@/contract/ids';
 import { releaseStarts, versionBump } from '@/contract/release-start';
 import { actionsRevisionPattern, workflowSetup } from '@/contract/setup';
+import {
+	approvalOfPublishWhen,
+	bumpOfVersionLands,
+	mustPublishSentence,
+	publishWhen,
+	publishWhenDescription,
+	versioningOfVersionScope,
+	versionLands,
+	versionLandsDescription,
+	versionScope,
+	versionScopeDescription,
+} from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
 import { dependencyOrder } from '@/dependency-order';
 import { textSchema as nonempty } from '@/model';
@@ -137,7 +149,8 @@ function streamSchema() {
 	const binding = bindingSchema();
 	const workflows = z.record(identifier, binding);
 	const shape = z.strictObject({
-		versioning: z.enum(['workspace', 'independent', 'none']).default('workspace'),
+		versionScope: versionScope.optional().describe(versionScopeDescription),
+		versioning: z.enum(['workspace', 'independent', 'none']).optional().meta({ deprecated: true }),
 		versionFiles: z.array(versionFileSchema).optional(),
 		versionSource: z.strictObject({
 			kind: z.literal('tags'),
@@ -148,13 +161,16 @@ function streamSchema() {
 			version: z.literal('manual').optional(),
 			workflow: binding.optional(),
 			strategy: z.enum(['managed', 'workflow']).optional(),
-			bump: versionBump.optional(),
+			versionLands: versionLands.optional().describe(versionLandsDescription),
+			bump: versionBump.optional().meta({ deprecated: true }),
 		}).default({}),
 		promote: z.strictObject({
-			approval: z.enum(['required', 'merge', 'push']).default('required'),
+			publishWhen: publishWhen.optional().describe(publishWhenDescription),
+			approval: z.enum(['required', 'merge', 'push']).optional().meta({ deprecated: true }),
 			workflow: binding.optional(),
-		}).default({ approval: 'required' }),
-		start: releaseStarts.optional(),
+		}).default({}),
+		startFrom: releaseStarts.optional(),
+		start: releaseStarts.optional().meta({ deprecated: true }),
 		workflows: workflows.superRefine((value, ctx) => {
 			for (const name of reservedOperations) {
 				if (Object.hasOwn(value, name)) {
@@ -162,7 +178,8 @@ function streamSchema() {
 				}
 			}
 		}).default({}),
-		required: packageReferences.default([]),
+		mustPublish: packageReferences.optional().describe(mustPublishSentence),
+		required: packageReferences.optional().meta({ deprecated: true }),
 		needs: z.record(nonempty, z.array(nonempty)).optional().describe(
 			'Publications that must finish before each listed publication, keyed by package reference',
 		),
@@ -185,21 +202,27 @@ function streamSchema() {
 		...(stream.versionFiles === undefined ? {} : { versionFiles: stream.versionFiles }),
 		...(stream.versionSource ? { versionSource: stream.versionSource } : {}),
 		...(stream.packages === undefined ? {} : { packages: stream.packages }),
-		versioning: stream.versioning,
+		versioning: stream.versionScope ? versioningOfVersionScope[stream.versionScope] : stream.versioning ?? 'workspace',
 		concurrency: stream.concurrency,
 		prepare: {
 			...(stream.prepare.strategy === undefined ? {} : { strategy: stream.prepare.strategy }),
 			version: 'manual' as const,
 			...(stream.prepare.workflow ? { workflow: stream.prepare.workflow } : {}),
-			...(stream.prepare.bump ? { bump: stream.prepare.bump } : {}),
+			...(stream.prepare.versionLands
+				? { bump: bumpOfVersionLands[stream.prepare.versionLands] }
+				: stream.prepare.bump
+				? { bump: stream.prepare.bump }
+				: {}),
 		},
 		promote: {
-			approval: stream.promote.approval,
+			approval: stream.promote.publishWhen
+				? approvalOfPublishWhen[stream.promote.publishWhen]
+				: stream.promote.approval ?? 'required',
 			...(stream.promote.workflow ? { workflow: stream.promote.workflow } : {}),
 		},
-		...(stream.start ? { start: stream.start } : {}),
+		...(stream.startFrom ?? stream.start ? { start: stream.startFrom ?? stream.start } : {}),
 		workflows: stream.workflows,
-		required: stream.required,
+		required: stream.mustPublish ?? stream.required ?? [],
 		...(stream.needs === undefined ? {} : { needs: stream.needs }),
 		credentials: stream.credentials,
 		channels: { stable: stream.channels.stable, prerelease: stream.channels.prerelease },
@@ -303,7 +326,7 @@ function graph(stream: Stream, path: (string | number)[], ctx: z.RefinementCtx):
 			}
 		}
 		if (operation.refs && !approved(name)) {
-			issue(ctx, 'unknown-reference', 'Ref publication requires promotion approval in its dependencies', [
+			issue(ctx, 'unknown-reference', 'Ref publication must run after the publishing workflow (promote)', [
 				...where(name),
 				'refs',
 			]);

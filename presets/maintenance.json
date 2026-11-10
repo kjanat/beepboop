@@ -4,7 +4,7 @@
 	],
 	"streams": {
 		"maintenance": {
-			"versioning": "none",
+			"versionScope": "none",
 			"concurrency": "supersede-pending"
 		}
 	}

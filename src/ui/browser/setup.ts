@@ -2,18 +2,24 @@ import { Effect, Result } from 'effect';
 import { publishable } from '@/automation/package-publication';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices, SetupPlan, Versioning } from '@/automation/setup-types';
-import {
-	approvalChoiceLabels,
-	approvalPolicies,
-	bumpChoiceLabels,
-	startChannels,
-	startChoiceLabels,
-	versionBumps,
-} from '@/contract/release-start';
+import { approvalPolicies, startChannels, versionBumps } from '@/contract/release-start';
 import { routes } from '@/contract/routes';
 import { setupStream } from '@/contract/setup';
 import type { ChoicesField, Editors, StreamField } from '@/contract/setup-fields';
 import { jsonFields, streamFields } from '@/contract/setup-fields';
+import {
+	publishWhenNames,
+	publishWhenQuestion,
+	publishWhenSentences,
+	startFromEffect,
+	startFromSentences,
+	versionLandsNames,
+	versionLandsQuestion,
+	versionLandsSentences,
+	versionScopeNames,
+	versionScopeQuestion,
+	versionScopeSentences,
+} from '@/contract/setup-terms';
 import { api } from '@/ui/browser/api';
 import { feedbackFor, find, Refused, refuse, show } from '@/ui/browser/dom';
 import { element, hint, issueText, jsonEditor, label, select, text, workflow } from '@/ui/browser/setup-fields';
@@ -124,35 +130,43 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 		name.required = true;
 		name.pattern = '[a-z][a-z0-9\\-]{0,63}';
 		hint(groupAdvanced, 'A release group is a set of packages released together. Most repositories only need one.');
-		const versioning = select(groupAdvanced, 'How package versions change', [
-			['workspace', 'Give the selected packages the same version'],
-			['independent', 'Version each package separately'],
-			...(value.versioning === 'none'
-				? [['none', 'Keep the configured custom version policy']] as [string, string][]
-				: []),
+		const scope = (entry: Versioning): [string, string] => [
+			entry,
+			`${versionScopeNames[entry]}: ${versionScopeSentences[entry]}`,
+		];
+		const versioning = select(groupAdvanced, `versionScope: ${versionScopeQuestion}`, [
+			scope('workspace'),
+			scope('independent'),
+			...(value.versioning === 'none' ? [scope('none')] : []),
 		], value.versioning);
 		versioning.dataset.field = 'versioning';
 		hint(groupAdvanced, 'Choose the actual version when preparing a release. Setup does not change package versions.');
 		const releasing = element('fieldset');
-		releasing.append(element('legend', 'How releases start and publish'));
+		releasing.append(element('legend', 'How a release starts and publishes'));
 		const starts = startChannels.map(channel => {
 			const input = element('input');
 			input.type = 'checkbox';
 			input.value = channel;
 			input.dataset.field = 'start';
 			input.checked = value.start?.includes(channel) ?? false;
-			label(releasing, `Start a release from ${startChoiceLabels[channel].replaceAll('`', '')}`, input);
+			label(releasing, `startFrom ${channel}: ${startFromSentences[channel].replaceAll('`', '')}`, input);
 			return { channel, input };
 		});
-		hint(releasing, 'A start approves the whole release. Nothing asks for approval after it.');
-		const bump = select(releasing, 'How a version bump reaches the default branch', [
+		hint(releasing, startFromEffect);
+		const bump = select(releasing, `versionLands: ${versionLandsQuestion}`, [
 			['', 'Choose'],
-			...versionBumps.map((entry): [string, string] => [entry, bumpChoiceLabels[entry]]),
+			...versionBumps.map((entry): [string, string] => [
+				entry,
+				`${versionLandsNames[entry]}: ${versionLandsSentences[entry]}`,
+			]),
 		], value.bump ?? '');
 		bump.dataset.field = 'bump';
-		const approval = select(releasing, 'When a version raised without a start publishes', [
+		const approval = select(releasing, `publishWhen: ${publishWhenQuestion}`, [
 			['', 'Choose'],
-			...approvalPolicies.map((entry): [string, string] => [entry, approvalChoiceLabels[entry]]),
+			...approvalPolicies.map((entry): [string, string] => [
+				entry,
+				`${publishWhenNames[entry]}: ${publishWhenSentences[entry].replaceAll('`', '')}`,
+			]),
 		], value.approval ?? '');
 		approval.dataset.field = 'approval';
 		body.append(releasing);

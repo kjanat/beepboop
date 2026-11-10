@@ -1,6 +1,14 @@
 import { parse } from 'yaml';
+import { readableConfiguration } from '@/automation/configuration-names';
 import { listed } from '@/automation/setup-summary';
 import type { Edit, Snapshot } from '@/automation/types';
+import {
+	approvalOfPublishWhen,
+	bumpOfVersionLands,
+	publishWhenSentences,
+	startFromEffect,
+	versionLandsSentences,
+} from '@/contract/setup-terms';
 
 export const onboardingBranch = 'automation/onboarding';
 export const updateBranch = 'automation/setup-update';
@@ -132,10 +140,18 @@ function leafChanges(before: Record<string, unknown>, after: Record<string, unkn
 		.map(path => ({ path, before: old.get(path), after: next.get(path) }));
 }
 const setupPath = /(?:^|\.)setup(?:\.|$)/;
+const renamedLine =
+	'Renames the settings to their current names: `publishWhen`, `versionLands`, `startFrom`, `mustPublish`, `versionScope` and `existingTriggers`.';
+function readable(source: string): Record<string, unknown> {
+	return record(readableConfiguration(document(source)));
+}
+function renamesSettings(source: string): boolean {
+	return !!source && !same(record(document(source)), readable(source));
+}
 const labelled: { pattern: RegExp; label: string }[] = [
-	{ pattern: /^streams\.[^.]+\.promote\.approval$/, label: 'approval' },
-	{ pattern: /^streams\.[^.]+\.start$/, label: 'release starts' },
-	{ pattern: /^streams\.[^.]+\.prepare\.bump$/, label: 'version bump' },
+	{ pattern: /^streams\.[^.]+\.promote\.publishWhen$/, label: 'publishWhen' },
+	{ pattern: /^streams\.[^.]+\.startFrom$/, label: 'startFrom' },
+	{ pattern: /^streams\.[^.]+\.prepare\.versionLands$/, label: 'versionLands' },
 	{ pattern: /(?:^|\.)publications$|^managers$/, label: 'publications' },
 	{ pattern: /^streams\.[^.]+\.workflows\.[^.]+\.needs(?:Jobs)?$/, label: 'workflow order' },
 ];
@@ -173,33 +189,24 @@ function valueChange(before: unknown, after: unknown): string {
 	}
 	return `${shown(before)} → ${shown(after)}`;
 }
-const approvalEffects: Record<string, string> = {
-	required: 'A version raised without a start waits for your approval in Beepboop.',
-	merge: 'Merging a version PR now publishes the release with no approval in Beepboop.',
-	push: 'A signed commit with passing checks that raises the version now publishes it with no approval.',
-};
-const bumpEffects: Record<string, string> = {
-	commit: 'Beepboop pushes a signed commit to the default branch.',
-	pr: 'Beepboop opens a version PR, and merging it continues the release.',
-};
 function effect(path: string, after: unknown): string | undefined {
-	if (path.endsWith('.promote.approval') && typeof after === 'string') return approvalEffects[after];
-	if (path.endsWith('.prepare.bump') && typeof after === 'string') return bumpEffects[after];
-	if (/\.start$/.test(path) && Array.isArray(after) && after.length) return 'A start approves the whole release.';
+	if (path.endsWith('.promote.publishWhen')) {
+		const policy = Object.entries(approvalOfPublishWhen).find(([name]) => name === after)?.[1];
+		return policy && publishWhenSentences[policy];
+	}
+	if (path.endsWith('.prepare.versionLands')) {
+		const bump = Object.entries(bumpOfVersionLands).find(([name]) => name === after)?.[1];
+		return bump && versionLandsSentences[bump];
+	}
+	if (/\.startFrom$/.test(path) && Array.isArray(after) && after.length) return startFromEffect;
 	if (
 		path.endsWith('publications') && Array.isArray(after)
 		&& after.some(value => typeof value === 'string' && value.startsWith('github-release:'))
 	) return 'This workflow now publishes the GitHub release.';
 	return undefined;
 }
-const subjects: { pattern: RegExp; label: string }[] = [
-	{ pattern: /^promote\.approval$/, label: 'Approval' },
-	{ pattern: /^start$/, label: 'Release starts' },
-	{ pattern: /^prepare\.bump$/, label: 'Version bump' },
-];
 function behaviour({ path, before, after }: LeafChange): string {
-	const rest = path.replace(/^streams\.[^.]+\./, '');
-	const subject = subjects.find(entry => entry.pattern.test(rest))?.label ?? `\`${rest}\``;
+	const subject = `\`${path.replace(/^streams\.[^.]+\./, '')}\``;
 	if (path.split('.').includes('credentials')) return `${subject} changes.`;
 	const consequence = effect(path, after);
 	return `${subject}: ${valueChange(before, after)}.${consequence ? ` ${consequence}` : ''}`;
@@ -214,11 +221,12 @@ export function behaviourChanges(edits: Edit[]): string[] {
 	const add = (group: string, line: string) => groups.set(group, [...(groups.get(group) ?? []), line]);
 	for (const edit of edits) {
 		if (edit.path === configurationPath) {
-			for (const change of leafChanges(record(document(edit.before)), record(document(edit.after)))) {
+			for (const change of leafChanges(readable(edit.before), readable(edit.after))) {
 				if (setupPath.test(change.path)) continue;
 				const stream = /^streams\.([^.]+)\./.exec(change.path)?.[1];
 				add(stream ? `\`${stream}\`` : 'Repository', behaviour(change));
 			}
+			if (renamesSettings(edit.before)) add('Repository', renamedLine);
 			continue;
 		}
 		if (!edit.before) {
@@ -250,7 +258,7 @@ export function behaviourChanges(edits: Edit[]): string[] {
 	const configuration = edits.find(edit => edit.path === configurationPath);
 	if (
 		configuration
-		&& leafChanges(record(document(configuration.before)), record(document(configuration.after))).some(change =>
+		&& leafChanges(readable(configuration.before), readable(configuration.after)).some(change =>
 			setupPath.test(change.path)
 		)
 	) add('Repository', '`.github/beepboop.json` records the setup input that generates its workflows.');
@@ -268,7 +276,14 @@ export function describeEdits(edits: Edit[]): FileChanges[] {
 		if (!edit.before) return { path: edit.path, changes: [{ text: 'adds the file' }] };
 		const before = document(edit.before), after = document(edit.after);
 		if (!before || !after) return { path: edit.path, changes: [{ text: 'changes the file' }] };
-		const changes = edit.path.endsWith('.json') ? configurationChanges(before, after) : workflowChanges(before, after);
+		const changes = edit.path === configurationPath
+			? [
+				...(renamesSettings(edit.before) ? [{ text: renamedLine, label: 'setting names' }] : []),
+				...configurationChanges(readable(edit.before), readable(edit.after)),
+			]
+			: edit.path.endsWith('.json')
+			? configurationChanges(before, after)
+			: workflowChanges(before, after);
 		return { path: edit.path, changes: changes.length ? changes : [{ text: 'changes formatting' }] };
 	});
 }

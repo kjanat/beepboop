@@ -17,6 +17,7 @@ import type { Client } from '@/cli/client';
 import { choicesEditors, streamEditors, workflowEditors } from '@/cli/setup-choices';
 import { routes } from '@/contract/routes';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
+import { publishWhenQuestion, startFromQuestion, versionLandsQuestion } from '@/contract/setup-terms';
 
 let world: World;
 let directory: string;
@@ -420,7 +421,7 @@ test('setup PRs and their refreshes are assigned to the owner with a review requ
 
 const lintSummary = [
 	'Release group lint:',
-	'- After you approve a release, release-lint.yml (new) pushes the tag lint-v<version>.',
+	'- When a release publishes, release-lint.yml (new) pushes the tag lint-v<version>.',
 	'- Tags matching lint-v* start release.yml. It publishes @octo/lint to npm, and Beepboop records each run. Its triggers stay as they are.',
 	'- After release.yml succeeds, publish-crates.yml (new) publishes lint and lint-core to crates.io.',
 	'- prepare-release.yml (new) runs `cargo update --workspace` and `cargo test --workspace --locked` in the version PR.',
@@ -439,8 +440,8 @@ function lintProposal(repository: { name: string }, sha: string) {
 		'lint        crates.io  crates/cli/Cargo.toml     required',
 		'lint-core   crates.io  crates/core/Cargo.toml    required',
 		'The setup PR writes .github/beepboop.json, .github/workflows/prepare-release.yml, .github/workflows/release-lint.yml and .github/workflows/publish-crates.yml.',
-		'lint: tick when a version raised without a start publishes. Until you do, Beepboop waits for your approval.',
-		'lint: tick how a version bump reaches the default branch. Until you do, Beepboop opens a version PR.',
+		'lint: tick `publishWhen`. Until you do, it is `approved-in-beepboop`: You publish it: the Publish button in Beepboop or `beepboop runs publish`. Approving or merging the version PR on GitHub does not publish.',
+		'lint: tick `versionLands`. Until you do, it is `via-version-pr`: Beepboop opens a version PR, and merging it puts the new version on the default branch.',
 		'lint (crates/cli/Cargo.toml) lacks README, description, license, a license file, repository. Beepboop holds its release until the package has them.',
 		'lint-core (crates/core/Cargo.toml) lacks README, description, license, a license file, repository. Beepboop holds its release until the package has them.',
 		'@octo/lint (bindings/js/package.json) lacks README, description, license, a license file, repository. Beepboop holds its release until the package has them.',
@@ -506,7 +507,7 @@ test('one adopt in a terminal shows the proposal, asks once and opens the setup 
 	);
 	expect(body).toContain('  - Publication: `release-lint.yml`, new in this PR\n');
 	expect(body).toContain(
-		'Only Beepboop dispatches `prepare-release.yml`, `release-lint.yml` and `publish-crates.yml`, which this PR creates.',
+		'- `prepare-release.yml`, `release-lint.yml` and `publish-crates.yml`: this PR creates them, and only Beepboop dispatches them.',
 	);
 	expect(body).toContain(
 		'### Held packages\n\n- `lint` (`crates/cli/Cargo.toml`) lacks README, description, license, a license file, repository. Beepboop holds its release until the package has them.\n',
@@ -760,7 +761,7 @@ test('automatic triggers default to review and retain an explicit saved handover
 		env: {},
 	});
 	expect(blocked.exitCode).toBe(1);
-	const trigger = initial.prompts.find(prompt => prompt.message.includes('who starts this workflow'));
+	const trigger = initial.prompts.find(prompt => prompt.message.includes('existingTriggers'));
 	expect(trigger?.kind === 'select' && trigger.choices[0].value).toBe('review');
 	expect(repository.pulls).toHaveLength(0);
 	expect(
@@ -777,7 +778,7 @@ test('automatic triggers default to review and retain an explicit saved handover
 		env: {},
 	});
 	expect(reviewed.exitCode).toBe(0);
-	const handover = saved.prompts.find(prompt => prompt.message.includes('who starts this workflow'));
+	const handover = saved.prompts.find(prompt => prompt.message.includes('existingTriggers'));
 	expect(handover?.kind === 'select' && handover.choices[0].value).toBe('dispatchOnly');
 });
 
@@ -802,7 +803,7 @@ test('shared preparation does not ask for a second trigger handover', async () =
 		env: {},
 	});
 	expect(result.exitCode).toBe(1);
-	expect(session.prompts.filter(prompt => prompt.message.includes('who starts this workflow'))).toHaveLength(1);
+	expect(session.prompts.filter(prompt => prompt.message.includes('existingTriggers'))).toHaveLength(1);
 	expect(result.stdout.join('')).toContain('shared workflows need separate preparation and publication jobs');
 	const headless = await app.execute(['repositories', 'adopt', repository.name], { isTTY: true, env: {} });
 	expect([headless.exitCode, headless.stderr.join('')]).toEqual([1, '']);
@@ -852,7 +853,8 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 		'Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\nedition = "2024"\n\n[dependencies]\nnix = "0.30"\n',
 		'src/main.rs': 'fn main() {}\n',
 	});
-	const customize = 'Customize filenames, versioning, approval, release groups, advanced fields or Actions revision?';
+	const customize =
+		'Customize filenames, versionScope, publishWhen, release groups, advanced fields or Actions revision?';
 	const session = defaults(
 		{
 			'main: publishing workflow filename': 'release-tool.yml',
@@ -875,9 +877,9 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 	) {
 		expect(messages).toContain(`main: build for ${target}?`);
 	}
-	expect(messages).toContain('main: start a release from (a start approves the whole release)');
-	expect(messages).toContain('main: how a version bump reaches the default branch');
-	expect(messages).toContain('main: when a version raised without a start publishes');
+	expect(messages).toContain(`main: startFrom. ${startFromQuestion}`);
+	expect(messages).toContain(`main: versionLands. ${versionLandsQuestion}`);
+	expect(messages).toContain(`main: publishWhen. ${publishWhenQuestion}`);
 	for (const field of ['versionSource', 'versionFiles', 'needs', 'operations']) {
 		expect(messages).toContain(`main: ${field} as JSON (empty leaves it out)`);
 	}

@@ -6,6 +6,7 @@ import type { SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '@/contract/setup';
 import { binaryTargets, leftOut, setupWorkflow } from '@/contract/setup';
 import type { Editors, WorkflowField } from '@/contract/setup-fields';
+import { existingTriggersNames, existingTriggersQuestion, existingTriggersSentences } from '@/contract/setup-terms';
 import { node, Refused } from '@/ui/browser/dom';
 
 export const workflowEditors = {
@@ -221,9 +222,9 @@ export function workflow(
 	const jobOverride = element('details');
 	jobOverride.append(element('summary', 'Choose a different job (optional)'));
 	controls.append(jobOverride);
-	const triggers = select(controls, 'Who starts this workflow?', [
-		['review', 'Keep the current triggers and check compatibility in preview'],
-		['dispatchOnly', 'Beepboop only (replace current automatic triggers)'],
+	const triggers = select(controls, `existingTriggers: ${existingTriggersQuestion}`, [
+		['review', `${existingTriggersNames.review}: ${existingTriggersSentences.review}`],
+		['dispatchOnly', `${existingTriggersNames.dispatchOnly}: ${existingTriggersSentences.dispatchOnly}`],
 	], initial?.triggers === 'dispatchOnly' ? 'dispatchOnly' : 'review');
 	triggers.dataset.field = 'triggers';
 	const triggerHelp = hint(
@@ -251,7 +252,7 @@ export function workflow(
 	);
 	hint(
 		commandBox,
-		`Write shell commands, one per line. GitHub Actions runs them in Bash after checking out the approved commit.${
+		`Write shell commands, one per line. GitHub Actions runs them in Bash after checking out the release commit.${
 			preparing ? '' : ' A lone beepboop publish line publishes Cargo, npm and PyPI packages through Beepboop.'
 		} Do not paste workflow YAML here.`,
 	);
@@ -395,7 +396,7 @@ export function workflow(
 				? `${reasons.join(' ')} Choose a preparation job above to handle this.`
 				: 'Beepboop edits the version files and opens the PR itself. Only the publishing workflow is needed.'
 			: shared
-			? 'One workflow file with two jobs. Beepboop runs preparation first, then publishing after the release PR is merged and approved.'
+			? 'One workflow file with two jobs. Beepboop runs preparation first, then publishing when `publishWhen` says the version publishes.'
 			: preparing
 			? 'Use a job that updates lockfiles and checks the proposed versions.'
 			: creating

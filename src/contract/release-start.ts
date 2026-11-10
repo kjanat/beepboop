@@ -16,14 +16,14 @@ export const releaseStarts = z.array(releaseStart).refine(
 ).meta({
 	id: 'releaseStarts',
 	description:
-		'Where a release of this stream can start. A start approves the whole release: the version bump, publication, binaries, tags and the GitHub release run without another approval.',
+		'Where a release of this stream starts. Starting a release also publishes it: the version bump, publication, binaries, tags and the GitHub release run, and nothing asks again.',
 });
 export const versionBumps = ['commit', 'pr'] as const;
 export type VersionBump = typeof versionBumps[number];
 export const versionBump = z.enum(versionBumps).meta({
 	id: 'versionBump',
 	description:
-		'How Beepboop applies a version bump: commit pushes a signed bot commit to the default branch, pr opens a version PR.',
+		'Earlier name of versionLands: commit pushes a signed bot commit to the default branch, pr opens a version PR.',
 });
 export const startWorkflowFile = 'start-release.yml';
 
@@ -35,19 +35,5 @@ export const startLabels: Record<StartChannel, string> = {
 	dashboard: 'the dashboard',
 	cli: 'the CLI',
 };
-export const startChoiceLabels: Record<StartChannel, string> = {
-	action: `the Start release workflow in GitHub Actions (${startWorkflowFile})`,
-	dashboard: 'the Release button in the Beepboop dashboard',
-	cli: '`beepboop release`',
-};
-export const bumpChoiceLabels: Record<VersionBump, string> = {
-	commit: 'Beepboop pushes a signed commit to the default branch',
-	pr: 'Beepboop opens a version PR, and merging it continues the release',
-};
 export const approvalPolicies = ['required', 'merge', 'push'] as const;
 export type ApprovalPolicy = typeof approvalPolicies[number];
-export const approvalChoiceLabels: Record<ApprovalPolicy, string> = {
-	required: 'After you approve it in Beepboop',
-	merge: 'When its version PR merges',
-	push: 'When a signed commit with passing checks raises it, without approval',
-};
