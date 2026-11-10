@@ -43,6 +43,8 @@ export interface UnreadableExecution {
 	error: string;
 }
 const executionRow = z.object({ id: z.string(), repository_id: z.number(), document: z.string() });
+const executionPage = 200;
+const legacyBlockedOutcomes: readonly string[] = ['blocked', 'awaiting-approval', 'verifying'];
 export function readableValues<T>(entries: (Readable<T> | { kind: 'unreadable' })[]): T[] {
 	return entries.flatMap(entry => entry.kind === 'readable' ? [entry.value] : []);
 }
@@ -192,20 +194,32 @@ export class Store {
 			conditions.push(`json_extract(document,'$.${column}')=?`);
 			values.push(value);
 		}
-		if (filter.states !== undefined) {
-			const states = filter.states.split(',');
-			conditions.push(`state IN (${states.map(() => '?').join(',')})`);
-			values.push(...states);
+		const wanted = filter.states?.split(',');
+		if (wanted !== undefined) {
+			const stored = wanted.some(state => legacyBlockedOutcomes.includes(state)) ? [...wanted, 'blocked'] : wanted;
+			conditions.push(`state IN (${stored.map(() => '?').join(',')})`);
+			values.push(...stored);
 		}
 		const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
-		return this.sql.all(
-			`SELECT id, repository_id, document FROM executions${where} ORDER BY updated_at DESC LIMIT ?`,
-			...values,
-			Math.min(filter.limit ?? 200, 200),
-		).pipe(
-			Effect.flatMap(rows => parse(z.array(executionRow), rows)),
-			Effect.flatMap(rows => fromSync(() => rows.map(row => decodeExecutionV1(JSON.parse(row.document))))),
-		);
+		const limit = Math.min(filter.limit ?? 200, 200);
+		const page = (offset: number, found: Execution[]): Effect.Effect<Execution[], DomainError> =>
+			this.sql.all(
+				`SELECT id, repository_id, document FROM executions${where} ORDER BY updated_at DESC, id LIMIT ? OFFSET ?`,
+				...values,
+				executionPage,
+				offset,
+			).pipe(
+				Effect.flatMap(rows => parse(z.array(executionRow), rows)),
+				Effect.flatMap(rows => fromSync(() => rows.map(row => decodeExecutionV1(JSON.parse(row.document))))),
+				Effect.flatMap(decoded => {
+					const kept = wanted === undefined ? decoded : decoded.filter(execution => wanted.includes(execution.state));
+					const collected = [...found, ...kept];
+					return decoded.length < executionPage || collected.length >= limit
+						? Effect.succeed(collected.slice(0, limit))
+						: page(offset + executionPage, collected);
+				}),
+			);
+		return page(0, []);
 	}
 	readExecutions(): Effect.Effect<(Readable<Execution> | UnreadableExecution)[], DomainError> {
 		return this.executionRows().pipe(

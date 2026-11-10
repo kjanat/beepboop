@@ -32,21 +32,6 @@ export function listedRepository(
 	});
 }
 
-export function filterRuns(
-	runs: readonly ExecutionView[],
-	repository: string | undefined,
-	filters: RunFilters,
-): ExecutionView[] {
-	const matching = runs.filter(run =>
-		(repository === undefined || run.repository.toLowerCase() === repository.toLowerCase())
-		&& (filters.stream === undefined || run.stream === filters.stream)
-		&& (filters.operation === undefined || run.operation === filters.operation)
-		&& (!filters.state.length || filters.state.includes(run.state))
-		&& (filters.version === undefined || run.version === filters.version)
-	);
-	return filters.limit === undefined ? matching : matching.slice(0, filters.limit);
-}
-
 export function slimRun(run: ExecutionView) {
 	const publications = Array.isArray(run.publications)
 		? run.publications.flatMap((entry: unknown) => {

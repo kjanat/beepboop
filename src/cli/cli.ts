@@ -9,7 +9,7 @@ import { readJson } from '@/cli/json-file';
 import { lookOf, step } from '@/cli/look';
 import { emit, failure, prompted, unprompted } from '@/cli/output';
 import { checkoutRepository, releaseRepository, releaseVersion } from '@/cli/release';
-import { filterRuns, listedRepository, serverFilter, slimRun } from '@/cli/runs';
+import { listedRepository, serverFilter, slimRun } from '@/cli/runs';
 import { setupRepository } from '@/cli/setup';
 import { stdin } from '@/cli/stdin';
 import {
@@ -287,15 +287,11 @@ const runs = group('runs').description('Follow, publish, cancel and recover rele
 						limit: flags.limit,
 					};
 					const repository = yield* listedRepository(client, filters);
-					const found = filterRuns(
-						yield* step(
-							out,
-							'Listing release operations',
-							client.call(routes.executionsList, serverFilter(repository, filters)),
-							rows => `${rows.length} ${rows.length === 1 ? 'operation' : 'operations'}`,
-						),
-						repository,
-						filters,
+					const found = yield* step(
+						out,
+						'Listing release operations',
+						client.call(routes.executionsList, serverFilter(repository, filters)),
+						rows => `${rows.length} ${rows.length === 1 ? 'operation' : 'operations'}`,
 					);
 					yield* executionTable(out, found, flags.full ? found : found.map(slimRun));
 				}))

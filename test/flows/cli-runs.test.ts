@@ -11,7 +11,7 @@ import { Effect } from 'effect';
 import { z } from 'zod';
 import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
-import { filterRuns, slimRun } from '@/cli/runs';
+import { slimRun } from '@/cli/runs';
 import type { executionFilter } from '@/contract/routes';
 import { routes } from '@/contract/routes';
 import type { ExecutionView } from '@/contract/views';
@@ -122,7 +122,19 @@ test('runs list --json prints a summary, and --full prints the whole record', as
 	expect(full).toHaveProperty('id', run.id);
 });
 
-test('filterRuns and slimRun compare repositories without case and keep only publication ids and outcomes', () => {
+test('runs list matches a renamed repository by identity, whatever name its old runs carry', async () => {
+	const run = await prepared();
+	await world.db.prepare('UPDATE repositories SET name=? WHERE name=?').bind('octo/renamed', 'octo/widget').run();
+	const outside = join(directory, 'plain');
+	await mkdir(outside);
+	const [listedRun] = z.array(z.looseObject({ id: z.string(), repository: z.string() })).parse(
+		JSON.parse((await listed(['--repository', 'octo/renamed'], outside)).stdout.join('')),
+	);
+	expect(listedRun).toMatchObject({ id: run.id, repository: 'octo/widget' });
+	expect(ids(await listed(['--repository', 'octo/widget'], outside))).toEqual([]);
+});
+
+test('slimRun keeps only publication ids and outcomes', () => {
 	const run = (id: string, repository: string, state: ExecutionView['state'], extra: object = {}): ExecutionView => ({
 		id,
 		repositoryId: 1,
@@ -135,15 +147,6 @@ test('filterRuns and slimRun compare repositories without case and keep only pub
 		updatedAt: 1,
 		...extra,
 	});
-	const all = [
-		run('a', 'Octo/Widget', 'failed'),
-		run('b', 'octo/tool', 'failed'),
-		run('c', 'octo/widget', 'succeeded'),
-	];
-	const filters = { all: false, state: [] as ExecutionView['state'][] };
-	expect(filterRuns(all, 'octo/widget', filters).map(entry => entry.id)).toEqual(['a', 'c']);
-	expect(filterRuns(all, undefined, { ...filters, state: ['failed'] }).map(entry => entry.id)).toEqual(['a', 'b']);
-	expect(filterRuns(all, undefined, { ...filters, limit: 2 }).map(entry => entry.id)).toEqual(['a', 'b']);
 	expect(
 		slimRun(run('d', 'octo/tool', 'succeeded', {
 			configuration: { secret: 1 },
@@ -177,6 +180,7 @@ async function crowded() {
 				id: `decoy-${index}`,
 				repositoryId: 777,
 				repository: 'octo/other',
+				state: 'succeeded',
 			});
 			return statement.bind(`decoy-${index}`, 777, 'succeeded', document, row.updated_at + 1 + index);
 		}),
