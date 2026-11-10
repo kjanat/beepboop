@@ -270,7 +270,12 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 				return yield* checked({
 					name: name.value,
 					packages,
-					required: observed ? value.required.filter(id => packages.includes(id)) : packages,
+					required: observed
+						? [
+							...value.required.filter(id => packages.includes(id)),
+							...packages.filter(id => !value.packages.includes(id) && !value.required.includes(id)),
+						]
+						: packages,
 					versioning: policy,
 					...(prepare ? { prepare } : {}),
 					...(promote ? { promote } : {}),
