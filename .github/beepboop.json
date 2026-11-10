@@ -17,7 +17,7 @@
         }
       },
       "promote": {
-        "approval": "required",
+        "approval": "merge",
         "workflow": {
           "file": "publish-cli.yml",
           "ref": "master",
