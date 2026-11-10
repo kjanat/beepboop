@@ -39,17 +39,38 @@ function target(run: Execution): string {
 	]);
 }
 
-export function needsUser(run: Execution, executions: readonly Execution[]): boolean {
-	if (run.state === 'awaiting-approval') return !publishesAutomatically(run);
-	if (run.state === 'blocked' || run.state === 'uncertain') return true;
-	if (run.state !== 'failed' && run.state !== 'cancelled') return false;
-	return !executions.some(other =>
-		other.id !== run.id && other.repositoryId === run.repositoryId && other.stream === run.stream
-		&& other.operation === run.operation && target(other) === target(run) && other.createdAt > run.createdAt
-	);
+export function byAge(a: Execution, b: Execution): number {
+	return a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 }
 
-export function releaseSummaries(executions: Execution[], repositories: RepositoryRecord[] = []) {
+export function needingUser(executions: readonly Execution[]): ReadonlySet<string> {
+	const keys = new Map(
+		executions.map(run => [run, JSON.stringify([run.repositoryId, run.stream, run.operation, target(run)])]),
+	);
+	const newest = new Map<string, Execution>();
+	for (const [run, key] of keys) {
+		const current = newest.get(key);
+		if (!current || byAge(current, run) < 0) newest.set(key, run);
+	}
+	const needing = new Set<string>();
+	for (const [run, key] of keys) {
+		const replaced = newest.get(key) !== run;
+		if (
+			run.state === 'awaiting-approval'
+				? !publishesAutomatically(run)
+				: run.state === 'blocked' || run.state === 'uncertain'
+				? true
+				: (run.state === 'failed' || run.state === 'cancelled') && !replaced
+		) needing.add(run.id);
+	}
+	return needing;
+}
+
+export function releaseSummaries(
+	executions: Execution[],
+	repositories: RepositoryRecord[] = [],
+	needing: ReadonlySet<string> = needingUser(executions),
+) {
 	const groups = new Map<string, [Execution, ...Execution[]]>();
 	for (const execution of executions) {
 		const identity = JSON.stringify([
@@ -63,7 +84,7 @@ export function releaseSummaries(executions: Execution[], repositories: Reposito
 		else groups.set(identity, [execution]);
 	}
 	return [...groups.values()].map(group => {
-		const runs = group.sort((a, b) => a.createdAt - b.createdAt);
+		const runs = group.sort(byAge);
 		const latest = runs[runs.length - 1] ?? runs[0];
 		const required = latest.releaseSet?.required ?? latest.configuration.streams[latest.stream]?.required ?? [];
 		const publications = required.map(id => {
@@ -89,7 +110,7 @@ export function releaseSummaries(executions: Execution[], repositories: Reposito
 			publications,
 			verified,
 			updatedAt: Math.max(...runs.map(run => run.updatedAt)),
-			attention: runs.some(run => needsUser(run, executions)),
+			attention: runs.some(run => needing.has(run.id)),
 		};
 	}).sort((a, b) => b.updatedAt - a.updatedAt);
 }

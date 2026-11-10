@@ -66,11 +66,11 @@ export function releaseStatus(release: ReturnType<typeof releaseSummaries>[numbe
 	if (publishesAutomatically(latest)) return { tone: 'active', label: 'Publishing once its checks pass' };
 	if (latest.state === 'awaiting-approval') return { tone: 'warn', label: 'Waiting for you to publish' };
 	if (release.attention) return { tone: 'warn', label: 'Needs attention' };
+	if (activeStates.includes(latest.state)) return { tone: 'active', label: 'In progress' };
+	if (latest.state === 'pending') return { tone: 'waiting', label: 'Waiting to start' };
 	if (release.publications.length && release.verified === release.publications.length) {
 		return { tone: 'ok', label: 'Required publications verified' };
 	}
-	if (activeStates.includes(latest.state)) return { tone: 'active', label: 'In progress' };
-	if (latest.state === 'pending') return { tone: 'waiting', label: 'Waiting to start' };
 	if (latest.state === 'succeeded' && latest.operation === 'prepare') {
 		return { tone: 'waiting', label: 'Prepared, no publication run yet' };
 	}
