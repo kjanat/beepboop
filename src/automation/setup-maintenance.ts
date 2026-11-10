@@ -52,6 +52,7 @@ export function savedSetup(saved: Record<string, unknown> | undefined): { saved?
 	const parsed = setupChoicesSchema.safeParse(saved?.choices);
 	return parsed.success ? { saved: parsed.data } : {};
 }
+export const observationsKept = { observationsKept: true } as const;
 function storedObservation(choices: unknown, raw: unknown, inventory: Inventory): unknown {
 	const parsed = setupChoicesSchema.safeParse(choices);
 	if (!parsed.success) return choices;
@@ -143,7 +144,8 @@ export function maintainSetup(
 					? saved.choices
 					: undefined);
 			const workflowPermission = yield* gateway.canEditWorkflows(name, id);
-			const plan = yield* previewSetup(snapshot, inventory, storedObservation(choices, raw, inventory), {
+			const repaired = saved.observationsKept === true ? choices : storedObservation(choices, raw, inventory);
+			const plan = yield* previewSetup(snapshot, inventory, repaired, {
 				...savedSetup(saved),
 				head: pull.head,
 				workflowPermission,
@@ -154,7 +156,12 @@ export function maintainSetup(
 				sha256Hex(JSON.stringify({ plan, head: pull.head, marked: marked(pull.body) }))
 			);
 			if (!requested && saved.maintenanceFingerprint === fingerprint && saved.options !== undefined) return;
-			const applied = { choices: plan.choices, options: setupOptions(plan), inferred: plan.adoption !== undefined };
+			const applied = {
+				choices: plan.choices,
+				options: setupOptions(plan),
+				inferred: plan.adoption !== undefined,
+				...observationsKept,
+			};
 			const proposal = {
 				title: setupTitle(pull.branch, plan.edits),
 				body: setupBody(plan, {
@@ -223,6 +230,7 @@ export function maintainSetup(
 				inferred: plan.adoption !== undefined,
 				edits: [...generated.values()],
 				maintenanceFingerprint: undefined,
+				...observationsKept,
 			});
 			yield* store.audit(
 				'beepboop',
@@ -307,6 +315,7 @@ function migrateSetup(
 			edits: plan.edits,
 			migration: 'proposed',
 			maintenanceFingerprint: undefined,
+			...observationsKept,
 		});
 		yield* store.audit('beepboop', 'repository.setup.migrated', `${name} ${snapshot.sha} ${result.url}`);
 	});

@@ -6,7 +6,7 @@ import { encodeRepository } from '@/automation/package-identity';
 import { repositoryName, repositoryReference } from '@/automation/repository-name';
 import { branchConflictBlocker, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import { setupBranch, setupTitle } from '@/automation/setup-changes';
-import { followsProposal, sameEdits, savedSetup, setupEdits } from '@/automation/setup-maintenance';
+import { followsProposal, observationsKept, sameEdits, savedSetup, setupEdits } from '@/automation/setup-maintenance';
 import type { DomainError } from '@/contract/errors';
 import { conflict, domainError, invalid, notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
@@ -122,6 +122,7 @@ export const repositoryEndpoints = {
 				options: setupOptions(plan),
 				inferred: plan.adoption !== undefined,
 				edits: [...generated.values()],
+				...observationsKept,
 			});
 			yield* service.store.audit(actor, 'repository.setup', String(id));
 			return result;
