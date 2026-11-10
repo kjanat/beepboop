@@ -50,6 +50,7 @@ export const comparisonSchema = z.object({
 });
 export const pullSchema = z.object({
 	number: countSchema,
+	node_id: textSchema,
 	html_url: textSchema,
 	state: looseSchema,
 	merged: looseSchema,

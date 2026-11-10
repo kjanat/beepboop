@@ -147,6 +147,7 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 			 			? 'This operation completed.'
 			 			: 'Follow the workflow and publication results below.')}
 		 </p>
+		 {card.autoMerge && <p class="notice">{card.autoMerge}</p>}
 		 {card.until && (
 			 <p class="notice">
 				 Publishes after {card.until} to stay within the registry's publish rate

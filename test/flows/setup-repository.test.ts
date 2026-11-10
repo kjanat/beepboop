@@ -9,6 +9,8 @@ import { z } from 'zod';
 import { optionId } from '@/automation/setup';
 import type { SetupChoices } from '@/automation/setup-types';
 import { binaries, binaryTargets, workflowSetup } from '@/contract/setup';
+import type { VersionPrMerge } from '@/contract/setup-terms';
+import { versionPrMergeSentences } from '@/contract/setup-terms';
 
 let world: World;
 eachWorld(created => {
@@ -427,6 +429,35 @@ test('each choice ticked in the setup PR body is written as ticked, and push sta
 	const plan = await previewSetup(api, repository.name);
 	expect(plan.edits).toEqual([]);
 	expect(plan.choices.streams[0]).toMatchObject({ approval: 'push', bump: 'commit', start: ['action', 'cli'] });
+});
+
+test('the setup PR ticks versionPrMerge manual by default and writes the method ticked in its body', async () => {
+	const repository = toolRepository();
+	const api = bearer(world, await world.cliSession());
+	await applyChoices(api, repository.name, crateChoices());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const [pull] = repository.pulls;
+	if (!pull) throw new Error('Missing setup PR');
+	const box = (value: VersionPrMerge, ticked: boolean) =>
+		`- [${ticked ? 'x' : ' '}] <!-- beepboop:choice:versionPrMerge:main:${value} --> \`${value}\`: ${
+			versionPrMergeSentences[value]
+		}`;
+	const prepared = (ref: string) =>
+		z.object({ streams: z.object({ main: z.looseObject({ prepare: z.looseObject({}).optional() }) }) })
+			.parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', ref) ?? '{}')).streams.main.prepare;
+	expect(pull.body).toContain('  - `versionPrMerge`: Who merges the version PR. Tick one.');
+	expect(pull.body).toContain(box('manual', true));
+	for (const value of ['squash', 'merge', 'rebase'] as const) expect(pull.body).toContain(box(value, false));
+	expect(prepared('automation/onboarding') ?? {}).not.toHaveProperty('versionPrMerge');
+	await editPull(world, repository, pull, tick(pull.body, 'versionPrMerge:main:squash'));
+	await world.wait(16_000);
+	expect(prepared('automation/onboarding')).toEqual({ versionPrMerge: 'squash' });
+	expect(pull.body).toContain(box('squash', true));
+	expect(pull.body).toContain(box('manual', false));
+	world.github.merge(repository, pull.number);
+	const plan = await previewSetup(api, repository.name);
+	expect(plan.edits).toEqual([]);
+	expect(plan.choices.streams[0]).toMatchObject({ versionPrMerge: 'squash' });
 });
 
 test('unticking every start writes an empty start list, and setup reads it back without asking again', async () => {

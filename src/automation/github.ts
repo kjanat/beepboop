@@ -31,10 +31,11 @@ import { marked, placeBlock, setupBlock, withStatus } from '@/automation/setup-b
 import { setupBranches } from '@/automation/setup-changes';
 import { buildSnapshot } from '@/automation/snapshot';
 import type { BotIdentity } from '@/automation/token';
-import type { Edit, PreparationResult, Snapshot } from '@/automation/types';
+import type { AutoMerge, Edit, PreparationResult, Snapshot } from '@/automation/types';
 import { legacyDiagnostic } from '@/contract/diagnostics';
 import type { DomainError } from '@/contract/errors';
 import { domainError, invalid, precondition, upstream } from '@/contract/errors';
+import type { AutoMergeMethod } from '@/contract/setup-terms';
 import { fromPromise, fromSync } from '@/failure';
 import { decode, sha, textSchema } from '@/model';
 
@@ -53,6 +54,29 @@ const contentEditsSchema = z.object({
 		}),
 	}),
 });
+const autoMergeSchema = z.object({
+	data: z.object({
+		enablePullRequestAutoMerge: z.object({
+			pullRequest: z.object({ autoMergeRequest: z.object({ mergeMethod: z.string() }).nullable() }),
+		}).nullable(),
+	}).nullable().optional(),
+	errors: z.array(z.object({ type: z.string().optional(), message: z.string() })).optional(),
+});
+// GitHub signals a rate limit by GraphQL error type RATE_LIMITED with HTTP 200, or by HTTP 403 or 429 naming the limit.
+function rateLimited(message: string, type?: string): boolean {
+	return type === 'RATE_LIMITED' || /rate limit|HTTP 429/i.test(message);
+}
+function preparationPullNumber(repository: string, url: string): Effect.Effect<string, DomainError> {
+	return Effect.gen(function*() {
+		const parsed = yield* fromSync(() => new URL(url));
+		const prefix = `/${repository}/pull/`;
+		if (
+			parsed.origin !== 'https://github.com' || !parsed.pathname.startsWith(prefix)
+			|| !/^[1-9][0-9]*$/.test(parsed.pathname.slice(prefix.length))
+		) return yield* precondition('Invalid preparation PR identity');
+		return parsed.pathname.slice(prefix.length);
+	});
+}
 function detailOf(body: string): string {
 	try {
 		const parsed: unknown = JSON.parse(body);
@@ -698,13 +722,7 @@ export class RepositoryGateway {
 	): Effect.Effect<{ mergeSha: string; base: string; defaultBranch: string }, DomainError> {
 		const self = this;
 		return Effect.gen(function*() {
-			const url = new URL(result.url);
-			const prefix = `/${repository}/pull/`;
-			if (
-				url.origin !== 'https://github.com' || !url.pathname.startsWith(prefix)
-				|| !/^[1-9][0-9]*$/.test(url.pathname.slice(prefix.length))
-			) return yield* precondition('Invalid preparation PR identity');
-			const number = url.pathname.slice(prefix.length);
+			const number = yield* preparationPullNumber(repository, result.url);
 			const pull = yield* self.read(pullSchema, `/repos/${repository}/pulls/${number}`, token);
 			const base = pull.base;
 			const mergeSha = pull.merged === true ? yield* self.mergeCommit(repository, number, token) : undefined;
@@ -969,6 +987,43 @@ export class RepositoryGateway {
 				return yield* precondition('Branch changed; preserve user edits and review the conflict');
 			}
 			return yield* self.finishPullRequest(snapshot, branch, title, body, expectedHead, token);
+		});
+	}
+	enableAutoMerge(
+		repository: string,
+		repositoryId: number,
+		url: string,
+		method: AutoMergeMethod,
+	): Effect.Effect<AutoMerge, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const token = yield* self.token(repository, repositoryId, { contents: 'write', pull_requests: 'write' });
+			const number = yield* preparationPullNumber(repository, url);
+			const pull = yield* self.read(pullSchema, `/repos/${repository}/pulls/${number}`, token);
+			const response = yield* self.read(autoMergeSchema, '/graphql', token, 'POST', {
+				query:
+					'mutation($id:ID!,$method:PullRequestMergeMethod!){enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:$method}){pullRequest{autoMergeRequest{mergeMethod}}}}',
+				variables: { id: pull.node_id, method: method.toUpperCase() },
+			}).pipe(
+				Effect.catchIf(
+					error => error.problem.code === 'precondition' || error.problem.code === 'forbidden',
+					error =>
+						Effect.succeed<z.output<typeof autoMergeSchema>>({ data: null, errors: [{ message: error.message }] }),
+				),
+			);
+			if (response.data?.enablePullRequestAutoMerge?.pullRequest.autoMergeRequest) {
+				return { method, state: 'enabled' as const };
+			}
+			const reason = response.errors?.map(error => error.message).join('; ') || 'GitHub returned no auto-merge request';
+			if (response.errors?.some(error => rateLimited(error.message, error.type))) {
+				return yield* upstream('github', `GitHub rate-limited auto-merge for ${repository}#${number}: ${reason}`);
+			}
+			const note =
+				`Beepboop could not turn on ${method} auto-merge for this version PR. GitHub said: ${reason}. The PR stays open until you merge it.`;
+			yield* self.call(`/repos/${repository}/issues/${number}/comments`, token, 'POST', { body: note }).pipe(
+				Effect.ignore,
+			);
+			return { method, state: 'refused' as const, note };
 		});
 	}
 	private finishPullRequest(

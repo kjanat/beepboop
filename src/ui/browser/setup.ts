@@ -16,6 +16,9 @@ import {
 	versionLandsNames,
 	versionLandsQuestion,
 	versionLandsSentences,
+	versionPrMergeQuestion,
+	versionPrMergeSentences,
+	versionPrMerges,
 	versionScopeNames,
 	versionScopeQuestion,
 	versionScopeSentences,
@@ -35,6 +38,7 @@ export const streamEditors = {
 	approval: 'control',
 	start: 'control',
 	bump: 'control',
+	versionPrMerge: 'control',
 	observe: 'control',
 	prepare: 'control',
 	promote: 'control',
@@ -51,6 +55,7 @@ const streamHelp: Record<StreamField, string> = {
 	approval: '',
 	start: '',
 	bump: '',
+	versionPrMerge: '',
 	observe: '',
 	prepare: '',
 	promote: '',
@@ -161,6 +166,15 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 			]),
 		], value.bump ?? '');
 		bump.dataset.field = 'bump';
+		const merging = select(
+			releasing,
+			`versionPrMerge: ${versionPrMergeQuestion}`,
+			versionPrMerges.map((
+				entry,
+			): [string, string] => [entry, `${entry}: ${versionPrMergeSentences[entry].replaceAll('`', '')}`]),
+			value.versionPrMerge ?? 'manual',
+		);
+		merging.dataset.field = 'versionPrMerge';
 		const approval = select(releasing, `publishWhen: ${publishWhenQuestion}`, [
 			['', 'Choose'],
 			...approvalPolicies.map((entry): [string, string] => [
@@ -221,10 +235,12 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 					: 'workspace';
 				const chosenApproval = approvalPolicies.find(entry => entry === approval.value);
 				const chosenBump = versionBumps.find(entry => entry === bump.value);
+				const chosenMerge = versionPrMerges.find(entry => entry === merging.value);
 				const started = starts.filter(entry => entry.input.checked).map(entry => entry.channel);
 				const extra: Record<string, unknown> = {
 					...(chosenApproval ? { approval: chosenApproval } : {}),
 					...(chosenBump ? { bump: chosenBump } : {}),
+					...(chosenMerge && (chosenMerge !== 'manual' || value.versionPrMerge) ? { versionPrMerge: chosenMerge } : {}),
 					...(started.length || value.start ? { start: started } : {}),
 				};
 				for (const [field, editor] of advancedFields) {

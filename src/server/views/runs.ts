@@ -2,6 +2,7 @@ import { matchesPublication } from '@/automation/package-identity.ts';
 import type { Execution } from '@/automation/types.ts';
 import { managerSpec } from '@/contract/catalog';
 import { githubHref, registryHref } from '@/contract/links';
+import { versionPrMergeSentences } from '@/contract/setup-terms';
 import { formatTime } from '@/contract/time';
 import { defaultTagPolicy, semVer, tagFor } from '@/contract/version';
 import { packageDisplayName } from '@/server/package-name.ts';
@@ -60,6 +61,11 @@ export function runCard(run: Execution, now: number) {
 			? missing
 			: [],
 		preparationUrl: preparation?.url.startsWith('https://github.com/') ? preparation.url : undefined,
+		autoMerge: preparation?.autoMerge?.state === 'refused'
+			? preparation.autoMerge.note
+			: preparation?.autoMerge
+			? versionPrMergeSentences[preparation.autoMerge.method].replaceAll('`', '')
+			: undefined,
 		publications: run.publications.map(publication => ({
 			...publication,
 			label: publicationName(run, publication),

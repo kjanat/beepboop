@@ -32,6 +32,8 @@ import {
 	versioningOfVersionScope,
 	versionLands,
 	versionLandsDescription,
+	versionPrMerge,
+	versionPrMergeDescription,
 	versionScope,
 	versionScopeDescription,
 } from '@/contract/setup-terms';
@@ -163,6 +165,7 @@ function streamSchema() {
 			strategy: z.enum(['managed', 'workflow']).optional(),
 			versionLands: versionLands.optional().describe(versionLandsDescription),
 			bump: versionBump.optional().meta({ deprecated: true }),
+			versionPrMerge: versionPrMerge.optional().describe(versionPrMergeDescription),
 		}).default({}),
 		promote: z.strictObject({
 			publishWhen: publishWhen.optional().describe(publishWhenDescription),
@@ -213,6 +216,7 @@ function streamSchema() {
 				: stream.prepare.bump
 				? { bump: stream.prepare.bump }
 				: {}),
+			...(stream.prepare.versionPrMerge ? { versionPrMerge: stream.prepare.versionPrMerge } : {}),
 		},
 		promote: {
 			approval: stream.promote.publishWhen

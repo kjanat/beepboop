@@ -30,6 +30,8 @@ export interface Pull {
 	reviewers: string[];
 	author?: string;
 	edits?: { editor: string; body: string }[];
+	autoMerge?: string;
+	comments?: string[];
 }
 export interface Run {
 	id: number;
@@ -74,6 +76,7 @@ export interface Repository {
 	releases: Release[];
 	signatures: boolean;
 	protectedBranches: Set<string>;
+	allowAutoMerge: boolean;
 	tagObjects: Map<string, { name: string; commit: string; verified: boolean }>;
 }
 
@@ -322,6 +325,26 @@ export class FakeGitHub {
 		});
 		this.route('POST', /^\/graphql$/, (_match, _url, body) => {
 			const variables = object(body.variables);
+			if (stringField(body, 'query').includes('enablePullRequestAutoMerge')) {
+				const [, repositoryId, number] = /^PR_(\d+)_(\d+)$/.exec(stringField(variables, 'id')) ?? [];
+				const repository = [...this.repositories.values()].find(entry => entry.id === Number(repositoryId));
+				if (!repository) {
+					return json({ data: null, errors: [{ type: 'NOT_FOUND', message: 'Could not resolve to a node' }] });
+				}
+				const pull = this.pull(repository, Number(number));
+				if (!repository.allowAutoMerge) {
+					return json({
+						data: { enablePullRequestAutoMerge: null },
+						errors: [{ type: 'UNPROCESSABLE', message: 'Pull request Auto merge is not allowed for this repository' }],
+					});
+				}
+				pull.autoMerge = stringField(variables, 'method');
+				return json({
+					data: {
+						enablePullRequestAutoMerge: { pullRequest: { autoMergeRequest: { mergeMethod: pull.autoMerge } } },
+					},
+				});
+			}
 			const repository = this.repository(`${stringField(variables, 'owner')}/${stringField(variables, 'name')}`);
 			const pull = this.pull(repository, Number(variables.number));
 			const nodes = (pull.edits ?? []).map(edit => ({ editor: { login: edit.editor }, diff: edit.body }));
@@ -345,6 +368,11 @@ export class FakeGitHub {
 			const pull = this.pull(repository, Number(match[2]));
 			pull.labels = [...new Set([...pull.labels, ...(Array.isArray(body.labels) ? body.labels.map(String) : [])])];
 			return json(pull.labels.map(name => ({ name })));
+		});
+		this.route('POST', new RegExp(`^${repo}/issues/(\\d+)/comments$`), (match, _url, body) => {
+			const pull = this.pull(this.repository(match[1]), Number(match[2]));
+			pull.comments = [...(pull.comments ?? []), stringField(body, 'body')];
+			return json({ id: pull.comments.length, body: stringField(body, 'body') }, 201);
 		});
 		this.route('POST', new RegExp(`^${repo}/issues/(\\d+)/assignees$`), (match, _url, body) => {
 			const pull = this.pull(this.repository(match[1]), Number(match[2]));
@@ -597,6 +625,7 @@ export class FakeGitHub {
 			releases: [],
 			signatures: false,
 			protectedBranches: new Set(),
+			allowAutoMerge: false,
 			tagObjects: new Map(),
 		};
 		this.repositories.set(name, repository);
@@ -751,6 +780,7 @@ export class FakeGitHub {
 	private pullJson(repository: Repository, pull: Pull) {
 		return {
 			number: pull.number,
+			node_id: `PR_${repository.id}_${pull.number}`,
 			html_url: `https://github.com/${repository.name}/pull/${pull.number}`,
 			state: pull.state,
 			merged: pull.merged,

@@ -284,10 +284,10 @@ beepboop adopt owner/repository --promote-file release.yml \
   when the proposal has several groups, and a new name adds a group.
 - `--package` and `--must-publish` take a package name or PURL and repeat.
   `--must-publish` defaults to the `--package` list.
-- `--version-scope`, `--start-from` (repeats), `--version-lands` and
-  `--publish-when` take the values of `versionScope`, `startFrom`,
-  `versionLands` and `publishWhen` in `.github/beepboop.json`, shown in
-  completion and help.
+- `--version-scope`, `--start-from` (repeats), `--version-lands`,
+  `--version-pr-merge` and `--publish-when` take the values of `versionScope`,
+  `startFrom`, `versionLands`, `prepare.versionPrMerge` and `publishWhen` in
+  `.github/beepboop.json`, shown in completion and help.
 - `--prepare-*` and `--promote-*` set the workflow fields: `file`, `job`,
   `existing-triggers`, `commands`, `tag-prefix`, `publication-steps`,
   `credentials` and,
@@ -330,6 +330,8 @@ workflow's `triggers` is `existingTriggers`. Each stream has these fields:
 
 - `name`, `packages` (PURLs), `versioning` (`workspace`, `independent` or
   `none`) and `required`.
+- `versionPrMerge`: `manual`, `squash`, `merge` or `rebase`, written to
+  `prepare.versionPrMerge`.
 - `versionSource`, such as `{ "kind": "tags", "prefix": "v" }`, to read the
   stream's version from its tags.
 - `versionFiles`, extra files that carry the version, in `json`, `yaml`,

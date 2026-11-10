@@ -335,6 +335,16 @@
 						"bump": {
 							"deprecated": true,
 							"$ref": "#/$defs/versionBump"
+						},
+						"versionPrMerge": {
+							"description": "Who merges the version PR. manual: You merge the version PR yourself. squash: Beepboop turns on GitHub auto-merge, and GitHub squashes the version PR into one commit once its checks pass. With `publishWhen: version-pr-merged`, the release then publishes with nobody touching it. merge: Beepboop turns on GitHub auto-merge, and GitHub merges the version PR with a merge commit once its checks pass. With `publishWhen: version-pr-merged`, the release then publishes with nobody touching it. rebase: Beepboop turns on GitHub auto-merge, and GitHub rebases the version PR onto the default branch once its checks pass. With `publishWhen: version-pr-merged`, the release then publishes with nobody touching it.",
+							"type": "string",
+							"enum": [
+								"manual",
+								"squash",
+								"merge",
+								"rebase"
+							]
 						}
 					},
 					"additionalProperties": false

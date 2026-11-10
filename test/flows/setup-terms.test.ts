@@ -13,6 +13,8 @@ import {
 	startFromSentences,
 	versionLandsQuestion,
 	versionLandsSentences,
+	versionPrMergeQuestion,
+	versionPrMergeSentences,
 	versionScopeQuestion,
 	versionScopeSentences,
 } from '@/contract/setup-terms';
@@ -35,6 +37,7 @@ const sentences = [
 	...Object.values(startFromSentences),
 	...Object.values(versionScopeSentences),
 	...Object.values(existingTriggersSentences),
+	...Object.values(versionPrMergeSentences),
 	mustPublishSentence,
 	startFromEffect,
 	publishWhenQuestion,
@@ -42,6 +45,7 @@ const sentences = [
 	startFromQuestion,
 	versionScopeQuestion,
 	existingTriggersQuestion,
+	versionPrMergeQuestion,
 ];
 const earlierWording = [
 	'After you approve it in Beepboop',
@@ -80,7 +84,7 @@ const legacy = {
 			packages: ['npm:widget'],
 			required: ['npm:widget'],
 			start: [{ via: 'cli' }],
-			prepare: { bump: 'commit' },
+			prepare: { bump: 'commit', versionPrMerge: 'squash' },
 			promote: { approval: 'merge', workflow: { file: 'release.yml', setup: { triggers: 'dispatchOnly' } } },
 		},
 	},
@@ -92,7 +96,7 @@ const current = {
 			packages: ['npm:widget'],
 			mustPublish: ['npm:widget'],
 			startFrom: [{ via: 'cli' }],
-			prepare: { versionLands: 'via-direct-commit' },
+			prepare: { versionLands: 'via-direct-commit', versionPrMerge: 'squash' },
 			promote: {
 				publishWhen: 'version-pr-merged',
 				workflow: { file: 'release.yml', setup: { existingTriggers: 'replace-with-dispatch' } },
@@ -112,6 +116,10 @@ test('the earlier setting names read the same as the current ones, and setup wri
 	const both = { streams: { main: { ...current.streams.main, versioning: 'workspace' } } };
 	expect(parsed(both).streams.main?.versioning).toBe('independent');
 	expect(readableConfiguration(both)).toEqual(current);
+	expect(parsed(current).streams.main?.prepare.versionPrMerge).toBe('squash');
+	const unknown = { streams: { main: { ...current.streams.main, prepare: { versionPrMerge: 'fast' } } } };
+	expect(Result.isFailure(parseRepositoryConfiguration(unknown))).toBe(true);
+	expect(configurationSchema.safeParse(unknown).success).toBe(false);
 });
 
 test('a repository setting overrides a preset whichever names each of them uses', async () => {

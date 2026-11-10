@@ -26,6 +26,7 @@ import { managerDestinationIds, managerNames } from '@/contract/catalog';
 import { diagnostic, isDiagnosticCode } from '@/contract/diagnostics';
 import { startChannel } from '@/contract/release-start';
 import { setupChoicesSchema } from '@/contract/setup';
+import { autoMergeMethods } from '@/contract/setup-terms';
 import { executionStates } from '@/contract/views';
 import { stringsSchema as strings } from '@/model';
 import type { PackageIdentity } from '@/package-url';
@@ -222,7 +223,16 @@ const refPlan: z.ZodType<RefPlan> = z.object({
 	})),
 	publicKey: z.string().optional(),
 });
-const pullResult = z.object({ url: z.string(), head: z.string(), kind: z.literal('commit').optional() });
+const autoMergeMethod = z.enum(autoMergeMethods);
+const pullResult = z.object({
+	url: z.string(),
+	head: z.string(),
+	kind: z.literal('commit').optional(),
+	autoMerge: z.discriminatedUnion('state', [
+		z.object({ method: autoMergeMethod, state: z.literal('enabled') }),
+		z.object({ method: autoMergeMethod, state: z.literal('refused'), note: z.string() }),
+	]).optional(),
+});
 const executionSchema: z.ZodType<Execution> = z.object({
 	prepared: z.object({ edits: z.array(edit), head: z.string().optional(), result: pullResult.optional() }).optional(),
 	releaseSet: z.object({

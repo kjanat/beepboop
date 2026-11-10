@@ -12,7 +12,13 @@ import { choicesFlagKinds, setupFlagPaths, streamFlagKinds, workflowFlagKinds } 
 import { startChannels } from '@/contract/release-start';
 import { binaryTargets, setupChoicesSchema } from '@/contract/setup';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
-import { existingTriggerChoices, publishWhens, versionLandings, versionScopes } from '@/contract/setup-terms';
+import {
+	existingTriggerChoices,
+	publishWhens,
+	versionLandings,
+	versionPrMerges,
+	versionScopes,
+} from '@/contract/setup-terms';
 
 let world: World;
 let directory: string;
@@ -114,6 +120,12 @@ const cases: {
 		args: ['--publish-when', 'version-pr-merged'],
 		read: c => main(c).approval,
 		value: 'merge',
+	},
+	{
+		flags: ['version-pr-merge'],
+		args: ['--version-pr-merge', 'squash'],
+		read: c => main(c).versionPrMerge,
+		value: 'squash',
 	},
 	{
 		flags: ['version-source'],
@@ -474,6 +486,7 @@ test('completion scripts list every setup flag and the values of each single-val
 				['version-scope', versionScopes],
 				['version-lands', versionLandings],
 				['publish-when', publishWhens],
+				['version-pr-merge', versionPrMerges],
 				['prepare-existing-triggers', existingTriggerChoices],
 				['promote-existing-triggers', existingTriggerChoices],
 			] as const

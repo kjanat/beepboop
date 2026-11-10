@@ -97,6 +97,7 @@ import type {
 	Edit,
 	Execution,
 	Package,
+	PreparationResult,
 	PreparedRelease,
 	Publication,
 	PublishKind,
@@ -833,10 +834,18 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					undefined,
 					{ coAuthored: execution.initiatedBy !== undefined },
 				);
-			prepared.result = result;
+			const merged = yield* this.autoMerged(execution, result);
+			prepared.result = merged;
 			yield* this.put(execution);
-			return result;
+			return merged;
 		}));
+	}
+	private autoMerged(execution: Execution, result: PreparationResult): Effect.Effect<PreparationResult, DomainError> {
+		const method = execution.configuration.streams[execution.stream]?.prepare.versionPrMerge;
+		if (result.kind === 'commit' || result.autoMerge || !method || method === 'manual') return Effect.succeed(result);
+		return this.gateway().enableAutoMerge(execution.repository, execution.repositoryId, result.url, method).pipe(
+			Effect.map(autoMerge => ({ ...result, autoMerge })),
+		);
 	}
 	register(id: string, identity: WorkflowIdentity): Promise<Execution> {
 		return this.serial(Effect.gen({ self: this }, function*() {
@@ -2551,7 +2560,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					operation.head = head;
 					return this.put(execution);
 				};
-				operation.result = committed(execution)
+				const result = committed(execution)
 					? yield* gateway.commitVersion(
 						snapshot,
 						versionMessage(execution),
@@ -2579,6 +2588,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						undefined,
 						{ coAuthored: execution.initiatedBy !== undefined },
 					);
+				operation.result = yield* this.autoMerged(execution, result);
 				execution.state = 'succeeded';
 				delete execution.reason;
 				yield* this.put(execution);

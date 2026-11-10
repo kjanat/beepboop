@@ -34,6 +34,8 @@ import {
 	startFromQuestion,
 	versionLandings,
 	versionLandsQuestion,
+	versionPrMergeQuestion,
+	versionPrMerges,
 	versionScopeQuestion,
 	versionScopes,
 } from '@/contract/setup-terms';
@@ -150,6 +152,7 @@ const adoptCommand = (name: string, description: string, target: typeof reposito
 		.flag('start-from', flag.array(flag.enum(startChannels)).describe(`${startFromQuestion}; repeat it`))
 		.flag('version-lands', flag.enum(versionLandings).describe(versionLandsQuestion))
 		.flag('publish-when', flag.enum(publishWhens).describe(publishWhenQuestion))
+		.flag('version-pr-merge', flag.enum(versionPrMerges).describe(versionPrMergeQuestion))
 		.flag('required', flag.array(flag.string()).deprecated('Use --must-publish'))
 		.flag('versioning', flag.enum(streamVersionings).deprecated('Use --version-scope'))
 		.flag('start', flag.array(flag.enum(startChannels)).deprecated('Use --start-from'))

@@ -17,7 +17,14 @@ import type { Client } from '@/cli/client';
 import { choicesEditors, streamEditors, workflowEditors } from '@/cli/setup-choices';
 import { routes } from '@/contract/routes';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
-import { publishWhenQuestion, startFromQuestion, versionLandsQuestion } from '@/contract/setup-terms';
+import {
+	publishWhenQuestion,
+	startFromQuestion,
+	versionLandsQuestion,
+	versionPrMergeQuestion,
+	versionPrMergeSentences,
+	versionPrMerges,
+} from '@/contract/setup-terms';
 
 let world: World;
 let directory: string;
@@ -133,6 +140,7 @@ test('Cargo adoption generates one workflow and advanced renaming keeps the shar
 			'workspace',
 			[],
 			'pr',
+			'manual',
 			'push',
 			'',
 			'',
@@ -859,6 +867,8 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 		{
 			'main: publishing workflow filename': 'release-tool.yml',
 			'main: version tag prefix (empty uses the default)': 'tool-v',
+			[`main: versionLands. ${versionLandsQuestion}`]: 'pr',
+			[`main: versionPrMerge. ${versionPrMergeQuestion}`]: 'merge',
 		},
 		{
 			[proposalPrompt]: false,
@@ -880,6 +890,10 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 	expect(messages).toContain(`main: startFrom. ${startFromQuestion}`);
 	expect(messages).toContain(`main: versionLands. ${versionLandsQuestion}`);
 	expect(messages).toContain(`main: publishWhen. ${publishWhenQuestion}`);
+	const merging = session.prompts.find(prompt => prompt.message === `main: versionPrMerge. ${versionPrMergeQuestion}`);
+	expect(merging?.kind === 'select' && merging.choices.map(choice => [choice.value, choice.label])).toEqual(
+		versionPrMerges.map(value => [value, `${value}: ${versionPrMergeSentences[value].replaceAll('`', '')}`]),
+	);
 	for (const field of ['versionSource', 'versionFiles', 'needs', 'operations']) {
 		expect(messages).toContain(`main: ${field} as JSON (empty leaves it out)`);
 	}
@@ -899,4 +913,5 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 			}),
 		}).parse(configuration).streams.main.promote.workflow.setup.tagPrefix,
 	).toBe('tool-v');
+	expect(configuration).toMatchObject({ streams: { main: { prepare: { versionPrMerge: 'merge' } } } });
 });

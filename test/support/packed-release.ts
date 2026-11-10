@@ -21,7 +21,7 @@ import type { World } from '@root/test/support/world.ts';
 import { z } from 'zod';
 import type { TagSigner } from '@/automation/refs';
 
-const prepareWorkflow = `name: Prepare
+export const prepareWorkflow = `name: Prepare
 on:
   workflow_dispatch:
     inputs:
