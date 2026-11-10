@@ -850,6 +850,19 @@ function completeChoices(
 						: {}),
 				};
 			};
+			const operations = stream.operations?.map(entry => {
+				const scope = { name: stream.name, packages: chosen.filter(pkg => entry.publications.includes(pkg.id)) };
+				const commands = refreshedCommands('promote', entry.commands, scope, candidates, context);
+				const generated = commands !== ''
+					&& (commands === suggestedCommands('promote', scope, context) || crateScript(commands));
+				return {
+					...entry,
+					commands,
+					...(generated && !entry.credentials && scope.packages.some(pkg => pkg.manager === 'cargo')
+						? { credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' } }
+						: {}),
+				};
+			});
 			const stored = object(object(raw.streams)[stream.name]);
 			const configured = object(stored.promote).approval;
 			const approval = stream.approval
@@ -869,6 +882,7 @@ function completeChoices(
 				...(merge ? { versionPrMerge: merge } : {}),
 				...(prepare ? { prepare } : {}),
 				...(promote ? { promote } : {}),
+				...(operations ? { operations } : {}),
 			};
 		}),
 	};

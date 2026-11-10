@@ -1295,6 +1295,52 @@ test('a merged binary workflow suggests its publication job for the promote role
 	expect(suggested.choices.streams[0]?.promote?.job).toBe('publish');
 });
 
+test('an operation workflow holding plain crate lines is regenerated like the promote workflow', async () => {
+	const repository = world.github.create('octo/lint', {
+		'Cargo.toml': '[workspace]\nmembers = ["crates/*"]\n\n[workspace.package]\nversion = "0.1.0"\n',
+		'Cargo.lock': '# Lockfile\n',
+		'crates/core/Cargo.toml': '[package]\nname = "lint-core"\nversion.workspace = true\n',
+		'crates/cli/Cargo.toml': '[package]\nname = "lint"\nversion.workspace = true\n',
+	});
+	const api = bearer(world, await world.cliSession());
+	const crates = ['pkg:cargo/lint-core', 'pkg:cargo/lint'];
+	const choices: SetupChoices = {
+		streams: [{
+			name: 'main',
+			packages: crates,
+			required: crates,
+			versioning: 'workspace',
+			prepare: {
+				file: 'prepare-lint.yml',
+				job: 'prepare',
+				triggers: 'review',
+				commands: 'cargo check --workspace --all-targets\ncargo test --workspace',
+				publicationSteps: {},
+			},
+			promote: { file: 'release-lint.yml', job: 'publish', triggers: 'review', commands: '', publicationSteps: {} },
+			operations: [{
+				name: 'crates',
+				file: 'publish-crates.yml',
+				job: 'crates',
+				triggers: 'review',
+				commands: "cargo publish --locked --package 'lint-core'\ncargo publish --locked --package 'lint'",
+				publicationSteps: {},
+				needs: ['promote'],
+				publications: crates,
+			}],
+		}],
+	};
+	const plan = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
+	);
+	expect(plan.blockers).toEqual([]);
+	const operation = plan.choices.streams[0]?.operations?.[0];
+	expect([operation?.commands, operation?.credentials]).toEqual([ledgerCommand, { CARGO_REGISTRY_TOKEN: 'crates-io' }]);
+	const workflow = plan.edits.find(edit => edit.path === '.github/workflows/publish-crates.yml')?.after ?? '';
+	expect(workflow).toContain('kjanat/beepboop/actions/publish@v1');
+	expect(workflow).not.toContain('cargo publish');
+});
+
 describe('a saved plain crate publish script', () => {
 	const crates = ['pkg:cargo/lint-core', 'pkg:cargo/lint'];
 	const promoteCommands = async (commands: string) => {
