@@ -9,6 +9,8 @@ import {
 	executionTone,
 	publicationTone,
 	releaseStatus,
+	runLabel,
+	runStateLabels,
 } from '@/server/views/tone.ts';
 
 interface Props {
@@ -60,11 +62,14 @@ const { releases } = Astro.props;
 		<ul class="run-links">
 			{release.runs.map(run => (
 				<li class="run-link">
-					{run.operation}
-					<Badge tone={executionTone[run.state]} label={run.state} />
+					{runLabel(run.operation)}
+					<Badge
+						tone={executionTone[run.state]}
+						label={runStateLabels[run.state]}
+					/>
 					<Arrow
 						href={`/runs#${run.id}`}
-						label={`Show the ${run.operation} operation`}
+						label={`Show the ${runLabel(run.operation).toLowerCase()}`}
 					/>
 				</li>
 			))}

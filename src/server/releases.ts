@@ -1,32 +1,41 @@
 import { matchesPackage, matchesPublication } from '@/automation/package-identity';
 import type { Execution, Publication, RepositoryRecord } from '@/automation/types.ts';
 
-/** Never combine evidence from different commits, configurations, or versions. */
+export const activeStates: readonly string[] = ['running', 'ready', 'dispatching', 'verifying'];
+
+export function needsUser(run: Execution, executions: readonly Execution[]): boolean {
+	if (run.state === 'awaiting-approval' || run.state === 'blocked' || run.state === 'uncertain') return true;
+	if (run.state !== 'failed' && run.state !== 'cancelled') return false;
+	return !executions.some(other =>
+		other.id !== run.id && other.repositoryId === run.repositoryId && other.stream === run.stream
+		&& other.operation === run.operation && other.version === run.version && other.createdAt > run.createdAt
+	);
+}
+
 export function releaseSummaries(executions: Execution[], repositories: RepositoryRecord[] = []) {
-	const groups = new Map<string, { first: Execution; runs: Execution[] }>();
+	const groups = new Map<string, [Execution, ...Execution[]]>();
 	for (const execution of executions) {
 		const identity = JSON.stringify([
 			execution.repositoryId,
 			execution.stream,
-			execution.sourceSha,
-			execution.configurationSha,
-			execution.version,
+			execution.version ?? execution.id,
 			execution.releaseSet?.group,
-			execution.releaseSet?.preparationId,
 		]);
 		const group = groups.get(identity);
-		if (group) group.runs.push(execution);
-		else groups.set(identity, { first: execution, runs: [execution] });
+		if (group) group.push(execution);
+		else groups.set(identity, [execution]);
 	}
-	return [...groups.values()].map(({ first, runs }) => {
-		const required = first.releaseSet?.required ?? first.configuration.streams[first.stream]?.required ?? [];
+	return [...groups.values()].map(([head, ...rest]) => {
+		const latest = rest.reduce((last, run) => run.createdAt >= last.createdAt ? run : last, head);
+		const runs = [head, ...rest].sort((a, b) => a.createdAt - b.createdAt);
+		const required = latest.releaseSet?.required ?? latest.configuration.streams[latest.stream]?.required ?? [];
 		const publications = required.map(id => {
 			const reports = runs.flatMap(run => run.publications.filter(publication => matchesPublication(id, publication)));
 			const succeeded = reports.find(report => report.outcome === 'succeeded');
-			const registered = repositories.find(repository => repository.id === first.repositoryId)?.inventory.packages
+			const registered = repositories.find(repository => repository.id === latest.repositoryId)?.inventory.packages
 				.some(pkg =>
-					matchesPackage(id, pkg) && pkg.publicationStatus === 'published' && first.version !== undefined
-					&& pkg.published === first.version
+					matchesPackage(id, pkg) && pkg.publicationStatus === 'published' && latest.version !== undefined
+					&& pkg.published === latest.version
 				);
 			const outcome: Publication['outcome'] | 'waiting' = succeeded?.outcome
 				?? (registered ? 'succeeded' : reports.at(-1)?.outcome ?? 'waiting');
@@ -34,17 +43,16 @@ export function releaseSummaries(executions: Execution[], repositories: Reposito
 		});
 		const verified = publications.filter(p => p.outcome === 'succeeded').length;
 		return {
-			repository: first.repository,
-			stream: first.stream,
-			commit: first.sourceSha,
-			version: first.version,
+			repository: latest.repository,
+			stream: latest.stream,
+			commit: latest.sourceSha,
+			version: latest.version,
 			runs,
+			latest,
 			publications,
 			verified,
 			updatedAt: Math.max(...runs.map(run => run.updatedAt)),
-			attention: runs.some(run =>
-				['awaiting-approval', 'blocked', 'failed', 'cancelled', 'uncertain'].includes(run.state)
-			),
+			attention: runs.some(run => needsUser(run, executions)),
 		};
 	}).sort((a, b) => b.updatedAt - a.updatedAt);
 }

@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { join } from 'node:path';
 import { begin, runAction, runIdentity } from '@root/test/support/actions.ts';
 import { discoveredWidget } from '@root/test/support/client.ts';
 import { bearer, text } from '@root/test/support/http.ts';
@@ -8,7 +9,8 @@ import { approvePromotion, only, prepareRelease } from '@root/test/support/relea
 import { editableConfiguration, passChecks, widget } from '@root/test/support/repositories.ts';
 import { fakeSigner, signingKey } from '@root/test/support/signing.ts';
 import type { World } from '@root/test/support/world.ts';
-import { eachWorld } from '@root/test/support/world.ts';
+import { eachWorld, origin } from '@root/test/support/world.ts';
+import { experimental_AstroContainer } from 'astro/container';
 import { Effect } from 'effect';
 import { z } from 'zod';
 import { Store } from '@/automation/store';
@@ -18,6 +20,10 @@ import { executionId, releaseEventId } from '@/persistence/identity-keys';
 import { releaseSetSummaries, releaseSummaries } from '@/server/releases';
 import { overview } from '@/server/views/overview';
 import { runCard } from '@/server/views/runs';
+import { releaseStatus } from '@/server/views/tone';
+
+type Component = Parameters<experimental_AstroContainer['renderToString']>[0];
+const componentModule = z.object({ default: z.custom<Component>(value => typeof value === 'function') });
 
 let world: World;
 eachWorld(created => {
@@ -223,6 +229,77 @@ test('a finished run whose registry publication appears late is verified without
 		'https://www.npmjs.com/package/@kjanat/beepboop/v/0.1.0',
 		'https://jsr.io/@kjanat/beepboop@0.1.0',
 	]);
+});
+
+test('the overview counts only runs that still need the user and shows each version as one release', async () => {
+	const { finished, repository } = await finishedPromotion('pending');
+	const record = await Effect.runPromise(new Store(world.db).repository(repository.id));
+	if (!record) throw new Error('No stored repository');
+	const run = (id: string, at: number, changes: Partial<Execution>): Execution => ({
+		...finished,
+		id,
+		createdAt: at,
+		updatedAt: at,
+		...changes,
+	});
+	const prepared = { operation: 'prepare', publications: [], sourceSha: 'a'.repeat(40) };
+	const published = finished.publications.map(publication => ({ ...publication, outcome: 'succeeded' as const }));
+	const readable = [
+		run('prepare-failed', 1, { ...prepared, state: 'failed' }),
+		run('prepare-done', 2, { ...prepared, state: 'succeeded' }),
+		run('promote-cancelled', 3, { state: 'cancelled' }),
+		run('promote-done', 4, { state: 'succeeded', publications: published }),
+		run('abandoned', 5, { version: '1.0.9', state: 'cancelled' }),
+		run('waiting', 6, { version: '2.0.0', state: 'awaiting-approval' }),
+		run('next-prepared', 7, { ...prepared, version: '2.1.0', state: 'succeeded' }),
+		run('next-running', 8, { version: '2.2.0', state: 'running' }),
+	];
+	const view = overview({
+		section: 'overview',
+		repositories: { readable: [], unreadable: [] },
+		executions: { readable, unreadable: [] },
+	});
+	expect([view.attention, view.waiting.map(entry => entry.id), view.running]).toEqual([
+		2,
+		['waiting', 'abandoned'],
+		1,
+	]);
+	const statuses = Object.fromEntries(
+		view.releases.map(
+			release => [release.version, [release.runs.map(entry => entry.id), releaseStatus(release).label]],
+		),
+	);
+	expect(statuses).toEqual({
+		[finished.version ?? '']: [
+			['prepare-failed', 'prepare-done', 'promote-cancelled', 'promote-done'],
+			'Required publications verified',
+		],
+		'1.0.9': [['abandoned'], 'Needs attention'],
+		'2.0.0': [['waiting'], 'Waiting for you to publish'],
+		'2.1.0': [['next-prepared'], 'Prepared, no publication run yet'],
+		'2.2.0': [['next-running'], 'In progress'],
+	});
+	expect(view.releases.find(release => release.version === finished.version)?.commit).toBe(finished.sourceSha);
+	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Overview.astro'));
+	const container = await experimental_AstroContainer.create();
+	const html = await container.renderToString(componentModule.parse(loaded).default, {
+		props: {
+			data: {
+				section: 'overview',
+				repositories: { readable: [record], unreadable: [] },
+				executions: { readable, unreadable: [] },
+			},
+		},
+		request: new Request(`${origin}/`),
+	});
+	const headings = [...html.matchAll(/<h2[^>]*>([^<]+)<\/h2>/g)].map(match => match[1]);
+	expect(headings.slice(0, 2)).toEqual(['Needs your attention', 'Recent releases']);
+	expect(html).toContain('<li>Publish</li>');
+	expect(html).not.toContain('Approve commit');
+	expect(html).toContain('Publication run');
+	expect(html).toContain('Preparation run');
+	expect(html).toContain('waiting for you to publish');
+	expect(html).not.toMatch(/>\s*promote\s*</);
 });
 
 test('a registry outage during verification is retried once the registry answers again', async () => {
