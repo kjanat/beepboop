@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Run lists read stored `blocked` rows through an index of only those rows. Each list scanned the whole execution history twice to find them.
 - An earlier run that still needs you, such as one with an unknown outcome, decides its stage's colour and stays unfolded beside a newer succeeded run.
 - The runs page remembers which releases, operations and run details you folded or unfolded when it reloads after a run changes.
 - A failed or cancelled run stops asking for attention once a higher version of the same stream has every required publication after it.
