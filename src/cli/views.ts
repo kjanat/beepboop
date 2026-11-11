@@ -79,6 +79,10 @@ export function repositoryView(out: Out, repository: RepositoryView) {
 					approval: stream.promote?.approval ?? 'required',
 				})),
 			);
+			for (const [name] of streams) {
+				const summary = repository.releases[name]?.summary;
+				if (summary) out.log(summary);
+			}
 		} else out.log(look.note('No release streams are configured.'));
 		const packages = detail.success ? detail.data.inventory?.packages ?? [] : [];
 		if (packages.length) {

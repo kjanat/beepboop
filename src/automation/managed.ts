@@ -53,7 +53,11 @@ export function createManagedPreparation(
 		const configuration = repository.configuration;
 		if (!configuration.streams[stream]) return yield* precondition('Unknown stream');
 		if (plan.sourceSha !== repository.sha) return yield* precondition('Preparation source revision changed');
-		if (plan.requiresPreparation) return yield* precondition('A preparation workflow must regenerate lockfiles');
+		if (plan.requiresPreparation) {
+			return yield* precondition(
+				`Lockfiles need regenerating and ${stream} has no preparation workflow. Add one in release setup.`,
+			);
+		}
 		if (!plan.edits.length) return yield* precondition('Preparation has no edits');
 		const identity = yield* planIdentity(plan, repository);
 		const eventId = `plan:${identity}`;

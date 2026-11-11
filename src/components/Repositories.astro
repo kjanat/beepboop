@@ -1,6 +1,7 @@
 ---
 import { winget, wingetOutcome } from '@/automation/destinations';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
+import { streamReleases } from '@/automation/release-capability';
 import { publishedOutsideRequired } from '@/automation/setup';
 import type { RepositoryRecord } from '@/automation/types';
 import Arrow from '@/components/Arrow.astro';
@@ -33,6 +34,20 @@ function listsPackages(repository: RepositoryRecord) {
 	return repository.inventory.packages.some(publishable)
 		|| Boolean(repository.configuration?.winget)
 		|| Boolean(repository.inventory.channels?.length);
+}
+function releases(repository: RepositoryRecord) {
+	return readiness(repository).kind === 'ready'
+		? Object.entries(streamReleases(repository))
+		: [];
+}
+const starts = (kind: string) => kind === 'promotes' || kind === 'prepares';
+function starting(repository: RepositoryRecord) {
+	return releases(repository).find(([, release]) => starts(release.kind))?.[0];
+}
+function recording(repository: RepositoryRecord) {
+	return releases(repository).flatMap(([, release]) =>
+		starts(release.kind) ? [] : [release.summary]
+	);
 }
 function wingetDestination(repository: RepositoryRecord) {
 	const policy = repository.configuration?.winget;
@@ -154,14 +169,17 @@ function wingetDestination(repository: RepositoryRecord) {
 						Review setup PR ↗
 					</a>
 				)}
-				{readiness(repository).kind === 'ready' && (
+				{starting(repository) !== undefined && (
 					<a
 						class="button primary"
-						href={`/releases?repository=${repository.id}`}
+						href={`/releases?repository=${repository.id}&stream=${
+							encodeURIComponent(starting(repository) ?? '')
+						}`}
 						aria-label={`Prepare a release of ${repository.name}`}
 					>Prepare a release</a>
 				)}
 			</div>
+			{recording(repository).map(summary => <p class="hint">{summary}</p>)}
 			<form
 				data-action="setup"
 				method="post"
