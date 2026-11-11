@@ -53,6 +53,12 @@ export function needingUser(executions: readonly Execution[]): ReadonlySet<strin
 		const current = newest.get(key);
 		if (!current || byAge(current, run) < 0) newest.set(key, run);
 	}
+	const released = executions.filter(run => run.state === 'succeeded' && run.operation !== 'prepare');
+	const superseded = (run: Execution) =>
+		released.some(other =>
+			other.repositoryId === run.repositoryId && other.stream === run.stream && other.version !== run.version
+			&& byAge(run, other) < 0
+		);
 	const needing = new Set<string>();
 	for (const [run, key] of keys) {
 		const replaced = newest.get(key) !== run;
@@ -61,7 +67,7 @@ export function needingUser(executions: readonly Execution[]): ReadonlySet<strin
 				? !publishesAutomatically(run)
 				: run.state === 'blocked' || run.state === 'uncertain'
 				? true
-				: (run.state === 'failed' || run.state === 'cancelled') && !replaced
+				: (run.state === 'failed' || run.state === 'cancelled') && !replaced && !superseded(run)
 		) needing.add(run.id);
 	}
 	return needing;

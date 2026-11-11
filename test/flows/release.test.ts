@@ -439,7 +439,7 @@ test('the runs page shows one release as a row of stages with one publication ta
 		'https://github.com/octo/widget/actions/runs/43',
 		'https://github.com/octo/widget/actions/runs/44',
 	]);
-	const table = all('.release-pipeline > .table-scroll tbody tr').map(row => [
+	const table = all('.release-pipeline > .release-detail > .table-scroll tbody tr').map(row => [
 		row.querySelector('td')?.firstChild?.textContent?.trim(),
 		row.querySelector('.arrow')?.getAttribute('href'),
 		row.querySelector('.badge')?.textContent,
@@ -459,6 +459,73 @@ test('the runs page shows one release as a row of stages with one publication ta
 		]);
 	expect(page.document.body.textContent).not.toContain('Still to publish');
 	await page.happyDOM.close();
+});
+
+test('the runs page filters by repository and folds a settled release', async () => {
+	const { finished } = await finishedPromotion('pending');
+	const published = finished.publications.map(publication => ({ ...publication, outcome: 'succeeded' as const }));
+	const { runId: _runId, runAttempt: _runAttempt, workflowSha: _workflowSha, ...unstarted } = finished;
+	const actor = 'ab'.repeat(16);
+	const readable: Execution[] = [
+		{ ...unstarted, id: 'old-a', version: '1.0.0', state: 'cancelled', reason: `Cancelled by ${actor}`, createdAt: 1 },
+		{ ...unstarted, id: 'old-b', version: '1.0.0', state: 'cancelled', reason: `Cancelled by ${actor}`, createdAt: 2 },
+		{ ...finished, id: 'done', state: 'succeeded', publications: published, createdAt: 3 },
+		{
+			...unstarted,
+			id: 'observed',
+			eventId: 'observed:77',
+			operation: 'crates',
+			state: 'succeeded',
+			publications: [],
+			runId: 77,
+			createdAt: 4,
+		},
+		{ ...finished, id: 'other', repository: 'octo/gadget', repositoryId: 99, state: 'running', createdAt: 5 },
+	];
+	expect([...needingUser(readable)]).toEqual([]);
+	const [old] = releaseSummaries(readable).filter(release => release.version === '1.0.0');
+	if (!old) throw new Error('No release');
+	expect(pipeline(old, Date.now())?.stages.map(stage => stage.note)).toEqual(['cancelled']);
+	expect([runCard(readable[0] ?? finished, Date.now()).reason, runCard(readable[3] ?? finished, Date.now()).release])
+		.toEqual([`Cancelled by ${actor.slice(0, 12)}`, undefined]);
+	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Runs.astro'));
+	const container = await experimental_AstroContainer.create();
+	const render = async (query: string) => {
+		const html = await container.renderToString(componentModule.parse(loaded).default, {
+			props: { data: { section: 'runs', executions: { readable, unreadable: [] } } },
+			request: new Request(`${origin}/runs${query}`),
+		});
+		const page = new Window();
+		page.document.body.innerHTML = html;
+		const all = (selector: string) => [...page.document.querySelectorAll(selector)];
+		const view = {
+			filters: all('.filters a').map(link => [link.textContent.trim(), link.getAttribute('aria-current')]),
+			releases: all('.release-pipeline').map(card => [
+				card.querySelector('.eyebrow')?.textContent.trim(),
+				card.querySelector('.section-heading .badge')?.textContent.trim(),
+				card.querySelector('.release-detail')?.hasAttribute('open'),
+			]),
+			text: page.document.body.textContent,
+		};
+		await page.happyDOM.close();
+		return view;
+	};
+	const everything = await render('');
+	expect(everything.filters).toEqual([
+		['All repositories', 'page'],
+		['octo/gadget', null],
+		['octo/widget', null],
+	]);
+	expect(everything.releases).toEqual([
+		['octo/widget / main', 'cancelled', false],
+		['octo/widget / main', 'Required publications verified', false],
+		['octo/gadget / main', 'In progress', true],
+	]);
+	expect(everything.text).toContain('Started on GitHub');
+	const widget = await render('?repository=octo%2Fwidget');
+	expect(widget.filters.filter(([, current]) => current === 'page')).toEqual([['octo/widget', 'page']]);
+	expect(widget.releases.map(([name]) => name)).toEqual(['octo/widget / main', 'octo/widget / main']);
+	expect((await render('?repository=octo%2Fmissing')).releases).toHaveLength(3);
 });
 
 test('a stage whose run failed after publishing is green and says the run failed', async () => {

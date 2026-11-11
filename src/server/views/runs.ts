@@ -44,7 +44,9 @@ function releaseLink(run: Execution): { tag: string; href: string } | undefined 
 	if (run.state !== 'succeeded') return undefined;
 	const parsed = semVer.safeParse(run.version);
 	const tag = run.release?.tag
-		?? (parsed.success ? tagFor(run.workflow?.refs ?? defaultTagPolicy, parsed.data) : undefined);
+		?? (parsed.success && (run.workflow?.refs || run.operation === 'promote')
+			? tagFor(run.workflow?.refs ?? defaultTagPolicy, parsed.data)
+			: undefined);
 	return tag ? { tag, href: githubHref(run.repository, 'releases', 'tag', tag) } : undefined;
 }
 
@@ -64,6 +66,12 @@ export function runCard(run: Execution, now: number) {
 		missing: !approving && run.state !== 'verifying' && run.operation !== 'prepare' && run.state !== 'cancelled'
 			? missing
 			: [],
+		reason: run.reason?.replace(/\b[0-9a-f]{32,64}\b/g, id => id.slice(0, 12)),
+		workflowCommit: run.workflowSha
+			? undefined
+			: run.eventId.startsWith('observed:')
+			? 'Started on GitHub'
+			: 'Not dispatched yet',
 		preparationUrl: preparation?.url.startsWith('https://github.com/') ? preparation.url : undefined,
 		autoMerge: preparation?.autoMerge?.state === 'refused'
 			? preparation.autoMerge.note
@@ -140,7 +148,9 @@ export function pipeline(release: Release, now: number) {
 		const tone: Tone = run ? executionTone[run.state] : 'neutral';
 		const attempts = Math.max(
 			0,
-			...[...targets.values()].map(runs => runs.reduce((count, entry) => count + (entry.runAttempt ?? 1), 0)),
+			...[...targets.values()].map(runs =>
+				runs.reduce((count, entry) => count + (entry.runId === undefined ? 0 : entry.runAttempt ?? 1), 0)
+			),
 		);
 		const done = current.filter(entry => entry.state === 'succeeded').length;
 		return {
@@ -199,6 +209,7 @@ export function pipeline(release: Release, now: number) {
 		: overall;
 	return {
 		status,
+		open: status.tone === 'warn' || status.tone === 'active' || status.tone === 'waiting',
 		stages,
 		publications: [
 			...required,
