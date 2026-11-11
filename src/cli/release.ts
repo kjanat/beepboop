@@ -161,7 +161,11 @@ export function releaseRepository(
 			configured,
 			([name, raw]) => decode(streamSchema, raw).pipe(Effect.map(stream => ({ name, stream }))),
 		);
-		const eligible = streams.filter(({ stream }) => stream.promote.workflow && stream.versioning !== 'independent');
+		const starts = (name: string) => {
+			const kind = repository.releases[name]?.kind;
+			return kind === 'promotes' || kind === 'prepares';
+		};
+		const eligible = streams.filter(({ name, stream }) => starts(name) && stream.versioning !== 'independent');
 		let selected = options.stream;
 		if (!selected && eligible.length === 1) selected = eligible[0]?.name;
 		if (!selected) {
@@ -172,7 +176,8 @@ export function releaseRepository(
 						'NO_ELIGIBLE_STREAMS',
 						streams.some(({ stream }) => stream.versioning === 'independent')
 							? 'Use beepboop releases plan-set and prepare-set for independent packages'
-							: `Run beepboop repositories adopt ${repository.name}`,
+							: streams.map(({ name }) => repository.releases[name]?.summary ?? '').join(' ').trim()
+								|| `Run beepboop repositories adopt ${repository.name}`,
 					),
 				);
 			}
@@ -212,9 +217,13 @@ export function releaseRepository(
 				'Use beepboop releases plan-set and prepare-set with an explicit package release plan',
 			));
 		}
-		if (!stream.promote.workflow) {
-			return yield* Effect.fail(failure(`Stream ${selected} has no publishing workflow`, 'NO_PUBLISHING_WORKFLOW'));
+		const release = repository.releases[selected];
+		if (!release || !starts(selected)) {
+			return yield* Effect.fail(
+				failure(release?.summary ?? `Stream ${selected} cannot release`, 'STREAM_CANNOT_RELEASE'),
+			);
 		}
+		const direct = release.kind === 'promotes';
 		let version = options.version;
 		if (!version) {
 			const required = failure(
@@ -260,7 +269,7 @@ export function releaseRepository(
 		const started = startsFrom(stream.start, 'cli') !== undefined;
 		const committing = stream.prepare.bump === 'commit';
 		const pending = plan.edits.length > 0 || plan.requiresPreparation === true;
-		if (!pending && !started) {
+		if (!pending && !started && !direct) {
 			return yield* Effect.fail(failure(
 				`Version ${summary.version} is already prepared at ${summary.sourceSha}`,
 				'ALREADY_PREPARED',
@@ -304,14 +313,15 @@ export function releaseRepository(
 					out,
 					stream.packages.map(id => ({
 						package: look.pkg(packageLabel(id)),
-						current: 'determined by preparation workflow',
+						current: direct ? 'read from tags' : 'determined by preparation workflow',
 						release: look.version(summary.version),
 					})),
 				);
-			} else out.log('The configured preparation workflow determines the package versions.');
+			} else if (!direct) out.log('The configured preparation workflow determines the package versions.');
 			for (const note of plan.diagnostics ?? []) out.log(look.note(note));
 			for (const edit of plan.edits) out.log(`\n${edit.path}\nCurrent:\n${edit.before}\nProposed:\n${edit.after}`);
-			if (!pending) {
+			if (direct) out.log(release.summary);
+			else if (!pending) {
 				out.log(`${repository.defaultBranch} already carries ${look.version(summary.version)}. Starting publishes it.`);
 			}
 		}
@@ -324,6 +334,8 @@ export function releaseRepository(
 						kind: 'confirm',
 						message: started
 							? `Start this release? ${startFromEffect}`
+							: direct
+							? `Create the publication run of ${summary.version}?`
 							: committing
 							? `Prepare this release and commit its version bump to ${repository.defaultBranch}?`
 							: 'Prepare this release and open its version PR?',
@@ -335,12 +347,18 @@ export function releaseRepository(
 		) return out.log(started ? 'Release start cancelled.' : 'Release preparation cancelled.');
 		const preparation = yield* step(
 			out,
-			started ? 'Starting the release' : 'Preparing the release',
+			started ? 'Starting the release' : direct ? 'Creating the publication run' : 'Preparing the release',
 			client.call(routes.releasesPrepare, { ...request, sourceSha: summary.sourceSha, planId: summary.planId }),
-			created => `${started ? 'Release' : 'Preparation'} ${look.id(created.id)} is ${created.state}`,
+			created =>
+				`${created.operation === 'promote' ? 'Release' : 'Preparation'} ${look.id(created.id)} is ${created.state}`,
 		);
 		if (out.jsonMode) return yield* emit(out, { ...preview, preparation });
-		out.log(`${started ? 'Release' : 'Preparation'} ${look.id(preparation.id)}: ${preparation.state}`);
+		out.log(`${started || direct ? 'Release' : 'Preparation'} ${look.id(preparation.id)}: ${preparation.state}`);
+		if (direct && !started) {
+			return out.log(
+				`Publish it with beepboop runs publish ${preparation.id} --sourceSha ${summary.sourceSha}.`,
+			);
+		}
 		if (started) {
 			out.log(
 				!pending

@@ -3,10 +3,12 @@ import { z } from 'zod';
 import { resolveConfiguration } from '@/automation/configuration';
 import { discover } from '@/automation/managers';
 import { encodeRepository } from '@/automation/package-identity';
+import { streamReleases } from '@/automation/release-capability';
 import { repositoryName, repositoryReference } from '@/automation/repository-name';
 import { branchConflictBlocker, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import { setupBranch, setupTitle } from '@/automation/setup-changes';
 import { followsProposal, observationsKept, sameEdits, savedSetup, setupEdits } from '@/automation/setup-maintenance';
+import type { RepositoryRecord } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
 import { conflict, domainError, invalid, notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
@@ -24,10 +26,14 @@ function ownerName(context: Context, input: string): Effect.Effect<string, Domai
 	return repositoryName(input, context.service.gateway.ownerLogin());
 }
 
+function shown(repository: RepositoryRecord) {
+	return { ...encodeRepository(repository), releases: streamReleases(repository) };
+}
+
 export const repositoryEndpoints = {
 	repositoriesList: admin(
 		routes.repositoriesList,
-		(_, { service }) => service.store.repositories().pipe(Effect.map(rows => rows.map(encodeRepository))),
+		(_, { service }) => service.store.repositories().pipe(Effect.map(rows => rows.map(shown))),
 	),
 	repositoriesResolve: admin(routes.repositoriesResolve, (input, { service }) =>
 		Effect.gen(function*() {
@@ -46,7 +52,7 @@ export const repositoryEndpoints = {
 				);
 			}
 			const stored = found ? yield* service.store.repository(found.id) : undefined;
-			if (stored) return encodeRepository(stored);
+			if (stored) return shown(stored);
 			return yield* notFound(
 				'repository',
 				`Repository ${input.repository} is not enrolled; run beepboop repositories discover ${input.repository}`,
@@ -57,7 +63,7 @@ export const repositoryEndpoints = {
 		Effect.gen(function*() {
 			yield* reference(input.repository);
 			const name = yield* ownerName(context, input.repository);
-			return encodeRepository(yield* context.service.discover(name, input.repositoryId));
+			return shown(yield* context.service.discover(name, input.repositoryId));
 		})),
 	setupPreview: admin(
 		routes.setupPreview,

@@ -7,6 +7,7 @@ import { latestTag } from '@/automation/managers/tags';
 import { matchesPackage } from '@/automation/package-identity';
 import { planReleaseSet } from '@/automation/planning';
 import { planHookUpdates } from '@/automation/precommit';
+import { capabilitySentence, releasable, releaseCapability } from '@/automation/release-capability';
 import { resolvePackageVersion } from '@/automation/release-version';
 import type { AutomationService } from '@/automation/service';
 import type { Execution, ReleasePlan, ReleaseStarted, Snapshot, Stream } from '@/automation/types';
@@ -45,6 +46,8 @@ function configured(
 		const repository = yield* ready(service, repositoryId);
 		const stream = repository.configuration.streams[name];
 		if (!stream) return yield* notFound('stream', 'Unknown stream', name);
+		const capability = releaseCapability(stream, repository.inventory);
+		if (!releasable(capability)) return yield* precondition(capabilitySentence(name, capability));
 		return { repository, stream };
 	});
 }
@@ -123,8 +126,10 @@ export function releasePlan(input: ReleaseInput, { service }: Pick<AdminContext,
 				sourceSha: snapshot.sha,
 				packages: [],
 				edits: [],
-				diagnostics: ['Preparation is delegated to the configured repository workflow'],
-				requiresPreparation: true,
+				diagnostics: stream.prepare.workflow
+					? ['Preparation is delegated to the configured repository workflow']
+					: [],
+				requiresPreparation: stream.prepare.workflow !== undefined,
 			};
 		const planId = yield* planIdentity(plan, repository);
 		return { selection, plan, planId };
@@ -133,9 +138,8 @@ export function releasePlan(input: ReleaseInput, { service }: Pick<AdminContext,
 
 function setPlan(input: { repositoryId: number; stream: string; plan: unknown }, { service }: AdminContext) {
 	return Effect.gen(function*() {
-		const repository = yield* ready(service, input.repositoryId);
-		const stream = repository.configuration.streams[input.stream];
-		if (stream?.versioning !== 'independent') return yield* precondition('Select an independent release stream');
+		const { repository, stream } = yield* configured(service, input.repositoryId, input.stream);
+		if (stream.versioning !== 'independent') return yield* precondition('Select an independent release stream');
 		const snapshot = yield* current(service, { repository, stream }, 'Refresh discovery before planning this revision');
 		const plan = yield* planReleaseSet(
 			snapshot,

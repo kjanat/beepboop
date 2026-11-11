@@ -36,6 +36,10 @@ export const executionView = z.looseObject({
 });
 export type ExecutionView = z.output<typeof executionView>;
 
+export const releaseKinds = ['observes', 'unpublishable', 'promotes', 'prepares'] as const;
+export const streamRelease = z.object({ kind: z.enum(releaseKinds), summary: z.string() });
+export type StreamRelease = z.output<typeof streamRelease>;
+
 export const repositoryView = z.looseObject({
 	id: z.number(),
 	name: z.string(),
@@ -44,6 +48,7 @@ export const repositoryView = z.looseObject({
 	suspended: z.boolean().optional(),
 	diagnostics: z.array(z.string()),
 	configuration: z.looseObject({ streams: z.record(z.string(), z.unknown()) }).optional(),
+	releases: z.record(z.string(), streamRelease),
 });
 export type RepositoryView = z.output<typeof repositoryView>;
 
