@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Retrying a failed observed release whose workflow ref is a tag pattern, such as `refs/tags/rshellcheck-v*`, re-runs the failed jobs of its run. The retry failed with `GitHub HTTP 422 on GET /repos/<owner>/<name>/commits/rshellcheck-v*`.
+- `beepboop runs publish`, `cancel` and `recover` accept the 12-character ID that `beepboop runs list` prints, or any unique prefix of 8 characters or more.
 - A setup rewrite of an already integrated workflow keeps the trailing comments of the steps it does not change, such as `# v5.2.7` after a pinned `uses`, and ends the file with the same final newline as the original.
 - Generated release workflows build Cargo binaries with `cargo auditable build`, so the SBOM lists the crates each binary was built with. The SBOM names the repository and release version, gives every file SHA1 and SHA256 digests, and lists no packages or CPEs guessed from asset file names. https://github.com/kjanat/beepboop/pull/72
 - A setup rebuild replaces the per-crate `cargo publish --locked --package 'name'` lines an earlier generator wrote with `beepboop publish`, so a rerun skips published crates, retries rate limits and reports each crate. Commands that differ from those lines stay as written.
