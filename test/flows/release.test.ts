@@ -14,6 +14,7 @@ import { experimental_AstroContainer } from 'astro/container';
 import { Effect } from 'effect';
 import { Window } from 'happy-dom';
 import { z } from 'zod';
+import { runFailedNote } from '@/automation/execution';
 import { Store } from '@/automation/store';
 import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
@@ -458,6 +459,27 @@ test('the runs page shows one release as a row of stages with one publication ta
 		]);
 	expect(page.document.body.textContent).not.toContain('Still to publish');
 	await page.happyDOM.close();
+});
+
+test('a stage whose run failed after publishing is green and says the run failed', async () => {
+	const { finished } = await finishedPromotion('pending');
+	const published = finished.publications.map(publication => ({ ...publication, outcome: 'succeeded' as const }));
+	const readable = [{ ...finished, state: 'succeeded' as const, reason: runFailedNote, publications: published }];
+	const [release] = releaseSummaries(readable);
+	if (!release) throw new Error('No release');
+	const view = pipeline(release, Date.now());
+	expect([view?.status.label, view?.stages.map(stage => [stage.operation, stage.tone, stage.note])]).toEqual([
+		'Required publications verified',
+		[['promote', 'ok', 'succeeded, workflow run failed']],
+	]);
+	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Runs.astro'));
+	const container = await experimental_AstroContainer.create();
+	const html = await container.renderToString(componentModule.parse(loaded).default, {
+		props: { data: { section: 'runs', executions: { readable, unreadable: [] } } },
+		request: new Request(`${origin}/runs`),
+	});
+	expect(html).toContain(runFailedNote);
+	expect(html).not.toContain('This operation completed.');
 });
 
 test('a stage with one execution per package stays unfinished until every package succeeds', async () => {

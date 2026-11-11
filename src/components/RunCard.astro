@@ -1,4 +1,5 @@
 ---
+import { runFailedNote } from '@/automation/execution';
 import type { Execution } from '@/automation/types.ts';
 import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
@@ -46,7 +47,7 @@ const card = runCard(run, now);
 						: ''
 				}Beepboop releases this commit once it is verified and its checks pass.`
 				: 'Waiting for you to publish it.'
-			: (run.state !== 'succeeded' && run.reason)
+			: ((run.state !== 'succeeded' || run.reason === runFailedNote) && run.reason)
 				|| (run.state === 'verifying'
 					? 'The workflow finished. Beepboop is waiting for the registries to show every publication.'
 					: run.state === 'succeeded'

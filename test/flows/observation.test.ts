@@ -7,6 +7,7 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import { z } from 'zod';
+import { runFailedNote } from '@/automation/execution';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Execution } from '@/automation/types';
@@ -334,6 +335,37 @@ test('a re-run attempt records its own outcome', async () => {
 		attempt: 2,
 	});
 	expect(after.map(execution => [execution.runAttempt, execution.state])).toEqual([[2, 'succeeded']]);
+});
+
+test('a failed run counts as succeeded once every required publication is on the registry', async () => {
+	const repository = npmRelease('widget', '1.2.0', "{ push: { tags: ['widget-v*'] } }");
+	await adopt(repository);
+	repository.refs.set('tags/widget-v1.2.0', world.github.head(repository));
+	const failure = { id: 9001, event: 'push', branch: 'widget-v1.2.0', conclusion: 'failure', attempt: 1 };
+	const [first] = await complete(repository, failure);
+	expect([first?.state, first?.reason]).toEqual(['failed', undefined]);
+	world.npm.publish('widget', '1.2.0');
+	await world.coordinator(repository).recover(first?.id ?? '', 'reconcile', 'test');
+	await world.wait(2_000);
+	const journal = await world.coordinator(repository).exportJournal();
+	const late = journal.filter(entry => entry.key.startsWith('execution:')).map(entry => decodeExecutionV1(entry.value));
+	expect(late.map(execution => [execution.state, execution.reason])).toEqual([['succeeded', runFailedNote]]);
+});
+
+test('a run that fails after publishing every required package counts as succeeded', async () => {
+	const repository = npmRelease('widget', '1.2.0', "{ push: { tags: ['widget-v*'] } }");
+	await adopt(repository);
+	repository.refs.set('tags/widget-v1.2.0', world.github.head(repository));
+	world.npm.publish('widget', '1.2.0');
+	const [published] = await complete(repository, {
+		id: 9001,
+		event: 'push',
+		branch: 'widget-v1.2.0',
+		conclusion: 'failure',
+		attempt: 1,
+	});
+	expect([published?.state, published?.reason]).toEqual(['succeeded', runFailedNote]);
+	expect(published?.publications.map(publication => publication.outcome)).toEqual(['succeeded']);
 });
 
 test('retrying a failed observed tag release by its short ID re-runs the failed jobs', async () => {
