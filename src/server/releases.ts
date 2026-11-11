@@ -54,7 +54,16 @@ export function needingUser(executions: readonly Execution[]): ReadonlySet<strin
 		const current = newest.get(key);
 		if (!current || byAge(current, run) < 0) newest.set(key, run);
 	}
-	const released = executions.filter(run => run.state === 'succeeded' && run.operation !== 'prepare');
+	const published = (run: Execution) => {
+		const required = run.releaseSet?.required ?? run.configuration.streams[run.stream]?.required ?? [];
+		const reports = executions.filter(other =>
+			other.repositoryId === run.repositoryId && other.stream === run.stream && other.version === run.version
+			&& other.releaseSet?.group === run.releaseSet?.group
+		).flatMap(other => other.publications);
+		return required.length > 0
+			&& required.every(id => reports.some(report => report.outcome === 'succeeded' && matchesPublication(id, report)));
+	};
+	const released = executions.filter(run => run.state === 'succeeded' && run.operation !== 'prepare' && published(run));
 	const superseded = (run: Execution) =>
 		released.some(other =>
 			other.repositoryId === run.repositoryId && other.stream === run.stream && byAge(run, other) < 0

@@ -487,6 +487,8 @@ test('the runs page filters by repository and folds a settled release', async ()
 		{ id: 'broken-gadget', repositoryId: 99, error: 'gadget record' },
 	];
 	expect([...needingUser(readable)]).toEqual([]);
+	const unpublished = readable.map(run => run.id === 'done' ? { ...run, publications: [] } : run);
+	expect([...needingUser(unpublished)]).toEqual(['old-b']);
 	const hotfix = readable.map(run => run.version === '1.0.0' ? { ...run, version: '2.0.0' } : run);
 	expect([...needingUser(hotfix)]).toEqual(['old-b']);
 	const set = (group: string) => ({ preparationId: 'set', group, required: [] });
