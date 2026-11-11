@@ -19,6 +19,7 @@ import { Store } from '@/automation/store';
 import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
+import { loaders } from '@/server/loaders';
 import { needingUser, releaseSetSummaries, releaseSummaries, runStateLabel } from '@/server/releases';
 import { overview } from '@/server/views/overview';
 import { pipeline, runCard } from '@/server/views/runs';
@@ -409,7 +410,7 @@ test('the runs page shows one release as a row of stages with one publication ta
 	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Runs.astro'));
 	const container = await experimental_AstroContainer.create();
 	const html = await container.renderToString(componentModule.parse(loaded).default, {
-		props: { data: { section: 'runs', executions: { readable, unreadable: [] } } },
+		props: { data: { section: 'runs', executions: { readable, unreadable: [] }, repositories: [] } },
 		request: new Request(`${origin}/runs`),
 	});
 	const page = new Window();
@@ -467,9 +468,25 @@ test('the runs page filters by repository and folds a settled release', async ()
 	const { runId: _runId, runAttempt: _runAttempt, workflowSha: _workflowSha, ...unstarted } = finished;
 	const actor = 'ab'.repeat(16);
 	const readable: Execution[] = [
-		{ ...unstarted, id: 'old-a', version: '1.0.0', state: 'cancelled', reason: `Cancelled by ${actor}`, createdAt: 1 },
-		{ ...unstarted, id: 'old-b', version: '1.0.0', state: 'cancelled', reason: `Cancelled by ${actor}`, createdAt: 2 },
-		{ ...finished, id: 'done', state: 'succeeded', publications: published, createdAt: 3 },
+		{
+			...unstarted,
+			id: 'old-a',
+			version: '1.0.0',
+			state: 'cancelled',
+			reason: `Cancelled by ${actor}`,
+			createdAt: 1,
+			updatedAt: 1,
+		},
+		{
+			...unstarted,
+			id: 'old-b',
+			version: '1.0.0',
+			state: 'cancelled',
+			reason: `Cancelled by ${actor}`,
+			createdAt: 2,
+			updatedAt: 2,
+		},
+		{ ...finished, id: 'done', state: 'succeeded', publications: published, createdAt: 3, updatedAt: 3 },
 		{
 			...unstarted,
 			id: 'observed',
@@ -479,8 +496,17 @@ test('the runs page filters by repository and folds a settled release', async ()
 			publications: [],
 			runId: 77,
 			createdAt: 4,
+			updatedAt: 4,
 		},
-		{ ...finished, id: 'other', repository: 'octo/gadget', repositoryId: 99, state: 'running', createdAt: 5 },
+		{
+			...finished,
+			id: 'other',
+			repository: 'octo/gadget',
+			repositoryId: 99,
+			state: 'running',
+			createdAt: 5,
+			updatedAt: 5,
+		},
 	];
 	const unreadable = [
 		{ id: 'broken-widget', repositoryId: finished.repositoryId, error: 'widget record' },
@@ -501,10 +527,17 @@ test('the runs page filters by repository and folds a settled release', async ()
 		.toEqual([`Cancelled by ${actor.slice(0, 12)}`, undefined]);
 	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Runs.astro'));
 	const container = await experimental_AstroContainer.create();
-	const render = async (query: string) => {
+	const render = async (selected?: string) => {
 		const html = await container.renderToString(componentModule.parse(loaded).default, {
-			props: { data: { section: 'runs', executions: { readable, unreadable } } },
-			request: new Request(`${origin}/runs${query}`),
+			props: {
+				data: {
+					section: 'runs',
+					executions: { readable, unreadable },
+					repositories: ['octo/gadget', 'octo/widget'],
+					selected,
+				},
+			},
+			request: new Request(`${origin}/runs`),
 		});
 		const page = new Window();
 		page.document.body.innerHTML = html;
@@ -518,11 +551,12 @@ test('the runs page filters by repository and folds a settled release', async ()
 			]),
 			text: page.document.body.textContent,
 			broken: all('.run-card pre').map(error => error.textContent),
+			polled: page.document.querySelector('[data-runs-latest]')?.getAttribute('data-runs-repository'),
 		};
 		await page.happyDOM.close();
 		return view;
 	};
-	const everything = await render('');
+	const everything = await render();
 	expect(everything.broken).toEqual(['widget record', 'gadget record']);
 	expect(everything.filters).toEqual([
 		['All repositories', 'page'],
@@ -535,11 +569,26 @@ test('the runs page filters by repository and folds a settled release', async ()
 		['octo/gadget / main', 'In progress', true],
 	]);
 	expect(everything.text).toContain('Started on GitHub');
-	const widget = await render('?repository=octo%2Fwidget');
+	const widget = await render('octo/widget');
 	expect(widget.filters.filter(([, current]) => current === 'page')).toEqual([['octo/widget', 'page']]);
-	expect(widget.releases.map(([name]) => name)).toEqual(['octo/widget / main', 'octo/widget / main']);
-	expect(widget.broken).toEqual(['widget record']);
-	expect((await render('?repository=octo%2Fmissing')).releases).toHaveLength(3);
+	expect([everything.polled, widget.polled]).toEqual([null, 'octo/widget']);
+});
+
+test('the runs loader reads one repository when the page names it', async () => {
+	const { finished, repository } = await finishedPromotion('pending');
+	const load = (name?: string) =>
+		Effect.runPromise(loaders.runs({ env: world.env, actor: 'admin', ...(name ? { repository: name } : {}) }));
+	const named = await load(repository.name);
+	expect([named.selected, named.repositories, named.executions.readable.map(run => run.id)]).toEqual([
+		repository.name,
+		[repository.name],
+		(await load()).executions.readable.map(run => run.id),
+	]);
+	expect(named.executions.readable.map(run => run.id)).toContain(finished.id);
+	expect((await load('octo/missing')).selected).toBeUndefined();
+	const store = new Store(world.db);
+	const other = await Effect.runPromise(store.readExecutions(repository.id + 1));
+	expect(other).toEqual([]);
 });
 
 test('an earlier run that still needs the user decides its stage and stays unfolded', async () => {
@@ -564,7 +613,7 @@ test('an earlier run that still needs the user decides its stage and stays unfol
 	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Runs.astro'));
 	const container = await experimental_AstroContainer.create();
 	const html = await container.renderToString(componentModule.parse(loaded).default, {
-		props: { data: { section: 'runs', executions: { readable, unreadable: [] } } },
+		props: { data: { section: 'runs', executions: { readable, unreadable: [] }, repositories: [] } },
 		request: new Request(`${origin}/runs`),
 	});
 	const page = new Window();
@@ -598,7 +647,7 @@ test('a stage whose run failed after publishing is green and says the run failed
 	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Runs.astro'));
 	const container = await experimental_AstroContainer.create();
 	const html = await container.renderToString(componentModule.parse(loaded).default, {
-		props: { data: { section: 'runs', executions: { readable, unreadable: [] } } },
+		props: { data: { section: 'runs', executions: { readable, unreadable: [] }, repositories: [] } },
 		request: new Request(`${origin}/runs`),
 	});
 	expect(html).toContain(runFailedNote);

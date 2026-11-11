@@ -22,19 +22,10 @@ import {
 interface Props {
 	data: ViewOf<'runs'>;
 }
-const { readable, unreadable: broken } = Astro.props.data.executions;
+const { repositories, selected } = Astro.props.data;
+const { readable: executions, unreadable } = Astro.props.data.executions;
 const now = Date.now();
-const latest = Math.max(0, ...readable.map(run => run.updatedAt));
-const repositories = [...new Set(readable.map(run => run.repository))].sort();
-const wanted = Astro.url.searchParams.get('repository');
-const selected = repositories.find(name => name === wanted);
-const executions = selected
-	? readable.filter(run => run.repository === selected)
-	: readable;
-const owners = new Set(executions.map(run => run.repositoryId));
-const unreadable = selected
-	? broken.filter(row => owners.has(row.repositoryId))
-	: broken;
+const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 const position = new Map(executions.map((run, index) => [run.id, index]));
 const first = (runs: readonly { id: string }[]) =>
 	Math.min(...runs.map(run => position.get(run.id) ?? 0));
@@ -42,7 +33,7 @@ const pipelines = releaseSummaries(executions).sort((a, b) =>
 	first(a.runs) - first(b.runs)
 );
 ---
-<span data-runs-latest={latest} hidden></span>
+<span data-runs-latest={latest} data-runs-repository={selected} hidden></span>
 {repositories.length > 1 && (
 	<nav class="filters" aria-label="Repository">
 		<a

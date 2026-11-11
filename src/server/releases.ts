@@ -54,6 +54,10 @@ export function needingUser(executions: readonly Execution[]): ReadonlySet<strin
 		const current = newest.get(key);
 		if (!current || byAge(current, run) < 0) newest.set(key, run);
 	}
+	const covers = (later: string | undefined, earlier: string | undefined) => {
+		const next = semVer.safeParse(later), previous = semVer.safeParse(earlier);
+		return next.success && (!previous.success || compare(next.data, previous.data) > 0);
+	};
 	const published = (run: Execution) => {
 		const required = run.releaseSet?.required ?? run.configuration.streams[run.stream]?.required ?? [];
 		const reports = executions.filter(other =>
@@ -66,10 +70,9 @@ export function needingUser(executions: readonly Execution[]): ReadonlySet<strin
 	const released = executions.filter(run => run.state === 'succeeded' && run.operation !== 'prepare' && published(run));
 	const superseded = (run: Execution) =>
 		released.some(other =>
-			other.repositoryId === run.repositoryId && other.stream === run.stream && byAge(run, other) < 0
+			other.repositoryId === run.repositoryId && other.stream === run.stream && other.updatedAt > run.updatedAt
 			&& other.releaseSet?.group === run.releaseSet?.group
-			&& semVer.safeParse(other.version).success
-			&& (!semVer.safeParse(run.version).success || compare(other.version ?? '', run.version ?? '') > 0)
+			&& covers(other.version, run.version)
 		);
 	const needing = new Set<string>();
 	for (const [run, key] of keys) {

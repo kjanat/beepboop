@@ -386,7 +386,7 @@ if (runsLatest) {
 	setInterval(() => {
 		if (document.hidden) return;
 		Effect.runFork(
-			api(routes.executionsList, {}).pipe(
+			api(routes.executionsList, { repository: runsLatest.dataset.runsRepository }).pipe(
 				Effect.tap(runs =>
 					Effect.sync(() => {
 						if (Math.max(0, ...runs.map(run => run.updatedAt)) > rendered) location.reload();

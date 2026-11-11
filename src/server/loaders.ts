@@ -16,6 +16,7 @@ import type { Section } from '@/server/sections.ts';
 export interface LoaderContext {
 	env: AutomationBindings;
 	actor: string;
+	repository?: string;
 }
 
 export type Panel<T> = { kind: 'loaded'; value: T } | { kind: 'failed' };
@@ -52,8 +53,11 @@ function repositories(
 ): Effect.Effect<Rows<RepositoryRecord, UnreadableRepository>, DomainError> {
 	return service.store.readRepositories().pipe(Effect.map(split));
 }
-function executions(service: AutomationService): Effect.Effect<Rows<Execution, UnreadableExecution>, DomainError> {
-	return service.store.readExecutions().pipe(Effect.map(split));
+function executions(
+	service: AutomationService,
+	repositoryId?: number,
+): Effect.Effect<Rows<Execution, UnreadableExecution>, DomainError> {
+	return service.store.readExecutions(repositoryId).pipe(Effect.map(split));
 }
 function grants(service: AutomationService) {
 	return service.credentials.grantDocuments().pipe(
@@ -134,10 +138,22 @@ export const loaders = {
 			})),
 		);
 	},
-	runs: ({ env }) =>
-		executions(new AutomationService(env)).pipe(
-			Effect.map(executionRows => ({ section: 'runs' as const, executions: executionRows })),
-		),
+	runs: ({ env, repository }) => {
+		const service = new AutomationService(env);
+		return repositories(service).pipe(
+			Effect.flatMap(repositoryRows => {
+				const selected = repositoryRows.readable.find(entry => entry.name === repository);
+				return executions(service, selected?.id).pipe(
+					Effect.map(executionRows => ({
+						section: 'runs' as const,
+						executions: executionRows,
+						repositories: repositoryRows.readable.map(entry => entry.name).sort(),
+						selected: selected?.name,
+					})),
+				);
+			}),
+		);
+	},
 	winget: ({ env }) => {
 		const service = new AutomationService(env);
 		return Effect.all([repositories(service), panel('winget-submissions', service.winget().list())], concurrent).pipe(
