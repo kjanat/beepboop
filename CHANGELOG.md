@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- An operation whose workflow run fails after every required publication succeeded ends as succeeded, and its card and stage say that the workflow run failed. An already failed operation changes at the next reconcile, also when a registry shows the publication later.
 - The runs page shows each release version as one card: a row of stages (prepare, promote and each extra operation) with a status dot per stage, the attempt count and a link to the workflow run, and one table of every publication of that release. The operations sit below it, opened when they run or need you. Each operation used to be its own card that listed the other operations' packages under "Still to publish".
 - PyPI publications link to the project page of the published version, and a GitHub release whose version is a tag such as `rshellcheck-v1.1.0` links to that release.
 - Run lists, release summaries and the overview list unfinished runs (pending, ready, dispatching, running, verifying, awaiting approval) before finished ones, newest created first within each group. Cancelling or failing an old run no longer lists it above a newer release, and the 200-run list limit now keeps unfinished runs.

@@ -143,8 +143,22 @@ export function runTitle(execution: Execution): string {
 export function expectedRunTitle(execution: Execution): string {
 	return execution.titled ? runTitle(execution) : `Release operation ${execution.id}`;
 }
+function requiredIds(execution: Execution): readonly string[] {
+	return execution.workflow?.publications
+		?? (execution.operation === 'publish'
+			? (execution.configuration.streams[execution.stream]?.required ?? [])
+			: []);
+}
+function requiredPublications(execution: Execution): Publication[] {
+	const required = requiredIds(execution);
+	return execution.publications.filter((p) => p.required || required.some(id => matchesPublication(id, p)));
+}
 export function completion(execution: Execution, runSucceeded: boolean): Execution['state'] {
-	if (!runSucceeded) return 'failed';
+	if (!runSucceeded) {
+		return requiredPublications(execution).length && completion(execution, true) === 'succeeded'
+			? 'succeeded'
+			: 'failed';
+	}
 	if (execution.managed) return execution.managed.result ? 'succeeded' : 'blocked';
 	if (execution.operation === 'prepare' && execution.plan && !execution.prepared?.result) return 'blocked';
 	if (!outputsComplete(execution)) return 'blocked';
@@ -152,19 +166,27 @@ export function completion(execution: Execution, runSucceeded: boolean): Executi
 		execution.workflow?.refs
 		&& !execution.publications.some(p => p.id === `refs:${execution.operation}` && p.outcome === 'succeeded')
 	) return 'blocked';
-	const required = execution.workflow?.publications
-		?? (execution.operation === 'publish'
-			? (execution.configuration.streams[execution.stream]?.required ?? [])
-			: []);
-	if (required.some((id) => !execution.publications.some((p) => matchesPublication(id, p)))) return 'blocked';
-	const publications = execution.publications.filter((p) =>
-		p.required || required.some(id => matchesPublication(id, p))
-	);
+	if (requiredIds(execution).some((id) => !execution.publications.some((p) => matchesPublication(id, p)))) {
+		return 'blocked';
+	}
+	const publications = requiredPublications(execution);
 	if (publications.some((p) => p.outcome === 'failed')) return 'failed';
 	if (publications.some((p) => p.outcome === 'uncertain')) return 'uncertain';
 	const open = publications.filter((p) => p.outcome !== 'succeeded');
 	if (!open.length) return 'succeeded';
 	return open.every(recheckable) ? 'verifying' : 'blocked';
+}
+export const runFailedNote = 'The workflow run failed after every required publication succeeded.';
+export function settle(execution: Execution, runSucceeded: boolean): Execution {
+	const state = completion(execution, runSucceeded);
+	return !runSucceeded && state === 'succeeded'
+		? { ...execution, state, reason: runFailedNote }
+		: { ...execution, state };
+}
+export function publishedAfterFailure(execution: Execution): Execution | undefined {
+	if (execution.state !== 'failed' || execution.runId === undefined) return undefined;
+	const settled = settle(execution, false);
+	return settled.state === 'succeeded' ? settled : undefined;
 }
 export function recheckable(publication: Publication): boolean {
 	return canVerifyPublication(publication.manager) && ['pending', 'uncertain'].includes(publication.outcome);

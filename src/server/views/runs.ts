@@ -1,3 +1,4 @@
+import { runFailedNote } from '@/automation/execution.ts';
 import { matchesPublication } from '@/automation/package-identity.ts';
 import type { Execution, Publication } from '@/automation/types.ts';
 import { managerSpec } from '@/contract/catalog';
@@ -148,6 +149,7 @@ export function pipeline(release: Release, now: number) {
 			tone,
 			note: [
 				run ? progress(run, now) : 'not run',
+				...(run?.state === 'succeeded' && run.reason === runFailedNote ? ['workflow run failed'] : []),
 				...(current.length > 1 ? [`${done} of ${current.length} packages succeeded`] : []),
 				...(attempts > 1 ? [`attempt ${attempts}`] : []),
 			].join(', '),

@@ -3,14 +3,15 @@ import { Effect, Semaphore } from 'effect';
 import { z } from 'zod';
 import type { WorkflowIdentity } from '@/automation/auth';
 import {
-	completion,
 	createExecution,
 	dependenciesReady,
 	deriveExecution,
 	expectedRunTitle,
 	mergePublications,
+	publishedAfterFailure,
 	recheckable,
 	runTitle,
+	settle,
 	validatePublicationIdentity,
 } from '@/automation/execution';
 import { logFailure, logRecovered } from '@/automation/failure-log';
@@ -2712,11 +2713,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						});
 						return;
 					}
-					yield* this.put({
-						...execution,
-						state: completion(execution, run.conclusion === 'success'),
-						runAttempt,
-					});
+					yield* this.put({ ...settle(execution, run.conclusion === 'success'), runAttempt });
 				} else if (execution.state === 'uncertain') {
 					yield* this.put({ ...execution, state: 'running', runAttempt });
 				}
@@ -2840,9 +2837,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					{ concurrency: 'unbounded' },
 				);
 				if (publications.some((publication, i) => publication.outcome !== execution.publications[i]?.outcome)) {
-					yield* this.put({ ...execution, publications });
+					const checked = { ...execution, publications };
+					yield* this.put(publishedAfterFailure(checked) ?? checked);
 					return 'continue' as const;
 				}
+			}
+			const published = publishedAfterFailure(execution);
+			if (published) {
+				yield* this.put(published);
+				return 'continue' as const;
 			}
 			if (execution.state === 'succeeded') yield* this.captureReleaseEvent(execution);
 			if (!active.includes(execution) || execution.state === 'pending') return 'continue' as const;
