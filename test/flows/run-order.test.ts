@@ -225,8 +225,13 @@ test('the run list reads executions in index order and caps the blocked rows tha
 		const plan = world.db.sqlite.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).all(...query.values).map(step =>
 			String(Reflect.get(step ?? {}, 'detail'))
 		);
-		expect(plan).toEqual(['SCAN executions USING INDEX executions_listed']);
+		expect(plan).toEqual([
+			`SCAN executions USING INDEX ${
+				query.sql.includes("state='blocked'") ? 'executions_blocked' : 'executions_listed'
+			}`,
+		]);
 	}
+	expect(lists.filter(query => query.sql.includes("state='blocked'"))).toHaveLength(2);
 	expect(lists.filter(query => !query.sql.includes('LIMIT ?')).map(query => query.sql.includes(' AND COALESCE(')))
 		.toEqual([true]);
 });
