@@ -15,10 +15,10 @@ function execution(
 	repositoryId?: number,
 ): Effect.Effect<Execution, DomainError> {
 	return Effect.gen(function*() {
-		const stored = yield* service.store.execution(id);
-		const matches = stored || !shortId.test(id) ? [] : yield* service.store.executionsStarting(id);
+		const matches = shortId.test(id) ? yield* service.store.executionsStarting(id) : [];
 		if (matches.length > 1) return yield* precondition(`Several operations start with ${id}; give more of the ID`);
-		const known = stored ?? matches[0];
+		const known = matches[0]
+			?? (repositoryId === undefined && !shortId.test(id) ? yield* service.store.execution(id) : undefined);
 		const owner = repositoryId ?? known?.repositoryId;
 		const full = known?.id ?? id;
 		const found = owner === undefined
