@@ -343,6 +343,7 @@ function integrate(
 ): Integration {
 	const root = object(yamlData(document)), jobs = object(root.jobs);
 	const targets = aliasTargets(document);
+	let emptied = false;
 	const blockers: string[] = [], notes: string[] = [];
 	const fail = (message: string) => blockers.push(`${choice.file}: ${message}`);
 	const jobName = choice.job || (Object.keys(jobs).length === 1 ? Object.keys(jobs)[0] : undefined)
@@ -612,9 +613,11 @@ function integrate(
 				const kept = results.filter(entry => !(typeof entry.id === 'string' && recorded.has(entry.id)));
 				const consumed = typeof step.id === 'string'
 					&& readsStep([beyondSteps, steps.filter(other => other !== step)], step.id);
-				return kept.length || reported.artifacts || consumed
-					? [{ ...step, with: { ...reported, publications: `${JSON.stringify(kept, null, 2)}\n` } }]
-					: [];
+				if (kept.length || reported.artifacts || consumed) {
+					return [{ ...step, with: { ...reported, publications: `${JSON.stringify(kept, null, 2)}\n` } }];
+				}
+				emptied = true;
+				return [];
 			});
 			steps = migrated.filter(step =>
 				step.id !== 'beepboop_credentials'
@@ -744,10 +747,13 @@ function integrate(
 	) {
 		fail('credentials need setup commands to receive them, or a beepboop_credentials step in the job');
 	}
-	const report = steps.find(step => actionRole(step.uses) === 'report');
+	const reports = steps.filter(step => actionRole(step.uses) === 'report');
+	const begun = `\u0024{{ steps.${id}.outputs.execution-id }}`;
+	const report = reports.find(step => object(step.with)['execution-id'] === begun)
+		?? (emptied ? undefined : reports[0]);
 	if (
-		operation === 'promote' && report && (!object(report.with).publications
-			|| object(report.with)['execution-id'] !== `\u0024{{ steps.${id}.outputs.execution-id }}`)
+		operation === 'promote' && report
+		&& (!object(report.with).publications || object(report.with)['execution-id'] !== begun)
 	) {
 		fail('report must provide publication results and the begin execution ID');
 	}

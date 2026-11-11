@@ -1648,6 +1648,18 @@ test('the rewrite leaves the report of another execution as written', async () =
 	expect(reports[1]).toMatchObject({ with: { 'execution-id': '${{ inputs.other_execution_id }}' } });
 });
 
+test('the rewrite removes its emptied report and leaves the report of another execution', async () => {
+	const rewritten = await rewrittenPlain({
+		later: `uses: kjanat/beepboop/actions/report@v1
+        with:
+          execution-id: \${{ inputs.other_execution_id }}
+          publications: '[{"id":"pkg:cargo/lint-core"},{"id":"pkg:cargo/lint"}]'`,
+	});
+	const reports = crateSteps(rewritten).filter(step => step.uses === 'kjanat/beepboop/actions/report@v1');
+	expect(reports.map(reportedIds)).toEqual([lintCrates]);
+	expect(publishStep(rewritten)).toMatchObject({ uses: 'kjanat/beepboop/actions/publish@v1' });
+});
+
 test('the rewrite leaves the report sent to another service as written', async () => {
 	const rewritten = await rewrittenPlain({
 		reportWith: '          artifacts: "[]"\n',
