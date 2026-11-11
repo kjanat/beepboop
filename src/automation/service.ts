@@ -21,7 +21,7 @@ import { publishable } from '@/automation/package-publication';
 import { pollPackages } from '@/automation/package-watch';
 import { matchesRef } from '@/automation/policy';
 import type { RefState } from '@/automation/refs';
-import { conflictMessage, moduleTagPrefixes, tagConflict } from '@/automation/refs';
+import { conflictMessage, streamModuleTagPrefixes, tagConflict } from '@/automation/refs';
 import { manifestProblems, releasedVersion, unreleasedManifestVersion } from '@/automation/release-version';
 import { bodyChoices, releaseAfterMerge } from '@/automation/setup';
 import { currentOptions, maintainSetup, rebuildingStatus, setupEdits } from '@/automation/setup-maintenance';
@@ -364,7 +364,7 @@ export class AutomationService {
 						parsed.data,
 						plan.sourceSha,
 						tags,
-						moduleTagPrefixes(repository.inventory.packages, stream.packages ?? []),
+						streamModuleTagPrefixes(repository.inventory.packages, stream),
 					);
 					if (conflict) {
 						const missing = packages.filter(pkg => releasedVersion(pkg) !== version);

@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - `beepboop runs list` shows the current checkout's repository by default and takes `--repository`, `--all`, `--stream`, `--operation`, `--state`, `--releaseVersion` and `--limit`. Its `--json` output is a per-run summary; `--full` prints whole records. https://github.com/kjanat/beepboop/issues/40
+- A stream can list `companionModules`, Go modules whose version tag its release pushes on the release commit beside its own tag, such as `go/v1.2.3` beside `rshellcheck-v1.2.3`. The module keeps its own stream. Setup takes the setting as a choices field, the `--companion-module` flag and a JSON editor in the dashboard. Discovery blocks an entry that matches no package and warns about one that is not a Go module versioned by tags.
+- Adoption notes a Go module whose tags carry the same versions as another stream's tags, or whose tag name a file builds beside that stream's tag name. The note names both options, `companionModules` and moving the module into the stream's `packages`, and changes nothing until you choose.
 
 ### Fixed
 

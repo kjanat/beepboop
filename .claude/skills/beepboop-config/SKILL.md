@@ -88,6 +88,9 @@ Stream fields:
   and `yaml` take `key` as a path array of strings and indexes. `toml` takes
   `key` as an array of bare keys. `text` takes `prefix` and `suffix` around the
   version.
+- `companionModules` lists Go modules (versionless PURLs) whose tag, such as
+  `go/v1.2.3`, the stream's release also pushes on the release commit. The
+  module keeps its own stream.
 - `prepare` and `promote` are workflow choices. Leave out `prepare` for a
   managed version PR. Lockfiles (`Cargo.lock`, `package-lock.json`,
   `bun.lock`, `pnpm-lock.yaml`, `yarn.lock`, `uv.lock`) need a `prepare`

@@ -1,6 +1,7 @@
 import { Effect, Result } from 'effect';
 import { z } from 'zod';
 import { binaryCandidates } from '@/automation/binary-candidates';
+import { companionProposals } from '@/automation/companion-detection';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
 import { legacyConfiguration, readableConfiguration } from '@/automation/configuration-names';
 import { formatJson, json } from '@/automation/json';
@@ -232,10 +233,14 @@ function suggested(
 		});
 		const needs = object(current.needs);
 		const versionFiles = z.array(versionFileSchema).safeParse(current.versionFiles);
+		const companionModules = Array.isArray(current.companionModules)
+			? current.companionModules.map(value => selectorKey(String(value), inventory.packages))
+			: [];
 		streams.push({
 			name,
 			...(observe.length ? { observe } : {}),
 			...(versionSource ? { versionSource } : {}),
+			...(companionModules.length ? { companionModules } : {}),
 			...(versionFiles.success && versionFiles.data.length ? { versionFiles: versionFiles.data } : {}),
 			...(Object.keys(needs).length
 				? {
@@ -392,7 +397,14 @@ function draftSetup(
 		const plan = {
 			...drafts,
 			blockers: [...ineligible, ...drafts.blockers],
-			notes: [...unanswered, ...added, ...failing, ...narrowed, ...drafts.notes],
+			notes: [
+				...unanswered,
+				...added,
+				...failing,
+				...narrowed,
+				...companionProposals(choices, snapshot, inventory),
+				...drafts.notes,
+			],
 			...(candidates.length ? { binaryCandidates: candidates } : {}),
 		};
 		return inferred ? { ...plan, adoption: proposalMarkdown(graph, snapshot, plan, resolved) } : plan;
@@ -504,7 +516,9 @@ function drafted(
 				...(selection.versionSource ? { versionSource: selection.versionSource } : {}),
 				...(selection.versionFiles ? { versionFiles: selection.versionFiles } : {}),
 				...(selection.needs ? { needs: selection.needs } : {}),
+				...(selection.companionModules?.length ? { companionModules: selection.companionModules } : {}),
 			};
+			if (!selection.companionModules?.length) delete updated.companionModules;
 			if (!selection.versionSource) delete updated.versionSource;
 			if (!selection.needs) delete updated.needs;
 			const granted = [

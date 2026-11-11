@@ -106,6 +106,8 @@ export const existingTriggersSentences: Record<TriggerHandover, string> = {
 export const existingTriggersQuestion = 'What happens to the existing triggers of a workflow Beepboop runs';
 
 export const mustPublishSentence = 'Packages that must publish for the release to count as successful.';
+export const companionModulesSentence =
+	'Go modules whose version tag is pushed on the release commit together with the stream tag, such as go/v1.2.3 beside cli-v1.2.3. Each module keeps its own stream.';
 
 export const publishWhen = z.enum(publishWhens);
 export const versionLands = z.enum(versionLandings);

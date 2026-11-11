@@ -150,6 +150,7 @@ test('Cargo adoption generates one workflow and advanced renaming keeps the shar
 			'',
 			'',
 			'',
+			'',
 			'my-release.yml',
 			'',
 			true,
@@ -895,7 +896,7 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 	expect(merging?.kind === 'select' && merging.choices.map(choice => [choice.value, choice.label])).toEqual(
 		versionPrMerges.map(value => [value, `${value}: ${versionPrMergeSentences[value].replaceAll('`', '')}`]),
 	);
-	for (const field of ['versionSource', 'versionFiles', 'needs', 'operations']) {
+	for (const field of ['versionSource', 'versionFiles', 'companionModules', 'needs', 'operations']) {
 		expect(messages).toContain(`main: ${field} as JSON (empty leaves it out)`);
 	}
 	expect(messages).toContain('main: promote credentials as JSON (empty leaves it out)');

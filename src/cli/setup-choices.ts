@@ -53,6 +53,7 @@ export const streamEditors = {
 	promote: 'control',
 	versionSource: 'json',
 	versionFiles: 'json',
+	companionModules: 'json',
 	needs: 'json',
 	operations: 'json',
 } as const satisfies Editors<StreamField>;

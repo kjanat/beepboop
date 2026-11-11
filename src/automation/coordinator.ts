@@ -80,7 +80,14 @@ import { publishable } from '@/automation/package-publication';
 import { matchesRef } from '@/automation/policy';
 import type { PublishBudget } from '@/automation/publish-budget';
 import type { RefPlan, TagSigner } from '@/automation/refs';
-import { conflictMessage, moduleTagPrefixes, planRefs, tagConflict, tagObject, tagPayload } from '@/automation/refs';
+import {
+	conflictMessage,
+	planRefs,
+	streamModuleTagPrefixes,
+	tagConflict,
+	tagObject,
+	tagPayload,
+} from '@/automation/refs';
 import { releaseNotes } from '@/automation/release-notes';
 import { compileReleaseSet } from '@/automation/release-set';
 import { manifestProblems } from '@/automation/release-version';
@@ -940,9 +947,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					version,
 					execution.sourceSha,
 					refs,
-					moduleTagPrefixes(
+					streamModuleTagPrefixes(
 						repository?.inventory.packages ?? [],
-						execution.configuration.streams[execution.stream]?.packages ?? [],
+						execution.configuration.streams[execution.stream],
 					),
 				);
 				execution.refPlan = yield* this.signRefs({
@@ -1867,9 +1874,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				version.data,
 				execution.sourceSha,
 				refs,
-				moduleTagPrefixes(
+				streamModuleTagPrefixes(
 					repository?.inventory.packages ?? [],
-					execution.configuration.streams[execution.stream]?.packages ?? [],
+					execution.configuration.streams[execution.stream],
 				),
 			);
 			return conflict && conflictMessage(conflict);

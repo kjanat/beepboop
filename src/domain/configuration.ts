@@ -26,6 +26,7 @@ import { actionsRevisionPattern, workflowSetup } from '@/contract/setup';
 import {
 	approvalOfPublishWhen,
 	bumpOfVersionLands,
+	companionModulesSentence,
 	mustPublishSentence,
 	publishWhen,
 	publishWhenDescription,
@@ -159,6 +160,7 @@ function streamSchema() {
 			prefix: z.string().regex(tagPrefixPattern).refine(validTagPrefix, 'Invalid tag prefix'),
 		}).optional(),
 		packages: packageReferences.optional(),
+		companionModules: packageReferences.optional().describe(companionModulesSentence),
 		prepare: z.strictObject({
 			version: z.literal('manual').optional(),
 			workflow: binding.optional(),
@@ -205,6 +207,7 @@ function streamSchema() {
 		...(stream.versionFiles === undefined ? {} : { versionFiles: stream.versionFiles }),
 		...(stream.versionSource ? { versionSource: stream.versionSource } : {}),
 		...(stream.packages === undefined ? {} : { packages: stream.packages }),
+		...(stream.companionModules === undefined ? {} : { companionModules: stream.companionModules }),
 		versioning: stream.versionScope ? versioningOfVersionScope[stream.versionScope] : stream.versioning ?? 'workspace',
 		concurrency: stream.concurrency,
 		prepare: {

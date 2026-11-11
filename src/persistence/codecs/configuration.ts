@@ -38,6 +38,7 @@ const stream = z.object({
 	versionFiles: z.array(versionFileSchema).optional(),
 	versionSource: z.object({ kind: z.literal('tags'), prefix: z.string() }).optional(),
 	packages: strings.optional(),
+	companionModules: strings.optional(),
 	versioning: z.enum(['workspace', 'independent', 'none']),
 	concurrency: z.enum(['queue', 'supersede-pending']),
 	prepare: z.object({

@@ -72,6 +72,31 @@ export function validateAgainst(
 				);
 			}
 		}
+		for (const reference of stream.companionModules ?? []) {
+			const matches = inventory.packages.filter(pkg => matchesPackage(reference, pkg));
+			if (!matches.length) {
+				report(
+					'blocking',
+					'unknown-reference',
+					subject,
+					`Stream ${name} companionModules names ${reference}, which discovery did not find`,
+				);
+			} else if (!matches.some(pkg => pkg.manager === 'go' && pkg.versionSource.startsWith('tags:'))) {
+				report(
+					'warning',
+					'companion-module',
+					subject,
+					`Stream ${name} companionModules names ${reference}, which is not a Go module versioned by tags; no tag is pushed for it`,
+				);
+			} else if (matches.some(pkg => stream.packages?.some(entry => matchesPackage(entry, pkg)))) {
+				report(
+					'warning',
+					'companion-module',
+					subject,
+					`Stream ${name} lists ${reference} in packages and companionModules; packages already pushes its tag`,
+				);
+			}
+		}
 		for (const [operation, binding] of operations) {
 			const at: DiagnosticSubject = { kind: 'binding', stream: name, operation };
 			const severity = dispatched.has(operation) ? 'blocking' : 'warning';

@@ -477,6 +477,47 @@ test('a Go module with its own released tags becomes its own stream', async () =
 	expect(offered('lint')).not.toContain('pkg:golang/github.com/octo/lint/sdk');
 });
 
+test('a released Go module that tracks the stream tags is proposed as a companion and changed only on request', async () => {
+	const repository = lintRepository();
+	world.github.push(repository, { 'sdk/go.mod': 'module github.com/octo/lint/sdk\n\ngo 1.26\n' }, 'Add the SDK');
+	for (const tag of ['sdk/v0.3.0', 'lint-v0.3.0']) repository.refs.set(`tags/${tag}`, world.github.head(repository));
+	const api = bearer(world, await world.cliSession());
+	const sdk = 'pkg:golang/github.com/octo/lint/sdk';
+	const configuredStreams = (plan: { edits: { path: string; after: string }[] }) =>
+		z.object({ streams: z.record(z.string(), z.looseObject({ companionModules: z.array(z.string()).optional() })) })
+			.parse(JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}')).streams;
+
+	const proposed = await previewSetup(api, repository.name);
+	expect(proposed.blockers).toEqual([]);
+	const proposals = proposed.notes.filter(note => note.includes('companionModules'));
+	expect(proposals).toHaveLength(1);
+	expect(proposals[0]).toContain('every `sdk/v<version>` tag has a matching `lint-v<version>` tag');
+	expect(proposals[0]).toContain(`set \`companionModules\` of \`lint\` to \`${sdk}\``);
+	expect(proposals[0]).toContain(`move ${sdk} into \`packages\` of \`lint\``);
+	expect(proposed.choices.streams.map(stream => stream.companionModules)).toEqual([undefined, undefined]);
+	expect(Object.values(configuredStreams(proposed)).map(stream => stream.companionModules)).toEqual([
+		undefined,
+		undefined,
+	]);
+
+	const chosen = {
+		streams: proposed.choices.streams.map(stream =>
+			stream.name === 'lint' ? { ...stream, companionModules: [sdk] } : stream
+		),
+	};
+	const applied = await previewSetup(api, repository.name, chosen);
+	expect(applied.blockers).toEqual([]);
+	expect(applied.notes.filter(note => note.includes('companionModules'))).toEqual([]);
+	expect(configuredStreams(applied).lint?.companionModules).toEqual([sdk]);
+	expect(configuredStreams(applied).sdk?.companionModules).toBeUndefined();
+	const lint = applied.choices.streams.find(stream => stream.name === 'lint');
+	if (!lint) throw new Error('No lint stream');
+	expect(lint.companionModules).toEqual([sdk]);
+	expect(streamSummary(lint, applied).join('\n')).toContain(
+		'pushes the tags lint-v<version>, go/v<version> and sdk/v<version>',
+	);
+});
+
 async function mergedSetup(tamper: boolean, login = 'octo') {
 	const repository = lintRepository();
 	const api = bearer(world, await world.cliSession());
