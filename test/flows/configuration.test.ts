@@ -371,6 +371,13 @@ const lateFailures: Finding[] = [
 		},
 	},
 	{
+		name: 'a companion module that discovery never finds',
+		codes: ['unknown-reference'],
+		edit: stream => {
+			stream.companionModules = ['pkg:golang/github.com/octo/widget/go'];
+		},
+	},
+	{
 		name: 'a promotion whose workflow file is missing',
 		codes: ['binding-missing'],
 		edit: stream => {
@@ -420,6 +427,13 @@ const workingConfigurations: Finding[] = [
 		codes: ['versioned-reference'],
 		edit: stream => {
 			stream.packages = ['pkg:npm/widget@1.0.0'];
+		},
+	},
+	{
+		name: 'a companion module that is not a Go module versioned by tags',
+		codes: ['companion-module'],
+		edit: stream => {
+			stream.companionModules = ['pkg:npm/widget'];
 		},
 	},
 	{

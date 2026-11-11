@@ -62,6 +62,7 @@ const setupPlan: z.ZodType<SetupPlan> = z.object({
 				required: strings,
 				versionSource: z.object({ kind: z.literal('tags'), prefix: z.string() }).optional(),
 				versionFiles: z.array(versionFileSchema).optional(),
+				companionModules: strings.optional(),
 				observe: z.array(
 					z.object({
 						name: z.string(),

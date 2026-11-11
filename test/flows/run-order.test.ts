@@ -208,3 +208,42 @@ test('the releases page still receives a fresh succeeded run when 200 unfinished
 	const data = await Effect.runPromise(loaders.releases({ env: world.env, actor: 'admin' }));
 	expect(data.executions.map(entry => entry.id)).toEqual(['done']);
 });
+
+test('the run list reads executions in index order and caps the blocked rows that stay blocked', async () => {
+	const base = await template();
+	const { approvedAt: _approvedAt, runId: _runId, ...plain } = base.document;
+	await insert({ ...base, document: plain }, [
+		['legacy-awaiting', 'blocked', 5, 5, { operation: 'promote', attempts: 0 }],
+		['legacy-stuck', 'blocked', 6, 6, { operation: 'prepare', attempts: 1 }],
+		['new-running', 'running', 7, 7],
+	]);
+	world.db.reset();
+	expect(await listed({})).toEqual(['new-running', 'legacy-awaiting', 'legacy-stuck']);
+	const lists = world.db.queries.filter(query => /FROM executions WHERE .* ORDER BY/.test(query.sql));
+	expect(lists).toHaveLength(3);
+	for (const query of lists) {
+		const plan = world.db.sqlite.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).all(...query.values).map(step =>
+			String(Reflect.get(step ?? {}, 'detail'))
+		);
+		expect(plan).toEqual(['SCAN executions USING INDEX executions_listed']);
+	}
+	expect(lists.filter(query => !query.sql.includes('LIMIT ?')).map(query => query.sql.includes(' AND COALESCE(')))
+		.toEqual([true]);
+});
+
+test('a short ID is found by an index search on the execution ID', async () => {
+	const base = await template();
+	await insert(base, [['abcdef0123456789', 'running', 1, 1], ['abcdef01ffffffff', 'running', 2, 2]]);
+	const store = new Store(world.db);
+	expect(await Effect.runPromise(store.executionsStarting('abcdef012'))).toEqual([
+		{ id: 'abcdef0123456789', repositoryId: base.repositoryId },
+	]);
+	expect(await Effect.runPromise(store.executionsStarting('abcdef01'))).toHaveLength(2);
+	expect(await Effect.runPromise(store.executionsStarting('abcdef02'))).toEqual([]);
+	const [query] = world.db.queries.slice(-1);
+	if (!query) throw new Error('Expected the prefix query');
+	const plan = world.db.sqlite.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).all(...query.values).map(step =>
+		String(Reflect.get(step ?? {}, 'detail'))
+	);
+	expect(plan).toEqual(['SEARCH executions USING INDEX sqlite_autoindex_executions_1 (id>? AND id<?)']);
+});

@@ -2,10 +2,12 @@ import { Effect } from 'effect';
 import type { AutomationService } from '@/automation/service';
 import type { Execution } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
-import { notFound } from '@/contract/errors';
+import { notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import { fromPromise } from '@/failure';
 import { admin } from '@/server/handlers/kit';
+
+const shortId = /^[0-9a-f]{8,63}$/;
 
 function execution(
 	service: AutomationService,
@@ -13,8 +15,15 @@ function execution(
 	repositoryId?: number,
 ): Effect.Effect<Execution, DomainError> {
 	return Effect.gen(function*() {
-		const owner = repositoryId ?? (yield* service.store.execution(id))?.repositoryId;
-		const found = owner === undefined ? undefined : yield* fromPromise(() => service.coordinator(owner).execution(id));
+		const matches = shortId.test(id) ? yield* service.store.executionsStarting(id) : [];
+		if (matches.length > 1) return yield* precondition(`Several operations start with ${id}; give more of the ID`);
+		const known = matches[0]
+			?? (repositoryId === undefined && !shortId.test(id) ? yield* service.store.execution(id) : undefined);
+		const owner = repositoryId ?? known?.repositoryId;
+		const full = known?.id ?? id;
+		const found = owner === undefined
+			? undefined
+			: yield* fromPromise(() => service.coordinator(owner).execution(full));
 		if (!found) return yield* notFound('execution', 'Unknown execution', id);
 		return found;
 	});

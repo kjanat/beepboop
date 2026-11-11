@@ -84,6 +84,10 @@ function rankRows(rows: ExecutionRow[]): ExecutionRow[] {
 	);
 }
 const executionPage = 200;
+// `decodeExecutionV1` reads a stored `blocked` row as unfinished only in these two cases.
+const maybeUnfinishedSql = `(${validJson('$.operation')}='promote' AND ${validJson('$.attempts')}=0 AND ${
+	validJson('$.approvedAt')
+} IS NULL) OR ${validJson('$.runId')} IS NOT NULL`;
 const legacyBlockedOutcomes: readonly string[] = ['blocked', 'awaiting-approval', 'verifying'];
 export function readableValues<T>(entries: (Readable<T> | { kind: 'unreadable' })[]): T[] {
 	return entries.flatMap(entry => entry.kind === 'readable' ? [entry.value] : []);
@@ -203,33 +207,43 @@ export class Store {
 	execution(id: string): Effect.Effect<Execution | undefined, DomainError> {
 		return this.document('executions', id, decodeExecutionV1);
 	}
-	private settledRows(
-		conditions: string[],
-		values: (string | number)[],
-		offset: number,
-	): Effect.Effect<ExecutionRow[], DomainError> {
+	executionsStarting(prefix: string): Effect.Effect<{ id: string; repositoryId: number }[], DomainError> {
+		return this.sql.all(
+			'SELECT id, repository_id FROM executions WHERE id>=?1 AND id<?2 ORDER BY id LIMIT 2',
+			prefix,
+			`${prefix}g`,
+		).pipe(
+			Effect.flatMap(rows => parse(z.array(z.object({ id: z.string(), repository_id: z.number() })), rows)),
+			Effect.map(rows => rows.map(row => ({ id: row.id, repositoryId: row.repository_id }))),
+		);
+	}
+	private settledRows(conditions: string[], values: (string | number)[]): Effect.Effect<ExecutionRow[], DomainError> {
 		return this.sql.all(
 			`SELECT ${executionColumns} FROM executions WHERE ${
 				[...conditions, "state<>'blocked'"].join(' AND ')
-			} ORDER BY ${executionOrderSql} LIMIT ? OFFSET ?`,
+			} ORDER BY ${executionOrderSql} LIMIT ?`,
 			...values,
 			executionPage,
-			offset,
 		).pipe(Effect.flatMap(rows => parse(z.array(executionRow), rows)));
 	}
 	private blockedRows(conditions: string[], values: (string | number)[]): Effect.Effect<ExecutionRow[], DomainError> {
-		return this.sql.all(
-			`SELECT ${executionColumns} FROM executions WHERE ${
-				[...conditions, "state='blocked'"].join(' AND ')
-			} ORDER BY ${executionOrderSql}`,
-			...values,
-		).pipe(Effect.flatMap(rows => parse(z.array(executionRow), rows)));
+		const rows = (unfinished: boolean) =>
+			this.sql.all(
+				`SELECT ${executionColumns} FROM executions WHERE ${
+					[...conditions, "state='blocked'", `${unfinished ? '' : 'NOT '}COALESCE(${maybeUnfinishedSql}, 0)`].join(
+						' AND ',
+					)
+				} ORDER BY ${executionOrderSql}${unfinished ? '' : ' LIMIT ?'}`,
+				...values,
+				...(unfinished ? [] : [executionPage]),
+			).pipe(Effect.flatMap(found => parse(z.array(executionRow), found)));
+		return Effect.all([rows(true), rows(false)]).pipe(Effect.map(([open, closed]) => [...open, ...closed]));
 	}
 	private executionRows(repositoryId?: number): Effect.Effect<ExecutionRow[], DomainError> {
 		const conditions = repositoryId === undefined ? ['1=1'] : ['repository_id=?'];
 		const values = repositoryId === undefined ? [] : [repositoryId];
 		return Effect.gen({ self: this }, function*() {
-			const settled = yield* this.settledRows(conditions, values, 0);
+			const settled = yield* this.settledRows(conditions, values);
 			const blocked = yield* this.blockedRows(conditions, values);
 			return rankRows([...settled, ...blocked]).slice(0, executionPage);
 		});
@@ -264,22 +278,13 @@ export class Store {
 			values.push(...stored);
 		}
 		const limit = Math.min(filter.limit ?? 200, 200);
-		const page = (offset: number, found: ExecutionRow[]): Effect.Effect<ExecutionRow[], DomainError> =>
-			this.settledRows(conditions, values, offset).pipe(
-				Effect.flatMap(rows => {
-					const collected = [...found, ...rows];
-					return rows.length < executionPage || collected.length >= limit
-						? Effect.succeed(collected)
-						: page(offset + executionPage, collected);
-				}),
-			);
 		return Effect.gen({ self: this }, function*() {
 			const blocked = yield* this.blockedRows(conditions, values);
 			const matching = wanted === undefined ? blocked : blocked.filter(row => {
 				const state = rowState(row);
 				return state !== undefined && wanted.includes(state);
 			});
-			const selected = rankRows([...(yield* page(0, [])), ...matching]).slice(0, limit);
+			const selected = rankRows([...(yield* this.settledRows(conditions, values)), ...matching]).slice(0, limit);
 			const decoded = yield* fromSync(() => selected.map(row => decodeExecutionV1(JSON.parse(row.document))));
 			return decoded.sort(newestActiveFirst);
 		});

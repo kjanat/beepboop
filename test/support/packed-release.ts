@@ -65,10 +65,12 @@ export async function packedRelease(
 	beforeRefs?: (promotionId: string) => Promise<void>,
 	signing?: PackedSigning,
 	githubRelease = false,
+	companionModule?: string,
 ): Promise<PackedRelease> {
 	const repository = widget(world.github);
 	world.npm.publish('widget', '1.0.0');
 	const configuration = z.looseObject({
+		managers: z.array(z.string()).optional(),
 		streams: z.looseObject({
 			main: z.looseObject({
 				prepare: z.looseObject({}),
@@ -85,9 +87,14 @@ export async function packedRelease(
 		signed: signing !== undefined && signing.signer === undefined,
 	};
 	if (signing?.signer) world.env.SIGNER = signing.signer;
+	if (companionModule !== undefined) {
+		configuration.streams.main.companionModules = [`pkg:golang/${companionModule}`];
+		configuration.managers = [...configuration.managers ?? [], 'go'];
+	}
 	const pushed = world.github.push(repository, {
 		'.github/beepboop.json': jsonFile(configuration, '\t'),
 		'.github/workflows/prepare.yml': prepareWorkflow,
+		...(companionModule === undefined ? {} : { 'go/go.mod': `module ${companionModule}\n\ngo 1.26\n` }),
 	}, 'Prepare in the workflow');
 	const checkout = materialize(filesAt(repository, pushed.sha));
 	const scratch = mkdtempSync(join(tmpdir(), 'beepboop-refs-'));

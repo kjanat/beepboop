@@ -1,12 +1,12 @@
 import { isDeepStrictEqual } from 'node:util';
 import { Result } from 'effect';
 import type { Document } from 'yaml';
-import { isMap, isNode, parseDocument, visit } from 'yaml';
+import { isAlias, isMap, isNode, isSeq, parseDocument, visit } from 'yaml';
 import { jobNeeds } from '@/automation/job-gate';
 import { object, yaml, yamlData } from '@/automation/managers/helpers';
 import { packageId } from '@/automation/package-identity';
 import { workflowEvents } from '@/automation/release-graph/calls';
-import { annotatePins, pinned, renderWorkflow } from '@/automation/setup-actions';
+import { annotatePins, matchEnding, pinned, renderWorkflow } from '@/automation/setup-actions';
 import {
 	assetConflicts,
 	assetSteps,
@@ -189,7 +189,7 @@ export function integrateReleaseWorkflow(
 		}
 		const jobsNode = document.get('jobs', true);
 		if (!existing && isMap(jobsNode)) jobsNode.flow = false;
-		let source = renderWorkflow(document);
+		let source = matchEnding(renderWorkflow(document), snapshot.files[path]);
 		const blockers: string[] = [], notes: string[] = [];
 		for (const [operation, choice] of [['prepare', prepare], ['promote', promote]] as const) {
 			const result = yield* integrateWorkflow(
@@ -219,7 +219,7 @@ export function integrateReleaseWorkflow(
 		for (const name of promote.binaries ? [beginJobId, ...promote.binaries.builds.map(buildJobId)] : []) {
 			combined.setIn(['jobs', name, 'if'], gate('promote'));
 		}
-		return { content: renderWorkflow(combined), blockers, notes };
+		return { content: matchEnding(renderWorkflow(combined), snapshot.files[path]), blockers, notes };
 	});
 }
 const migratableKeys = ['id', 'name', 'run', 'if', 'env', 'continue-on-error', 'timeout-minutes'];
@@ -250,6 +250,57 @@ function publicationEntries(value: unknown): { id?: unknown }[] | undefined {
 	} catch {
 		return undefined;
 	}
+}
+function anchorsAndAliases(node: unknown): { anchors: string[]; aliases: string[] } {
+	const found: { anchors: string[]; aliases: string[] } = { anchors: [], aliases: [] };
+	if (!isNode(node)) return found;
+	visit(node, {
+		Node(_, entry) {
+			if (isAlias(entry)) found.aliases.push(entry.source);
+			else if (isNode(entry) && entry.anchor) found.anchors.push(entry.anchor);
+		},
+	});
+	return found;
+}
+function setSteps(document: Document, jobName: string, steps: Record<string, unknown>[], previous: unknown): void {
+	const path = ['jobs', jobName, 'steps'];
+	const sequence = document.getIn(path, true);
+	if (!isSeq(sequence) || !Array.isArray(previous)) {
+		document.setIn(path, steps);
+		return;
+	}
+	const nodes = sequence.items, taken = new Set<number>();
+	const matches = steps.map(step => {
+		const index = previous.findIndex((entry, at) => !taken.has(at) && isDeepStrictEqual(entry, step));
+		if (index >= 0 && index < nodes.length) taken.add(index);
+		return index >= 0 && index < nodes.length ? index : undefined;
+	});
+	const outside = new Set<string>();
+	visit(document, {
+		Node(_, entry) {
+			if (entry === sequence) return visit.SKIP;
+			if (!isAlias(entry) && isNode(entry) && entry.anchor) outside.add(entry.anchor);
+		},
+	});
+	let settled = false;
+	while (!settled) {
+		settled = true;
+		const defined = new Set(outside);
+		for (const index of matches) {
+			if (index !== undefined) { for (const name of anchorsAndAliases(nodes[index]).anchors) defined.add(name); }
+		}
+		for (const [position, index] of matches.entries()) {
+			if (index === undefined) continue;
+			if (!anchorsAndAliases(nodes[index]).aliases.every(name => defined.has(name))) {
+				matches[position] = undefined;
+				settled = false;
+			}
+		}
+	}
+	sequence.items = steps.map((step, position) => {
+		const index = matches[position];
+		return index === undefined ? document.createNode(step) : nodes[index];
+	});
 }
 function integrate(
 	document: Document.Parsed,
@@ -679,7 +730,7 @@ function integrate(
 		}
 	}
 	// Only rewrite the steps sequence when integration changes it; existing steps keep comments.
-	if (!existingBegin || !isDeepStrictEqual(steps, job.steps)) document.setIn(['jobs', jobName, 'steps'], steps);
+	if (!existingBegin || !isDeepStrictEqual(steps, job.steps)) setSteps(document, jobName, steps, job.steps);
 	if (jobsMap && (!original || binaries)) jobsMap.flow = false;
 	if (binaries && jobsMap) {
 		const begin = { uses: action('begin'), id, with: { 'execution-id': executionInput, stream, operation } };
@@ -718,5 +769,9 @@ function integrate(
 	}
 	const unchanged = original !== undefined
 		&& isDeepStrictEqual(yamlData(parseDocument(original)), yamlData(document));
-	return { content: unchanged ? original : annotatePins(renderWorkflow(document)), blockers, notes };
+	return {
+		content: unchanged ? original : matchEnding(annotatePins(renderWorkflow(document)), original),
+		blockers,
+		notes,
+	};
 }

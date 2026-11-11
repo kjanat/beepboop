@@ -294,6 +294,8 @@ beepboop adopt owner/repository --promote-file release.yml \
   when the proposal has several groups, and a new name adds a group.
 - `--package` and `--must-publish` take a package name or PURL and repeat.
   `--must-publish` defaults to the `--package` list.
+- `--companion-module` takes a Go module name or PURL and repeats. The release
+  also pushes that module's version tag on the release commit.
 - `--version-scope`, `--start-from` (repeats), `--version-lands`,
   `--version-pr-merge` and `--publish-when` take the values of `versionScope`,
   `startFrom`, `versionLands`, `prepare.versionPrMerge` and `publishWhen` in
@@ -346,6 +348,9 @@ workflow's `triggers` is `existingTriggers`. Each stream has these fields:
   stream's version from its tags.
 - `versionFiles`, extra files that carry the version, in `json`, `yaml`,
   `toml` or `text` format.
+- `companionModules` (PURLs), Go modules whose version tag the release also
+  pushes on the release commit. Setup proposes it in its notes when a module's
+  tags follow another stream's tags, and never sets it unasked.
 - `prepare` and `promote`, each a workflow choice.
 - `observe`, a list of workflows that Beepboop watches. Each entry has `name`,
   `file`, an optional `ref` pattern and the `publications` that workflow

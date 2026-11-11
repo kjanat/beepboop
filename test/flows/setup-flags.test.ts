@@ -134,6 +134,12 @@ const cases: {
 		value: { kind: 'tags', prefix: 'tool-v' },
 	},
 	{ flags: ['version-files'], args: ['--version-files', '[]'], read: c => main(c).versionFiles, value: [] },
+	{
+		flags: ['companion-module'],
+		args: ['--companion-module', id],
+		read: c => main(c).companionModules,
+		value: [id],
+	},
 	{ flags: ['observe'], args: ['--observe', '[]'], read: c => main(c).observe, value: [] },
 	{ flags: ['needs'], args: ['--needs', '{}'], read: c => main(c).needs, value: {} },
 	{ flags: ['operations'], args: ['--operations', '[]'], read: c => main(c).operations, value: [] },

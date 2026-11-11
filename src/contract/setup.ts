@@ -154,6 +154,7 @@ export const setupStream = z.object({
 	}).strict()
 		.optional(),
 	versionFiles: z.array(versionFileSchema).optional(),
+	companionModules: z.array(z.string()).optional(),
 	observe: z.array(observed).optional(),
 	needs: z.record(z.string(), z.array(z.string())).optional(),
 	prepare: workflow.optional(),

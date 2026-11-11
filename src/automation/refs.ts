@@ -57,6 +57,14 @@ export function moduleTagPrefixes(packages: Package[], references: string[]): st
 			: []
 	);
 }
+export function streamModuleTagPrefixes(
+	packages: Package[],
+	stream: { packages?: string[]; companionModules?: string[] } | undefined,
+): string[] {
+	return [
+		...new Set(moduleTagPrefixes(packages, [...stream?.packages ?? [], ...stream?.companionModules ?? []])),
+	];
+}
 function versionTags(policy: RefPolicy, version: SemVer, modulePrefixes: string[]): string[] {
 	const tag = tagFor(policy, version);
 	return policy.phase === 'version'
