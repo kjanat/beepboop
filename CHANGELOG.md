@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Run lists, release summaries and the overview list unfinished runs (pending, ready, dispatching, running, verifying, awaiting approval) before finished ones, newest created first within each group. Cancelling or failing an old run no longer lists it above a newer release, and the 200-run list limit now keeps unfinished runs.
 - Retrying a failed observed release whose workflow ref is a tag pattern, such as `refs/tags/rshellcheck-v*`, re-runs the failed jobs of its run. The retry failed with `GitHub HTTP 422 on GET /repos/<owner>/<name>/commits/rshellcheck-v*`.
 - `beepboop runs publish`, `cancel` and `recover` accept the 12-character ID that `beepboop runs list` prints, or any unique prefix of 8 characters or more.
 - A setup rewrite of an already integrated workflow keeps the trailing comments of the steps it does not change, such as `# v5.2.7` after a pinned `uses`, and ends the file with the same final newline as the original.

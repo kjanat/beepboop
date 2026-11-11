@@ -1,3 +1,4 @@
+import { listOrder, unfinishedStates } from '@/automation/execution-order.ts';
 import { matchesPackage, matchesPublication } from '@/automation/package-identity';
 import type { Execution, Publication, RepositoryRecord } from '@/automation/types.ts';
 
@@ -110,9 +111,15 @@ export function releaseSummaries(
 			publications,
 			verified,
 			updatedAt: Math.max(...runs.map(run => run.updatedAt)),
+			unfinished: runs.some(run => unfinishedStates.includes(run.state)),
 			attention: runs.some(run => needing.has(run.id)),
 		};
-	}).sort((a, b) => b.updatedAt - a.updatedAt);
+	}).sort((a, b) =>
+		listOrder(
+			{ unfinished: a.unfinished, createdAt: a.latest.createdAt, id: a.latest.id },
+			{ unfinished: b.unfinished, createdAt: b.latest.createdAt, id: b.latest.id },
+		)
+	);
 }
 
 export type ReleaseSetState = 'succeeded' | 'needs attention' | 'waiting for you to publish' | 'in progress';

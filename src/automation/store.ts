@@ -1,5 +1,14 @@
 import { Effect } from 'effect';
 import { z } from 'zod';
+import type { Listed } from '@/automation/execution-order';
+import {
+	executionOrderSql,
+	listed,
+	listOrder,
+	newestActiveFirst,
+	unfinishedStates,
+	validJson,
+} from '@/automation/execution-order';
 import { encodeRepository, identifyRepository } from '@/automation/package-identity';
 import { documentRow, rowDocument } from '@/automation/schemas';
 import type {
@@ -42,8 +51,43 @@ export interface UnreadableExecution {
 	repositoryId: number;
 	error: string;
 }
-const executionRow = z.object({ id: z.string(), repository_id: z.number(), document: z.string() });
+const executionRow = z.object({
+	id: z.string(),
+	repository_id: z.number(),
+	state: z.string(),
+	document: z.string(),
+	created: z.number().nullable().catch(null),
+});
+type ExecutionRow = z.output<typeof executionRow>;
+const executionColumns = `id, repository_id, state, document, ${validJson('$.createdAt')} AS created`;
+function rowOrder(row: ExecutionRow): Listed {
+	try {
+		return listed(decodeExecutionV1(JSON.parse(row.document)));
+	} catch {
+		return {
+			unfinished: unfinishedStates.some(state => state === row.state),
+			createdAt: row.created ?? Number.NEGATIVE_INFINITY,
+			id: row.id,
+		};
+	}
+}
+function rowState(row: ExecutionRow): string | undefined {
+	try {
+		return decodeExecutionV1(JSON.parse(row.document)).state;
+	} catch {
+		return undefined;
+	}
+}
+function rankRows(rows: ExecutionRow[]): ExecutionRow[] {
+	return rows.map(row => ({ row, order: rowOrder(row) })).sort((a, b) => listOrder(a.order, b.order)).map(entry =>
+		entry.row
+	);
+}
 const executionPage = 200;
+// `decodeExecutionV1` reads a stored `blocked` row as unfinished only in these two cases.
+const maybeUnfinishedSql = `(${validJson('$.operation')}='promote' AND ${validJson('$.attempts')}=0 AND ${
+	validJson('$.approvedAt')
+} IS NULL) OR ${validJson('$.runId')} IS NOT NULL`;
 const legacyBlockedOutcomes: readonly string[] = ['blocked', 'awaiting-approval', 'verifying'];
 export function readableValues<T>(entries: (Readable<T> | { kind: 'unreadable' })[]): T[] {
 	return entries.flatMap(entry => entry.kind === 'readable' ? [entry.value] : []);
@@ -163,32 +207,55 @@ export class Store {
 	execution(id: string): Effect.Effect<Execution | undefined, DomainError> {
 		return this.document('executions', id, decodeExecutionV1);
 	}
-	executionsStarting(prefix: string): Effect.Effect<Execution[], DomainError> {
+	executionsStarting(prefix: string): Effect.Effect<{ id: string; repositoryId: number }[], DomainError> {
 		return this.sql.all(
-			'SELECT id, repository_id, document FROM executions WHERE substr(id, 1, ?1)=?2 LIMIT 2',
-			prefix.length,
+			'SELECT id, repository_id FROM executions WHERE id>=?1 AND id<?2 ORDER BY id LIMIT 2',
 			prefix,
+			`${prefix}g`,
 		).pipe(
-			Effect.flatMap(rows => parse(z.array(executionRow), rows)),
-			Effect.flatMap(rows => fromSync(() => rows.map(row => decodeExecutionV1(JSON.parse(row.document))))),
+			Effect.flatMap(rows => parse(z.array(z.object({ id: z.string(), repository_id: z.number() })), rows)),
+			Effect.map(rows => rows.map(row => ({ id: row.id, repositoryId: row.repository_id }))),
 		);
 	}
-	private executionRows(repositoryId?: number): Effect.Effect<z.output<typeof executionRow>[], DomainError> {
-		const rows = repositoryId === undefined
-			? this.sql.all('SELECT id, repository_id, document FROM executions ORDER BY updated_at DESC LIMIT 200')
-			: this.sql.all(
-				'SELECT id, repository_id, document FROM executions WHERE repository_id=? ORDER BY updated_at DESC LIMIT 200',
-				repositoryId,
-			);
-		return rows.pipe(Effect.flatMap(rows => parse(z.array(executionRow), rows)));
+	private settledRows(conditions: string[], values: (string | number)[]): Effect.Effect<ExecutionRow[], DomainError> {
+		return this.sql.all(
+			`SELECT ${executionColumns} FROM executions WHERE ${
+				[...conditions, "state<>'blocked'"].join(' AND ')
+			} ORDER BY ${executionOrderSql} LIMIT ?`,
+			...values,
+			executionPage,
+		).pipe(Effect.flatMap(rows => parse(z.array(executionRow), rows)));
+	}
+	private blockedRows(conditions: string[], values: (string | number)[]): Effect.Effect<ExecutionRow[], DomainError> {
+		const rows = (unfinished: boolean) =>
+			this.sql.all(
+				`SELECT ${executionColumns} FROM executions WHERE ${
+					[...conditions, "state='blocked'", `${unfinished ? '' : 'NOT '}COALESCE(${maybeUnfinishedSql}, 0)`].join(
+						' AND ',
+					)
+				} ORDER BY ${executionOrderSql}${unfinished ? '' : ' LIMIT ?'}`,
+				...values,
+				...(unfinished ? [] : [executionPage]),
+			).pipe(Effect.flatMap(found => parse(z.array(executionRow), found)));
+		return Effect.all([rows(true), rows(false)]).pipe(Effect.map(([open, closed]) => [...open, ...closed]));
+	}
+	private executionRows(repositoryId?: number): Effect.Effect<ExecutionRow[], DomainError> {
+		const conditions = repositoryId === undefined ? ['1=1'] : ['repository_id=?'];
+		const values = repositoryId === undefined ? [] : [repositoryId];
+		return Effect.gen({ self: this }, function*() {
+			const settled = yield* this.settledRows(conditions, values);
+			const blocked = yield* this.blockedRows(conditions, values);
+			return rankRows([...settled, ...blocked]).slice(0, executionPage);
+		});
 	}
 	executions(repositoryId?: number): Effect.Effect<Execution[], DomainError> {
 		return this.executionRows(repositoryId).pipe(
 			Effect.flatMap(rows => fromSync(() => rows.map(row => decodeExecutionV1(JSON.parse(row.document))))),
+			Effect.map(decoded => decoded.sort(newestActiveFirst)),
 		);
 	}
 	filteredExecutions(filter: ExecutionFilter): Effect.Effect<Execution[], DomainError> {
-		const conditions: string[] = [], values: (string | number)[] = [];
+		const conditions: string[] = ['1=1'], values: (string | number)[] = [];
 		if (filter.repository !== undefined) {
 			conditions.push('repository_id IN (SELECT id FROM repositories WHERE LOWER(name)=LOWER(?))');
 			values.push(filter.repository);
@@ -201,7 +268,7 @@ export class Store {
 			] as const
 		) {
 			if (value === undefined) continue;
-			conditions.push(`json_extract(document,'$.${column}')=?`);
+			conditions.push(`${validJson(`$.${column}`)}=?`);
 			values.push(value);
 		}
 		const wanted = filter.states?.split(',');
@@ -210,37 +277,57 @@ export class Store {
 			conditions.push(`state IN (${stored.map(() => '?').join(',')})`);
 			values.push(...stored);
 		}
-		const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
 		const limit = Math.min(filter.limit ?? 200, 200);
-		const page = (offset: number, found: Execution[]): Effect.Effect<Execution[], DomainError> =>
-			this.sql.all(
-				`SELECT id, repository_id, document FROM executions${where} ORDER BY updated_at DESC, id LIMIT ? OFFSET ?`,
-				...values,
-				executionPage,
-				offset,
-			).pipe(
-				Effect.flatMap(rows => parse(z.array(executionRow), rows)),
-				Effect.flatMap(rows => fromSync(() => rows.map(row => decodeExecutionV1(JSON.parse(row.document))))),
-				Effect.flatMap(decoded => {
-					const kept = wanted === undefined ? decoded : decoded.filter(execution => wanted.includes(execution.state));
-					const collected = [...found, ...kept];
-					return decoded.length < executionPage || collected.length >= limit
-						? Effect.succeed(collected.slice(0, limit))
-						: page(offset + executionPage, collected);
-				}),
-			);
-		return page(0, []);
+		return Effect.gen({ self: this }, function*() {
+			const blocked = yield* this.blockedRows(conditions, values);
+			const matching = wanted === undefined ? blocked : blocked.filter(row => {
+				const state = rowState(row);
+				return state !== undefined && wanted.includes(state);
+			});
+			const selected = rankRows([...(yield* this.settledRows(conditions, values)), ...matching]).slice(0, limit);
+			const decoded = yield* fromSync(() => selected.map(row => decodeExecutionV1(JSON.parse(row.document))));
+			return decoded.sort(newestActiveFirst);
+		});
+	}
+	succeededExecutions(): Effect.Effect<Execution[], DomainError> {
+		return this.sql.all(
+			`SELECT ${executionColumns} FROM executions WHERE state='succeeded' ORDER BY ${executionOrderSql} LIMIT ?`,
+			executionPage,
+		).pipe(
+			Effect.flatMap(rows => parse(z.array(executionRow), rows)),
+			Effect.map(rows =>
+				readableValues(
+					readEach(
+						rows,
+						row => decodeExecutionV1(JSON.parse(row.document)),
+						(): { kind: 'unreadable' } => ({ kind: 'unreadable' }),
+					),
+				)
+					.sort(newestActiveFirst)
+			),
+		);
 	}
 	readExecutions(): Effect.Effect<(Readable<Execution> | UnreadableExecution)[], DomainError> {
 		return this.executionRows().pipe(
-			Effect.map(rows =>
-				readEach(rows, row => decodeExecutionV1(JSON.parse(row.document)), (row, error): UnreadableExecution => ({
-					kind: 'unreadable',
-					id: row.id,
-					repositoryId: row.repository_id,
-					error,
-				}))
-			),
+			Effect.map(rows => {
+				const entries = readEach(
+					rows,
+					row => decodeExecutionV1(JSON.parse(row.document)),
+					(row, error): UnreadableExecution => ({
+						kind: 'unreadable',
+						id: row.id,
+						repositoryId: row.repository_id,
+						error,
+					}),
+				);
+				return [
+					...readableValues(entries).sort(newestActiveFirst).map((value): Readable<Execution> => ({
+						kind: 'readable',
+						value,
+					})),
+					...entries.flatMap(entry => entry.kind === 'unreadable' ? [entry] : []),
+				];
+			}),
 		);
 	}
 	event(id: string): Effect.Effect<AutomationEvent | undefined, DomainError> {

@@ -167,22 +167,24 @@ test('slimRun keeps only publication ids and outcomes', () => {
 
 async function crowded() {
 	const run = await prepared();
-	const row = z.object({ document: z.string(), updated_at: z.number() }).parse(
-		await world.db.prepare('SELECT document, updated_at FROM executions WHERE id=?').bind(run.id).first(),
+	const row = z.object({ document: z.string(), updated_at: z.number(), state: z.string() }).parse(
+		await world.db.prepare('SELECT document, updated_at, state FROM executions WHERE id=?').bind(run.id).first(),
 	);
 	const statement = world.db.prepare(
 		'INSERT INTO executions(id,repository_id,state,document,updated_at) VALUES(?,?,?,?,?)',
 	);
 	await world.db.batch(
 		Array.from({ length: 205 }, (_, index) => {
+			const stored = z.object({ createdAt: z.number() }).parse(JSON.parse(row.document));
 			const document = JSON.stringify({
 				...JSON.parse(row.document),
 				id: `decoy-${index}`,
 				repositoryId: 777,
 				repository: 'octo/other',
-				state: 'succeeded',
+				state: row.state,
+				createdAt: stored.createdAt + 1 + index,
 			});
-			return statement.bind(`decoy-${index}`, 777, 'succeeded', document, row.updated_at + 1 + index);
+			return statement.bind(`decoy-${index}`, 777, row.state, document, row.updated_at + 1 + index);
 		}),
 	);
 	return run;
@@ -217,6 +219,6 @@ test('the server applies stream, operation, state and version filters in SQL and
 	expect(await list({ repository: 'octo/widget', version: '9.9.9' })).toEqual([]);
 	expect(await list({ repository: 'octo/widget', states: `failed,${run.state}` })).toEqual([run.id]);
 	expect(await list({ repository: 'octo/widget', states: 'failed' })).toEqual([]);
-	expect(await list({ stream: 'main', states: 'succeeded', limit: 2 })).toHaveLength(2);
+	expect(await list({ stream: 'main', states: run.state, limit: 2 })).toHaveLength(2);
 	await expect(list({ states: 'sideways' })).rejects.toThrow();
 });

@@ -315,6 +315,53 @@ test('the overview counts only runs that still need the user and shows each vers
 	await page.happyDOM.close();
 });
 
+test('a run cancelled after a newer release started stays below the unfinished release', async () => {
+	const { finished, repository } = await finishedPromotion('pending');
+	const record = await Effect.runPromise(new Store(world.db).repository(repository.id));
+	if (!record) throw new Error('No stored repository');
+	const run = (id: string, createdAt: number, updatedAt: number, changes: Partial<Execution>): Execution => ({
+		...finished,
+		id,
+		createdAt,
+		updatedAt,
+		publications: [],
+		...changes,
+	});
+	const readable = [
+		run('stale-cancelled', 1, 900, { version: '1.0.0', state: 'cancelled' }),
+		run('current-prepare', 2, 100, { version: '1.1.0', operation: 'prepare', state: 'running' }),
+		run('stale-failed', 0, 950, { version: '0.9.0', state: 'failed' }),
+		run('next-pending', 3, 50, { version: '1.2.0', operation: 'prepare', state: 'pending' }),
+		run('awaiting', 4, 40, { version: '1.3.0', state: 'awaiting-approval' }),
+	];
+	const releases = releaseSummaries(readable).map(release => release.version);
+	expect(releases).toEqual(['1.3.0', '1.2.0', '1.1.0', '1.0.0', '0.9.0']);
+	const view = overview({
+		section: 'overview',
+		repositories: { readable: [], unreadable: [] },
+		executions: { readable, unreadable: [] },
+	});
+	expect(view.releases.map(release => release.version)).toEqual(releases);
+	expect(view.waiting.map(entry => entry.id)).toEqual(['awaiting', 'stale-cancelled', 'stale-failed']);
+	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Overview.astro'));
+	const container = await experimental_AstroContainer.create();
+	const html = await container.renderToString(componentModule.parse(loaded).default, {
+		props: {
+			data: {
+				section: 'overview',
+				repositories: { readable: [record], unreadable: [] },
+				executions: { readable, unreadable: [] },
+			},
+		},
+		request: new Request(`${origin}/`),
+	});
+	const page = new Window();
+	page.document.body.innerHTML = html;
+	const titles = [...page.document.querySelectorAll('article h2')].map(element => element.textContent.trim());
+	expect(titles).toEqual(['Version 1.3.0', 'Version 1.2.0', 'Version 1.1.0', 'Version 1.0.0', 'Version 0.9.0']);
+	await page.happyDOM.close();
+});
+
 test('a later run replaces a failed run only for the same release target', async () => {
 	const { finished } = await finishedPromotion('pending');
 	const run = (id: string, at: number, changes: Partial<Execution>): Execution => ({
