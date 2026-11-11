@@ -30,7 +30,11 @@ const [view, outage] = await Effect.runPromise(Effect.gen(function*() {
 	}
 	const env = yield* bindings;
 	return yield* Effect.all([
-		load(section, { env, actor }),
+		load(section, {
+			env,
+			actor,
+			repository: Astro.url.searchParams.get('repository') ?? undefined,
+		}),
 		panel('github-status', githubOutage),
 	], { concurrency: 'unbounded' });
 }));

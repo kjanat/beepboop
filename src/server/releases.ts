@@ -1,6 +1,7 @@
 import { listOrder, unfinishedStates } from '@/automation/execution-order.ts';
 import { matchesPackage, matchesPublication } from '@/automation/package-identity';
 import type { Execution, Publication, RepositoryRecord } from '@/automation/types.ts';
+import { compare, semVer } from '@/contract/version';
 
 export const activeStates: readonly string[] = ['running', 'ready', 'dispatching', 'verifying'];
 
@@ -53,6 +54,26 @@ export function needingUser(executions: readonly Execution[]): ReadonlySet<strin
 		const current = newest.get(key);
 		if (!current || byAge(current, run) < 0) newest.set(key, run);
 	}
+	const covers = (later: string | undefined, earlier: string | undefined) => {
+		const next = semVer.safeParse(later), previous = semVer.safeParse(earlier);
+		return next.success && (!previous.success || compare(next.data, previous.data) > 0);
+	};
+	const published = (run: Execution) => {
+		const required = run.releaseSet?.required ?? run.configuration.streams[run.stream]?.required ?? [];
+		const reports = executions.filter(other =>
+			other.repositoryId === run.repositoryId && other.stream === run.stream && other.version === run.version
+			&& other.releaseSet?.group === run.releaseSet?.group
+		).flatMap(other => other.publications);
+		return required.length > 0
+			&& required.every(id => reports.some(report => report.outcome === 'succeeded' && matchesPublication(id, report)));
+	};
+	const released = executions.filter(run => run.state === 'succeeded' && run.operation !== 'prepare' && published(run));
+	const superseded = (run: Execution) =>
+		released.some(other =>
+			other.repositoryId === run.repositoryId && other.stream === run.stream && other.updatedAt > run.updatedAt
+			&& other.releaseSet?.group === run.releaseSet?.group
+			&& covers(other.version, run.version)
+		);
 	const needing = new Set<string>();
 	for (const [run, key] of keys) {
 		const replaced = newest.get(key) !== run;
@@ -61,7 +82,7 @@ export function needingUser(executions: readonly Execution[]): ReadonlySet<strin
 				? !publishesAutomatically(run)
 				: run.state === 'blocked' || run.state === 'uncertain'
 				? true
-				: (run.state === 'failed' || run.state === 'cancelled') && !replaced
+				: (run.state === 'failed' || run.state === 'cancelled') && !replaced && !superseded(run)
 		) needing.add(run.id);
 	}
 	return needing;
@@ -113,6 +134,7 @@ export function releaseSummaries(
 			updatedAt: Math.max(...runs.map(run => run.updatedAt)),
 			unfinished: runs.some(run => unfinishedStates.includes(run.state)),
 			attention: runs.some(run => needing.has(run.id)),
+			needing: runs.filter(run => needing.has(run.id)).map(run => run.id),
 		};
 	}).sort((a, b) =>
 		listOrder(

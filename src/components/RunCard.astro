@@ -47,7 +47,7 @@ const card = runCard(run, now);
 						: ''
 				}Beepboop releases this commit once it is verified and its checks pass.`
 				: 'Waiting for you to publish it.'
-			: ((run.state !== 'succeeded' || run.reason === runFailedNote) && run.reason)
+			: ((run.state !== 'succeeded' || run.reason === runFailedNote) && card.reason)
 				|| (run.state === 'verifying'
 					? 'The workflow finished. Beepboop is waiting for the registries to show every publication.'
 					: run.state === 'succeeded'
@@ -181,7 +181,7 @@ const card = runCard(run, now);
 			<button aria-label={`Cancel ${card.name}`}>Cancel</button>
 		</form>
 	)}
-	<details>
+	<details data-fold={`details:${run.id}`}>
 		<summary aria-label={`Run details for ${card.name}`}>
 			Run details
 		</summary>
@@ -206,7 +206,7 @@ const card = runCard(run, now);
 						 />
 					 </>
 				 )
-					: 'Not dispatched yet'}
+					: card.workflowCommit}
 			</dd>
 			<dt>Run attempt</dt>
 			<dd>{run.runAttempt ?? 'Not started'}</dd>

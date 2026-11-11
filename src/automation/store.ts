@@ -307,8 +307,8 @@ export class Store {
 			),
 		);
 	}
-	readExecutions(): Effect.Effect<(Readable<Execution> | UnreadableExecution)[], DomainError> {
-		return this.executionRows().pipe(
+	readExecutions(repositoryId?: number): Effect.Effect<(Readable<Execution> | UnreadableExecution)[], DomainError> {
+		return this.executionRows(repositoryId).pipe(
 			Effect.map(rows => {
 				const entries = readEach(
 					rows,

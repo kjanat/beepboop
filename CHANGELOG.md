@@ -8,12 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- The runs page has a repository filter, `/runs?repository=<owner>/<name>`, and folds the publications and operations of each release. A release that waits, runs or needs attention starts unfolded.
 - `beepboop runs list` shows the current checkout's repository by default and takes `--repository`, `--all`, `--stream`, `--operation`, `--state`, `--releaseVersion` and `--limit`. Its `--json` output is a per-run summary; `--full` prints whole records. https://github.com/kjanat/beepboop/issues/40
 - A stream can list `companionModules`, Go modules whose version tag its release pushes on the release commit beside its own tag, such as `go/v1.2.3` beside `rshellcheck-v1.2.3`. The module keeps its own stream. Setup takes the setting as a choices field, the `--companion-module` flag and a JSON editor in the dashboard. Discovery blocks an entry that matches no package and warns about one that is not a Go module versioned by tags.
 - Adoption notes a Go module whose tags carry the same versions as another stream's tags, or whose tag name a file builds beside that stream's tag name. The note names both options, `companionModules` and moving the module into the stream's `packages`, and changes nothing until you choose.
 
 ### Fixed
 
+- An earlier run that still needs you, such as one with an unknown outcome, decides its stage's colour and stays unfolded beside a newer succeeded run.
+- The runs page remembers which releases, operations and run details you folded or unfolded when it reloads after a run changes.
+- A failed or cancelled run stops asking for attention once a higher version of the same stream has every required publication after it.
+- A stage's attempt count leaves out runs that never started.
+- The run card links a release only for the operation that creates it, shows `Started on GitHub` as the workflow commit of an observed run, and shortens operation and session IDs in a reason to 12 characters.
 - An operation whose workflow run fails after every required publication succeeded ends as succeeded, and its card and stage say that the workflow run failed. An already failed operation changes at the next reconcile, also when a registry shows the publication later.
 - The runs page shows each release version as one card: a row of stages (prepare, promote and each extra operation) with a status dot per stage, the attempt count and a link to the workflow run, and one table of every publication of that release. The operations sit below it, opened when they run or need you. Each operation used to be its own card that listed the other operations' packages under "Still to publish".
 - PyPI publications link to the project page of the published version, and a GitHub release whose version is a tag such as `rshellcheck-v1.1.0` links to that release.

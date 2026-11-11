@@ -22,6 +22,7 @@ import {
 interface Props {
 	data: ViewOf<'runs'>;
 }
+const { repositories, selected } = Astro.props.data;
 const { readable: executions, unreadable } = Astro.props.data.executions;
 const now = Date.now();
 const latest = Math.max(0, ...executions.map(run => run.updatedAt));
@@ -32,7 +33,25 @@ const pipelines = releaseSummaries(executions).sort((a, b) =>
 	first(a.runs) - first(b.runs)
 );
 ---
-<span data-runs-latest={latest} hidden></span>
+<span data-runs-latest={latest} data-runs-repository={selected} hidden></span>
+{repositories.length > 1 && (
+	<nav class="filters" aria-label="Repository">
+		<a
+			class="filter-link"
+			href="/runs"
+			aria-current={selected ? undefined : 'page'}
+		>
+			All repositories
+		</a>
+		{repositories.map(name => (
+			<a
+				class="filter-link"
+				href={`/runs?repository=${encodeURIComponent(name)}`}
+				aria-current={name === selected ? 'page' : undefined}
+			>{name}</a>
+		))}
+	</nav>
+)}
 {releaseSetSummaries(executions).map(release => (
 	<article class="run-card">
 		<div class="section-heading">
@@ -161,48 +180,66 @@ const pipelines = releaseSummaries(executions).sort((a, b) =>
 				 </li>
 			 ))}
 		 </ol>
-		 {!!view.publications.length && (
-			 <div class="table-scroll">
-				 <table>
-					 <thead>
-						 <tr>
-							 <th>Publication</th>
-							 <th>Version</th>
-							 <th>Result</th>
-						 </tr>
-					 </thead>
-					 <tbody>
-						 {view.publications.map(p => (
+		 <details
+			 class="release-detail"
+			 open={view.open}
+			 data-fold={`release:${release.latest.repositoryId}:${release.stream}:${release.version}:${
+			 	release.latest.releaseSet?.group ?? ''
+			 }`}
+		 >
+			 <summary class="release-summary">Publications and operations</summary>
+			 {!!view.publications.length && (
+				 <div class="table-scroll">
+					 <table>
+						 <thead>
 							 <tr>
-								 <td>
-									 {p.label}
-									 {p.href && <Arrow href={p.href} label={`Open ${p.label}`} />}
-									 <small>{p.required ? 'required' : 'optional'}</small>
-								 </td>
-								 <td>{p.version}</td>
-								 <td>
-									 <Badge tone={publicationTone[p.outcome]} label={p.outcome} />
-								 </td>
+								 <th>Publication</th>
+								 <th>Version</th>
+								 <th>Result</th>
 							 </tr>
-						 ))}
-					 </tbody>
-				 </table>
-			 </div>
-		 )}
-		 {view.stages.flatMap(stage => stage.runs).map(entry => (
-			 <details class="stage-detail" open={entry.open}>
-				 <summary class="stage-summary">
-					 {entry.run.operation}
-					 {entry.run.package && ` ${packageLabel(entry.run.package.id)}`}
-					 {entry.earlier && ' (earlier run)'}
-					 <Badge
-						 tone={executionTone[entry.run.state]}
-						 label={runStateLabel(entry.run)}
-					 />
-				 </summary>
-				 <RunCard run={entry.run} now={now} grouped />
-			 </details>
-		 ))}
+						 </thead>
+						 <tbody>
+							 {view.publications.map(p => (
+								 <tr>
+									 <td>
+										 {p.label}
+										 {p.href && (
+											 <Arrow href={p.href} label={`Open ${p.label}`} />
+										 )}
+										 <small>{p.required ? 'required' : 'optional'}</small>
+									 </td>
+									 <td>{p.version}</td>
+									 <td>
+										 <Badge
+											 tone={publicationTone[p.outcome]}
+											 label={p.outcome}
+										 />
+									 </td>
+								 </tr>
+							 ))}
+						 </tbody>
+					 </table>
+				 </div>
+			 )}
+			 {view.stages.flatMap(stage => stage.runs).map(entry => (
+				 <details
+					 class="stage-detail"
+					 open={entry.open}
+					 data-fold={`run:${entry.run.id}`}
+				 >
+					 <summary class="stage-summary">
+						 {entry.run.operation}
+						 {entry.run.package && ` ${packageLabel(entry.run.package.id)}`}
+						 {entry.earlier && ' (earlier run)'}
+						 <Badge
+							 tone={executionTone[entry.run.state]}
+							 label={runStateLabel(entry.run)}
+						 />
+					 </summary>
+					 <RunCard run={entry.run} now={now} grouped />
+				 </details>
+			 ))}
+		 </details>
 	 </article>
  );
 })}

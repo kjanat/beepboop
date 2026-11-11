@@ -44,7 +44,9 @@ function releaseLink(run: Execution): { tag: string; href: string } | undefined 
 	if (run.state !== 'succeeded') return undefined;
 	const parsed = semVer.safeParse(run.version);
 	const tag = run.release?.tag
-		?? (parsed.success ? tagFor(run.workflow?.refs ?? defaultTagPolicy, parsed.data) : undefined);
+		?? (parsed.success && (run.workflow?.refs || run.operation === 'promote')
+			? tagFor(run.workflow?.refs ?? defaultTagPolicy, parsed.data)
+			: undefined);
 	return tag ? { tag, href: githubHref(run.repository, 'releases', 'tag', tag) } : undefined;
 }
 
@@ -64,6 +66,12 @@ export function runCard(run: Execution, now: number) {
 		missing: !approving && run.state !== 'verifying' && run.operation !== 'prepare' && run.state !== 'cancelled'
 			? missing
 			: [],
+		reason: run.reason?.replace(/\b[0-9a-f]{32,64}\b/g, id => id.slice(0, 12)),
+		workflowCommit: run.workflowSha
+			? undefined
+			: run.eventId.startsWith('observed:')
+			? 'Started on GitHub'
+			: 'Not dispatched yet',
 		preparationUrl: preparation?.url.startsWith('https://github.com/') ? preparation.url : undefined,
 		autoMerge: preparation?.autoMerge?.state === 'refused'
 			? preparation.autoMerge.note
@@ -113,7 +121,6 @@ function follows(stage: string, started: ReadonlySet<string>, needs: ReadonlyMap
 }
 
 const urgency: readonly Tone[] = ['error', 'warn', 'active', 'waiting', 'ok', 'neutral'];
-const needsLook: readonly Execution['state'][] = ['awaiting-approval', 'blocked', 'failed', 'cancelled', 'uncertain'];
 const working: readonly Execution['state'][] = ['ready', 'dispatching', 'running', 'verifying'];
 const inFlight: readonly Execution['state'][] = ['pending', 'ready', 'dispatching', 'running', 'verifying'];
 
@@ -133,16 +140,22 @@ export function pipeline(release: Release, now: number) {
 			const target = run.package?.id ?? '';
 			targets.set(target, [...targets.get(target) ?? [], run]);
 		}
-		const current = [...targets.values()].flatMap(runs => runs.slice(-1));
+		const current = [...targets.values()].flatMap(runs =>
+			runs.filter((entry, index) =>
+				index === runs.length - 1 || release.needing.includes(entry.id) || inFlight.includes(entry.state)
+			)
+		);
 		newest.push(...current);
 		const run =
 			[...current].sort((x, y) => urgency.indexOf(executionTone[x.state]) - urgency.indexOf(executionTone[y.state]))[0];
 		const tone: Tone = run ? executionTone[run.state] : 'neutral';
 		const attempts = Math.max(
 			0,
-			...[...targets.values()].map(runs => runs.reduce((count, entry) => count + (entry.runAttempt ?? 1), 0)),
+			...[...targets.values()].map(runs =>
+				runs.reduce((count, entry) => count + (entry.runId === undefined ? 0 : entry.runAttempt ?? 1), 0)
+			),
 		);
-		const done = current.filter(entry => entry.state === 'succeeded').length;
+		const done = [...targets.values()].filter(runs => runs.at(-1)?.state === 'succeeded').length;
 		return {
 			operation,
 			run,
@@ -150,7 +163,7 @@ export function pipeline(release: Release, now: number) {
 			note: [
 				run ? progress(run, now) : 'not run',
 				...(run?.state === 'succeeded' && run.reason === runFailedNote ? ['workflow run failed'] : []),
-				...(current.length > 1 ? [`${done} of ${current.length} packages succeeded`] : []),
+				...(targets.size > 1 ? [`${done} of ${targets.size} packages succeeded`] : []),
 				...(attempts > 1 ? [`attempt ${attempts}`] : []),
 			].join(', '),
 			runHref: run?.runId
@@ -160,7 +173,7 @@ export function pipeline(release: Release, now: number) {
 				[...runs].reverse().map((entry, index) => ({
 					run: entry,
 					earlier: index > 0,
-					open: index === 0 && (needsLook.includes(entry.state) || inFlight.includes(entry.state)),
+					open: release.needing.includes(entry.id) || inFlight.includes(entry.state),
 				}))
 			),
 		};
@@ -199,6 +212,7 @@ export function pipeline(release: Release, now: number) {
 		: overall;
 	return {
 		status,
+		open: status.tone === 'warn' || status.tone === 'active' || status.tone === 'waiting',
 		stages,
 		publications: [
 			...required,
