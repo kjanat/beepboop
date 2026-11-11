@@ -1955,17 +1955,20 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const patterned = /[*?[]/.test(pattern);
 			const ref = patterned ? observedRef : pattern;
 			if (!ref) return undefined;
-			const tag = namespace === 'tags';
-			if (patterned && namespace !== undefined) {
-				const found = yield* this.gateway().read(
-					gitRefSchema.nullable(),
-					`/repos/${execution.repository}/git/ref/${namespace}/${encodeURIComponent(ref)}`,
-					token,
-				);
-				if (found === null) return yield* precondition(`Workflow ref ${ref} no longer exists`);
-				const target = yield* this.gateway().peelTag(execution.repository, found.object, token);
-				return { ref, sha: target.sha, tag };
+			if (patterned) {
+				for (const candidate of namespace === undefined ? ['tags', 'heads'] : [namespace]) {
+					const found = yield* this.gateway().read(
+						gitRefSchema.nullable(),
+						`/repos/${execution.repository}/git/ref/${candidate}/${encodeURIComponent(ref)}`,
+						token,
+					);
+					if (found === null) continue;
+					const target = yield* this.gateway().peelTag(execution.repository, found.object, token);
+					return { ref, sha: target.sha, tag: candidate === 'tags' };
+				}
+				return yield* precondition(`Workflow ref ${ref} no longer exists`);
 			}
+			const tag = namespace === 'tags';
 			const commit = yield* this.gateway().read(
 				commitSchema.nullable(),
 				`/repos/${execution.repository}/commits/${encodeURIComponent(ref)}`,

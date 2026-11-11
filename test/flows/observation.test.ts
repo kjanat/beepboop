@@ -367,9 +367,10 @@ test('retrying a failed observed tag release by its short ID re-runs the failed 
 	expect(after.map(execution => [execution.runAttempt, execution.state])).toEqual([[2, 'succeeded']]);
 });
 
-async function failedTagRelease(conclusion: string, tag: string) {
+async function failedTagRelease(conclusion: string, tag: string, ref?: string) {
 	const repository = npmRelease('widget', '1.2.0', "{ push: { tags: ['widget-v*'] } }");
-	await adopt(repository);
+	const { plan } = await adopt(repository);
+	if (ref !== undefined) await pin(repository, plan, ref);
 	repository.refs.set(`tags/${tag}`, world.github.head(repository));
 	const [failed] = await complete(repository, { id: 9001, event: 'push', branch: tag, conclusion, attempt: 1 });
 	if (failed?.state !== 'failed') throw new Error('Expected the failed release');
@@ -380,6 +381,18 @@ async function failedTagRelease(conclusion: string, tag: string) {
 
 test('a retry refuses an observed release whose tag moved to a later commit', async () => {
 	const { repository, failed, retry } = await failedTagRelease('failure', 'widget-v1.2.0');
+	const later = world.github.push(repository, { 'README.md': '# widget\n' }, 'Document widget');
+	repository.refs.set('tags/widget-v1.2.0', later.sha);
+	const refused = await retry();
+	expect([refused.status, field(refused.body, 'error')]).toEqual([
+		422,
+		`Tag widget-v1.2.0 moved to ${later.sha.slice(0, 12)}; this release builds ${failed.sourceSha.slice(0, 12)}`,
+	]);
+	expect(repository.runs.find(run => run.id === 9001)?.attempt).toBe(1);
+});
+
+test('a retry refuses a moved tag of a shorthand tag pattern', async () => {
+	const { repository, failed, retry } = await failedTagRelease('failure', 'widget-v1.2.0', 'widget-v*');
 	const later = world.github.push(repository, { 'README.md': '# widget\n' }, 'Document widget');
 	repository.refs.set('tags/widget-v1.2.0', later.sha);
 	const refused = await retry();
