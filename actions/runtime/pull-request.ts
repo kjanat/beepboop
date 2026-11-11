@@ -119,13 +119,19 @@ export function pullRequest(environment: Environment): Effect.Effect<PullRequest
 		const base = environment.PR_BASE
 			|| (checkedOut !== 'HEAD'
 				? checkedOut
-				: environment.GITHUB_BASE_REF
-					|| (environment.GITHUB_REF?.startsWith('refs/heads/') ? environment.GITHUB_REF_NAME : undefined));
+				: environment.GITHUB_REF?.startsWith('refs/heads/')
+				? environment.GITHUB_REF_NAME
+				: undefined);
 		if (!base) return yield* fail('The checkout is on no branch. Set the base input.');
 		if (base === branch) return yield* fail(`The pull request branch ${branch} is its own base`);
 		yield* read(root, 'check-ref-format', '--branch', branch);
 		const parent = yield* read(root, 'rev-parse', 'HEAD');
 		if (!shaPattern.test(parent)) return yield* fail('Cannot read the checked-out commit');
+		if (environment.GITHUB_REF?.startsWith('refs/pull/') && parent === environment.GITHUB_SHA) {
+			return yield* fail(
+				'The checkout is the merge commit of a pull request, so the new pull request would hold that whole pull request. Check out its branch with the head_ref of the github context as the checkout ref.',
+			);
+		}
 		const paths = (environment.PR_ADD_PATHS ?? '').split('\n').map(path => path.trim()).filter(Boolean);
 		const entries = yield* staged(root, paths);
 		if (!entries.length) {

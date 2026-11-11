@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `actions/pull-request` refuses the merge commit that a `pull_request` run checks out by default. A pull request built on it held every change of the original pull request. Check out the branch with `ref: ${{ github.head_ref }}`.
 - The release form, the repository list, `beepboop release`, `beepboop repositories show` and the release API share one per-stream answer to whether Beepboop starts releases. A stream whose workflows only observe shows what starts a release, such as `release.yml on refs/tags/v*`, and has no Release button. A stream without a publishing workflow says so. Planning or preparing either one is refused with the same sentence. https://github.com/kjanat/beepboop/issues/39
 - A stream that reads its version from tags and has no version file or preparation workflow goes straight to a publication run that waits for you to publish it. Preparing it was refused with `A preparation workflow must regenerate lockfiles`. https://github.com/kjanat/beepboop/issues/38
 - A release whose lockfiles need regenerating in a stream without a preparation workflow is refused with the stream's name and the missing workflow.
