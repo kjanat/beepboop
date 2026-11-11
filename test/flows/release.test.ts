@@ -574,7 +574,7 @@ test('an earlier run that still needs the user decides its stage and stays unfol
 		fold.hasAttribute('open'),
 	]);
 	expect(folds).toEqual([
-		[`release:${finished.repositoryId}:main:${finished.version}`, true],
+		[`release:${finished.repositoryId}:main:${finished.version}:`, true],
 		['run:done', false],
 		['details:done', false],
 		['run:unknown', true],

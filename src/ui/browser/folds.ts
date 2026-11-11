@@ -12,7 +12,19 @@ function read(storage: Pick<Storage, 'getItem'>): Choices {
 	}
 }
 
-export function rememberFolds(root: ParentNode, storage: Pick<Storage, 'getItem' | 'setItem'>): void {
+type FoldStorage = Pick<Storage, 'getItem' | 'setItem'>;
+
+function opened(open: () => FoldStorage): FoldStorage | undefined {
+	try {
+		return open();
+	} catch {
+		return undefined;
+	}
+}
+
+export function rememberFolds(root: ParentNode, open: () => FoldStorage): void {
+	const storage = opened(open);
+	if (!storage) return;
 	const saved = read(storage);
 	for (const fold of root.querySelectorAll<HTMLDetailsElement>('details[data-fold]')) {
 		const id = fold.dataset.fold;

@@ -192,7 +192,9 @@ const pipelines = releaseSummaries(executions).sort((a, b) =>
 		 <details
 			 class="release-detail"
 			 open={view.open}
-			 data-fold={`release:${release.latest.repositoryId}:${release.stream}:${release.version}`}
+			 data-fold={`release:${release.latest.repositoryId}:${release.stream}:${release.version}:${
+			 	release.latest.releaseSet?.group ?? ''
+			 }`}
 		 >
 			 <summary class="release-summary">Publications and operations</summary>
 			 {!!view.publications.length && (

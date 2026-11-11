@@ -379,7 +379,7 @@ repositorySelection?.addEventListener('change', () => {
 	location.assign(`/releases?repository=${encodeURIComponent(repositorySelection.value)}`);
 });
 
-rememberFolds(document, sessionStorage);
+rememberFolds(document, () => sessionStorage);
 const runsLatest = find(document, '[data-runs-latest]', HTMLElement);
 if (runsLatest) {
 	const rendered = Number(runsLatest.dataset.runsLatest);

@@ -6,7 +6,7 @@ import { Window } from 'happy-dom';
 const folds: {
 	rememberFolds(
 		root: Document,
-		storage: { getItem(key: string): string | null; setItem(key: string, value: string): void },
+		open: () => { getItem(key: string): string | null; setItem(key: string, value: string): void },
 	): void;
 } = await import(new URL('../../src/ui/browser/folds.ts', import.meta.url).href);
 
@@ -22,10 +22,11 @@ function page(open: { release: boolean; run: boolean }) {
 
 test('a reload keeps the folds the user opened and closed', async () => {
 	const stored = new Map<string, string>();
-	const storage = {
+	const held = {
 		getItem: (key: string) => stored.get(key) ?? null,
 		setItem: (key: string, value: string) => void stored.set(key, value),
 	};
+	const storage = () => held;
 	const first = page({ release: false, run: true });
 	folds.rememberFolds(first.window.document, storage);
 	const [release, run] = [...first.window.document.querySelectorAll('details')];
@@ -56,5 +57,10 @@ test('a reload keeps the folds the user opened and closed', async () => {
 	const broken = page({ release: false, run: true });
 	folds.rememberFolds(broken.window.document, storage);
 	expect(broken.state()).toEqual([false, true, false]);
-	await Promise.all([changed, needsUser, becameOpen, broken].map(entry => entry.window.happyDOM.close()));
+	const denied = page({ release: false, run: true });
+	folds.rememberFolds(denied.window.document, () => {
+		throw new Error('SecurityError');
+	});
+	expect(denied.state()).toEqual([false, true, false]);
+	await Promise.all([changed, needsUser, becameOpen, broken, denied].map(entry => entry.window.happyDOM.close()));
 });
