@@ -122,6 +122,7 @@ export function releaseSummaries(
 			updatedAt: Math.max(...runs.map(run => run.updatedAt)),
 			unfinished: runs.some(run => unfinishedStates.includes(run.state)),
 			attention: runs.some(run => needing.has(run.id)),
+			needing: runs.filter(run => needing.has(run.id)).map(run => run.id),
 		};
 	}).sort((a, b) =>
 		listOrder(

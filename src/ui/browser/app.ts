@@ -22,6 +22,7 @@ import {
 	showError,
 	watchValidity,
 } from '@/ui/browser/dom.ts';
+import { rememberFolds } from '@/ui/browser/folds';
 import { canApplySetup, setup } from '@/ui/browser/setup';
 
 interface Choice {
@@ -378,6 +379,7 @@ repositorySelection?.addEventListener('change', () => {
 	location.assign(`/releases?repository=${encodeURIComponent(repositorySelection.value)}`);
 });
 
+rememberFolds(document, sessionStorage);
 const runsLatest = find(document, '[data-runs-latest]', HTMLElement);
 if (runsLatest) {
 	const rendered = Number(runsLatest.dataset.runsLatest);

@@ -540,6 +540,48 @@ test('the runs page filters by repository and folds a settled release', async ()
 	expect((await render('?repository=octo%2Fmissing')).releases).toHaveLength(3);
 });
 
+test('an earlier run that still needs the user decides its stage and stays unfolded', async () => {
+	const { finished } = await finishedPromotion('pending');
+	const published = finished.publications.map(publication => ({ ...publication, outcome: 'succeeded' as const }));
+	const readable: Execution[] = [
+		{ ...finished, id: 'unknown', state: 'uncertain', publications: [], createdAt: 1 },
+		{ ...finished, id: 'done', state: 'succeeded', publications: published, createdAt: 2 },
+	];
+	const [release] = releaseSummaries(readable);
+	if (!release) throw new Error('No release');
+	const view = pipeline(release, Date.now());
+	expect([view?.status.label, view?.open, view?.stages.map(stage => [stage.run?.id, stage.tone])]).toEqual([
+		'Needs attention',
+		true,
+		[['unknown', 'warn']],
+	]);
+	expect(view?.stages.flatMap(stage => stage.runs).map(entry => [entry.run.id, entry.earlier, entry.open])).toEqual([
+		['done', false, false],
+		['unknown', true, true],
+	]);
+	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Runs.astro'));
+	const container = await experimental_AstroContainer.create();
+	const html = await container.renderToString(componentModule.parse(loaded).default, {
+		props: { data: { section: 'runs', executions: { readable, unreadable: [] } } },
+		request: new Request(`${origin}/runs`),
+	});
+	const page = new Window();
+	page.document.body.innerHTML = html;
+	const folds = [...page.document.querySelectorAll('details[data-fold]')].map(fold => [
+		fold.getAttribute('data-fold'),
+		fold.hasAttribute('open'),
+	]);
+	expect(folds).toEqual([
+		[`release:${finished.repositoryId}:main:${finished.version}`, true],
+		['run:done', false],
+		['details:done', false],
+		['run:unknown', true],
+		['details:unknown', false],
+	]);
+	expect(page.document.querySelector('details[data-fold="run:unknown"] form[data-action="recover"]')).not.toBeNull();
+	await page.happyDOM.close();
+});
+
 test('a stage whose run failed after publishing is green and says the run failed', async () => {
 	const { finished } = await finishedPromotion('pending');
 	const published = finished.publications.map(publication => ({ ...publication, outcome: 'succeeded' as const }));

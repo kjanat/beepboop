@@ -189,7 +189,11 @@ const pipelines = releaseSummaries(executions).sort((a, b) =>
 				 </li>
 			 ))}
 		 </ol>
-		 <details class="release-detail" open={view.open}>
+		 <details
+			 class="release-detail"
+			 open={view.open}
+			 data-fold={`release:${release.latest.repositoryId}:${release.stream}:${release.version}`}
+		 >
 			 <summary class="release-summary">Publications and operations</summary>
 			 {!!view.publications.length && (
 				 <div class="table-scroll">
@@ -225,7 +229,11 @@ const pipelines = releaseSummaries(executions).sort((a, b) =>
 				 </div>
 			 )}
 			 {view.stages.flatMap(stage => stage.runs).map(entry => (
-				 <details class="stage-detail" open={entry.open}>
+				 <details
+					 class="stage-detail"
+					 open={entry.open}
+					 data-fold={`run:${entry.run.id}`}
+				 >
 					 <summary class="stage-summary">
 						 {entry.run.operation}
 						 {entry.run.package && ` ${packageLabel(entry.run.package.id)}`}
