@@ -140,6 +140,11 @@ test('add-paths limits the commit and base names the target branch', async () =>
 	writeFileSync(join(checkout.dir, 'scratch.txt'), 'local\n');
 	gitOutput(checkout.dir, ['checkout', '--detach']);
 	await expect(open(repository, checkout.dir)).rejects.toThrow('The checkout is on no branch. Set the base input.');
+	await expect(open(repository, checkout.dir, {
+		GITHUB_REF: 'refs/pull/7/merge',
+		GITHUB_REF_TYPE: 'branch',
+		GITHUB_REF_NAME: '7/merge',
+	})).rejects.toThrow('The checkout is on no branch. Set the base input.');
 	const result = await open(repository, checkout.dir, { PR_BASE: 'next', PR_ADD_PATHS: 'README.md\n' });
 	expect(result.operation).toBe('created');
 	expect(repository.pulls[0]?.base).toBe('next');
@@ -211,4 +216,25 @@ test('a branch name that needs URL encoding is created under its own name', asyn
 	expect(repository.refs.get('heads/autofix/café')).toBe(result.headSha);
 	expect(repository.pulls[0]?.head.ref).toBe('autofix/café');
 	expect((await open(repository, checkout.dir, { PR_BRANCH: 'autofix/café' })).operation).toBe('none');
+});
+
+test('a detached checkout targets the base of its pull request event or its pushed branch', async () => {
+	const { repository, checkout } = checkedOut();
+	repository.refs.set('heads/next', checkout.sha);
+	writeFileSync(join(checkout.dir, 'README.md'), '# widget\n\nFormatted.\n');
+	gitOutput(checkout.dir, ['checkout', '--detach']);
+	await open(repository, checkout.dir, {
+		GITHUB_REF: 'refs/pull/7/merge',
+		GITHUB_REF_NAME: '7/merge',
+		GITHUB_BASE_REF: 'next',
+	});
+	await open(repository, checkout.dir, {
+		PR_BRANCH: 'autofix/other',
+		GITHUB_REF: 'refs/heads/main',
+		GITHUB_REF_NAME: 'main',
+	});
+	expect(repository.pulls.map(pull => [pull.head.ref, pull.base])).toEqual([
+		['autofix/format', 'next'],
+		['autofix/other', 'main'],
+	]);
 });

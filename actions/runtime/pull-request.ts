@@ -119,9 +119,8 @@ export function pullRequest(environment: Environment): Effect.Effect<PullRequest
 		const base = environment.PR_BASE
 			|| (checkedOut !== 'HEAD'
 				? checkedOut
-				: environment.GITHUB_REF_TYPE === 'branch'
-				? environment.GITHUB_REF_NAME
-				: undefined);
+				: environment.GITHUB_BASE_REF
+					|| (environment.GITHUB_REF?.startsWith('refs/heads/') ? environment.GITHUB_REF_NAME : undefined));
 		if (!base) return yield* fail('The checkout is on no branch. Set the base input.');
 		if (base === branch) return yield* fail(`The pull request branch ${branch} is its own base`);
 		yield* read(root, 'check-ref-format', '--branch', branch);
