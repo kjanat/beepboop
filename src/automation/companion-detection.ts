@@ -19,6 +19,11 @@ function streamPrefixes(stream: Stream): string[] {
 		]),
 	];
 }
+function pushedPrefix(stream: Stream): string | undefined {
+	const promote = stream.promote;
+	if (!promote) return undefined;
+	return promote.tagPrefix ?? (promote.binaries ? stream.versionSource?.prefix ?? 'v' : undefined);
+}
 function versionsOf(tags: readonly string[], prefix: string): string[] {
 	return tags.flatMap(tag =>
 		tag.startsWith(prefix) && release.test(tag.slice(prefix.length)) ? [tag.slice(prefix.length)] : []
@@ -53,18 +58,31 @@ export function companionProposals(choices: SetupChoices, snapshot: Snapshot, in
 		if (!owner) return [];
 		return choices.streams.flatMap(target => {
 			if (target === owner || target.packages.includes(id) || target.companionModules?.includes(id)) return [];
-			return streamPrefixes(target).flatMap(prefix => {
-				if (prefix === module) return [];
-				const found = evidence(snapshot, module, prefix);
-				if (found === undefined) return [];
-				return [
-					`${target.name}: ${pkg.name} tags \`${module}<version>\` in its own stream \`${owner.name}\`, and ${found}. `
-					+ `A \`${target.name}\` release pushes \`${prefix}<version>\`. `
-					+ `Option 1, keep \`${owner.name}\` and push \`${module}<version>\` on the same commit: set \`companionModules\` of \`${target.name}\` to \`${id}\` (\`--stream ${target.name} --companion-module ${pkg.name}\`). `
-					+ `Option 2, release both as one stream: move ${id} into \`packages\` of \`${target.name}\`. `
-					+ `Both stay proposals until you choose.`,
-				];
+			const pushed = pushedPrefix(target);
+			if (pushed === module) return [];
+			const [found] = streamPrefixes(target).flatMap(prefix => {
+				const seen = prefix === module ? undefined : evidence(snapshot, module, prefix);
+				return seen === undefined ? [] : [seen];
 			});
+			if (found === undefined) return [];
+			const tracked =
+				`${target.name}: ${pkg.name} tags \`${module}<version>\` in its own stream \`${owner.name}\`, and ${found}. `;
+			if (!target.promote) {
+				return [
+					`${tracked}\`${target.name}\` only observes tags. \`companionModules\` needs a stream Beepboop promotes.`,
+				];
+			}
+			if (pushed === undefined) {
+				return [
+					`${tracked}A \`${target.name}\` release pushes no version tag. \`companionModules\` needs a promotion with a tag prefix.`,
+				];
+			}
+			return [
+				`${tracked}A \`${target.name}\` release pushes \`${pushed}<version>\`. `
+				+ `Option 1, keep \`${owner.name}\` and push \`${module}<version>\` on the same commit: set \`companionModules\` of \`${target.name}\` to \`${id}\` (\`--stream ${target.name} --companion-module ${pkg.name}\`). `
+				+ `Option 2, release both as one stream: move ${id} into \`packages\` of \`${target.name}\`. `
+				+ `Both stay proposals until you choose.`,
+			];
 		});
 	});
 }

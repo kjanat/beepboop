@@ -1,5 +1,5 @@
 import { Effect } from 'effect';
-import { matchesPackage } from '@/automation/package-identity';
+import { matchesPackage, packageId } from '@/automation/package-identity';
 import type { Package } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
@@ -48,22 +48,36 @@ export function tagObject(change: RefChange, version: string, tagger: string, si
 export function tagPayload(change: RefChange, version: string, tagger: string): string {
 	return `object ${change.commit}\ntype commit\ntag ${change.name}\ntagger ${tagger}\n\nRelease ${version}\n`;
 }
+export interface ModuleTag {
+	id: string;
+	prefix: string;
+}
 /** A Go module publishes a version by its own tag, such as `go/v1.2.3` for the module in `go/`. */
-export function moduleTagPrefixes(packages: Package[], references: string[]): string[] {
+function moduleTags(packages: readonly Package[], references: string[]): ModuleTag[] {
 	return packages.flatMap(pkg =>
 		pkg.manager === 'go' && pkg.versionSource?.startsWith('tags:')
 			&& references.some(reference => matchesPackage(reference, pkg))
-			? [pkg.versionSource.slice('tags:'.length)]
+			? [{ id: packageId(pkg), prefix: pkg.versionSource.slice('tags:'.length) }]
 			: []
 	);
 }
+export function moduleTagPrefixes(packages: readonly Package[], references: string[]): string[] {
+	return moduleTags(packages, references).map(tag => tag.prefix);
+}
+export function streamModuleTags(
+	packages: readonly Package[],
+	stream: { packages?: string[]; companionModules?: string[] } | undefined,
+): ModuleTag[] {
+	return moduleTags(packages, [...stream?.packages ?? [], ...stream?.companionModules ?? []]);
+}
+export function tagPrefixes(tags: readonly ModuleTag[]): string[] {
+	return [...new Set(tags.map(tag => tag.prefix))];
+}
 export function streamModuleTagPrefixes(
-	packages: Package[],
+	packages: readonly Package[],
 	stream: { packages?: string[]; companionModules?: string[] } | undefined,
 ): string[] {
-	return [
-		...new Set(moduleTagPrefixes(packages, [...stream?.packages ?? [], ...stream?.companionModules ?? []])),
-	];
+	return tagPrefixes(streamModuleTags(packages, stream));
 }
 function versionTags(policy: RefPolicy, version: SemVer, modulePrefixes: string[]): string[] {
 	const tag = tagFor(policy, version);

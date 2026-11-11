@@ -94,6 +94,8 @@ function observed(context: EnrolledContext, stream: string, operation: string, v
 		if (!matchesRef(execution.workflow.ref, identity.ref)) {
 			return yield* precondition('Observed run does not match configured ref');
 		}
+		if (identity.ref.startsWith('refs/tags/')) execution.refNamespace = 'tags';
+		else if (identity.ref.startsWith('refs/heads/')) execution.refNamespace = 'heads';
 		yield* fromPromise(() => service.coordinator(identity.repositoryId).enqueue(execution));
 		return execution.id;
 	});

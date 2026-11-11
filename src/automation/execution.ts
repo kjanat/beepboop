@@ -2,10 +2,12 @@ import { Effect } from 'effect';
 import { canVerifyPublication } from '@/automation/managers';
 import { outputsComplete } from '@/automation/outputs';
 import { matchesPackage, matchesPublication, packageId, parseIdentity } from '@/automation/package-identity';
+import { streamModuleTags } from '@/automation/refs';
 import type {
 	Configuration,
 	DiscoveredWorkflow,
 	Execution,
+	Package,
 	Publication,
 	ReleaseReference,
 	RepositoryRecord,
@@ -37,6 +39,7 @@ interface ExecutionSource {
 	configurationSha: string;
 	presetShas: Record<string, string>;
 	workflows: readonly DiscoveredWorkflow[];
+	packages: readonly Package[];
 }
 
 export function createExecution(
@@ -51,6 +54,7 @@ export function createExecution(
 		configurationSha: repository.sha,
 		presetShas: repository.presetShas,
 		workflows: repository.inventory.workflows,
+		packages: repository.inventory.packages,
 	}, request);
 }
 
@@ -67,6 +71,7 @@ export function deriveExecution(
 		configurationSha: parent.configurationSha,
 		presetShas: parent.presetShas,
 		workflows: revision.inventory.workflows,
+		packages: revision.inventory.packages,
 	}, request).pipe(
 		Effect.map(execution =>
 			parent.initiatedBy === undefined ? execution : { ...execution, initiatedBy: parent.initiatedBy }
@@ -98,6 +103,15 @@ function executionFrom(source: ExecutionSource, request: ExecutionRequest): Effe
 		) {
 			return yield* precondition('Workflow needs workflow_dispatch and beepboop_execution_id');
 		}
+		const tagsModules = binding.refs?.phase === 'version';
+		const absent = tagsModules
+			? stream.companionModules?.find(reference => !source.packages.some(pkg => matchesPackage(reference, pkg)))
+			: undefined;
+		if (absent !== undefined) {
+			return yield* precondition(
+				`Companion module ${absent} of stream ${streamName} is missing from discovery; refresh discovery or remove it from companionModules`,
+			);
+		}
 		const id = yield* executionId(source.repositoryId, streamName, operation, eventId);
 		const dependencies = yield* Effect.forEach(
 			binding.needs ?? [],
@@ -120,6 +134,7 @@ function executionFrom(source: ExecutionSource, request: ExecutionRequest): Effe
 			state: observed ? 'pending' : operation === 'promote' ? 'awaiting-approval' : 'ready',
 			dependencies,
 			workflow: { ...binding, ref: binding.ref ?? source.defaultBranch },
+			...(tagsModules ? { moduleTags: streamModuleTags(source.packages, stream) } : {}),
 			...(workflow?.dispatchInputs.includes('beepboop_title') ? { titled: true } : {}),
 			attempts: 0,
 			publications: [],

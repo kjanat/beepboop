@@ -254,6 +254,8 @@ const executionSchema: z.ZodType<Execution> = z.object({
 	}).optional(),
 	resolvedInputs: z.array(resolvedInput).optional(),
 	refPlan: refPlan.optional(),
+	moduleTags: z.array(z.object({ id: z.string(), prefix: z.string() })).optional(),
+	refNamespace: z.enum(['heads', 'tags']).optional(),
 	upstreamRelease: releaseReference.optional(),
 	release: releaseReference.optional(),
 	plan: plan.optional(),
