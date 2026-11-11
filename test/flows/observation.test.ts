@@ -367,6 +367,51 @@ test('retrying a failed observed tag release by its short ID re-runs the failed 
 	expect(after.map(execution => [execution.runAttempt, execution.state])).toEqual([[2, 'succeeded']]);
 });
 
+async function failedTagRelease(conclusion: string, tag: string) {
+	const repository = npmRelease('widget', '1.2.0', "{ push: { tags: ['widget-v*'] } }");
+	await adopt(repository);
+	repository.refs.set(`tags/${tag}`, world.github.head(repository));
+	const [failed] = await complete(repository, { id: 9001, event: 'push', branch: tag, conclusion, attempt: 1 });
+	if (failed?.state !== 'failed') throw new Error('Expected the failed release');
+	const api = bearer(world, await world.cliSession());
+	const retry = () => api('/api/executions/recover', { id: failed.id, action: 'retry' });
+	return { repository, failed, retry };
+}
+
+test('a retry refuses an observed release whose tag moved to a later commit', async () => {
+	const { repository, failed, retry } = await failedTagRelease('failure', 'widget-v1.2.0');
+	const later = world.github.push(repository, { 'README.md': '# widget\n' }, 'Document widget');
+	repository.refs.set('tags/widget-v1.2.0', later.sha);
+	const refused = await retry();
+	expect([refused.status, field(refused.body, 'error')]).toEqual([
+		422,
+		`Tag widget-v1.2.0 moved to ${later.sha.slice(0, 12)}; this release builds ${failed.sourceSha.slice(0, 12)}`,
+	]);
+	expect(repository.runs.find(run => run.id === 9001)?.attempt).toBe(1);
+});
+
+test('a retry refuses an observed release whose tag was deleted while a branch has its name', async () => {
+	const { repository, retry } = await failedTagRelease('failure', 'widget-v1.2.0');
+	repository.refs.set('heads/widget-v1.2.0', world.github.head(repository));
+	repository.refs.delete('tags/widget-v1.2.0');
+	const refused = await retry();
+	expect([refused.status, field(refused.body, 'error')]).toEqual([
+		422,
+		'Workflow ref widget-v1.2.0 no longer exists',
+	]);
+	expect(repository.runs.find(run => run.id === 9001)?.attempt).toBe(1);
+});
+
+test('a retry refuses an observed release whose run succeeded', async () => {
+	const { repository, retry } = await failedTagRelease('success', 'widget-v1.3.0');
+	const refused = await retry();
+	expect([refused.status, field(refused.body, 'error')]).toEqual([
+		422,
+		'Workflow run 9001 succeeded, so it has no failed jobs to re-run. Fix the reported problem and re-run the workflow on GitHub',
+	]);
+	expect(repository.runs.find(run => run.id === 9001)?.attempt).toBe(1);
+});
+
 test('a short ID that matches no operation is unknown', async () => {
 	const api = bearer(world, await world.cliSession());
 	const missing = await api('/api/executions/recover', { id: 'abcdef012345', action: 'retry' });

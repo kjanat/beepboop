@@ -1946,18 +1946,33 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		execution: Execution,
 		token: string,
 		observedRef?: string,
-	): Effect.Effect<{ ref: string; sha: string } | undefined, DomainError> {
+	): Effect.Effect<{ ref: string; sha: string; tag: boolean } | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const pattern = execution.workflow?.ref.replace(/^refs\/(heads|tags)\//, '');
-			const ref = pattern !== undefined && /[*?[]/.test(pattern) ? observedRef : pattern;
+			const configured = execution.workflow?.ref;
+			if (configured === undefined) return undefined;
+			const namespace = /^refs\/(heads|tags)\//.exec(configured)?.[1];
+			const pattern = configured.replace(/^refs\/(heads|tags)\//, '');
+			const patterned = /[*?[]/.test(pattern);
+			const ref = patterned ? observedRef : pattern;
 			if (!ref) return undefined;
+			const tag = namespace === 'tags';
+			if (patterned && namespace !== undefined) {
+				const found = yield* this.gateway().read(
+					gitRefSchema.nullable(),
+					`/repos/${execution.repository}/git/ref/${namespace}/${encodeURIComponent(ref)}`,
+					token,
+				);
+				if (found === null) return yield* precondition(`Workflow ref ${ref} no longer exists`);
+				const target = yield* this.gateway().peelTag(execution.repository, found.object, token);
+				return { ref, sha: target.sha, tag };
+			}
 			const commit = yield* this.gateway().read(
 				commitSchema.nullable(),
 				`/repos/${execution.repository}/commits/${encodeURIComponent(ref)}`,
 				token,
 			);
 			if (commit === null) return yield* precondition(`Workflow ref ${ref} no longer exists`);
-			return { ref, sha: commit.sha };
+			return { ref, sha: commit.sha, tag };
 		});
 	}
 	private contains(execution: Execution, sha: string, token: string): Effect.Effect<boolean, DomainError> {
@@ -1979,7 +1994,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	): Effect.Effect<string | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const head = yield* this.refHead(execution, token, observedRef);
-			if (!head || (yield* this.contains(execution, head.sha, token))) return undefined;
+			if (!head) return undefined;
+			if (head.tag) {
+				if (head.sha === execution.sourceSha) return undefined;
+				return `Tag ${head.ref} moved to ${head.sha.slice(0, 12)}; this release builds ${
+					execution.sourceSha.slice(0, 12)
+				}`;
+			}
+			if (yield* this.contains(execution, head.sha, token)) return undefined;
 			if (!execution.eventId.startsWith('observed:')) return moved(execution, head);
 			return `${head.ref} at ${head.sha.slice(0, 12)} no longer contains ${execution.sourceSha.slice(0, 12)}`;
 		});
@@ -2004,6 +2026,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				typeof run?.head_branch === 'string' ? run.head_branch : undefined,
 			);
 			if (moved) return yield* precondition(moved);
+			if (run !== null && execution.eventId.startsWith('observed:') && run.conclusion === 'success') {
+				return yield* precondition(
+					`Workflow run ${run.id} succeeded, so it has no failed jobs to re-run. Fix the reported problem and re-run the workflow on GitHub`,
+				);
+			}
 			if (run !== null && run.head_sha === execution.sourceSha) {
 				yield* gateway.call(
 					`/repos/${execution.repository}/actions/runs/${execution.runId}/rerun-failed-jobs`,
