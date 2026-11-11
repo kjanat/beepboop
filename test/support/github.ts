@@ -67,6 +67,7 @@ export interface Repository {
 	name: string;
 	defaultBranch: string;
 	trees: Map<string, Map<string, string>>;
+	blobs: Map<string, string>;
 	commits: Map<string, Commit>;
 	refs: Map<string, string>;
 	pulls: Pull[];
@@ -235,9 +236,23 @@ export class FakeGitHub {
 			if (!base) throw new HttpError(422, 'Unknown base tree');
 			const files = new Map(base);
 			for (const entry of Array.isArray(body.tree) ? body.tree.map(object) : []) {
-				files.set(stringField(entry, 'path'), stringField(entry, 'content'));
+				const path = stringField(entry, 'path');
+				if (entry.sha === null) files.delete(path);
+				else if (typeof entry.sha === 'string') {
+					const blob = repository.blobs.get(entry.sha);
+					if (blob === undefined) throw new HttpError(422, 'Unknown blob');
+					files.set(path, blob);
+				} else files.set(path, stringField(entry, 'content'));
 			}
 			return json({ sha: this.tree(repository, files) }, 201);
+		});
+		this.route('POST', new RegExp(`^${repo}/git/blobs$`), (match, _url, body) => {
+			const repository = this.repository(match[1]);
+			if (body.encoding !== 'base64') throw new HttpError(422, 'Expected base64 content');
+			const content = Buffer.from(stringField(body, 'content'), 'base64').toString();
+			const sha = hash({ blob: content });
+			repository.blobs.set(sha, content);
+			return json({ sha }, 201);
 		});
 		this.route('POST', new RegExp(`^${repo}/git/commits$`), (match, _url, body) => {
 			const repository = this.repository(match[1]);
@@ -616,6 +631,7 @@ export class FakeGitHub {
 			name,
 			defaultBranch,
 			trees: new Map(),
+			blobs: new Map(),
 			commits: new Map(),
 			refs: new Map(),
 			pulls: [],
