@@ -218,23 +218,41 @@ test('a branch name that needs URL encoding is created under its own name', asyn
 	expect((await open(repository, checkout.dir, { PR_BRANCH: 'autofix/café' })).operation).toBe('none');
 });
 
-test('a detached checkout targets the base of its pull request event or its pushed branch', async () => {
+test('a detached checkout of a pushed branch targets that branch', async () => {
 	const { repository, checkout } = checkedOut();
-	repository.refs.set('heads/next', checkout.sha);
 	writeFileSync(join(checkout.dir, 'README.md'), '# widget\n\nFormatted.\n');
 	gitOutput(checkout.dir, ['checkout', '--detach']);
+	await open(repository, checkout.dir, { GITHUB_REF: 'refs/heads/main', GITHUB_REF_NAME: 'main' });
+	expect(repository.pulls.map(pull => [pull.head.ref, pull.base])).toEqual([['autofix/format', 'main']]);
+});
+
+test('the merge commit of a pull request run is refused, also with a base', async () => {
+	const { repository, checkout, requests } = checkedOut();
+	writeFileSync(join(checkout.dir, 'README.md'), '# widget\n\nFormatted.\n');
+	gitOutput(checkout.dir, ['checkout', '--detach']);
+	const event = {
+		GITHUB_REF: 'refs/pull/7/merge',
+		GITHUB_REF_NAME: '7/merge',
+		GITHUB_BASE_REF: 'main',
+		GITHUB_SHA: checkout.sha,
+	};
+	const refusal = 'The checkout is the merge commit of a pull request';
+	await expect(open(repository, checkout.dir, event)).rejects.toThrow('The checkout is on no branch');
+	await expect(open(repository, checkout.dir, { ...event, PR_BASE: 'main' })).rejects.toThrow(refusal);
+	expect(requests).toEqual([]);
+	expect(repository.pulls).toEqual([]);
+});
+
+test('a pull request run that checked out its head branch opens a pull request against that branch', async () => {
+	const { repository, checkout } = checkedOut();
+	repository.refs.set('heads/feature', checkout.sha);
+	gitOutput(checkout.dir, ['checkout', '-b', 'feature']);
+	writeFileSync(join(checkout.dir, 'README.md'), '# widget\n\nFormatted.\n');
 	await open(repository, checkout.dir, {
 		GITHUB_REF: 'refs/pull/7/merge',
 		GITHUB_REF_NAME: '7/merge',
-		GITHUB_BASE_REF: 'next',
+		GITHUB_BASE_REF: 'main',
+		GITHUB_SHA: 'a'.repeat(40),
 	});
-	await open(repository, checkout.dir, {
-		PR_BRANCH: 'autofix/other',
-		GITHUB_REF: 'refs/heads/main',
-		GITHUB_REF_NAME: 'main',
-	});
-	expect(repository.pulls.map(pull => [pull.head.ref, pull.base])).toEqual([
-		['autofix/format', 'next'],
-		['autofix/other', 'main'],
-	]);
+	expect(repository.pulls.map(pull => [pull.head.ref, pull.base])).toEqual([['autofix/format', 'feature']]);
 });
