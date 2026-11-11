@@ -63,6 +63,34 @@ const autoMergeSchema = z.object({
 	}).nullable().optional(),
 	errors: z.array(z.object({ type: z.string().optional(), message: z.string() })).optional(),
 });
+interface TagTarget {
+	__typename: string;
+	oid: string;
+	target?: TagTarget | undefined;
+}
+const tagTargetSchema: z.ZodType<TagTarget> = z.object({
+	__typename: textSchema,
+	oid: textSchema,
+	target: z.lazy(() => tagTargetSchema).optional(),
+});
+const tagRefsSchema = z.object({
+	data: z.object({
+		repository: z.object({
+			refs: z.object({
+				pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }),
+				nodes: z.array(z.object({ name: textSchema, target: tagTargetSchema })),
+			}),
+		}),
+	}),
+});
+const tagPeelDepth = 8;
+function tagTargetSelection(depth: number): string {
+	return depth === 0 ? '__typename oid' : `__typename oid ... on Tag{target{${tagTargetSelection(depth - 1)}}}`;
+}
+const tagRefsQuery =
+	`query($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){refs(refPrefix:"refs/tags/",first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{name target{${
+		tagTargetSelection(tagPeelDepth)
+	}}}}}}`;
 // GitHub signals a rate limit by GraphQL error type RATE_LIMITED with HTTP 200, or by HTTP 403 or 429 naming the limit.
 function rateLimited(message: string, type?: string): boolean {
 	return type === 'RATE_LIMITED' || /rate limit|HTTP 429/i.test(message);
@@ -313,28 +341,26 @@ export class RepositoryGateway {
 		const self = this;
 		return Effect.gen(function*() {
 			const token = yield* self.token(name, id, { contents: 'read' });
+			const [owner = '', repository = ''] = name.split('/');
 			const result: RefState[] = [];
+			let after: string | null = null;
 			for (let page = 1; page <= 100; page++) {
-				const rows = yield* self.read(
-					z.array(namedSchema),
-					`/repos/${name}/tags?per_page=100&page=${page}`,
-					token,
-				);
-				for (const { name: tag } of rows) {
-					const reference = yield* self.read(
-						gitRefSchema,
-						`/repos/${name}/git/ref/tags/${encodeURIComponent(tag)}`,
-						token,
-					);
-					const oid = reference.object.sha;
-					let target = reference.object;
-					for (let depth = 0; target.type === 'tag' && depth < 8; depth++) {
-						target = yield* self.peelTag(name, target, token);
-					}
-					if (target.type !== 'commit') return yield* precondition('Tag does not resolve to a commit');
-					result.push({ name: tag, oid, commit: target.sha });
+				const response: z.output<typeof tagRefsSchema> = yield* self.read(tagRefsSchema, '/graphql', token, 'POST', {
+					query: tagRefsQuery,
+					variables: { owner, name: repository, after },
+				});
+				const { nodes, pageInfo } = response.data.repository.refs;
+				for (const { name: tag, target } of nodes) {
+					let peeled = target;
+					while (peeled.target) peeled = peeled.target;
+					if (peeled.__typename !== 'Commit') return yield* precondition('Tag does not resolve to a commit');
+					result.push({ name: tag, oid: target.oid, commit: peeled.oid });
 				}
-				if (rows.length < 100) return result;
+				if (!pageInfo.hasNextPage) return result;
+				if (pageInfo.endCursor === null || pageInfo.endCursor === after) {
+					return yield* precondition('Tag discovery cursor did not advance');
+				}
+				after = pageInfo.endCursor;
 			}
 			return yield* precondition('Tag discovery limit exceeded');
 		});
