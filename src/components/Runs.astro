@@ -5,6 +5,7 @@ import Commit from '@/components/Commit.astro';
 import Field from '@/components/Field.astro';
 import RecoverForm from '@/components/RecoverForm.astro';
 import RunCard from '@/components/RunCard.astro';
+import { packageLabel } from '@/domain/package-label';
 import type { ViewOf } from '@/server/loaders.ts';
 import {
 	releaseSetSummaries,
@@ -192,6 +193,7 @@ const pipelines = releaseSummaries(executions).sort((a, b) =>
 			 <details class="stage-detail" open={entry.open}>
 				 <summary class="stage-summary">
 					 {entry.run.operation}
+					 {entry.run.package && ` ${packageLabel(entry.run.package.id)}`}
 					 {entry.earlier && ' (earlier run)'}
 					 <Badge
 						 tone={executionTone[entry.run.state]}

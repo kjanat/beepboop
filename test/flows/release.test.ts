@@ -20,7 +20,7 @@ import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
 import { needingUser, releaseSetSummaries, releaseSummaries, runStateLabel } from '@/server/releases';
 import { overview } from '@/server/views/overview';
-import { runCard } from '@/server/views/runs';
+import { pipeline, runCard } from '@/server/views/runs';
 import { releaseStatus } from '@/server/views/tone';
 
 type Component = Parameters<experimental_AstroContainer['renderToString']>[0];
@@ -458,6 +458,37 @@ test('the runs page shows one release as a row of stages with one publication ta
 		]);
 	expect(page.document.body.textContent).not.toContain('Still to publish');
 	await page.happyDOM.close();
+});
+
+test('a stage with one execution per package stays unfinished until every package succeeds', async () => {
+	const { finished } = await finishedPromotion('pending');
+	const run = (id: string, at: number, changes: Partial<Execution>): Execution => ({
+		...finished,
+		id,
+		createdAt: at,
+		updatedAt: at,
+		operation: 'publish',
+		publications: [],
+		runAttempt: 1,
+		...changes,
+	});
+	const [release] = releaseSummaries([
+		run('core-failed', 1, { package: { id: 'pkg:npm/core', manager: 'npm' }, state: 'failed' }),
+		run('core-running', 2, { package: { id: 'pkg:npm/core', manager: 'npm' }, state: 'running' }),
+		run('cli-done', 3, { package: { id: 'pkg:npm/cli', manager: 'npm' }, state: 'succeeded' }),
+	]);
+	if (!release) throw new Error('No release');
+	const stage = pipeline(release, Date.now())?.stages.find(entry => entry.operation === 'publish');
+	expect([stage?.run?.id, stage?.tone, stage?.note]).toEqual([
+		'core-running',
+		'active',
+		'running, 1 of 2 packages succeeded, attempt 2',
+	]);
+	expect(stage?.runs.map(entry => [entry.run.id, entry.earlier, entry.open])).toEqual([
+		['core-running', false, true],
+		['core-failed', true, false],
+		['cli-done', false, false],
+	]);
 });
 
 test('a later run replaces a failed run only for the same release target', async () => {

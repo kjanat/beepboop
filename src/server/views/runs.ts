@@ -101,6 +101,7 @@ function configuredStages(run: Execution): string[] {
 	return placed;
 }
 
+const urgency: readonly Tone[] = ['error', 'warn', 'active', 'waiting', 'ok', 'neutral'];
 const needsLook: readonly Execution['state'][] = ['awaiting-approval', 'blocked', 'failed', 'uncertain'];
 const inFlight: readonly Execution['state'][] = ['pending', 'ready', 'dispatching', 'running', 'verifying'];
 
@@ -111,26 +112,39 @@ export function pipeline(release: Release, now: number) {
 		...new Set([...configuredStages(release.latest), ...release.runs.map(run => run.operation)]),
 	];
 	const stages = operations.map(operation => {
-		const runs = release.runs.filter(run => run.operation === operation).sort(byAge);
-		const run = runs.at(-1);
+		const targets = new Map<string, Execution[]>();
+		for (const run of release.runs.filter(entry => entry.operation === operation).sort(byAge)) {
+			const target = run.package?.id ?? '';
+			targets.set(target, [...targets.get(target) ?? [], run]);
+		}
+		const current = [...targets.values()].flatMap(runs => runs.slice(-1));
+		const run =
+			[...current].sort((x, y) => urgency.indexOf(executionTone[x.state]) - urgency.indexOf(executionTone[y.state]))[0];
 		const tone: Tone = run ? executionTone[run.state] : 'neutral';
-		const attempts = runs.reduce((count, entry) => count + (entry.runAttempt ?? 1), 0);
+		const attempts = Math.max(
+			0,
+			...[...targets.values()].map(runs => runs.reduce((count, entry) => count + (entry.runAttempt ?? 1), 0)),
+		);
+		const done = current.filter(entry => entry.state === 'succeeded').length;
 		return {
 			operation,
 			run,
 			tone,
 			note: [
 				run ? progress(run, now) : 'not run',
+				...(current.length > 1 ? [`${done} of ${current.length} packages succeeded`] : []),
 				...(attempts > 1 ? [`attempt ${attempts}`] : []),
 			].join(', '),
 			runHref: run?.runId
 				? githubHref(run.repository, 'actions', 'runs', String(run.runId))
 				: undefined,
-			runs: [...runs].reverse().map((entry, index) => ({
-				run: entry,
-				earlier: index > 0,
-				open: index === 0 && (needsLook.includes(entry.state) || inFlight.includes(entry.state)),
-			})),
+			runs: [...targets.values()].flatMap(runs =>
+				[...runs].reverse().map((entry, index) => ({
+					run: entry,
+					earlier: index > 0,
+					open: index === 0 && (needsLook.includes(entry.state) || inFlight.includes(entry.state)),
+				}))
+			),
 		};
 	});
 	const reported = release.runs.flatMap(run => run.publications.map(publication => ({ run, publication })));
