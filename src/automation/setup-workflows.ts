@@ -1,11 +1,12 @@
 import { isDeepStrictEqual } from 'node:util';
 import { Result } from 'effect';
-import type { Document } from 'yaml';
+import type { Alias, Document, Node } from 'yaml';
 import { isAlias, isMap, isNode, isSeq, parseDocument, visit } from 'yaml';
 import { jobNeeds } from '@/automation/job-gate';
 import { object, yaml, yamlData } from '@/automation/managers/helpers';
 import { packageId } from '@/automation/package-identity';
 import { workflowEvents } from '@/automation/release-graph/calls';
+import { escapeRegExp } from '@/automation/release-graph/shell';
 import { annotatePins, matchEnding, pinned, renderWorkflow } from '@/automation/setup-actions';
 import {
 	assetConflicts,
@@ -224,14 +225,26 @@ export function integrateReleaseWorkflow(
 }
 const migratableKeys = ['id', 'name', 'run', 'if', 'env', 'continue-on-error', 'timeout-minutes'];
 const carriedKeys = ['if', 'continue-on-error', 'timeout-minutes'];
+function texts(value: unknown): string[] {
+	if (typeof value === 'string') return [value];
+	if (Array.isArray(value)) return value.flatMap(texts);
+	return typeof value === 'object' && value !== null ? Object.values(value).flatMap(texts) : [];
+}
+function readsStep(value: unknown, id: string): boolean {
+	const name = escapeRegExp(id);
+	const reference = new RegExp(
+		`\\bsteps\\s*(?:\\.\\s*${name}(?![\\w-])|\\[\\s*(?:'${name}'|"${name}")\\s*\\])`,
+		'i',
+	);
+	return texts(value).some(text => reference.test(text));
+}
 function migratedSettings(
 	step: Record<string, unknown>,
 	credentialNames: string[],
 ): Record<string, unknown> | undefined {
 	if (Object.keys(step).some(key => !migratableKeys.includes(key))) return undefined;
 	const entries = Object.entries(object(step.env));
-	const fromCredentials = (value: unknown) =>
-		typeof value === 'string' && value.includes('steps.beepboop_credentials.');
+	const fromCredentials = (value: unknown) => readsStep(value, 'beepboop_credentials');
 	if (!entries.every(([name, value]) => !fromCredentials(value) || credentialNames.includes(name))) return undefined;
 	const env = entries.filter(([, value]) => !fromCredentials(value));
 	return {
@@ -251,18 +264,24 @@ function publicationEntries(value: unknown): { id?: unknown }[] | undefined {
 		return undefined;
 	}
 }
-function anchorsAndAliases(node: unknown): { anchors: string[]; aliases: string[] } {
-	const found: { anchors: string[]; aliases: string[] } = { anchors: [], aliases: [] };
-	if (!isNode(node)) return found;
-	visit(node, {
+function aliasTargets(document: Document): Map<Alias, Node> {
+	const bound = new Map<string, Node>(), targets = new Map<Alias, Node>();
+	visit(document, {
 		Node(_, entry) {
-			if (isAlias(entry)) found.aliases.push(entry.source);
-			else if (isNode(entry) && entry.anchor) found.anchors.push(entry.anchor);
+			const target = isAlias(entry) ? bound.get(entry.source) : undefined;
+			if (isAlias(entry) && target) targets.set(entry, target);
+			else if (entry.anchor) bound.set(entry.anchor, entry);
 		},
 	});
-	return found;
+	return targets;
 }
-function setSteps(document: Document, jobName: string, steps: Record<string, unknown>[], previous: unknown): void {
+function setSteps(
+	document: Document,
+	jobName: string,
+	steps: Record<string, unknown>[],
+	previous: unknown,
+	targets: Map<Alias, Node>,
+): void {
 	const path = ['jobs', jobName, 'steps'];
 	const sequence = document.getIn(path, true);
 	if (!isSeq(sequence) || !Array.isArray(previous)) {
@@ -275,27 +294,35 @@ function setSteps(document: Document, jobName: string, steps: Record<string, unk
 		if (index >= 0 && index < nodes.length) taken.add(index);
 		return index >= 0 && index < nodes.length ? index : undefined;
 	});
-	const outside = new Set<string>();
-	visit(document, {
-		Node(_, entry) {
-			if (entry === sequence) return visit.SKIP;
-			if (!isAlias(entry) && isNode(entry) && entry.anchor) outside.add(entry.anchor);
-		},
-	});
 	let settled = false;
 	while (!settled) {
-		settled = true;
-		const defined = new Set(outside);
-		for (const index of matches) {
-			if (index !== undefined) { for (const name of anchorsAndAliases(nodes[index]).anchors) defined.add(name); }
-		}
-		for (const [position, index] of matches.entries()) {
-			if (index === undefined) continue;
-			if (!anchorsAndAliases(nodes[index]).aliases.every(name => defined.has(name))) {
-				matches[position] = undefined;
-				settled = false;
-			}
-		}
+		const bound = new Map<string, Node>(), rebound = new Set<number>();
+		let position: number | undefined;
+		const walk = (root: Document | Node): void => {
+			visit(root, {
+				Node(_, entry) {
+					if (entry === sequence) {
+						for (const [at, index] of matches.entries()) {
+							const kept = index === undefined ? undefined : nodes[index];
+							if (!isNode(kept)) continue;
+							position = at;
+							walk(kept);
+						}
+						position = undefined;
+						return visit.SKIP;
+					}
+					if (!isAlias(entry)) {
+						if (entry.anchor) bound.set(entry.anchor, entry);
+					} else if (position !== undefined && bound.get(entry.source) !== targets.get(entry)) {
+						rebound.add(position);
+					}
+					return undefined;
+				},
+			});
+		};
+		walk(document);
+		for (const at of rebound) matches[at] = undefined;
+		settled = rebound.size === 0;
 	}
 	sequence.items = steps.map((step, position) => {
 		const index = matches[position];
@@ -315,6 +342,7 @@ function integrate(
 	release: boolean,
 ): Integration {
 	const root = object(yamlData(document)), jobs = object(root.jobs);
+	const targets = aliasTargets(document);
 	const blockers: string[] = [], notes: string[] = [];
 	const fail = (message: string) => blockers.push(`${choice.file}: ${message}`);
 	const jobName = choice.job || (Object.keys(jobs).length === 1 ? Object.keys(jobs)[0] : undefined)
@@ -561,6 +589,8 @@ function integrate(
 				)
 					.map(packageId),
 			);
+			const execution = `\${{ steps.${id}.outputs.execution-id }}`;
+			const beyondSteps = { ...job, steps: undefined };
 			const migrated = steps.flatMap((step, index) => {
 				if (index === plainStep) {
 					return [{
@@ -569,23 +599,26 @@ function integrate(
 						...carried,
 						uses: action('publish'),
 						with: {
-							'execution-id': `\${{ steps.${id}.outputs.execution-id }}`,
+							'execution-id': execution,
 							...(aliases.length ? { credentials: JSON.stringify(credentials) } : {}),
 						},
 					}];
 				}
 				if (actionRole(step.uses) !== 'report') return [step];
 				const reported = object(step.with);
+				if (reported['execution-id'] !== execution || reported.service !== undefined) return [step];
 				const results = publicationEntries(reported.publications);
 				if (!results) return [step];
 				const kept = results.filter(entry => !(typeof entry.id === 'string' && recorded.has(entry.id)));
-				return kept.length || reported.artifacts
+				const consumed = typeof step.id === 'string'
+					&& readsStep([beyondSteps, steps.filter(other => other !== step)], step.id);
+				return kept.length || reported.artifacts || consumed
 					? [{ ...step, with: { ...reported, publications: `${JSON.stringify(kept, null, 2)}\n` } }]
 					: [];
 			});
 			steps = migrated.filter(step =>
 				step.id !== 'beepboop_credentials'
-				|| migrated.some(other => other !== step && JSON.stringify(other).includes('steps.beepboop_credentials.'))
+				|| readsStep([beyondSteps, migrated.filter(other => other !== step)], 'beepboop_credentials')
 			);
 		}
 	}
@@ -730,7 +763,7 @@ function integrate(
 		}
 	}
 	// Only rewrite the steps sequence when integration changes it; existing steps keep comments.
-	if (!existingBegin || !isDeepStrictEqual(steps, job.steps)) setSteps(document, jobName, steps, job.steps);
+	if (!existingBegin || !isDeepStrictEqual(steps, job.steps)) setSteps(document, jobName, steps, job.steps, targets);
 	if (jobsMap && (!original || binaries)) jobsMap.flow = false;
 	if (binaries && jobsMap) {
 		const begin = { uses: action('begin'), id, with: { 'execution-id': executionInput, stream, operation } };

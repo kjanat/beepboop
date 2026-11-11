@@ -1393,6 +1393,10 @@ type PlainVariant = {
 	untouched?: string;
 	envAnchor?: boolean;
 	ending?: string;
+	earlier?: string;
+	later?: string;
+	reportKeys?: string;
+	jobOutputs?: string;
 };
 const rewrittenPlain = async (variant: PlainVariant = {}) => {
 	const repository = lintRepository();
@@ -1410,7 +1414,7 @@ const rewrittenPlain = async (variant: PlainVariant = {}) => {
 	expect(ledger).toContain('kjanat/beepboop/actions/publish@');
 	const plainWorkflow = ledger.replace(
 		/ {6}- id: beepboop_publish\n {8}name: Publish selected packages\n {8}uses: [^\n]+\n {8}with:\n(?: {10}[^\n]+\n)+/,
-		`      - id: beepboop_credentials
+		`${variant.earlier ? `      - ${variant.earlier}\n` : ''}      - id: beepboop_credentials
         uses: kjanat/beepboop/actions/credentials@v1
         with:
           execution-id: \${{ steps.beepboop.outputs.execution-id }}
@@ -1426,7 +1430,7 @@ ${
 		?? ''
 }          CARGO_REGISTRY_TOKEN: \${{ fromJSON(steps.beepboop_credentials.outputs.values)['crates-io'] }}
       - uses: kjanat/beepboop/actions/report@v1
-        if: \${{ !cancelled() && steps.beepboop.outcome == 'success' }}
+${variant.reportKeys ?? ''}        if: \${{ !cancelled() && steps.beepboop.outcome == 'success' }}
         with:
           execution-id: \${{ steps.beepboop.outputs.execution-id }}
 ${variant.reportWith ?? ''}          publications: ${
@@ -1450,7 +1454,7 @@ ${variant.reportWith ?? ''}          publications: ${
               }
             ]
 `
-}`,
+}${variant.later ? `      - ${variant.later}\n` : ''}`,
 	);
 	expect(plainWorkflow).toContain("cargo publish --locked --package 'lint'");
 	expect(plainWorkflow).toContain('beepboop_credentials');
@@ -1458,10 +1462,14 @@ ${variant.reportWith ?? ''}          publications: ${
 	const anchor = variant.envAnchor
 		? '      - uses: kjanat/beepboop/actions/report@v1'
 		: '      - id: beepboop_credentials';
-	const seeded = variant.untouched
+	const stepped = variant.untouched
 		? plainWorkflow.replace(anchor, `      - ${variant.untouched}\n${anchor}`)
 		: plainWorkflow;
-	expect(seeded).toContain(variant.untouched ?? 'cargo publish');
+	expect(stepped).toContain(variant.untouched ?? 'cargo publish');
+	const seeded = variant.jobOutputs
+		? stepped.replace(/^ {2}crates:\n/m, `  crates:\n    outputs:\n${variant.jobOutputs}`)
+		: stepped;
+	expect(seeded).toContain(variant.jobOutputs ?? 'cargo publish');
 	const content = variant.ending === undefined ? seeded : `${seeded.trimEnd()}${variant.ending}`;
 	world.github.push(repository, { '.github/workflows/publish-crates.yml': content }, 'Integrate crates workflow');
 	const plan = await Effect.runPromise(
@@ -1474,9 +1482,10 @@ ${variant.reportWith ?? ''}          publications: ${
 	return plan.edits.find(edit => edit.path === '.github/workflows/publish-crates.yml')?.after ?? '';
 };
 
-const publishStep = (workflow: string) =>
+const crateSteps = (workflow: string) =>
 	z.object({ jobs: z.record(z.string(), z.object({ steps: z.array(z.looseObject({})) })) }).parse(parse(workflow))
-		.jobs.crates?.steps.find(step => step.id === 'beepboop_publish');
+		.jobs.crates?.steps ?? [];
+const publishStep = (workflow: string) => crateSteps(workflow).find(step => step.id === 'beepboop_publish');
 
 test('an integrated operation workflow with plain crate lines is rewritten to the ledger step', async () => {
 	const rewritten = await rewrittenPlain();
@@ -1505,6 +1514,39 @@ test('an untouched step aliasing the replaced step keeps working', async () => {
 	});
 	expect(rewritten).toContain('uses: acme/tool@0123456789abcdef0123456789abcdef01234567\n');
 	expect(rewritten).toContain('CARGO_REGISTRY_TOKEN:');
+	expect(publishStep(rewritten)).toMatchObject({ uses: 'kjanat/beepboop/actions/publish@v1' });
+});
+
+const tokenValue = "${{ fromJSON(steps.beepboop_credentials.outputs.values)['crates-io'] }}";
+const aliasingStep = 'uses: acme/tool@0123456789abcdef0123456789abcdef01234567\n        env: *publish_env';
+const anchoringStep = 'run: echo other\n        env: &publish_env\n          VALUE: second';
+
+test('an untouched step keeps the environment it aliased when a later step reuses the anchor name', async () => {
+	const rewritten = await rewrittenPlain({
+		envAnchor: true,
+		publishEnv: '          VALUE: first\n',
+		untouched: `${aliasingStep}\n      - ${anchoringStep}`,
+	});
+	const steps = crateSteps(rewritten);
+	expect(steps.find(step => step.uses === 'acme/tool@0123456789abcdef0123456789abcdef01234567')).toMatchObject({
+		env: { VALUE: 'first', CARGO_REGISTRY_TOKEN: tokenValue },
+	});
+	expect(steps.find(step => step.run === 'echo other')).toMatchObject({ env: { VALUE: 'second' } });
+	expect(publishStep(rewritten)).toMatchObject({ uses: 'kjanat/beepboop/actions/publish@v1' });
+});
+
+test('an untouched step keeps the environment it aliased when an earlier step reuses the anchor name', async () => {
+	const rewritten = await rewrittenPlain({
+		envAnchor: true,
+		publishEnv: '          VALUE: first\n',
+		earlier: anchoringStep,
+		untouched: aliasingStep,
+	});
+	const steps = crateSteps(rewritten);
+	expect(steps.find(step => step.uses === 'acme/tool@0123456789abcdef0123456789abcdef01234567')).toMatchObject({
+		env: { VALUE: 'first', CARGO_REGISTRY_TOKEN: tokenValue },
+	});
+	expect(steps.find(step => step.run === 'echo other')).toMatchObject({ env: { VALUE: 'second' } });
 	expect(publishStep(rewritten)).toMatchObject({ uses: 'kjanat/beepboop/actions/publish@v1' });
 });
 
@@ -1538,6 +1580,30 @@ test('the credential step stays while another step still reads its outputs', asy
 	});
 });
 
+test.each(["steps['beepboop_credentials']", 'steps["beepboop_credentials"]'])(
+	'the credential step stays while a step condition reads %s',
+	async reference => {
+		const rewritten = await rewrittenPlain({ publishIf: `\${{ ${reference}.outputs.values != '' }}` });
+		expect(crateSteps(rewritten).map(step => step.id)).toContain('beepboop_credentials');
+		expect(publishStep(rewritten)).toMatchObject({ uses: 'kjanat/beepboop/actions/publish@v1' });
+	},
+);
+
+test('the credential step stays while a job output reads its outputs', async () => {
+	const rewritten = await rewrittenPlain({
+		jobOutputs: "      granted: ${{ steps.beepboop_credentials.outputs.values != '' }}\n",
+	});
+	expect(crateSteps(rewritten).map(step => step.id)).toContain('beepboop_credentials');
+	expect(publishStep(rewritten)).toMatchObject({ uses: 'kjanat/beepboop/actions/publish@v1' });
+});
+
+test('a publish step with a credential in bracket notation under another name stays as written', async () => {
+	const rewritten = await rewrittenPlain({
+		publishEnv: "          OTHER_TOKEN: ${{ fromJSON(steps['beepboop_credentials'].outputs.values)['crates-io'] }}\n",
+	});
+	expect(rewritten).toBe('');
+});
+
 test('a publish step with a setting an action step cannot take stays as written', async () => {
 	const rewritten = await rewrittenPlain({ publishKeys: '        working-directory: crates\n' });
 	expect(rewritten).toBe('');
@@ -1562,6 +1628,59 @@ test('the rewrite leaves a report step with runtime publications as written', as
 	const rewritten = await rewrittenPlain({ publications: '"${{ steps.results.outputs.publications }}"' });
 	expect(rewritten).toContain('steps.results.outputs.publications');
 	expect(rewritten).toContain('kjanat/beepboop/actions/publish@v1');
+});
+
+const reportedIds = (step: Record<string, unknown> | undefined) =>
+	z.object({ with: z.object({ publications: z.string() }) }).transform(report =>
+		z.array(z.object({ id: z.string() })).parse(JSON.parse(report.with.publications)).map(entry => entry.id)
+	).parse(step);
+
+test('the rewrite leaves the report of another execution as written', async () => {
+	const rewritten = await rewrittenPlain({
+		reportWith: '          artifacts: "[]"\n',
+		later: `uses: kjanat/beepboop/actions/report@v1
+        with:
+          execution-id: \${{ inputs.other_execution_id }}
+          publications: '[{"id":"pkg:cargo/lint-core"},{"id":"pkg:cargo/lint"}]'`,
+	});
+	const reports = crateSteps(rewritten).filter(step => step.uses === 'kjanat/beepboop/actions/report@v1');
+	expect(reports.map(reportedIds)).toEqual([[], lintCrates]);
+	expect(reports[1]).toMatchObject({ with: { 'execution-id': '${{ inputs.other_execution_id }}' } });
+});
+
+test('the rewrite leaves the report sent to another service as written', async () => {
+	const rewritten = await rewrittenPlain({
+		reportWith: '          artifacts: "[]"\n',
+		later: `uses: kjanat/beepboop/actions/report@v1
+        with:
+          service: https://staging.example
+          execution-id: \${{ steps.beepboop.outputs.execution-id }}
+          publications: '[{"id":"pkg:cargo/lint-core"},{"id":"pkg:cargo/lint"}]'`,
+	});
+	const reports = crateSteps(rewritten).filter(step => step.uses === 'kjanat/beepboop/actions/report@v1');
+	expect(reports.map(reportedIds)).toEqual([[], lintCrates]);
+});
+
+test('the rewrite keeps an emptied report step whose result a later step reads', async () => {
+	const rewritten = await rewrittenPlain({
+		reportKeys: '        id: release_report\n',
+		later: 'run: echo \'${{ steps["release_report"].outputs.result }}\'',
+	});
+	const report = crateSteps(rewritten).find(step => step.id === 'release_report');
+	expect(report).toMatchObject({ uses: 'kjanat/beepboop/actions/report@v1' });
+	expect(reportedIds(report)).toEqual([]);
+	expect(publishStep(rewritten)).toMatchObject({ uses: 'kjanat/beepboop/actions/publish@v1' });
+});
+
+test('the rewrite keeps an emptied report step whose result a job output reads', async () => {
+	const rewritten = await rewrittenPlain({
+		reportKeys: '        id: release_report\n',
+		jobOutputs: '      result: ${{ steps.release_report.outputs.result }}\n',
+	});
+	const report = crateSteps(rewritten).find(step => step.id === 'release_report');
+	expect(report).toMatchObject({ uses: 'kjanat/beepboop/actions/report@v1' });
+	expect(reportedIds(report)).toEqual([]);
+	expect(publishStep(rewritten)).toMatchObject({ uses: 'kjanat/beepboop/actions/publish@v1' });
 });
 
 test("the adoption text states each stream's own publishWhen", async () => {
