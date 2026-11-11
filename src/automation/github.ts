@@ -357,6 +357,9 @@ export class RepositoryGateway {
 					result.push({ name: tag, oid: target.oid, commit: peeled.oid });
 				}
 				if (!pageInfo.hasNextPage) return result;
+				if (pageInfo.endCursor === null || pageInfo.endCursor === after) {
+					return yield* precondition('Tag discovery cursor did not advance');
+				}
 				after = pageInfo.endCursor;
 			}
 			return yield* precondition('Tag discovery limit exceeded');

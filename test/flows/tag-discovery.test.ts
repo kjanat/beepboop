@@ -45,3 +45,21 @@ test('tag discovery refuses a tag that resolves to something other than a commit
 	const exit = await Effect.runPromiseExit(gateway.tagRefs(repository.name, repository.id));
 	expect(JSON.stringify(exit)).toContain('Tag does not resolve to a commit');
 });
+
+for (const endCursor of [null, 'same']) {
+	test(`tag discovery stops when the next page cursor is ${endCursor ?? 'missing'}`, async () => {
+		const repository = widget(world.github, { configured: false });
+		let pages = 0;
+		world.network.serve('api.github.com', request => {
+			if (new URL(request.url).pathname !== '/graphql') return world.github.handle(request);
+			pages += 1;
+			return Response.json({
+				data: { repository: { refs: { pageInfo: { hasNextPage: true, endCursor }, nodes: [] } } },
+			});
+		});
+		const gateway = new RepositoryGateway(world.env, Number(world.env.OWNER_ID));
+		const exit = await Effect.runPromiseExit(gateway.tagRefs(repository.name, repository.id));
+		expect(JSON.stringify(exit)).toContain('Tag discovery cursor did not advance');
+		expect(pages).toBe(endCursor === null ? 1 : 2);
+	});
+}
