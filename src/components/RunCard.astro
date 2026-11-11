@@ -1,0 +1,224 @@
+---
+import type { Execution } from '@/automation/types.ts';
+import Arrow from '@/components/Arrow.astro';
+import Badge from '@/components/Badge.astro';
+import Commit from '@/components/Commit.astro';
+import Field from '@/components/Field.astro';
+import RecoverForm from '@/components/RecoverForm.astro';
+import Time from '@/components/Time.astro';
+import { githubHref } from '@/contract/links';
+import { startLabels } from '@/contract/release-start';
+import { packageLabel } from '@/domain/package-label';
+import { runStateLabel } from '@/server/releases';
+import { runCard } from '@/server/views/runs.ts';
+import { executionTone, publicationTone } from '@/server/views/tone.ts';
+
+interface Props {
+	run: Execution;
+	now: number;
+	grouped?: boolean;
+}
+const { run, now, grouped = false } = Astro.props;
+const card = runCard(run, now);
+---
+<article class="run-card" id={run.id}>
+	<div class="section-heading">
+		<div>
+			{!grouped && <p class="eyebrow">{run.repository} / {run.stream}</p>}
+			<h2>
+				{grouped
+					? `${run.operation} operation`
+					: run.version
+					? `Version ${run.version}`
+					: 'Workflow operation'}
+			</h2>
+		</div>
+		<Badge tone={executionTone[run.state]} label={runStateLabel(run)} />
+	</div>
+	<p>
+		{card.approving
+			? card.automatic
+				? `${
+					run.started
+						? `Started from ${startLabels[run.started.via]}. `
+						: run.approvedBy === 'merge'
+						? 'You merged the preparation PR. '
+						: ''
+				}Beepboop releases this commit once it is verified and its checks pass.`
+				: 'Waiting for you to publish it.'
+			: (run.state !== 'succeeded' && run.reason)
+				|| (run.state === 'verifying'
+					? 'The workflow finished. Beepboop is waiting for the registries to show every publication.'
+					: run.state === 'succeeded'
+					? 'This operation completed.'
+					: 'Follow the workflow and publication results below.')}
+	</p>
+	{card.autoMerge && <p class="notice">{card.autoMerge}</p>}
+	{card.until && (
+		<p class="notice">
+			Publishes after {card.until} to stay within the registry's publish rate
+			limit.
+		</p>
+	)}
+	<dl class="fields metadata">
+		<Field label="Operation">{run.operation}</Field>
+		{run.package && (
+			<Field label="Package">{packageLabel(run.package.id)}</Field>
+		)}
+		<Field label="Commit">
+			<Commit
+				repository={run.repository}
+				sha={run.sourceSha}
+				label="Open commit on GitHub"
+			/>
+		</Field>
+		<Field label="Updated"><Time value={run.updatedAt} /></Field>
+		{card.release && (
+			<Field label="Release">
+				<code>{card.release.tag}</code>
+				<Arrow href={card.release.href} label="Open release on GitHub" />
+			</Field>
+		)}
+		{run.runId && (
+			<Field label="Workflow run">
+				<code>{run.runId}</code>
+				<Arrow
+					href={githubHref(run.repository, 'actions', 'runs', String(run.runId))}
+					label="Open workflow run on GitHub"
+				/>
+			</Field>
+		)}
+	</dl>
+	{card.preparationUrl && (
+		<a class="button" href={card.preparationUrl}>Review preparation PR ↗</a>
+	)}
+	{!!card.publications.length && (
+		<div class="table-scroll">
+			<table>
+				<thead>
+					<tr>
+						<th>Publication</th>
+						<th>Version</th>
+						<th>Result</th>
+					</tr>
+				</thead>
+				<tbody>
+					{card.publications.map(p => (
+						<tr>
+							<td>
+								{p.label}
+								{p.href && <Arrow href={p.href} label={`Open ${p.label}`} />}
+								<small>{p.required ? 'required' : 'optional'}</small>
+							</td>
+							<td>{p.version}</td>
+							<td>
+								<Badge tone={publicationTone[p.outcome]} label={p.outcome} />
+							</td>
+						</tr>
+					))}
+				</tbody>
+			</table>
+		</div>
+	)}
+	{!grouped && !!card.missing.length && (
+		<div class="notice">
+			<p>Still to publish</p>
+			<ul class="inline-list">
+				{card.missing.map(id => <li>{packageLabel(id)}</li>)}
+			</ul>
+		</div>
+	)}
+	{card.approving && (
+		<form
+			data-action="approve"
+			method="post"
+			action="/api/executions/approve"
+			data-automatic={card.automatic ? 'true' : undefined}
+		>
+			<input type="hidden" name="id" value={run.id}>
+			<input type="hidden" name="sourceSha" value={run.sourceSha}>
+			<input type="hidden" name="force" value="false">
+			<p>
+				{card.automatic
+					? 'Checks on commit'
+					: 'Publish from commit'}
+				<code>{run.sourceSha}</code>
+				<Arrow
+					href={githubHref(run.repository, 'commit', run.sourceSha)}
+					label="Open commit on GitHub"
+				/>
+			</p>
+			<ul class="approval-status" aria-live="polite">
+				<li>Checking the commit signature and checks…</li>
+			</ul>
+			<button class="primary" disabled hidden={card.automatic}>
+				{run.version ? `Publish ${run.version}` : 'Publish this commit'}
+			</button>
+		</form>
+	)}
+	{card.retryable && (
+		<RecoverForm id={run.id} recovery="retry" label={`Retry ${card.name}`}>
+			Retry
+		</RecoverForm>
+	)}
+	{card.reconcilable && (
+		<RecoverForm
+			id={run.id}
+			recovery="reconcile"
+			label={`Check workflow outcome of ${card.name}`}
+		>
+			<p slot="detail">
+				Check whether GitHub accepted the earlier request before attempting
+				another dispatch.
+			</p>
+			Check workflow outcome
+		</RecoverForm>
+	)}
+	{card.cancellable && (
+		<form data-action="cancel" method="post" action="/api/executions/cancel">
+			<input type="hidden" name="id" value={run.id}>
+			<button aria-label={`Cancel ${card.name}`}>Cancel</button>
+		</form>
+	)}
+	<details>
+		<summary aria-label={`Run details for ${card.name}`}>
+			Run details
+		</summary>
+		<dl>
+			<dt>Configuration commit</dt>
+			<dd>
+				<code>{run.configurationSha}</code>
+				<Arrow
+					href={githubHref(run.repository, 'commit', run.configurationSha)}
+					label="Open configuration commit on GitHub"
+				/>
+			</dd>
+			<dt>Workflow commit</dt>
+			<dd>
+				{run.workflowSha
+					? (
+					 <>
+						 <code>{run.workflowSha}</code>
+						 <Arrow
+							 href={githubHref(run.repository, 'commit', run.workflowSha)}
+							 label="Open workflow commit on GitHub"
+						 />
+					 </>
+				 )
+					: 'Not dispatched yet'}
+			</dd>
+			<dt>Run attempt</dt>
+			<dd>{run.runAttempt ?? 'Not started'}</dd>
+		</dl>
+		{!!run.artifacts.length && (
+			<ul class="artifact-list">
+				{run.artifacts.map(a => (
+					<li>
+						{a.name}
+						<code>{a.digest}</code>
+					</li>
+				))}
+			</ul>
+		)}
+	</details>
+</article>

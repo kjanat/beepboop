@@ -28,6 +28,9 @@ export function registryHref(
 	if (destination === 'npm') {
 		return `${packagePages.npm(name)}${version ? `/v/${encodePath(version)}` : ''}`;
 	}
+	if (destination === 'pypi') {
+		return `https://pypi.org/project/${encodePath(name)}/${version ? `${encodePath(version)}/` : ''}`;
+	}
 	if (destination === 'crates-io') return `https://crates.io/crates/${encodePath(name, version ?? '')}`;
 	if (destination === 'jsr') return `${packagePages.jsr(name)}${version ? `@${encodeURIComponent(version)}` : ''}`;
 	if (destination === 'go-proxy') {
@@ -37,6 +40,8 @@ export function registryHref(
 		const parsed = semVer.safeParse(version);
 		return parsed.success
 			? githubHref(repository, 'releases', 'tag', tagFor(defaultTagPolicy, parsed.data))
+			: version
+			? githubHref(repository, 'releases', 'tag', version)
 			: githubHref(repository, 'releases');
 	}
 	if (destination === 'vscode-marketplace') {

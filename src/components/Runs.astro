@@ -4,13 +4,14 @@ import Badge from '@/components/Badge.astro';
 import Commit from '@/components/Commit.astro';
 import Field from '@/components/Field.astro';
 import RecoverForm from '@/components/RecoverForm.astro';
-import Time from '@/components/Time.astro';
-import { githubHref } from '@/contract/links';
-import { startLabels } from '@/contract/release-start';
-import { packageLabel } from '@/domain/package-label';
+import RunCard from '@/components/RunCard.astro';
 import type { ViewOf } from '@/server/loaders.ts';
-import { releaseSetSummaries, runStateLabel } from '@/server/releases';
-import { progress, runCard } from '@/server/views/runs.ts';
+import {
+	releaseSetSummaries,
+	releaseSummaries,
+	runStateLabel,
+} from '@/server/releases';
+import { pipeline, progress } from '@/server/views/runs.ts';
 import {
 	executionTone,
 	publicationTone,
@@ -23,6 +24,12 @@ interface Props {
 const { readable: executions, unreadable } = Astro.props.data.executions;
 const now = Date.now();
 const latest = Math.max(0, ...executions.map(run => run.updatedAt));
+const position = new Map(executions.map((run, index) => [run.id, index]));
+const first = (runs: readonly { id: string }[]) =>
+	Math.min(...runs.map(run => position.get(run.id) ?? 0));
+const pipelines = releaseSummaries(executions).sort((a, b) =>
+	first(a.runs) - first(b.runs)
+);
 ---
 <span data-runs-latest={latest} hidden></span>
 {releaseSetSummaries(executions).map(release => (
@@ -116,77 +123,44 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 		<a href="/releases">Prepare a release →</a>
 	</article>
 )}
-{executions.map(run => {
-	const card = runCard(run, now);
+{pipelines.map(release => {
+	const view = pipeline(release, now);
+	if (!view) return release.runs.map(run => <RunCard run={run} now={now} />);
 	return (
-	 <article class="run-card" id={run.id}>
+	 <article class="run-card release-pipeline">
 		 <div class="section-heading">
 			 <div>
-				 <p class="eyebrow">{run.repository} / {run.stream}</p>
-				 <h2>
-					 {run.version ? `Version ${run.version}` : 'Workflow operation'}
-				 </h2>
+				 <p class="eyebrow">{release.repository} / {release.stream}</p>
+				 <h2>Version {release.version}</h2>
 			 </div>
-			 <Badge tone={executionTone[run.state]} label={runStateLabel(run)} />
+			 <Badge tone={view.status.tone} label={view.status.label} />
 		 </div>
-		 <p>
-			 {card.approving
-			 	? card.automatic
-			 		? `${
-			 			run.started
-			 				? `Started from ${startLabels[run.started.via]}. `
-			 				: run.approvedBy === 'merge'
-			 				? 'You merged the preparation PR. '
-			 				: ''
-			 		}Beepboop releases this commit once it is verified and its checks pass.`
-			 		: 'Waiting for you to publish it.'
-			 	: (run.state !== 'succeeded' && run.reason)
-			 		|| (run.state === 'verifying'
-			 			? 'The workflow finished. Beepboop is waiting for the registries to show every publication.'
-			 			: run.state === 'succeeded'
-			 			? 'This operation completed.'
-			 			: 'Follow the workflow and publication results below.')}
-		 </p>
-		 {card.autoMerge && <p class="notice">{card.autoMerge}</p>}
-		 {card.until && (
-			 <p class="notice">
-				 Publishes after {card.until} to stay within the registry's publish rate
-				 limit.
-			 </p>
-		 )}
-		 <dl class="fields metadata">
-			 <Field label="Operation">{run.operation}</Field>
-			 {run.package && (
-				 <Field label="Package">{packageLabel(run.package.id)}</Field>
-			 )}
-			 <Field label="Commit">
-				 <Commit
-					 repository={run.repository}
-					 sha={run.sourceSha}
-					 label="Open commit on GitHub"
-				 />
-			 </Field>
-			 <Field label="Updated"><Time value={run.updatedAt} /></Field>
-			 {card.release && (
-				 <Field label="Release">
-					 <code>{card.release.tag}</code>
-					 <Arrow href={card.release.href} label="Open release on GitHub" />
-				 </Field>
-			 )}
-			 {run.runId && (
-				 <Field label="Workflow run">
-					 <code>{run.runId}</code>
-					 <Arrow
-						 href={githubHref(run.repository, 'actions', 'runs', String(run.runId))}
-						 label="Open workflow run on GitHub"
-					 />
-				 </Field>
-			 )}
-		 </dl>
-		 {card.preparationUrl && (
-			 <a class="button" href={card.preparationUrl}>Review preparation PR ↗</a>
-		 )}
-		 {!!card.publications.length && (
+		 <ol class="pipeline">
+			 {view.stages.map(stage => (
+				 <li data-tone={stage.tone}>
+					 <span
+						 class="stage-dot"
+						 data-tone={stage.tone}
+						 aria-hidden="true"
+					 ></span>
+					 <span class="stage-text">
+						 {stage.run
+						 	? <a href={`#${stage.run.id}`}>{stage.operation}</a>
+						 	: <span>{stage.operation}</span>}
+						 <small>
+							 {stage.note}
+							 {stage.runHref && (
+								 <Arrow
+									 href={stage.runHref}
+									 label={`Open the ${stage.operation} workflow run on GitHub`}
+								 />
+							 )}
+						 </small>
+					 </span>
+				 </li>
+			 ))}
+		 </ol>
+		 {!!view.publications.length && (
 			 <div class="table-scroll">
 				 <table>
 					 <thead>
@@ -197,7 +171,7 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 						 </tr>
 					 </thead>
 					 <tbody>
-						 {card.publications.map(p => (
+						 {view.publications.map(p => (
 							 <tr>
 								 <td>
 									 {p.label}
@@ -214,107 +188,19 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 				 </table>
 			 </div>
 		 )}
-		 {!!card.missing.length && (
-			 <div class="notice">
-				 <p>Still to publish</p>
-				 <ul class="inline-list">
-					 {card.missing.map(id => <li>{packageLabel(id)}</li>)}
-				 </ul>
-			 </div>
-		 )}
-		 {card.approving && (
-			 <form
-				 data-action="approve"
-				 method="post"
-				 action="/api/executions/approve"
-				 data-automatic={card.automatic ? 'true' : undefined}
-			 >
-				 <input type="hidden" name="id" value={run.id}>
-				 <input type="hidden" name="sourceSha" value={run.sourceSha}>
-				 <input type="hidden" name="force" value="false">
-				 <p>
-					 {card.automatic
-					 	? 'Checks on commit'
-					 	: 'Publish from commit'}
-					 <code>{run.sourceSha}</code>
-					 <Arrow
-						 href={githubHref(run.repository, 'commit', run.sourceSha)}
-						 label="Open commit on GitHub"
+		 {view.stages.flatMap(stage => stage.runs).map(entry => (
+			 <details class="stage-detail" open={entry.open}>
+				 <summary class="stage-summary">
+					 {entry.run.operation}
+					 {entry.earlier && ' (earlier run)'}
+					 <Badge
+						 tone={executionTone[entry.run.state]}
+						 label={runStateLabel(entry.run)}
 					 />
-				 </p>
-				 <ul class="approval-status" aria-live="polite">
-					 <li>Checking the commit signature and checks…</li>
-				 </ul>
-				 <button class="primary" disabled hidden={card.automatic}>
-					 {run.version ? `Publish ${run.version}` : 'Publish this commit'}
-				 </button>
-			 </form>
-		 )}
-		 {card.retryable && (
-			 <RecoverForm id={run.id} recovery="retry" label={`Retry ${card.name}`}>
-				 Retry
-			 </RecoverForm>
-		 )}
-		 {card.reconcilable && (
-			 <RecoverForm
-				 id={run.id}
-				 recovery="reconcile"
-				 label={`Check workflow outcome of ${card.name}`}
-			 >
-				 <p slot="detail">
-					 Check whether GitHub accepted the earlier request before attempting
-					 another dispatch.
-				 </p>
-				 Check workflow outcome
-			 </RecoverForm>
-		 )}
-		 {card.cancellable && (
-			 <form data-action="cancel" method="post" action="/api/executions/cancel">
-				 <input type="hidden" name="id" value={run.id}>
-				 <button aria-label={`Cancel ${card.name}`}>Cancel</button>
-			 </form>
-		 )}
-		 <details>
-			 <summary aria-label={`Run details for ${card.name}`}>
-				 Run details
-			 </summary>
-			 <dl>
-				 <dt>Configuration commit</dt>
-				 <dd>
-					 <code>{run.configurationSha}</code>
-					 <Arrow
-						 href={githubHref(run.repository, 'commit', run.configurationSha)}
-						 label="Open configuration commit on GitHub"
-					 />
-				 </dd>
-				 <dt>Workflow commit</dt>
-				 <dd>
-					 {run.workflowSha
-					 	? (
-							<>
-								<code>{run.workflowSha}</code>
-								<Arrow
-									href={githubHref(run.repository, 'commit', run.workflowSha)}
-									label="Open workflow commit on GitHub"
-								/>
-							</>
-						)
-					 	: 'Not dispatched yet'}
-				 </dd>
-				 <dt>Run attempt</dt>
-				 <dd>{run.runAttempt ?? 'Not started'}</dd>
-			 </dl>
-			 {!!run.artifacts.length && (
-				 <ul class="artifact-list">
-					 {run.artifacts.map(a => (
-						 <li>
-							 {a.name}
-							 <code>{a.digest}</code>
-						 </li>
-					 ))}
-				 </ul>
-			 )}
-		 </details>
+				 </summary>
+				 <RunCard run={entry.run} now={now} grouped />
+			 </details>
+		 ))}
 	 </article>
  );
 })}

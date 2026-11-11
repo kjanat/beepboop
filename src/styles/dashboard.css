@@ -912,3 +912,85 @@ dd {
 [aria-invalid="true"] {
 	border-color: var(--red);
 }
+.pipeline {
+	display: flex;
+	flex-wrap: wrap;
+	row-gap: 12px;
+	list-style: none;
+	padding: 0;
+	margin: 16px 0;
+}
+.pipeline li {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.pipeline li + li::before {
+	content: "";
+	width: 28px;
+	height: 2px;
+	margin: 0 6px;
+	background: var(--line);
+}
+.stage-text {
+	display: flex;
+	flex-direction: column;
+	font-weight: 650;
+}
+.stage-text small {
+	color: var(--muted);
+	font-weight: 400;
+}
+.stage-dot {
+	flex: none;
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	border: 2px solid var(--rail);
+}
+.stage-dot[data-tone="ok"] {
+	border-color: var(--green);
+	background: var(--green);
+}
+.stage-dot[data-tone="error"] {
+	border-color: var(--red);
+	background: var(--red);
+}
+.stage-dot[data-tone="warn"] {
+	border-color: var(--amber-ink);
+	background: var(--badge-amber);
+}
+.stage-dot[data-tone="waiting"] {
+	border-color: var(--blue);
+	border-style: dashed;
+}
+.stage-dot[data-tone="active"] {
+	border-color: var(--blue);
+	border-top-color: transparent;
+	animation: stage-spin 0.9s linear infinite;
+}
+@keyframes stage-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.stage-dot[data-tone="active"] {
+		animation: none;
+		border-top-color: var(--blue);
+		background: var(--badge-blue);
+	}
+}
+.stage-detail {
+	margin-top: 12px;
+}
+.stage-summary {
+	font-weight: 650;
+	cursor: pointer;
+}
+.stage-summary .badge {
+	margin-left: 8px;
+}
+.stage-detail > .run-card {
+	margin-top: 8px;
+}
