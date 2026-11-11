@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `kjanat/beepboop/actions/pull-request` commits the changes in a workflow's checkout as the Beepboop App and opens or updates a pull request. It takes `branch`, `title`, `body`, `commit-message`, `base` and `add-paths`, requests the repository token itself and creates a verified commit through the GitHub API. https://github.com/kjanat/beepboop/issues/53
 - The runs page has a repository filter, `/runs?repository=<owner>/<name>`, and folds the publications and operations of each release. A release that waits, runs or needs attention starts unfolded.
 - `beepboop runs list` shows the current checkout's repository by default and takes `--repository`, `--all`, `--stream`, `--operation`, `--state`, `--releaseVersion` and `--limit`. Its `--json` output is a per-run summary; `--full` prints whole records. https://github.com/kjanat/beepboop/issues/40
 - A stream can list `companionModules`, Go modules whose version tag its release pushes on the release commit beside its own tag, such as `go/v1.2.3` beside `rshellcheck-v1.2.3`. The module keeps its own stream. Setup takes the setting as a choices field, the `--companion-module` flag and a JSON editor in the dashboard. Discovery blocks an entry that matches no package and warns about one that is not a Go module versioned by tags.

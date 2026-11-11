@@ -91,7 +91,7 @@ export function begin(
 }
 
 export function runRuntime(
-	entry: 'prepare' | 'refs',
+	entry: 'prepare' | 'pull-request' | 'refs',
 	env: Record<string, string>,
 ): Promise<void> {
 	return withRuntime('beepboop-runtime-', async directory => {

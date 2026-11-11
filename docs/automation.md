@@ -951,6 +951,47 @@ token. Deploy the service through Cloudflare Builds before you use the updated
 action. The App installation must have approved Contents and Workflows write
 access. The action leaves installation permissions unchanged.
 
+## Pull request from a workflow
+
+`actions/pull-request` commits the changes in the checkout as the Beepboop App
+and opens a pull request for them. It requests the repository token itself, so
+the job needs `id-token: write` and the conditions of
+[Repository token](#repository-token) apply.
+
+```yaml
+permissions:
+  contents: read
+  id-token: write
+steps:
+  - uses: actions/checkout@v7
+  - run: dprint fmt
+  - uses: kjanat/beepboop/actions/pull-request@v1
+    with:
+      branch: autofix/dprint
+      title: "style: apply dprint formatting"
+      body: Formatting drift from the scheduled `dprint fmt` run.
+```
+
+The action creates the commit through the GitHub API, so GitHub signs it and
+shows it as verified, with the App bot as author. The commit holds every change
+in the checkout, including new, deleted and executable files, on top of the
+checked-out commit. Each run replaces `branch` with that one commit. A run
+whose changes equal the branch pushes nothing.
+
+| Input            | Meaning                                                              |
+| ---------------- | -------------------------------------------------------------------- |
+| `branch`         | Branch that holds the changes. Required.                             |
+| `title`          | Pull request title. Required.                                        |
+| `body`           | Pull request body.                                                   |
+| `commit-message` | Commit message. Defaults to the title.                               |
+| `base`           | Branch the pull request targets. Defaults to the checked-out branch. |
+| `add-paths`      | Git pathspecs to commit, one per line. Defaults to every change.     |
+
+The outputs are `pull-request-number`, `pull-request-url`,
+`pull-request-head-sha` and `pull-request-operation`, which is `created`,
+`updated` or `none`. A checkout without changes opens no pull request and
+leaves an existing one as it is.
+
 ## Subscriptions
 
 Start an operation when a package changes:

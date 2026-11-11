@@ -1,0 +1,60 @@
+name: Beepboop pull request
+description: Commit the checkout's changes as the Beepboop App and open or update a pull request
+inputs:
+  branch:
+    description: Branch that holds the changes. Each run replaces it with one commit on top of the checked-out commit.
+    required: true
+  title:
+    description: Pull request title
+    required: true
+  body:
+    description: Pull request body
+    default: ""
+  commit-message:
+    description: Commit message. Defaults to the title.
+    default: ""
+  base:
+    description: Branch the pull request targets. Defaults to the checked-out branch.
+    default: ""
+  add-paths:
+    description: Git pathspecs to commit, one per line. Defaults to every change in the checkout.
+    default: ""
+  service:
+    description: Beepboop service origin
+    default: https://beepboop.kjanat.dev
+outputs:
+  pull-request-number:
+    description: Number of the pull request, empty when the checkout had no changes
+    value: ${{ steps.pull-request.outputs.pull-request-number }}
+  pull-request-url:
+    description: URL of the pull request
+    value: ${{ steps.pull-request.outputs.pull-request-url }}
+  pull-request-operation:
+    description: created, updated or none
+    value: ${{ steps.pull-request.outputs.pull-request-operation }}
+  pull-request-head-sha:
+    description: Commit at the head of the pull request branch
+    value: ${{ steps.pull-request.outputs.pull-request-head-sha }}
+runs:
+  using: composite
+  steps:
+    - name: Ensure Bun is available
+      id: bun
+      uses: $/actions/deps/bun
+    - id: token
+      uses: $/actions/token
+      with:
+        service: ${{ inputs.service }}
+        permission-contents: write
+        permission-pull-requests: write
+    - id: pull-request
+      shell: bash
+      env:
+        PR_ADD_PATHS: ${{ inputs.add-paths }}
+        PR_BASE: ${{ inputs.base }}
+        PR_BODY: ${{ inputs.body }}
+        PR_BRANCH: ${{ inputs.branch }}
+        PR_COMMIT_MESSAGE: ${{ inputs.commit-message }}
+        PR_TITLE: ${{ inputs.title }}
+        PR_TOKEN: ${{ steps.token.outputs.token }}
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/pull-request.ts"
