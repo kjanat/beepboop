@@ -21,6 +21,7 @@ import { experimental_AstroContainer } from 'astro/container';
 import { Effect } from 'effect';
 import { Window } from 'happy-dom';
 import { z } from 'zod';
+import { app } from '@/cli/cli';
 import { errorEnvelope } from '@/contract/errors';
 import { streamRelease } from '@/contract/views';
 import { loaders } from '@/server/loaders';
@@ -337,4 +338,31 @@ test('a plan whose lockfiles need regenerating names the missing preparation wor
 		422,
 		'Lockfiles need regenerating and main has no preparation workflow. Add one in release setup.',
 	]);
+});
+
+test('a direct release under version-commit-pushed says that it publishes without another approval', async () => {
+	const repository = await statute({
+		publishWhen: 'version-commit-pushed',
+		workflow: { file: 'tag.yml', refs: { phase: 'version', prefix: 'v' }, publications: [module] },
+	});
+	const summary =
+		'main has no version to write. The release goes straight to tag.yml and publishes once the commit is verified and its checks pass.';
+	expect(await release(repository)).toEqual({ kind: 'promotes', summary });
+	const prompts: string[] = [];
+	const cli = await app.execute(['release', 'patch', '--repository', repository.name], {
+		prompter: {
+			async promptOne(config) {
+				prompts.push(config.message);
+				return { answered: true, value: true };
+			},
+		},
+		isTTY: true,
+		env: {},
+	});
+	expect(cli.exitCode).toBe(0);
+	const output = cli.stdout.join('');
+	expect(output).toContain(summary);
+	expect(output).toContain('Beepboop publishes once the commit is verified and its checks pass.');
+	expect(output).not.toContain('runs publish');
+	expect(prompts).toEqual(['Publish 0.13.2 once its commit is verified and its checks pass?']);
 });

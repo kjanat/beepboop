@@ -335,7 +335,9 @@ export function releaseRepository(
 						message: started
 							? `Start this release? ${startFromEffect}`
 							: direct
-							? `Create the publication run of ${summary.version}?`
+							? stream.promote.approval === 'push'
+								? `Publish ${summary.version} once its commit is verified and its checks pass?`
+								: `Create the publication run of ${summary.version}?`
 							: committing
 							? `Prepare this release and commit its version bump to ${repository.defaultBranch}?`
 							: 'Prepare this release and open its version PR?',
@@ -356,7 +358,9 @@ export function releaseRepository(
 		out.log(`${started || direct ? 'Release' : 'Preparation'} ${look.id(preparation.id)}: ${preparation.state}`);
 		if (direct && !started) {
 			return out.log(
-				`Publish it with beepboop runs publish ${preparation.id} --sourceSha ${summary.sourceSha}.`,
+				policy === 'push'
+					? 'Beepboop publishes once the commit is verified and its checks pass.'
+					: `Publish it with beepboop runs publish ${preparation.id} --sourceSha ${summary.sourceSha}.`,
 			);
 		}
 		if (started) {

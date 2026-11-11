@@ -14,7 +14,7 @@ export type Preparation =
 export type ReleaseCapability =
 	| { kind: 'observes'; triggers: ReleaseTrigger[] }
 	| { kind: 'unpublishable' }
-	| { kind: 'promotes'; workflow: string }
+	| { kind: 'promotes'; workflow: string; automatic: boolean }
 	| { kind: 'prepares'; through: Preparation; lands: 'pr' | 'commit' };
 function dispatched(binding: WorkflowBinding | undefined): binding is WorkflowBinding {
 	return binding !== undefined && binding.mode !== 'observe';
@@ -45,7 +45,7 @@ export function releaseCapability(stream: Stream, inventory: Inventory): Release
 		return { kind: 'prepares', through: { kind: 'files', paths: stream.versionFiles.map(rule => rule.path) }, lands };
 	}
 	if (workflow) return { kind: 'prepares', through: { kind: 'workflow', file: workflow.file }, lands };
-	return { kind: 'promotes', workflow: publisher.file };
+	return { kind: 'promotes', workflow: publisher.file, automatic: stream.promote.approval === 'push' };
 }
 
 export function releasable(
@@ -71,7 +71,11 @@ export function capabilitySentence(name: string, capability: ReleaseCapability):
 		case 'unpublishable':
 			return `${name} has no publishing workflow. Add one in release setup.`;
 		case 'promotes':
-			return `${name} has no version to write. The release goes straight to ${capability.workflow} and waits for you to publish it.`;
+			return `${name} has no version to write. The release goes straight to ${capability.workflow} and ${
+				capability.automatic
+					? 'publishes once the commit is verified and its checks pass'
+					: 'waits for you to publish it'
+			}.`;
 		case 'prepares': {
 			const { through } = capability;
 			if (through.kind === 'workflow') return `${through.file} prepares the new version of ${name}.`;
