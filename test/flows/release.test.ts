@@ -482,9 +482,16 @@ test('the runs page filters by repository and folds a settled release', async ()
 		},
 		{ ...finished, id: 'other', repository: 'octo/gadget', repositoryId: 99, state: 'running', createdAt: 5 },
 	];
+	const unreadable = [
+		{ id: 'broken-widget', repositoryId: finished.repositoryId, error: 'widget record' },
+		{ id: 'broken-gadget', repositoryId: 99, error: 'gadget record' },
+	];
 	expect([...needingUser(readable)]).toEqual([]);
 	const hotfix = readable.map(run => run.version === '1.0.0' ? { ...run, version: '2.0.0' } : run);
 	expect([...needingUser(hotfix)]).toEqual(['old-b']);
+	const set = (group: string) => ({ preparationId: 'set', group, required: [] });
+	const groups = readable.map(run => ({ ...run, releaseSet: set(run.version === '1.0.0' ? 'widget' : 'gadget') }));
+	expect([...needingUser(groups)]).toEqual(['old-b']);
 	const [old] = releaseSummaries(readable).filter(release => release.version === '1.0.0');
 	if (!old) throw new Error('No release');
 	expect(pipeline(old, Date.now())?.stages.map(stage => stage.note)).toEqual(['cancelled']);
@@ -494,7 +501,7 @@ test('the runs page filters by repository and folds a settled release', async ()
 	const container = await experimental_AstroContainer.create();
 	const render = async (query: string) => {
 		const html = await container.renderToString(componentModule.parse(loaded).default, {
-			props: { data: { section: 'runs', executions: { readable, unreadable: [] } } },
+			props: { data: { section: 'runs', executions: { readable, unreadable } } },
 			request: new Request(`${origin}/runs${query}`),
 		});
 		const page = new Window();
@@ -508,11 +515,13 @@ test('the runs page filters by repository and folds a settled release', async ()
 				card.querySelector('.release-detail')?.hasAttribute('open'),
 			]),
 			text: page.document.body.textContent,
+			broken: all('.run-card pre').map(error => error.textContent),
 		};
 		await page.happyDOM.close();
 		return view;
 	};
 	const everything = await render('');
+	expect(everything.broken).toEqual(['widget record', 'gadget record']);
 	expect(everything.filters).toEqual([
 		['All repositories', 'page'],
 		['octo/gadget', null],
@@ -527,6 +536,7 @@ test('the runs page filters by repository and folds a settled release', async ()
 	const widget = await render('?repository=octo%2Fwidget');
 	expect(widget.filters.filter(([, current]) => current === 'page')).toEqual([['octo/widget', 'page']]);
 	expect(widget.releases.map(([name]) => name)).toEqual(['octo/widget / main', 'octo/widget / main']);
+	expect(widget.broken).toEqual(['widget record']);
 	expect((await render('?repository=octo%2Fmissing')).releases).toHaveLength(3);
 });
 

@@ -58,6 +58,7 @@ export function needingUser(executions: readonly Execution[]): ReadonlySet<strin
 	const superseded = (run: Execution) =>
 		released.some(other =>
 			other.repositoryId === run.repositoryId && other.stream === run.stream && byAge(run, other) < 0
+			&& other.releaseSet?.group === run.releaseSet?.group
 			&& semVer.safeParse(other.version).success
 			&& (!semVer.safeParse(run.version).success || compare(other.version ?? '', run.version ?? '') > 0)
 		);
