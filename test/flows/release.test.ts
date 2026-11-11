@@ -483,6 +483,8 @@ test('the runs page filters by repository and folds a settled release', async ()
 		{ ...finished, id: 'other', repository: 'octo/gadget', repositoryId: 99, state: 'running', createdAt: 5 },
 	];
 	expect([...needingUser(readable)]).toEqual([]);
+	const hotfix = readable.map(run => run.version === '1.0.0' ? { ...run, version: '2.0.0' } : run);
+	expect([...needingUser(hotfix)]).toEqual(['old-b']);
 	const [old] = releaseSummaries(readable).filter(release => release.version === '1.0.0');
 	if (!old) throw new Error('No release');
 	expect(pipeline(old, Date.now())?.stages.map(stage => stage.note)).toEqual(['cancelled']);

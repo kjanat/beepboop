@@ -1,6 +1,7 @@
 import { listOrder, unfinishedStates } from '@/automation/execution-order.ts';
 import { matchesPackage, matchesPublication } from '@/automation/package-identity';
 import type { Execution, Publication, RepositoryRecord } from '@/automation/types.ts';
+import { compare, semVer } from '@/contract/version';
 
 export const activeStates: readonly string[] = ['running', 'ready', 'dispatching', 'verifying'];
 
@@ -56,8 +57,9 @@ export function needingUser(executions: readonly Execution[]): ReadonlySet<strin
 	const released = executions.filter(run => run.state === 'succeeded' && run.operation !== 'prepare');
 	const superseded = (run: Execution) =>
 		released.some(other =>
-			other.repositoryId === run.repositoryId && other.stream === run.stream && other.version !== run.version
-			&& byAge(run, other) < 0
+			other.repositoryId === run.repositoryId && other.stream === run.stream && byAge(run, other) < 0
+			&& semVer.safeParse(other.version).success
+			&& (!semVer.safeParse(run.version).success || compare(other.version ?? '', run.version ?? '') > 0)
 		);
 	const needing = new Set<string>();
 	for (const [run, key] of keys) {

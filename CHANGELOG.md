@@ -15,7 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- A failed or cancelled run stops asking for attention once a later version of the same stream is released.
+- A failed or cancelled run stops asking for attention once a higher version of the same stream is released after it.
 - A stage's attempt count leaves out runs that never started.
 - The run card links a release only for the operation that creates it, shows `Started on GitHub` as the workflow commit of an observed run, and shortens operation and session IDs in a reason to 12 characters.
 - An operation whose workflow run fails after every required publication succeeded ends as succeeded, and its card and stage say that the workflow run failed. An already failed operation changes at the next reconcile, also when a registry shows the publication later.
