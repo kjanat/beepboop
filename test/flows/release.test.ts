@@ -6,7 +6,7 @@ import { bearer, text } from '@root/test/support/http.ts';
 import { packedRelease } from '@root/test/support/packed-release.ts';
 import { loggedErrors } from '@root/test/support/process.ts';
 import { approvePromotion, only, prepareRelease } from '@root/test/support/releases.ts';
-import { editableConfiguration, passChecks, widget } from '@root/test/support/repositories.ts';
+import { editableConfiguration, jsonFile, passChecks, widget } from '@root/test/support/repositories.ts';
 import { fakeSigner, signingKey } from '@root/test/support/signing.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
@@ -843,6 +843,58 @@ test('a companion module tag is pushed on the release commit beside the version 
 	expect(new Set(plan.changes.map(change => change.commit)).size).toBe(1);
 	expect(Object.keys(tags)).toEqual(['v1.1.0', 'go/v1.1.0']);
 	expect(tags['go/v1.1.0']).toContain('tag go/v1.1.0');
+}, 30_000);
+
+async function removeCompanionModule(): Promise<void> {
+	const target = world.github.repository('octo/widget');
+	const configuration = z.looseObject({ streams: z.looseObject({ main: z.looseObject({}) }) }).parse(
+		JSON.parse(world.github.file(target, '.github/beepboop.json') ?? '{}'),
+	);
+	delete configuration.streams.main.companionModules;
+	world.github.push(
+		target,
+		{ '.github/beepboop.json': jsonFile(configuration, '\t'), 'go/go.mod': null },
+		'Remove the Go module',
+	);
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: 'octo/widget' })).status).toBe(200);
+	const stored = await Effect.runPromise(new Store(world.db).repository(target.id));
+	expect(stored?.inventory.packages.map(pkg => pkg.manager)).toEqual(['npm']);
+}
+
+test(
+	'a companion module removed by a later discovery is still tagged by the release that started with it',
+	async () => {
+		const { plan, tags } = await packedRelease(
+			world,
+			removeCompanionModule,
+			undefined,
+			false,
+			'github.com/octo/widget/go',
+		);
+		expect(plan.changes.map(change => change.name)).toEqual(['v1.1.0', 'go/v1.1.0']);
+		expect(Object.keys(tags)).toEqual(['v1.1.0', 'go/v1.1.0']);
+	},
+	30_000,
+);
+
+test('a release stored without its companion modules reads them from discovery', async () => {
+	const { plan } = await packedRelease(
+		world,
+		async promotionId => {
+			const target = world.github.repository('octo/widget');
+			const storage = world.coordinators.instance(String(target.id)).storage;
+			const key = `execution:${promotionId}`;
+			const stored = z.looseObject({ moduleTags: z.unknown() }).parse(await storage.get(key));
+			expect(stored.moduleTags).toEqual([{ id: 'pkg:golang/github.com/octo/widget/go', prefix: 'go/v' }]);
+			delete stored.moduleTags;
+			await storage.put(key, stored);
+		},
+		undefined,
+		false,
+		'github.com/octo/widget/go',
+	);
+	expect(plan.changes.map(change => change.name)).toEqual(['v1.1.0', 'go/v1.1.0']);
 }, 30_000);
 
 test('signed version tags fall back to the runner key without a signer binding', async () => {

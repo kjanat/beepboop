@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { begin } from '@root/test/support/actions.ts';
 import type { Repository } from '@root/test/support/github.ts';
 import { bearer, field } from '@root/test/support/http.ts';
 import { runWorkflow } from '@root/test/support/repositories.ts';
@@ -447,6 +448,128 @@ test('a retry refuses an observed release whose tag was deleted while a branch h
 	expect(repository.runs.find(run => run.id === 9001)?.attempt).toBe(1);
 });
 
+test('a retry refuses a shorthand tag pattern whose tag was deleted while a branch has its name', async () => {
+	const { repository, failed, retry } = await failedTagRelease('failure', 'widget-v1.2.0', 'widget-v*');
+	expect(failed.refNamespace).toBe('tags');
+	repository.refs.set('heads/widget-v1.2.0', world.github.head(repository));
+	repository.refs.delete('tags/widget-v1.2.0');
+	const refused = await retry();
+	expect([refused.status, field(refused.body, 'error')]).toEqual([
+		422,
+		'Workflow ref widget-v1.2.0 no longer exists',
+	]);
+	expect(repository.runs.find(run => run.id === 9001)?.attempt).toBe(1);
+});
+
+test('a retry of a branch run under a shorthand pattern ignores a tag created with the branch name', async () => {
+	const repository = npmRelease('widget', '1.2.0', "{ push: { tags: ['widget-v*'] } }");
+	const { plan } = await adopt(repository);
+	await pin(repository, plan, 'widget-v*');
+	repository.refs.set('heads/widget-v1.2.0', world.github.head(repository));
+	const [failed] = await complete(repository, {
+		id: 9001,
+		event: 'push',
+		branch: 'widget-v1.2.0',
+		conclusion: 'failure',
+		attempt: 1,
+	});
+	expect([failed?.state, failed?.version, failed?.refNamespace]).toEqual(['failed', undefined, 'heads']);
+	const later = world.github.push(repository, { 'README.md': '# widget\n' }, 'Document widget');
+	repository.refs.set('tags/widget-v1.2.0', later.sha);
+	const api = bearer(world, await world.cliSession());
+	const retried = await api('/api/executions/recover', { id: failed?.id ?? '', action: 'retry' });
+	expect([retried.status, field(retried.body, 'state')]).toEqual([200, 'uncertain']);
+	expect(repository.runs.find(run => run.id === 9001)?.attempt).toBe(2);
+});
+
+test('an execution stored without its ref namespace still probes tags and then branches', async () => {
+	const { repository, failed, retry } = await failedTagRelease('failure', 'widget-v1.2.0', 'widget-v*');
+	const storage = world.coordinators.instance(String(repository.id)).storage;
+	const key = `execution:${failed.id}`;
+	const stored = z.looseObject({ refNamespace: z.unknown() }).parse(await storage.get(key));
+	delete stored.refNamespace;
+	await storage.put(key, stored);
+	repository.refs.set('heads/widget-v1.2.0', world.github.head(repository));
+	repository.refs.delete('tags/widget-v1.2.0');
+	expect((await retry()).status).toBe(200);
+	expect(repository.runs.find(run => run.id === 9001)?.attempt).toBe(2);
+});
+
+test('a run that registers itself records the namespace of the ref it ran on', async () => {
+	const repository = npmRelease('widget', '1.2.0', "{ push: { tags: ['widget-v*'] } }");
+	const { plan } = await adopt(repository);
+	await pin(repository, plan, 'widget-v*');
+	const [stream] = plan.choices.streams;
+	const operation = stream?.observe?.[0]?.name;
+	if (!stream || operation === undefined) throw new Error('Expected an observed stream');
+	const sha = world.github.head(repository);
+	repository.refs.set('tags/widget-v1.2.0', sha);
+	repository.refs.set('heads/widget-v1.3.0', sha);
+	const registered: [string, string | undefined][] = [];
+	for (const [id, namespace, name] of [[9001, 'tags', 'widget-v1.2.0'], [9002, 'heads', 'widget-v1.3.0']] as const) {
+		repository.runs.push({
+			id,
+			path: '.github/workflows/release.yml',
+			event: 'push',
+			headSha: sha,
+			headBranch: name,
+			status: 'in_progress',
+			conclusion: null,
+			attempt: 1,
+			title: 'Release',
+			inputs: {},
+		});
+		const identity = {
+			repository,
+			runId: id,
+			sha,
+			file: 'release.yml',
+			ref: `refs/${namespace}/${name}`,
+			event: 'push',
+		};
+		await begin(world, identity, '', stream.name, operation);
+	}
+	const journal = await world.coordinator(repository).exportJournal();
+	for (const entry of journal.filter(candidate => candidate.key.startsWith('execution:'))) {
+		const execution = decodeExecutionV1(entry.value);
+		registered.push([execution.eventId, execution.refNamespace]);
+	}
+	expect(registered.sort()).toEqual([['observed:9001', 'tags'], ['observed:9002', 'heads']]);
+});
+
+test('a retry refuses an exact tag ref whose tag was deleted while a branch has its name', async () => {
+	const { repository, retry } = await failedTagRelease('failure', 'widget-v1.2.0', 'refs/tags/widget-v1.2.0');
+	repository.refs.set('heads/widget-v1.2.0', world.github.head(repository));
+	repository.refs.delete('tags/widget-v1.2.0');
+	const refused = await retry();
+	expect([refused.status, field(refused.body, 'error')]).toEqual([
+		422,
+		'Workflow ref widget-v1.2.0 no longer exists',
+	]);
+	expect(repository.runs.find(run => run.id === 9001)?.attempt).toBe(1);
+});
+
+test('a retry of an exact tag ref reads the tag while a branch with its name sits at another commit', async () => {
+	const { repository, retry } = await failedTagRelease('failure', 'widget-v1.2.0', 'refs/tags/widget-v1.2.0');
+	const later = world.github.push(repository, { 'README.md': '# widget\n' }, 'Document widget');
+	repository.refs.set('heads/widget-v1.2.0', later.sha);
+	const retried = await retry();
+	expect([retried.status, field(retried.body, 'state')]).toEqual([200, 'uncertain']);
+	expect(repository.runs.find(run => run.id === 9001)?.attempt).toBe(2);
+});
+
+test('a retry refuses an exact tag ref whose tag moved to a later commit', async () => {
+	const { repository, failed, retry } = await failedTagRelease('failure', 'widget-v1.2.0', 'refs/tags/widget-v1.2.0');
+	const later = world.github.push(repository, { 'README.md': '# widget\n' }, 'Document widget');
+	repository.refs.set('tags/widget-v1.2.0', later.sha);
+	const refused = await retry();
+	expect([refused.status, field(refused.body, 'error')]).toEqual([
+		422,
+		`Tag widget-v1.2.0 moved to ${later.sha.slice(0, 12)}; this release builds ${failed.sourceSha.slice(0, 12)}`,
+	]);
+	expect(repository.runs.find(run => run.id === 9001)?.attempt).toBe(1);
+});
+
 test('a retry refuses an observed release whose run succeeded', async () => {
 	const { repository, retry } = await failedTagRelease('success', 'widget-v1.3.0');
 	const refused = await retry();
@@ -461,6 +584,82 @@ test('a short ID that matches no operation is unknown', async () => {
 	const api = bearer(world, await world.cliSession());
 	const missing = await api('/api/executions/recover', { id: 'abcdef012345', action: 'retry' });
 	expect(missing.status).toBe(404);
+});
+
+async function storedState(repository: Repository, id: string): Promise<string> {
+	const journal = await world.coordinator(repository).exportJournal();
+	const entry = journal.find(candidate => candidate.key === `execution:${id}`);
+	if (!entry) throw new Error('Expected the stored execution');
+	return decodeExecutionV1(entry.value).state;
+}
+
+test('a short ID shared by two operations is refused before either changes', async () => {
+	const { repository, failed } = await failedTagRelease('failure', 'widget-v1.2.0');
+	const prefix = failed.id.slice(0, 8);
+	const twin = `${prefix}${failed.id.slice(8).split('').reverse().join('')}`;
+	expect(twin).not.toBe(failed.id);
+	const row = z.object({ repository_id: z.number(), state: z.string(), document: z.string(), updated_at: z.number() })
+		.parse(
+			await world.db.prepare('SELECT repository_id,state,document,updated_at FROM executions WHERE id=?')
+				.bind(failed.id).first(),
+		);
+	await world.db.prepare('INSERT INTO executions(id,repository_id,state,document,updated_at) VALUES(?,?,?,?,?)')
+		.bind(twin, row.repository_id, row.state, row.document, row.updated_at).run();
+	const api = bearer(world, await world.cliSession());
+	for (
+		const refused of [
+			await api('/api/executions/recover', { id: prefix, action: 'retry' }),
+			await api('/api/executions/cancel', { id: prefix }),
+		]
+	) {
+		expect([refused.status, field(refused.body, 'error')]).toEqual([
+			422,
+			`Several operations start with ${prefix}; give more of the ID`,
+		]);
+	}
+	expect(await storedState(repository, failed.id)).toBe('failed');
+	expect(repository.runs.find(run => run.id === 9001)?.attempt).toBe(1);
+	const longer = await api('/api/executions/cancel', { id: failed.id.slice(0, 63) });
+	expect([longer.status, field(longer.body, 'id'), field(longer.body, 'state')]).toEqual([200, failed.id, 'cancelled']);
+});
+
+test('a short ID needs eight characters', async () => {
+	const { repository, failed } = await failedTagRelease('failure', 'widget-v1.2.0');
+	const api = bearer(world, await world.cliSession());
+	const short = await api('/api/executions/recover', { id: failed.id.slice(0, 7), action: 'retry' });
+	expect(short.status).toBe(404);
+	expect(repository.runs.find(run => run.id === 9001)?.attempt).toBe(1);
+	const retried = await api('/api/executions/recover', { id: failed.id.slice(0, 8), action: 'retry' });
+	expect([retried.status, field(retried.body, 'id')]).toEqual([200, failed.id]);
+	expect(repository.runs.find(run => run.id === 9001)?.attempt).toBe(2);
+});
+
+test('cancelling by short ID cancels that operation', async () => {
+	const { repository, failed } = await failedTagRelease('failure', 'widget-v1.2.0');
+	const api = bearer(world, await world.cliSession());
+	const cancelled = await api('/api/executions/cancel', { id: failed.id.slice(0, 8) });
+	expect([cancelled.status, field(cancelled.body, 'id'), field(cancelled.body, 'state')]).toEqual([
+		200,
+		failed.id,
+		'cancelled',
+	]);
+	expect(await storedState(repository, failed.id)).toBe('cancelled');
+});
+
+test('a full ID with its repository reaches an operation the index has no row for', async () => {
+	const { repository, failed } = await failedTagRelease('failure', 'widget-v1.2.0');
+	await world.db.prepare('DELETE FROM executions WHERE id=?').bind(failed.id).run();
+	const api = bearer(world, await world.cliSession());
+	const unknown = await api('/api/executions/recover', { id: failed.id, action: 'retry' });
+	expect(unknown.status).toBe(404);
+	expect(repository.runs.find(run => run.id === 9001)?.attempt).toBe(1);
+	const retried = await api('/api/executions/recover', {
+		id: failed.id,
+		repositoryId: repository.id,
+		action: 'retry',
+	});
+	expect([retried.status, field(retried.body, 'id')]).toEqual([200, failed.id]);
+	expect(repository.runs.find(run => run.id === 9001)?.attempt).toBe(2);
 });
 
 test('a run without its tag fails once and an unreadable run stops being retried', async () => {

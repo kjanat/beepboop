@@ -88,6 +88,7 @@ import {
 	tagConflict,
 	tagObject,
 	tagPayload,
+	tagPrefixes,
 } from '@/automation/refs';
 import { releaseNotes } from '@/automation/release-notes';
 import { compileReleaseSet } from '@/automation/release-set';
@@ -942,16 +943,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const refs = yield* gateway.tagRefs(execution.repository, execution.repositoryId);
 			if (!execution.refPlan) {
 				if (complete) return yield* precondition('Ref plan has not been authorized');
-				const repository = yield* this.store().repository(execution.repositoryId);
 				const changes = yield* planRefs(
 					policy,
 					version,
 					execution.sourceSha,
 					refs,
-					streamModuleTagPrefixes(
-						repository?.inventory.packages ?? [],
-						execution.configuration.streams[execution.stream],
-					),
+					yield* this.modulePrefixes(execution),
 				);
 				execution.refPlan = yield* this.signRefs({
 					repository: execution.repository,
@@ -1868,20 +1865,27 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const policy = execution.workflow?.refs;
 			const version = semVer.safeParse(execution.version);
 			if (execution.operation !== 'promote' || !policy || !version.success) return undefined;
-			const repository = yield* this.store().repository(execution.repositoryId);
 			const refs = yield* this.gateway().tagRefs(execution.repository, execution.repositoryId);
 			const conflict = tagConflict(
 				policy,
 				version.data,
 				execution.sourceSha,
 				refs,
-				streamModuleTagPrefixes(
-					repository?.inventory.packages ?? [],
-					execution.configuration.streams[execution.stream],
-				),
+				yield* this.modulePrefixes(execution),
 			);
 			return conflict && conflictMessage(conflict);
 		});
+	}
+	private modulePrefixes(execution: Execution): Effect.Effect<string[], DomainError> {
+		if (execution.moduleTags) return Effect.succeed(tagPrefixes(execution.moduleTags));
+		return this.store().repository(execution.repositoryId).pipe(
+			Effect.map(repository =>
+				streamModuleTagPrefixes(
+					repository?.inventory.packages ?? [],
+					execution.configuration.streams[execution.stream],
+				)
+			),
+		);
 	}
 	private approvalProblems(execution: Execution): Effect.Effect<string[], DomainError> {
 		return this.commitChecks(execution).pipe(Effect.map(({ pending, failed }) => [...failed, ...pending]));
@@ -1951,12 +1955,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Effect.gen({ self: this }, function*() {
 			const configured = execution.workflow?.ref;
 			if (configured === undefined) return undefined;
-			const namespace = /^refs\/(heads|tags)\//.exec(configured)?.[1];
+			const namespace = /^refs\/(heads|tags)\//.exec(configured)?.[1] ?? execution.refNamespace;
 			const pattern = configured.replace(/^refs\/(heads|tags)\//, '');
 			const patterned = /[*?[]/.test(pattern);
 			const ref = patterned ? observedRef : pattern;
 			if (!ref) return undefined;
-			if (patterned) {
+			if (patterned || namespace !== undefined) {
 				for (const candidate of namespace === undefined ? ['tags', 'heads'] : [namespace]) {
 					const found = yield* this.gateway().read(
 						gitRefSchema.nullable(),
@@ -1969,14 +1973,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 				return yield* precondition(`Workflow ref ${ref} no longer exists`);
 			}
-			const tag = namespace === 'tags';
 			const commit = yield* this.gateway().read(
 				commitSchema.nullable(),
 				`/repos/${execution.repository}/commits/${encodeURIComponent(ref)}`,
 				token,
 			);
 			if (commit === null) return yield* precondition(`Workflow ref ${ref} no longer exists`);
-			return { ref, sha: commit.sha, tag };
+			return { ref, sha: commit.sha, tag: false };
 		});
 	}
 	private contains(execution: Execution, sha: string, token: string): Effect.Effect<boolean, DomainError> {
@@ -2386,6 +2389,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					);
 					execution.runId = run.id;
 					execution.runAttempt = run.run_attempt;
+					execution.refNamespace = tagged ? 'tags' : 'heads';
 					execution.state = 'running';
 					execution.dependencies = (yield* this.executions()).filter(other =>
 						other.stream === streamName && other.operation === 'promote' && other.state === 'succeeded'

@@ -1,7 +1,7 @@
 import type { Channel, ChannelOutcome, RegistryOutcome } from '@/automation/destinations';
 import type { ResolvedInput } from '@/automation/outputs';
 import type { PackagePublication } from '@/automation/package-publication';
-import type { RefPlan } from '@/automation/refs';
+import type { ModuleTag, RefPlan } from '@/automation/refs';
 import type { ManagerName } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
 import type { StartChannel } from '@/contract/release-start';
@@ -103,6 +103,7 @@ export interface Artifact {
 	expiresAt: string;
 }
 export type ExecutionState = ExecutionStateView;
+export type RefNamespace = 'heads' | 'tags';
 export interface ReleaseReference {
 	group?: string;
 	id: string;
@@ -166,6 +167,8 @@ export interface Execution {
 	};
 	resolvedInputs?: ResolvedInput[];
 	refPlan?: RefPlan;
+	moduleTags?: ModuleTag[];
+	refNamespace?: RefNamespace;
 	upstreamRelease?: ReleaseReference;
 	release?: ReleaseReference;
 	plan?: ReleasePlan | import('@/automation/planning').ReleaseSetPlan;

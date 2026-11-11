@@ -1082,10 +1082,23 @@ warns about an entry that is not a Go module versioned by tags, or that
 `packages` already lists. A version tag that already points at another commit
 stops the release, as for every other tag.
 
+Once the stream pushed `go/v1.2.3`, that version of the module belongs to the
+stream's release. The module's own stream can release `1.2.3` only on the same
+commit. On any other commit Beepboop refuses the release with
+`Version tag go/v1.2.3 already targets <commit>` and asks for a new version.
+
+A release records its companion modules and their tag prefixes when Beepboop
+creates it, and plans its tags from that record. A discovery refresh during the
+release changes neither. Beepboop refuses to create a release whose
+`companionModules` entry discovery did not find.
+
 Adoption proposes `companionModules` when a Go module's tags carry the same
 versions as another stream's tags, or when one file builds both tag names. The
 setup notes name the module, the evidence, and both options, and change
-nothing until you choose one.
+nothing until you choose one. For a stream that only observes tags, or whose
+promotion pushes no version tag, the note says so and offers no option:
+`companionModules` takes effect only on a stream whose promotion pushes a
+version tag.
 
 Setup writes `refs` with `phase: "version"` for binary releases and for a
 promote setup choice with `tagPrefix`, such as `"tagPrefix": "cli-v"`. The
