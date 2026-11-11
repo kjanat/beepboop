@@ -84,33 +84,48 @@ export function runCard(run: Execution, now: number) {
 
 type Release = ReturnType<typeof releaseSummaries>[number];
 
-function configuredStages(run: Execution): string[] {
+function configuredStages(run: Execution): Map<string, string[]> {
 	const stream = run.configuration.streams[run.stream];
-	if (!stream) return [];
-	const placed = [...(stream.prepare ? ['prepare'] : []), 'promote'];
-	const waiting = new Map(Object.entries(stream.workflows));
-	while (waiting.size) {
-		const ready = [...waiting].filter(([, binding]) =>
-			(binding.needs ?? []).every(need => placed.includes(need) || !waiting.has(need))
-		);
-		for (const [name] of ready.length ? ready : waiting) {
-			placed.push(name);
-			waiting.delete(name);
-		}
+	if (!stream) return new Map();
+	const needs = new Map<string, string[]>([
+		['prepare', stream.prepare.workflow?.needs ?? []],
+		['promote', [...stream.promote.workflow?.needs ?? [], 'prepare']],
+		...Object.entries(stream.workflows).map(([name, binding]): [string, string[]] => [name, binding.needs ?? []]),
+	]);
+	const ordered = new Map<string, string[]>();
+	while (ordered.size < needs.size) {
+		const waiting = [...needs].filter(([name]) => !ordered.has(name));
+		const ready = waiting.filter(([, wanted]) => wanted.every(need => ordered.has(need) || !needs.has(need)));
+		for (const [name, wanted] of ready.length ? ready : waiting) ordered.set(name, wanted);
 	}
-	return placed;
+	return ordered;
+}
+
+function follows(stage: string, started: ReadonlySet<string>, needs: ReadonlyMap<string, string[]>): boolean {
+	const seen = new Set<string>();
+	const reaches = (name: string): boolean => {
+		if (seen.has(name)) return false;
+		seen.add(name);
+		return (needs.get(name) ?? []).some(need => started.has(need) || reaches(need));
+	};
+	return reaches(stage);
 }
 
 const urgency: readonly Tone[] = ['error', 'warn', 'active', 'waiting', 'ok', 'neutral'];
-const needsLook: readonly Execution['state'][] = ['awaiting-approval', 'blocked', 'failed', 'uncertain'];
+const needsLook: readonly Execution['state'][] = ['awaiting-approval', 'blocked', 'failed', 'cancelled', 'uncertain'];
+const working: readonly Execution['state'][] = ['ready', 'dispatching', 'running', 'verifying'];
 const inFlight: readonly Execution['state'][] = ['pending', 'ready', 'dispatching', 'running', 'verifying'];
 
 /** One release as a row of stages, like a workflow run and its jobs. */
 export function pipeline(release: Release, now: number) {
 	if (release.version === undefined) return undefined;
+	const needs = configuredStages(release.latest);
+	const started = new Set(release.runs.map(run => run.operation));
 	const operations = [
-		...new Set([...configuredStages(release.latest), ...release.runs.map(run => run.operation)]),
+		...[...needs.keys()].filter(name => started.has(name) || follows(name, started, needs)),
+		...[...started].filter(name => !needs.has(name)),
 	];
+	const newest: Execution[] = [];
 	const stages = operations.map(operation => {
 		const targets = new Map<string, Execution[]>();
 		for (const run of release.runs.filter(entry => entry.operation === operation).sort(byAge)) {
@@ -118,6 +133,7 @@ export function pipeline(release: Release, now: number) {
 			targets.set(target, [...targets.get(target) ?? [], run]);
 		}
 		const current = [...targets.values()].flatMap(runs => runs.slice(-1));
+		newest.push(...current);
 		const run =
 			[...current].sort((x, y) => urgency.indexOf(executionTone[x.state]) - urgency.indexOf(executionTone[y.state]))[0];
 		const tone: Tone = run ? executionTone[run.state] : 'neutral';
@@ -168,10 +184,17 @@ export function pipeline(release: Release, now: number) {
 	const extra = new Map<string, (typeof reported)[number]>();
 	for (const entry of reported) {
 		if (requiredIds.some(id => matchesPublication(id, entry.publication))) continue;
-		const current = extra.get(entry.publication.id);
-		if (current?.publication.outcome !== 'succeeded') extra.set(entry.publication.id, entry);
+		const key = JSON.stringify([entry.publication.id, entry.publication.version]);
+		if (extra.get(key)?.publication.outcome !== 'succeeded') extra.set(key, entry);
 	}
-	const status: Status = releaseStatus(release);
+	const overall = releaseStatus(release);
+	const status: Status = overall.tone === 'warn'
+		? overall
+		: newest.some(run => working.includes(run.state))
+		? { tone: 'active', label: 'In progress' }
+		: newest.some(run => run.state === 'pending')
+		? { tone: 'waiting', label: 'Waiting to start' }
+		: overall;
 	return {
 		status,
 		stages,

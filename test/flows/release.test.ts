@@ -489,6 +489,78 @@ test('a stage with one execution per package stays unfinished until every packag
 		['core-failed', true, false],
 		['cli-done', false, false],
 	]);
+	expect(pipeline(release, Date.now())?.status).toEqual({ tone: 'active', label: 'In progress' });
+});
+
+test('stages follow the configured order and leave out the ones a release skipped', async () => {
+	const { finished } = await finishedPromotion('pending');
+	const stream = finished.configuration.streams[finished.stream];
+	if (!stream) throw new Error('No stream');
+	const binding = { file: 'lint.yml', inputs: {}, required: true };
+	const configuration = {
+		...finished.configuration,
+		streams: {
+			...finished.configuration.streams,
+			[finished.stream]: {
+				...stream,
+				promote: { ...stream.promote, workflow: { ...binding, file: 'release.yml', needs: ['lint'] } },
+				workflows: {
+					lint: binding,
+					release: { ...binding, file: 'observed.yml', needs: ['promote'] },
+					crates: { ...binding, file: 'crates.yml', needs: ['release'] },
+				},
+			},
+		},
+	};
+	const run = (id: string, at: number, changes: Partial<Execution>): Execution => ({
+		...finished,
+		configuration,
+		id,
+		createdAt: at,
+		updatedAt: at,
+		publications: [],
+		...changes,
+	});
+	const stagesOf = (runs: Execution[]) => {
+		const [release] = releaseSummaries(runs);
+		if (!release) throw new Error('No release');
+		return pipeline(release, Date.now())?.stages.map(
+			stage => [stage.operation, stage.note, stage.runs.map(e => e.open)],
+		);
+	};
+	expect(stagesOf([run('lint', 1, { operation: 'lint', state: 'succeeded' })])).toEqual([
+		['lint', 'succeeded', [false]],
+		['promote', 'not run', []],
+		['release', 'not run', []],
+		['crates', 'not run', []],
+	]);
+	expect(stagesOf([run('observed', 1, { operation: 'release', state: 'cancelled' })])).toEqual([
+		['release', 'cancelled', [true]],
+		['crates', 'not run', []],
+	]);
+});
+
+test('two releases of one repository with different tags both stay in the publication table', async () => {
+	const { finished } = await finishedPromotion('pending');
+	const [npm] = finished.publications;
+	if (!npm) throw new Error('No publication');
+	const { identity: _identity, ...bare } = npm;
+	const notes = (version: string) => ({
+		...bare,
+		identity: { type: 'github', namespace: 'octo', name: 'widget', version },
+		id: 'pkg:github/octo/widget',
+		manager: 'github-release' as const,
+		name: 'octo/widget',
+		version,
+		required: false,
+		outcome: 'succeeded' as const,
+	});
+	const [release] = releaseSummaries([{ ...finished, publications: [notes('cli-v1.1.0'), notes('sdk-v1.1.0')] }]);
+	if (!release) throw new Error('No release');
+	expect(pipeline(release, Date.now())?.publications.filter(p => !p.required).map(p => p.version)).toEqual([
+		'cli-v1.1.0',
+		'sdk-v1.1.0',
+	]);
 });
 
 test('a later run replaces a failed run only for the same release target', async () => {
