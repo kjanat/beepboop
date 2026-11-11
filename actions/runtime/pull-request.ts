@@ -3,6 +3,7 @@ import type { Environment, Invalid } from '@root/actions/runtime/protocol.ts';
 import { ActionFailure, attempt, attemptAsync, fail, required } from '@root/actions/runtime/protocol.ts';
 import { Effect } from 'effect';
 import { repositoryNamePattern } from '@/automation/repository-name.ts';
+import { githubApiVersion } from '@/contract/http.ts';
 import { shaPattern } from '@/contract/ids.ts';
 import { array, record, text } from '@/model.ts';
 import type { OutputFailure } from '@/tooling/github-output.ts';
@@ -47,7 +48,7 @@ function github(token: string) {
 						Authorization: `Bearer ${token}`,
 						'Content-Type': 'application/json',
 						'User-Agent': 'beepboop-pull-request',
-						'X-GitHub-Api-Version': '2022-11-28',
+						'X-GitHub-Api-Version': githubApiVersion,
 					},
 					...(body === undefined ? {} : { body: JSON.stringify(body) }),
 					signal: AbortSignal.timeout(60000),

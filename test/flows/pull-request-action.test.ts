@@ -12,6 +12,7 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import { z } from 'zod';
+import { githubApiVersion } from '@/contract/http';
 
 let world: World;
 const directories: string[] = [];
@@ -34,15 +35,17 @@ function checkedOut() {
 	world.github.relabel(repository, head, checkout.sha);
 	const trees: z.output<typeof treeBody>['tree'][] = [];
 	const requests: string[] = [];
+	const versions = new Set<string | null>();
 	world.network.serve('api.github.com', async request => {
 		const path = new URL(request.url).pathname;
 		requests.push(`${request.method} ${path.replace('/repos/octo/widget', '')}`);
+		versions.add(request.headers.get('x-github-api-version'));
 		if (request.method === 'POST' && path.endsWith('/git/trees')) {
 			trees.push(treeBody.parse(await request.clone().json()).tree);
 		}
 		return world.github.handle(request);
 	});
-	return { repository, checkout, trees, requests };
+	return { repository, checkout, trees, requests, versions };
 }
 
 function open(repository: Repository, dir: string, inputs: Record<string, string> = {}) {
@@ -58,7 +61,7 @@ function open(repository: Repository, dir: string, inputs: Record<string, string
 }
 
 test('changes in the checkout become one verified commit and a pull request', async () => {
-	const { repository, checkout, trees } = checkedOut();
+	const { repository, checkout, trees, versions } = checkedOut();
 	writeFileSync(join(checkout.dir, 'README.md'), '# widget\n\nFormatted.\n');
 	writeFileSync(join(checkout.dir, 'run.sh'), '#!/bin/sh\necho run\n');
 	chmodSync(join(checkout.dir, 'run.sh'), 0o755);
@@ -96,6 +99,7 @@ test('changes in the checkout become one verified commit and a pull request', as
 		['run.sh', '100755', false],
 	]);
 	expect(world.github.head(repository)).toBe(checkout.sha);
+	expect([...versions]).toEqual([githubApiVersion]);
 });
 
 test('a rerun pushes nothing for the same changes and replaces the commit for new ones', async () => {

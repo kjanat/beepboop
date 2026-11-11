@@ -35,6 +35,7 @@ import type { AutoMerge, Edit, PreparationResult, Snapshot } from '@/automation/
 import { legacyDiagnostic } from '@/contract/diagnostics';
 import type { DomainError } from '@/contract/errors';
 import { domainError, invalid, precondition, upstream } from '@/contract/errors';
+import { githubApiVersion } from '@/contract/http';
 import type { AutoMergeMethod } from '@/contract/setup-terms';
 import { fromPromise, fromSync } from '@/failure';
 import { decode, sha, textSchema } from '@/model';
@@ -110,7 +111,7 @@ export const gitHubRequest = Effect.fn('GitHub.request')(function*(
 				headers: {
 					...(token ? { Authorization: `Bearer ${token}` } : {}),
 					Accept: 'application/vnd.github+json',
-					'X-GitHub-Api-Version': '2026-03-10',
+					'X-GitHub-Api-Version': githubApiVersion,
 					'User-Agent': 'beepboop',
 					'Content-Type': 'application/json',
 				},
@@ -186,7 +187,7 @@ export class RepositoryGateway {
 		return Effect.gen(function*() {
 			const headers = {
 				Authorization: `Bearer ${token}`,
-				'X-GitHub-Api-Version': '2026-03-10',
+				'X-GitHub-Api-Version': githubApiVersion,
 				'User-Agent': 'beepboop',
 			};
 			const download = yield* fromPromise(() =>
