@@ -987,6 +987,10 @@ whose changes equal the branch pushes nothing.
 | `base`           | Branch the pull request targets. Defaults to the checked-out branch. |
 | `add-paths`      | Git pathspecs to commit, one per line. Defaults to every change.     |
 
+On a `pull_request` run, check out the pull request's branch with
+`ref: ${{ github.head_ref }}`. The default checkout of such a run is a merge
+commit that holds the whole pull request, and the action refuses it.
+
 The outputs are `pull-request-number`, `pull-request-url`,
 `pull-request-head-sha` and `pull-request-operation`, which is `created`,
 `updated` or `none`. A checkout without changes opens no pull request and
