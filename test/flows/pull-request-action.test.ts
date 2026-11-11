@@ -180,3 +180,31 @@ test('the bundled entrypoint writes the step outputs', async () => {
 	expect(written).toMatch(/^pull-request-operation<<(value_[0-9a-f-]+)\nnone\n\1$/m);
 	expect(written).toMatch(/^pull-request-number<<(value_[0-9a-f-]+)\n\n\1$/m);
 });
+
+test('add-paths leaves out a file an earlier step staged', async () => {
+	const { repository, checkout, trees } = checkedOut();
+	writeFileSync(join(checkout.dir, 'selected.txt'), 'selected\n');
+	writeFileSync(join(checkout.dir, 'excluded.txt'), 'excluded\n');
+	gitOutput(checkout.dir, ['add', 'excluded.txt']);
+	await open(repository, checkout.dir, { PR_ADD_PATHS: 'selected.txt' });
+	expect(one(trees, 'tree request').map(entry => entry.path)).toEqual(['selected.txt']);
+});
+
+test('a file name with pathspec characters keeps its own contents', async () => {
+	const { repository, checkout } = checkedOut();
+	writeFileSync(join(checkout.dir, 'file1.txt'), 'plain\n');
+	writeFileSync(join(checkout.dir, 'file[1].txt'), 'bracketed\n');
+	const result = await open(repository, checkout.dir);
+	const files = filesAt(repository, result.headSha ?? '');
+	expect([files['file1.txt'], files['file[1].txt']]).toEqual(['plain\n', 'bracketed\n']);
+});
+
+test('a branch name that needs URL encoding is created under its own name', async () => {
+	const { repository, checkout } = checkedOut();
+	writeFileSync(join(checkout.dir, 'README.md'), '# widget\n\nFormatted.\n');
+	const result = await open(repository, checkout.dir, { PR_BRANCH: 'autofix/café' });
+	expect(result.operation).toBe('created');
+	expect(repository.refs.get('heads/autofix/café')).toBe(result.headSha);
+	expect(repository.pulls[0]?.head.ref).toBe('autofix/café');
+	expect((await open(repository, checkout.dir, { PR_BRANCH: 'autofix/café' })).operation).toBe('none');
+});

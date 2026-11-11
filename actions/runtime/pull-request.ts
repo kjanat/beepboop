@@ -3,6 +3,7 @@ import type { Environment, Invalid } from '@root/actions/runtime/protocol.ts';
 import { ActionFailure, attempt, attemptAsync, fail, required } from '@root/actions/runtime/protocol.ts';
 import { Effect } from 'effect';
 import { repositoryNamePattern } from '@/automation/repository-name.ts';
+import { shaPattern } from '@/contract/ids.ts';
 import { array, record, text } from '@/model.ts';
 import type { OutputFailure } from '@/tooling/github-output.ts';
 import { writeOutput } from '@/tooling/github-output.ts';
@@ -35,12 +36,11 @@ function read(root: string, ...args: string[]): Effect.Effect<string, ActionFail
 	return run(root, args).pipe(Effect.map(output => output.toString().trim()));
 }
 
-function github(environment: Environment, token: string) {
-	const origin = environment.GITHUB_API_URL || 'https://api.github.com';
+function github(token: string) {
 	return (method: string, path: string, body?: unknown, missing = false): Effect.Effect<unknown, ActionFailure> =>
 		Effect.gen(function*() {
 			const response = yield* attemptAsync(() =>
-				fetch(`${origin}${path}`, {
+				fetch(new URL(path, 'https://api.github.com'), {
 					method,
 					headers: {
 						Accept: 'application/vnd.github+json',
@@ -79,21 +79,26 @@ function textAt(value: unknown, ...keys: string[]): Effect.Effect<string, Invali
 
 function staged(root: string, paths: string[]): Effect.Effect<Entry[], ActionFailure> {
 	return Effect.gen(function*() {
-		yield* run(root, ['add', '--all', '--', ...(paths.length ? paths : ['.'])]);
-		const names = (yield* run(root, ['diff', '--cached', '--name-status', '--no-renames', '-z', 'HEAD'])).toString()
-			.split('\0');
+		const selected = paths.length ? paths : ['.'];
+		yield* run(root, ['add', '--all', '--', ...selected]);
+		const raw = (yield* run(root, [
+			'diff',
+			'--cached',
+			'--raw',
+			'--abbrev=40',
+			'--no-renames',
+			'-z',
+			'HEAD',
+			'--',
+			...selected,
+		])).toString().split('\0');
 		const entries: Entry[] = [];
-		for (let index = 0; index + 1 < names.length; index += 2) {
-			const status = names[index], path = names[index + 1];
-			if (!status || !path) continue;
-			if (status === 'D') {
-				entries.push({ path, mode: '100644', type: 'blob', sha: null });
-				continue;
-			}
-			const listed = (yield* run(root, ['ls-files', '--stage', '-z', '--', path])).toString().split('\0')[0] ?? '';
-			const [mode, sha] = listed.split('\t')[0]?.split(' ') ?? [];
-			if (!mode || !sha) return yield* fail(`Cannot read the staged entry of ${path}`);
-			entries.push({ path, mode, type: mode === '160000' ? 'commit' : 'blob', sha });
+		for (let index = 0; index + 1 < raw.length; index += 2) {
+			const [, mode, , sha, status] = raw[index]?.split(' ') ?? [];
+			const path = raw[index + 1];
+			if (!mode || !sha || !status || !path) return yield* fail('Cannot read the staged changes');
+			if (status === 'D') entries.push({ path, mode: '100644', type: 'blob', sha: null });
+			else entries.push({ path, mode, type: mode === '160000' ? 'commit' : 'blob', sha });
 		}
 		return entries;
 	});
@@ -120,6 +125,7 @@ export function pullRequest(environment: Environment): Effect.Effect<PullRequest
 		if (base === branch) return yield* fail(`The pull request branch ${branch} is its own base`);
 		yield* read(root, 'check-ref-format', '--branch', branch);
 		const parent = yield* read(root, 'rev-parse', 'HEAD');
+		if (!shaPattern.test(parent)) return yield* fail('Cannot read the checked-out commit');
 		const paths = (environment.PR_ADD_PATHS ?? '').split('\n').map(path => path.trim()).filter(Boolean);
 		const entries = yield* staged(root, paths);
 		if (!entries.length) {
@@ -127,7 +133,7 @@ export function pullRequest(environment: Environment): Effect.Effect<PullRequest
 			return { operation: 'none' };
 		}
 
-		const api = github(environment, yield* need('PR_TOKEN'));
+		const api = github(yield* need('PR_TOKEN'));
 		const repo = `/repos/${repository}`;
 		const ref = `heads/${branch.split('/').map(encodeURIComponent).join('/')}`;
 		const tree: Entry[] = [];
@@ -145,6 +151,9 @@ export function pullRequest(environment: Environment): Effect.Effect<PullRequest
 
 		const existing = yield* api('GET', `${repo}/git/ref/${ref}`, undefined, true);
 		const current = existing === undefined ? undefined : yield* textAt(existing, 'object', 'sha');
+		if (current !== undefined && !shaPattern.test(current)) {
+			return yield* fail('GitHub returned an invalid branch head');
+		}
 		let head = current;
 		if (current !== undefined) {
 			const commit = yield* api('GET', `${repo}/git/commits/${current}`);
@@ -158,7 +167,7 @@ export function pullRequest(environment: Environment): Effect.Effect<PullRequest
 				yield* api('POST', `${repo}/git/commits`, { message, tree: next, parents: [parent] }),
 				'sha',
 			);
-			if (current === undefined) yield* api('POST', `${repo}/git/refs`, { ref: `refs/${ref}`, sha: head });
+			if (current === undefined) yield* api('POST', `${repo}/git/refs`, { ref: `refs/heads/${branch}`, sha: head });
 			else yield* api('PATCH', `${repo}/git/refs/${ref}`, { sha: head, force: true });
 		}
 
