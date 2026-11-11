@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Tag discovery reads every tag and its commit in one GitHub request per 100 tags. The publish check on the runs page took 18 seconds for a repository with 20 annotated tags.
 - The release form, the repository list, `beepboop release`, `beepboop repositories show` and the release API share one per-stream answer to whether Beepboop starts releases. A stream whose workflows only observe shows what starts a release, such as `release.yml on refs/tags/v*`, and has no Release button. A stream without a publishing workflow says so. Planning or preparing either one is refused with the same sentence. https://github.com/kjanat/beepboop/issues/39
 - A stream that reads its version from tags and has no version file or preparation workflow goes straight to a publication run that waits for you to publish it. Preparing it was refused with `A preparation workflow must regenerate lockfiles`. https://github.com/kjanat/beepboop/issues/38
 - A release whose lockfiles need regenerating in a stream without a preparation workflow is refused with the stream's name and the missing workflow.

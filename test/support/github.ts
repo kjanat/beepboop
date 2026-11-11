@@ -78,7 +78,7 @@ export interface Repository {
 	signatures: boolean;
 	protectedBranches: Set<string>;
 	allowAutoMerge: boolean;
-	tagObjects: Map<string, { name: string; commit: string; verified: boolean }>;
+	tagObjects: Map<string, { name: string; commit: string; verified: boolean; targetType?: string }>;
 }
 
 export function filesAt(repository: Repository, sha: string): Record<string, string> {
@@ -361,6 +361,26 @@ export class FakeGitHub {
 				});
 			}
 			const repository = this.repository(`${stringField(variables, 'owner')}/${stringField(variables, 'name')}`);
+			if (stringField(body, 'query').includes('refs(refPrefix:"refs/tags/"')) {
+				const tags = [...repository.refs].filter(([ref]) => ref.startsWith('tags/'));
+				const start = typeof variables.after === 'string' ? Number(variables.after) : 0;
+				const end = start + 100;
+				const nodes = tags.slice(start, end).map(([ref, oid]) => {
+					const tag = repository.tagObjects.get(oid);
+					return {
+						name: ref.slice(5),
+						target: tag
+							? { __typename: 'Tag', oid, target: { __typename: tag.targetType ?? 'Commit', oid: tag.commit } }
+							: { __typename: 'Commit', oid },
+					};
+				});
+				const hasNextPage = end < tags.length;
+				return json({
+					data: {
+						repository: { refs: { pageInfo: { hasNextPage, endCursor: nodes.length ? String(end) : null }, nodes } },
+					},
+				});
+			}
 			const pull = this.pull(repository, Number(variables.number));
 			const nodes = (pull.edits ?? []).map(edit => ({ editor: { login: edit.editor }, diff: edit.body }));
 			return json({ data: { repository: { pullRequest: { userContentEdits: { nodes } } } } });
@@ -422,12 +442,6 @@ export class FakeGitHub {
 				}),
 				files: changed.map(filename => ({ filename })),
 			});
-		});
-		this.route('GET', new RegExp(`^${repo}/tags$`), match => {
-			const repository = this.repository(match[1]);
-			return json(
-				[...repository.refs.keys()].filter(ref => ref.startsWith('tags/')).map(ref => ({ name: ref.slice(5) })),
-			);
 		});
 		this.route('GET', new RegExp(`^${repo}/commits/([0-9a-f]{40})/check-runs$`), match => {
 			const repository = this.repository(match[1]);
