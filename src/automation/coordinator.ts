@@ -1945,9 +1945,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private refHead(
 		execution: Execution,
 		token: string,
+		observedRef?: string,
 	): Effect.Effect<{ ref: string; sha: string } | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const ref = execution.workflow?.ref.replace(/^refs\/(heads|tags)\//, '');
+			const pattern = execution.workflow?.ref.replace(/^refs\/(heads|tags)\//, '');
+			const ref = pattern !== undefined && /[*?[]/.test(pattern) ? observedRef : pattern;
 			if (!ref) return undefined;
 			const commit = yield* this.gateway().read(
 				commitSchema.nullable(),
@@ -1970,9 +1972,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return comparison.status === 'ahead';
 		});
 	}
-	private headMoved(execution: Execution, token: string): Effect.Effect<string | undefined, DomainError> {
+	private headMoved(
+		execution: Execution,
+		token: string,
+		observedRef?: string,
+	): Effect.Effect<string | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const head = yield* this.refHead(execution, token);
+			const head = yield* this.refHead(execution, token, observedRef);
 			if (!head || (yield* this.contains(execution, head.sha, token))) return undefined;
 			if (!execution.eventId.startsWith('observed:')) return moved(execution, head);
 			return `${head.ref} at ${head.sha.slice(0, 12)} no longer contains ${execution.sourceSha.slice(0, 12)}`;
@@ -1985,8 +1991,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				contents: 'read',
 				actions: 'write',
 			});
-			const moved = yield* this.headMoved(execution, token);
-			if (moved) return yield* precondition(moved);
 			const run = execution.runId
 				? yield* gateway.read(
 					workflowRunSchema,
@@ -1994,6 +1998,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					token,
 				)
 				: null;
+			const moved = yield* this.headMoved(
+				execution,
+				token,
+				typeof run?.head_branch === 'string' ? run.head_branch : undefined,
+			);
+			if (moved) return yield* precondition(moved);
 			if (run !== null && run.head_sha === execution.sourceSha) {
 				yield* gateway.call(
 					`/repos/${execution.repository}/actions/runs/${execution.runId}/rerun-failed-jobs`,

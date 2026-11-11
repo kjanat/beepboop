@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import type { Repository } from '@root/test/support/github.ts';
-import { bearer } from '@root/test/support/http.ts';
+import { bearer, field } from '@root/test/support/http.ts';
 import { runWorkflow } from '@root/test/support/repositories.ts';
 import { applyChoices, applySetup, discoverSetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
@@ -290,6 +290,7 @@ async function complete(
 	const path = run.path ?? '.github/workflows/release.yml';
 	const existing = repository.runs.find(entry => entry.id === run.id);
 	if (existing) {
+		existing.status = 'completed';
 		existing.conclusion = run.conclusion;
 		existing.attempt = run.attempt;
 	} else {
@@ -333,6 +334,43 @@ test('a re-run attempt records its own outcome', async () => {
 		attempt: 2,
 	});
 	expect(after.map(execution => [execution.runAttempt, execution.state])).toEqual([[2, 'succeeded']]);
+});
+
+test('retrying a failed observed tag release by its short ID re-runs the failed jobs', async () => {
+	const repository = npmRelease('widget', '1.2.0', "{ push: { tags: ['widget-v*'] } }");
+	await adopt(repository);
+	repository.refs.set('tags/widget-v1.2.0', world.github.head(repository));
+	const [failed] = await complete(repository, {
+		id: 9001,
+		event: 'push',
+		branch: 'widget-v1.2.0',
+		conclusion: 'failure',
+		attempt: 1,
+	});
+	if (!failed) throw new Error('Expected the failed release');
+	const api = bearer(world, await world.cliSession());
+	const retried = await api('/api/executions/recover', { id: failed.id.slice(0, 12), action: 'retry' });
+	expect([retried.status, field(retried.body, 'id'), field(retried.body, 'state')]).toEqual([
+		200,
+		failed.id,
+		'uncertain',
+	]);
+	expect(repository.runs.find(run => run.id === 9001)?.attempt).toBe(2);
+	world.npm.publish('widget', '1.2.0');
+	const after = await complete(repository, {
+		id: 9001,
+		event: 'push',
+		branch: 'widget-v1.2.0',
+		conclusion: 'success',
+		attempt: 2,
+	});
+	expect(after.map(execution => [execution.runAttempt, execution.state])).toEqual([[2, 'succeeded']]);
+});
+
+test('a short ID that matches no operation is unknown', async () => {
+	const api = bearer(world, await world.cliSession());
+	const missing = await api('/api/executions/recover', { id: 'abcdef012345', action: 'retry' });
+	expect(missing.status).toBe(404);
 });
 
 test('a run without its tag fails once and an unreadable run stops being retried', async () => {

@@ -163,6 +163,16 @@ export class Store {
 	execution(id: string): Effect.Effect<Execution | undefined, DomainError> {
 		return this.document('executions', id, decodeExecutionV1);
 	}
+	executionsStarting(prefix: string): Effect.Effect<Execution[], DomainError> {
+		return this.sql.all(
+			'SELECT id, repository_id, document FROM executions WHERE substr(id, 1, ?1)=?2 LIMIT 2',
+			prefix.length,
+			prefix,
+		).pipe(
+			Effect.flatMap(rows => parse(z.array(executionRow), rows)),
+			Effect.flatMap(rows => fromSync(() => rows.map(row => decodeExecutionV1(JSON.parse(row.document))))),
+		);
+	}
 	private executionRows(repositoryId?: number): Effect.Effect<z.output<typeof executionRow>[], DomainError> {
 		const rows = repositoryId === undefined
 			? this.sql.all('SELECT id, repository_id, document FROM executions ORDER BY updated_at DESC LIMIT 200')
