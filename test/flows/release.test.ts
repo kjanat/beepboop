@@ -20,7 +20,7 @@ import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
 import { needingUser, releaseSetSummaries, releaseSummaries, runStateLabel } from '@/server/releases';
 import { overview } from '@/server/views/overview';
-import { runCard } from '@/server/views/runs';
+import { pipeline, runCard } from '@/server/views/runs';
 import { releaseStatus } from '@/server/views/tone';
 
 type Component = Parameters<experimental_AstroContainer['renderToString']>[0];
@@ -360,6 +360,207 @@ test('a run cancelled after a newer release started stays below the unfinished r
 	const titles = [...page.document.querySelectorAll('article h2')].map(element => element.textContent.trim());
 	expect(titles).toEqual(['Version 1.3.0', 'Version 1.2.0', 'Version 1.1.0', 'Version 1.0.0', 'Version 0.9.0']);
 	await page.happyDOM.close();
+});
+
+test('the runs page shows one release as a row of stages with one publication table', async () => {
+	const { finished } = await finishedPromotion('pending');
+	const run = (id: string, at: number, changes: Partial<Execution>): Execution => ({
+		...finished,
+		id,
+		createdAt: at,
+		updatedAt: at,
+		publications: [],
+		...changes,
+	});
+	const [npm] = finished.publications;
+	if (!npm) throw new Error('No publication');
+	const { identity: _identity, ...bare } = npm;
+	const wheel = {
+		...bare,
+		identity: { type: 'pypi', name: 'widget', version: npm.version },
+		id: 'pkg:pypi/widget',
+		manager: 'pypi' as const,
+		name: 'widget',
+		required: false,
+	};
+	const notes = {
+		...bare,
+		identity: { type: 'github', namespace: 'octo', name: 'widget', version: 'widget-v1.1.0' },
+		id: 'pkg:github/octo/widget',
+		manager: 'github-release' as const,
+		name: 'octo/widget',
+		version: 'widget-v1.1.0',
+		required: false,
+	};
+	const readable = [
+		run('crates', 5, { operation: 'crates', state: 'running', runId: 44, runAttempt: 1 }),
+		run('release', 4, {
+			operation: 'release',
+			state: 'failed',
+			runId: 43,
+			runAttempt: 2,
+			publications: [{ ...wheel, outcome: 'succeeded' }, { ...notes, outcome: 'succeeded' }],
+		}),
+		run('promote', 3, { state: 'succeeded', publications: [{ ...npm, outcome: 'succeeded' }] }),
+		run('promote-cancelled', 2, { state: 'cancelled' }),
+		run('prepare', 1, { operation: 'prepare', state: 'succeeded' }),
+	];
+	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Runs.astro'));
+	const container = await experimental_AstroContainer.create();
+	const html = await container.renderToString(componentModule.parse(loaded).default, {
+		props: { data: { section: 'runs', executions: { readable, unreadable: [] } } },
+		request: new Request(`${origin}/runs`),
+	});
+	const page = new Window();
+	page.document.body.innerHTML = html;
+	const all = (selector: string) => [...page.document.querySelectorAll(selector)];
+	const words = (selector: string) => all(selector).map(element => element.textContent.replace(/\s+/g, ' ').trim());
+	expect(all('.release-pipeline')).toHaveLength(1);
+	expect(words('.release-pipeline > .section-heading h2')).toEqual([`Version ${finished.version}`]);
+	expect(
+		all('.pipeline li').map(
+			stage => [stage.querySelector('a, span > span')?.textContent, stage.getAttribute('data-tone')],
+		),
+	)
+		.toEqual([
+			['prepare', 'ok'],
+			['promote', 'ok'],
+			['release', 'error'],
+			['crates', 'active'],
+		]);
+	expect(words('.pipeline li small')).toEqual([
+		'succeeded ↗',
+		'succeeded, attempt 2 ↗',
+		'failed, attempt 2 ↗',
+		'running ↗',
+	]);
+	expect(all('.pipeline li .arrow').map(link => link.getAttribute('href')).slice(2)).toEqual([
+		'https://github.com/octo/widget/actions/runs/43',
+		'https://github.com/octo/widget/actions/runs/44',
+	]);
+	const table = all('.release-pipeline > .table-scroll tbody tr').map(row => [
+		row.querySelector('td')?.firstChild?.textContent?.trim(),
+		row.querySelector('.arrow')?.getAttribute('href'),
+		row.querySelector('.badge')?.textContent,
+	]);
+	expect(table).toEqual([
+		['widget on npm', `https://www.npmjs.com/package/widget/v/${finished.version}`, 'succeeded'],
+		['widget on PyPI', `https://pypi.org/project/widget/${finished.version}/`, 'succeeded'],
+		['octo/widget on GitHub release', 'https://github.com/octo/widget/releases/tag/widget-v1.1.0', 'succeeded'],
+	]);
+	expect(all('.stage-detail').map(detail => [detail.querySelector('.run-card')?.id, detail.hasAttribute('open')]))
+		.toEqual([
+			['prepare', false],
+			['promote', false],
+			['promote-cancelled', false],
+			['release', true],
+			['crates', true],
+		]);
+	expect(page.document.body.textContent).not.toContain('Still to publish');
+	await page.happyDOM.close();
+});
+
+test('a stage with one execution per package stays unfinished until every package succeeds', async () => {
+	const { finished } = await finishedPromotion('pending');
+	const run = (id: string, at: number, changes: Partial<Execution>): Execution => ({
+		...finished,
+		id,
+		createdAt: at,
+		updatedAt: at,
+		operation: 'publish',
+		publications: [],
+		runAttempt: 1,
+		...changes,
+	});
+	const [release] = releaseSummaries([
+		run('core-failed', 1, { package: { id: 'pkg:npm/core', manager: 'npm' }, state: 'failed' }),
+		run('core-running', 2, { package: { id: 'pkg:npm/core', manager: 'npm' }, state: 'running' }),
+		run('cli-done', 3, { package: { id: 'pkg:npm/cli', manager: 'npm' }, state: 'succeeded' }),
+	]);
+	if (!release) throw new Error('No release');
+	const stage = pipeline(release, Date.now())?.stages.find(entry => entry.operation === 'publish');
+	expect([stage?.run?.id, stage?.tone, stage?.note]).toEqual([
+		'core-running',
+		'active',
+		'running, 1 of 2 packages succeeded, attempt 2',
+	]);
+	expect(stage?.runs.map(entry => [entry.run.id, entry.earlier, entry.open])).toEqual([
+		['core-running', false, true],
+		['core-failed', true, false],
+		['cli-done', false, false],
+	]);
+	expect(pipeline(release, Date.now())?.status).toEqual({ tone: 'active', label: 'In progress' });
+});
+
+test('stages follow the configured order and leave out the ones a release skipped', async () => {
+	const { finished } = await finishedPromotion('pending');
+	const stream = finished.configuration.streams[finished.stream];
+	if (!stream) throw new Error('No stream');
+	const binding = { file: 'lint.yml', inputs: {}, required: true };
+	const configuration = {
+		...finished.configuration,
+		streams: {
+			...finished.configuration.streams,
+			[finished.stream]: {
+				...stream,
+				promote: { ...stream.promote, workflow: { ...binding, file: 'release.yml', needs: ['lint'] } },
+				workflows: {
+					lint: binding,
+					release: { ...binding, file: 'observed.yml', needs: ['promote'] },
+					crates: { ...binding, file: 'crates.yml', needs: ['release'] },
+				},
+			},
+		},
+	};
+	const run = (id: string, at: number, changes: Partial<Execution>): Execution => ({
+		...finished,
+		configuration,
+		id,
+		createdAt: at,
+		updatedAt: at,
+		publications: [],
+		...changes,
+	});
+	const stagesOf = (runs: Execution[]) => {
+		const [release] = releaseSummaries(runs);
+		if (!release) throw new Error('No release');
+		return pipeline(release, Date.now())?.stages.map(
+			stage => [stage.operation, stage.note, stage.runs.map(e => e.open)],
+		);
+	};
+	expect(stagesOf([run('lint', 1, { operation: 'lint', state: 'succeeded' })])).toEqual([
+		['lint', 'succeeded', [false]],
+		['promote', 'not run', []],
+		['release', 'not run', []],
+		['crates', 'not run', []],
+	]);
+	expect(stagesOf([run('observed', 1, { operation: 'release', state: 'cancelled' })])).toEqual([
+		['release', 'cancelled', [true]],
+		['crates', 'not run', []],
+	]);
+});
+
+test('two releases of one repository with different tags both stay in the publication table', async () => {
+	const { finished } = await finishedPromotion('pending');
+	const [npm] = finished.publications;
+	if (!npm) throw new Error('No publication');
+	const { identity: _identity, ...bare } = npm;
+	const notes = (version: string) => ({
+		...bare,
+		identity: { type: 'github', namespace: 'octo', name: 'widget', version },
+		id: 'pkg:github/octo/widget',
+		manager: 'github-release' as const,
+		name: 'octo/widget',
+		version,
+		required: false,
+		outcome: 'succeeded' as const,
+	});
+	const [release] = releaseSummaries([{ ...finished, publications: [notes('cli-v1.1.0'), notes('sdk-v1.1.0')] }]);
+	if (!release) throw new Error('No release');
+	expect(pipeline(release, Date.now())?.publications.filter(p => !p.required).map(p => p.version)).toEqual([
+		'cli-v1.1.0',
+		'sdk-v1.1.0',
+	]);
 });
 
 test('a later run replaces a failed run only for the same release target', async () => {

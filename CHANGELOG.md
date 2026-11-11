@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The runs page shows each release version as one card: a row of stages (prepare, promote and each extra operation) with a status dot per stage, the attempt count and a link to the workflow run, and one table of every publication of that release. The operations sit below it, opened when they run or need you. Each operation used to be its own card that listed the other operations' packages under "Still to publish".
+- PyPI publications link to the project page of the published version, and a GitHub release whose version is a tag such as `rshellcheck-v1.1.0` links to that release.
 - Run lists, release summaries and the overview list unfinished runs (pending, ready, dispatching, running, verifying, awaiting approval) before finished ones, newest created first within each group. Cancelling or failing an old run no longer lists it above a newer release, and the 200-run list limit now keeps unfinished runs.
 - Retrying a failed observed release whose workflow ref is a tag pattern, such as `refs/tags/rshellcheck-v*`, re-runs the failed jobs of its run. The retry failed with `GitHub HTTP 422 on GET /repos/<owner>/<name>/commits/rshellcheck-v*`.
 - `beepboop runs publish`, `cancel` and `recover` accept the 12-character ID that `beepboop runs list` prints, or any unique prefix of 8 characters or more.
