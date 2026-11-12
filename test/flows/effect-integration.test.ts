@@ -13,7 +13,8 @@ import { administrator, workflowIdentity } from '@/automation/auth';
 import { AutomationCoordinator } from '@/automation/coordinator';
 import { logFailure } from '@/automation/failure-log';
 import { RepositoryGateway } from '@/automation/github';
-import { Automation } from '@/automation/service';
+import type { Fetcher } from '@/automation/managers/registry';
+import { Automation, applicationLayer } from '@/automation/service';
 import { readEach } from '@/automation/store';
 import { precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
@@ -177,6 +178,91 @@ test('GitHub JWT issuance and both authentication paths follow the supplied cloc
 		[epoch / 1000 - 60, epoch / 1000 + 540],
 		[epoch / 1000 + 3660 - 60, epoch / 1000 + 3660 + 540],
 	]);
+});
+
+test('authentication caches JWKS across application layers, isolates transports, and refreshes expired keys', async () => {
+	const repository = widget(world.github);
+	const token = await world.runToken({ repository, runId: 1, sha: 'a'.repeat(40), file: 'publish.yml' });
+	const adminRequest = new Request(origin, { headers: { Cookie: await world.adminCookie() } });
+	const workflowRequest = new Request(origin, { headers: { Authorization: `Bearer ${token}` } });
+	let unavailable = false;
+	const fetched: string[] = [];
+	const transport: Fetcher = (input, init) => {
+		fetched.push(String(input));
+		return unavailable ? Promise.reject(new Error('Issuer unavailable')) : world.network.fetch(input, init);
+	};
+	const admin = Effect.flatMap(Automation, service => administrator(adminRequest, world.env, service.authentication));
+	const workflow = Effect.flatMap(Automation, service =>
+		workflowIdentity(
+			workflowRequest,
+			origin,
+			Number(world.env.OWNER_ID),
+			service.authentication.workflowKeys,
+		));
+	const run = <A, E>(effect: Effect.Effect<A, E, Automation>, http = transport) =>
+		Effect.runPromise(effect.pipe(Effect.provide(applicationLayer(world.env, undefined, http))));
+	expect(await run(admin)).toBe(adminSubject);
+	expect((await run(workflow)).runId).toBe(1);
+	unavailable = true;
+	expect(await run(admin)).toBe(adminSubject);
+	expect((await run(workflow)).runId).toBe(1);
+	expect(fetched).toEqual([
+		`${issuer}/.well-known/jwks.json`,
+		'https://token.actions.githubusercontent.com/.well-known/jwks',
+	]);
+	const isolated = await run(admin.pipe(Effect.result), (input, init) => transport(input, init));
+	expect(Result.isFailure(isolated)).toBe(true);
+	expect(fetched).toHaveLength(3);
+	world.advance(600001);
+	const expired = await run(admin.pipe(Effect.result));
+	expect(Result.isFailure(expired)).toBe(true);
+	expect(fetched).toHaveLength(4);
+	unavailable = false;
+	expect(await run(admin)).toBe(adminSubject);
+	expect(fetched).toHaveLength(5);
+	expect(await run(admin)).toBe(adminSubject);
+	expect(fetched).toHaveLength(5);
+});
+
+test('concurrent JWKS fetches retain independent cancellation and successful keys remain cached', async () => {
+	const repository = widget(world.github);
+	const token = await world.runToken({ repository, runId: 1, sha: 'a'.repeat(40), file: 'publish.yml' });
+	const adminRequest = new Request(origin, { headers: { Cookie: await world.adminCookie() } });
+	const workflowRequest = new Request(origin, { headers: { Authorization: `Bearer ${token}` } });
+	for (const kind of ['administrator', 'workflow'] as const) {
+		const url = kind === 'administrator'
+			? `${issuer}/.well-known/jwks.json`
+			: 'https://token.actions.githubusercontent.com/.well-known/jwks';
+		const jwks = await (await world.network.fetch(url)).json();
+		await Effect.runPromise(Effect.gen(function*() {
+			const first = yield* Deferred.make<void>();
+			const second = yield* Deferred.make<void>();
+			const pending: { signal: AbortSignal | null | undefined; complete: (response: Response) => void }[] = [];
+			const transport: Fetcher = (_input, init) => new Promise<Response>((resolve, reject) => {
+				const signal = init?.signal;
+				signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+				pending.push({ signal, complete: resolve });
+				Deferred.doneUnsafe(pending.length === 1 ? first : second, Exit.void);
+			});
+			const verify = Effect.flatMap(Automation, service =>
+				kind === 'administrator'
+					? administrator(adminRequest, world.env, service.authentication).pipe(Effect.asVoid)
+					: workflowIdentity(workflowRequest, origin, Number(world.env.OWNER_ID), service.authentication.workflowKeys)
+						.pipe(Effect.asVoid));
+			const check = verify.pipe(Effect.provide(applicationLayer(world.env, undefined, transport)));
+			const interrupted = yield* Effect.forkChild(check);
+			yield* Deferred.await(first);
+			const successful = yield* Effect.forkChild(check);
+			yield* Deferred.await(second);
+			yield* Fiber.interrupt(interrupted);
+			expect(pending[0]?.signal?.aborted).toBe(true);
+			expect(pending[1]?.signal?.aborted).toBe(false);
+			pending[1]?.complete(Response.json(jwks));
+			yield* Fiber.join(successful);
+			yield* check;
+			expect(pending).toHaveLength(2);
+		}));
+	}
 });
 
 test('normalization codecs validate their output and round-trip canonical persisted configuration', () => {

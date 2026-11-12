@@ -7,8 +7,8 @@ import {
 	verifyRegistrationResponse,
 } from '@simplewebauthn/server';
 import { Clock, Context, Effect, Result, Schema, SchemaGetter } from 'effect';
-import type { JWTVerifyGetKey } from 'jose';
-import { createRemoteJWKSet, customFetch, errors, jwtVerify } from 'jose';
+import type { JWKSCacheInput, JWTVerifyGetKey } from 'jose';
+import { createRemoteJWKSet, customFetch, errors, jwksCache, jwtVerify } from 'jose';
 import { cliAuthRoute, cliSubject } from '@/automation/cli-auth';
 import { logRecovered } from '@/automation/failure-log';
 import type { Fetcher } from '@/automation/managers/registry';
@@ -97,13 +97,24 @@ export class Authentication
 	extends Context.Service<Authentication, AuthenticationDependencies>()('beepboop/Authentication')
 {}
 
+const keyCaches = new WeakMap<Fetcher, Map<string, JWKSCacheInput>>();
+
 export function authentication(env: AuthBindings, db: Sql, transport: Fetcher): AuthenticationDependencies {
 	const sessions = new SessionStore(db);
 	const http = (signal: AbortSignal): Fetcher => (input, init) => transport(input, {
 		...init,
 		signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
 	});
-	const keys = (url: URL) => (signal: AbortSignal) => createRemoteJWKSet(url, { [customFetch]: http(signal) });
+	const caches = keyCaches.get(transport) ?? new Map<string, JWKSCacheInput>();
+	keyCaches.set(transport, caches);
+	const keys = (url: URL) => {
+		let cache = caches.get(url.href);
+		if (!cache) {
+			cache = {};
+			caches.set(url.href, cache);
+		}
+		return (signal: AbortSignal) => createRemoteJWKSet(url, { [customFetch]: http(signal), [jwksCache]: cache });
+	};
 	return {
 		sessions,
 		cliSessions: new CLISessionStore(db),
