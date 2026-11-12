@@ -8,20 +8,20 @@ metadata names the release assets; the checksums file supplies their digests.
 
 Start with [the cask example](../examples/homebrew/cask.json).
 
-| Field         | Meaning                                                                                                                            |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `token`       | Cask token and file name, `<token>.rb`.                                                                                            |
-| `name`        | `name` stanza.                                                                                                                     |
-| `desc`        | `desc` stanza.                                                                                                                     |
-| `homepage`    | HTTPS homepage.                                                                                                                    |
-| `url`         | Download URL template. It accepts `{tag}`, `{version}` and `{asset}`.                                                              |
-| `verified`    | Optional `verified:` value for a download host that differs from the homepage.                                                     |
-| `macos`       | `arm` and `intel` asset names, and optional platform `caveats`.                                                                    |
-| `linux`       | The same for Linux. A cask lists `macos`, `linux` or both.                                                                         |
-| `naked`       | Optional `glob` and `name` for a raw binary: the cask moves the download and makes it 755. A cask with `naked` lists one platform. |
-| `binaries`    | `path` inside the staged download and optional `target`.                                                                           |
-| `completions` | Optional `executable`, `arguments` and `shells` for `generate_completions_from_executable`.                                        |
-| `caveats`     | Optional caveats for every platform.                                                                                               |
+| Field         | Meaning                                                                                                                         |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `token`       | Cask token and file name, `<token>.rb`.                                                                                         |
+| `name`        | `name` stanza.                                                                                                                  |
+| `desc`        | `desc` stanza.                                                                                                                  |
+| `homepage`    | HTTPS homepage.                                                                                                                 |
+| `url`         | Download URL template. It accepts `{tag}`, `{version}` and `{asset}`.                                                           |
+| `verified`    | Optional `verified:` value for a download host that differs from the homepage.                                                  |
+| `macos`       | `arm` and `intel` asset names, and optional platform `caveats`.                                                                 |
+| `linux`       | The same for Linux. A cask lists `macos`, `linux` or both.                                                                      |
+| `naked`       | Optional `glob` and `name` for a raw binary: the cask moves the download and makes it 755. It applies to every listed platform. |
+| `binaries`    | `path` inside the staged download and optional `target`.                                                                        |
+| `completions` | Optional `executable`, `arguments` and `shells` for `generate_completions_from_executable`.                                     |
+| `caveats`     | Optional caveats for every platform.                                                                                            |
 
 Asset names accept `{version}`. Each architecture block carries its own
 `version`, `sha256` and `url`, and the URL writes the version as `#{version}`.

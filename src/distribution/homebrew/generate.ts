@@ -36,11 +36,7 @@ export const homebrewConfiguration = z.strictObject({
 		shells: z.array(z.enum(shells)).min(1),
 	}).optional(),
 	caveats: text.optional(),
-}).refine(config => config.macos !== undefined || config.linux !== undefined, 'Expected macos or linux assets')
-	.refine(
-		config => !(config.naked && config.macos && config.linux),
-		'Expected one platform, macos or linux, with naked',
-	);
+}).refine(config => config.macos !== undefined || config.linux !== undefined, 'Expected macos or linux assets');
 export type HomebrewConfiguration = z.input<typeof homebrewConfiguration>;
 
 export interface CaskOptions {

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Effect } from 'effect';
 import type { HomebrewConfiguration } from '@/distribution/homebrew/generate';
-import { generateCask, homebrewConfiguration } from '@/distribution/homebrew/generate';
+import { generateCask } from '@/distribution/homebrew/generate';
 import { writeRendered } from '@/distribution/output';
 import type { ScoopConfiguration } from '@/distribution/scoop/generate';
 import { generateManifest, scoopConfiguration } from '@/distribution/scoop/generate';
@@ -187,11 +187,42 @@ test('a cask refuses missing checksums, a tag without its version and paths outs
 			checksums,
 		}),
 	).toBe('Expected an HTTPS release URL');
-	const mixed = { ...kprintCask, naked: { glob: 'kprint-*', name: 'kprint' } };
-	expect(homebrewConfiguration.safeParse(mixed).error?.issues.map(issue => issue.message)).toEqual([
-		'Expected one platform, macos or linux, with naked',
-	]);
-	expect(await failure({ configuration: mixed, version: '0.61.0', tag: '0.61.0', checksums })).not.toBe('generated');
+});
+
+test('a naked cask for macOS and Linux moves the download on both and clears quarantine on macOS', async () => {
+	const result = await run(generateCask({
+		configuration: {
+			token: 'fsql',
+			name: 'fsql',
+			desc: 'Query and modify the filesystem with SQL',
+			homepage: 'https://github.com/kjanat/fsql',
+			url: 'https://github.com/kjanat/fsql/releases/download/{tag}/{asset}',
+			macos: { arm: 'fsql-aarch64-apple-darwin', intel: 'fsql-x86_64-apple-darwin' },
+			linux: { arm: 'fsql-aarch64-unknown-linux-gnu', intel: 'fsql-x86_64-unknown-linux-gnu' },
+			naked: { glob: 'fsql-*', name: 'fsql' },
+			binaries: [{ path: 'fsql' }],
+		},
+		version: '0.2.0',
+		checksums: [
+			`${digest('1')}  fsql-aarch64-apple-darwin`,
+			`${digest('2')}  fsql-x86_64-apple-darwin`,
+			`${digest('3')}  fsql-aarch64-unknown-linux-gnu`,
+			`${digest('4')}  fsql-x86_64-unknown-linux-gnu`,
+		].join('\n'),
+	}));
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(result.success).toContain(`
+  container type: :naked
+  binary "fsql"
+
+  preflight_steps do
+    move "fsql-*", "fsql", source_glob: true
+    set_permissions "fsql", "755", recursive: false
+    on_macos do
+      run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{staged_path}}"]
+    end
+  end
+`);
 });
 
 test('a cask url percent-encodes the tag and asset and keeps the version interpolation', async () => {
