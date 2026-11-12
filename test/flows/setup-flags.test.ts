@@ -6,7 +6,7 @@ import { savedClient } from '@root/test/support/cli.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { z } from 'zod';
+import { Effect, Schema, Struct } from 'effect';
 import { app } from '@/cli/cli';
 import { choicesFlagKinds, setupFlagPaths, streamFlagKinds, workflowFlagKinds } from '@/cli/setup-flags';
 import { startChannels } from '@/contract/release-start';
@@ -19,6 +19,19 @@ import {
 	versionPrMerges,
 	versionScopes,
 } from '@/contract/setup-terms';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 let world: World;
 let directory: string;
@@ -58,19 +71,19 @@ const silent: PromptEngine = {
 	},
 };
 
-const previewed = z.looseObject({
+const previewed = looseStruct({
 	choices: setupChoicesSchema,
-	blockers: z.array(z.string()),
-	notes: z.array(z.string()),
+	blockers: mutableArray(Schema.String),
+	notes: mutableArray(Schema.String),
 });
 
 async function preview(args: string[]) {
 	const result = await app.execute(['adopt', 'octo/tool', '--json', ...args], { isTTY: false, env: {} });
 	expect([result.exitCode, result.stderr.join('')]).toEqual([0, '']);
-	return previewed.parse(JSON.parse(result.stdout.join('')));
+	return decodeSync(previewed, JSON.parse(result.stdout.join('')));
 }
 
-function main(choices: z.output<typeof setupChoicesSchema>) {
+function main(choices: Decoded<typeof setupChoicesSchema>) {
 	const stream = choices.streams.find(entry => entry.name === 'main');
 	if (!stream) throw new Error('no main stream');
 	return stream;
@@ -81,7 +94,7 @@ const build = { toolchain: 'cargo', name: 'tool', manifest: 'Cargo.toml', asset:
 const cases: {
 	flags: string[];
 	args: string[];
-	read: (choices: z.output<typeof setupChoicesSchema>) => unknown;
+	read: (choices: Decoded<typeof setupChoicesSchema>) => unknown;
 	value: unknown;
 }[] = [
 	{
@@ -275,7 +288,7 @@ test('each earlier flag name still sets its field and warns about its current na
 			0,
 			expect.stringContaining(`Use --${renamed[flag]}`),
 		]);
-		expect(entry.read(previewed.parse(JSON.parse(result.stdout.join(''))).choices)).toEqual(entry.value);
+		expect(entry.read(decodeSync(previewed, JSON.parse(result.stdout.join(''))).choices)).toEqual(entry.value);
 	}
 });
 
@@ -321,7 +334,7 @@ test('setup flags reject values outside their enums and invalid JSON', async () 
 	expect(binary.stderr.join('')).toContain('--binary other is not a binary of main');
 	const workflowless = await app.execute(['adopt', 'octo/tool', '--promote-job', 'ship'], { isTTY: false, env: {} });
 	expect(workflowless.exitCode).not.toBe(0);
-	expect(workflowless.stderr.join('')).toContain('--promote-file: Invalid input');
+	expect(workflowless.stderr.join('')).toContain('--promote-file: Missing key');
 	const prefix = await app.execute(['adopt', 'octo/tool', ...promote, '--promote-tag-prefix', 'bad prefix'], {
 		isTTY: false,
 		env: {},
@@ -337,7 +350,7 @@ test('flags given with --choices override only their fields', async () => {
 	const file = join(directory, 'choices.json');
 	await Bun.write(file, JSON.stringify({ ...proposal.choices, streams: [stream] }));
 	const plan = await preview(['--choices', file, '--version-lands', 'via-direct-commit', '--start-from', 'cli']);
-	expect(main(plan.choices)).toEqual(main(setupChoicesSchema.parse({
+	expect(main(plan.choices)).toEqual(main(decodeSync(setupChoicesSchema, {
 		streams: [{ ...stream, bump: 'commit', start: ['cli'] }],
 	})));
 	const refused = await app.execute([
@@ -379,15 +392,18 @@ test('a fully flagged adopt in a terminal asks no question and opens the setup P
 	const body = repository.pulls[0]?.body ?? '';
 	expect(body).not.toContain('tick `publishWhen`');
 	expect(body).not.toContain('tick `versionLands`');
-	const configuration = z.object({
-		streams: z.object({
-			main: z.object({
-				startFrom: z.array(z.looseObject({ via: z.string() })),
-				prepare: z.looseObject({ versionLands: z.string() }),
-				promote: z.looseObject({ publishWhen: z.string() }),
+	const configuration = decodeSync(
+		mutableStruct({
+			streams: mutableStruct({
+				main: mutableStruct({
+					startFrom: mutableArray(looseStruct({ via: Schema.String })),
+					prepare: looseStruct({ versionLands: Schema.String }),
+					promote: looseStruct({ publishWhen: Schema.String }),
+				}),
 			}),
 		}),
-	}).parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'));
+		JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'),
+	);
 	expect(configuration.streams.main.startFrom.map(start => start.via)).toEqual(['cli']);
 	expect(configuration.streams.main.prepare.versionLands).toBe('via-direct-commit');
 	expect(configuration.streams.main.promote.publishWhen).toBe('version-pr-merged');
@@ -431,7 +447,7 @@ test('flagged adopt saves a reviewable plan and stops on blockers', async () => 
 	});
 	expect([saved.exitCode, saved.stderr.join('')]).toEqual([0, '']);
 	expect(saved.stdout.join('')).toContain(`Open the setup PR with: beepboop adopt octo/tool --plan ${output} --apply`);
-	expect(main(previewed.parse(await Bun.file(output).json()).choices).bump).toBe('commit');
+	expect(main(decodeSync(previewed, await Bun.file(output).json()).choices).bump).toBe('commit');
 	expect(repository.pulls).toHaveLength(0);
 	const blocked = await app.execute(['adopt', 'octo/tool', '--version-lands', 'via-direct-commit'], {
 		prompter: silent,
@@ -457,7 +473,8 @@ test('fields given by no flag stay unanswered in the setup PR', async () => {
 	const configuration = JSON.parse(
 		world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}',
 	);
-	const stream = z.object({ streams: z.object({ main: z.looseObject({ promote: z.looseObject({}) }) }) }).parse(
+	const stream = decodeSync(
+		mutableStruct({ streams: mutableStruct({ main: looseStruct({ promote: looseStruct({}) }) }) }),
 		configuration,
 	).streams.main;
 	expect(stream.promote).not.toHaveProperty('approval');
@@ -594,7 +611,7 @@ test('a flagged new workflow needs commands Beepboop cannot generate and a job i
 		{ isTTY: false, env: {} },
 	);
 	expect(commanded.exitCode).toBe(0);
-	expect(previewed.parse(JSON.parse(commanded.stdout.join(''))).choices.streams[0]?.promote).toMatchObject({
+	expect(decodeSync(previewed, JSON.parse(commanded.stdout.join(''))).choices.streams[0]?.promote).toMatchObject({
 		file: 'release.yml',
 		job: 'publish',
 		commands: './publish.sh',
@@ -610,7 +627,7 @@ test('a flagged new workflow needs commands Beepboop cannot generate and a job i
 		{ isTTY: false, env: {} },
 	);
 	expect(shipped.exitCode).toBe(0);
-	expect(previewed.parse(JSON.parse(shipped.stdout.join(''))).choices.streams[0]?.promote).toMatchObject({
+	expect(decodeSync(previewed, JSON.parse(shipped.stdout.join(''))).choices.streams[0]?.promote).toMatchObject({
 		file: 'ship.yml',
 		job: 'ship',
 		commands: 'beepboop publish',

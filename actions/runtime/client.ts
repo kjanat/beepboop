@@ -11,7 +11,7 @@ import {
 	required,
 } from '@root/actions/runtime/protocol.ts';
 import { identityToken, mask, postJson, serviceOrigin } from '@root/actions/runtime/session.ts';
-import { Effect } from 'effect';
+import { Clock, Effect } from 'effect';
 import { record, text } from '@/model.ts';
 import { writeOutput } from '@/tooling/github-output.ts';
 
@@ -82,7 +82,7 @@ await Effect.runPromise(Effect.gen(function*() {
 	const mode = yield* Effect.fromResult(parseMode(process.argv[2]));
 	const origin = yield* serviceOrigin;
 	const token = yield* identityToken(origin);
-	const body = JSON.stringify(yield* Effect.fromResult(requestBody(mode, process.env)));
+	const body = JSON.stringify(yield* Effect.fromResult(requestBody(mode, process.env, yield* Clock.currentTimeMillis)));
 	const result = yield* exchange(mode, Effect.suspend(() => postJson(origin, endpoints[mode].path, token, body)));
 	yield* writeResult(mode, result);
 }));

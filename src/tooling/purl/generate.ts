@@ -1,8 +1,8 @@
 import { resolve } from 'node:path';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import { compile } from 'json-schema-to-typescript';
-import { z } from 'zod';
 import { parseTypeDefinition } from '@/package-url/definition';
+import { mutableRecord } from '@/schema';
 import { definitionFiles } from '@/tooling/purl/definition-files';
 import {
 	attemptPromise,
@@ -29,7 +29,7 @@ await main(Effect.gen(function*() {
 			if ((yield* readText(path)) !== output) return yield* refuse(`Generated PURL types are stale: ${path}`);
 		});
 	const schema = yield* parse(
-		z.record(z.string(), z.unknown()),
+		mutableRecord(Schema.String, Schema.Unknown),
 		yield* readJson(`${root}/type-definition.schema.json`),
 	);
 	const definitionTypes = yield* attemptPromise(() =>

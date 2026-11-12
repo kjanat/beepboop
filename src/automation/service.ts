@@ -1,19 +1,19 @@
 import { CronExpressionParser } from 'cron-parser';
-import { Cause, Effect, Layer, Result } from 'effect';
-import { z } from 'zod';
+import { Clock, Context, Effect, Layer, Result, Schema } from 'effect';
 import { configuredGrant } from '@/automation/access';
 import type { AuthBindings } from '@/automation/auth';
 import { resolveConfiguration } from '@/automation/configuration';
 import type { AutomationCoordinator } from '@/automation/coordinator';
 import { createExecution, deriveExecution } from '@/automation/execution';
-import { logFailure } from '@/automation/failure-log';
+import { logFailure, logRecovered } from '@/automation/failure-log';
 import type { Credentials } from '@/automation/github';
-import { RepositoryGateway } from '@/automation/github';
+import { GitHub, gitHubLayer, RepositoryGateway } from '@/automation/github';
 import { workflowRunsSchema } from '@/automation/github-resources';
 import type { InboxEvent, SetupPullEdit, SetupPullMerge } from '@/automation/inbox';
 import { inboxEvent } from '@/automation/inbox';
 import { discover, planRelease, resolvePublished, versionsInFiles } from '@/automation/managers';
 import { jsrTokenAlias, jsrTokenRefused, setUpJsrPackage } from '@/automation/managers/jsr';
+import type { Fetcher } from '@/automation/managers/registry';
 import { registryLayer } from '@/automation/managers/registry';
 import { Notifications } from '@/automation/notifications';
 import { matchesPackage, packageId, publishablePackages } from '@/automation/package-identity';
@@ -53,18 +53,20 @@ import { countSchema, decode, integer, looseSchema, record } from '@/model';
 import { ChangeLog } from '@/persistence/d1/changes';
 import { CLISessionStore } from '@/persistence/d1/cli-sessions';
 import { CredentialStore } from '@/persistence/d1/credentials';
+import { Database, databaseLayer } from '@/persistence/d1/database';
 import { OnboardingStore } from '@/persistence/d1/onboarding';
 import { ScheduleStore } from '@/persistence/d1/schedules';
 import { SessionStore } from '@/persistence/d1/sessions';
 import { executionId } from '@/persistence/identity-keys';
+import { decodeSync, mutableArray, mutableRecord, mutableStruct, safeDecode } from '@/schema';
 import { readBody, verifySignature } from '@/webhook';
 
-const webhookInstallation = z.object({ account: z.object({ id: looseSchema }) });
-const webhookRepositoryIds = z.array(z.object({ id: countSchema })).nullish();
-const webhookRepository = z.object({
+const webhookInstallation = mutableStruct({ account: mutableStruct({ id: looseSchema }) });
+const webhookRepositoryIds = Schema.optional(Schema.NullOr(mutableArray(mutableStruct({ id: countSchema }))));
+const webhookRepository = mutableStruct({
 	id: looseSchema,
 	full_name: looseSchema,
-	owner: z.object({ id: looseSchema }),
+	owner: mutableStruct({ id: looseSchema }),
 });
 
 const changeRetention = 7 * 24 * 60 * 60 * 1000;
@@ -76,24 +78,36 @@ export interface AutomationBindings extends AuthBindings, Credentials, WinGetBin
 	VAULT_ACTIVE_KEY: string;
 }
 export class AutomationService {
-	readonly store: Store;
-	readonly gateway: RepositoryGateway;
-	readonly credentials: CredentialStore;
-	readonly sessions: SessionStore;
-	readonly cliSessions: CLISessionStore;
-	readonly schedules: ScheduleStore;
-	readonly onboarding: OnboardingStore;
-	readonly changes: ChangeLog;
-	constructor(readonly env: AutomationBindings, readonly defer?: (work: Promise<void>) => void) {
-		this.store = new Store(env.DB);
-		this.gateway = new RepositoryGateway(env, Number(env.OWNER_ID), fetch, defer);
-		this.credentials = new CredentialStore(env.DB);
-		this.sessions = new SessionStore(env.DB);
-		this.cliSessions = new CLISessionStore(env.DB);
-		this.schedules = new ScheduleStore(env.DB);
-		this.onboarding = new OnboardingStore(env.DB);
-		this.changes = new ChangeLog(env.DB);
+	constructor(
+		readonly env: AutomationBindings,
+		readonly dependencies: AutomationDependencies,
+		readonly defer?: (work: Promise<void>) => void,
+	) {}
+	get store() {
+		return this.dependencies.store;
 	}
+	get gateway() {
+		return this.dependencies.gateway;
+	}
+	get credentials() {
+		return this.dependencies.credentials;
+	}
+	get sessions() {
+		return this.dependencies.sessions;
+	}
+	get cliSessions() {
+		return this.dependencies.cliSessions;
+	}
+	get schedules() {
+		return this.dependencies.schedules;
+	}
+	get onboarding() {
+		return this.dependencies.onboarding;
+	}
+	get changes() {
+		return this.dependencies.changes;
+	}
+
 	coordinator(id: number) {
 		return this.env.AUTOMATION.getByName(String(id));
 	}
@@ -149,22 +163,21 @@ export class AutomationService {
 				);
 			}
 			return yield* fromPromise(() => coordinator.enqueue(execution));
-		});
+		}).pipe(
+			Effect.withSpan('release.enqueue', { attributes: { repositoryId: repository.id, executionId: execution.id } }),
+			Effect.annotateLogs({ repositoryId: repository.id, executionId: execution.id }),
+		);
 	}
 	winget() {
 		return new WinGetService(this.store, this.gateway, this.env);
 	}
 	notifications() {
-		return new Notifications(this.store, () => this.vault());
+		return new Notifications(this.store, () => this.vault(), this.dependencies.transport);
 	}
 	vault() {
-		return new Vault(
-			this.store,
-			this.credentials,
-			z.record(z.string(), z.string()).parse(JSON.parse(this.env.VAULT_KEYS)),
-			this.env.VAULT_ACTIVE_KEY,
-		);
+		return this.dependencies.vault;
 	}
+
 	setAccess(id: number, access: Access): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			yield* this.store.setAccess(id, access);
@@ -172,14 +185,18 @@ export class AutomationService {
 		});
 	}
 	private access(name: string): Effect.Effect<Access, DomainError> {
-		return this.gateway.installation(name).pipe(
-			Effect.map((installation): Access =>
-				installation === 'active' ? { kind: 'active' } : { kind: 'suspended', since: Date.now() }
-			),
-		);
+		return Effect.clockWith(clock => {
+			return this.gateway.installation(name).pipe(
+				Effect.map((installation): Access =>
+					installation === 'active' ? { kind: 'active' } : { kind: 'suspended', since: clock.currentTimeMillisUnsafe() }
+				),
+			);
+		});
 	}
 	discover(name: string, id: number | undefined): Effect.Effect<RepositoryRecord, DomainError> {
 		return Effect.gen({ self: this }, function*() {
+			const clock = yield* Clock.Clock;
+
 			const installation = yield* this.gateway.installation(name);
 			if (installation === 'active') {
 				const repositoryId = id ?? (yield* this.gateway.identify(name));
@@ -196,13 +213,15 @@ export class AutomationService {
 			}
 			const access: Access = stored.access.kind === 'suspended'
 				? stored.access
-				: { kind: 'suspended', since: Date.now() };
+				: { kind: 'suspended', since: clock.currentTimeMillisUnsafe() };
 			yield* this.setAccess(stored.id, access);
 			return { ...stored, access };
 		});
 	}
 	refresh(name: string, id: number): Effect.Effect<RepositoryRecord, DomainError> {
 		return Effect.gen({ self: this }, function*() {
+			const clock = yield* Clock.Clock;
+
 			const snapshot = yield* this.gateway.snapshot(name, id);
 			const prior = yield* this.store.enrollment(id);
 			const repository: RepositoryRecord = {
@@ -212,7 +231,7 @@ export class AutomationService {
 				inventory: discover(snapshot),
 				presetShas: {},
 				diagnostics: [],
-				updatedAt: Date.now(),
+				updatedAt: clock.currentTimeMillisUnsafe(),
 			};
 			const document = snapshot.files['.github/beepboop.json'];
 			if (document) {
@@ -225,11 +244,10 @@ export class AutomationService {
 					repository.inventory = discover(snapshot, resolved.configuration.managers);
 					repository.diagnostics.push(...validateAgainst(resolved.configuration, repository.inventory, snapshot));
 				}).pipe(
-					Effect.catchCause(cause =>
+					Effect.catch(error =>
 						Effect.sync(() => {
-							const error = Cause.squash(cause);
 							repository.diagnostics.push(
-								...(error instanceof z.ZodError
+								...(error instanceof Schema.SchemaError
 									? configurationDiagnostics(error)
 									: [configurationProblem(decodeError(error))]),
 							);
@@ -246,7 +264,7 @@ export class AutomationService {
 				});
 			}
 			const verification = this.gateway.verification(name, id);
-			repository.inventory = yield* resolvePublished(repository.inventory, fetch, verification);
+			repository.inventory = yield* resolvePublished(repository.inventory, this.dependencies.transport, verification);
 			yield* this.store.putRepository(repository);
 			yield* fromPromise(() => this.coordinator(id).setAccess(repository.access.kind === 'suspended'));
 			yield* this.releaseFromManifest(repository).pipe(
@@ -257,7 +275,10 @@ export class AutomationService {
 			);
 			yield* this.winget().watch(repository);
 			return repository;
-		});
+		}).pipe(
+			Effect.withSpan('repository.refresh', { attributes: { repositoryId: id, repository: name } }),
+			Effect.annotateLogs({ repositoryId: id, repository: name }),
+		);
 	}
 	private startedPreparation(
 		repository: RepositoryRecord,
@@ -321,7 +342,7 @@ export class AutomationService {
 				Effect.catchIf(error => error.problem.code !== 'upstream', () => Effect.fail(jsrTokenRefused(names))),
 			);
 			for (const name of names) yield* setUpJsrPackage(name, repository, token);
-		}).pipe(Effect.provide(Layer.mergeAll(registryLayer(fetch), secretsLayer(this.vault()))));
+		}).pipe(Effect.provide(Layer.mergeAll(registryLayer(this.dependencies.transport), secretsLayer(this.vault()))));
 	}
 	private releaseFromManifest(stored: RepositoryRecord): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
@@ -356,7 +377,7 @@ export class AutomationService {
 				);
 				if (plan.edits.length || plan.requiresPreparation) continue;
 				const policy = stream.promote.workflow.refs;
-				const parsed = semVer.safeParse(version);
+				const parsed = safeDecode(semVer, version);
 				if (policy && parsed.success) {
 					tags ??= yield* this.gateway.tagRefs(repository.name, repository.id);
 					const conflict = tagConflict(
@@ -490,6 +511,8 @@ export class AutomationService {
 	}
 	webhook(request: Request): Effect.Effect<Response, DomainError> {
 		return Effect.gen({ self: this }, function*() {
+			const clock = yield* Clock.Clock;
+
 			const bytes = yield* readBody(request);
 			const verified = yield* verifySignature(
 				bytes,
@@ -519,7 +542,7 @@ export class AutomationService {
 				for (const repository of yield* this.store.enrollments()) {
 					const access: Access | undefined =
 						payload.action === 'deleted' || payload.action === 'suspend' || removed.has(repository.id)
-							? { kind: 'suspended', since: Date.now() }
+							? { kind: 'suspended', since: clock.currentTimeMillisUnsafe() }
 							: all || added.has(repository.id)
 							? { kind: 'active' }
 							: payload.action === 'unsuspend' && repository.access.kind === 'suspended'
@@ -541,13 +564,18 @@ export class AutomationService {
 			}
 			const delivery = request.headers.get('x-github-delivery');
 			if (!delivery) return new Response('Missing delivery', { status: 400 });
-			const received = inboxEvent.safeParse(yield* Effect.fromResult(this.inbound(event, payload)));
+			const received = safeDecode(inboxEvent, yield* Effect.fromResult(this.inbound(event, payload)));
 			if (received.success) {
 				const data = received.data;
 				yield* fromPromise(() => this.coordinator(repository.id).receive(delivery, repository.id, data));
 			}
 			return new Response(null, { status: 202 });
-		});
+		}).pipe(
+			Effect.withSpan('webhook.receive', {
+				attributes: { deliveryId: request.headers.get('x-github-delivery') ?? '' },
+			}),
+			Effect.annotateLogs({ deliveryId: request.headers.get('x-github-delivery') ?? '' }),
+		);
 	}
 	private inbound(event: string | null, payload: Record<string, unknown>): Parsed<unknown> {
 		if (event === 'pull_request') {
@@ -614,7 +642,7 @@ export class AutomationService {
 			if (document === undefined) return;
 			const saved = yield* Effect.fromResult(record(yield* fromJson(document)));
 			if (saved.url !== `https://github.com/${repository.name}/pull/${pull.number}`) return;
-			const choices = yield* fromSync(() => setupChoicesSchema.optional().parse(saved.choices));
+			const choices = yield* fromSync(() => decodeSync(Schema.optional(setupChoicesSchema), saved.choices));
 			if (!choices) return;
 			const generated = setupEdits(saved);
 			const merged = yield* this.gateway.snapshot(
@@ -666,11 +694,11 @@ export class AutomationService {
 			if (document === undefined) return;
 			const saved = yield* Effect.fromResult(record(yield* fromJson(document)));
 			if (saved.url !== `https://github.com/${repository.name}/pull/${pull.number}`) return;
-			const base = yield* fromSync(() => setupChoicesSchema.optional().parse(saved.choices));
+			const base = yield* fromSync(() => decodeSync(Schema.optional(setupChoicesSchema), saved.choices));
 			if (!base) return;
 			const options = yield* currentOptions(this.store, this.gateway, repository, base);
 			const body = pull.body ?? '';
-			const choices = yield* fromSync(() => setupChoicesSchema.parse(bodyChoices(body, options, base)));
+			const choices = yield* fromSync(() => decodeSync(setupChoicesSchema, bodyChoices(body, options, base)));
 			const scheduled = yield* fromPromise(() =>
 				this.coordinator(repository.id).setupEdited(
 					{ repositoryId: repository.id, number: pull.number, head: pull.head.sha, body, choices },
@@ -712,22 +740,23 @@ export class AutomationService {
 				}
 			}
 			yield* this.store.queueEvent(event, deliveries);
-			yield* this.deliverEvents();
-		});
+			yield* this.deliverEvents;
+		}).pipe(
+			Effect.withSpan('release.event', { attributes: { eventId: event.id } }),
+			Effect.annotateLogs({ eventId: event.id }),
+		);
 	}
-	private deliverEvents(): Effect.Effect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			for (const delivery of yield* this.store.pendingDeliveries()) {
-				const delivered = yield* Effect.gen({ self: this }, function*() {
-					const repository = yield* this.store.repository(delivery.repositoryId);
-					if (!repository) return yield* precondition('Destination unavailable');
-					const ready = yield* requireReady(repository);
-					yield* this.enqueue(ready, delivery.execution);
-				}).pipe(Effect.as(true), Effect.catchCause(() => Effect.succeed(false)));
-				yield* this.store.deliveryResult(delivery.id, delivered);
-			}
-		});
-	}
+	private deliverEvents: Effect.Effect<void, DomainError> = Effect.gen({ self: this }, function*() {
+		for (const delivery of yield* this.store.pendingDeliveries()) {
+			const delivered = yield* Effect.gen({ self: this }, function*() {
+				const repository = yield* this.store.repository(delivery.repositoryId);
+				if (!repository) return yield* precondition('Destination unavailable');
+				const ready = yield* requireReady(repository);
+				yield* this.enqueue(ready, delivery.execution);
+			}).pipe(Effect.as(true), Effect.orElseSucceed(() => false));
+			yield* this.store.deliveryResult(delivery.id, delivered);
+		}
+	});
 	private scheduleStreams(ready: ReadyRepository, now: number): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			for (const [streamName, stream] of Object.entries(ready.configuration.streams)) {
@@ -763,6 +792,8 @@ export class AutomationService {
 	}
 	private scheduledRepository(repository: { name: string; id: number }): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
+			const clock = yield* Clock.Clock;
+
 			const refreshed = yield* this.refresh(repository.name, repository.id);
 			yield* this.winget().automatic(refreshed).pipe(
 				this.store.auditFailure('winget', 'winget.failed', repository.name),
@@ -775,23 +806,106 @@ export class AutomationService {
 			}
 			const state = readiness(refreshed);
 			if (state.kind !== 'ready') return;
-			yield* this.scheduleStreams(state.repository, Date.now());
+			yield* this.scheduleStreams(state.repository, clock.currentTimeMillisUnsafe());
 		});
 	}
-	scheduled(): Effect.Effect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			yield* this.sessions.sweep();
-			yield* this.changes.prune(Date.now() - changeRetention);
-			yield* this.deliverEvents();
-			yield* this.winget().reconcile();
-			for (const repository of yield* this.store.enrollments()) {
-				// Next scheduled pass retries; preserve the last known configuration.
-				yield* this.scheduledRepository(repository).pipe(Effect.ignoreCause);
-			}
-			const notifications = this.notifications();
-			const readable = yield* this.store.readableRepositories();
-			yield* pollPackages(this.store, readable, fetch, event => this.event(event), notifications);
-			yield* notifications.deliver();
-		});
-	}
+	scheduled: Effect.Effect<void, DomainError> = Effect.gen({ self: this }, function*() {
+		const clock = yield* Clock.Clock;
+
+		yield* this.sessions.sweep();
+		yield* this.changes.prune(clock.currentTimeMillisUnsafe() - changeRetention);
+		yield* this.deliverEvents;
+		yield* this.winget().reconcile();
+		for (const repository of yield* this.store.enrollments()) {
+			// Next scheduled pass retries; preserve the last known configuration.
+			yield* this.scheduledRepository(repository).pipe(
+				logRecovered('repository.scheduled.failed', { repositoryId: repository.id, repository: repository.name }),
+			);
+		}
+		const notifications = this.notifications();
+		const readable = yield* this.store.readableRepositories();
+		yield* pollPackages(this.store, readable, this.dependencies.transport, event => this.event(event), notifications);
+		yield* notifications.deliver();
+	});
+}
+
+export interface AutomationDependencies {
+	readonly store: Store;
+	readonly vault: Pick<Vault, keyof Vault>;
+	readonly gateway: RepositoryGateway;
+	readonly credentials: CredentialStore;
+	readonly sessions: SessionStore;
+	readonly cliSessions: CLISessionStore;
+	readonly schedules: ScheduleStore;
+	readonly onboarding: OnboardingStore;
+	readonly changes: ChangeLog;
+	readonly transport: Fetcher;
+}
+
+export class ApplicationConfiguration extends Context.Service<ApplicationConfiguration, {
+	readonly env: AutomationBindings;
+	readonly defer?: (work: Promise<void>) => void;
+}>()('beepboop/ApplicationConfiguration') {}
+
+export class HttpTransport
+	extends Context.Service<HttpTransport, { readonly fetch: Fetcher }>()('beepboop/HttpTransport')
+{}
+export class ApplicationSecrets
+	extends Context.Service<ApplicationSecrets, Pick<Vault, keyof Vault>>()('beepboop/ApplicationSecrets')
+{}
+export class Automation extends Context.Service<Automation, AutomationService>()('beepboop/Automation') {}
+
+export const makeAutomation = Effect.gen(function*() {
+	const { env, defer } = yield* ApplicationConfiguration;
+	const db = yield* Database;
+	const vault = yield* ApplicationSecrets;
+	const github = yield* GitHub;
+	const { fetch: transport } = yield* HttpTransport;
+	return new AutomationService(env, {
+		store: new Store(db),
+		vault,
+		gateway: new RepositoryGateway(env, Number(env.OWNER_ID), transport, defer, github),
+		credentials: new CredentialStore(db),
+		sessions: new SessionStore(db),
+		cliSessions: new CLISessionStore(db),
+		schedules: new ScheduleStore(db),
+		onboarding: new OnboardingStore(db),
+		changes: new ChangeLog(db),
+		transport,
+	}, defer);
+});
+
+export const automationLayer = Layer.effect(Automation, makeAutomation);
+
+export function applicationLayer(
+	env: AutomationBindings,
+	defer?: (work: Promise<void>) => void,
+	transport: Fetcher = fetch,
+) {
+	const base = Layer.mergeAll(
+		Layer.succeed(ApplicationConfiguration, { env, defer }),
+		Layer.succeed(HttpTransport, { fetch: transport }),
+		databaseLayer(env.DB),
+		gitHubLayer(transport),
+	);
+	const secrets = Layer.effect(
+		ApplicationSecrets,
+		Effect.gen(function*() {
+			const db = yield* Database;
+			const { env } = yield* ApplicationConfiguration;
+			const keys = yield* fromJson(env.VAULT_KEYS).pipe(
+				Effect.flatMap(value => fromSync(() => decodeSync(mutableRecord(Schema.String, Schema.String), value))),
+			);
+			return new Vault(new Store(db), new CredentialStore(db), keys, env.VAULT_ACTIVE_KEY);
+		}),
+	);
+	return automationLayer.pipe(Layer.provide(secrets.pipe(Layer.provideMerge(base))));
+}
+
+export function withAutomation<A, E, R>(
+	env: AutomationBindings,
+	use: (service: AutomationService) => Effect.Effect<A, E, R>,
+	defer?: (work: Promise<void>) => void,
+): Effect.Effect<A, E | DomainError, R> {
+	return Effect.flatMap(Automation, use).pipe(Effect.provide(applicationLayer(env, defer)));
 }

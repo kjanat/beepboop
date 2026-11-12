@@ -42,11 +42,24 @@ import {
 } from '@root/test/support/repositories.ts';
 import type { RunIdentity, World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { Effect } from 'effect';
+import { Effect, Schema, Struct } from 'effect';
 import { ledgerSchema } from '@/automation/ledger';
 import { publishMinutes } from '@/automation/setup-workflows';
 import type { Execution } from '@/automation/types';
 import { publishWaitMinutes } from '@/contract/ledger';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 let world: World;
 let target = '';
@@ -308,7 +321,7 @@ function started(begun: Map<string, { execution: Execution; identity: RunIdentit
 async function ledgerOf(repository: Repository, executionId: string) {
 	const journal = await world.coordinator(repository).exportJournal();
 	const value = journal.find(entry => entry.key === `ledger:${executionId}`)?.value;
-	return ledgerSchema.parse(value);
+	return decodeSync(ledgerSchema, value);
 }
 async function executionOf(repository: Repository, executionId: string) {
 	const execution = await world.coordinator(repository).execution(executionId);

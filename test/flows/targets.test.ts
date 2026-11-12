@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { Validator } from '@cfworker/json-schema';
-import { Effect } from 'effect';
+import { Effect, Schema, Struct } from 'effect';
 import { npmManager } from '@/automation/managers/npm';
 import { discoverNpmTargets } from '@/automation/managers/npm-targets';
 import { emptyInventory } from '@/automation/managers/registry';
@@ -8,6 +8,19 @@ import { assetName, binaryJobs } from '@/automation/setup-binaries';
 import type { Snapshot } from '@/automation/types';
 import { binaries, defaultBinaryTargets } from '@/contract/setup';
 import { targetsSchema } from '@/contract/targets';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 import { assertTargetsCurrent } from '@/tooling/schema/render';
 
 const fixture = (name: string) => Bun.file(new URL(`../fixtures/targets/${name}.json`, import.meta.url));
@@ -24,7 +37,7 @@ test('the published contract validates all five real repository descriptor shape
 	const validator = new Validator(schema, '2020-12', false);
 	for (const name of ['runner', 'actionlint', 'kprint', 'overseer', 'kprint-build']) {
 		const source = await fixture(name).json();
-		expect({ name, valid: targetsSchema.safeParse(source).success }).toEqual({ name, valid: true });
+		expect({ name, valid: safeDecode(targetsSchema, source).success }).toEqual({ name, valid: true });
 		expect({ name, errors: validator.validate(source).errors }).toEqual({ name, errors: [] });
 	}
 	await Effect.runPromise(assertTargetsCurrent);
@@ -40,9 +53,9 @@ test('known fields reject malformed types while platform and build extensions st
 			{ ...source, targets: [{ pkg: 'freebsd-x64', os: [], cpu: 'x64' }] },
 			{ ...source, targets: [{ pkg: 'freebsd-x64', os: 'freebsd', cpu: 64 }] },
 		]
-	) expect(targetsSchema.safeParse(broken).success).toBe(false);
+	) expect(safeDecode(targetsSchema, broken).success).toBe(false);
 	expect(
-		targetsSchema.safeParse({
+		safeDecode(targetsSchema, {
 			...source,
 			targets: [{ pkg: 'haiku-riscv64', os: 'haiku', cpu: 'riscv64', build: 'custom', extension: { enabled: true } }],
 		}).success,
@@ -164,10 +177,10 @@ test('npm name segments reject uppercase while build metadata stays open', async
 			{ platformScope: '@example', binary: 'Tool', facade: 'tool', targets: valid.targets },
 		]
 	) {
-		expect(targetsSchema.safeParse(source).success).toBe(false);
+		expect(safeDecode(targetsSchema, source).success).toBe(false);
 		expect(validator.validate(source).valid).toBe(false);
 	}
-	expect(targetsSchema.safeParse(valid).success).toBe(true);
+	expect(safeDecode(targetsSchema, valid).success).toBe(true);
 	expect(validator.validate(valid).valid).toBe(true);
 });
 
@@ -332,8 +345,8 @@ const go = {
 const cargo = { toolchain: 'cargo', name: 'tool', manifest: 'Cargo.toml', asset: '{name}-{rust.target}{ext}' } as const;
 
 test('new Go platforms generate executable cross-build jobs and retain existing defaults', () => {
-	expect(binaries.parse({ builds: [go] }).targets).toEqual([...defaultBinaryTargets]);
-	const release = binaries.parse({
+	expect(decodeSync(binaries, { builds: [go] }).targets).toEqual([...defaultBinaryTargets]);
+	const release = decodeSync(binaries, {
 		builds: [go],
 		targets: [
 			'freebsd-amd64',
@@ -362,7 +375,7 @@ test('new Go platforms generate executable cross-build jobs and retain existing 
 });
 
 test('Rust Android and BSD targets install cross and preserve native auditable builds', () => {
-	const release = binaries.parse({
+	const release = decodeSync(binaries, {
 		builds: [cargo],
 		targets: ['linux-amd64', 'android-arm64', 'freebsd-amd64', 'netbsd-amd64'],
 	});
@@ -387,6 +400,6 @@ test('Rust Android and BSD targets install cross and preserve native auditable b
 	expect(JSON.stringify(job)).toContain('cargo auditable build');
 	expect(JSON.stringify(job)).toContain('cross build');
 	for (const release of [{ builds: [go], targets: ['android-arm64'] }, { builds: [cargo], targets: ['aix-ppc64'] }]) {
-		expect(binaries.safeParse(release).success).toBe(false);
+		expect(safeDecode(binaries, release).success).toBe(false);
 	}
 });

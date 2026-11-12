@@ -1,7 +1,6 @@
 import { expect, test } from 'bun:test';
 import { widgetConfiguration } from '@root/test/support/repositories.ts';
-import { Effect, Result } from 'effect';
-import { z } from 'zod';
+import { Effect, Result, Schema, Struct } from 'effect';
 import { companionProposals } from '@/automation/companion-detection';
 import { parseRepositoryConfiguration } from '@/automation/configuration';
 import { createExecution } from '@/automation/execution';
@@ -16,6 +15,19 @@ import { configurationDrift, configurationSchema } from '@/domain/configuration'
 import { requireReady } from '@/domain/repository';
 import { validateAgainst } from '@/domain/validate';
 import { storedConfiguration } from '@/persistence/codecs/configuration';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 const commit = 'a'.repeat(40);
 const policy: RefPolicy = { phase: 'version', prefix: 'rshellcheck-v', aliases: [], signed: false };
@@ -64,25 +76,27 @@ test('a module named in packages and companionModules is tagged once', () => {
 });
 
 test('companionModules reads the same through the schema, the parser and the stored codec', () => {
-	const document = z.looseObject({ streams: z.looseObject({ main: z.looseObject({}) }) }).parse(
+	const document = decodeSync(
+		looseStruct({ streams: looseStruct({ main: looseStruct({}) }) }),
 		JSON.parse(widgetConfiguration()),
 	);
 	document.streams.main.companionModules = [module];
-	const parsed = configurationSchema.parse(document);
+	const parsed = decodeSync(configurationSchema, document);
 	expect(parsed.streams.main?.companionModules).toEqual([module]);
 	const configuration = parseRepositoryConfiguration(document);
 	if (Result.isFailure(configuration)) throw configuration.failure;
 	expect(configuration.success.streams.main?.companionModules).toEqual([module]);
 	expect(configurationDrift(document, configuration.success)).toEqual([]);
 	const encoded = JSON.stringify(parsed);
-	expect(JSON.stringify(storedConfiguration.parse(JSON.parse(encoded)))).toBe(encoded);
+	expect(JSON.stringify(decodeSync(storedConfiguration, JSON.parse(encoded)))).toBe(encoded);
 	document.streams.main.companionModules = 'pkg:golang/github.com/octo/shellcheck/go';
-	expect(configurationSchema.safeParse(document).success).toBe(false);
+	expect(safeDecode(configurationSchema, document).success).toBe(false);
 	expect(Result.isFailure(parseRepositoryConfiguration(document))).toBe(true);
 });
 
 test('validation warns when a companion module is already in packages', () => {
-	const document = z.looseObject({ streams: z.looseObject({ main: z.looseObject({}) }) }).parse(
+	const document = decodeSync(
+		looseStruct({ streams: looseStruct({ main: looseStruct({}) }) }),
 		JSON.parse(widgetConfiguration()),
 	);
 	document.streams.main.packages = [module];
@@ -94,7 +108,7 @@ test('validation warns when a companion module is already in packages', () => {
 		diagnostics: [],
 		publicationOrder: [],
 	};
-	const found = validateAgainst(configurationSchema.parse(document), inventory, {
+	const found = validateAgainst(decodeSync(configurationSchema, document), inventory, {
 		paths: ['.github/workflows/publish.yml', '.github/workflows/ci.yml'],
 	}).filter(entry => entry.code === 'companion-module');
 	expect(found.map(entry => [entry.severity, entry.message])).toEqual([[
@@ -218,7 +232,7 @@ test('the proposal names the prefix the promotion pushes, whatever prefix the st
 	expect(note).toContain('every `go/v<version>` tag has a matching `rshellcheck-v<version>` tag');
 	expect(note).toContain('A `main` release pushes `v<version>`.');
 	expect(note).toContain(`set \`companionModules\` of \`main\` to \`${module}\``);
-	const built = binaries.parse({ builds: [{ toolchain: 'cargo', name: 'rshellcheck', manifest: 'Cargo.toml' }] });
+	const built = decodeSync(binaries, { builds: [{ toolchain: 'cargo', name: 'rshellcheck', manifest: 'Cargo.toml' }] });
 	expect(pushed({ promote: { ...promote, binaries: built } })[0]).toContain('A `main` release pushes `v<version>`.');
 	expect(
 		pushed({ promote: { ...promote, binaries: built }, versionSource: { kind: 'tags', prefix: 'rshellcheck-v' } })[0],
@@ -230,11 +244,14 @@ test('the proposal names the prefix the promotion pushes, whatever prefix the st
 });
 
 function promotion(packages: Package[], phase: 'version' | 'aliases' = 'version') {
-	const document = z.looseObject({
-		streams: z.looseObject({
-			main: z.looseObject({ promote: z.looseObject({ workflow: z.looseObject({}) }) }),
+	const document = decodeSync(
+		looseStruct({
+			streams: looseStruct({
+				main: looseStruct({ promote: looseStruct({ workflow: looseStruct({}) }) }),
+			}),
 		}),
-	}).parse(JSON.parse(widgetConfiguration()));
+		JSON.parse(widgetConfiguration()),
+	);
 	document.streams.main.companionModules = [module];
 	document.streams.main.promote.workflow.refs = { phase, prefix: 'v' };
 	const record: RepositoryRecord = {
@@ -243,7 +260,7 @@ function promotion(packages: Package[], phase: 'version' | 'aliases' = 'version'
 		name: 'octo/widget',
 		defaultBranch: 'main',
 		sha: commit,
-		configuration: configurationSchema.parse(document),
+		configuration: decodeSync(configurationSchema, document),
 		presetShas: {},
 		inventory: {
 			...inventory,

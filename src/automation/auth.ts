@@ -6,10 +6,9 @@ import {
 	verifyAuthenticationResponse,
 	verifyRegistrationResponse,
 } from '@simplewebauthn/server';
-import { Effect, Result } from 'effect';
+import { Effect, Result, Schema, SchemaGetter } from 'effect';
 import type { JWTVerifyGetKey } from 'jose';
 import { createRemoteJWKSet, errors, jwtVerify } from 'jose';
-import { z } from 'zod';
 import { cliAuthRoute, cliSubject } from '@/automation/cli-auth';
 import { logRecovered } from '@/automation/failure-log';
 import { documentRow } from '@/automation/schemas';
@@ -22,31 +21,37 @@ import { integer, record, sha, text } from '@/model';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { replaceDocument, sql } from '@/persistence/d1/database';
 import { SessionStore } from '@/persistence/d1/sessions';
+import { decodeSync, mapped, mutableArray, mutableStruct } from '@/schema';
 
-const clientExtensionResults = z.object({}).catch({});
-const registrationResponse: z.ZodType<RegistrationResponseJSON> = z.object({
-	id: z.string(),
-	rawId: z.string(),
-	type: z.literal('public-key'),
-	response: z.object({
-		clientDataJSON: z.string(),
-		attestationObject: z.string(),
-		authenticatorData: z.string().optional(),
-		transports: z.array(z.string()).optional(),
-		publicKeyAlgorithm: z.number().optional(),
-		publicKey: z.string().optional(),
+const clientExtensionResults = Schema.Unknown.pipe(
+	Schema.decodeTo(mutableStruct({}), {
+		decode: SchemaGetter.transform(() => ({})),
+		encode: SchemaGetter.transform(() => ({})),
+	}),
+);
+const registrationResponse: Schema.Codec<RegistrationResponseJSON, unknown> = mutableStruct({
+	id: Schema.String,
+	rawId: Schema.String,
+	type: Schema.Literal('public-key'),
+	response: mutableStruct({
+		clientDataJSON: Schema.String,
+		attestationObject: Schema.String,
+		authenticatorData: Schema.optional(Schema.String),
+		transports: Schema.optional(mutableArray(Schema.String)),
+		publicKeyAlgorithm: Schema.optional(Schema.Finite),
+		publicKey: Schema.optional(Schema.String),
 	}),
 	clientExtensionResults,
 });
-const authenticationResponse: z.ZodType<AuthenticationResponseJSON> = z.object({
-	id: z.string(),
-	rawId: z.string(),
-	type: z.literal('public-key'),
-	response: z.object({
-		clientDataJSON: z.string(),
-		authenticatorData: z.string(),
-		signature: z.string(),
-		userHandle: z.string().nullish().transform(value => value ?? undefined),
+const authenticationResponse: Schema.Codec<AuthenticationResponseJSON, unknown> = mutableStruct({
+	id: Schema.String,
+	rawId: Schema.String,
+	type: Schema.Literal('public-key'),
+	response: mutableStruct({
+		clientDataJSON: Schema.String,
+		authenticatorData: Schema.String,
+		signature: Schema.String,
+		userHandle: mapped(Schema.optional(Schema.NullOr(Schema.String)), value => value ?? undefined),
 	}),
 	clientExtensionResults,
 });
@@ -349,12 +354,12 @@ interface SavedCredential {
 	counter: number;
 	transports?: WebAuthnCredential['transports'];
 }
-const savedCredential: z.ZodType<SavedCredential> = z.object({
-	label: z.string().optional(),
-	id: z.string(),
-	publicKey: z.string(),
-	counter: z.number(),
-	transports: z.array(z.string()).optional(),
+const savedCredential: Schema.Codec<SavedCredential, unknown> = mutableStruct({
+	label: Schema.optional(Schema.String),
+	id: Schema.String,
+	publicKey: Schema.String,
+	counter: Schema.Finite,
+	transports: Schema.optional(mutableArray(Schema.String)),
 });
 export class Authenticators {
 	private readonly sessions: SessionStore;
@@ -368,8 +373,8 @@ export class Authenticators {
 			Effect.flatMap(rows =>
 				fromSync(() =>
 					rows.map(row => {
-						const { document } = documentRow.parse(row);
-						return { document, credential: savedCredential.parse(JSON.parse(document)) };
+						const { document } = decodeSync(documentRow, row);
+						return { document, credential: decodeSync(savedCredential, JSON.parse(document)) };
 					})
 				)
 			),

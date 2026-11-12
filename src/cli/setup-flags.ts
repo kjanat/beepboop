@@ -1,6 +1,5 @@
 import type { CLIError } from '@kjanat/dreamcli';
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema } from 'effect';
 import type { Selection } from '@/automation/setup-defaults';
 import { suggestedCommands, ungenerated } from '@/automation/setup-defaults';
 import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
@@ -16,6 +15,7 @@ import {
 	versioningOfVersionScope,
 } from '@/contract/setup-terms';
 import { packageLabel } from '@/domain/package-label';
+import { mutableArray, safeDecode, schemaIssues } from '@/schema';
 
 type Stream = SetupChoices['streams'][number];
 type FlagKind = 'stream' | 'text' | 'list' | 'packages' | 'json' | 'workflow' | 'binaries';
@@ -115,8 +115,8 @@ export const setupFlagPaths: readonly SetupFlagPath[] = [
 
 export type SetupFlagValues = ReadonlyMap<string, unknown>;
 
-const text = z.string();
-const list = z.array(z.string());
+const text = Schema.String;
+const list = mutableArray(Schema.String);
 
 export function readSetupFlags(
 	given: Readonly<Record<string, unknown>>,
@@ -128,10 +128,10 @@ export function readSetupFlags(
 				if (values.has(name)) continue;
 				const raw = given[name];
 				if (kind === 'stream' || kind === 'text') {
-					const parsed = text.safeParse(raw);
+					const parsed = safeDecode(text, raw);
 					if (parsed.success) values.set(name, parsed.data);
 				} else if (kind === 'json') {
-					const parsed = text.safeParse(raw);
+					const parsed = safeDecode(text, raw);
 					if (!parsed.success) continue;
 					values.set(
 						name,
@@ -141,7 +141,7 @@ export function readSetupFlags(
 						}),
 					);
 				} else {
-					const parsed = list.safeParse(raw);
+					const parsed = safeDecode(list, raw);
 					if (parsed.success && parsed.data.length) values.set(name, parsed.data);
 				}
 			}
@@ -232,12 +232,12 @@ function generated(
 	given: Record<string, unknown>,
 ): Effect.Effect<Record<string, unknown>, CLIError> {
 	return Effect.gen(function*() {
-		const file = text.safeParse(given.file);
+		const file = safeDecode(text, given.file);
 		if (!file.success) return given;
 		const evidence = plan.workflows.find(workflow => workflow.file === file.data);
 		const owned = evidence?.roles.filter(entry => entry.stream === stream && entry.operation === role) ?? [];
 		const inferred = owned.length === 1 ? owned[0]?.job : evidence?.jobs.length === 1 ? evidence.jobs[0] : undefined;
-		const job = text.safeParse(given.job).data ?? (evidence ? inferred : role === 'prepare' ? 'prepare' : 'publish');
+		const job = safeDecode(text, given.job).data ?? (evidence ? inferred : role === 'prepare' ? 'prepare' : 'publish');
 		if (job === undefined) {
 			return yield* Effect.fail(
 				failure(
@@ -283,14 +283,14 @@ export function applySetupFlags(
 		const streams = structuredClone(choices.streams);
 		const value = (name: string) => values.get(name);
 		const strings = (name: string) => {
-			const parsed = list.safeParse(value(name));
+			const parsed = safeDecode(list, value(name));
 			return parsed.success ? parsed.data : undefined;
 		};
 		const streamPaths = setupFlagPaths.filter(entry => !choicesFields.some(field => field === entry.path));
 		const streamFlagged = streamPaths.some(entry =>
 			entry.kind !== 'stream' && entry.names.some(name => values.has(name))
 		);
-		const requested = text.safeParse(value('stream'));
+		const requested = safeDecode(text, value('stream'));
 		let target: Stream | undefined;
 		if (requested.success) {
 			target = streams.find(stream => stream.name === requested.data);
@@ -333,7 +333,7 @@ export function applySetupFlags(
 				}
 				if (field) entered[field] = given;
 			}
-			const packages = list.safeParse(entered.packages).data ?? current.packages;
+			const packages = safeDecode(list, entered.packages).data ?? current.packages;
 			if (values.has('package') && !values.has('must-publish') && !values.has('required')) {
 				entered.required = [...packages];
 			}
@@ -351,9 +351,9 @@ export function applySetupFlags(
 				if (!next) continue;
 				entered[role] = current[role] ? next : yield* generated(plan, current.name, role, packages, next);
 			}
-			const parsed = setupStream.safeParse(entered);
+			const parsed = safeDecode(setupStream, entered);
 			if (!parsed.success) {
-				const [issue] = parsed.error.issues;
+				const [issue] = schemaIssues(parsed.error);
 				return yield* Effect.fail(
 					failure(
 						issue ? `${flagOf(issue.path)}: ${issue.message}` : parsed.error.message,
@@ -363,14 +363,14 @@ export function applySetupFlags(
 			}
 			streams[streams.indexOf(current)] = parsed.data;
 		}
-		const revision = text.safeParse(value('actions-revision'));
-		const result = setupChoicesSchema.safeParse({
+		const revision = safeDecode(text, value('actions-revision'));
+		const result = safeDecode(setupChoicesSchema, {
 			...choices,
 			streams,
 			...(revision.success ? { actionsRevision: revision.data } : {}),
 		});
 		if (!result.success) {
-			const [issue] = result.error.issues;
+			const [issue] = schemaIssues(result.error);
 			return yield* Effect.fail(
 				failure(
 					issue && issue.path[0] === 'actionsRevision'

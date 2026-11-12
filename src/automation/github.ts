@@ -1,6 +1,5 @@
-import { Context, Data, Effect, Layer, Schedule } from 'effect';
+import { Clock, Context, Data, Effect, Layer, Schema } from 'effect';
 import { importPKCS8, SignJWT } from 'jose';
-import { z } from 'zod';
 import { logRecovered } from '@/automation/failure-log';
 import type { GitObject } from '@/automation/github-resources';
 import {
@@ -40,46 +39,57 @@ import type { AutoMergeMethod } from '@/contract/setup-terms';
 import { parseRetryAfter } from '@/domain/http-date';
 import { fromPromise, fromSync } from '@/failure';
 import { decode, sha, textSchema } from '@/model';
+import { responseJson, responseText } from '@/runtime/http';
+import { ioConcurrency, retryTransient } from '@/runtime/policy';
+import type { Contract, Decoded } from '@/schema';
+import { mutableArray, mutableStruct } from '@/schema';
 
 type Permission = Record<string, 'read' | 'write'>;
 const coAuthor = 'Co-authored-by: kjanat <6353477+kjanat@users.noreply.github.com>';
 const ownerLogins = new Map<number, string>();
 const botIdentities = new Map<string, BotIdentity>();
-const contentEditsSchema = z.object({
-	data: z.object({
-		repository: z.object({
-			pullRequest: z.object({
-				userContentEdits: z.object({
-					nodes: z.array(z.object({ editor: z.object({ login: z.string() }).nullable(), diff: z.string().nullable() })),
+const contentEditsSchema = mutableStruct({
+	data: mutableStruct({
+		repository: mutableStruct({
+			pullRequest: mutableStruct({
+				userContentEdits: mutableStruct({
+					nodes: mutableArray(
+						mutableStruct({
+							editor: Schema.NullOr(mutableStruct({ login: Schema.String })),
+							diff: Schema.NullOr(Schema.String),
+						}),
+					),
 				}),
 			}),
 		}),
 	}),
 });
-const autoMergeSchema = z.object({
-	data: z.object({
-		enablePullRequestAutoMerge: z.object({
-			pullRequest: z.object({ autoMergeRequest: z.object({ mergeMethod: z.string() }).nullable() }),
-		}).nullable(),
-	}).nullable().optional(),
-	errors: z.array(z.object({ type: z.string().optional(), message: z.string() })).optional(),
+const autoMergeSchema = mutableStruct({
+	data: Schema.optional(Schema.NullOr(mutableStruct({
+		enablePullRequestAutoMerge: Schema.NullOr(mutableStruct({
+			pullRequest: mutableStruct({ autoMergeRequest: Schema.NullOr(mutableStruct({ mergeMethod: Schema.String })) }),
+		})),
+	}))),
+	errors: Schema.optional(
+		mutableArray(mutableStruct({ type: Schema.optional(Schema.String), message: Schema.String })),
+	),
 });
 interface TagTarget {
 	__typename: string;
 	oid: string;
 	target?: TagTarget | undefined;
 }
-const tagTargetSchema: z.ZodType<TagTarget> = z.object({
+const tagTargetSchema: Schema.Codec<TagTarget, unknown> = mutableStruct({
 	__typename: textSchema,
 	oid: textSchema,
-	target: z.lazy(() => tagTargetSchema).optional(),
+	target: Schema.optional(Schema.suspend(() => tagTargetSchema)),
 });
-const tagRefsSchema = z.object({
-	data: z.object({
-		repository: z.object({
-			refs: z.object({
-				pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }),
-				nodes: z.array(z.object({ name: textSchema, target: tagTargetSchema })),
+const tagRefsSchema = mutableStruct({
+	data: mutableStruct({
+		repository: mutableStruct({
+			refs: mutableStruct({
+				pageInfo: mutableStruct({ hasNextPage: Schema.Boolean, endCursor: Schema.NullOr(Schema.String) }),
+				nodes: mutableArray(mutableStruct({ name: textSchema, target: tagTargetSchema })),
 			}),
 		}),
 	}),
@@ -133,16 +143,18 @@ export const gitHubRequest = Effect.fn('GitHub.request')(function*(
 	method = 'GET',
 	body?: unknown,
 ) {
+	const clock = yield* Clock.Clock;
+
 	if (!path.startsWith('/')) {
 		return yield* invalid('Invalid API path');
 	}
 	const route = `${method} ${path.split('?')[0]}`;
 	const reach = Effect.tryPromise({
-		try: () =>
+		try: signal =>
 			transport(`https://api.github.com${path}`, {
 				method,
 				redirect: 'manual',
-				signal: AbortSignal.timeout(20_000),
+				signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
 				headers: {
 					...(token ? { Authorization: `Bearer ${token}` } : {}),
 					Accept: 'application/vnd.github+json',
@@ -156,7 +168,9 @@ export const gitHubRequest = Effect.fn('GitHub.request')(function*(
 			upstream('github', `GitHub unreachable on ${route}: ${error instanceof Error ? error.message : String(error)}`),
 	});
 	const failed = (response: Response) =>
-		Effect.promise(() => response.text().then(detailOf, () => '')).pipe(
+		responseText(response).pipe(
+			Effect.map(detailOf),
+			Effect.orElseSucceed(() => ''),
 			Effect.map(detail => `GitHub HTTP ${response.status} on ${route}${detail ? `: ${detail}` : ''}`),
 		);
 	const answered = method === 'GET'
@@ -165,9 +179,9 @@ export const gitHubRequest = Effect.fn('GitHub.request')(function*(
 				response => response.status < 500,
 				response => Effect.fail(new ServerError({ response })),
 			),
-			Effect.retry({
-				schedule: Schedule.exponential('500 millis'),
-				times: 2,
+			retryTransient<ServerError | DomainError>({
+				attempts: 3,
+				delay: 500,
 				while: failure => failure._tag === 'ServerError',
 			}),
 			Effect.catchTag('ServerError', ({ response }) => Effect.succeed(response)),
@@ -179,7 +193,8 @@ export const gitHubRequest = Effect.fn('GitHub.request')(function*(
 		const message = yield* failed(response);
 		if (response.status >= 400 && response.status < 500 && response.status !== 408) {
 			const retryAt = response.status === 429 || response.status === 403 && rateLimited(message)
-				? parseRetryAfter(response.headers.get('retry-after') ?? '', Date.now()) ?? Date.now() + 60_000
+				? parseRetryAfter(response.headers.get('retry-after') ?? '', clock.currentTimeMillisUnsafe())
+					?? clock.currentTimeMillisUnsafe() + 60_000
 				: undefined;
 			return yield* new GitHubRejection(response.status, message, retryAt);
 		}
@@ -188,10 +203,9 @@ export const gitHubRequest = Effect.fn('GitHub.request')(function*(
 			: domainError({ code: 'precondition', diagnostics: [legacyDiagnostic(message)] }, message);
 	}
 	if (response.status === 204) return null;
-	return yield* Effect.tryPromise({
-		try: (): Promise<unknown> => response.json(),
-		catch: () => upstream('github', `GitHub sent invalid JSON on ${route}`),
-	});
+	return yield* responseJson(response).pipe(
+		Effect.mapError(() => upstream('github', `GitHub sent invalid JSON on ${route}`)),
+	);
 });
 
 export class RepositoryGateway {
@@ -200,17 +214,20 @@ export class RepositoryGateway {
 		private ownerId: number,
 		private transport: Fetcher = fetch,
 		private defer?: (work: Promise<void>) => void,
+		private api?: GitHub['Service'],
 	) {}
 	call(path: string, token: string, method = 'GET', body?: unknown): Effect.Effect<unknown, DomainError> {
-		return gitHubRequest(this.transport, path, token, method, body);
+		return this.api
+			? this.api.call(path, token, method, body)
+			: gitHubRequest(this.transport, path, token, method, body);
 	}
-	read<S extends z.ZodType>(
+	read<S extends Contract>(
 		schema: S,
 		path: string,
 		token: string,
 		method = 'GET',
 		body?: unknown,
-	): Effect.Effect<z.output<S>, DomainError> {
+	): Effect.Effect<Decoded<S>, DomainError> {
 		return this.call(path, token, method, body).pipe(Effect.flatMap(value => Effect.fromResult(decode(schema, value))));
 	}
 	peelTag(repository: string, object: GitObject, token: string): Effect.Effect<GitObject, DomainError> {
@@ -232,10 +249,10 @@ export class RepositoryGateway {
 				'X-GitHub-Api-Version': githubApiVersion,
 				'User-Agent': 'beepboop',
 			};
-			const download = yield* fromPromise(() =>
+			const download = yield* fromPromise(signal =>
 				self.transport(`https://api.github.com/repos/${repository}/releases/assets/${asset.id}`, {
 					headers: { ...headers, Accept: 'application/octet-stream' },
-					signal: AbortSignal.timeout(60_000),
+					signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
 				})
 			);
 			if (!download.ok) {
@@ -243,7 +260,7 @@ export class RepositoryGateway {
 				return yield* (download.status >= 500 ? upstream('github', message) : precondition(message));
 			}
 			const content = yield* fromPromise(() => download.arrayBuffer());
-			const upload = yield* fromPromise(() =>
+			const upload = yield* fromPromise(signal =>
 				self.transport(
 					`https://uploads.github.com/repos/${repository}/releases/${releaseId}/assets?name=${
 						encodeURIComponent(asset.name)
@@ -252,7 +269,7 @@ export class RepositoryGateway {
 						method: 'POST',
 						headers: { ...headers, Accept: 'application/vnd.github+json', 'Content-Type': asset.contentType },
 						body: content,
-						signal: AbortSignal.timeout(60_000),
+						signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
 					},
 				)
 			);
@@ -300,12 +317,14 @@ export class RepositoryGateway {
 	private appToken(): Effect.Effect<string, DomainError> {
 		const self = this;
 		return Effect.gen(function*() {
+			const clock = yield* Clock.Clock;
+
 			const key = yield* fromPromise(() => importPKCS8(self.credentials.GITHUB_APP_PRIVATE_KEY, 'RS256'));
 			return yield* fromPromise(() =>
 				new SignJWT({})
 					.setProtectedHeader({ alg: 'RS256' })
 					.setIssuer(self.credentials.GITHUB_APP_ID)
-					.setIssuedAt(Math.floor(Date.now() / 1000) - 60)
+					.setIssuedAt(Math.floor(clock.currentTimeMillisUnsafe() / 1000) - 60)
 					.setExpirationTime('9m')
 					.sign(key)
 			);
@@ -359,7 +378,7 @@ export class RepositoryGateway {
 			const result: RefState[] = [];
 			let after: string | null = null;
 			for (let page = 1; page <= 100; page++) {
-				const response: z.output<typeof tagRefsSchema> = yield* self.read(tagRefsSchema, '/graphql', token, 'POST', {
+				const response: Decoded<typeof tagRefsSchema> = yield* self.read(tagRefsSchema, '/graphql', token, 'POST', {
 					query: tagRefsQuery,
 					variables: { owner, name: repository, after },
 				});
@@ -466,13 +485,13 @@ export class RepositoryGateway {
 		return Effect.gen(function*() {
 			const refs = yield* Effect.forEach(prefixes, prefix =>
 				self.read(
-					z.array(matchingRefSchema).nullable(),
+					Schema.NullOr(mutableArray(matchingRefSchema)),
 					`/repos/${name}/git/matching-refs/tags${
 						prefix ? `/${prefix.split('/').map(encodeURIComponent).join('/')}` : ''
 					}`,
 					token,
 				).pipe(Effect.map(rows => (rows ?? []).map(row => row.ref.slice('refs/tags/'.length)))), {
-				concurrency: 'unbounded',
+				concurrency: ioConcurrency,
 			});
 			return refs.flat();
 		});
@@ -503,10 +522,10 @@ export class RepositoryGateway {
 		);
 	}
 	/** Read the proposal head without modifying or creating a branch. */
-	private ownerInstallation(jwt: string): Effect.Effect<z.output<typeof installationSchema>, DomainError> {
+	private ownerInstallation(jwt: string): Effect.Effect<Decoded<typeof installationSchema>, DomainError> {
 		const self = this;
 		return Effect.gen(function*() {
-			const installation = (yield* self.read(z.array(installationSchema), '/app/installations?per_page=100', jwt))
+			const installation = (yield* self.read(mutableArray(installationSchema), '/app/installations?per_page=100', jwt))
 				.find(installation => installation.account.id === self.ownerId);
 			if (!installation) return yield* precondition('The GitHub App is not installed on the owner account');
 			return installation;
@@ -558,14 +577,14 @@ export class RepositoryGateway {
 			const files = comparison.files;
 			if (files.length >= 300) return undefined;
 			const mergeBase = comparison.merge_base_commit.sha;
-			const paths = yield* Effect.fromResult(decode(z.array(textSchema), files.map(file => file.filename)));
+			const paths = yield* Effect.fromResult(decode(mutableArray(textSchema), files.map(file => file.filename)));
 			return yield* Effect.forEach(paths, path => {
 				return Effect.all({
 					path: Effect.succeed(path),
 					before: self.file(name, path, mergeBase, token).pipe(Effect.map(content => content ?? '')),
 					after: self.file(name, path, head, token).pipe(Effect.map(content => content ?? '')),
 				});
-			}, { concurrency: 'unbounded' });
+			}, { concurrency: ioConcurrency });
 		});
 	}
 	setupHead(name: string, id: number, branch: string): Effect.Effect<string | null, DomainError> {
@@ -573,7 +592,7 @@ export class RepositoryGateway {
 		return Effect.gen(function*() {
 			const token = yield* self.token(name, id);
 			const ref = yield* self.read(
-				gitRefSchema.nullable(),
+				Schema.NullOr(gitRefSchema),
 				`/repos/${name}/git/ref/heads/${branch}`,
 				token,
 			);
@@ -605,7 +624,7 @@ export class RepositoryGateway {
 					: {}),
 			});
 			const existing = yield* self.read(
-				gitRefSchema.nullable(),
+				Schema.NullOr(gitRefSchema),
 				`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`,
 				token,
 			);
@@ -633,7 +652,7 @@ export class RepositoryGateway {
 				coAuthored ? `${title}\n\n${coAuthor}` : title,
 			);
 			const rules = yield* self.read(
-				z.array(ruleSchema).nullable(),
+				Schema.NullOr(mutableArray(ruleSchema)),
 				`/repos/${name}/rules/branches/${encodeURIComponent(branch)}`,
 				token,
 			);
@@ -841,7 +860,7 @@ export class RepositoryGateway {
 		return Effect.gen(function*() {
 			for (let page = 1; page <= 10; page++) {
 				const events = yield* self.read(
-					z.array(issueEventSchema),
+					mutableArray(issueEventSchema),
 					`/repos/${repository}/issues/${number}/events?per_page=100&page=${page}`,
 					token,
 				);
@@ -874,7 +893,7 @@ export class RepositoryGateway {
 				return yield* precondition('Preparation commit ancestry changed');
 			}
 			const rules = yield* self.read(
-				z.array(ruleSchema).nullable(),
+				Schema.NullOr(mutableArray(ruleSchema)),
 				`/repos/${name}/rules/branches/${encodeURIComponent(branch)}`,
 				token,
 			);
@@ -883,7 +902,7 @@ export class RepositoryGateway {
 				return yield* precondition('Preparation commit signature is not verified');
 			}
 			const existing = yield* self.read(
-				gitRefSchema.nullable(),
+				Schema.NullOr(gitRefSchema),
 				`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`,
 				token,
 			);
@@ -907,11 +926,11 @@ export class RepositoryGateway {
 		const self = this;
 		return Effect.gen(function*() {
 			const token = yield* self.token(name, id, { contents: 'read', pull_requests: 'read' });
-			const rows: z.output<typeof pullSchema>[] = [];
+			const rows: Decoded<typeof pullSchema>[] = [];
 			for (const branch of setupBranches) {
 				rows.push(
 					...yield* self.read(
-						z.array(pullSchema),
+						mutableArray(pullSchema),
 						`/repos/${name}/pulls?state=open&head=${encodeURIComponent(`${name.split('/')[0]}:${branch}`)}`,
 						token,
 					),
@@ -1020,7 +1039,7 @@ export class RepositoryGateway {
 				pull_requests: 'write',
 			});
 			const current = yield* self.read(
-				gitRefSchema.nullable(),
+				Schema.NullOr(gitRefSchema),
 				`/repos/${snapshot.repository.name}/git/ref/heads/${encodeURIComponent(branch)}`,
 				token,
 			);
@@ -1049,7 +1068,7 @@ export class RepositoryGateway {
 				Effect.catchIf(
 					error => error.problem.code === 'precondition' || error.problem.code === 'forbidden',
 					error =>
-						Effect.succeed<z.output<typeof autoMergeSchema>>({ data: null, errors: [{ message: error.message }] }),
+						Effect.succeed<Decoded<typeof autoMergeSchema>>({ data: null, errors: [{ message: error.message }] }),
 				),
 			);
 			if (response.data?.enablePullRequestAutoMerge?.pullRequest.autoMergeRequest) {
@@ -1080,7 +1099,7 @@ export class RepositoryGateway {
 			const { name } = snapshot.repository;
 			const owner = name.split('/')[0];
 			const unmerged = (yield* self.read(
-				z.array(pullSchema),
+				mutableArray(pullSchema),
 				`/repos/${name}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`,
 				token,
 			)).filter(pull => pull.merged !== true && typeof pull.merged_at !== 'string');
@@ -1095,7 +1114,7 @@ export class RepositoryGateway {
 				);
 			}
 			const existing = pulls[0];
-			const validBase = (pull: z.output<typeof pullSchema>) =>
+			const validBase = (pull: Decoded<typeof pullSchema>) =>
 				pull.base.ref === snapshot.repository.defaultBranch ? Effect.void : precondition(
 					`The preparation PR #${pull.number} targets ${pull.base.ref}; retarget it to ${snapshot.repository.defaultBranch} to continue this release.`,
 				);
@@ -1120,7 +1139,7 @@ export class RepositoryGateway {
 				});
 			yield* validBase(pull);
 			const metadata = Effect.gen(function*() {
-				const available = yield* self.read(z.array(namedSchema), `/repos/${name}/labels?per_page=100`, token);
+				const available = yield* self.read(mutableArray(namedSchema), `/repos/${name}/labels?per_page=100`, token);
 				let labels = available
 					.map((label) => label.name)
 					.filter((name) =>
@@ -1138,7 +1157,7 @@ export class RepositoryGateway {
 					labels = ['maintenance'];
 				}
 				yield* self.read(
-					z.array(namedSchema),
+					mutableArray(namedSchema),
 					`/repos/${name}/issues/${pull.number}/labels`,
 					token,
 					'POST',

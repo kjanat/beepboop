@@ -1,6 +1,8 @@
+import { Schema } from 'effect';
+import type { Decoded } from '@/schema';
+import { matchesPattern, mutableArray, refined, strictStruct } from '@/schema';
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Kaj Kowalski; Copyright (c) 2021 rhysd
-import * as z from 'zod';
 
 export const manifestTypes = ['version', 'installer', 'defaultLocale'] as const;
 export type ManifestType = (typeof manifestTypes)[number];
@@ -9,136 +11,201 @@ export const schemaVersion = '1.12.0';
 const versionPart = '(0|[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])';
 const unique = (items: unknown[]): boolean => new Set(items.map(item => JSON.stringify(item))).size === items.length;
 
-const packageIdentifier = z.string().regex(
-	// biome-ignore lint/suspicious/noControlCharactersInRegex: WinGet excludes ASCII control characters from package identifiers.
-	/^[^.\s\\/:*?"<>|\x01-\x1f]{1,32}(\.[^.\s\\/:*?"<>|\x01-\x1f]{1,32}){1,7}$/,
-).max(128).describe('The package unique identifier');
+const packageIdentifier = Schema.String.check(
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: WinGet excludes ASCII control characters from identifiers.
+	matchesPattern(/^[^.\s\\/:*?"<>|\x01-\x1f]{1,32}(\.[^.\s\\/:*?"<>|\x01-\x1f]{1,32}){1,7}$/),
+).check(Schema.isMaxLength(128)).annotate({ description: 'The package unique identifier' });
 // biome-ignore lint/suspicious/noControlCharactersInRegex: WinGet excludes ASCII control characters from package versions.
-const packageVersion = z.string().regex(/^[^\\/:*?"<>|\x01-\x1f]+$/).max(128).describe('The package version');
-const locale = z.string().regex(/^([a-zA-Z]{2,3}|[iI]-[a-zA-Z]+|[xX]-[a-zA-Z]{1,8})(-[a-zA-Z]{1,8})*$/).max(20);
-const manifestType = (type: ManifestType) => z.literal(type).describe('The manifest type');
-const manifestVersion = z.string().regex(new RegExp(`^${versionPart}(\\.${versionPart}){2}$`)).describe(
-	'The manifest syntax version',
-);
-const minimumOSVersion = z.string().regex(new RegExp(`^${versionPart}(\\.${versionPart}){0,3}$`));
-const url = z.string().regex(/^([Hh][Tt][Tt][Pp][Ss]?):\/\/.+$/).max(2048);
-const sha256 = z.string().regex(/^[A-Fa-f0-9]{64}$/);
-const installerReturnCode = z.int().min(-2147483648).max(4294967295).refine(code => code !== 0).describe(
-	'An exit code that can be returned by the installer after execution',
-);
+const packageVersion = Schema.String.check(matchesPattern(/^[^\\/:*?"<>|\x01-\x1f]+$/)).check(Schema.isMaxLength(128))
+	.annotate({ description: 'The package version' });
+const locale = Schema.String.check(
+	matchesPattern(/^([a-zA-Z]{2,3}|[iI]-[a-zA-Z]+|[xX]-[a-zA-Z]{1,8})(-[a-zA-Z]{1,8})*$/),
+).check(Schema.isMaxLength(20));
+const manifestType = (type: ManifestType) => Schema.Literal(type).annotate({ description: 'The manifest type' });
+const manifestVersion = Schema.String.check(matchesPattern(new RegExp(`^${versionPart}(\\.${versionPart}){2}$`)))
+	.annotate({ description: 'The manifest syntax version' });
+const minimumOSVersion = Schema.String.check(matchesPattern(new RegExp(`^${versionPart}(\\.${versionPart}){0,3}$`)));
+const url = Schema.String.check(matchesPattern(/^([Hh][Tt][Tt][Pp][Ss]?):\/\/.+$/)).check(Schema.isMaxLength(2048));
+const sha256 = Schema.String.check(matchesPattern(/^[A-Fa-f0-9]{64}$/));
+const installerReturnCode = refined(
+	Schema.Int.check(Schema.isGreaterThanOrEqualTo(-2147483648)).check(Schema.isLessThanOrEqualTo(4294967295)),
+	code => code !== 0,
+).annotate({ description: 'An exit code that can be returned by the installer after execution' });
 
-export const versionManifest = z.strictObject({
+export const versionManifest = strictStruct({
 	PackageIdentifier: packageIdentifier,
 	PackageVersion: packageVersion,
-	DefaultLocale: locale.describe('The default package meta-data locale'),
+	DefaultLocale: locale.annotate({ description: 'The default package meta-data locale' }),
 	ManifestType: manifestType('version'),
 	ManifestVersion: manifestVersion,
 });
 
-export const installerManifest = z.strictObject({
+export const installerType = Schema.Literals([
+	'msix',
+	'msi',
+	'appx',
+	'exe',
+	'zip',
+	'inno',
+	'nullsoft',
+	'wix',
+	'burn',
+	'pwa',
+	'portable',
+	'font',
+]);
+export const installerArchitecture = Schema.Literals(['x86', 'x64', 'arm', 'arm64', 'neutral']);
+
+export const installerManifest = strictStruct({
 	PackageIdentifier: packageIdentifier,
 	PackageVersion: packageVersion,
-	InstallerLocale: locale.optional().describe('The installer meta-data locale'),
-	Platform: z.array(z.enum(['Windows.Desktop', 'Windows.Universal'])).max(2).refine(unique).optional().describe(
-		'The installer supported operating system',
-	),
-	MinimumOSVersion: minimumOSVersion.optional().describe('The installer minimum operating system version'),
-	InstallerType: z.enum([
-		'msix',
-		'msi',
-		'appx',
-		'exe',
-		'zip',
-		'inno',
-		'nullsoft',
-		'wix',
-		'burn',
-		'pwa',
-		'portable',
-		'font',
-	])
-		.optional().describe(
+	InstallerLocale: Schema.optional(locale).annotate({ description: 'The installer meta-data locale' }),
+	Platform: Schema.optional(
+		refined(
+			mutableArray(Schema.Literals(['Windows.Desktop', 'Windows.Universal'])).check(Schema.isMaxLength(2)),
+			unique,
+		),
+	).annotate({ description: 'The installer supported operating system' }),
+	MinimumOSVersion: Schema.optional(minimumOSVersion).annotate({
+		description: 'The installer minimum operating system version',
+	}),
+	InstallerType: Schema.optional(installerType).annotate({
+		description:
 			'Enumeration of supported installer types. InstallerType is required in either root level or individual Installer level',
-		),
-	NestedInstallerType: z.enum(['msix', 'msi', 'appx', 'exe', 'inno', 'nullsoft', 'wix', 'burn', 'portable', 'font'])
-		.optional().describe('Enumeration of supported nested installer types contained inside an archive file'),
-	NestedInstallerFiles: z.array(
-		z.strictObject({
-			RelativeFilePath: z.string().min(1).max(512).describe('The relative path to the nested installer file'),
-			PortableCommandAlias: z.string().min(1).max(40).optional().describe(
-				'The command alias to be used for calling the package. Only applies to the nested portable package',
+	}),
+	NestedInstallerType: Schema.optional(
+		Schema.Literals(['msix', 'msi', 'appx', 'exe', 'inno', 'nullsoft', 'wix', 'burn', 'portable', 'font']),
+	).annotate({ description: 'Enumeration of supported nested installer types contained inside an archive file' }),
+	NestedInstallerFiles: Schema.optional(
+		mutableArray(
+			strictStruct({
+				RelativeFilePath: Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(512)).annotate({
+					description: 'The relative path to the nested installer file',
+				}),
+				PortableCommandAlias: Schema.optional(Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(40)))
+					.annotate({
+						description:
+							'The command alias to be used for calling the package. Only applies to the nested portable package',
+					}),
+			}).annotate({ description: 'A nested installer file contained inside an archive' }),
+		).check(Schema.isMaxLength(1024)),
+	).annotate({ description: 'List of nested installer files contained inside an archive' }),
+	Scope: Schema.optional(Schema.Literals(['user', 'machine'])).annotate({
+		description: 'Scope indicates if the installer is per user or per machine',
+	}),
+	InstallerSuccessCodes: Schema.optional(
+		refined(mutableArray(installerReturnCode).check(Schema.isMaxLength(16)), unique),
+	).annotate({
+		description: 'List of additional non-zero installer success exit codes other than known default values by winget',
+	}),
+	UpgradeBehavior: Schema.optional(Schema.Literals(['install', 'uninstallPrevious', 'deny'])).annotate({
+		description: 'The upgrade method',
+	}),
+	Commands: Schema.optional(
+		refined(
+			mutableArray(Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(40))).check(
+				Schema.isMaxLength(16),
 			),
-		}).describe('A nested installer file contained inside an archive'),
-	).max(1024).optional().describe('List of nested installer files contained inside an archive'),
-	Scope: z.enum(['user', 'machine']).optional().describe('Scope indicates if the installer is per user or per machine'),
-	InstallerSuccessCodes: z.array(installerReturnCode).max(16).refine(unique).optional().describe(
-		'List of additional non-zero installer success exit codes other than known default values by winget',
-	),
-	UpgradeBehavior: z.enum(['install', 'uninstallPrevious', 'deny']).optional().describe('The upgrade method'),
-	Commands: z.array(z.string().min(1).max(40)).max(16).refine(unique).optional().describe(
-		'List of commands or aliases to run the package',
-	),
-	ReleaseDate: z.iso.date().optional().describe('The installer release date'),
-	InstallationMetadata: z.strictObject({
-		DefaultInstallLocation: z.string().min(1).max(2048).optional().describe(
-			'Represents the default installed package location. Used for deeper installation detection.',
+			unique,
 		),
-		Files: z.array(
-			z.strictObject({
-				RelativeFilePath: z.string().min(1).max(2048).describe('The relative path to the installed file.'),
-				FileSha256: sha256.optional().describe('Optional Sha256 of the installed file.'),
-				FileType: z.enum(['launch', 'uninstall', 'other']).optional().describe(
-					'The optional installed file type. If not specified, the file is treated as other.',
-				),
-				InvocationParameter: z.string().min(1).max(2048).optional().describe('Optional parameter for invocable files.'),
-				DisplayName: z.string().min(1).max(256).optional().describe('Optional display name for invocable files.'),
-			}).describe('Represents an installed file.'),
-		).max(2048).refine(unique).optional().describe('List of installed files.'),
-	}).optional().describe('Details about the installation. Used for deeper installation detection.'),
-	Installers: z.array(z.strictObject({
-		Architecture: z.enum(['x86', 'x64', 'arm', 'arm64', 'neutral']).describe('The installer target architecture'),
-		InstallerUrl: url.describe('The installer Url'),
-		InstallerSha256: sha256.describe('Sha256 is required. Sha256 of the installer'),
-	})).min(1).max(1024),
+	).annotate({ description: 'List of commands or aliases to run the package' }),
+	ReleaseDate: Schema.optional(Schema.String.check(matchesPattern(/^\d{4}-\d{2}-\d{2}$/))).annotate({
+		description: 'The installer release date',
+	}),
+	InstallationMetadata: Schema.optional(strictStruct({
+		DefaultInstallLocation: Schema.optional(Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(2048)))
+			.annotate({
+				description: 'Represents the default installed package location. Used for deeper installation detection.',
+			}),
+		Files: Schema.optional(refined(
+			mutableArray(
+				strictStruct({
+					RelativeFilePath: Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(2048)).annotate({
+						description: 'The relative path to the installed file.',
+					}),
+					FileSha256: Schema.optional(sha256).annotate({ description: 'Optional Sha256 of the installed file.' }),
+					FileType: Schema.optional(Schema.Literals(['launch', 'uninstall', 'other'])).annotate({
+						description: 'The optional installed file type. If not specified, the file is treated as other.',
+					}),
+					InvocationParameter: Schema.optional(
+						Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(2048)),
+					).annotate({ description: 'Optional parameter for invocable files.' }),
+					DisplayName: Schema.optional(Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(256)))
+						.annotate({ description: 'Optional display name for invocable files.' }),
+				}).annotate({ description: 'Represents an installed file.' }),
+			).check(Schema.isMaxLength(2048)),
+			unique,
+		)).annotate({ description: 'List of installed files.' }),
+	})).annotate({ description: 'Details about the installation. Used for deeper installation detection.' }),
+	Installers: mutableArray(strictStruct({
+		Architecture: installerArchitecture.annotate({ description: 'The installer target architecture' }),
+		InstallerUrl: url.annotate({ description: 'The installer Url' }),
+		InstallerSha256: sha256.annotate({ description: 'Sha256 is required. Sha256 of the installer' }),
+	})).check(Schema.isMinLength(1)).check(Schema.isMaxLength(1024)),
 	ManifestType: manifestType('installer'),
 	ManifestVersion: manifestVersion,
 });
 
-export const defaultLocaleManifest = z.strictObject({
+export const defaultLocaleManifest = strictStruct({
 	PackageIdentifier: packageIdentifier,
 	PackageVersion: packageVersion,
-	PackageLocale: locale.describe('The package meta-data locale'),
-	Publisher: z.string().min(2).max(256).describe('The publisher name'),
-	PublisherUrl: url.optional().describe('The publisher home page'),
-	PublisherSupportUrl: url.optional().describe('The publisher support page'),
-	Author: z.string().min(2).max(256).optional().describe('The package author'),
-	PackageName: z.string().min(2).max(256).describe('The package name'),
-	PackageUrl: url.optional().describe('The package home page'),
-	License: z.string().min(3).max(512).describe('The package license'),
-	LicenseUrl: url.optional().describe('The license page'),
-	Copyright: z.string().min(3).max(512).optional().describe('The package copyright'),
-	CopyrightUrl: url.optional().describe('The package copyright page'),
-	ShortDescription: z.string().min(3).max(256).describe('The short package description'),
-	Description: z.string().min(3).max(10000).optional().describe('The full package description'),
-	Tags: z.array(z.string().min(1).max(40).describe('Package moniker or tag')).max(16).refine(unique).optional()
-		.describe(
-			'List of additional package search terms',
+	PackageLocale: locale.annotate({ description: 'The package meta-data locale' }),
+	Publisher: Schema.String.check(Schema.isMinLength(2)).check(Schema.isMaxLength(256)).annotate({
+		description: 'The publisher name',
+	}),
+	PublisherUrl: Schema.optional(url).annotate({ description: 'The publisher home page' }),
+	PublisherSupportUrl: Schema.optional(url).annotate({ description: 'The publisher support page' }),
+	Author: Schema.optional(Schema.String.check(Schema.isMinLength(2)).check(Schema.isMaxLength(256))).annotate({
+		description: 'The package author',
+	}),
+	PackageName: Schema.String.check(Schema.isMinLength(2)).check(Schema.isMaxLength(256)).annotate({
+		description: 'The package name',
+	}),
+	PackageUrl: Schema.optional(url).annotate({ description: 'The package home page' }),
+	License: Schema.String.check(Schema.isMinLength(3)).check(Schema.isMaxLength(512)).annotate({
+		description: 'The package license',
+	}),
+	LicenseUrl: Schema.optional(url).annotate({ description: 'The license page' }),
+	Copyright: Schema.optional(Schema.String.check(Schema.isMinLength(3)).check(Schema.isMaxLength(512))).annotate({
+		description: 'The package copyright',
+	}),
+	CopyrightUrl: Schema.optional(url).annotate({ description: 'The package copyright page' }),
+	ShortDescription: Schema.String.check(Schema.isMinLength(3)).check(Schema.isMaxLength(256)).annotate({
+		description: 'The short package description',
+	}),
+	Description: Schema.optional(Schema.String.check(Schema.isMinLength(3)).check(Schema.isMaxLength(10000))).annotate({
+		description: 'The full package description',
+	}),
+	Tags: Schema.optional(
+		refined(
+			mutableArray(
+				Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(40)).annotate({
+					description: 'Package moniker or tag',
+				}),
+			).check(Schema.isMaxLength(16)),
+			unique,
 		),
-	ReleaseNotes: z.string().min(1).max(10000).optional().describe('The package release notes'),
-	ReleaseNotesUrl: url.optional().describe('The package release notes url'),
-	InstallationNotes: z.string().min(1).max(10000).optional().describe(
-		'The notes displayed to the user upon completion of a package installation.',
+	).annotate({ description: 'List of additional package search terms' }),
+	ReleaseNotes: Schema.optional(Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(10000))).annotate({
+		description: 'The package release notes',
+	}),
+	ReleaseNotesUrl: Schema.optional(url).annotate({ description: 'The package release notes url' }),
+	InstallationNotes: Schema.optional(Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(10000)))
+		.annotate({ description: 'The notes displayed to the user upon completion of a package installation.' }),
+	Documentations: Schema.optional(
+		mutableArray(strictStruct({
+			DocumentLabel: Schema.optional(Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(100)))
+				.annotate({
+					description:
+						'The label of the documentation for providing software guides such as manuals and troubleshooting URLs.',
+				}),
+			DocumentUrl: Schema.optional(url).annotate({ description: 'The documentation URL.' }),
+		})).check(Schema.isMaxLength(256)),
 	),
-	Documentations: z.array(z.strictObject({
-		DocumentLabel: z.string().min(1).max(100).optional().describe(
-			'The label of the documentation for providing software guides such as manuals and troubleshooting URLs.',
-		),
-		DocumentUrl: url.optional().describe('The documentation URL.'),
-	})).max(256).optional(),
 	ManifestType: manifestType('defaultLocale'),
 	ManifestVersion: manifestVersion,
 });
 
-export type VersionManifest = z.infer<typeof versionManifest>;
-export type InstallerManifest = z.infer<typeof installerManifest>;
-export type DefaultLocaleManifest = z.infer<typeof defaultLocaleManifest>;
+export type VersionManifest = Decoded<typeof versionManifest>;
+export type InstallerManifest = Decoded<typeof installerManifest>;
+export type DefaultLocaleManifest = Decoded<typeof defaultLocaleManifest>;

@@ -9,8 +9,7 @@ import { bearer, field } from '@root/test/support/http.ts';
 import { jsonFile, passChecks, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { Effect, Result } from 'effect';
-import { z } from 'zod';
+import { Effect, Result, Schema, Struct } from 'effect';
 import { parseRepositoryConfiguration } from '@/automation/configuration';
 import { identityOf, parseIdentity, parseReleaseIdentity, releaseIdentity } from '@/automation/package-identity';
 import { configurationDrift, configurationSchema, issueMessage } from '@/domain/configuration';
@@ -20,6 +19,19 @@ import { packageIdentity, parsePackageIdentity, purlDefinitions } from '@/packag
 import { storedConfiguration } from '@/persistence/codecs/configuration';
 import { decodeRepositoryV1 } from '@/persistence/codecs/v1';
 import { executionId, planIdentity, releaseEventId } from '@/persistence/identity-keys';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 import { assertCurrent, schemaPath } from '@/tooling/schema/render';
 
 let world: World;
@@ -27,21 +39,24 @@ eachWorld(created => {
 	world = created;
 });
 
-const storedDocument = z.object({
-	diagnostics: z.array(z.string()),
-	findings: z.array(z.object({ code: z.string(), severity: z.string(), message: z.string() })),
-	inventory: z.object({
-		diagnostics: z.array(z.string()),
-		findings: z.array(z.object({ code: z.string(), severity: z.string(), message: z.string() })),
+const storedDocument = mutableStruct({
+	diagnostics: mutableArray(Schema.String),
+	findings: mutableArray(mutableStruct({ code: Schema.String, severity: Schema.String, message: Schema.String })),
+	inventory: mutableStruct({
+		diagnostics: mutableArray(Schema.String),
+		findings: mutableArray(mutableStruct({ code: Schema.String, severity: Schema.String, message: Schema.String })),
 	}),
 });
-const documentRow = z.object({ document: z.string() });
+const documentRow = mutableStruct({ document: Schema.String });
 async function storedRow(id: number): Promise<string> {
-	return documentRow.parse(await world.db.prepare('SELECT document FROM repositories WHERE id=?').bind(id).first())
+	return decodeSync(
+		documentRow,
+		await world.db.prepare('SELECT document FROM repositories WHERE id=?').bind(id).first(),
+	)
 		.document;
 }
-async function stored(id: number): Promise<z.output<typeof storedDocument>> {
-	return storedDocument.parse(JSON.parse(await storedRow(id)));
+async function stored(id: number): Promise<Decoded<typeof storedDocument>> {
+	return decodeSync(storedDocument, JSON.parse(await storedRow(id)));
 }
 function diagnostics(reply: Reply): unknown {
 	return field(reply.body, 'diagnostics');
@@ -71,7 +86,7 @@ test('rows written before typed diagnostics still read as blocking', async () =>
 	const repository = widget(world.github);
 	const api = bearer(world, await world.cliSession());
 	await api('/api/repositories/discover', { repository: 'octo/widget' });
-	const legacy = z.looseObject({ inventory: z.looseObject({}) }).parse(JSON.parse(await storedRow(repository.id)));
+	const legacy = decodeSync(looseStruct({ inventory: looseStruct({}) }), JSON.parse(await storedRow(repository.id)));
 	delete legacy.findings;
 	delete legacy.inventory.findings;
 	legacy.diagnostics = ['Configuration invalid'];
@@ -94,16 +109,16 @@ function jsonBlocks(markdown: string): unknown[] {
 	});
 }
 
-const widgetSchema = z.looseObject({
-	streams: z.looseObject({
-		main: z.looseObject({
-			promote: z.looseObject({ approval: z.string(), workflow: z.looseObject({ file: z.string() }) }),
+const widgetSchema = looseStruct({
+	streams: looseStruct({
+		main: looseStruct({
+			promote: looseStruct({ approval: Schema.String, workflow: looseStruct({ file: Schema.String }) }),
 		}),
 	}),
 });
-type WidgetDocument = z.output<typeof widgetSchema>;
+type WidgetDocument = Decoded<typeof widgetSchema>;
 function widgetDocument(): WidgetDocument {
-	return widgetSchema.parse(JSON.parse(widgetConfiguration()));
+	return decodeSync(widgetSchema, JSON.parse(widgetConfiguration()));
 }
 
 const root = new URL('../../', import.meta.url);
@@ -120,13 +135,13 @@ async function documentedFragments(): Promise<unknown[]> {
 
 test('parsing a parsed configuration returns it unchanged, and stored copies decode to the same value', async () => {
 	for (const value of await shippedConfigurations()) {
-		const parsed = configurationSchema.parse(value);
+		const parsed = decodeSync(configurationSchema, value);
 		const configuration = parseRepositoryConfiguration(value);
 		if (Result.isFailure(configuration)) throw configuration.failure;
 		expect(configurationDrift(value, configuration.success)).toEqual([]);
 		const encoded = JSON.stringify(parsed);
-		expect(JSON.stringify(configurationSchema.parse(parsed))).toBe(encoded);
-		expect(JSON.stringify(storedConfiguration.parse(JSON.parse(encoded)))).toBe(encoded);
+		expect(JSON.stringify(decodeSync(configurationSchema, parsed))).toBe(encoded);
+		expect(JSON.stringify(decodeSync(storedConfiguration, JSON.parse(encoded)))).toBe(encoded);
 	}
 });
 
@@ -294,7 +309,7 @@ test('stored repositories keep their plan identity and decode under the configur
 		},
 	};
 	expect(decodeRepositoryV1(legacy).configuration?.subscriptions[0]).toMatchObject({ workflow: 'ci.yml' });
-	expect(configurationSchema.safeParse(legacy.configuration).success).toBe(false);
+	expect(safeDecode(configurationSchema, legacy.configuration).success).toBe(false);
 });
 
 test('refresh records schema drift as a warning while the current parser keeps releasing', async () => {
@@ -324,7 +339,7 @@ test('editors validate with the published schema and refuse what refresh refuses
 	const published = new Validator(Result.getOrThrow(record(await Bun.file(schemaPath).json())), '2020-12', false);
 	for (const value of await shippedConfigurations()) expect(published.validate(value).errors).toEqual([]);
 	for (const value of await documentedFragments()) {
-		if (configurationSchema.safeParse(value).success) expect(published.validate(value).errors).toEqual([]);
+		if (safeDecode(configurationSchema, value).success) expect(published.validate(value).errors).toEqual([]);
 	}
 	for (
 		const value of [
@@ -335,18 +350,21 @@ test('editors validate with the published schema and refuse what refresh refuses
 		]
 	) {
 		expect(published.validate(value).valid).toBe(false);
-		expect(configurationSchema.safeParse(value).success).toBe(false);
+		expect(safeDecode(configurationSchema, value).success).toBe(false);
 	}
 });
 
 test('schema:check refuses a hand-edited schema file', async () => {
 	await Effect.runPromise(assertCurrent(schemaPath));
 	const edited = join(tmpdir(), `beepboop-schema-${crypto.randomUUID()}.json`);
-	const published = z.looseObject({
-		properties: z.looseObject({
-			managers: z.looseObject({ items: z.looseObject({ enum: z.array(z.string()) }) }),
+	const published = decodeSync(
+		looseStruct({
+			properties: looseStruct({
+				managers: looseStruct({ items: looseStruct({ enum: mutableArray(Schema.String) }) }),
+			}),
 		}),
-	}).parse(await Bun.file(schemaPath).json());
+		await Bun.file(schemaPath).json(),
+	);
 	published.properties.managers.items.enum.push('homebrew');
 	await Bun.write(edited, jsonFile(published, '\t'));
 	try {
@@ -467,7 +485,7 @@ const workingConfigurations: Finding[] = [
 	},
 ];
 
-const finding = z.object({ code: z.string(), severity: z.string(), message: z.string() });
+const finding = mutableStruct({ code: Schema.String, severity: Schema.String, message: Schema.String });
 async function refreshed(edit: (configuration: WidgetDocument) => void, message: string) {
 	const repository = widget(world.github);
 	const configuration = widgetDocument();
@@ -477,7 +495,7 @@ async function refreshed(edit: (configuration: WidgetDocument) => void, message:
 	const api = bearer(world, await world.cliSession());
 	const discovered = await api('/api/repositories/discover', { repository: 'octo/widget' });
 	expect(discovered.status).toBe(200);
-	const findings = (await stored(repository.id)).findings.map(entry => finding.parse(entry));
+	const findings = (await stored(repository.id)).findings.map(entry => decodeSync(finding, entry));
 	const plan = await api('/api/releases/plan', { repositoryId: repository.id, stream: 'main', version: '1.1.0' });
 	return { discovered, findings, plan };
 }
@@ -549,15 +567,15 @@ test('setup preview names each schema problem in an invalid configuration', asyn
 	expect(field(preview.body, 'error')).toContain('streams.main.promote.approval');
 });
 
-const retiredKeys = z.looseObject({
-	configuration: z.looseObject({
-		streams: z.looseObject({
-			main: z.looseObject({ promote: z.looseObject({ workflow: z.looseObject({}) }) }),
+const retiredKeys = looseStruct({
+	configuration: looseStruct({
+		streams: looseStruct({
+			main: looseStruct({ promote: looseStruct({ workflow: looseStruct({}) }) }),
 		}),
 	}),
 });
-function withRetiredKeys(document: unknown): z.output<typeof retiredKeys> {
-	const parsed = retiredKeys.parse(document);
+function withRetiredKeys(document: unknown): Decoded<typeof retiredKeys> {
+	const parsed = decodeSync(retiredKeys, document);
 	parsed.configuration.retired = true;
 	parsed.configuration.streams.main.retired = true;
 	parsed.configuration.streams.main.promote.workflow.retired = true;
@@ -627,14 +645,17 @@ test('stored identities crash and outside package input stays a Result', () => {
 	expect(Result.isFailure(parsePackageIdentity(broken))).toBe(true);
 
 	const raw: unknown = JSON.parse(widgetConfiguration());
-	const edited = z.looseObject({
-		streams: z.looseObject({ main: z.looseObject({ packages: z.array(z.string()) }) }),
-	}).parse(raw);
+	const edited = decodeSync(
+		looseStruct({
+			streams: looseStruct({ main: looseStruct({ packages: mutableArray(Schema.String) }) }),
+		}),
+		raw,
+	);
 	edited.streams.main.packages = ['pkg:npm/'];
-	expect(configurationSchema.safeParse(edited).success).toBe(false);
+	expect(safeDecode(configurationSchema, edited).success).toBe(false);
 	expect(Result.isFailure(parseRepositoryConfiguration(edited))).toBe(true);
 
-	const configuration = configurationSchema.parse(JSON.parse(widgetConfiguration()));
+	const configuration = decodeSync(configurationSchema, JSON.parse(widgetConfiguration()));
 	const main = configuration.streams.main;
 	if (main === undefined) throw new Error('Missing main stream');
 	main.packages = ['pkg:npm/', 'pkg:npm/widget@1.2.3'];
@@ -668,7 +689,7 @@ test('the parser and schema agree on tag prefixes with directories', () => {
 		] as const
 	) {
 		expect(Result.isSuccess(parseRepositoryConfiguration(document(prefix)))).toBe(valid);
-		expect(configurationSchema.safeParse(document(prefix)).success).toBe(valid);
+		expect(safeDecode(configurationSchema, document(prefix)).success).toBe(valid);
 	}
 });
 
@@ -695,10 +716,10 @@ test('the parser and schema agree on job gates', () => {
 		] as const
 	) {
 		expect(Result.isSuccess(parseRepositoryConfiguration(value))).toBe(valid);
-		expect(configurationSchema.safeParse(value).success).toBe(valid);
+		expect(safeDecode(configurationSchema, value).success).toBe(valid);
 	}
-	const parsed = configurationSchema.parse(document({ release: ['plan'] }));
-	const encoded = storedConfiguration.parse(parsed).streams.main;
+	const parsed = decodeSync(configurationSchema, document({ release: ['plan'] }));
+	const encoded = decodeSync(storedConfiguration, parsed).streams.main;
 	expect(encoded?.workflows.crates?.needsJobs).toEqual({ release: ['plan'] });
 	expect(encoded?.needs).toEqual({ 'pkg:cargo/cli': ['pkg:cargo/core'] });
 	const legacy = parseRepositoryConfiguration(document({ release: ['plan'] }));
@@ -728,24 +749,40 @@ test('the parser and schema agree on operation dependencies, schedules and WinGe
 		] as const
 	) {
 		expect(Result.isSuccess(parseRepositoryConfiguration(value))).toBe(valid);
-		expect(configurationSchema.safeParse(value).success).toBe(valid);
+		expect(safeDecode(configurationSchema, value).success).toBe(valid);
 	}
 
 	const fourFields = parseRepositoryConfiguration(document({ nightly: { file: 'n.yml', schedule: '0 6 * *' } }));
 	expect(Result.isFailure(fourFields) && fourFields.failure.message).toBe('Schedules use five-field UTC cron');
 	const winget = { config: 'winget/widget.json', tagPrefix: 'v', automatic: false };
-	expect(configurationSchema.parse(document({}, { config: 'winget/widget.json' })).winget).toEqual(winget);
+	expect(decodeSync(configurationSchema, document({}, { config: 'winget/widget.json' })).winget).toEqual(winget);
 	const legacy = parseRepositoryConfiguration(document({}, { config: 'winget/widget.json' }));
 	expect(Result.isSuccess(legacy) && legacy.success.winget).toEqual(winget);
 
 	const broken = document({ a: { file: 'a.yml', needs: ['b', 'missing'] }, b: { file: 'b.yml', needs: ['a'] } });
 	const legacyBroken = parseRepositoryConfiguration(broken);
 	expect(Result.isFailure(legacyBroken) && legacyBroken.failure.message).toBe('Operation dependency cycle');
-	const schema = configurationSchema.safeParse(broken);
-	expect(schema.success ? [] : schema.error.issues.map(issueMessage)).toEqual([
+	const schema = safeDecode(configurationSchema, broken);
+	expect(schema.success ? [] : schemaIssues(schema.error).map(issueMessage)).toEqual([
 		'streams.main.workflows.a: Operation dependency cycle',
 		'streams.main.workflows.a.needs: Unknown dependency missing',
 	]);
 	const unknown = parseRepositoryConfiguration(document({ build: { file: 'build.yml', needs: ['missing'] } }));
 	expect(Result.isFailure(unknown) && unknown.failure.message).toBe('Unknown dependency missing');
+});
+
+test('invalid record keys and explicit null stay invalid in the runtime and published schema', async () => {
+	const validator = new Validator(await Bun.file(new URL('../../schemas/v1.json', import.meta.url)).json());
+	for (
+		const value of [
+			{ streams: { 'bad key': {} } },
+			{ streams: { main: { workflows: { 'bad key': { file: 'ci.yml' } } } } },
+			{ extends: null },
+			{ streams: { main: { packages: null } } },
+			{ streams: { main: { unexpected: true } } },
+		]
+	) {
+		expect(safeDecode(configurationSchema, value).success).toBe(false);
+		expect(validator.validate(value).valid).toBe(false);
+	}
 });

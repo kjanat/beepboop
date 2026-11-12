@@ -11,14 +11,27 @@ import { fakeSigner, signingKey } from '@root/test/support/signing.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
 import { experimental_AstroContainer } from 'astro/container';
-import { Effect } from 'effect';
+import { Effect, Schema, Struct } from 'effect';
 import { Window } from 'happy-dom';
-import { z } from 'zod';
 import { runFailedNote } from '@/automation/execution';
 import { Store } from '@/automation/store';
 import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableRecord,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 import { loaders } from '@/server/loaders';
 import { needingUser, releaseSetSummaries, releaseSummaries, runStateLabel } from '@/server/releases';
 import { overview } from '@/server/views/overview';
@@ -27,7 +40,9 @@ import { releaseStatus } from '@/server/views/tone';
 import { packageDestinations } from '@/ui/destinations';
 
 type Component = Parameters<experimental_AstroContainer['renderToString']>[0];
-const componentModule = z.object({ default: z.custom<Component>(value => typeof value === 'function') });
+const componentModule = mutableStruct({
+	default: Schema.declare<Component>((value): value is Component => typeof value === 'function'),
+});
 
 let world: World;
 eachWorld(created => {
@@ -165,7 +180,7 @@ async function finishedPromotion(outcome: 'pending' | 'skipped') {
 	const entry = (await world.coordinator(repository).exportJournal()).find(entry =>
 		entry.key === `execution:${promotion.id}`
 	);
-	const stored = z.record(z.string(), z.unknown()).parse(entry?.value);
+	const stored = decodeSync(mutableRecord(Schema.String, Schema.Unknown), entry?.value);
 	return { api, repository, merged, promotion, stored, token, finished: await only(api, 'promote') };
 }
 
@@ -304,7 +319,7 @@ test('the overview counts only runs that still need the user and shows each vers
 	expect(view.releases.find(release => release.version === finished.version)?.commit).toBe(finished.sourceSha);
 	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Overview.astro'));
 	const container = await experimental_AstroContainer.create();
-	const html = await container.renderToString(componentModule.parse(loaded).default, {
+	const html = await container.renderToString(decodeSync(componentModule, loaded).default, {
 		props: {
 			data: {
 				section: 'overview',
@@ -359,7 +374,7 @@ test('a run cancelled after a newer release started stays below the unfinished r
 	expect(view.waiting.map(entry => entry.id)).toEqual(['awaiting', 'stale-cancelled', 'stale-failed']);
 	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Overview.astro'));
 	const container = await experimental_AstroContainer.create();
-	const html = await container.renderToString(componentModule.parse(loaded).default, {
+	const html = await container.renderToString(decodeSync(componentModule, loaded).default, {
 		props: {
 			data: {
 				section: 'overview',
@@ -445,7 +460,7 @@ test.each(['1.1.0', 'v1.1.0', 'widget-v1.1.0', 'tools/v1.1.0'])(
 		];
 		const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Runs.astro'));
 		const container = await experimental_AstroContainer.create();
-		const html = await container.renderToString(componentModule.parse(loaded).default, {
+		const html = await container.renderToString(decodeSync(componentModule, loaded).default, {
 			props: { data: { section: 'runs', executions: { readable, unreadable: [] }, repositories: [] } },
 			request: new Request(`${origin}/runs`),
 		});
@@ -572,7 +587,7 @@ test('the runs page filters by repository and folds a settled release', async ()
 	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Runs.astro'));
 	const container = await experimental_AstroContainer.create();
 	const render = async (selected?: string) => {
-		const html = await container.renderToString(componentModule.parse(loaded).default, {
+		const html = await container.renderToString(decodeSync(componentModule, loaded).default, {
 			props: {
 				data: {
 					section: 'runs',
@@ -656,7 +671,7 @@ test('an earlier run that still needs the user decides its stage and stays unfol
 	]);
 	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Runs.astro'));
 	const container = await experimental_AstroContainer.create();
-	const html = await container.renderToString(componentModule.parse(loaded).default, {
+	const html = await container.renderToString(decodeSync(componentModule, loaded).default, {
 		props: { data: { section: 'runs', executions: { readable, unreadable: [] }, repositories: [] } },
 		request: new Request(`${origin}/runs`),
 	});
@@ -690,7 +705,7 @@ test('a stage whose run failed after publishing is green and says the run failed
 	]);
 	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Runs.astro'));
 	const container = await experimental_AstroContainer.create();
-	const html = await container.renderToString(componentModule.parse(loaded).default, {
+	const html = await container.renderToString(decodeSync(componentModule, loaded).default, {
 		props: { data: { section: 'runs', executions: { readable, unreadable: [] }, repositories: [] } },
 		request: new Request(`${origin}/runs`),
 	});
@@ -926,13 +941,19 @@ test('a finished run whose publication cannot be rechecked is blocked and needs 
 test('a stored blocked promotion decodes as verifying only when a recheck can settle it', async () => {
 	const { stored } = await finishedPromotion('pending');
 	expect(decodeExecutionV1({ ...stored, state: 'blocked' }).state).toBe('verifying');
-	const workflow = { ...z.record(z.string(), z.unknown()).parse(stored['workflow']), publications: ['pkg:npm/other'] };
+	const workflow = {
+		...decodeSync(mutableRecord(Schema.String, Schema.Unknown), stored['workflow']),
+		publications: ['pkg:npm/other'],
+	};
 	expect(decodeExecutionV1({ ...stored, state: 'blocked', workflow }).state).toBe('blocked');
 });
 
 test('the state filter matches the state a stored blocked run decodes to and keeps the limit correct', async () => {
 	const { stored, finished } = await finishedPromotion('pending');
-	const workflow = { ...z.record(z.string(), z.unknown()).parse(stored['workflow']), publications: ['pkg:npm/other'] };
+	const workflow = {
+		...decodeSync(mutableRecord(Schema.String, Schema.Unknown), stored['workflow']),
+		publications: ['pkg:npm/other'],
+	};
 	const { approvedAt: _approvedAt, ...unapproved } = stored;
 	const legacy = [
 		{ id: finished.id, document: { ...stored, state: 'blocked' }, updatedAt: 3_000 },
@@ -1019,6 +1040,7 @@ test('a merge-approved release whose merge cannot be confirmed waits for approva
 	expect(logged.events()).toEqual([{
 		event: 'preparation-merge.failed',
 		repository: 'octo/widget',
+		repositoryId: repository.id,
 		pull: `https://github.com/octo/widget/pull/${pull.number}`,
 		error:
 			`GitHub HTTP 403 on GET /repos/octo/widget/compare/${merged.sha}...${merged.sha}: Resource not accessible by integration`,
@@ -1063,7 +1085,8 @@ test('a companion module tag is pushed on the release commit beside the version 
 
 async function removeCompanionModule(): Promise<void> {
 	const target = world.github.repository('octo/widget');
-	const configuration = z.looseObject({ streams: z.looseObject({ main: z.looseObject({}) }) }).parse(
+	const configuration = decodeSync(
+		looseStruct({ streams: looseStruct({ main: looseStruct({}) }) }),
 		JSON.parse(world.github.file(target, '.github/beepboop.json') ?? '{}'),
 	);
 	delete configuration.streams.main.companionModules;
@@ -1101,7 +1124,7 @@ test('a release stored without its companion modules reads them from discovery',
 			const target = world.github.repository('octo/widget');
 			const storage = world.coordinators.instance(String(target.id)).storage;
 			const key = `execution:${promotionId}`;
-			const stored = z.looseObject({ moduleTags: z.unknown() }).parse(await storage.get(key));
+			const stored = decodeSync(looseStruct({ moduleTags: Schema.Unknown }), await storage.get(key));
 			expect(stored.moduleTags).toEqual([{ id: 'pkg:golang/github.com/octo/widget/go', prefix: 'go/v' }]);
 			delete stored.moduleTags;
 			await storage.put(key, stored);
@@ -1246,7 +1269,7 @@ test('publish-release creates a missing release with the same cleaned notes', as
 			target.releases = [];
 			const storage = world.coordinators.instance(String(target.id)).storage;
 			const key = `execution:${promotionId}`;
-			const stored = z.looseObject({ draftRelease: z.unknown() }).parse(await storage.get(key));
+			const stored = decodeSync(looseStruct({ draftRelease: Schema.Unknown }), await storage.get(key));
 			delete stored.draftRelease;
 			await storage.put(key, stored);
 		},

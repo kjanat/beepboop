@@ -1,14 +1,12 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
 	"$id": "https://beepboop.kjanat.dev/schema/v1.json",
-	"title": "Repository release automation",
 	"type": "object",
 	"properties": {
 		"$schema": {
 			"type": "string"
 		},
 		"extends": {
-			"default": [],
 			"type": "array",
 			"items": {
 				"type": "string",
@@ -16,20 +14,6 @@
 			}
 		},
 		"managers": {
-			"default": [
-				"pre-commit",
-				"cargo",
-				"npm",
-				"jsr",
-				"pypi",
-				"github-release",
-				"oci",
-				"goreleaser",
-				"go",
-				"vscode",
-				"manifest",
-				"workflow"
-			],
 			"type": "array",
 			"items": {
 				"type": "string",
@@ -51,804 +35,2307 @@
 		},
 		"streams": {
 			"type": "object",
+			"patternProperties": {
+				"^[a-z][a-z0-9-]{0,63}$": {
+					"type": "object",
+					"properties": {
+						"versionScope": {
+							"type": "string",
+							"enum": [
+								"one-for-stream",
+								"per-package",
+								"none"
+							],
+							"description": "Which packages share a version. one-for-stream: Every package in the release group gets the same version. per-package: Each package gets its own version. none: The release group carries no version."
+						},
+						"versioning": {
+							"type": "string",
+							"enum": [
+								"workspace",
+								"independent",
+								"none"
+							]
+						},
+						"versionFiles": {
+							"type": "array",
+							"items": {
+								"anyOf": [
+									{
+										"type": "object",
+										"properties": {
+											"path": {
+												"type": "string"
+											},
+											"group": {
+												"type": "string",
+												"minLength": 1
+											},
+											"template": {
+												"type": "string",
+												"maxLength": 1000
+											},
+											"format": {
+												"type": "string",
+												"enum": [
+													"json"
+												]
+											},
+											"key": {
+												"type": "array",
+												"items": {
+													"anyOf": [
+														{
+															"type": "string",
+															"minLength": 1
+														},
+														{
+															"type": "integer",
+															"minimum": 0,
+															"maximum": 9007199254740991
+														}
+													]
+												},
+												"minItems": 1
+											}
+										},
+										"required": [
+											"path",
+											"format",
+											"key"
+										],
+										"allOf": [
+											{
+												"type": "object",
+												"additionalProperties": {}
+											}
+										],
+										"propertyNames": {
+											"enum": [
+												"path",
+												"group",
+												"template",
+												"format",
+												"key"
+											]
+										}
+									},
+									{
+										"type": "object",
+										"properties": {
+											"path": {
+												"type": "string"
+											},
+											"group": {
+												"type": "string",
+												"minLength": 1
+											},
+											"template": {
+												"type": "string",
+												"maxLength": 1000
+											},
+											"format": {
+												"type": "string",
+												"enum": [
+													"yaml"
+												]
+											},
+											"key": {
+												"type": "array",
+												"items": {
+													"anyOf": [
+														{
+															"type": "string",
+															"minLength": 1
+														},
+														{
+															"type": "integer",
+															"minimum": 0,
+															"maximum": 9007199254740991
+														}
+													]
+												},
+												"minItems": 1
+											}
+										},
+										"required": [
+											"path",
+											"format",
+											"key"
+										],
+										"allOf": [
+											{
+												"type": "object",
+												"additionalProperties": {}
+											}
+										],
+										"propertyNames": {
+											"enum": [
+												"path",
+												"group",
+												"template",
+												"format",
+												"key"
+											]
+										}
+									},
+									{
+										"type": "object",
+										"properties": {
+											"path": {
+												"type": "string"
+											},
+											"group": {
+												"type": "string",
+												"minLength": 1
+											},
+											"template": {
+												"type": "string",
+												"maxLength": 1000
+											},
+											"format": {
+												"type": "string",
+												"enum": [
+													"toml"
+												]
+											},
+											"key": {
+												"type": "array",
+												"items": {
+													"type": "string",
+													"pattern": "^[A-Za-z0-9_-]+$"
+												},
+												"minItems": 1
+											}
+										},
+										"required": [
+											"path",
+											"format",
+											"key"
+										],
+										"allOf": [
+											{
+												"type": "object",
+												"additionalProperties": {}
+											}
+										],
+										"propertyNames": {
+											"enum": [
+												"path",
+												"group",
+												"template",
+												"format",
+												"key"
+											]
+										}
+									},
+									{
+										"type": "object",
+										"properties": {
+											"path": {
+												"type": "string"
+											},
+											"group": {
+												"type": "string",
+												"minLength": 1
+											},
+											"template": {
+												"type": "string",
+												"maxLength": 1000
+											},
+											"format": {
+												"type": "string",
+												"enum": [
+													"text"
+												]
+											},
+											"prefix": {
+												"type": "string",
+												"minLength": 1
+											},
+											"suffix": {
+												"type": "string",
+												"minLength": 1
+											}
+										},
+										"required": [
+											"path",
+											"format",
+											"prefix",
+											"suffix"
+										],
+										"allOf": [
+											{
+												"type": "object",
+												"additionalProperties": {}
+											}
+										],
+										"propertyNames": {
+											"enum": [
+												"path",
+												"group",
+												"template",
+												"format",
+												"prefix",
+												"suffix"
+											]
+										}
+									}
+								]
+							}
+						},
+						"versionSource": {
+							"type": "object",
+							"properties": {
+								"kind": {
+									"type": "string",
+									"enum": [
+										"tags"
+									]
+								},
+								"prefix": {
+									"type": "string",
+									"pattern": "^(?:[A-Za-z0-9._-]+\\/)*[A-Za-z0-9._-]*$"
+								}
+							},
+							"required": [
+								"kind",
+								"prefix"
+							],
+							"allOf": [
+								{
+									"type": "object",
+									"additionalProperties": {}
+								}
+							],
+							"propertyNames": {
+								"enum": [
+									"kind",
+									"prefix"
+								]
+							}
+						},
+						"packages": {
+							"type": "array",
+							"items": {
+								"type": "string",
+								"minLength": 1
+							}
+						},
+						"companionModules": {
+							"type": "array",
+							"items": {
+								"type": "string",
+								"minLength": 1
+							},
+							"description": "Go modules whose version tag is pushed on the release commit together with the stream tag, such as go/v1.2.3 beside cli-v1.2.3. Each module keeps its own stream."
+						},
+						"prepare": {
+							"type": "object",
+							"properties": {
+								"version": {
+									"type": "string",
+									"enum": [
+										"manual"
+									]
+								},
+								"workflow": {
+									"type": "object",
+									"properties": {
+										"file": {
+											"type": "string",
+											"pattern": "^[\\w-][\\w.-]*\\.ya?ml$"
+										},
+										"ref": {
+											"type": "string",
+											"pattern": "^(?:refs\\/(?:heads|tags)\\/)?[A-Za-z0-9][A-Za-z0-9._/-]*\\*?$"
+										},
+										"inputs": {
+											"type": "object",
+											"allOf": [
+												{
+													"type": "object",
+													"additionalProperties": {
+														"anyOf": [
+															{
+																"type": "string"
+															},
+															{
+																"type": "boolean"
+															},
+															{
+																"type": "number"
+															}
+														]
+													}
+												},
+												{
+													"type": "object",
+													"additionalProperties": {}
+												}
+											],
+											"propertyNames": {
+												"type": "string"
+											}
+										},
+										"required": {
+											"type": "boolean"
+										},
+										"needs": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"minLength": 1
+											}
+										},
+										"needsJobs": {
+											"type": "object",
+											"patternProperties": {
+												"^[a-z][a-z0-9-]{0,63}$": {
+													"type": "array",
+													"items": {
+														"type": "string",
+														"pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+													},
+													"minItems": 1
+												}
+											},
+											"allOf": [
+												{
+													"type": "object",
+													"additionalProperties": {}
+												}
+											],
+											"description": "Jobs of an observed operation in needs that must succeed before this operation starts, keyed by that operation",
+											"propertyNames": {
+												"type": "string",
+												"pattern": "^[a-z][a-z0-9-]{0,63}$"
+											}
+										},
+										"schedule": {
+											"type": "string",
+											"minLength": 1
+										},
+										"publications": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"minLength": 1
+											}
+										},
+										"mode": {
+											"type": "string",
+											"enum": [
+												"observe",
+												"dispatch"
+											]
+										},
+										"each": {
+											"type": "string",
+											"enum": [
+												"package"
+											]
+										},
+										"refs": {
+											"type": "object",
+											"properties": {
+												"phase": {
+													"type": "string",
+													"enum": [
+														"version",
+														"aliases"
+													]
+												},
+												"prefix": {
+													"type": "string",
+													"pattern": "^(?:[A-Za-z0-9._-]+\\/)*[A-Za-z0-9._-]*$"
+												},
+												"aliases": {
+													"type": "array",
+													"items": {
+														"type": "string",
+														"enum": [
+															"major",
+															"minor"
+														]
+													}
+												},
+												"signed": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"phase"
+											],
+											"allOf": [
+												{
+													"type": "object",
+													"additionalProperties": {}
+												}
+											],
+											"propertyNames": {
+												"enum": [
+													"phase",
+													"prefix",
+													"aliases",
+													"signed"
+												]
+											}
+										},
+										"platform": {
+											"type": "object",
+											"properties": {
+												"os": {
+													"type": "string",
+													"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+												},
+												"arch": {
+													"type": "string",
+													"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+												},
+												"abi": {
+													"type": "string",
+													"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+												}
+											},
+											"required": [
+												"os",
+												"arch"
+											],
+											"allOf": [
+												{
+													"type": "object",
+													"additionalProperties": {}
+												}
+											],
+											"propertyNames": {
+												"enum": [
+													"os",
+													"arch",
+													"abi"
+												]
+											}
+										},
+										"outputs": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+													},
+													"kind": {
+														"type": "string",
+														"enum": [
+															"archive",
+															"binary",
+															"manifest",
+															"package",
+															"checksums"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"kind"
+												],
+												"allOf": [
+													{
+														"type": "object",
+														"additionalProperties": {}
+													}
+												],
+												"propertyNames": {
+													"enum": [
+														"id",
+														"kind"
+													]
+												}
+											}
+										},
+										"artifactInputs": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"operation": {
+														"type": "string",
+														"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+													},
+													"output": {
+														"type": "string",
+														"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+													}
+												},
+												"required": [
+													"operation",
+													"output"
+												],
+												"allOf": [
+													{
+														"type": "object",
+														"additionalProperties": {}
+													}
+												],
+												"propertyNames": {
+													"enum": [
+														"operation",
+														"output"
+													]
+												}
+											}
+										},
+										"setup": {
+											"type": "object",
+											"properties": {
+												"job": {
+													"type": "string"
+												},
+												"commands": {
+													"type": "string"
+												},
+												"publicationSteps": {
+													"type": "object",
+													"allOf": [
+														{
+															"type": "object",
+															"additionalProperties": {
+																"type": "string"
+															}
+														},
+														{
+															"type": "object",
+															"additionalProperties": {}
+														}
+													],
+													"propertyNames": {
+														"type": "string"
+													}
+												},
+												"credentials": {
+													"type": "object",
+													"patternProperties": {
+														"^[A-Z_][A-Z0-9_]*$": {
+															"type": "string",
+															"pattern": "^[\\w-]{1,64}$"
+														}
+													},
+													"allOf": [
+														{
+															"type": "object",
+															"additionalProperties": {}
+														}
+													],
+													"propertyNames": {
+														"type": "string",
+														"pattern": "^[A-Z_][A-Z0-9_]*$"
+													}
+												},
+												"tagPrefix": {
+													"type": "string",
+													"pattern": "^(?:[A-Za-z0-9._-]+\\/)*[A-Za-z0-9._-]*$"
+												},
+												"binaries": {
+													"type": "object",
+													"properties": {
+														"builds": {
+															"type": "array",
+															"items": {
+																"anyOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"toolchain": {
+																				"type": "string",
+																				"enum": [
+																					"go"
+																				]
+																			},
+																			"name": {
+																				"type": "string",
+																				"pattern": "^[A-Za-z0-9][\\w.-]*$"
+																			},
+																			"module": {
+																				"type": "string",
+																				"pattern": "^(?:\\.|[\\w.-]+(?:\\/[\\w.-]+)*)$"
+																			},
+																			"package": {
+																				"type": "string",
+																				"pattern": "^\\.(?:\\/[\\w.-]+)*$"
+																			},
+																			"asset": {
+																				"type": "string",
+																				"pattern": "^(?:[\\w.-]|\\{[\\w.]+\\})+$"
+																			}
+																		},
+																		"required": [
+																			"toolchain",
+																			"name",
+																			"module"
+																		],
+																		"allOf": [
+																			{
+																				"type": "object",
+																				"additionalProperties": {}
+																			}
+																		],
+																		"propertyNames": {
+																			"enum": [
+																				"toolchain",
+																				"name",
+																				"module",
+																				"package",
+																				"asset"
+																			]
+																		}
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"toolchain": {
+																				"type": "string",
+																				"enum": [
+																					"cargo"
+																				]
+																			},
+																			"name": {
+																				"type": "string",
+																				"pattern": "^[A-Za-z0-9][\\w.-]*$"
+																			},
+																			"manifest": {
+																				"type": "string",
+																				"pattern": "^(?:[\\w.-]+\\/)*Cargo\\.toml$"
+																			},
+																			"asset": {
+																				"type": "string",
+																				"pattern": "^(?:[\\w.-]|\\{[\\w.]+\\})+$"
+																			}
+																		},
+																		"required": [
+																			"toolchain",
+																			"name",
+																			"manifest"
+																		],
+																		"allOf": [
+																			{
+																				"type": "object",
+																				"additionalProperties": {}
+																			}
+																		],
+																		"propertyNames": {
+																			"enum": [
+																				"toolchain",
+																				"name",
+																				"manifest",
+																				"asset"
+																			]
+																		}
+																	}
+																]
+															},
+															"minItems": 1
+														},
+														"targets": {
+															"type": "array",
+															"items": {
+																"type": "string",
+																"enum": [
+																	"linux-amd64",
+																	"linux-arm64",
+																	"darwin-amd64",
+																	"darwin-arm64",
+																	"windows-amd64",
+																	"windows-arm64",
+																	"android-amd64",
+																	"android-arm64",
+																	"android-arm",
+																	"android-386",
+																	"freebsd-amd64",
+																	"freebsd-386",
+																	"freebsd-arm64",
+																	"netbsd-amd64",
+																	"netbsd-arm64",
+																	"openbsd-amd64",
+																	"openbsd-arm64",
+																	"dragonfly-amd64",
+																	"solaris-amd64",
+																	"illumos-amd64",
+																	"aix-ppc64"
+																]
+															},
+															"minItems": 1
+														}
+													},
+													"required": [
+														"builds"
+													],
+													"allOf": [
+														{
+															"type": "object",
+															"additionalProperties": {}
+														}
+													],
+													"propertyNames": {
+														"enum": [
+															"builds",
+															"targets"
+														]
+													}
+												},
+												"existingTriggers": {
+													"type": "string",
+													"enum": [
+														"keep-and-report",
+														"replace-with-dispatch",
+														"keep-and-block-conflicts"
+													],
+													"description": "What happens to the existing triggers of a workflow Beepboop runs. keep-and-report: The workflow keeps its existing triggers. Beepboop reports a trigger that conflicts with its dispatch. replace-with-dispatch: Beepboop replaces the workflow's existing triggers with its own dispatch. keep-and-block-conflicts: The workflow keeps its existing triggers. Beepboop blocks the setup when a trigger cannot work with its dispatch."
+												},
+												"triggers": {
+													"type": "string",
+													"enum": [
+														"review",
+														"dispatchOnly",
+														"preserve"
+													]
+												}
+											},
+											"additionalProperties": true
+										}
+									},
+									"required": [
+										"file"
+									],
+									"allOf": [
+										{
+											"type": "object",
+											"additionalProperties": {}
+										}
+									],
+									"propertyNames": {
+										"enum": [
+											"file",
+											"ref",
+											"inputs",
+											"required",
+											"needs",
+											"needsJobs",
+											"schedule",
+											"publications",
+											"mode",
+											"each",
+											"refs",
+											"platform",
+											"outputs",
+											"artifactInputs",
+											"setup"
+										]
+									}
+								},
+								"strategy": {
+									"type": "string",
+									"enum": [
+										"managed",
+										"workflow"
+									]
+								},
+								"versionLands": {
+									"type": "string",
+									"enum": [
+										"via-version-pr",
+										"via-direct-commit"
+									],
+									"description": "How a new version reaches the default branch. via-version-pr: Beepboop opens a version PR, and merging it puts the new version on the default branch. via-direct-commit: Beepboop pushes a signed commit with the new version straight to the default branch."
+								},
+								"bump": {
+									"$ref": "#/$defs/versionBump"
+								},
+								"versionPrMerge": {
+									"type": "string",
+									"enum": [
+										"manual",
+										"squash",
+										"merge",
+										"rebase"
+									],
+									"description": "Who merges the version PR. manual: You merge the version PR yourself. squash: Beepboop turns on GitHub auto-merge, and GitHub squashes the version PR into one commit once its checks pass. With `publishWhen: version-pr-merged`, the release then publishes with nobody touching it. merge: Beepboop turns on GitHub auto-merge, and GitHub merges the version PR with a merge commit once its checks pass. With `publishWhen: version-pr-merged`, the release then publishes with nobody touching it. rebase: Beepboop turns on GitHub auto-merge, and GitHub rebases the version PR onto the default branch once its checks pass. With `publishWhen: version-pr-merged`, the release then publishes with nobody touching it."
+								}
+							},
+							"allOf": [
+								{
+									"type": "object",
+									"additionalProperties": {}
+								}
+							],
+							"propertyNames": {
+								"enum": [
+									"version",
+									"workflow",
+									"strategy",
+									"versionLands",
+									"bump",
+									"versionPrMerge"
+								]
+							}
+						},
+						"promote": {
+							"type": "object",
+							"properties": {
+								"publishWhen": {
+									"type": "string",
+									"enum": [
+										"approved-in-beepboop",
+										"version-pr-merged",
+										"version-commit-pushed"
+									],
+									"description": "When a version on the default branch publishes. approved-in-beepboop: You publish it: the Publish button in Beepboop or `beepboop runs publish`. Approving or merging the version PR on GitHub does not publish. version-pr-merged: Merging the version PR publishes it once the checks pass. Nobody publishes it in Beepboop. version-commit-pushed: A signed commit that raises the version publishes it once the checks pass, with no review."
+								},
+								"approval": {
+									"type": "string",
+									"enum": [
+										"required",
+										"merge",
+										"push"
+									]
+								},
+								"workflow": {
+									"type": "object",
+									"properties": {
+										"file": {
+											"type": "string",
+											"pattern": "^[\\w-][\\w.-]*\\.ya?ml$"
+										},
+										"ref": {
+											"type": "string",
+											"pattern": "^(?:refs\\/(?:heads|tags)\\/)?[A-Za-z0-9][A-Za-z0-9._/-]*\\*?$"
+										},
+										"inputs": {
+											"type": "object",
+											"allOf": [
+												{
+													"type": "object",
+													"additionalProperties": {
+														"anyOf": [
+															{
+																"type": "string"
+															},
+															{
+																"type": "boolean"
+															},
+															{
+																"type": "number"
+															}
+														]
+													}
+												},
+												{
+													"type": "object",
+													"additionalProperties": {}
+												}
+											],
+											"propertyNames": {
+												"type": "string"
+											}
+										},
+										"required": {
+											"type": "boolean"
+										},
+										"needs": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"minLength": 1
+											}
+										},
+										"needsJobs": {
+											"type": "object",
+											"patternProperties": {
+												"^[a-z][a-z0-9-]{0,63}$": {
+													"type": "array",
+													"items": {
+														"type": "string",
+														"pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+													},
+													"minItems": 1
+												}
+											},
+											"allOf": [
+												{
+													"type": "object",
+													"additionalProperties": {}
+												}
+											],
+											"description": "Jobs of an observed operation in needs that must succeed before this operation starts, keyed by that operation",
+											"propertyNames": {
+												"type": "string",
+												"pattern": "^[a-z][a-z0-9-]{0,63}$"
+											}
+										},
+										"schedule": {
+											"type": "string",
+											"minLength": 1
+										},
+										"publications": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"minLength": 1
+											}
+										},
+										"mode": {
+											"type": "string",
+											"enum": [
+												"observe",
+												"dispatch"
+											]
+										},
+										"each": {
+											"type": "string",
+											"enum": [
+												"package"
+											]
+										},
+										"refs": {
+											"type": "object",
+											"properties": {
+												"phase": {
+													"type": "string",
+													"enum": [
+														"version",
+														"aliases"
+													]
+												},
+												"prefix": {
+													"type": "string",
+													"pattern": "^(?:[A-Za-z0-9._-]+\\/)*[A-Za-z0-9._-]*$"
+												},
+												"aliases": {
+													"type": "array",
+													"items": {
+														"type": "string",
+														"enum": [
+															"major",
+															"minor"
+														]
+													}
+												},
+												"signed": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"phase"
+											],
+											"allOf": [
+												{
+													"type": "object",
+													"additionalProperties": {}
+												}
+											],
+											"propertyNames": {
+												"enum": [
+													"phase",
+													"prefix",
+													"aliases",
+													"signed"
+												]
+											}
+										},
+										"platform": {
+											"type": "object",
+											"properties": {
+												"os": {
+													"type": "string",
+													"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+												},
+												"arch": {
+													"type": "string",
+													"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+												},
+												"abi": {
+													"type": "string",
+													"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+												}
+											},
+											"required": [
+												"os",
+												"arch"
+											],
+											"allOf": [
+												{
+													"type": "object",
+													"additionalProperties": {}
+												}
+											],
+											"propertyNames": {
+												"enum": [
+													"os",
+													"arch",
+													"abi"
+												]
+											}
+										},
+										"outputs": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+													},
+													"kind": {
+														"type": "string",
+														"enum": [
+															"archive",
+															"binary",
+															"manifest",
+															"package",
+															"checksums"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"kind"
+												],
+												"allOf": [
+													{
+														"type": "object",
+														"additionalProperties": {}
+													}
+												],
+												"propertyNames": {
+													"enum": [
+														"id",
+														"kind"
+													]
+												}
+											}
+										},
+										"artifactInputs": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"operation": {
+														"type": "string",
+														"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+													},
+													"output": {
+														"type": "string",
+														"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+													}
+												},
+												"required": [
+													"operation",
+													"output"
+												],
+												"allOf": [
+													{
+														"type": "object",
+														"additionalProperties": {}
+													}
+												],
+												"propertyNames": {
+													"enum": [
+														"operation",
+														"output"
+													]
+												}
+											}
+										},
+										"setup": {
+											"type": "object",
+											"properties": {
+												"job": {
+													"type": "string"
+												},
+												"commands": {
+													"type": "string"
+												},
+												"publicationSteps": {
+													"type": "object",
+													"allOf": [
+														{
+															"type": "object",
+															"additionalProperties": {
+																"type": "string"
+															}
+														},
+														{
+															"type": "object",
+															"additionalProperties": {}
+														}
+													],
+													"propertyNames": {
+														"type": "string"
+													}
+												},
+												"credentials": {
+													"type": "object",
+													"patternProperties": {
+														"^[A-Z_][A-Z0-9_]*$": {
+															"type": "string",
+															"pattern": "^[\\w-]{1,64}$"
+														}
+													},
+													"allOf": [
+														{
+															"type": "object",
+															"additionalProperties": {}
+														}
+													],
+													"propertyNames": {
+														"type": "string",
+														"pattern": "^[A-Z_][A-Z0-9_]*$"
+													}
+												},
+												"tagPrefix": {
+													"type": "string",
+													"pattern": "^(?:[A-Za-z0-9._-]+\\/)*[A-Za-z0-9._-]*$"
+												},
+												"binaries": {
+													"type": "object",
+													"properties": {
+														"builds": {
+															"type": "array",
+															"items": {
+																"anyOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"toolchain": {
+																				"type": "string",
+																				"enum": [
+																					"go"
+																				]
+																			},
+																			"name": {
+																				"type": "string",
+																				"pattern": "^[A-Za-z0-9][\\w.-]*$"
+																			},
+																			"module": {
+																				"type": "string",
+																				"pattern": "^(?:\\.|[\\w.-]+(?:\\/[\\w.-]+)*)$"
+																			},
+																			"package": {
+																				"type": "string",
+																				"pattern": "^\\.(?:\\/[\\w.-]+)*$"
+																			},
+																			"asset": {
+																				"type": "string",
+																				"pattern": "^(?:[\\w.-]|\\{[\\w.]+\\})+$"
+																			}
+																		},
+																		"required": [
+																			"toolchain",
+																			"name",
+																			"module"
+																		],
+																		"allOf": [
+																			{
+																				"type": "object",
+																				"additionalProperties": {}
+																			}
+																		],
+																		"propertyNames": {
+																			"enum": [
+																				"toolchain",
+																				"name",
+																				"module",
+																				"package",
+																				"asset"
+																			]
+																		}
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"toolchain": {
+																				"type": "string",
+																				"enum": [
+																					"cargo"
+																				]
+																			},
+																			"name": {
+																				"type": "string",
+																				"pattern": "^[A-Za-z0-9][\\w.-]*$"
+																			},
+																			"manifest": {
+																				"type": "string",
+																				"pattern": "^(?:[\\w.-]+\\/)*Cargo\\.toml$"
+																			},
+																			"asset": {
+																				"type": "string",
+																				"pattern": "^(?:[\\w.-]|\\{[\\w.]+\\})+$"
+																			}
+																		},
+																		"required": [
+																			"toolchain",
+																			"name",
+																			"manifest"
+																		],
+																		"allOf": [
+																			{
+																				"type": "object",
+																				"additionalProperties": {}
+																			}
+																		],
+																		"propertyNames": {
+																			"enum": [
+																				"toolchain",
+																				"name",
+																				"manifest",
+																				"asset"
+																			]
+																		}
+																	}
+																]
+															},
+															"minItems": 1
+														},
+														"targets": {
+															"type": "array",
+															"items": {
+																"type": "string",
+																"enum": [
+																	"linux-amd64",
+																	"linux-arm64",
+																	"darwin-amd64",
+																	"darwin-arm64",
+																	"windows-amd64",
+																	"windows-arm64",
+																	"android-amd64",
+																	"android-arm64",
+																	"android-arm",
+																	"android-386",
+																	"freebsd-amd64",
+																	"freebsd-386",
+																	"freebsd-arm64",
+																	"netbsd-amd64",
+																	"netbsd-arm64",
+																	"openbsd-amd64",
+																	"openbsd-arm64",
+																	"dragonfly-amd64",
+																	"solaris-amd64",
+																	"illumos-amd64",
+																	"aix-ppc64"
+																]
+															},
+															"minItems": 1
+														}
+													},
+													"required": [
+														"builds"
+													],
+													"allOf": [
+														{
+															"type": "object",
+															"additionalProperties": {}
+														}
+													],
+													"propertyNames": {
+														"enum": [
+															"builds",
+															"targets"
+														]
+													}
+												},
+												"existingTriggers": {
+													"type": "string",
+													"enum": [
+														"keep-and-report",
+														"replace-with-dispatch",
+														"keep-and-block-conflicts"
+													],
+													"description": "What happens to the existing triggers of a workflow Beepboop runs. keep-and-report: The workflow keeps its existing triggers. Beepboop reports a trigger that conflicts with its dispatch. replace-with-dispatch: Beepboop replaces the workflow's existing triggers with its own dispatch. keep-and-block-conflicts: The workflow keeps its existing triggers. Beepboop blocks the setup when a trigger cannot work with its dispatch."
+												},
+												"triggers": {
+													"type": "string",
+													"enum": [
+														"review",
+														"dispatchOnly",
+														"preserve"
+													]
+												}
+											},
+											"additionalProperties": true
+										}
+									},
+									"required": [
+										"file"
+									],
+									"allOf": [
+										{
+											"type": "object",
+											"additionalProperties": {}
+										}
+									],
+									"propertyNames": {
+										"enum": [
+											"file",
+											"ref",
+											"inputs",
+											"required",
+											"needs",
+											"needsJobs",
+											"schedule",
+											"publications",
+											"mode",
+											"each",
+											"refs",
+											"platform",
+											"outputs",
+											"artifactInputs",
+											"setup"
+										]
+									}
+								}
+							},
+							"allOf": [
+								{
+									"type": "object",
+									"additionalProperties": {}
+								}
+							],
+							"propertyNames": {
+								"enum": [
+									"publishWhen",
+									"approval",
+									"workflow"
+								]
+							}
+						},
+						"startFrom": {
+							"type": "array",
+							"items": {
+								"anyOf": [
+									{
+										"type": "object",
+										"properties": {
+											"via": {
+												"type": "string",
+												"enum": [
+													"action"
+												]
+											},
+											"workflow": {
+												"type": "string",
+												"pattern": "^[\\w-][\\w.-]*\\.ya?ml$"
+											}
+										},
+										"required": [
+											"via",
+											"workflow"
+										],
+										"allOf": [
+											{
+												"type": "object",
+												"additionalProperties": {}
+											}
+										],
+										"propertyNames": {
+											"enum": [
+												"via",
+												"workflow"
+											]
+										}
+									},
+									{
+										"type": "object",
+										"properties": {
+											"via": {
+												"type": "string",
+												"enum": [
+													"dashboard"
+												]
+											}
+										},
+										"required": [
+											"via"
+										],
+										"allOf": [
+											{
+												"type": "object",
+												"additionalProperties": {}
+											}
+										],
+										"propertyNames": {
+											"enum": [
+												"via"
+											]
+										}
+									},
+									{
+										"type": "object",
+										"properties": {
+											"via": {
+												"type": "string",
+												"enum": [
+													"cli"
+												]
+											}
+										},
+										"required": [
+											"via"
+										],
+										"allOf": [
+											{
+												"type": "object",
+												"additionalProperties": {}
+											}
+										],
+										"propertyNames": {
+											"enum": [
+												"via"
+											]
+										}
+									}
+								]
+							}
+						},
+						"start": {
+							"type": "array",
+							"items": {
+								"anyOf": [
+									{
+										"type": "object",
+										"properties": {
+											"via": {
+												"type": "string",
+												"enum": [
+													"action"
+												]
+											},
+											"workflow": {
+												"type": "string",
+												"pattern": "^[\\w-][\\w.-]*\\.ya?ml$"
+											}
+										},
+										"required": [
+											"via",
+											"workflow"
+										],
+										"allOf": [
+											{
+												"type": "object",
+												"additionalProperties": {}
+											}
+										],
+										"propertyNames": {
+											"enum": [
+												"via",
+												"workflow"
+											]
+										}
+									},
+									{
+										"type": "object",
+										"properties": {
+											"via": {
+												"type": "string",
+												"enum": [
+													"dashboard"
+												]
+											}
+										},
+										"required": [
+											"via"
+										],
+										"allOf": [
+											{
+												"type": "object",
+												"additionalProperties": {}
+											}
+										],
+										"propertyNames": {
+											"enum": [
+												"via"
+											]
+										}
+									},
+									{
+										"type": "object",
+										"properties": {
+											"via": {
+												"type": "string",
+												"enum": [
+													"cli"
+												]
+											}
+										},
+										"required": [
+											"via"
+										],
+										"allOf": [
+											{
+												"type": "object",
+												"additionalProperties": {}
+											}
+										],
+										"propertyNames": {
+											"enum": [
+												"via"
+											]
+										}
+									}
+								]
+							}
+						},
+						"workflows": {
+							"type": "object",
+							"patternProperties": {
+								"^[a-z][a-z0-9-]{0,63}$": {
+									"type": "object",
+									"properties": {
+										"file": {
+											"type": "string",
+											"pattern": "^[\\w-][\\w.-]*\\.ya?ml$"
+										},
+										"ref": {
+											"type": "string",
+											"pattern": "^(?:refs\\/(?:heads|tags)\\/)?[A-Za-z0-9][A-Za-z0-9._/-]*\\*?$"
+										},
+										"inputs": {
+											"type": "object",
+											"allOf": [
+												{
+													"type": "object",
+													"additionalProperties": {
+														"anyOf": [
+															{
+																"type": "string"
+															},
+															{
+																"type": "boolean"
+															},
+															{
+																"type": "number"
+															}
+														]
+													}
+												},
+												{
+													"type": "object",
+													"additionalProperties": {}
+												}
+											],
+											"propertyNames": {
+												"type": "string"
+											}
+										},
+										"required": {
+											"type": "boolean"
+										},
+										"needs": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"minLength": 1
+											}
+										},
+										"needsJobs": {
+											"type": "object",
+											"patternProperties": {
+												"^[a-z][a-z0-9-]{0,63}$": {
+													"type": "array",
+													"items": {
+														"type": "string",
+														"pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+													},
+													"minItems": 1
+												}
+											},
+											"allOf": [
+												{
+													"type": "object",
+													"additionalProperties": {}
+												}
+											],
+											"description": "Jobs of an observed operation in needs that must succeed before this operation starts, keyed by that operation",
+											"propertyNames": {
+												"type": "string",
+												"pattern": "^[a-z][a-z0-9-]{0,63}$"
+											}
+										},
+										"schedule": {
+											"type": "string",
+											"minLength": 1
+										},
+										"publications": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"minLength": 1
+											}
+										},
+										"mode": {
+											"type": "string",
+											"enum": [
+												"observe",
+												"dispatch"
+											]
+										},
+										"each": {
+											"type": "string",
+											"enum": [
+												"package"
+											]
+										},
+										"refs": {
+											"type": "object",
+											"properties": {
+												"phase": {
+													"type": "string",
+													"enum": [
+														"version",
+														"aliases"
+													]
+												},
+												"prefix": {
+													"type": "string",
+													"pattern": "^(?:[A-Za-z0-9._-]+\\/)*[A-Za-z0-9._-]*$"
+												},
+												"aliases": {
+													"type": "array",
+													"items": {
+														"type": "string",
+														"enum": [
+															"major",
+															"minor"
+														]
+													}
+												},
+												"signed": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"phase"
+											],
+											"allOf": [
+												{
+													"type": "object",
+													"additionalProperties": {}
+												}
+											],
+											"propertyNames": {
+												"enum": [
+													"phase",
+													"prefix",
+													"aliases",
+													"signed"
+												]
+											}
+										},
+										"platform": {
+											"type": "object",
+											"properties": {
+												"os": {
+													"type": "string",
+													"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+												},
+												"arch": {
+													"type": "string",
+													"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+												},
+												"abi": {
+													"type": "string",
+													"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+												}
+											},
+											"required": [
+												"os",
+												"arch"
+											],
+											"allOf": [
+												{
+													"type": "object",
+													"additionalProperties": {}
+												}
+											],
+											"propertyNames": {
+												"enum": [
+													"os",
+													"arch",
+													"abi"
+												]
+											}
+										},
+										"outputs": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+													},
+													"kind": {
+														"type": "string",
+														"enum": [
+															"archive",
+															"binary",
+															"manifest",
+															"package",
+															"checksums"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"kind"
+												],
+												"allOf": [
+													{
+														"type": "object",
+														"additionalProperties": {}
+													}
+												],
+												"propertyNames": {
+													"enum": [
+														"id",
+														"kind"
+													]
+												}
+											}
+										},
+										"artifactInputs": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"operation": {
+														"type": "string",
+														"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+													},
+													"output": {
+														"type": "string",
+														"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+													}
+												},
+												"required": [
+													"operation",
+													"output"
+												],
+												"allOf": [
+													{
+														"type": "object",
+														"additionalProperties": {}
+													}
+												],
+												"propertyNames": {
+													"enum": [
+														"operation",
+														"output"
+													]
+												}
+											}
+										},
+										"setup": {
+											"type": "object",
+											"properties": {
+												"job": {
+													"type": "string"
+												},
+												"commands": {
+													"type": "string"
+												},
+												"publicationSteps": {
+													"type": "object",
+													"allOf": [
+														{
+															"type": "object",
+															"additionalProperties": {
+																"type": "string"
+															}
+														},
+														{
+															"type": "object",
+															"additionalProperties": {}
+														}
+													],
+													"propertyNames": {
+														"type": "string"
+													}
+												},
+												"credentials": {
+													"type": "object",
+													"patternProperties": {
+														"^[A-Z_][A-Z0-9_]*$": {
+															"type": "string",
+															"pattern": "^[\\w-]{1,64}$"
+														}
+													},
+													"allOf": [
+														{
+															"type": "object",
+															"additionalProperties": {}
+														}
+													],
+													"propertyNames": {
+														"type": "string",
+														"pattern": "^[A-Z_][A-Z0-9_]*$"
+													}
+												},
+												"tagPrefix": {
+													"type": "string",
+													"pattern": "^(?:[A-Za-z0-9._-]+\\/)*[A-Za-z0-9._-]*$"
+												},
+												"binaries": {
+													"type": "object",
+													"properties": {
+														"builds": {
+															"type": "array",
+															"items": {
+																"anyOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"toolchain": {
+																				"type": "string",
+																				"enum": [
+																					"go"
+																				]
+																			},
+																			"name": {
+																				"type": "string",
+																				"pattern": "^[A-Za-z0-9][\\w.-]*$"
+																			},
+																			"module": {
+																				"type": "string",
+																				"pattern": "^(?:\\.|[\\w.-]+(?:\\/[\\w.-]+)*)$"
+																			},
+																			"package": {
+																				"type": "string",
+																				"pattern": "^\\.(?:\\/[\\w.-]+)*$"
+																			},
+																			"asset": {
+																				"type": "string",
+																				"pattern": "^(?:[\\w.-]|\\{[\\w.]+\\})+$"
+																			}
+																		},
+																		"required": [
+																			"toolchain",
+																			"name",
+																			"module"
+																		],
+																		"allOf": [
+																			{
+																				"type": "object",
+																				"additionalProperties": {}
+																			}
+																		],
+																		"propertyNames": {
+																			"enum": [
+																				"toolchain",
+																				"name",
+																				"module",
+																				"package",
+																				"asset"
+																			]
+																		}
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"toolchain": {
+																				"type": "string",
+																				"enum": [
+																					"cargo"
+																				]
+																			},
+																			"name": {
+																				"type": "string",
+																				"pattern": "^[A-Za-z0-9][\\w.-]*$"
+																			},
+																			"manifest": {
+																				"type": "string",
+																				"pattern": "^(?:[\\w.-]+\\/)*Cargo\\.toml$"
+																			},
+																			"asset": {
+																				"type": "string",
+																				"pattern": "^(?:[\\w.-]|\\{[\\w.]+\\})+$"
+																			}
+																		},
+																		"required": [
+																			"toolchain",
+																			"name",
+																			"manifest"
+																		],
+																		"allOf": [
+																			{
+																				"type": "object",
+																				"additionalProperties": {}
+																			}
+																		],
+																		"propertyNames": {
+																			"enum": [
+																				"toolchain",
+																				"name",
+																				"manifest",
+																				"asset"
+																			]
+																		}
+																	}
+																]
+															},
+															"minItems": 1
+														},
+														"targets": {
+															"type": "array",
+															"items": {
+																"type": "string",
+																"enum": [
+																	"linux-amd64",
+																	"linux-arm64",
+																	"darwin-amd64",
+																	"darwin-arm64",
+																	"windows-amd64",
+																	"windows-arm64",
+																	"android-amd64",
+																	"android-arm64",
+																	"android-arm",
+																	"android-386",
+																	"freebsd-amd64",
+																	"freebsd-386",
+																	"freebsd-arm64",
+																	"netbsd-amd64",
+																	"netbsd-arm64",
+																	"openbsd-amd64",
+																	"openbsd-arm64",
+																	"dragonfly-amd64",
+																	"solaris-amd64",
+																	"illumos-amd64",
+																	"aix-ppc64"
+																]
+															},
+															"minItems": 1
+														}
+													},
+													"required": [
+														"builds"
+													],
+													"allOf": [
+														{
+															"type": "object",
+															"additionalProperties": {}
+														}
+													],
+													"propertyNames": {
+														"enum": [
+															"builds",
+															"targets"
+														]
+													}
+												},
+												"existingTriggers": {
+													"type": "string",
+													"enum": [
+														"keep-and-report",
+														"replace-with-dispatch",
+														"keep-and-block-conflicts"
+													],
+													"description": "What happens to the existing triggers of a workflow Beepboop runs. keep-and-report: The workflow keeps its existing triggers. Beepboop reports a trigger that conflicts with its dispatch. replace-with-dispatch: Beepboop replaces the workflow's existing triggers with its own dispatch. keep-and-block-conflicts: The workflow keeps its existing triggers. Beepboop blocks the setup when a trigger cannot work with its dispatch."
+												},
+												"triggers": {
+													"type": "string",
+													"enum": [
+														"review",
+														"dispatchOnly",
+														"preserve"
+													]
+												}
+											},
+											"additionalProperties": true
+										}
+									},
+									"required": [
+										"file"
+									],
+									"allOf": [
+										{
+											"type": "object",
+											"additionalProperties": {}
+										}
+									],
+									"propertyNames": {
+										"enum": [
+											"file",
+											"ref",
+											"inputs",
+											"required",
+											"needs",
+											"needsJobs",
+											"schedule",
+											"publications",
+											"mode",
+											"each",
+											"refs",
+											"platform",
+											"outputs",
+											"artifactInputs",
+											"setup"
+										]
+									}
+								}
+							},
+							"allOf": [
+								{
+									"type": "object",
+									"additionalProperties": {}
+								}
+							],
+							"propertyNames": {
+								"type": "string",
+								"pattern": "^[a-z][a-z0-9-]{0,63}$"
+							}
+						},
+						"mustPublish": {
+							"type": "array",
+							"items": {
+								"type": "string",
+								"minLength": 1
+							},
+							"description": "Packages that must publish for the release to count as successful."
+						},
+						"required": {
+							"type": "array",
+							"items": {
+								"type": "string",
+								"minLength": 1
+							}
+						},
+						"needs": {
+							"type": "object",
+							"description": "Publications that must finish before each listed publication, keyed by package reference",
+							"propertyNames": {
+								"type": "string",
+								"minLength": 1
+							}
+						},
+						"credentials": {
+							"type": "array",
+							"items": {
+								"type": "string",
+								"minLength": 1
+							}
+						},
+						"channels": {
+							"type": "object",
+							"properties": {
+								"stable": {
+									"type": "string",
+									"minLength": 1
+								},
+								"prerelease": {
+									"type": "string",
+									"minLength": 1
+								}
+							},
+							"allOf": [
+								{
+									"type": "object",
+									"additionalProperties": {}
+								}
+							],
+							"propertyNames": {
+								"enum": [
+									"stable",
+									"prerelease"
+								]
+							}
+						},
+						"concurrency": {
+							"type": "string",
+							"enum": [
+								"queue",
+								"supersede-pending"
+							]
+						}
+					},
+					"allOf": [
+						{
+							"type": "object",
+							"additionalProperties": {}
+						}
+					],
+					"propertyNames": {
+						"enum": [
+							"versionScope",
+							"versioning",
+							"versionFiles",
+							"versionSource",
+							"packages",
+							"companionModules",
+							"prepare",
+							"promote",
+							"startFrom",
+							"start",
+							"workflows",
+							"mustPublish",
+							"required",
+							"needs",
+							"credentials",
+							"channels",
+							"concurrency"
+						]
+					}
+				}
+			},
+			"allOf": [
+				{
+					"type": "object",
+					"additionalProperties": {}
+				}
+			],
 			"propertyNames": {
 				"type": "string",
 				"pattern": "^[a-z][a-z0-9-]{0,63}$"
-			},
-			"additionalProperties": {
-				"$ref": "#/$defs/stream"
 			}
 		},
 		"subscriptions": {
 			"type": "array",
 			"items": {
-				"$ref": "#/$defs/subscription"
-			}
-		},
-		"winget": {
-			"type": "object",
-			"properties": {
-				"config": {
-					"type": "string",
-					"pattern": "^[\\w./-]+\\.json$",
-					"description": "Path to WinGet package JSON in the release commit"
-				},
-				"tagPrefix": {
-					"default": "v",
-					"type": "string",
-					"pattern": "^[\\w.-]*$"
-				},
-				"automatic": {
-					"default": false,
-					"type": "boolean"
-				}
-			},
-			"required": [
-				"config"
-			],
-			"additionalProperties": false
-		},
-		"actionsRevision": {
-			"description": "Published Actions version or full commit that setup pins in generated workflows",
-			"type": "string",
-			"pattern": "^(?:[a-f0-9]{40}|v\\d+(?:\\.\\d+){0,2})$"
-		}
-	},
-	"additionalProperties": false,
-	"$defs": {
-		"stream": {
-			"type": "object",
-			"properties": {
-				"versionScope": {
-					"description": "Which packages share a version. one-for-stream: Every package in the release group gets the same version. per-package: Each package gets its own version. none: The release group carries no version.",
-					"type": "string",
-					"enum": [
-						"one-for-stream",
-						"per-package",
-						"none"
-					]
-				},
-				"versioning": {
-					"deprecated": true,
-					"type": "string",
-					"enum": [
-						"workspace",
-						"independent",
-						"none"
-					]
-				},
-				"versionFiles": {
-					"type": "array",
-					"items": {
-						"oneOf": [
-							{
-								"type": "object",
-								"properties": {
-									"path": {
-										"type": "string"
-									},
-									"group": {
-										"type": "string",
-										"minLength": 1
-									},
-									"template": {
-										"default": "{version}",
-										"type": "string",
-										"maxLength": 1000
-									},
-									"format": {
-										"type": "string",
-										"const": "json"
-									},
-									"key": {
-										"minItems": 1,
-										"type": "array",
-										"items": {
-											"anyOf": [
-												{
-													"type": "string",
-													"minLength": 1
-												},
-												{
-													"type": "integer",
-													"minimum": 0,
-													"maximum": 9007199254740991
-												}
-											]
-										}
-									}
-								},
-								"required": [
-									"path",
-									"format",
-									"key"
-								],
-								"additionalProperties": false
-							},
-							{
-								"type": "object",
-								"properties": {
-									"path": {
-										"type": "string"
-									},
-									"group": {
-										"type": "string",
-										"minLength": 1
-									},
-									"template": {
-										"default": "{version}",
-										"type": "string",
-										"maxLength": 1000
-									},
-									"format": {
-										"type": "string",
-										"const": "yaml"
-									},
-									"key": {
-										"minItems": 1,
-										"type": "array",
-										"items": {
-											"anyOf": [
-												{
-													"type": "string",
-													"minLength": 1
-												},
-												{
-													"type": "integer",
-													"minimum": 0,
-													"maximum": 9007199254740991
-												}
-											]
-										}
-									}
-								},
-								"required": [
-									"path",
-									"format",
-									"key"
-								],
-								"additionalProperties": false
-							},
-							{
-								"type": "object",
-								"properties": {
-									"path": {
-										"type": "string"
-									},
-									"group": {
-										"type": "string",
-										"minLength": 1
-									},
-									"template": {
-										"default": "{version}",
-										"type": "string",
-										"maxLength": 1000
-									},
-									"format": {
-										"type": "string",
-										"const": "toml"
-									},
-									"key": {
-										"minItems": 1,
-										"type": "array",
-										"items": {
-											"type": "string",
-											"pattern": "^[A-Za-z0-9_-]+$"
-										}
-									}
-								},
-								"required": [
-									"path",
-									"format",
-									"key"
-								],
-								"additionalProperties": false
-							},
-							{
-								"type": "object",
-								"properties": {
-									"path": {
-										"type": "string"
-									},
-									"group": {
-										"type": "string",
-										"minLength": 1
-									},
-									"template": {
-										"default": "{version}",
-										"type": "string",
-										"maxLength": 1000
-									},
-									"format": {
-										"type": "string",
-										"const": "text"
-									},
-									"prefix": {
-										"type": "string",
-										"minLength": 1
-									},
-									"suffix": {
-										"type": "string",
-										"minLength": 1
-									}
-								},
-								"required": [
-									"path",
-									"format",
-									"prefix",
-									"suffix"
-								],
-								"additionalProperties": false
-							}
-						]
-					}
-				},
-				"versionSource": {
-					"type": "object",
-					"properties": {
-						"kind": {
-							"type": "string",
-							"const": "tags"
-						},
-						"prefix": {
-							"type": "string",
-							"pattern": "^(?:[A-Za-z0-9._-]+\\/)*[A-Za-z0-9._-]*$"
-						}
-					},
-					"required": [
-						"kind",
-						"prefix"
-					],
-					"additionalProperties": false
-				},
-				"packages": {
-					"type": "array",
-					"items": {
-						"$ref": "#/$defs/packageReference"
-					}
-				},
-				"companionModules": {
-					"description": "Go modules whose version tag is pushed on the release commit together with the stream tag, such as go/v1.2.3 beside cli-v1.2.3. Each module keeps its own stream.",
-					"type": "array",
-					"items": {
-						"$ref": "#/$defs/packageReference"
-					}
-				},
-				"prepare": {
-					"type": "object",
-					"properties": {
-						"version": {
-							"type": "string",
-							"const": "manual"
-						},
-						"workflow": {
-							"$ref": "#/$defs/workflow"
-						},
-						"strategy": {
-							"type": "string",
-							"enum": [
-								"managed",
-								"workflow"
-							]
-						},
-						"versionLands": {
-							"description": "How a new version reaches the default branch. via-version-pr: Beepboop opens a version PR, and merging it puts the new version on the default branch. via-direct-commit: Beepboop pushes a signed commit with the new version straight to the default branch.",
-							"type": "string",
-							"enum": [
-								"via-version-pr",
-								"via-direct-commit"
-							]
-						},
-						"bump": {
-							"deprecated": true,
-							"$ref": "#/$defs/versionBump"
-						},
-						"versionPrMerge": {
-							"description": "Who merges the version PR. manual: You merge the version PR yourself. squash: Beepboop turns on GitHub auto-merge, and GitHub squashes the version PR into one commit once its checks pass. With `publishWhen: version-pr-merged`, the release then publishes with nobody touching it. merge: Beepboop turns on GitHub auto-merge, and GitHub merges the version PR with a merge commit once its checks pass. With `publishWhen: version-pr-merged`, the release then publishes with nobody touching it. rebase: Beepboop turns on GitHub auto-merge, and GitHub rebases the version PR onto the default branch once its checks pass. With `publishWhen: version-pr-merged`, the release then publishes with nobody touching it.",
-							"type": "string",
-							"enum": [
-								"manual",
-								"squash",
-								"merge",
-								"rebase"
-							]
-						}
-					},
-					"additionalProperties": false
-				},
-				"promote": {
-					"type": "object",
-					"properties": {
-						"publishWhen": {
-							"description": "When a version on the default branch publishes. approved-in-beepboop: You publish it: the Publish button in Beepboop or `beepboop runs publish`. Approving or merging the version PR on GitHub does not publish. version-pr-merged: Merging the version PR publishes it once the checks pass. Nobody publishes it in Beepboop. version-commit-pushed: A signed commit that raises the version publishes it once the checks pass, with no review.",
-							"type": "string",
-							"enum": [
-								"approved-in-beepboop",
-								"version-pr-merged",
-								"version-commit-pushed"
-							]
-						},
-						"approval": {
-							"deprecated": true,
-							"type": "string",
-							"enum": [
-								"required",
-								"merge",
-								"push"
-							]
-						},
-						"workflow": {
-							"$ref": "#/$defs/workflow"
-						}
-					},
-					"additionalProperties": false
-				},
-				"startFrom": {
-					"$ref": "#/$defs/releaseStarts"
-				},
-				"start": {
-					"deprecated": true,
-					"$ref": "#/$defs/releaseStarts"
-				},
-				"workflows": {
-					"type": "object",
-					"propertyNames": {
-						"type": "string",
-						"pattern": "^[a-z][a-z0-9-]{0,63}$"
-					},
-					"additionalProperties": {
-						"$ref": "#/$defs/workflow"
-					}
-				},
-				"mustPublish": {
-					"description": "Packages that must publish for the release to count as successful.",
-					"type": "array",
-					"items": {
-						"$ref": "#/$defs/packageReference"
-					}
-				},
-				"required": {
-					"deprecated": true,
-					"type": "array",
-					"items": {
-						"$ref": "#/$defs/packageReference"
-					}
-				},
-				"needs": {
-					"description": "Publications that must finish before each listed publication, keyed by package reference",
-					"type": "object",
-					"propertyNames": {
-						"type": "string",
-						"minLength": 1
-					},
-					"additionalProperties": {
-						"type": "array",
-						"items": {
-							"type": "string",
-							"minLength": 1
-						}
-					}
-				},
-				"credentials": {
-					"default": [],
-					"type": "array",
-					"items": {
-						"type": "string",
-						"minLength": 1
-					}
-				},
-				"channels": {
-					"default": {
-						"stable": "latest",
-						"prerelease": "next"
-					},
-					"type": "object",
-					"properties": {
-						"stable": {
-							"default": "latest",
-							"type": "string",
-							"minLength": 1
-						},
-						"prerelease": {
-							"default": "next",
-							"type": "string",
-							"minLength": 1
-						}
-					},
-					"additionalProperties": false
-				},
-				"concurrency": {
-					"default": "queue",
-					"type": "string",
-					"enum": [
-						"queue",
-						"supersede-pending"
-					]
-				}
-			},
-			"additionalProperties": false
-		},
-		"packageReference": {
-			"description": "Package URL (versionless for release selection). Legacy manager:name references are accepted for compatibility.",
-			"type": "string",
-			"minLength": 1
-		},
-		"workflow": {
-			"type": "object",
-			"properties": {
-				"file": {
-					"type": "string",
-					"pattern": "^[\\w-][\\w.-]*\\.ya?ml$"
-				},
-				"ref": {
-					"type": "string",
-					"pattern": "^(?:refs\\/(?:heads|tags)\\/)?[A-Za-z0-9][A-Za-z0-9._/-]*\\*?$"
-				},
-				"inputs": {
-					"type": "object",
-					"propertyNames": {
-						"type": "string"
-					},
-					"additionalProperties": {
-						"type": [
-							"string",
-							"boolean",
-							"number"
-						]
-					}
-				},
-				"required": {
-					"type": "boolean"
-				},
-				"needs": {
-					"type": "array",
-					"items": {
-						"type": "string",
-						"minLength": 1
-					}
-				},
-				"needsJobs": {
-					"description": "Jobs of an observed operation in needs that must succeed before this operation starts, keyed by that operation",
-					"type": "object",
-					"propertyNames": {
-						"type": "string",
-						"pattern": "^[a-z][a-z0-9-]{0,63}$"
-					},
-					"additionalProperties": {
-						"minItems": 1,
-						"type": "array",
-						"items": {
-							"type": "string",
-							"pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
-						}
-					}
-				},
-				"schedule": {
-					"type": "string",
-					"minLength": 1
-				},
-				"publications": {
-					"type": "array",
-					"items": {
-						"$ref": "#/$defs/packageReference"
-					}
-				},
-				"mode": {
-					"type": "string",
-					"enum": [
-						"observe",
-						"dispatch"
-					]
-				},
-				"each": {
-					"type": "string",
-					"const": "package"
-				},
-				"refs": {
-					"type": "object",
-					"properties": {
-						"phase": {
-							"type": "string",
-							"enum": [
-								"version",
-								"aliases"
-							]
-						},
-						"prefix": {
-							"default": "v",
-							"type": "string",
-							"pattern": "^(?:[A-Za-z0-9._-]+\\/)*[A-Za-z0-9._-]*$"
-						},
-						"aliases": {
-							"default": [],
-							"type": "array",
-							"items": {
-								"type": "string",
-								"enum": [
-									"major",
-									"minor"
-								]
-							}
-						},
-						"signed": {
-							"type": "boolean"
-						}
-					},
-					"required": [
-						"phase"
-					],
-					"additionalProperties": false
-				},
-				"platform": {
-					"type": "object",
-					"properties": {
-						"os": {
-							"type": "string",
-							"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
-						},
-						"arch": {
-							"type": "string",
-							"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
-						},
-						"abi": {
-							"type": "string",
-							"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
-						}
-					},
-					"required": [
-						"os",
-						"arch"
-					],
-					"additionalProperties": false
-				},
-				"outputs": {
-					"type": "array",
-					"items": {
+				"anyOf": [
+					{
 						"type": "object",
 						"properties": {
 							"id": {
 								"type": "string",
-								"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+								"pattern": "^[a-z][a-z0-9-]{0,63}$"
 							},
-							"kind": {
+							"source": {
+								"type": "string",
+								"minLength": 1
+							},
+							"stream": {
+								"type": "string",
+								"minLength": 1
+							},
+							"operation": {
+								"type": "string",
+								"minLength": 1
+							},
+							"event": {
 								"type": "string",
 								"enum": [
-									"archive",
-									"binary",
-									"manifest",
-									"package",
-									"checksums"
+									"release"
+								]
+							},
+							"sourceStream": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sourceGroup": {
+								"type": "string",
+								"minLength": 1
+							},
+							"publication": {
+								"type": "string",
+								"minLength": 1
+							}
+						},
+						"required": [
+							"id",
+							"source",
+							"stream",
+							"operation",
+							"event"
+						],
+						"allOf": [
+							{
+								"type": "object",
+								"additionalProperties": {}
+							}
+						],
+						"propertyNames": {
+							"enum": [
+								"id",
+								"source",
+								"stream",
+								"operation",
+								"event",
+								"sourceStream",
+								"sourceGroup",
+								"publication"
+							]
+						}
+					},
+					{
+						"type": "object",
+						"properties": {
+							"id": {
+								"type": "string",
+								"pattern": "^[a-z][a-z0-9-]{0,63}$"
+							},
+							"source": {
+								"type": "string",
+								"minLength": 1
+							},
+							"stream": {
+								"type": "string",
+								"minLength": 1
+							},
+							"operation": {
+								"type": "string",
+								"minLength": 1
+							},
+							"event": {
+								"type": "string",
+								"enum": [
+									"package.version.changed"
 								]
 							}
 						},
 						"required": [
 							"id",
-							"kind"
-						],
-						"additionalProperties": false
-					}
-				},
-				"artifactInputs": {
-					"type": "array",
-					"items": {
-						"type": "object",
-						"properties": {
-							"operation": {
-								"type": "string",
-								"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
-							},
-							"output": {
-								"type": "string",
-								"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
-							}
-						},
-						"required": [
+							"source",
+							"stream",
 							"operation",
-							"output"
+							"event"
 						],
-						"additionalProperties": false
-					}
-				},
-				"setup": {
-					"$ref": "#/$defs/workflowSetup"
-				}
-			},
-			"required": [
-				"file"
-			],
-			"additionalProperties": false
-		},
-		"workflowSetup": {
-			"description": "Setup input that generates this workflow file. Change it through a setup update PR.",
-			"type": "object",
-			"properties": {
-				"job": {
-					"type": "string"
-				},
-				"commands": {
-					"default": "",
-					"type": "string"
-				},
-				"publicationSteps": {
-					"default": {},
-					"type": "object",
-					"propertyNames": {
-						"type": "string"
-					},
-					"additionalProperties": {
-						"type": "string"
-					}
-				},
-				"credentials": {
-					"type": "object",
-					"propertyNames": {
-						"type": "string",
-						"pattern": "^[A-Z_][A-Z0-9_]*$"
-					},
-					"additionalProperties": {
-						"type": "string",
-						"pattern": "^[\\w-]{1,64}$"
-					}
-				},
-				"tagPrefix": {
-					"type": "string",
-					"pattern": "^(?:[A-Za-z0-9._-]+\\/)*[A-Za-z0-9._-]*$"
-				},
-				"binaries": {
-					"type": "object",
-					"properties": {
-						"builds": {
-							"minItems": 1,
-							"type": "array",
-							"items": {
-								"oneOf": [
-									{
-										"type": "object",
-										"properties": {
-											"toolchain": {
-												"type": "string",
-												"const": "go"
-											},
-											"name": {
-												"type": "string",
-												"pattern": "^[A-Za-z0-9][\\w.-]*$"
-											},
-											"module": {
-												"type": "string",
-												"pattern": "^(?:\\.|[\\w.-]+(?:\\/[\\w.-]+)*)$"
-											},
-											"package": {
-												"default": ".",
-												"type": "string",
-												"pattern": "^\\.(?:\\/[\\w.-]+)*$"
-											},
-											"asset": {
-												"default": "{name}-{go.os}-{go.arch}{ext}",
-												"type": "string",
-												"pattern": "^(?:[\\w.-]|\\{[\\w.]+\\})+$"
-											}
-										},
-										"required": [
-											"toolchain",
-											"name",
-											"module"
-										],
-										"additionalProperties": false
-									},
-									{
-										"type": "object",
-										"properties": {
-											"toolchain": {
-												"type": "string",
-												"const": "cargo"
-											},
-											"name": {
-												"type": "string",
-												"pattern": "^[A-Za-z0-9][\\w.-]*$"
-											},
-											"manifest": {
-												"type": "string",
-												"pattern": "^(?:[\\w.-]+\\/)*Cargo\\.toml$"
-											},
-											"asset": {
-												"default": "{name}-{rust.target}{ext}",
-												"type": "string",
-												"pattern": "^(?:[\\w.-]|\\{[\\w.]+\\})+$"
-											}
-										},
-										"required": [
-											"toolchain",
-											"name",
-											"manifest"
-										],
-										"additionalProperties": false
-									}
-								]
+						"allOf": [
+							{
+								"type": "object",
+								"additionalProperties": {}
 							}
-						},
-						"targets": {
-							"default": [
-								"linux-amd64",
-								"linux-arm64",
-								"darwin-amd64",
-								"darwin-arm64",
-								"windows-amd64",
-								"windows-arm64"
-							],
-							"minItems": 1,
-							"type": "array",
-							"items": {
-								"type": "string",
-								"enum": [
-									"linux-amd64",
-									"linux-arm64",
-									"darwin-amd64",
-									"darwin-arm64",
-									"windows-amd64",
-									"windows-arm64",
-									"android-amd64",
-									"android-arm64",
-									"android-arm",
-									"android-386",
-									"freebsd-amd64",
-									"freebsd-386",
-									"freebsd-arm64",
-									"netbsd-amd64",
-									"netbsd-arm64",
-									"openbsd-amd64",
-									"openbsd-arm64",
-									"dragonfly-amd64",
-									"solaris-amd64",
-									"illumos-amd64",
-									"aix-ppc64"
-								]
-							}
+						],
+						"propertyNames": {
+							"enum": [
+								"id",
+								"source",
+								"stream",
+								"operation",
+								"event"
+							]
 						}
 					},
-					"required": [
-						"builds"
-					],
-					"additionalProperties": false
-				},
-				"existingTriggers": {
-					"description": "What happens to the existing triggers of a workflow Beepboop runs. keep-and-report: The workflow keeps its existing triggers. Beepboop reports a trigger that conflicts with its dispatch. replace-with-dispatch: Beepboop replaces the workflow's existing triggers with its own dispatch. keep-and-block-conflicts: The workflow keeps its existing triggers. Beepboop blocks the setup when a trigger cannot work with its dispatch.",
-					"type": "string",
-					"enum": [
-						"keep-and-report",
-						"replace-with-dispatch",
-						"keep-and-block-conflicts"
-					]
-				},
-				"triggers": {
-					"deprecated": true,
-					"type": "string",
-					"enum": [
-						"review",
-						"dispatchOnly",
-						"preserve"
-					]
-				}
-			},
-			"additionalProperties": false
-		},
-		"versionBump": {
-			"type": "string",
-			"enum": [
-				"commit",
-				"pr"
-			],
-			"description": "Earlier name of versionLands: commit pushes a signed bot commit to the default branch, pr opens a version PR."
-		},
-		"releaseStarts": {
-			"type": "array",
-			"items": {
-				"oneOf": [
 					{
 						"type": "object",
 						"properties": {
-							"via": {
+							"id": {
 								"type": "string",
-								"const": "action"
+								"pattern": "^[a-z][a-z0-9-]{0,63}$"
+							},
+							"source": {
+								"type": "string",
+								"minLength": 1
+							},
+							"stream": {
+								"type": "string",
+								"minLength": 1
+							},
+							"operation": {
+								"type": "string",
+								"minLength": 1
+							},
+							"event": {
+								"type": "string",
+								"enum": [
+									"workflow_run"
+								]
 							},
 							"workflow": {
 								"type": "string",
@@ -856,160 +2343,96 @@
 							}
 						},
 						"required": [
-							"via",
+							"id",
+							"source",
+							"stream",
+							"operation",
+							"event",
 							"workflow"
 						],
-						"additionalProperties": false
-					},
-					{
-						"type": "object",
-						"properties": {
-							"via": {
-								"type": "string",
-								"const": "dashboard"
+						"allOf": [
+							{
+								"type": "object",
+								"additionalProperties": {}
 							}
-						},
-						"required": [
-							"via"
 						],
-						"additionalProperties": false
-					},
-					{
-						"type": "object",
-						"properties": {
-							"via": {
-								"type": "string",
-								"const": "cli"
-							}
-						},
-						"required": [
-							"via"
-						],
-						"additionalProperties": false
+						"propertyNames": {
+							"enum": [
+								"id",
+								"source",
+								"stream",
+								"operation",
+								"event",
+								"workflow"
+							]
+						}
 					}
 				]
-			},
-			"description": "Where a release of this stream starts. Starting a release also publishes it: the version bump, publication, binaries, tags and the GitHub release run, and nothing asks again."
+			}
 		},
-		"subscription": {
-			"oneOf": [
-				{
-					"type": "object",
-					"properties": {
-						"id": {
-							"type": "string",
-							"pattern": "^[a-z][a-z0-9-]{0,63}$"
-						},
-						"source": {
-							"type": "string",
-							"minLength": 1
-						},
-						"stream": {
-							"type": "string",
-							"minLength": 1
-						},
-						"operation": {
-							"type": "string",
-							"minLength": 1
-						},
-						"event": {
-							"type": "string",
-							"const": "release"
-						},
-						"sourceStream": {
-							"type": "string",
-							"minLength": 1
-						},
-						"sourceGroup": {
-							"type": "string",
-							"minLength": 1
-						},
-						"publication": {
-							"type": "string",
-							"minLength": 1
-						}
-					},
-					"required": [
-						"id",
-						"source",
-						"stream",
-						"operation",
-						"event"
-					],
-					"additionalProperties": false
+		"winget": {
+			"type": "object",
+			"properties": {
+				"config": {
+					"type": "string",
+					"pattern": "^[\\w./-]+\\.json$"
 				},
-				{
-					"type": "object",
-					"properties": {
-						"id": {
-							"type": "string",
-							"pattern": "^[a-z][a-z0-9-]{0,63}$"
-						},
-						"source": {
-							"type": "string",
-							"minLength": 1
-						},
-						"stream": {
-							"type": "string",
-							"minLength": 1
-						},
-						"operation": {
-							"type": "string",
-							"minLength": 1
-						},
-						"event": {
-							"type": "string",
-							"const": "package.version.changed"
-						}
-					},
-					"required": [
-						"id",
-						"source",
-						"stream",
-						"operation",
-						"event"
-					],
-					"additionalProperties": false
+				"tagPrefix": {
+					"type": "string",
+					"pattern": "^[\\w.-]*$"
 				},
-				{
-					"type": "object",
-					"properties": {
-						"id": {
-							"type": "string",
-							"pattern": "^[a-z][a-z0-9-]{0,63}$"
-						},
-						"source": {
-							"type": "string",
-							"minLength": 1
-						},
-						"stream": {
-							"type": "string",
-							"minLength": 1
-						},
-						"operation": {
-							"type": "string",
-							"minLength": 1
-						},
-						"event": {
-							"type": "string",
-							"const": "workflow_run"
-						},
-						"workflow": {
-							"type": "string",
-							"pattern": "^[\\w-][\\w.-]*\\.ya?ml$"
-						}
-					},
-					"required": [
-						"id",
-						"source",
-						"stream",
-						"operation",
-						"event",
-						"workflow"
-					],
-					"additionalProperties": false
+				"automatic": {
+					"type": "boolean"
 				}
-			]
+			},
+			"required": [
+				"config"
+			],
+			"allOf": [
+				{
+					"type": "object",
+					"additionalProperties": {}
+				}
+			],
+			"propertyNames": {
+				"enum": [
+					"config",
+					"tagPrefix",
+					"automatic"
+				]
+			}
+		},
+		"actionsRevision": {
+			"type": "string",
+			"description": "Published Actions version or full commit that setup pins in generated workflows",
+			"pattern": "^(?:[a-f0-9]{40}|v\\d+(?:\\.\\d+){0,2})$"
+		}
+	},
+	"allOf": [
+		{
+			"type": "object",
+			"additionalProperties": {}
+		}
+	],
+	"propertyNames": {
+		"enum": [
+			"$schema",
+			"extends",
+			"managers",
+			"streams",
+			"subscriptions",
+			"winget",
+			"actionsRevision"
+		]
+	},
+	"$defs": {
+		"versionBump": {
+			"type": "string",
+			"enum": [
+				"commit",
+				"pr"
+			],
+			"description": "Earlier name of versionLands: commit pushes a signed bot commit to the default branch, pr opens a version PR."
 		}
 	}
 }

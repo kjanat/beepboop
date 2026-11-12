@@ -1,5 +1,18 @@
 import type { FakeGitHub, Repository } from '@root/test/support/github.ts';
-import { z } from 'zod';
+import { Effect, Schema, Struct } from 'effect';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 export function dispatchedPublishWorkflow(name: string, stream: string, step: string, steps: string): string {
 	return `name: ${name}
@@ -102,12 +115,12 @@ export function widgetConfiguration(approval: 'required' | 'merge' | 'push' = 'r
 	}, '\t');
 }
 
-const promotedConfiguration = z.looseObject({
-	streams: z.looseObject({ main: z.looseObject({ promote: z.looseObject({ workflow: z.looseObject({}) }) }) }),
+const promotedConfiguration = looseStruct({
+	streams: looseStruct({ main: looseStruct({ promote: looseStruct({ workflow: looseStruct({}) }) }) }),
 });
 
 export function editableConfiguration() {
-	return promotedConfiguration.parse(JSON.parse(widgetConfiguration()));
+	return decodeSync(promotedConfiguration, JSON.parse(widgetConfiguration()));
 }
 
 export function widget(github: FakeGitHub, options: WidgetOptions = {}): Repository {

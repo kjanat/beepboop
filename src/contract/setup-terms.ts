@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { Schema } from 'effect';
 import type { ApprovalPolicy, StartChannel, VersionBump } from '@/contract/release-start';
 import { startWorkflowFile } from '@/contract/release-start';
 
@@ -109,11 +109,11 @@ export const mustPublishSentence = 'Packages that must publish for the release t
 export const companionModulesSentence =
 	'Go modules whose version tag is pushed on the release commit together with the stream tag, such as go/v1.2.3 beside cli-v1.2.3. Each module keeps its own stream.';
 
-export const publishWhen = z.enum(publishWhens);
-export const versionLands = z.enum(versionLandings);
-export const versionScope = z.enum(versionScopes);
-export const versionPrMerge = z.enum(versionPrMerges);
-export const existingTriggers = z.enum(existingTriggerChoices);
+export const publishWhen = Schema.Literals(publishWhens);
+export const versionLands = Schema.Literals(versionLandings);
+export const versionScope = Schema.Literals(versionScopes);
+export const versionPrMerge = Schema.Literals(versionPrMerges);
+export const existingTriggers = Schema.Literals(existingTriggerChoices);
 
 function described<K extends string>(
 	question: string,

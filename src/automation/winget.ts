@@ -1,5 +1,4 @@
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Clock, Effect, Schema } from 'effect';
 import { logRecovered } from '@/automation/failure-log';
 import type { RepositoryGateway } from '@/automation/github';
 import {
@@ -23,44 +22,49 @@ import { fromPromise, fromSync } from '@/failure';
 import { countSchema, decode, looseSchema, record, shaSchema, text, textSchema } from '@/model';
 import type { Sql } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
+import type { Decoded } from '@/schema';
+import { decodeSync, mutableArray, mutableRecord, mutableStruct } from '@/schema';
 
-const releaseListing = z.array(
-	z.object({
-		id: looseSchema,
-		tag_name: looseSchema,
-		name: looseSchema,
-		draft: looseSchema,
-		prerelease: looseSchema,
-		published_at: looseSchema,
-	}),
-);
-const publicRepository = z.object({ private: looseSchema });
-const stableRelease = z.object({
+const releaseListing = mutableArray(mutableStruct({
+	id: looseSchema,
+	tag_name: looseSchema,
+	name: looseSchema,
+	draft: looseSchema,
+	prerelease: looseSchema,
+	published_at: looseSchema,
+}));
+const publicRepository = mutableStruct({ private: looseSchema });
+const stableRelease = mutableStruct({
 	id: looseSchema,
 	draft: looseSchema,
 	prerelease: looseSchema,
-	published_at: z.string().nullish(),
+	published_at: Schema.optional(Schema.NullOr(Schema.String)),
 	tag_name: textSchema,
 	html_url: textSchema,
 	body: looseSchema,
 });
-const releaseAssets = z.array(
-	z.object({ name: textSchema, digest: looseSchema, state: looseSchema, browser_download_url: looseSchema }),
+const releaseAssets = mutableArray(
+	mutableStruct({ name: textSchema, digest: looseSchema, state: looseSchema, browser_download_url: looseSchema }),
 );
-const forkRepository = z.object({ fork: looseSchema, parent: z.object({ full_name: looseSchema }).optional() });
-const upstreamRepository = z.object({ default_branch: textSchema });
-const winGetPull = z.object({
-	number: z.number(),
+const forkRepository = mutableStruct({
+	fork: looseSchema,
+	parent: Schema.optional(mutableStruct({ full_name: looseSchema })),
+});
+const upstreamRepository = mutableStruct({ default_branch: textSchema });
+const winGetPull = mutableStruct({
+	number: Schema.Finite,
 	html_url: textSchema,
-	head: z.object({ sha: shaSchema }),
+	head: mutableStruct({ sha: shaSchema }),
 	merged_at: looseSchema,
 	state: looseSchema,
 });
-type WinGetPull = z.output<typeof winGetPull>;
-const submitter = z.object({ login: textSchema, id: countSchema });
-const branchComparison = z.object({ files: z.array(z.object({ status: looseSchema, filename: looseSchema })) });
-const fileContent = z.object({ content: textSchema });
-const reviewList = z.array(z.object({ state: looseSchema, user: looseSchema }));
+type WinGetPull = Decoded<typeof winGetPull>;
+const submitter = mutableStruct({ login: textSchema, id: countSchema });
+const branchComparison = mutableStruct({
+	files: mutableArray(mutableStruct({ status: looseSchema, filename: looseSchema })),
+});
+const fileContent = mutableStruct({ content: textSchema });
+const reviewList = mutableArray(mutableStruct({ state: looseSchema, user: looseSchema }));
 
 export interface WinGetPlan {
 	id: string;
@@ -93,34 +97,34 @@ export interface WinGetRelease {
 	name: string;
 	publishedAt: number;
 }
-const submissionSchema: z.ZodType<WinGetSubmission> = z.object({
-	plan: z.object({
-		id: z.string(),
-		repositoryId: z.number(),
-		repository: z.string(),
-		releaseId: z.number(),
-		tag: z.string(),
-		version: z.string(),
-		packageIdentifier: z.string(),
-		sourceSha: z.string(),
-		configurationSha: z.string(),
-		files: z.record(z.string(), z.string()),
-		releaseUrl: z.string(),
-		digest: z.string(),
+const submissionSchema: Schema.Codec<WinGetSubmission, unknown> = mutableStruct({
+	plan: mutableStruct({
+		id: Schema.String,
+		repositoryId: Schema.Finite,
+		repository: Schema.String,
+		releaseId: Schema.Finite,
+		tag: Schema.String,
+		version: Schema.String,
+		packageIdentifier: Schema.String,
+		sourceSha: Schema.String,
+		configurationSha: Schema.String,
+		files: mutableRecord(Schema.String, Schema.String),
+		releaseUrl: Schema.String,
+		digest: Schema.String,
 	}),
-	state: z.enum(['pending', 'open', 'merged', 'closed', 'failed']),
-	number: z.number().optional(),
-	url: z.string().optional(),
-	head: z.string().optional(),
-	checks: z.string().optional(),
-	reviews: z.string().optional(),
-	reason: z.string().optional(),
-	updatedAt: z.number(),
+	state: Schema.Literals(['pending', 'open', 'merged', 'closed', 'failed']),
+	number: Schema.optional(Schema.Finite),
+	url: Schema.optional(Schema.String),
+	head: Schema.optional(Schema.String),
+	checks: Schema.optional(Schema.String),
+	reviews: Schema.optional(Schema.String),
+	reason: Schema.optional(Schema.String),
+	updatedAt: Schema.Finite,
 });
 function parseSubmission(document: string): WinGetSubmission {
-	return submissionSchema.parse(JSON.parse(document));
+	return decodeSync(submissionSchema, JSON.parse(document));
 }
-const submissionRow = z.object({ id: z.string(), document: z.string() });
+const submissionRow = mutableStruct({ id: Schema.String, document: Schema.String });
 export interface WinGetBindings {
 	WINGET_GITHUB_TOKEN?: string;
 	WINGET_FORK?: string;
@@ -155,7 +159,7 @@ export class WinGetService {
 		return sql(this.store.db);
 	}
 	private documents(rows: unknown[]): Effect.Effect<WinGetSubmission[], DomainError> {
-		return fromSync(() => rows.map(row => parseSubmission(documentRow.parse(row).document)));
+		return fromSync(() => rows.map(row => parseSubmission(decodeSync(documentRow, row).document)));
 	}
 	releases(repo: RepositoryRecord): Effect.Effect<WinGetRelease[], DomainError> {
 		const self = this;
@@ -273,7 +277,7 @@ export class WinGetService {
 		return this.sql.first('SELECT document FROM winget_submissions WHERE id=?', id).pipe(
 			Effect.flatMap(row =>
 				fromSync(() => {
-					const parsed = documentRow.nullable().parse(row);
+					const parsed = decodeSync(Schema.NullOr(documentRow), row);
 					return parsed ? parseSubmission(parsed.document) : undefined;
 				})
 			),
@@ -295,6 +299,8 @@ export class WinGetService {
 	): Effect.Effect<void, DomainError> {
 		const self = this;
 		return Effect.gen(function*() {
+			const clock = yield* Clock.Clock;
+
 			if (saved.state !== 'failed' || saved.number || saved.url || saved.head) {
 				return yield* precondition('The previous plan is already submitted or in progress; it cannot be replaced');
 			}
@@ -302,7 +308,7 @@ export class WinGetService {
 			const old = saved.plan;
 			const branch = `winget/${old.packageIdentifier}/${old.version}/${old.digest.slice(0, 16)}`;
 			const pulls = yield* self.gateway.read(
-				z.array(z.unknown()),
+				mutableArray(Schema.Unknown),
 				`/repos/${upstream}/pulls?state=all&head=${encodeURIComponent(`${fork.split('/')[0]}:${branch}`)}&per_page=100`,
 				token,
 			);
@@ -320,7 +326,7 @@ export class WinGetService {
 				pending.updatedAt,
 				pending.plan.id,
 				lease,
-				Date.now(),
+				clock.currentTimeMillisUnsafe(),
 			);
 			if (!updated.meta.changes) return yield* precondition('Submission lease expired; preview again');
 		});
@@ -332,10 +338,12 @@ export class WinGetService {
 	): Effect.Effect<WinGetSubmission, DomainError> {
 		const self = this;
 		return Effect.gen(function*() {
+			const clock = yield* Clock.Clock;
+
 			if (!self.setup()) return yield* precondition('Configure the WinGet bot token and fork before submitting');
 			const plan = yield* self.plan(repo, releaseId);
 			if (plan.digest !== expectedDigest) return yield* precondition('Release or configuration changed; preview again');
-			const pending: WinGetSubmission = { plan, state: 'pending', updatedAt: Date.now() };
+			const pending: WinGetSubmission = { plan, state: 'pending', updatedAt: clock.currentTimeMillisUnsafe() };
 			yield* self.sql.run(
 				'INSERT OR IGNORE INTO winget_submissions(id,package,version,document,updated_at) VALUES(?,?,?,?,?)',
 				plan.id,
@@ -351,9 +359,9 @@ export class WinGetService {
 			const locked = yield* self.sql.run(
 				'UPDATE winget_submissions SET lease=?,lease_until=? WHERE id=? AND lease_until<?',
 				lease,
-				Date.now() + 600_000,
+				clock.currentTimeMillisUnsafe() + 600_000,
 				plan.id,
-				Date.now(),
+				clock.currentTimeMillisUnsafe(),
 			);
 			if (!locked.meta.changes) return yield* precondition('Submission is already in progress; refresh shortly');
 			let attempted: WinGetSubmission | undefined;
@@ -374,14 +382,18 @@ export class WinGetService {
 				const branch = `winget/${plan.packageIdentifier}/${plan.version}/${plan.digest.slice(0, 16)}`;
 				const head = `${fork.split('/')[0]}:${branch}`;
 				const pulls = yield* self.gateway.read(
-					z.array(winGetPull),
+					mutableArray(winGetPull),
 					`/repos/${upstream}/pulls?state=all&head=${encodeURIComponent(head)}&per_page=100`,
 					token,
 				);
 				if (pulls.length > 1) return yield* precondition('Multiple matching WinGet pull requests');
 				let pull = pulls[0];
 				if (!pull) {
-					let ref = yield* self.gateway.read(gitRefSchema.nullable(), `/repos/${fork}/git/ref/heads/${branch}`, token);
+					let ref = yield* self.gateway.read(
+						Schema.NullOr(gitRefSchema),
+						`/repos/${fork}/git/ref/heads/${branch}`,
+						token,
+					);
 					const recovered = ref !== null;
 					if (!ref) {
 						const base = yield* self.gateway.read(
@@ -449,7 +461,7 @@ export class WinGetService {
 							`Release: ${plan.releaseUrl}\nSource commit: ${plan.sourceSha}\n\nInstaller SHA-256 values verified against GitHub release assets.`,
 					});
 				}
-				const result = self.pullState(plan, pull);
+				const result = self.pullState(plan, pull, clock.currentTimeMillisUnsafe());
 				attempted = result;
 				yield* self.save(result, lease).pipe(
 					logRecovered('winget.save-failed', { submissionId: plan.id, url: result.url }),
@@ -461,7 +473,12 @@ export class WinGetService {
 			}).pipe(
 				Effect.tapError(error =>
 					attempted
-						? self.save({ ...attempted, state: 'failed', reason: decodeError(error), updatedAt: Date.now() }, lease)
+						? self.save({
+							...attempted,
+							state: 'failed',
+							reason: decodeError(error),
+							updatedAt: clock.currentTimeMillisUnsafe(),
+						}, lease)
 						: Effect.void
 				),
 				Effect.ensuring(
@@ -472,27 +489,31 @@ export class WinGetService {
 			);
 		});
 	}
-	private pullState(plan: WinGetPlan, pull: WinGetPull): WinGetSubmission {
+	private pullState(plan: WinGetPlan, pull: WinGetPull, now: number): WinGetSubmission {
 		return {
 			plan,
 			number: pull.number,
 			url: pull.html_url,
 			head: pull.head.sha,
 			state: pull.merged_at ? 'merged' : pull.state === 'closed' ? 'closed' : 'open',
-			updatedAt: Date.now(),
+			updatedAt: now,
 		};
 	}
 	private openSubmissions(after: string | null): Effect.Effect<{ id: string; document: string }[], DomainError> {
-		return this.sql.all(
-			"SELECT id,document FROM winget_submissions WHERE json_extract(document,'$.state') IN ('open','pending') AND lease_until<? AND (? IS NULL OR id>?) ORDER BY id LIMIT 100",
-			Date.now(),
-			after,
-			after,
-		).pipe(Effect.flatMap(rows => parse(z.array(submissionRow), rows)));
+		return Effect.clockWith(clock => {
+			return this.sql.all(
+				"SELECT id,document FROM winget_submissions WHERE json_extract(document,'$.state') IN ('open','pending') AND lease_until<? AND (? IS NULL OR id>?) ORDER BY id LIMIT 100",
+				clock.currentTimeMillisUnsafe(),
+				after,
+				after,
+			).pipe(Effect.flatMap(rows => parse(mutableArray(submissionRow), rows)));
+		});
 	}
 	private reconcileOne(saved: WinGetSubmission): Effect.Effect<void, DomainError> {
 		const self = this;
 		return Effect.gen(function*() {
+			const clock = yield* Clock.Clock;
+
 			if (!['pending', 'open'].includes(saved.state)) return;
 			const token = yield* Effect.fromResult(text(self.env.WINGET_GITHUB_TOKEN));
 			if (!saved.number) {
@@ -501,7 +522,7 @@ export class WinGetService {
 				const branch = `winget/${plan.packageIdentifier}/${plan.version}/${plan.digest.slice(0, 16)}`;
 				const head = `${fork.split('/')[0]}:${branch}`;
 				const pulls = yield* self.gateway.read(
-					z.array(winGetPull),
+					mutableArray(winGetPull),
 					`/repos/${upstream}/pulls?state=all&head=${encodeURIComponent(head)}&per_page=100`,
 					token,
 				);
@@ -510,15 +531,15 @@ export class WinGetService {
 				if (!recovered) return;
 				yield* self.sql.run(
 					'UPDATE winget_submissions SET document=?,updated_at=? WHERE id=? AND lease_until<?',
-					JSON.stringify(self.pullState(plan, recovered)),
-					Date.now(),
+					JSON.stringify(self.pullState(plan, recovered, clock.currentTimeMillisUnsafe())),
+					clock.currentTimeMillisUnsafe(),
 					plan.id,
-					Date.now(),
+					clock.currentTimeMillisUnsafe(),
 				);
 				return;
 			}
 			const pull = yield* self.gateway.read(winGetPull, `/repos/${upstream}/pulls/${saved.number}`, token);
-			const next = self.pullState(saved.plan, pull);
+			const next = self.pullState(saved.plan, pull, clock.currentTimeMillisUnsafe());
 			const checks = yield* self.gateway.read(
 				checkRunsSchema,
 				`/repos/${upstream}/commits/${next.head}/check-runs?per_page=100`,
@@ -562,7 +583,7 @@ export class WinGetService {
 				JSON.stringify(next),
 				next.updatedAt,
 				saved.plan.id,
-				Date.now(),
+				clock.currentTimeMillisUnsafe(),
 			);
 		});
 	}
@@ -584,9 +605,15 @@ export class WinGetService {
 		});
 	}
 	watch(repo: RepositoryRecord): Effect.Effect<void, DomainError> {
-		return (repo.configuration?.winget?.automatic
-			? this.sql.run('INSERT OR IGNORE INTO winget_watches(repository_id,since) VALUES(?,?)', repo.id, Date.now())
-			: this.sql.run('DELETE FROM winget_watches WHERE repository_id=?', repo.id)).pipe(Effect.asVoid);
+		return Effect.clockWith(clock => {
+			return (repo.configuration?.winget?.automatic
+				? this.sql.run(
+					'INSERT OR IGNORE INTO winget_watches(repository_id,since) VALUES(?,?)',
+					repo.id,
+					clock.currentTimeMillisUnsafe(),
+				)
+				: this.sql.run('DELETE FROM winget_watches WHERE repository_id=?', repo.id)).pipe(Effect.asVoid);
+		});
 	}
 	automatic(repo: RepositoryRecord): Effect.Effect<void, DomainError> {
 		const self = this;
@@ -596,7 +623,7 @@ export class WinGetService {
 			) return;
 			yield* self.watch(repo);
 			const watch = yield* parse(
-				z.object({ since: z.number() }).nullable(),
+				Schema.NullOr(mutableStruct({ since: Schema.Finite })),
 				yield* self.sql.first('SELECT since FROM winget_watches WHERE repository_id=?', repo.id),
 			);
 			for (const release of yield* self.releases(repo)) {

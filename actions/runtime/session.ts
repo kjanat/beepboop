@@ -13,7 +13,8 @@ export function mask(value: string): Effect.Effect<void> {
 
 export function post(url: URL | string, init: RequestInit): Effect.Effect<Response, ActionFailure> {
 	return Effect.tryPromise({
-		try: () => fetch(url, { ...init, redirect: 'error' }),
+		try: signal =>
+			fetch(url, { ...init, redirect: 'error', signal: init.signal ? AbortSignal.any([signal, init.signal]) : signal }),
 		catch: error => new ActionFailure({ message: errorMessage(error), retryable: true }),
 	});
 }

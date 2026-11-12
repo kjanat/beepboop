@@ -1,8 +1,10 @@
-import { z } from 'zod';
+import { Schema } from 'effect';
 import type { RepositoryRecord } from '@/automation/types';
 import type { Diagnostic } from '@/contract/diagnostics';
 import type { Access } from '@/domain/repository';
 import { decodeRepositoryV1 } from '@/persistence/codecs/v1';
+import type { Decoded } from '@/schema';
+import { decodeSync, mutableStruct } from '@/schema';
 
 export const repositoryColumns = 'id, name, document, access, suspended_at';
 export const enrollmentColumns =
@@ -11,27 +13,27 @@ export const enrollmentColumns =
 const legacySuspension = 'App access removed or suspended';
 const active: Access = { kind: 'active' };
 
-const accessColumns = z.discriminatedUnion('access', [
-	z.object({ access: z.literal('active') }),
-	z.object({ access: z.literal('suspended'), suspended_at: z.number() }),
+const accessColumns = Schema.Union([
+	mutableStruct({ access: Schema.Literal('active') }),
+	mutableStruct({ access: Schema.Literal('suspended'), suspended_at: Schema.Finite }),
 ]);
 
-export const repositoryRow = z.object({
-	id: z.number(),
-	name: z.string(),
-	document: z.string(),
-	access: z.unknown(),
-	suspended_at: z.unknown(),
+export const repositoryRow = mutableStruct({
+	id: Schema.Finite,
+	name: Schema.String,
+	document: Schema.String,
+	access: Schema.Unknown,
+	suspended_at: Schema.Unknown,
 });
-export type RepositoryRow = z.output<typeof repositoryRow>;
+export type RepositoryRow = Decoded<typeof repositoryRow>;
 
-export const enrollmentRow = z.object({
-	id: z.number(),
-	name: z.string(),
-	access: z.unknown(),
-	suspended_at: z.unknown(),
-	updated_at: z.number(),
-	legacy_suspended: z.number(),
+export const enrollmentRow = mutableStruct({
+	id: Schema.Finite,
+	name: Schema.String,
+	access: Schema.Unknown,
+	suspended_at: Schema.Unknown,
+	updated_at: Schema.Finite,
+	legacy_suspended: Schema.Finite,
 });
 export interface Enrollment {
 	id: number;
@@ -40,7 +42,7 @@ export interface Enrollment {
 }
 
 function accessOf(columns: { access: unknown; suspended_at: unknown }, document: Access): Access {
-	const parsed = accessColumns.parse({ access: columns.access, suspended_at: columns.suspended_at });
+	const parsed = decodeSync(accessColumns, { access: columns.access, suspended_at: columns.suspended_at });
 	return parsed.access === 'suspended' ? { kind: 'suspended', since: parsed.suspended_at } : document;
 }
 
@@ -53,7 +55,7 @@ export function decodeRepository(row: RepositoryRow): RepositoryRecord {
 	return { ...stored, access: accessOf(row, stored.access), diagnostics: stored.diagnostics.filter(current) };
 }
 
-export function decodeEnrollment(row: z.output<typeof enrollmentRow>): Enrollment {
+export function decodeEnrollment(row: Decoded<typeof enrollmentRow>): Enrollment {
 	const document: Access = row.legacy_suspended === 1 ? { kind: 'suspended', since: row.updated_at } : active;
 	return { id: row.id, name: row.name, access: accessOf(row, document) };
 }

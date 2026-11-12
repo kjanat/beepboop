@@ -4,12 +4,25 @@ import { discoveredWidget } from '@root/test/support/client.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema, Struct } from 'effect';
 import { Store } from '@/automation/store';
 import type { Client } from '@/cli/client';
 import type { executionFilter } from '@/contract/routes';
 import { routes } from '@/contract/routes';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableRecord,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 import { loaders } from '@/server/loaders';
 
 let world: World, directory: string, client: Client, token: string;
@@ -30,11 +43,15 @@ async function template() {
 	const prepared = await Effect.runPromise(
 		client.call(routes.releasesPrepare, { ...request, sourceSha: plan.sourceSha, planId: plan.planId }),
 	);
-	const row = z.object({ document: z.string() }).parse(
+	const row = decodeSync(
+		mutableStruct({ document: Schema.String }),
 		await world.db.prepare('SELECT document FROM executions WHERE id=?').bind(prepared.id).first(),
 	);
 	await world.db.prepare('DELETE FROM executions WHERE id=?').bind(prepared.id).run();
-	return { repositoryId: repository.id, document: z.record(z.string(), z.unknown()).parse(JSON.parse(row.document)) };
+	return {
+		repositoryId: repository.id,
+		document: decodeSync(mutableRecord(Schema.String, Schema.Unknown), JSON.parse(row.document)),
+	};
 }
 
 type Row = [id: string, state: string, createdAt: number, updatedAt: number, changes?: Record<string, unknown>];
@@ -54,7 +71,7 @@ async function insert(base: Awaited<ReturnType<typeof template>>, rows: Row[]) {
 	));
 }
 
-const listed = (input: z.input<typeof executionFilter>) =>
+const listed = (input: Encoded<typeof executionFilter>) =>
 	Effect.runPromise(client.call(routes.executionsList, input)).then(rows => rows.map(entry => entry.id));
 
 test('an old run cancelled after a newer run started is listed below it', async () => {

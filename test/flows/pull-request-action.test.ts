@@ -10,9 +10,21 @@ import { one } from '@root/test/support/lists.ts';
 import { widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema, Struct } from 'effect';
 import { githubApiVersion } from '@/contract/http';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 let world: World;
 const directories: string[] = [];
@@ -23,8 +35,10 @@ afterEach(() => {
 	for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
-const treeBody = z.object({
-	tree: z.array(z.object({ path: z.string(), mode: z.string(), type: z.string(), sha: z.string().nullable() })),
+const treeBody = mutableStruct({
+	tree: mutableArray(
+		mutableStruct({ path: Schema.String, mode: Schema.String, type: Schema.String, sha: Schema.NullOr(Schema.String) }),
+	),
 });
 
 function checkedOut() {
@@ -33,7 +47,7 @@ function checkedOut() {
 	const checkout = materialize(filesAt(repository, head));
 	directories.push(checkout.dir);
 	world.github.relabel(repository, head, checkout.sha);
-	const trees: z.output<typeof treeBody>['tree'][] = [];
+	const trees: Decoded<typeof treeBody>['tree'][] = [];
 	const requests: string[] = [];
 	const versions = new Set<string | null>();
 	world.network.serve('api.github.com', async request => {
@@ -41,7 +55,7 @@ function checkedOut() {
 		requests.push(`${request.method} ${path.replace('/repos/octo/widget', '')}`);
 		versions.add(request.headers.get('x-github-api-version'));
 		if (request.method === 'POST' && path.endsWith('/git/trees')) {
-			trees.push(treeBody.parse(await request.clone().json()).tree);
+			trees.push(decodeSync(treeBody, await request.clone().json()).tree);
 		}
 		return world.github.handle(request);
 	});

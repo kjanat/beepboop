@@ -4,13 +4,27 @@ import { bearer } from '@root/test/support/http.ts';
 import { applyChoices, editPull, previewSetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
+import { Effect, Schema, Struct } from 'effect';
 import { parse } from 'yaml';
-import { z } from 'zod';
 import { optionId } from '@/automation/setup';
 import type { SetupChoices } from '@/automation/setup-types';
 import { binaries, defaultBinaryTargets, workflowSetup } from '@/contract/setup';
 import type { VersionPrMerge } from '@/contract/setup-terms';
 import { versionPrMergeSentences } from '@/contract/setup-terms';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableRecord,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 let world: World;
 eachWorld(created => {
@@ -23,7 +37,7 @@ function toolRepository(): Repository {
 		'src/main.rs': 'fn main() {}\n',
 	});
 }
-function toolChoices(targets: z.input<typeof binaries>['targets'] = ['linux-amd64', 'darwin-arm64']): SetupChoices {
+function toolChoices(targets: Encoded<typeof binaries>['targets'] = ['linux-amd64', 'darwin-arm64']): SetupChoices {
 	return {
 		streams: [{
 			name: 'main',
@@ -37,7 +51,7 @@ function toolChoices(targets: z.input<typeof binaries>['targets'] = ['linux-amd6
 				triggers: 'review',
 				commands: '',
 				publicationSteps: {},
-				binaries: binaries.parse({
+				binaries: decodeSync(binaries, {
 					builds: [{ toolchain: 'cargo', name: 'tool', manifest: 'Cargo.toml' }],
 					targets,
 				}),
@@ -46,12 +60,14 @@ function toolChoices(targets: z.input<typeof binaries>['targets'] = ['linux-amd6
 		actionsRevision: 'v1',
 	};
 }
-const stored = z.object({
-	actionsRevision: z.string().optional(),
-	streams: z.object({ main: z.object({ promote: z.object({ workflow: z.looseObject({ setup: workflowSetup }) }) }) }),
+const stored = mutableStruct({
+	actionsRevision: Schema.optional(Schema.String),
+	streams: mutableStruct({
+		main: mutableStruct({ promote: mutableStruct({ workflow: looseStruct({ setup: workflowSetup }) }) }),
+	}),
 });
 function configuration(repository: Repository, ref?: string) {
-	return stored.parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', ref) ?? '{}'));
+	return decodeSync(stored, JSON.parse(world.github.file(repository, '.github/beepboop.json', ref) ?? '{}'));
 }
 
 test('the setup PR writes each workflow setup input into its binding in beepboop.json', async () => {
@@ -60,7 +76,7 @@ test('the setup PR writes each workflow setup input into its binding in beepboop
 	await applyChoices(api, repository.name, toolChoices());
 	const proposed = configuration(repository, 'automation/onboarding');
 	expect(proposed.actionsRevision).toBe('v1');
-	expect(proposed.streams.main.promote.workflow.setup).toEqual(workflowSetup.parse({
+	expect(proposed.streams.main.promote.workflow.setup).toEqual(decodeSync(workflowSetup, {
 		job: 'publish',
 		binaries: {
 			builds: [{ toolchain: 'cargo', name: 'tool', manifest: 'Cargo.toml' }],
@@ -105,13 +121,17 @@ test('a release workflow from the previous generator gets auditable builds and a
 	await applyChoices(api, repository.name, toolChoices());
 	world.github.merge(repository, 1);
 	const current = world.github.file(repository, '.github/workflows/release.yml') ?? '';
-	const workflow = z.object({
-		jobs: z.record(
-			z.string(),
-			z.looseObject({ steps: z.array(z.looseObject({ uses: z.string().optional(), env: z.unknown().optional() })) }),
+	const workflow = mutableStruct({
+		jobs: mutableRecord(
+			Schema.String,
+			looseStruct({
+				steps: mutableArray(
+					looseStruct({ uses: Schema.optional(Schema.String), env: Schema.optional(Schema.Unknown) }),
+				),
+			}),
 		),
 	});
-	const generated = workflow.parse(parse(current));
+	const generated = decodeSync(workflow, parse(current));
 	const install = generated.jobs['build-tool']?.steps.find(step => step.uses?.startsWith('taiki-e/install-action@'));
 	expect(install).toBeDefined();
 	const previous = current
@@ -128,7 +148,7 @@ test('a release workflow from the previous generator gets auditable builds and a
 	await applyChoices(api, repository.name, plan.choices);
 	const updated = world.github.file(repository, '.github/workflows/release.yml', 'automation/setup-update') ?? '';
 	expect(updated).toBe(current);
-	const parsed = workflow.parse(parse(updated));
+	const parsed = decodeSync(workflow, parse(updated));
 	expect(parsed.jobs['build-tool']?.steps).toContainEqual(install);
 	expect(parsed.jobs.publish?.steps.find(step => step.uses?.startsWith('anchore/sbom-action@'))?.env).toMatchObject({
 		SYFT_FILE_METADATA_SELECTION: 'all',
@@ -141,14 +161,17 @@ test('a repository whose stored choices are not in beepboop.json gets one setup 
 	const api = bearer(world, await world.cliSession());
 	await applyChoices(api, repository.name, toolChoices());
 	world.github.merge(repository, 1);
-	const current = z.looseObject({
-		actionsRevision: z.string().optional(),
-		streams: z.object({
-			main: z.looseObject({
-				promote: z.looseObject({ workflow: z.looseObject({ setup: z.unknown().optional() }) }),
+	const current = decodeSync(
+		looseStruct({
+			actionsRevision: Schema.optional(Schema.String),
+			streams: mutableStruct({
+				main: looseStruct({
+					promote: looseStruct({ workflow: looseStruct({ setup: Schema.optional(Schema.Unknown) }) }),
+				}),
 			}),
 		}),
-	}).parse(JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}'));
+		JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}'),
+	);
 	delete current.actionsRevision;
 	delete current.streams.main.promote.workflow.setup;
 	world.github.push(
@@ -262,13 +285,13 @@ test('the migration PR proposes each Cargo binary with the targets its dependenc
 	expect(pull.body).toContain('- [ ] <!-- beepboop:choice:binary:main:engine -->');
 });
 
-const sharedJobs = z.object({
-	jobs: z.record(
-		z.string(),
-		z.looseObject({
-			if: z.string().optional(),
-			needs: z.array(z.string()).optional(),
-			steps: z.array(z.looseObject({ id: z.string().optional(), uses: z.string().optional() })),
+const sharedJobs = mutableStruct({
+	jobs: mutableRecord(
+		Schema.String,
+		looseStruct({
+			if: Schema.optional(Schema.String),
+			needs: Schema.optional(mutableArray(Schema.String)),
+			steps: mutableArray(looseStruct({ id: Schema.optional(Schema.String), uses: Schema.optional(Schema.String) })),
 		}),
 	),
 });
@@ -290,7 +313,7 @@ function sharedChoices(withBinaries: boolean): SetupChoices {
 				tagPrefix: 'v',
 				...(withBinaries
 					? {
-						binaries: binaries.parse({
+						binaries: decodeSync(binaries, {
 							builds: [{ toolchain: 'cargo', name: 'engine', manifest: 'crates/cli/Cargo.toml' }],
 							targets: unixTargets,
 						}),
@@ -307,7 +330,7 @@ test('a shared release workflow gates its binary jobs, uploads before the tag an
 	await applyChoices(api, repository.name, sharedChoices(true));
 	world.github.merge(repository, 1);
 	const source = world.github.file(repository, '.github/workflows/release.yml') ?? '';
-	const { jobs } = sharedJobs.parse(parse(source));
+	const { jobs } = decodeSync(sharedJobs, parse(source));
 	const publish = "${{ inputs.beepboop_operation == 'publish' }}";
 	expect([jobs.begin?.if, jobs['build-engine']?.if, jobs.publish?.if]).toEqual([publish, publish, publish]);
 	expect(jobs.prepare?.if).toBe("${{ inputs.beepboop_operation == 'prepare' }}");
@@ -321,7 +344,7 @@ test('a shared release workflow gates its binary jobs, uploads before the tag an
 	const unticked = await previewSetup(api, repository.name, sharedChoices(false));
 	expect(unticked.blockers).toEqual([]);
 	const regenerated = unticked.edits.find(edit => edit.path === '.github/workflows/release.yml')?.after ?? '';
-	const remaining = sharedJobs.parse(parse(regenerated)).jobs;
+	const remaining = decodeSync(sharedJobs, parse(regenerated)).jobs;
 	expect(Object.keys(remaining).sort()).toEqual(['prepare', 'publish']);
 	expect(remaining.publish?.needs).toBeUndefined();
 	expect(remaining.publish?.steps.some(step => step.id === 'beepboop_binaries')).toBe(false);
@@ -335,7 +358,7 @@ test('binaries added to an existing shared ledger workflow upload after the crat
 	const plan = await previewSetup(api, repository.name, sharedChoices(true));
 	expect(plan.blockers).toEqual([]);
 	const after = plan.edits.find(edit => edit.path === '.github/workflows/release.yml')?.after ?? '';
-	const { jobs } = sharedJobs.parse(parse(after));
+	const { jobs } = decodeSync(sharedJobs, parse(after));
 	const publish = "${{ inputs.beepboop_operation == 'publish' }}";
 	expect([jobs.begin?.if, jobs['build-engine']?.if]).toEqual([publish, publish]);
 	expect(jobs.publish?.needs).toEqual(['build-engine']);
@@ -346,18 +369,19 @@ test('binaries added to an existing shared ledger workflow upload after the crat
 	expect(index('beepboop_token')).toBeLessThan(index('publish-release'));
 });
 
-const releaseMode = z.object({
-	streams: z.object({
-		main: z.looseObject({
-			prepare: z.looseObject({ versionLands: z.string().optional() }).optional(),
-			promote: z.looseObject({ publishWhen: z.string().optional() }),
-			startFrom: z.array(z.looseObject({ via: z.string() })).optional(),
+const releaseMode = mutableStruct({
+	streams: mutableStruct({
+		main: looseStruct({
+			prepare: Schema.optional(looseStruct({ versionLands: Schema.optional(Schema.String) })),
+			promote: looseStruct({ publishWhen: Schema.optional(Schema.String) }),
+			startFrom: Schema.optional(mutableArray(looseStruct({ via: Schema.String }))),
 		}),
 	}),
 });
 function modeOf(repository: Repository, ref?: string) {
-	const { main } = releaseMode.parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', ref) ?? '{}'))
-		.streams;
+	const { main } =
+		decodeSync(releaseMode, JSON.parse(world.github.file(repository, '.github/beepboop.json', ref) ?? '{}'))
+			.streams;
 	for (const legacy of ['start', 'versioning', 'required']) expect(main).not.toHaveProperty(legacy);
 	expect(main.promote).not.toHaveProperty('approval');
 	expect(main.prepare ?? {}).not.toHaveProperty('bump');
@@ -441,17 +465,24 @@ test('each choice ticked in the setup PR body is written as ticked, and push sta
 	expect(pull.body).toContain('- [ ] <!-- beepboop:choice:approval:main:required -->');
 	expect(pull.body).toContain('- [ ] <!-- beepboop:choice:start:main:dashboard -->');
 	expect(pull.body).not.toContain('Until you do');
-	const dispatch = z.object({
-		on: z.object({
-			workflow_dispatch: z.object({ inputs: z.record(z.string(), z.record(z.string(), z.unknown())) }),
-		}),
-		jobs: z.object({
-			start: z.object({
-				permissions: z.record(z.string(), z.string()),
-				steps: z.array(z.object({ uses: z.string(), with: z.record(z.string(), z.string()) })),
+	const dispatch = decodeSync(
+		mutableStruct({
+			on: mutableStruct({
+				workflow_dispatch: mutableStruct({
+					inputs: mutableRecord(Schema.String, mutableRecord(Schema.String, Schema.Unknown)),
+				}),
+			}),
+			jobs: mutableStruct({
+				start: mutableStruct({
+					permissions: mutableRecord(Schema.String, Schema.String),
+					steps: mutableArray(
+						mutableStruct({ uses: Schema.String, with: mutableRecord(Schema.String, Schema.String) }),
+					),
+				}),
 			}),
 		}),
-	}).parse(parse(world.github.file(repository, '.github/workflows/start-release.yml', 'automation/onboarding') ?? ''));
+		parse(world.github.file(repository, '.github/workflows/start-release.yml', 'automation/onboarding') ?? ''),
+	);
 	expect(dispatch.on.workflow_dispatch.inputs).toEqual({
 		stream: { description: 'Release stream', type: 'choice', options: ['main'], default: 'main' },
 		bump: { description: 'Version bump', type: 'choice', options: ['patch', 'minor', 'major'], default: 'patch' },
@@ -480,8 +511,10 @@ test('the setup PR ticks versionPrMerge manual by default and writes the method 
 			versionPrMergeSentences[value]
 		}`;
 	const prepared = (ref: string) =>
-		z.object({ streams: z.object({ main: z.looseObject({ prepare: z.looseObject({}).optional() }) }) })
-			.parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', ref) ?? '{}')).streams.main.prepare;
+		decodeSync(
+			mutableStruct({ streams: mutableStruct({ main: looseStruct({ prepare: Schema.optional(looseStruct({})) }) }) }),
+			JSON.parse(world.github.file(repository, '.github/beepboop.json', ref) ?? '{}'),
+		).streams.main.prepare;
 	expect(pull.body).toContain('  - `versionPrMerge`: Who merges the version PR. Tick one.');
 	expect(pull.body).toContain(box('manual', true));
 	for (const value of ['squash', 'merge', 'rebase'] as const) expect(pull.body).toContain(box(value, false));
@@ -556,11 +589,11 @@ test('a rebuild keeps the needs and the GitHub release publication of an observe
 	};
 	const choices = crateChoices({ observe: [observed] });
 	const plan = await applyChoices(api, repository.name, choices);
-	const workflows = z.object({
-		streams: z.object({ main: z.object({ workflows: z.record(z.string(), z.looseObject({})) }) }),
+	const workflows = mutableStruct({
+		streams: mutableStruct({ main: mutableStruct({ workflows: mutableRecord(Schema.String, looseStruct({})) }) }),
 	});
 	const binding = (ref?: string) =>
-		workflows.parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', ref) ?? '{}')).streams.main
+		decodeSync(workflows, JSON.parse(world.github.file(repository, '.github/beepboop.json', ref) ?? '{}')).streams.main
 			.workflows.release;
 	expect(binding('automation/onboarding')).toMatchObject({
 		publications: ['pkg:github/octo/tool'],
@@ -614,16 +647,17 @@ test('a setup update whose saved choices lost observed needs and publications ge
 	await world.wait(16_000);
 	const pull = repository.pulls.find(entry => entry.state === 'open');
 	if (!pull) throw new Error('Missing setup update PR');
-	const document = z.looseObject({
-		choices: z.looseObject({
-			streams: z.array(z.looseObject({ observe: z.array(z.looseObject({})).optional() })),
+	const document = looseStruct({
+		choices: looseStruct({
+			streams: mutableArray(looseStruct({ observe: Schema.optional(mutableArray(looseStruct({}))) })),
 		}),
 	});
 	const lose = async () => {
-		const row = z.object({ document: z.string() }).parse(
+		const row = decodeSync(
+			mutableStruct({ document: Schema.String }),
 			await world.db.prepare('SELECT document FROM onboarding WHERE repository_id=?').bind(repository.id).first(),
 		);
-		const { observationsKept: _kept, ...saved } = document.parse(JSON.parse(row.document));
+		const { observationsKept: _kept, ...saved } = decodeSync(document, JSON.parse(row.document));
 		saved.inferred = false;
 		for (const stream of saved.choices.streams) {
 			stream.observe = stream.observe?.map(({ needs: _needs, ...entry }) => ({ ...entry, publications: [] }));
@@ -633,11 +667,12 @@ test('a setup update whose saved choices lost observed needs and publications ge
 			repository.id,
 		).run();
 	};
-	const workflows = z.object({
-		streams: z.object({ main: z.object({ workflows: z.record(z.string(), z.looseObject({})) }) }),
+	const workflows = mutableStruct({
+		streams: mutableStruct({ main: mutableStruct({ workflows: mutableRecord(Schema.String, looseStruct({})) }) }),
 	});
 	const binding = () =>
-		workflows.parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', pull.head.ref) ?? '{}')).streams
+		decodeSync(workflows, JSON.parse(world.github.file(repository, '.github/beepboop.json', pull.head.ref) ?? '{}'))
+			.streams
 			.main.workflows.release;
 	const kept = () => {
 		expect(binding()).toMatchObject({ publications: ['pkg:github/octo/tool'], needs: ['promote'] });
@@ -680,11 +715,12 @@ test('a maintenance rebuild keeps observed needs and publications that explicit 
 	const pull = repository.pulls.find(entry => entry.state === 'open');
 	if (!pull) throw new Error('Missing setup update PR');
 	await applyChoices(api, repository.name, observed({}));
-	const workflows = z.object({
-		streams: z.object({ main: z.object({ workflows: z.record(z.string(), z.looseObject({})) }) }),
+	const workflows = mutableStruct({
+		streams: mutableStruct({ main: mutableStruct({ workflows: mutableRecord(Schema.String, looseStruct({})) }) }),
 	});
 	const binding = () =>
-		workflows.parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', pull.head.ref) ?? '{}')).streams
+		decodeSync(workflows, JSON.parse(world.github.file(repository, '.github/beepboop.json', pull.head.ref) ?? '{}'))
+			.streams
 			.main.workflows.release;
 	expect(binding()).toMatchObject({ publications: [] });
 	expect(binding()).not.toHaveProperty('needs');
@@ -726,11 +762,17 @@ test('unticking a package drops it from the observed workflow that publishes it'
 	expect(pull.body).toContain(extra);
 	await editPull(world, repository, pull, pull.body.replace(extra, extra.replace('[x]', '[ ]')));
 	await world.wait(16_000);
-	const stored = z.object({
-		streams: z.object({
-			main: z.object({ packages: z.array(z.string()), workflows: z.record(z.string(), z.looseObject({})) }),
+	const stored = decodeSync(
+		mutableStruct({
+			streams: mutableStruct({
+				main: mutableStruct({
+					packages: mutableArray(Schema.String),
+					workflows: mutableRecord(Schema.String, looseStruct({})),
+				}),
+			}),
 		}),
-	}).parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'));
+		JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'),
+	);
 	expect(stored.streams.main.packages).toEqual(['pkg:cargo/tool']);
 	expect(stored.streams.main.workflows.release).toMatchObject({ publications: ['pkg:github/octo/tool'] });
 });
@@ -806,14 +848,19 @@ test('a ticked target that the binary is expected to fail on stays ticked with a
 		'- main: engine is expected to fail on windows-amd64: engine-cli depends on uzers and rustix (fs, process), which build only for Unix.',
 	);
 	expect(pull.body).not.toContain('engine leaves out Windows');
-	const targets = z.object({
-		streams: z.object({
-			main: z.object({
-				promote: z.object({
-					workflow: z.object({ setup: z.object({ binaries: z.object({ targets: z.array(z.string()) }) }) }),
+	const targets = decodeSync(
+		mutableStruct({
+			streams: mutableStruct({
+				main: mutableStruct({
+					promote: mutableStruct({
+						workflow: mutableStruct({
+							setup: mutableStruct({ binaries: mutableStruct({ targets: mutableArray(Schema.String) }) }),
+						}),
+					}),
 				}),
 			}),
 		}),
-	}).parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', pull.head.ref) ?? '{}'));
+		JSON.parse(world.github.file(repository, '.github/beepboop.json', pull.head.ref) ?? '{}'),
+	);
 	expect(targets.streams.main.promote.workflow.setup.binaries.targets).toContain('windows-amd64');
 });

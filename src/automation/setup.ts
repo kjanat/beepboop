@@ -1,5 +1,4 @@
 import { Effect, Result } from 'effect';
-import { z } from 'zod';
 import { binaryCandidates } from '@/automation/binary-candidates';
 import { companionProposals } from '@/automation/companion-detection';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
@@ -71,6 +70,7 @@ import { packageMarkdown } from '@/domain/package-label';
 import { publicationStages } from '@/domain/publication-stages';
 import { validateAgainst } from '@/domain/validate';
 import { fromPromise, fromSync, toDomainError } from '@/failure';
+import { mutableArray, safeDecode } from '@/schema';
 
 function releasedPackage(pkg: Package | undefined): boolean {
 	return !!pkg && publishable(pkg) && pkg.published !== undefined
@@ -175,7 +175,7 @@ function suggested(
 			).map(packageId);
 		const previous = saved?.streams.find(stream => stream.name === name);
 		const generator = (binding: Record<string, unknown>, before: SetupWorkflow | undefined) => {
-			const stored = workflowSetup.safeParse(binding.setup);
+			const stored = safeDecode(workflowSetup, binding.setup);
 			if (stored.success) return stored.data;
 			if (!before || before.file !== binding.file) return undefined;
 			const { file: _file, ...input } = before;
@@ -233,7 +233,7 @@ function suggested(
 			}];
 		});
 		const needs = object(current.needs);
-		const versionFiles = z.array(versionFileSchema).safeParse(current.versionFiles);
+		const versionFiles = safeDecode(mutableArray(versionFileSchema), current.versionFiles);
 		const companionModules = Array.isArray(current.companionModules)
 			? current.companionModules.map(value => selectorKey(String(value), inventory.packages))
 			: [];
@@ -268,7 +268,7 @@ function suggested(
 			prepare: choose('prepare'),
 			promote: proposeBinaries(
 				choose('promote'),
-				workflowSetup.safeParse(object(object(current.promote).workflow).setup).success
+				safeDecode(workflowSetup, object(object(current.promote).workflow).setup).success
 					|| observe.some(entry =>
 						entry.publications.includes(selectorKey(`pkg:github/${snapshot.repository.name}`, inventory.packages))
 					),
@@ -331,7 +331,7 @@ function draftSetup(
 		// Empty selections are allowed in suggestions, but cannot be applied.
 		const candidates = binaryCandidates(snapshot, inventory);
 		const suggestion = suggested(snapshot, raw, workflows, inventory, graph, resolved, baseline.saved, candidates);
-		const normalized = setupChoicesSchema.safeParse(suggestion);
+		const normalized = safeDecode(setupChoicesSchema, suggestion);
 		const requested = normalized.success ? normalized.data : suggestion;
 		const proposal = completeChoices(
 			snapshot,
@@ -892,11 +892,11 @@ function completeChoices(
 			const configured = object(stored.promote).approval;
 			const approval = stream.approval
 				?? (configured === 'required' || configured === 'merge' || configured === 'push' ? configured : undefined);
-			const starts = releaseStarts.safeParse(stored.start);
+			const starts = safeDecode(releaseStarts, stored.start);
 			const start = stream.start ?? (starts.success ? starts.data.map(entry => entry.via) : undefined);
-			const bumped = versionBump.safeParse(object(stored.prepare).bump);
+			const bumped = safeDecode(versionBump, object(stored.prepare).bump);
 			const bump = stream.bump ?? (bumped.success ? bumped.data : undefined);
-			const merged = versionPrMerge.safeParse(object(stored.prepare).versionPrMerge);
+			const merged = safeDecode(versionPrMerge, object(stored.prepare).versionPrMerge);
 			const merge = stream.versionPrMerge ?? (merged.success ? merged.data : undefined);
 			const prepare = complete('prepare', stream.prepare), promote = complete('promote', stream.promote);
 			return {
@@ -911,7 +911,7 @@ function completeChoices(
 			};
 		}),
 	};
-	const canonical = setupChoicesSchema.safeParse(completed);
+	const canonical = safeDecode(setupChoicesSchema, completed);
 	return canonical.success ? canonical.data : completed;
 }
 function withDependencies(inventory: Inventory, choices: SetupChoices): SetupChoices['streams'] {

@@ -3,511 +3,536 @@
 	"$id": "https://beepboop.kjanat.dev/schema/targets.v1.json",
 	"anyOf": [
 		{
-			"anyOf": [
-				{
-					"type": "object",
-					"properties": {
-						"$schema": {
-							"type": "string"
-						},
-						"versionSource": {
-							"type": "string",
-							"pattern": "^(?:tags:[^\\s]*|(?!(?:.*\\/)?\\.\\.?\\/)(?:[\\w.-]+\\/)*(?:Cargo\\.toml#(?:workspace\\.)?package\\.version|package\\.json#version))$"
-						},
-						"binaries": {
-							"minItems": 1,
-							"type": "array",
-							"items": {
-								"type": "string",
-								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-							}
-						},
-						"bundle": {
-							"type": "object",
-							"properties": {
-								"name": {
-									"type": "string",
-									"pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
-								}
-							},
-							"required": [
-								"name"
-							],
-							"additionalProperties": {}
-						},
-						"targets": {
-							"minItems": 1,
-							"type": "array",
-							"items": {
-								"type": "object",
-								"properties": {
-									"pkg": {
-										"type": "string",
-										"pattern": "^[a-z0-9][a-z0-9._-]*$"
-									},
-									"os": {
-										"anyOf": [
-											{
-												"type": "string",
-												"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-											},
-											{
-												"minItems": 1,
-												"type": "array",
-												"items": {
-													"type": "string",
-													"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-												}
-											}
-										]
-									},
-									"cpu": {
-										"anyOf": [
-											{
-												"type": "string",
-												"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-											},
-											{
-												"minItems": 1,
-												"type": "array",
-												"items": {
-													"type": "string",
-													"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-												}
-											}
-										]
-									},
-									"libc": {
-										"anyOf": [
-											{
-												"type": "string",
-												"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-											},
-											{
-												"minItems": 1,
-												"type": "array",
-												"items": {
-													"type": "string",
-													"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-												}
-											}
-										]
-									},
-									"rust": {
-										"type": "string",
-										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-									},
-									"rust_target": {
-										"type": "string",
-										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-									},
-									"target": {
-										"type": "string",
-										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-									},
-									"runner": {
-										"type": "string",
-										"minLength": 1
-									},
-									"build": {
-										"type": "string",
-										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-									},
-									"asset": {
-										"type": "string",
-										"minLength": 1
-									},
-									"zipFileName": {
-										"type": "string",
-										"minLength": 1
-									},
-									"format": {
-										"type": "string",
-										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-									},
-									"tier": {
-										"type": "integer",
-										"exclusiveMinimum": 0,
-										"maximum": 9007199254740991
-									},
-									"experimental": {
-										"type": "boolean"
-									}
-								},
-								"required": [
-									"pkg"
-								],
-								"additionalProperties": {}
-							}
-						},
-						"platformScope": {
-							"not": {}
-						},
-						"scope": {
-							"type": "string",
-							"pattern": "^@[a-z0-9][a-z0-9._-]*$"
-						},
-						"facade": {
-							"type": "string",
-							"pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
-						},
-						"facades": {
-							"not": {}
-						}
-					},
-					"required": [
-						"targets",
-						"scope",
-						"facade"
-					],
-					"additionalProperties": {}
+			"type": "object",
+			"properties": {
+				"$schema": {
+					"type": "string"
 				},
-				{
-					"type": "object",
-					"properties": {
-						"$schema": {
-							"type": "string"
-						},
-						"versionSource": {
-							"type": "string",
-							"pattern": "^(?:tags:[^\\s]*|(?!(?:.*\\/)?\\.\\.?\\/)(?:[\\w.-]+\\/)*(?:Cargo\\.toml#(?:workspace\\.)?package\\.version|package\\.json#version))$"
-						},
-						"binaries": {
-							"minItems": 1,
-							"type": "array",
-							"items": {
-								"type": "string",
-								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-							}
-						},
-						"bundle": {
-							"type": "object",
-							"properties": {
-								"name": {
-									"type": "string",
-									"pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
-								}
-							},
-							"required": [
-								"name"
-							],
-							"additionalProperties": {}
-						},
-						"targets": {
-							"minItems": 1,
-							"type": "array",
-							"items": {
-								"type": "object",
-								"properties": {
-									"pkg": {
-										"type": "string",
-										"pattern": "^[a-z0-9][a-z0-9._-]*$"
-									},
-									"os": {
-										"anyOf": [
-											{
-												"type": "string",
-												"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-											},
-											{
-												"minItems": 1,
-												"type": "array",
-												"items": {
-													"type": "string",
-													"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-												}
-											}
-										]
-									},
-									"cpu": {
-										"anyOf": [
-											{
-												"type": "string",
-												"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-											},
-											{
-												"minItems": 1,
-												"type": "array",
-												"items": {
-													"type": "string",
-													"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-												}
-											}
-										]
-									},
-									"libc": {
-										"anyOf": [
-											{
-												"type": "string",
-												"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-											},
-											{
-												"minItems": 1,
-												"type": "array",
-												"items": {
-													"type": "string",
-													"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-												}
-											}
-										]
-									},
-									"rust": {
-										"type": "string",
-										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-									},
-									"rust_target": {
-										"type": "string",
-										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-									},
-									"target": {
-										"type": "string",
-										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-									},
-									"runner": {
-										"type": "string",
-										"minLength": 1
-									},
-									"build": {
-										"type": "string",
-										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-									},
-									"asset": {
-										"type": "string",
-										"minLength": 1
-									},
-									"zipFileName": {
-										"type": "string",
-										"minLength": 1
-									},
-									"format": {
-										"type": "string",
-										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-									},
-									"tier": {
-										"type": "integer",
-										"exclusiveMinimum": 0,
-										"maximum": 9007199254740991
-									},
-									"experimental": {
-										"type": "boolean"
-									}
-								},
-								"required": [
-									"pkg"
-								],
-								"additionalProperties": {}
-							}
-						},
-						"platformScope": {
-							"not": {}
-						},
-						"scope": {
-							"type": "string",
-							"pattern": "^@[a-z0-9][a-z0-9._-]*$"
-						},
-						"facades": {
-							"minItems": 1,
-							"type": "array",
-							"items": {
-								"type": "object",
-								"properties": {
-									"name": {
-										"type": "string",
-										"pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
-									},
-									"pkg": {
-										"type": "string",
-										"pattern": "^[a-z0-9][a-z0-9._-]*$"
-									},
-									"shim": {
-										"type": "string",
-										"pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
-									}
-								},
-								"required": [
-									"name"
-								],
-								"additionalProperties": {}
-							}
-						},
-						"facade": {
-							"not": {}
-						}
-					},
-					"required": [
-						"targets",
-						"scope",
-						"facades"
-					],
-					"additionalProperties": {}
+				"versionSource": {
+					"type": "string",
+					"pattern": "^(?:tags:[^\\s]*|(?!(?:.*\\/)?\\.\\.?\\/)(?:[\\w.-]+\\/)*(?:Cargo\\.toml#(?:workspace\\.)?package\\.version|package\\.json#version))$"
 				},
-				{
+				"binaries": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+					},
+					"minItems": 1
+				},
+				"bundle": {
 					"type": "object",
 					"properties": {
-						"$schema": {
-							"type": "string"
-						},
-						"versionSource": {
-							"type": "string",
-							"pattern": "^(?:tags:[^\\s]*|(?!(?:.*\\/)?\\.\\.?\\/)(?:[\\w.-]+\\/)*(?:Cargo\\.toml#(?:workspace\\.)?package\\.version|package\\.json#version))$"
-						},
-						"binaries": {
-							"minItems": 1,
-							"type": "array",
-							"items": {
-								"type": "string",
-								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-							}
-						},
-						"bundle": {
-							"type": "object",
-							"properties": {
-								"name": {
-									"type": "string",
-									"pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
-								}
-							},
-							"required": [
-								"name"
-							],
-							"additionalProperties": {}
-						},
-						"targets": {
-							"minItems": 1,
-							"type": "array",
-							"items": {
-								"type": "object",
-								"properties": {
-									"pkg": {
-										"type": "string",
-										"pattern": "^[a-z0-9][a-z0-9._-]*$"
-									},
-									"os": {
-										"anyOf": [
-											{
-												"type": "string",
-												"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-											},
-											{
-												"minItems": 1,
-												"type": "array",
-												"items": {
-													"type": "string",
-													"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-												}
-											}
-										]
-									},
-									"cpu": {
-										"anyOf": [
-											{
-												"type": "string",
-												"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-											},
-											{
-												"minItems": 1,
-												"type": "array",
-												"items": {
-													"type": "string",
-													"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-												}
-											}
-										]
-									},
-									"libc": {
-										"anyOf": [
-											{
-												"type": "string",
-												"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-											},
-											{
-												"minItems": 1,
-												"type": "array",
-												"items": {
-													"type": "string",
-													"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-												}
-											}
-										]
-									},
-									"rust": {
-										"type": "string",
-										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-									},
-									"rust_target": {
-										"type": "string",
-										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-									},
-									"target": {
-										"type": "string",
-										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-									},
-									"runner": {
-										"type": "string",
-										"minLength": 1
-									},
-									"build": {
-										"type": "string",
-										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-									},
-									"asset": {
-										"type": "string",
-										"minLength": 1
-									},
-									"zipFileName": {
-										"type": "string",
-										"minLength": 1
-									},
-									"format": {
-										"type": "string",
-										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-									},
-									"tier": {
-										"type": "integer",
-										"exclusiveMinimum": 0,
-										"maximum": 9007199254740991
-									},
-									"experimental": {
-										"type": "boolean"
-									}
-								},
-								"required": [
-									"pkg"
-								],
-								"additionalProperties": {}
-							}
-						},
-						"scope": {
-							"not": {}
-						},
-						"facades": {
-							"not": {}
-						},
-						"platformScope": {
-							"type": "string",
-							"pattern": "^@[a-z0-9][a-z0-9._-]*$"
-						},
-						"binary": {
-							"type": "string",
-							"pattern": "^[a-z0-9][a-z0-9._-]*$"
-						},
-						"facade": {
+						"name": {
 							"type": "string",
 							"pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
 						}
 					},
 					"required": [
-						"targets",
-						"platformScope",
-						"binary",
-						"facade"
+						"name"
 					],
-					"additionalProperties": {}
+					"patternProperties": {
+						"^(?!(?:name)$)[\\s\\S]*$": {}
+					},
+					"additionalProperties": true
+				},
+				"targets": {
+					"type": "array",
+					"items": {
+						"type": "object",
+						"properties": {
+							"pkg": {
+								"type": "string",
+								"pattern": "^[a-z0-9][a-z0-9._-]*$"
+							},
+							"os": {
+								"anyOf": [
+									{
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									{
+										"type": "array",
+										"items": {
+											"type": "string",
+											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+										},
+										"minItems": 1
+									}
+								]
+							},
+							"cpu": {
+								"anyOf": [
+									{
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									{
+										"type": "array",
+										"items": {
+											"type": "string",
+											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+										},
+										"minItems": 1
+									}
+								]
+							},
+							"libc": {
+								"anyOf": [
+									{
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									{
+										"type": "array",
+										"items": {
+											"type": "string",
+											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+										},
+										"minItems": 1
+									}
+								]
+							},
+							"rust": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"rust_target": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"target": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"runner": {
+								"type": "string",
+								"minLength": 1
+							},
+							"build": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"asset": {
+								"type": "string",
+								"minLength": 1
+							},
+							"zipFileName": {
+								"type": "string",
+								"minLength": 1
+							},
+							"format": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"tier": {
+								"type": "integer",
+								"maximum": 9007199254740991,
+								"exclusiveMinimum": 0
+							},
+							"experimental": {
+								"type": "boolean"
+							}
+						},
+						"required": [
+							"pkg"
+						],
+						"patternProperties": {
+							"^(?!(?:pkg|os|cpu|libc|rust|rust_target|target|runner|build|asset|zipFileName|format|tier|experimental)$)[\\s\\S]*$": {}
+						},
+						"additionalProperties": true
+					},
+					"minItems": 1
+				},
+				"platformScope": {
+					"not": {}
+				},
+				"scope": {
+					"type": "string",
+					"pattern": "^@[a-z0-9][a-z0-9._-]*$"
+				},
+				"facade": {
+					"type": "string",
+					"pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
+				},
+				"facades": {
+					"not": {}
 				}
-			]
+			},
+			"required": [
+				"targets",
+				"scope",
+				"facade"
+			],
+			"patternProperties": {
+				"^(?!(?:\\$schema|versionSource|binaries|bundle|targets|platformScope|scope|facade|facades)$)[\\s\\S]*$": {}
+			},
+			"additionalProperties": true
 		},
 		{
-			"minItems": 1,
+			"type": "object",
+			"properties": {
+				"$schema": {
+					"type": "string"
+				},
+				"versionSource": {
+					"type": "string",
+					"pattern": "^(?:tags:[^\\s]*|(?!(?:.*\\/)?\\.\\.?\\/)(?:[\\w.-]+\\/)*(?:Cargo\\.toml#(?:workspace\\.)?package\\.version|package\\.json#version))$"
+				},
+				"binaries": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+					},
+					"minItems": 1
+				},
+				"bundle": {
+					"type": "object",
+					"properties": {
+						"name": {
+							"type": "string",
+							"pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
+						}
+					},
+					"required": [
+						"name"
+					],
+					"patternProperties": {
+						"^(?!(?:name)$)[\\s\\S]*$": {}
+					},
+					"additionalProperties": true
+				},
+				"targets": {
+					"type": "array",
+					"items": {
+						"type": "object",
+						"properties": {
+							"pkg": {
+								"type": "string",
+								"pattern": "^[a-z0-9][a-z0-9._-]*$"
+							},
+							"os": {
+								"anyOf": [
+									{
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									{
+										"type": "array",
+										"items": {
+											"type": "string",
+											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+										},
+										"minItems": 1
+									}
+								]
+							},
+							"cpu": {
+								"anyOf": [
+									{
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									{
+										"type": "array",
+										"items": {
+											"type": "string",
+											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+										},
+										"minItems": 1
+									}
+								]
+							},
+							"libc": {
+								"anyOf": [
+									{
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									{
+										"type": "array",
+										"items": {
+											"type": "string",
+											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+										},
+										"minItems": 1
+									}
+								]
+							},
+							"rust": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"rust_target": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"target": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"runner": {
+								"type": "string",
+								"minLength": 1
+							},
+							"build": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"asset": {
+								"type": "string",
+								"minLength": 1
+							},
+							"zipFileName": {
+								"type": "string",
+								"minLength": 1
+							},
+							"format": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"tier": {
+								"type": "integer",
+								"maximum": 9007199254740991,
+								"exclusiveMinimum": 0
+							},
+							"experimental": {
+								"type": "boolean"
+							}
+						},
+						"required": [
+							"pkg"
+						],
+						"patternProperties": {
+							"^(?!(?:pkg|os|cpu|libc|rust|rust_target|target|runner|build|asset|zipFileName|format|tier|experimental)$)[\\s\\S]*$": {}
+						},
+						"additionalProperties": true
+					},
+					"minItems": 1
+				},
+				"platformScope": {
+					"not": {}
+				},
+				"scope": {
+					"type": "string",
+					"pattern": "^@[a-z0-9][a-z0-9._-]*$"
+				},
+				"facades": {
+					"type": "array",
+					"items": {
+						"type": "object",
+						"properties": {
+							"name": {
+								"type": "string",
+								"pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
+							},
+							"pkg": {
+								"type": "string",
+								"pattern": "^[a-z0-9][a-z0-9._-]*$"
+							},
+							"shim": {
+								"type": "string",
+								"pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
+							}
+						},
+						"required": [
+							"name"
+						],
+						"patternProperties": {
+							"^(?!(?:name|pkg|shim)$)[\\s\\S]*$": {}
+						},
+						"additionalProperties": true
+					},
+					"minItems": 1
+				},
+				"facade": {
+					"not": {}
+				}
+			},
+			"required": [
+				"targets",
+				"scope",
+				"facades"
+			],
+			"patternProperties": {
+				"^(?!(?:\\$schema|versionSource|binaries|bundle|targets|platformScope|scope|facades|facade)$)[\\s\\S]*$": {}
+			},
+			"additionalProperties": true
+		},
+		{
+			"type": "object",
+			"properties": {
+				"$schema": {
+					"type": "string"
+				},
+				"versionSource": {
+					"type": "string",
+					"pattern": "^(?:tags:[^\\s]*|(?!(?:.*\\/)?\\.\\.?\\/)(?:[\\w.-]+\\/)*(?:Cargo\\.toml#(?:workspace\\.)?package\\.version|package\\.json#version))$"
+				},
+				"binaries": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+					},
+					"minItems": 1
+				},
+				"bundle": {
+					"type": "object",
+					"properties": {
+						"name": {
+							"type": "string",
+							"pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
+						}
+					},
+					"required": [
+						"name"
+					],
+					"patternProperties": {
+						"^(?!(?:name)$)[\\s\\S]*$": {}
+					},
+					"additionalProperties": true
+				},
+				"targets": {
+					"type": "array",
+					"items": {
+						"type": "object",
+						"properties": {
+							"pkg": {
+								"type": "string",
+								"pattern": "^[a-z0-9][a-z0-9._-]*$"
+							},
+							"os": {
+								"anyOf": [
+									{
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									{
+										"type": "array",
+										"items": {
+											"type": "string",
+											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+										},
+										"minItems": 1
+									}
+								]
+							},
+							"cpu": {
+								"anyOf": [
+									{
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									{
+										"type": "array",
+										"items": {
+											"type": "string",
+											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+										},
+										"minItems": 1
+									}
+								]
+							},
+							"libc": {
+								"anyOf": [
+									{
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									{
+										"type": "array",
+										"items": {
+											"type": "string",
+											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+										},
+										"minItems": 1
+									}
+								]
+							},
+							"rust": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"rust_target": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"target": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"runner": {
+								"type": "string",
+								"minLength": 1
+							},
+							"build": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"asset": {
+								"type": "string",
+								"minLength": 1
+							},
+							"zipFileName": {
+								"type": "string",
+								"minLength": 1
+							},
+							"format": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"tier": {
+								"type": "integer",
+								"maximum": 9007199254740991,
+								"exclusiveMinimum": 0
+							},
+							"experimental": {
+								"type": "boolean"
+							}
+						},
+						"required": [
+							"pkg"
+						],
+						"patternProperties": {
+							"^(?!(?:pkg|os|cpu|libc|rust|rust_target|target|runner|build|asset|zipFileName|format|tier|experimental)$)[\\s\\S]*$": {}
+						},
+						"additionalProperties": true
+					},
+					"minItems": 1
+				},
+				"scope": {
+					"not": {}
+				},
+				"facades": {
+					"not": {}
+				},
+				"platformScope": {
+					"type": "string",
+					"pattern": "^@[a-z0-9][a-z0-9._-]*$"
+				},
+				"binary": {
+					"type": "string",
+					"pattern": "^[a-z0-9][a-z0-9._-]*$"
+				},
+				"facade": {
+					"type": "string",
+					"pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
+				}
+			},
+			"required": [
+				"targets",
+				"platformScope",
+				"binary",
+				"facade"
+			],
+			"patternProperties": {
+				"^(?!(?:\\$schema|versionSource|binaries|bundle|targets|scope|facades|platformScope|binary|facade)$)[\\s\\S]*$": {}
+			},
+			"additionalProperties": true
+		},
+		{
 			"type": "array",
 			"items": {
 				"anyOf": [
@@ -525,12 +550,12 @@
 										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
 									},
 									{
-										"minItems": 1,
 										"type": "array",
 										"items": {
 											"type": "string",
 											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-										}
+										},
+										"minItems": 1
 									}
 								]
 							},
@@ -541,12 +566,12 @@
 										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
 									},
 									{
-										"minItems": 1,
 										"type": "array",
 										"items": {
 											"type": "string",
 											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-										}
+										},
+										"minItems": 1
 									}
 								]
 							},
@@ -557,12 +582,12 @@
 										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
 									},
 									{
-										"minItems": 1,
 										"type": "array",
 										"items": {
 											"type": "string",
 											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-										}
+										},
+										"minItems": 1
 									}
 								]
 							},
@@ -600,8 +625,8 @@
 							},
 							"tier": {
 								"type": "integer",
-								"exclusiveMinimum": 0,
-								"maximum": 9007199254740991
+								"maximum": 9007199254740991,
+								"exclusiveMinimum": 0
 							},
 							"experimental": {
 								"type": "boolean"
@@ -612,7 +637,10 @@
 							"runner",
 							"build"
 						],
-						"additionalProperties": {}
+						"patternProperties": {
+							"^(?!(?:pkg|os|cpu|libc|rust|rust_target|target|runner|build|asset|zipFileName|format|tier|experimental)$)[\\s\\S]*$": {}
+						},
+						"additionalProperties": true
 					},
 					{
 						"type": "object",
@@ -628,12 +656,12 @@
 										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
 									},
 									{
-										"minItems": 1,
 										"type": "array",
 										"items": {
 											"type": "string",
 											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-										}
+										},
+										"minItems": 1
 									}
 								]
 							},
@@ -644,12 +672,12 @@
 										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
 									},
 									{
-										"minItems": 1,
 										"type": "array",
 										"items": {
 											"type": "string",
 											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-										}
+										},
+										"minItems": 1
 									}
 								]
 							},
@@ -660,12 +688,12 @@
 										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
 									},
 									{
-										"minItems": 1,
 										"type": "array",
 										"items": {
 											"type": "string",
 											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-										}
+										},
+										"minItems": 1
 									}
 								]
 							},
@@ -703,8 +731,8 @@
 							},
 							"tier": {
 								"type": "integer",
-								"exclusiveMinimum": 0,
-								"maximum": 9007199254740991
+								"maximum": 9007199254740991,
+								"exclusiveMinimum": 0
 							},
 							"experimental": {
 								"type": "boolean"
@@ -715,10 +743,14 @@
 							"runner",
 							"build"
 						],
-						"additionalProperties": {}
+						"patternProperties": {
+							"^(?!(?:pkg|os|cpu|libc|rust|rust_target|target|runner|build|asset|zipFileName|format|tier|experimental)$)[\\s\\S]*$": {}
+						},
+						"additionalProperties": true
 					}
 				]
-			}
+			},
+			"minItems": 1
 		},
 		{
 			"type": "object",
@@ -727,108 +759,114 @@
 					"type": "string"
 				}
 			},
-			"additionalProperties": {
-				"type": "object",
-				"properties": {
-					"pkg": {
-						"type": "string",
-						"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-					},
-					"os": {
-						"anyOf": [
-							{
-								"type": "string",
-								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-							},
-							{
-								"minItems": 1,
-								"type": "array",
-								"items": {
+			"patternProperties": {
+				"^(?!\\$schema$)[\\s\\S]*$": {
+					"type": "object",
+					"properties": {
+						"pkg": {
+							"type": "string",
+							"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+						},
+						"os": {
+							"anyOf": [
+								{
 									"type": "string",
 									"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+								},
+								{
+									"type": "array",
+									"items": {
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									"minItems": 1
 								}
-							}
-						]
-					},
-					"cpu": {
-						"anyOf": [
-							{
-								"type": "string",
-								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-							},
-							{
-								"minItems": 1,
-								"type": "array",
-								"items": {
+							]
+						},
+						"cpu": {
+							"anyOf": [
+								{
 									"type": "string",
 									"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+								},
+								{
+									"type": "array",
+									"items": {
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									"minItems": 1
 								}
-							}
-						]
-					},
-					"libc": {
-						"anyOf": [
-							{
-								"type": "string",
-								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-							},
-							{
-								"minItems": 1,
-								"type": "array",
-								"items": {
+							]
+						},
+						"libc": {
+							"anyOf": [
+								{
 									"type": "string",
 									"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+								},
+								{
+									"type": "array",
+									"items": {
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									"minItems": 1
 								}
-							}
-						]
+							]
+						},
+						"rust": {
+							"type": "string",
+							"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+						},
+						"rust_target": {
+							"type": "string",
+							"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+						},
+						"target": {
+							"type": "string",
+							"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+						},
+						"runner": {
+							"type": "string",
+							"minLength": 1
+						},
+						"build": {
+							"type": "string",
+							"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+						},
+						"asset": {
+							"type": "string",
+							"minLength": 1
+						},
+						"zipFileName": {
+							"type": "string",
+							"minLength": 1
+						},
+						"format": {
+							"type": "string",
+							"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+						},
+						"tier": {
+							"type": "integer",
+							"maximum": 9007199254740991,
+							"exclusiveMinimum": 0
+						},
+						"experimental": {
+							"type": "boolean"
+						}
 					},
-					"rust": {
-						"type": "string",
-						"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+					"required": [
+						"os",
+						"cpu"
+					],
+					"patternProperties": {
+						"^(?!(?:pkg|os|cpu|libc|rust|rust_target|target|runner|build|asset|zipFileName|format|tier|experimental)$)[\\s\\S]*$": {}
 					},
-					"rust_target": {
-						"type": "string",
-						"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-					},
-					"target": {
-						"type": "string",
-						"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-					},
-					"runner": {
-						"type": "string",
-						"minLength": 1
-					},
-					"build": {
-						"type": "string",
-						"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-					},
-					"asset": {
-						"type": "string",
-						"minLength": 1
-					},
-					"zipFileName": {
-						"type": "string",
-						"minLength": 1
-					},
-					"format": {
-						"type": "string",
-						"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
-					},
-					"tier": {
-						"type": "integer",
-						"exclusiveMinimum": 0,
-						"maximum": 9007199254740991
-					},
-					"experimental": {
-						"type": "boolean"
-					}
-				},
-				"required": [
-					"os",
-					"cpu"
-				],
-				"additionalProperties": {}
-			}
+					"additionalProperties": true
+				}
+			},
+			"additionalProperties": true
 		}
 	]
 }

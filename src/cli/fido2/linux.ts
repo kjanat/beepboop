@@ -1,5 +1,5 @@
 import { closeSync, constants, openSync, readdirSync, readFileSync, readSync, writeSync } from 'node:fs';
-import { Data, Effect } from 'effect';
+import { Clock, Data, Effect } from 'effect';
 import type { HidDevice, HidTransport } from '@/cli/fido2/types';
 import { closeAll, SecurityKeyError, securityKeyFailure } from '@/cli/fido2/types';
 
@@ -37,15 +37,19 @@ function open(path: string): HidDevice {
 			Effect.try({ try: () => void writeSync(fd, Uint8Array.from([0, ...report])), catch: securityKeyFailure }),
 		read: timeoutMs =>
 			Effect.gen(function*() {
+				const clock = yield* Clock.Clock;
+
 				const buffer = new Uint8Array(64);
-				const deadline = Date.now() + timeoutMs;
+				const deadline = clock.currentTimeMillisUnsafe() + timeoutMs;
 				for (;;) {
 					const length = yield* system(() => readSync(fd, buffer, 0, buffer.length, null)).pipe(
 						Effect.catchIf(error => error.code === 'EAGAIN', () => Effect.succeed(0)),
 						Effect.mapError(failed),
 					);
 					if (length > 0) return buffer.slice(0, length);
-					if (Date.now() > deadline) return yield* new SecurityKeyError({ message: 'Security key timed out' });
+					if (clock.currentTimeMillisUnsafe() > deadline) {
+						return yield* new SecurityKeyError({ message: 'Security key timed out' });
+					}
 					yield* Effect.sleep('5 millis');
 				}
 			}),

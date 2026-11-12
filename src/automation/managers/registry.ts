@@ -15,6 +15,7 @@ import { precondition } from '@/contract/errors';
 import { fromPromise } from '@/failure';
 import type { PackageIdentity } from '@/package-url';
 import { InvalidPackageUrl, parsePackageIdentity } from '@/package-url';
+import { ioConcurrency } from '@/runtime/policy';
 
 export interface Manager {
 	readonly name: ManagerName;
@@ -123,7 +124,7 @@ export class ManagerRegistry {
 						diagnostics.push({ code: 'lookup-failed', severity: 'warning', message: `${label(channel)}: ${failure}` });
 					}
 					return outcome;
-				})), { concurrency: 'unbounded' });
+				})), { concurrency: ioConcurrency });
 		const lookups = (pkg: Package): { destination: ManagerDestinationId; latest: RegistryLookup }[] => {
 			const manager = this.managers.get(pkg.manager);
 			const mapped = managerSpec(pkg.manager).destinations;
@@ -144,10 +145,10 @@ export class ManagerRegistry {
 					lookups(pkg),
 					({ destination, latest }) =>
 						latest(pkg, request, context).pipe(Effect.map(result => ({ destination, result }))),
-					{ concurrency: 'unbounded' },
+					{ concurrency: ioConcurrency },
 				),
 				channels(pkg.channels ?? [], () => `${pkg.manager}:${pkg.name}`),
-			], { concurrency: 'unbounded' }).pipe(Effect.flatMap(([results, checked]) =>
+			], { concurrency: ioConcurrency }).pipe(Effect.flatMap(([results, checked]) =>
 				Effect.sync(() => {
 					const primary = managerSpec(pkg.manager).destinations?.primary;
 					pkg.destinations = [
@@ -174,7 +175,7 @@ export class ManagerRegistry {
 				})
 			));
 		return Effect.gen(function*() {
-			yield* Effect.forEach(pending, resolve, { concurrency: 8, discard: true });
+			yield* Effect.forEach(pending, resolve, { concurrency: ioConcurrency, discard: true });
 			const { destinations: _destinations, ...rest } = inventory;
 			const repositoryChannels = inventory.channels ?? [];
 			const destinations: ChannelOutcome[] = [];
@@ -262,5 +263,10 @@ export class Registry extends Context.Service<Registry, {
 }>()('beepboop/Registry') {}
 
 export function registryLayer(transport: Fetcher): Layer.Layer<Registry> {
-	return Layer.succeed(Registry, { fetch: (url, init) => fromPromise(() => transport(url, init ?? {})) });
+	return Layer.succeed(Registry, {
+		fetch: (url, init) =>
+			fromPromise(signal =>
+				transport(url, { ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal })
+			),
+	});
 }

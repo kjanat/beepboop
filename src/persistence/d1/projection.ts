@@ -42,8 +42,10 @@ export class ProjectionStore {
 		).bind(row.repositoryId, row.entity, row.id, row.revision, at, row.id, row.revision);
 	}
 	apply(rows: readonly Projection[]): Effect.Effect<void, DomainError> {
-		if (!rows.length) return Effect.void;
-		const at = Date.now();
-		return sql(this.db).batch(rows.flatMap(row => [this.upsert(row), this.change(row, at)])).pipe(Effect.asVoid);
+		return Effect.clockWith(clock => {
+			if (!rows.length) return Effect.void;
+			const at = clock.currentTimeMillisUnsafe();
+			return sql(this.db).batch(rows.flatMap(row => [this.upsert(row), this.change(row, at)])).pipe(Effect.asVoid);
+		});
 	}
 }

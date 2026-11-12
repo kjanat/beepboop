@@ -1,26 +1,47 @@
-import { z } from 'zod';
+import { Effect, Schema } from 'effect';
 import { unsafeRelativePath } from '@/relative-path';
+import type { Decoded } from '@/schema';
+import { matchesPattern, mutableArray, refined, strictStruct } from '@/schema';
 
 export function safeVersionPath(path: string): boolean {
 	return !path.includes('\\') && !unsafeRelativePath(path, ['', '.', '..', '.git']);
 }
 const common = {
-	path: z.string().refine(safeVersionPath, 'Expected a repository-relative path'),
-	group: z.string().min(1).optional(),
-	template: z.string().max(1000).default('{version}'),
+	path: refined(Schema.String, safeVersionPath, 'Expected a repository-relative path'),
+	group: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
+	template: Schema.String.check(Schema.isMaxLength(1000)).pipe(Schema.withDecodingDefault(Effect.succeed('{version}'))),
 };
-export const versionFileSchema = z.discriminatedUnion('format', [
-	z.strictObject({
+export const versionFileSchema = Schema.Union([
+	strictStruct({
 		...common,
-		format: z.literal('json'),
-		key: z.array(z.union([z.string().min(1), z.number().int().nonnegative()])).min(1),
+		format: Schema.Literal('json'),
+		key: mutableArray(
+			Schema.Union([
+				Schema.String.check(Schema.isMinLength(1)),
+				Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0)),
+			]),
+		).check(Schema.isMinLength(1)),
 	}),
-	z.strictObject({
+	strictStruct({
 		...common,
-		format: z.literal('yaml'),
-		key: z.array(z.union([z.string().min(1), z.number().int().nonnegative()])).min(1),
+		format: Schema.Literal('yaml'),
+		key: mutableArray(
+			Schema.Union([
+				Schema.String.check(Schema.isMinLength(1)),
+				Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0)),
+			]),
+		).check(Schema.isMinLength(1)),
 	}),
-	z.strictObject({ ...common, format: z.literal('toml'), key: z.array(z.string().regex(/^[A-Za-z0-9_-]+$/)).min(1) }),
-	z.strictObject({ ...common, format: z.literal('text'), prefix: z.string().min(1), suffix: z.string().min(1) }),
+	strictStruct({
+		...common,
+		format: Schema.Literal('toml'),
+		key: mutableArray(Schema.String.check(matchesPattern(/^[A-Za-z0-9_-]+$/))).check(Schema.isMinLength(1)),
+	}),
+	strictStruct({
+		...common,
+		format: Schema.Literal('text'),
+		prefix: Schema.String.check(Schema.isMinLength(1)),
+		suffix: Schema.String.check(Schema.isMinLength(1)),
+	}),
 ]);
-export type VersionFile = z.infer<typeof versionFileSchema>;
+export type VersionFile = Decoded<typeof versionFileSchema>;

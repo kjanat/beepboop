@@ -1,39 +1,50 @@
 import type { CLIError, Out, ProgressHandle } from '@kjanat/dreamcli';
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema } from 'effect';
 import type { Client } from '@/cli/client';
 import type { Look, State } from '@/cli/look';
 import { lookOf, registryOf, table } from '@/cli/look';
 import { failure } from '@/cli/output';
 import { routes } from '@/contract/routes';
 import type { BinaryProgress } from '@/contract/views';
+import type { Decoded } from '@/schema';
+import { decodeSync, looseStruct, mutableArray, mutableRecord } from '@/schema';
 
-const result = z.looseObject({ url: z.string(), head: z.string(), kind: z.literal('commit').optional() });
-const tracked = z.looseObject({
-	id: z.string(),
-	repositoryId: z.number(),
-	repository: z.string(),
-	stream: z.string(),
-	operation: z.string(),
-	state: z.string(),
-	version: z.string().optional(),
-	sourceSha: z.string(),
-	reason: z.string().optional(),
-	runId: z.number().optional(),
-	approvedBy: z.string().optional(),
-	release: z.looseObject({ tag: z.string().optional() }).optional(),
-	draftRelease: z.looseObject({ tag: z.string() }).optional(),
-	workflow: z.looseObject({ file: z.string() }).optional(),
-	managed: z.looseObject({ result: result.optional() }).optional(),
-	prepared: z.looseObject({ result: result.optional() }).optional(),
-	publications: z.array(
-		z.looseObject({ id: z.string(), name: z.string(), manager: z.string(), version: z.string(), outcome: z.string() }),
-	).default([]),
-	configuration: z.looseObject({
-		streams: z.record(z.string(), z.looseObject({ required: z.array(z.string()).optional() })),
-	}).optional(),
+const result = looseStruct({
+	url: Schema.String,
+	head: Schema.String,
+	kind: Schema.optional(Schema.Literal('commit')),
 });
-type Tracked = z.output<typeof tracked>;
+const tracked = looseStruct({
+	id: Schema.String,
+	repositoryId: Schema.Finite,
+	repository: Schema.String,
+	stream: Schema.String,
+	operation: Schema.String,
+	state: Schema.String,
+	version: Schema.optional(Schema.String),
+	sourceSha: Schema.String,
+	reason: Schema.optional(Schema.String),
+	runId: Schema.optional(Schema.Finite),
+	approvedBy: Schema.optional(Schema.String),
+	release: Schema.optional(looseStruct({ tag: Schema.optional(Schema.String) })),
+	draftRelease: Schema.optional(looseStruct({ tag: Schema.String })),
+	workflow: Schema.optional(looseStruct({ file: Schema.String })),
+	managed: Schema.optional(looseStruct({ result: Schema.optional(result) })),
+	prepared: Schema.optional(looseStruct({ result: Schema.optional(result) })),
+	publications: mutableArray(
+		looseStruct({
+			id: Schema.String,
+			name: Schema.String,
+			manager: Schema.String,
+			version: Schema.String,
+			outcome: Schema.String,
+		}),
+	).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+	configuration: Schema.optional(looseStruct({
+		streams: mutableRecord(Schema.String, looseStruct({ required: Schema.optional(mutableArray(Schema.String)) })),
+	})),
+});
+type Tracked = Decoded<typeof tracked>;
 
 export const followInterval = 5_000;
 
@@ -156,7 +167,7 @@ function snapshot(client: Client, followed: Followed): Effect.Effect<Tracked[], 
 		Effect.flatMap(rows =>
 			Effect.try({
 				try: () =>
-					z.array(tracked).parse(rows).filter(row =>
+					decodeSync(mutableArray(tracked), rows).filter(row =>
 						row.repositoryId === followed.repositoryId && row.stream === followed.stream
 					),
 				catch: () => failure('Server returned an invalid execution list', 'INVALID_RESPONSE'),

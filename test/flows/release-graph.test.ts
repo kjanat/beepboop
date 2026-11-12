@@ -4,8 +4,7 @@ import { runWorkflow, workflowJob } from '@root/test/support/repositories.ts';
 import { applySetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema, Struct } from 'effect';
 import { discover } from '@/automation/managers';
 import { packageId } from '@/automation/package-identity';
 import { adoptionChoices, adoptionMarkdown } from '@/automation/release-graph/adoption';
@@ -17,20 +16,35 @@ import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SnapshotSource } from '@/automation/snapshot';
 import { buildSnapshot } from '@/automation/snapshot';
 import type { Snapshot } from '@/automation/types';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableRecord,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
-const snapshotSchema = z.object({
-	repository: z.object({ id: z.number(), name: z.string(), defaultBranch: z.string() }),
-	sha: z.string(),
-	files: z.record(z.string(), z.string()),
-	paths: z.array(z.string()),
-	tags: z.array(z.string()).optional(),
+const snapshotSchema = mutableStruct({
+	repository: mutableStruct({ id: Schema.Finite, name: Schema.String, defaultBranch: Schema.String }),
+	sha: Schema.String,
+	files: mutableRecord(Schema.String, Schema.String),
+	paths: mutableArray(Schema.String),
+	tags: Schema.optional(mutableArray(Schema.String)),
 });
 
 const snapshots = new Map<string, Snapshot>();
 async function snapshotOf(name: string): Promise<Snapshot> {
 	const known = snapshots.get(name);
 	if (known) return known;
-	const parsed = snapshotSchema.parse(
+	const parsed = decodeSync(
+		snapshotSchema,
 		await Bun.file(new URL(`../fixtures/repositories/${name}.json`, import.meta.url)).json(),
 	);
 	const snapshot: Snapshot = {

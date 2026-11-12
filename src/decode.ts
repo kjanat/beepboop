@@ -1,17 +1,16 @@
-import { Effect } from 'effect';
-import type { z } from 'zod';
+import { Effect, Schema } from 'effect';
+import type { Contract, Decoded } from '@/schema';
 
-export function decodeWith<S extends z.ZodType, E>(
+export function decodeWith<S extends Contract, E>(
 	schema: S,
 	value: unknown,
-	reject: (error: z.ZodError) => E,
-): Effect.Effect<z.output<S>, E> {
-	const parsed = schema.safeParse(value);
-	return parsed.success ? Effect.succeed(parsed.data) : Effect.fail(reject(parsed.error));
+	reject: (error: Schema.SchemaError) => E,
+): Effect.Effect<Decoded<S>, E> {
+	return Schema.decodeUnknownEffect(schema, { errors: 'all' })(value).pipe(Effect.mapError(reject));
 }
 
 export function parseWith<E>(
-	attempt: <A>(run: () => A) => Effect.Effect<A, E>,
-): <S extends z.ZodType>(schema: S, value: unknown) => Effect.Effect<z.output<S>, E> {
-	return (schema, value) => attempt(() => schema.parse(value));
+	reject: (error: Schema.SchemaError) => E,
+): <S extends Contract>(schema: S, value: unknown) => Effect.Effect<Decoded<S>, E> {
+	return (schema, value) => decodeWith(schema, value, reject);
 }

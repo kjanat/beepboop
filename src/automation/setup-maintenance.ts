@@ -1,5 +1,4 @@
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema } from 'effect';
 import { resolveConfiguration } from '@/automation/configuration';
 import type { RepositoryGateway } from '@/automation/github';
 import { discover } from '@/automation/managers';
@@ -22,14 +21,15 @@ import { packageMarkdown } from '@/domain/package-label';
 import { fromJson, fromPromise, fromSync, toDomainError } from '@/failure';
 import { record } from '@/model';
 import { parse, replaceDocument, sql } from '@/persistence/d1/database';
+import { decodeSync, mutableArray, mutableStruct, safeDecode } from '@/schema';
 
-const editsSchema = z.array(z.object({ path: z.string(), before: z.string(), after: z.string() }));
+const editsSchema = mutableArray(mutableStruct({ path: Schema.String, before: Schema.String, after: Schema.String }));
 export function sameEdits(left: Edit[], right: Edit[]): boolean {
 	const sorted = (edits: Edit[]) => JSON.stringify([...edits].sort((a, b) => a.path.localeCompare(b.path)));
 	return sorted(left) === sorted(right);
 }
 export function setupEdits(saved: Record<string, unknown> | undefined): Edit[] {
-	if (Array.isArray(saved?.edits)) return editsSchema.parse(saved.edits);
+	if (Array.isArray(saved?.edits)) return decodeSync(editsSchema, saved.edits);
 	return typeof saved?.content === 'string'
 		? [{ path: '.github/beepboop.json', before: '', after: saved.content }]
 		: [];
@@ -49,12 +49,12 @@ export function rebuildingStatus(body: string): string {
 	return status ? `${status}\n\n${rebuilding}` : rebuilding;
 }
 export function savedSetup(saved: Record<string, unknown> | undefined): { saved?: SetupChoices } {
-	const parsed = setupChoicesSchema.safeParse(saved?.choices);
+	const parsed = safeDecode(setupChoicesSchema, saved?.choices);
 	return parsed.success ? { saved: parsed.data } : {};
 }
 export const observationsKept = { observationsKept: true } as const;
 function storedObservation(choices: unknown, raw: unknown, inventory: Inventory): unknown {
-	const parsed = setupChoicesSchema.safeParse(choices);
+	const parsed = safeDecode(setupChoicesSchema, choices);
 	if (!parsed.success) return choices;
 	const streams = object(object(raw).streams);
 	const boxed = new Set(inventory.packages.filter(publishable).map(packageId));
@@ -101,7 +101,7 @@ export function maintainSetup(
 		const { name, id } = snapshot.repository;
 		const db = sql(store.db);
 		const row = yield* parse(
-			documentRow.nullable(),
+			Schema.NullOr(documentRow),
 			yield* db.first('SELECT document FROM onboarding WHERE repository_id=?', id),
 		);
 		if (!row) return;
@@ -125,7 +125,7 @@ export function maintainSetup(
 			);
 		const current = Effect.gen(function*() {
 			const now = yield* parse(
-				documentRow.nullable(),
+				Schema.NullOr(documentRow),
 				yield* db.first('SELECT document FROM onboarding WHERE repository_id=?', id),
 			);
 			if (now?.document !== row.document) return yield* precondition(superseded);
@@ -136,7 +136,7 @@ export function maintainSetup(
 		yield* Effect.gen(function*() {
 			const raw = yield* fromSync((): unknown => JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}'));
 			const resolved = yield* resolveConfiguration(raw, ref => gateway.preset(ref)).pipe(
-				Effect.mapError(error => error instanceof z.ZodError ? toDomainError(error) : error),
+				Effect.mapError(error => error instanceof Schema.SchemaError ? toDomainError(error) : error),
 			);
 			const original = previous.find(edit => edit.path === '.github/beepboop.json')?.before ?? '';
 			const choices = requested?.choices
@@ -280,7 +280,7 @@ function migrateSetup(
 		const raw = yield* fromSync((): unknown => JSON.parse(source));
 		if (!setupMissing(raw, choices)) return;
 		const resolved = yield* resolveConfiguration(raw, ref => gateway.preset(ref)).pipe(
-			Effect.mapError(error => error instanceof z.ZodError ? toDomainError(error) : error),
+			Effect.mapError(error => error instanceof Schema.SchemaError ? toDomainError(error) : error),
 		);
 		const stored = yield* store.repository(id);
 		const branch = setupBranch(snapshot);
@@ -331,7 +331,7 @@ export function currentOptions(
 		const stored = yield* store.repository(repository.id);
 		const raw = yield* fromSync((): unknown => JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}'));
 		const resolved = yield* resolveConfiguration(raw, ref => gateway.preset(ref)).pipe(
-			Effect.mapError(error => error instanceof z.ZodError ? toDomainError(error) : error),
+			Effect.mapError(error => error instanceof Schema.SchemaError ? toDomainError(error) : error),
 		);
 		const plan = yield* previewSetup(
 			snapshot,

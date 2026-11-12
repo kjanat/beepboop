@@ -1,9 +1,10 @@
-import { Cause, Effect } from 'effect';
-import { z } from 'zod';
+import { Cause, Effect, Schema } from 'effect';
 import type { NotificationKind, WatchedRegistry } from '@/contract/catalog';
 import { notificationKinds, watchedRegistries } from '@/contract/catalog';
 import { routes } from '@/contract/routes';
 import { awaitWith } from '@/refusal';
+import type { Contract, Decoded } from '@/schema';
+import { looseStruct, mutableArray, mutableRecord, mutableStruct, safeDecode } from '@/schema';
 import { api, elevatedApi } from '@/ui/browser/api';
 import {
 	element,
@@ -37,38 +38,38 @@ interface RepositoryChoice {
 	name: string;
 	workflows: Choice[];
 }
-const credentialDescriptor = z.looseObject({
-	id: z.string(),
-	type: z.string(),
-	transports: z.array(z.string()).optional(),
+const credentialDescriptor = looseStruct({
+	id: Schema.String,
+	type: Schema.String,
+	transports: Schema.optional(mutableArray(Schema.String)),
 });
-const extensions = z.looseObject({ appid: z.string().optional(), credProps: z.boolean().optional() });
-const requirement = z.enum(['discouraged', 'preferred', 'required']);
-const requestOptions: z.ZodType<PublicKeyCredentialRequestOptionsJSON> = z.looseObject({
-	allowCredentials: z.array(credentialDescriptor).optional(),
-	challenge: z.string(),
-	extensions: extensions.optional(),
-	hints: z.array(z.string()).optional(),
-	rpId: z.string().optional(),
-	timeout: z.number().optional(),
-	userVerification: z.string().optional(),
+const extensions = looseStruct({ appid: Schema.optional(Schema.String), credProps: Schema.optional(Schema.Boolean) });
+const requirement = Schema.Literals(['discouraged', 'preferred', 'required']);
+const requestOptions: Schema.Codec<PublicKeyCredentialRequestOptionsJSON, unknown> = looseStruct({
+	allowCredentials: Schema.optional(mutableArray(credentialDescriptor)),
+	challenge: Schema.String,
+	extensions: Schema.optional(extensions),
+	hints: Schema.optional(mutableArray(Schema.String)),
+	rpId: Schema.optional(Schema.String),
+	timeout: Schema.optional(Schema.Finite),
+	userVerification: Schema.optional(Schema.String),
 });
-const creationOptions: z.ZodType<PublicKeyCredentialCreationOptionsJSON> = z.looseObject({
-	attestation: z.string().optional(),
-	authenticatorSelection: z.looseObject({
-		authenticatorAttachment: z.enum(['cross-platform', 'platform']).optional(),
-		requireResidentKey: z.boolean().optional(),
-		residentKey: requirement.optional(),
-		userVerification: requirement.optional(),
-	}).optional(),
-	challenge: z.string(),
-	excludeCredentials: z.array(credentialDescriptor).optional(),
-	extensions: extensions.optional(),
-	hints: z.array(z.string()).optional(),
-	pubKeyCredParams: z.array(z.looseObject({ alg: z.number(), type: z.literal('public-key') })),
-	rp: z.looseObject({ id: z.string().optional(), name: z.string() }),
-	timeout: z.number().optional(),
-	user: z.looseObject({ displayName: z.string(), id: z.string(), name: z.string() }),
+const creationOptions: Schema.Codec<PublicKeyCredentialCreationOptionsJSON, unknown> = looseStruct({
+	attestation: Schema.optional(Schema.String),
+	authenticatorSelection: Schema.optional(looseStruct({
+		authenticatorAttachment: Schema.optional(Schema.Literals(['cross-platform', 'platform'])),
+		requireResidentKey: Schema.optional(Schema.Boolean),
+		residentKey: Schema.optional(requirement),
+		userVerification: Schema.optional(requirement),
+	})),
+	challenge: Schema.String,
+	excludeCredentials: Schema.optional(mutableArray(credentialDescriptor)),
+	extensions: Schema.optional(extensions),
+	hints: Schema.optional(mutableArray(Schema.String)),
+	pubKeyCredParams: mutableArray(looseStruct({ alg: Schema.Finite, type: Schema.Literal('public-key') })),
+	rp: looseStruct({ id: Schema.optional(Schema.String), name: Schema.String }),
+	timeout: Schema.optional(Schema.Finite),
+	user: looseStruct({ displayName: Schema.String, id: Schema.String, name: Schema.String }),
 });
 function recovery(value: string | undefined): 'retry' | 'reconcile' {
 	return value === 'retry' ? 'retry' : 'reconcile';
@@ -80,7 +81,7 @@ function notificationKind(value: string | undefined): Effect.Effect<Notification
 	return oneOf(notificationKinds, value, 'Choose a destination type.');
 }
 function storedVersions(form: HTMLFormElement): Effect.Effect<Record<string, number>, Refused> {
-	return dataset(z.record(z.string(), z.number()), form.dataset.versions, '{}');
+	return dataset(mutableRecord(Schema.String, Schema.Finite), form.dataset.versions, '{}');
 }
 function overwriteConfirmed(form: HTMLFormElement, alias: string, versions: Record<string, number>): boolean {
 	const version = versions[alias];
@@ -113,22 +114,22 @@ function overwriteConfirmed(form: HTMLFormElement, alias: string, versions: Reco
 }
 const revealTimers = new Map<HTMLElement, ReturnType<typeof setTimeout>>();
 
-const repositoryChoice: z.ZodType<RepositoryChoice> = z.object({
-	id: z.number().int().positive(),
-	name: z.string(),
-	workflows: z.array(z.object({
-		stream: z.string(),
-		operation: z.string(),
-		file: z.string(),
-		ref: z.string(),
-		credentials: z.array(z.string()),
+const repositoryChoice: Schema.Codec<RepositoryChoice, unknown> = mutableStruct({
+	id: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
+	name: Schema.String,
+	workflows: mutableArray(mutableStruct({
+		stream: Schema.String,
+		operation: Schema.String,
+		file: Schema.String,
+		ref: Schema.String,
+		credentials: mutableArray(Schema.String),
 	})),
 });
-function decoded<S extends z.ZodType>(schema: S, value: unknown, message: string): Effect.Effect<z.output<S>, Refused> {
-	const parsed = schema.safeParse(value);
+function decoded<S extends Contract>(schema: S, value: unknown, message: string): Effect.Effect<Decoded<S>, Refused> {
+	const parsed = safeDecode(schema, value);
 	return parsed.success ? Effect.succeed(parsed.data) : refuse(message);
 }
-function dataset<S extends z.ZodType>(schema: S, source: string | undefined, fallback: string) {
+function dataset<S extends Contract>(schema: S, source: string | undefined, fallback: string) {
 	const malformed = 'The dashboard sent malformed form data.';
 	return Effect.try({
 		try: (): unknown => JSON.parse(source ?? fallback),
@@ -136,7 +137,7 @@ function dataset<S extends z.ZodType>(schema: S, source: string | undefined, fal
 	}).pipe(Effect.flatMap(value => decoded(schema, value, malformed)));
 }
 function repositoryChoices(form: HTMLFormElement): Effect.Effect<RepositoryChoice[], Refused> {
-	return dataset(z.array(repositoryChoice), form.dataset.repositories, '[]');
+	return dataset(mutableArray(repositoryChoice), form.dataset.repositories, '[]');
 }
 function fields(form: HTMLFormElement): Record<string, string> {
 	return Object.fromEntries(
@@ -392,7 +393,7 @@ if (runsLatest) {
 						if (Math.max(0, ...runs.map(run => run.updatedAt)) > rendered) location.reload();
 					})
 				),
-				Effect.ignoreCause,
+				Effect.ignore,
 			),
 		);
 	}, 5000);
@@ -464,7 +465,7 @@ function submitted(form: HTMLFormElement, action: string | undefined, clicked: s
 					return {
 						group: {
 							id: group.dataset.group,
-							packages: yield* dataset(z.array(z.string()), group.dataset.packages, '[]'),
+							packages: yield* dataset(mutableArray(Schema.String), group.dataset.packages, '[]'),
 							version: versionField.value,
 						},
 						versionField,

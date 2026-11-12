@@ -1,12 +1,14 @@
-import { z } from 'zod';
+import { Schema } from 'effect';
+import type { Decoded } from '@/schema';
+import { decodeSync, mutableRecord, mutableStruct } from '@/schema';
 
 const key = 'beepboop:folds';
-const choices = z.record(z.string(), z.object({ initial: z.boolean(), open: z.boolean() }));
-type Choices = z.output<typeof choices>;
+const choices = mutableRecord(Schema.String, mutableStruct({ initial: Schema.Boolean, open: Schema.Boolean }));
+type Choices = Decoded<typeof choices>;
 
 function read(storage: Pick<Storage, 'getItem'>): Choices {
 	try {
-		return choices.parse(JSON.parse(storage.getItem(key) ?? '{}'));
+		return decodeSync(choices, JSON.parse(storage.getItem(key) ?? '{}'));
 	} catch {
 		return {};
 	}

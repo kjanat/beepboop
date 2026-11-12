@@ -1,64 +1,69 @@
-import { z } from 'zod';
+import { Schema } from 'effect';
 import { onboardingBranch, updateBranch } from '@/automation/setup-changes';
+import type { Decoded } from '@/schema';
+import { matchesPattern, mutableStruct } from '@/schema';
 
-export const setupPullEdit = z.object({
-	action: z.literal('edited'),
-	changes: z.object({ body: z.object({ from: z.string().nullable() }) }),
-	sender: z.object({ id: z.number() }),
-	pull_request: z.object({
-		number: z.number().int().positive(),
-		state: z.literal('open'),
-		body: z.string().nullable(),
-		user: z.object({ id: z.number() }),
-		head: z.object({
-			ref: z.enum([onboardingBranch, updateBranch]),
-			sha: z.string().regex(/^[a-f0-9]{40}$/),
-			repo: z.object({ id: z.number() }),
+export const setupPullEdit = mutableStruct({
+	action: Schema.Literal('edited'),
+	changes: mutableStruct({ body: mutableStruct({ from: Schema.NullOr(Schema.String) }) }),
+	sender: mutableStruct({ id: Schema.Finite }),
+	pull_request: mutableStruct({
+		number: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
+		state: Schema.Literal('open'),
+		body: Schema.NullOr(Schema.String),
+		user: mutableStruct({ id: Schema.Finite }),
+		head: mutableStruct({
+			ref: Schema.Literals([onboardingBranch, updateBranch]),
+			sha: Schema.String.check(matchesPattern(/^[a-f0-9]{40}$/)),
+			repo: mutableStruct({ id: Schema.Finite }),
 		}),
-		base: z.object({ repo: z.object({ id: z.number() }) }),
+		base: mutableStruct({ repo: mutableStruct({ id: Schema.Finite }) }),
 	}),
 });
-export type SetupPullEdit = z.output<typeof setupPullEdit>;
+export type SetupPullEdit = Decoded<typeof setupPullEdit>;
 
-export const setupPullMerge = z.object({
-	action: z.literal('closed'),
-	pull_request: z.object({
-		number: z.number().int().positive(),
-		merged: z.literal(true),
-		merge_commit_sha: z.string().regex(/^[a-f0-9]{40}$/),
-		user: z.object({ id: z.number() }),
-		merged_by: z.object({ id: z.number(), login: z.string() }),
-		head: z.object({ ref: z.enum([onboardingBranch, updateBranch]), repo: z.object({ id: z.number() }) }),
-		base: z.object({ repo: z.object({ id: z.number() }) }),
+export const setupPullMerge = mutableStruct({
+	action: Schema.Literal('closed'),
+	pull_request: mutableStruct({
+		number: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
+		merged: Schema.Literal(true),
+		merge_commit_sha: Schema.String.check(matchesPattern(/^[a-f0-9]{40}$/)),
+		user: mutableStruct({ id: Schema.Finite }),
+		merged_by: mutableStruct({ id: Schema.Finite, login: Schema.String }),
+		head: mutableStruct({
+			ref: Schema.Literals([onboardingBranch, updateBranch]),
+			repo: mutableStruct({ id: Schema.Finite }),
+		}),
+		base: mutableStruct({ repo: mutableStruct({ id: Schema.Finite }) }),
 	}),
 });
-export type SetupPullMerge = z.output<typeof setupPullMerge>;
+export type SetupPullMerge = Decoded<typeof setupPullMerge>;
 
-export const inboxEvent = z.discriminatedUnion('kind', [
-	z.object({ kind: z.literal('push'), ref: z.string() }),
-	z.object({ kind: z.literal('release'), action: z.string() }),
-	z.object({
-		kind: z.literal('workflow_run'),
-		action: z.string(),
-		run: z.object({
-			id: z.number().int().positive(),
-			conclusion: z.string().nullable(),
-			event: z.string(),
-			path: z.string(),
-			headRepositoryId: z.number().int().nullable(),
+export const inboxEvent = Schema.Union([
+	mutableStruct({ kind: Schema.Literal('push'), ref: Schema.String }),
+	mutableStruct({ kind: Schema.Literal('release'), action: Schema.String }),
+	mutableStruct({
+		kind: Schema.Literal('workflow_run'),
+		action: Schema.String,
+		run: mutableStruct({
+			id: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
+			conclusion: Schema.NullOr(Schema.String),
+			event: Schema.String,
+			path: Schema.String,
+			headRepositoryId: Schema.NullOr(Schema.Finite.check(Schema.isInt())),
 		}),
 	}),
-	z.object({ kind: z.literal('pull_request'), edit: setupPullEdit }),
-	z.object({ kind: z.literal('setup_merged'), merge: setupPullMerge }),
+	mutableStruct({ kind: Schema.Literal('pull_request'), edit: setupPullEdit }),
+	mutableStruct({ kind: Schema.Literal('setup_merged'), merge: setupPullMerge }),
 ]);
-export type InboxEvent = z.output<typeof inboxEvent>;
+export type InboxEvent = Decoded<typeof inboxEvent>;
 
-export const inboxEntry = z.object({
-	delivery: z.string().min(1),
-	repositoryId: z.number().int().positive(),
+export const inboxEntry = mutableStruct({
+	delivery: Schema.String.check(Schema.isMinLength(1)),
+	repositoryId: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
 	event: inboxEvent,
-	attempts: z.number().int().nonnegative(),
-	due: z.number(),
-	error: z.string().optional(),
+	attempts: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0)),
+	due: Schema.Finite,
+	error: Schema.optional(Schema.String),
 });
-export type InboxEntry = z.output<typeof inboxEntry>;
+export type InboxEntry = Decoded<typeof inboxEntry>;

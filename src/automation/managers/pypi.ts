@@ -88,6 +88,6 @@ export const pypiManager: Adapter<'pypi'> = {
 			}
 			const digest = object(files.find(file => file.packagetype === 'sdist')?.digests ?? files[0]?.digests).sha256;
 			return result('succeeded', typeof digest === 'string' ? digest : undefined);
-		}).pipe(Effect.catchCause(() => Effect.succeed(result('uncertain'))));
+		}).pipe(Effect.orElseSucceed(() => result('uncertain')));
 	},
 };

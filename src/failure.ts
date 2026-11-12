@@ -1,5 +1,4 @@
-import { Cause, Effect } from 'effect';
-import { z } from 'zod';
+import { Cause, Effect, Result, Schema } from 'effect';
 import { legacyDiagnostic } from '@/contract/diagnostics';
 import type { ApiError } from '@/contract/errors';
 import { DomainError, envelope, messageOf, statusOf } from '@/contract/errors';
@@ -14,7 +13,7 @@ const d1Failure = /^D1_ERROR\b/;
 
 export function classify(error: unknown, incident: string): Classified {
 	if (error instanceof DomainError) return { problem: error.problem, message: error.message };
-	if (error instanceof z.ZodError) {
+	if (error instanceof Schema.SchemaError) {
 		const problem: ApiError = { code: 'internal', incident };
 		return { problem, message: messageOf(problem) };
 	}
@@ -26,7 +25,7 @@ export function classify(error: unknown, incident: string): Classified {
 		const message = 'Invalid JSON in request or configuration';
 		return { problem: { code: 'invalid', issues: [{ path: [], message }] }, message };
 	}
-	if (error instanceof InvalidPackageUrl || (error instanceof Error && error.constructor === Error)) {
+	if (error instanceof InvalidPackageUrl) {
 		return {
 			problem: { code: 'precondition', diagnostics: [legacyDiagnostic(error.message)] },
 			message: error.message,
@@ -62,10 +61,12 @@ function wantsDocument(request: Request, path: string): boolean {
 		&& (request.headers.get('accept') ?? '').includes('text/html');
 }
 
-export function failure(request: Request, error: unknown): Response {
+export function failure(request: Request, error: unknown, cause?: Cause.Cause<unknown>): Response {
 	const incident = crypto.randomUUID();
 	const path = new URL(request.url).pathname;
-	const { problem, message } = classify(error, incident);
+	const { problem, message } = cause && Cause.hasDies(cause)
+		? { problem: { code: 'internal', incident } as const, message: messageOf({ code: 'internal', incident }) }
+		: classify(error, incident);
 	const status = statusOf[problem.code];
 	console.error(JSON.stringify({
 		event: 'request.failed',
@@ -96,27 +97,34 @@ export function failure(request: Request, error: unknown): Response {
 export function toDomainError(error: unknown): DomainError {
 	if (error instanceof DomainError) return error;
 	const { problem, message } = classify(error, crypto.randomUUID());
-	const detail = error instanceof z.ZodError
-		? z.prettifyError(error)
+	const detail = error instanceof Schema.SchemaError
+		? error.message
 		: error instanceof Error
 		? error.message
 		: String(error);
 	return new DomainError({ problem, message, detail });
 }
 
-export function fromPromise<A>(run: () => Promise<A>): Effect.Effect<A, DomainError> {
+export function fromPromise<A>(run: (signal: AbortSignal) => Promise<A>): Effect.Effect<A, DomainError> {
 	return Effect.tryPromise({ try: run, catch: toDomainError });
 }
 
 export function fromSync<A>(run: () => A): Effect.Effect<A, DomainError> {
-	return Effect.try({ try: run, catch: toDomainError });
+	return Effect.suspend(() => Result.match(Result.try(run), {
+		onSuccess: Effect.succeed,
+		onFailure: error =>
+			error instanceof DomainError || error instanceof Schema.SchemaError || error instanceof SyntaxError
+				|| error instanceof InvalidPackageUrl
+				? Effect.fail(toDomainError(error))
+				: Effect.die(error),
+	}));
 }
 
 export function fromJson(source: string): Effect.Effect<unknown, DomainError> {
 	return fromSync((): unknown => JSON.parse(source));
 }
 
-export function recover<B, E>(handler: (error: DomainError) => Effect.Effect<B, E>) {
-	return <A>(effect: Effect.Effect<A, DomainError>): Effect.Effect<A | B, E> =>
-		effect.pipe(Effect.catchCause(cause => handler(toDomainError(Cause.squash(cause)))));
+export function recover<B, E, R2>(handler: (error: DomainError) => Effect.Effect<B, E, R2>) {
+	return <A, R>(effect: Effect.Effect<A, DomainError, R>): Effect.Effect<A | B, E, R | R2> =>
+		effect.pipe(Effect.catch(handler));
 }

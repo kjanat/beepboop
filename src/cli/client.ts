@@ -3,7 +3,6 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { CLIError } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
-import type { z } from 'zod';
 import type { SecurityKeyPrompts } from '@/cli/fido2/index';
 import { securityKeyAssertion } from '@/cli/fido2/index';
 import { failure, signIn } from '@/cli/output';
@@ -14,6 +13,7 @@ import { bearerHeaders } from '@/contract/http';
 import { cliTokenPattern, confirmationCode, loginSecret, sha256Hex } from '@/contract/ids';
 import type { Route } from '@/contract/routes';
 import { routes } from '@/contract/routes';
+import type { Contract, Decoded, Encoded } from '@/schema';
 
 const codes = {
 	unauthenticated: 'SESSION_REVOKED',
@@ -61,18 +61,21 @@ export function serverOrigin(value: string): Effect.Effect<string, CLIError> {
 		return url.origin;
 	});
 }
-function local<A>(run: () => Promise<A>): Effect.Effect<A> {
-	return Effect.promise(run);
+function local<A>(run: (signal: AbortSignal) => Promise<A>): Effect.Effect<A, CLIError> {
+	return Effect.tryPromise({
+		try: run,
+		catch: error => failure(error instanceof Error ? error.message : String(error), 'LOCAL_IO'),
+	});
 }
 function refusal(error: ApiFailure): CLIError {
 	return error.status === 401
 		? failure('Session revoked', 'SESSION_REVOKED', signIn)
 		: failure(error.message, error.problem ? codes[error.problem.code] : `HTTP_${error.status}`);
 }
-function unreachable(error: Unreachable): Effect.Effect<never> {
-	return Effect.die(error.cause);
+function unreachable(error: Unreachable): Effect.Effect<never, CLIError> {
+	return Effect.fail(failure(error.message, 'UNREACHABLE'));
 }
-function reached<A>(effect: Effect.Effect<A, Unreachable>): Effect.Effect<A> {
+function reached<A>(effect: Effect.Effect<A, Unreachable>): Effect.Effect<A, CLIError> {
 	return Effect.catch(effect, unreachable);
 }
 function rejected(response: Response): Effect.Effect<never, CLIError> {
@@ -95,10 +98,10 @@ export class Client {
 	pause(millis: number): Effect.Effect<void> {
 		return Effect.sleep(millis);
 	}
-	private file(): Effect.Effect<string> {
+	private file(): Effect.Effect<string, CLIError> {
 		return local(() => sha256Hex(this.origin)).pipe(Effect.map(hash => join(this.directory, `${hash}.json`)));
 	}
-	save(session: Session): Effect.Effect<void> {
+	save(session: Session): Effect.Effect<void, CLIError> {
 		return Effect.gen({ self: this }, function*() {
 			yield* local(() => mkdir(this.directory, { recursive: true, mode: 0o700 }));
 			yield* local(() => chmod(this.directory, 0o700));
@@ -107,7 +110,7 @@ export class Client {
 			yield* local(async () => {
 				await writeFile(temporary, JSON.stringify(session), { mode: 0o600, flag: 'wx' });
 				await rename(temporary, path);
-			}).pipe(Effect.ensuring(local(() => rm(temporary, { force: true }))));
+			}).pipe(Effect.uninterruptible, Effect.ensuring(local(() => rm(temporary, { force: true })).pipe(Effect.orDie)));
 		});
 	}
 	session(): Effect.Effect<Session, CLIError> {
@@ -137,33 +140,32 @@ export class Client {
 	}
 	private transport(session: Session): Transport {
 		return request =>
-			send(() =>
+			send(signal =>
 				fetch(`${this.origin}${request.path}`, {
 					method: request.method,
 					headers: bearerHeaders(session.token),
 					...(request.body === undefined ? {} : { body: request.body }),
 					redirect: 'error',
-					signal: AbortSignal.timeout(30000),
+					signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
 				})
 			).pipe(Effect.tap(response => Effect.sync(() => warnOutage(response))));
 	}
-	call<Q extends z.ZodType, S extends z.ZodType>(
+	call<Q extends Contract, S extends Contract>(
 		route: Route<Q, S>,
-		input: z.input<Q>,
-	): Effect.Effect<z.output<S>, CLIError> {
+		input: Encoded<Q>,
+	): Effect.Effect<Decoded<S>, CLIError> {
 		return Effect.gen({ self: this }, function*() {
 			const transport = this.transport(yield* this.session());
 			return yield* call(route, input, transport).pipe(
-				Effect.catchTag('Unreachable', unreachable),
-				Effect.mapError(refusal),
+				Effect.catchTags({ Unreachable: unreachable, ApiFailure: error => Effect.fail(refusal(error)) }),
 			);
 		});
 	}
-	elevatedCall<Q extends z.ZodType, S extends z.ZodType>(
+	elevatedCall<Q extends Contract, S extends Contract>(
 		route: Route<Q, S>,
-		input: (proof: string | undefined) => z.input<Q>,
+		input: (proof: string | undefined) => Encoded<Q>,
 		prompts: SecurityKeyPrompts<CLIError>,
-	): Effect.Effect<z.output<S>, CLIError> {
+	): Effect.Effect<Decoded<S>, CLIError> {
 		return Effect.gen({ self: this }, function*() {
 			const transport = this.transport(yield* this.session());
 			return yield* elevatedCall(route, input, transport, Effect.suspend(() => this.elevated(prompts))).pipe(
@@ -204,8 +206,13 @@ export class Client {
 			yield* show(`${this.origin}/auth/cli/authorize?challenge=${challenge}`, confirmationCode(challenge));
 			while (!signal.aborted) {
 				const response = yield* reached(
-					send(() =>
-						fetch(`${this.origin}/auth/cli/token`, { method: 'POST', body: verifier, redirect: 'error', signal })
+					send(interruption =>
+						fetch(`${this.origin}/auth/cli/token`, {
+							method: 'POST',
+							body: verifier,
+							redirect: 'error',
+							signal: AbortSignal.any([signal, interruption]),
+						})
 					),
 				);
 				warnOutage(response);
@@ -226,7 +233,7 @@ export class Client {
 					return yield* Effect.fail(failure(`Login failed (${response.status}): ${problem.message}`, 'LOGIN_FAILED'));
 				}
 				const session = parseSession(yield* local((): Promise<unknown> => response.json()));
-				if (!session) return yield* Effect.die(new Error('Invalid login response'));
+				if (!session) return yield* Effect.fail(failure('Invalid login response', 'INVALID_RESPONSE'));
 				yield* this.save(session);
 				return;
 			}

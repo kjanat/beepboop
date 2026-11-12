@@ -1,5 +1,4 @@
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Clock, Effect, Schema } from 'effect';
 import type { Fetcher } from '@/automation/managers/registry';
 import type { Store } from '@/automation/store';
 import type { Vault } from '@/automation/vault';
@@ -12,6 +11,8 @@ import type { DestinationInput } from '@/contract/notifications';
 import { fromPromise, fromSync } from '@/failure';
 import type { Sql } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
+import type { Decoded } from '@/schema';
+import { decodeSync, mutableArray, mutableStruct } from '@/schema';
 
 export const deliveryStates = ['pending', 'delivered', 'failed'] as const;
 export type DeliveryState = (typeof deliveryStates)[number];
@@ -49,41 +50,41 @@ export interface NotificationDelivery {
 	updatedAt: number;
 }
 
-const destinationRow = z.object({
-	id: z.string(),
-	name: z.string(),
-	kind: z.enum(notificationKinds),
-	credential: z.string(),
-	subscribe_new: z.number(),
-	enabled: z.number(),
-	created_at: z.number(),
+const destinationRow = mutableStruct({
+	id: Schema.String,
+	name: Schema.String,
+	kind: Schema.Literals(notificationKinds),
+	credential: Schema.String,
+	subscribe_new: Schema.Finite,
+	enabled: Schema.Finite,
+	created_at: Schema.Finite,
 });
-const subscriptionRow = z.object({
-	destination_id: z.string(),
-	registry: z.enum(watchedRegistries),
-	name: z.string(),
+const subscriptionRow = mutableStruct({
+	destination_id: Schema.String,
+	registry: Schema.Literals(watchedRegistries),
+	name: Schema.String,
 });
-const payloadSchema: z.ZodType<VersionChangedPayload> = z.object({
-	id: z.string(),
-	type: z.literal('package.version.changed'),
-	package: z.object({ registry: z.enum(watchedRegistries), name: z.string() }),
-	version: z.object({ previous: z.string().nullable(), current: z.string() }),
-	url: z.string(),
+const payloadSchema: Schema.Codec<VersionChangedPayload, unknown> = mutableStruct({
+	id: Schema.String,
+	type: Schema.Literal('package.version.changed'),
+	package: mutableStruct({ registry: Schema.Literals(watchedRegistries), name: Schema.String }),
+	version: mutableStruct({ previous: Schema.NullOr(Schema.String), current: Schema.String }),
+	url: Schema.String,
 });
-const deliveryRow = z.object({
-	id: z.string(),
-	event_id: z.string(),
-	destination_id: z.string(),
-	document: z.string(),
-	state: z.enum(deliveryStates),
-	attempts: z.number(),
-	error: z.string().nullable(),
-	updated_at: z.number(),
+const deliveryRow = mutableStruct({
+	id: Schema.String,
+	event_id: Schema.String,
+	destination_id: Schema.String,
+	document: Schema.String,
+	state: Schema.Literals(deliveryStates),
+	attempts: Schema.Finite,
+	error: Schema.NullOr(Schema.String),
+	updated_at: Schema.Finite,
 });
 
 type Outcome = { state: DeliveryState; error?: string };
 
-function destination(row: z.infer<typeof destinationRow>): NotificationDestination {
+function destination(row: Decoded<typeof destinationRow>): NotificationDestination {
 	return {
 		id: row.id,
 		name: row.name,
@@ -174,21 +175,21 @@ export class Notifications {
 	private readonly sql: Sql;
 	constructor(
 		private store: Store,
-		private vault: () => Vault,
+		private vault: () => Pick<Vault, keyof Vault>,
 		private request: Fetcher = fetch,
 	) {
 		this.sql = sql(store.db);
 	}
 	destinations(): Effect.Effect<NotificationDestination[], DomainError> {
 		return this.sql.all('SELECT * FROM notification_destinations ORDER BY name, id').pipe(
-			Effect.flatMap(rows => parse(z.array(destinationRow), rows)),
+			Effect.flatMap(rows => parse(mutableArray(destinationRow), rows)),
 			Effect.map(rows => rows.map(destination)),
 		);
 	}
 	subscriptions(): Effect.Effect<NotificationSubscription[], DomainError> {
 		return this.sql.all('SELECT destination_id, registry, name FROM notification_subscriptions ORDER BY registry, name')
 			.pipe(
-				Effect.flatMap(rows => parse(z.array(subscriptionRow), rows)),
+				Effect.flatMap(rows => parse(mutableArray(subscriptionRow), rows)),
 				Effect.map(rows =>
 					rows.map(row => ({ destinationId: row.destination_id, registry: row.registry, name: row.name }))
 				),
@@ -198,11 +199,11 @@ export class Notifications {
 		return this.sql.all('SELECT * FROM notification_deliveries ORDER BY updated_at DESC LIMIT 50').pipe(
 			Effect.flatMap(rows =>
 				fromSync(() =>
-					z.array(deliveryRow).parse(rows).map(row => ({
+					decodeSync(mutableArray(deliveryRow), rows).map(row => ({
 						id: row.id,
 						eventId: row.event_id,
 						destinationId: row.destination_id,
-						payload: payloadSchema.parse(JSON.parse(row.document)),
+						payload: decodeSync(payloadSchema, JSON.parse(row.document)),
 						state: row.state,
 						attempts: row.attempts,
 						...(row.error === null ? {} : { error: row.error }),
@@ -223,6 +224,8 @@ export class Notifications {
 	}
 	saveDestination(input: DestinationInput, actor: string): Effect.Effect<string, DomainError> {
 		return Effect.gen({ self: this }, function*() {
+			const clock = yield* Clock.Clock;
+
 			yield* this.checkDestination(input);
 			const id = input.id ?? crypto.randomUUID();
 			yield* this.sql.run(
@@ -233,22 +236,24 @@ export class Notifications {
 				input.credential,
 				Number(input.subscribeNew),
 				Number(input.enabled),
-				Date.now(),
+				clock.currentTimeMillisUnsafe(),
 			);
 			yield* this.store.audit(actor, 'notification.save', id);
 			return id;
 		});
 	}
 	removeDestination(id: string, actor: string): Effect.Effect<void, DomainError> {
-		return this.sql.batch([
-			this.sql.statement('DELETE FROM notification_subscriptions WHERE destination_id=?', id),
-			this.sql.statement(
-				"UPDATE notification_deliveries SET state='failed', error='Destination removed', updated_at=? WHERE destination_id=? AND state='pending'",
-				Date.now(),
-				id,
-			),
-			this.sql.statement('DELETE FROM notification_destinations WHERE id=?', id),
-		]).pipe(Effect.andThen(this.store.audit(actor, 'notification.remove', id)));
+		return Effect.clockWith(clock => {
+			return this.sql.batch([
+				this.sql.statement('DELETE FROM notification_subscriptions WHERE destination_id=?', id),
+				this.sql.statement(
+					"UPDATE notification_deliveries SET state='failed', error='Destination removed', updated_at=? WHERE destination_id=? AND state='pending'",
+					clock.currentTimeMillisUnsafe(),
+					id,
+				),
+				this.sql.statement('DELETE FROM notification_destinations WHERE id=?', id),
+			]).pipe(Effect.andThen(this.store.audit(actor, 'notification.remove', id)));
+		});
 	}
 	setSubscription(
 		subscription: NotificationSubscription,
@@ -276,25 +281,29 @@ export class Notifications {
 		).pipe(Effect.asVoid);
 	}
 	stage(payload: VersionChangedPayload): Effect.Effect<void, DomainError> {
-		return this.sql.run(
-			"INSERT OR IGNORE INTO notification_deliveries (id, event_id, destination_id, document, state, attempts, updated_at) SELECT ? || ':' || d.id, ?, d.id, ?, 'pending', 0, ? FROM notification_destinations d JOIN notification_subscriptions s ON s.destination_id = d.id WHERE d.enabled=1 AND s.registry=? AND s.name=?",
-			payload.id,
-			payload.id,
-			JSON.stringify(payload),
-			Date.now(),
-			payload.package.registry,
-			payload.package.name,
-		).pipe(Effect.asVoid);
+		return Effect.clockWith(clock => {
+			return this.sql.run(
+				"INSERT OR IGNORE INTO notification_deliveries (id, event_id, destination_id, document, state, attempts, updated_at) SELECT ? || ':' || d.id, ?, d.id, ?, 'pending', 0, ? FROM notification_destinations d JOIN notification_subscriptions s ON s.destination_id = d.id WHERE d.enabled=1 AND s.registry=? AND s.name=?",
+				payload.id,
+				payload.id,
+				JSON.stringify(payload),
+				clock.currentTimeMillisUnsafe(),
+				payload.package.registry,
+				payload.package.name,
+			).pipe(Effect.asVoid);
+		});
 	}
 	deliver(): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
+			const clock = yield* Clock.Clock;
+
 			const rows = yield* this.sql.all(
 				"SELECT * FROM notification_deliveries WHERE state='pending' ORDER BY updated_at LIMIT 50",
 			);
 			const destinations = new Map((yield* this.destinations()).map(entry => [entry.id, entry]));
-			for (const row of yield* parse(z.array(deliveryRow), rows)) {
+			for (const row of yield* parse(mutableArray(deliveryRow), rows)) {
 				const attempts = row.attempts + 1;
-				const payload = yield* fromSync(() => payloadSchema.parse(JSON.parse(row.document)));
+				const payload = yield* fromSync(() => decodeSync(payloadSchema, JSON.parse(row.document)));
 				const outcome = yield* this.send(destinations.get(row.destination_id), payload);
 				const state = outcome.state === 'pending' && attempts >= maximumAttempts ? 'failed' : outcome.state;
 				yield* this.sql.run(
@@ -302,7 +311,7 @@ export class Notifications {
 					state,
 					attempts,
 					outcome.error ?? null,
-					Date.now(),
+					clock.currentTimeMillisUnsafe(),
 					row.id,
 				);
 			}
@@ -316,7 +325,7 @@ export class Notifications {
 			if (!destination?.enabled) return { state: 'failed', error: 'Destination unavailable' };
 			const secret = yield* this.vault().reveal(destination.credential, `notify:${destination.id}`).pipe(
 				Effect.map(credential => credential.value),
-				Effect.catchCause(() => Effect.undefined),
+				Effect.catch(() => Effect.undefined),
 			);
 			if (secret === undefined) return { state: 'pending', error: 'Webhook secret unavailable' };
 			const url = target(destination.kind, secret);
@@ -327,11 +336,11 @@ export class Notifications {
 				};
 			}
 			const request = this.request;
-			const response = yield* fromPromise(() =>
+			const response = yield* fromPromise(signal =>
 				request(url, {
 					method: 'POST',
 					redirect: 'manual',
-					signal: AbortSignal.timeout(10_000),
+					signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
 					headers: {
 						'Content-Type': 'application/json',
 						'Idempotency-Key': payload.id,
@@ -339,7 +348,7 @@ export class Notifications {
 					},
 					body: JSON.stringify(destination.kind === 'slack' ? slackMessage(payload) : payload),
 				})
-			).pipe(Effect.catchCause(() => Effect.undefined));
+			).pipe(Effect.catch(() => Effect.undefined));
 			if (!response) return { state: 'pending', error: 'Request failed' };
 			yield* Effect.promise(() => response.body?.cancel().catch(() => undefined) ?? Promise.resolve());
 			if (response.ok) return { state: 'delivered' };

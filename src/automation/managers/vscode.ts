@@ -1,5 +1,4 @@
-import { Effect, Result } from 'effect';
-import { z } from 'zod';
+import { Effect, Result, Schema } from 'effect';
 import { object } from '@/automation/managers/helpers';
 import { packageManifests } from '@/automation/managers/package-json';
 import type { Adapter, RegistryVersion } from '@/automation/managers/registry';
@@ -9,14 +8,15 @@ import { identityOf, parseExtension } from '@/automation/package-identity';
 import { excluded, registry } from '@/automation/package-publication';
 import { fileProblem } from '@/contract/diagnostics';
 import { fromPromise } from '@/failure';
+import { mutableArray, mutableStruct, safeDecode } from '@/schema';
 
 const identifier = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
-const marketplaceQuery = z.object({
-	results: z.array(z.object({
-		extensions: z.array(z.object({ versions: z.array(z.object({ version: z.string() })) })),
+const marketplaceQuery = mutableStruct({
+	results: mutableArray(mutableStruct({
+		extensions: mutableArray(mutableStruct({ versions: mutableArray(mutableStruct({ version: Schema.String })) })),
 	})),
 });
-const openVsxExtension = z.object({ version: z.string() });
+const openVsxExtension = mutableStruct({ version: Schema.String });
 const gallery = 'https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery';
 const galleryHeaders = { Accept: 'application/json;api-version=3.0-preview.1', 'Content-Type': 'application/json' };
 function galleryQuery(id: string, latestOnly: boolean): string {
@@ -27,7 +27,7 @@ function galleryQuery(id: string, latestOnly: boolean): string {
 	});
 }
 function marketplaceVersions(body: unknown): string[] | undefined {
-	const parsed = marketplaceQuery.safeParse(body);
+	const parsed = safeDecode(marketplaceQuery, body);
 	if (!parsed.success) return undefined;
 	return parsed.data.results[0]?.extensions[0]?.versions.map(entry => entry.version) ?? [];
 }
@@ -59,7 +59,7 @@ export const vscodeManager: Adapter<'vscode'> = {
 			const versions = marketplaceVersions(yield* fromPromise((): Promise<unknown> => response.json()));
 			if (!versions) return result('uncertain');
 			return result(versions.includes(publication.version) ? 'succeeded' : 'pending');
-		}).pipe(Effect.catchCause(() => Effect.succeed(result('uncertain'))));
+		}).pipe(Effect.orElseSucceed(() => result('uncertain')));
 	},
 	secondaryLatest: {
 		'open-vsx'(pkg, request) {
@@ -70,7 +70,7 @@ export const vscodeManager: Adapter<'vscode'> = {
 					latestVersion(
 						request,
 						`https://open-vsx.org/api/${encodeURIComponent(publisher)}/${encodeURIComponent(extension)}`,
-						body => openVsxExtension.safeParse(body).data?.version,
+						body => safeDecode(openVsxExtension, body).data?.version,
 					),
 			});
 		},

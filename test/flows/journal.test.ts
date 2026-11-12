@@ -9,8 +9,21 @@ import { approvePromotion, prepareRelease } from '@root/test/support/releases.ts
 import { passChecks } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { z } from 'zod';
+import { Effect, Schema, Struct } from 'effect';
 import { routes } from '@/contract/routes';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 let world: World;
 eachWorld(created => {
@@ -21,11 +34,13 @@ function errors() {
 	const logged = loggedErrors();
 	return {
 		events: () =>
-			logged.events().filter(line => z.object({ event: z.string() }).safeParse(line).data?.event !== 'request.failed'),
+			logged.events().filter(line =>
+				safeDecode(mutableStruct({ event: Schema.String }), line).data?.event !== 'request.failed'
+			),
 	};
 }
 
-const changeRows = z.array(z.object({ entity: z.string(), id: z.string(), revision: z.number() }));
+const changeRows = mutableArray(mutableStruct({ entity: Schema.String, id: Schema.String, revision: Schema.Finite }));
 
 test('a D1 outage keeps the outbox, and the next alarm projects it', async () => {
 	const token = await world.cliSession();
@@ -52,7 +67,8 @@ test('a D1 outage keeps the outbox, and the next alarm projects it', async () =>
 	await world.wait(10_000);
 	expect((await call(routes.executionsList, {}, send)).map(execution => execution.id)).toEqual([prepared.id]);
 	expect([...journal.snapshot().keys()].filter(key => key.startsWith('outbox:'))).toEqual([]);
-	const changes = changeRows.parse(
+	const changes = decodeSync(
+		changeRows,
 		(await world.db.prepare('SELECT entity, id, revision FROM changes ORDER BY seq').all()).results,
 	);
 	expect(changes).toEqual([{ entity: 'execution', id: prepared.id, revision: 1 }]);
@@ -146,9 +162,10 @@ test('an outage retries in the inbox for eight attempts, and other failures dead
 	world.network.serve('api.github.com', outage);
 	await world.push(repository, '00000000-0000-4000-8000-00000000dead');
 	await world.wait(60_000 * 2 ** 8);
-	expect(inbox().map(([key, entry]) => [key, z.looseObject({ attempts: z.number() }).parse(entry).attempts])).toEqual([
-		['inbox-dead:00000000-0000-4000-8000-00000000dead', 8],
-	]);
+	expect(inbox().map(([key, entry]) => [key, decodeSync(looseStruct({ attempts: Schema.Finite }), entry).attempts]))
+		.toEqual([
+			['inbox-dead:00000000-0000-4000-8000-00000000dead', 8],
+		]);
 
 	world.network.serve('api.github.com', github);
 	world.github.suspend();
@@ -164,17 +181,19 @@ test('an outage retries in the inbox for eight attempts, and other failures dead
 		target: expect.stringContaining('00000000-0000-4000-8000-0000000000fe: push after 1 attempts'),
 		error: 'D1_ERROR: Network connection lost.',
 	}]);
-	expect(inbox().map(([key, entry]) => [key, z.looseObject({ attempts: z.number() }).parse(entry).attempts])).toEqual([
-		['inbox-dead:00000000-0000-4000-8000-0000000000fe', 1],
-		['inbox-dead:00000000-0000-4000-8000-0000000000ff', 1],
-		['inbox-dead:00000000-0000-4000-8000-00000000dead', 8],
-	]);
+	expect(inbox().map(([key, entry]) => [key, decodeSync(looseStruct({ attempts: Schema.Finite }), entry).attempts]))
+		.toEqual([
+			['inbox-dead:00000000-0000-4000-8000-0000000000fe', 1],
+			['inbox-dead:00000000-0000-4000-8000-0000000000ff', 1],
+			['inbox-dead:00000000-0000-4000-8000-00000000dead', 8],
+		]);
 	const dead = await world.db.prepare('SELECT target FROM audit WHERE action=? ORDER BY created_at').bind('inbox.dead')
 		.all();
-	expect(z.array(z.object({ target: z.string() })).parse(dead.results).map(row => row.target)).toEqual([
-		'00000000-0000-4000-8000-00000000dead: push after 8 attempts: GitHub unreachable on GET /repos/octo/widget/installation: Connection reset by peer',
-		'00000000-0000-4000-8000-0000000000ff: push after 1 attempts: GitHub HTTP 403 on POST /app/installations/77/access_tokens: This installation has been suspended',
-	]);
+	expect(decodeSync(mutableArray(mutableStruct({ target: Schema.String })), dead.results).map(row => row.target))
+		.toEqual([
+			'00000000-0000-4000-8000-00000000dead: push after 8 attempts: GitHub unreachable on GET /repos/octo/widget/installation: Connection reset by peer',
+			'00000000-0000-4000-8000-0000000000ff: push after 1 attempts: GitHub HTTP 403 on POST /app/installations/77/access_tokens: This installation has been suspended',
+		]);
 });
 
 test('a poisoned execution is quarantined while the rest of the journal advances', async () => {
@@ -194,11 +213,15 @@ test('a poisoned execution is quarantined while the rest of the journal advances
 	const listed = await call(routes.executionsList, {}, send);
 	expect(listed.map(execution => [execution.id, execution.state])).toEqual([[text(prepared.body, 'id'), 'succeeded']]);
 	expect(journal.snapshot().get('quarantine:poisoned')).toEqual({
-		error: expect.stringContaining('expected'),
+		error: expect.stringContaining('at ["state"]'),
 		at: Date.parse('2026-11-04T09:00:15.000Z'),
 	});
 	const audit = await world.db.prepare('SELECT target FROM audit WHERE action=?').bind('execution.quarantined').all();
-	expect(z.array(z.object({ target: z.string() })).parse(audit.results).map(row => row.target.split(':')[0])).toEqual([
+	expect(
+		decodeSync(mutableArray(mutableStruct({ target: Schema.String })), audit.results).map(row =>
+			row.target.split(':')[0]
+		),
+	).toEqual([
 		'poisoned',
 	]);
 
@@ -220,17 +243,22 @@ test('packed refs complete from the journal after the execution row is gone', as
 	let seen = -1;
 	const { promotionId } = await packedRelease(world, async () => {
 		await world.db.prepare('DELETE FROM executions').run();
-		seen = z.object({ n: z.number() }).parse(
+		seen = decodeSync(
+			mutableStruct({ n: Schema.Finite }),
 			(await world.db.prepare('SELECT COUNT(*) AS n FROM executions').all()).results[0],
 		).n;
 	});
 	expect(seen).toBe(0);
-	const restored = z.object({ document: z.string() }).parse(
+	const restored = decodeSync(
+		mutableStruct({ document: Schema.String }),
 		await world.db.prepare('SELECT document FROM executions WHERE id=?').bind(promotionId).first(),
 	);
-	const publication = z.object({
-		publications: z.array(z.object({ id: z.string(), outcome: z.string() })),
-	}).parse(JSON.parse(restored.document));
+	const publication = decodeSync(
+		mutableStruct({
+			publications: mutableArray(mutableStruct({ id: Schema.String, outcome: Schema.String })),
+		}),
+		JSON.parse(restored.document),
+	);
 	expect(publication.publications.some(entry => entry.id === 'refs:promote' && entry.outcome === 'succeeded')).toBe(
 		true,
 	);

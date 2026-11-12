@@ -7,14 +7,27 @@ import { discoveredWidget } from '@root/test/support/client.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema, Struct } from 'effect';
 import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
 import { slimRun } from '@/cli/runs';
 import type { executionFilter } from '@/contract/routes';
 import { routes } from '@/contract/routes';
 import type { ExecutionView } from '@/contract/views';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableRecord,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 let world: World, directory: string, client: Client, token: string;
 eachWorld(created => {
@@ -43,9 +56,9 @@ async function listed(args: string[], cwd: string) {
 	}
 }
 const ids = (result: { stdout: readonly string[] }) =>
-	z.array(z.looseObject({ id: z.string() })).parse(
-		JSON.parse(result.stdout.join('')),
-	).map(entry => entry.id);
+	decodeSync(mutableArray(looseStruct({ id: Schema.String })), JSON.parse(result.stdout.join(''))).map(entry =>
+		entry.id
+	);
 
 async function prepared() {
 	const repository = await discoveredWidget(world, token);
@@ -108,14 +121,16 @@ test('runs list --json prints a summary, and --full prints the whole record', as
 	const run = await prepared();
 	const outside = join(directory, 'plain');
 	await mkdir(outside);
-	const [slim] = z.array(z.record(z.string(), z.unknown())).parse(
+	const [slim] = decodeSync(
+		mutableArray(mutableRecord(Schema.String, Schema.Unknown)),
 		JSON.parse((await listed([], outside)).stdout.join('')),
 	);
 	expect(Object.keys(slim ?? {}).sort()).toEqual(
 		['id', 'operation', 'publications', 'repository', 'sourceSha', 'state', 'stream', 'updatedAt', 'version'],
 	);
 	expect(slim).toMatchObject({ id: run.id, repository: 'octo/widget', operation: 'prepare', version: '1.0.1' });
-	const [full] = z.array(z.record(z.string(), z.unknown())).parse(
+	const [full] = decodeSync(
+		mutableArray(mutableRecord(Schema.String, Schema.Unknown)),
 		JSON.parse((await listed(['--full'], outside)).stdout.join('')),
 	);
 	expect(full).toHaveProperty('configuration');
@@ -127,7 +142,8 @@ test('runs list matches a renamed repository by identity, whatever name its old 
 	await world.db.prepare('UPDATE repositories SET name=? WHERE name=?').bind('octo/renamed', 'octo/widget').run();
 	const outside = join(directory, 'plain');
 	await mkdir(outside);
-	const [listedRun] = z.array(z.looseObject({ id: z.string(), repository: z.string() })).parse(
+	const [listedRun] = decodeSync(
+		mutableArray(looseStruct({ id: Schema.String, repository: Schema.String })),
 		JSON.parse((await listed(['--repository', 'octo/renamed'], outside)).stdout.join('')),
 	);
 	expect(listedRun).toMatchObject({ id: run.id, repository: 'octo/widget' });
@@ -167,7 +183,8 @@ test('slimRun keeps only publication ids and outcomes', () => {
 
 async function crowded() {
 	const run = await prepared();
-	const row = z.object({ document: z.string(), updated_at: z.number(), state: z.string() }).parse(
+	const row = decodeSync(
+		mutableStruct({ document: Schema.String, updated_at: Schema.Finite, state: Schema.String }),
 		await world.db.prepare('SELECT document, updated_at, state FROM executions WHERE id=?').bind(run.id).first(),
 	);
 	const statement = world.db.prepare(
@@ -175,7 +192,7 @@ async function crowded() {
 	);
 	await world.db.batch(
 		Array.from({ length: 205 }, (_, index) => {
-			const stored = z.object({ createdAt: z.number() }).parse(JSON.parse(row.document));
+			const stored = decodeSync(mutableStruct({ createdAt: Schema.Finite }), JSON.parse(row.document));
 			const document = JSON.stringify({
 				...JSON.parse(row.document),
 				id: `decoy-${index}`,
@@ -207,7 +224,7 @@ test('the server filters before its 200-row limit, so busy repositories cannot h
 
 test('the server applies stream, operation, state and version filters in SQL and rejects unknown states', async () => {
 	const run = await crowded();
-	const list = (input: z.input<typeof executionFilter>) =>
+	const list = (input: Encoded<typeof executionFilter>) =>
 		Effect.runPromise(client.call(routes.executionsList, input)).then(rows => rows.map(entry => entry.id));
 	expect(await list({ repository: 'octo/widget', stream: 'main', operation: run.operation, version: '1.0.1' })).toEqual(
 		[

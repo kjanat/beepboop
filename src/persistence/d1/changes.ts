@@ -1,23 +1,26 @@
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema } from 'effect';
 import type { ChangesResponse } from '@/contract/changes';
 import { change } from '@/contract/changes';
 import type { DomainError } from '@/contract/errors';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
+import { decodeSync, mapped, mutableArray, mutableStruct } from '@/schema';
 
 const page = 500;
-const changeRow = z.object({
-	seq: z.number(),
-	repository_id: z.number(),
-	entity: change.shape.entity,
-	id: z.string(),
-	revision: z.number(),
-}).transform(({ repository_id, ...row }) => change.parse({ ...row, repositoryId: repository_id }));
+const changeRow = mapped(
+	mutableStruct({
+		seq: Schema.Finite,
+		repository_id: Schema.Finite,
+		entity: change.fields.entity,
+		id: Schema.String,
+		revision: Schema.Finite,
+	}),
+	({ repository_id, ...row }) => decodeSync(change, { ...row, repositoryId: repository_id }),
+);
 
 export class ChangeLog {
 	private readonly sql: Sql;
-	constructor(db: SqlDatabase) {
+	constructor(db: SqlDatabase | Sql) {
 		this.sql = sql(db);
 	}
 	since(cursor: number, repositoryId?: number): Effect.Effect<ChangesResponse, DomainError> {
@@ -34,7 +37,7 @@ export class ChangeLog {
 				page,
 			);
 		return rows.pipe(
-			Effect.flatMap(rows => parse(z.array(changeRow), rows)),
+			Effect.flatMap(rows => parse(mutableArray(changeRow), rows)),
 			Effect.map(changes => ({ cursor: changes.at(-1)?.seq ?? cursor, changes })),
 		);
 	}

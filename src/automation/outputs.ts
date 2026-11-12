@@ -1,20 +1,21 @@
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema } from 'effect';
 import type { Artifact, Execution } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { sha256DigestPattern } from '@/contract/ids';
+import type { Decoded } from '@/schema';
+import { matchesPattern, strictStruct } from '@/schema';
 
-export const nameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
-export const outputSchema = z.strictObject({
+export const nameSchema = Schema.String.check(matchesPattern(/^[A-Za-z0-9][A-Za-z0-9._-]*$/));
+export const outputSchema = strictStruct({
 	id: nameSchema,
-	kind: z.enum(['archive', 'binary', 'manifest', 'package', 'checksums']),
+	kind: Schema.Literals(['archive', 'binary', 'manifest', 'package', 'checksums']),
 });
-export const inputSchema = z.strictObject({ operation: nameSchema, output: nameSchema });
-export const platformSchema = z.strictObject({ os: nameSchema, arch: nameSchema, abi: nameSchema.optional() });
-export type OutputDeclaration = z.infer<typeof outputSchema>;
-export type InputDeclaration = z.infer<typeof inputSchema>;
-export type Platform = z.infer<typeof platformSchema>;
+export const inputSchema = strictStruct({ operation: nameSchema, output: nameSchema });
+export const platformSchema = strictStruct({ os: nameSchema, arch: nameSchema, abi: Schema.optional(nameSchema) });
+export type OutputDeclaration = Decoded<typeof outputSchema>;
+export type InputDeclaration = Decoded<typeof inputSchema>;
+export type Platform = Decoded<typeof platformSchema>;
 export interface ResolvedInput extends InputDeclaration {
 	executionId: string;
 	sourceSha: string;
@@ -34,37 +35,41 @@ export function outputsComplete(execution: Execution): boolean {
 export function resolveInputs(
 	execution: Execution,
 	dependencies: Execution[],
-	now = Date.now(),
+	now?: number,
 ): Effect.Effect<ResolvedInput[], DomainError> {
-	return Effect.forEach(execution.workflow?.artifactInputs ?? [], input => {
-		const matches = dependencies.filter(dependency =>
-			execution.dependencies.includes(dependency.id) && dependency.operation === input.operation
-			&& dependency.repositoryId === execution.repositoryId && dependency.stream === execution.stream
-			&& dependency.eventId === execution.eventId && dependency.configurationSha === execution.configurationSha
-			&& dependency.sourceSha === execution.sourceSha
-		);
-		const producer = matches[0];
-		if (matches.length !== 1 || !producer || producer.state !== 'succeeded') {
-			return Effect.fail(precondition(`Output producer is not ready: ${input.operation}`));
-		}
-		const declaration = producer.workflow?.outputs?.find(output => output.id === input.output);
-		const artifacts = producer.artifacts.filter(artifact => artifact.name === input.output);
-		const artifact = artifacts[0];
-		if (
-			!declaration || artifacts.length !== 1 || !artifact || artifact.runId !== producer.runId
-			|| !sha256DigestPattern.test(artifact.digest)
-			|| !(Date.parse(artifact.expiresAt) > now)
-		) {
-			return Effect.fail(precondition(`Output is unavailable: ${input.operation}/${input.output}`));
-		}
-		return Effect.succeed({
-			...input,
-			executionId: producer.id,
-			sourceSha: producer.sourceSha,
-			version: producer.version,
-			platform: producer.workflow?.platform,
-			kind: declaration.kind,
-			artifact: structuredClone(artifact),
+	return Effect.clockWith(clock => {
+		now ??= clock.currentTimeMillisUnsafe();
+
+		return Effect.forEach(execution.workflow?.artifactInputs ?? [], input => {
+			const matches = dependencies.filter(dependency =>
+				execution.dependencies.includes(dependency.id) && dependency.operation === input.operation
+				&& dependency.repositoryId === execution.repositoryId && dependency.stream === execution.stream
+				&& dependency.eventId === execution.eventId && dependency.configurationSha === execution.configurationSha
+				&& dependency.sourceSha === execution.sourceSha
+			);
+			const producer = matches[0];
+			if (matches.length !== 1 || !producer || producer.state !== 'succeeded') {
+				return Effect.fail(precondition(`Output producer is not ready: ${input.operation}`));
+			}
+			const declaration = producer.workflow?.outputs?.find(output => output.id === input.output);
+			const artifacts = producer.artifacts.filter(artifact => artifact.name === input.output);
+			const artifact = artifacts[0];
+			if (
+				!declaration || artifacts.length !== 1 || !artifact || artifact.runId !== producer.runId
+				|| !sha256DigestPattern.test(artifact.digest)
+				|| !(Date.parse(artifact.expiresAt) > (now ?? clock.currentTimeMillisUnsafe()))
+			) {
+				return Effect.fail(precondition(`Output is unavailable: ${input.operation}/${input.output}`));
+			}
+			return Effect.succeed({
+				...input,
+				executionId: producer.id,
+				sourceSha: producer.sourceSha,
+				version: producer.version,
+				platform: producer.workflow?.platform,
+				kind: declaration.kind,
+				artifact: structuredClone(artifact),
+			});
 		});
 	});
 }

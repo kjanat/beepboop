@@ -1,10 +1,12 @@
 import { Data, Effect } from 'effect';
-import type { z } from 'zod';
 import type { ApiError } from '@/contract/errors';
 import { errorEnvelope, securityKeyRequired } from '@/contract/errors';
 import { isJson } from '@/contract/http';
 import type { Route } from '@/contract/routes';
 import { awaitWith } from '@/refusal';
+import { responseJson } from '@/runtime/http';
+import type { Contract, Decoded, Encoded } from '@/schema';
+import { safeDecode } from '@/schema';
 
 export interface Outgoing {
 	method: 'GET' | 'POST';
@@ -27,7 +29,7 @@ export type Transport = (request: Outgoing) => Effect.Effect<Response, Unreachab
 
 const reach = awaitWith((message, cause) => new Unreachable({ message, cause }));
 
-export function send(run: () => Promise<Response>): Effect.Effect<Response, Unreachable> {
+export function send(run: (signal: AbortSignal) => Promise<Response>): Effect.Effect<Response, Unreachable> {
 	return reach(run);
 }
 
@@ -38,9 +40,10 @@ export function failureOf(response: Response): Effect.Effect<ApiFailure> {
 		message: `Beepboop request failed (${response.status})`,
 	});
 	if (!isJson(response)) return Effect.succeed(fallback);
-	return Effect.promise((): Promise<unknown> => response.json().catch(() => undefined)).pipe(
+	return responseJson(response).pipe(
+		Effect.orElseSucceed(() => undefined),
 		Effect.map(body => {
-			const parsed = errorEnvelope.safeParse(body);
+			const parsed = safeDecode(errorEnvelope, body);
 			return parsed.success
 				? new ApiFailure({ status: response.status, problem: parsed.data.problem, message: parsed.data.error })
 				: fallback;
@@ -60,16 +63,16 @@ function query(input: unknown): string {
 	return encoded ? `?${encoded}` : '';
 }
 
-export function outgoing<Q extends z.ZodType, S extends z.ZodType>(route: Route<Q, S>, input: z.input<Q>): Outgoing {
+export function outgoing<Q extends Contract, S extends Contract>(route: Route<Q, S>, input: Encoded<Q>): Outgoing {
 	if (route.method === 'GET') return { method: route.method, path: `${route.path}${query(input)}`, body: undefined };
 	return { method: route.method, path: route.path, body: JSON.stringify(input) };
 }
 
-export function call<Q extends z.ZodType, S extends z.ZodType>(
+export function call<Q extends Contract, S extends Contract>(
 	route: Route<Q, S>,
-	input: z.input<Q>,
+	input: Encoded<Q>,
 	transport: Transport,
-): Effect.Effect<z.output<S>, ApiFailure | Unreachable> {
+): Effect.Effect<Decoded<S>, ApiFailure | Unreachable> {
 	return Effect.gen(function*() {
 		const response = yield* transport(outgoing(route, input));
 		if (!response.ok) return yield* yield* failureOf(response);
@@ -80,16 +83,23 @@ export function call<Q extends z.ZodType, S extends z.ZodType>(
 				message: 'Beepboop answered without JSON',
 			});
 		}
-		const body = yield* Effect.promise((): Promise<unknown> => response.json());
-		return route.response.parse(body);
+		const invalid = () =>
+			new ApiFailure({
+				status: response.status,
+				problem: undefined,
+				message: 'Beepboop answered with invalid JSON or an invalid response',
+			});
+		const body = yield* responseJson(response).pipe(Effect.mapError(invalid));
+		const parsed = safeDecode(route.response, body);
+		return parsed.success ? parsed.data : yield* invalid();
 	});
 }
-export function elevatedCall<Q extends z.ZodType, S extends z.ZodType, E>(
+export function elevatedCall<Q extends Contract, S extends Contract, E>(
 	route: Route<Q, S>,
-	input: (proof: string | undefined) => z.input<Q>,
+	input: (proof: string | undefined) => Encoded<Q>,
 	transport: Transport,
 	prove: Effect.Effect<string, E>,
-): Effect.Effect<z.output<S>, ApiFailure | Unreachable | E> {
+): Effect.Effect<Decoded<S>, ApiFailure | Unreachable | E> {
 	return call(route, input(undefined), transport).pipe(
 		Effect.catchIf(
 			(error): error is ApiFailure =>

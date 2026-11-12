@@ -8,9 +8,8 @@ import { eachDirectory } from '@root/test/support/directories.ts';
 import { plugin, widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { Effect } from 'effect';
+import { Effect, Schema, Struct } from 'effect';
 import { parse } from 'yaml';
-import { z } from 'zod';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import { jobObstacles } from '@/automation/setup-workflows';
 import { app } from '@/cli/cli';
@@ -28,6 +27,21 @@ import {
 	versionPrMergeSentences,
 	versionPrMerges,
 } from '@/contract/setup-terms';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableRecord,
+	mutableStruct,
+	preserveUnknown,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 let world: World;
 let directory: string;
@@ -167,8 +181,9 @@ test('Cargo adoption generates one workflow and advanced renaming keeps the shar
 	expect(source).toContain("inputs.beepboop_operation == 'publish'");
 	expect(world.github.file(repository, '.github/workflows/release-my-crate.yml', 'automation/onboarding'))
 		.toBeUndefined();
-	const binding = z.object({ workflow: z.object({ file: z.string() }) });
-	const config = z.object({ streams: z.object({ main: z.object({ prepare: binding, promote: binding }) }) }).parse(
+	const binding = mutableStruct({ workflow: mutableStruct({ file: Schema.String }) });
+	const config = decodeSync(
+		mutableStruct({ streams: mutableStruct({ main: mutableStruct({ prepare: binding, promote: binding }) }) }),
 		JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'),
 	);
 	expect(config.streams.main.prepare.workflow.file).toBe('my-release.yml');
@@ -203,23 +218,29 @@ jobs:
 		[true, 'ship.yml', 'ship', 'publish_a', '', '', 'managed', [], 'pr', 'required', false, true],
 	);
 	expect(result.exitCode).toBe(0);
-	const workflow = z.object({
-		jobs: z.object({
-			ship: z.object({
-				steps: z.array(
-					z.object({
-						id: z.string().optional(),
-						run: z.string().optional(),
-						uses: z.string().optional(),
-						with: z.object({ publications: z.string().optional() }).passthrough().optional(),
-					}).passthrough(),
-				),
+	const workflow = decodeSync(
+		mutableStruct({
+			jobs: mutableStruct({
+				ship: mutableStruct({
+					steps: mutableArray(
+						mutableStruct({
+							id: Schema.optional(Schema.String),
+							run: Schema.optional(Schema.String),
+							uses: Schema.optional(Schema.String),
+							with: Schema.optional(
+								mutableStruct({ publications: Schema.optional(Schema.String) }).pipe(preserveUnknown),
+							),
+						}).pipe(preserveUnknown),
+					),
+				}),
 			}),
 		}),
-	}).parse(parse(world.github.file(repository, '.github/workflows/ship.yml', 'automation/onboarding') ?? ''));
+		parse(world.github.file(repository, '.github/workflows/ship.yml', 'automation/onboarding') ?? ''),
+	);
 	const steps = workflow.jobs.ship.steps;
 	expect(steps.find(step => step.id === 'beepboop_publish')?.uses).toBe('kjanat/beepboop/actions/publish@v1');
-	const publications = z.array(z.object({ name: z.string(), outcome: z.string() })).parse(
+	const publications = decodeSync(
+		mutableArray(mutableStruct({ name: Schema.String, outcome: Schema.String })),
 		JSON.parse(steps.find(step => step.with?.publications)?.with?.publications ?? '[]'),
 	);
 	expect(publications.map(pkg => [pkg.name, pkg.outcome])).toEqual([
@@ -238,13 +259,16 @@ for (const mixed of ['pypi', 'npm'] as const) {
 		const result = await run(['adopt', repository.name], [true, 'new', 'managed', [], 'pr', 'required', false, true]);
 		expect(result.stdout.join('')).not.toContain('Bash commands');
 		expect(result.exitCode).toBe(0);
-		const workflow = z.object({
-			jobs: z.object({
-				publish: z.object({
-					steps: z.array(z.looseObject({ id: z.string().optional(), uses: z.string().optional() })),
+		const workflow = decodeSync(
+			mutableStruct({
+				jobs: mutableStruct({
+					publish: mutableStruct({
+						steps: mutableArray(
+							looseStruct({ id: Schema.optional(Schema.String), uses: Schema.optional(Schema.String) }),
+						),
+					}),
 				}),
 			}),
-		}).parse(
 			parse(world.github.file(repository, '.github/workflows/release-mixed.yml', 'automation/onboarding') ?? ''),
 		);
 		const steps = workflow.jobs.publish.steps;
@@ -616,8 +640,11 @@ test('a plan with choice fields this CLI does not know asks for an upgrade and s
 	const choices = join(directory, 'choices.json'), output = join(directory, 'plan.json');
 	await Bun.write(choices, JSON.stringify(bindingsChoices));
 	await review(repository.name, choices, output);
-	const saved = z.object({ choices: z.object({ streams: z.array(z.record(z.string(), z.unknown())) }) }).passthrough()
-		.parse(await Bun.file(output).json());
+	const saved = decodeSync(
+		mutableStruct({ choices: mutableStruct({ streams: mutableArray(mutableRecord(Schema.String, Schema.Unknown)) }) })
+			.pipe(preserveUnknown),
+		await Bun.file(output).json(),
+	);
 	const [stream] = saved.choices.streams;
 	if (stream) stream.channels = { stable: 'latest' };
 	await Bun.write(output, JSON.stringify(saved));
@@ -715,11 +742,16 @@ test('saved Cargo commands are kept for the same packages and regenerated after 
 	const source = world.github.file(repository, '.github/workflows/release.yml', 'automation/onboarding') ?? '';
 	expect(source).toContain('uses: kjanat/beepboop/actions/publish@v1');
 	expect(source).not.toContain("'crate-a'");
-	const configured = z.object({
-		streams: z.object({
-			main: z.object({ promote: z.object({ workflow: z.object({ publications: z.array(z.string()) }) }) }),
+	const configured = decodeSync(
+		mutableStruct({
+			streams: mutableStruct({
+				main: mutableStruct({
+					promote: mutableStruct({ workflow: mutableStruct({ publications: mutableArray(Schema.String) }) }),
+				}),
+			}),
 		}),
-	}).parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'));
+		JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'),
+	);
 	expect(configured.streams.main.promote.workflow.publications).toEqual([
 		'pkg:cargo/crate-b',
 		'github-release:octo/crates',
@@ -841,11 +873,16 @@ test('an inferred stream is adopted by observing its existing workflow', async (
 	);
 	expect(repository.pulls).toHaveLength(1);
 	expect(repository.pulls[0]?.body).toContain('## Release plan');
-	const config = z.object({
-		streams: z.object({
-			main: z.object({ workflows: z.record(z.string(), z.object({ mode: z.string(), file: z.string() })) }),
+	const config = decodeSync(
+		mutableStruct({
+			streams: mutableStruct({
+				main: mutableStruct({
+					workflows: mutableRecord(Schema.String, mutableStruct({ mode: Schema.String, file: Schema.String })),
+				}),
+			}),
 		}),
-	}).parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'));
+		JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'),
+	);
 	expect(Object.values(config.streams.main.workflows)).toEqual([
 		expect.objectContaining({ mode: 'observe', file: 'release.yml' }),
 	]);
@@ -917,11 +954,16 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 		world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}',
 	);
 	expect(
-		z.object({
-			streams: z.object({
-				main: z.object({ promote: z.object({ workflow: z.object({ setup: z.object({ tagPrefix: z.string() }) }) }) }),
+		decodeSync(
+			mutableStruct({
+				streams: mutableStruct({
+					main: mutableStruct({
+						promote: mutableStruct({ workflow: mutableStruct({ setup: mutableStruct({ tagPrefix: Schema.String }) }) }),
+					}),
+				}),
 			}),
-		}).parse(configuration).streams.main.promote.workflow.setup.tagPrefix,
+			configuration,
+		).streams.main.promote.workflow.setup.tagPrefix,
 	).toBe('tool-v');
 	expect(configuration).toMatchObject({
 		streams: {

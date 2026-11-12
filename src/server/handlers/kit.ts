@@ -1,5 +1,4 @@
 import { Effect } from 'effect';
-import type { z } from 'zod';
 import type { WorkflowIdentity } from '@/automation/auth';
 import { Authenticators, administrator, workflowIdentity } from '@/automation/auth';
 import type { AutomationBindings, AutomationService } from '@/automation/service';
@@ -10,6 +9,8 @@ import type { AnyRoute, Known, Route } from '@/contract/routes';
 import type { ReadyRepository } from '@/domain/repository';
 import { readiness, requireReady } from '@/domain/repository';
 import { fromSync } from '@/failure';
+import type { Contract, Decoded, Encoded } from '@/schema';
+import { decodeSync } from '@/schema';
 
 export interface Context {
 	request: Request;
@@ -52,23 +53,23 @@ export interface Endpoint<R extends AnyRoute> {
 	run(context: Context, read: Effect.Effect<unknown, DomainError>): Effect.Effect<unknown, DomainError>;
 }
 
-type Reply<S extends z.ZodType> = Effect.Effect<Known<z.input<S>>, DomainError>;
-type Handle<Q extends z.ZodType, S extends z.ZodType, C> = (input: z.output<Q>, context: C) => Reply<S>;
-interface Elevated<S extends z.ZodType> {
+type Reply<S extends Contract> = Effect.Effect<Known<Encoded<S>>, DomainError>;
+type Handle<Q extends Contract, S extends Contract, C> = (input: Decoded<Q>, context: C) => Reply<S>;
+interface Elevated<S extends Contract> {
 	readonly commit: Reply<S>;
 }
 
-function respond<S extends z.ZodType>(schema: S, reply: Reply<S>): Reply<S> {
-	return reply.pipe(Effect.tap(result => fromSync(() => schema.parse(result))));
+function respond<S extends Contract>(schema: S, reply: Reply<S>): Reply<S> {
+	return reply.pipe(Effect.tap(result => fromSync(() => decodeSync(schema, result))));
 }
 
-function parsed<Q extends z.ZodType>(route: Route<Q, z.ZodType>, read: Effect.Effect<unknown, DomainError>) {
+function parsed<Q extends Contract>(route: Route<Q, Contract>, read: Effect.Effect<unknown, DomainError>) {
 	return read.pipe(
 		Effect.flatMap(raw => decodeRequest(route.request, raw).pipe(Effect.map(input => ({ raw, input })))),
 	);
 }
 
-export function admin<Q extends z.ZodType, S extends z.ZodType>(
+export function admin<Q extends Contract, S extends Contract>(
 	route: Route<Q, S>,
 	handle: Handle<Q, S, AdminContext>,
 ): Endpoint<Route<Q, S>> {
@@ -83,9 +84,9 @@ export function admin<Q extends z.ZodType, S extends z.ZodType>(
 	};
 }
 
-export function elevated<Q extends z.ZodType, S extends z.ZodType>(
+export function elevated<Q extends Contract, S extends Contract>(
 	route: Route<Q, S>,
-	precheck: (input: z.output<Q>, context: AdminContext) => Effect.Effect<Elevated<S>, DomainError>,
+	precheck: (input: Decoded<Q>, context: AdminContext) => Effect.Effect<Elevated<S>, DomainError>,
 ): Endpoint<Route<Q, S>> {
 	return {
 		route,
@@ -106,7 +107,7 @@ function identify(context: Context): Effect.Effect<WorkflowIdentity, DomainError
 	return workflowIdentity(context.request, context.env.APPLICATION_ORIGIN, Number(context.env.OWNER_ID));
 }
 
-export function workflowToken<Q extends z.ZodType, S extends z.ZodType>(
+export function workflowToken<Q extends Contract, S extends Contract>(
 	route: Route<Q, S>,
 	handle: Handle<Q, S, WorkflowContext>,
 ): Endpoint<Route<Q, S>> {
@@ -121,7 +122,7 @@ export function workflowToken<Q extends z.ZodType, S extends z.ZodType>(
 	};
 }
 
-export function workflow<Q extends z.ZodType, S extends z.ZodType>(
+export function workflow<Q extends Contract, S extends Contract>(
 	route: Route<Q, S>,
 	handle: Handle<Q, S, EnrolledContext>,
 ): Endpoint<Route<Q, S>> {

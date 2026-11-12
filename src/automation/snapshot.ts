@@ -21,6 +21,7 @@ import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { safeVersionPath } from '@/contract/version-files';
 import { parentDirectory } from '@/relative-path';
+import { ioConcurrency } from '@/runtime/policy';
 
 export interface TreeEntry {
 	path: string;
@@ -268,7 +269,7 @@ export function buildSnapshot(
 					Effect.sync(() => {
 						if (text !== null) read.set(path, text);
 					})
-				)), { concurrency: 8, discard: true });
+				)), { concurrency: ioConcurrency, discard: true });
 		yield* readAll(fetched);
 		const requested = new Set(fetched);
 		for (;;) {

@@ -24,7 +24,7 @@ interface Props {
 }
 const { repositories, selected } = Astro.props.data;
 const { readable: executions, unreadable } = Astro.props.data.executions;
-const now = Date.now();
+const { now } = Astro.props.data;
 const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 const position = new Map(executions.map((run, index) => [run.id, index]));
 const first = (runs: readonly { id: string }[]) =>

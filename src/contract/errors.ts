@@ -1,8 +1,9 @@
 import type { Effect } from 'effect';
-import { Data } from 'effect';
-import { z } from 'zod';
+import { Data, Schema } from 'effect';
 import { diagnostic } from '@/contract/diagnostics';
 import { decodeWith } from '@/decode';
+import type { Contract, Decoded } from '@/schema';
+import { mutableArray, mutableStruct, schemaIssues } from '@/schema';
 
 export const resources = [
 	'repository',
@@ -21,26 +22,40 @@ export type Resource = (typeof resources)[number];
 export const conflictKinds = ['stale-plan', 'stale-revision', 'stale-version', 'override-digest', 'protocol'] as const;
 export const services = ['github', 'registry', 'd1', 'oidc'] as const;
 
-export const issue = z.object({ path: z.array(z.union([z.string(), z.number()])), message: z.string() });
-export type Issue = z.output<typeof issue>;
+export const issue = mutableStruct({
+	path: mutableArray(Schema.Union([Schema.String, Schema.Finite])),
+	message: Schema.String,
+});
+export type Issue = Decoded<typeof issue>;
 
-export const apiError = z.discriminatedUnion('code', [
-	z.object({ code: z.literal('unauthenticated') }),
-	z.object({ code: z.literal('forbidden'), reason: z.string() }),
-	z.object({ code: z.literal('not-found'), resource: z.enum(resources), id: z.string().optional() }),
-	z.object({ code: z.literal('method-not-allowed'), allowed: z.array(z.enum(['GET', 'POST'])) }),
-	z.object({ code: z.literal('invalid'), issues: z.array(issue) }),
-	z.object({
-		code: z.literal('conflict'),
-		kind: z.enum(conflictKinds),
-		expected: z.string().optional(),
-		actual: z.string().optional(),
+export const apiError = Schema.Union([
+	mutableStruct({ code: Schema.Literal('unauthenticated') }),
+	mutableStruct({ code: Schema.Literal('forbidden'), reason: Schema.String }),
+	mutableStruct({
+		code: Schema.Literal('not-found'),
+		resource: Schema.Literals(resources),
+		id: Schema.optional(Schema.String),
 	}),
-	z.object({ code: z.literal('precondition'), diagnostics: z.array(diagnostic) }),
-	z.object({ code: z.literal('upstream'), service: z.enum(services), retryable: z.literal(true) }),
-	z.object({ code: z.literal('internal'), incident: z.string() }),
+	mutableStruct({
+		code: Schema.Literal('method-not-allowed'),
+		allowed: mutableArray(Schema.Literals(['GET', 'POST'])),
+	}),
+	mutableStruct({ code: Schema.Literal('invalid'), issues: mutableArray(issue) }),
+	mutableStruct({
+		code: Schema.Literal('conflict'),
+		kind: Schema.Literals(conflictKinds),
+		expected: Schema.optional(Schema.String),
+		actual: Schema.optional(Schema.String),
+	}),
+	mutableStruct({ code: Schema.Literal('precondition'), diagnostics: mutableArray(diagnostic) }),
+	mutableStruct({
+		code: Schema.Literal('upstream'),
+		service: Schema.Literals(services),
+		retryable: Schema.Literal(true),
+	}),
+	mutableStruct({ code: Schema.Literal('internal'), incident: Schema.String }),
 ]);
-export type ApiError = z.output<typeof apiError>;
+export type ApiError = Decoded<typeof apiError>;
 export type ErrorCode = ApiError['code'];
 
 export const statusOf = {
@@ -55,8 +70,8 @@ export const statusOf = {
 	internal: 500,
 } as const satisfies Record<ErrorCode, number>;
 
-export const errorEnvelope = z.object({ error: z.string(), problem: apiError.optional() });
-export type ErrorEnvelope = z.output<typeof errorEnvelope>;
+export const errorEnvelope = mutableStruct({ error: Schema.String, problem: Schema.optional(apiError) });
+export type ErrorEnvelope = Decoded<typeof errorEnvelope>;
 
 const resourceLabels = {
 	repository: 'Repository',
@@ -133,15 +148,15 @@ export function invalid(message: string, path: (string | number)[] = []): Domain
 export function upstream(service: (typeof services)[number], message: string): DomainError {
 	return domainError({ code: 'upstream', service, retryable: true }, message);
 }
-export function invalidRequest(error: z.ZodError): DomainError {
+export function invalidRequest(error: Schema.SchemaError): DomainError {
 	return domainError({
 		code: 'invalid',
-		issues: error.issues.map(entry => ({
+		issues: schemaIssues(error).map(entry => ({
 			path: entry.path.flatMap(part => typeof part === 'symbol' ? [] : [part]),
 			message: entry.message,
 		})),
 	});
 }
-export function decodeRequest<S extends z.ZodType>(schema: S, value: unknown): Effect.Effect<z.output<S>, DomainError> {
+export function decodeRequest<S extends Contract>(schema: S, value: unknown): Effect.Effect<Decoded<S>, DomainError> {
 	return decodeWith(schema, value, invalidRequest);
 }

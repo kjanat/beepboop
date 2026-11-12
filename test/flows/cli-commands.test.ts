@@ -5,12 +5,24 @@ import { call, cliTransport, discoveredWidget } from '@root/test/support/client.
 import { eachDirectory } from '@root/test/support/directories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema, Struct } from 'effect';
 import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
 import { stdin } from '@/cli/stdin';
 import { routes } from '@/contract/routes';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 let world: World, directory: string, client: Client, token: string;
 eachWorld(created => {
@@ -319,7 +331,7 @@ test('releases plan-set, prepare-set and start show the release set with spinner
 	expect(planned.tty).toContain(
 		'group   version  packages      \n------  -------  --------------\nwidget  1.1.0    pkg:npm/widget\n',
 	);
-	const reviewed = z.object({ sourceSha: z.string(), planId: z.string() }).parse(planned.parsed);
+	const reviewed = decodeSync(mutableStruct({ sourceSha: Schema.String, planId: Schema.String }), planned.parsed);
 	expect(planned.tty).toContain(
 		`Prepare it with: beepboop releases prepare-set octo/widget --stream main --plan ${plan} --sourceSha ${reviewed.sourceSha} --planId ${reviewed.planId}\n`,
 	);

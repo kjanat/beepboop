@@ -1,10 +1,10 @@
 import { writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema } from 'effect';
 import { packageId } from '@/automation/package-identity';
 import { checkoutAt } from '@/git';
 import { looseSchema } from '@/model';
+import { mutableArray, mutableRecord, mutableStruct } from '@/schema';
 import { sha256Hex } from '@/sha256';
 import { packageManifest } from '@/tooling/cli/manifest';
 import { writeOutput } from '@/tooling/github-output';
@@ -22,10 +22,12 @@ import {
 
 const root = resolve(import.meta.dir, '../../..');
 const directory = join(root, 'packages/cli');
-const npmVersion = z.object({ dist: z.object({ integrity: looseSchema }).nullish() });
-const jsrPackage = z.object({ versions: z.record(z.string(), z.unknown()).nullish() });
-const jsrVersion = z.object({ yanked: looseSchema });
-const jsrFiles = z.object({ manifest: z.record(z.string(), z.object({ checksum: z.string() })) });
+const npmVersion = mutableStruct({ dist: Schema.optional(Schema.NullOr(mutableStruct({ integrity: looseSchema }))) });
+const jsrPackage = mutableStruct({
+	versions: Schema.optional(Schema.NullOr(mutableRecord(Schema.String, Schema.Unknown))),
+});
+const jsrVersion = mutableStruct({ yanked: looseSchema });
+const jsrFiles = mutableStruct({ manifest: mutableRecord(Schema.String, mutableStruct({ checksum: Schema.String })) });
 
 function output(name: string, value: string): Effect.Effect<void, ToolFailure> {
 	return writeOutput(name, value).pipe(
@@ -54,15 +56,18 @@ function checksum(path: string): Effect.Effect<string | undefined, ToolFailure> 
 await main(Effect.gen(function*() {
 	const npm = yield* parse(packageManifest, yield* readJson(join(directory, 'package.json')));
 	const jsr = yield* parse(
-		packageManifest.extend({ publish: z.object({ include: z.array(z.string()) }) }),
+		mutableStruct({
+			...packageManifest.fields,
+			...{ publish: mutableStruct({ include: mutableArray(Schema.String) }) },
+		}),
 		yield* readJson(join(directory, 'jsr.json')),
 	);
 	const context = yield* parse(
-		z.object({
-			sourceSha: z.string().optional(),
-			operation: z.string().optional(),
-			stream: z.string().optional(),
-			version: z.string().optional(),
+		mutableStruct({
+			sourceSha: Schema.optional(Schema.String),
+			operation: Schema.optional(Schema.String),
+			stream: Schema.optional(Schema.String),
+			version: Schema.optional(Schema.String),
 		}),
 		yield* attempt((): unknown => JSON.parse(process.env.RELEASE_CONTEXT ?? '{}')),
 	);

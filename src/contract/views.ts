@@ -1,4 +1,6 @@
-import { z } from 'zod';
+import { Schema } from 'effect';
+import type { Decoded } from '@/schema';
+import { looseStruct, mutableArray, mutableRecord, mutableStruct } from '@/schema';
 
 export const tones = ['ok', 'active', 'waiting', 'warn', 'error', 'neutral'] as const;
 export type Tone = (typeof tones)[number];
@@ -23,89 +25,100 @@ export const executionStates = [
 ] as const;
 export type ExecutionStateView = (typeof executionStates)[number];
 
-export const executionView = z.looseObject({
-	id: z.string(),
-	repositoryId: z.number(),
-	repository: z.string(),
-	stream: z.string(),
-	operation: z.string(),
-	state: z.enum(executionStates),
-	version: z.string().optional(),
-	sourceSha: z.string(),
-	updatedAt: z.number(),
+export const executionView = looseStruct({
+	id: Schema.String,
+	repositoryId: Schema.Finite,
+	repository: Schema.String,
+	stream: Schema.String,
+	operation: Schema.String,
+	state: Schema.Literals(executionStates),
+	version: Schema.optional(Schema.String),
+	sourceSha: Schema.String,
+	updatedAt: Schema.Finite,
 });
-export type ExecutionView = z.output<typeof executionView>;
+export type ExecutionView = Decoded<typeof executionView>;
 
 export const releaseKinds = ['observes', 'unpublishable', 'promotes', 'prepares'] as const;
-export const streamRelease = z.object({ kind: z.enum(releaseKinds), summary: z.string() });
-export type StreamRelease = z.output<typeof streamRelease>;
+export const streamRelease = mutableStruct({ kind: Schema.Literals(releaseKinds), summary: Schema.String });
+export type StreamRelease = Decoded<typeof streamRelease>;
 
-export const repositoryView = z.looseObject({
-	id: z.number(),
-	name: z.string(),
-	defaultBranch: z.string(),
-	sha: z.string(),
-	suspended: z.boolean().optional(),
-	diagnostics: z.array(z.string()),
-	configuration: z.looseObject({ streams: z.record(z.string(), z.unknown()) }).optional(),
-	releases: z.record(z.string(), streamRelease),
+export const repositoryView = looseStruct({
+	id: Schema.Finite,
+	name: Schema.String,
+	defaultBranch: Schema.String,
+	sha: Schema.String,
+	suspended: Schema.optional(Schema.Boolean),
+	diagnostics: mutableArray(Schema.String),
+	configuration: Schema.optional(looseStruct({ streams: mutableRecord(Schema.String, Schema.Unknown) })),
+	releases: mutableRecord(Schema.String, streamRelease),
 });
-export type RepositoryView = z.output<typeof repositoryView>;
+export type RepositoryView = Decoded<typeof repositoryView>;
 
-export const binaryProgress = z.object({
-	legs: z.array(z.object({
-		build: z.string(),
-		target: z.string(),
-		job: z.string(),
-		state: z.enum(['waiting', 'running', 'succeeded', 'failed', 'skipped']),
-		startedAt: z.string().optional(),
-		completedAt: z.string().optional(),
+export const binaryProgress = mutableStruct({
+	legs: mutableArray(mutableStruct({
+		build: Schema.String,
+		target: Schema.String,
+		job: Schema.String,
+		state: Schema.Literals(['waiting', 'running', 'succeeded', 'failed', 'skipped']),
+		startedAt: Schema.optional(Schema.String),
+		completedAt: Schema.optional(Schema.String),
 	})),
-	assets: z.array(z.object({ build: z.string(), target: z.string(), name: z.string(), uploaded: z.boolean() })),
+	assets: mutableArray(
+		mutableStruct({ build: Schema.String, target: Schema.String, name: Schema.String, uploaded: Schema.Boolean }),
+	),
 });
-export type BinaryProgress = z.output<typeof binaryProgress>;
+export type BinaryProgress = Decoded<typeof binaryProgress>;
 
-export const planReview = z.looseObject({
-	sourceSha: z.string(),
-	planId: z.string(),
-	version: z.string().optional(),
-	edits: z.array(z.object({ path: z.string(), before: z.string(), after: z.string() })),
-	groups: z.array(z.looseObject({ id: z.string(), version: z.string(), packages: z.array(z.string()) })).optional(),
-	diagnostics: z.array(z.string()).optional(),
-	requiresPreparation: z.boolean(),
+export const planReview = looseStruct({
+	sourceSha: Schema.String,
+	planId: Schema.String,
+	version: Schema.optional(Schema.String),
+	edits: mutableArray(mutableStruct({ path: Schema.String, before: Schema.String, after: Schema.String })),
+	groups: Schema.optional(
+		mutableArray(looseStruct({ id: Schema.String, version: Schema.String, packages: mutableArray(Schema.String) })),
+	),
+	diagnostics: Schema.optional(mutableArray(Schema.String)),
+	requiresPreparation: Schema.Boolean,
 });
-export type PlanReview = z.output<typeof planReview>;
+export type PlanReview = Decoded<typeof planReview>;
 
-export const credentialRow = z.looseObject({
-	alias: z.string(),
-	version: z.number(),
-	key_id: z.string(),
-	active: z.number(),
-	created_at: z.number(),
+export const credentialRow = looseStruct({
+	alias: Schema.String,
+	version: Schema.Finite,
+	key_id: Schema.String,
+	active: Schema.Finite,
+	created_at: Schema.Finite,
 });
-export const credentialsView = z.looseObject({
-	credentials: z.array(credentialRow),
-	grants: z.array(z.looseObject({ id: z.string(), alias: z.string(), repositoryId: z.number(), delivery: z.string() })),
-	deliveries: z.array(z.unknown()),
+export const credentialsView = looseStruct({
+	credentials: mutableArray(credentialRow),
+	grants: mutableArray(
+		looseStruct({ id: Schema.String, alias: Schema.String, repositoryId: Schema.Finite, delivery: Schema.String }),
+	),
+	deliveries: mutableArray(Schema.Unknown),
 });
-export type CredentialsView = z.output<typeof credentialsView>;
+export type CredentialsView = Decoded<typeof credentialsView>;
 
-export const destinationView = z.looseObject({
-	id: z.string(),
-	name: z.string(),
-	kind: z.string(),
-	credential: z.string(),
-	subscribeNew: z.boolean(),
-	enabled: z.boolean(),
+export const destinationView = looseStruct({
+	id: Schema.String,
+	name: Schema.String,
+	kind: Schema.String,
+	credential: Schema.String,
+	subscribeNew: Schema.Boolean,
+	enabled: Schema.Boolean,
 });
-export const notificationsView = z.looseObject({
-	destinations: z.array(destinationView),
-	subscriptions: z.array(z.looseObject({ destinationId: z.string(), registry: z.string(), name: z.string() })),
-	deliveries: z.array(z.unknown()),
+export const notificationsView = looseStruct({
+	destinations: mutableArray(destinationView),
+	subscriptions: mutableArray(
+		looseStruct({ destinationId: Schema.String, registry: Schema.String, name: Schema.String }),
+	),
+	deliveries: mutableArray(Schema.Unknown),
 });
-export type NotificationsView = z.output<typeof notificationsView>;
+export type NotificationsView = Decoded<typeof notificationsView>;
 
-export const approvalReadiness = z.looseObject({ problems: z.array(z.string()), blocked: z.array(z.string()) });
-export const securityChallenge = z.looseObject({ id: z.string(), options: z.unknown() });
-export const securityProof = z.looseObject({ proof: z.string().optional() });
-export const acknowledged = z.looseObject({ ok: z.boolean() });
+export const approvalReadiness = looseStruct({
+	problems: mutableArray(Schema.String),
+	blocked: mutableArray(Schema.String),
+});
+export const securityChallenge = looseStruct({ id: Schema.String, options: Schema.Unknown });
+export const securityProof = looseStruct({ proof: Schema.optional(Schema.String) });
+export const acknowledged = looseStruct({ ok: Schema.Boolean });

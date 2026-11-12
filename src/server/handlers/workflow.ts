@@ -1,5 +1,4 @@
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema } from 'effect';
 import { createExecution } from '@/automation/execution';
 import { logRecovered } from '@/automation/failure-log';
 import { matchesRef } from '@/automation/policy';
@@ -14,37 +13,45 @@ import { routes } from '@/contract/routes';
 import type { ReadyRepository } from '@/domain/repository';
 import { requireReady } from '@/domain/repository';
 import { fromPromise } from '@/failure';
+import { mutableStruct } from '@/schema';
 import type { EnrolledContext } from '@/server/handlers/kit';
 import { workflow, workflowToken } from '@/server/handlers/kit';
 import { beginRelease, releasePlan } from '@/server/handlers/releases';
 
 const outcomes = ['pending', 'succeeded', 'failed', 'uncertain', 'skipped', 'rate-limited'] as const;
-const reportedFields = z.object({
-	id: z.string().min(1),
-	manager: z.enum(reportableManagerNames, { message: 'Invalid publication' }),
-	name: z.string().min(1),
-	version: z.string().min(1),
-	required: z.unknown().optional(),
-	digest: z.string().min(1).optional(),
-	url: z.string().min(1).optional(),
-	channel: z.string().min(1).optional(),
-	outcome: z.enum(outcomes, { message: 'Invalid publication' }),
-	retryAfter: z.unknown().optional(),
+const reportedFields = mutableStruct({
+	id: Schema.String.check(Schema.isMinLength(1)),
+	manager: Schema.Literals(reportableManagerNames).annotate({ message: 'Invalid publication' }),
+	name: Schema.String.check(Schema.isMinLength(1)),
+	version: Schema.String.check(Schema.isMinLength(1)),
+	required: Schema.optional(Schema.Unknown),
+	digest: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
+	url: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
+	channel: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
+	outcome: Schema.Literals(outcomes).annotate({ message: 'Invalid publication' }),
+	retryAfter: Schema.optional(Schema.Unknown),
 });
 function publication(raw: unknown): Effect.Effect<Publication, DomainError> {
 	return Effect.gen(function*() {
 		const { required, outcome, retryAfter, ...fields } = yield* decodeRequest(reportedFields, raw);
 		const common = { ...fields, required: required !== false };
 		if (outcome !== 'rate-limited') return { ...common, outcome };
-		return { ...common, outcome, retryAfter: yield* decodeRequest(z.iso.datetime({ offset: true }), retryAfter) };
+		return {
+			...common,
+			outcome,
+			retryAfter: yield* decodeRequest(
+				Schema.String.check(Schema.makeFilter(value => Number.isFinite(Date.parse(value)))),
+				retryAfter,
+			),
+		};
 	});
 }
-const artifact: z.ZodType<Artifact> = z.object({
-	id: z.number().int().positive(),
-	runId: z.number().int().positive(),
-	name: z.string().min(1),
-	digest: z.string().min(1),
-	expiresAt: z.string().min(1),
+const artifact: Schema.Codec<Artifact, unknown> = mutableStruct({
+	id: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
+	runId: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
+	name: Schema.String.check(Schema.isMinLength(1)),
+	digest: Schema.String.check(Schema.isMinLength(1)),
+	expiresAt: Schema.String.check(Schema.isMinLength(1)),
 });
 
 function owned(context: EnrolledContext, id: string): Effect.Effect<Execution, DomainError> {
@@ -153,11 +160,11 @@ export const workflowEndpoints = {
 	workflowBegin: workflow(routes.workflowBegin, (input, context) =>
 		Effect.gen(function*() {
 			const id = input.executionId || (yield* Effect.gen(function*() {
-				const stream = yield* decodeRequest(z.string().min(1), input.stream);
-				const operation = yield* decodeRequest(z.string().min(1), input.operation);
+				const stream = yield* decodeRequest(Schema.String.check(Schema.isMinLength(1)), input.stream);
+				const operation = yield* decodeRequest(Schema.String.check(Schema.isMinLength(1)), input.operation);
 				const version = input.version === undefined
 					? undefined
-					: yield* decodeRequest(z.string().min(1), input.version);
+					: yield* decodeRequest(Schema.String.check(Schema.isMinLength(1)), input.version);
 				return yield* observed(context, stream, operation, version);
 			}));
 			const execution = yield* owned(context, id);

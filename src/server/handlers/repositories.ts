@@ -1,5 +1,4 @@
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema } from 'effect';
 import { resolveConfiguration } from '@/automation/configuration';
 import { discover } from '@/automation/managers';
 import { encodeRepository } from '@/automation/package-identity';
@@ -145,7 +144,7 @@ function setupReview(input: { repository: string; choices?: unknown }, context: 
 		const raw = yield* fromJson(snapshot.files['.github/beepboop.json'] ?? '{}');
 		const resolved = yield* resolveConfiguration(raw, ref => service.gateway.preset(ref)).pipe(
 			Effect.mapError(error =>
-				error instanceof z.ZodError
+				error instanceof Schema.SchemaError
 					? domainError({ code: 'precondition', diagnostics: configurationDiagnostics(error) })
 					: error
 			),

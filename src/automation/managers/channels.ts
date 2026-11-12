@@ -1,5 +1,4 @@
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema } from 'effect';
 import type { Channel, ChannelOutcome } from '@/automation/destinations';
 import { tracksBranch } from '@/automation/destinations';
 import type { Fetcher, RegistryVersion } from '@/automation/managers/registry';
@@ -7,13 +6,14 @@ import { LookupFailure, latestText, latestVersion, unpublished } from '@/automat
 import type { Snapshot } from '@/automation/types';
 import type { Diagnostic } from '@/contract/diagnostics';
 import { fileProblem } from '@/contract/diagnostics';
+import { mutableArray, mutableStruct, safeDecode } from '@/schema';
 
-const aurInfo = z.object({
-	type: z.string(),
-	error: z.string().optional(),
-	results: z.array(z.object({ Name: z.string(), Version: z.string() })),
+const aurInfo = mutableStruct({
+	type: Schema.String,
+	error: Schema.optional(Schema.String),
+	results: mutableArray(mutableStruct({ Name: Schema.String, Version: Schema.String })),
 });
-const scoopManifest = z.object({ version: z.string() });
+const scoopManifest = mutableStruct({ version: Schema.String });
 const aurName = /^[a-z0-9@_+][a-z0-9@._+-]*$/;
 export const pkgbuildFile = /(?:^|\/)PKGBUILD$/;
 
@@ -22,7 +22,7 @@ function raw(repository: string, directory: string, file: string): string {
 	return `https://raw.githubusercontent.com/${path.map(encodeURIComponent).join('/')}`;
 }
 function aurVersion(body: unknown, name: string): unknown {
-	const parsed = aurInfo.safeParse(body);
+	const parsed = safeDecode(aurInfo, body);
 	if (!parsed.success) return undefined;
 	if (parsed.data.type === 'error') return new LookupFailure(parsed.data.error ?? 'AUR error');
 	const found = parsed.data.results.find(result => result.Name === name);
@@ -53,7 +53,7 @@ function latest(channel: Channel, request: Fetcher): Effect.Effect<RegistryVersi
 		return latestVersion(
 			request,
 			raw(channel.repository, channel.directory, `${channel.name}.json`),
-			body => scoopManifest.safeParse(body).data?.version,
+			body => safeDecode(scoopManifest, body).data?.version,
 		);
 	}
 	return latestText(request, raw(channel.repository, channel.directory, `${channel.name}.rb`), formulaVersion);

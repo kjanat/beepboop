@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Clock, Effect } from 'effect';
 import { createExecution } from '@/automation/execution';
 import type { ReleaseSetPlan } from '@/automation/planning';
 import type { Execution, ReleasePlan, ReleaseStarted } from '@/automation/types';
@@ -50,6 +50,8 @@ export function createManagedPreparation(
 	started?: ReleaseStarted,
 ): Effect.Effect<Execution, DomainError> {
 	return Effect.gen(function*() {
+		const clock = yield* Clock.Clock;
+
 		const configuration = repository.configuration;
 		if (!configuration.streams[stream]) return yield* precondition('Unknown stream');
 		if (plan.sourceSha !== repository.sha) return yield* precondition('Preparation source revision changed');
@@ -83,8 +85,8 @@ export function createManagedPreparation(
 			attempts: 0,
 			publications: [],
 			artifacts: [],
-			createdAt: Date.now(),
-			updatedAt: Date.now(),
+			createdAt: clock.currentTimeMillisUnsafe(),
+			updatedAt: clock.currentTimeMillisUnsafe(),
 			managed: {
 				kind: 'prepare',
 				plan: structuredClone(plan),

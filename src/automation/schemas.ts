@@ -1,25 +1,30 @@
-import { z } from 'zod';
+import { Schema } from 'effect';
 import type { SetupOption } from '@/automation/setup-types';
+import { decodeSync, mutableArray, mutableStruct } from '@/schema';
 
-export const documentRow = z.object({ document: z.string() });
+export const documentRow = mutableStruct({ document: Schema.String });
 export function rowDocument(row: unknown): unknown {
-	return JSON.parse(documentRow.parse(row).document);
+	return JSON.parse(decodeSync(documentRow, row).document);
 }
 
-export const setupOptionsSchema: z.ZodType<SetupOption[]> = z.array(z.union([
-	z.object({ kind: z.enum(['package', 'required']), stream: z.string(), package: z.string() }),
-	z.object({
-		kind: z.literal('workflow'),
-		stream: z.string(),
-		operation: z.enum(['prepare', 'promote']),
-		file: z.string(),
-		job: z.string().optional(),
+export const setupOptionsSchema: Schema.Codec<SetupOption[], unknown> = mutableArray(Schema.Union([
+	mutableStruct({ kind: Schema.Literals(['package', 'required']), stream: Schema.String, package: Schema.String }),
+	mutableStruct({
+		kind: Schema.Literal('workflow'),
+		stream: Schema.String,
+		operation: Schema.Literals(['prepare', 'promote']),
+		file: Schema.String,
+		job: Schema.optional(Schema.String),
 	}),
-	z.object({ kind: z.literal('versioning'), stream: z.string(), value: z.enum(['workspace', 'independent', 'none']) }),
-	z.object({
-		kind: z.literal('triggers'),
-		stream: z.string(),
-		operation: z.enum(['prepare', 'promote']),
-		value: z.enum(['review', 'dispatchOnly', 'preserve']),
+	mutableStruct({
+		kind: Schema.Literal('versioning'),
+		stream: Schema.String,
+		value: Schema.Literals(['workspace', 'independent', 'none']),
+	}),
+	mutableStruct({
+		kind: Schema.Literal('triggers'),
+		stream: Schema.String,
+		operation: Schema.Literals(['prepare', 'promote']),
+		value: Schema.Literals(['review', 'dispatchOnly', 'preserve']),
 	}),
 ]));

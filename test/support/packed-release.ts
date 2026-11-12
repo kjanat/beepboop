@@ -19,8 +19,21 @@ import { approvePromotion, prepareRelease } from '@root/test/support/releases.ts
 import { jsonFile, passChecks, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
 import type { SigningKey } from '@root/test/support/signing.ts';
 import type { World } from '@root/test/support/world.ts';
-import { z } from 'zod';
+import { Effect, Schema, Struct } from 'effect';
 import type { TagSigner } from '@/automation/refs';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 export const prepareWorkflow = `name: Prepare
 on:
@@ -36,18 +49,18 @@ jobs:
       - run: npm test
 `;
 
-const contextFields = z.object({ id: z.string(), sourceSha: z.string() });
-const refPlan = z.object({
-	changes: z.array(z.object({
-		name: z.string(),
-		commit: z.string(),
-		annotated: z.boolean(),
-		signed: z.boolean(),
-		object: z.string().optional(),
+const contextFields = mutableStruct({ id: Schema.String, sourceSha: Schema.String });
+const refPlan = mutableStruct({
+	changes: mutableArray(mutableStruct({
+		name: Schema.String,
+		commit: Schema.String,
+		annotated: Schema.Boolean,
+		signed: Schema.Boolean,
+		object: Schema.optional(Schema.String),
 	})),
-	publicKey: z.string().optional(),
+	publicKey: Schema.optional(Schema.String),
 });
-export type PackedRefPlan = z.infer<typeof refPlan>;
+export type PackedRefPlan = Decoded<typeof refPlan>;
 
 export interface PackedSigning {
 	key: SigningKey;
@@ -71,15 +84,18 @@ export async function packedRelease(
 ): Promise<PackedRelease> {
 	const repository = widget(world.github);
 	world.npm.publish('widget', '1.0.0');
-	const configuration = z.looseObject({
-		managers: z.array(z.string()).optional(),
-		streams: z.looseObject({
-			main: z.looseObject({
-				prepare: z.looseObject({}),
-				promote: z.looseObject({ workflow: z.looseObject({ publications: z.array(z.string()) }) }),
+	const configuration = decodeSync(
+		looseStruct({
+			managers: Schema.optional(mutableArray(Schema.String)),
+			streams: looseStruct({
+				main: looseStruct({
+					prepare: looseStruct({}),
+					promote: looseStruct({ workflow: looseStruct({ publications: mutableArray(Schema.String) }) }),
+				}),
 			}),
 		}),
-	}).parse(JSON.parse(widgetConfiguration()));
+		JSON.parse(widgetConfiguration()),
+	);
 	configuration.streams.main.prepare = { workflow: { file: 'prepare.yml' } };
 	if (githubRelease) configuration.streams.main.promote.workflow.publications.push('github-release:octo/widget');
 	configuration.streams.main.promote.workflow.refs = {
@@ -121,7 +137,7 @@ export async function packedRelease(
 		const contextFile = join(scratch, 'context.json');
 		writeFileSync(contextFile, begun.context ?? '{}');
 		const releaseContext = JSON.stringify({ ...JSON.parse(begun.outputs.context ?? '{}'), contextFile });
-		const source = contextFields.parse(JSON.parse(releaseContext));
+		const source = decodeSync(contextFields, JSON.parse(releaseContext));
 		if (source.sourceSha !== gitOutput(checkout.dir, ['rev-parse', 'HEAD'])) {
 			throw new Error('Checkout drifted from the planned source');
 		}
@@ -170,7 +186,7 @@ export async function packedRelease(
 		await begin(world, promoteIdentity, promotionId, 'main', 'promote');
 		if (beforeRefs) await beforeRefs(promotionId);
 		const planned = await runAction(world, 'refs-plan', promoteIdentity, { EXECUTION_ID: promotionId });
-		const planBody = refPlan.parse(JSON.parse(planned.outputs.result ?? ''));
+		const planBody = decodeSync(refPlan, JSON.parse(planned.outputs.result ?? ''));
 		const local = signing && !signing.signer ? signing.key : undefined;
 		writeFileSync(
 			gitconfig,

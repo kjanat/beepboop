@@ -9,7 +9,7 @@ export type SessionKind = (typeof sessionKinds)[number];
 
 export class SessionStore {
 	private readonly sql: Sql;
-	constructor(db: SqlDatabase) {
+	constructor(db: SqlDatabase | Sql) {
 		this.sql = sql(db);
 	}
 	open(kind: SessionKind, id: string, document: unknown, lifetime: number): Effect.Effect<void, DomainError> {
@@ -25,22 +25,32 @@ export class SessionStore {
 		document: unknown,
 		lifetime: number,
 	): Effect.Effect<void, DomainError> {
-		return this.sql.run(
-			`${verb} INTO sessions(id,kind,document,expires_at) VALUES(?,?,?,?)`,
-			id,
-			kind,
-			JSON.stringify(document),
-			Date.now() + lifetime,
-		).pipe(Effect.asVoid);
+		return Effect.clockWith(clock => {
+			return this.sql.run(
+				`${verb} INTO sessions(id,kind,document,expires_at) VALUES(?,?,?,?)`,
+				id,
+				kind,
+				JSON.stringify(document),
+				clock.currentTimeMillisUnsafe() + lifetime,
+			).pipe(Effect.asVoid);
+		});
 	}
 	take(id: string): Effect.Effect<string | undefined, DomainError> {
-		return this.sql.first('DELETE FROM sessions WHERE id=? AND expires_at>? RETURNING document', id, Date.now()).pipe(
-			Effect.flatMap(optionalColumn(documentRow, row => row.document)),
-		);
+		return Effect.clockWith(clock => {
+			return this.sql.first(
+				'DELETE FROM sessions WHERE id=? AND expires_at>? RETURNING document',
+				id,
+				clock.currentTimeMillisUnsafe(),
+			).pipe(
+				Effect.flatMap(optionalColumn(documentRow, row => row.document)),
+			);
+		});
 	}
 	sweep(): Effect.Effect<number, DomainError> {
-		return this.sql.run('DELETE FROM sessions WHERE expires_at<=?', Date.now()).pipe(
-			Effect.map(result => result.meta.changes),
-		);
+		return Effect.clockWith(clock => {
+			return this.sql.run('DELETE FROM sessions WHERE expires_at<=?', clock.currentTimeMillisUnsafe()).pipe(
+				Effect.map(result => result.meta.changes),
+			);
+		});
 	}
 }

@@ -20,17 +20,30 @@ import {
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
 import { strip } from 'ansispeck';
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema, Struct } from 'effect';
 import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
 import { checkoutRepository, releaseRepository } from '@/cli/release';
 import { routes } from '@/contract/routes';
 import { planReview } from '@/contract/views';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableRecord,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 let world: World, directory: string, client: Client, token: string;
 const requests: { path: string; body: unknown }[] = [];
-const plans: z.output<typeof planReview>[] = [];
+const plans: Decoded<typeof planReview>[] = [];
 eachWorld(created => {
 	world = created;
 });
@@ -45,7 +58,7 @@ beforeEach(async () => {
 		const path = new URL(request.url).pathname;
 		if (path.startsWith('/api/releases/')) requests.push({ path, body: await request.clone().json() });
 		const response = await world.handle(request);
-		if (path === '/api/releases/plan' && response.ok) plans.push(planReview.parse(await response.clone().json()));
+		if (path === '/api/releases/plan' && response.ok) plans.push(decodeSync(planReview, await response.clone().json()));
 		return response;
 	});
 });
@@ -61,12 +74,12 @@ function seed() {
 	return discoveredWidget(world, token);
 }
 const prepareCalls = () => requests.filter(request => request.path === '/api/releases/prepare');
-const streamRecord = z.record(z.string(), z.unknown());
+const streamRecord = mutableRecord(Schema.String, Schema.Unknown);
 function widgetStreams() {
-	return z.looseObject({ streams: streamRecord }).parse(JSON.parse(widgetConfiguration()));
+	return decodeSync(looseStruct({ streams: streamRecord }), JSON.parse(widgetConfiguration()));
 }
 function withMain(configuration: ReturnType<typeof widgetStreams>, changes: Record<string, unknown>) {
-	return { ...streamRecord.parse(configuration.streams.main), ...changes };
+	return { ...decodeSync(streamRecord, configuration.streams.main), ...changes };
 }
 
 async function delegated(packages = ['widget'], published: Record<string, string> = { widget: '1.2.3' }) {
@@ -331,7 +344,7 @@ for (const [bump, version] of [['patch', '1.2.4'], ['minor', '1.3.0'], ['major',
 		const source = world.github.head(repository);
 		const preview = await run(['release', bump, '--repository', repository.name, '--json']);
 		expect(preview.exitCode).toBe(0);
-		const plan = planReview.parse(JSON.parse(preview.stdout.join('')).plan);
+		const plan = decodeSync(planReview, JSON.parse(preview.stdout.join('')).plan);
 		expect(plan.version).toBe(version);
 		expect(plan.edits).toEqual([]);
 		expect(plan.requiresPreparation).toBe(true);
@@ -505,7 +518,8 @@ test('an acceptable grant asks for the security key once and stores the grant', 
 
 test('managed manifest plans with custom version files promote after the preparation PR is merged', async () => {
 	const repository = await seed();
-	const configuration = z.looseObject({ streams: z.looseObject({ main: z.looseObject({}) }) }).parse(
+	const configuration = decodeSync(
+		looseStruct({ streams: looseStruct({ main: looseStruct({}) }) }),
 		JSON.parse(widgetConfiguration()),
 	);
 	configuration.streams.main.versionFiles = [{ path: 'VERSION', format: 'text', prefix: 'version=', suffix: '\n' }];
@@ -585,7 +599,7 @@ test('workflow bumps require a known baseline and explicit versions stay delegat
 	expect(prepareCalls()).toHaveLength(0);
 	const explicit = await run(['release', '4.0.0', '--repository', repository.name, '--json']);
 	expect(explicit.exitCode).toBe(0);
-	const plan = planReview.parse(JSON.parse(explicit.stdout.join('')).plan);
+	const plan = decodeSync(planReview, JSON.parse(explicit.stdout.join('')).plan);
 	expect(plan.version).toBe('4.0.0');
 	expect(plan.edits).toEqual([]);
 	expect(plan.requiresPreparation).toBe(true);
@@ -599,7 +613,7 @@ test('workflow bump baselines use only the selected publishable package group', 
 	expect(prepareCalls()).toHaveLength(0);
 	const explicit = await run(['release', '4.0.0', '--repository', repository.name, '--json']);
 	expect(explicit.exitCode).toBe(0);
-	expect(planReview.parse(JSON.parse(explicit.stdout.join('')).plan).version).toBe('4.0.0');
+	expect(decodeSync(planReview, JSON.parse(explicit.stdout.join('')).plan).version).toBe('4.0.0');
 	configuration.streams.main.packages = ['pkg:npm/widget'];
 	configuration.streams.main.required = ['pkg:npm/widget'];
 	configuration.streams.main.promote.workflow.publications = ['pkg:npm/widget'];
@@ -611,7 +625,7 @@ test('workflow bump baselines use only the selected publishable package group', 
 	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
 	const selected = await run(['release', 'minor', '--repository', repository.name, '--json']);
 	expect(selected.exitCode).toBe(0);
-	expect(planReview.parse(JSON.parse(selected.stdout.join('')).plan).version).toBe('1.3.0');
+	expect(decodeSync(planReview, JSON.parse(selected.stdout.join('')).plan).version).toBe('1.3.0');
 });
 
 test('workflow tag-derived bumps remain authoritative when registry packages are unpublished', async () => {
@@ -626,13 +640,13 @@ test('workflow tag-derived bumps remain authoritative when registry packages are
 	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
 	const preview = await run(['release', 'minor', '--repository', repository.name, '--json']);
 	expect(preview.exitCode).toBe(0);
-	const plan = planReview.parse(JSON.parse(preview.stdout.join('')).plan);
+	const plan = decodeSync(planReview, JSON.parse(preview.stdout.join('')).plan);
 	expect(plan.version).toBe('2.5.0');
 	expect(plan.edits).toEqual([]);
 	expect(plan.requiresPreparation).toBe(true);
 	const explicit = await run(['release', '3.0.0', '--repository', repository.name, '--json']);
 	expect(explicit.exitCode).toBe(0);
-	expect(planReview.parse(JSON.parse(explicit.stdout.join('')).plan).version).toBe('3.0.0');
+	expect(decodeSync(planReview, JSON.parse(explicit.stdout.join('')).plan).version).toBe('3.0.0');
 	expect(prepareCalls()).toHaveLength(0);
 	const existing = (await promotions()).map(execution => execution.id);
 	const prepared = await run(['release', 'minor', '--repository', repository.name], [true]);
@@ -652,7 +666,8 @@ test('workflow tag-derived bumps remain authoritative when registry packages are
 
 async function cliStarts() {
 	const repository = await seed();
-	const configuration = z.looseObject({ streams: z.looseObject({ main: z.looseObject({}) }) }).parse(
+	const configuration = decodeSync(
+		looseStruct({ streams: looseStruct({ main: looseStruct({}) }) }),
 		JSON.parse(widgetConfiguration()),
 	);
 	configuration.streams.main.start = [{ via: 'cli' }];
@@ -761,7 +776,7 @@ test('--dry-run plans and previews without a prompt or a release', async () => {
 	expect(output).toContain('Dry run: Beepboop started nothing.');
 	const json = await run(['release', 'patch', '--repository', repository.name, '--dry-run', '--yes', '--json']);
 	expect(json.exitCode).toBe(0);
-	expect(planReview.parse(JSON.parse(json.stdout.join('')).plan).version).toBe('1.0.1');
+	expect(decodeSync(planReview, JSON.parse(json.stdout.join('')).plan).version).toBe('1.0.1');
 	expect(JSON.parse(json.stdout.join(''))).not.toHaveProperty('preparation');
 	expect(requests.filter(request => request.path === '/api/releases/plan')).toHaveLength(2);
 	expect(prepareCalls()).toHaveLength(0);
@@ -891,7 +906,7 @@ test('a release without a cli start says up front how the prepared version publi
 	const configuration = widgetStreams();
 	configuration.streams.main = withMain(configuration, {
 		prepare: { strategy: 'managed', bump: 'commit' },
-		promote: { ...z.looseObject({}).parse(withMain(configuration, {}).promote), approval: 'merge' },
+		promote: { ...decodeSync(looseStruct({}), withMain(configuration, {}).promote), approval: 'merge' },
 	});
 	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Publish on merge');
 	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));

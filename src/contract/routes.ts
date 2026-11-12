@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { Schema } from 'effect';
 import { changesResponse } from '@/contract/changes';
 import {
 	claimStep,
@@ -23,11 +23,13 @@ import {
 	securityProof,
 } from '@/contract/views';
 import { shaSchema as sha, textSchema as text } from '@/model';
+import type { Contract, Decoded, Encoded } from '@/schema';
+import { looseStruct, mutableArray, mutableRecord, mutableStruct, numberFromInput, refined } from '@/schema';
 
 export type Method = 'GET' | 'POST';
 export type Auth = 'admin' | 'elevated' | 'workflow' | 'workflow-token';
 
-export interface Route<Q extends z.ZodType = z.ZodType, R extends z.ZodType = z.ZodType> {
+export interface Route<Q extends Contract = Contract, R extends Contract = Contract> {
 	method: Method;
 	path: `/api/${string}`;
 	auth: Auth;
@@ -36,26 +38,35 @@ export interface Route<Q extends z.ZodType = z.ZodType, R extends z.ZodType = z.
 	response: R;
 }
 
-function route<const Q extends z.ZodType, const R extends z.ZodType>(definition: Route<Q, R>): Route<Q, R> {
+function route<const Q extends Contract, const R extends Contract>(definition: Route<Q, R>): Route<Q, R> {
 	return definition;
 }
 
-const id = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
-const proof = text.optional();
-const none = z.object({});
-const executionRef = z.object({ id: text, repositoryId: id.optional() });
-export const executionFilter = z.object({
-	repository: text.optional(),
-	stream: text.optional(),
-	operation: text.optional(),
-	states: text.refine(
-		value => value.split(',').every(state => (executionStates as readonly string[]).includes(state)),
-		'Unknown execution state',
-	).optional(),
-	version: text.optional(),
-	limit: z.coerce.number().int().min(1).max(200).optional(),
+const id = Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0)).check(
+	Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
+);
+const proof = Schema.optional(text);
+const none = mutableStruct({});
+const executionRef = mutableStruct({ id: text, repositoryId: Schema.optional(id) });
+export const executionFilter = mutableStruct({
+	repository: Schema.optional(text),
+	stream: Schema.optional(text),
+	operation: Schema.optional(text),
+	states: Schema.optional(
+		refined(
+			text,
+			value => value.split(',').every(state => (executionStates as readonly string[]).includes(state)),
+			'Unknown execution state',
+		),
+	),
+	version: Schema.optional(text),
+	limit: Schema.optional(
+		numberFromInput.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(1)).check(
+			Schema.isLessThanOrEqualTo(200),
+		),
+	),
 });
-export type ExecutionFilter = z.output<typeof executionFilter>;
+export type ExecutionFilter = Decoded<typeof executionFilter>;
 
 export const routes = {
 	wingetList: route({
@@ -64,7 +75,7 @@ export const routes = {
 		auth: 'admin',
 		idempotent: true,
 		request: none,
-		response: z.unknown(),
+		response: Schema.Unknown,
 	}),
 	repositoriesList: route({
 		method: 'GET',
@@ -72,7 +83,7 @@ export const routes = {
 		auth: 'admin',
 		idempotent: true,
 		request: none,
-		response: z.array(repositoryView),
+		response: mutableArray(repositoryView),
 	}),
 	executionsList: route({
 		method: 'GET',
@@ -80,7 +91,7 @@ export const routes = {
 		auth: 'admin',
 		idempotent: true,
 		request: executionFilter,
-		response: z.array(executionView),
+		response: mutableArray(executionView),
 	}),
 	notificationsList: route({
 		method: 'GET',
@@ -111,31 +122,35 @@ export const routes = {
 		path: '/api/winget/releases',
 		auth: 'admin',
 		idempotent: true,
-		request: z.object({ repositoryId: id }),
-		response: z.array(z.looseObject({ id: z.number(), tag: z.string(), name: z.string() })),
+		request: mutableStruct({ repositoryId: id }),
+		response: mutableArray(looseStruct({ id: Schema.Finite, tag: Schema.String, name: Schema.String })),
 	}),
 	wingetPreview: route({
 		method: 'POST',
 		path: '/api/winget/preview',
 		auth: 'admin',
 		idempotent: true,
-		request: z.object({ repositoryId: id, releaseId: id }),
-		response: z.looseObject({ digest: z.string(), sourceSha: z.string(), files: z.record(z.string(), z.string()) }),
+		request: mutableStruct({ repositoryId: id, releaseId: id }),
+		response: looseStruct({
+			digest: Schema.String,
+			sourceSha: Schema.String,
+			files: mutableRecord(Schema.String, Schema.String),
+		}),
 	}),
 	wingetSubmit: route({
 		method: 'POST',
 		path: '/api/winget/submit',
 		auth: 'admin',
 		idempotent: false,
-		request: z.object({ repositoryId: id, releaseId: id, digest: text }),
-		response: z.unknown(),
+		request: mutableStruct({ repositoryId: id, releaseId: id, digest: text }),
+		response: Schema.Unknown,
 	}),
 	repositoriesResolve: route({
 		method: 'POST',
 		path: '/api/repositories/resolve',
 		auth: 'admin',
 		idempotent: true,
-		request: z.object({ repository: text }),
+		request: mutableStruct({ repository: text }),
 		response: repositoryView,
 	}),
 	repositoriesDiscover: route({
@@ -143,7 +158,7 @@ export const routes = {
 		path: '/api/repositories/discover',
 		auth: 'admin',
 		idempotent: true,
-		request: z.object({ repository: text, repositoryId: id.optional() }),
+		request: mutableStruct({ repository: text, repositoryId: Schema.optional(id) }),
 		response: repositoryView,
 	}),
 	setupPreview: route({
@@ -151,46 +166,46 @@ export const routes = {
 		path: '/api/repositories/setup/preview',
 		auth: 'admin',
 		idempotent: true,
-		request: z.object({ repository: text, choices: z.unknown().optional() }),
-		response: z.unknown(),
+		request: mutableStruct({ repository: text, choices: Schema.optional(Schema.Unknown) }),
+		response: Schema.Unknown,
 	}),
 	setupApply: route({
 		method: 'POST',
 		path: '/api/repositories/setup/apply',
 		auth: 'admin',
 		idempotent: false,
-		request: z.object({
+		request: mutableStruct({
 			repository: text,
-			choices: z.unknown().optional(),
-			planId: z.string(),
-			sourceSha: z.string(),
-			setupHead: z.string().nullable(),
-			takeOver: z.boolean().optional(),
+			choices: Schema.optional(Schema.Unknown),
+			planId: Schema.String,
+			sourceSha: Schema.String,
+			setupHead: Schema.NullOr(Schema.String),
+			takeOver: Schema.optional(Schema.Boolean),
 		}),
-		response: z.looseObject({ url: z.string() }),
+		response: looseStruct({ url: Schema.String }),
 	}),
 	hooksUpdate: route({
 		method: 'POST',
 		path: '/api/releases/update-references',
 		auth: 'admin',
 		idempotent: false,
-		request: z.object({ repositoryId: id, releaseEventId: text, preview: z.boolean().optional() }),
-		response: z.unknown(),
+		request: mutableStruct({ repositoryId: id, releaseEventId: text, preview: Schema.optional(Schema.Boolean) }),
+		response: Schema.Unknown,
 	}),
 	releasesStartSet: route({
 		method: 'POST',
 		path: '/api/releases/start-set',
 		auth: 'admin',
 		idempotent: true,
-		request: z.object({ preparationId: text, sourceSha: sha }),
-		response: z.array(executionView),
+		request: mutableStruct({ preparationId: text, sourceSha: sha }),
+		response: mutableArray(executionView),
 	}),
 	releasesPlanSet: route({
 		method: 'POST',
 		path: '/api/releases/plan-set',
 		auth: 'admin',
 		idempotent: true,
-		request: z.object({ repositoryId: id, stream: text, plan: z.unknown() }),
+		request: mutableStruct({ repositoryId: id, stream: text, plan: Schema.Unknown }),
 		response: planReview,
 	}),
 	releasesPrepareSet: route({
@@ -198,7 +213,13 @@ export const routes = {
 		path: '/api/releases/prepare-set',
 		auth: 'admin',
 		idempotent: true,
-		request: z.object({ repositoryId: id, stream: text, plan: z.unknown(), sourceSha: sha, planId: z.string() }),
+		request: mutableStruct({
+			repositoryId: id,
+			stream: text,
+			plan: Schema.Unknown,
+			sourceSha: sha,
+			planId: Schema.String,
+		}),
 		response: executionView,
 	}),
 	releasesPlan: route({
@@ -206,7 +227,12 @@ export const routes = {
 		path: '/api/releases/plan',
 		auth: 'admin',
 		idempotent: true,
-		request: z.object({ repositoryId: id, stream: text, version: z.unknown(), packages: z.array(text).optional() }),
+		request: mutableStruct({
+			repositoryId: id,
+			stream: text,
+			version: Schema.Unknown,
+			packages: Schema.optional(mutableArray(text)),
+		}),
 		response: planReview,
 	}),
 	releasesPrepare: route({
@@ -214,13 +240,13 @@ export const routes = {
 		path: '/api/releases/prepare',
 		auth: 'admin',
 		idempotent: true,
-		request: z.object({
+		request: mutableStruct({
 			repositoryId: id,
 			stream: text,
-			version: z.unknown(),
-			packages: z.array(text).optional(),
+			version: Schema.Unknown,
+			packages: Schema.optional(mutableArray(text)),
 			sourceSha: sha,
-			planId: z.string(),
+			planId: Schema.String,
 		}),
 		response: executionView,
 	}),
@@ -253,7 +279,7 @@ export const routes = {
 		path: '/api/executions/approve',
 		auth: 'admin',
 		idempotent: true,
-		request: executionRef.extend({ sourceSha: sha, force: z.boolean().optional() }),
+		request: mutableStruct({ ...executionRef.fields, ...{ sourceSha: sha, force: Schema.optional(Schema.Boolean) } }),
 		response: executionView,
 	}),
 	executionsRecover: route({
@@ -261,7 +287,7 @@ export const routes = {
 		path: '/api/executions/recover',
 		auth: 'admin',
 		idempotent: false,
-		request: executionRef.extend({ action: z.enum(['retry', 'reconcile']) }),
+		request: mutableStruct({ ...executionRef.fields, ...{ action: Schema.Literals(['retry', 'reconcile']) } }),
 		response: executionView,
 	}),
 	cliSessionsRevoke: route({
@@ -269,7 +295,7 @@ export const routes = {
 		path: '/api/cli-sessions/revoke',
 		auth: 'admin',
 		idempotent: true,
-		request: z.object({ id: text }),
+		request: mutableStruct({ id: text }),
 		response: acknowledged,
 	}),
 	cliSessionsRevokeAll: route({
@@ -285,7 +311,7 @@ export const routes = {
 		path: '/api/authenticators/options',
 		auth: 'admin',
 		idempotent: false,
-		request: z.object({ register: z.boolean().optional(), label: z.string().optional(), proof }),
+		request: mutableStruct({ register: Schema.optional(Schema.Boolean), label: Schema.optional(Schema.String), proof }),
 		response: securityChallenge,
 	}),
 	authenticatorsVerify: route({
@@ -293,7 +319,7 @@ export const routes = {
 		path: '/api/authenticators/verify',
 		auth: 'admin',
 		idempotent: false,
-		request: z.object({ id: text, response: z.unknown() }),
+		request: mutableStruct({ id: text, response: Schema.Unknown }),
 		response: securityProof,
 	}),
 	authenticatorsRemove: route({
@@ -301,8 +327,8 @@ export const routes = {
 		path: '/api/authenticators/remove',
 		auth: 'elevated',
 		idempotent: false,
-		request: z.object({ id: text, proof }),
-		response: z.looseObject({ removed: z.boolean() }),
+		request: mutableStruct({ id: text, proof }),
+		response: looseStruct({ removed: Schema.Boolean }),
 	}),
 	packagesAdd: route({
 		method: 'POST',
@@ -333,15 +359,15 @@ export const routes = {
 		path: '/api/notifications/save',
 		auth: 'admin',
 		idempotent: false,
-		request: z.object({ destination: destinationInput }),
-		response: z.looseObject({ id: z.string() }),
+		request: mutableStruct({ destination: destinationInput }),
+		response: looseStruct({ id: Schema.String }),
 	}),
 	notificationsRemove: route({
 		method: 'POST',
 		path: '/api/notifications/remove',
 		auth: 'admin',
 		idempotent: true,
-		request: z.object({ id: text }),
+		request: mutableStruct({ id: text }),
 		response: acknowledged,
 	}),
 	credentialsReplace: route({
@@ -349,49 +375,54 @@ export const routes = {
 		path: '/api/credentials/replace',
 		auth: 'elevated',
 		idempotent: false,
-		request: z.object({ alias: text, value: text, proof, expectedVersion: z.number().int().nullable().optional() }),
-		response: z.looseObject({ version: z.number() }),
+		request: mutableStruct({
+			alias: text,
+			value: text,
+			proof,
+			expectedVersion: Schema.optional(Schema.NullOr(Schema.Finite.check(Schema.isInt()))),
+		}),
+		response: looseStruct({ version: Schema.Finite }),
 	}),
 	credentialsReveal: route({
 		method: 'POST',
 		path: '/api/credentials/reveal',
 		auth: 'elevated',
 		idempotent: false,
-		request: z.object({ alias: text, proof }),
-		response: z.looseObject({ value: z.string(), version: z.number() }),
+		request: mutableStruct({ alias: text, proof }),
+		response: looseStruct({ value: Schema.String, version: Schema.Finite }),
 	}),
 	credentialsSync: route({
 		method: 'POST',
 		path: '/api/credentials/sync',
 		auth: 'elevated',
 		idempotent: false,
-		request: z.object({ alias: text, proof }),
-		response: z.array(z.looseObject({ id: z.string(), state: z.string() })),
+		request: mutableStruct({ alias: text, proof }),
+		response: mutableArray(looseStruct({ id: Schema.String, state: Schema.String })),
 	}),
 	credentialsGrant: route({
 		method: 'POST',
 		path: '/api/credentials/grant',
 		auth: 'elevated',
 		idempotent: false,
-		request: z.object({ selection: z.looseObject({ repositoryId: id }), proof }),
-		response: z.looseObject({ granted: z.boolean() }),
+		request: mutableStruct({ selection: looseStruct({ repositoryId: id }), proof }),
+		response: looseStruct({ granted: Schema.Boolean }),
 	}),
 	credentialsRevoke: route({
 		method: 'POST',
 		path: '/api/credentials/revoke',
 		auth: 'elevated',
 		idempotent: false,
-		request: z.object({ grantId: text, proof }),
-		response: z.looseObject({ revoked: z.boolean() }),
+		request: mutableStruct({ grantId: text, proof }),
+		response: looseStruct({ revoked: Schema.Boolean }),
 	}),
 	changes: route({
 		method: 'GET',
 		path: '/api/v1/changes',
 		auth: 'admin',
 		idempotent: true,
-		request: z.object({
-			since: z.coerce.number().int().nonnegative(),
-			repositoryId: z.coerce.number().pipe(id).optional(),
+		request: mutableStruct({
+			since: numberFromInput.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0)),
+			repositoryId: Schema.optional(numberFromInput.pipe(Schema.decodeTo(id))),
 		}),
 		response: changesResponse,
 	}),
@@ -400,23 +431,23 @@ export const routes = {
 		path: '/api/v1/admin/reindex',
 		auth: 'elevated',
 		idempotent: true,
-		request: z.object({ repositoryId: id.optional(), proof }),
-		response: z.object({ queued: z.number().int().nonnegative() }),
+		request: mutableStruct({ repositoryId: Schema.optional(id), proof }),
+		response: mutableStruct({ queued: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0)) }),
 	}),
 	workflowToken: route({
 		method: 'POST',
 		path: '/api/workflow/token',
 		auth: 'workflow-token',
 		idempotent: false,
-		request: z.object({
-			permissions: z.unknown().optional(),
-			purpose: z.string().optional(),
-			identity: z.boolean().optional(),
-			executionId: z.string().optional(),
+		request: mutableStruct({
+			permissions: Schema.optional(Schema.Unknown),
+			purpose: Schema.optional(Schema.String),
+			identity: Schema.optional(Schema.Boolean),
+			executionId: Schema.optional(Schema.String),
 		}),
-		response: z.looseObject({
-			token: z.string(),
-			bot: z.looseObject({ login: z.string(), id: z.number(), email: z.string() }).optional(),
+		response: looseStruct({
+			token: Schema.String,
+			bot: Schema.optional(looseStruct({ login: Schema.String, id: Schema.Finite, email: Schema.String })),
 		}),
 	}),
 	workflowStart: route({
@@ -424,7 +455,10 @@ export const routes = {
 		path: '/api/workflow/start',
 		auth: 'workflow',
 		idempotent: true,
-		request: z.object({ stream: z.string().min(1), version: z.string().min(1) }),
+		request: mutableStruct({
+			stream: Schema.String.check(Schema.isMinLength(1)),
+			version: Schema.String.check(Schema.isMinLength(1)),
+		}),
 		response: executionView,
 	}),
 	workflowBegin: route({
@@ -432,11 +466,11 @@ export const routes = {
 		path: '/api/workflow/begin',
 		auth: 'workflow',
 		idempotent: true,
-		request: z.object({
-			executionId: z.string().optional(),
-			stream: z.string().optional(),
-			operation: z.string().optional(),
-			version: z.string().optional(),
+		request: mutableStruct({
+			executionId: Schema.optional(Schema.String),
+			stream: Schema.optional(Schema.String),
+			operation: Schema.optional(Schema.String),
+			version: Schema.optional(Schema.String),
 		}),
 		response: executionView,
 	}),
@@ -445,18 +479,18 @@ export const routes = {
 		path: '/api/workflow/prepared',
 		auth: 'workflow',
 		idempotent: true,
-		request: z.object({ executionId: text, files: z.array(z.object({ path: text, content: text })) }),
-		response: z.unknown(),
+		request: mutableStruct({ executionId: text, files: mutableArray(mutableStruct({ path: text, content: text })) }),
+		response: Schema.Unknown,
 	}),
 	workflowReport: route({
 		method: 'POST',
 		path: '/api/workflow/report',
 		auth: 'workflow',
 		idempotent: true,
-		request: z.object({
+		request: mutableStruct({
 			executionId: text,
-			publications: z.array(z.unknown()).optional(),
-			artifacts: z.array(z.unknown()).optional(),
+			publications: Schema.optional(mutableArray(Schema.Unknown)),
+			artifacts: Schema.optional(mutableArray(Schema.Unknown)),
 		}),
 		response: executionView,
 	}),
@@ -465,32 +499,32 @@ export const routes = {
 		path: '/api/workflow/credentials',
 		auth: 'workflow',
 		idempotent: true,
-		request: z.object({ executionId: text, aliases: z.array(text) }),
-		response: z.record(z.string(), z.string()),
+		request: mutableStruct({ executionId: text, aliases: mutableArray(text) }),
+		response: mutableRecord(Schema.String, Schema.String),
 	}),
 	workflowRefsPlan: route({
 		method: 'POST',
 		path: '/api/workflow/refs-plan',
 		auth: 'workflow',
 		idempotent: true,
-		request: z.object({ executionId: text }),
-		response: z.unknown(),
+		request: mutableStruct({ executionId: text }),
+		response: Schema.Unknown,
 	}),
 	workflowRefsComplete: route({
 		method: 'POST',
 		path: '/api/workflow/refs-complete',
 		auth: 'workflow',
 		idempotent: true,
-		request: z.object({ executionId: text }),
-		response: z.unknown(),
+		request: mutableStruct({ executionId: text }),
+		response: Schema.Unknown,
 	}),
 	workflowRelease: route({
 		method: 'POST',
 		path: '/api/workflow/release',
 		auth: 'workflow',
 		idempotent: true,
-		request: z.object({ executionId: text }),
-		response: z.unknown(),
+		request: mutableStruct({ executionId: text }),
+		response: Schema.Unknown,
 	}),
 	workflowPublishNext: route({
 		method: 'POST',
@@ -520,14 +554,14 @@ export const routes = {
 
 export type Routes = typeof routes;
 export type RouteId = keyof Routes;
-export type AnyRoute = Route<z.ZodType, z.ZodType>;
-export type RequestOf<R extends AnyRoute> = z.output<R['request']>;
-export type InputOf<R extends AnyRoute> = z.input<R['request']>;
-export type ResponseOf<R extends AnyRoute> = z.output<R['response']>;
+export type AnyRoute = Route<Contract, Contract>;
+export type RequestOf<R extends AnyRoute> = Decoded<R['request']>;
+export type InputOf<R extends AnyRoute> = Encoded<R['request']>;
+export type ResponseOf<R extends AnyRoute> = Decoded<R['response']>;
 export type Known<T> = T extends readonly (infer U)[] ? Known<U>[]
 	: T extends object ? { [P in keyof T as string extends P ? never : P]: Known<T[P]> }
 	: T;
-export type ResultOf<R extends AnyRoute> = Known<z.input<R['response']>>;
+export type ResultOf<R extends AnyRoute> = Known<Encoded<R['response']>>;
 
 export function isRouteId(key: string): key is RouteId {
 	return Object.hasOwn(routes, key);

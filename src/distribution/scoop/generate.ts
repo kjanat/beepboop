@@ -1,33 +1,39 @@
-import { Effect } from 'effect';
-import * as z from 'zod';
+import { Effect, Schema } from 'effect';
 import type { DomainError } from '@/contract/errors';
 import { assetName, checksumOf, expand, https, parseChecksums, releaseTag } from '@/distribution/assets';
 import { fromSync } from '@/failure';
+import type { Encoded } from '@/schema';
+import { decodeSync, matchesPattern, mutableArray, mutableStruct, refined, strictStruct } from '@/schema';
 
-const text = z.string().min(1);
-const executable = text.refine(
+const text = Schema.String.check(Schema.isMinLength(1));
+const executable = refined(
+	text,
 	path => !/^(?:[\\/]|[A-Za-z]:)/.test(path) && !path.split(/[\\/]/).includes('..'),
 	'Expected a relative path inside the archive',
 );
-const alias = text.refine(
+const alias = refined(
+	text,
 	name => !/[\\/:]/.test(name) && name !== '.' && name !== '..',
 	'Expected a shim name without a path',
 );
 const architectures = ['64bit', '32bit', 'arm64'] as const;
 
-export const scoopConfiguration = z.strictObject({
-	name: z.string().regex(/^[a-z0-9][a-z0-9._-]*$/),
+export const scoopConfiguration = strictStruct({
+	name: Schema.String.check(matchesPattern(/^[a-z0-9][a-z0-9._-]*$/)),
 	description: text,
 	homepage: text,
 	license: text,
 	url: text,
-	architecture: z.partialRecord(z.enum(architectures), text).refine(
+	architecture: refined(
+		mutableStruct({ '32bit': Schema.optional(text), '64bit': Schema.optional(text), arm64: Schema.optional(text) }),
 		assets => Object.keys(assets).length > 0,
 		'Expected at least one architecture',
 	),
-	bin: z.array(z.union([executable, z.tuple([executable, alias])])).min(1),
+	bin: mutableArray(Schema.Union([executable, Schema.mutable(Schema.Tuple([executable, alias]))])).check(
+		Schema.isMinLength(1),
+	),
 });
-export type ScoopConfiguration = z.input<typeof scoopConfiguration>;
+export type ScoopConfiguration = Encoded<typeof scoopConfiguration>;
 
 export interface ScoopOptions {
 	configuration: ScoopConfiguration;
@@ -38,7 +44,7 @@ export interface ScoopOptions {
 
 export function generateManifest(options: ScoopOptions): Effect.Effect<string, DomainError> {
 	return Effect.gen(function*() {
-		const config = yield* fromSync(() => scoopConfiguration.parse(options.configuration));
+		const config = yield* fromSync(() => decodeSync(scoopConfiguration, options.configuration));
 		const version = options.version;
 		const tag = yield* releaseTag(version, options.tag);
 		const checksums = yield* parseChecksums(options.checksums);

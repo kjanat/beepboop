@@ -3,13 +3,26 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withEnvironment } from '@root/test/support/process.ts';
-import { Effect } from 'effect';
+import { Effect, Schema, Struct } from 'effect';
 import type { HomebrewConfiguration } from '@/distribution/homebrew/generate';
 import { generateCask } from '@/distribution/homebrew/generate';
 import { writeRendered } from '@/distribution/output';
 import type { ScoopConfiguration } from '@/distribution/scoop/generate';
 import { generateManifest, scoopConfiguration } from '@/distribution/scoop/generate';
 import { generateManifests } from '@/distribution/winget/generate';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 const digest = (character: string) => character.repeat(64);
 const checksums = [
@@ -311,7 +324,7 @@ test('a Scoop manifest refuses rooted executables and shim aliases with a path',
 		const configuration = { ...kprintScoop, bin };
 		const result = await run(generateManifest({ configuration, version: '0.61.0', tag: '0.61.0', checksums }));
 		return result._tag === 'Failure'
-			? JSON.stringify(scoopConfiguration.safeParse(configuration).error?.issues)
+			? JSON.stringify(safeDecode(scoopConfiguration, configuration).error?.issues)
 			: 'generated';
 	};
 	expect(await refused(['C:\\build\\kprint.exe'])).toContain('Expected a relative path inside the archive');

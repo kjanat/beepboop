@@ -1,54 +1,58 @@
-import { z } from 'zod';
+import { Schema } from 'effect';
 import { countSchema, looseSchema, shaSchema, textSchema } from '@/model';
+import type { Decoded } from '@/schema';
+import { mutableArray, mutableStruct } from '@/schema';
 
-const identified = z.object({ id: z.number() });
-const verification = z.object({ verified: looseSchema });
+const identified = mutableStruct({ id: Schema.Finite });
+const verification = mutableStruct({ verified: looseSchema });
 
-export const appSchema = z.object({ slug: textSchema });
-export const userSchema = z.object({ login: looseSchema, type: looseSchema, id: countSchema });
-export const installationSchema = z.object({
+export const appSchema = mutableStruct({ slug: textSchema });
+export const userSchema = mutableStruct({ login: looseSchema, type: looseSchema, id: countSchema });
+export const installationSchema = mutableStruct({
 	id: countSchema,
-	account: z.object({ id: countSchema, login: textSchema }),
+	account: mutableStruct({ id: countSchema, login: textSchema }),
 	suspended_at: looseSchema,
 });
-export const accessTokenSchema = z.object({ token: textSchema });
-export const repositorySchema = z.object({
+export const accessTokenSchema = mutableStruct({ token: textSchema });
+export const repositorySchema = mutableStruct({
 	id: countSchema,
-	full_name: z.string(),
+	full_name: Schema.String,
 	owner: identified,
 	default_branch: textSchema,
 });
-export const commitSchema = z.object({ sha: shaSchema, commit: z.object({ verification }) });
-export const gitObjectSchema = z.object({ sha: shaSchema, type: z.string() });
-export type GitObject = z.output<typeof gitObjectSchema>;
-export const gitRefSchema = z.object({ object: gitObjectSchema });
-export const gitTagSchema = z.object({
+export const commitSchema = mutableStruct({ sha: shaSchema, commit: mutableStruct({ verification }) });
+export const gitObjectSchema = mutableStruct({ sha: shaSchema, type: Schema.String });
+export type GitObject = Decoded<typeof gitObjectSchema>;
+export const gitRefSchema = mutableStruct({ object: gitObjectSchema });
+export const gitTagSchema = mutableStruct({
 	object: gitObjectSchema,
 	tag: looseSchema,
-	verification: verification.optional(),
+	verification: Schema.optional(verification),
 });
-export const gitCommitSchema = z.object({
-	tree: z.object({ sha: shaSchema }),
-	parents: z.array(z.object({ sha: looseSchema })),
+export const gitCommitSchema = mutableStruct({
+	tree: mutableStruct({ sha: shaSchema }),
+	parents: mutableArray(mutableStruct({ sha: looseSchema })),
 	verification,
 });
-export const createdSchema = z.object({ sha: shaSchema });
-export const treeSchema = z.object({
+export const createdSchema = mutableStruct({ sha: shaSchema });
+export const treeSchema = mutableStruct({
 	truncated: looseSchema,
-	tree: z.array(z.object({ path: textSchema, type: textSchema, mode: textSchema })),
+	tree: mutableArray(mutableStruct({ path: textSchema, type: textSchema, mode: textSchema })),
 });
-export const contentSchema = z.object({ encoding: looseSchema, content: looseSchema, size: looseSchema });
-export const namedSchema = z.object({ name: textSchema });
-export const matchingRefSchema = z.object({ ref: textSchema });
-export const ruleSchema = z.object({ type: looseSchema });
-export const comparisonSchema = z.object({
+export const contentSchema = mutableStruct({ encoding: looseSchema, content: looseSchema, size: looseSchema });
+export const namedSchema = mutableStruct({ name: textSchema });
+export const matchingRefSchema = mutableStruct({ ref: textSchema });
+export const ruleSchema = mutableStruct({ type: looseSchema });
+export const comparisonSchema = mutableStruct({
 	status: looseSchema,
 	ahead_by: looseSchema,
-	merge_base_commit: z.object({ sha: shaSchema }),
-	commits: z.array(z.object({ sha: looseSchema, author: identified, commit: z.object({ verification }) })),
-	files: z.array(z.object({ filename: looseSchema })),
+	merge_base_commit: mutableStruct({ sha: shaSchema }),
+	commits: mutableArray(
+		mutableStruct({ sha: looseSchema, author: identified, commit: mutableStruct({ verification }) }),
+	),
+	files: mutableArray(mutableStruct({ filename: looseSchema })),
 });
-export const pullSchema = z.object({
+export const pullSchema = mutableStruct({
 	number: countSchema,
 	node_id: textSchema,
 	html_url: textSchema,
@@ -57,13 +61,13 @@ export const pullSchema = z.object({
 	merged_at: looseSchema,
 	title: looseSchema,
 	body: looseSchema,
-	assignees: z.array(z.object({ login: z.string() })).nullish(),
-	requested_reviewers: z.array(z.object({ login: z.string() })).nullish(),
-	head: z.object({ ref: z.string(), sha: shaSchema, repo: identified }),
-	base: z.object({ ref: textSchema, repo: z.object({ id: z.number(), default_branch: textSchema }) }),
+	assignees: Schema.optional(Schema.NullOr(mutableArray(mutableStruct({ login: Schema.String })))),
+	requested_reviewers: Schema.optional(Schema.NullOr(mutableArray(mutableStruct({ login: Schema.String })))),
+	head: mutableStruct({ ref: Schema.String, sha: shaSchema, repo: identified }),
+	base: mutableStruct({ ref: textSchema, repo: mutableStruct({ id: Schema.Finite, default_branch: textSchema }) }),
 });
-export const issueEventSchema = z.object({ event: looseSchema, commit_id: looseSchema });
-export const workflowRunSchema = z.object({
+export const issueEventSchema = mutableStruct({ event: looseSchema, commit_id: looseSchema });
+export const workflowRunSchema = mutableStruct({
 	id: countSchema,
 	repository: identified,
 	display_title: textSchema,
@@ -75,23 +79,21 @@ export const workflowRunSchema = z.object({
 	head_branch: looseSchema,
 	run_attempt: countSchema,
 });
-export type WorkflowRun = z.output<typeof workflowRunSchema>;
-export const workflowRunsSchema = z.object({ workflow_runs: z.array(workflowRunSchema) });
-export const workflowJobsSchema = z.object({
-	total_count: z.number().int().nonnegative(),
-	jobs: z.array(
-		z.object({
-			name: z.string(),
-			status: z.string(),
-			conclusion: z.string().nullable(),
-			started_at: z.string().nullable().optional(),
-			completed_at: z.string().nullable().optional(),
-		}),
-	),
+export type WorkflowRun = Decoded<typeof workflowRunSchema>;
+export const workflowRunsSchema = mutableStruct({ workflow_runs: mutableArray(workflowRunSchema) });
+export const workflowJobsSchema = mutableStruct({
+	total_count: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0)),
+	jobs: mutableArray(mutableStruct({
+		name: Schema.String,
+		status: Schema.String,
+		conclusion: Schema.NullOr(Schema.String),
+		started_at: Schema.optional(Schema.NullOr(Schema.String)),
+		completed_at: Schema.optional(Schema.NullOr(Schema.String)),
+	})),
 });
-export const dispatchSchema = z.object({ workflow_run_id: countSchema.optional() }).nullable();
-const assetSchema = z.object({ id: countSchema, name: textSchema, state: looseSchema, content_type: textSchema });
-export const releaseSchema = z.object({
+export const dispatchSchema = Schema.NullOr(mutableStruct({ workflow_run_id: Schema.optional(countSchema) }));
+const assetSchema = mutableStruct({ id: countSchema, name: textSchema, state: looseSchema, content_type: textSchema });
+export const releaseSchema = mutableStruct({
 	id: countSchema,
 	tag_name: looseSchema,
 	target_commitish: looseSchema,
@@ -99,21 +101,21 @@ export const releaseSchema = z.object({
 	prerelease: looseSchema,
 	html_url: looseSchema,
 	author: identified,
-	assets: z.array(assetSchema),
+	assets: mutableArray(assetSchema),
 });
-export type GitHubRelease = z.output<typeof releaseSchema>;
-export const releaseNotesSchema = z.object({ body: z.string() });
-export const artifactSchema = z.object({
+export type GitHubRelease = Decoded<typeof releaseSchema>;
+export const releaseNotesSchema = mutableStruct({ body: Schema.String });
+export const artifactSchema = mutableStruct({
 	workflow_run: identified,
 	expired: looseSchema,
 	name: looseSchema,
 	digest: looseSchema,
 	expires_at: looseSchema,
 });
-export const checkRunsSchema = z.object({
+export const checkRunsSchema = mutableStruct({
 	total_count: looseSchema,
-	check_runs: z.array(
-		z.object({ name: looseSchema, status: looseSchema, conclusion: looseSchema, details_url: looseSchema }),
+	check_runs: mutableArray(
+		mutableStruct({ name: looseSchema, status: looseSchema, conclusion: looseSchema, details_url: looseSchema }),
 	),
 });
-export const commitStatusSchema = z.object({ state: looseSchema, total_count: looseSchema });
+export const commitStatusSchema = mutableStruct({ state: looseSchema, total_count: looseSchema });

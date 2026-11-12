@@ -1,10 +1,11 @@
-import { Effect, Semaphore } from 'effect';
-import { z } from 'zod';
+import { Clock, Effect, Schema, Semaphore } from 'effect';
 import type { ProjectedEntity } from '@/contract/changes';
 import { projectedEntities } from '@/contract/changes';
 import type { DomainError } from '@/contract/errors';
 import { fromPromise, fromSync } from '@/failure';
 import type { Projection } from '@/persistence/d1/projection';
+import type { Decoded } from '@/schema';
+import { decodeSync, looseStruct, mutableStruct, safeDecode } from '@/schema';
 
 export interface EntityRef {
 	entity: ProjectedEntity;
@@ -21,15 +22,15 @@ const prefixes = {
 	'release-set': 'release-set:',
 	release: 'release:',
 } as const satisfies Record<ProjectedEntity, string>;
-const counter = z.number().int().nonnegative();
-const outboxEntry = z.object({
-	entity: z.enum(projectedEntities),
-	id: z.string(),
-	repositoryId: z.number().int().positive(),
-	revision: z.number().int().positive(),
+const counter = Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0));
+const outboxEntry = mutableStruct({
+	entity: Schema.Literals(projectedEntities),
+	id: Schema.String,
+	repositoryId: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
+	revision: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
 });
-type OutboxEntry = z.output<typeof outboxEntry>;
-const projectedExecution = z.looseObject({ state: z.string(), updatedAt: z.number() });
+type OutboxEntry = Decoded<typeof outboxEntry>;
+const projectedExecution = looseStruct({ state: Schema.String, updatedAt: Schema.Finite });
 
 export function keyOf(ref: Pick<EntityRef, 'entity' | 'id'>): string {
 	return `${prefixes[ref.entity]}${ref.id}`;
@@ -47,7 +48,7 @@ function projection(entry: OutboxEntry, value: unknown, now: number): Projection
 	const document = JSON.stringify(value);
 	const common = { id: entry.id, repositoryId: entry.repositoryId, revision: entry.revision, document };
 	if (entry.entity !== 'execution') return { ...common, entity: entry.entity, updatedAt: now };
-	const parsed = projectedExecution.safeParse(value);
+	const parsed = safeDecode(projectedExecution, value);
 	if (!parsed.success) return undefined;
 	return { ...common, entity: 'execution', state: parsed.data.state, updatedAt: parsed.data.updatedAt };
 }
@@ -63,7 +64,7 @@ export class Journal {
 			Effect.gen({ self: this }, function*() {
 				const current = this.revision
 					?? (yield* fromPromise(() => this.storage.get('journal:seq')).pipe(
-						Effect.flatMap(value => fromSync(() => counter.parse(value ?? 0))),
+						Effect.flatMap(value => fromSync(() => decodeSync(counter, value ?? 0))),
 					));
 				this.revision = current + 1;
 				return this.revision;
@@ -127,18 +128,20 @@ export class Journal {
 	}
 	private flush(project: (rows: Projection[]) => Effect.Effect<void, DomainError>): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
+			const clock = yield* Clock.Clock;
+
 			for (;;) {
 				const entries = yield* fromPromise(() => this.storage.list({ prefix: 'outbox:', limit: batch }));
 				if (!entries.size) return;
 				const latest = new Map<string, OutboxEntry>();
 				for (const value of entries.values()) {
-					const parsed = outboxEntry.safeParse(value);
+					const parsed = safeDecode(outboxEntry, value);
 					if (!parsed.success) continue;
 					const key = keyOf(parsed.data);
 					if ((latest.get(key)?.revision ?? 0) < parsed.data.revision) latest.set(key, parsed.data);
 				}
 				const values = yield* fromPromise(() => this.storage.get([...latest.keys()]));
-				const now = Date.now();
+				const now = clock.currentTimeMillisUnsafe();
 				yield* project([...latest].flatMap(([key, entry]) => projection(entry, values.get(key), now) ?? []));
 				yield* fromPromise(() => this.storage.delete([...entries.keys()]));
 			}

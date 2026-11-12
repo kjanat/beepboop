@@ -1,8 +1,12 @@
+import { Effect, Schema, Struct } from 'effect';
+import { installerArchitecture, installerType } from '@/distribution/winget/schema';
+import type { Encoded } from '@/schema';
+import { decodeSync, mutableArray, mutableStruct, strictStruct } from '@/schema';
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Kaj Kowalski; Copyright (c) 2021 rhysd
-import { Effect } from 'effect';
+
 import { stringify } from 'yaml';
-import * as z from 'zod';
+
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { assetName, checksumOf, expand, https, parseChecksums, releaseTag } from '@/distribution/assets';
@@ -23,37 +27,44 @@ import {
 import { fromSync } from '@/failure';
 import { unsafeRelativePath } from '@/relative-path';
 
-const metadata = defaultLocaleManifest.omit({
-	PackageIdentifier: true,
-	PackageVersion: true,
-	PackageLocale: true,
-	ReleaseNotes: true,
-	ReleaseNotesUrl: true,
-	ManifestType: true,
-	ManifestVersion: true,
+const metadata = strictStruct(
+	Struct.omit(defaultLocaleManifest.fields, [
+		'PackageIdentifier',
+		'PackageVersion',
+		'PackageLocale',
+		'ReleaseNotes',
+		'ReleaseNotesUrl',
+		'ManifestType',
+		'ManifestVersion',
+	]),
+);
+const installer = mutableStruct({
+	...strictStruct(
+		Struct.omit(installerManifest.fields, [
+			'PackageIdentifier',
+			'PackageVersion',
+			'InstallerLocale',
+			'ReleaseDate',
+			'Installers',
+			'ManifestType',
+			'ManifestVersion',
+		]),
+	).fields,
+	...{ InstallerType: installerType },
 });
-const installer = installerManifest.omit({
-	PackageIdentifier: true,
-	PackageVersion: true,
-	InstallerLocale: true,
-	ReleaseDate: true,
-	Installers: true,
-	ManifestType: true,
-	ManifestVersion: true,
-}).extend({ InstallerType: installerManifest.shape.InstallerType.unwrap() });
-export const wingetConfiguration = z.strictObject({
-	packageIdentifier: versionManifest.shape.PackageIdentifier,
-	defaultLocale: versionManifest.shape.DefaultLocale.default('en-US'),
-	releaseNotesUrl: z.string().min(1),
+export const wingetConfiguration = strictStruct({
+	packageIdentifier: versionManifest.fields.PackageIdentifier,
+	defaultLocale: versionManifest.fields.DefaultLocale.pipe(Schema.withDecodingDefault(Effect.succeed('en-US'))),
+	releaseNotesUrl: Schema.String.check(Schema.isMinLength(1)),
 	metadata,
 	installer,
-	installers: z.array(z.strictObject({
-		architecture: installerManifest.shape.Installers.element.shape.Architecture,
-		asset: z.string().min(1),
-		url: z.string().min(1),
-	})).min(1).max(1024),
+	installers: mutableArray(strictStruct({
+		architecture: installerArchitecture,
+		asset: Schema.String.check(Schema.isMinLength(1)),
+		url: Schema.String.check(Schema.isMinLength(1)),
+	})).check(Schema.isMinLength(1)).check(Schema.isMaxLength(1024)),
 });
-export type WingetConfiguration = z.input<typeof wingetConfiguration>;
+export type WingetConfiguration = Encoded<typeof wingetConfiguration>;
 export interface GenerateOptions {
 	configuration: WingetConfiguration;
 	version: string;
@@ -84,7 +95,7 @@ export function capReleaseNotes(
 }
 export function generateManifests(options: GenerateOptions): Effect.Effect<Manifests, DomainError> {
 	return Effect.gen(function*() {
-		const config = yield* fromSync(() => wingetConfiguration.parse(options.configuration));
+		const config = yield* fromSync(() => decodeSync(wingetConfiguration, options.configuration));
 		const version = options.version;
 		const tag = yield* releaseTag(version, options.tag);
 		const variables = { version, tag: encodeURIComponent(tag) };
@@ -124,8 +135,8 @@ export function generateManifests(options: GenerateOptions): Effect.Effect<Manif
 		};
 		const notes = yield* capReleaseNotes(plainText(options.releaseNotes), releaseNotesUrl);
 		return yield* fromSync(() => ({
-			version: versionManifest.parse({ ...common, DefaultLocale: config.defaultLocale, ManifestType: 'version' }),
-			installer: installerManifest.parse({
+			version: decodeSync(versionManifest, { ...common, DefaultLocale: config.defaultLocale, ManifestType: 'version' }),
+			installer: decodeSync(installerManifest, {
 				...config.installer,
 				...common,
 				InstallerLocale: config.defaultLocale,
@@ -133,7 +144,7 @@ export function generateManifests(options: GenerateOptions): Effect.Effect<Manif
 				Installers: entries,
 				ManifestType: 'installer',
 			}),
-			defaultLocale: defaultLocaleManifest.parse({
+			defaultLocale: decodeSync(defaultLocaleManifest, {
 				...config.metadata,
 				...common,
 				PackageLocale: config.defaultLocale,

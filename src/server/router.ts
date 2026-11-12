@@ -2,8 +2,8 @@ import targetsSchema from '@root/schemas/targets.v1.json';
 import schema from '@root/schemas/v1.json' with { type: 'json' };
 import { Effect } from 'effect';
 import { authRoute } from '@/automation/auth';
-import type { AutomationBindings } from '@/automation/service';
-import { AutomationService } from '@/automation/service';
+import type { AutomationBindings, AutomationService } from '@/automation/service';
+import { withAutomation } from '@/automation/service';
 import type { DomainError } from '@/contract/errors';
 import { domainError, notFound } from '@/contract/errors';
 import type { Method, RouteId } from '@/contract/routes';
@@ -56,9 +56,8 @@ export function dispatch(
 	env: AutomationBindings,
 	defer?: (work: Promise<void>) => void,
 ): Effect.Effect<Response, DomainError> {
-	return Effect.gen(function*() {
+	return withAutomation(env, service => Effect.gen(function*() {
 		const path = new URL(request.url).pathname;
-		const service = new AutomationService(env, defer);
 		const raw = rawRoutes.get(path);
 		if (raw) {
 			if (!raw.methods.some(method => method === request.method)) return yield* methodNotAllowed(raw.methods);
@@ -76,5 +75,5 @@ export function dispatch(
 		const method = routes[id].method;
 		const endpoint: Pick<Endpoint<never>, 'run'> = endpoints[id];
 		return Response.json(yield* endpoint.run({ request, env, service }, input(request, method)));
-	});
+	}), defer);
 }

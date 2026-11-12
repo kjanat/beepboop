@@ -1,14 +1,14 @@
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema } from 'effect';
 import type { DomainError } from '@/contract/errors';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { optionalColumn, sql } from '@/persistence/d1/database';
+import { mutableStruct } from '@/schema';
 
-const cursorRow = z.object({ last_tick: z.number() });
+const cursorRow = mutableStruct({ last_tick: Schema.Finite });
 
 export class ScheduleStore {
 	private readonly sql: Sql;
-	constructor(db: SqlDatabase) {
+	constructor(db: SqlDatabase | Sql) {
 		this.sql = sql(db);
 	}
 	cursor(key: string): Effect.Effect<number | undefined, DomainError> {

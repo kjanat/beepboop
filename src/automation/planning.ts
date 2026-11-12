@@ -1,5 +1,4 @@
-import { Effect, Result } from 'effect';
-import { z } from 'zod';
+import { Effect, Result, Schema } from 'effect';
 import { applyVersionFiles, fileEdits } from '@/automation/editors';
 import { planRelease, publicationOrder } from '@/automation/managers';
 import { inputSchema, nameSchema, outputSchema, platformSchema } from '@/automation/outputs';
@@ -13,24 +12,28 @@ import { decodeRequest, precondition } from '@/contract/errors';
 import type { VersionFile } from '@/contract/version-files';
 import { dependencyOrder } from '@/dependency-order';
 import { invalid } from '@/model';
+import type { Decoded } from '@/schema';
+import { mutableArray, strictStruct } from '@/schema';
 
-const operation = z.strictObject({
+const operation = strictStruct({
 	id: nameSchema,
 	group: nameSchema,
-	needs: z.array(nameSchema).default([]),
-	platform: platformSchema.optional(),
-	inputs: z.array(inputSchema).default([]),
-	outputs: z.array(outputSchema).default([]),
+	needs: mutableArray(nameSchema).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+	platform: Schema.optional(platformSchema),
+	inputs: mutableArray(inputSchema).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+	outputs: mutableArray(outputSchema).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
-export const releaseSetRequest = z.strictObject({
-	groups: z.array(z.strictObject({
+export const releaseSetRequest = strictStruct({
+	groups: mutableArray(strictStruct({
 		id: nameSchema,
-		packages: z.array(z.string().min(1)).min(1),
-		version: z.unknown(),
-	})).min(1),
-	operations: z.array(operation).max(100).default([]),
+		packages: mutableArray(Schema.String.check(Schema.isMinLength(1))).check(Schema.isMinLength(1)),
+		version: Schema.Unknown,
+	})).check(Schema.isMinLength(1)),
+	operations: mutableArray(operation).check(Schema.isMaxLength(100)).pipe(
+		Schema.withDecodingDefault(Effect.succeed([])),
+	),
 });
-export type PlannedOperation = z.infer<typeof operation> & { version: string };
+export type PlannedOperation = Decoded<typeof operation> & { version: string };
 export interface ReleaseSetPlan {
 	lockfiles: string[];
 	sourceSha: string;

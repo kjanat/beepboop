@@ -10,6 +10,7 @@ import { fileProblem } from '@/contract/diagnostics';
 import { npmTargetDescriptor, platformMap } from '@/contract/targets';
 import { safeVersionPath } from '@/contract/version-files';
 import { parentDirectory } from '@/relative-path';
+import { safeDecode } from '@/schema';
 
 interface Manifest {
 	path: string;
@@ -39,7 +40,7 @@ function ownedMaps(
 	packages: readonly Package[],
 ): OwnedMap[] {
 	return [...documents].flatMap(([path, document]) => {
-		const parsed = platformMap.safeParse(document);
+		const parsed = safeDecode(platformMap, document);
 		if (!parsed.success) return [];
 		const keys = Object.keys(parsed.data).filter(key => key !== '$schema');
 		if (!keys.length) return [];
@@ -100,7 +101,7 @@ export function discoverNpmTargets(snapshot: Snapshot, inventory: Inventory): bo
 	for (const [path, document] of documents) {
 		const invalid = (detail: string) => inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', detail));
 		const raw = object(document);
-		const parsed = npmTargetDescriptor.safeParse(document);
+		const parsed = safeDecode(npmTargetDescriptor, document);
 		const groups: Group[] = [];
 		let sourceOverride: string | undefined;
 		let bundle: string | undefined;

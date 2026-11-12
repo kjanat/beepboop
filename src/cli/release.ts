@@ -1,6 +1,5 @@
 import type { Ask, CLIError, Out } from '@kjanat/dreamcli';
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema } from 'effect';
 import { repositoryReference } from '@/automation/repository-name';
 import type { Client } from '@/cli/client';
 import { followRelease } from '@/cli/follow';
@@ -14,6 +13,8 @@ import { decodeWith } from '@/decode';
 import { packageLabel } from '@/domain/package-label';
 import { git } from '@/git';
 import { shaSchema } from '@/model';
+import type { Contract, Decoded } from '@/schema';
+import { looseStruct, mutableArray, mutableStruct, schemaIssues } from '@/schema';
 
 const bumps = ['patch', 'minor', 'major'] as const;
 export function releaseVersion(value: string): Effect.Effect<string | { bump: typeof bumps[number] }, CLIError> {
@@ -92,34 +93,39 @@ export function checkoutRepository(cwd: string): Effect.Effect<string, CLIError>
 	});
 }
 
-const streamSchema = z.looseObject({
-	versioning: z.enum(['workspace', 'independent', 'none']),
-	packages: z.array(z.string()).optional(),
-	versionSource: z.object({ kind: z.literal('tags') }).optional(),
-	versionFiles: z.array(z.unknown()).optional(),
-	prepare: z.looseObject({
-		strategy: z.string().optional(),
-		workflow: z.object({ file: z.string() }).optional(),
-		bump: versionBump.optional(),
+const streamSchema = looseStruct({
+	versioning: Schema.Literals(['workspace', 'independent', 'none']),
+	packages: Schema.optional(mutableArray(Schema.String)),
+	versionSource: Schema.optional(mutableStruct({ kind: Schema.Literal('tags') })),
+	versionFiles: Schema.optional(mutableArray(Schema.Unknown)),
+	prepare: looseStruct({
+		strategy: Schema.optional(Schema.String),
+		workflow: Schema.optional(mutableStruct({ file: Schema.String })),
+		bump: Schema.optional(versionBump),
 	}),
-	promote: z.looseObject({
-		approval: z.enum(['required', 'merge', 'push']),
-		workflow: z.object({ file: z.string() }).optional(),
+	promote: looseStruct({
+		approval: Schema.Literals(['required', 'merge', 'push']),
+		workflow: Schema.optional(mutableStruct({ file: Schema.String })),
 	}),
-	start: z.array(releaseStart).optional(),
+	start: Schema.optional(mutableArray(releaseStart)),
 });
-const summarySchema = z.looseObject({
-	version: z.string().min(1),
+const summarySchema = looseStruct({
+	version: Schema.String.check(Schema.isMinLength(1)),
 	sourceSha: shaSchema,
-	planId: z.string().min(1),
-	packages: z.array(z.object({ name: z.string(), manager: z.string(), version: z.string().optional() })).optional(),
-	blockers: z.array(z.string()).optional(),
+	planId: Schema.String.check(Schema.isMinLength(1)),
+	packages: Schema.optional(
+		mutableArray(
+			mutableStruct({ name: Schema.String, manager: Schema.String, version: Schema.optional(Schema.String) }),
+		),
+	),
+	blockers: Schema.optional(mutableArray(Schema.String)),
 });
-function decode<S extends z.ZodType>(schema: S, value: unknown): Effect.Effect<z.output<S>, CLIError> {
+function decode<S extends Contract>(schema: S, value: unknown): Effect.Effect<Decoded<S>, CLIError> {
 	return decodeWith(
 		schema,
 		value,
-		error => failure('Server returned an invalid release description', 'INVALID_RESPONSE', error.issues[0]?.message),
+		error =>
+			failure('Server returned an invalid release description', 'INVALID_RESPONSE', schemaIssues(error)[0]?.message),
 	);
 }
 

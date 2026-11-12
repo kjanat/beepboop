@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { Effect, Result } from 'effect';
+import { Effect, Result, Schema, Struct } from 'effect';
 import { parseRepositoryConfiguration, resolveConfiguration } from '@/automation/configuration';
 import { legacyConfiguration, readableConfiguration } from '@/automation/configuration-names';
 import {
@@ -19,6 +19,19 @@ import {
 	versionScopeSentences,
 } from '@/contract/setup-terms';
 import { configurationSchema } from '@/domain/configuration';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 const root = new URL('../../src/', import.meta.url);
 
@@ -108,8 +121,8 @@ const current = {
 test('the earlier setting names read the same as the current ones, and setup writes only the current names', () => {
 	const parsed = (value: unknown) => Result.getOrThrow(parseRepositoryConfiguration(value));
 	expect(parsed(current)).toEqual(parsed(legacy));
-	expect(configurationSchema.parse(current)).toEqual(configurationSchema.parse(legacy));
-	expect(configurationSchema.parse(current)).toEqual(parsed(current));
+	expect(decodeSync(configurationSchema, current)).toEqual(decodeSync(configurationSchema, legacy));
+	expect(decodeSync(configurationSchema, current)).toEqual(parsed(current));
 	expect(readableConfiguration(legacy)).toEqual(current);
 	expect(readableConfiguration(current)).toEqual(current);
 	expect(legacyConfiguration(current)).toEqual(legacy);
@@ -119,7 +132,7 @@ test('the earlier setting names read the same as the current ones, and setup wri
 	expect(parsed(current).streams.main?.prepare.versionPrMerge).toBe('squash');
 	const unknown = { streams: { main: { ...current.streams.main, prepare: { versionPrMerge: 'fast' } } } };
 	expect(Result.isFailure(parseRepositoryConfiguration(unknown))).toBe(true);
-	expect(configurationSchema.safeParse(unknown).success).toBe(false);
+	expect(safeDecode(configurationSchema, unknown).success).toBe(false);
 });
 
 test('a repository setting overrides a preset whichever names each of them uses', async () => {
