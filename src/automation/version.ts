@@ -3,6 +3,7 @@ import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { semVer } from '@/contract/version';
 import { compareVersions, invalid, record, text } from '@/model';
+import { safeDecode } from '@/schema';
 
 export type VersionRequest =
 	| { version: string }
@@ -13,7 +14,7 @@ export type VersionRequest =
 function release(value: unknown): Effect.Effect<string, DomainError> {
 	return Effect.fromResult(
 		text(value).pipe(Result.flatMap(input => {
-			const parsed = semVer.safeParse(input);
+			const parsed = safeDecode(semVer, input);
 			return parsed.success ? Result.succeed(parsed.data) : invalid('Invalid value format');
 		})),
 	);

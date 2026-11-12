@@ -4,14 +4,27 @@ import { passChecks, plugin, widget, widgetConfiguration } from '@root/test/supp
 import { applyChoices, applySetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
-import { Effect } from 'effect';
+import { Effect, Schema, Struct } from 'effect';
 import type { Element, HTMLElement, HTMLFormElement, HTMLInputElement, HTMLSelectElement } from 'happy-dom';
 import { Window } from 'happy-dom';
-import { z } from 'zod';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import { routes } from '@/contract/routes';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
 import { existingTriggersQuestion, versionPrMergeSentences, versionPrMerges } from '@/contract/setup-terms';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	preserveUnknown,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 // Browser modules are checked separately to keep DOM and Worker Element types apart.
 const browserModule = new URL('../../src/ui/browser/setup.ts', import.meta.url).href;
@@ -101,7 +114,7 @@ test('the dashboard asks for the security key only for a grant the server accept
 	const api: {
 		elevatedApi(
 			route: typeof routes.credentialsGrant,
-			input: (proof: string | undefined) => z.input<typeof routes.credentialsGrant.request>,
+			input: (proof: string | undefined) => Encoded<typeof routes.credentialsGrant.request>,
 			prove: Effect.Effect<string>,
 		): Effect.Effect<unknown, unknown>;
 	} = await import(new URL('../../src/ui/browser/api.ts', import.meta.url).href);
@@ -291,15 +304,18 @@ test('Cargo setup creates one workflow with preparation and publishing jobs', as
 	expect(workflow).toContain("inputs.beepboop_operation == 'prepare'");
 	expect(workflow).toContain("inputs.beepboop_operation == 'publish'");
 	expect(workflow).toContain('uses: kjanat/beepboop/actions/publish@v1');
-	const binding = z.object({ file: z.string(), inputs: z.object({ beepboop_operation: z.string() }) });
-	const configuration = z.object({
-		streams: z.object({
-			main: z.object({
-				prepare: z.object({ workflow: binding }),
-				promote: z.object({ workflow: binding }),
+	const binding = mutableStruct({ file: Schema.String, inputs: mutableStruct({ beepboop_operation: Schema.String }) });
+	const configuration = decodeSync(
+		mutableStruct({
+			streams: mutableStruct({
+				main: mutableStruct({
+					prepare: mutableStruct({ workflow: binding }),
+					promote: mutableStruct({ workflow: binding }),
+				}),
 			}),
 		}),
-	}).parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'));
+		JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'),
+	);
 	expect(configuration.streams.main.prepare.workflow.inputs.beepboop_operation).toBe('prepare');
 	expect(configuration.streams.main.promote.workflow.inputs.beepboop_operation).toBe('publish');
 	await act(form, 'preview');
@@ -511,9 +527,12 @@ test('an observed workflow keeps its needs, its publications without a box and t
 	});
 	world.github.merge(repository, 1);
 	passChecks(repository, world.github.head(repository));
-	const stored = z.object({ streams: z.object({ main: z.object({ mustPublish: z.array(z.string()) }).loose() }) });
+	const stored = mutableStruct({
+		streams: mutableStruct({ main: mutableStruct({ mustPublish: mutableArray(Schema.String) }).pipe(preserveUnknown) }),
+	});
 	expect(
-		stored.parse(JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}')).streams.main.mustPublish,
+		decodeSync(stored, JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}')).streams.main
+			.mustPublish,
 	)
 		.toEqual(['pkg:cargo/tool']);
 	const form = await open('octo/tool');
@@ -678,7 +697,7 @@ test('the dashboard proposes the crate binary for Unix targets and writes edited
 	versionFiles.value = '[{';
 	await expect(act(form, 'preview')).rejects.toThrow('versionFiles is not valid JSON.');
 	versionFiles.value = '{"path": 1}';
-	await expect(act(form, 'preview')).rejects.toThrow('versionFiles: Invalid input: expected array, received object');
+	await expect(act(form, 'preview')).rejects.toThrow('versionFiles: Expected array');
 	versionFiles.value = '';
 	await act(form, 'preview');
 	const result = form.querySelector('.setup-result')?.textContent ?? '';

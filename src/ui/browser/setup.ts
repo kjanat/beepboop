@@ -24,6 +24,7 @@ import {
 	versionScopeQuestion,
 	versionScopeSentences,
 } from '@/contract/setup-terms';
+import { safeDecode } from '@/schema';
 import { api } from '@/ui/browser/api';
 import { feedbackFor, find, Refused, refuse, show } from '@/ui/browser/dom';
 import { element, hint, issueText, jsonEditor, label, select, text, workflow } from '@/ui/browser/setup-fields';
@@ -251,7 +252,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 					if (entered !== undefined) extra[field] = entered;
 				}
 				const checked = (stream: Record<string, unknown>) => {
-					const parsed = setupStream.safeParse({ ...extra, ...stream });
+					const parsed = safeDecode(setupStream, { ...extra, ...stream });
 					return parsed.success
 						? Result.succeed(parsed.data)
 						: Result.fail(new Refused({ message: `${name.value}: ${issueText(parsed.error)}` }));

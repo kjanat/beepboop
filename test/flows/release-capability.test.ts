@@ -18,16 +18,31 @@ import {
 import type { World } from '@root/test/support/world.ts';
 import { adminSubject, eachWorld, origin } from '@root/test/support/world.ts';
 import { experimental_AstroContainer } from 'astro/container';
-import { Effect } from 'effect';
+import { Effect, Schema, Struct } from 'effect';
 import { Window } from 'happy-dom';
-import { z } from 'zod';
 import { app } from '@/cli/cli';
 import { errorEnvelope } from '@/contract/errors';
 import { streamRelease } from '@/contract/views';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableRecord,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 import { loaders } from '@/server/loaders';
 
 type Component = Parameters<experimental_AstroContainer['renderToString']>[0];
-const componentModule = z.object({ default: z.custom<Component>(value => typeof value === 'function') });
+const componentModule = mutableStruct({
+	default: Schema.declare<Component>((value): value is Component => typeof value === 'function'),
+});
 
 let world: World, directory: string, api: Api;
 eachWorld(created => {
@@ -79,7 +94,8 @@ async function statute(promote?: Record<string, unknown>): Promise<Repository> {
 }
 
 async function release(repository: Repository, stream = 'main') {
-	const listed = z.array(z.looseObject({ id: z.number(), releases: z.record(z.string(), streamRelease) })).parse(
+	const listed = decodeSync(
+		mutableArray(looseStruct({ id: Schema.Finite, releases: mutableRecord(Schema.String, streamRelease) })),
 		(await api('/api/repositories')).body,
 	);
 	const found = listed.find(entry => entry.id === repository.id)?.releases[stream];
@@ -91,11 +107,11 @@ async function rendered(component: 'Releases' | 'Repositories', query: string) {
 	const section = component === 'Releases' ? 'releases' : 'repositories';
 	const context = { env: world.env, actor: adminSubject };
 	const data = component === 'Releases'
-		? await Effect.runPromise(loaders.releases(context))
-		: await Effect.runPromise(loaders.repositories(context));
+		? await world.run(loaders.releases(context))
+		: await world.run(loaders.repositories(context));
 	const loaded: unknown = await import(join(import.meta.dir, `../../src/components/${component}.astro`));
 	const container = await experimental_AstroContainer.create();
-	const html = await container.renderToString(componentModule.parse(loaded).default, {
+	const html = await container.renderToString(decodeSync(componentModule, loaded).default, {
 		props: { data },
 		request: new Request(`${origin}/${section}${query}`),
 	});
@@ -110,7 +126,7 @@ async function rendered(component: 'Releases' | 'Repositories', query: string) {
 }
 
 function refusal(body: unknown): string {
-	return errorEnvelope.parse(body).error;
+	return decodeSync(errorEnvelope, body).error;
 }
 
 test('a stream that only observes offers no release and every surface says what starts one', async () => {
@@ -180,8 +196,10 @@ test('a tag-versioned stream with a publishing workflow goes straight to a publi
 	const planned = await api('/api/releases/plan', request);
 	expect(planned.status).toBe(200);
 	expect(
-		z.looseObject({ version: z.string(), edits: z.array(z.unknown()), requiresPreparation: z.boolean() })
-			.parse(planned.body),
+		decodeSync(
+			looseStruct({ version: Schema.String, edits: mutableArray(Schema.Unknown), requiresPreparation: Schema.Boolean }),
+			planned.body,
+		),
 	).toMatchObject({ version: '0.13.2', edits: [], requiresPreparation: false });
 	const prepared = await api('/api/releases/prepare', {
 		...request,

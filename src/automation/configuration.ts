@@ -1,5 +1,4 @@
-import { Effect, Result } from 'effect';
-import { z } from 'zod';
+import { Effect, Result, Schema } from 'effect';
 import { legacyConfiguration } from '@/automation/configuration-names';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { parseReleaseIdentity } from '@/automation/package-identity';
@@ -43,12 +42,13 @@ import {
 import { toDomainError } from '@/failure';
 import { array, invalid, oneOf, record, strings, text } from '@/model';
 import { purl } from '@/package-url';
+import { decodeSync, safeDecode } from '@/schema';
 
-type Invalid = DomainError | z.ZodError;
+type Invalid = DomainError | Schema.SchemaError;
 type Parsed<A> = Result.Result<A, Invalid>;
 
 function lift<A>(run: () => A): Parsed<A> {
-	return Result.try({ try: run, catch: error => error instanceof z.ZodError ? error : toDomainError(error) });
+	return Result.try({ try: run, catch: error => error instanceof Schema.SchemaError ? error : toDomainError(error) });
 }
 function packageReferences(value: unknown): Parsed<string[]> {
 	return Result.gen(function*() {
@@ -64,10 +64,10 @@ function keys(data: Record<string, unknown>, allowed: string[], context: string)
 	const unknown = Object.keys(data).find(key => !allowed.includes(key));
 	return unknown === undefined ? Result.void : invalid(`${context}: unknown field ${unknown}`);
 }
-function parsedItems<A>(value: unknown, schema: z.ZodType<A>): Parsed<A[]> {
+function parsedItems<A>(value: unknown, schema: Schema.Codec<A, unknown>): Parsed<A[]> {
 	return Result.gen(function*() {
 		const items = yield* array(value);
-		return yield* lift(() => items.map(item => schema.parse(item)));
+		return yield* lift(() => items.map(item => decodeSync(schema, item)));
 	});
 }
 function winGetPolicy(value: unknown): Parsed<NonNullable<Configuration['winget']>> {
@@ -117,7 +117,7 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 			],
 			'workflow',
 		);
-		const setup = data.setup === undefined ? undefined : yield* lift(() => workflowSetup.parse(data.setup));
+		const setup = data.setup === undefined ? undefined : yield* lift(() => decodeSync(workflowSetup, data.setup));
 		const schedule = data.schedule === undefined ? undefined : yield* text(data.schedule);
 		if (schedule !== undefined) {
 			if (!fiveFieldCron(schedule)) return yield* invalid(utcCronMessage);
@@ -169,7 +169,9 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 		const artifactInputs = data.artifactInputs === undefined
 			? undefined
 			: yield* parsedItems(data.artifactInputs, inputSchema);
-		const platform = data.platform === undefined ? undefined : yield* lift(() => platformSchema.parse(data.platform));
+		const platform = data.platform === undefined
+			? undefined
+			: yield* lift(() => decodeSync(platformSchema, data.platform));
 		const needs = data.needs === undefined && !artifactInputs ? undefined : yield* strings(data.needs ?? []);
 		const publications = data.publications === undefined ? undefined : yield* packageReferences(data.publications);
 		let needsJobs: Record<string, string[]> | undefined;
@@ -248,7 +250,7 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 			? undefined
 			: yield* oneOf(prepare.versionPrMerge, versionPrMerges, 'Invalid versionPrMerge');
 		const starts = row.startFrom ?? row.start;
-		const start = starts === undefined ? undefined : yield* lift(() => releaseStarts.parse(starts));
+		const start = starts === undefined ? undefined : yield* lift(() => decodeSync(releaseStarts, starts));
 		yield* keys(channels, ['stable', 'prerelease'], 'channels');
 		if (prepare.version !== undefined && prepare.version !== 'manual') {
 			return yield* invalid('Only manual version selection is supported');
@@ -502,7 +504,7 @@ export function resolveConfiguration(
 		const merged = yield* visit(value, []);
 		const configuration = yield* Effect.fromResult(parseRepositoryConfiguration(merged)).pipe(
 			Effect.mapError((error): Invalid => {
-				const schema = configurationSchema.safeParse(merged);
+				const schema = safeDecode(configurationSchema, merged);
 				return schema.success ? error : schema.error;
 			}),
 		);

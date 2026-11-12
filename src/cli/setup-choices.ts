@@ -44,6 +44,7 @@ import {
 	versionScopeSentences,
 } from '@/contract/setup-terms';
 import { packageLabel } from '@/domain/package-label';
+import { safeDecode, schemaIssues } from '@/schema';
 
 export const choicesEditors = { streams: 'control', actionsRevision: 'control' } as const satisfies Editors<
 	ChoicesField
@@ -103,7 +104,14 @@ function jsonInput(ask: Ask, message: string, current: unknown): Effect.Effect<u
 			empty: 'accept',
 			validate: value => !value.trim() || validJson(value) || 'Enter valid JSON.',
 		})
-	).pipe(Effect.map((value): unknown => value.trim() ? JSON.parse(value) : undefined));
+	).pipe(
+		Effect.flatMap(value =>
+			Effect.try({
+				try: (): unknown => value.trim() ? JSON.parse(value) : undefined,
+				catch: () => failure('Enter valid JSON', 'INVALID_JSON'),
+			})
+		),
+	);
 }
 
 function select(ask: Ask, message: string, entries: SelectChoice[]): Effect.Effect<string, CLIError> {
@@ -530,9 +538,9 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 						...(credentials === undefined ? {} : { credentials }),
 					};
 				}
-				const parsed = setupStream.safeParse(entered);
+				const parsed = safeDecode(setupStream, entered);
 				if (!parsed.success) {
-					const [issue] = parsed.error.issues;
+					const [issue] = schemaIssues(parsed.error);
 					return yield* Effect.fail(
 						failure(
 							`${stream.name}: ${issue ? `${issue.path.join('.')}: ${issue.message}` : parsed.error.message}`,

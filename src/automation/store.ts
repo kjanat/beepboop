@@ -1,5 +1,4 @@
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Clock, Effect, Schema } from 'effect';
 import type { Listed } from '@/automation/execution-order';
 import {
 	executionOrderSql,
@@ -23,6 +22,7 @@ import type { ExecutionFilter } from '@/contract/routes';
 import type { Access } from '@/domain/repository';
 import { fromJson, fromSync, recover } from '@/failure';
 import { record } from '@/model';
+import { InvalidPackageUrl } from '@/package-url';
 import type { Enrollment, RepositoryRow } from '@/persistence/codecs/repository';
 import {
 	decodeEnrollment,
@@ -37,6 +37,8 @@ import { decodeDeliveryV1, decodeEventV1, decodeExecutionV1 } from '@/persistenc
 import { AuditStore } from '@/persistence/d1/audit';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
+import type { Decoded } from '@/schema';
+import { decodeSync, mutableArray, mutableStruct } from '@/schema';
 
 export type Readable<T> = { kind: 'readable'; value: T };
 export interface UnreadableRepository {
@@ -51,19 +53,20 @@ export interface UnreadableExecution {
 	repositoryId: number;
 	error: string;
 }
-const executionRow = z.object({
-	id: z.string(),
-	repository_id: z.number(),
-	state: z.string(),
-	document: z.string(),
-	created: z.number().nullable().catch(null),
+const executionRow = mutableStruct({
+	id: Schema.String,
+	repository_id: Schema.Finite,
+	state: Schema.String,
+	document: Schema.String,
+	created: Schema.NullOr(Schema.Finite).pipe(Schema.catchDecoding(() => Effect.succeedSome(null))),
 });
-type ExecutionRow = z.output<typeof executionRow>;
+type ExecutionRow = Decoded<typeof executionRow>;
 const executionColumns = `id, repository_id, state, document, ${validJson('$.createdAt')} AS created`;
 function rowOrder(row: ExecutionRow): Listed {
 	try {
 		return listed(decodeExecutionV1(JSON.parse(row.document)));
-	} catch {
+	} catch (error) {
+		if (!isDecodingFailure(error)) throw error;
 		return {
 			unfinished: unfinishedStates.some(state => state === row.state),
 			createdAt: row.created ?? Number.NEGATIVE_INFINITY,
@@ -74,7 +77,8 @@ function rowOrder(row: ExecutionRow): Listed {
 function rowState(row: ExecutionRow): string | undefined {
 	try {
 		return decodeExecutionV1(JSON.parse(row.document)).state;
-	} catch {
+	} catch (error) {
+		if (!isDecodingFailure(error)) throw error;
 		return undefined;
 	}
 }
@@ -92,7 +96,7 @@ const legacyBlockedOutcomes: readonly string[] = ['blocked', 'awaiting-approval'
 export function readableValues<T>(entries: (Readable<T> | { kind: 'unreadable' })[]): T[] {
 	return entries.flatMap(entry => entry.kind === 'readable' ? [entry.value] : []);
 }
-function readEach<R, T, U>(
+export function readEach<R, T, U>(
 	rows: R[],
 	decode: (row: R) => T,
 	unreadable: (row: R, error: string) => U,
@@ -101,17 +105,22 @@ function readEach<R, T, U>(
 		try {
 			return { kind: 'readable', value: decode(row) };
 		} catch (error) {
+			if (!isDecodingFailure(error)) throw error;
 			return unreadable(row, decodeError(error));
 		}
 	});
 }
+export function isDecodingFailure(error: unknown): boolean {
+	return error instanceof Schema.SchemaError || error instanceof SyntaxError || error instanceof InvalidPackageUrl
+		|| (error instanceof DomainError && (error.problem.code === 'invalid' || error.problem.code === 'precondition'));
+}
 export function decodeError(error: unknown): string {
 	if (error instanceof DomainError) return error.detail ?? error.message;
-	if (error instanceof z.ZodError) return z.prettifyError(error);
+	if (error instanceof Schema.SchemaError) return error.message;
 	return error instanceof Error ? error.message : 'Unreadable document';
 }
 
-const onboardingRow = z.object({ repository_id: z.number(), document: z.string() });
+const onboardingRow = mutableStruct({ repository_id: Schema.Finite, document: Schema.String });
 
 export function onboardingPulls(
 	rows: { repository_id: number; document: string }[],
@@ -129,32 +138,32 @@ export function onboardingPulls(
 export class Store {
 	private readonly auditLog: AuditStore;
 	private readonly sql: Sql;
-	constructor(readonly db: SqlDatabase) {
+	constructor(readonly db: SqlDatabase | Sql) {
 		this.auditLog = new AuditStore(db);
 		this.sql = sql(db);
 	}
 	repository(id: number): Effect.Effect<RepositoryRecord | undefined, DomainError> {
 		return this.sql.first(`SELECT ${repositoryColumns} FROM repositories WHERE id=?`, id).pipe(
-			Effect.flatMap(row => row ? fromSync(() => decodeRepository(repositoryRow.parse(row))) : Effect.undefined),
+			Effect.flatMap(row => row ? fromSync(() => decodeRepository(decodeSync(repositoryRow, row))) : Effect.undefined),
 		);
 	}
 	private repositoryRows(): Effect.Effect<RepositoryRow[], DomainError> {
 		return this.sql.all(
 			`SELECT ${repositoryColumns} FROM repositories ORDER BY COALESCE(added_at, updated_at) DESC, name`,
-		).pipe(Effect.flatMap(rows => parse(z.array(repositoryRow), rows)));
+		).pipe(Effect.flatMap(rows => parse(mutableArray(repositoryRow), rows)));
 	}
 	repositories(): Effect.Effect<RepositoryRecord[], DomainError> {
 		return this.repositoryRows().pipe(Effect.flatMap(rows => fromSync(() => rows.map(decodeRepository))));
 	}
 	enrollment(id: number): Effect.Effect<Enrollment | undefined, DomainError> {
 		return this.sql.first(`SELECT ${enrollmentColumns} FROM repositories WHERE id=?`, id).pipe(
-			Effect.flatMap(row => row ? fromSync(() => decodeEnrollment(enrollmentRow.parse(row))) : Effect.undefined),
+			Effect.flatMap(row => row ? fromSync(() => decodeEnrollment(decodeSync(enrollmentRow, row))) : Effect.undefined),
 		);
 	}
 	enrollments(): Effect.Effect<Enrollment[], DomainError> {
 		return this.sql.all(
 			`SELECT ${enrollmentColumns} FROM repositories ORDER BY COALESCE(added_at, updated_at) DESC, name`,
-		).pipe(Effect.flatMap(rows => fromSync(() => z.array(enrollmentRow).parse(rows).map(decodeEnrollment))));
+		).pipe(Effect.flatMap(rows => fromSync(() => decodeSync(mutableArray(enrollmentRow), rows).map(decodeEnrollment))));
 	}
 	readableRepositories(): Effect.Effect<RepositoryRecord[], DomainError> {
 		return this.readRepositories().pipe(
@@ -175,7 +184,7 @@ export class Store {
 	}
 	onboardingPulls(): Effect.Effect<Map<number, string>, DomainError> {
 		return this.sql.all('SELECT repository_id, document FROM onboarding').pipe(
-			Effect.flatMap(rows => fromSync(() => z.array(onboardingRow).parse(rows))),
+			Effect.flatMap(rows => fromSync(() => decodeSync(mutableArray(onboardingRow), rows))),
 			Effect.flatMap(onboardingPulls),
 		);
 	}
@@ -213,7 +222,9 @@ export class Store {
 			prefix,
 			`${prefix}g`,
 		).pipe(
-			Effect.flatMap(rows => parse(z.array(z.object({ id: z.string(), repository_id: z.number() })), rows)),
+			Effect.flatMap(rows =>
+				parse(mutableArray(mutableStruct({ id: Schema.String, repository_id: Schema.Finite })), rows)
+			),
 			Effect.map(rows => rows.map(row => ({ id: row.id, repositoryId: row.repository_id }))),
 		);
 	}
@@ -224,7 +235,7 @@ export class Store {
 			} ORDER BY ${executionOrderSql} LIMIT ?`,
 			...values,
 			executionPage,
-		).pipe(Effect.flatMap(rows => parse(z.array(executionRow), rows)));
+		).pipe(Effect.flatMap(rows => parse(mutableArray(executionRow), rows)));
 	}
 	private blockedRows(conditions: string[], values: (string | number)[]): Effect.Effect<ExecutionRow[], DomainError> {
 		const rows = (unfinished: boolean) =>
@@ -236,7 +247,7 @@ export class Store {
 				} ORDER BY ${executionOrderSql}${unfinished ? '' : ' LIMIT ?'}`,
 				...values,
 				...(unfinished ? [] : [executionPage]),
-			).pipe(Effect.flatMap(found => parse(z.array(executionRow), found)));
+			).pipe(Effect.flatMap(found => parse(mutableArray(executionRow), found)));
 		return Effect.all([rows(true), rows(false)]).pipe(Effect.map(([open, closed]) => [...open, ...closed]));
 	}
 	private executionRows(repositoryId?: number): Effect.Effect<ExecutionRow[], DomainError> {
@@ -294,7 +305,7 @@ export class Store {
 			`SELECT ${executionColumns} FROM executions WHERE state='succeeded' ORDER BY ${executionOrderSql} LIMIT ?`,
 			executionPage,
 		).pipe(
-			Effect.flatMap(rows => parse(z.array(executionRow), rows)),
+			Effect.flatMap(rows => parse(mutableArray(executionRow), rows)),
 			Effect.map(rows =>
 				readableValues(
 					readEach(
@@ -344,13 +355,15 @@ export class Store {
 	}
 	queueEvent(event: AutomationEvent, deliveries: SubscriptionDelivery[]): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
+			const clock = yield* Clock.Clock;
+
 			const serialized = JSON.stringify(event);
 			yield* this.sql.batch([
 				this.sql.statement(
 					'INSERT OR IGNORE INTO release_events(id,document,created_at) VALUES(?,?,?)',
 					event.id,
 					serialized,
-					Date.now(),
+					clock.currentTimeMillisUnsafe(),
 				),
 				...deliveries.map(delivery =>
 					this.sql.statement(
@@ -359,14 +372,14 @@ export class Store {
 						event.id,
 						delivery.repositoryId,
 						JSON.stringify(delivery),
-						Date.now(),
+						clock.currentTimeMillisUnsafe(),
 						event.id,
 						serialized,
 					)
 				),
 			]);
 			const saved = yield* parse(
-				documentRow.nullable(),
+				Schema.NullOr(documentRow),
 				yield* this.sql.first('SELECT document FROM release_events WHERE id=?', event.id),
 			);
 			if (saved?.document !== serialized) return yield* precondition('Event identity changed');
@@ -378,13 +391,15 @@ export class Store {
 		).pipe(Effect.flatMap(rows => fromSync(() => rows.map(row => decodeDeliveryV1(rowDocument(row))))));
 	}
 	deliveryResult(id: string, succeeded: boolean): Effect.Effect<void, DomainError> {
-		return this.sql.run(
-			'UPDATE subscription_deliveries SET state=?,error=?,updated_at=? WHERE id=?',
-			succeeded ? 'delivered' : 'pending',
-			succeeded ? null : 'Delivery awaiting retry',
-			Date.now(),
-			id,
-		).pipe(Effect.asVoid);
+		return Effect.clockWith(clock => {
+			return this.sql.run(
+				'UPDATE subscription_deliveries SET state=?,error=?,updated_at=? WHERE id=?',
+				succeeded ? 'delivered' : 'pending',
+				succeeded ? null : 'Delivery awaiting retry',
+				clock.currentTimeMillisUnsafe(),
+				id,
+			).pipe(Effect.asVoid);
+		});
 	}
 	activity(): Effect.Effect<ActivityEntry[], DomainError> {
 		return this.auditLog.recent();

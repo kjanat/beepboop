@@ -1,21 +1,24 @@
 import { Effect } from 'effect';
-import type { AuthBindings } from '@/automation/auth';
+import type { AuthBindings, AuthenticationDependencies } from '@/automation/auth';
 import type { DomainError } from '@/contract/errors';
 import { unauthenticated } from '@/contract/errors';
 import { cliToken, cliTokenPattern, confirmationCode, loginSecretPattern, sha256Hex } from '@/contract/ids';
-import { fromJson, fromPromise } from '@/failure';
+import { fromJson, fromPromise, toDomainError } from '@/failure';
 import { record, string } from '@/model';
-import { CLISessionStore } from '@/persistence/d1/cli-sessions';
-import { SessionStore } from '@/persistence/d1/sessions';
+import type { CLISessionStore } from '@/persistence/d1/cli-sessions';
+import { responseText } from '@/runtime/http';
 
 type CLIEnvironment = Pick<AuthBindings, 'ADMIN_SUBJECT'> & Partial<Pick<AuthBindings, 'DB'>>;
-export function cliSubject(request: Request, env: CLIEnvironment): Effect.Effect<string, DomainError> {
+export function cliSubject(
+	request: Request,
+	env: CLIEnvironment,
+	sessions: CLISessionStore,
+): Effect.Effect<string, DomainError> {
 	return Effect.gen(function*() {
 		const token = request.headers.get('authorization')?.match(/^Bearer (\S+)$/)?.[1];
-		const db = env.DB;
-		if (!token || !cliTokenPattern.test(token) || !db) return yield* unauthenticated('CLI login required');
+		if (!token || !cliTokenPattern.test(token)) return yield* unauthenticated('CLI login required');
 		const hash = yield* fromPromise(() => sha256Hex(token));
-		const subject = yield* new CLISessionStore(db).subject(hash);
+		const subject = yield* sessions.subject(hash);
 		if (!subject || !env.ADMIN_SUBJECT || subject !== env.ADMIN_SUBJECT) {
 			return yield* unauthenticated('CLI session revoked; run beepboop auth login');
 		}
@@ -28,35 +31,41 @@ export function cliAuthRoute(
 	request: Request,
 	env: AuthBindings,
 	verify: (request: Request, env: AuthBindings) => Effect.Effect<string, DomainError>,
+	dependencies: Pick<AuthenticationDependencies, 'sessions' | 'cliSessions'>,
 ): Effect.Effect<Response, DomainError> {
 	return Effect.gen(function*() {
 		const url = new URL(request.url);
 		const json = (value: unknown, status = 200) =>
 			Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
 		if (url.pathname === '/auth/cli/token' && request.method === 'POST') {
-			const verifier = yield* fromPromise(() => request.text());
+			const verifier = yield* responseText(request).pipe(Effect.mapError(({ cause }) => toDomainError(cause)));
 			if (!loginSecretPattern.test(verifier)) return json({ error: 'Invalid login verifier' }, 400);
 			const hash = yield* fromPromise(() => sha256Hex(verifier));
-			const document = yield* new SessionStore(env.DB).take(`cli-approval:${hash}`);
+			const document = yield* dependencies.sessions.take(`cli-approval:${hash}`);
 			if (document === undefined) return json({ pending: true }, 202);
 			const approval = yield* Effect.fromResult(record(yield* fromJson(document)));
 			if (approval.subject !== env.ADMIN_SUBJECT) return json({ error: 'Access denied' }, 403);
 			const token = cliToken();
 			const subject = yield* Effect.fromResult(string(approval.subject));
 			// Store only hashes of terminal credentials; the browser never receives them.
-			yield* new CLISessionStore(env.DB).create(yield* fromPromise(() => sha256Hex(token)), subject);
+			yield* dependencies.cliSessions.create(yield* fromPromise(() => sha256Hex(token)), subject);
 			return json({ token });
 		}
 		if (url.pathname === '/auth/cli/logout' && request.method === 'POST') {
-			if (!(yield* cliSubject(request, env).pipe(Effect.as(true), Effect.orElseSucceed(() => false)))) {
+			if (
+				!(yield* cliSubject(request, env, dependencies.cliSessions).pipe(
+					Effect.as(true),
+					Effect.orElseSucceed(() => false),
+				))
+			) {
 				return json({ error: 'CLI session revoked' }, 401);
 			}
 			const token = request.headers.get('authorization')?.slice(7) ?? '';
-			yield* new CLISessionStore(env.DB).revoke(yield* fromPromise(() => sha256Hex(token)));
+			yield* dependencies.cliSessions.revoke(yield* fromPromise(() => sha256Hex(token)));
 			return json({ ok: true });
 		}
 		if (url.pathname === '/auth/cli/status' && request.method === 'GET') {
-			return yield* cliSubject(request, env).pipe(
+			return yield* cliSubject(request, env, dependencies.cliSessions).pipe(
 				Effect.map(subject => json({ subject })),
 				Effect.orElseSucceed(() => json({ error: 'CLI session revoked' }, 401)),
 			);
@@ -77,7 +86,7 @@ export function cliAuthRoute(
 		const approved = request.method === 'POST';
 		if (approved) {
 			if (request.headers.get('origin') !== env.APPLICATION_ORIGIN) return json({ error: 'Invalid origin' }, 403);
-			yield* new SessionStore(env.DB).offer('cli-approval', `cli-approval:${challenge}`, { subject }, 300000);
+			yield* dependencies.sessions.offer('cli-approval', `cli-approval:${challenge}`, { subject }, 300000);
 		}
 		return new Response(
 			`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Beepboop CLI login</title><main><h1>${

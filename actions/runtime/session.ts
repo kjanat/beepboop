@@ -4,6 +4,7 @@ import { Effect } from 'effect';
 import { bearerHeaders } from '@/contract/http.ts';
 import { record } from '@/model.ts';
 import { errorMessage } from '@/refusal.ts';
+import { responseJson } from '@/runtime/http.ts';
 
 export function mask(value: string): Effect.Effect<void> {
 	return Effect.sync(() =>
@@ -13,7 +14,8 @@ export function mask(value: string): Effect.Effect<void> {
 
 export function post(url: URL | string, init: RequestInit): Effect.Effect<Response, ActionFailure> {
 	return Effect.tryPromise({
-		try: () => fetch(url, { ...init, redirect: 'error' }),
+		try: signal =>
+			fetch(url, { ...init, redirect: 'error', signal: init.signal ? AbortSignal.any([signal, init.signal]) : signal }),
 		catch: error => new ActionFailure({ message: errorMessage(error), retryable: true }),
 	});
 }
@@ -40,10 +42,9 @@ export function identityToken(origin: URL): Effect.Effect<string, Invalid> {
 			signal: AbortSignal.timeout(20000),
 		});
 		if (!identity.ok) return yield* fail('Could not obtain workflow identity');
-		const issued = yield* Effect.tryPromise({
-			try: (): Promise<unknown> => identity.json(),
-			catch: () => new ActionFailure({ message: 'Could not obtain workflow identity' }),
-		});
+		const issued = yield* responseJson(identity).pipe(
+			Effect.mapError(() => new ActionFailure({ message: 'Could not obtain workflow identity' })),
+		);
 		const token = (yield* Effect.fromResult(record(issued))).value;
 		if (typeof token !== 'string') return yield* fail('Missing workflow identity');
 		yield* mask(token);

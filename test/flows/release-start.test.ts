@@ -8,9 +8,22 @@ import { executions, promotions } from '@root/test/support/releases.ts';
 import { editableConfiguration, passChecks, widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
-import { z } from 'zod';
+import { Effect, Schema, Struct } from 'effect';
 import type { Execution } from '@/automation/types';
 import type { ReleaseStart, VersionBump } from '@/contract/release-start';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 type Api = (path: string, body?: unknown) => Promise<Reply>;
 
@@ -19,8 +32,8 @@ eachWorld(created => {
 	world = created;
 });
 
-const plan = z.looseObject({ sourceSha: z.string(), planId: z.string() });
-const execution = z.looseObject({ id: z.string(), operation: z.string(), state: z.string() });
+const plan = looseStruct({ sourceSha: Schema.String, planId: Schema.String });
+const execution = looseStruct({ id: Schema.String, operation: Schema.String, state: Schema.String });
 
 async function configured(start: ReleaseStart[], bump?: VersionBump, approval = 'required') {
 	const repository = widget(world.github);
@@ -59,10 +72,10 @@ async function release(send: (path: string, body: unknown) => Promise<{ status: 
 	const request = { repositoryId: id, stream: 'main', version: { bump: 'patch' } };
 	const planned = await send('/api/releases/plan', request);
 	expect(planned.status).toBe(200);
-	const { sourceSha, planId } = plan.parse(planned.body);
+	const { sourceSha, planId } = decodeSync(plan, planned.body);
 	const started = await send('/api/releases/prepare', { ...request, sourceSha, planId });
 	expect(started.status).toBe(200);
-	return execution.parse(started.body);
+	return decodeSync(execution, started.body);
 }
 
 async function fromDashboard(path: string, body: unknown) {
@@ -158,7 +171,7 @@ test('the release action starts a release from its workflow_dispatch run and ref
 		STREAM: 'main',
 		RELEASE_VERSION: 'patch',
 	});
-	expect(execution.parse(JSON.parse(result.outputs.result ?? '{}'))).toMatchObject({ operation: 'prepare' });
+	expect(decodeSync(execution, JSON.parse(result.outputs.result ?? '{}'))).toMatchObject({ operation: 'prepare' });
 	await landed(repository);
 	await publishedOnce(api, repository, 'action');
 });
@@ -314,7 +327,7 @@ test('a stream with tag versions cannot start a release', async () => {
 	const request = { repositoryId: repository.id, stream: 'main', version: '1.0.1' };
 	const planned = await api('/api/releases/plan', request);
 	expect(planned.status).toBe(200);
-	const { sourceSha, planId } = plan.parse(planned.body);
+	const { sourceSha, planId } = decodeSync(plan, planned.body);
 	const refused = await api('/api/releases/prepare', { ...request, sourceSha, planId });
 	expect(refused.status).toBe(422);
 	expect(JSON.stringify(refused.body)).toContain(
@@ -340,7 +353,7 @@ test('the release action refreshes a stale branch head and refuses a run on anot
 	expect(JSON.stringify(stale.body)).toContain('main moved after this run started. Run the workflow again.');
 	const started = await start(next.sha);
 	expect(started.status).toBe(200);
-	expect(execution.parse(started.body)).toMatchObject({ operation: 'prepare' });
+	expect(decodeSync(execution, started.body)).toMatchObject({ operation: 'prepare' });
 	await landed(repository);
 	await publishedOnce(api, repository, 'action');
 });

@@ -1,18 +1,20 @@
 import { appendFileSync } from 'node:fs';
 import { publishRefs } from '@root/actions/runtime/refs.ts';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import { parse } from 'yaml';
-import { z } from 'zod';
 import type { RefChange } from '@/automation/refs';
 import { repositoryNamePattern } from '@/automation/repository-name';
 import { shaPattern } from '@/contract/ids';
 import { git as runGit } from '@/git';
 import { compareVersions, looseSchema } from '@/model';
+import { mutableRecord, mutableStruct } from '@/schema';
 import { attempt, parse as decode, main, refuse, ToolFailure } from '@/tooling/runtime';
 
-const actionSchema = z.object({
-	inputs: z.record(z.string(), z.object({ required: looseSchema, default: looseSchema })).nullish(),
-	outputs: z.record(z.string(), z.unknown()).nullish(),
+const actionSchema = mutableStruct({
+	inputs: Schema.optional(
+		Schema.NullOr(mutableRecord(Schema.String, mutableStruct({ required: looseSchema, default: looseSchema }))),
+	),
+	outputs: Schema.optional(Schema.NullOr(mutableRecord(Schema.String, Schema.Unknown))),
 });
 
 type Bump = 'major' | 'minor' | 'patch';

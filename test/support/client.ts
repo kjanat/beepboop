@@ -2,22 +2,34 @@ import type { Repository } from '@root/test/support/github.ts';
 import { bearerRequest } from '@root/test/support/http.ts';
 import { widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
-import { Effect } from 'effect';
-import type { z } from 'zod';
+import { Effect, Schema, Struct } from 'effect';
 import type { Transport } from '@/contract/client';
 import { call as request, send } from '@/contract/client';
 import type { Route } from '@/contract/routes';
 import { routes } from '@/contract/routes';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 export function cliTransport(world: World, token: string): Transport {
 	return outgoing => send(() => bearerRequest(world, token, outgoing));
 }
 
-export function call<Q extends z.ZodType, S extends z.ZodType>(
+export function call<Q extends Contract, S extends Contract>(
 	route: Route<Q, S>,
-	input: z.input<Q>,
+	input: Encoded<Q>,
 	transport: Transport,
-): Promise<z.output<S>> {
+): Promise<Decoded<S>> {
 	return Effect.runPromise(request(route, input, transport));
 }
 

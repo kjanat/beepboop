@@ -2,8 +2,8 @@ import targetsSchema from '@root/schemas/targets.v1.json';
 import schema from '@root/schemas/v1.json' with { type: 'json' };
 import { Effect } from 'effect';
 import { authRoute } from '@/automation/auth';
-import type { AutomationBindings } from '@/automation/service';
-import { AutomationService } from '@/automation/service';
+import type { Automation, AutomationService } from '@/automation/service';
+import { withAutomation } from '@/automation/service';
 import type { DomainError } from '@/contract/errors';
 import { domainError, notFound } from '@/contract/errors';
 import type { Method, RouteId } from '@/contract/routes';
@@ -53,19 +53,17 @@ function input(request: Request, method: Method): Effect.Effect<unknown, DomainE
 
 export function dispatch(
 	request: Request,
-	env: AutomationBindings,
-	defer?: (work: Promise<void>) => void,
-): Effect.Effect<Response, DomainError> {
-	return Effect.gen(function*() {
+): Effect.Effect<Response, DomainError, Automation> {
+	return withAutomation(service => Effect.gen(function*() {
+		const env = service.env;
 		const path = new URL(request.url).pathname;
-		const service = new AutomationService(env, defer);
 		const raw = rawRoutes.get(path);
 		if (raw) {
 			if (!raw.methods.some(method => method === request.method)) return yield* methodNotAllowed(raw.methods);
 			return yield* raw.serve(request, service);
 		}
 		if (path.startsWith('/auth/')) {
-			const response = yield* authRoute(request, env);
+			const response = yield* authRoute(request, env, service.authentication);
 			if (response) return response;
 			return yield* notFound('route', 'Not found');
 		}
@@ -76,5 +74,5 @@ export function dispatch(
 		const method = routes[id].method;
 		const endpoint: Pick<Endpoint<never>, 'run'> = endpoints[id];
 		return Response.json(yield* endpoint.run({ request, env, service }, input(request, method)));
-	});
+	}));
 }

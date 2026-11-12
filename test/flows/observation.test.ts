@@ -6,13 +6,27 @@ import { runWorkflow } from '@root/test/support/repositories.ts';
 import { applyChoices, applySetup, discoverSetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema, Struct } from 'effect';
 import { runFailedNote } from '@/automation/execution';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableRecord,
+	mutableStruct,
+	preserveUnknown,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 let world: World;
 eachWorld(created => {
@@ -153,12 +167,17 @@ test('reopening setup keeps the implicit coverage of an observe binding', async 
 	const [stream] = plan.choices.streams;
 	if (!stream) throw new Error('Expected an adopted stream');
 	const path = ['.github', 'beepboop.json'].join('/');
-	const stored = z.object({
-		streams: z.record(
-			z.string(),
-			z.object({ workflows: z.record(z.string(), z.record(z.string(), z.unknown())) }).loose(),
-		),
-	}).loose().parse(JSON.parse(world.github.file(repository, path) ?? '{}'));
+	const stored = decodeSync(
+		mutableStruct({
+			streams: mutableRecord(
+				Schema.String,
+				mutableStruct({ workflows: mutableRecord(Schema.String, mutableRecord(Schema.String, Schema.Unknown)) }).pipe(
+					preserveUnknown,
+				),
+			),
+		}).pipe(preserveUnknown),
+		JSON.parse(world.github.file(repository, path) ?? '{}'),
+	);
 	const current = stored.streams[stream.name];
 	if (!current) throw new Error('Expected the stored stream');
 	const { packages: _packages, ...rest } = current;
@@ -216,12 +235,17 @@ async function pin(
 	const [stream] = plan.choices.streams;
 	if (!stream) throw new Error('Expected an adopted stream');
 	const path = ['.github', 'beepboop.json'].join('/');
-	const stored = z.object({
-		streams: z.record(
-			z.string(),
-			z.object({ workflows: z.record(z.string(), z.record(z.string(), z.unknown())) }).loose(),
-		),
-	}).loose().parse(JSON.parse(world.github.file(repository, path) ?? '{}'));
+	const stored = decodeSync(
+		mutableStruct({
+			streams: mutableRecord(
+				Schema.String,
+				mutableStruct({ workflows: mutableRecord(Schema.String, mutableRecord(Schema.String, Schema.Unknown)) }).pipe(
+					preserveUnknown,
+				),
+			),
+		}).pipe(preserveUnknown),
+		JSON.parse(world.github.file(repository, path) ?? '{}'),
+	);
 	const current = stored.streams[stream.name];
 	if (!current) throw new Error('Expected the stored stream');
 	const workflows = Object.fromEntries(
@@ -486,7 +510,7 @@ test('an execution stored without its ref namespace still probes tags and then b
 	const { repository, failed, retry } = await failedTagRelease('failure', 'widget-v1.2.0', 'widget-v*');
 	const storage = world.coordinators.instance(String(repository.id)).storage;
 	const key = `execution:${failed.id}`;
-	const stored = z.looseObject({ refNamespace: z.unknown() }).parse(await storage.get(key));
+	const stored = decodeSync(looseStruct({ refNamespace: Schema.Unknown }), await storage.get(key));
 	delete stored.refNamespace;
 	await storage.put(key, stored);
 	repository.refs.set('heads/widget-v1.2.0', world.github.head(repository));
@@ -598,11 +622,16 @@ test('a short ID shared by two operations is refused before either changes', asy
 	const prefix = failed.id.slice(0, 8);
 	const twin = `${prefix}${failed.id.slice(8).split('').reverse().join('')}`;
 	expect(twin).not.toBe(failed.id);
-	const row = z.object({ repository_id: z.number(), state: z.string(), document: z.string(), updated_at: z.number() })
-		.parse(
-			await world.db.prepare('SELECT repository_id,state,document,updated_at FROM executions WHERE id=?')
-				.bind(failed.id).first(),
-		);
+	const row = decodeSync(
+		mutableStruct({
+			repository_id: Schema.Finite,
+			state: Schema.String,
+			document: Schema.String,
+			updated_at: Schema.Finite,
+		}),
+		await world.db.prepare('SELECT repository_id,state,document,updated_at FROM executions WHERE id=?')
+			.bind(failed.id).first(),
+	);
 	await world.db.prepare('INSERT INTO executions(id,repository_id,state,document,updated_at) VALUES(?,?,?,?,?)')
 		.bind(twin, row.repository_id, row.state, row.document, row.updated_at).run();
 	const api = bearer(world, await world.cliSession());
@@ -880,12 +909,19 @@ test('editing an adopted stream clears publications and leaves observation', asy
 	const { reopened } = await adopt(repository);
 	const api = bearer(world, await world.cliSession());
 	const stored = async () =>
-		z.object({
-			streams: z.record(
-				z.string(),
-				z.object({ workflows: z.record(z.string(), z.object({ mode: z.string() }).loose()).optional() }).loose(),
-			),
-		}).parse(JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/setup-update') ?? '{}'));
+		decodeSync(
+			mutableStruct({
+				streams: mutableRecord(
+					Schema.String,
+					mutableStruct({
+						workflows: Schema.optional(
+							mutableRecord(Schema.String, mutableStruct({ mode: Schema.String }).pipe(preserveUnknown)),
+						),
+					}).pipe(preserveUnknown),
+				),
+			}),
+			JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/setup-update') ?? '{}'),
+		);
 	const apply = async (choices: SetupChoices) => {
 		await applyChoices(api, repository.name, choices);
 	};

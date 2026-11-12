@@ -1,12 +1,13 @@
+import { Schema } from 'effect';
 import { parseDocument } from 'yaml';
-import { z } from 'zod';
+import { looseStruct, mutableArray, mutableRecord, safeDecode } from '@/schema';
 
-const jobSchema = z.looseObject({
-	name: z.unknown().optional(),
-	needs: z.union([z.string(), z.array(z.string())]).optional(),
-	if: z.unknown().optional(),
+const jobSchema = looseStruct({
+	name: Schema.optional(Schema.Unknown),
+	needs: Schema.optional(Schema.Union([Schema.String, mutableArray(Schema.String)])),
+	if: Schema.optional(Schema.Unknown),
 });
-const workflowSchema = z.looseObject({ jobs: z.record(z.string(), jobSchema) });
+const workflowSchema = looseStruct({ jobs: mutableRecord(Schema.String, jobSchema) });
 
 export interface GateJob {
 	display?: string;
@@ -31,7 +32,7 @@ export function jobNeeds<T>(needs: T | T[] | undefined): T[] {
 export function workflowJobs(source: string): WorkflowJobs | undefined {
 	const document = parseDocument(source);
 	if (document.errors.length) return undefined;
-	const parsed = workflowSchema.safeParse(document.toJS());
+	const parsed = safeDecode(workflowSchema, document.toJS());
 	if (!parsed.success) return undefined;
 	return new Map(
 		Object.entries(parsed.data.jobs).map(([key, job]): [string, GateJob] => {

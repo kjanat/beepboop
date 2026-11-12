@@ -1,8 +1,8 @@
 import { Context, Effect, Layer } from 'effect';
-import type { z } from 'zod';
 import type { DomainError } from '@/contract/errors';
 import { parseWith } from '@/decode';
-import { fromPromise, fromSync } from '@/failure';
+import { fromPromise, toDomainError } from '@/failure';
+import type { Contract, Decoded } from '@/schema';
 
 export interface SqlResult {
 	results: unknown[];
@@ -29,7 +29,8 @@ export interface Sql {
 	readonly batch: (statements: SqlStatement[]) => Effect.Effect<unknown[], DomainError>;
 }
 
-export function sql(db: SqlDatabase): Sql {
+export function sql(db: SqlDatabase | Sql): Sql {
+	if ('statement' in db) return db;
 	const statement = (query: string, ...values: unknown[]) =>
 		values.length ? db.prepare(query).bind(...values) : db.prepare(query);
 	return {
@@ -42,11 +43,11 @@ export function sql(db: SqlDatabase): Sql {
 	};
 }
 
-export const parse = parseWith(fromSync);
+export const parse = parseWith(toDomainError);
 
-export function optionalColumn<S extends z.ZodType, T>(
+export function optionalColumn<S extends Contract, T>(
 	schema: S,
-	pick: (row: z.output<S>) => T,
+	pick: (row: Decoded<S>) => T,
 ): (row: unknown) => Effect.Effect<T | undefined, DomainError> {
 	return row => row === null ? Effect.undefined : parse(schema, row).pipe(Effect.map(pick));
 }

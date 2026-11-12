@@ -1,11 +1,11 @@
 import type { Out } from '@kjanat/dreamcli';
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema } from 'effect';
 import type { Look, State } from '@/cli/look';
 import { lookOf, registryOf, table } from '@/cli/look';
 import { emit } from '@/cli/output';
 import type { CredentialsView, ExecutionView, NotificationsView, RepositoryView } from '@/contract/views';
 import { planReview } from '@/contract/views';
+import { looseStruct, mutableArray, mutableRecord, safeDecode } from '@/schema';
 
 const executionStates: Record<string, State> = {
 	succeeded: 'published',
@@ -39,34 +39,34 @@ export function repositoryTable(out: Out, repositories: readonly RepositoryView[
 		})), 'No repositories are enrolled.');
 }
 
-const shownPackage = z.looseObject({
-	name: z.string(),
-	manager: z.string(),
-	version: z.string().optional(),
-	manifest: z.string(),
-	publicationStatus: z.string().optional(),
-	published: z.string().optional(),
+const shownPackage = looseStruct({
+	name: Schema.String,
+	manager: Schema.String,
+	version: Schema.optional(Schema.String),
+	manifest: Schema.String,
+	publicationStatus: Schema.optional(Schema.String),
+	published: Schema.optional(Schema.String),
 });
-const shownRepository = z.looseObject({
-	inventory: z.looseObject({ packages: z.array(shownPackage) }).optional(),
-	configuration: z.looseObject({
-		streams: z.record(
-			z.string(),
-			z.looseObject({
-				packages: z.array(z.string()).optional(),
-				promote: z.looseObject({ approval: z.string().optional() }).optional(),
-				prepare: z.looseObject({ bump: z.string().optional() }).optional(),
-				start: z.array(z.looseObject({ via: z.string() })).optional(),
+const shownRepository = looseStruct({
+	inventory: Schema.optional(looseStruct({ packages: mutableArray(shownPackage) })),
+	configuration: Schema.optional(looseStruct({
+		streams: mutableRecord(
+			Schema.String,
+			looseStruct({
+				packages: Schema.optional(mutableArray(Schema.String)),
+				promote: Schema.optional(looseStruct({ approval: Schema.optional(Schema.String) })),
+				prepare: Schema.optional(looseStruct({ bump: Schema.optional(Schema.String) })),
+				start: Schema.optional(mutableArray(looseStruct({ via: Schema.String }))),
 			}),
 		),
-	}).optional(),
+	})),
 });
 
 export function repositoryView(out: Out, repository: RepositoryView) {
 	if (out.jsonMode) return emit(out, repository);
 	return Effect.sync(() => {
 		const look = lookOf(out);
-		const detail = shownRepository.safeParse(repository);
+		const detail = safeDecode(shownRepository, repository);
 		out.log(look.heading(`${look.pkg(repository.name)} on ${repository.defaultBranch} at ${look.sha(repository.sha)}`));
 		const streams = Object.entries(detail.success ? detail.data.configuration?.streams ?? {} : {});
 		if (streams.length) {
@@ -121,7 +121,7 @@ export function executionTable(out: Out, executions: readonly ExecutionView[], j
 		})), 'No release operations yet.');
 }
 
-const reasoned = z.looseObject({ reason: z.string().optional() });
+const reasoned = looseStruct({ reason: Schema.optional(Schema.String) });
 
 export function executionView(out: Out, execution: ExecutionView) {
 	if (out.jsonMode) return emit(out, execution);
@@ -134,7 +134,7 @@ export function executionView(out: Out, execution: ExecutionView) {
 				execution.version ? ` ${look.version(execution.version)}` : ''
 			} at ${look.sha(execution.sourceSha)}`,
 		);
-		const reason = reasoned.safeParse(execution);
+		const reason = safeDecode(reasoned, execution);
 		if (reason.success && reason.data.reason) out.log(look.note(reason.data.reason));
 	});
 }
@@ -158,11 +158,11 @@ export function credentialTables(out: Out, view: CredentialsView, names: Readonl
 			);
 		}
 		if (view.grants.length) {
-			const grant = z.looseObject({ stream: z.string().optional(), operation: z.string().optional() });
+			const grant = looseStruct({ stream: Schema.optional(Schema.String), operation: Schema.optional(Schema.String) });
 			table(
 				out,
 				view.grants.map(row => {
-					const scope = grant.safeParse(row);
+					const scope = safeDecode(grant, row);
 					return {
 						grant: look.id(row.id),
 						secret: look.pkg(row.alias),
@@ -193,7 +193,7 @@ export function notificationTable(out: Out, view: NotificationsView) {
 }
 
 export function planView(out: Out, plan: unknown, prepare: (sourceSha: string, planId: string) => string) {
-	const parsed = planReview.safeParse(plan);
+	const parsed = safeDecode(planReview, plan);
 	if (out.jsonMode || !parsed.success) return emit(out, plan);
 	return Effect.sync(() => {
 		const look = lookOf(out);

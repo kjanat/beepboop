@@ -20,6 +20,6 @@ export function attemptWith<E>(refusal: Refusal<E>): <A>(run: () => A) => Result
 
 export function awaitWith<E>(
 	refusal: (message: string, cause: unknown) => E,
-): <A>(run: () => Promise<A>) => Effect.Effect<A, E> {
+): <A>(run: (signal: AbortSignal) => Promise<A>) => Effect.Effect<A, E> {
 	return run => Effect.tryPromise({ try: run, catch: error => refusal(errorMessage(error), error) });
 }

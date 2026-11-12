@@ -1,8 +1,7 @@
 #!/usr/bin/env bun
 import type { CLIError, InteractiveResult, Out, SpinnerHandle } from '@kjanat/dreamcli';
 import { arg, cli, command, flag, group } from '@kjanat/dreamcli';
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema } from 'effect';
 import { Client } from '@/cli/client';
 import type { SecurityKeyPrompts } from '@/cli/fido2/index';
 import { readJson } from '@/cli/json-file';
@@ -42,6 +41,7 @@ import {
 	versionScopes,
 } from '@/contract/setup-terms';
 import { executionStates, executionView as executionViewSchema } from '@/contract/views';
+import { looseStruct, safeDecode } from '@/schema';
 
 const base = (name: string, description: string, promptServer = false) =>
 	command(name).description(description)
@@ -64,7 +64,7 @@ const repository = (name: string, description: string) => base(name, description
 function enrolled(client: Client, repository: string) {
 	return client.call(routes.repositoriesResolve, { repository });
 }
-const sessionStatus = z.looseObject({ subject: z.string() });
+const sessionStatus = looseStruct({ subject: Schema.String });
 export const authStatus = base('status', 'Verify your saved session with the server').action(({ flags, out }) =>
 	Effect.runPromise(Effect.gen(function*() {
 		const client = yield* Client.at(flags.server);
@@ -76,7 +76,7 @@ export const authStatus = base('status', 'Verify your saved session with the ser
 			() => 'Session is valid',
 		);
 		if (out.jsonMode) return yield* emit(out, status);
-		const parsed = sessionStatus.safeParse(status);
+		const parsed = safeDecode(sessionStatus, status);
 		out.log(
 			`${look.mark('published')} Signed in to ${look.link(client.origin)}${
 				parsed.success ? ` as ${look.pkg(parsed.data.subject)}` : ''
@@ -478,7 +478,7 @@ function reviewRelease<I extends object>(
 				prepare(client, { ...request, sourceSha: flags.sourceSha, planId: flags.planId }),
 				() => 'Preparation is queued',
 			);
-			const view = executionViewSchema.safeParse(prepared);
+			const view = safeDecode(executionViewSchema, prepared);
 			yield* view.success ? executionView(out, view.data) : emit(out, prepared);
 		}
 	}));
@@ -577,7 +577,7 @@ function securityKey(
 	ask: (prompt: { kind: 'password'; message: string }) => Promise<unknown>,
 ): SecurityKeyPrompts<CLIError> {
 	return {
-		pin: Effect.promise(() => ask({ kind: 'password', message: 'Security key PIN' })).pipe(
+		pin: prompted(() => ask({ kind: 'password', message: 'Security key PIN' })).pipe(
 			Effect.filterOrFail(
 				(value): value is string => typeof value === 'string' && value.length > 0,
 				() => failure('A security key PIN is required', 'PIN_REQUIRED'),
@@ -632,7 +632,10 @@ const secrets = group('secrets').description('Store secret values and list workf
 						client.call(routes.credentialsList, {}),
 						() => `Read ${look.pkg(args.alias)}`,
 					)).credentials.find(row => row.alias === args.alias && row.active === 1)?.version;
-					const piped = yield* Effect.promise(() => stdin.piped());
+					const piped = yield* Effect.tryPromise({
+						try: () => stdin.piped(),
+						catch: () => failure('Could not read stdin', 'INPUT_FAILED'),
+					});
 					const value = piped === null
 						? yield* unprompted(
 							Effect.gen(function*() {

@@ -20,13 +20,26 @@ import {
 import { applySetup, discoverSetup, previewSetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { Effect } from 'effect';
+import { Effect, Schema, Struct } from 'effect';
 import { parse } from 'yaml';
-import { z } from 'zod';
 import { setupOptions } from '@/automation/setup';
 import { ledgerCommand } from '@/automation/setup-defaults';
 import { streamSummary } from '@/automation/setup-summary';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableRecord,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 let world: World;
 eachWorld(created => {
@@ -136,7 +149,7 @@ function unpublished() {
 	world.network.serve('proxy.golang.org', () => new Response(null, { status: 404 }));
 }
 
-const refPlan = z.object({ changes: z.array(z.object({ name: z.string(), commit: z.string() })) });
+const refPlan = mutableStruct({ changes: mutableArray(mutableStruct({ name: Schema.String, commit: Schema.String })) });
 
 test('one approval pushes the tags, then the tag workflow publishes, then the crates publish', async () => {
 	const published = new Map<string, string>();
@@ -228,30 +241,40 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 		'pkg:cargo/lint-core': registries,
 		'pkg:cargo/lint': [...registries, 'pkg:cargo/lint-core'],
 	});
-	const configured = z.object({
-		streams: z.record(
-			z.string(),
-			z.looseObject({
-				needs: z.record(z.string(), z.array(z.string())),
-				promote: z.looseObject({ workflow: z.looseObject({ publications: z.array(z.string()) }) }),
-				workflows: z.record(z.string(), z.looseObject({ needs: z.array(z.string()).optional() })),
-			}),
-		),
-	}).parse(JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'));
+	const configured = decodeSync(
+		mutableStruct({
+			streams: mutableRecord(
+				Schema.String,
+				looseStruct({
+					needs: mutableRecord(Schema.String, mutableArray(Schema.String)),
+					promote: looseStruct({ workflow: looseStruct({ publications: mutableArray(Schema.String) }) }),
+					workflows: mutableRecord(Schema.String, looseStruct({ needs: Schema.optional(mutableArray(Schema.String)) })),
+				}),
+			),
+		}),
+		JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'),
+	);
 	expect(configured.streams[stream.name]?.needs).toEqual(stream.needs);
 	expect(configured.streams[stream.name]?.promote.workflow.publications).toEqual([module]);
 	expect(configured.streams[stream.name]?.workflows.release?.needs).toEqual(['promote']);
 	expect(configured.streams[stream.name]?.workflows.crates?.needs).toEqual(['release']);
 	const stepIds = (file: string, job: string) =>
-		z.object({ jobs: z.record(z.string(), z.object({ steps: z.array(z.looseObject({ id: z.string().optional() })) })) })
-			.parse(parse(plan.edits.find(edit => edit.path === `.github/workflows/${file}`)?.after ?? ''))
+		decodeSync(
+			mutableStruct({
+				jobs: mutableRecord(
+					Schema.String,
+					mutableStruct({ steps: mutableArray(looseStruct({ id: Schema.optional(Schema.String) })) }),
+				),
+			}),
+			parse(plan.edits.find(edit => edit.path === `.github/workflows/${file}`)?.after ?? ''),
+		)
 			.jobs[job]?.steps.flatMap(step => step.id?.startsWith('beepboop_') ? [step.id] : []);
 	expect(stepIds('release-lint.yml', 'promote')).toEqual(['beepboop_token', 'beepboop_refs']);
 	expect(stepIds('publish-crates.yml', 'crates')).toEqual(['beepboop_publish']);
 	const source = (file: string) => plan.edits.find(edit => edit.path === `.github/workflows/${file}`)?.after ?? '';
 	expect(
 		['release-lint.yml', 'publish-crates.yml'].map(file =>
-			z.object({ name: z.string() }).parse(parse(source(file))).name
+			decodeSync(mutableStruct({ name: Schema.String }), parse(source(file))).name
 		),
 	)
 		.toEqual(['Publish lint', 'Publish lint crates']);
@@ -330,7 +353,7 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 		const tags = runOf('release-lint.yml');
 		await begin(world, tags.identity, promotion.id, stream.name, 'promote');
 		const planned = await runAction(world, 'refs-plan', tags.identity, { EXECUTION_ID: promotion.id });
-		const changes = refPlan.parse(JSON.parse(planned.outputs.result ?? '')).changes;
+		const changes = decodeSync(refPlan, JSON.parse(planned.outputs.result ?? '')).changes;
 		expect(changes.map(change => change.name)).toEqual(['lint-v1.1.0', 'go/v1.1.0']);
 		for (const [index, change] of changes.entries()) {
 			world.github.recordTag(repository, change.name, String(index + 1).repeat(40), change.commit, true);
@@ -486,8 +509,15 @@ test('a released Go module that tracks the stream tags is proposed as a companio
 	const api = bearer(world, await world.cliSession());
 	const sdk = 'pkg:golang/github.com/octo/lint/sdk';
 	const configuredStreams = (plan: { edits: { path: string; after: string }[] }) =>
-		z.object({ streams: z.record(z.string(), z.looseObject({ companionModules: z.array(z.string()).optional() })) })
-			.parse(JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}')).streams;
+		decodeSync(
+			mutableStruct({
+				streams: mutableRecord(
+					Schema.String,
+					looseStruct({ companionModules: Schema.optional(mutableArray(Schema.String)) }),
+				),
+			}),
+			JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'),
+		).streams;
 
 	const proposed = await previewSetup(api, repository.name);
 	expect(proposed.blockers).toEqual([]);
@@ -570,8 +600,9 @@ async function mergedSetup(tamper: boolean, login = 'octo') {
 	});
 	await world.wait(2_000);
 	const rows = await world.db.prepare('SELECT document FROM grants WHERE repository_id=?').bind(repository.id).all();
-	return z.array(z.object({ document: z.string() })).parse(rows.results).map(row =>
-		z.looseObject({ alias: z.string(), operation: z.string(), workflow: z.string(), ref: z.string() }).parse(
+	return decodeSync(mutableArray(mutableStruct({ document: Schema.String })), rows.results).map(row =>
+		decodeSync(
+			looseStruct({ alias: Schema.String, operation: Schema.String, workflow: Schema.String, ref: Schema.String }),
 			JSON.parse(row.document),
 		)
 	);
@@ -600,7 +631,8 @@ test('an uncustomized setup PR follows the current proposal when the default bra
 	world.github.push(repository, { 'sdk/go.mod': 'module github.com/octo/lint/sdk\n\ngo 1.26\n' }, 'Add the SDK');
 	expect((await world.push(repository)).status).toBe(202);
 	await world.wait(5_000);
-	const configured = z.object({ streams: z.record(z.string(), z.object({ packages: z.array(z.string()) })) }).parse(
+	const configured = decodeSync(
+		mutableStruct({ streams: mutableRecord(Schema.String, mutableStruct({ packages: mutableArray(Schema.String) })) }),
 		JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'),
 	);
 	expect(configured.streams.lint?.packages).toContain('pkg:golang/github.com/octo/lint/sdk');
@@ -640,9 +672,15 @@ async function stagedRelease() {
 	const merged = world.github.merge(repository, 1);
 	passChecks(repository, merged.sha);
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
-	const configured = z.object({
-		streams: z.record(z.string(), z.object({ workflows: z.record(z.string(), z.looseObject({})) })),
-	}).parse(JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}'));
+	const configured = decodeSync(
+		mutableStruct({
+			streams: mutableRecord(
+				Schema.String,
+				mutableStruct({ workflows: mutableRecord(Schema.String, looseStruct({})) }),
+			),
+		}),
+		JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}'),
+	);
 	expect(configured.streams[stream.name]?.workflows.crates).toMatchObject({
 		needs: ['release'],
 		needsJobs: { release: ['plan', 'build', 'assemble'] },
@@ -740,9 +778,10 @@ test('a completed run starts the crates when its build jobs passed, after tracki
 	await world.wait(30_000 * 11);
 	expect([...storage.snapshot()].filter(([key]) => key.startsWith('track:'))).toEqual([]);
 	const dead = await world.db.prepare('SELECT target FROM audit WHERE action=?').bind('track.dead').all();
-	expect(z.array(z.object({ target: z.string() })).parse(dead.results).map(row => row.target)).toEqual([
-		expect.stringMatching(/^run 9200 after 10 attempts: GitHub unreachable on GET .*\/jobs/),
-	]);
+	expect(decodeSync(mutableArray(mutableStruct({ target: Schema.String })), dead.results).map(row => row.target))
+		.toEqual([
+			expect.stringMatching(/^run 9200 after 10 attempts: GitHub unreachable on GET .*\/jobs/),
+		]);
 	expect(crateRuns()).toEqual([]);
 	world.network.serve('api.github.com', request => world.github.handle(request));
 	run.jobs = [...passedBuild, { name: 'npm', status: 'completed', conclusion: 'failure' }];
@@ -809,7 +848,8 @@ for (const scenario of ['observed', 'unobserved', 'renamed'] as const) {
 			expect(applied.status).toBe(200);
 			const merged = world.github.merge(repository, 1);
 			passChecks(repository, merged.sha);
-			const discovered = z.object({ findings: z.array(z.looseObject({ message: z.string() })) }).parse(
+			const discovered = decodeSync(
+				mutableStruct({ findings: mutableArray(looseStruct({ message: Schema.String })) }),
 				(await api('/api/repositories/discover', { repository: repository.name })).body,
 			);
 			const stranded = `Version tag lint-v1.0.0 already targets ${tagged.slice(0, 12)}, so ${

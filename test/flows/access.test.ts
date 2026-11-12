@@ -10,16 +10,31 @@ import { bearer, field, text } from '@root/test/support/http.ts';
 import type { World } from '@root/test/support/world.ts';
 import { adminSubject, eachWorld, origin } from '@root/test/support/world.ts';
 import { experimental_AstroContainer } from 'astro/container';
-import { Effect } from 'effect';
-import { z } from 'zod';
-import { AutomationService } from '@/automation/service';
+import { Effect, Schema, Struct } from 'effect';
+import { withAutomation } from '@/automation/service';
 import { Store } from '@/automation/store';
 import { errorEnvelope } from '@/contract/errors';
 import { readiness } from '@/domain/repository';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableRecord,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 import { loaders } from '@/server/loaders';
 
 type Component = Parameters<experimental_AstroContainer['renderToString']>[0];
-const componentModule = z.object({ default: z.custom<Component>(value => typeof value === 'function') });
+const componentModule = mutableStruct({
+	default: Schema.declare<Component>((value): value is Component => typeof value === 'function'),
+});
 const repositoriesComponent = join(import.meta.dir, '../../src/components/Repositories.astro');
 
 let world: World;
@@ -40,14 +55,14 @@ async function journalAccess(repository: Repository): Promise<unknown> {
 }
 
 function refusal(response: Reply): { status: number; error: string } {
-	return { status: response.status, error: errorEnvelope.parse(response.body).error };
+	return { status: response.status, error: decodeSync(errorEnvelope, response.body).error };
 }
 
 async function badge(): Promise<string> {
-	const data = await Effect.runPromise(loaders.repositories({ env: world.env, actor: adminSubject }));
+	const data = await world.run(loaders.repositories({ env: world.env, actor: adminSubject }));
 	const loaded: unknown = await import(repositoriesComponent);
 	const container = await experimental_AstroContainer.create();
-	const html = await container.renderToString(componentModule.parse(loaded).default, {
+	const html = await container.renderToString(decodeSync(componentModule, loaded).default, {
 		props: { data },
 		request: new Request(`${origin}/repositories`),
 	});
@@ -129,11 +144,15 @@ test('a suspended repository refuses releases and returns only where GitHub rest
 	).toBe(202);
 	expect(readiness(await stored(repository)).kind).toBe('ready');
 
-	const legacy = z.record(z.string(), z.unknown()).parse(JSON.parse(
-		z.object({ document: z.string() }).parse(
-			await world.db.prepare('SELECT document FROM repositories WHERE id=?').bind(repository.id).first(),
-		).document,
-	));
+	const legacy = decodeSync(
+		mutableRecord(Schema.String, Schema.Unknown),
+		JSON.parse(
+			decodeSync(
+				mutableStruct({ document: Schema.String }),
+				await world.db.prepare('SELECT document FROM repositories WHERE id=?').bind(repository.id).first(),
+			).document,
+		),
+	);
 	const finding = { code: 'unsupported', severity: 'blocking', message: 'App access removed or suspended' };
 	world.advance(60_000);
 	await world.db.prepare(
@@ -177,7 +196,8 @@ test('a lost unsuspend webhook leaves refresh suspended until discover asks GitH
 	expect(refreshed.diagnostics).toEqual([]);
 	expect(await journalAccess(repository)).toEqual({ suspended: true });
 
-	const document = z.object({ document: z.string() }).parse(
+	const document = decodeSync(
+		mutableStruct({ document: Schema.String }),
 		await world.db.prepare('SELECT document FROM repositories WHERE id=?').bind(repository.id).first(),
 	).document;
 	const deployed = new TestD1(migrationFiles().filter(file => file < '0012'));
@@ -210,7 +230,7 @@ test('discover and the cron refresh rewrite a repository row that no longer deco
 	expect(text((await api('/api/repositories/resolve', { repository: 'widget' })).body, 'name')).toBe('octo/widget');
 
 	await corrupt();
-	await Effect.runPromise(new AutomationService(world.env).scheduled());
+	await world.run(withAutomation(service => service.scheduled));
 	expect(readiness(await stored(repository)).kind).toBe('ready');
 	expect(world.network.unrouted).toEqual([]);
 });

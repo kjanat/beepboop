@@ -1,4 +1,5 @@
-import { z } from 'zod';
+import { Schema } from 'effect';
+import { mutableStruct } from '@/schema';
 
 export const exclusionReasons = [
 	'private',
@@ -17,11 +18,14 @@ export function excluded(reason: ExclusionReason): PackagePublication {
 }
 export function publicationSchema(
 	errors: { publication?: string; reason?: string } = {},
-): z.ZodType<PackagePublication> {
-	return z.discriminatedUnion('kind', [
-		z.object({ kind: z.literal('registry') }),
-		z.object({ kind: z.literal('excluded'), reason: z.enum(exclusionReasons, { error: errors.reason }) }),
-	], { error: errors.publication });
+): Schema.Codec<PackagePublication, unknown> {
+	return Schema.Union([
+		mutableStruct({ kind: Schema.Literal('registry') }),
+		mutableStruct({
+			kind: Schema.Literal('excluded'),
+			reason: Schema.Literals(exclusionReasons).annotate({ message: errors.reason }),
+		}),
+	]);
 }
 export function publishable(pkg: { publication: PackagePublication }): boolean {
 	return pkg.publication.kind === 'registry';

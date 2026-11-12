@@ -14,6 +14,7 @@ import type { SetupFlagValues } from '@/cli/setup-flags';
 import { applySetupFlags, readSetupFlags } from '@/cli/setup-flags';
 import { routes } from '@/contract/routes';
 import { setupChoicesSchema } from '@/contract/setup';
+import { safeDecode, schemaIssues } from '@/schema';
 
 function parsePlan(value: unknown): Effect.Effect<SetupPlan, CLIError> {
 	return parseSetupPlan(value).pipe(Effect.mapError(error => failure(error.message, 'INVALID_PLAN')));
@@ -121,7 +122,12 @@ export function setupRepository(
 			);
 			const plan = yield* parsePlan(preview);
 			const output = flags.output;
-			if (output) yield* Effect.promise(() => Bun.write(output, `${JSON.stringify(preview, null, 2)}\n`));
+			if (output) {
+				yield* Effect.tryPromise({
+					try: () => Bun.write(output, `${JSON.stringify(preview, null, 2)}\n`),
+					catch: () => failure('Could not write setup preview', 'OUTPUT_FAILED'),
+				});
+			}
 			if (out.jsonMode) return yield* emit(out, preview);
 			describe(plan);
 			if (plan.blockers.length) return out.setExitCode(1);
@@ -160,7 +166,12 @@ export function setupRepository(
 		);
 		const plan = yield* parsePlan(preview);
 		const output = flags.output;
-		if (output) yield* Effect.promise(() => Bun.write(output, `${JSON.stringify(preview, null, 2)}\n`));
+		if (output) {
+			yield* Effect.tryPromise({
+				try: () => Bun.write(output, `${JSON.stringify(preview, null, 2)}\n`),
+				catch: () => failure('Could not write setup preview', 'OUTPUT_FAILED'),
+			});
+		}
 		if (out.jsonMode) return yield* emit(out, preview);
 		if (output) {
 			describe(plan);
@@ -200,9 +211,9 @@ export function setupRepository(
 
 function chosenWithFlags(file: string, given: SetupFlagValues, plan: SetupPlan) {
 	return Effect.gen(function*() {
-		const parsed = setupChoicesSchema.safeParse(yield* readJson(file));
+		const parsed = safeDecode(setupChoicesSchema, yield* readJson(file));
 		if (!parsed.success) {
-			const [issue] = parsed.error.issues;
+			const [issue] = schemaIssues(parsed.error);
 			return yield* Effect.fail(
 				failure(
 					`--choices ${file}: ${issue ? `${issue.path.join('.')}: ${issue.message}` : parsed.error.message}`,

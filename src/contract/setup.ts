@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { Effect, Schema, Struct } from 'effect';
 import { supportedTargets } from '@/contract/binary-platforms';
 import {
 	jobKeyPattern,
@@ -17,6 +17,17 @@ import {
 	versionPrMerge,
 } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
+import type { Decoded, Encoded } from '@/schema';
+import {
+	mapped,
+	matchesPattern,
+	mutableArray,
+	mutableRecord,
+	mutableStruct,
+	refined,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 export const defaultBinaryTargets = [
 	'linux-amd64',
@@ -45,12 +56,13 @@ export const binaryTargets = [
 	'aix-ppc64',
 ] as const;
 export type BinaryTarget = (typeof binaryTargets)[number];
-const identifier = z.string().regex(identifierPattern);
-const directory = z.string().regex(/^(?:\.|[\w.-]+(?:\/[\w.-]+)*)$/).refine(
+const identifier = Schema.String.check(matchesPattern(identifierPattern));
+const directory = refined(
+	Schema.String.check(matchesPattern(/^(?:\.|[\w.-]+(?:\/[\w.-]+)*)$/)),
 	value => !value.split('/').includes('..'),
 	'Invalid directory',
 );
-const binaryName = z.string().regex(/^[A-Za-z0-9][\w.-]*$/);
+const binaryName = Schema.String.check(matchesPattern(/^[A-Za-z0-9][\w.-]*$/));
 export const assetPlaceholders = [
 	'name',
 	'version',
@@ -64,54 +76,70 @@ export const assetPlaceholders = [
 	'uname.arch',
 ] as const;
 export type AssetPlaceholder = (typeof assetPlaceholders)[number];
-const asset = z.string().regex(/^(?:[\w.-]|\{[\w.]+\})+$/).refine(
+const asset = refined(
+	Schema.String.check(matchesPattern(/^(?:[\w.-]|\{[\w.]+\})+$/)),
 	value =>
 		[...value.matchAll(/\{([\w.]+)\}/g)].every(([, key]) => assetPlaceholders.some(placeholder => placeholder === key)),
 	'Unknown asset placeholder',
 );
-export const binaryBuild = z.discriminatedUnion('toolchain', [
-	z.object({
-		toolchain: z.literal('go'),
-		name: binaryName,
-		module: directory,
-		package: z.string().regex(/^\.(?:\/[\w.-]+)*$/).refine(value => !value.split('/').includes('..'), 'Invalid package')
-			.default('.'),
-		asset: asset.default('{name}-{go.os}-{go.arch}{ext}'),
-	}).strict(),
-	z.object({
-		toolchain: z.literal('cargo'),
-		name: binaryName,
-		manifest: z.string().regex(/^(?:[\w.-]+\/)*Cargo\.toml$/).refine(
-			value => !value.split('/').includes('..'),
-			'Invalid manifest',
-		),
-		asset: asset.default('{name}-{rust.target}{ext}'),
-	}).strict(),
-]);
-export type BinaryBuild = z.infer<typeof binaryBuild>;
-export const binaries = z.object({
-	builds: z.array(binaryBuild).min(1).refine(
-		builds => new Set(builds.map(build => build.name)).size === builds.length,
-		'Binary names must be unique',
+export const binaryBuild = Schema.Union([
+	strictStruct(
+		mutableStruct({
+			toolchain: Schema.Literal('go'),
+			name: binaryName,
+			module: directory,
+			package: refined(
+				Schema.String.check(matchesPattern(/^\.(?:\/[\w.-]+)*$/)),
+				value => !value.split('/').includes('..'),
+				'Invalid package',
+			).pipe(Schema.withDecodingDefault(Effect.succeed('.'))),
+			asset: asset.pipe(Schema.withDecodingDefault(Effect.succeed('{name}-{go.os}-{go.arch}{ext}'))),
+		}).fields,
 	),
-	targets: z.array(z.enum(binaryTargets)).min(1).refine(
-		targets => new Set(targets).size === targets.length,
-		'Targets must be unique',
-	).default([...defaultBinaryTargets]),
-}).strict().superRefine((release, context) => {
-	for (const build of release.builds) {
-		for (const target of release.targets) {
-			if (!supportedTargets(build.toolchain).includes(target)) {
-				context.addIssue({
-					code: 'custom',
-					path: ['targets'],
-					message: `${build.toolchain} has no build recipe for ${target}`,
-				});
+	strictStruct(
+		mutableStruct({
+			toolchain: Schema.Literal('cargo'),
+			name: binaryName,
+			manifest: refined(
+				Schema.String.check(matchesPattern(/^(?:[\w.-]+\/)*Cargo\.toml$/)),
+				value => !value.split('/').includes('..'),
+				'Invalid manifest',
+			),
+			asset: asset.pipe(Schema.withDecodingDefault(Effect.succeed('{name}-{rust.target}{ext}'))),
+		}).fields,
+	),
+]);
+export type BinaryBuild = Decoded<typeof binaryBuild>;
+export const binaries = withValidation(
+	strictStruct(
+		mutableStruct({
+			builds: refined(
+				mutableArray(binaryBuild).check(Schema.isMinLength(1)),
+				builds => new Set(builds.map(build => build.name)).size === builds.length,
+				'Binary names must be unique',
+			),
+			targets: refined(
+				mutableArray(Schema.Literals(binaryTargets)).check(Schema.isMinLength(1)),
+				targets => new Set(targets).size === targets.length,
+				'Targets must be unique',
+			).pipe(Schema.withDecodingDefault(Effect.succeed([...defaultBinaryTargets]))),
+		}).fields,
+	),
+	(release, context) => {
+		for (const build of release.builds) {
+			for (const target of release.targets) {
+				if (!supportedTargets(build.toolchain).includes(target)) {
+					context.addIssue({
+						code: 'custom',
+						path: ['targets'],
+						message: `${build.toolchain} has no build recipe for ${target}`,
+					});
+				}
 			}
 		}
-	}
-});
-export type BinaryRelease = z.infer<typeof binaries>;
+	},
+);
+export type BinaryRelease = Decoded<typeof binaries>;
 export interface BinaryCandidate {
 	package: string;
 	build: BinaryBuild;
@@ -126,82 +154,120 @@ export function unbuildable(candidate: BinaryCandidate, targets: readonly Binary
 }
 export const workflowTriggers = ['review', 'dispatchOnly', 'preserve'] as const;
 export const streamVersionings = ['workspace', 'independent', 'none'] as const;
-const workflow = z.object({
-	file: z.string().regex(workflowFilePattern),
-	job: z.string().optional(),
-	triggers: z.enum(workflowTriggers).default('review'),
-	commands: z.string().default(''),
-	/** Map publication identities to existing step IDs, for accurate outcome reporting. */
-	publicationSteps: z.record(z.string(), z.string()).default({}),
-	/** Environment variable name to stored credential alias, for the setup commands step. */
-	credentials: z.record(z.string().regex(githubSecretNamePattern), z.string().regex(credentialAliasPattern)).optional(),
-	/** Prefix of the version tag the publication workflow pushes, such as `v` or `cli-v`. */
-	tagPrefix: z.string().regex(tagPrefixPattern).refine(validTagPrefix, 'Invalid tag prefix').optional(),
-	binaries: binaries.optional(),
-}).strict();
-export const workflowSetup = workflow.omit({ file: true, triggers: true }).extend({
-	existingTriggers: existingTriggers.optional().describe(existingTriggersDescription),
-	triggers: z.enum(workflowTriggers).optional().meta({ deprecated: true }),
-}).transform(({ existingTriggers: handover, triggers, ...rest }) => ({
-	...rest,
-	triggers: handover ? triggersOfExistingTriggers[handover] : triggers ?? 'review',
-})).meta({
-	id: 'workflowSetup',
+const workflow = strictStruct(
+	mutableStruct({
+		file: Schema.String.check(matchesPattern(workflowFilePattern)),
+		job: Schema.optional(Schema.String),
+		triggers: Schema.Literals(workflowTriggers).pipe(Schema.withDecodingDefault(Effect.succeed('review'))),
+		commands: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(''))),
+		/** Map publication identities to existing step IDs, for accurate outcome reporting. */
+		publicationSteps: mutableRecord(Schema.String, Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+		/** Environment variable name to stored credential alias, for the setup commands step. */
+		credentials: Schema.optional(
+			mutableRecord(
+				Schema.String.check(matchesPattern(githubSecretNamePattern)),
+				Schema.String.check(matchesPattern(credentialAliasPattern)),
+			),
+		),
+		/** Prefix of the version tag the publication workflow pushes, such as `v` or `cli-v`. */
+		tagPrefix: Schema.optional(
+			refined(Schema.String.check(matchesPattern(tagPrefixPattern)), validTagPrefix, 'Invalid tag prefix'),
+		),
+		binaries: Schema.optional(binaries),
+	}).fields,
+);
+export const workflowSetupValue = Schema.toType(strictStruct({
+	...Struct.omit(workflow.fields, ['file', 'triggers']),
+	triggers: Schema.Literals(workflowTriggers),
+}));
+export const workflowSetup = mapped(
+	strictStruct({
+		...Struct.omit(workflow.fields, ['file', 'triggers']),
+		...{
+			existingTriggers: Schema.optional(existingTriggers).annotate({ description: existingTriggersDescription }),
+			triggers: Schema.optional(Schema.Literals(workflowTriggers)).annotate({ deprecated: true }),
+		},
+	}),
+	workflowSetupValue,
+	({ existingTriggers: handover, triggers, ...rest }) => ({
+		...rest,
+		triggers: handover ? triggersOfExistingTriggers[handover] : triggers ?? 'review',
+	}),
+	value => value,
+).annotate({
+	identifier: 'workflowSetup',
 	description: 'Setup input that generates this workflow file. Change it through a setup update PR.',
 });
-export type WorkflowSetup = z.output<typeof workflowSetup>;
-export type WorkflowSetupInput = z.input<typeof workflowSetup>;
+export type WorkflowSetup = Decoded<typeof workflowSetup>;
+export type WorkflowSetupInput = Encoded<typeof workflowSetup>;
 export const actionsRevisionPattern = /^(?:[a-f0-9]{40}|v\d+(?:\.\d+){0,2})$/;
-const observed = z.object({
-	name: identifier,
-	file: z.string().regex(workflowFilePattern),
-	ref: z.string().regex(refPattern).refine(validRef, 'Invalid workflow ref').optional(),
-	publications: z.array(z.string()).default([]),
-	needs: z.array(identifier).optional(),
-}).strict();
-const operation = workflow.extend({
-	name: identifier.refine(
-		name => name !== 'prepare' && name !== 'promote',
-		'prepare and promote are reserved operation names',
-	),
-	needs: z.array(identifier).min(1),
-	needsJobs: z.record(identifier, z.array(z.string().regex(jobKeyPattern)).min(1))
-		.optional(),
-	publications: z.array(z.string()).default([]),
-}).strict();
+const observed = strictStruct(
+	mutableStruct({
+		name: identifier,
+		file: Schema.String.check(matchesPattern(workflowFilePattern)),
+		ref: Schema.optional(refined(Schema.String.check(matchesPattern(refPattern)), validRef, 'Invalid workflow ref')),
+		publications: mutableArray(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+		needs: Schema.optional(mutableArray(identifier)),
+	}).fields,
+);
+const operation = strictStruct(
+	mutableStruct({
+		...workflow.fields,
+		...{
+			name: refined(
+				identifier,
+				name => name !== 'prepare' && name !== 'promote',
+				'prepare and promote are reserved operation names',
+			),
+			needs: mutableArray(identifier).check(Schema.isMinLength(1)),
+			needsJobs: Schema.optional(
+				mutableRecord(
+					identifier,
+					mutableArray(Schema.String.check(matchesPattern(jobKeyPattern))).check(Schema.isMinLength(1)),
+				),
+			),
+			publications: mutableArray(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+		},
+	}).fields,
+);
 export const setupWorkflow = workflow;
-export const setupStream = z.object({
-	name: identifier,
-	packages: z.array(z.string()),
-	versioning: z.enum(streamVersionings),
-	approval: z.enum(approvalPolicies).optional(),
-	start: z.array(startChannel).optional(),
-	bump: versionBump.optional(),
-	versionPrMerge: versionPrMerge.optional(),
-	required: z.array(z.string()),
-	versionSource: z.object({
-		kind: z.literal('tags'),
-		prefix: z.string().regex(tagPrefixPattern).refine(validTagPrefix, 'Invalid tag prefix'),
-	}).strict()
-		.optional(),
-	versionFiles: z.array(versionFileSchema).optional(),
-	companionModules: z.array(z.string()).optional(),
-	observe: z.array(observed).optional(),
-	needs: z.record(z.string(), z.array(z.string())).optional(),
-	prepare: workflow.optional(),
-	promote: workflow.optional(),
-	operations: z.array(operation).optional(),
-}).strict();
-type SetupStream = z.infer<typeof setupStream>;
+export const setupStream = strictStruct(
+	mutableStruct({
+		name: identifier,
+		packages: mutableArray(Schema.String),
+		versioning: Schema.Literals(streamVersionings),
+		approval: Schema.optional(Schema.Literals(approvalPolicies)),
+		start: Schema.optional(mutableArray(startChannel)),
+		bump: Schema.optional(versionBump),
+		versionPrMerge: Schema.optional(versionPrMerge),
+		required: mutableArray(Schema.String),
+		versionSource: Schema.optional(strictStruct(
+			mutableStruct({
+				kind: Schema.Literal('tags'),
+				prefix: refined(Schema.String.check(matchesPattern(tagPrefixPattern)), validTagPrefix, 'Invalid tag prefix'),
+			}).fields,
+		)),
+		versionFiles: Schema.optional(mutableArray(versionFileSchema)),
+		companionModules: Schema.optional(mutableArray(Schema.String)),
+		observe: Schema.optional(mutableArray(observed)),
+		needs: Schema.optional(mutableRecord(Schema.String, mutableArray(Schema.String))),
+		prepare: Schema.optional(workflow),
+		promote: Schema.optional(workflow),
+		operations: Schema.optional(mutableArray(operation)),
+	}).fields,
+);
+type SetupStream = Decoded<typeof setupStream>;
 export function bumpable(stream: SetupStream): boolean {
 	return !!stream.promote && stream.versionSource?.kind !== 'tags';
 }
 export function startable(stream: SetupStream): boolean {
 	return bumpable(stream) && stream.versioning !== 'independent';
 }
-export const setupChoicesSchema = z.object({
-	streams: z.array(setupStream),
-	/** Full commit of the published Actions distribution, required for external actions. */
-	actionsRevision: z.string().regex(actionsRevisionPattern).optional(),
-}).strict();
-export type SetupChoices = z.infer<typeof setupChoicesSchema>;
+export const setupChoicesSchema = strictStruct(
+	mutableStruct({
+		streams: mutableArray(setupStream),
+		/** Full commit of the published Actions distribution, required for external actions. */
+		actionsRevision: Schema.optional(Schema.String.check(matchesPattern(actionsRevisionPattern))),
+	}).fields,
+);
+export type SetupChoices = Decoded<typeof setupChoicesSchema>;

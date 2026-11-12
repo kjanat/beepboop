@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import { matchesPackage, packageId } from '@/automation/package-identity';
 import type { Package } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
@@ -109,7 +109,7 @@ export function planRefs(
 	modulePrefixes: string[] = [],
 ): Effect.Effect<RefChange[], DomainError> {
 	return Effect.gen(function*() {
-		const normalized = yield* fromSync(() => semVer.parse(version));
+		const normalized = yield* fromSync(() => Schema.decodeSync(semVer)(version));
 		const conflict = tagConflict(policy, normalized, commit, refs, modulePrefixes);
 		if (conflict) return yield* precondition(conflictMessage(conflict));
 		const tag = tagFor(policy, normalized);

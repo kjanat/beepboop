@@ -1,17 +1,20 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { Invalid } from '@root/actions/runtime/protocol.ts';
 import { ActionFailure, attempt, attemptAsync, fail, required } from '@root/actions/runtime/protocol.ts';
 import { call, mask, serviceOrigin } from '@root/actions/runtime/session.ts';
-import { Effect } from 'effect';
-import { z } from 'zod';
+import type { Scope } from 'effect';
+import { Clock, Effect, Schema } from 'effect';
 import { githubSecretNamePattern } from '@/contract/ids.ts';
 import type { LedgerEntry, LedgerPackage } from '@/contract/ledger.ts';
 import { claimStep, nextStep, publishWaitMinutes, settledStep } from '@/contract/ledger.ts';
 import { filled, lacking, licenseFile, readmeFile } from '@/contract/package-metadata.ts';
 import { textSchema } from '@/model.ts';
+import { terminate } from '@/runtime/process.ts';
+import type { Contract, Decoded } from '@/schema';
+import { decodeSync, matchesPattern, mutableArray, mutableRecord, mutableStruct } from '@/schema';
 import { sha256Hex } from '@/sha256.ts';
 
 export interface Command {
@@ -44,38 +47,43 @@ function sha256(path: string): Effect.Effect<string, ActionFailure> {
 	return Effect.fromResult(attempt(() => sha256Hex(readFileSync(path))));
 }
 
-function scratch(name: string): Effect.Effect<string, ActionFailure> {
-	return Effect.fromResult(
-		attempt(() =>
-			mkdtempSync(join(process.env.RUNNER_TEMP || tmpdir(), `beepboop-${name.replace(/[^\w.-]+/g, '-')}-`))
-		),
+function scratch(name: string): Effect.Effect<string, ActionFailure, Scope.Scope> {
+	return Effect.acquireRelease(
+		Effect.sync(() =>
+			attempt(() =>
+				mkdtempSync(join(process.env.RUNNER_TEMP || tmpdir(), `beepboop-${name.replace(/[^\w.-]+/g, '-')}-`))
+			)
+		).pipe(Effect.flatMap(Effect.fromResult)),
+		directory => Effect.sync(() => rmSync(directory, { recursive: true, force: true })),
 	);
 }
 
-const cargoMetadata = z.object({
-	target_directory: z.string(),
-	packages: z.array(z.object({
-		name: z.string(),
-		description: z.string().nullish(),
-		license: z.string().nullish(),
-		license_file: z.string().nullish(),
-		repository: z.string().nullish(),
+const cargoMetadata = mutableStruct({
+	target_directory: Schema.String,
+	packages: mutableArray(mutableStruct({
+		name: Schema.String,
+		description: Schema.optional(Schema.NullOr(Schema.String)),
+		license: Schema.optional(Schema.NullOr(Schema.String)),
+		license_file: Schema.optional(Schema.NullOr(Schema.String)),
+		repository: Schema.optional(Schema.NullOr(Schema.String)),
 	})),
 });
-const npmManifest = z.object({
-	name: z.unknown(),
-	version: z.unknown(),
-	description: z.unknown(),
-	license: z.unknown(),
-	repository: z.union([z.string(), z.object({ url: z.unknown() })]).optional().catch(undefined),
+const npmManifest = mutableStruct({
+	name: Schema.Unknown,
+	version: Schema.Unknown,
+	description: Schema.Unknown,
+	license: Schema.Unknown,
+	repository: Schema.optional(Schema.Union([Schema.String, mutableStruct({ url: Schema.Unknown })])).pipe(
+		Schema.catchDecoding(() => Effect.succeedSome(undefined)),
+	),
 });
-const secretValues = z.record(z.string(), z.string());
-const tarball = z.object({
-	filename: z.string(),
-	integrity: z.string(),
-	files: z.array(z.object({ path: z.string() })),
+const secretValues = mutableRecord(Schema.String, Schema.String);
+const tarball = mutableStruct({
+	filename: Schema.String,
+	integrity: Schema.String,
+	files: mutableArray(mutableStruct({ path: Schema.String })),
 });
-const packed = z.tuple([tarball]).rest(tarball);
+const packed = Schema.mutable(Schema.TupleWithRest(Schema.Tuple([tarball]), [tarball]));
 
 function checked(runner: Runner, command: string[], cwd: string): Effect.Effect<string, ActionFailure> {
 	return runner.run(command, { cwd }).pipe(Effect.flatMap(result =>
@@ -110,7 +118,7 @@ export function distributionLicensed(file: string, entries: readonly string[]): 
 	});
 }
 
-function npmMissing(files: readonly string[], manifest: z.output<typeof npmManifest>): string[] {
+function npmMissing(files: readonly string[], manifest: Decoded<typeof npmManifest>): string[] {
 	const repository = manifest.repository;
 	return lacking({
 		README: files.some(path => readmeFile.test(path)),
@@ -121,9 +129,9 @@ function npmMissing(files: readonly string[], manifest: z.output<typeof npmManif
 	});
 }
 
-function packedManifest(runner: Runner, file: string): Effect.Effect<z.output<typeof npmManifest>, ActionFailure> {
+function packedManifest(runner: Runner, file: string): Effect.Effect<Decoded<typeof npmManifest>, ActionFailure> {
 	return checked(runner, ['tar', '-xzOf', file, 'package/package.json'], '.').pipe(
-		Effect.flatMap(packaged => Effect.fromResult(attempt(() => npmManifest.parse(JSON.parse(packaged))))),
+		Effect.flatMap(packaged => Effect.fromResult(attempt(() => decodeSync(npmManifest, JSON.parse(packaged))))),
 	);
 }
 
@@ -165,7 +173,7 @@ function build(
 	pkg: LedgerPackage,
 	toolchain: Effect.Effect<void, ActionFailure>,
 	tarballs: ReadonlyMap<string, string>,
-): Effect.Effect<Artifact, ActionFailure> {
+): Effect.Effect<Artifact, ActionFailure, Scope.Scope> {
 	return Effect.gen(function*() {
 		const dir = dirname(pkg.manifest);
 		if (pkg.manager === 'cargo') {
@@ -179,7 +187,7 @@ function build(
 				'--manifest-path',
 				pkg.manifest,
 			], '.');
-			const target = yield* Effect.fromResult(attempt(() => cargoMetadata.parse(JSON.parse(metadata))));
+			const target = yield* Effect.fromResult(attempt(() => decodeSync(cargoMetadata, JSON.parse(metadata))));
 			const listed = yield* checked(runner, ['cargo', 'package', '--list', '--manifest-path', pkg.manifest], '.');
 			const own = target.packages.find(entry => entry.name === pkg.name);
 			const lines = listed.split('\n').map(line => line.trim());
@@ -230,7 +238,7 @@ function build(
 		const out = yield* scratch(pkg.name);
 		const output = yield* checked(runner, ['npm', 'pack', '--json', '--pack-destination', out], dir);
 		const start = output.startsWith('[') ? 0 : output.lastIndexOf('\n[') + 1;
-		const [first] = yield* Effect.fromResult(attempt(() => packed.parse(JSON.parse(output.slice(start)))));
+		const [first] = yield* Effect.fromResult(attempt(() => decodeSync(packed, JSON.parse(output.slice(start)))));
 		const file = join(out, first.filename);
 		const manifest = yield* packedManifest(runner, file);
 		const missing = npmMissing(first.files.map(entry => entry.path), manifest);
@@ -283,10 +291,10 @@ function classify(result: Command): Report {
 }
 
 export function publishPackages(runner: Runner): Effect.Effect<LedgerEntry[], Invalid> {
-	const step = <S extends z.ZodType>(path: `/api/workflow/publish/${string}`, schema: S, body: object) =>
+	const step = <S extends Contract>(path: `/api/workflow/publish/${string}`, schema: S, body: object) =>
 		runner.call(path, { executionId: runner.executionId, ...body }).pipe(
 			Effect.flatMap(value =>
-				Effect.fromResult(attempt((): z.output<S> => schema.parse(value))).pipe(
+				Effect.fromResult(attempt((): Decoded<S> => decodeSync(schema, value))).pipe(
 					Effect.mapError(() => new ActionFailure({ message: `Beepboop answered ${path} with an unknown step` })),
 				)
 			),
@@ -308,7 +316,7 @@ export function publishPackages(runner: Runner): Effect.Effect<LedgerEntry[], In
 		const granted = aliases.length
 			? yield* runner.call('/api/workflow/credentials', { executionId: runner.executionId, aliases })
 			: {};
-		const values = yield* Effect.fromResult(attempt(() => secretValues.parse(granted)));
+		const values = yield* Effect.fromResult(attempt(() => decodeSync(secretValues, granted)));
 		for (const value of Object.values(values)) yield* mask(value);
 		const env: Record<string, string> = {};
 		for (const [name, alias] of Object.entries(runner.credentials)) {
@@ -367,7 +375,7 @@ export function publishPackages(runner: Runner): Effect.Effect<LedgerEntry[], In
 			const result = yield* runner.run(command, { cwd, env: yield* environment });
 			const reported = yield* report(pkg, classify(result));
 			runner.log(`${pkg.name} ${pkg.version}: ${show(reported.entry)}`);
-		});
+		}).pipe(Effect.scoped);
 	return Effect.gen(function*() {
 		const tarballs = yield* tarballIndex(runner);
 		const tries = new Map<string, number>();
@@ -399,57 +407,58 @@ export function requireAll(entries: LedgerEntry[]): Effect.Effect<void, ActionFa
 	);
 }
 
-const event = z.object({ repository: z.object({ private: z.boolean() }) });
-export function publicRepository(path: string | undefined): boolean {
-	if (!path) return false;
-	const parsed = attempt(() => event.parse(JSON.parse(readFileSync(path, 'utf8'))));
-	return parsed._tag === 'Success' && !parsed.success.repository.private;
+export function publicRepository(privateValue: string | undefined): boolean {
+	return privateValue === 'false';
 }
 
-const credentials = z.record(z.string().regex(githubSecretNamePattern), textSchema);
+const credentials = mutableRecord(Schema.String.check(matchesPattern(githubSecretNamePattern)), textSchema);
 
 export function command(argv: string[], options: { cwd: string; env?: Record<string, string> }) {
-	return attemptAsync(async (): Promise<Command> => {
-		const child = Bun.spawn(argv, {
+	return Effect.acquireUseRelease(
+		Effect.sync(() => attempt(() => Bun.spawn(argv, {
 			cwd: options.cwd,
 			env: { ...process.env, ...options.env },
 			stdout: 'pipe',
 			stderr: 'pipe',
-		});
-		const chunks: string[] = [], out: string[] = [];
-		const drain = async (stream: ReadableStream<Uint8Array>, sink: NodeJS.WriteStream, own?: string[]) => {
-			const decoder = new TextDecoder();
-			for await (const chunk of stream) {
-				sink.write(chunk);
-				const text = decoder.decode(chunk, { stream: true });
-				chunks.push(text);
-				own?.push(text);
-			}
-		};
-		await Promise.all([drain(child.stdout, process.stdout, out), drain(child.stderr, process.stderr)]);
-		return { code: await child.exited, stdout: out.join(''), output: chunks.join('') };
-	});
+		}))).pipe(Effect.flatMap(Effect.fromResult)),
+		child => attemptAsync(async (): Promise<Command> => {
+			const chunks: string[] = [], out: string[] = [];
+			const drain = async (stream: ReadableStream<Uint8Array>, sink: NodeJS.WriteStream, own?: string[]) => {
+				const decoder = new TextDecoder();
+				for await (const chunk of stream) {
+					sink.write(chunk);
+					const text = decoder.decode(chunk, { stream: true });
+					chunks.push(text);
+					own?.push(text);
+				}
+			};
+			await Promise.all([drain(child.stdout, process.stdout, out), drain(child.stderr, process.stderr)]);
+			return { code: await child.exited, stdout: out.join(''), output: chunks.join('') };
+		}),
+		terminate,
+	);
 }
 
 export const main: Effect.Effect<void, Invalid> = Effect.gen(function*() {
+	const clock = yield* Clock.Clock;
 	const environment = process.env;
 	const origin = yield* serviceOrigin;
 	const executionId = yield* Effect.fromResult(
 		required({ EXECUTION_ID: environment.EXECUTION_ID || environment.BEEPBOOP_EXECUTION_ID }, 'EXECUTION_ID'),
 	);
 	const mapping = yield* Effect.fromResult(
-		attempt(() => credentials.parse(JSON.parse(environment.CREDENTIALS || '{}'))),
+		attempt(() => decodeSync(credentials, JSON.parse(environment.CREDENTIALS || '{}'))),
 	);
 	const entries = yield* publishPackages({
 		executionId,
 		credentials: mapping,
-		provenance: publicRepository(environment.GITHUB_EVENT_PATH),
+		provenance: publicRepository(environment.REPOSITORY_PRIVATE),
 		...(environment.NPM_TARBALLS ? { tarballs: environment.NPM_TARBALLS } : {}),
 		call: (path, body) => call(origin, path, body),
 		run: command,
 		sleep: milliseconds => Effect.sleep(milliseconds),
 		exists: path => existsSync(path),
-		now: () => Date.now(),
+		now: () => clock.currentTimeMillisUnsafe(),
 		log: line => console.log(line),
 	});
 	yield* requireAll(entries);

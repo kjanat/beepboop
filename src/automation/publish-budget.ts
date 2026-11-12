@@ -1,22 +1,24 @@
 import { DurableObject } from 'cloudflare:workers';
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Clock, Effect, Schema } from 'effect';
 import { deferSlot, reserveSlot } from '@/automation/publish-pace';
 import type { PublishKind } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
 import { fromPromise, fromSync } from '@/failure';
+import { decodeSync } from '@/schema';
 
-const arrival = z.number().optional();
+const arrival = Schema.optional(Schema.Finite);
 
 export class PublishBudget extends DurableObject<unknown> {
 	private theoretical(kind: PublishKind): Effect.Effect<number, DomainError> {
 		return fromPromise(() => this.ctx.storage.get(`arrival:${kind}`)).pipe(
-			Effect.flatMap(value => fromSync(() => arrival.parse(value) ?? 0)),
+			Effect.flatMap(value => fromSync(() => decodeSync(arrival, value) ?? 0)),
 		);
 	}
 	reserve(kind: PublishKind): Promise<number> {
 		return Effect.runPromise(Effect.gen({ self: this }, function*() {
-			const slot = reserveSlot(yield* this.theoretical(kind), Date.now(), kind);
+			const clock = yield* Clock.Clock;
+
+			const slot = reserveSlot(yield* this.theoretical(kind), clock.currentTimeMillisUnsafe(), kind);
 			yield* fromPromise(() => this.ctx.storage.put(`arrival:${kind}`, slot.theoretical));
 			return slot.allowedAt;
 		}));

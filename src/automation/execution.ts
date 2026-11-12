@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Clock, Effect } from 'effect';
 import { canVerifyPublication } from '@/automation/managers';
 import { outputsComplete } from '@/automation/outputs';
 import { matchesPackage, matchesPublication, packageId, parseIdentity } from '@/automation/package-identity';
@@ -81,6 +81,8 @@ export function deriveExecution(
 
 function executionFrom(source: ExecutionSource, request: ExecutionRequest): Effect.Effect<Execution, DomainError> {
 	return Effect.gen(function*() {
+		const clock = yield* Clock.Clock;
+
 		const { stream: streamName, operation, eventId, version, upstreamRelease } = request;
 		const observed = request.observed === true;
 		const stream = source.configuration.streams[streamName];
@@ -139,8 +141,8 @@ function executionFrom(source: ExecutionSource, request: ExecutionRequest): Effe
 			attempts: 0,
 			publications: [],
 			artifacts: [],
-			createdAt: Date.now(),
-			updatedAt: Date.now(),
+			createdAt: clock.currentTimeMillisUnsafe(),
+			updatedAt: clock.currentTimeMillisUnsafe(),
 		};
 		return execution;
 	});

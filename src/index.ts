@@ -1,8 +1,9 @@
 import { handle } from '@astrojs/cloudflare/handler';
 import { Cause, Effect } from 'effect';
 import type { AutomationBindings } from '@/automation/service.ts';
-import { AutomationService } from '@/automation/service.ts';
+import { applicationLayer, withAutomation } from '@/automation/service.ts';
 import { failure } from '@/failure.ts';
+import { jsonLogging } from '@/runtime/logging';
 import { parseBindings } from '@/server/bindings.ts';
 
 export { AutomationCoordinator } from '@/automation/coordinator.ts';
@@ -13,13 +14,22 @@ export default {
 	fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response> {
 		return Effect.runPromise(
 			Effect.tryPromise(() => handle(request, env, context)).pipe(
-				Effect.catchCause(cause => Effect.sync(() => failure(request, Cause.squash(cause)))),
+				Effect.catchCauseIf(
+					cause => !Cause.hasInterrupts(cause),
+					cause => failure(request, Cause.squash(cause), cause),
+				),
+				Effect.provide(jsonLogging),
 			),
+			{ signal: request.signal },
 		);
 	},
 	async scheduled(_event: ScheduledController, env: AutomationBindings): Promise<void> {
 		await Effect.runPromise(
-			parseBindings(env).pipe(Effect.flatMap(parsed => new AutomationService(parsed).scheduled())),
+			parseBindings(env).pipe(
+				Effect.flatMap(parsed =>
+					withAutomation(service => service.scheduled).pipe(Effect.provide(applicationLayer(parsed)))
+				),
+			),
 		);
 	},
 } satisfies ExportedHandler<Env>;

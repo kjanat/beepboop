@@ -2,9 +2,7 @@ import { Result } from 'effect';
 import type { Document } from 'yaml';
 import { parseDocument } from 'yaml';
 import { escapeRegExp } from '@/automation/release-graph/shell';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
-import { toDomainError } from '@/failure';
+import { DomainError, precondition } from '@/contract/errors';
 import { record } from '@/model';
 export function object(value: unknown): Record<string, unknown> {
 	return Result.getOrElse(record(value), () => ({}));
@@ -47,10 +45,27 @@ export function validYaml(source: string, message: string): Result.Result<Docume
 	return document.errors.length ? Result.fail(precondition(message)) : Result.succeed(document);
 }
 export function yamlData(document: Document): unknown {
-	return document.toJS({ maxAliasCount: 100 });
+	if (document.errors.length) throw precondition('Invalid YAML');
+	try {
+		return document.toJS({ maxAliasCount: 100 });
+	} catch (error) {
+		if (
+			error instanceof ReferenceError && (
+				error.message.startsWith('Unresolved alias (the anchor must be set before the alias): ')
+				|| error.message === 'Excessive alias count indicates a resource exhaustion attack'
+			)
+		) throw precondition(`Invalid YAML: ${error.message}`);
+		throw error;
+	}
 }
 export function yaml(source: string): Result.Result<Record<string, unknown>, DomainError> {
 	return validYaml(source, 'Invalid YAML').pipe(
-		Result.flatMap(document => Result.try({ try: () => object(yamlData(document)), catch: toDomainError })),
+		Result.flatMap(document => Result.try({
+			try: () => object(yamlData(document)),
+			catch: error => {
+				if (error instanceof DomainError) return error;
+				throw error;
+			},
+		})),
 	);
 }

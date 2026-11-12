@@ -1,24 +1,25 @@
-import { Result } from 'effect';
-import { z } from 'zod';
+import { Result, Schema } from 'effect';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { shaPattern } from '@/contract/ids';
 import { compare, semverPattern } from '@/contract/semver';
 import { rejectWith } from '@/refusal';
+import type { Contract, Decoded } from '@/schema';
+import { matchesPattern, mutableArray, safeDecode } from '@/schema';
 
 export type Parsed<A> = Result.Result<A, DomainError>;
 
 export const invalid = rejectWith(precondition);
 
-export const textSchema = z.string().min(1);
-export const stringsSchema = z.array(z.string());
-export const countSchema = z.int().positive();
-export const shaSchema = z.string().regex(shaPattern);
-export const looseSchema = z.unknown().optional();
+export const textSchema = Schema.String.check(Schema.isMinLength(1));
+export const stringsSchema = mutableArray(Schema.String);
+export const countSchema = Schema.Int.check(Schema.isGreaterThan(0));
+export const shaSchema = Schema.String.check(matchesPattern(shaPattern));
+export const looseSchema = Schema.optional(Schema.Unknown);
 
-export function decode<S extends z.ZodType>(schema: S, value: unknown): Parsed<z.output<S>> {
-	const parsed = schema.safeParse(value);
-	return parsed.success ? Result.succeed(parsed.data) : invalid(z.prettifyError(parsed.error));
+export function decode<S extends Contract>(schema: S, value: unknown): Parsed<Decoded<S>> {
+	const parsed = safeDecode(schema, value);
+	return parsed.success ? Result.succeed(parsed.data) : invalid(parsed.error.message);
 }
 
 export function record(value: unknown): Parsed<Record<string, unknown>> {
@@ -33,7 +34,7 @@ export function text(value: unknown): Parsed<string> {
 	return typeof value === 'string' && value.length > 0 ? Result.succeed(value) : invalid('Expected nonempty string');
 }
 export function integer(value: unknown): Parsed<number> {
-	const parsed = countSchema.safeParse(value);
+	const parsed = safeDecode(countSchema, value);
 	return parsed.success ? Result.succeed(parsed.data) : invalid('Expected positive integer');
 }
 export function array(value: unknown): Parsed<unknown[]> {

@@ -8,6 +8,7 @@ import { formatTime } from '@/contract/time';
 import { defaultTagPolicy, semVer, tagFor } from '@/contract/version';
 import type { Status, Tone } from '@/contract/views';
 import { packageLabel } from '@/domain/package-label';
+import { safeDecode } from '@/schema';
 import { packageDisplayName } from '@/server/package-name.ts';
 import type { releaseSummaries } from '@/server/releases.ts';
 import { byAge, publishesAutomatically, runStateLabel } from '@/server/releases.ts';
@@ -26,7 +27,7 @@ export function progress(run: Execution, now: number): string {
 
 function publicationName(run: Execution, publication: Execution['publications'][number]): string {
 	if (!publication.id.startsWith('refs:')) return packageDisplayName(publication);
-	const parsed = semVer.safeParse(publication.version);
+	const parsed = safeDecode(semVer, publication.version);
 	return `tag ${parsed.success ? tagFor(run.workflow?.refs ?? defaultTagPolicy, parsed.data) : publication.version}`;
 }
 
@@ -45,7 +46,7 @@ function publicationHref(
 
 function releaseLink(run: Execution): { tag: string; href: string } | undefined {
 	if (run.state !== 'succeeded') return undefined;
-	const parsed = semVer.safeParse(run.version);
+	const parsed = safeDecode(semVer, run.version);
 	const tag = run.release?.tag
 		?? run.publications.find(publication =>
 			publication.manager === 'github-release' && publication.outcome === 'succeeded'

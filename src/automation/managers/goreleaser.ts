@@ -103,7 +103,7 @@ function verifyRelease(
 			}
 			return result('succeeded');
 		}),
-		Effect.catchCause(() => Effect.succeed(result('uncertain'))),
+		Effect.orElseSucceed(() => result('uncertain')),
 	);
 }
 
@@ -132,7 +132,7 @@ export const goreleaserManager: Adapter<'goreleaser'> = {
 					? { kind: 'published', version: tag.replace(/^v/, '') }
 					: { kind: 'failed', url, reason: 'no valid version' };
 			}),
-			Effect.catchCause(() => Effect.succeed<RegistryVersion>({ kind: 'failed', url, reason: 'request failed' })),
+			Effect.orElseSucceed((): RegistryVersion => ({ kind: 'failed', url, reason: 'request failed' })),
 		);
 	},
 	discover(snapshot) {

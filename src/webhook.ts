@@ -5,29 +5,41 @@ import { fromPromise } from '@/failure';
 
 const MAX_BODY = 1_048_576;
 export function readBody(request: Request): Effect.Effect<Uint8Array, DomainError> {
-	const reader = request.body?.getReader();
-	if (!reader) return Effect.fail(precondition('Missing body'));
-	return Effect.gen(function*() {
-		const chunks: Uint8Array[] = [];
-		let size = 0;
-		for (;;) {
-			const chunk = yield* fromPromise(() => reader.read());
-			if (chunk.done) break;
-			size += chunk.value.byteLength;
-			if (size > MAX_BODY) {
-				yield* fromPromise(() => reader.cancel());
-				return yield* precondition('Body too large');
+	return Effect.acquireUseRelease(
+		Effect.sync(() => request.body?.getReader()),
+		reader => Effect.gen(function*() {
+			if (!reader) return yield* precondition('Missing body');
+			const chunks: Uint8Array[] = [];
+			let size = 0;
+			for (;;) {
+				const chunk = yield* fromPromise(() => reader.read());
+				if (chunk.done) break;
+				size += chunk.value.byteLength;
+				if (size > MAX_BODY) {
+					yield* fromPromise(() => reader.cancel());
+					return yield* precondition('Body too large');
+				}
+				chunks.push(chunk.value);
 			}
-			chunks.push(chunk.value);
-		}
-		const result = new Uint8Array(size);
-		let offset = 0;
-		for (const chunk of chunks) {
-			result.set(chunk, offset);
-			offset += chunk.byteLength;
-		}
-		return result;
-	}).pipe(Effect.ensuring(Effect.sync(() => reader.releaseLock())));
+			const result = new Uint8Array(size);
+			let offset = 0;
+			for (const chunk of chunks) {
+				result.set(chunk, offset);
+				offset += chunk.byteLength;
+			}
+			return result;
+		}),
+		reader =>
+			reader
+				? Effect.promise(async () => {
+					try {
+						await reader.cancel().catch(() => undefined);
+					} finally {
+						reader.releaseLock();
+					}
+				})
+				: Effect.void,
+	);
 }
 export function verifySignature(
 	body: Uint8Array,

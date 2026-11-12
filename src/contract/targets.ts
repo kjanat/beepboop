@@ -1,74 +1,86 @@
-import { z } from 'zod';
+import { Schema } from 'effect';
+import type { Decoded } from '@/schema';
+import { looseStruct, matchesPattern, mutableArray, mutableStruct } from '@/schema';
 
-const token = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$/);
-const packageName = z.string().regex(/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/);
-const segment = z.string().regex(/^[a-z0-9][a-z0-9._-]*$/);
-const scope = z.string().regex(/^@[a-z0-9][a-z0-9._-]*$/);
-const selection = z.union([token, z.array(token).min(1)]);
-const versionSource = z.string().regex(
-	/^(?:tags:[^\s]*|(?!(?:.*\/)?\.\.?\/)(?:[\w.-]+\/)*(?:Cargo\.toml#(?:workspace\.)?package\.version|package\.json#version))$/,
+const token = Schema.String.check(matchesPattern(/^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$/));
+const packageName = Schema.String.check(matchesPattern(/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/));
+const segment = Schema.String.check(matchesPattern(/^[a-z0-9][a-z0-9._-]*$/));
+const scope = Schema.String.check(matchesPattern(/^@[a-z0-9][a-z0-9._-]*$/));
+const selection = Schema.Union([token, mutableArray(token).check(Schema.isMinLength(1))]);
+const versionSource = Schema.String.check(
+	matchesPattern(
+		/^(?:tags:[^\s]*|(?!(?:.*\/)?\.\.?\/)(?:[\w.-]+\/)*(?:Cargo\.toml#(?:workspace\.)?package\.version|package\.json#version))$/,
+	),
 );
 
 /** Shared fields are validated; repository-specific build metadata is preserved. */
-export const targetFields = z.looseObject({
-	pkg: token.optional(),
-	os: selection.optional(),
-	cpu: selection.optional(),
-	libc: selection.optional(),
-	rust: token.optional(),
-	rust_target: token.optional(),
-	target: token.optional(),
-	runner: z.string().min(1).optional(),
-	build: token.optional(),
-	asset: z.string().min(1).optional(),
-	zipFileName: z.string().min(1).optional(),
-	format: token.optional(),
-	tier: z.number().int().positive().optional(),
-	experimental: z.boolean().optional(),
+export const targetFields = looseStruct({
+	pkg: Schema.optional(token),
+	os: Schema.optional(selection),
+	cpu: Schema.optional(selection),
+	libc: Schema.optional(selection),
+	rust: Schema.optional(token),
+	rust_target: Schema.optional(token),
+	target: Schema.optional(token),
+	runner: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
+	build: Schema.optional(token),
+	asset: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
+	zipFileName: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
+	format: Schema.optional(token),
+	tier: Schema.optional(Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0))),
+	experimental: Schema.optional(Schema.Boolean),
 });
-const npmTarget = targetFields.extend({ pkg: segment });
-const facade = z.looseObject({ name: packageName, pkg: segment.optional(), shim: packageName.optional() });
+const npmTarget = looseStruct({ ...targetFields.schema.fields, ...{ pkg: segment } });
+const facade = looseStruct({ name: packageName, pkg: Schema.optional(segment), shim: Schema.optional(packageName) });
 const common = {
-	$schema: z.string().optional(),
-	versionSource: versionSource.optional(),
-	binaries: z.array(token).min(1).optional(),
-	bundle: z.looseObject({ name: packageName }).optional(),
-	targets: z.array(npmTarget).min(1),
+	$schema: Schema.optional(Schema.String),
+	versionSource: Schema.optional(versionSource),
+	binaries: Schema.optional(mutableArray(token).check(Schema.isMinLength(1))),
+	bundle: Schema.optional(looseStruct({ name: packageName })),
+	targets: mutableArray(npmTarget).check(Schema.isMinLength(1)),
 };
-export const npmTargetDescriptor = z.union([
-	z.looseObject({
+export const npmTargetDescriptor = Schema.Union([
+	looseStruct({
 		...common,
-		platformScope: z.never().optional(),
+		platformScope: Schema.optional(Schema.Never),
 		scope,
 		facade: packageName,
-		facades: z.never().optional(),
+		facades: Schema.optional(Schema.Never),
 	}),
-	z.looseObject({
+	looseStruct({
 		...common,
-		platformScope: z.never().optional(),
+		platformScope: Schema.optional(Schema.Never),
 		scope,
-		facades: z.array(facade).min(1),
-		facade: z.never().optional(),
+		facades: mutableArray(facade).check(Schema.isMinLength(1)),
+		facade: Schema.optional(Schema.Never),
 	}),
-	z.looseObject({
+	looseStruct({
 		...common,
-		scope: z.never().optional(),
-		facades: z.never().optional(),
+		scope: Schema.optional(Schema.Never),
+		facades: Schema.optional(Schema.Never),
 		platformScope: scope,
 		binary: segment,
 		facade: packageName,
 	}),
 ]);
-const platformEntry = targetFields.extend({ os: selection, cpu: selection });
-export const platformMap = z.object({ $schema: z.string().optional() }).catchall(platformEntry);
-const buildTarget = z.union([
-	targetFields.extend({ target: token, runner: z.string().min(1), build: token }),
-	targetFields.extend({ rust: token, runner: z.string().min(1), build: token }),
+const platformEntry = looseStruct({ ...targetFields.schema.fields, ...{ os: selection, cpu: selection } });
+export const platformMap = Schema.StructWithRest(mutableStruct({ $schema: Schema.optional(Schema.String) }), [
+	Schema.Record(Schema.String.check(matchesPattern(/^(?!\$schema$)[\s\S]*$/u)), Schema.mutableKey(platformEntry)),
+]);
+const buildTarget = Schema.Union([
+	looseStruct({
+		...targetFields.schema.fields,
+		...{ target: token, runner: Schema.String.check(Schema.isMinLength(1)), build: token },
+	}),
+	looseStruct({
+		...targetFields.schema.fields,
+		...{ rust: token, runner: Schema.String.check(Schema.isMinLength(1)), build: token },
+	}),
 ]);
 /** The public schema and runtime reader share this contract. */
-export const targetsSchema = z.union([
+export const targetsSchema = Schema.Union([
 	npmTargetDescriptor,
-	z.array(buildTarget).min(1),
+	mutableArray(buildTarget).check(Schema.isMinLength(1)),
 	platformMap,
 ]);
-export type NpmTargetDescriptor = z.infer<typeof npmTargetDescriptor>;
+export type NpmTargetDescriptor = Decoded<typeof npmTargetDescriptor>;

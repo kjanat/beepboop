@@ -1,5 +1,5 @@
+import type { Schema } from 'effect';
 import { Result } from 'effect';
-import type { z } from 'zod';
 import type { Selection } from '@/automation/setup-defaults';
 import { preparationReasons, suggestedCommands, suggestedWorkflowFile } from '@/automation/setup-defaults';
 import type { SetupPlan, SetupWorkflow } from '@/automation/setup-types';
@@ -7,6 +7,7 @@ import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '
 import { binaryTargets, defaultBinaryTargets, leftOut, setupWorkflow } from '@/contract/setup';
 import type { Editors, WorkflowField } from '@/contract/setup-fields';
 import { existingTriggersNames, existingTriggersQuestion, existingTriggersSentences } from '@/contract/setup-terms';
+import { safeDecode, schemaIssues } from '@/schema';
 import { node, Refused } from '@/ui/browser/dom';
 
 export const workflowEditors = {
@@ -54,8 +55,8 @@ export function select(parent: HTMLElement, title: string, entries: [string, str
 	label(parent, title, control);
 	return control;
 }
-export function issueText(error: z.ZodError): string {
-	const [issue] = error.issues;
+export function issueText(error: Schema.SchemaError): string {
+	const [issue] = schemaIssues(error);
 	return issue ? `${issue.path.map(String).join('.') || 'value'}: ${issue.message}` : error.message;
 }
 export interface JsonEditor {
@@ -297,7 +298,7 @@ export function workflow(
 				const kept = initial?.file === editor.file() ? initial : undefined;
 				const secrets = yield* credentials.read();
 				const built = binaries ? yield* binaries.read() : undefined;
-				const parsed = setupWorkflow.safeParse({
+				const parsed = safeDecode(setupWorkflow, {
 					file: editor.file(),
 					job: chosen,
 					triggers: triggers.disabled ? 'review' : triggers.value === 'dispatchOnly' ? 'dispatchOnly' : 'review',

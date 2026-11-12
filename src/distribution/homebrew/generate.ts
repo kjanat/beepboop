@@ -1,16 +1,18 @@
-import { Effect } from 'effect';
-import * as z from 'zod';
+import { Effect, Schema } from 'effect';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { assetName, checksumOf, expand, https, parseChecksums, releaseTag } from '@/distribution/assets';
 import { fromSync } from '@/failure';
+import type { Decoded, Encoded } from '@/schema';
+import { decodeSync, matchesPattern, mutableArray, refined, strictStruct } from '@/schema';
 
-const text = z.string().min(1);
-const stagedPath = text.refine(
+const text = Schema.String.check(Schema.isMinLength(1));
+const stagedPath = refined(
+	text,
 	path => !path.startsWith('/') && !path.split('/').some(part => part === '..' || part === ''),
 	'Expected a relative path inside the staged cask',
 );
-const platform = z.strictObject({ arm: text, intel: text, caveats: text.optional() });
+const platform = strictStruct({ arm: text, intel: text, caveats: Schema.optional(text) });
 const shells = ['bash', 'zsh', 'fish', 'pwsh'] as const;
 const completionDirectories: Record<(typeof shells)[number], string> = {
 	bash: 'etc/bash_completion.d',
@@ -19,25 +21,31 @@ const completionDirectories: Record<(typeof shells)[number], string> = {
 	pwsh: 'share/pwsh/completions',
 };
 
-export const homebrewConfiguration = z.strictObject({
-	token: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
-	name: text,
-	desc: text,
-	homepage: text,
-	url: text,
-	verified: text.optional(),
-	macos: platform.optional(),
-	linux: platform.optional(),
-	naked: z.strictObject({ glob: text, name: stagedPath }).optional(),
-	binaries: z.array(z.strictObject({ path: stagedPath, target: stagedPath.optional() })).min(1),
-	completions: z.strictObject({
-		executable: stagedPath,
-		arguments: z.array(text).min(1),
-		shells: z.array(z.enum(shells)).min(1),
-	}).optional(),
-	caveats: text.optional(),
-}).refine(config => config.macos !== undefined || config.linux !== undefined, 'Expected macos or linux assets');
-export type HomebrewConfiguration = z.input<typeof homebrewConfiguration>;
+export const homebrewConfiguration = refined(
+	strictStruct({
+		token: Schema.String.check(matchesPattern(/^[a-z0-9][a-z0-9-]*$/)),
+		name: text,
+		desc: text,
+		homepage: text,
+		url: text,
+		verified: Schema.optional(text),
+		macos: Schema.optional(platform),
+		linux: Schema.optional(platform),
+		naked: Schema.optional(strictStruct({ glob: text, name: stagedPath })),
+		binaries: mutableArray(strictStruct({ path: stagedPath, target: Schema.optional(stagedPath) })).check(
+			Schema.isMinLength(1),
+		),
+		completions: Schema.optional(strictStruct({
+			executable: stagedPath,
+			arguments: mutableArray(text).check(Schema.isMinLength(1)),
+			shells: mutableArray(Schema.Literals(shells)).check(Schema.isMinLength(1)),
+		})),
+		caveats: Schema.optional(text),
+	}),
+	config => config.macos !== undefined || config.linux !== undefined,
+	'Expected macos or linux assets',
+);
+export type HomebrewConfiguration = Encoded<typeof homebrewConfiguration>;
 
 export interface CaskOptions {
 	configuration: HomebrewConfiguration;
@@ -79,7 +87,7 @@ function livecheck(version: string, tag: string): string[] {
 }
 
 function variant(
-	config: z.output<typeof homebrewConfiguration>,
+	config: Decoded<typeof homebrewConfiguration>,
 	asset: string,
 	checksums: ReadonlyMap<string, string>,
 	version: string,
@@ -112,7 +120,7 @@ function variant(
 
 export function generateCask(options: CaskOptions): Effect.Effect<string, DomainError> {
 	return Effect.gen(function*() {
-		const config = yield* fromSync(() => homebrewConfiguration.parse(options.configuration));
+		const config = yield* fromSync(() => decodeSync(homebrewConfiguration, options.configuration));
 		const version = options.version;
 		const tag = yield* releaseTag(version, options.tag);
 		if (!tag.includes(version)) return yield* precondition(`Release tag ${tag} does not contain ${version}`);

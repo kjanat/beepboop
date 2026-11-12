@@ -1,14 +1,15 @@
 #!/usr/bin/env bun
 
 import { resolve } from 'node:path';
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema } from 'effect';
 import { discover, resolvePublished } from '@/automation/managers';
 import { adoptionChoices, adoptionMarkdown } from '@/automation/release-graph/adoption';
 import { inferReleaseGraph } from '@/automation/release-graph/graph';
 import { buildSnapshot } from '@/automation/snapshot';
 import type { DomainError } from '@/contract/errors';
 import { toDomainError } from '@/failure';
+import type { Contract } from '@/schema';
+import { mutableArray, mutableStruct } from '@/schema';
 import type { ToolFailure } from '@/tooling/runtime';
 import { attempt, main, parse, refuse } from '@/tooling/runtime';
 
@@ -39,18 +40,18 @@ const options = process.argv.slice(2).filter(value => value !== '--snapshot');
 const fromGitHub = Effect.gen(function*() {
 	const [name, ref] = (options[1] ?? '').split('@');
 	if (!name || !/^\w[\w.-]*\/[\w.-]+$/.test(name)) return yield* refuse('Expected owner/repository[@ref]');
-	const gh = <T extends z.ZodType>(path: string, schema: T) =>
+	const gh = <T extends Contract>(path: string, schema: T) =>
 		ghApi(path, () => refuse('Could not read repository revision')).pipe(Effect.flatMap(value => parse(schema, value)));
-	const metadata = yield* gh(`repos/${name}`, z.object({ id: z.number(), default_branch: z.string() }));
+	const metadata = yield* gh(`repos/${name}`, mutableStruct({ id: Schema.Finite, default_branch: Schema.String }));
 	const { sha } = yield* gh(
 		`repos/${name}/commits/${encodeURIComponent(ref || metadata.default_branch)}`,
-		z.object({ sha: z.string() }),
+		mutableStruct({ sha: Schema.String }),
 	);
 	const tree = yield* gh(
 		`repos/${name}/git/trees/${sha}?recursive=1`,
-		z.object({
-			truncated: z.boolean(),
-			tree: z.array(z.object({ path: z.string(), type: z.string(), mode: z.string() })),
+		mutableStruct({
+			truncated: Schema.Boolean,
+			tree: mutableArray(mutableStruct({ path: Schema.String, type: Schema.String, mode: Schema.String })),
 		}),
 	);
 	if (tree.truncated) return yield* refuse('Truncated repository tree');
@@ -59,21 +60,23 @@ const fromGitHub = Effect.gen(function*() {
 		sha,
 		entries: tree.tree,
 		read: path =>
-			gh(`repos/${name}/contents/${path}?ref=${sha}`, z.object({ size: z.number(), content: z.string() })).pipe(
-				Effect.flatMap(file =>
-					file.size > 1048576
-						? refuse('Discovery file limit exceeded')
-						: Effect.succeed(Buffer.from(file.content, 'base64').toString('utf8'))
+			gh(`repos/${name}/contents/${path}?ref=${sha}`, mutableStruct({ size: Schema.Finite, content: Schema.String }))
+				.pipe(
+					Effect.flatMap(file =>
+						file.size > 1048576
+							? refuse('Discovery file limit exceeded')
+							: Effect.succeed(Buffer.from(file.content, 'base64').toString('utf8'))
+					),
+					Effect.mapError(toDomainError),
 				),
-				Effect.mapError(toDomainError),
-			),
 		tags: prefixes =>
 			Effect.forEach(
 				prefixes,
 				prefix =>
-					gh(`repos/${name}/git/matching-refs/tags/${prefix}`, z.array(z.object({ ref: z.string() }))).pipe(
-						Effect.map(rows => rows.map(row => row.ref.slice('refs/tags/'.length))),
-					),
+					gh(`repos/${name}/git/matching-refs/tags/${prefix}`, mutableArray(mutableStruct({ ref: Schema.String })))
+						.pipe(
+							Effect.map(rows => rows.map(row => row.ref.slice('refs/tags/'.length))),
+						),
 			).pipe(Effect.map(groups => groups.flat()), Effect.mapError(toDomainError)),
 	});
 });

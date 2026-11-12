@@ -2,20 +2,33 @@ import { expect, test } from 'bun:test';
 import { bearer } from '@root/test/support/http.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { z } from 'zod';
+import { Effect, Schema, Struct } from 'effect';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 let world: World;
 eachWorld(created => {
 	world = created;
 });
 
-const inventory = z.object({
-	inventory: z.object({
-		packages: z.array(z.object({
-			manager: z.string(),
-			name: z.string(),
-			manifest: z.string(),
-			publication: z.looseObject({ kind: z.string() }),
+const inventory = mutableStruct({
+	inventory: mutableStruct({
+		packages: mutableArray(mutableStruct({
+			manager: Schema.String,
+			name: Schema.String,
+			manifest: Schema.String,
+			publication: looseStruct({ kind: Schema.String }),
 		})),
 	}),
 });
@@ -24,7 +37,7 @@ async function packages(files: Record<string, string>) {
 	const api = bearer(world, await world.cliSession());
 	const discovered = await api('/api/repositories/discover', { repository: repository.name });
 	expect(discovered.status).toBe(200);
-	return inventory.parse(discovered.body).inventory.packages.map(pkg => [
+	return decodeSync(inventory, discovered.body).inventory.packages.map(pkg => [
 		pkg.manager,
 		pkg.name,
 		pkg.manifest,

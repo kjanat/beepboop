@@ -1,7 +1,6 @@
 import type { CronExpression } from 'cron-parser';
 import { CronExpressionParser } from 'cron-parser';
-import { Result } from 'effect';
-import { z } from 'zod';
+import { Effect, Result, Schema } from 'effect';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { parseReleaseIdentity } from '@/automation/package-identity';
 import { presetReferencePattern } from '@/automation/preset';
@@ -40,29 +39,58 @@ import {
 } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
 import { dependencyOrder } from '@/dependency-order';
+import {
+	bindingValue,
+	configurationValue,
+	refPolicyValue,
+	streamValue,
+	subscriptionValue,
+	wingetValue,
+} from '@/domain/configuration-value';
 import { textSchema as nonempty } from '@/model';
 import { purl } from '@/package-url';
+import type { Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	mapped,
+	matchesPattern,
+	mutableArray,
+	mutableRecord,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 export const reservedOperations = ['prepare', 'promote'] as const;
 export type ReservedOperation = (typeof reservedOperations)[number];
-const identifier = z.string().regex(identifierPattern);
+const identifier = Schema.String.check(matchesPattern(identifierPattern));
 
-function issue(ctx: z.RefinementCtx, code: DiagnosticCode, message: string, path: (string | number)[]): void {
+function issue(ctx: ValidationContext, code: DiagnosticCode, message: string, path: (string | number)[]): void {
 	ctx.addIssue({ code: 'custom', message, path, params: { diagnostic: code } });
 }
 
-export const packageReference = nonempty.transform((value, ctx) => {
-	if (!value.startsWith('pkg:')) return value;
-	const identity = parseReleaseIdentity(value);
-	if (Result.isSuccess(identity)) return purl(identity.success);
-	ctx.addIssue({ code: 'custom', message: identity.failure.message });
-	return z.NEVER;
-}).meta({
-	id: 'packageReference',
+export const packageReference = mapped(
+	nonempty,
+	refined(nonempty, value => {
+		if (!value.startsWith('pkg:')) return true;
+		const parsed = parseReleaseIdentity(value);
+		return Result.isSuccess(parsed) && purl(parsed.success) === value;
+	}),
+	(value, ctx) => {
+		if (!value.startsWith('pkg:')) return value;
+		const identity = parseReleaseIdentity(value);
+		if (Result.isSuccess(identity)) return purl(identity.success);
+		ctx.addIssue({ code: 'custom', message: identity.failure.message });
+		return undefined as never;
+	},
+	value => value,
+).annotate({
+	identifier: 'packageReference',
 	description:
 		'Package URL (versionless for release selection). Legacy manager:name references are accepted for compatibility.',
 });
-const packageReferences = z.array(packageReference);
+const packageReferences = mutableArray(packageReference);
 
 export const utcCronMessage = 'Schedules use five-field UTC cron';
 export function fiveFieldCron(value: string): boolean {
@@ -71,42 +99,63 @@ export function fiveFieldCron(value: string): boolean {
 export function parseUtcCron(value: string): CronExpression {
 	return CronExpressionParser.parse(value, { tz: 'UTC' });
 }
-const cron = nonempty.refine(
+const cron = refined(
+	nonempty,
 	value => fiveFieldCron(value) && Result.isSuccess(Result.try(() => parseUtcCron(value))),
 	utcCronMessage,
 );
 
-const refPolicy = z.strictObject({
-	phase: z.enum(['version', 'aliases']),
-	prefix: z.string().regex(tagPrefixPattern).refine(validTagPrefix, 'Invalid tag prefix').default('v'),
-	aliases: z.array(z.enum(['major', 'minor'])).refine(
-		aliases => new Set(aliases).size === aliases.length,
-		'Invalid aliases',
-	).default([]),
-	signed: z.boolean().optional(),
-}).transform(({ phase, prefix, aliases, signed }) => ({ phase, prefix, aliases, signed: signed === true }));
+const refPolicy = mapped(
+	strictStruct({
+		phase: Schema.Literals(['version', 'aliases']),
+		prefix: refined(Schema.String.check(matchesPattern(tagPrefixPattern)), validTagPrefix, 'Invalid tag prefix').pipe(
+			Schema.withDecodingDefault(Effect.succeed('v')),
+		),
+		aliases: refined(
+			mutableArray(Schema.Literals(['major', 'minor'])),
+			aliases => new Set(aliases).size === aliases.length,
+			'Invalid aliases',
+		).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+		signed: Schema.optional(Schema.Boolean),
+	}),
+	Schema.toType(refPolicyValue),
+	({ phase, prefix, aliases, signed }) => ({ phase, prefix, aliases, signed: signed === true }),
+	value => value,
+);
 
 function bindingSchema() {
-	const shape = z.strictObject({
-		file: z.string().regex(workflowFilePattern, 'Workflow must be a filename'),
-		ref: z.string().regex(refPattern, 'Invalid workflow ref').refine(validRef, 'Invalid workflow ref').optional(),
-		inputs: z.record(z.string(), z.union([z.string(), z.boolean(), z.number()])).optional(),
-		required: z.boolean().optional(),
-		needs: z.array(nonempty).optional(),
-		needsJobs: z.record(identifier, z.array(z.string().regex(jobKeyPattern)).min(1)).optional().describe(
-			'Jobs of an observed operation in needs that must succeed before this operation starts, keyed by that operation',
+	const shape = strictStruct({
+		file: Schema.String.check(matchesPattern(workflowFilePattern, { message: 'Workflow must be a filename' })),
+		ref: Schema.optional(
+			refined(
+				Schema.String.check(matchesPattern(refPattern, { message: 'Invalid workflow ref' })),
+				validRef,
+				'Invalid workflow ref',
+			),
 		),
-		schedule: cron.optional(),
-		publications: packageReferences.optional(),
-		mode: z.enum(['observe', 'dispatch']).optional(),
-		each: z.literal('package').optional(),
-		refs: refPolicy.optional(),
-		platform: platformSchema.optional(),
-		outputs: z.array(outputSchema).optional(),
-		artifactInputs: z.array(inputSchema).optional(),
-		setup: workflowSetup.optional(),
+		inputs: Schema.optional(mutableRecord(Schema.String, Schema.Union([Schema.String, Schema.Boolean, Schema.Finite]))),
+		required: Schema.optional(Schema.Boolean),
+		needs: Schema.optional(mutableArray(nonempty)),
+		needsJobs: Schema.optional(
+			mutableRecord(
+				identifier,
+				mutableArray(Schema.String.check(matchesPattern(jobKeyPattern))).check(Schema.isMinLength(1)),
+			),
+		).annotate({
+			description:
+				'Jobs of an observed operation in needs that must succeed before this operation starts, keyed by that operation',
+		}),
+		schedule: Schema.optional(cron),
+		publications: Schema.optional(packageReferences),
+		mode: Schema.optional(Schema.Literals(['observe', 'dispatch'])),
+		each: Schema.optional(Schema.Literal('package')),
+		refs: Schema.optional(refPolicy),
+		platform: Schema.optional(platformSchema),
+		outputs: Schema.optional(mutableArray(outputSchema)),
+		artifactInputs: Schema.optional(mutableArray(inputSchema)),
+		setup: Schema.optional(workflowSetup),
 	});
-	const checked = shape.superRefine((binding, ctx) => {
+	const checked = withValidation(shape, (binding, ctx) => {
 		if (
 			binding.each
 			&& (binding.outputs !== undefined || binding.artifactInputs !== undefined || binding.refs !== undefined)
@@ -123,7 +172,7 @@ function bindingSchema() {
 		const ids = (binding.outputs ?? []).map(output => output.id);
 		if (new Set(ids).size !== ids.length) issue(ctx, 'duplicate-identity', 'Duplicate output', ['outputs']);
 	});
-	return checked.transform(binding => ({
+	return mapped(checked, Schema.toType(bindingValue), binding => ({
 		...(binding.outputs ? { outputs: binding.outputs } : {}),
 		...(binding.artifactInputs ? { artifactInputs: binding.artifactInputs } : {}),
 		...(binding.platform ? { platform: binding.platform } : {}),
@@ -145,57 +194,62 @@ function bindingSchema() {
 		inputs: binding.inputs ?? {},
 		required: binding.required !== false,
 		...(binding.setup ? { setup: binding.setup } : {}),
-	})).meta({ id: 'workflow' });
+	}), value => value).annotate({ identifier: 'workflow' });
 }
 
 function streamSchema() {
 	const binding = bindingSchema();
-	const workflows = z.record(identifier, binding);
-	const shape = z.strictObject({
-		versionScope: versionScope.optional().describe(versionScopeDescription),
-		versioning: z.enum(['workspace', 'independent', 'none']).optional().meta({ deprecated: true }),
-		versionFiles: z.array(versionFileSchema).optional(),
-		versionSource: z.strictObject({
-			kind: z.literal('tags'),
-			prefix: z.string().regex(tagPrefixPattern).refine(validTagPrefix, 'Invalid tag prefix'),
-		}).optional(),
-		packages: packageReferences.optional(),
-		companionModules: packageReferences.optional().describe(companionModulesSentence),
-		prepare: z.strictObject({
-			version: z.literal('manual').optional(),
-			workflow: binding.optional(),
-			strategy: z.enum(['managed', 'workflow']).optional(),
-			versionLands: versionLands.optional().describe(versionLandsDescription),
-			bump: versionBump.optional().meta({ deprecated: true }),
-			versionPrMerge: versionPrMerge.optional().describe(versionPrMergeDescription),
-		}).default({}),
-		promote: z.strictObject({
-			publishWhen: publishWhen.optional().describe(publishWhenDescription),
-			approval: z.enum(['required', 'merge', 'push']).optional().meta({ deprecated: true }),
-			workflow: binding.optional(),
-		}).default({}),
-		startFrom: releaseStarts.optional(),
-		start: releaseStarts.optional().meta({ deprecated: true }),
-		workflows: workflows.superRefine((value, ctx) => {
+	const workflows = mutableRecord(identifier, binding);
+	const shape = strictStruct({
+		versionScope: Schema.optional(versionScope).annotate({ description: versionScopeDescription }),
+		versioning: Schema.optional(Schema.Literals(['workspace', 'independent', 'none'])).annotate({ deprecated: true }),
+		versionFiles: Schema.optional(mutableArray(versionFileSchema)),
+		versionSource: Schema.optional(strictStruct({
+			kind: Schema.Literal('tags'),
+			prefix: refined(Schema.String.check(matchesPattern(tagPrefixPattern)), validTagPrefix, 'Invalid tag prefix'),
+		})),
+		packages: Schema.optional(packageReferences),
+		companionModules: Schema.optional(packageReferences).annotate({ description: companionModulesSentence }),
+		prepare: strictStruct({
+			version: Schema.optional(Schema.Literal('manual')),
+			workflow: Schema.optional(binding),
+			strategy: Schema.optional(Schema.Literals(['managed', 'workflow'])),
+			versionLands: Schema.optional(versionLands).annotate({ description: versionLandsDescription }),
+			bump: Schema.optional(versionBump).annotate({ deprecated: true }),
+			versionPrMerge: Schema.optional(versionPrMerge).annotate({ description: versionPrMergeDescription }),
+		}).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+		promote: strictStruct({
+			publishWhen: Schema.optional(publishWhen).annotate({ description: publishWhenDescription }),
+			approval: Schema.optional(Schema.Literals(['required', 'merge', 'push'])).annotate({ deprecated: true }),
+			workflow: Schema.optional(binding),
+		}).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+		startFrom: Schema.optional(releaseStarts),
+		start: Schema.optional(releaseStarts).annotate({ deprecated: true }),
+		workflows: withValidation(workflows, (value, ctx) => {
 			for (const name of reservedOperations) {
 				if (Object.hasOwn(value, name)) {
 					issue(ctx, 'reserved-operation', `${name} is configured under ${name}.workflow`, [name]);
 				}
 			}
-		}).default({}),
-		mustPublish: packageReferences.optional().describe(mustPublishSentence),
-		required: packageReferences.optional().meta({ deprecated: true }),
-		needs: z.record(nonempty, z.array(nonempty)).optional().describe(
-			'Publications that must finish before each listed publication, keyed by package reference',
-		),
-		credentials: z.array(nonempty).default([]),
-		channels: z.strictObject({ stable: nonempty.default('latest'), prerelease: nonempty.default('next') }).default({
+		}).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+		mustPublish: Schema.optional(packageReferences).annotate({ description: mustPublishSentence }),
+		required: Schema.optional(packageReferences).annotate({ deprecated: true }),
+		needs: Schema.optional(mutableRecord(nonempty, mutableArray(nonempty))).annotate({
+			description: 'Publications that must finish before each listed publication, keyed by package reference',
+		}),
+		credentials: mutableArray(nonempty).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+		channels: strictStruct({
+			stable: nonempty.pipe(Schema.withDecodingDefault(Effect.succeed('latest'))),
+			prerelease: nonempty.pipe(Schema.withDecodingDefault(Effect.succeed('next'))),
+		}).pipe(Schema.withDecodingDefault(Effect.succeed({
 			stable: 'latest',
 			prerelease: 'next',
-		}),
-		concurrency: z.enum(['queue', 'supersede-pending']).default('queue'),
+		}))),
+		concurrency: Schema.Literals(['queue', 'supersede-pending']).pipe(
+			Schema.withDecodingDefault(Effect.succeed('queue')),
+		),
 	});
-	const checked = shape.superRefine((stream, ctx) => {
+	const checked = withValidation(shape, (stream, ctx) => {
 		if (stream.prepare.strategy === 'workflow' && !stream.prepare.workflow) {
 			issue(ctx, 'binding-missing', 'The workflow preparation strategy needs prepare.workflow', [
 				'prepare',
@@ -203,7 +257,7 @@ function streamSchema() {
 			]);
 		}
 	});
-	return checked.transform(stream => ({
+	return mapped(checked, Schema.toType(streamValue), stream => ({
 		...(stream.versionFiles === undefined ? {} : { versionFiles: stream.versionFiles }),
 		...(stream.versionSource ? { versionSource: stream.versionSource } : {}),
 		...(stream.packages === undefined ? {} : { packages: stream.packages }),
@@ -233,53 +287,61 @@ function streamSchema() {
 		...(stream.needs === undefined ? {} : { needs: stream.needs }),
 		credentials: stream.credentials,
 		channels: { stable: stream.channels.stable, prerelease: stream.channels.prerelease },
-	})).meta({ id: 'stream' });
+	}), value => value).annotate({ identifier: 'stream' });
 }
 
 const subscriptionCommon = { id: identifier, source: nonempty, stream: nonempty, operation: nonempty };
 function subscriptionSchema() {
-	const release = z.strictObject({
+	const release = strictStruct({
 		...subscriptionCommon,
-		event: z.literal('release'),
-		sourceStream: nonempty.optional(),
-		sourceGroup: nonempty.optional(),
-		publication: nonempty.optional(),
+		event: Schema.Literal('release'),
+		sourceStream: Schema.optional(nonempty),
+		sourceGroup: Schema.optional(nonempty),
+		publication: Schema.optional(nonempty),
 	});
-	const packageChanged = z.strictObject({ ...subscriptionCommon, event: z.literal('package.version.changed') });
-	const workflowRun = z.strictObject({
+	const packageChanged = strictStruct({ ...subscriptionCommon, event: Schema.Literal('package.version.changed') });
+	const workflowRun = strictStruct({
 		...subscriptionCommon,
-		event: z.literal('workflow_run'),
-		workflow: z.string().regex(workflowFilePattern, 'Workflow subscription requires an exact filename'),
+		event: Schema.Literal('workflow_run'),
+		workflow: Schema.String.check(
+			matchesPattern(workflowFilePattern, { message: 'Workflow subscription requires an exact filename' }),
+		),
 	});
-	return z.discriminatedUnion('event', [release, packageChanged, workflowRun]).transform(subscription => ({
-		id: subscription.id,
-		...('sourceStream' in subscription && subscription.sourceStream !== undefined
-			? { sourceStream: subscription.sourceStream }
-			: {}),
-		...('sourceGroup' in subscription && subscription.sourceGroup !== undefined
-			? { sourceGroup: subscription.sourceGroup }
-			: {}),
-		...('publication' in subscription && subscription.publication !== undefined
-			? { publication: subscription.publication }
-			: {}),
-		source: subscription.source,
-		event: subscription.event,
-		stream: subscription.stream,
-		operation: subscription.operation,
-		...('workflow' in subscription && subscription.workflow !== undefined ? { workflow: subscription.workflow } : {}),
-	})).meta({ id: 'subscription' });
+	return mapped(
+		Schema.Union([release, packageChanged, workflowRun]),
+		Schema.toType(subscriptionValue).check(
+			Schema.makeFilter(value => value.event !== 'workflow_run' || typeof value.workflow === 'string'),
+		),
+		subscription => subscription,
+		value =>
+			value.event === 'workflow_run'
+				? { ...value, event: 'workflow_run' as const, workflow: value.workflow ?? '' }
+				: value.event === 'release'
+				? { ...value, event: 'release' as const }
+				: { ...value, event: 'package.version.changed' as const },
+	).annotate({ identifier: 'subscription' });
 }
 
-const winget = z.strictObject({
-	config: z.string().regex(winGetConfigPattern).refine(relativeWinGetConfig, 'Invalid WinGet configuration path')
-		.meta({ description: 'Path to WinGet package JSON in the release commit' }),
-	tagPrefix: z.string().regex(winGetTagPrefixPattern).default(defaultWinGetTagPrefix),
-	automatic: z.boolean().default(false),
-}).transform(({ config, tagPrefix, automatic }) => ({ config, tagPrefix, automatic }));
+const winget = mapped(
+	strictStruct({
+		config: refined(
+			Schema.String.check(matchesPattern(winGetConfigPattern)),
+			relativeWinGetConfig,
+			'Invalid WinGet configuration path',
+		).annotate({ description: 'Path to WinGet package JSON in the release commit' }),
+		tagPrefix: Schema.String.check(matchesPattern(winGetTagPrefixPattern)).pipe(
+			Schema.withDecodingDefault(Effect.succeed(defaultWinGetTagPrefix)),
+		),
+		automatic: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+	}),
+	Schema.toType(wingetValue),
+	({ config, tagPrefix, automatic }) => ({ config, tagPrefix, automatic }),
+	value => value,
+);
 
-export type WorkflowBinding = z.output<ReturnType<typeof bindingSchema>>;
-export type Stream = z.output<ReturnType<typeof streamSchema>>;
-export type Subscription = z.output<ReturnType<typeof subscriptionSchema>>;
+export type WorkflowBinding = Decoded<ReturnType<typeof bindingSchema>>;
+export type Stream = Decoded<ReturnType<typeof streamSchema>>;
+export type Subscription = Decoded<ReturnType<typeof subscriptionSchema>>;
 export function operations(stream: Stream): ReadonlyMap<string, WorkflowBinding> {
 	const result = new Map<string, WorkflowBinding>(Object.entries(stream.workflows));
 	for (const name of reservedOperations) result.delete(name);
@@ -288,7 +350,7 @@ export function operations(stream: Stream): ReadonlyMap<string, WorkflowBinding>
 	return result;
 }
 
-function graph(stream: Stream, path: (string | number)[], ctx: z.RefinementCtx): void {
+function graph(stream: Stream, path: (string | number)[], ctx: ValidationContext): void {
 	const operationsOf = operations(stream);
 	const where = (name: string): (string | number)[] =>
 		reservedOperations.some(reserved => reserved === name) ? [...path, name, 'workflow'] : [...path, 'workflows', name];
@@ -341,53 +403,65 @@ function graph(stream: Stream, path: (string | number)[], ctx: z.RefinementCtx):
 	}
 }
 
-export const configurationSchema = z.strictObject({
-	$schema: z.string().optional(),
-	extends: z.array(z.string().regex(presetReferencePattern, 'Invalid preset reference')).default([]),
-	managers: z.array(z.enum(managerNames)).default([...managerNames]),
-	streams: z.record(identifier, streamSchema()).default({}),
-	subscriptions: z.array(subscriptionSchema()).default([]),
-	winget: winget.optional(),
-	actionsRevision: z.string().regex(actionsRevisionPattern).optional().describe(
-		'Published Actions version or full commit that setup pins in generated workflows',
+export const configurationSchema = mapped(
+	withValidation(
+		strictStruct({
+			$schema: Schema.optional(Schema.String),
+			extends: mutableArray(
+				Schema.String.check(matchesPattern(presetReferencePattern, { message: 'Invalid preset reference' })),
+			).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+			managers: mutableArray(Schema.Literals(managerNames)).pipe(
+				Schema.withDecodingDefault(Effect.succeed([...managerNames])),
+			),
+			streams: mutableRecord(identifier, streamSchema()).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+			subscriptions: mutableArray(subscriptionSchema()).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+			winget: Schema.optional(winget),
+			actionsRevision: Schema.optional(Schema.String.check(matchesPattern(actionsRevisionPattern))).annotate({
+				description: 'Published Actions version or full commit that setup pins in generated workflows',
+			}),
+		}),
+		(configuration, ctx) => {
+			for (const [name, stream] of Object.entries(configuration.streams)) graph(stream, ['streams', name], ctx);
+			const ids = new Set<string>();
+			configuration.subscriptions.forEach((subscription, index) => {
+				if (ids.has(subscription.id)) {
+					issue(ctx, 'duplicate-identity', 'Duplicate subscription', ['subscriptions', index, 'id']);
+				}
+				ids.add(subscription.id);
+				const stream = configuration.streams[subscription.stream];
+				if (!stream || !Object.hasOwn(stream.workflows, subscription.operation)) {
+					issue(ctx, 'unknown-reference', 'Subscription references an unknown operation', [
+						'subscriptions',
+						index,
+						'operation',
+					]);
+				}
+			});
+		},
 	),
-}).superRefine((configuration, ctx) => {
-	for (const [name, stream] of Object.entries(configuration.streams)) graph(stream, ['streams', name], ctx);
-	const ids = new Set<string>();
-	configuration.subscriptions.forEach((subscription, index) => {
-		if (ids.has(subscription.id)) {
-			issue(ctx, 'duplicate-identity', 'Duplicate subscription', ['subscriptions', index, 'id']);
-		}
-		ids.add(subscription.id);
-		const stream = configuration.streams[subscription.stream];
-		if (!stream || !Object.hasOwn(stream.workflows, subscription.operation)) {
-			issue(ctx, 'unknown-reference', 'Subscription references an unknown operation', [
-				'subscriptions',
-				index,
-				'operation',
-			]);
-		}
-	});
-}).transform(configuration => ({
-	...(configuration.winget === undefined ? {} : { winget: configuration.winget }),
-	...(configuration.actionsRevision === undefined ? {} : { actionsRevision: configuration.actionsRevision }),
-	extends: configuration.extends,
-	managers: configuration.managers,
-	streams: configuration.streams,
-	subscriptions: configuration.subscriptions,
-})).meta({ title: 'Repository release automation' });
-export type ConfigurationInput = z.input<typeof configurationSchema>;
-export type Configuration = z.output<typeof configurationSchema>;
+	Schema.toType(configurationValue),
+	configuration => ({
+		...(configuration.winget === undefined ? {} : { winget: configuration.winget }),
+		...(configuration.actionsRevision === undefined ? {} : { actionsRevision: configuration.actionsRevision }),
+		extends: configuration.extends,
+		managers: configuration.managers,
+		streams: configuration.streams,
+		subscriptions: configuration.subscriptions,
+	}),
+	value => value,
+).annotate({ title: 'Repository release automation' });
+export type ConfigurationInput = Encoded<typeof configurationSchema>;
+export type Configuration = Decoded<typeof configurationSchema>;
 
 export const configurationPath = '.github/beepboop.json';
 
-function codeOf(issue: z.core.$ZodIssue): DiagnosticCode {
+function codeOf(issue: ReturnType<typeof schemaIssues>[number]): DiagnosticCode {
 	if (issue.code !== 'custom') return 'invalid-configuration';
 	const code = issue.params?.diagnostic;
 	return typeof code === 'string' && isDiagnosticCode(code) ? code : 'invalid-configuration';
 }
 
-export function issueMessage(issue: z.core.$ZodIssue): string {
+export function issueMessage(issue: ReturnType<typeof schemaIssues>[number]): string {
 	return issue.path.length ? `${issue.path.map(String).join('.')}: ${issue.message}` : issue.message;
 }
 
@@ -395,12 +469,12 @@ export function configurationProblem(message: string, code: DiagnosticCode = 'in
 	return { code, severity: 'blocking', subject: { kind: 'file', path: configurationPath }, message };
 }
 
-export function configurationDiagnostics(error: z.ZodError): Diagnostic[] {
-	return error.issues.map(issue => configurationProblem(issueMessage(issue), codeOf(issue)));
+export function configurationDiagnostics(error: Schema.SchemaError): Diagnostic[] {
+	return schemaIssues(error).map(issue => configurationProblem(issueMessage(issue), codeOf(issue)));
 }
 
 export function configurationDrift(value: unknown, legacy: Configuration): Diagnostic[] {
-	const parsed = configurationSchema.safeParse(value);
+	const parsed = safeDecode(configurationSchema, value);
 	const drift = (message: string): Diagnostic => ({
 		code: 'configuration-drift',
 		severity: 'warning',
@@ -408,7 +482,7 @@ export function configurationDrift(value: unknown, legacy: Configuration): Diagn
 		message,
 	});
 	if (!parsed.success) {
-		return parsed.error.issues.map(issue => drift(`The configuration schema rejects ${issueMessage(issue)}`));
+		return schemaIssues(parsed.error).map(issue => drift(`The configuration schema rejects ${issueMessage(issue)}`));
 	}
 	return JSON.stringify(parsed.data) === JSON.stringify(legacy)
 		? []

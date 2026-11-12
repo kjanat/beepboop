@@ -1,6 +1,5 @@
-import { Context, Effect, Layer } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
 import { seal } from 'tweetnacl-sealedbox-js';
-import { z } from 'zod';
 import type { WorkflowIdentity } from '@/automation/auth';
 import { base64, bytes } from '@/automation/auth';
 import type { RepositoryGateway } from '@/automation/github';
@@ -14,6 +13,7 @@ import { credentialAliasPattern, githubSecretNamePattern } from '@/contract/ids'
 import { fromPromise, fromSync } from '@/failure';
 import { textSchema } from '@/model';
 import type { CredentialStore } from '@/persistence/d1/credentials';
+import { decodeSync, matchesPattern, mutableStruct } from '@/schema';
 
 interface GrantFields {
 	id: string;
@@ -30,29 +30,35 @@ export type Grant =
 	| (GrantFields & { delivery: 'runtime' })
 	| (GrantFields & { delivery: 'repository'; secretName: string })
 	| (GrantFields & { delivery: 'environment'; environment: string; secretName: string });
-const secretPublicKey = z.object({ key: textSchema, key_id: textSchema });
+const secretPublicKey = mutableStruct({ key: textSchema, key_id: textSchema });
 const grantFields = {
 	id: textSchema,
-	alias: z.string().regex(/^[\w-]+$/),
-	repositoryId: z.number().int().positive(),
-	repository: z.string().regex(repositoryNamePattern),
+	alias: Schema.String.check(matchesPattern(/^[\w-]+$/)),
+	repositoryId: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
+	repository: Schema.String.check(matchesPattern(repositoryNamePattern)),
 	operation: textSchema,
-	workflow: z.string().regex(workflowFilePattern),
-	ref: z.string().startsWith('refs/'),
+	workflow: Schema.String.check(matchesPattern(workflowFilePattern)),
+	ref: Schema.String.check(Schema.isStartingWith('refs/')),
 };
-const secretName = z.string({ error: 'Secret name required' }).regex(githubSecretNamePattern, 'Secret name required');
-const grantSchema = z.discriminatedUnion('delivery', [
-	z.object({
+const secretName = Schema.String.check(matchesPattern(githubSecretNamePattern, { message: 'Secret name required' }))
+	.annotateKey({ messageMissingKey: 'Secret name required' });
+const grantSchema = Schema.Union([
+	mutableStruct({
 		...grantFields,
-		delivery: z.literal('runtime'),
-		environment: textSchema.optional(),
-		secretName: textSchema.optional(),
+		delivery: Schema.Literal('runtime'),
+		environment: Schema.optional(textSchema),
+		secretName: Schema.optional(textSchema),
 	}),
-	z.object({ ...grantFields, delivery: z.literal('repository'), environment: textSchema.optional(), secretName }),
-	z.object({
+	mutableStruct({
 		...grantFields,
-		delivery: z.literal('environment'),
-		environment: z.string().min(1, 'Environment required'),
+		delivery: Schema.Literal('repository'),
+		environment: Schema.optional(textSchema),
+		secretName,
+	}),
+	mutableStruct({
+		...grantFields,
+		delivery: Schema.Literal('environment'),
+		environment: Schema.String.check(Schema.isMinLength(1, { message: 'Environment required' })),
 		secretName,
 	}),
 ]);
@@ -61,7 +67,7 @@ export function runtimeGrant(grant: Grant, operation: string, repository: string
 		&& matchesRef(grant.ref, ref);
 }
 export function parseGrant(value: unknown): Effect.Effect<Grant, DomainError> {
-	return fromSync(() => grantSchema.parse(value));
+	return fromSync(() => decodeSync(grantSchema, value));
 }
 export function requestGrant(value: unknown): Effect.Effect<Grant, DomainError> {
 	return decodeRequest(grantSchema, value);
@@ -188,7 +194,7 @@ export class Vault {
 					});
 					return 'succeeded';
 				}).pipe(
-					Effect.catchCause(() => Effect.succeed('failed')),
+					Effect.orElseSucceed(() => 'failed'),
 					Effect.tap(state => this.credentials.recordDelivery(grant.id, secret.version, state)),
 					Effect.map(state => ({ id: grant.id, state })),
 				);

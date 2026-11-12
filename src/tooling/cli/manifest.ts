@@ -1,3 +1,4 @@
-import { z } from 'zod';
+import { Schema } from 'effect';
+import { mutableStruct } from '@/schema';
 
-export const packageManifest = z.object({ name: z.string(), version: z.string() });
+export const packageManifest = mutableStruct({ name: Schema.String, version: Schema.String });

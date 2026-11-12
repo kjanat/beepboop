@@ -1,5 +1,4 @@
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Clock, Effect, Schema } from 'effect';
 import { jsrLatest } from '@/automation/managers/jsr';
 import { npmLatest } from '@/automation/managers/npm';
 import type { Fetcher, RegistryVersion } from '@/automation/managers/registry';
@@ -15,16 +14,17 @@ import { watchedRegistries } from '@/contract/catalog';
 import type { DomainError } from '@/contract/errors';
 import { recover } from '@/failure';
 import { parse, sql } from '@/persistence/d1/database';
+import { mutableArray, mutableStruct } from '@/schema';
 
-const watchedRow = z.object({
-	registry: z.enum(watchedRegistries),
-	name: z.string(),
-	manual: z.number(),
-	version: z.string().nullable(),
-	checked_at: z.number().nullable(),
-	changed_at: z.number().nullable(),
-	error: z.string().nullable(),
-	awaiting_release: z.number(),
+const watchedRow = mutableStruct({
+	registry: Schema.Literals(watchedRegistries),
+	name: Schema.String,
+	manual: Schema.Finite,
+	version: Schema.NullOr(Schema.String),
+	checked_at: Schema.NullOr(Schema.Finite),
+	changed_at: Schema.NullOr(Schema.Finite),
+	error: Schema.NullOr(Schema.String),
+	awaiting_release: Schema.Finite,
 });
 
 export interface PackageWatch extends WatchedPackage {
@@ -52,7 +52,7 @@ export function packageWatches(
 	return Effect.gen(function*() {
 		const listed = new Map(watchlist(repositories).map(entry => [key(entry.registry, entry.name), entry]));
 		const rows = yield* parse(
-			z.array(watchedRow),
+			mutableArray(watchedRow),
 			yield* sql(store.db).all('SELECT * FROM watched_packages ORDER BY registry, name'),
 		);
 		const watches = new Map<string, PackageWatch>();
@@ -87,13 +87,15 @@ export function addWatch(
 	manual: boolean,
 ): Effect.Effect<void, DomainError> {
 	return Effect.gen(function*() {
+		const clock = yield* Clock.Clock;
+
 		const db = sql(store.db);
 		const inserted = yield* db.run(
 			'INSERT OR IGNORE INTO watched_packages (registry, name, manual, added_at) VALUES (?, ?, ?, ?)',
 			registry,
 			name,
 			Number(manual),
-			Date.now(),
+			clock.currentTimeMillisUnsafe(),
 		);
 		if (inserted.meta.changes > 0) {
 			yield* notifications.subscribeNew(registry, name);
@@ -124,8 +126,10 @@ export function pollPackages(
 	notifications: Notifications,
 ): Effect.Effect<void, DomainError> {
 	return Effect.gen(function*() {
+		const clock = yield* Clock.Clock;
+
 		const db = sql(store.db);
-		const now = Date.now();
+		const now = clock.currentTimeMillisUnsafe();
 		for (const watch of yield* packageWatches(store, repositories)) {
 			yield* addWatch(store, notifications, watch.registry, watch.name, false);
 			const latest = yield* lookups[watch.registry](watch.name, request).pipe(

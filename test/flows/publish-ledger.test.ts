@@ -42,11 +42,24 @@ import {
 } from '@root/test/support/repositories.ts';
 import type { RunIdentity, World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { Effect } from 'effect';
+import { Effect, Schema, Struct } from 'effect';
 import { ledgerSchema } from '@/automation/ledger';
 import { publishMinutes } from '@/automation/setup-workflows';
 import type { Execution } from '@/automation/types';
 import { publishWaitMinutes } from '@/contract/ledger';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 let world: World;
 let target = '';
@@ -308,7 +321,7 @@ function started(begun: Map<string, { execution: Execution; identity: RunIdentit
 async function ledgerOf(repository: Repository, executionId: string) {
 	const journal = await world.coordinator(repository).exportJournal();
 	const value = journal.find(entry => entry.key === `ledger:${executionId}`)?.value;
-	return ledgerSchema.parse(value);
+	return decodeSync(ledgerSchema, value);
 }
 async function executionOf(repository: Repository, executionId: string) {
 	const execution = await world.coordinator(repository).execution(executionId);
@@ -887,15 +900,10 @@ test('a generated npm package publishes only from a tarball, and duplicate tarba
 }, 60_000);
 
 test('npm provenance follows the visibility of the repository in the workflow event', () => {
-	const event = (value: unknown) => {
-		const path = join(target, `event-${crypto.randomUUID()}.json`);
-		writeFileSync(path, JSON.stringify(value));
-		return path;
-	};
-	expect(publicRepository(event({ repository: { private: false } }))).toBe(true);
-	expect(publicRepository(event({ repository: { private: true } }))).toBe(false);
-	expect(publicRepository(event({}))).toBe(false);
-	expect(publicRepository(undefined)).toBe(false);
+	expect(publicRepository('false')).toBe(true);
+	for (const value of ['true', 'null', '', 'false\n', undefined]) {
+		expect(publicRepository(value)).toBe(false);
+	}
 });
 
 test('a crate that fails to package is reported failed and its dependent does not publish', async () => {

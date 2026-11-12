@@ -4,6 +4,7 @@ import type { Outcome, Publication } from '@/automation/types';
 import { sha256DigestPattern, sha256Hex } from '@/contract/ids';
 import { fromPromise } from '@/failure';
 import { record } from '@/model';
+import { responseBytes, responseJson } from '@/runtime/http';
 
 /** Public distribution verification. Never forwards GitHub or vault credentials to registries. */
 export function verifyImage(publication: Publication, request: Fetcher = fetch): Effect.Effect<Publication> {
@@ -24,18 +25,20 @@ export function verifyImage(publication: Publication, request: Fetcher = fetch):
 		...(digest === undefined ? {} : { digest }),
 	});
 	const manifest = () =>
-		fromPromise(() => request(url, { headers, redirect: 'manual', signal: AbortSignal.timeout(15000) }));
+		fromPromise(signal =>
+			request(url, { headers, redirect: 'manual', signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) })
+		);
 	return Effect.gen(function*() {
 		let response = yield* manifest();
 		if (response.status === 401) {
 			const tokenUrl = new URL(registry === 'ghcr.io' ? 'https://ghcr.io/token' : 'https://auth.docker.io/token');
 			tokenUrl.searchParams.set('service', registry === 'ghcr.io' ? 'ghcr.io' : 'registry.docker.io');
 			tokenUrl.searchParams.set('scope', `repository:${image}:pull`);
-			const auth = yield* fromPromise(() =>
-				request(tokenUrl, { redirect: 'manual', signal: AbortSignal.timeout(15000) })
+			const auth = yield* fromPromise(signal =>
+				request(tokenUrl, { redirect: 'manual', signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) })
 			);
 			if (!auth.ok) return result('uncertain');
-			const data = yield* Effect.fromResult(record(yield* fromPromise((): Promise<unknown> => auth.json())));
+			const data = yield* Effect.fromResult(record(yield* responseJson(auth)));
 			const token = data.token ?? data.access_token;
 			if (typeof token !== 'string') return result('uncertain');
 			headers.Authorization = `Bearer ${token}`;
@@ -48,9 +51,9 @@ export function verifyImage(publication: Publication, request: Fetcher = fetch):
 			return result('failed');
 		}
 		// Verify the bytes as well as the registry's digest header.
-		const content = yield* fromPromise(() => response.arrayBuffer());
+		const content = yield* responseBytes(response);
 		if (content.byteLength > 4 * 1024 * 1024) return result('failed');
-		const hash = yield* fromPromise(() => sha256Hex(content));
+		const hash = yield* fromPromise(() => sha256Hex(content.buffer));
 		if (digest !== `sha256:${hash}`) return result('failed');
 		if (publication.channel) {
 			const channel = yield* verifyImage({ ...publication, version: publication.channel, channel: undefined }, request);
@@ -59,5 +62,5 @@ export function verifyImage(publication: Publication, request: Fetcher = fetch):
 			}
 		}
 		return result('succeeded', digest);
-	}).pipe(Effect.catchCause(() => Effect.succeed(result('uncertain'))));
+	}).pipe(Effect.orElseSucceed(() => result('uncertain')));
 }

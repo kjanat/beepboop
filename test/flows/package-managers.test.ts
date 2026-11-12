@@ -3,13 +3,27 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withEnvironment } from '@root/test/support/process.ts';
-import { Effect } from 'effect';
+import { Effect, Schema, Struct } from 'effect';
 import type { HomebrewConfiguration } from '@/distribution/homebrew/generate';
 import { generateCask } from '@/distribution/homebrew/generate';
 import { writeRendered } from '@/distribution/output';
 import type { ScoopConfiguration } from '@/distribution/scoop/generate';
 import { generateManifest, scoopConfiguration } from '@/distribution/scoop/generate';
-import { generateManifests } from '@/distribution/winget/generate';
+import { generateManifests, wingetConfiguration } from '@/distribution/winget/generate';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
+import { ToolFailure } from '@/tooling/runtime';
 
 const digest = (character: string) => character.repeat(64);
 const checksums = [
@@ -311,7 +325,7 @@ test('a Scoop manifest refuses rooted executables and shim aliases with a path',
 		const configuration = { ...kprintScoop, bin };
 		const result = await run(generateManifest({ configuration, version: '0.61.0', tag: '0.61.0', checksums }));
 		return result._tag === 'Failure'
-			? JSON.stringify(scoopConfiguration.safeParse(configuration).error?.issues)
+			? JSON.stringify(safeDecode(scoopConfiguration, configuration).error?.issues)
 			: 'generated';
 	};
 	expect(await refused(['C:\\build\\kprint.exe'])).toContain('Expected a relative path inside the archive');
@@ -348,6 +362,42 @@ test('a generated file is reported in GITHUB_OUTPUT, or on stderr outside a work
 	} finally {
 		stderr.mockRestore();
 		await rm(directory, { recursive: true, force: true });
+	}
+});
+
+test('WinGet rejects installer typos and maps malformed release URLs to CLI failures', async () => {
+	const configuration = {
+		packageIdentifier: 'Kjanat.Kprint',
+		releaseNotesUrl: 'https://example.com/{tag}',
+		metadata: { Publisher: 'kjanat', PackageName: 'kprint', License: 'MIT', ShortDescription: 'Code formatter' },
+		installer: { InstallerType: 'portable' },
+		installers: [{ architecture: 'x64', asset: 'kprint.exe', url: 'https://example.com/{asset}' }],
+	} as const;
+	expect(
+		safeDecode(wingetConfiguration, {
+			...configuration,
+			installer: { ...configuration.installer, InstallerSwitchess: { Silent: '/S' } },
+		}).success,
+	).toBe(false);
+	for (const position of ['releaseNotes', 'installer']) {
+		const result = await run(
+			generateManifests({
+				configuration: {
+					...configuration,
+					releaseNotesUrl: position === 'releaseNotes' ? 'https://' : configuration.releaseNotesUrl,
+					installers: configuration.installers.map(installer => ({
+						...installer,
+						url: position === 'installer' ? 'not a URL' : installer.url,
+					})),
+				},
+				version: '1.0.0',
+				releaseDate: '2026-11-12',
+				checksums: `${digest('a')}  kprint.exe`,
+				releaseNotes: 'Notes',
+			}).pipe(Effect.mapError(error => new ToolFailure({ message: error.message, cause: error }))),
+		);
+		expect(result._tag === 'Failure' && result.failure._tag).toBe('ToolFailure');
+		expect(result._tag === 'Failure' && result.failure.message).toBe('Expected an HTTPS release URL');
 	}
 });
 

@@ -2,6 +2,7 @@ import { listOrder, unfinishedStates } from '@/automation/execution-order.ts';
 import { matchesPackage, matchesPublication } from '@/automation/package-identity';
 import type { Execution, Publication, RepositoryRecord } from '@/automation/types.ts';
 import { compare, semVer } from '@/contract/version';
+import { safeDecode } from '@/schema';
 
 export const activeStates: readonly string[] = ['running', 'ready', 'dispatching', 'verifying'];
 
@@ -55,7 +56,7 @@ export function needingUser(executions: readonly Execution[]): ReadonlySet<strin
 		if (!current || byAge(current, run) < 0) newest.set(key, run);
 	}
 	const covers = (later: string | undefined, earlier: string | undefined) => {
-		const next = semVer.safeParse(later), previous = semVer.safeParse(earlier);
+		const next = safeDecode(semVer, later), previous = safeDecode(semVer, earlier);
 		return next.success && (!previous.success || compare(next.data, previous.data) > 0);
 	};
 	const published = (run: Execution) => {

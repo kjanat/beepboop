@@ -1,11 +1,12 @@
-import { Result } from 'effect';
-import { z } from 'zod';
+import { Result, Schema } from 'effect';
 import type { Publication, PublishKind } from '@/automation/types';
 import { registryLabel } from '@/contract/catalog';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import type { LedgerEntry, LedgerManager, LedgerPackage } from '@/contract/ledger';
 import { ledgerManagers } from '@/contract/ledger';
+import type { Decoded } from '@/schema';
+import { mutableArray, mutableStruct } from '@/schema';
 
 export const registries: Record<LedgerManager, string> = {
 	cargo: registryLabel('cargo'),
@@ -15,51 +16,56 @@ export const registries: Record<LedgerManager, string> = {
 export const leaseDuration = 15 * 60_000;
 export const rateLimitAttempts = 5;
 
-const status = z.discriminatedUnion('state', [
-	z.object({ state: z.literal('planned') }),
-	z.object({ state: z.literal('claimed'), holder: z.string(), leaseUntil: z.number() }),
-	z.object({ state: z.literal('uploaded'), holder: z.string(), since: z.number(), checkedAt: z.number() }),
-	z.object({ state: z.literal('published'), url: z.string() }),
-	z.object({ state: z.literal('reused'), url: z.string() }),
-	z.object({ state: z.literal('rate-limited'), holder: z.string(), retryAfter: z.number() }),
-	z.object({ state: z.literal('failed-retryable'), holder: z.string(), error: z.string() }),
-	z.object({ state: z.literal('failed-permanent'), error: z.string() }),
+const status = Schema.Union([
+	mutableStruct({ state: Schema.Literal('planned') }),
+	mutableStruct({ state: Schema.Literal('claimed'), holder: Schema.String, leaseUntil: Schema.Finite }),
+	mutableStruct({
+		state: Schema.Literal('uploaded'),
+		holder: Schema.String,
+		since: Schema.Finite,
+		checkedAt: Schema.Finite,
+	}),
+	mutableStruct({ state: Schema.Literal('published'), url: Schema.String }),
+	mutableStruct({ state: Schema.Literal('reused'), url: Schema.String }),
+	mutableStruct({ state: Schema.Literal('rate-limited'), holder: Schema.String, retryAfter: Schema.Finite }),
+	mutableStruct({ state: Schema.Literal('failed-retryable'), holder: Schema.String, error: Schema.String }),
+	mutableStruct({ state: Schema.Literal('failed-permanent'), error: Schema.String }),
 ]);
-export type LedgerStatus = z.output<typeof status>;
+export type LedgerStatus = Decoded<typeof status>;
 
-const attempt = z.object({
-	holder: z.string(),
-	at: z.number(),
-	event: z.enum(['claimed', 'uploaded', 'published', 'reused', 'rate-limited', 'failed']),
-	detail: z.string().optional(),
+const attempt = mutableStruct({
+	holder: Schema.String,
+	at: Schema.Finite,
+	event: Schema.Literals(['claimed', 'uploaded', 'published', 'reused', 'rate-limited', 'failed']),
+	detail: Schema.optional(Schema.String),
 });
-export type LedgerAttempt = z.output<typeof attempt>;
+export type LedgerAttempt = Decoded<typeof attempt>;
 
-const record = z.object({
-	purl: z.string(),
-	id: z.string(),
-	manager: z.enum(ledgerManagers),
-	name: z.string(),
-	version: z.string(),
-	manifest: z.string(),
-	required: z.boolean(),
-	dependencies: z.array(z.string()),
-	generated: z.boolean().optional(),
-	channel: z.string().optional(),
-	digest: z.string().optional(),
-	reservation: z.enum(['new', 'update']).optional(),
-	notBefore: z.number().optional(),
+const record = mutableStruct({
+	purl: Schema.String,
+	id: Schema.String,
+	manager: Schema.Literals(ledgerManagers),
+	name: Schema.String,
+	version: Schema.String,
+	manifest: Schema.String,
+	required: Schema.Boolean,
+	dependencies: mutableArray(Schema.String),
+	generated: Schema.optional(Schema.Boolean),
+	channel: Schema.optional(Schema.String),
+	digest: Schema.optional(Schema.String),
+	reservation: Schema.optional(Schema.Literals(['new', 'update'])),
+	notBefore: Schema.optional(Schema.Finite),
 	status,
-	attempts: z.array(attempt),
+	attempts: mutableArray(attempt),
 });
-export type LedgerRecord = z.output<typeof record>;
+export type LedgerRecord = Decoded<typeof record>;
 
-export const ledgerSchema = z.object({
-	executionId: z.string(),
-	sourceSha: z.string(),
-	records: z.array(record),
+export const ledgerSchema = mutableStruct({
+	executionId: Schema.String,
+	sourceSha: Schema.String,
+	records: mutableArray(record),
 });
-export type Ledger = z.output<typeof ledgerSchema>;
+export type Ledger = Decoded<typeof ledgerSchema>;
 
 export type Availability =
 	| { kind: 'open' }

@@ -8,13 +8,15 @@ import { Network } from '@root/test/support/network.ts';
 import { FakeNpm } from '@root/test/support/registries.ts';
 import { FakeNamespace } from '@root/test/support/rpc.ts';
 import { FakeWorkflow } from '@root/test/support/workflows.ts';
+import { Effect } from 'effect';
 import type { JWK } from 'jose';
 import { exportJWK, exportPKCS8, generateKeyPair, SignJWT } from 'jose';
 import type { CoordinatorBindings } from '@/automation/coordinator';
 import { AutomationCoordinator } from '@/automation/coordinator';
 import { PublishBudget } from '@/automation/publish-budget';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
-import type { AutomationBindings } from '@/automation/service';
+import type { Automation, AutomationBindings } from '@/automation/service';
+import { applicationLayer } from '@/automation/service';
 import { cliToken, sha256Hex } from '@/contract/ids';
 import { serve } from '@/server/endpoint';
 
@@ -62,13 +64,17 @@ export class World {
 	readonly coordinators: FakeNamespace<AutomationCoordinator>;
 	readonly budgets: FakeNamespace<PublishBudget>;
 	readonly env: Environment;
+	readonly application: ReturnType<typeof applicationLayer>;
 	private constructor(
 		private readonly actions: SigningKey,
 		private readonly openauth: SigningKey,
 		appKey: string,
 	) {
 		this.budgets = new FakeNamespace('PublishBudget', state => new PublishBudget(state, this.env));
-		this.coordinators = new FakeNamespace('AutomationCoordinator', state => new AutomationCoordinator(state, this.env));
+		this.coordinators = new FakeNamespace(
+			'AutomationCoordinator',
+			state => new AutomationCoordinator(state, this.env, this.application),
+		);
 		this.env = {
 			DB: this.db,
 			AUTOMATION: this.coordinators,
@@ -85,6 +91,7 @@ export class World {
 			OPENAUTH_CLIENT_ID: 'beepboop',
 			ADMIN_SUBJECT: adminSubject,
 		};
+		this.application = applicationLayer(this.env, deferBackground, this.network.fetch);
 		this.network.serve('api.github.com', request => this.github.handle(request));
 		this.network.serve('registry.npmjs.org', request => this.npm.handle(request));
 		this.network.serve(
@@ -115,8 +122,11 @@ export class World {
 		setSystemTime();
 	}
 
+	run<A, E>(work: Effect.Effect<A, E, Automation>): Promise<A> {
+		return Effect.runPromise(work.pipe(Effect.provide(this.application)));
+	}
 	async handle(request: Request): Promise<Response> {
-		const response = await serve(request, deferBackground);
+		const response = await serve(request, deferBackground, this.application);
 		await drainBackground();
 		return response;
 	}

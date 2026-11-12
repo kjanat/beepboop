@@ -1,13 +1,12 @@
 import { Effect } from 'effect';
-import { Authenticators } from '@/automation/auth';
 import { notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import { admin, elevated } from '@/server/handlers/kit';
 
 export const securityEndpoints = {
-	authenticatorsOptions: admin(routes.authenticatorsOptions, (input, { env, actor }) =>
+	authenticatorsOptions: admin(routes.authenticatorsOptions, (input, { service, actor }) =>
 		Effect.gen(function*() {
-			const authenticators = new Authenticators(env);
+			const authenticators = service.authentication.authenticators;
 			const register = input.register === true;
 			if (register && (yield* authenticators.enrolled(actor)) > 0) {
 				yield* authenticators.consume(actor, input.proof ?? '');
@@ -16,13 +15,13 @@ export const securityEndpoints = {
 		})),
 	authenticatorsVerify: admin(
 		routes.authenticatorsVerify,
-		(input, { env, actor }) => new Authenticators(env).verify(actor, input.id, input.response),
+		(input, { service, actor }) => service.authentication.authenticators.verify(actor, input.id, input.response),
 	),
 	authenticatorsRemove: elevated(
 		routes.authenticatorsRemove,
-		(input, { env, service, actor }) =>
+		(input, { service, actor }) =>
 			Effect.gen(function*() {
-				const authenticators = new Authenticators(env);
+				const authenticators = service.authentication.authenticators;
 				const keys = yield* authenticators.list(actor);
 				if (!keys.some(key => key.id === input.id)) {
 					return yield* notFound('security-key', 'Unknown security key', input.id);

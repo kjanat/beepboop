@@ -82,7 +82,11 @@ export function oneOf<T extends string>(
 }
 
 export function report<E>(program: Effect.Effect<void, E>, form?: HTMLFormElement): Effect.Effect<void> {
-	return program.pipe(Effect.catchCause(cause => Effect.sync(() => showError(Cause.squash(cause), form))));
+	return program.pipe(
+		Effect.catchCause(cause =>
+			Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.sync(() => showError(Cause.squash(cause), form))
+		),
+	);
 }
 
 const feedbacks = new WeakMap<HTMLFormElement, HTMLElement>();

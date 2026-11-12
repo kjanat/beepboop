@@ -5,11 +5,25 @@ import { bearer, bearerRequest, reply } from '@root/test/support/http.ts';
 import { widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
-import { Effect, Fiber, Result } from 'effect';
+import { Effect, Fiber, Result, Schema, Struct } from 'effect';
 import { TestClock } from 'effect/testing';
 import { ApiFailure } from '@/contract/client';
 import { errorEnvelope } from '@/contract/errors';
 import { routeIds, routes } from '@/contract/routes';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
+import { serve } from '@/server/endpoint';
 import { rawRoutes, resolve } from '@/server/router';
 
 const legacy = [
@@ -106,7 +120,7 @@ test('the route table answers every path the old router answered, and nothing el
 	}
 	const unknown = await reply(await world.handle(new Request(`${origin}/api/repositories/nope`)));
 	expect(unknown.status).toBe(404);
-	expect(errorEnvelope.parse(unknown.body).problem).toEqual({ code: 'not-found', resource: 'route' });
+	expect(decodeSync(errorEnvelope, unknown.body).problem).toEqual({ code: 'not-found', resource: 'route' });
 	const suffixed = await world.handle(
 		new Request(`${origin}/api/workflow/anything/begin`, { method: 'POST', body: '{}' }),
 	);
@@ -114,10 +128,10 @@ test('the route table answers every path the old router answered, and nothing el
 	const wrongMethod = await reply(await world.handle(new Request(`${origin}/api/repositories`, { method: 'POST' })));
 	expect(wrongMethod.status).toBe(405);
 	expect(wrongMethod.headers.get('allow')).toBe('GET');
-	expect(errorEnvelope.parse(wrongMethod.body).problem).toEqual({ code: 'method-not-allowed', allowed: ['GET'] });
+	expect(decodeSync(errorEnvelope, wrongMethod.body).problem).toEqual({ code: 'method-not-allowed', allowed: ['GET'] });
 	const anonymous = await reply(await world.handle(new Request(`${origin}/api/executions`)));
 	expect(anonymous.status).toBe(401);
-	expect(errorEnvelope.parse(anonymous.body).problem).toEqual({ code: 'unauthenticated' });
+	expect(decodeSync(errorEnvelope, anonymous.body).problem).toEqual({ code: 'unauthenticated' });
 	expect(world.network.unrouted).toEqual([]);
 });
 
@@ -388,10 +402,10 @@ test('a broken Worker configuration fails with a logged internal error', async (
 	console.error = (...values: unknown[]) => logged.push(values.map(String).join(' '));
 	try {
 		const response = await reply(
-			await world.handle(new Request(`${origin}/api/repositories`, { headers: { Authorization: 'Bearer x' } })),
+			await serve(new Request(`${origin}/api/repositories`, { headers: { Authorization: 'Bearer x' } })),
 		);
 		expect(response.status).toBe(500);
-		expect(errorEnvelope.parse(response.body).problem?.code).toBe('internal');
+		expect(decodeSync(errorEnvelope, response.body).problem?.code).toBe('internal');
 	} finally {
 		console.error = error;
 	}
@@ -439,12 +453,14 @@ test('the Actions request builders produce bodies the server parses', async () =
 			const route = routes[ids[mode]];
 			const mirrored: { path: string; idempotent: boolean } = endpoints[mode];
 			expect({ mode, ...mirrored }).toEqual({ mode, path: route.path, idempotent: route.idempotent });
-			const parsed = route.request.safeParse(
+			const parsed = safeDecode(
+				route.request,
 				Result.getOrThrow(requestBody(mode, environment, Date.parse('2026-11-04T09:00:00Z'))),
 			);
 			expect({ mode, issues: parsed.error?.issues ?? [] }).toEqual({ mode, issues: [] });
 		}
-		const report = routes.workflowReport.request.parse(
+		const report = decodeSync(
+			routes.workflowReport.request,
 			Result.getOrThrow(requestBody('report', environment, Date.parse('2026-11-04T09:00:00Z'))),
 		);
 		expect(report.publications).toEqual([
@@ -465,7 +481,10 @@ test('the Actions request builders produce bodies the server parses', async () =
 test('the token action reads permission-* inputs, the permissions JSON, or neither', async () => {
 	const { requestBody } = await import('@root/actions/runtime/protocol.ts');
 	const permissions = (environment: Record<string, string>) =>
-		Result.map(requestBody('token', environment), body => routes.workflowToken.request.parse(body).permissions);
+		Result.map(
+			requestBody('token', environment, 0),
+			body => decodeSync(routes.workflowToken.request, body).permissions,
+		);
 	const inputs = JSON.stringify({
 		service: 'https://beepboop.kjanat.dev',
 		'permission-contents': 'write',

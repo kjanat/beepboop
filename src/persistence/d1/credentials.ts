@@ -1,27 +1,38 @@
-import { Effect } from 'effect';
-import { z } from 'zod';
+import { Effect, Schema } from 'effect';
 import { documentRow } from '@/automation/schemas';
 import type { DomainError } from '@/contract/errors';
 import { fromSync } from '@/failure';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { optionalColumn, parse, sql, upsertDocument } from '@/persistence/d1/database';
+import type { Decoded } from '@/schema';
+import { mutableArray, mutableStruct } from '@/schema';
 
-const versionRow = z.object({ version: z.number().nullable() });
-const sealedRow = z.object({ version: z.number(), key_id: z.string(), iv: z.string(), ciphertext: z.string() });
-const listedRow = z.object({
-	alias: z.string(),
-	version: z.number(),
-	key_id: z.string(),
-	active: z.number(),
-	created_at: z.number(),
+const versionRow = mutableStruct({ version: Schema.NullOr(Schema.Finite) });
+const sealedRow = mutableStruct({
+	version: Schema.Finite,
+	key_id: Schema.String,
+	iv: Schema.String,
+	ciphertext: Schema.String,
 });
-const activeRow = z.object({ alias: z.string(), version: z.number(), created_at: z.number() });
-const deliveryRow = z.object({ grant_id: z.string(), version: z.number(), state: z.string(), updated_at: z.number() });
+const listedRow = mutableStruct({
+	alias: Schema.String,
+	version: Schema.Finite,
+	key_id: Schema.String,
+	active: Schema.Finite,
+	created_at: Schema.Finite,
+});
+const activeRow = mutableStruct({ alias: Schema.String, version: Schema.Finite, created_at: Schema.Finite });
+const deliveryRow = mutableStruct({
+	grant_id: Schema.String,
+	version: Schema.Finite,
+	state: Schema.String,
+	updated_at: Schema.Finite,
+});
 
-export type SealedCredential = z.output<typeof sealedRow>;
-export type ListedCredential = z.output<typeof listedRow>;
-export type ActiveCredential = z.output<typeof activeRow>;
-export type DeliveryRow = z.output<typeof deliveryRow>;
+export type SealedCredential = Decoded<typeof sealedRow>;
+export type ListedCredential = Decoded<typeof listedRow>;
+export type ActiveCredential = Decoded<typeof activeRow>;
+export type DeliveryRow = Decoded<typeof deliveryRow>;
 
 export interface Sealed {
 	alias: string;
@@ -33,21 +44,21 @@ export interface Sealed {
 
 export class CredentialStore {
 	private readonly sql: Sql;
-	constructor(db: SqlDatabase) {
+	constructor(db: SqlDatabase | Sql) {
 		this.sql = sql(db);
 	}
 	list(): Effect.Effect<ListedCredential[], DomainError> {
 		return this.sql.all('SELECT alias,version,key_id,active,created_at FROM credentials ORDER BY alias,version DESC')
-			.pipe(Effect.flatMap(rows => parse(z.array(listedRow), rows)));
+			.pipe(Effect.flatMap(rows => parse(mutableArray(listedRow), rows)));
 	}
 	active(): Effect.Effect<ActiveCredential[], DomainError> {
 		return this.sql.all('SELECT alias,version,created_at FROM credentials WHERE active=1 ORDER BY alias').pipe(
-			Effect.flatMap(rows => parse(z.array(activeRow), rows)),
+			Effect.flatMap(rows => parse(mutableArray(activeRow), rows)),
 		);
 	}
 	activeVersion(alias: string): Effect.Effect<number | undefined, DomainError> {
 		return this.sql.first('SELECT version FROM credentials WHERE alias=? AND active=1', alias).pipe(
-			Effect.flatMap(optionalColumn(z.object({ version: z.number() }), row => row.version)),
+			Effect.flatMap(optionalColumn(mutableStruct({ version: Schema.Finite }), row => row.version)),
 		);
 	}
 	sealed(alias: string): Effect.Effect<SealedCredential | undefined, DomainError> {
@@ -61,18 +72,20 @@ export class CredentialStore {
 		);
 	}
 	store(sealed: Sealed): Effect.Effect<void, DomainError> {
-		return this.sql.batch([
-			this.sql.statement('UPDATE credentials SET active=0 WHERE alias=?', sealed.alias),
-			this.sql.statement(
-				'INSERT INTO credentials(alias,version,key_id,ciphertext,iv,active,created_at) VALUES(?,?,?,?,?,1,?)',
-				sealed.alias,
-				sealed.version,
-				sealed.keyId,
-				sealed.ciphertext,
-				sealed.iv,
-				Date.now(),
-			),
-		]).pipe(Effect.asVoid);
+		return Effect.clockWith(clock => {
+			return this.sql.batch([
+				this.sql.statement('UPDATE credentials SET active=0 WHERE alias=?', sealed.alias),
+				this.sql.statement(
+					'INSERT INTO credentials(alias,version,key_id,ciphertext,iv,active,created_at) VALUES(?,?,?,?,?,1,?)',
+					sealed.alias,
+					sealed.version,
+					sealed.keyId,
+					sealed.ciphertext,
+					sealed.iv,
+					clock.currentTimeMillisUnsafe(),
+				),
+			]).pipe(Effect.asVoid);
+		});
 	}
 	grantDocuments(filter: { alias?: string; repositoryId?: number } = {}): Effect.Effect<unknown[], DomainError> {
 		const rows = filter.alias === undefined
@@ -87,7 +100,7 @@ export class CredentialStore {
 				filter.repositoryId,
 			);
 		return rows.pipe(
-			Effect.flatMap(rows => parse(z.array(documentRow), rows)),
+			Effect.flatMap(rows => parse(mutableArray(documentRow), rows)),
 			Effect.flatMap(rows => fromSync(() => rows.map((row): unknown => JSON.parse(row.document)))),
 		);
 	}
@@ -108,16 +121,18 @@ export class CredentialStore {
 	}
 	deliveries(): Effect.Effect<DeliveryRow[], DomainError> {
 		return this.sql.all('SELECT grant_id,version,state,updated_at FROM secret_deliveries').pipe(
-			Effect.flatMap(rows => parse(z.array(deliveryRow), rows)),
+			Effect.flatMap(rows => parse(mutableArray(deliveryRow), rows)),
 		);
 	}
 	recordDelivery(grantId: string, version: number, state: string): Effect.Effect<void, DomainError> {
-		return this.sql.run(
-			'INSERT INTO secret_deliveries(grant_id,version,state,updated_at) VALUES(?,?,?,?) ON CONFLICT(grant_id,version) DO UPDATE SET state=excluded.state,updated_at=excluded.updated_at',
-			grantId,
-			version,
-			state,
-			Date.now(),
-		).pipe(Effect.asVoid);
+		return Effect.clockWith(clock => {
+			return this.sql.run(
+				'INSERT INTO secret_deliveries(grant_id,version,state,updated_at) VALUES(?,?,?,?) ON CONFLICT(grant_id,version) DO UPDATE SET state=excluded.state,updated_at=excluded.updated_at',
+				grantId,
+				version,
+				state,
+				clock.currentTimeMillisUnsafe(),
+			).pipe(Effect.asVoid);
+		});
 	}
 }

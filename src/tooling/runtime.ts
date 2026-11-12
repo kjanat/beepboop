@@ -6,6 +6,7 @@ import type { Scope } from 'effect';
 import { Data, Effect } from 'effect';
 import { parseWith } from '@/decode';
 import { failWith } from '@/refusal';
+import { terminate } from '@/runtime/process';
 
 export class ToolFailure
 	extends Data.TaggedError('ToolFailure')<{ readonly message: string; readonly cause?: unknown }>
@@ -26,11 +27,11 @@ export function attempt<A>(run: () => A): Effect.Effect<A, ToolFailure> {
 	return Effect.try({ try: run, catch: toolFailure });
 }
 
-export function attemptPromise<A>(run: () => Promise<A>): Effect.Effect<A, ToolFailure> {
+export function attemptPromise<A>(run: (signal: AbortSignal) => Promise<A>): Effect.Effect<A, ToolFailure> {
 	return Effect.tryPromise({ try: run, catch: toolFailure });
 }
 
-export const parse = parseWith(attempt);
+export const parse = parseWith(toolFailure);
 
 export function readJson(path: string): Effect.Effect<unknown, ToolFailure> {
 	return attemptPromise((): Promise<unknown> => Bun.file(path).json());
@@ -59,28 +60,30 @@ function spawn(args: string[], options: Command, stdin: 'inherit' | 'ignore', st
 	});
 }
 
-function exited<A>(
-	output: () => Promise<{ code: number; value: A }>,
-	failure: (value: A) => string,
+function command<A>(
+	args: string[],
+	options: Command,
+	stdin: 'inherit' | 'ignore',
+	stdout: 'inherit' | 'pipe',
+	read: (child: ReturnType<typeof spawn>) => Promise<A>,
 ): Effect.Effect<A, ToolFailure> {
-	return attemptPromise(output).pipe(
-		Effect.flatMap(({ code, value }) => code === 0 ? Effect.succeed(value) : refuse(failure(value))),
+	return Effect.acquireUseRelease(
+		attempt(() => spawn(args, options, stdin, stdout)),
+		child => attemptPromise(async () => {
+			const [value, code] = await Promise.all([read(child), child.exited]);
+			if (code !== 0) throw new Error(`${args[0]} failed (exit ${code})`);
+			return value;
+		}),
+		terminate,
 	);
 }
 
 export function run(args: string[], options: Command = {}): Effect.Effect<void, ToolFailure> {
-	return exited(
-		async () => ({ code: await spawn(args, options, 'inherit', 'inherit').exited, value: undefined }),
-		() => `${args[0]} failed`,
-	);
+	return command(args, options, 'inherit', 'inherit', () => Promise.resolve());
 }
 
 export function capture(args: string[], options: Command = {}): Effect.Effect<string, ToolFailure> {
-	return exited(async () => {
-		const child = spawn(args, options, 'ignore', 'pipe');
-		const [value, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
-		return { code, value };
-	}, stdout => `${args.join(' ')} failed: ${stdout}`.trim());
+	return command(args, options, 'ignore', 'pipe', child => new Response(child.stdout).text());
 }
 
 export function checkArguments(allowPositionals: boolean) {

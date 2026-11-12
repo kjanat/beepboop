@@ -2,10 +2,12 @@ import { spawnSync } from 'node:child_process';
 import type { Environment, Invalid } from '@root/actions/runtime/protocol.ts';
 import { ActionFailure, attempt, attemptAsync, fail, required } from '@root/actions/runtime/protocol.ts';
 import { Effect } from 'effect';
+import type { Fetcher } from '@/automation/managers/registry.ts';
 import { repositoryNamePattern } from '@/automation/repository-name.ts';
 import { githubApiVersion } from '@/contract/http.ts';
 import { shaPattern } from '@/contract/ids.ts';
 import { array, record, text } from '@/model.ts';
+import { responseJson, responseText } from '@/runtime/http.ts';
 import type { OutputFailure } from '@/tooling/github-output.ts';
 import { writeOutput } from '@/tooling/github-output.ts';
 
@@ -37,11 +39,11 @@ function read(root: string, ...args: string[]): Effect.Effect<string, ActionFail
 	return run(root, args).pipe(Effect.map(output => output.toString().trim()));
 }
 
-function github(token: string) {
+export function pullRequestTransport(token: string, transport: Fetcher) {
 	return (method: string, path: string, body?: unknown, missing = false): Effect.Effect<unknown, ActionFailure> =>
 		Effect.gen(function*() {
-			const response = yield* attemptAsync(() =>
-				fetch(new URL(path, 'https://api.github.com'), {
+			const response = yield* attemptAsync(signal =>
+				transport(new URL(path, 'https://api.github.com'), {
 					method,
 					headers: {
 						Accept: 'application/vnd.github+json',
@@ -51,18 +53,17 @@ function github(token: string) {
 						'X-GitHub-Api-Version': githubApiVersion,
 					},
 					...(body === undefined ? {} : { body: JSON.stringify(body) }),
-					signal: AbortSignal.timeout(60000),
+					signal: AbortSignal.any([signal, AbortSignal.timeout(60000)]),
 				})
 			);
 			if (missing && response.status === 404) return undefined;
 			if (!response.ok) {
-				const detail = yield* Effect.promise(() => response.text().catch(() => ''));
+				const detail = yield* responseText(response).pipe(Effect.orElseSucceed(() => ''));
 				return yield* fail(`GitHub HTTP ${response.status} on ${method} ${path}: ${detail.slice(0, 500)}`);
 			}
-			return yield* Effect.tryPromise({
-				try: (): Promise<unknown> => response.json(),
-				catch: () => new ActionFailure({ message: `GitHub answered ${method} ${path} with invalid JSON` }),
-			});
+			return yield* responseJson(response).pipe(
+				Effect.mapError(() => new ActionFailure({ message: `GitHub answered ${method} ${path} with invalid JSON` })),
+			);
 		});
 }
 
@@ -139,7 +140,7 @@ export function pullRequest(environment: Environment): Effect.Effect<PullRequest
 			return { operation: 'none' };
 		}
 
-		const api = github(yield* need('PR_TOKEN'));
+		const api = pullRequestTransport(yield* need('PR_TOKEN'), fetch);
 		const repo = `/repos/${repository}`;
 		const ref = `heads/${branch.split('/').map(encodeURIComponent).join('/')}`;
 		const tree: Entry[] = [];

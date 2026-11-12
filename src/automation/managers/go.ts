@@ -7,9 +7,10 @@ import { latestVersion, publicationResult, registryRequest, unconfirmed } from '
 import { excluded, registry } from '@/automation/package-publication';
 import type { Package, Publication } from '@/automation/types';
 import { fileProblem } from '@/contract/diagnostics';
-import { fromPromise } from '@/failure';
 import { packageIdentity } from '@/package-url';
 import { parentDirectory } from '@/relative-path';
+import { responseJson } from '@/runtime/http';
+import { ioConcurrency } from '@/runtime/policy';
 
 const pseudoVersion =
 	/^v[0-9]+\.(?:0\.0-|\d+\.\d+-(?:[^+]*\.)?0\.)\d{14}-[A-Za-z0-9]+(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
@@ -86,14 +87,14 @@ function verifyModule(publication: Publication, request: Fetcher): Effect.Effect
 		if (response.status === 410) return result('pending');
 		const missing = unconfirmed(response);
 		if (missing) return result(missing);
-		const info = object(yield* fromPromise((): Promise<unknown> => response.json()));
+		const info = object(yield* responseJson(response));
 		const hash = object(info.Origin).Hash;
 		if (info.Version !== version || (publication.digest && typeof hash === 'string' && hash !== publication.digest)) {
 			return result('failed');
 		}
 		if (typeof hash !== 'string') return result(publication.digest ? 'uncertain' : 'succeeded');
 		return result('succeeded', hash);
-	}).pipe(Effect.catchCause(() => Effect.succeed(result('uncertain'))));
+	}).pipe(Effect.orElseSucceed(() => result('uncertain')));
 }
 
 export const goManager: Adapter<'go'> = {
@@ -127,7 +128,7 @@ export const goManager: Adapter<'go'> = {
 				},
 			);
 		return Effect.all([lookup(pkg.name), split?.suffix ? lookup(split.prefix) : Effect.undefined], {
-			concurrency: 'unbounded',
+			concurrency: ioConcurrency,
 		}).pipe(Effect.map(([current, previous]) =>
 			previous?.kind === 'published' && split
 				? { ...current, previousModule: { name: split.prefix, version: previous.version } }

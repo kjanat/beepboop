@@ -10,9 +10,22 @@ import { only } from '@root/test/support/releases.ts';
 import { widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
-import { Effect } from 'effect';
+import { Effect, Schema, Struct } from 'effect';
 import { RepositoryGateway } from '@/automation/github';
 import { pullSchema } from '@/automation/github-resources';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 let world: World;
 eachWorld(created => {
@@ -35,7 +48,7 @@ test('PR creation succeeds with a stale response head while all later GitHub rea
 		const response = await world.github.handle(request);
 		if (request.method === 'POST' && path === `/repos/${repository.name}/pulls`) {
 			created = true;
-			const pull = pullSchema.parse(await response.json());
+			const pull = decodeSync(pullSchema, await response.json());
 			return Response.json({ ...pull, head: { ...pull.head, sha: snapshot.sha } }, { status: 201 });
 		}
 		return response;

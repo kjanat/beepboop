@@ -1,14 +1,22 @@
-import { z } from 'zod';
+import { Schema } from 'effect';
 import { bareSemverPattern } from '@/contract/semver';
+import type { Decoded } from '@/schema';
+import { mapped, matchesPattern, refined, safeDecode, strictStruct } from '@/schema';
 
 export { compare, isPrerelease, semverPattern } from '@/contract/semver';
 
-export const semVer = z.string().transform(value => value.replace(/^v/, '')).pipe(z.string().regex(bareSemverPattern))
-	.brand<'SemVer'>();
-export type SemVer = z.output<typeof semVer>;
+export const semVer = mapped(
+	Schema.String,
+	Schema.String.check(matchesPattern(bareSemverPattern)),
+	value => value.replace(/^v/, ''),
+	value => value,
+).pipe(
+	Schema.brand('SemVer'),
+);
+export type SemVer = Decoded<typeof semVer>;
 
-export const tagPolicy = z.strictObject({ prefix: z.string().refine(prefix => !prefix.includes('..')) });
-export type TagPolicy = z.output<typeof tagPolicy>;
+export const tagPolicy = strictStruct({ prefix: refined(Schema.String, prefix => !prefix.includes('..')) });
+export type TagPolicy = Decoded<typeof tagPolicy>;
 export const defaultTagPolicy: TagPolicy = { prefix: 'v' };
 
 export function tagFor(policy: TagPolicy, version: SemVer): string {
@@ -16,6 +24,6 @@ export function tagFor(policy: TagPolicy, version: SemVer): string {
 }
 export function parseTag(policy: TagPolicy, tag: string): SemVer | undefined {
 	if (!tag.startsWith(policy.prefix)) return undefined;
-	const parsed = semVer.safeParse(tag.slice(policy.prefix.length));
+	const parsed = safeDecode(semVer, tag.slice(policy.prefix.length));
 	return parsed.success && tagFor(policy, parsed.data) === tag ? parsed.data : undefined;
 }

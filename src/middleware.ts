@@ -1,7 +1,9 @@
 import { defineMiddleware } from 'astro:middleware';
 import { Effect } from 'effect';
 import { administrator } from '@/automation/auth.ts';
+import { Automation, applicationLayer } from '@/automation/service';
 import { failure } from '@/failure';
+import { jsonLogging } from '@/runtime/logging';
 import { bindings } from '@/server/bindings.ts';
 import { dashboardPaths } from '@/server/sections.ts';
 
@@ -9,7 +11,11 @@ export const onRequest = defineMiddleware(async (context, next) => {
 	if (dashboardPaths.has(context.url.pathname.replace(/\/$/, '') || '/')) {
 		const refused = await Effect.runPromise(
 			bindings.pipe(
-				Effect.flatMap(env => administrator(context.request, env)),
+				Effect.flatMap(env =>
+					Effect.flatMap(Automation, service => administrator(context.request, env, service.authentication)).pipe(
+						Effect.provide(applicationLayer(env)),
+					)
+				),
 				Effect.flatMap(actor =>
 					Effect.sync(() => {
 						context.locals.actor = actor;
@@ -17,15 +23,15 @@ export const onRequest = defineMiddleware(async (context, next) => {
 				),
 				Effect.as(undefined),
 				Effect.catchTag('DomainError', error =>
-					Effect.succeed(
-						error.problem.code === 'unauthenticated'
-							? context.redirect(
-								`/auth/login?return=${encodeURIComponent(`${context.url.pathname}${context.url.search}`)}`,
-								302,
-							)
-							: failure(context.request, error),
-					)),
+					error.problem.code === 'unauthenticated'
+						? Effect.succeed(context.redirect(
+							`/auth/login?return=${encodeURIComponent(`${context.url.pathname}${context.url.search}`)}`,
+							302,
+						))
+						: failure(context.request, error)),
+				Effect.provide(jsonLogging),
 			),
+			{ signal: context.request.signal },
 		);
 		if (refused) return refused;
 	}

@@ -6,7 +6,7 @@ import { optionalColumn, sql, upsertDocument } from '@/persistence/d1/database';
 
 export class OnboardingStore {
 	private readonly sql: Sql;
-	constructor(db: SqlDatabase) {
+	constructor(db: SqlDatabase | Sql) {
 		this.sql = sql(db);
 	}
 	document(repositoryId: number): Effect.Effect<string | undefined, DomainError> {

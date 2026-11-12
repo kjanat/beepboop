@@ -1,12 +1,25 @@
 import { expect, test } from 'bun:test';
 import { jsonFile, publishWorkflow } from '@root/test/support/repositories.ts';
-import { Effect } from 'effect';
+import { Effect, Schema, Struct } from 'effect';
 import { discover } from '@/automation/managers';
 import { publicationOrder } from '@/automation/managers/order';
 import { planReleaseSet } from '@/automation/planning';
 import { compileReleaseSet } from '@/automation/release-set';
 import type { Execution, Package, Snapshot } from '@/automation/types';
 import { configurationSchema } from '@/domain/configuration';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import {
+	decodeSync,
+	looseStruct,
+	mapped,
+	mutableArray,
+	mutableStruct,
+	refined,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+	withValidation,
+} from '@/schema';
 
 function npm(
 	name: string,
@@ -89,7 +102,7 @@ test('a release set plan orders operations by needs and inputs and refuses broke
 });
 
 async function compile(buildNeeds: string[]): Promise<Effect.Effect<Execution[], Error>> {
-	const configuration = configurationSchema.parse({
+	const configuration = decodeSync(configurationSchema, {
 		managers: ['npm', 'workflow'],
 		streams: {
 			main: {
