@@ -468,11 +468,16 @@ test('a failed publish stays retryable and the next run attempt publishes it', a
 	]);
 }, 60_000);
 
-async function failRun(repository: Repository, identity: RunIdentity, executionId: string) {
+const publishFailed = [
+	{ name: 'Build', status: 'completed' as const, conclusion: 'success' },
+	{ name: 'Publish', status: 'completed' as const, conclusion: 'failure' },
+];
+async function failRun(repository: Repository, identity: RunIdentity, executionId: string, jobs = publishFailed) {
 	const run = repository.runs.find(entry => entry.id === identity.runId);
 	if (!run) throw new Error('Missing run');
 	run.status = 'completed';
 	run.conclusion = 'failure';
+	run.jobs = jobs;
 	await world.workflowRun(repository, run, 'failure', 'workflow_dispatch');
 	await world.wait(2_000);
 	const after = await executionOf(repository, executionId);
@@ -497,6 +502,14 @@ test('Beepboop re-runs the failed jobs while the ledger retries a package, for t
 		[4, 'failed'],
 	]);
 	expect(state.commands.filter(entry => entry.command === 'publish lint-core')).toHaveLength(4);
+}, 60_000);
+
+test('a run with a failed job outside the publish job is never retried automatically', async () => {
+	const { repository, begun } = await released({ main: [core] });
+	const { execution, identity } = started(begun, 'main');
+	await publishing(identity, execution.id, { commands: [], outcomes: { 'lint-core': ['fail'] } });
+	const jobs = [...publishFailed, { name: 'Docker', status: 'completed' as const, conclusion: 'failure' }];
+	expect((await failRun(repository, identity, execution.id, jobs)).slice(0, 2)).toEqual([1, 'failed']);
 }, 60_000);
 
 test('a package the registry holds with a different digest is never retried automatically', async () => {
@@ -1096,24 +1109,6 @@ test('every upload goes out before a dependent waits for its dependency to be li
 	]);
 }, 60_000);
 
-test('a report from an earlier publish action still waits for the registry listing', async () => {
-	const { begun } = await released({ main: [core] });
-	const { execution, identity } = started(begun, 'main');
-	const purl = 'pkg:cargo/lint-core@1.1.0';
-	const replies = await withIdentity(world, identity, async () => {
-		const claim = { executionId: execution.id, purl, digest: checksum('lint-core', '1.1.0') };
-		await Effect.runPromise(workflowCall(world, '/api/workflow/publish/claim', claim));
-		const report = { executionId: execution.id, purl, outcome: 'published' };
-		const waiting = await Effect.runPromise(workflowCall(world, '/api/workflow/publish/report', report));
-		registry.set('lint-core@1.1.0', checksum('lint-core', '1.1.0'));
-		return [waiting, await Effect.runPromise(workflowCall(world, '/api/workflow/publish/report', report))];
-	});
-	expect(replies).toMatchObject([
-		{ kind: 'wait', reason: 'crates.io has not confirmed lint-core 1.1.0 yet' },
-		{ kind: 'settled', entry: { purl, state: 'published' } },
-	]);
-}, 60_000);
-
 test('an upload the registry never lists fails the finished run 15 minutes later', async () => {
 	const { repository, begun } = await released({ main: [core] });
 	const { execution, identity } = started(begun, 'main');
@@ -1132,6 +1127,24 @@ test('an upload the registry never lists fails the finished run 15 minutes later
 		state: 'failed-retryable',
 		error: 'crates.io did not list lint-core 1.1.0 within 15 minutes of its upload',
 	});
+}, 60_000);
+
+test('a report from an earlier publish action still waits for the registry listing', async () => {
+	const { begun } = await released({ main: [core] });
+	const { execution, identity } = started(begun, 'main');
+	const purl = 'pkg:cargo/lint-core@1.1.0';
+	const replies = await withIdentity(world, identity, async () => {
+		const claim = { executionId: execution.id, purl, digest: checksum('lint-core', '1.1.0') };
+		await Effect.runPromise(workflowCall(world, '/api/workflow/publish/claim', claim));
+		const report = { executionId: execution.id, purl, outcome: 'published' };
+		const waiting = await Effect.runPromise(workflowCall(world, '/api/workflow/publish/report', report));
+		registry.set('lint-core@1.1.0', checksum('lint-core', '1.1.0'));
+		return [waiting, await Effect.runPromise(workflowCall(world, '/api/workflow/publish/report', report))];
+	});
+	expect(replies).toMatchObject([
+		{ kind: 'wait', reason: 'crates.io has not confirmed lint-core 1.1.0 yet' },
+		{ kind: 'settled', entry: { purl, state: 'published' } },
+	]);
 }, 60_000);
 
 test('an upload the registry never lists becomes retryable 15 minutes later, without a second upload', async () => {

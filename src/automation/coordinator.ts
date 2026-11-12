@@ -2131,15 +2131,25 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			yield* this.requestReconcile(Date.now());
 		});
 	}
-	private retryable(execution: Execution): Effect.Effect<boolean, DomainError> {
+	private retryable(
+		execution: Execution,
+		run: Pick<WorkflowRun, 'id' | 'run_attempt'>,
+		token: string,
+	): Effect.Effect<boolean, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const stored = yield* this.read(`ledger:${execution.id}`);
 			if (stored === undefined) return false;
 			const ledger = yield* fromSync(() => ledgerSchema.parse(stored));
+			const holder = `${run.id}:${run.run_attempt}`;
 			const open = ledger.records.filter(record =>
 				record.required && !released(record) && record.status.state !== 'uploaded'
 			);
-			return open.length > 0 && open.every(record => record.status.state === 'failed-retryable');
+			if (
+				!open.length
+				|| !open.every(record => record.status.state === 'failed-retryable' && record.status.holder === holder)
+			) return false;
+			const jobs = yield* this.runJobs(execution.repository, run, token);
+			return jobs.filter(job => job.conclusion === 'failure' || job.conclusion === 'timed_out').length === 1;
 		});
 	}
 	recover(id: string, action: 'reconcile' | 'retry', actor: string): Promise<Execution> {
@@ -2792,7 +2802,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						return;
 					}
 					const settled = settle(execution, run.conclusion === 'success');
-					if (settled.state === 'failed' && runAttempt <= automaticRetries && (yield* this.retryable(execution))) {
+					if (
+						settled.state === 'failed' && run.conclusion !== 'success' && runAttempt <= automaticRetries
+						&& (yield* this.retryable(execution, run, token))
+					) {
 						const retried = yield* Effect.result(this.redispatch(
 							{ ...execution, runAttempt },
 							reopened(execution.publications),

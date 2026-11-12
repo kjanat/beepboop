@@ -479,10 +479,11 @@ The action exits nonzero when a required package did not publish, after every
 package has its outcome. Beepboop stores each outcome on the execution. The
 workflow needs no `actions/report` step for these packages.
 
-When a run fails and every required package that has not published is
-`failed-retryable`, Beepboop re-runs the failed jobs. It does this after the
-first, second and third run attempts. A `failed-permanent` package, or a failure
-outside the ledger, leaves the execution `failed` for you to retry.
+When a run fails, the publishing job is its only failed job, and that attempt
+left every required package that has not published `failed-retryable`, Beepboop
+re-runs the failed jobs. It does this after the first, second and third run
+attempts. A `failed-permanent` package, or a failed job besides the publishing
+job, leaves the execution `failed` for you to retry.
 
 ## Start a release
 
