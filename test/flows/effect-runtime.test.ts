@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Cause, Clock, Deferred, Effect, Exit, Fiber, Layer, Result } from 'effect';
 import { TestClock } from 'effect/testing';
+import { applyVersionFiles } from '@/automation/editors';
 import { GitHub, gitHubRequest } from '@/automation/github';
 import { latestVersion, registryRequest } from '@/automation/managers/verification';
 import {
@@ -18,6 +19,7 @@ import { Vault } from '@/automation/vault';
 import { call, send } from '@/contract/client';
 import { precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
+import { https } from '@/distribution/assets';
 import { classify, fromSync, recover } from '@/failure';
 import { CredentialStore } from '@/persistence/d1/credentials';
 import type { Sql } from '@/persistence/d1/database';
@@ -35,14 +37,51 @@ test('recovery handles typed failures and preserves defects and interruption', a
 		expect(Exit.isFailure(exit)).toBe(true);
 		if (Exit.isFailure(exit)) expect(Cause.hasDies(exit.cause) || Cause.hasInterrupts(exit.cause)).toBe(true);
 	}
-	const bug = new Error('decoder bug');
-	const exit = await Effect.runPromiseExit(
-		fromSync(() => {
-			throw bug;
-		}).pipe(recovered),
-	);
-	expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
-	expect(classify(bug, 'incident').problem).toEqual({ code: 'internal', incident: 'incident' });
+	for (const bug of [new Error('decoder bug'), new TypeError('unexpected programmer error')]) {
+		const exit = await Effect.runPromiseExit(
+			fromSync(() => {
+				throw bug;
+			}).pipe(recovered),
+		);
+		expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+		expect(classify(bug, 'incident').problem).toEqual({ code: 'internal', incident: 'incident' });
+	}
+});
+
+test('malformed release URLs remain recoverable input failures', async () => {
+	for (const value of ['not a URL', 'https://', 'http://example.com/tool.zip', 'https://user@example.com/tool.zip']) {
+		const result = await Effect.runPromise(https(value).pipe(Effect.result));
+		expect(Result.isFailure(result) && result.failure.problem.code).toBe('precondition');
+		expect(await Effect.runPromise(https(value).pipe(recover(error => Effect.succeed(error.message)))))
+			.toBe('Expected an HTTPS release URL');
+	}
+	expect(await Effect.runPromise(https('https://example.com/tool.zip'))).toBe('https://example.com/tool.zip');
+});
+
+test('invalid original and edited TOML version files remain recoverable input failures', async () => {
+	const valid = '[package]\nversion = "1.0.0"\n';
+	const malformed = '[package\nversion = "1.0.0"\n';
+	for (const [original, current] of [[malformed, malformed], [valid, malformed]] as const) {
+		const files = { 'Cargo.toml': current };
+		const result = await Effect.runPromise(
+			applyVersionFiles(
+				{
+					repository: { id: 1, name: 'octo/tool', defaultBranch: 'main' },
+					sha: 'a'.repeat(40),
+					files: { 'Cargo.toml': original },
+					paths: ['Cargo.toml'],
+				},
+				files,
+				[{ path: 'Cargo.toml', format: 'toml', key: ['package', 'version'], template: '{version}' }],
+				{
+					release: '1.1.0',
+				},
+			).pipe(Effect.result),
+		);
+		expect(Result.isFailure(result) && result.failure.problem.code).toBe('precondition');
+		expect(Result.isFailure(result) && result.failure.message).toContain('Invalid TOML');
+		expect(files['Cargo.toml']).toBe(current);
+	}
 });
 
 test('registry decoder defects remain observable instead of becoming outages', async () => {

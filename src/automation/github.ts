@@ -108,10 +108,10 @@ function rateLimited(message: string, type?: string): boolean {
 }
 function preparationPullNumber(repository: string, url: string): Effect.Effect<string, DomainError> {
 	return Effect.gen(function*() {
-		const parsed = yield* fromSync(() => new URL(url));
+		const parsed = URL.parse(url);
 		const prefix = `/${repository}/pull/`;
 		if (
-			parsed.origin !== 'https://github.com' || !parsed.pathname.startsWith(prefix)
+			parsed?.origin !== 'https://github.com' || !parsed.pathname.startsWith(prefix)
 			|| !/^[1-9][0-9]*$/.test(parsed.pathname.slice(prefix.length))
 		) return yield* precondition('Invalid preparation PR identity');
 		return parsed.pathname.slice(prefix.length);

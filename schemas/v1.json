@@ -800,7 +800,24 @@
 													]
 												}
 											},
-											"additionalProperties": true
+											"allOf": [
+												{
+													"type": "object",
+													"additionalProperties": {}
+												}
+											],
+											"propertyNames": {
+												"enum": [
+													"job",
+													"commands",
+													"publicationSteps",
+													"credentials",
+													"tagPrefix",
+													"binaries",
+													"existingTriggers",
+													"triggers"
+												]
+											}
 										}
 									},
 									"required": [
@@ -1360,7 +1377,24 @@
 													]
 												}
 											},
-											"additionalProperties": true
+											"allOf": [
+												{
+													"type": "object",
+													"additionalProperties": {}
+												}
+											],
+											"propertyNames": {
+												"enum": [
+													"job",
+													"commands",
+													"publicationSteps",
+													"credentials",
+													"tagPrefix",
+													"binaries",
+													"existingTriggers",
+													"triggers"
+												]
+											}
 										}
 									},
 									"required": [
@@ -2048,7 +2082,24 @@
 													]
 												}
 											},
-											"additionalProperties": true
+											"allOf": [
+												{
+													"type": "object",
+													"additionalProperties": {}
+												}
+											],
+											"propertyNames": {
+												"enum": [
+													"job",
+													"commands",
+													"publicationSteps",
+													"credentials",
+													"tagPrefix",
+													"binaries",
+													"existingTriggers",
+													"triggers"
+												]
+											}
 										}
 									},
 									"required": [

@@ -1,7 +1,6 @@
 import { Effect } from 'effect';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
-import { fromSync } from '@/failure';
 
 export const stableVersion = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
@@ -29,9 +28,9 @@ export function expand(value: string, variables: Record<string, string>): Effect
 }
 
 export function https(value: string): Effect.Effect<string, DomainError> {
-	return fromSync(() => new URL(value)).pipe(
+	return Effect.sync(() => URL.parse(value)).pipe(
 		Effect.filterOrFail(
-			url => url.protocol === 'https:' && !url.username && !url.password && !url.hash,
+			url => url !== null && url.protocol === 'https:' && !url.username && !url.password && !url.hash,
 			() => precondition('Expected an HTTPS release URL'),
 		),
 		Effect.as(value),

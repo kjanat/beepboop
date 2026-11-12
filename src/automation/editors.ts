@@ -1,5 +1,5 @@
-import { Effect } from 'effect';
-import { parse as parseToml } from 'smol-toml';
+import { Effect, Result } from 'effect';
+import { parse as parseToml, TomlError } from 'smol-toml';
 import { isScalar } from 'yaml';
 import { validYaml, yamlData, yamlDocument } from '@/automation/managers/helpers';
 import type { Edit, ReleasePlan, Snapshot } from '@/automation/types';
@@ -9,6 +9,13 @@ import { precondition } from '@/contract/errors';
 import type { VersionFile } from '@/contract/version-files';
 import { fromSync } from '@/failure';
 import { semver } from '@/model';
+
+function toml(source: string) {
+	return Effect.suspend(() => Result.match(Result.try(() => parseToml(source)), {
+		onSuccess: Effect.succeed,
+		onFailure: error => error instanceof TomlError ? Effect.fail(precondition(error.message)) : Effect.die(error),
+	}));
+}
 
 function valueAt(data: unknown, key: (string | number)[]): Effect.Effect<unknown, DomainError> {
 	return Effect.gen(function*() {
@@ -36,7 +43,7 @@ function edit(source: string, rule: VersionFile, version: string): Effect.Effect
 			return source.slice(0, from) + value + source.slice(to);
 		}
 		if (rule.format === 'toml') {
-			const prior = yield* valueAt(yield* fromSync(() => parseToml(source)), rule.key);
+			const prior = yield* valueAt(yield* toml(source), rule.key);
 			if (typeof prior !== 'string') return yield* precondition('TOML version field must be a string');
 			let section: string[] = [], count = 0;
 			const result = source.split('\n').map(line => {
@@ -50,7 +57,7 @@ function edit(source: string, rule: VersionFile, version: string): Effect.Effect
 				count++;
 				return `${match[1]}${match[2]}${match[3]}${JSON.stringify(value)}${match[5]}`;
 			}).join('\n');
-			if (count !== 1 || (yield* valueAt(yield* fromSync(() => parseToml(result)), rule.key)) !== value) {
+			if (count !== 1 || (yield* valueAt(yield* toml(result), rule.key)) !== value) {
 				return yield* precondition('Cannot safely locate TOML version field');
 			}
 			return result;
@@ -79,13 +86,10 @@ function currentValue(source: string, rule: VersionFile): Effect.Effect<unknown,
 		const from = source.indexOf(rule.prefix) + rule.prefix.length;
 		return Effect.succeed(source.slice(from, source.indexOf(rule.suffix, from)));
 	}
-	return fromSync((): unknown =>
-		rule.format === 'toml'
-			? parseToml(source)
-			: rule.format === 'json'
-			? JSON.parse(source)
-			: yamlData(yamlDocument(source))
-	).pipe(Effect.flatMap(data => valueAt(data, rule.key)));
+	const data = rule.format === 'toml'
+		? toml(source)
+		: fromSync((): unknown => rule.format === 'json' ? JSON.parse(source) : yamlData(yamlDocument(source)));
+	return data.pipe(Effect.flatMap(data => valueAt(data, rule.key)));
 }
 
 /** Compose version fields without overwriting a different adapter's chosen version. */

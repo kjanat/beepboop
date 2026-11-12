@@ -12,6 +12,7 @@ import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Result, Schema, Struct } from 'effect';
 import { parseRepositoryConfiguration } from '@/automation/configuration';
 import { identityOf, parseIdentity, parseReleaseIdentity, releaseIdentity } from '@/automation/package-identity';
+import { workflowSetup } from '@/contract/setup';
 import { configurationDrift, configurationSchema, issueMessage } from '@/domain/configuration';
 import { validateAgainst } from '@/domain/validate';
 import { record } from '@/model';
@@ -352,6 +353,28 @@ test('editors validate with the published schema and refuse what refresh refuses
 		expect(published.validate(value).valid).toBe(false);
 		expect(safeDecode(configurationSchema, value).success).toBe(false);
 	}
+});
+
+test('workflow setup rejects unknown keys before normalization in runtime and published schemas', async () => {
+	const published = new Validator(Result.getOrThrow(record(await Bun.file(schemaPath).json())), '2020-12', false);
+	for (const setup of [{ comands: 'npm publish' }, { file: 'other.yml' }, { existingTrigers: 'preserve' }]) {
+		const document = { streams: { main: { promote: { workflow: { file: 'publish.yml', setup } } } } };
+		expect(safeDecode(workflowSetup, setup).success).toBe(false);
+		expect(safeDecode(configurationSchema, document).success).toBe(false);
+		expect(Result.isFailure(parseRepositoryConfiguration(document))).toBe(true);
+		expect(published.validate(document).valid).toBe(false);
+	}
+	expect(decodeSync(workflowSetup, { commands: 'npm publish', triggers: 'dispatchOnly' })).toEqual({
+		commands: 'npm publish',
+		publicationSteps: {},
+		triggers: 'dispatchOnly',
+	});
+	expect(decodeSync(workflowSetup, {})).toEqual({ commands: '', publicationSteps: {}, triggers: 'review' });
+	expect(decodeSync(workflowSetup, { existingTriggers: 'replace-with-dispatch', triggers: 'preserve' })).toEqual({
+		commands: '',
+		publicationSteps: {},
+		triggers: 'dispatchOnly',
+	});
 });
 
 test('schema:check refuses a hand-edited schema file', async () => {

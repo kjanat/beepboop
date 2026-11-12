@@ -1,7 +1,7 @@
 import { Effect, Schema, Struct } from 'effect';
 import { installerArchitecture, installerType } from '@/distribution/winget/schema';
 import type { Encoded } from '@/schema';
-import { decodeSync, mutableArray, mutableStruct, strictStruct } from '@/schema';
+import { decodeSync, mutableArray, strictStruct } from '@/schema';
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Kaj Kowalski; Copyright (c) 2021 rhysd
 
@@ -38,19 +38,17 @@ const metadata = strictStruct(
 		'ManifestVersion',
 	]),
 );
-const installer = mutableStruct({
-	...strictStruct(
-		Struct.omit(installerManifest.fields, [
-			'PackageIdentifier',
-			'PackageVersion',
-			'InstallerLocale',
-			'ReleaseDate',
-			'Installers',
-			'ManifestType',
-			'ManifestVersion',
-		]),
-	).fields,
-	...{ InstallerType: installerType },
+const installer = strictStruct({
+	...Struct.omit(installerManifest.fields, [
+		'PackageIdentifier',
+		'PackageVersion',
+		'InstallerLocale',
+		'ReleaseDate',
+		'Installers',
+		'ManifestType',
+		'ManifestVersion',
+	]),
+	InstallerType: installerType,
 });
 export const wingetConfiguration = strictStruct({
 	packageIdentifier: versionManifest.fields.PackageIdentifier,

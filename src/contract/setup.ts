@@ -177,8 +177,8 @@ const workflow = strictStruct(
 	}).fields,
 );
 export const workflowSetup = mapped(
-	mutableStruct({
-		...strictStruct(Struct.omit(workflow.fields, ['file', 'triggers'])).fields,
+	strictStruct({
+		...Struct.omit(workflow.fields, ['file', 'triggers']),
 		...{
 			existingTriggers: Schema.optional(existingTriggers).annotate({ description: existingTriggersDescription }),
 			triggers: Schema.optional(Schema.Literals(workflowTriggers)).annotate({ deprecated: true }),
