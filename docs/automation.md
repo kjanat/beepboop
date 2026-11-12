@@ -625,6 +625,37 @@ any tool that the runner lacks.
     GitHub release for the tag. A promote choice with `binaries` also uploads
     the assets to the draft release first. See [Binary builds](#binary-builds).
 
+## Generated npm packages
+
+For npm packages built from Rust binaries, keep a `npm/targets.json` descriptor
+in the repository. It declares the package scope, facade packages and platform
+targets before their generated `package.json` files exist:
+
+```json
+{
+  "scope": "@example",
+  "versionSource": "crates/cli/Cargo.toml#package.version",
+  "facades": [{ "name": "@example/cli", "pkg": "cli", "shim": "@example/fmt" }],
+  "targets": [{ "pkg": "linux-x64-glibc" }, { "pkg": "darwin-arm64" }]
+}
+```
+
+This declares `@example/cli-linux-x64-glibc`, `@example/cli-darwin-arm64`,
+`@example/cli` and `@example/fmt`. The facade depends on its platform packages;
+the shim depends on the facade. A target with `experimental: true` is optional.
+The descriptor can also live under a directory such as `deployment/npm`.
+
+`versionSource` defaults to `Cargo.toml#workspace.package.version`. It can name
+`package.version` or `workspace.package.version` in a repository-relative
+`Cargo.toml`. Discovery reads that version, and version preparation updates
+the same Cargo manifest. The referenced value must be a string.
+
+Use the descriptor in the package build too, so the declared package names
+and published packages stay aligned. Bind the generated package identities to
+their publishing workflow in `.github/beepboop.json`, and include the required
+identities in `mustPublish`. Beepboop verifies their versions in npm after an
+observed publishing run.
+
 ## Package metadata
 
 Discovery checks each publishable Cargo crate, npm package and Python project

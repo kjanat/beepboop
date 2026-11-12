@@ -74,9 +74,10 @@ export function streamSummary(
 	const files = [...new Set(stream.observe?.map(entry => entry.file) ?? [])];
 	for (const file of files) {
 		const entries = stream.observe?.filter(entry => entry.file === file) ?? [];
-		const tags = entries.flatMap(entry =>
-			entry.ref?.startsWith('refs/tags/') ? [entry.ref.slice('refs/tags/'.length)] : []
-		);
+		const pushes = plan.workflows.find(workflow => workflow.file === file)?.events.includes('push');
+		const tags = pushes
+			? entries.flatMap(entry => entry.ref?.startsWith('refs/tags/') ? [entry.ref.slice('refs/tags/'.length)] : [])
+			: [];
 		const ids = [...new Set(entries.flatMap(entry => entry.publications))];
 		const start = tags.length
 			? `Tags matching ${listed(tags)} start ${file}`
@@ -108,7 +109,7 @@ export function streamSummary(
 				commands.length ? `runs ${listed(commands.map(command => `\`${command}\``))}` : 'runs its existing jobs'
 			} in the version PR.`,
 		);
-	} else if (stream.packages.length) {
+	} else if (stream.promote && stream.packages.length) {
 		lines.push(
 			stream.bump === 'commit' ? 'Beepboop pushes the version commit itself.' : 'Beepboop opens the version PR itself.',
 		);

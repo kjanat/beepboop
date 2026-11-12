@@ -1182,6 +1182,9 @@ function noteMarkdown(plan: SetupPlan, note: string): string {
 }
 function fixedStream(stream: SetupChoices['streams'][number]): string | undefined {
 	if (!stream.promote) {
+		if (stream.observe?.some(entry => entry.publications.length)) {
+			return `Beepboop observes the existing publishing workflows for \`${stream.name}\`. Their own triggers start releases.`;
+		}
 		return `\`${stream.name}\` has no publishing workflow, so it has no \`startFrom\`, \`versionLands\` or \`publishWhen\`.`;
 	}
 	if (stream.versionSource?.kind === 'tags') {
@@ -1275,7 +1278,13 @@ export function setupBody(plan: SetupPlan, context: SetupBodyContext): string {
 			...choiceLines(stream.name),
 			`  - \`versionScope: ${versionScopeNames[stream.versioning]}\`: ${versionScopeSentences[stream.versioning]}`,
 			`  - Preparation: ${workflow(stream.prepare)}`,
-			`  - Publication: ${workflow(stream.promote)}`,
+			`  - Publication: ${
+				stream.promote ? workflow(stream.promote) : stream.observe?.some(entry => entry.publications.length)
+					? stream.observe.filter(entry => entry.publications.length).map(entry => `observes \`${entry.file}\``).join(
+						', ',
+					)
+					: 'none'
+			}`,
 			...binaryLines(stream.name),
 			...(stream.operations ?? []).map(entry =>
 				`  - After ${

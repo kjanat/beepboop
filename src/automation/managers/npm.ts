@@ -10,6 +10,7 @@ import type { Package } from '@/automation/types';
 import { npmTargets } from '@/contract/catalog';
 import { fileProblem } from '@/contract/diagnostics';
 import { precondition } from '@/contract/errors';
+import { safeVersionPath } from '@/contract/version-files';
 import { fromSync } from '@/failure';
 import { packageIdentity } from '@/package-url';
 
@@ -126,16 +127,27 @@ export const npmManager: Adapter<'npm'> = {
 			const descriptor = parsed.success;
 			const { targets } = descriptor;
 			if (typeof descriptor.scope !== 'string' || !Array.isArray(targets)) continue;
-			const cargo = Result.try(() => object(parseToml(snapshot.files['Cargo.toml'] ?? '')));
+			const versionSource = descriptor.versionSource ?? 'Cargo.toml#workspace.package.version';
+			if (typeof versionSource !== 'string') {
+				invalid();
+				continue;
+			}
+			const versionLocation = /^((?:[^/#]+\/)*Cargo\.toml)#((?:workspace\.)?package\.version)$/.exec(versionSource);
+			const versionPath = versionLocation?.[1];
+			const versionKey = versionLocation?.[2];
+			if (!versionPath || !versionKey || !safeVersionPath(versionPath)) {
+				invalid();
+				continue;
+			}
+			const cargo = Result.try(() => object(parseToml(snapshot.files[versionPath] ?? '')));
 			if (Result.isFailure(cargo)) {
 				invalid();
 				continue;
 			}
-			const workspace = object(cargo.success.workspace);
-			const version = object(workspace.package).version;
+			const version = versionKey.split('.').reduce<unknown>((value, key) => object(value)[key], cargo.success);
 			if (typeof version !== 'string') {
 				inventory.diagnostics.push(
-					fileProblem(path, 'invalid-manifest', `generated packages need workspace.package.version in Cargo.toml`),
+					fileProblem(path, 'invalid-manifest', `generated packages need a string version at ${versionSource}`),
 				);
 				continue;
 			}
@@ -151,7 +163,7 @@ export const npmManager: Adapter<'npm'> = {
 					name,
 					version,
 					manifest: path,
-					versionSource: 'Cargo.toml#workspace.package.version',
+					versionSource,
 					publication: registry,
 					dependencies,
 					generated: true,
