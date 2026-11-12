@@ -1,0 +1,18 @@
+{
+	"token": "tool",
+	"name": "Example Tool",
+	"desc": "Example command-line tool",
+	"homepage": "https://tool.example.com",
+	"url": "https://github.com/example/tool/releases/download/{tag}/{asset}",
+	"verified": "github.com/example/tool/",
+	"macos": {
+		"arm": "tool-{version}-aarch64-apple-darwin.tar.gz",
+		"intel": "tool-{version}-x86_64-apple-darwin.tar.gz"
+	},
+	"linux": {
+		"arm": "tool-{version}-aarch64-unknown-linux-musl.tar.gz",
+		"intel": "tool-{version}-x86_64-unknown-linux-musl.tar.gz"
+	},
+	"binaries": [{ "path": "tool" }],
+	"completions": { "executable": "tool", "arguments": ["completions"], "shells": ["bash", "zsh", "fish"] }
+}

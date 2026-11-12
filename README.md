@@ -44,6 +44,8 @@ workflows run the builds and package generation.
   security keys.
 - [WinGet](docs/winget.md) covers package metadata, installer assets, checksums,
   release notes and bot submissions.
+- [Homebrew and Scoop](docs/homebrew-scoop.md) covers cask and manifest
+  metadata and release checksums.
 - [Configuration schema](schemas/v1.json) and [preset templates](presets/).
 - [Architecture](docs/adr-001-repository-automation.md) covers execution
   storage, authentication and recovery.

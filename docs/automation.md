@@ -1431,7 +1431,9 @@ endpoint returns the edits. With `preview` false, it opens a PR. Updates use a
 verified release event, keep SHA pins and YAML comments, and skip `local` and
 `meta` hooks.
 
-For Windows package files, use the [WinGet generation Action](winget.md).
+For Windows package files, use the [WinGet generation Action](winget.md). For
+Homebrew casks and Scoop manifests, use the
+[Homebrew and Scoop generators](homebrew-scoop.md).
 
 Package selections and publication records use
 [structured PURL identities](package-identities.md). Beepboop also accepts
