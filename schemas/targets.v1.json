@@ -43,7 +43,7 @@
 								"properties": {
 									"pkg": {
 										"type": "string",
-										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+										"pattern": "^[a-z0-9][a-z0-9._-]*$"
 									},
 									"os": {
 										"anyOf": [
@@ -201,7 +201,7 @@
 								"properties": {
 									"pkg": {
 										"type": "string",
-										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+										"pattern": "^[a-z0-9][a-z0-9._-]*$"
 									},
 									"os": {
 										"anyOf": [
@@ -317,7 +317,7 @@
 									},
 									"pkg": {
 										"type": "string",
-										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+										"pattern": "^[a-z0-9][a-z0-9._-]*$"
 									},
 									"shim": {
 										"type": "string",
@@ -380,7 +380,7 @@
 								"properties": {
 									"pkg": {
 										"type": "string",
-										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+										"pattern": "^[a-z0-9][a-z0-9._-]*$"
 									},
 									"os": {
 										"anyOf": [
@@ -489,7 +489,7 @@
 						},
 						"binary": {
 							"type": "string",
-							"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							"pattern": "^[a-z0-9][a-z0-9._-]*$"
 						},
 						"facade": {
 							"type": "string",

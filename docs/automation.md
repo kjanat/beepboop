@@ -657,6 +657,11 @@ directory depth. It supports:
 - Platform maps keyed by platform name with `os`, `cpu` and optional `libc`
   and `rust_target`. Discovery uses a facade's checked-in optional dependencies
   to identify the matching packages; a map alone supplies no package names.
+  Maps belong to the nearest enclosing directory containing a package manifest
+  or matching facades, and can cover nested packages. A more specific map takes
+  precedence; maps with the same ownership scope report an ambiguity. Each
+  facade supplies its own `package.json#version`. Missing or ambiguous platform
+  matches produce diagnostics without generating partial publication sets.
 - Build matrix arrays containing `target` or `rust`, `runner` and `build`.
   These validate as build metadata and create no npm publications by themselves.
 
@@ -664,13 +669,17 @@ OS, CPU and libc values accept strings or nonempty arrays. Platform names and
 build methods are open strings, so Android, BSD, alternative architectures and
 repository-specific build methods remain valid. Known fields retain type checks;
 extra repository metadata is preserved. Duplicate generated package names are
-reported as invalid descriptors. Existing descriptors containing only `pkg`
+reported as invalid descriptors. npm name segments (`target.pkg`, `facade.pkg`
+and `binary`) must be lowercase. Checked-in private packages and packages using
+another registry keep their exclusion policy; an excluded facade skips its
+entire generated group. Existing descriptors containing only `pkg`
 remain supported. Array documents can use an editor's external schema association.
 
 `versionSource` can name `package.version` or `workspace.package.version` in a
 repository-relative `Cargo.toml`, `package.json#version`, or `tags:<prefix>`.
-Without an override, discovery uses the root Cargo workspace/package version,
-the root Go module's tags, or the single matching facade manifest's version,
+For explicit npm descriptors without an override, discovery uses the root Cargo
+workspace/package version, the root Go module's tags, or the single matching
+facade manifest's version,
 in that order. File values must be strings. Version preparation updates that
 same source; tag sources follow the existing tag-based release path.
 

@@ -146,6 +146,172 @@ test('platform maps preserve private and foreign-registry facade exclusions', ()
 	}
 });
 
+test('npm name segments reject uppercase while build metadata stays open', async () => {
+	const validator = new Validator(
+		await Bun.file(new URL('../../schemas/targets.v1.json', import.meta.url)).json(),
+		'2020-12',
+		false,
+	);
+	const valid = {
+		scope: '@example',
+		facade: 'tool',
+		targets: [{ pkg: 'linux-x64', rust: 'CustomTarget', build: 'CustomBuild' }],
+	};
+	for (
+		const source of [
+			{ ...valid, targets: [{ pkg: 'Linux-x64' }] },
+			{ scope: '@example', facades: [{ name: 'tool', pkg: 'Tool' }], targets: valid.targets },
+			{ platformScope: '@example', binary: 'Tool', facade: 'tool', targets: valid.targets },
+		]
+	) {
+		expect(targetsSchema.safeParse(source).success).toBe(false);
+		expect(validator.validate(source).valid).toBe(false);
+	}
+	expect(targetsSchema.safeParse(valid).success).toBe(true);
+	expect(validator.validate(valid).valid).toBe(true);
+});
+
+const linuxMap = JSON.stringify({ 'linux-x64': { os: 'linux', cpu: 'x64' } });
+const facadeManifest = (name: string, version: string) => JSON.stringify({
+	name,
+	version,
+	optionalDependencies: { [`${name}-linux-x64`]: version },
+});
+
+test('partial and ambiguous map matches report diagnostics without changing publications', () => {
+	for (const extra of [{}, { '@other/tool-linux-x64': '1.2.3' }]) {
+		const manifest = JSON.stringify({
+			name: '@example/tool',
+			version: '1.2.3',
+			optionalDependencies: { '@example/tool-linux-x64': '1.2.3', ...extra },
+		});
+		const files = { 'npm/tool/package.json': manifest };
+		const original = npmManager.discover(snapshot(files));
+		const result = npmManager.discover(snapshot({
+			...files,
+			'npm/platforms.json': JSON.stringify({
+				'linux-x64': { os: 'linux', cpu: 'x64' },
+				'darwin-arm64': { os: 'darwin', cpu: 'arm64' },
+			}),
+		}));
+		expect(result.packages).toEqual(original.packages);
+		expect(result.diagnostics).toHaveLength(1);
+		expect(result.diagnostics[0]?.message).toContain('darwin-arm64 (0 matches)');
+		if (Object.keys(extra).length) expect(result.diagnostics[0]?.message).toContain('linux-x64 (2 matches)');
+	}
+});
+
+test('explicit descriptors skip excluded facades and their generated groups', () => {
+	for (const fields of [{ private: true }, { publishConfig: { registry: 'https://npm.example.com' } }]) {
+		const files = { 'npm/tool/package.json': JSON.stringify({ name: '@example/tool', version: '1.2.3', ...fields }) };
+		const original = npmManager.discover(snapshot(files));
+		const result = npmManager.discover(snapshot({
+			...files,
+			'npm/targets.json': JSON.stringify({
+				scope: '@example',
+				facades: [{ name: '@example/tool', pkg: 'tool', shim: 'tool' }],
+				bundle: { name: '@example/all' },
+				targets: [{ pkg: 'linux-x64' }],
+			}),
+		}));
+		expect(result.diagnostics).toEqual([]);
+		expect(result.packages).toEqual(original.packages);
+	}
+});
+
+test('generated platform, shim and bundle names preserve checked-in exclusion policies', () => {
+	for (const fields of [{ private: true }, { publishConfig: { registry: 'https://npm.example.com' } }]) {
+		const files = Object.fromEntries(['@example/tool-linux-x64', 'tool', '@example/all'].map((name, index) => [
+			`npm/excluded-${index}/package.json`,
+			JSON.stringify({ name, version: '0.1.0', ...fields }),
+		]));
+		const originals = npmManager.discover(snapshot(files)).packages;
+		const descriptors: Record<string, string>[] = [
+			{
+				'npm/targets.json': JSON.stringify({
+					scope: '@example',
+					facades: [{ name: '@example/tool', pkg: 'tool', shim: 'tool' }],
+					bundle: { name: '@example/all' },
+					targets: [{ pkg: 'linux-x64' }],
+				}),
+			},
+			{ 'npm/platforms.json': linuxMap },
+		];
+		for (const descriptor of descriptors) {
+			const result = npmManager.discover(
+				snapshot({ ...files, ...descriptor, 'npm/tool/package.json': facadeManifest('@example/tool', '1.2.3') }),
+			);
+			expect(result.diagnostics).toEqual([]);
+			for (const original of originals) {
+				expect(result.packages.find(pkg => pkg.name === original.name)).toEqual(original);
+			}
+			expect(result.packages.find(pkg => pkg.name === '@example/tool')).toMatchObject({
+				generated: true,
+				dependencies: ['@example/tool-linux-x64'],
+			});
+		}
+	}
+});
+
+test('independent platform maps own their facades and versions regardless of file order', () => {
+	const files = {
+		'packages/a/scripts/platforms.json': linuxMap,
+		'packages/b/scripts/platforms.json': linuxMap,
+		'packages/a/package.json': facadeManifest('@example/a', '1.2.3'),
+		'packages/b/package.json': facadeManifest('@example/b', '4.5.6'),
+	};
+	for (const entries of [Object.entries(files), Object.entries(files).reverse()]) {
+		const result = npmManager.discover(snapshot(Object.fromEntries(entries)));
+		expect(result.diagnostics).toEqual([]);
+		expect(result.packages).toHaveLength(4);
+		for (const [key, version] of [['a', '1.2.3'], ['b', '4.5.6']]) {
+			for (const suffix of ['', '-linux-x64']) {
+				expect(result.packages.find(pkg => pkg.name === `@example/${key}${suffix}`)).toMatchObject({
+					version,
+					manifest: `packages/${key}/scripts/platforms.json`,
+					versionSource: `packages/${key}/package.json#version`,
+				});
+			}
+		}
+	}
+});
+
+test('shared maps support nested facades with independent versions and more specific owners', () => {
+	const files = {
+		'scripts/platforms.json': linuxMap,
+		'packages/a/package.json': facadeManifest('@example/a', '1.2.3'),
+		'packages/b/package.json': facadeManifest('@example/b', '4.5.6'),
+		'Cargo.toml': '[package]\nversion="9.9.9"',
+	};
+	for (const nested of [false, true]) {
+		const result = npmManager.discover(
+			snapshot({ ...files, ...(nested ? { 'packages/b/platforms.json': linuxMap } : {}) }),
+		);
+		expect(result.diagnostics).toEqual([]);
+		expect(result.packages).toHaveLength(4);
+		for (const [key, version] of [['a', '1.2.3'], ['b', '4.5.6']]) {
+			for (const suffix of ['', '-linux-x64']) {
+				expect(result.packages.find(pkg => pkg.name === `@example/${key}${suffix}`)).toMatchObject({
+					version,
+					manifest: nested && key === 'b' ? 'packages/b/platforms.json' : 'scripts/platforms.json',
+					versionSource: `packages/${key}/package.json#version`,
+				});
+			}
+		}
+	}
+});
+
+test('equally scoped maps report ambiguous ownership without replacing facades', () => {
+	const files = { 'npm/tool/package.json': facadeManifest('@example/tool', '1.2.3') };
+	const original = npmManager.discover(snapshot(files));
+	const result = npmManager.discover(
+		snapshot({ ...files, 'npm/platforms.json': linuxMap, 'npm/targets.json': linuxMap }),
+	);
+	expect(result.packages).toEqual(original.packages);
+	expect(result.diagnostics).toHaveLength(2);
+	expect(result.diagnostics.every(diagnostic => diagnostic.message.includes('ambiguous platform maps'))).toBe(true);
+});
+
 test('duplicate targets fail discovery instead of double counting a publication', async () => {
 	const source = await fixture('runner').json();
 	source.targets.push(source.targets[0]);

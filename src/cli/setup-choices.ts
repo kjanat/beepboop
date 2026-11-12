@@ -8,6 +8,7 @@ import { streamSummary } from '@/automation/setup-summary';
 import type { SetupChoices, SetupPlan, SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
 import { lookOf } from '@/cli/look';
 import { failure, prompted } from '@/cli/output';
+import { supportedTargets } from '@/contract/binary-platforms';
 import { workflowFilePattern } from '@/contract/catalog';
 import { identifierPattern } from '@/contract/ids';
 import { approvalPolicies, startChannels, versionBumps } from '@/contract/release-start';
@@ -418,7 +419,11 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 						builds.every(entry => entry.candidate?.targets.includes(target) ?? true)
 					);
 				const targets: BinaryRelease['targets'] = [];
-				for (const target of binaryTargets) {
+				for (
+					const target of binaryTargets.filter(target =>
+						builds.every(entry => supportedTargets(entry.build.toolchain).includes(target))
+					)
+				) {
 					const wanted = yield* prompted(() =>
 						ask({
 							kind: 'confirm',

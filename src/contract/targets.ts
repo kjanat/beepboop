@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 const token = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$/);
 const packageName = z.string().regex(/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/);
+const segment = z.string().regex(/^[a-z0-9][a-z0-9._-]*$/);
 const scope = z.string().regex(/^@[a-z0-9][a-z0-9._-]*$/);
 const selection = z.union([token, z.array(token).min(1)]);
 const versionSource = z.string().regex(
@@ -25,8 +26,8 @@ export const targetFields = z.looseObject({
 	tier: z.number().int().positive().optional(),
 	experimental: z.boolean().optional(),
 });
-const npmTarget = targetFields.extend({ pkg: token });
-const facade = z.looseObject({ name: packageName, pkg: token.optional(), shim: packageName.optional() });
+const npmTarget = targetFields.extend({ pkg: segment });
+const facade = z.looseObject({ name: packageName, pkg: segment.optional(), shim: packageName.optional() });
 const common = {
 	$schema: z.string().optional(),
 	versionSource: versionSource.optional(),
@@ -54,7 +55,7 @@ export const npmTargetDescriptor = z.union([
 		scope: z.never().optional(),
 		facades: z.never().optional(),
 		platformScope: scope,
-		binary: token,
+		binary: segment,
 		facade: packageName,
 	}),
 ]);

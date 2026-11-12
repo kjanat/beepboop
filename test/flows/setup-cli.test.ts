@@ -16,6 +16,7 @@ import { jobObstacles } from '@/automation/setup-workflows';
 import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
 import { choicesEditors, streamEditors, workflowEditors } from '@/cli/setup-choices';
+import { supportedTargets } from '@/contract/binary-platforms';
 import { routes } from '@/contract/routes';
 import { binaryTargets, defaultBinaryTargets } from '@/contract/setup';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
@@ -887,6 +888,10 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 	expect(messages).toContain('main: build tool (Cargo, Cargo.toml) for the GitHub release?');
 	for (const target of binaryTargets) {
 		const prompt = session.prompts.find(prompt => prompt.message === `main: build for ${target}?`);
+		if (!supportedTargets('cargo').includes(target)) {
+			expect(prompt).toBeUndefined();
+			continue;
+		}
 		expect(prompt?.kind).toBe('confirm');
 		expect(prompt?.kind === 'confirm' && prompt.default).toBe(
 			defaultBinaryTargets.some(value => value === target) && !target.startsWith('windows-'),
