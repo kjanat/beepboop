@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
-import { Authenticators, administrator, workflowIdentity } from '@/automation/auth';
+import { administrator, workflowIdentity } from '@/automation/auth';
 import type { AutomationBindings, AutomationService } from '@/automation/service';
 import type { RepositoryRecord } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
@@ -77,7 +77,7 @@ export function admin<Q extends Contract, S extends Contract>(
 		route,
 		run: (context, read) =>
 			Effect.gen(function*() {
-				const actor = yield* administrator(context.request, context.env);
+				const actor = yield* administrator(context.request, context.env, context.service.authentication);
 				const { input } = yield* parsed(route, read);
 				return yield* respond(route.response, handle(input, { ...context, actor }));
 			}),
@@ -92,19 +92,24 @@ export function elevated<Q extends Contract, S extends Contract>(
 		route,
 		run: (context, read) =>
 			Effect.gen(function*() {
-				const actor = yield* administrator(context.request, context.env);
+				const actor = yield* administrator(context.request, context.env, context.service.authentication);
 				const { raw, input } = yield* parsed(route, read);
 				const proof = typeof raw === 'object' && raw !== null && 'proof' in raw ? raw.proof : undefined;
 				const { commit } = yield* precheck(input, { ...context, actor });
 				if (typeof proof !== 'string') return yield* forbidden(securityKeyRequired);
-				yield* new Authenticators(context.env).consume(actor, proof);
+				yield* context.service.authentication.authenticators.consume(actor, proof);
 				return yield* respond(route.response, commit);
 			}),
 	};
 }
 
 function identify(context: Context): Effect.Effect<WorkflowIdentity, DomainError> {
-	return workflowIdentity(context.request, context.env.APPLICATION_ORIGIN, Number(context.env.OWNER_ID));
+	return workflowIdentity(
+		context.request,
+		context.env.APPLICATION_ORIGIN,
+		Number(context.env.OWNER_ID),
+		context.service.authentication.workflowKeys,
+	);
 }
 
 export function workflowToken<Q extends Contract, S extends Contract>(

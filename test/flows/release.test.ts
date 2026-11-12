@@ -636,7 +636,7 @@ test('the runs page filters by repository and folds a settled release', async ()
 test('the runs loader reads one repository when the page names it', async () => {
 	const { finished, repository } = await finishedPromotion('pending');
 	const load = (name?: string) =>
-		Effect.runPromise(loaders.runs({ env: world.env, actor: 'admin', ...(name ? { repository: name } : {}) }));
+		world.run(loaders.runs({ env: world.env, actor: 'admin', ...(name ? { repository: name } : {}) }));
 	const named = await load(repository.name);
 	expect([named.selected, named.repositories, named.executions.readable.map(run => run.id)]).toEqual([
 		repository.name,
@@ -1037,14 +1037,14 @@ test('a merge-approved release whose merge cannot be confirmed waits for approva
 	const logged = loggedErrors();
 	expect((await world.push(repository)).status).toBe(202);
 	await world.wait(1_000);
-	expect(logged.events()).toEqual([{
+	expect(logged.events()).toEqual([expect.objectContaining({
 		event: 'preparation-merge.failed',
 		repository: 'octo/widget',
 		repositoryId: repository.id,
 		pull: `https://github.com/octo/widget/pull/${pull.number}`,
 		error:
 			`GitHub HTTP 403 on GET /repos/octo/widget/compare/${merged.sha}...${merged.sha}: Resource not accessible by integration`,
-	}]);
+	})]);
 	const promotion = await only(api, 'promote');
 	expect(promotion.state).toBe('awaiting-approval');
 	expect(promotion.approvedBy).toBeUndefined();

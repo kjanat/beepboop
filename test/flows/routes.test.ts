@@ -23,6 +23,7 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/schema';
+import { serve } from '@/server/endpoint';
 import { rawRoutes, resolve } from '@/server/router';
 
 const legacy = [
@@ -401,7 +402,7 @@ test('a broken Worker configuration fails with a logged internal error', async (
 	console.error = (...values: unknown[]) => logged.push(values.map(String).join(' '));
 	try {
 		const response = await reply(
-			await world.handle(new Request(`${origin}/api/repositories`, { headers: { Authorization: 'Bearer x' } })),
+			await serve(new Request(`${origin}/api/repositories`, { headers: { Authorization: 'Bearer x' } })),
 		);
 		expect(response.status).toBe(500);
 		expect(decodeSync(errorEnvelope, response.body).problem?.code).toBe('internal');

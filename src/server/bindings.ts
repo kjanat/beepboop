@@ -11,12 +11,12 @@ const required = mutableStruct({
 	APPLICATION_ORIGIN: Schema.String.check(Schema.makeFilter(value => URL.canParse(value))),
 	OPENAUTH_ISSUER: Schema.String.check(Schema.makeFilter(value => URL.canParse(value))),
 	VAULT_ACTIVE_KEY: Schema.String.check(Schema.isMinLength(1)),
-	VAULT_KEYS: mapped(Schema.String, (value, context) => {
+	VAULT_KEYS: mapped(Schema.String, mutableRecord(Schema.String, Schema.String), (value, context) => {
 		const keys = Result.try(() => decodeSync(mutableRecord(Schema.String, Schema.String), JSON.parse(value)));
 		if (Result.isSuccess(keys)) return keys.success;
 		context.addIssue({ code: 'custom', message: 'VAULT_KEYS must be a JSON object of strings' });
 		return undefined as never;
-	}),
+	}, value => JSON.stringify(value)),
 });
 
 export function parseBindings<T extends AutomationBindings>(source: T): Effect.Effect<T, ConfigurationError> {

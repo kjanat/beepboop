@@ -59,7 +59,7 @@ function refusal(response: Reply): { status: number; error: string } {
 }
 
 async function badge(): Promise<string> {
-	const data = await Effect.runPromise(loaders.repositories({ env: world.env, actor: adminSubject }));
+	const data = await world.run(loaders.repositories({ env: world.env, actor: adminSubject }));
 	const loaded: unknown = await import(repositoriesComponent);
 	const container = await experimental_AstroContainer.create();
 	const html = await container.renderToString(decodeSync(componentModule, loaded).default, {
@@ -230,7 +230,7 @@ test('discover and the cron refresh rewrite a repository row that no longer deco
 	expect(text((await api('/api/repositories/resolve', { repository: 'widget' })).body, 'name')).toBe('octo/widget');
 
 	await corrupt();
-	await Effect.runPromise(withAutomation(world.env, service => service.scheduled));
+	await world.run(withAutomation(service => service.scheduled));
 	expect(readiness(await stored(repository)).kind).toBe('ready');
 	expect(world.network.unrouted).toEqual([]);
 });

@@ -1,8 +1,10 @@
 import { Effect, Option, Schema, Semaphore } from 'effect';
-import { checkGitHub } from 'github-up/browser';
+import { Automation } from '@/automation/service';
 import { listed } from '@/automation/setup-summary';
 import type { DomainError } from '@/contract/errors';
-import { fromPromise } from '@/failure';
+import { fromPromise, toDomainError } from '@/failure';
+import { decode } from '@/model';
+import { responseJson } from '@/runtime/http';
 import { looseStruct, mutableArray, safeDecode } from '@/schema';
 
 export interface GitHubOutage {
@@ -23,7 +25,7 @@ export function knownOutage(): GitHubOutage | undefined {
 	return latest?.outage;
 }
 
-export const refreshOutage: Effect.Effect<void, DomainError> = Semaphore.withPermit(
+export const refreshOutage: Effect.Effect<void, DomainError, Automation> = Semaphore.withPermit(
 	refreshing,
 	Effect.clockWith(clock =>
 		latest && clock.currentTimeMillisUnsafe() - latest.at < 60_000
@@ -36,16 +38,25 @@ export const refreshOutage: Effect.Effect<void, DomainError> = Semaphore.withPer
 	),
 );
 
-export const githubOutage: Effect.Effect<GitHubOutage | undefined, DomainError> = refreshOutage.pipe(
+export const githubOutage: Effect.Effect<GitHubOutage | undefined, DomainError, Automation> = refreshOutage.pipe(
 	Effect.map(knownOutage),
 );
 
-const check: Effect.Effect<GitHubOutage | undefined, DomainError> = Effect.gen(function*() {
-	const result = yield* fromPromise(() => checkGitHub()).pipe(
+const statusSummary = looseStruct({
+	components: mutableArray(looseStruct({ name: Schema.String, status: Schema.String, group: Schema.Boolean })),
+	incidents: mutableArray(looseStruct({ name: Schema.String, status: Schema.String, shortlink: Schema.String })),
+});
+const check: Effect.Effect<GitHubOutage | undefined, DomainError, Automation> = Effect.gen(function*() {
+	const service = yield* Automation;
+	const result = yield* fromPromise(signal =>
+		service.dependencies.transport('https://www.githubstatus.com/api/v2/summary.json', { signal })
+	).pipe(
+		Effect.flatMap(response => responseJson(response).pipe(Effect.mapError(toDomainError))),
+		Effect.flatMap(value => Effect.fromResult(decode(statusSummary, value))),
 		Effect.timeoutOption('3 seconds'),
 		Effect.map(Option.getOrUndefined),
 	);
-	return result?.kind === 'ok' ? outageFrom(result.summary) : undefined;
+	return result ? outageFrom(result) : undefined;
 });
 
 const reliedOn: ReadonlySet<string> = new Set([

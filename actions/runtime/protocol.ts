@@ -5,6 +5,7 @@ import { isJson } from '@/contract/http.ts';
 import { parseRetryAfter } from '@/domain/http-date.ts';
 import { array, record, text } from '@/model.ts';
 import { attemptWith, awaitWith, errorMessage, failWith, rejectWith } from '@/refusal.ts';
+import { responseJson } from '@/runtime/http.ts';
 import { retryTransient } from '@/runtime/policy.ts';
 
 export const modes = [
@@ -144,7 +145,8 @@ export interface Failure {
 export function failureOf(response: Response): Effect.Effect<Failure> {
 	const prefix = `Beepboop request failed: HTTP ${response.status}`;
 	if (!isJson(response)) return Effect.succeed({ message: prefix, retryable: false });
-	return Effect.promise((): Promise<unknown> => response.json().catch(() => undefined)).pipe(
+	return responseJson(response).pipe(
+		Effect.orElseSucceed(() => undefined),
 		Effect.map((body): Failure => {
 			if (typeof body !== 'object' || body === null) return { message: prefix, retryable: false };
 			const error = 'error' in body && typeof body.error === 'string' ? body.error : undefined;
@@ -169,13 +171,11 @@ export function retried<E>(
 		const response = yield* send;
 		if (response.ok) {
 			if (!isJson(response)) return yield* fail(`Beepboop answered HTTP ${response.status} without JSON`);
-			return yield* Effect.tryPromise({
-				try: (): Promise<unknown> => response.json(),
-				catch: error =>
-					error instanceof SyntaxError
-						? actionFailure(`Beepboop answered HTTP ${response.status} with invalid JSON`)
-						: new ActionFailure({ message: errorMessage(error), retryable: true }),
-			});
+			return yield* responseJson(response).pipe(Effect.mapError(({ cause }) =>
+				cause instanceof SyntaxError
+					? actionFailure(`Beepboop answered HTTP ${response.status} with invalid JSON`)
+					: new ActionFailure({ message: errorMessage(cause), retryable: true })
+			));
 		}
 		const failure = yield* failureOf(response);
 		return yield* new ActionFailure(failure);

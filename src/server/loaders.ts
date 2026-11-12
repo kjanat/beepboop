@@ -1,7 +1,6 @@
 import { Effect } from 'effect';
-import { Authenticators } from '@/automation/auth.ts';
 import { packageWatches } from '@/automation/package-watch.ts';
-import type { AutomationBindings, AutomationService } from '@/automation/service.ts';
+import type { Automation, AutomationBindings, AutomationService } from '@/automation/service.ts';
 import { withAutomation } from '@/automation/service.ts';
 import type { Readable, UnreadableExecution, UnreadableRepository } from '@/automation/store.ts';
 import { readableValues } from '@/automation/store.ts';
@@ -22,7 +21,7 @@ export interface LoaderContext {
 
 export type Panel<T> = { kind: 'loaded'; value: T } | { kind: 'failed' };
 
-export function panel<T>(name: string, work: Effect.Effect<T, DomainError>): Effect.Effect<Panel<T>> {
+export function panel<T, R>(name: string, work: Effect.Effect<T, DomainError, R>): Effect.Effect<Panel<T>, never, R> {
 	return work.pipe(
 		Effect.map((value): Panel<T> => ({ kind: 'loaded', value })),
 		recover(error =>
@@ -68,7 +67,7 @@ function grants(service: AutomationService) {
 const concurrent = { concurrency: ioConcurrency } as const;
 
 export const loaders = {
-	overview: ({ env }) => withAutomation(env, service => {
+	overview: (_context) => withAutomation(service => {
 		return Effect.all([repositories(service), executions(service)], concurrent).pipe(
 			Effect.map(([repositoryRows, executionRows]) => ({
 				section: 'overview' as const,
@@ -77,7 +76,7 @@ export const loaders = {
 			})),
 		);
 	}),
-	repositories: ({ env }) => withAutomation(env, service => {
+	repositories: (_context) => withAutomation(service => {
 		return Effect.all([
 			repositories(service),
 			service.store.onboardingPulls(),
@@ -91,8 +90,8 @@ export const loaders = {
 			})),
 		);
 	}),
-	packages: ({ env }) =>
-		withAutomation(env, service => Effect.gen(function*() {
+	packages: (_context) =>
+		withAutomation(service => Effect.gen(function*() {
 			const notifications = service.notifications();
 			const [repositoryRows, destinations, subscriptions] = yield* Effect.all([
 				repositories(service),
@@ -106,10 +105,10 @@ export const loaders = {
 				subscriptions,
 			};
 		})),
-	notifications: ({ env, actor }) => withAutomation(env, service => {
+	notifications: ({ actor }) => withAutomation(service => {
 		const notifications = service.notifications();
 		return Effect.all([
-			new Authenticators(env).list(actor),
+			service.authentication.authenticators.list(actor),
 			service.credentials.active(),
 			notifications.destinations(),
 			notifications.subscriptions(),
@@ -125,7 +124,7 @@ export const loaders = {
 			})),
 		);
 	}),
-	releases: ({ env }) => withAutomation(env, service => {
+	releases: (_context) => withAutomation(service => {
 		return Effect.all([repositories(service), service.store.succeededExecutions()], concurrent).pipe(
 			Effect.map(([repositoryRows, succeeded]) => ({
 				section: 'releases' as const,
@@ -134,7 +133,7 @@ export const loaders = {
 			})),
 		);
 	}),
-	runs: ({ env, repository }) => withAutomation(env, service => Effect.clockWith(clock => {
+	runs: ({ repository }) => withAutomation(service => Effect.clockWith(clock => {
 		return repositories(service).pipe(
 			Effect.flatMap(repositoryRows => {
 				const selected = repositoryRows.readable.find(entry => entry.name === repository);
@@ -150,7 +149,7 @@ export const loaders = {
 			}),
 		);
 	})),
-	winget: ({ env }) => withAutomation(env, service => {
+	winget: (_context) => withAutomation(service => {
 		return Effect.all([repositories(service), panel('winget-submissions', service.winget().list())], concurrent).pipe(
 			Effect.map(([repositoryRows, submissions]) => ({
 				section: 'winget' as const,
@@ -160,9 +159,9 @@ export const loaders = {
 			})),
 		);
 	}),
-	secrets: ({ env, actor }) => withAutomation(env, service => {
+	secrets: ({ actor }) => withAutomation(service => {
 		return Effect.all([
-			new Authenticators(env).list(actor),
+			service.authentication.authenticators.list(actor),
 			service.credentials.active(),
 			grants(service),
 			service.credentials.deliveries(),
@@ -178,21 +177,22 @@ export const loaders = {
 			})),
 		);
 	}),
-	activity: ({ env }) =>
-		withAutomation(env, service =>
+	activity: (_context) =>
+		withAutomation(service =>
 			service.store.activity().pipe(
 				Effect.map(activity => ({ section: 'activity' as const, activity })),
-			)),
-	security: ({ env, actor }) => withAutomation(env, service => {
-		return Effect.all([new Authenticators(env).list(actor), service.cliSessions.list()], concurrent).pipe(
+			)
+		),
+	security: ({ actor }) => withAutomation(service => {
+		return Effect.all([service.authentication.authenticators.list(actor), service.cliSessions.list()], concurrent).pipe(
 			Effect.map(([keys, sessions]) => ({ section: 'security' as const, keys, cliSessions: sessions })),
 		);
 	}),
-} satisfies { [S in Section]: (context: LoaderContext) => Effect.Effect<{ section: S }, DomainError> };
+} satisfies { [S in Section]: (context: LoaderContext) => Effect.Effect<{ section: S }, DomainError, Automation> };
 
 export type SectionView = Effect.Success<ReturnType<(typeof loaders)[Section]>>;
 export type ViewOf<S extends Section> = Extract<SectionView, { section: S }>;
 
-export function load(section: Section, context: LoaderContext): Effect.Effect<SectionView, DomainError> {
+export function load(section: Section, context: LoaderContext): Effect.Effect<SectionView, DomainError, Automation> {
 	return loaders[section](context);
 }

@@ -320,12 +320,13 @@ export class RepositoryGateway {
 			const clock = yield* Clock.Clock;
 
 			const key = yield* fromPromise(() => importPKCS8(self.credentials.GITHUB_APP_PRIVATE_KEY, 'RS256'));
+			const now = Math.floor(clock.currentTimeMillisUnsafe() / 1000);
 			return yield* fromPromise(() =>
 				new SignJWT({})
 					.setProtectedHeader({ alg: 'RS256' })
 					.setIssuer(self.credentials.GITHUB_APP_ID)
-					.setIssuedAt(Math.floor(clock.currentTimeMillisUnsafe() / 1000) - 60)
-					.setExpirationTime('9m')
+					.setIssuedAt(now - 60)
+					.setExpirationTime(now + 9 * 60)
 					.sign(key)
 			);
 		});
@@ -599,18 +600,18 @@ export class RepositoryGateway {
 			return ref ? ref.object.sha : null;
 		});
 	}
-	pullRequest(
+	pullRequest<R = never>(
 		snapshot: Snapshot,
 		branch: string,
 		title: string,
 		body: string,
 		edits: Edit[],
 		expectedHead?: string,
-		checkpoint?: (head: string) => Effect.Effect<void, DomainError>,
+		checkpoint?: (head: string) => Effect.Effect<void, DomainError, R>,
 		setupEdits?: Edit[],
 		existingPull?: number,
 		options: { takeOver?: boolean; coAuthored?: boolean } = {},
-	): Effect.Effect<{ url: string; head: string }, DomainError> {
+	): Effect.Effect<{ url: string; head: string }, DomainError, R> {
 		const { takeOver = false, coAuthored = false } = options;
 		const self = this;
 		return Effect.gen(function*() {
@@ -726,13 +727,13 @@ export class RepositoryGateway {
 		});
 	}
 	/** Fast-forward the default branch to a signed bot commit that applies the version bump. */
-	commitVersion(
+	commitVersion<R = never>(
 		snapshot: Snapshot,
 		message: string,
 		edits: Edit[],
 		head: string | undefined,
-		checkpoint: (head: string) => Effect.Effect<void, DomainError>,
-	): Effect.Effect<PreparationResult, DomainError> {
+		checkpoint: (head: string) => Effect.Effect<void, DomainError, R>,
+	): Effect.Effect<PreparationResult, DomainError, R> {
 		const self = this;
 		return Effect.gen(function*() {
 			const { name, id, defaultBranch } = snapshot.repository;

@@ -1,9 +1,9 @@
-import { Schema } from 'effect';
+import { Schema, Struct } from 'effect';
 import type { ChannelOutcome, RegistryOutcome } from '@/automation/destinations';
 import { completion } from '@/automation/execution';
 import type { ResolvedInput } from '@/automation/outputs';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
-import type { StoredInventory, StoredPackage, StoredRepository } from '@/automation/package-identity';
+import type { StoredInventory, StoredRepository } from '@/automation/package-identity';
 import { identifyExecution, identifyRepository, normalizePublication } from '@/automation/package-identity';
 import { publicationSchema } from '@/automation/package-publication';
 import type { ReleaseSetPlan } from '@/automation/planning';
@@ -38,7 +38,7 @@ const shas = mutableRecord(Schema.String, Schema.String);
 const storedDiagnostic = mutableStruct({
 	...diagnostic.fields,
 	...{
-		code: mapped(Schema.String, code => isDiagnosticCode(code) ? code : 'legacy'),
+		code: mapped(Schema.String, diagnostic.fields.code, code => isDiagnosticCode(code) ? code : 'legacy', code => code),
 	},
 });
 
@@ -95,7 +95,7 @@ const registryOutcome: Schema.Codec<RegistryOutcome, unknown> = Schema.Union([
 	outcomeSchema({ destination: Schema.Literals(managerDestinationIds) }),
 	channelOutcome,
 ]);
-const storedPackage: Schema.Codec<StoredPackage, unknown> = mutableStruct({
+const storedPackage = mutableStruct({
 	identity: Schema.optional(identity),
 	previousModule: Schema.optional(mutableStruct({ name: Schema.String, version: Schema.String })),
 	publicationStatus: Schema.optional(Schema.Literals(['published', 'missing', 'failed', 'unchecked'])),
@@ -113,7 +113,12 @@ const storedPackage: Schema.Codec<StoredPackage, unknown> = mutableStruct({
 	publish: Schema.optional(Schema.Boolean),
 	dependencies: strings,
 });
-const pkg: Schema.Codec<Package, unknown> = mapped(storedPackage, normalizePublication);
+const pkg: Schema.Codec<Package, unknown> = mapped(
+	storedPackage,
+	Schema.toType(mutableStruct({ ...Struct.omit(storedPackage.fields, ['publish']), publication })),
+	normalizePublication,
+	value => value,
+);
 const discoveredWorkflow: Schema.Codec<DiscoveredWorkflow, unknown> = mutableStruct({
 	tagPatterns: Schema.optional(strings),
 	branchPatterns: Schema.optional(strings),

@@ -107,8 +107,8 @@ async function rendered(component: 'Releases' | 'Repositories', query: string) {
 	const section = component === 'Releases' ? 'releases' : 'repositories';
 	const context = { env: world.env, actor: adminSubject };
 	const data = component === 'Releases'
-		? await Effect.runPromise(loaders.releases(context))
-		: await Effect.runPromise(loaders.repositories(context));
+		? await world.run(loaders.releases(context))
+		: await world.run(loaders.repositories(context));
 	const loaded: unknown = await import(join(import.meta.dir, `../../src/components/${component}.astro`));
 	const container = await experimental_AstroContainer.create();
 	const html = await container.renderToString(decodeSync(componentModule, loaded).default, {

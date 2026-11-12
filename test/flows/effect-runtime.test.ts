@@ -11,6 +11,7 @@ import {
 	ApplicationConfiguration,
 	ApplicationSecrets,
 	Automation,
+	authenticationLayer,
 	automationLayer,
 	HttpTransport,
 } from '@/automation/service';
@@ -248,7 +249,9 @@ test('the application layer uses explicitly supplied database, GitHub, HTTP and 
 			yield* service.sessions.open('login-flow', 'id', {}, 1000);
 			expect(service.dependencies.transport).toBe(http);
 			expect(service.vault()).toBe(vault);
-		}).pipe(Effect.provide(automationLayer.pipe(Layer.provide(supplied)))),
+		}).pipe(
+			Effect.provide(automationLayer.pipe(Layer.provide(authenticationLayer.pipe(Layer.provideMerge(supplied))))),
+		),
 	);
 	expect(calls).toEqual(['/injected']);
 	expect(queries).toHaveLength(1);

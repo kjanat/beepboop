@@ -4,7 +4,7 @@ import { change } from '@/contract/changes';
 import type { DomainError } from '@/contract/errors';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
-import { decodeSync, mapped, mutableArray, mutableStruct } from '@/schema';
+import { mapped, mutableArray, mutableStruct } from '@/schema';
 
 const page = 500;
 const changeRow = mapped(
@@ -15,7 +15,9 @@ const changeRow = mapped(
 		id: Schema.String,
 		revision: Schema.Finite,
 	}),
-	({ repository_id, ...row }) => decodeSync(change, { ...row, repositoryId: repository_id }),
+	change,
+	({ repository_id, ...row }) => ({ ...row, repositoryId: repository_id }),
+	({ repositoryId, ...row }) => ({ ...row, repository_id: repositoryId }),
 );
 
 export class ChangeLog {

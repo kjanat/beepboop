@@ -1,7 +1,8 @@
 import { CronExpressionParser } from 'cron-parser';
 import { Clock, Context, Effect, Layer, Result, Schema } from 'effect';
 import { configuredGrant } from '@/automation/access';
-import type { AuthBindings } from '@/automation/auth';
+import type { AuthBindings, AuthenticationDependencies } from '@/automation/auth';
+import { Authentication, authentication } from '@/automation/auth';
 import { resolveConfiguration } from '@/automation/configuration';
 import type { AutomationCoordinator } from '@/automation/coordinator';
 import { createExecution, deriveExecution } from '@/automation/execution';
@@ -51,12 +52,12 @@ import { fromJson, fromPromise, fromSync, recover } from '@/failure';
 import type { Parsed } from '@/model';
 import { countSchema, decode, integer, looseSchema, record } from '@/model';
 import { ChangeLog } from '@/persistence/d1/changes';
-import { CLISessionStore } from '@/persistence/d1/cli-sessions';
+import type { CLISessionStore } from '@/persistence/d1/cli-sessions';
 import { CredentialStore } from '@/persistence/d1/credentials';
 import { Database, databaseLayer } from '@/persistence/d1/database';
 import { OnboardingStore } from '@/persistence/d1/onboarding';
 import { ScheduleStore } from '@/persistence/d1/schedules';
-import { SessionStore } from '@/persistence/d1/sessions';
+import type { SessionStore } from '@/persistence/d1/sessions';
 import { executionId } from '@/persistence/identity-keys';
 import { decodeSync, mutableArray, mutableRecord, mutableStruct, safeDecode } from '@/schema';
 import { readBody, verifySignature } from '@/webhook';
@@ -83,6 +84,9 @@ export class AutomationService {
 		readonly dependencies: AutomationDependencies,
 		readonly defer?: (work: Promise<void>) => void,
 	) {}
+	get authentication() {
+		return this.dependencies.authentication;
+	}
 	get store() {
 		return this.dependencies.store;
 	}
@@ -830,6 +834,7 @@ export class AutomationService {
 }
 
 export interface AutomationDependencies {
+	readonly authentication: AuthenticationDependencies;
 	readonly store: Store;
 	readonly vault: Pick<Vault, keyof Vault>;
 	readonly gateway: RepositoryGateway;
@@ -859,15 +864,17 @@ export const makeAutomation = Effect.gen(function*() {
 	const { env, defer } = yield* ApplicationConfiguration;
 	const db = yield* Database;
 	const vault = yield* ApplicationSecrets;
+	const auth = yield* Authentication;
 	const github = yield* GitHub;
 	const { fetch: transport } = yield* HttpTransport;
 	return new AutomationService(env, {
+		authentication: auth,
 		store: new Store(db),
 		vault,
 		gateway: new RepositoryGateway(env, Number(env.OWNER_ID), transport, defer, github),
 		credentials: new CredentialStore(db),
-		sessions: new SessionStore(db),
-		cliSessions: new CLISessionStore(db),
+		sessions: auth.sessions,
+		cliSessions: auth.cliSessions,
 		schedules: new ScheduleStore(db),
 		onboarding: new OnboardingStore(db),
 		changes: new ChangeLog(db),
@@ -876,6 +883,16 @@ export const makeAutomation = Effect.gen(function*() {
 });
 
 export const automationLayer = Layer.effect(Automation, makeAutomation);
+
+export const authenticationLayer = Layer.effect(
+	Authentication,
+	Effect.gen(function*() {
+		const { env } = yield* ApplicationConfiguration;
+		const db = yield* Database;
+		const { fetch: transport } = yield* HttpTransport;
+		return authentication(env, db, transport);
+	}),
+);
 
 export function applicationLayer(
 	env: AutomationBindings,
@@ -899,13 +916,14 @@ export function applicationLayer(
 			return new Vault(new Store(db), new CredentialStore(db), keys, env.VAULT_ACTIVE_KEY);
 		}),
 	);
-	return automationLayer.pipe(Layer.provide(secrets.pipe(Layer.provideMerge(base))));
+
+	return automationLayer.pipe(
+		Layer.provide(Layer.mergeAll(secrets, authenticationLayer).pipe(Layer.provideMerge(base))),
+	);
 }
 
 export function withAutomation<A, E, R>(
-	env: AutomationBindings,
 	use: (service: AutomationService) => Effect.Effect<A, E, R>,
-	defer?: (work: Promise<void>) => void,
-): Effect.Effect<A, E | DomainError, R> {
-	return Effect.flatMap(Automation, use).pipe(Effect.provide(applicationLayer(env, defer)));
+): Effect.Effect<A, E, R | Automation> {
+	return Effect.flatMap(Automation, use);
 }

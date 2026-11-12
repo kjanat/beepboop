@@ -61,37 +61,38 @@ function wantsDocument(request: Request, path: string): boolean {
 		&& (request.headers.get('accept') ?? '').includes('text/html');
 }
 
-export function failure(request: Request, error: unknown, cause?: Cause.Cause<unknown>): Response {
-	const incident = crypto.randomUUID();
-	const path = new URL(request.url).pathname;
-	const { problem, message } = cause && Cause.hasDies(cause)
-		? { problem: { code: 'internal', incident } as const, message: messageOf({ code: 'internal', incident }) }
-		: classify(error, incident);
-	const status = statusOf[problem.code];
-	console.error(JSON.stringify({
-		event: 'request.failed',
-		method: request.method,
-		path,
-		status,
-		code: problem.code,
-		incident,
-		error: error instanceof Error ? error.message : String(error),
-	}));
-	const headers = new Headers({ 'Cache-Control': 'no-store' });
-	if (problem.code === 'method-not-allowed') headers.set('Allow', problem.allowed.join(', '));
-	if (wantsDocument(request, path)) {
-		headers.set('Content-Type', 'text/html; charset=utf-8');
-		return new Response(
-			errorPage({
-				title: String(status),
-				heading: 'Request failed',
-				message,
-				link: { href: '/', text: 'Return to the dashboard' },
-			}),
-			{ status, headers },
-		);
-	}
-	return Response.json(envelope(problem, message), { status, headers });
+export function failure(request: Request, error: unknown, cause?: Cause.Cause<unknown>): Effect.Effect<Response> {
+	return Effect.gen(function*() {
+		const incident = crypto.randomUUID();
+		const path = new URL(request.url).pathname;
+		const { problem, message } = cause && Cause.hasDies(cause)
+			? { problem: { code: 'internal', incident } as const, message: messageOf({ code: 'internal', incident }) }
+			: classify(error, incident);
+		const status = statusOf[problem.code];
+		yield* Effect.logError('request.failed', cause ?? Cause.fail(error)).pipe(Effect.annotateLogs({
+			method: request.method,
+			path,
+			status,
+			code: problem.code,
+			incident,
+			error: error instanceof Error ? error.message : String(error),
+		}));
+		const headers = new Headers({ 'Cache-Control': 'no-store' });
+		if (problem.code === 'method-not-allowed') headers.set('Allow', problem.allowed.join(', '));
+		if (wantsDocument(request, path)) {
+			headers.set('Content-Type', 'text/html; charset=utf-8');
+			return new Response(
+				errorPage({
+					title: String(status),
+					heading: 'Request failed',
+					message,
+					link: { href: '/', text: 'Return to the dashboard' },
+				}),
+				{ status, headers },
+			);
+		}
+		return Response.json(envelope(problem, message), { status, headers });
+	});
 }
 
 export function toDomainError(error: unknown): DomainError {
@@ -102,7 +103,7 @@ export function toDomainError(error: unknown): DomainError {
 		: error instanceof Error
 		? error.message
 		: String(error);
-	return new DomainError({ problem, message, detail });
+	return new DomainError({ problem, message, detail, cause: error });
 }
 
 export function fromPromise<A>(run: (signal: AbortSignal) => Promise<A>): Effect.Effect<A, DomainError> {

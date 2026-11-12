@@ -222,7 +222,7 @@ test('the releases page still receives a fresh succeeded run when 200 unfinished
 			10 + index,
 		]),
 	]);
-	const data = await Effect.runPromise(loaders.releases({ env: world.env, actor: 'admin' }));
+	const data = await world.run(loaders.releases({ env: world.env, actor: 'admin' }));
 	expect(data.executions.map(entry => entry.id)).toEqual(['done']);
 });
 

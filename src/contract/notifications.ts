@@ -12,7 +12,8 @@ const packageNames: Record<WatchedRegistry, RegExp> = {
 export const watchInput = refined(
 	mutableStruct({
 		registry: Schema.Literals(watchedRegistries),
-		name: mapped(Schema.String, value => value.trim()).check(Schema.isMinLength(1)).check(Schema.isMaxLength(214)),
+		name: mapped(Schema.String, Schema.String, value => value.trim(), value => value).check(Schema.isMinLength(1))
+			.check(Schema.isMaxLength(214)),
 	}),
 	input => packageNames[input.registry].test(input.name),
 	{ message: 'Invalid package name', path: ['name'] },
@@ -20,7 +21,9 @@ export const watchInput = refined(
 
 export const destinationInput = mutableStruct({
 	id: Schema.optional(Schema.String.check(matchesPattern(credentialAliasPattern))),
-	name: mapped(Schema.String, value => value.trim()).check(Schema.isMinLength(1)).check(Schema.isMaxLength(80)),
+	name: mapped(Schema.String, Schema.String, value => value.trim(), value => value).check(Schema.isMinLength(1)).check(
+		Schema.isMaxLength(80),
+	),
 	kind: Schema.Literals(notificationKinds),
 	credential: Schema.String.check(matchesPattern(credentialAliasPattern)),
 	subscribeNew: Schema.Boolean,

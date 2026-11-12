@@ -6,11 +6,12 @@ import {
 	verifyAuthenticationResponse,
 	verifyRegistrationResponse,
 } from '@simplewebauthn/server';
-import { Effect, Result, Schema, SchemaGetter } from 'effect';
+import { Clock, Context, Effect, Result, Schema, SchemaGetter } from 'effect';
 import type { JWTVerifyGetKey } from 'jose';
-import { createRemoteJWKSet, errors, jwtVerify } from 'jose';
+import { createRemoteJWKSet, customFetch, errors, jwtVerify } from 'jose';
 import { cliAuthRoute, cliSubject } from '@/automation/cli-auth';
 import { logRecovered } from '@/automation/failure-log';
+import type { Fetcher } from '@/automation/managers/registry';
 import { documentRow } from '@/automation/schemas';
 import { decodeError } from '@/automation/store';
 import type { DomainError } from '@/contract/errors';
@@ -18,8 +19,9 @@ import { decodeRequest, forbidden, precondition, unauthenticated } from '@/contr
 import { loginSecretPattern } from '@/contract/ids';
 import { errorPage, fromJson, fromPromise, fromSync, recover, toDomainError } from '@/failure';
 import { integer, record, sha, text } from '@/model';
+import { CLISessionStore } from '@/persistence/d1/cli-sessions';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
-import { replaceDocument, sql } from '@/persistence/d1/database';
+import { replaceDocument } from '@/persistence/d1/database';
 import { SessionStore } from '@/persistence/d1/sessions';
 import { decodeSync, mapped, mutableArray, mutableStruct } from '@/schema';
 
@@ -51,7 +53,12 @@ const authenticationResponse: Schema.Codec<AuthenticationResponseJSON, unknown> 
 		clientDataJSON: Schema.String,
 		authenticatorData: Schema.String,
 		signature: Schema.String,
-		userHandle: mapped(Schema.optional(Schema.NullOr(Schema.String)), value => value ?? undefined),
+		userHandle: mapped(
+			Schema.optional(Schema.NullOr(Schema.String)),
+			Schema.UndefinedOr(Schema.String),
+			value => value ?? undefined,
+			value => value,
+		),
 	}),
 	clientExtensionResults,
 });
@@ -78,17 +85,42 @@ export interface WorkflowIdentity {
 	environment?: string;
 	event: string;
 }
-const githubKeys = createRemoteJWKSet(
-	new URL('https://token.actions.githubusercontent.com/.well-known/jwks'),
-);
-const keys = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
+export interface AuthenticationDependencies {
+	readonly sessions: SessionStore;
+	readonly cliSessions: CLISessionStore;
+	readonly authenticators: Authenticators;
+	readonly client: (signal: AbortSignal) => ReturnType<typeof createClient>;
+	readonly administratorKeys: (signal: AbortSignal) => JWTVerifyGetKey;
+	readonly workflowKeys: (signal: AbortSignal) => JWTVerifyGetKey;
+}
+export class Authentication
+	extends Context.Service<Authentication, AuthenticationDependencies>()('beepboop/Authentication')
+{}
+
+export function authentication(env: AuthBindings, db: Sql, transport: Fetcher): AuthenticationDependencies {
+	const sessions = new SessionStore(db);
+	const http = (signal: AbortSignal): Fetcher => (input, init) => transport(input, {
+		...init,
+		signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
+	});
+	const keys = (url: URL) => (signal: AbortSignal) => createRemoteJWKSet(url, { [customFetch]: http(signal) });
+	return {
+		sessions,
+		cliSessions: new CLISessionStore(db),
+		authenticators: new Authenticators(env, db, sessions),
+		client: signal =>
+			createClient({ clientID: env.OPENAUTH_CLIENT_ID, issuer: env.OPENAUTH_ISSUER, fetch: http(signal) }),
+		administratorKeys: keys(new URL('/.well-known/jwks.json', env.OPENAUTH_ISSUER)),
+		workflowKeys: keys(new URL('https://token.actions.githubusercontent.com/.well-known/jwks')),
+	};
+}
 export function base64(bytes: Uint8Array): string {
 	return btoa(String.fromCharCode(...bytes));
 }
 export function bytes(value: string): Uint8Array<ArrayBuffer> {
 	return Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
 }
-function verified<T>(verification: () => Promise<T>): Effect.Effect<T, DomainError> {
+function verified<T>(verification: (signal: AbortSignal) => Promise<T>): Effect.Effect<T, DomainError> {
 	return Effect.tryPromise({
 		try: verification,
 		catch: error => error instanceof errors.JOSEError ? unauthenticated(error.message) : toDomainError(error),
@@ -98,14 +130,16 @@ export function workflowIdentity(
 	request: Request,
 	audience: string,
 	ownerId: number,
-	issuerKeys: JWTVerifyGetKey = githubKeys,
+	issuerKeys: (signal: AbortSignal) => JWTVerifyGetKey,
 ): Effect.Effect<WorkflowIdentity, DomainError> {
 	return Effect.gen(function*() {
 		const token = request.headers.get('authorization')?.replace(/^Bearer /, '');
 		if (!token || token.length > 20000) return yield* unauthenticated('Workflow authentication required');
-		const { payload } = yield* verified(() =>
-			jwtVerify(token, issuerKeys, {
+		const now = yield* Clock.currentTimeMillis;
+		const { payload } = yield* verified(signal =>
+			jwtVerify(token, issuerKeys(signal), {
 				issuer: 'https://token.actions.githubusercontent.com',
+				currentDate: new Date(now),
 				audience,
 				algorithms: ['RS256'],
 				requiredClaims: ['exp', 'iat', 'sub'],
@@ -166,20 +200,17 @@ export function administrator(
 	env:
 		& Pick<AuthBindings, 'APPLICATION_ORIGIN' | 'OPENAUTH_ISSUER' | 'OPENAUTH_CLIENT_ID' | 'ADMIN_SUBJECT'>
 		& Partial<Pick<AuthBindings, 'DB'>>,
+	dependencies: AuthenticationDependencies,
 ): Effect.Effect<string, DomainError> {
 	return Effect.gen(function*() {
-		if (request.headers.has('authorization')) return yield* cliSubject(request, env);
+		if (request.headers.has('authorization')) return yield* cliSubject(request, env, dependencies.cliSessions);
 		const token = cookie(request, '__Host-beepboop_access');
 		if (!token || token.length > 20000) return yield* unauthenticated('Administrator login required');
-		let key = keys.get(env.OPENAUTH_ISSUER);
-		if (!key) {
-			key = createRemoteJWKSet(new URL('/.well-known/jwks.json', env.OPENAUTH_ISSUER));
-			keys.set(env.OPENAUTH_ISSUER, key);
-		}
-		const issuerKey = key;
-		const { payload } = yield* verified(() =>
-			jwtVerify(token, issuerKey, {
+		const now = yield* Clock.currentTimeMillis;
+		const { payload } = yield* verified(signal =>
+			jwtVerify(token, dependencies.administratorKeys(signal), {
 				issuer: env.OPENAUTH_ISSUER,
+				currentDate: new Date(now),
 				audience: env.OPENAUTH_CLIENT_ID,
 				algorithms: ['ES256', 'RS256'],
 				requiredClaims: ['exp', 'sub'],
@@ -252,20 +283,28 @@ export function completeLogin(request: Request, steps: LoginCompletion): Effect.
 		}).pipe(recover(error => Effect.succeed(loginFailed(decodeError(error)))));
 	});
 }
-export function authRoute(request: Request, env: AuthBindings): Effect.Effect<Response | undefined, DomainError> {
+export function authRoute(
+	request: Request,
+	env: AuthBindings,
+	dependencies: AuthenticationDependencies,
+): Effect.Effect<Response | undefined, DomainError> {
 	return Effect.gen(function*() {
 		const path = new URL(request.url).pathname;
-		if (path.startsWith('/auth/cli/')) return yield* cliAuthRoute(request, env, administrator);
-		const client = createClient({ clientID: env.OPENAUTH_CLIENT_ID, issuer: env.OPENAUTH_ISSUER });
+		if (path.startsWith('/auth/cli/')) {
+			return yield* cliAuthRoute(request, env, request => administrator(request, env, dependencies), dependencies);
+		}
 		const renew: Effect.Effect<SessionTokens | undefined> = Effect.gen(function*() {
 			const refresh = cookie(request, refreshCookie);
 			if (!refresh || refresh.length > 4096) return undefined;
-			const result = yield* Effect.promise(() => client.refresh(refresh).catch(() => undefined));
+			const result = yield* fromPromise(signal => dependencies.client(signal).refresh(refresh)).pipe(
+				Effect.orElseSucceed(() => undefined),
+			);
 			if (!result || result.err || !result.tokens) return undefined;
 			const tokens = result.tokens;
 			const verified = yield* administrator(
 				new Request(`${env.APPLICATION_ORIGIN}/`, { headers: { Cookie: `${accessCookie}=${tokens.access}` } }),
 				env,
+				dependencies,
 			).pipe(Effect.catch(() => Effect.undefined));
 			return verified ? { access: tokens.access, refresh: tokens.refresh, expiresIn: tokens.expiresIn } : undefined;
 		});
@@ -285,11 +324,11 @@ export function authRoute(request: Request, env: AuthBindings): Effect.Effect<Re
 					headers: sessionHeaders(renewed, loginTarget(parameters.get('cli'), parameters.get('return'))),
 				});
 			}
-			const { url, challenge } = yield* fromPromise(() =>
-				client.authorize(`${env.APPLICATION_ORIGIN}/auth/callback`, 'code', { pkce: true })
+			const { url, challenge } = yield* fromPromise(signal =>
+				dependencies.client(signal).authorize(`${env.APPLICATION_ORIGIN}/auth/callback`, 'code', { pkce: true })
 			);
 			const id = crypto.randomUUID();
-			yield* new SessionStore(env.DB).open('login-flow', id, {
+			yield* dependencies.sessions.open('login-flow', id, {
 				...challenge,
 				cli: parameters.get('cli'),
 				return: returnPath(parameters.get('return')),
@@ -301,12 +340,12 @@ export function authRoute(request: Request, env: AuthBindings): Effect.Effect<Re
 		}
 		if (path === '/auth/callback') {
 			return yield* completeLogin(request, {
-				consumeFlow: id => new SessionStore(env.DB).take(id),
+				consumeFlow: id => dependencies.sessions.take(id),
 				exchange: (code, verifier) =>
 					Effect.gen(function*() {
-						const result = yield* Effect.promise(() =>
-							client.exchange(code, `${env.APPLICATION_ORIGIN}/auth/callback`, verifier).catch(() => null)
-						);
+						const result = yield* fromPromise(signal =>
+							dependencies.client(signal).exchange(code, `${env.APPLICATION_ORIGIN}/auth/callback`, verifier)
+						).pipe(Effect.orElseSucceed(() => undefined));
 						if (!result || result.err) return yield* precondition('Login exchange failed');
 						return {
 							access: result.tokens.access,
@@ -318,11 +357,16 @@ export function authRoute(request: Request, env: AuthBindings): Effect.Effect<Re
 					administrator(
 						new Request(`${env.APPLICATION_ORIGIN}/`, { headers: { Cookie: `__Host-beepboop_access=${access}` } }),
 						env,
+						dependencies,
 					),
 			});
 		}
 		if (path === '/auth/logout' && request.method === 'POST') {
-			return yield* signOut(request, env.APPLICATION_ORIGIN, refresh => fromPromise(() => client.revoke(refresh)));
+			return yield* signOut(
+				request,
+				env.APPLICATION_ORIGIN,
+				refresh => fromPromise(signal => dependencies.client(signal).revoke(refresh)),
+			);
 		}
 		return undefined;
 	});
@@ -364,9 +408,9 @@ const savedCredential: Schema.Codec<SavedCredential, unknown> = mutableStruct({
 export class Authenticators {
 	private readonly sessions: SessionStore;
 	private readonly sql: Sql;
-	constructor(private env: AuthBindings) {
-		this.sessions = new SessionStore(env.DB);
-		this.sql = sql(env.DB);
+	constructor(private env: AuthBindings, db: Sql, sessions: SessionStore) {
+		this.sessions = sessions;
+		this.sql = db;
 	}
 	private saved(subject: string): Effect.Effect<{ document: string; credential: SavedCredential }[], DomainError> {
 		return this.sql.all('SELECT document FROM authenticators WHERE subject=?', subject).pipe(

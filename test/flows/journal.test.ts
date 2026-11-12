@@ -61,7 +61,9 @@ test('a D1 outage keeps the outbox, and the next alarm projects it', async () =>
 	const outbox = [...journal.snapshot().keys()].filter(key => key.startsWith('outbox:'));
 	expect(outbox.length).toBe(1);
 	expect(journal.alarm).toBe(Date.now() + 10_000);
-	expect(logged.events()).toEqual([{ event: 'projection.failed', error: 'D1_ERROR: Network connection lost.' }]);
+	expect(logged.events()).toEqual([
+		expect.objectContaining({ event: 'projection.failed', error: 'D1_ERROR: Network connection lost.' }),
+	]);
 
 	world.db.failBatch = undefined;
 	await world.wait(10_000);
@@ -176,11 +178,11 @@ test('an outage retries in the inbox for eight attempts, and other failures dead
 	await world.push(repository, '00000000-0000-4000-8000-0000000000fe');
 	await world.wait(1_000);
 	world.db.failWrites = undefined;
-	expect(logged.events()).toEqual([{
+	expect(logged.events()).toEqual([expect.objectContaining({
 		event: 'inbox.audit-failed',
 		target: expect.stringContaining('00000000-0000-4000-8000-0000000000fe: push after 1 attempts'),
 		error: 'D1_ERROR: Network connection lost.',
-	}]);
+	})]);
 	expect(inbox().map(([key, entry]) => [key, decodeSync(looseStruct({ attempts: Schema.Finite }), entry).attempts]))
 		.toEqual([
 			['inbox-dead:00000000-0000-4000-8000-0000000000fe', 1],
@@ -232,11 +234,11 @@ test('a poisoned execution is quarantined while the rest of the journal advances
 	await world.wait(1_000);
 	world.db.failWrites = undefined;
 	expect(journal.snapshot().has('quarantine:unaudited')).toBe(true);
-	expect(logged.events()).toEqual([{
+	expect(logged.events()).toEqual([expect.objectContaining({
 		event: 'quarantine.audit-failed',
 		target: expect.stringMatching(/^unaudited: /),
 		error: 'D1_ERROR: Network connection lost.',
-	}]);
+	})]);
 });
 
 test('packed refs complete from the journal after the execution row is gone', async () => {

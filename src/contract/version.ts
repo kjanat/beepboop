@@ -5,8 +5,12 @@ import { mapped, matchesPattern, refined, safeDecode, strictStruct } from '@/sch
 
 export { compare, isPrerelease, semverPattern } from '@/contract/semver';
 
-export const semVer = mapped(Schema.String, value => value.replace(/^v/, '')).pipe(
-	Schema.decodeTo(Schema.String.check(matchesPattern(bareSemverPattern))),
+export const semVer = mapped(
+	Schema.String,
+	Schema.String.check(matchesPattern(bareSemverPattern)),
+	value => value.replace(/^v/, ''),
+	value => value,
+).pipe(
 	Schema.brand('SemVer'),
 );
 export type SemVer = Decoded<typeof semVer>;

@@ -1688,10 +1688,12 @@ const reportedIds = (step: Record<string, unknown> | undefined) =>
 	decodeSync(
 		mapped(
 			mutableStruct({ with: mutableStruct({ publications: Schema.String }) }),
+			mutableArray(Schema.String),
 			report =>
 				decodeSync(mutableArray(mutableStruct({ id: Schema.String })), JSON.parse(report.with.publications)).map(
 					entry => entry.id,
 				),
+			ids => ({ with: { publications: JSON.stringify(ids.map(id => ({ id }))) } }),
 		),
 		step,
 	);

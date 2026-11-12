@@ -116,6 +116,7 @@ export class DomainError extends Data.TaggedError('DomainError')<{
 	readonly problem: ApiError;
 	readonly message: string;
 	readonly detail?: string;
+	readonly cause?: unknown;
 }> {}
 
 export function domainError(problem: ApiError, message = messageOf(problem)): DomainError {

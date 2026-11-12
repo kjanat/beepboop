@@ -34,6 +34,9 @@ export function mutableArray<S extends Schema.Constraint>(item: S) {
 export function decodeSync<S extends Schema.ConstraintDecoder<unknown>>(schema: S, value: unknown): S['Type'] {
 	return Schema.decodeUnknownSync(schema, { errors: 'all' })(value);
 }
+export function encodeSync<S extends Schema.ConstraintEncoder<unknown>>(schema: S, value: S['Type']): S['Encoded'] {
+	return Schema.encodeSync(schema)(value);
+}
 export function safeDecode<S extends Schema.ConstraintDecoder<unknown>>(schema: S, value: unknown) {
 	return Result.match(Schema.decodeUnknownResult(schema, { errors: 'all' })(value), {
 		onSuccess: data => ({ success: true as const, data, error: undefined }),
@@ -80,8 +83,13 @@ export function refined<S extends Schema.Top>(
 		),
 	);
 }
-export function mapped<S extends Schema.Top, A>(schema: S, map: (value: S['Type'], ctx: ValidationContext) => A) {
-	return schema.pipe(Schema.decodeTo(Schema.declare<A>((_value): _value is A => true), {
+export function mapped<S extends Schema.Top, T extends Schema.Top>(
+	schema: S,
+	output: T,
+	map: (value: S['Type'], ctx: ValidationContext) => T['Encoded'],
+	encode: (value: T['Encoded']) => S['Type'],
+) {
+	return schema.pipe(Schema.decodeTo(output, {
 		decode: SchemaGetter.transformEffect(value => Effect.suspend(() => {
 			const issues: SchemaIssue.Issue[] = [];
 			const result = map(value, { addIssue: issue => issues.push(issueOf(issue)) });
@@ -90,7 +98,7 @@ export function mapped<S extends Schema.Top, A>(schema: S, map: (value: S['Type'
 				? Effect.fail(new SchemaIssue.Composite(schema.ast, [first, ...rest]))
 				: Effect.succeed(result);
 		})),
-		encode: SchemaGetter.forbidden(() => 'This normalization has no inverse'),
+		encode: SchemaGetter.transform(encode),
 	}));
 }
 export interface DecodingIssue {
@@ -152,7 +160,7 @@ export function mutableRecord<K extends Schema.Record.Key, V extends Schema.Cons
 		Schema.decodeTo(record),
 	);
 }
-export const numberFromInput = mapped(Schema.Unknown, value => Number(value)).pipe(Schema.decodeTo(Schema.Finite));
+export const numberFromInput = mapped(Schema.Unknown, Schema.Finite, value => Number(value), value => value);
 
 export function matchesPattern(pattern: RegExp, annotations?: Schema.Annotations.Filter) {
 	return Schema.isPattern(pattern, { ...annotations, toJsonSchema: () => ({ pattern: pattern.source }) });

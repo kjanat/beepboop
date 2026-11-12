@@ -1,5 +1,6 @@
 ---
 import { Effect } from 'effect';
+import { applicationLayer } from '@/automation/service';
 import Activity from '@/components/Activity.astro';
 import Notifications from '@/components/Notifications.astro';
 import Overview from '@/components/Overview.astro';
@@ -36,7 +37,7 @@ const [view, outage] = await Effect.runPromise(Effect.gen(function*() {
 			repository: Astro.url.searchParams.get('repository') ?? undefined,
 		}),
 		panel('github-status', githubOutage),
-	], { concurrency: 'unbounded' });
+	], { concurrency: 'unbounded' }).pipe(Effect.provide(applicationLayer(env)));
 }));
 ---
 <Layout

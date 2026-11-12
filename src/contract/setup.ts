@@ -176,6 +176,10 @@ const workflow = strictStruct(
 		binaries: Schema.optional(binaries),
 	}).fields,
 );
+export const workflowSetupValue = Schema.toType(strictStruct({
+	...Struct.omit(workflow.fields, ['file', 'triggers']),
+	triggers: Schema.Literals(workflowTriggers),
+}));
 export const workflowSetup = mapped(
 	strictStruct({
 		...Struct.omit(workflow.fields, ['file', 'triggers']),
@@ -184,10 +188,12 @@ export const workflowSetup = mapped(
 			triggers: Schema.optional(Schema.Literals(workflowTriggers)).annotate({ deprecated: true }),
 		},
 	}),
+	workflowSetupValue,
 	({ existingTriggers: handover, triggers, ...rest }) => ({
 		...rest,
 		triggers: handover ? triggersOfExistingTriggers[handover] : triggers ?? 'review',
 	}),
+	value => value,
 ).annotate({
 	identifier: 'workflowSetup',
 	description: 'Setup input that generates this workflow file. Change it through a setup update PR.',

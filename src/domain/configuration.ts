@@ -39,6 +39,14 @@ import {
 } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
 import { dependencyOrder } from '@/dependency-order';
+import {
+	bindingValue,
+	configurationValue,
+	refPolicyValue,
+	streamValue,
+	subscriptionValue,
+	wingetValue,
+} from '@/domain/configuration-value';
 import { textSchema as nonempty } from '@/model';
 import { purl } from '@/package-url';
 import type { Decoded, Encoded, ValidationContext } from '@/schema';
@@ -62,13 +70,22 @@ function issue(ctx: ValidationContext, code: DiagnosticCode, message: string, pa
 	ctx.addIssue({ code: 'custom', message, path, params: { diagnostic: code } });
 }
 
-export const packageReference = mapped(nonempty, (value, ctx) => {
-	if (!value.startsWith('pkg:')) return value;
-	const identity = parseReleaseIdentity(value);
-	if (Result.isSuccess(identity)) return purl(identity.success);
-	ctx.addIssue({ code: 'custom', message: identity.failure.message });
-	return undefined as never;
-}).annotate({
+export const packageReference = mapped(
+	nonempty,
+	refined(nonempty, value => {
+		if (!value.startsWith('pkg:')) return true;
+		const parsed = parseReleaseIdentity(value);
+		return Result.isSuccess(parsed) && purl(parsed.success) === value;
+	}),
+	(value, ctx) => {
+		if (!value.startsWith('pkg:')) return value;
+		const identity = parseReleaseIdentity(value);
+		if (Result.isSuccess(identity)) return purl(identity.success);
+		ctx.addIssue({ code: 'custom', message: identity.failure.message });
+		return undefined as never;
+	},
+	value => value,
+).annotate({
 	identifier: 'packageReference',
 	description:
 		'Package URL (versionless for release selection). Legacy manager:name references are accepted for compatibility.',
@@ -101,7 +118,9 @@ const refPolicy = mapped(
 		).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 		signed: Schema.optional(Schema.Boolean),
 	}),
+	Schema.toType(refPolicyValue),
 	({ phase, prefix, aliases, signed }) => ({ phase, prefix, aliases, signed: signed === true }),
+	value => value,
 );
 
 function bindingSchema() {
@@ -153,7 +172,7 @@ function bindingSchema() {
 		const ids = (binding.outputs ?? []).map(output => output.id);
 		if (new Set(ids).size !== ids.length) issue(ctx, 'duplicate-identity', 'Duplicate output', ['outputs']);
 	});
-	return mapped(checked, binding => ({
+	return mapped(checked, Schema.toType(bindingValue), binding => ({
 		...(binding.outputs ? { outputs: binding.outputs } : {}),
 		...(binding.artifactInputs ? { artifactInputs: binding.artifactInputs } : {}),
 		...(binding.platform ? { platform: binding.platform } : {}),
@@ -175,7 +194,7 @@ function bindingSchema() {
 		inputs: binding.inputs ?? {},
 		required: binding.required !== false,
 		...(binding.setup ? { setup: binding.setup } : {}),
-	})).annotate({ identifier: 'workflow' });
+	}), value => value).annotate({ identifier: 'workflow' });
 }
 
 function streamSchema() {
@@ -238,7 +257,7 @@ function streamSchema() {
 			]);
 		}
 	});
-	return mapped(checked, stream => ({
+	return mapped(checked, Schema.toType(streamValue), stream => ({
 		...(stream.versionFiles === undefined ? {} : { versionFiles: stream.versionFiles }),
 		...(stream.versionSource ? { versionSource: stream.versionSource } : {}),
 		...(stream.packages === undefined ? {} : { packages: stream.packages }),
@@ -268,7 +287,7 @@ function streamSchema() {
 		...(stream.needs === undefined ? {} : { needs: stream.needs }),
 		credentials: stream.credentials,
 		channels: { stable: stream.channels.stable, prerelease: stream.channels.prerelease },
-	})).annotate({ identifier: 'stream' });
+	}), value => value).annotate({ identifier: 'stream' });
 }
 
 const subscriptionCommon = { id: identifier, source: nonempty, stream: nonempty, operation: nonempty };
@@ -288,23 +307,19 @@ function subscriptionSchema() {
 			matchesPattern(workflowFilePattern, { message: 'Workflow subscription requires an exact filename' }),
 		),
 	});
-	return mapped(Schema.Union([release, packageChanged, workflowRun]), subscription => ({
-		id: subscription.id,
-		...('sourceStream' in subscription && subscription.sourceStream !== undefined
-			? { sourceStream: subscription.sourceStream }
-			: {}),
-		...('sourceGroup' in subscription && subscription.sourceGroup !== undefined
-			? { sourceGroup: subscription.sourceGroup }
-			: {}),
-		...('publication' in subscription && subscription.publication !== undefined
-			? { publication: subscription.publication }
-			: {}),
-		source: subscription.source,
-		event: subscription.event,
-		stream: subscription.stream,
-		operation: subscription.operation,
-		...('workflow' in subscription && subscription.workflow !== undefined ? { workflow: subscription.workflow } : {}),
-	})).annotate({ identifier: 'subscription' });
+	return mapped(
+		Schema.Union([release, packageChanged, workflowRun]),
+		Schema.toType(subscriptionValue).check(
+			Schema.makeFilter(value => value.event !== 'workflow_run' || typeof value.workflow === 'string'),
+		),
+		subscription => subscription,
+		value =>
+			value.event === 'workflow_run'
+				? { ...value, event: 'workflow_run' as const, workflow: value.workflow ?? '' }
+				: value.event === 'release'
+				? { ...value, event: 'release' as const }
+				: { ...value, event: 'package.version.changed' as const },
+	).annotate({ identifier: 'subscription' });
 }
 
 const winget = mapped(
@@ -319,7 +334,9 @@ const winget = mapped(
 		),
 		automatic: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 	}),
+	Schema.toType(wingetValue),
 	({ config, tagPrefix, automatic }) => ({ config, tagPrefix, automatic }),
+	value => value,
 );
 
 export type WorkflowBinding = Decoded<ReturnType<typeof bindingSchema>>;
@@ -422,6 +439,7 @@ export const configurationSchema = mapped(
 			});
 		},
 	),
+	Schema.toType(configurationValue),
 	configuration => ({
 		...(configuration.winget === undefined ? {} : { winget: configuration.winget }),
 		...(configuration.actionsRevision === undefined ? {} : { actionsRevision: configuration.actionsRevision }),
@@ -430,6 +448,7 @@ export const configurationSchema = mapped(
 		streams: configuration.streams,
 		subscriptions: configuration.subscriptions,
 	}),
+	value => value,
 ).annotate({ title: 'Repository release automation' });
 export type ConfigurationInput = Encoded<typeof configurationSchema>;
 export type Configuration = Decoded<typeof configurationSchema>;

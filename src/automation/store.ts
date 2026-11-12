@@ -22,6 +22,7 @@ import type { ExecutionFilter } from '@/contract/routes';
 import type { Access } from '@/domain/repository';
 import { fromJson, fromSync, recover } from '@/failure';
 import { record } from '@/model';
+import { InvalidPackageUrl } from '@/package-url';
 import type { Enrollment, RepositoryRow } from '@/persistence/codecs/repository';
 import {
 	decodeEnrollment,
@@ -64,7 +65,8 @@ const executionColumns = `id, repository_id, state, document, ${validJson('$.cre
 function rowOrder(row: ExecutionRow): Listed {
 	try {
 		return listed(decodeExecutionV1(JSON.parse(row.document)));
-	} catch {
+	} catch (error) {
+		if (!isDecodingFailure(error)) throw error;
 		return {
 			unfinished: unfinishedStates.some(state => state === row.state),
 			createdAt: row.created ?? Number.NEGATIVE_INFINITY,
@@ -75,7 +77,8 @@ function rowOrder(row: ExecutionRow): Listed {
 function rowState(row: ExecutionRow): string | undefined {
 	try {
 		return decodeExecutionV1(JSON.parse(row.document)).state;
-	} catch {
+	} catch (error) {
+		if (!isDecodingFailure(error)) throw error;
 		return undefined;
 	}
 }
@@ -93,7 +96,7 @@ const legacyBlockedOutcomes: readonly string[] = ['blocked', 'awaiting-approval'
 export function readableValues<T>(entries: (Readable<T> | { kind: 'unreadable' })[]): T[] {
 	return entries.flatMap(entry => entry.kind === 'readable' ? [entry.value] : []);
 }
-function readEach<R, T, U>(
+export function readEach<R, T, U>(
 	rows: R[],
 	decode: (row: R) => T,
 	unreadable: (row: R, error: string) => U,
@@ -102,9 +105,14 @@ function readEach<R, T, U>(
 		try {
 			return { kind: 'readable', value: decode(row) };
 		} catch (error) {
+			if (!isDecodingFailure(error)) throw error;
 			return unreadable(row, decodeError(error));
 		}
 	});
+}
+export function isDecodingFailure(error: unknown): boolean {
+	return error instanceof Schema.SchemaError || error instanceof SyntaxError || error instanceof InvalidPackageUrl
+		|| (error instanceof DomainError && (error.problem.code === 'invalid' || error.problem.code === 'precondition'));
 }
 export function decodeError(error: unknown): string {
 	if (error instanceof DomainError) return error.detail ?? error.message;
