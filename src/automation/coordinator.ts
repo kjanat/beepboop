@@ -43,15 +43,18 @@ import {
 	entry,
 	fail,
 	label,
+	leaseDuration,
 	ledgerSchema,
 	pacedPublication,
 	publicationOf,
 	publish,
 	rateLimit,
+	rechecked,
 	registries,
 	released,
 	reservation,
 	reuse,
+	upload,
 	view,
 } from '@/automation/ledger';
 import { preparationBody } from '@/automation/managed';
@@ -183,8 +186,14 @@ const settleInterval = 15_000;
 const projectionRetry = 10_000;
 const dependencyPoll = 30_000;
 const verificationPoll = 15_000;
+const automaticRetries = 3;
 const defaultRetryAfter = 60_000;
 const metadataReason = 'Fix the package metadata before this release: ';
+function reopened(publications: Publication[]): Publication[] {
+	return publications.map(publication =>
+		publication.outcome === 'succeeded' ? publication : { ...publication, outcome: 'pending' as const }
+	);
+}
 function wakeDue(wake: ReleaseWake): number {
 	return wake === true ? 0 : wake.due;
 }
@@ -1209,13 +1218,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const { execution, holder } = yield* this.publishing(id, identity);
 			let ledger = yield* this.ledgerOf(execution);
 			const now = Date.now();
+			for (const record of ledger.records) {
+				if (record.status.state !== 'uploaded' || record.status.checkedAt + verificationPoll > now) continue;
+				ledger = yield* this.confirmUpload(execution, ledger, record, holder, record.status.since, now);
+			}
 			const ledgers = yield* this.ledgers(), executions = yield* this.executions();
 			const waits: { until: number; reason: string }[] = [];
 			for (const purl of ledger.records.map(record => record.purl)) {
 				const record = ledger.records.find(entry => entry.purl === purl);
 				if (!record) continue;
 				const open = availability(record, holder, now);
-				if (open.kind === 'settled') continue;
+				if (open.kind === 'settled' || open.kind === 'uploaded') continue;
 				if (open.kind === 'held') return { kind: 'publish' as const, package: view(record) };
 				if (open.kind === 'wait') {
 					waits.push(open);
@@ -1238,7 +1251,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			let record = yield* this.recordOf(ledger, purl);
 			const now = Date.now();
 			const open = availability(record, holder, now);
-			if (open.kind === 'settled') return { kind: 'settled' as const, entry: entry(record) };
+			if (open.kind === 'settled' || open.kind === 'uploaded') {
+				return { kind: 'settled' as const, entry: entry(record) };
+			}
 			if (open.kind === 'wait') return { kind: 'wait' as const, until: open.until, reason: open.reason };
 			if (open.kind === 'open') {
 				const blocked = this.blocker(execution, record, holder, yield* this.ledgers(), yield* this.executions(), now);
@@ -1289,7 +1304,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const record = yield* this.recordOf(ledger, report.purl);
 			const now = Date.now();
 			const open = availability(record, holder, now);
-			if (open.kind === 'settled') return { kind: 'settled' as const, entry: entry(record) };
+			if (open.kind === 'settled' || open.kind === 'uploaded') {
+				return { kind: 'settled' as const, entry: entry(record) };
+			}
 			if (report.outcome === 'failed' && open.kind === 'open') {
 				return yield* this.settled(ledger, fail(record, holder, report.message, false, now));
 			}
@@ -1314,12 +1331,55 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (report.outcome === 'failed') {
 				return yield* this.settled(ledger, fail(record, holder, report.message, false, now));
 			}
+			if (report.moveOn) return yield* this.settled(ledger, upload(record, holder, now));
 			return {
 				kind: 'wait' as const,
 				until: now + verificationPoll,
 				reason: `${registries[record.manager]} has not confirmed ${label(record)} yet`,
 			};
 		}));
+	}
+	private confirmUpload(
+		execution: Execution,
+		ledger: Ledger,
+		record: LedgerRecord,
+		holder: string,
+		since: number,
+		now: number,
+	): Effect.Effect<Ledger, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const found = yield* this.registry(execution, record);
+			if (found.outcome === 'succeeded') {
+				return yield* this.settleRecord(ledger, publish(record, holder, found.url ?? '', now));
+			}
+			if (found.outcome === 'failed') {
+				const different = `${registries[record.manager]} has a different ${label(record)}`;
+				return yield* this.settleRecord(ledger, fail(record, holder, different, true, now));
+			}
+			if (now - since >= leaseDuration) {
+				const unlisted = `${registries[record.manager]} did not list ${label(record)} within ${
+					leaseDuration / 60_000
+				} minutes of its upload`;
+				return yield* this.settleRecord(ledger, fail(record, holder, unlisted, false, now));
+			}
+			return yield* this.settleRecord(ledger, rechecked(record, now));
+		});
+	}
+	private confirmUploads(execution: Execution): Effect.Effect<boolean, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const stored = yield* this.read(`ledger:${execution.id}`);
+			if (stored === undefined) return false;
+			let ledger = yield* fromSync(() => ledgerSchema.parse(stored));
+			const now = Date.now();
+			let changed = false;
+			for (const record of ledger.records) {
+				const status = record.status;
+				if (status.state !== 'uploaded' || status.checkedAt + verificationPoll > now) continue;
+				ledger = yield* this.confirmUpload(execution, ledger, record, status.holder, status.since, now);
+				changed ||= ledger.records.find(entry => entry.purl === record.purl)?.status.state !== 'uploaded';
+			}
+			return changed;
+		});
 	}
 	private publishing(
 		id: string,
@@ -1373,6 +1433,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						inventory.filter(other => other.manager === pkg.manager && other.name === name && publishable(other))
 							.map(packageId)
 					),
+					...(pkg.generated ? { generated: true } : {}),
 					...(pkg.manager === 'npm' && stream
 						? { channel: isPrerelease(semVer.parse(version)) ? stream.channels.prerelease : stream.channels.stable }
 						: {}),
@@ -2013,7 +2074,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return `${head.ref} at ${head.sha.slice(0, 12)} no longer contains ${execution.sourceSha.slice(0, 12)}`;
 		});
 	}
-	private redispatch(execution: Execution, publications: Publication[]): Effect.Effect<void, DomainError> {
+	private redispatch(
+		execution: Execution,
+		publications: Publication[],
+		requested: string,
+	): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const gateway = this.gateway();
 			const token = yield* gateway.token(execution.repository, execution.repositoryId, {
@@ -2048,7 +2113,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					...execution,
 					state: 'uncertain',
 					runAttempt: run.run_attempt,
-					reason: 'Retry requested; re-running the failed jobs',
+					reason: `${requested}; re-running the failed jobs`,
 					publications,
 				});
 			} else {
@@ -2059,11 +2124,32 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					runId: undefined,
 					runAttempt: undefined,
 					workflowSha: undefined,
-					reason: 'Retry requested; dispatching a new run',
+					reason: `${requested}; dispatching a new run`,
 					publications,
 				});
 			}
 			yield* this.requestReconcile(Date.now());
+		});
+	}
+	private retryable(
+		execution: Execution,
+		run: Pick<WorkflowRun, 'id' | 'run_attempt'>,
+		token: string,
+	): Effect.Effect<boolean, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const stored = yield* this.read(`ledger:${execution.id}`);
+			if (stored === undefined) return false;
+			const ledger = yield* fromSync(() => ledgerSchema.parse(stored));
+			const holder = `${run.id}:${run.run_attempt}`;
+			const open = ledger.records.filter(record =>
+				record.required && !released(record) && record.status.state !== 'uploaded'
+			);
+			if (
+				!open.length
+				|| !open.every(record => record.status.state === 'failed-retryable' && record.status.holder === holder)
+			) return false;
+			const jobs = yield* this.runJobs(execution.repository, run, token);
+			return jobs.filter(job => job.conclusion === 'failure' || job.conclusion === 'timed_out').length === 1;
 		});
 	}
 	recover(id: string, action: 'reconcile' | 'retry', actor: string): Promise<Execution> {
@@ -2080,14 +2166,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (execution.artifacts.some((a) => Date.parse(a.expiresAt) <= Date.now())) {
 					return yield* precondition('Artifacts expired; use the configured preparation/recovery producer');
 				}
-				const publications = execution.publications.map(publication =>
-					publication.outcome === 'succeeded' ? publication : { ...publication, outcome: 'pending' as const }
-				);
+				const publications = reopened(execution.publications);
 				if (execution.operation === 'promote' && execution.attempts === 0 && execution.approvedAt === undefined) {
 					const next: Execution = { ...execution, state: 'awaiting-approval', publications };
 					delete next.reason;
 					yield* this.put(next);
-				} else yield* this.redispatch(execution, publications);
+				} else yield* this.redispatch(execution, publications, 'Retry requested');
 			} else yield* this.wakeUp();
 			const releaseSet = execution.releaseSet;
 			const workflowId = releaseSet?.workflowId;
@@ -2717,7 +2801,19 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						});
 						return;
 					}
-					yield* this.put({ ...settle(execution, run.conclusion === 'success'), runAttempt });
+					const settled = settle(execution, run.conclusion === 'success');
+					if (
+						settled.state === 'failed' && run.conclusion !== 'success' && runAttempt <= automaticRetries
+						&& (yield* this.retryable(execution, run, token))
+					) {
+						const retried = yield* Effect.result(this.redispatch(
+							{ ...execution, runAttempt },
+							reopened(execution.publications),
+							`Attempt ${runAttempt} left publications the next attempt retries`,
+						));
+						if (retried._tag === 'Success') return;
+					}
+					yield* this.put({ ...settled, runAttempt });
 				} else if (execution.state === 'uncertain') {
 					yield* this.put({ ...execution, state: 'running', runAttempt });
 				}
@@ -2830,6 +2926,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		unresolved: (execution: Execution) => boolean,
 	): Effect.Effect<'continue' | 'stop', DomainError> {
 		return Effect.gen({ self: this }, function*() {
+			if (
+				!['dispatching', 'running', 'uncertain'].includes(execution.state) && (yield* this.confirmUploads(execution))
+			) {
+				return 'continue' as const;
+			}
 			if (unresolved(execution)) {
 				const context = this.gateway().verification(execution.repository, execution.repositoryId);
 				const publications = yield* Effect.forEach(

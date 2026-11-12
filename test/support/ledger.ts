@@ -14,6 +14,7 @@ export interface Publishing {
 	scratch: string;
 	credentials?: Record<string, string>;
 	provenance?: boolean;
+	tarballs?: string;
 }
 
 export async function withIdentity<A>(
@@ -36,6 +37,7 @@ export async function publishWith(world: World, identity: RunIdentity, execution
 		executionId,
 		credentials: options.credentials ?? {},
 		provenance: options.provenance === true,
+		...(options.tarballs ? { tarballs: options.tarballs } : {}),
 		call: (path, body) => workflowCall(world, path, body),
 		run: options.run,
 		sleep: milliseconds => Effect.sync(() => world.advance(milliseconds)),

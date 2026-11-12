@@ -8,6 +8,7 @@ export type LedgerManager = (typeof ledgerManagers)[number];
 export const ledgerStates = [
 	'planned',
 	'claimed',
+	'uploaded',
 	'published',
 	'reused',
 	'rate-limited',
@@ -24,6 +25,7 @@ export const ledgerPackage = z.object({
 	version: text,
 	manifest: text,
 	required: z.boolean(),
+	generated: z.boolean().optional(),
 	channel: text.optional(),
 });
 export type LedgerPackage = z.output<typeof ledgerPackage>;
@@ -45,13 +47,14 @@ export const nextStep = z.discriminatedUnion('kind', [publish, wait, done]);
 export type NextStep = z.output<typeof nextStep>;
 export const claimStep = z.discriminatedUnion('kind', [publish, wait, settled]);
 export type ClaimStep = z.output<typeof claimStep>;
+export const settledStep = settled;
 export const reportStep = z.discriminatedUnion('kind', [wait, settled]);
 export type ReportStep = z.output<typeof reportStep>;
 
 export const publishNextRequest = z.object({ executionId: text });
 export const publishClaimRequest = z.object({ executionId: text, purl: text, digest: text });
 export const publishReportRequest = z.discriminatedUnion('outcome', [
-	z.object({ executionId: text, purl: text, outcome: z.literal('published') }),
+	z.object({ executionId: text, purl: text, outcome: z.literal('published'), moveOn: z.literal(true).optional() }),
 	z.object({ executionId: text, purl: text, outcome: z.literal('failed'), message: text }),
 	z.object({ executionId: text, purl: text, outcome: z.literal('rate-limited'), retryAfter: text.optional() }),
 ]);

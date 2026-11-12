@@ -411,6 +411,24 @@ File name patterns ignore case.
 A package that lacks an item fails before its claim. The failure names the
 package and each missing item, and the action publishes nothing for it.
 
+A generated npm package, one that a target descriptor such as
+`npm/targets.json` describes, publishes from a tarball you built. Pass the
+directory of tarballs as `npm-tarballs`:
+
+```yaml
+- uses: kjanat/beepboop/actions/publish@v1
+  with:
+    execution-id: ${{ steps.beepboop.outputs.execution-id }}
+    npm-tarballs: dist/tarballs
+```
+
+The action reads `package/package.json` from each `.tgz` file in the directory
+and publishes the tarball whose name and version match the package. The
+digest is the tarball's sha512 integrity, and the contents check reads the
+tarball's file list. Any npm package with a matching tarball publishes from it.
+A generated package without one fails before its claim. Two tarballs with the
+same name and version stop the run.
+
 Before the first Cargo build, the action runs `rustup toolchain install` when
 the checkout has a `rust-toolchain.toml` or `rust-toolchain` file. It reads
 `cargo metadata` and `npm pack --json` from standard output only.
@@ -424,10 +442,21 @@ compares the crates.io checksum, the PyPI sha256 or the npm integrity with the
 claimed digest. Only a 404 response proves that a version is missing. Beepboop
 treats any other registry error as unknown and asks again.
 
+A registry can accept an upload minutes before it lists the version. When the
+registry does not list the claimed digest at the report, the package is
+`uploaded` and the action goes on to the next package. Beepboop checks each
+uploaded package again every 15 seconds while the run asks for packages, and
+every minute after the run ends. A package that depends on an uploaded package
+waits until the registry lists it. The action ends once every package is
+uploaded or settled, and the execution stays `verifying` until the registry
+lists every uploaded package. A package the registry still does not list 15
+minutes after its upload becomes `failed-retryable`.
+
 | State              | Meaning                                                                         |
 | ------------------ | ------------------------------------------------------------------------------- |
 | `planned`          | Waits for its turn.                                                             |
 | `claimed`          | A run holds a 15-minute lease and publishes it.                                 |
+| `uploaded`         | The registry accepted the upload and does not list it yet.                      |
 | `published`        | The registry lists the claimed digest after the publish.                        |
 | `reused`           | The registry already listed the claimed digest.                                 |
 | `rate-limited`     | The registry refused it until the `Retry-After` time.                           |
@@ -449,6 +478,12 @@ After five rate limits in one run, the package fails for that run.
 The action exits nonzero when a required package did not publish, after every
 package has its outcome. Beepboop stores each outcome on the execution. The
 workflow needs no `actions/report` step for these packages.
+
+When a run fails, the publishing job is its only failed job, and that attempt
+left every required package that has not published `failed-retryable`, Beepboop
+re-runs the failed jobs. It does this after the first, second and third run
+attempts. A `failed-permanent` package, or a failed job besides the publishing
+job, leaves the execution `failed` for you to retry.
 
 ## Start a release
 
