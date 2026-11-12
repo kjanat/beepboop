@@ -10,9 +10,8 @@ export function npmIntegrity(name: string, version: string): string {
 
 export class FakeNpm {
 	readonly packages = new Map<string, NpmPackage>();
-	publish(name: string, version: string, tag = 'latest'): string {
+	publish(name: string, version: string, tag = 'latest', integrity = npmIntegrity(name, version)): string {
 		const entry: NpmPackage = this.packages.get(name) ?? { versions: new Map(), tags: {} };
-		const integrity = npmIntegrity(name, version);
 		entry.versions.set(version, integrity);
 		entry.tags[tag] = version;
 		if (tag === 'latest') entry.latest = version;

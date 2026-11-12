@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import type { Invalid } from '@root/actions/runtime/protocol.ts';
 import { ActionFailure, attempt, attemptAsync, fail, required } from '@root/actions/runtime/protocol.ts';
 import { call, mask, serviceOrigin } from '@root/actions/runtime/session.ts';
@@ -22,6 +23,7 @@ export interface Runner {
 	executionId: string;
 	credentials: Record<string, string>;
 	provenance: boolean;
+	tarballs?: string;
 	call(path: `/api/workflow/${string}`, body: unknown): Effect.Effect<unknown, Invalid>;
 	run(command: string[], options: { cwd: string; env?: Record<string, string> }): Effect.Effect<Command, ActionFailure>;
 	sleep(milliseconds: number): Effect.Effect<void>;
@@ -61,6 +63,8 @@ const cargoMetadata = z.object({
 	})),
 });
 const npmManifest = z.object({
+	name: z.unknown(),
+	version: z.unknown(),
 	description: z.unknown(),
 	license: z.unknown(),
 	repository: z.union([z.string(), z.object({ url: z.unknown() })]).optional().catch(undefined),
@@ -106,10 +110,61 @@ export function distributionLicensed(file: string, entries: readonly string[]): 
 	});
 }
 
+function npmMissing(files: readonly string[], manifest: z.output<typeof npmManifest>): string[] {
+	const repository = manifest.repository;
+	return lacking({
+		README: files.some(path => readmeFile.test(path)),
+		description: filled(manifest.description),
+		license: filled(manifest.license),
+		'a license file': files.some(path => licenseFile.test(path)),
+		repository: typeof repository === 'string' ? filled(repository) : filled(repository?.url),
+	});
+}
+
+function packedManifest(runner: Runner, file: string): Effect.Effect<z.output<typeof npmManifest>, ActionFailure> {
+	return checked(runner, ['tar', '-xzOf', file, 'package/package.json'], '.').pipe(
+		Effect.flatMap(packaged => Effect.fromResult(attempt(() => npmManifest.parse(JSON.parse(packaged))))),
+	);
+}
+
+export function tarballIndex(runner: Runner): Effect.Effect<Map<string, string>, ActionFailure> {
+	return Effect.gen(function*() {
+		const index = new Map<string, string>();
+		if (!runner.tarballs) return index;
+		const directory = resolve(runner.tarballs);
+		const names = yield* Effect.fromResult(
+			attempt(() => readdirSync(directory).filter(name => name.endsWith('.tgz')).sort()),
+		);
+		for (const name of names) {
+			const file = join(directory, name);
+			const manifest = yield* packedManifest(runner, file);
+			const key = `${String(manifest.name)}@${String(manifest.version)}`;
+			if (index.has(key)) return yield* fail(`${runner.tarballs} holds two tarballs for ${key}`);
+			index.set(key, file);
+		}
+		return index;
+	});
+}
+
+function prebuilt(runner: Runner, file: string): Effect.Effect<Artifact, ActionFailure> {
+	return Effect.gen(function*() {
+		const listing = yield* checked(runner, ['tar', '-tzf', file], '.');
+		const files = listing.split('\n').map(line => line.trim().replace(/^package\//, '')).filter(Boolean);
+		const manifest = yield* packedManifest(runner, file);
+		const bytes = yield* Effect.fromResult(attempt(() => readFileSync(file)));
+		return {
+			digest: `sha512-${createHash('sha512').update(bytes).digest('base64')}`,
+			files: [file],
+			missing: npmMissing(files, manifest),
+		};
+	});
+}
+
 function build(
 	runner: Runner,
 	pkg: LedgerPackage,
 	toolchain: Effect.Effect<void, ActionFailure>,
+	tarballs: Effect.Effect<Map<string, string>, ActionFailure>,
 ): Effect.Effect<Artifact, ActionFailure> {
 	return Effect.gen(function*() {
 		const dir = dirname(pkg.manifest);
@@ -163,21 +218,22 @@ function build(
 			);
 			return { digest: yield* sha256(sdist), files, missing: pythonMissing(metadata, listings.includes(true)) };
 		}
+		const tarball = (yield* tarballs).get(`${pkg.name}@${pkg.version}`);
+		if (tarball) return yield* prebuilt(runner, tarball);
+		if (pkg.generated) {
+			return yield* fail(
+				runner.tarballs
+					? `${runner.tarballs} holds no tarball for ${pkg.name} ${pkg.version}`
+					: `${pkg.name} is generated; pass its tarball through the npm-tarballs input`,
+			);
+		}
 		const out = yield* scratch(pkg.name);
 		const output = yield* checked(runner, ['npm', 'pack', '--json', '--pack-destination', out], dir);
 		const start = output.startsWith('[') ? 0 : output.lastIndexOf('\n[') + 1;
 		const [first] = yield* Effect.fromResult(attempt(() => packed.parse(JSON.parse(output.slice(start)))));
 		const file = join(out, first.filename);
-		const packaged = yield* checked(runner, ['tar', '-xzOf', file, 'package/package.json'], '.');
-		const manifest = yield* Effect.fromResult(attempt(() => npmManifest.parse(JSON.parse(packaged))));
-		const repository = manifest.repository;
-		const missing = lacking({
-			README: first.files.some(entry => readmeFile.test(entry.path)),
-			description: filled(manifest.description),
-			license: filled(manifest.license),
-			'a license file': first.files.some(entry => licenseFile.test(entry.path)),
-			repository: typeof repository === 'string' ? filled(repository) : filled(repository?.url),
-		});
+		const manifest = yield* packedManifest(runner, file);
+		const missing = npmMissing(first.files.map(entry => entry.path), manifest);
 		return { digest: first.integrity, files: [file], missing };
 	});
 }
@@ -269,6 +325,11 @@ export function publishPackages(runner: Runner): Effect.Effect<LedgerEntry[], In
 		});
 	const pause = (until: number, reason: string) =>
 		until > deadline ? Effect.succeed(false) : sleep(until, reason).pipe(Effect.as(true));
+	let index: Map<string, string> | undefined;
+	const tarballs = Effect.gen(function*() {
+		index ??= yield* tarballIndex(runner);
+		return index;
+	});
 	let installed = false;
 	const toolchain = Effect.gen(function*() {
 		if (installed || !['rust-toolchain.toml', 'rust-toolchain'].some(file => runner.exists(file))) return;
@@ -278,7 +339,7 @@ export function publishPackages(runner: Runner): Effect.Effect<LedgerEntry[], In
 	const one = (pkg: LedgerPackage) =>
 		Effect.gen(function*() {
 			runner.log(`Building ${pkg.name} ${pkg.version}`);
-			const built = yield* Effect.result(build(runner, pkg, toolchain));
+			const built = yield* Effect.result(build(runner, pkg, toolchain, tarballs));
 			if (built._tag === 'Failure') {
 				const reported = yield* report(pkg, { outcome: 'failed', message: built.failure.message });
 				if (reported.kind === 'settled') runner.log(`${pkg.name} ${pkg.version}: ${show(reported.entry)}`);
@@ -383,6 +444,7 @@ export const main: Effect.Effect<void, Invalid> = Effect.gen(function*() {
 		executionId,
 		credentials: mapping,
 		provenance: publicRepository(environment.GITHUB_EVENT_PATH),
+		...(environment.NPM_TARBALLS ? { tarballs: environment.NPM_TARBALLS } : {}),
 		call: (path, body) => call(origin, path, body),
 		run: command,
 		sleep: milliseconds => Effect.sleep(milliseconds),

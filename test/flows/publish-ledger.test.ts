@@ -10,6 +10,7 @@ import {
 	publishPackages,
 	pythonMissing,
 	requireAll,
+	tarballIndex,
 } from '@root/actions/runtime/publish.ts';
 import { begin, runIdentity } from '@root/test/support/actions.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
@@ -699,6 +700,147 @@ test('an npm prerelease publishes under the stream prerelease channel without pr
 		env: { NPM_TOKEN: 'npm-secret', 'npm_config_//registry.npmjs.org/:_authToken': 'npm-secret' },
 	});
 	expect(world.npm.packages.get(npm)?.tags).toEqual({ latest: '1.0.0', next: '1.1.0-rc.1' });
+}, 60_000);
+
+const tool = 'pkg:npm/%40octo/tool', toolLinux = 'pkg:npm/%40octo/tool-linux-x64';
+const generatedLayout: Layout = {
+	managers: ['npm', 'workflow'],
+	secrets: { 'npm-token': 'npm-secret' },
+	files: version => ({
+		'Cargo.toml': `[package]\nname = "tool"\nversion = "${version}"\n`,
+		'distribution/npm/targets.json': JSON.stringify({
+			scope: '@octo',
+			facades: [{ name: '@octo/tool', pkg: 'tool' }],
+			targets: [{ pkg: 'linux-x64' }],
+		}),
+	}),
+};
+
+interface Tarballs {
+	commands: string[];
+	manifests: Map<string, { name: string; version: string }>;
+}
+function tarballs(state: Tarballs) {
+	return (argv: string[]) =>
+		Effect.sync((): Command => {
+			const file = argv[2] ?? '';
+			const manifest = state.manifests.get(file);
+			state.commands.push(`${argv.slice(0, 2).join(' ')} ${manifest?.name ?? file}`);
+			if (!manifest) return { code: 2, stdout: '', output: `tar: ${file}: Cannot open` };
+			if (argv[0] === 'tar' && argv[1] === '-tzf') {
+				const listing = 'package/package.json\npackage/README.md\npackage/LICENSE\npackage/bin/tool\n';
+				return { code: 0, stdout: listing, output: listing };
+			}
+			if (argv[0] === 'tar') {
+				const packaged = JSON.stringify({ ...manifest, ...npmMetadata });
+				return { code: 0, stdout: packaged, output: packaged };
+			}
+			const digest = `sha512-${createHash('sha512').update(readFileSync(file)).digest('base64')}`;
+			world.npm.publish(manifest.name, manifest.version, argv[argv.indexOf('--tag') + 1], digest);
+			return { code: 0, stdout: `+ ${manifest.name}@${manifest.version}`, output: '' };
+		});
+}
+function packTarballs(names: string[], version: string): Tarballs {
+	const directory = join(target, 'tarballs');
+	mkdirSync(directory, { recursive: true });
+	const manifests = new Map<string, { name: string; version: string }>();
+	for (const name of names) {
+		const file = join(directory, `${name.replace('@', '').replace('/', '-')}-${version}.tgz`);
+		writeFileSync(file, `${name} ${version} tarball\n`);
+		manifests.set(file, { name, version });
+	}
+	return { commands: [], manifests };
+}
+function tarballDigest(name: string, version: string) {
+	const file = join(target, 'tarballs', `${name.replace('@', '').replace('/', '-')}-${version}.tgz`);
+	return `sha512-${createHash('sha512').update(readFileSync(file)).digest('base64')}`;
+}
+
+test('generated npm packages publish their prebuilt tarballs, the platform before its facade', async () => {
+	world.npm.publish('@octo/tool', '1.0.0');
+	world.npm.publish('@octo/tool-linux-x64', '1.0.0');
+	const { repository, begun } = await released({ main: [toolLinux, tool] }, generatedLayout);
+	const { execution, identity } = started(begun, 'main');
+	const state = packTarballs(['@octo/tool-linux-x64', '@octo/tool'], '1.1.0');
+	const { result } = await publishing(identity, execution.id, {
+		run: tarballs(state),
+		credentials: { NODE_AUTH_TOKEN: 'npm-token' },
+		tarballs: join(target, 'tarballs'),
+	});
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual([
+		['pkg:npm/%40octo/tool-linux-x64@1.1.0', 'published'],
+		['pkg:npm/%40octo/tool@1.1.0', 'published'],
+	]);
+	expect(state.commands.filter(command => command.startsWith('npm publish'))).toEqual([
+		'npm publish @octo/tool-linux-x64',
+		'npm publish @octo/tool',
+	]);
+	expect((await executionOf(repository, execution.id)).publications.map(p => [p.id, p.outcome, p.digest])).toEqual([
+		[toolLinux, 'succeeded', tarballDigest('@octo/tool-linux-x64', '1.1.0')],
+		[tool, 'succeeded', tarballDigest('@octo/tool', '1.1.0')],
+	]);
+}, 60_000);
+
+test('a generated npm package without its tarball fails before its claim and its facade never publishes', async () => {
+	world.npm.publish('@octo/tool', '1.0.0');
+	world.npm.publish('@octo/tool-linux-x64', '1.0.0');
+	const { begun } = await released({ main: [toolLinux, tool] }, generatedLayout);
+	const { execution, identity } = started(begun, 'main');
+	const state = packTarballs(['@octo/tool'], '1.1.0');
+	const { result } = await publishing(identity, execution.id, {
+		run: tarballs(state),
+		tarballs: join(target, 'tarballs'),
+	});
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual([
+		[
+			'pkg:npm/%40octo/tool-linux-x64@1.1.0',
+			'failed-retryable',
+			`${join(target, 'tarballs')} holds no tarball for @octo/tool-linux-x64 1.1.0`,
+		],
+		['pkg:npm/%40octo/tool@1.1.0', 'failed-retryable', `${toolLinux} did not publish`],
+	]);
+	expect(state.commands.filter(command => command.startsWith('npm'))).toEqual([]);
+}, 60_000);
+
+test('a generated npm package publishes only from a tarball, and duplicate tarballs stop the run', async () => {
+	world.npm.publish('@octo/tool', '1.0.0');
+	world.npm.publish('@octo/tool-linux-x64', '1.0.0');
+	const { begun } = await released({ main: [toolLinux, tool] }, generatedLayout);
+	const { execution, identity } = started(begun, 'main');
+	const state = packTarballs(['@octo/tool-linux-x64'], '1.1.0');
+	const unset = await publishing(identity, execution.id, { run: tarballs(state) });
+	if (unset.result._tag === 'Failure') throw new Error(unset.result.failure.message);
+	expect(states(unset.result.success)).toEqual([
+		[
+			'pkg:npm/%40octo/tool-linux-x64@1.1.0',
+			'failed-retryable',
+			'@octo/tool-linux-x64 is generated; pass its tarball through the npm-tarballs input',
+		],
+		['pkg:npm/%40octo/tool@1.1.0', 'failed-retryable', `${toolLinux} did not publish`],
+	]);
+	expect(state.commands).toEqual([]);
+
+	const copy = join(target, 'tarballs', 'copy.tgz');
+	writeFileSync(copy, 'copy\n');
+	state.manifests.set(copy, { name: '@octo/tool-linux-x64', version: '1.1.0' });
+	const doubled = await withIdentity(world, identity, () =>
+		Effect.runPromise(Effect.result(tarballIndex({
+			executionId: execution.id,
+			credentials: {},
+			provenance: false,
+			tarballs: join(target, 'tarballs'),
+			call: () => Effect.undefined,
+			run: tarballs(state),
+			sleep: () => Effect.void,
+			exists: () => false,
+			now: () => Date.now(),
+			log: () => undefined,
+		}))));
+	expect(doubled._tag === 'Failure' && doubled.failure.message).toBe(
+		`${join(target, 'tarballs')} holds two tarballs for @octo/tool-linux-x64@1.1.0`,
+	);
 }, 60_000);
 
 test('npm provenance follows the visibility of the repository in the workflow event', () => {

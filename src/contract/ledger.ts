@@ -25,6 +25,7 @@ export const ledgerPackage = z.object({
 	version: text,
 	manifest: text,
 	required: z.boolean(),
+	generated: z.boolean().optional(),
 	channel: text.optional(),
 });
 export type LedgerPackage = z.output<typeof ledgerPackage>;

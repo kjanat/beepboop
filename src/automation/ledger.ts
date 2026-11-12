@@ -44,6 +44,7 @@ const record = z.object({
 	manifest: z.string(),
 	required: z.boolean(),
 	dependencies: z.array(z.string()),
+	generated: z.boolean().optional(),
 	channel: z.string().optional(),
 	digest: z.string().optional(),
 	reservation: z.enum(['new', 'update']).optional(),
@@ -220,6 +221,7 @@ export function view(record: LedgerRecord): LedgerPackage {
 		version: record.version,
 		manifest: record.manifest,
 		required: record.required,
+		...(record.generated ? { generated: true } : {}),
 		...(record.channel ? { channel: record.channel } : {}),
 	};
 }

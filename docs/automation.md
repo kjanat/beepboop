@@ -411,6 +411,24 @@ File name patterns ignore case.
 A package that lacks an item fails before its claim. The failure names the
 package and each missing item, and the action publishes nothing for it.
 
+A generated npm package, one that a target descriptor such as
+`npm/targets.json` describes, publishes from a tarball you built. Pass the
+directory of tarballs as `npm-tarballs`:
+
+```yaml
+- uses: kjanat/beepboop/actions/publish@v1
+  with:
+    execution-id: ${{ steps.beepboop.outputs.execution-id }}
+    npm-tarballs: dist/tarballs
+```
+
+The action reads `package/package.json` from each `.tgz` file in the directory
+and publishes the tarball whose name and version match the package. The
+digest is the tarball's sha512 integrity, and the contents check reads the
+tarball's file list. Any npm package with a matching tarball publishes from it.
+A generated package without one fails before its claim. Two tarballs with the
+same name and version stop the run.
+
 Before the first Cargo build, the action runs `rustup toolchain install` when
 the checkout has a `rust-toolchain.toml` or `rust-toolchain` file. It reads
 `cargo metadata` and `npm pack --json` from standard output only.

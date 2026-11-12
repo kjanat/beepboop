@@ -1406,6 +1406,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						inventory.filter(other => other.manager === pkg.manager && other.name === name && publishable(other))
 							.map(packageId)
 					),
+					...(pkg.generated ? { generated: true } : {}),
 					...(pkg.manager === 'npm' && stream
 						? { channel: isPrerelease(semVer.parse(version)) ? stream.channels.prerelease : stream.channels.stable }
 						: {}),

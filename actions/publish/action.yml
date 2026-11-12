@@ -10,6 +10,9 @@ inputs:
   credentials:
     description: JSON object mapping environment variable names to granted credential aliases
     default: "{}"
+  npm-tarballs:
+    description: Directory of prebuilt npm tarballs. A generated npm package publishes only from here
+    default: ""
 runs:
   using: composite
   steps:
@@ -19,6 +22,7 @@ runs:
     - shell: bash
       env:
         CREDENTIALS: ${{ inputs.credentials }}
+        NPM_TARBALLS: ${{ inputs.npm-tarballs }}
         EXECUTION_ID: ${{ inputs.execution-id }}
         SERVICE_ORIGIN: ${{ inputs.service }}
       run: bun "${GITHUB_ACTION_PATH}/../runtime/publish.ts"
