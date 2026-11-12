@@ -10,7 +10,6 @@ import {
 	publishPackages,
 	pythonMissing,
 	requireAll,
-	tarballIndex,
 } from '@root/actions/runtime/publish.ts';
 import { begin, runIdentity } from '@root/test/support/actions.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
@@ -864,22 +863,14 @@ test('a generated npm package publishes only from a tarball, and duplicate tarba
 	const copy = join(target, 'tarballs', 'copy.tgz');
 	writeFileSync(copy, 'copy\n');
 	state.manifests.set(copy, { name: '@octo/tool-linux-x64', version: '1.1.0' });
-	const doubled = await withIdentity(world, identity, () =>
-		Effect.runPromise(Effect.result(tarballIndex({
-			executionId: execution.id,
-			credentials: {},
-			provenance: false,
-			tarballs: join(target, 'tarballs'),
-			call: () => Effect.undefined,
-			run: tarballs(state),
-			sleep: () => Effect.void,
-			exists: () => false,
-			now: () => Date.now(),
-			log: () => undefined,
-		}))));
-	expect(doubled._tag === 'Failure' && doubled.failure.message).toBe(
+	const doubled = await publishing(identity, execution.id, {
+		run: tarballs(state),
+		tarballs: join(target, 'tarballs'),
+	});
+	expect(doubled.result._tag === 'Failure' && doubled.result.failure.message).toBe(
 		`${join(target, 'tarballs')} holds two tarballs for @octo/tool-linux-x64@1.1.0`,
 	);
+	expect(state.commands.filter(command => command.startsWith('npm'))).toEqual([]);
 }, 60_000);
 
 test('npm provenance follows the visibility of the repository in the workflow event', () => {

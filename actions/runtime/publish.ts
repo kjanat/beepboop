@@ -127,7 +127,7 @@ function packedManifest(runner: Runner, file: string): Effect.Effect<z.output<ty
 	);
 }
 
-export function tarballIndex(runner: Runner): Effect.Effect<Map<string, string>, ActionFailure> {
+function tarballIndex(runner: Runner): Effect.Effect<Map<string, string>, ActionFailure> {
 	return Effect.gen(function*() {
 		const index = new Map<string, string>();
 		if (!runner.tarballs) return index;
@@ -164,7 +164,7 @@ function build(
 	runner: Runner,
 	pkg: LedgerPackage,
 	toolchain: Effect.Effect<void, ActionFailure>,
-	tarballs: Effect.Effect<Map<string, string>, ActionFailure>,
+	tarballs: ReadonlyMap<string, string>,
 ): Effect.Effect<Artifact, ActionFailure> {
 	return Effect.gen(function*() {
 		const dir = dirname(pkg.manifest);
@@ -218,7 +218,7 @@ function build(
 			);
 			return { digest: yield* sha256(sdist), files, missing: pythonMissing(metadata, listings.includes(true)) };
 		}
-		const tarball = (yield* tarballs).get(`${pkg.name}@${pkg.version}`);
+		const tarball = tarballs.get(`${pkg.name}@${pkg.version}`);
 		if (tarball) return yield* prebuilt(runner, tarball);
 		if (pkg.generated) {
 			return yield* fail(
@@ -329,18 +329,13 @@ export function publishPackages(runner: Runner): Effect.Effect<LedgerEntry[], In
 		});
 	const pause = (until: number, reason: string) =>
 		until > deadline ? Effect.succeed(false) : sleep(until, reason).pipe(Effect.as(true));
-	let index: Map<string, string> | undefined;
-	const tarballs = Effect.gen(function*() {
-		index ??= yield* tarballIndex(runner);
-		return index;
-	});
 	let installed = false;
 	const toolchain = Effect.gen(function*() {
 		if (installed || !['rust-toolchain.toml', 'rust-toolchain'].some(file => runner.exists(file))) return;
 		yield* checked(runner, ['rustup', 'toolchain', 'install'], '.');
 		installed = true;
 	});
-	const one = (pkg: LedgerPackage) =>
+	const one = (pkg: LedgerPackage, tarballs: ReadonlyMap<string, string>) =>
 		Effect.gen(function*() {
 			runner.log(`Building ${pkg.name} ${pkg.version}`);
 			const built = yield* Effect.result(build(runner, pkg, toolchain, tarballs));
@@ -374,6 +369,7 @@ export function publishPackages(runner: Runner): Effect.Effect<LedgerEntry[], In
 			runner.log(`${pkg.name} ${pkg.version}: ${show(reported.entry)}`);
 		});
 	return Effect.gen(function*() {
+		const tarballs = yield* tarballIndex(runner);
 		const tries = new Map<string, number>();
 		for (;;) {
 			const handed = yield* next();
@@ -388,7 +384,7 @@ export function publishPackages(runner: Runner): Effect.Effect<LedgerEntry[], In
 			const count = (tries.get(handed.package.purl) ?? 0) + 1;
 			if (count > packageAttempts) return yield* fail(`${handed.package.purl} did not settle in this run`);
 			tries.set(handed.package.purl, count);
-			yield* one(handed.package);
+			yield* one(handed.package, tarballs);
 		}
 	});
 }
