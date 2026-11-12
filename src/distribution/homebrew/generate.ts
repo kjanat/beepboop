@@ -36,7 +36,11 @@ export const homebrewConfiguration = z.strictObject({
 		shells: z.array(z.enum(shells)).min(1),
 	}).optional(),
 	caveats: text.optional(),
-}).refine(config => config.macos !== undefined || config.linux !== undefined, 'Expected macos or linux assets');
+}).refine(config => config.macos !== undefined || config.linux !== undefined, 'Expected macos or linux assets')
+	.refine(
+		config => !(config.naked && config.macos && config.linux),
+		'Expected one platform, macos or linux, with naked',
+	);
 export type HomebrewConfiguration = z.input<typeof homebrewConfiguration>;
 
 export interface CaskOptions {
@@ -91,8 +95,11 @@ function variant(
 		yield* https(yield* expand(config.url, { version, tag: encodeURIComponent(tag), asset: encodeURIComponent(name) }));
 		const url = yield* expand(config.url, {
 			version: symbolicVersion,
-			tag: tag.replaceAll(version, symbolicVersion),
-			asset: yield* assetName(asset, { version: symbolicVersion }),
+			tag: encodeURIComponent(tag).replaceAll(version, symbolicVersion),
+			asset: encodeURIComponent(yield* assetName(asset, { version: symbolicVersion })).replaceAll(
+				encodeURIComponent(symbolicVersion),
+				symbolicVersion,
+			),
 		});
 		return [
 			`version ${ruby(version)}`,

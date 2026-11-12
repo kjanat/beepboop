@@ -1,10 +1,15 @@
-import { expect, test } from 'bun:test';
+import { expect, spyOn, test } from 'bun:test';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Effect } from 'effect';
 import type { HomebrewConfiguration } from '@/distribution/homebrew/generate';
-import { generateCask } from '@/distribution/homebrew/generate';
+import { generateCask, homebrewConfiguration } from '@/distribution/homebrew/generate';
+import { writeRendered } from '@/distribution/output';
 import type { ScoopConfiguration } from '@/distribution/scoop/generate';
-import { generateManifest } from '@/distribution/scoop/generate';
+import { generateManifest, scoopConfiguration } from '@/distribution/scoop/generate';
 import { generateManifests } from '@/distribution/winget/generate';
+import { withEnvironment } from '@root/test/support/process.ts';
 
 const digest = (character: string) => character.repeat(64);
 const checksums = [
@@ -182,6 +187,35 @@ test('a cask refuses missing checksums, a tag without its version and paths outs
 			checksums,
 		}),
 	).toBe('Expected an HTTPS release URL');
+	const mixed = { ...kprintCask, naked: { glob: 'kprint-*', name: 'kprint' } };
+	expect(homebrewConfiguration.safeParse(mixed).error?.issues.map(issue => issue.message)).toEqual([
+		'Expected one platform, macos or linux, with naked',
+	]);
+	expect(await failure({ configuration: mixed, version: '0.61.0', tag: '0.61.0', checksums })).not.toBe('generated');
+});
+
+test('a cask url percent-encodes the tag and asset and keeps the version interpolation', async () => {
+	const result = await run(generateCask({
+		configuration: {
+			token: 'tool',
+			name: 'tool',
+			desc: 'Tool',
+			homepage: 'https://example.com',
+			url: 'https://example.com/download/{tag}/{asset}',
+			macos: { arm: 'tool#mac-{version}-arm.zip', intel: 'tool#mac-{version}-intel.zip' },
+			binaries: [{ path: 'tool' }],
+		},
+		version: '1.2.3',
+		tag: 'rel/v1.2.3',
+		checksums: `${digest('1')}  tool#mac-1.2.3-arm.zip\n${digest('2')}  tool#mac-1.2.3-intel.zip\n`,
+	}));
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(result.success).toContain(
+		'url "https://example.com/download/rel%2Fv#{version}/tool%23mac-#{version}-arm.zip"',
+	);
+	expect(result.success).toContain(
+		'url "https://example.com/download/rel%2Fv#{version}/tool%23mac-#{version}-intel.zip"',
+	);
 });
 
 const kprintScoop: ScoopConfiguration = {
@@ -239,6 +273,51 @@ test('a Scoop manifest refuses a missing checksum and an executable outside the 
 		checksums,
 	}));
 	expect(outside._tag).toBe('Failure');
+});
+
+test('a Scoop manifest refuses rooted executables and shim aliases with a path', async () => {
+	const refused = async (bin: ScoopConfiguration['bin']) => {
+		const configuration = { ...kprintScoop, bin };
+		const result = await run(generateManifest({ configuration, version: '0.61.0', tag: '0.61.0', checksums }));
+		return result._tag === 'Failure'
+			? JSON.stringify(scoopConfiguration.safeParse(configuration).error?.issues)
+			: 'generated';
+	};
+	expect(await refused(['C:\\build\\kprint.exe'])).toContain('Expected a relative path inside the archive');
+	expect(await refused(['\\\\server\\share\\kprint.exe'])).toContain('Expected a relative path inside the archive');
+	expect(await refused(['/kprint.exe'])).toContain('Expected a relative path inside the archive');
+	expect(await refused([['kprint.exe', '../apps/other/current/other']])).toContain(
+		'Expected a shim name without a path',
+	);
+	expect(await refused([['kprint.exe', '..']])).toContain('Expected a shim name without a path');
+	expect(await refused(['bin\\kprint.exe', ['bin/kprint.exe', 'dprint']])).toBe('generated');
+});
+
+test('a generated file is reported in GITHUB_OUTPUT, or on stderr outside a workflow', async () => {
+	const directory = await mkdtemp(join(tmpdir(), 'beepboop-rendered-'));
+	const rendered = (name: string) => Effect.succeed({ name, content: 'content\n' });
+	const stderr = spyOn(process.stderr, 'write').mockImplementation(() => true);
+	try {
+		const output = join(directory, 'output');
+		await withEnvironment(
+			{ GITHUB_OUTPUT: output },
+			() => Effect.runPromise(writeRendered(directory, rendered('tool.rb'), () => {})),
+		);
+		expect(await readFile(join(directory, 'tool.rb'), 'utf8')).toBe('content\n');
+		expect(await readFile(output, 'utf8')).toMatch(
+			new RegExp(`^file<<(value_[0-9a-f-]+)\\n${join(directory, 'tool.rb')}\\n\\1\\n$`),
+		);
+		expect(stderr).not.toHaveBeenCalled();
+		await withEnvironment(
+			{ GITHUB_OUTPUT: '' },
+			() => Effect.runPromise(writeRendered(directory, rendered('tool.json'), () => {})),
+		);
+		expect(await readFile(output, 'utf8')).not.toContain('tool.json');
+		expect(stderr.mock.calls.map(([text]) => String(text)).join('')).toContain(`\n${join(directory, 'tool.json')}\n`);
+	} finally {
+		stderr.mockRestore();
+		await rm(directory, { recursive: true, force: true });
+	}
 });
 
 test('WinGet manifests keep uppercase hashes from the shared checksum parser', async () => {

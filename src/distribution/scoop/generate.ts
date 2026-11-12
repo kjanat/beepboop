@@ -5,7 +5,14 @@ import { assetName, checksumOf, expand, https, parseChecksums, releaseTag } from
 import { fromSync } from '@/failure';
 
 const text = z.string().min(1);
-const executable = text.refine(path => !path.startsWith('/') && !path.split(/[\\/]/).includes('..'));
+const executable = text.refine(
+	path => !/^(?:[\\/]|[A-Za-z]:)/.test(path) && !path.split(/[\\/]/).includes('..'),
+	'Expected a relative path inside the archive',
+);
+const alias = text.refine(
+	name => !/[\\/:]/.test(name) && name !== '.' && name !== '..',
+	'Expected a shim name without a path',
+);
 const architectures = ['64bit', '32bit', 'arm64'] as const;
 
 export const scoopConfiguration = z.strictObject({
@@ -18,7 +25,7 @@ export const scoopConfiguration = z.strictObject({
 		assets => Object.keys(assets).length > 0,
 		'Expected at least one architecture',
 	),
-	bin: z.array(z.union([executable, z.tuple([executable, text])])).min(1),
+	bin: z.array(z.union([executable, z.tuple([executable, alias])])).min(1),
 });
 export type ScoopConfiguration = z.input<typeof scoopConfiguration>;
 

@@ -1,8 +1,8 @@
-import { appendFile, readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { Effect } from 'effect';
 import type { DomainError } from '@/contract/errors';
-import { outputEntry } from '@/tooling/github-output';
+import { outputEntry, writeOutput } from '@/tooling/github-output';
 import { attemptPromise, ToolFailure } from '@/tooling/runtime';
 
 export interface Rendered {
@@ -26,11 +26,11 @@ export function writeRendered(
 		const path = join(resolve(directory), name);
 		yield* attemptPromise(() => writeFile(path, content, { flag: 'wx' }));
 		log(path);
-		const entry = yield* Effect.fromResult(outputEntry('file', path)).pipe(
-			Effect.mapError(error => new ToolFailure({ message: error.message, cause: error })),
-		);
-		const target = process.env.GITHUB_OUTPUT;
-		if (target) yield* attemptPromise(() => appendFile(target, entry));
-		else process.stderr.write(entry);
+		const entry = process.env.GITHUB_OUTPUT
+			? writeOutput('file', path)
+			: Effect.fromResult(outputEntry('file', path)).pipe(Effect.map(text => {
+				process.stderr.write(text);
+			}));
+		yield* entry.pipe(Effect.mapError(error => new ToolFailure({ message: error.message, cause: error })));
 	});
 }
