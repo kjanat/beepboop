@@ -407,11 +407,8 @@ export function requireAll(entries: LedgerEntry[]): Effect.Effect<void, ActionFa
 	);
 }
 
-const event = mutableStruct({ repository: mutableStruct({ private: Schema.Boolean }) });
-export function publicRepository(path: string | undefined): boolean {
-	if (!path) return false;
-	const parsed = attempt(() => decodeSync(event, JSON.parse(readFileSync(path, 'utf8'))));
-	return parsed._tag === 'Success' && !parsed.success.repository.private;
+export function publicRepository(privateValue: string | undefined): boolean {
+	return privateValue === 'false';
 }
 
 const credentials = mutableRecord(Schema.String.check(matchesPattern(githubSecretNamePattern)), textSchema);
@@ -455,7 +452,7 @@ export const main: Effect.Effect<void, Invalid> = Effect.gen(function*() {
 	const entries = yield* publishPackages({
 		executionId,
 		credentials: mapping,
-		provenance: publicRepository(environment.GITHUB_EVENT_PATH),
+		provenance: publicRepository(environment.REPOSITORY_PRIVATE),
 		...(environment.NPM_TARBALLS ? { tarballs: environment.NPM_TARBALLS } : {}),
 		call: (path, body) => call(origin, path, body),
 		run: command,

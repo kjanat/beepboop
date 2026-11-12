@@ -900,15 +900,10 @@ test('a generated npm package publishes only from a tarball, and duplicate tarba
 }, 60_000);
 
 test('npm provenance follows the visibility of the repository in the workflow event', () => {
-	const event = (value: unknown) => {
-		const path = join(target, `event-${crypto.randomUUID()}.json`);
-		writeFileSync(path, JSON.stringify(value));
-		return path;
-	};
-	expect(publicRepository(event({ repository: { private: false } }))).toBe(true);
-	expect(publicRepository(event({ repository: { private: true } }))).toBe(false);
-	expect(publicRepository(event({}))).toBe(false);
-	expect(publicRepository(undefined)).toBe(false);
+	expect(publicRepository('false')).toBe(true);
+	for (const value of ['true', 'null', '', 'false\n', undefined]) {
+		expect(publicRepository(value)).toBe(false);
+	}
 });
 
 test('a crate that fails to package is reported failed and its dependent does not publish', async () => {

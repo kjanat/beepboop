@@ -21,6 +21,7 @@ runs:
       uses: $/actions/deps/bun
     - shell: bash
       env:
+        REPOSITORY_PRIVATE: ${{ toJSON(github.event.repository.private) }}
         CREDENTIALS: ${{ inputs.credentials }}
         NPM_TARBALLS: ${{ inputs.npm-tarballs }}
         EXECUTION_ID: ${{ inputs.execution-id }}

@@ -133,13 +133,10 @@ test('interrupting a subprocess waits for its termination', async () => {
 	const ready = join(directory, 'ready');
 	const stopped = join(directory, 'stopped');
 	try {
-		const script = `const fs = require('node:fs'); process.on('SIGTERM', () => { fs.writeFileSync(${
-			JSON.stringify(stopped)
-		}, 'stopped'); process.exit(0); }); fs.writeFileSync(${
-			JSON.stringify(ready)
-		}, 'ready'); setInterval(() => {}, 100);`;
+		const script =
+			"const fs = require('node:fs'); const [, stopped, ready] = process.argv; process.on('SIGTERM', () => { fs.writeFileSync(stopped, 'stopped'); process.exit(0); }); fs.writeFileSync(ready, 'ready'); setInterval(() => {}, 100);";
 		await Effect.runPromise(Effect.gen(function*() {
-			const fiber = yield* Effect.forkChild(capture([process.execPath, '-e', script]));
+			const fiber = yield* Effect.forkChild(capture([process.execPath, '-e', script, stopped, ready]));
 			yield* Effect.tryPromise(async () => {
 				for (let attempt = 0; attempt < 200; attempt++) {
 					if (await Bun.file(ready).exists()) return;
