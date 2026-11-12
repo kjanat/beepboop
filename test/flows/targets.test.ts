@@ -96,6 +96,56 @@ test('platform maps use declared dependencies and never invent npm names', async
 	expect(inventory.packages).toEqual([]);
 });
 
+test('experimental platform-map entries remain optional publications', () => {
+	const result = npmManager.discover(snapshot({
+		'npm/platforms.json': JSON.stringify({
+			'linux-x64': { os: 'linux', cpu: 'x64' },
+			'freebsd-x64': { os: 'freebsd', cpu: 'x64', experimental: true },
+		}),
+		'npm/tool/package.json': JSON.stringify({
+			name: '@example/tool',
+			version: '1.2.3',
+			optionalDependencies: { '@example/tool-linux-x64': '1.2.3', '@example/tool-freebsd-x64': '1.2.3' },
+		}),
+	}));
+	expect(result.diagnostics).toEqual([]);
+	expect(result.packages.map(pkg => [pkg.name, pkg.optional])).toEqual([
+		['@example/tool-linux-x64', false],
+		['@example/tool-freebsd-x64', true],
+		['@example/tool', false],
+	]);
+	expect(result.packages.find(pkg => pkg.name === '@example/tool')?.dependencies).toContain(
+		'@example/tool-freebsd-x64',
+	);
+});
+
+test('platform maps preserve private and foreign-registry facade exclusions', () => {
+	for (
+		const [fields, reason] of [
+			[{ publishConfig: { registry: 'https://npm.example.com' } }, 'other-registry'],
+			[{ private: true }, 'private'],
+		] as const
+	) {
+		const result = npmManager.discover(snapshot({
+			'npm/platforms.json': JSON.stringify({ 'linux-x64': { os: 'linux', cpu: 'x64' } }),
+			'npm/tool/package.json': JSON.stringify({
+				name: '@example/tool',
+				version: '1.2.3',
+				optionalDependencies: { '@example/tool-linux-x64': '1.2.3' },
+				...fields,
+			}),
+		}));
+		expect(result.diagnostics).toEqual([]);
+		expect(result.packages).toHaveLength(1);
+		expect(result.packages[0]).toMatchObject({
+			name: '@example/tool',
+			manifest: 'npm/tool/package.json',
+			publication: { kind: 'excluded', reason },
+		});
+		expect(result.packages[0]?.generated).toBeUndefined();
+	}
+});
+
 test('duplicate targets fail discovery instead of double counting a publication', async () => {
 	const source = await fixture('runner').json();
 	source.targets.push(source.targets[0]);

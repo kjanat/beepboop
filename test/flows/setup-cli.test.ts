@@ -17,6 +17,7 @@ import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
 import { choicesEditors, streamEditors, workflowEditors } from '@/cli/setup-choices';
 import { routes } from '@/contract/routes';
+import { binaryTargets, defaultBinaryTargets } from '@/contract/setup';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
 import {
 	publishWhenQuestion,
@@ -884,10 +885,12 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 	expect(result.exitCode).toBe(0);
 	const messages = session.prompts.map(prompt => prompt.message);
 	expect(messages).toContain('main: build tool (Cargo, Cargo.toml) for the GitHub release?');
-	for (
-		const target of ['linux-amd64', 'linux-arm64', 'darwin-amd64', 'darwin-arm64', 'windows-amd64', 'windows-arm64']
-	) {
-		expect(messages).toContain(`main: build for ${target}?`);
+	for (const target of binaryTargets) {
+		const prompt = session.prompts.find(prompt => prompt.message === `main: build for ${target}?`);
+		expect(prompt?.kind).toBe('confirm');
+		expect(prompt?.kind === 'confirm' && prompt.default).toBe(
+			defaultBinaryTargets.some(value => value === target) && !target.startsWith('windows-'),
+		);
 	}
 	expect(messages).toContain(`main: startFrom. ${startFromQuestion}`);
 	expect(messages).toContain(`main: versionLands. ${versionLandsQuestion}`);
@@ -915,7 +918,18 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 			}),
 		}).parse(configuration).streams.main.promote.workflow.setup.tagPrefix,
 	).toBe('tool-v');
-	expect(configuration).toMatchObject({ streams: { main: { prepare: { versionPrMerge: 'merge' } } } });
+	expect(configuration).toMatchObject({
+		streams: {
+			main: {
+				prepare: { versionPrMerge: 'merge' },
+				promote: {
+					workflow: {
+						setup: { binaries: { targets: ['linux-amd64', 'linux-arm64', 'darwin-amd64', 'darwin-arm64'] } },
+					},
+				},
+			},
+		},
+	});
 });
 
 const dependentMatrixPublish =

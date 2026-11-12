@@ -3,7 +3,7 @@ import { parse as parseToml } from 'smol-toml';
 import { object } from '@/automation/managers/helpers';
 import { packageManifests } from '@/automation/managers/package-json';
 import { latestTag, tagPrefix } from '@/automation/managers/tags';
-import { registry } from '@/automation/package-publication';
+import { publishable, registry } from '@/automation/package-publication';
 import type { Inventory, Package, Snapshot } from '@/automation/types';
 import { npmTargets } from '@/contract/catalog';
 import { fileProblem } from '@/contract/diagnostics';
@@ -55,14 +55,21 @@ export function discoverNpmTargets(snapshot: Snapshot, inventory: Inventory): bo
 			if (!map.success || !Object.keys(map.data).length) continue;
 			const keys = Object.keys(map.data).filter(key => key !== '$schema');
 			if (!keys.length) continue;
-			for (const { manifest } of manifests) {
-				if (typeof manifest.name !== 'string' || manifest.private === true) continue;
+			for (const { path: manifestPath, manifest } of manifests) {
+				if (typeof manifest.name !== 'string') continue;
+				const existing = inventory.packages.find(pkg =>
+					pkg.manager === 'npm' && pkg.manifest === manifestPath && pkg.name === manifest.name
+				);
+				if (!existing || !publishable(existing)) continue;
 				const names = Object.keys(object(manifest.optionalDependencies));
-				const platforms = keys.map(key => names.filter(name => name.endsWith(`-${key}`)));
-				if (platforms.every(matches => matches.length === 1)) {
+				const platforms = keys.map(key => ({
+					names: names.filter(name => name.endsWith(`-${key}`)),
+					optional: object(map.data[key]).experimental === true,
+				}));
+				if (platforms.every(platform => platform.names.length === 1)) {
 					groups.push({
 						name: manifest.name,
-						platforms: platforms.flatMap(matches => matches.map(name => ({ name, optional: false }))),
+						platforms: platforms.flatMap(({ names, optional }) => names.map(name => ({ name, optional }))),
 					});
 				}
 			}

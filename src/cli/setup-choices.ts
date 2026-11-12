@@ -12,7 +12,15 @@ import { workflowFilePattern } from '@/contract/catalog';
 import { identifierPattern } from '@/contract/ids';
 import { approvalPolicies, startChannels, versionBumps } from '@/contract/release-start';
 import type { BinaryBuild, BinaryRelease } from '@/contract/setup';
-import { actionsRevisionPattern, binaryTargets, bumpable, leftOut, setupStream, startable } from '@/contract/setup';
+import {
+	actionsRevisionPattern,
+	binaryTargets,
+	bumpable,
+	defaultBinaryTargets,
+	leftOut,
+	setupStream,
+	startable,
+} from '@/contract/setup';
 import type { ChoicesField, Editors, StreamField, WorkflowField } from '@/contract/setup-fields';
 import { jsonFields, streamFields } from '@/contract/setup-fields';
 import {
@@ -406,7 +414,9 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				}
 				if (!builds.length) return undefined;
 				const defaults = previous?.binaries?.targets
-					?? binaryTargets.filter(target => builds.every(entry => entry.candidate?.targets.includes(target) ?? true));
+					?? defaultBinaryTargets.filter(target =>
+						builds.every(entry => entry.candidate?.targets.includes(target) ?? true)
+					);
 				const targets: BinaryRelease['targets'] = [];
 				for (const target of binaryTargets) {
 					const wanted = yield* prompted(() =>
