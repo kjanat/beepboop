@@ -43,15 +43,18 @@ import {
 	entry,
 	fail,
 	label,
+	leaseDuration,
 	ledgerSchema,
 	pacedPublication,
 	publicationOf,
 	publish,
 	rateLimit,
+	rechecked,
 	registries,
 	released,
 	reservation,
 	reuse,
+	upload,
 	view,
 } from '@/automation/ledger';
 import { preparationBody } from '@/automation/managed';
@@ -1209,13 +1212,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const { execution, holder } = yield* this.publishing(id, identity);
 			let ledger = yield* this.ledgerOf(execution);
 			const now = Date.now();
+			for (const record of ledger.records) {
+				if (record.status.state !== 'uploaded' || record.status.checkedAt + verificationPoll > now) continue;
+				ledger = yield* this.confirmUpload(execution, ledger, record, holder, record.status.since, now);
+			}
 			const ledgers = yield* this.ledgers(), executions = yield* this.executions();
 			const waits: { until: number; reason: string }[] = [];
 			for (const purl of ledger.records.map(record => record.purl)) {
 				const record = ledger.records.find(entry => entry.purl === purl);
 				if (!record) continue;
 				const open = availability(record, holder, now);
-				if (open.kind === 'settled') continue;
+				if (open.kind === 'settled' || open.kind === 'uploaded') continue;
 				if (open.kind === 'held') return { kind: 'publish' as const, package: view(record) };
 				if (open.kind === 'wait') {
 					waits.push(open);
@@ -1238,7 +1245,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			let record = yield* this.recordOf(ledger, purl);
 			const now = Date.now();
 			const open = availability(record, holder, now);
-			if (open.kind === 'settled') return { kind: 'settled' as const, entry: entry(record) };
+			if (open.kind === 'settled' || open.kind === 'uploaded') {
+				return { kind: 'settled' as const, entry: entry(record) };
+			}
 			if (open.kind === 'wait') return { kind: 'wait' as const, until: open.until, reason: open.reason };
 			if (open.kind === 'open') {
 				const blocked = this.blocker(execution, record, holder, yield* this.ledgers(), yield* this.executions(), now);
@@ -1289,7 +1298,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const record = yield* this.recordOf(ledger, report.purl);
 			const now = Date.now();
 			const open = availability(record, holder, now);
-			if (open.kind === 'settled') return { kind: 'settled' as const, entry: entry(record) };
+			if (open.kind === 'settled' || open.kind === 'uploaded') {
+				return { kind: 'settled' as const, entry: entry(record) };
+			}
 			if (report.outcome === 'failed' && open.kind === 'open') {
 				return yield* this.settled(ledger, fail(record, holder, report.message, false, now));
 			}
@@ -1314,12 +1325,34 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (report.outcome === 'failed') {
 				return yield* this.settled(ledger, fail(record, holder, report.message, false, now));
 			}
-			return {
-				kind: 'wait' as const,
-				until: now + verificationPoll,
-				reason: `${registries[record.manager]} has not confirmed ${label(record)} yet`,
-			};
+			return yield* this.settled(ledger, upload(record, holder, now));
 		}));
+	}
+	private confirmUpload(
+		execution: Execution,
+		ledger: Ledger,
+		record: LedgerRecord,
+		holder: string,
+		since: number,
+		now: number,
+	): Effect.Effect<Ledger, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const found = yield* this.registry(execution, record);
+			if (found.outcome === 'succeeded') {
+				return yield* this.settleRecord(ledger, publish(record, holder, found.url ?? '', now));
+			}
+			if (found.outcome === 'failed') {
+				const different = `${registries[record.manager]} has a different ${label(record)}`;
+				return yield* this.settleRecord(ledger, fail(record, holder, different, true, now));
+			}
+			if (now - since >= leaseDuration) {
+				const unlisted = `${registries[record.manager]} did not list ${label(record)} within ${
+					leaseDuration / 60_000
+				} minutes of its upload`;
+				return yield* this.settleRecord(ledger, fail(record, holder, unlisted, false, now));
+			}
+			return yield* this.settleRecord(ledger, rechecked(record, now));
+		});
 	}
 	private publishing(
 		id: string,

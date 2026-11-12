@@ -869,16 +869,84 @@ test('npm and PyPI packages built without a license file fail before their claim
 	]);
 }, 60_000);
 
-test('a publish crates.io never lists fails after the verification polls run out', async () => {
-	const { begun } = await released({ main: [core] });
+test(
+	'an upload the registry does not list yet ends the run uploaded, and Beepboop verifies it after the run',
+	async () => {
+		const { repository, begun } = await released({ main: [core] });
+		const { execution, identity } = started(begun, 'main');
+		const state: Cargo = { commands: [], outcomes: { 'lint-core': ['unlisted'] } };
+		const start = Date.now();
+		const { result, logs } = await publishing(identity, execution.id, state);
+		if (result._tag === 'Failure') throw new Error(result.failure.message);
+		expect(states(result.success)).toEqual([['pkg:cargo/lint-core@1.1.0', 'uploaded']]);
+		expect(Date.now() - start).toBe(0);
+		expect(logs).toContain('lint-core 1.1.0: uploaded');
+		expect(Effect.runSync(Effect.result(requireAll(result.success)))._tag).toBe('Success');
+		expect((await executionOf(repository, execution.id)).publications.map(p => [p.id, p.outcome, p.digest])).toEqual([
+			[core, 'pending', checksum('lint-core', '1.1.0')],
+		]);
+
+		const run = repository.runs.find(entry => entry.id === identity.runId);
+		if (!run) throw new Error('Missing run');
+		run.status = 'completed';
+		run.conclusion = 'success';
+		await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
+		await world.wait(2_000);
+		expect((await executionOf(repository, execution.id)).state).toBe('verifying');
+		registry.set('lint-core@1.1.0', checksum('lint-core', '1.1.0'));
+		await world.wait(61_000);
+		const verified = await executionOf(repository, execution.id);
+		expect([verified.state, verified.publications.map(p => p.outcome)]).toEqual(['succeeded', ['succeeded']]);
+	},
+	60_000,
+);
+
+test('every upload goes out before a dependent waits for its dependency to be listed', async () => {
+	const { repository, begun } = await released({ main: [core, cli] });
 	const { execution, identity } = started(begun, 'main');
-	const state: Cargo = { commands: [], outcomes: { 'lint-core': ['unlisted'] } };
+	registryLag = 2;
+	const state: Cargo = { commands: [], outcomes: {} };
 	const { result, logs } = await publishing(identity, execution.id, state);
 	if (result._tag === 'Failure') throw new Error(result.failure.message);
 	expect(states(result.success)).toEqual([
-		['pkg:cargo/lint-core@1.1.0', 'failed-retryable', 'The registry did not list lint-core 1.1.0 in time'],
+		['pkg:cargo/lint-core@1.1.0', 'published'],
+		['pkg:cargo/lint@1.1.0', 'published'],
 	]);
-	expect(logs.filter(line => line.startsWith('crates.io has not confirmed lint-core 1.1.0 yet'))).toHaveLength(19);
+	expect(state.commands.map(entry => entry.command).filter(command => command.startsWith('publish'))).toEqual([
+		'publish lint-core',
+		'publish lint',
+	]);
+	expect(logs).toContain('lint-core 1.1.0: uploaded');
+	expect(logs.some(line => line.startsWith(`lint 1.1.0 waits for ${core}`))).toBe(true);
+	expect((await ledgerOf(repository, execution.id)).records.map(record => record.attempts.map(a => a.event))).toEqual([
+		['claimed', 'uploaded', 'published'],
+		['claimed', 'published'],
+	]);
+}, 60_000);
+
+test('an upload the registry never lists becomes retryable 15 minutes later, without a second upload', async () => {
+	const { repository, begun } = await released({ main: [core] });
+	const { execution, identity } = started(begun, 'main');
+	const state: Cargo = { commands: [], outcomes: { 'lint-core': ['unlisted'] } };
+	await publishing(identity, execution.id, state);
+	world.advance(15 * 60_000);
+	const run = repository.runs.find(entry => entry.id === identity.runId);
+	if (!run) throw new Error('Missing run');
+	run.attempt = 2;
+	const retried = { ...identity, attempt: 2 };
+	await begin(world, retried, execution.id, 'main', 'promote');
+	const second = await publishing(retried, execution.id, state);
+	if (second.result._tag === 'Failure') throw new Error(second.result.failure.message);
+	expect(states(second.result.success)).toEqual([
+		[
+			'pkg:cargo/lint-core@1.1.0',
+			'failed-retryable',
+			'crates.io did not list lint-core 1.1.0 within 15 minutes of its upload',
+		],
+	]);
+	expect(state.commands.map(entry => entry.command).filter(command => command.startsWith('publish'))).toEqual([
+		'publish lint-core',
+	]);
 }, 60_000);
 
 test('a Retry-After beyond this run ends it with the publication rate limited for the next dispatch', async () => {
@@ -906,25 +974,19 @@ test('a Retry-After beyond this run ends it with the publication rate limited fo
 	]);
 }, 60_000);
 
-test(
-	'a publish after a long slot wait still waits for crates.io to list it and stays inside the job timeout',
-	async () => {
-		const { repository, begun } = await released({ main: [core] });
-		const { execution, identity } = started(begun, 'main');
-		await world.budgets.instance('crates-io').storage.put('arrival:update', Date.now() + 29 * 60_000);
-		const state: Cargo = { commands: [], outcomes: {} };
-		const start = Date.now();
-		registryLag = 4;
-		const { result, logs } = await publishing(identity, execution.id, state);
-		if (result._tag === 'Failure') throw new Error(result.failure.message);
-		expect(states(result.success)).toEqual([['pkg:cargo/lint-core@1.1.0', 'published']]);
-		expect(logs.filter(line => line.startsWith('crates.io has not confirmed lint-core 1.1.0 yet')).length)
-			.toBeGreaterThan(0);
-		expect(Date.now() - start).toBeLessThan(publishMinutes(1) * 60_000);
-		expect((await ledgerOf(repository, execution.id)).records[0]?.status.state).toBe('published');
-	},
-	60_000,
-);
+test('a publish after a long slot wait uploads and ends inside the job timeout', async () => {
+	const { repository, begun } = await released({ main: [core] });
+	const { execution, identity } = started(begun, 'main');
+	await world.budgets.instance('crates-io').storage.put('arrival:update', Date.now() + 29 * 60_000);
+	const state: Cargo = { commands: [], outcomes: {} };
+	const start = Date.now();
+	registryLag = 4;
+	const { result } = await publishing(identity, execution.id, state);
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual([['pkg:cargo/lint-core@1.1.0', 'uploaded']]);
+	expect(Date.now() - start).toBeLessThan(publishMinutes(1) * 60_000);
+	expect((await ledgerOf(repository, execution.id)).records[0]?.status.state).toBe('uploaded');
+}, 60_000);
 
 test('waits across packages share one budget, so a run ends before the publish job timeout', async () => {
 	const { begun } = await released({ main: [core, cli] });

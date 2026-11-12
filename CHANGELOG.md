@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `actions/publish` goes on to the next package once the registry accepts an upload. The package is `uploaded` until the registry lists it, and Beepboop checks it again while the run hands out packages and after the run ends. A package that depends on it waits for the listing. The action polled the registry after each upload and failed the package when the registry took longer than its polls to list it.
 - Tag discovery reads every tag and its commit in one GitHub request per 100 tags. The publish check on the runs page took 18 seconds for a repository with 20 annotated tags.
 - `actions/pull-request` refuses the merge commit that a `pull_request` run checks out by default. A pull request built on it held every change of the original pull request. Check out the branch with `ref: ${{ github.head_ref }}`.
 - The release form, the repository list, `beepboop release`, `beepboop repositories show` and the release API share one per-stream answer to whether Beepboop starts releases. A stream whose workflows only observe shows what starts a release, such as `release.yml on refs/tags/v*`, and has no Release button. A stream without a publishing workflow says so. Planning or preparing either one is refused with the same sentence. https://github.com/kjanat/beepboop/issues/39

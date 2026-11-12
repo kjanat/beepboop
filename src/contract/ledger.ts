@@ -8,6 +8,7 @@ export type LedgerManager = (typeof ledgerManagers)[number];
 export const ledgerStates = [
 	'planned',
 	'claimed',
+	'uploaded',
 	'published',
 	'reused',
 	'rate-limited',
@@ -45,7 +46,7 @@ export const nextStep = z.discriminatedUnion('kind', [publish, wait, done]);
 export type NextStep = z.output<typeof nextStep>;
 export const claimStep = z.discriminatedUnion('kind', [publish, wait, settled]);
 export type ClaimStep = z.output<typeof claimStep>;
-export const reportStep = z.discriminatedUnion('kind', [wait, settled]);
+export const reportStep = settled;
 export type ReportStep = z.output<typeof reportStep>;
 
 export const publishNextRequest = z.object({ executionId: text });

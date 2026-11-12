@@ -36,7 +36,6 @@ interface Artifact {
 }
 
 const longestWait = publishWaitMinutes * 60_000;
-const verificationPolls = 20;
 const packageAttempts = 8;
 
 function sha256(path: string): Effect.Effect<string, ActionFailure> {
@@ -306,17 +305,8 @@ export function publishPackages(runner: Runner): Effect.Effect<LedgerEntry[], In
 			const { command, cwd } = publishCommand(pkg, artifact, runner.provenance);
 			runner.log(`Publishing ${pkg.name} ${pkg.version}`);
 			const result = yield* runner.run(command, { cwd, env: yield* environment });
-			let outcome: Report = classify(result);
-			for (let poll = 1;; poll++) {
-				const reported = yield* report(pkg, outcome);
-				if (reported.kind === 'settled') {
-					runner.log(`${pkg.name} ${pkg.version}: ${show(reported.entry)}`);
-					return;
-				}
-				if (poll >= verificationPolls) {
-					outcome = { outcome: 'failed', message: `The registry did not list ${pkg.name} ${pkg.version} in time` };
-				} else yield* sleep(reported.until, reported.reason);
-			}
+			const reported = yield* report(pkg, classify(result));
+			runner.log(`${pkg.name} ${pkg.version}: ${show(reported.entry)}`);
 		});
 	return Effect.gen(function*() {
 		const tries = new Map<string, number>();
@@ -339,7 +329,7 @@ export function publishPackages(runner: Runner): Effect.Effect<LedgerEntry[], In
 }
 
 export function requireAll(entries: LedgerEntry[]): Effect.Effect<void, ActionFailure> {
-	const missing = entries.filter(entry => entry.required && !['published', 'reused'].includes(entry.state));
+	const missing = entries.filter(entry => entry.required && !['uploaded', 'published', 'reused'].includes(entry.state));
 	if (!missing.length) return Effect.void;
 	return fail(
 		`${missing.length} required publication${missing.length === 1 ? '' : 's'} did not publish: ${

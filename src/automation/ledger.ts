@@ -18,6 +18,7 @@ export const rateLimitAttempts = 5;
 const status = z.discriminatedUnion('state', [
 	z.object({ state: z.literal('planned') }),
 	z.object({ state: z.literal('claimed'), holder: z.string(), leaseUntil: z.number() }),
+	z.object({ state: z.literal('uploaded'), holder: z.string(), since: z.number(), checkedAt: z.number() }),
 	z.object({ state: z.literal('published'), url: z.string() }),
 	z.object({ state: z.literal('reused'), url: z.string() }),
 	z.object({ state: z.literal('rate-limited'), holder: z.string(), retryAfter: z.number() }),
@@ -29,7 +30,7 @@ export type LedgerStatus = z.output<typeof status>;
 const attempt = z.object({
 	holder: z.string(),
 	at: z.number(),
-	event: z.enum(['claimed', 'published', 'reused', 'rate-limited', 'failed']),
+	event: z.enum(['claimed', 'uploaded', 'published', 'reused', 'rate-limited', 'failed']),
 	detail: z.string().optional(),
 });
 export type LedgerAttempt = z.output<typeof attempt>;
@@ -62,6 +63,7 @@ export type Ledger = z.output<typeof ledgerSchema>;
 export type Availability =
 	| { kind: 'open' }
 	| { kind: 'held' }
+	| { kind: 'uploaded'; since: number; checkedAt: number }
 	| { kind: 'settled' }
 	| { kind: 'wait'; until: number; reason: string };
 
@@ -78,6 +80,8 @@ export function availability(record: LedgerRecord, holder: string, now: number):
 			return { kind: 'settled' };
 		case 'failed-retryable':
 			return status.holder === holder ? { kind: 'settled' } : { kind: 'open' };
+		case 'uploaded':
+			return { kind: 'uploaded', since: status.since, checkedAt: status.checkedAt };
 		case 'claimed':
 			if (status.holder === holder) return { kind: 'held' };
 			return status.leaseUntil > now
@@ -147,6 +151,14 @@ export function claim(
 
 export function reuse(record: LedgerRecord, holder: string, url: string, now: number): LedgerRecord {
 	return settle(record, holder, now, { state: 'reused', url }, 'reused');
+}
+
+export function upload(record: LedgerRecord, holder: string, now: number): LedgerRecord {
+	return settle(record, holder, now, { state: 'uploaded', holder, since: now, checkedAt: now }, 'uploaded');
+}
+
+export function rechecked(record: LedgerRecord, now: number): LedgerRecord {
+	return record.status.state === 'uploaded' ? { ...record, status: { ...record.status, checkedAt: now } } : record;
 }
 
 export function publish(record: LedgerRecord, holder: string, url: string, now: number): LedgerRecord {
@@ -230,6 +242,8 @@ export function publicationOf(record: LedgerRecord): Publication | undefined {
 				url: status.url,
 				outcome: 'succeeded',
 			};
+		case 'uploaded':
+			return { ...fields, ...(record.digest ? { digest: record.digest } : {}), outcome: 'pending' };
 		case 'failed-retryable':
 		case 'failed-permanent':
 			return { ...fields, outcome: 'failed' };
