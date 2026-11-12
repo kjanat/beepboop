@@ -1,3 +1,12 @@
+const background = new Set<Promise<unknown>>();
+export function deferBackground(work: Promise<unknown>): void {
+	background.add(work);
+	void work.finally(() => background.delete(work));
+}
+export async function drainBackground(): Promise<void> {
+	while (background.size) await Promise.all([...background]);
+}
+
 import { deserialize, serialize } from 'bun:jsc';
 
 export interface StorageOperation {
@@ -170,7 +179,7 @@ export function durableObjectState(name: string, storage: MemoryStorage): Durabl
 			delete: () => unsupported('facets'),
 			clone: () => unsupported('facets'),
 		},
-		waitUntil() {},
+		waitUntil: deferBackground,
 		blockConcurrencyWhile: callback => callback(),
 		acceptWebSocket: () => unsupported('acceptWebSocket'),
 		getWebSockets: () => [],

@@ -40,7 +40,10 @@ function plannedEdit(value: unknown): Result.Result<PlannedEdit, Invalid> {
 
 function preparation(source: string): Result.Result<Preparation, Invalid> {
 	return Result.gen(function*() {
-		const context = yield* record(yield* attempt((): unknown => JSON.parse(source)));
+		const input = yield* record(yield* attempt((): unknown => JSON.parse(source)));
+		const context = typeof input.contextFile === 'string'
+			? yield* record(yield* attempt((): unknown => JSON.parse(readFileSync(input.contextFile as string, 'utf8'))))
+			: input;
 		if (context.operation !== 'prepare' || !context.plan || !context.id) {
 			return yield* refuse('Expected a preparation execution');
 		}

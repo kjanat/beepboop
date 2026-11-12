@@ -282,7 +282,9 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 		);
 		const prepareIdentity = runIdentity(repository, prepareRun, 'prepare-release.yml');
 		const begun = await begin(world, prepareIdentity, text(prepared.body, 'id'), stream.name, 'prepare');
-		const context = begun.outputs.context ?? '';
+		const contextFile = join(scratch, 'context.json');
+		writeFileSync(contextFile, begun.context ?? '{}');
+		const context = JSON.stringify({ ...JSON.parse(begun.outputs.context ?? '{}'), contextFile });
 		const environment = join(scratch, 'env'), runner = join(scratch, 'runner');
 		writeFileSync(environment, '');
 		mkdirSync(runner);

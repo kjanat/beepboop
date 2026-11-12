@@ -14,7 +14,7 @@ export function serve(request: Request, defer?: (work: Promise<void>) => void): 
 	return Effect.runPromise(Effect.gen(function*() {
 		const path = new URL(request.url).pathname;
 		const response = yield* bindings.pipe(
-			Effect.flatMap(env => dispatch(request, env)),
+			Effect.flatMap(env => dispatch(request, env, defer)),
 			Effect.catchCause(cause => Effect.sync(() => failure(request, Cause.squash(cause)))),
 		);
 		if (!path.startsWith('/api/') && !path.startsWith('/auth/cli/')) return response;

@@ -1,6 +1,7 @@
 import { Effect } from 'effect';
 import { z } from 'zod';
 import { createExecution } from '@/automation/execution';
+import { logRecovered } from '@/automation/failure-log';
 import { matchesRef } from '@/automation/policy';
 import { issueWorkflowToken } from '@/automation/token';
 import type { Artifact, Edit, Execution, Publication } from '@/automation/types';
@@ -161,9 +162,24 @@ export const workflowEndpoints = {
 			}));
 			const execution = yield* owned(context, id);
 			if (execution.operation === 'promote') yield* context.service.prepareJsr(execution);
-			return yield* fromPromise(() =>
+			const registered = yield* fromPromise(() =>
 				context.service.coordinator(context.identity.repositoryId).register(id, context.identity)
 			);
+			return {
+				id: registered.id,
+				repositoryId: registered.repositoryId,
+				repository: registered.repository,
+				stream: registered.stream,
+				operation: registered.operation,
+				state: registered.state,
+				version: registered.version,
+				sourceSha: registered.sourceSha,
+				updatedAt: registered.updatedAt,
+				plan: registered.plan,
+				resolvedInputs: registered.resolvedInputs,
+				package: registered.package,
+				draftRelease: registered.draftRelease,
+			};
 		})),
 	workflowRefsPlan: workflow(
 		routes.workflowRefsPlan,
@@ -220,7 +236,10 @@ export const workflowEndpoints = {
 			const result = yield* fromPromise(() =>
 				context.service.coordinator(execution.repositoryId).prepared(execution.id, context.identity, edits)
 			);
-			yield* store.audit(`run:${context.identity.runId}`, 'release.prepared', result.url);
+			const audit = store.audit(`run:${context.identity.runId}`, 'release.prepared', result.url)
+				.pipe(logRecovered('release.prepared-audit-failed', { executionId: execution.id }));
+			if (context.service.defer) context.service.defer(Effect.runPromiseWith(yield* Effect.context())(audit));
+			else yield* audit;
 			return result;
 		})),
 	workflowReport: workflow(routes.workflowReport, (input, context) =>

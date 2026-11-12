@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, mock, setSystemTime, spyOn } from 'bun:test';
 import { env as runtimeEnv } from '@root/test/support/cloudflare-workers.ts';
 import { TestD1 } from '@root/test/support/d1.ts';
+import { deferBackground, drainBackground } from '@root/test/support/do-storage.ts';
 import type { Repository } from '@root/test/support/github.ts';
 import { appId, FakeGitHub, ownerId } from '@root/test/support/github.ts';
 import { Network } from '@root/test/support/network.ts';
@@ -114,8 +115,10 @@ export class World {
 		setSystemTime();
 	}
 
-	handle(request: Request): Promise<Response> {
-		return serve(request);
+	async handle(request: Request): Promise<Response> {
+		const response = await serve(request, deferBackground);
+		await drainBackground();
+		return response;
 	}
 	advance(milliseconds: number): void {
 		setSystemTime(new Date(Date.now() + milliseconds));
@@ -138,6 +141,7 @@ export class World {
 			setSystemTime(new Date(Math.max(Date.now(), next.storage.alarm ?? 0)));
 			next.storage.alarm = null;
 			await next.object.alarm();
+			await drainBackground();
 		}
 		throw new Error(`More than ${limit} alarms fired within ${milliseconds} ms`);
 	}
@@ -251,7 +255,8 @@ export function eachWorld(bind: (world: World) => void): void {
 		current = await World.create();
 		bind(current);
 	});
-	afterEach(() => {
+	afterEach(async () => {
+		await drainBackground();
 		if (current) current.dispose();
 	});
 }
