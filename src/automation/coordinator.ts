@@ -1365,6 +1365,22 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return yield* this.settleRecord(ledger, rechecked(record, now));
 		});
 	}
+	private confirmUploads(execution: Execution): Effect.Effect<boolean, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const stored = yield* this.read(`ledger:${execution.id}`);
+			if (stored === undefined) return false;
+			let ledger = yield* fromSync(() => ledgerSchema.parse(stored));
+			const now = Date.now();
+			let changed = false;
+			for (const record of ledger.records) {
+				const status = record.status;
+				if (status.state !== 'uploaded' || status.checkedAt + verificationPoll > now) continue;
+				ledger = yield* this.confirmUpload(execution, ledger, record, status.holder, status.since, now);
+				changed ||= ledger.records.find(entry => entry.purl === record.purl)?.status.state !== 'uploaded';
+			}
+			return changed;
+		});
+	}
 	private publishing(
 		id: string,
 		identity: WorkflowIdentity,
@@ -2897,6 +2913,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		unresolved: (execution: Execution) => boolean,
 	): Effect.Effect<'continue' | 'stop', DomainError> {
 		return Effect.gen({ self: this }, function*() {
+			if (
+				!['dispatching', 'running', 'uncertain'].includes(execution.state) && (yield* this.confirmUploads(execution))
+			) {
+				return 'continue' as const;
+			}
 			if (unresolved(execution)) {
 				const context = this.gateway().verification(execution.repository, execution.repositoryId);
 				const publications = yield* Effect.forEach(

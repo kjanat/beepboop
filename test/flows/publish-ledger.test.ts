@@ -1123,6 +1123,26 @@ test('a report from an earlier publish action still waits for the registry listi
 	]);
 }, 60_000);
 
+test('an upload the registry never lists fails the finished run 15 minutes later', async () => {
+	const { repository, begun } = await released({ main: [core] });
+	const { execution, identity } = started(begun, 'main');
+	await publishing(identity, execution.id, { commands: [], outcomes: { 'lint-core': ['unlisted'] } });
+	const run = repository.runs.find(entry => entry.id === identity.runId);
+	if (!run) throw new Error('Missing run');
+	run.status = 'completed';
+	run.conclusion = 'success';
+	await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
+	await world.wait(2_000);
+	expect((await executionOf(repository, execution.id)).state).toBe('verifying');
+	await world.wait(16 * 60_000);
+	const failed = await executionOf(repository, execution.id);
+	expect([failed.state, failed.publications.map(p => p.outcome), run.attempt]).toEqual(['failed', ['failed'], 1]);
+	expect((await ledgerOf(repository, execution.id)).records[0]?.status).toMatchObject({
+		state: 'failed-retryable',
+		error: 'crates.io did not list lint-core 1.1.0 within 15 minutes of its upload',
+	});
+}, 60_000);
+
 test('an upload the registry never lists becomes retryable 15 minutes later, without a second upload', async () => {
 	const { repository, begun } = await released({ main: [core] });
 	const { execution, identity } = started(begun, 'main');
