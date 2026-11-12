@@ -1,0 +1,12 @@
+{
+	"name": "tool",
+	"description": "Example command-line tool",
+	"homepage": "https://tool.example.com",
+	"license": "MIT",
+	"url": "https://github.com/example/tool/releases/download/{tag}/{asset}",
+	"architecture": {
+		"64bit": "tool-{version}-x86_64-pc-windows-msvc.zip",
+		"arm64": "tool-{version}-aarch64-pc-windows-msvc.zip"
+	},
+	"bin": ["tool.exe"]
+}

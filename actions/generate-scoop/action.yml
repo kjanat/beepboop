@@ -1,0 +1,40 @@
+name: Generate a Scoop manifest
+description: Generate a Scoop manifest from manifest metadata and release checksums
+inputs:
+  config:
+    description: Manifest metadata JSON file
+    required: true
+  version:
+    description: Stable release version
+    required: true
+  tag:
+    description: Release tag (defaults to v followed by the version)
+  checksums:
+    description: Release SHA256 checksums file
+    required: true
+  out:
+    description: Output directory
+    required: true
+outputs:
+  file:
+    description: Absolute path of the generated manifest
+    value: ${{ steps.generate.outputs.file }}
+runs:
+  using: composite
+  steps:
+    - name: Ensure Bun is available
+      id: bun
+      uses: $/actions/deps/bun
+    - name: Install generator dependencies
+      shell: bash
+      working-directory: ${{ github.action_path }}/../..
+      run: bun install --frozen-lockfile --production --ignore-scripts
+    - id: generate
+      shell: bash
+      env:
+        SCOOP_MANIFEST_CHECKSUMS: ${{ inputs.checksums }}
+        SCOOP_MANIFEST_CONFIG: ${{ inputs.config }}
+        SCOOP_MANIFEST_OUT: ${{ inputs.out }}
+        SCOOP_MANIFEST_TAG: ${{ inputs.tag }}
+        SCOOP_MANIFEST_VERSION: ${{ inputs.version }}
+      run: bun "${GITHUB_ACTION_PATH}/../../src/distribution/scoop/cli.ts"

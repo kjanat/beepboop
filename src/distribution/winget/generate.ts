@@ -5,6 +5,7 @@ import { stringify } from 'yaml';
 import * as z from 'zod';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
+import { assetName, checksumOf, expand, https, parseChecksums, releaseTag } from '@/distribution/assets';
 import { plainText } from '@/distribution/winget/notes';
 import type {
 	DefaultLocaleManifest,
@@ -67,36 +68,6 @@ export interface Manifests {
 	defaultLocale: DefaultLocaleManifest;
 }
 export const releaseNotesLimit = 10000;
-export function parseChecksums(source: string): Effect.Effect<Map<string, string>, DomainError> {
-	return Effect.gen(function*() {
-		const result = new Map<string, string>();
-		for (const [index, line] of source.split(/\r?\n/).entries()) {
-			if (!line) continue;
-			const match = /^([a-fA-F0-9]{64}) [ *](\S+)$/.exec(line);
-			if (!match?.[1] || !match[2]) return yield* precondition(`Malformed checksum line ${index + 1}`);
-			if (result.has(match[2])) return yield* precondition(`Duplicate checksum for ${match[2]}`);
-			result.set(match[2], match[1].toUpperCase());
-		}
-		return result;
-	});
-}
-function expand(value: string, variables: Record<string, string>): Effect.Effect<string, DomainError> {
-	const unknown = [...value.matchAll(/\{([^{}]+)\}/g)].map(match => match[1] ?? '').find(key =>
-		!Object.hasOwn(variables, key)
-	);
-	return unknown === undefined
-		? Effect.succeed(value.replace(/\{([^{}]+)\}/g, (_match, key: string) => variables[key] ?? ''))
-		: Effect.fail(precondition(`Unknown template variable ${unknown}`));
-}
-function https(value: string): Effect.Effect<string, DomainError> {
-	return fromSync(() => new URL(value)).pipe(
-		Effect.filterOrFail(
-			url => url.protocol === 'https:' && !url.username && !url.password && !url.hash,
-			() => precondition('Expected an HTTPS release URL'),
-		),
-		Effect.as(value),
-	);
-}
 export function capReleaseNotes(
 	notes: string,
 	url: string,
@@ -115,23 +86,14 @@ export function generateManifests(options: GenerateOptions): Effect.Effect<Manif
 	return Effect.gen(function*() {
 		const config = yield* fromSync(() => wingetConfiguration.parse(options.configuration));
 		const version = options.version;
-		if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
-			return yield* precondition('Expected stable MAJOR.MINOR.PATCH version');
-		}
-		const tag = options.tag ?? `v${version}`;
-		// biome-ignore lint/suspicious/noControlCharactersInRegex: Reject control characters in release tags.
-		if (!tag || /[\x00-\x20?#]/.test(tag)) return yield* precondition('Invalid release tag');
+		const tag = yield* releaseTag(version, options.tag);
 		const variables = { version, tag: encodeURIComponent(tag) };
 		const checksums = yield* parseChecksums(options.checksums);
 		const releaseNotesUrl = yield* https(yield* expand(config.releaseNotesUrl, variables));
 		const entries: { Architecture: string; InstallerUrl: string; InstallerSha256: string }[] = [];
 		for (const item of config.installers) {
-			const asset = yield* expand(item.asset, variables);
-			if (!asset || /[\\/]/.test(asset) || asset === '.' || asset === '..') {
-				return yield* precondition('Expected an asset filename');
-			}
-			const digest = checksums.get(asset);
-			if (!digest) return yield* precondition(`Checksum missing for ${asset}`);
+			const asset = yield* assetName(item.asset, variables);
+			const digest = (yield* checksumOf(checksums, asset)).toUpperCase();
 			entries.push({
 				Architecture: item.architecture,
 				InstallerUrl: yield* https(yield* expand(item.url, { ...variables, asset: encodeURIComponent(asset) })),
