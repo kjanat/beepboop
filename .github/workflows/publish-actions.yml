@@ -1,7 +1,26 @@
 name: Publish Actions
-on: { push: { branches: [master] }, workflow_dispatch: null }
+on:
+  push:
+    branches: [master]
+    paths:
+      - actions/**
+      - src/**
+      - "!src/components/**"
+      - "!src/layouts/**"
+      - "!src/pages/**"
+      - "!src/server/**"
+      - "!src/styles/**"
+      - "!src/ui/**"
+      - "!src/index.ts"
+      - "!src/middleware.ts"
+      - package.json
+      - bun.lock
+      - bunfig.toml
+      - tsconfig.json
+      - mise.toml
+      - .github/workflows/publish-actions.yml
+  workflow_dispatch: null
 permissions: { contents: read }
-concurrency: { group: publish-actions, cancel-in-progress: false }
 jobs:
   verify: { if: github.ref == 'refs/heads/master', uses: $/.github/workflows/ci.yml }
   trailers:
@@ -21,12 +40,21 @@ jobs:
             ${{ github.event.head_commit.message }}
             </code></pre></details>
         run: printf '%s\n' "${step_summary}" >> "${GITHUB_STEP_SUMMARY}"
+  wait:
+    needs: trailers
+    if: github.ref == 'refs/heads/master' && fromJsOn(needs.trailers.outputs.publish) && github.actor_id == github.repository_owner_id
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    environment: { name: tag, deployment: false }
+    concurrency: { group: publish-actions-wait, cancel-in-progress: true }
+    steps: [run: null]
   publish:
-    needs: [verify, trailers]
+    needs: [verify, trailers, wait]
     if: fromJsOn(needs.trailers.outputs.publish) && github.actor_id == github.repository_owner_id
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions: { contents: read, id-token: write }
+    concurrency: { group: publish-actions, cancel-in-progress: false }
     steps:
       - name: Authenticate as Beepboop
         id: bot
