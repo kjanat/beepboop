@@ -28,9 +28,11 @@ export function writeRendered(
 		log(path);
 		const entry = process.env.GITHUB_OUTPUT
 			? writeOutput('file', path)
-			: Effect.fromResult(outputEntry('file', path)).pipe(Effect.map(text => {
-				process.stderr.write(text);
-			}));
+			: Effect.fromResult(outputEntry('file', path)).pipe(Effect.flatMap(text =>
+				Effect.sync(() => {
+					process.stderr.write(text);
+				})
+			));
 		yield* entry.pipe(Effect.mapError(error => new ToolFailure({ message: error.message, cause: error })));
 	});
 }

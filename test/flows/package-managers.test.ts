@@ -2,6 +2,7 @@ import { expect, spyOn, test } from 'bun:test';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { withEnvironment } from '@root/test/support/process.ts';
 import { Effect } from 'effect';
 import type { HomebrewConfiguration } from '@/distribution/homebrew/generate';
 import { generateCask } from '@/distribution/homebrew/generate';
@@ -9,7 +10,6 @@ import { writeRendered } from '@/distribution/output';
 import type { ScoopConfiguration } from '@/distribution/scoop/generate';
 import { generateManifest, scoopConfiguration } from '@/distribution/scoop/generate';
 import { generateManifests } from '@/distribution/winget/generate';
-import { withEnvironment } from '@root/test/support/process.ts';
 
 const digest = (character: string) => character.repeat(64);
 const checksums = [
