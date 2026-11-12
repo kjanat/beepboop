@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `beepboop runs list` shows the current checkout's repository by default and takes `--repository`, `--all`, `--stream`, `--operation`, `--state`, `--releaseVersion` and `--limit`. Its `--json` output is a per-run summary; `--full` prints whole records. https://github.com/kjanat/beepboop/issues/40
 - A stream can list `companionModules`, Go modules whose version tag its release pushes on the release commit beside its own tag, such as `go/v1.2.3` beside `rshellcheck-v1.2.3`. The module keeps its own stream. Setup takes the setting as a choices field, the `--companion-module` flag and a JSON editor in the dashboard. Discovery blocks an entry that matches no package and warns about one that is not a Go module versioned by tags.
 - `actions/publish` takes `npm-tarballs`, a directory of prebuilt npm tarballs. A generated npm package, such as a platform package from `npm/targets.json`, publishes from the tarball whose `package.json` name and version match, with the tarball's sha512 integrity as its digest.
+- When a run fails and every required package that has not published is `failed-retryable`, Beepboop re-runs the failed jobs, up to the fourth run attempt.
 - Adoption notes a Go module whose tags carry the same versions as another stream's tags, or whose tag name a file builds beside that stream's tag name. The note names both options, `companionModules` and moving the module into the stream's `packages`, and changes nothing until you choose.
 
 ### Fixed

@@ -186,8 +186,14 @@ const settleInterval = 15_000;
 const projectionRetry = 10_000;
 const dependencyPoll = 30_000;
 const verificationPoll = 15_000;
+const automaticRetries = 3;
 const defaultRetryAfter = 60_000;
 const metadataReason = 'Fix the package metadata before this release: ';
+function reopened(publications: Publication[]): Publication[] {
+	return publications.map(publication =>
+		publication.outcome === 'succeeded' ? publication : { ...publication, outcome: 'pending' as const }
+	);
+}
 function wakeDue(wake: ReleaseWake): number {
 	return wake === true ? 0 : wake.due;
 }
@@ -2047,7 +2053,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return `${head.ref} at ${head.sha.slice(0, 12)} no longer contains ${execution.sourceSha.slice(0, 12)}`;
 		});
 	}
-	private redispatch(execution: Execution, publications: Publication[]): Effect.Effect<void, DomainError> {
+	private redispatch(
+		execution: Execution,
+		publications: Publication[],
+		requested: string,
+	): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const gateway = this.gateway();
 			const token = yield* gateway.token(execution.repository, execution.repositoryId, {
@@ -2082,7 +2092,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					...execution,
 					state: 'uncertain',
 					runAttempt: run.run_attempt,
-					reason: 'Retry requested; re-running the failed jobs',
+					reason: `${requested}; re-running the failed jobs`,
 					publications,
 				});
 			} else {
@@ -2093,11 +2103,22 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					runId: undefined,
 					runAttempt: undefined,
 					workflowSha: undefined,
-					reason: 'Retry requested; dispatching a new run',
+					reason: `${requested}; dispatching a new run`,
 					publications,
 				});
 			}
 			yield* this.requestReconcile(Date.now());
+		});
+	}
+	private retryable(execution: Execution): Effect.Effect<boolean, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const stored = yield* this.read(`ledger:${execution.id}`);
+			if (stored === undefined) return false;
+			const ledger = yield* fromSync(() => ledgerSchema.parse(stored));
+			const open = ledger.records.filter(record =>
+				record.required && !released(record) && record.status.state !== 'uploaded'
+			);
+			return open.length > 0 && open.every(record => record.status.state === 'failed-retryable');
 		});
 	}
 	recover(id: string, action: 'reconcile' | 'retry', actor: string): Promise<Execution> {
@@ -2114,14 +2135,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (execution.artifacts.some((a) => Date.parse(a.expiresAt) <= Date.now())) {
 					return yield* precondition('Artifacts expired; use the configured preparation/recovery producer');
 				}
-				const publications = execution.publications.map(publication =>
-					publication.outcome === 'succeeded' ? publication : { ...publication, outcome: 'pending' as const }
-				);
+				const publications = reopened(execution.publications);
 				if (execution.operation === 'promote' && execution.attempts === 0 && execution.approvedAt === undefined) {
 					const next: Execution = { ...execution, state: 'awaiting-approval', publications };
 					delete next.reason;
 					yield* this.put(next);
-				} else yield* this.redispatch(execution, publications);
+				} else yield* this.redispatch(execution, publications, 'Retry requested');
 			} else yield* this.wakeUp();
 			const releaseSet = execution.releaseSet;
 			const workflowId = releaseSet?.workflowId;
@@ -2751,7 +2770,16 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						});
 						return;
 					}
-					yield* this.put({ ...settle(execution, run.conclusion === 'success'), runAttempt });
+					const settled = settle(execution, run.conclusion === 'success');
+					if (settled.state === 'failed' && runAttempt <= automaticRetries && (yield* this.retryable(execution))) {
+						const retried = yield* Effect.result(this.redispatch(
+							{ ...execution, runAttempt },
+							reopened(execution.publications),
+							`Attempt ${runAttempt} left publications the next attempt retries`,
+						));
+						if (retried._tag === 'Success') return;
+					}
+					yield* this.put({ ...settled, runAttempt });
 				} else if (execution.state === 'uncertain') {
 					yield* this.put({ ...execution, state: 'running', runAttempt });
 				}

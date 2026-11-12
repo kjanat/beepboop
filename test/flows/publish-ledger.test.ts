@@ -469,6 +469,45 @@ test('a failed publish stays retryable and the next run attempt publishes it', a
 	]);
 }, 60_000);
 
+async function failRun(repository: Repository, identity: RunIdentity, executionId: string) {
+	const run = repository.runs.find(entry => entry.id === identity.runId);
+	if (!run) throw new Error('Missing run');
+	run.status = 'completed';
+	run.conclusion = 'failure';
+	await world.workflowRun(repository, run, 'failure', 'workflow_dispatch');
+	await world.wait(2_000);
+	const after = await executionOf(repository, executionId);
+	return [run.attempt, after.state, after.reason];
+}
+
+test('Beepboop re-runs the failed jobs while the ledger retries a package, for three attempts', async () => {
+	const { repository, begun } = await released({ main: [core, cli] });
+	const { execution, identity } = started(begun, 'main');
+	const state: Cargo = { commands: [], outcomes: { 'lint-core': ['fail', 'fail', 'fail', 'fail'] } };
+	const seen: unknown[] = [];
+	for (let attempt = 1; attempt <= 4; attempt++) {
+		const current = { ...identity, attempt };
+		if (attempt > 1) await begin(world, current, execution.id, 'main', 'promote');
+		await publishing(current, execution.id, state);
+		seen.push(await failRun(repository, current, execution.id));
+	}
+	expect(seen.map(entry => Array.isArray(entry) ? entry.slice(0, 2) : entry)).toEqual([
+		[2, 'running'],
+		[3, 'running'],
+		[4, 'running'],
+		[4, 'failed'],
+	]);
+	expect(state.commands.filter(entry => entry.command === 'publish lint-core')).toHaveLength(4);
+}, 60_000);
+
+test('a package the registry holds with a different digest is never retried automatically', async () => {
+	const { repository, begun } = await released({ main: [core] });
+	const { execution, identity } = started(begun, 'main');
+	registry.set('lint-core@1.1.0', 'd'.repeat(64));
+	await publishing(identity, execution.id, { commands: [], outcomes: {} });
+	expect((await failRun(repository, identity, execution.id)).slice(0, 2)).toEqual([1, 'failed']);
+}, 60_000);
+
 test('crates.io errors never count as proof that a crate is missing', async () => {
 	const { begun } = await released({ main: [core] });
 	const { execution, identity } = started(begun, 'main');
