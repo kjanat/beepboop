@@ -1095,6 +1095,11 @@ export class RepositoryGateway {
 				);
 			}
 			const existing = pulls[0];
+			const validBase = (pull: z.output<typeof pullSchema>) =>
+				pull.base.ref === snapshot.repository.defaultBranch ? Effect.void : precondition(
+					`The preparation PR #${pull.number} targets ${pull.base.ref}; retarget it to ${snapshot.repository.defaultBranch} to continue this release.`,
+				);
+			if (existing) yield* validBase(existing);
 			const previousBody = typeof existing?.body === 'string' ? existing.body : '';
 			const pull = existing
 				? yield* self.read(pullSchema, `/repos/${name}/pulls/${existing.number}`, token, 'PATCH', {
@@ -1113,6 +1118,7 @@ export class RepositoryGateway {
 					head: branch,
 					base: snapshot.repository.defaultBranch,
 				});
+			yield* validBase(pull);
 			const metadata = Effect.gen(function*() {
 				const available = yield* self.read(z.array(namedSchema), `/repos/${name}/labels?per_page=100`, token);
 				let labels = available

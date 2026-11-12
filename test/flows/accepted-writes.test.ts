@@ -220,3 +220,37 @@ test('a pending manual WinGet receipt is recovered without creating another PR',
 	});
 	expect(calls).toHaveLength(1);
 });
+
+for (const when of ['before update', 'during update'] as const) {
+	test(`a preparation PR retargeted ${when} is rejected without metadata updates`, async () => {
+		const repository = widget(world.github);
+		const gateway = new RepositoryGateway(world.env, Number(world.env.OWNER_ID));
+		const snapshot = await Effect.runPromise(gateway.snapshot(repository.name, repository.id));
+		const created = await Effect.runPromise(gateway.pullRequest(snapshot, 'release/base', 'Release', '', [{
+			path: 'package.json',
+			before: snapshot.files['package.json'] ?? '',
+			after: '{"name":"widget","version":"1.1.0"}\n',
+		}]));
+		const stored = one(repository.pulls, 'created PR');
+		if (when === 'before update') stored.base = 'maintenance';
+		world.network.serve('api.github.com', request => {
+			if (
+				when === 'during update' && request.method === 'PATCH'
+				&& new URL(request.url).pathname.endsWith(`/pulls/${stored.number}`)
+			) {
+				stored.base = 'maintenance';
+			}
+			return world.github.handle(request);
+		});
+		const mark = world.network.mark();
+		const result = await Effect.runPromise(
+			Effect.result(gateway.refreshPullRequest(snapshot, 'release/base', 'Updated', '', created.head)),
+		);
+		expect(result._tag === 'Failure' && result.failure.message).toBe(
+			`The preparation PR #${stored.number} targets maintenance; retarget it to ${repository.defaultBranch} to continue this release.`,
+		);
+		expect(world.network.since(mark).filter(call => /\/labels|\/assignees|\/requested_reviewers/.test(call.url)))
+			.toEqual([]);
+		if (when === 'before update') expect(stored.title).toBe('Release');
+	});
+}
