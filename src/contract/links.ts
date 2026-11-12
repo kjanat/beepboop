@@ -1,5 +1,4 @@
 import type { ManagerDestinationId, WatchedRegistry } from '@/contract/catalog';
-import { defaultTagPolicy, semVer, tagFor } from '@/contract/version';
 
 function encodePath(...parts: string[]): string {
 	return parts.flatMap(part => part.split('/')).filter(Boolean).map(part =>
@@ -37,10 +36,7 @@ export function registryHref(
 		return `https://pkg.go.dev/${encodePath(name)}${version ? `@v${encodeURIComponent(version)}` : ''}`;
 	}
 	if (destination === 'github-release') {
-		const parsed = semVer.safeParse(version);
-		return parsed.success
-			? githubHref(repository, 'releases', 'tag', tagFor(defaultTagPolicy, parsed.data))
-			: version
+		return version
 			? githubHref(repository, 'releases', 'tag', version)
 			: githubHref(repository, 'releases');
 	}
