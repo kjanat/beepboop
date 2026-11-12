@@ -1,10 +1,18 @@
 const background = new Set<Promise<unknown>>();
+const backgroundFailures: unknown[] = [];
 export function deferBackground(work: Promise<unknown>): void {
 	background.add(work);
-	void work.finally(() => background.delete(work));
+	void work.then(
+		() => background.delete(work),
+		error => {
+			backgroundFailures.push(error);
+			background.delete(work);
+		},
+	);
 }
 export async function drainBackground(): Promise<void> {
-	while (background.size) await Promise.all([...background]);
+	while (background.size) await Promise.allSettled([...background]);
+	if (backgroundFailures.length) throw new AggregateError(backgroundFailures.splice(0), 'Background work failed');
 }
 
 import { deserialize, serialize } from 'bun:jsc';

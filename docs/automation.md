@@ -1199,10 +1199,11 @@ gpg-signing-service, Beepboop signs every new version tag regardless of
 `signed`. It signs the planned tag object with that key's primary user ID as
 tagger. The action writes the tag with `git mktag` and checks it with
 `git verify-tag`. Without the binding, `signed: true` makes the action run
-`git tag -s` with the runner's own Git signing key. GitHub must report a signed
-version tag as verified. For that, the key's email must belong to the repository
-owner's GitHub account. Alias operations should depend on the publication
-operations they distribute.
+`git tag -s` with the runner's own Git signing key. Completion records the
+authenticated action's successful push result without waiting for GitHub's
+verified flag. For GitHub to display a verified signature, the key's email must
+belong to the repository owner's GitHub account. Alias operations should depend
+on the publication operations they distribute.
 
 A version operation also tags every Go module that the stream lists in
 `packages`. Each tag uses the module's own prefix, such as `go/v1.2.3` for a

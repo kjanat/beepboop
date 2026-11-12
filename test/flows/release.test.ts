@@ -84,9 +84,17 @@ test('a managed release travels from discovery to a verified publication', async
 		EXECUTION_ID: promotion.id,
 		PUBLICATIONS: JSON.stringify([
 			{ id: 'pkg:npm/widget', manager: 'npm', name: 'widget', version: '1.1.0', outcome: 'succeeded' },
+			{
+				id: 'github-release:octo/widget',
+				manager: 'github-release',
+				name: repository.name,
+				version: 'v1.1.0',
+				outcome: 'succeeded',
+			},
 		]),
 	});
 	expect(reported.outputs.result).toContain('"outcome":"succeeded"');
+	expect((await only(api, 'promote')).release).toMatchObject({ tag: 'v1.1.0', commit: merged.sha });
 
 	run.status = 'completed';
 	run.conclusion = 'success';
@@ -108,6 +116,9 @@ test('a managed release travels from discovery to a verified publication', async
 	const preparation = executions.find(execution => execution.operation === 'prepare');
 	expect(preparation?.eventId).toBe(`plan:${text(plan.body, 'planId')}`);
 	const succeeded = await only(api, 'promote');
+	expect(journal.find(entry => entry.key.startsWith('release-event:'))?.value).toMatchObject({
+		release: { tag: 'v1.1.0', commit: merged.sha },
+	});
 	expect(journal.filter(entry => entry.key.startsWith('release-event:')).map(entry => entry.key)).toEqual([
 		`release-event:${releaseEventId({ ...succeeded, version: '1.1.0' })}`,
 	]);

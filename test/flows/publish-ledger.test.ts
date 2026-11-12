@@ -1376,30 +1376,32 @@ echo "info: downloading 8 components" >&2
 	]);
 }, 60_000);
 
-test('stored accepted uploads settle without another registry request', async () => {
-	const { repository, begun } = await released({ main: [core] });
-	const { execution, identity } = started(begun, 'main');
-	await publishing(identity, execution.id, { commands: [], outcomes: { 'lint-core': ['unlisted'] } });
-	const ledger = await ledgerOf(repository, execution.id);
-	const record = ledger.records[0];
-	if (!record) throw new Error('Missing publication');
-	record.status = {
-		state: 'uploaded',
-		holder: `${identity.runId}:1`,
-		since: Date.now() - 20 * 60_000,
-		checkedAt: Date.now() - 20 * 60_000,
-	};
-	const storage = world.coordinators.instance(String(repository.id)).storage;
-	await storage.put(`ledger:${execution.id}`, ledger);
-	const current = await world.coordinator(repository).execution(execution.id);
-	if (!current) throw new Error('Missing execution');
-	current.publications = current.publications.map(publication => ({ ...publication, outcome: 'pending' }));
-	await storage.put(`execution:${execution.id}`, current);
-	const calls = world.network.mark();
-	await world.wait(61_000);
-	expect((await ledgerOf(repository, execution.id)).records[0]?.status.state).toBe('published');
-	expect((await executionOf(repository, execution.id)).publications.map(publication => publication.outcome)).toEqual([
-		'succeeded',
-	]);
-	expect(world.network.since(calls).filter(call => call.host === 'crates.io')).toEqual([]);
-}, 60_000);
+for (const state of ['uploaded', 'published'] as const) {
+	test(`stored ${state} receipts repair the execution without another registry request`, async () => {
+		const { repository, begun } = await released({ main: [core] });
+		const { execution, identity } = started(begun, 'main');
+		await publishing(identity, execution.id, { commands: [], outcomes: { 'lint-core': ['unlisted'] } });
+		const ledger = await ledgerOf(repository, execution.id);
+		const record = ledger.records[0];
+		if (!record) throw new Error('Missing publication');
+		record.status = state === 'published' ? { state: 'published', url: '' } : {
+			state: 'uploaded',
+			holder: `${identity.runId}:1`,
+			since: Date.now() - 20 * 60_000,
+			checkedAt: Date.now() - 20 * 60_000,
+		};
+		const storage = world.coordinators.instance(String(repository.id)).storage;
+		await storage.put(`ledger:${execution.id}`, ledger);
+		const current = await world.coordinator(repository).execution(execution.id);
+		if (!current) throw new Error('Missing execution');
+		current.publications = current.publications.map(publication => ({ ...publication, outcome: 'pending' }));
+		await storage.put(`execution:${execution.id}`, current);
+		const calls = world.network.mark();
+		await world.wait(61_000);
+		expect((await ledgerOf(repository, execution.id)).records[0]?.status.state).toBe('published');
+		expect((await executionOf(repository, execution.id)).publications.map(publication => publication.outcome)).toEqual([
+			'succeeded',
+		]);
+		expect(world.network.since(calls).filter(call => call.host === 'crates.io')).toEqual([]);
+	}, 60_000);
+}

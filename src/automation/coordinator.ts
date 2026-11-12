@@ -15,7 +15,7 @@ import {
 	validatePublicationIdentity,
 } from '@/automation/execution';
 import { logFailure, logRecovered } from '@/automation/failure-log';
-import { RepositoryGateway } from '@/automation/github';
+import { GitHubRejection, RepositoryGateway } from '@/automation/github';
 import type { GitHubRelease, WorkflowRun } from '@/automation/github-resources';
 import {
 	checkRunsSchema,
@@ -182,6 +182,13 @@ const dependencyPoll = 30_000;
 const automaticRetries = 3;
 const defaultRetryAfter = 60_000;
 const metadataReason = 'Fix the package metadata before this release: ';
+function missingReceipt(execution: Execution, record: LedgerRecord): boolean {
+	return released(record)
+		&& !execution.publications.some(publication =>
+			publication.id === record.id && publication.version === record.version && publication.outcome === 'succeeded'
+			&& (!record.digest || publication.digest === record.digest)
+		);
+}
 function reopened(publications: Publication[]): Publication[] {
 	return publications.map(publication =>
 		publication.outcome === 'succeeded' ? publication : { ...publication, outcome: 'pending' as const }
@@ -1352,9 +1359,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private acceptedUploads(ledger: Ledger): Effect.Effect<Ledger, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			let next = ledger;
+			const execution = yield* this.get(ledger.executionId);
 			for (const record of ledger.records) {
-				if (record.status.state !== 'uploaded') continue;
-				next = yield* this.settleRecord(next, publish(record, record.status.holder, '', Date.now()));
+				if (record.status.state === 'uploaded') {
+					next = yield* this.settleRecord(next, publish(record, record.status.holder, '', Date.now()));
+				} else if (missingReceipt(execution, record)) {
+					const publication = publicationOf(record);
+					if (publication) yield* this.recordPublication(ledger.executionId, record, publication);
+				}
 			}
 			return next;
 		});
@@ -1562,6 +1574,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 			}
 			const accepted: Publication[] = [];
+			let release = execution.release;
 			for (const reported of publications) {
 				const identity = yield* Effect.fromResult(parseIdentity(reported, execution.repository)).pipe(
 					Effect.mapError(toDomainError),
@@ -1574,11 +1587,28 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (publication.manager === 'github-release' && publication.name !== execution.repository) {
 					return yield* precondition('Release repository mismatch');
 				}
+				if (publication.manager === 'github-release' && publication.outcome === 'succeeded') {
+					if (release?.tag && release.tag !== publication.version) {
+						return yield* precondition('Release identity changed');
+					}
+					release = {
+						id: `github:${execution.repositoryId}:tag:${publication.version}`,
+						repository: { id: execution.repositoryId, name: execution.repository },
+						stream: execution.stream,
+						commit: execution.sourceSha,
+						version: execution.version ?? publication.version.replace(/^v/, ''),
+						artifacts: [],
+						publications: [],
+						...release,
+						tag: publication.version,
+					};
+				}
 				accepted.push(publication);
 			}
 			const merged = yield* mergeArtifacts(execution.artifacts, artifacts, workflow.outputs);
 			const next = {
 				...execution,
+				release,
 				publications: yield* mergePublications(execution.publications, accepted),
 				artifacts: merged,
 			};
@@ -2778,7 +2808,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				attempts: execution.attempts + 1,
 				dispatchedAt: Date.now(),
 			});
-			const response = yield* gateway.read(
+			const dispatched = yield* Effect.result(gateway.read(
 				dispatchSchema,
 				`/repos/${execution.repository}/actions/workflows/${workflow.file}/dispatches`,
 				token,
@@ -2792,8 +2822,20 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						beepboop_execution_id: execution.id,
 					},
 				},
-			);
-			const runId = response?.workflow_run_id;
+			));
+			if (dispatched._tag === 'Failure') {
+				const error = dispatched.failure;
+				if (!(error instanceof GitHubRejection)) return yield* error;
+				yield* this.put({
+					...execution,
+					state: error.retryAt === undefined ? 'failed' : 'ready',
+					attempts: execution.attempts + 1,
+					notBefore: error.retryAt,
+					reason: `Dispatch rejected: ${decodeError(error)}`,
+				});
+				return;
+			}
+			const runId = dispatched.success?.workflow_run_id;
 			if (runId) {
 				yield* this.put({ ...execution, state: 'running', attempts: execution.attempts + 1, runId });
 			}
@@ -2818,7 +2860,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const storedLedger = yield* this.read(`ledger:${execution.id}`);
 			if (storedLedger !== undefined) {
 				const ledger = yield* fromSync(() => ledgerSchema.parse(storedLedger));
-				if (ledger.records.some(record => record.status.state === 'uploaded')) {
+				if (ledger.records.some(record => record.status.state === 'uploaded' || missingReceipt(execution, record))) {
 					yield* this.acceptedUploads(ledger);
 					return 'continue' as const;
 				}

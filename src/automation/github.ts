@@ -34,10 +34,10 @@ import { buildSnapshot } from '@/automation/snapshot';
 import type { BotIdentity } from '@/automation/token';
 import type { AutoMerge, Edit, PreparationResult, Snapshot } from '@/automation/types';
 import { legacyDiagnostic } from '@/contract/diagnostics';
-import type { DomainError } from '@/contract/errors';
-import { domainError, invalid, precondition, upstream } from '@/contract/errors';
+import { DomainError, domainError, invalid, precondition, upstream } from '@/contract/errors';
 import { githubApiVersion } from '@/contract/http';
 import type { AutoMergeMethod } from '@/contract/setup-terms';
+import { parseRetryAfter } from '@/domain/http-date';
 import { fromPromise, fromSync } from '@/failure';
 import { decode, sha, textSchema } from '@/model';
 
@@ -120,6 +120,12 @@ function detailOf(body: string): string {
 
 class ServerError extends Data.TaggedError('ServerError')<{ readonly response: Response }> {}
 
+export class GitHubRejection extends DomainError {
+	constructor(readonly status: number, message: string, readonly retryAt?: number) {
+		super({ problem: { code: 'precondition', diagnostics: [legacyDiagnostic(message)] }, message });
+	}
+}
+
 export const gitHubRequest = Effect.fn('GitHub.request')(function*(
 	transport: Fetcher,
 	path: string,
@@ -171,6 +177,12 @@ export const gitHubRequest = Effect.fn('GitHub.request')(function*(
 	if (response.status === 404 && method === 'GET') return null;
 	if (!response.ok) {
 		const message = yield* failed(response);
+		if (response.status >= 400 && response.status < 500 && response.status !== 408) {
+			const retryAt = response.status === 429 || response.status === 403 && rateLimited(message)
+				? parseRetryAfter(response.headers.get('retry-after') ?? '', Date.now()) ?? Date.now() + 60_000
+				: undefined;
+			return yield* new GitHubRejection(response.status, message, retryAt);
+		}
 		return yield* response.status >= 500
 			? upstream('github', message)
 			: domainError({ code: 'precondition', diagnostics: [legacyDiagnostic(message)] }, message);

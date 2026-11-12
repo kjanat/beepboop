@@ -122,3 +122,101 @@ test('publishing a GitHub release succeeds when later release and tag reads are 
 	expect(confirmations).toEqual([]);
 	expect(refsCompletion.filter(call => /\/(?:git\/ref|git\/tags)|graphql/.test(call.url))).toEqual([]);
 }, 30_000);
+
+for (const outcome of [429, 422, 'reset', 204] as const) {
+	test(`dispatch recovery distinguishes ${outcome} from an accepted write`, async () => {
+		const { discoveredWidget } = await import('@root/test/support/client.ts');
+		const { prepareRelease, approvePromotion } = await import('@root/test/support/releases.ts');
+		const { passChecks } = await import('@root/test/support/repositories.ts');
+		const session = await world.cliSession();
+		const repository = await discoveredWidget(world, session);
+		const api = bearer(world, session);
+		await prepareRelease(api, { repositoryId: repository.id, stream: 'main', version: '1.1.0' });
+		await world.wait(20_000);
+		const merged = world.github.merge(repository, one(repository.pulls, 'preparation PR').number);
+		passChecks(repository, merged.sha);
+		await world.push(repository);
+		await world.wait(1_000);
+		let requests = 0;
+		world.network.serve('api.github.com', request => {
+			if (request.method === 'POST' && new URL(request.url).pathname.endsWith('/dispatches')) {
+				requests++;
+				if (requests === 1) {
+					if (outcome === 'reset') throw new Error('ECONNRESET');
+					if (outcome === 204) return new Response(null, { status: 204 });
+					return Response.json(
+						{ message: 'Dispatch rejected' },
+						{ status: outcome, headers: { 'Retry-After': '120' } },
+					);
+				}
+			}
+			return world.github.handle(request);
+		});
+		await approvePromotion(api, merged.sha);
+		await world.wait(16_000);
+		expect(requests).toBe(1);
+		const first = await only(api, 'promote');
+		expect(first.state).toBe(outcome === 429 ? 'ready' : outcome === 422 ? 'failed' : 'dispatching');
+		await world.wait(61_000);
+		expect(requests).toBe(1);
+		await world.wait(121_000);
+		expect(requests).toBe(outcome === 429 ? 2 : 1);
+		expect((await only(api, 'promote')).state).toBe(
+			outcome === 429 ? 'running' : outcome === 422 ? 'failed' : 'uncertain',
+		);
+	});
+}
+
+test('a pending manual WinGet receipt is recovered without creating another PR', async () => {
+	const { Store } = await import('@/automation/store');
+	const { WinGetService } = await import('@/automation/winget');
+	const plan = {
+		id: 'receipt',
+		repositoryId: 42,
+		repository: 'octo/widget',
+		releaseId: 10,
+		tag: 'v1.1.0',
+		version: '1.1.0',
+		packageIdentifier: 'Octo.Widget',
+		sourceSha: 'a'.repeat(40),
+		configurationSha: 'b'.repeat(40),
+		files: {},
+		digest: 'c'.repeat(64),
+		releaseUrl: 'https://github.com/octo/widget/releases/tag/v1.1.0',
+	};
+	await world.db.prepare('INSERT INTO winget_submissions(id,package,version,document,updated_at) VALUES(?,?,?,?,?)')
+		.bind(
+			plan.id,
+			plan.packageIdentifier,
+			plan.version,
+			JSON.stringify({ plan, state: 'pending', updatedAt: Date.now() }),
+			Date.now(),
+		).run();
+	const calls: string[] = [];
+	world.network.serve('api.github.com', request => {
+		calls.push(`${request.method} ${request.url}`);
+		const url = new URL(request.url);
+		if (request.method === 'GET' && url.pathname === '/repos/microsoft/winget-pkgs/pulls') {
+			expect(url.searchParams.get('head')).toBe('octo:winget/Octo.Widget/1.1.0/cccccccccccccccc');
+			return Response.json([{
+				number: 123,
+				html_url: 'https://github.com/microsoft/winget-pkgs/pull/123',
+				head: { sha: 'd'.repeat(40) },
+				state: 'open',
+				merged_at: null,
+			}]);
+		}
+		return Response.json({ message: 'Unexpected request' }, { status: 403 });
+	});
+	const service = new WinGetService(new Store(world.db), new RepositoryGateway(world.env, 42), {
+		WINGET_GITHUB_TOKEN: 'test-token',
+		WINGET_FORK: 'octo/winget-pkgs',
+	});
+	await Effect.runPromise(service.reconcile());
+	expect(await Effect.runPromise(service.get(plan.id))).toMatchObject({
+		state: 'open',
+		number: 123,
+		url: 'https://github.com/microsoft/winget-pkgs/pull/123',
+	});
+	expect(calls).toHaveLength(1);
+});

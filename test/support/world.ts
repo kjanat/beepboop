@@ -256,7 +256,10 @@ export function eachWorld(bind: (world: World) => void): void {
 		bind(current);
 	});
 	afterEach(async () => {
-		await drainBackground();
-		if (current) current.dispose();
+		try {
+			await drainBackground();
+		} finally {
+			if (current) current.dispose();
+		}
 	});
 }
