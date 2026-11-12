@@ -6,7 +6,7 @@ import { suggestedCommands, ungenerated } from '@/automation/setup-defaults';
 import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
 import { failure } from '@/cli/output';
 import type { BinaryBuild } from '@/contract/setup';
-import { binaryTargets, setupChoicesSchema, setupStream } from '@/contract/setup';
+import { defaultBinaryTargets, setupChoicesSchema, setupStream } from '@/contract/setup';
 import type { ChoicesField, StreamField, WorkflowField } from '@/contract/setup-fields';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
 import {
@@ -215,7 +215,7 @@ function binaries(
 			targets: targets
 				? [...targets]
 				: existing?.targets
-					?? binaryTargets.filter(target =>
+					?? defaultBinaryTargets.filter(target =>
 						chosen.every(build =>
 							candidates.find(candidate => candidate.build.name === build.name)?.targets.includes(target) ?? true
 						)

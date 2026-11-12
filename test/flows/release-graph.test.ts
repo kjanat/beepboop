@@ -217,7 +217,7 @@ describe('release streams', () => {
 		expect(target(main, 'winget').downstream).toBe(true);
 		expect(target(main, 'winget').required).toBe(false);
 		expect(main.versionGroup.carriers).toEqual([
-			{ path: 'distribution/npm/facade/package.json', status: 'inferred' },
+			{ path: 'distribution/npm/targets.json', status: 'derived' },
 		]);
 		expect(target(stream(graph, 'sdk'), 'crates-io').names).toEqual(['actionlint-extension-api']);
 		const moved = await load('actionlint-go-identity-model');
@@ -2965,6 +2965,17 @@ describe('release streams', () => {
 		expect(main?.observe?.find(binding => binding.file === 'release.yml')?.ref).toBe('refs/tags/v*');
 		expect(main?.observe?.find(binding => binding.file === 'release.yml')?.publications).toEqual([
 			'pkg:github/kjanat/actionlint',
+			'pkg:npm/%40kjanat-actionlint/actionlint-darwin-arm64',
+			'pkg:npm/%40kjanat-actionlint/actionlint-darwin-x64',
+			'pkg:npm/%40kjanat-actionlint/actionlint-freebsd-ia32',
+			'pkg:npm/%40kjanat-actionlint/actionlint-freebsd-x64',
+			'pkg:npm/%40kjanat-actionlint/actionlint-linux-arm',
+			'pkg:npm/%40kjanat-actionlint/actionlint-linux-arm64',
+			'pkg:npm/%40kjanat-actionlint/actionlint-linux-ia32',
+			'pkg:npm/%40kjanat-actionlint/actionlint-linux-x64',
+			'pkg:npm/%40kjanat-actionlint/actionlint-win32-arm64',
+			'pkg:npm/%40kjanat-actionlint/actionlint-win32-ia32',
+			'pkg:npm/%40kjanat-actionlint/actionlint-win32-x64',
 			'pkg:npm/%40kjanat/actionlint',
 		]);
 		const prepare = main?.observe?.find(binding => binding.file === 'release-prepare.yml');

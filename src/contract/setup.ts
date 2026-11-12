@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { supportedTargets } from '@/contract/binary-platforms';
 import {
 	jobKeyPattern,
 	refPattern,
@@ -17,13 +18,31 @@ import {
 } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
 
-export const binaryTargets = [
+export const defaultBinaryTargets = [
 	'linux-amd64',
 	'linux-arm64',
 	'darwin-amd64',
 	'darwin-arm64',
 	'windows-amd64',
 	'windows-arm64',
+] as const;
+export const binaryTargets = [
+	...defaultBinaryTargets,
+	'android-amd64',
+	'android-arm64',
+	'android-arm',
+	'android-386',
+	'freebsd-amd64',
+	'freebsd-386',
+	'freebsd-arm64',
+	'netbsd-amd64',
+	'netbsd-arm64',
+	'openbsd-amd64',
+	'openbsd-arm64',
+	'dragonfly-amd64',
+	'solaris-amd64',
+	'illumos-amd64',
+	'aix-ppc64',
 ] as const;
 export type BinaryTarget = (typeof binaryTargets)[number];
 const identifier = z.string().regex(identifierPattern);
@@ -78,8 +97,20 @@ export const binaries = z.object({
 	targets: z.array(z.enum(binaryTargets)).min(1).refine(
 		targets => new Set(targets).size === targets.length,
 		'Targets must be unique',
-	).default([...binaryTargets]),
-}).strict();
+	).default([...defaultBinaryTargets]),
+}).strict().superRefine((release, context) => {
+	for (const build of release.builds) {
+		for (const target of release.targets) {
+			if (!supportedTargets(build.toolchain).includes(target)) {
+				context.addIssue({
+					code: 'custom',
+					path: ['targets'],
+					message: `${build.toolchain} has no build recipe for ${target}`,
+				});
+			}
+		}
+	}
+});
 export type BinaryRelease = z.infer<typeof binaries>;
 export interface BinaryCandidate {
 	package: string;

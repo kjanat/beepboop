@@ -785,7 +785,22 @@
 									"darwin-amd64",
 									"darwin-arm64",
 									"windows-amd64",
-									"windows-arm64"
+									"windows-arm64",
+									"android-amd64",
+									"android-arm64",
+									"android-arm",
+									"android-386",
+									"freebsd-amd64",
+									"freebsd-386",
+									"freebsd-arm64",
+									"netbsd-amd64",
+									"netbsd-arm64",
+									"openbsd-amd64",
+									"openbsd-arm64",
+									"dragonfly-amd64",
+									"solaris-amd64",
+									"illumos-amd64",
+									"aix-ppc64"
 								]
 							}
 						}

@@ -2,7 +2,8 @@ import { expect, test } from 'bun:test';
 import { binaryCandidates, unixDependencies } from '@/automation/binary-candidates';
 import { discover } from '@/automation/managers';
 import type { Snapshot } from '@/automation/types';
-import { binaryTargets, leftOut } from '@/contract/setup';
+import { supportedTargets } from '@/contract/binary-platforms';
+import { leftOut } from '@/contract/setup';
 
 function snapshot(files: Record<string, string>, extra: string[] = []): Snapshot {
 	return {
@@ -24,12 +25,12 @@ test('a crate with src/main.rs or a [[bin]] target proposes each binary for ever
 		{
 			package: 'pkg:cargo/tool',
 			build: { toolchain: 'cargo', name: 'helper', manifest: 'Cargo.toml', asset: '{name}-{rust.target}{ext}' },
-			targets: [...binaryTargets],
+			targets: supportedTargets('cargo'),
 		},
 		{
 			package: 'pkg:cargo/tool',
 			build: { toolchain: 'cargo', name: 'tool', manifest: 'Cargo.toml', asset: '{name}-{rust.target}{ext}' },
-			targets: [...binaryTargets],
+			targets: supportedTargets('cargo'),
 		},
 	]);
 	expect(candidates({ 'Cargo.toml': '[package]\nname = "library"\nversion = "1.0.0"\n' }, ['src/lib.rs'])).toEqual([]);
@@ -39,7 +40,7 @@ test('an unconditional Unix-only dependency leaves out the Windows targets and s
 	const [candidate] = candidates({
 		'Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\n\n[dependencies]\nnix = "0.30"\n',
 	}, ['src/main.rs']);
-	expect(candidate?.targets).toEqual(['linux-amd64', 'linux-arm64', 'darwin-amd64', 'darwin-arm64']);
+	expect(candidate?.targets).toEqual(supportedTargets('cargo').filter(target => !target.startsWith('windows-')));
 	expect(candidate?.reason).toBe('tool depends on nix, which build only for Unix');
 	expect(candidate && leftOut(candidate)).toBe(
 		'tool leaves out Windows: tool depends on nix, which build only for Unix.',

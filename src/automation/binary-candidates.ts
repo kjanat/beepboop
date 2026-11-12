@@ -3,8 +3,8 @@ import { parse as parseToml } from 'smol-toml';
 import { object } from '@/automation/managers/helpers';
 import { packageId } from '@/automation/package-identity';
 import type { Inventory, Package, Snapshot } from '@/automation/types';
+import { supportedTargets } from '@/contract/binary-platforms';
 import type { BinaryCandidate } from '@/contract/setup';
-import { binaryTargets } from '@/contract/setup';
 import { parentDirectory, walkRelative } from '@/relative-path';
 
 const unixCrates = new Set(['nix', 'uzers', 'users', 'termios', 'daemonize', 'fork', 'pty-process']);
@@ -66,7 +66,8 @@ export function unixDependencies(snapshot: Snapshot, manifest: string, seen = ne
 
 function cargoCandidates(snapshot: Snapshot, pkg: Package): BinaryCandidate[] {
 	const unix = unixDependencies(snapshot, pkg.manifest);
-	const targets = unix.length ? binaryTargets.filter(target => !target.startsWith('windows-')) : [...binaryTargets];
+	const available = supportedTargets('cargo');
+	const targets = unix.length ? available.filter(target => !target.startsWith('windows-')) : available;
 	return cargoBinaryNames(snapshot, pkg.manifest).map(name => ({
 		package: packageId(pkg),
 		build: { toolchain: 'cargo', name, manifest: pkg.manifest, asset: '{name}-{rust.target}{ext}' },
@@ -103,7 +104,7 @@ function goCandidates(snapshot: Snapshot, pkg: Package): BinaryCandidate[] {
 				package: relative ? `./${relative}` : '.',
 				asset: '{name}-{go.os}-{go.arch}{ext}',
 			},
-			targets: [...binaryTargets],
+			targets: supportedTargets('go'),
 		}];
 	});
 }

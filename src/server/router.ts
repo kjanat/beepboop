@@ -1,3 +1,4 @@
+import targetsSchema from '@root/schemas/targets.v1.json';
 import schema from '@root/schemas/v1.json' with { type: 'json' };
 import { Effect } from 'effect';
 import { authRoute } from '@/automation/auth';
@@ -22,6 +23,7 @@ export const rawRoutes: ReadonlyMap<string, RawRoute> = new Map<string, RawRoute
 		methods: ['GET'],
 		serve: () => Effect.sync(() => Response.json({ service: 'beepboop', mode: 'automation' })),
 	}],
+	['/schema/targets.v1.json', { methods: ['GET'], serve: () => Effect.sync(() => Response.json(targetsSchema)) }],
 	['/schema/v1.json', { methods: ['GET'], serve: () => Effect.sync(() => Response.json(schema)) }],
 	['/webhooks/github', { methods: ['POST'], serve: (request, service) => service.webhook(request) }],
 ]);
