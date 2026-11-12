@@ -1331,7 +1331,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (report.outcome === 'failed') {
 				return yield* this.settled(ledger, fail(record, holder, report.message, false, now));
 			}
-			return yield* this.settled(ledger, upload(record, holder, now));
+			if (report.moveOn) return yield* this.settled(ledger, upload(record, holder, now));
+			return {
+				kind: 'wait' as const,
+				until: now + verificationPoll,
+				reason: `${registries[record.manager]} has not confirmed ${label(record)} yet`,
+			};
 		}));
 	}
 	private confirmUpload(

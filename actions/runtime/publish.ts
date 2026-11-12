@@ -9,7 +9,7 @@ import { Effect } from 'effect';
 import { z } from 'zod';
 import { githubSecretNamePattern } from '@/contract/ids.ts';
 import type { LedgerEntry, LedgerPackage } from '@/contract/ledger.ts';
-import { claimStep, nextStep, publishWaitMinutes, reportStep } from '@/contract/ledger.ts';
+import { claimStep, nextStep, publishWaitMinutes, settledStep } from '@/contract/ledger.ts';
 import { filled, lacking, licenseFile, readmeFile } from '@/contract/package-metadata.ts';
 import { textSchema } from '@/model.ts';
 import { sha256Hex } from '@/sha256.ts';
@@ -295,7 +295,11 @@ export function publishPackages(runner: Runner): Effect.Effect<LedgerEntry[], In
 	const claim = (pkg: LedgerPackage, digest: string) =>
 		step('/api/workflow/publish/claim', claimStep, { purl: pkg.purl, digest });
 	const report = (pkg: LedgerPackage, outcome: Report) =>
-		step('/api/workflow/publish/report', reportStep, { purl: pkg.purl, ...outcome });
+		step('/api/workflow/publish/report', settledStep, {
+			purl: pkg.purl,
+			...outcome,
+			...(outcome.outcome === 'published' ? { moveOn: true } : {}),
+		});
 	const show = (entry: LedgerEntry) => `${entry.state}${entry.error ? ` (${entry.error})` : ''}`;
 	let secrets: Record<string, string> | undefined;
 	const environment = Effect.gen(function*() {

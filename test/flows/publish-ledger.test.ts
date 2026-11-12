@@ -1105,6 +1105,24 @@ test('every upload goes out before a dependent waits for its dependency to be li
 	]);
 }, 60_000);
 
+test('a report from an earlier publish action still waits for the registry listing', async () => {
+	const { begun } = await released({ main: [core] });
+	const { execution, identity } = started(begun, 'main');
+	const purl = 'pkg:cargo/lint-core@1.1.0';
+	const replies = await withIdentity(world, identity, async () => {
+		const claim = { executionId: execution.id, purl, digest: checksum('lint-core', '1.1.0') };
+		await Effect.runPromise(workflowCall(world, '/api/workflow/publish/claim', claim));
+		const report = { executionId: execution.id, purl, outcome: 'published' };
+		const waiting = await Effect.runPromise(workflowCall(world, '/api/workflow/publish/report', report));
+		registry.set('lint-core@1.1.0', checksum('lint-core', '1.1.0'));
+		return [waiting, await Effect.runPromise(workflowCall(world, '/api/workflow/publish/report', report))];
+	});
+	expect(replies).toMatchObject([
+		{ kind: 'wait', reason: 'crates.io has not confirmed lint-core 1.1.0 yet' },
+		{ kind: 'settled', entry: { purl, state: 'published' } },
+	]);
+}, 60_000);
+
 test('an upload the registry never lists becomes retryable 15 minutes later, without a second upload', async () => {
 	const { repository, begun } = await released({ main: [core] });
 	const { execution, identity } = started(begun, 'main');
