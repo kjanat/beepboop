@@ -1,6 +1,7 @@
 import { Document } from 'yaml';
 import { renderWorkflow } from '@/automation/setup-actions';
 import { expression } from '@/automation/setup-binaries';
+import { hostedRunners } from '@/contract/runners';
 
 export function startWorkflow(streams: readonly string[], actionsRevision: string | undefined): string {
 	const [first = 'main'] = streams;
@@ -24,7 +25,7 @@ export function startWorkflow(streams: readonly string[], actionsRevision: strin
 			permissions: {},
 			jobs: {
 				start: {
-					'runs-on': 'ubuntu-latest',
+					'runs-on': hostedRunners.linux,
 					permissions: { 'id-token': 'write' },
 					steps: [{
 						uses: `kjanat/beepboop/actions/release@${actionsRevision ?? 'v1'}`,

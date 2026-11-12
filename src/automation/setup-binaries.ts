@@ -1,6 +1,7 @@
 import { object } from '@/automation/managers/helpers';
 import { pinned } from '@/automation/setup-actions';
 import { platforms } from '@/contract/binary-platforms';
+import { hostedRunners } from '@/contract/runners';
 import type { BinaryBuild, BinaryRelease, BinaryTarget } from '@/contract/setup';
 
 // GitHub expressions, evaluated by Actions rather than JavaScript.
@@ -70,7 +71,7 @@ function toolchain(build: BinaryBuild, targets: readonly BinaryTarget[]): Toolch
 	if (build.toolchain === 'go') {
 		return {
 			label: `${matrix('goos')}/${matrix('goarch')}`,
-			runner: 'ubuntu-latest',
+			runner: hostedRunners.linux,
 			include: targets.map(target => ({
 				goos: platforms[target].names['go.os'],
 				goarch: platforms[target].names['go.arch'],
@@ -111,7 +112,7 @@ function toolchain(build: BinaryBuild, targets: readonly BinaryTarget[]): Toolch
 				? [{
 					uses: pinned('install'),
 					if: "matrix.builder == 'cross'",
-					with: { tool: 'cross@0.2.5', fallback: 'none' },
+					with: { tool: 'cross', fallback: 'none' },
 				}]
 				: []),
 		],
@@ -119,10 +120,10 @@ function toolchain(build: BinaryBuild, targets: readonly BinaryTarget[]): Toolch
 			env: {
 				...Object.fromEntries(targets.flatMap(target => {
 					const platform = platforms[target];
-					return platform.image
+					return platform.cargo === 'cross'
 						? [[
 							`CROSS_TARGET_${platform.names['rust.target'].toUpperCase().replaceAll('-', '_')}_IMAGE`,
-							platform.image,
+							`ghcr.io/cross-rs/${platform.names['rust.target']}:main`,
 						]]
 						: [];
 				})),
@@ -201,7 +202,7 @@ echo "name=\${TEMPLATE//\\{version\\}/\${VERSION}}" >> "\${GITHUB_OUTPUT}"
 	return Object.fromEntries([
 		[beginJobId, {
 			name: 'Begin release',
-			'runs-on': 'ubuntu-latest',
+			'runs-on': hostedRunners.linux,
 			'timeout-minutes': 10,
 			permissions: { contents: 'read', 'id-token': 'write' },
 			outputs: { sourceSha: expression(`${context}.sourceSha`), version: expression(`${context}.version`) },

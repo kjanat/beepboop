@@ -1289,10 +1289,15 @@ The builds live in the binding's `setup.binaries`:
 }
 ```
 
+Generated jobs use Ubuntu 26.04 (including ARM64), macOS 26 (including Intel),
+Windows Server 2025 with Visual Studio 2026, and Windows 11 ARM64 with Visual
+Studio 2026. The labels are centralized in `src/contract/runners.ts` and follow
+the [official runner image list](https://github.com/actions/runner-images#available-images).
+
 `targets` defaults to all six platforms. Setup generates a `begin` job and one
 matrix job per build. The `begin` job alone holds `id-token: write`. It runs
 `begin` and outputs the release commit and version. Go builds cross-compile on
-`ubuntu-latest` with `CGO_ENABLED=0` and set `main.version`. Cargo builds run on
+`ubuntu-26.04` with `CGO_ENABLED=0` and set `main.version`. Cargo builds run on
 native runners for the default targets with `cargo auditable build`, which embeds the
 crates each binary was built with. `taiki-e/install-action` installs
 `cargo-auditable` from its checksummed release. Each build job has only
@@ -1304,10 +1309,11 @@ Additional Go targets use the same pure-Go cross-build recipe: FreeBSD (amd64,
 (amd64), Solaris (amd64), illumos (amd64) and AIX (ppc64). Target names use Go
 architecture names, for example `freebsd-amd64` and `aix-ppc64`.
 
-Additional Cargo targets use `cross@0.2.5` on Ubuntu: Android (amd64, arm64,
+Additional Cargo targets use the current `cross` release on Ubuntu: Android (amd64, arm64,
 arm and 386), FreeBSD (amd64 and 386) and NetBSD (amd64). Cross supplies the
-foreign compiler and sysroot. Android and NetBSD images are pinned by digest to newer toolchain
-builds because the 0.2.5 images lack libraries required by current Rust. These builds use `cross build`; their release
+foreign compiler and sysroot. Cross images use upstream `main` tags for every
+cross target; the generator adds no Cross version or image digest pins.
+These builds use `cross build`; their release
 artifacts still receive checksums, an SBOM and attestations, but have no embedded
 cargo-auditable dependency metadata. Native legs in a mixed matrix keep
 `cargo auditable build`. Go Android builds require a C toolchain and are not

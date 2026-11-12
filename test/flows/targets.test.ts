@@ -131,7 +131,7 @@ test('new Go platforms generate executable cross-build jobs and retain existing 
 	});
 	const jobs = binaryJobs(release, {}, 'release');
 	expect(jobs['build-tool']).toMatchObject({
-		'runs-on': 'ubuntu-latest',
+		'runs-on': 'ubuntu-26.04',
 		strategy: {
 			matrix: {
 				include: release.targets.map(target => ({
@@ -163,10 +163,11 @@ test('Rust Android and BSD targets install cross and preserve native auditable b
 			},
 		},
 	});
-	expect(JSON.stringify(job)).toContain('cross@0.2.5');
+	expect(JSON.stringify(job)).toContain('"tool":"cross"');
+	expect(JSON.stringify(job)).not.toContain('cross@');
 	expect(JSON.stringify(job)).toContain('CROSS_TARGET_AARCH64_LINUX_ANDROID_IMAGE');
 	expect(JSON.stringify(job)).toContain('CROSS_TARGET_X86_64_UNKNOWN_NETBSD_IMAGE');
-	expect(JSON.stringify(job)).toContain('ghcr.io/cross-rs/aarch64-linux-android@sha256:');
+	expect(JSON.stringify(job)).toContain('ghcr.io/cross-rs/aarch64-linux-android:main');
 	expect(JSON.stringify(job)).toContain('cargo auditable build');
 	expect(JSON.stringify(job)).toContain('cross build');
 	for (const release of [{ builds: [go], targets: ['android-arm64'] }, { builds: [cargo], targets: ['aix-ppc64'] }]) {

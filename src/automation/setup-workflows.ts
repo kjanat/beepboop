@@ -27,6 +27,7 @@ import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { identifierPattern } from '@/contract/ids';
 import { ledgerManagers, publishWaitMinutes } from '@/contract/ledger';
+import { hostedRunners } from '@/contract/runners';
 import { toDomainError } from '@/failure';
 
 const prepareMinutes = 120;
@@ -185,7 +186,7 @@ export function integrateReleaseWorkflow(
 			return fail('shared workflows need separate preparation and publication jobs guarded by beepboop_operation');
 		}
 		for (const job of [prepareJob, publishJob]) {
-			if (!existing) document.setIn(['jobs', job], document.createNode({ 'runs-on': 'ubuntu-latest', steps: [] }));
+			if (!existing) document.setIn(['jobs', job], document.createNode({ 'runs-on': hostedRunners.linux, steps: [] }));
 			else document.deleteIn(['jobs', job, 'if']);
 		}
 		const jobsNode = document.get('jobs', true);
@@ -440,7 +441,7 @@ function integrate(
 			'id-token': 'write',
 		});
 	}
-	if (!original) document.setIn(['jobs', jobName, 'runs-on'], 'ubuntu-latest');
+	if (!original) document.setIn(['jobs', jobName, 'runs-on'], hostedRunners.linux);
 	let steps = Array.isArray(job.steps) ? job.steps.map(object) : [];
 	const uploaded = steps.findIndex(step => step.id === 'beepboop_binaries');
 	if (!binaries && operation === 'promote' && uploaded >= 0) {
