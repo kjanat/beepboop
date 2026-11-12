@@ -130,6 +130,8 @@ export const platforms: Record<BinaryTarget, Platform> = {
 	'netbsd-amd64': {
 		...platform(['netbsd', 'amd64'], 'x86_64-unknown-netbsd', ['netbsd', 'x64'], ['NetBSD', 'x86_64'], 'ubuntu-latest'),
 		cargo: 'cross',
+		image:
+			'ghcr.io/cross-rs/x86_64-unknown-netbsd@sha256:fa7a1ced50a0029423d7b806782538ce496f84070fba0028b7bbd8ccdf494a9f',
 		go: true,
 	},
 	'netbsd-arm64': {

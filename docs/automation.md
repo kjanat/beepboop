@@ -1306,8 +1306,8 @@ architecture names, for example `freebsd-amd64` and `aix-ppc64`.
 
 Additional Cargo targets use `cross@0.2.5` on Ubuntu: Android (amd64, arm64,
 arm and 386), FreeBSD (amd64 and 386) and NetBSD (amd64). Cross supplies the
-foreign compiler and sysroot. Android images are pinned by digest to newer NDK
-builds because the 0.2.5 images fail to link current Rust. These builds use `cross build`; their release
+foreign compiler and sysroot. Android and NetBSD images are pinned by digest to newer toolchain
+builds because the 0.2.5 images lack libraries required by current Rust. These builds use `cross build`; their release
 artifacts still receive checksums, an SBOM and attestations, but have no embedded
 cargo-auditable dependency metadata. Native legs in a mixed matrix keep
 `cargo auditable build`. Go Android builds require a C toolchain and are not

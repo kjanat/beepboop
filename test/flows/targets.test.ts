@@ -165,6 +165,7 @@ test('Rust Android and BSD targets install cross and preserve native auditable b
 	});
 	expect(JSON.stringify(job)).toContain('cross@0.2.5');
 	expect(JSON.stringify(job)).toContain('CROSS_TARGET_AARCH64_LINUX_ANDROID_IMAGE');
+	expect(JSON.stringify(job)).toContain('CROSS_TARGET_X86_64_UNKNOWN_NETBSD_IMAGE');
 	expect(JSON.stringify(job)).toContain('ghcr.io/cross-rs/aarch64-linux-android@sha256:');
 	expect(JSON.stringify(job)).toContain('cargo auditable build');
 	expect(JSON.stringify(job)).toContain('cross build');
