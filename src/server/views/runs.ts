@@ -37,13 +37,19 @@ function publicationHref(
 ): string | undefined {
 	const destination = managerSpec(publication.manager).destinations?.primary;
 	if (!destination) return undefined;
-	return registryHref(destination, publication.name, published ? publication.version : undefined, run.repository);
+	const version = published
+		? publication.manager === 'goreleaser' ? `v${publication.version.replace(/^v/, '')}` : publication.version
+		: undefined;
+	return registryHref(destination, publication.name, version, run.repository);
 }
 
 function releaseLink(run: Execution): { tag: string; href: string } | undefined {
 	if (run.state !== 'succeeded') return undefined;
 	const parsed = semVer.safeParse(run.version);
 	const tag = run.release?.tag
+		?? run.publications.find(publication =>
+			publication.manager === 'github-release' && publication.outcome === 'succeeded'
+		)?.version
 		?? (parsed.success && (run.workflow?.refs || run.operation === 'promote')
 			? tagFor(run.workflow?.refs ?? defaultTagPolicy, parsed.data)
 			: undefined);

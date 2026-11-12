@@ -51,10 +51,14 @@ function input(request: Request, method: Method): Effect.Effect<unknown, DomainE
 	);
 }
 
-export function dispatch(request: Request, env: AutomationBindings): Effect.Effect<Response, DomainError> {
+export function dispatch(
+	request: Request,
+	env: AutomationBindings,
+	defer?: (work: Promise<void>) => void,
+): Effect.Effect<Response, DomainError> {
 	return Effect.gen(function*() {
 		const path = new URL(request.url).pathname;
-		const service = new AutomationService(env);
+		const service = new AutomationService(env, defer);
 		const raw = rawRoutes.get(path);
 		if (raw) {
 			if (!raw.methods.some(method => method === request.method)) return yield* methodNotAllowed(raw.methods);

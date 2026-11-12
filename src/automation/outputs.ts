@@ -30,7 +30,7 @@ export function outputsComplete(execution: Execution): boolean {
 	);
 }
 
-/** Only consume outputs already verified by the producer's report endpoint. */
+/** Only consume outputs recorded by the authenticated producer's report endpoint. */
 export function resolveInputs(
 	execution: Execution,
 	dependencies: Execution[],

@@ -1,6 +1,7 @@
 import { Context, Data, Effect, Layer, Schedule } from 'effect';
 import { importPKCS8, SignJWT } from 'jose';
 import { z } from 'zod';
+import { logRecovered } from '@/automation/failure-log';
 import type { GitObject } from '@/automation/github-resources';
 import {
 	accessTokenSchema,
@@ -33,10 +34,10 @@ import { buildSnapshot } from '@/automation/snapshot';
 import type { BotIdentity } from '@/automation/token';
 import type { AutoMerge, Edit, PreparationResult, Snapshot } from '@/automation/types';
 import { legacyDiagnostic } from '@/contract/diagnostics';
-import type { DomainError } from '@/contract/errors';
-import { domainError, invalid, precondition, upstream } from '@/contract/errors';
+import { DomainError, domainError, invalid, precondition, upstream } from '@/contract/errors';
 import { githubApiVersion } from '@/contract/http';
 import type { AutoMergeMethod } from '@/contract/setup-terms';
+import { parseRetryAfter } from '@/domain/http-date';
 import { fromPromise, fromSync } from '@/failure';
 import { decode, sha, textSchema } from '@/model';
 
@@ -119,6 +120,12 @@ function detailOf(body: string): string {
 
 class ServerError extends Data.TaggedError('ServerError')<{ readonly response: Response }> {}
 
+export class GitHubRejection extends DomainError {
+	constructor(readonly status: number, message: string, readonly retryAt?: number) {
+		super({ problem: { code: 'precondition', diagnostics: [legacyDiagnostic(message)] }, message });
+	}
+}
+
 export const gitHubRequest = Effect.fn('GitHub.request')(function*(
 	transport: Fetcher,
 	path: string,
@@ -170,6 +177,12 @@ export const gitHubRequest = Effect.fn('GitHub.request')(function*(
 	if (response.status === 404 && method === 'GET') return null;
 	if (!response.ok) {
 		const message = yield* failed(response);
+		if (response.status >= 400 && response.status < 500 && response.status !== 408) {
+			const retryAt = response.status === 429 || response.status === 403 && rateLimited(message)
+				? parseRetryAfter(response.headers.get('retry-after') ?? '', Date.now()) ?? Date.now() + 60_000
+				: undefined;
+			return yield* new GitHubRejection(response.status, message, retryAt);
+		}
 		return yield* response.status >= 500
 			? upstream('github', message)
 			: domainError({ code: 'precondition', diagnostics: [legacyDiagnostic(message)] }, message);
@@ -186,6 +199,7 @@ export class RepositoryGateway {
 		private credentials: Credentials,
 		private ownerId: number,
 		private transport: Fetcher = fetch,
+		private defer?: (work: Promise<void>) => void,
 	) {}
 	call(path: string, token: string, method = 'GET', body?: unknown): Effect.Effect<unknown, DomainError> {
 		return gitHubRequest(this.transport, path, token, method, body);
@@ -1081,6 +1095,11 @@ export class RepositoryGateway {
 				);
 			}
 			const existing = pulls[0];
+			const validBase = (pull: z.output<typeof pullSchema>) =>
+				pull.base.ref === snapshot.repository.defaultBranch ? Effect.void : precondition(
+					`The preparation PR #${pull.number} targets ${pull.base.ref}; retarget it to ${snapshot.repository.defaultBranch} to continue this release.`,
+				);
+			if (existing) yield* validBase(existing);
 			const previousBody = typeof existing?.body === 'string' ? existing.body : '';
 			const pull = existing
 				? yield* self.read(pullSchema, `/repos/${name}/pulls/${existing.number}`, token, 'PATCH', {
@@ -1099,61 +1118,47 @@ export class RepositoryGateway {
 					head: branch,
 					base: snapshot.repository.defaultBranch,
 				});
-			const available = yield* self.read(z.array(namedSchema), `/repos/${name}/labels?per_page=100`, token);
-			let labels = available
-				.map((label) => label.name)
-				.filter((name) =>
-					['maintenance', 'type:maintenance', 'area:release', 'release', 'dependencies'].includes(
-						name,
-					)
+			yield* validBase(pull);
+			const metadata = Effect.gen(function*() {
+				const available = yield* self.read(z.array(namedSchema), `/repos/${name}/labels?per_page=100`, token);
+				let labels = available
+					.map((label) => label.name)
+					.filter((name) =>
+						['maintenance', 'type:maintenance', 'area:release', 'release', 'dependencies'].includes(
+							name,
+						)
+					);
+				labels = labels.filter((name) => name !== 'dependencies');
+				if (!labels.length) {
+					yield* self.call(`/repos/${name}/labels`, token, 'POST', {
+						name: 'maintenance',
+						color: '527a67',
+						description: 'Repository maintenance and release automation',
+					});
+					labels = ['maintenance'];
+				}
+				yield* self.read(
+					z.array(namedSchema),
+					`/repos/${name}/issues/${pull.number}/labels`,
+					token,
+					'POST',
+					{ labels },
 				);
-			labels = labels.filter((name) => name !== 'dependencies');
-			if (!labels.length) {
-				yield* self.call(`/repos/${name}/labels`, token, 'POST', {
-					name: 'maintenance',
-					color: '527a67',
-					description: 'Repository maintenance and release automation',
-				});
-				labels = ['maintenance'];
-			}
-			const applied = (yield* self.read(
-				z.array(namedSchema),
-				`/repos/${name}/issues/${pull.number}/labels`,
-				token,
-				'POST',
-				{ labels },
-			)).map((label) => label.name);
-			if (labels.some((name) => !applied.includes(name))) {
-				return yield* precondition('Pull request labels were not confirmed');
-			}
-			const maintainer = yield* self.ownerLogin();
-			if (!pull.assignees?.some(assignee => assignee.login === maintainer)) {
-				yield* self.call(`/repos/${name}/issues/${pull.number}/assignees`, token, 'POST', {
-					assignees: [maintainer],
-				});
-			}
-			if (!pull.requested_reviewers?.some(reviewer => reviewer.login === maintainer)) {
-				yield* self.call(`/repos/${name}/pulls/${pull.number}/requested_reviewers`, token, 'POST', {
-					reviewers: [maintainer],
-				});
-			}
-			const actual = yield* self.read(
-				gitRefSchema,
-				`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`,
-				token,
-			);
-			let current = pull;
-			for (let attempt = 0; attempt < 5 && current.head.sha !== head; attempt++) {
-				yield* Effect.sleep('1 second');
-				current = yield* self.read(pullSchema, `/repos/${name}/pulls/${pull.number}`, token);
-			}
-			if (
-				actual.object.sha !== head || current.head.sha !== head
-				|| current.base.ref !== snapshot.repository.defaultBranch
-			) {
-				return yield* precondition('Preparation pull request identity changed');
-			}
-			return { url: current.html_url, head };
+				const maintainer = yield* self.ownerLogin();
+				if (!pull.assignees?.some(assignee => assignee.login === maintainer)) {
+					yield* self.call(`/repos/${name}/issues/${pull.number}/assignees`, token, 'POST', {
+						assignees: [maintainer],
+					});
+				}
+				if (!pull.requested_reviewers?.some(reviewer => reviewer.login === maintainer)) {
+					yield* self.call(`/repos/${name}/pulls/${pull.number}/requested_reviewers`, token, 'POST', {
+						reviewers: [maintainer],
+					});
+				}
+			}).pipe(logRecovered('pull-request.metadata-failed', { repository: name, number: pull.number }));
+			if (self.defer) self.defer(Effect.runPromiseWith(yield* Effect.context())(metadata));
+			else yield* metadata;
+			return { url: pull.html_url, head };
 		});
 	}
 }

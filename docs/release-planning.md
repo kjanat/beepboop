@@ -140,21 +140,24 @@ example, this stream builds a Windows archive before generating WinGet manifests
 
 Upload each output as a GitHub Actions artifact whose name equals its declared
 output ID. Report its `id`, `runId`, `name`, `digest` (the `sha256:` digest), and
-`expiresAt` through the report action. Beepboop checks these values against GitHub
-and the authenticated producer run. A successful workflow with a missing output
+`expiresAt` through the report action. Beepboop binds the report to the authenticated producer run and validates its
+identity, digest format, expiry, and output declarations. The successful upload
+receipt supplies the artifact identity. A successful workflow with a missing output
 stays blocked. Reporting a changed identity or two artifacts for one output fails.
 
 `artifactInputs` adds producer operations to `needs` automatically. Before dispatch
 and registration, Beepboop requires the producer to have succeeded against the same
 repository, stream, event, configuration revision, and source revision. The begin
-action's `context.resolvedInputs` contains the exact producer execution, version,
-platform, and verified artifact identity. Download that artifact by its ID and run;
+action returns a compact `context` with release metadata and a `contextFile`
+path. Read that runner-local JSON file for `resolvedInputs`, which contains the
+exact producer execution, version, platform, and reported artifact identity. Download that artifact by its ID and run;
 do not search for the newest artifact with a matching name. Expired artifacts block
 consumption.
 
 The `platform` field describes an output's target. The repository workflow still
 selects its runner and build commands. Output `kind` declares the expected format;
-Beepboop verifies the artifact container identity and digest, not its file contents.
+The producer reports the artifact container identity and digest returned by its
+upload. Beepboop records that receipt without another GitHub request.
 
 ## Additional version files
 

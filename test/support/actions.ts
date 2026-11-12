@@ -29,6 +29,7 @@ export interface ActionResult {
 	outputs: Record<string, string>;
 	environment: string;
 	logs: string[];
+	context?: string;
 }
 
 async function withRuntime<A>(prefix: string, work: (directory: string) => Promise<A>): Promise<A> {
@@ -63,6 +64,7 @@ export function runAction(
 		return withEnvironment({
 			SERVICE_ORIGIN: world.env.APPLICATION_ORIGIN,
 			...tokenRequest,
+			RUNNER_TEMP: directory,
 			GITHUB_OUTPUT: output,
 			GITHUB_ENV: environment,
 			...variables,
@@ -70,7 +72,14 @@ export function runAction(
 			process.argv[2] = mode;
 			return withConsoleLog((...values: unknown[]) => logs.push(values.map(String).join(' ')), async () => {
 				await import(`${client}?run=${++invocation}`);
-				return { outputs: outputs(output), environment: readFileSync(environment, 'utf8'), logs };
+				const result = outputs(output);
+				const contextFile = result.context ? JSON.parse(result.context).contextFile : undefined;
+				return {
+					outputs: result,
+					environment: readFileSync(environment, 'utf8'),
+					logs,
+					...(contextFile ? { context: readFileSync(contextFile, 'utf8') } : {}),
+				};
 			});
 		});
 	});

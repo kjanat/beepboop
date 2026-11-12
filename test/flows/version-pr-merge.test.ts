@@ -154,7 +154,7 @@ const rateLimits = {
 		Response.json({ message: 'You have exceeded a secondary rate limit. Please wait a few minutes.' }, { status: 403 }),
 };
 for (const [kind, limit] of Object.entries(rateLimits)) {
-	test(`an auto-merge request hit by a ${kind} is retried and never recorded as refused`, async () => {
+	test(`an auto-merge request hit by a ${kind} leaves preparation successful and never records a refusal`, async () => {
 		let limited = true;
 		intercept((path, body) => {
 			if (!limited || !autoMergeCall(path, body)) return undefined;
@@ -164,8 +164,11 @@ for (const [kind, limit] of Object.entries(rateLimits)) {
 		const { repository, api } = await managed('squash');
 		expect(limited).toBe(false);
 		const waiting = await only(api, 'prepare');
-		expect([waiting.state, waiting.managed?.result?.autoMerge]).toEqual(['uncertain', undefined]);
-		expect(waiting.reason).toMatch(/rate limit/i);
+		expect([waiting.state, waiting.managed?.result?.autoMerge]).toEqual(['succeeded', {
+			method: 'squash',
+			state: 'enabled',
+		}]);
+		expect(waiting.reason).toBeUndefined();
 		await world.wait(4 * 60_000);
 		const pull = one(repository.pulls, 'version PR');
 		expect([pull.state, pull.autoMerge, pull.comments]).toEqual(['open', 'SQUASH', undefined]);
@@ -203,4 +206,25 @@ test('the setup PR describes a versionPrMerge change with the sentence of its ne
 		'- `main`',
 		`  - \`prepare.versionPrMerge\`: none → \`rebase\`. ${versionPrMergeSentences.rebase}`,
 	]);
+});
+
+test('a preparation rerun never receives the stored before and after lockfile copies', async () => {
+	const { repository, api, executionId } = await versionPr('manual', true, { workflow: { file: 'prepare.yml' } });
+	await submitted(repository, executionId, api);
+	const execution = await world.coordinator(repository).execution(executionId);
+	if (!execution?.prepared) throw new Error('Missing prepared execution');
+	execution.prepared.edits.push({ path: 'Cargo.lock', before: 'before'.repeat(50_000), after: 'after'.repeat(50_000) });
+	await world.coordinators.instance(String(repository.id)).storage.put(`execution:${executionId}`, execution);
+	const run = one(repository.runs.filter(entry => entry.path === '.github/workflows/prepare.yml'), 'prepare run');
+	run.attempt = 2;
+	const begun = await begin(
+		world,
+		{ ...runIdentity(repository, run, 'prepare.yml'), attempt: 2 },
+		executionId,
+		'main',
+		'prepare',
+	);
+	expect(begun.outputs.context?.length).toBeLessThan(2_000);
+	expect(JSON.parse(begun.context ?? '{}').prepared).toBeUndefined();
+	expect(begun.context).not.toContain('beforebeforebefore');
 });

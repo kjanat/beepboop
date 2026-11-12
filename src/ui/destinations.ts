@@ -36,7 +36,7 @@ function storedOutcomes(pkg: Package): RegistryOutcome[] {
 }
 
 export function packageDestinations(pkg: Package, repository: string): DestinationEntry[] {
-	return storedOutcomes(pkg).map(outcome => registryEntry(outcome, pkg.name, repository));
+	return storedOutcomes(pkg).map(outcome => registryEntry(outcome, pkg, repository));
 }
 
 export function primaryStatus(pkg: Package): string {
@@ -88,10 +88,13 @@ function channelEntry(outcome: ChannelOutcome): DestinationEntry {
 	};
 }
 
-function registryEntry(outcome: RegistryOutcome, name: string, repository: string): DestinationEntry {
+function registryEntry(outcome: RegistryOutcome, pkg: Package, repository: string): DestinationEntry {
 	if (isChannelOutcome(outcome)) return channelEntry(outcome);
 	const { label } = registryDestination(outcome.destination);
 	const version = outcome.state === 'published' ? outcome.version : undefined;
-	const href = registryHref(outcome.destination, name, version, repository);
+	const reference = pkg.manager === 'goreleaser' && outcome.destination === 'github-release' && version
+		? `v${version.replace(/^v/, '')}`
+		: version;
+	const href = registryHref(outcome.destination, pkg.name, reference, repository);
 	return { label, status: stateLabel(outcome), ...(href ? { href } : {}) };
 }

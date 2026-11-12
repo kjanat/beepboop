@@ -382,6 +382,7 @@ export class WinGetService {
 				let pull = pulls[0];
 				if (!pull) {
 					let ref = yield* self.gateway.read(gitRefSchema.nullable(), `/repos/${fork}/git/ref/heads/${branch}`, token);
+					const recovered = ref !== null;
 					if (!ref) {
 						const base = yield* self.gateway.read(
 							gitRefSchema,
@@ -413,26 +414,31 @@ export class WinGetService {
 							sha: created.sha,
 						});
 					}
-					// Verify a recovered branch before opening a PR after an interrupted attempt.
-					const headSha = ref.object.sha;
-					const comparison = yield* self.gateway.read(
-						branchComparison,
-						`/repos/${upstream}/compare/${encodeURIComponent(baseBranch)}...${encodeURIComponent(head)}`,
-						token,
-					);
-					const changed = comparison.files;
-					if (
-						changed.length !== Object.keys(plan.files).length
-						|| changed.some(file => file.status !== 'added' || !Object.hasOwn(plan.files, String(file.filename)))
-					) return yield* precondition('Submission branch contains unexpected changes');
-					for (const [path, content] of Object.entries(plan.files)) {
-						const file = yield* self.gateway.read(fileContent, `/repos/${fork}/contents/${path}?ref=${headSha}`, token);
-						const decoded = yield* fromSync(() =>
-							new TextDecoder().decode(
-								Uint8Array.from(atob(file.content.replaceAll('\n', '')), c => c.charCodeAt(0)),
-							)
+					if (recovered) {
+						const headSha = ref.object.sha;
+						const comparison = yield* self.gateway.read(
+							branchComparison,
+							`/repos/${upstream}/compare/${encodeURIComponent(baseBranch)}...${encodeURIComponent(head)}`,
+							token,
 						);
-						if (decoded !== content) return yield* precondition('Submission branch content changed');
+						const changed = comparison.files;
+						if (
+							changed.length !== Object.keys(plan.files).length
+							|| changed.some(file => file.status !== 'added' || !Object.hasOwn(plan.files, String(file.filename)))
+						) return yield* precondition('Submission branch contains unexpected changes');
+						for (const [path, content] of Object.entries(plan.files)) {
+							const file = yield* self.gateway.read(
+								fileContent,
+								`/repos/${fork}/contents/${path}?ref=${headSha}`,
+								token,
+							);
+							const decoded = yield* fromSync(() =>
+								new TextDecoder().decode(
+									Uint8Array.from(atob(file.content.replaceAll('\n', '')), c => c.charCodeAt(0)),
+								)
+							);
+							if (decoded !== content) return yield* precondition('Submission branch content changed');
+						}
 					}
 					pull = yield* self.gateway.read(winGetPull, `/repos/${upstream}/pulls`, token, 'POST', {
 						title: `New version: ${plan.packageIdentifier} ${plan.version}`,
@@ -444,8 +450,13 @@ export class WinGetService {
 					});
 				}
 				const result = self.pullState(plan, pull);
-				yield* self.save(result, lease);
-				yield* self.store.audit('winget', 'winget.submit', result.url ?? plan.id);
+				attempted = result;
+				yield* self.save(result, lease).pipe(
+					logRecovered('winget.save-failed', { submissionId: plan.id, url: result.url }),
+				);
+				yield* self.store.audit('winget', 'winget.submit', result.url ?? plan.id).pipe(
+					logRecovered('winget.audit-failed', { submissionId: plan.id }),
+				);
 				return result;
 			}).pipe(
 				Effect.tapError(error =>
@@ -473,7 +484,8 @@ export class WinGetService {
 	}
 	private openSubmissions(after: string | null): Effect.Effect<{ id: string; document: string }[], DomainError> {
 		return this.sql.all(
-			"SELECT id,document FROM winget_submissions WHERE json_extract(document,'$.state')='open' AND (? IS NULL OR id>?) ORDER BY id LIMIT 100",
+			"SELECT id,document FROM winget_submissions WHERE json_extract(document,'$.state') IN ('open','pending') AND lease_until<? AND (? IS NULL OR id>?) ORDER BY id LIMIT 100",
+			Date.now(),
 			after,
 			after,
 		).pipe(Effect.flatMap(rows => parse(z.array(submissionRow), rows)));
@@ -481,8 +493,30 @@ export class WinGetService {
 	private reconcileOne(saved: WinGetSubmission): Effect.Effect<void, DomainError> {
 		const self = this;
 		return Effect.gen(function*() {
-			if (!saved.number || saved.state !== 'open') return;
+			if (!['pending', 'open'].includes(saved.state)) return;
 			const token = yield* Effect.fromResult(text(self.env.WINGET_GITHUB_TOKEN));
+			if (!saved.number) {
+				const fork = yield* Effect.fromResult(text(self.env.WINGET_FORK));
+				const plan = saved.plan;
+				const branch = `winget/${plan.packageIdentifier}/${plan.version}/${plan.digest.slice(0, 16)}`;
+				const head = `${fork.split('/')[0]}:${branch}`;
+				const pulls = yield* self.gateway.read(
+					z.array(winGetPull),
+					`/repos/${upstream}/pulls?state=all&head=${encodeURIComponent(head)}&per_page=100`,
+					token,
+				);
+				if (pulls.length > 1) return yield* precondition('Multiple matching WinGet pull requests');
+				const recovered = pulls[0];
+				if (!recovered) return;
+				yield* self.sql.run(
+					'UPDATE winget_submissions SET document=?,updated_at=? WHERE id=? AND lease_until<?',
+					JSON.stringify(self.pullState(plan, recovered)),
+					Date.now(),
+					plan.id,
+					Date.now(),
+				);
+				return;
+			}
 			const pull = yield* self.gateway.read(winGetPull, `/repos/${upstream}/pulls/${saved.number}`, token);
 			const next = self.pullState(saved.plan, pull);
 			const checks = yield* self.gateway.read(

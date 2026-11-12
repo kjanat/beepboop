@@ -21,7 +21,7 @@ outputs:
     description: execution-id
     value: ${{ steps.client.outputs.execution-id }}
   context:
-    description: context
+    description: Release metadata and a contextFile path for the full runner-local context
     value: ${{ steps.client.outputs.context }}
 runs:
   using: composite

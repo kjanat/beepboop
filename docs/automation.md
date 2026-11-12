@@ -437,27 +437,23 @@ npm publishes with `--provenance` when the workflow event names a public
 repository. The channel is the stream's `channels.stable`, or
 `channels.prerelease` for a prerelease version.
 
-Beepboop checks the registry before each claim and after each report. It
-compares the crates.io checksum, the PyPI sha256 or the npm integrity with the
-claimed digest. Only a 404 response proves that a version is missing. Beepboop
-treats any other registry error as unknown and asks again.
+Beepboop checks the registry before each claim. It compares the crates.io
+checksum, the PyPI sha256 or the npm integrity with the claimed digest. A 404
+allows a new upload; other registry errors leave the claim waiting. When a
+publisher reports failure, a registry lookup can recover an upload whose
+response was lost.
 
-A registry can accept an upload minutes before it lists the version. When the
-registry does not list the claimed digest at the report, the package is
-`uploaded` and the action goes on to the next package. Beepboop checks each
-uploaded package again every 15 seconds while the run asks for packages, and
-every minute after the run ends. A package that depends on an uploaded package
-waits until the registry lists it. The action ends once every package is
-uploaded or settled, and the execution stays `verifying` until the registry
-lists every uploaded package. A package the registry still does not list 15
-minutes after its upload becomes `failed-retryable`.
+A successful publisher result settles the claimed package as `published`
+immediately and unblocks dependent packages. Registry listing delays and later
+outages cannot downgrade that success. Stored `uploaded` records from earlier
+versions are also treated as accepted publications and migrated to `published`.
 
 | State              | Meaning                                                                         |
 | ------------------ | ------------------------------------------------------------------------------- |
 | `planned`          | Waits for its turn.                                                             |
 | `claimed`          | A run holds a 15-minute lease and publishes it.                                 |
-| `uploaded`         | The registry accepted the upload and does not list it yet.                      |
-| `published`        | The registry lists the claimed digest after the publish.                        |
+| `uploaded`         | Accepted upload from an earlier version; migrated to `published`.               |
+| `published`        | The publisher successfully uploaded the claimed package.                        |
 | `reused`           | The registry already listed the claimed digest.                                 |
 | `rate-limited`     | The registry refused it until the `Retry-After` time.                           |
 | `failed-retryable` | The build, the publish or a dependency failed. The next run attempt retries it. |
@@ -653,8 +649,7 @@ any tool that the runner lacks.
    `actions/publish`, which publishes the packages and reports each outcome.
    `actions/token` then issues an App token, and `actions/publish-refs` pushes
    the version tag. When the Worker has the `SIGNER` binding, Beepboop signs
-   that tag. Beepboop completes the release after the run, once it has verified
-   every required publication.
+   that tag. Beepboop completes the release after the run, once every required publication has a successful result.
 10. In a new promote workflow with a `tagPrefix`, setup adds
     `actions/publish-release` after `actions/publish-refs`. It publishes the
     GitHub release for the tag. A promote choice with `binaries` also uploads
@@ -1204,10 +1199,11 @@ gpg-signing-service, Beepboop signs every new version tag regardless of
 `signed`. It signs the planned tag object with that key's primary user ID as
 tagger. The action writes the tag with `git mktag` and checks it with
 `git verify-tag`. Without the binding, `signed: true` makes the action run
-`git tag -s` with the runner's own Git signing key. GitHub must report a signed
-version tag as verified. For that, the key's email must belong to the repository
-owner's GitHub account. Alias operations should depend on the publication
-operations they distribute.
+`git tag -s` with the runner's own Git signing key. Completion records the
+authenticated action's successful push result without waiting for GitHub's
+verified flag. For GitHub to display a verified signature, the key's email must
+belong to the repository owner's GitHub account. Alias operations should depend
+on the publication operations they distribute.
 
 A version operation also tags every Go module that the stream lists in
 `packages`. Each tag uses the module's own prefix, such as `go/v1.2.3` for a

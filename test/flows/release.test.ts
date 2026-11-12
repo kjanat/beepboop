@@ -24,6 +24,7 @@ import { needingUser, releaseSetSummaries, releaseSummaries, runStateLabel } fro
 import { overview } from '@/server/views/overview';
 import { pipeline, runCard } from '@/server/views/runs';
 import { releaseStatus } from '@/server/views/tone';
+import { packageDestinations } from '@/ui/destinations';
 
 type Component = Parameters<experimental_AstroContainer['renderToString']>[0];
 const componentModule = z.object({ default: z.custom<Component>(value => typeof value === 'function') });
@@ -84,9 +85,17 @@ test('a managed release travels from discovery to a verified publication', async
 		EXECUTION_ID: promotion.id,
 		PUBLICATIONS: JSON.stringify([
 			{ id: 'pkg:npm/widget', manager: 'npm', name: 'widget', version: '1.1.0', outcome: 'succeeded' },
+			{
+				id: 'github-release:octo/widget',
+				manager: 'github-release',
+				name: repository.name,
+				version: 'v1.1.0',
+				outcome: 'succeeded',
+			},
 		]),
 	});
 	expect(reported.outputs.result).toContain('"outcome":"succeeded"');
+	expect((await only(api, 'promote')).release).toMatchObject({ tag: 'v1.1.0', commit: merged.sha });
 
 	run.status = 'completed';
 	run.conclusion = 'success';
@@ -108,6 +117,9 @@ test('a managed release travels from discovery to a verified publication', async
 	const preparation = executions.find(execution => execution.operation === 'prepare');
 	expect(preparation?.eventId).toBe(`plan:${text(plan.body, 'planId')}`);
 	const succeeded = await only(api, 'promote');
+	expect(journal.find(entry => entry.key.startsWith('release-event:'))?.value).toMatchObject({
+		release: { tag: 'v1.1.0', commit: merged.sha },
+	});
 	expect(journal.filter(entry => entry.key.startsWith('release-event:')).map(entry => entry.key)).toEqual([
 		`release-event:${releaseEventId({ ...succeeded, version: '1.1.0' })}`,
 	]);
@@ -364,103 +376,135 @@ test('a run cancelled after a newer release started stays below the unfinished r
 	await page.happyDOM.close();
 });
 
-test('the runs page shows one release as a row of stages with one publication table', async () => {
-	const { finished } = await finishedPromotion('pending');
-	const run = (id: string, at: number, changes: Partial<Execution>): Execution => ({
-		...finished,
-		id,
-		createdAt: at,
-		updatedAt: at,
-		publications: [],
-		...changes,
-	});
-	const [npm] = finished.publications;
-	if (!npm) throw new Error('No publication');
-	const { identity: _identity, ...bare } = npm;
-	const wheel = {
-		...bare,
-		identity: { type: 'pypi', name: 'widget', version: npm.version },
-		id: 'pkg:pypi/widget',
-		manager: 'pypi' as const,
-		name: 'widget',
-		required: false,
-	};
-	const notes = {
-		...bare,
-		identity: { type: 'github', namespace: 'octo', name: 'widget', version: 'widget-v1.1.0' },
-		id: 'pkg:github/octo/widget',
-		manager: 'github-release' as const,
-		name: 'octo/widget',
-		version: 'widget-v1.1.0',
-		required: false,
-	};
-	const readable = [
-		run('crates', 5, { operation: 'crates', state: 'running', runId: 44, runAttempt: 1 }),
-		run('release', 4, {
-			operation: 'release',
-			state: 'failed',
-			runId: 43,
-			runAttempt: 2,
-			publications: [{ ...wheel, outcome: 'succeeded' }, { ...notes, outcome: 'succeeded' }],
-		}),
-		run('promote', 3, { state: 'succeeded', publications: [{ ...npm, outcome: 'succeeded' }] }),
-		run('promote-cancelled', 2, { state: 'cancelled' }),
-		run('prepare', 1, { operation: 'prepare', state: 'succeeded' }),
-	];
-	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Runs.astro'));
-	const container = await experimental_AstroContainer.create();
-	const html = await container.renderToString(componentModule.parse(loaded).default, {
-		props: { data: { section: 'runs', executions: { readable, unreadable: [] }, repositories: [] } },
-		request: new Request(`${origin}/runs`),
-	});
-	const page = new Window();
-	page.document.body.innerHTML = html;
-	const all = (selector: string) => [...page.document.querySelectorAll(selector)];
-	const words = (selector: string) => all(selector).map(element => element.textContent.replace(/\s+/g, ' ').trim());
-	expect(all('.release-pipeline')).toHaveLength(1);
-	expect(words('.release-pipeline > .section-heading h2')).toEqual([`Version ${finished.version}`]);
-	expect(
-		all('.pipeline li').map(
-			stage => [stage.querySelector('a, span > span')?.textContent, stage.getAttribute('data-tone')],
-		),
-	)
-		.toEqual([
-			['prepare', 'ok'],
-			['promote', 'ok'],
-			['release', 'error'],
-			['crates', 'active'],
-		]);
-	expect(words('.pipeline li small')).toEqual([
-		'succeeded ↗',
-		'succeeded, attempt 2 ↗',
-		'failed, attempt 2 ↗',
-		'running ↗',
-	]);
-	expect(all('.pipeline li .arrow').map(link => link.getAttribute('href')).slice(2)).toEqual([
-		'https://github.com/octo/widget/actions/runs/43',
-		'https://github.com/octo/widget/actions/runs/44',
-	]);
-	const table = all('.release-pipeline > .release-detail > .table-scroll tbody tr').map(row => [
-		row.querySelector('td')?.firstChild?.textContent?.trim(),
-		row.querySelector('.arrow')?.getAttribute('href'),
-		row.querySelector('.badge')?.textContent,
-	]);
-	expect(table).toEqual([
-		['widget on npm', `https://www.npmjs.com/package/widget/v/${finished.version}`, 'succeeded'],
-		['widget on PyPI', `https://pypi.org/project/widget/${finished.version}/`, 'succeeded'],
-		['octo/widget on GitHub release', 'https://github.com/octo/widget/releases/tag/widget-v1.1.0', 'succeeded'],
-	]);
-	expect(all('.stage-detail').map(detail => [detail.querySelector('.run-card')?.id, detail.hasAttribute('open')]))
-		.toEqual([
-			['prepare', false],
-			['promote', false],
-			['promote-cancelled', false],
-			['release', true],
-			['crates', true],
-		]);
-	expect(page.document.body.textContent).not.toContain('Still to publish');
-	await page.happyDOM.close();
+test('GitHub package links preserve literal tags while GoReleaser keeps its version convention', () => {
+	for (
+		const [manager, version, tag] of [
+			['github-release', '0.62.0', '0.62.0'],
+			['github-release', 'v0.62.0', 'v0.62.0'],
+			['github-release', 'tools/v0.62.0', 'tools/v0.62.0'],
+			['goreleaser', '0.62.0', 'v0.62.0'],
+		] as const
+	) {
+		const entries = packageDestinations({
+			manager,
+			name: 'kjanat/kprint',
+			published: version,
+			manifest: '',
+			versionSource: '',
+			publication: { kind: 'registry' },
+			dependencies: [],
+		}, 'kjanat/kprint');
+		expect(entries[0]?.href).toBe(`https://github.com/kjanat/kprint/releases/tag/${tag}`);
+	}
 });
+
+test.each(['1.1.0', 'v1.1.0', 'widget-v1.1.0', 'tools/v1.1.0'])(
+	'the runs page preserves release tag %s in its publication table and run card',
+	async tag => {
+		const { finished } = await finishedPromotion('pending');
+		const run = (id: string, at: number, changes: Partial<Execution>): Execution => ({
+			...finished,
+			id,
+			createdAt: at,
+			updatedAt: at,
+			publications: [],
+			...changes,
+		});
+		const [npm] = finished.publications;
+		if (!npm) throw new Error('No publication');
+		const { identity: _identity, ...bare } = npm;
+		const wheel = {
+			...bare,
+			identity: { type: 'pypi', name: 'widget', version: npm.version },
+			id: 'pkg:pypi/widget',
+			manager: 'pypi' as const,
+			name: 'widget',
+			required: false,
+		};
+		const notes = {
+			...bare,
+			identity: { type: 'github', namespace: 'octo', name: 'widget', version: tag },
+			id: 'pkg:github/octo/widget',
+			manager: 'github-release' as const,
+			name: 'octo/widget',
+			version: tag,
+			required: false,
+		};
+		const readable = [
+			run('crates', 5, { operation: 'crates', state: 'running', runId: 44, runAttempt: 1 }),
+			run('release', 4, {
+				operation: 'release',
+				state: 'failed',
+				runId: 43,
+				runAttempt: 2,
+				publications: [{ ...wheel, outcome: 'succeeded' }, { ...notes, outcome: 'succeeded' }],
+			}),
+			run('promote', 3, { state: 'succeeded', publications: [{ ...npm, outcome: 'succeeded' }] }),
+			run('promote-cancelled', 2, { state: 'cancelled' }),
+			run('prepare', 1, { operation: 'prepare', state: 'succeeded' }),
+		];
+		const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Runs.astro'));
+		const container = await experimental_AstroContainer.create();
+		const html = await container.renderToString(componentModule.parse(loaded).default, {
+			props: { data: { section: 'runs', executions: { readable, unreadable: [] }, repositories: [] } },
+			request: new Request(`${origin}/runs`),
+		});
+		const page = new Window();
+		page.document.body.innerHTML = html;
+		const all = (selector: string) => [...page.document.querySelectorAll(selector)];
+		const words = (selector: string) => all(selector).map(element => element.textContent.replace(/\s+/g, ' ').trim());
+		expect(all('.release-pipeline')).toHaveLength(1);
+		expect(words('.release-pipeline > .section-heading h2')).toEqual([`Version ${finished.version}`]);
+		expect(
+			all('.pipeline li').map(
+				stage => [stage.querySelector('a, span > span')?.textContent, stage.getAttribute('data-tone')],
+			),
+		)
+			.toEqual([
+				['prepare', 'ok'],
+				['promote', 'ok'],
+				['release', 'error'],
+				['crates', 'active'],
+			]);
+		expect(words('.pipeline li small')).toEqual([
+			'succeeded ↗',
+			'succeeded, attempt 2 ↗',
+			'failed, attempt 2 ↗',
+			'running ↗',
+		]);
+		expect(all('.pipeline li .arrow').map(link => link.getAttribute('href')).slice(2)).toEqual([
+			'https://github.com/octo/widget/actions/runs/43',
+			'https://github.com/octo/widget/actions/runs/44',
+		]);
+		const table = all('.release-pipeline > .release-detail > .table-scroll tbody tr').map(row => [
+			row.querySelector('td')?.firstChild?.textContent?.trim(),
+			row.querySelector('.arrow')?.getAttribute('href'),
+			row.querySelector('.badge')?.textContent,
+		]);
+		expect(table).toEqual([
+			['widget on npm', `https://www.npmjs.com/package/widget/v/${finished.version}`, 'succeeded'],
+			['widget on PyPI', `https://pypi.org/project/widget/${finished.version}/`, 'succeeded'],
+			['octo/widget on GitHub release', `https://github.com/octo/widget/releases/tag/${tag}`, 'succeeded'],
+		]);
+		expect(
+			runCard({ ...finished, state: 'succeeded', publications: [{ ...notes, outcome: 'succeeded' }] }, Date.now())
+				.release,
+		).toEqual({
+			tag,
+			href: `https://github.com/octo/widget/releases/tag/${tag}`,
+		});
+		expect(all('.stage-detail').map(detail => [detail.querySelector('.run-card')?.id, detail.hasAttribute('open')]))
+			.toEqual([
+				['prepare', false],
+				['promote', false],
+				['promote-cancelled', false],
+				['release', true],
+				['crates', true],
+			]);
+		expect(page.document.body.textContent).not.toContain('Still to publish');
+		await page.happyDOM.close();
+	},
+);
 
 test('the runs page filters by repository and folds a settled release', async () => {
 	const { finished } = await finishedPromotion('pending');

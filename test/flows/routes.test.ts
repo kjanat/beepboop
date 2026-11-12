@@ -332,6 +332,53 @@ test('workflow requests retry upstream failures on idempotent endpoints only', a
 		retried(replies(new Response('{', { headers: { 'Content-Type': 'application/json' } })), true, 3),
 	);
 	expect(Result.isFailure(garbled) && garbled.failure.message).toBe('Beepboop answered HTTP 200 with invalid JSON');
+	const interrupted = () =>
+		new Response(
+			new ReadableStream({
+				start(controller) {
+					controller.error(new Error('ECONNRESET while reading response'));
+				},
+			}),
+			{ headers: { 'Content-Type': 'application/json' } },
+		);
+	expect(await settle(retried(replies(interrupted(), Response.json({ accepted: true })), true, 3))).toEqual(
+		Result.succeed({ accepted: true }),
+	);
+});
+
+test('workflow transport failures retry the same idempotent request with fresh timeouts', async () => {
+	const { retried } = await import('@root/actions/runtime/protocol.ts');
+	const { postJson } = await import('@root/actions/runtime/session.ts');
+	for (const [idempotent, failures, expected] of [[true, 1, 2], [true, 3, 3], [false, 1, 1]] as const) {
+		const requests: { body: string; signal: AbortSignal }[] = [];
+		world.network.serve('transport.test', async request => {
+			requests.push({ body: await request.text(), signal: request.signal });
+			if (requests.length <= failures) throw new Error('ECONNRESET: The socket connection was closed unexpectedly');
+			return Response.json({ accepted: true });
+		});
+		const result = await Effect.runPromise(Effect.provide(
+			Effect.gen(function*() {
+				const fiber = yield* Effect.forkChild(Effect.result(retried(
+					postJson(
+						new URL('https://transport.test'),
+						'/api/workflow/publish/report',
+						'test-token',
+						'{"outcome":"published"}',
+					),
+					idempotent,
+					3,
+				)));
+				yield* TestClock.adjust('3 seconds');
+				return yield* Fiber.join(fiber);
+			}),
+			TestClock.layer(),
+		));
+		expect(requests).toHaveLength(expected);
+		expect(requests.every(request => request.body === '{"outcome":"published"}')).toBe(true);
+		expect(new Set(requests.map(request => request.signal)).size).toBe(expected);
+		if (idempotent && failures === 1) expect(result).toEqual(Result.succeed({ accepted: true }));
+		else expect(Result.isFailure(result) && result.failure.message).toContain('ECONNRESET');
+	}
 });
 
 test('a broken Worker configuration fails with a logged internal error', async () => {

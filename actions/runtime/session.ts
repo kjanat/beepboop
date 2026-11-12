@@ -1,8 +1,9 @@
 import type { Invalid } from '@root/actions/runtime/protocol.ts';
-import { ActionFailure, attempt, attemptAsync, fail, required, retried } from '@root/actions/runtime/protocol.ts';
+import { ActionFailure, attempt, fail, required, retried } from '@root/actions/runtime/protocol.ts';
 import { Effect } from 'effect';
 import { bearerHeaders } from '@/contract/http.ts';
 import { record } from '@/model.ts';
+import { errorMessage } from '@/refusal.ts';
 
 export function mask(value: string): Effect.Effect<void> {
 	return Effect.sync(() =>
@@ -11,7 +12,10 @@ export function mask(value: string): Effect.Effect<void> {
 }
 
 export function post(url: URL | string, init: RequestInit): Effect.Effect<Response, ActionFailure> {
-	return attemptAsync(() => fetch(url, { ...init, redirect: 'error' }));
+	return Effect.tryPromise({
+		try: () => fetch(url, { ...init, redirect: 'error' }),
+		catch: error => new ActionFailure({ message: errorMessage(error), retryable: true }),
+	});
 }
 
 export const serviceOrigin: Effect.Effect<URL, ActionFailure> = Effect.gen(function*() {
@@ -53,12 +57,12 @@ export function postJson(
 	token: string,
 	body: string,
 ): Effect.Effect<Response, ActionFailure> {
-	return post(new URL(path, origin), {
+	return Effect.suspend(() => post(new URL(path, origin), {
 		method: 'POST',
 		headers: bearerHeaders(token),
 		body,
 		signal: AbortSignal.timeout(30000),
-	});
+	}));
 }
 
 export function call(

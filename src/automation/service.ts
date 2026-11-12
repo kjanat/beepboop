@@ -84,9 +84,9 @@ export class AutomationService {
 	readonly schedules: ScheduleStore;
 	readonly onboarding: OnboardingStore;
 	readonly changes: ChangeLog;
-	constructor(readonly env: AutomationBindings) {
+	constructor(readonly env: AutomationBindings, readonly defer?: (work: Promise<void>) => void) {
 		this.store = new Store(env.DB);
-		this.gateway = new RepositoryGateway(env, Number(env.OWNER_ID));
+		this.gateway = new RepositoryGateway(env, Number(env.OWNER_ID), fetch, defer);
 		this.credentials = new CredentialStore(env.DB);
 		this.sessions = new SessionStore(env.DB);
 		this.cliSessions = new CLISessionStore(env.DB);

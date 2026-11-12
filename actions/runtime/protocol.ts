@@ -4,7 +4,7 @@ import type { DomainError } from '@/contract/errors.ts';
 import { isJson } from '@/contract/http.ts';
 import { parseRetryAfter } from '@/domain/http-date.ts';
 import { array, record, text } from '@/model.ts';
-import { attemptWith, awaitWith, failWith, rejectWith } from '@/refusal.ts';
+import { attemptWith, awaitWith, errorMessage, failWith, rejectWith } from '@/refusal.ts';
 
 export const modes = [
 	'start',
@@ -31,7 +31,10 @@ export const endpoints = {
 	token: { path: '/api/workflow/token', idempotent: false },
 } as const satisfies Record<Mode, { path: `/api/workflow/${string}`; idempotent: boolean }>;
 
-export class ActionFailure extends Data.TaggedError('ActionFailure')<{ readonly message: string }> {}
+export class ActionFailure extends Data.TaggedError('ActionFailure')<{
+	readonly message: string;
+	readonly retryable?: boolean;
+}> {}
 export type Invalid = ActionFailure | DomainError;
 
 function actionFailure(message: string): ActionFailure {
@@ -168,14 +171,18 @@ export function retried<E>(
 				if (!isJson(response)) return yield* fail(`Beepboop answered HTTP ${response.status} without JSON`);
 				return yield* Effect.tryPromise({
 					try: (): Promise<unknown> => response.json(),
-					catch: () => actionFailure(`Beepboop answered HTTP ${response.status} with invalid JSON`),
+					catch: error =>
+						error instanceof SyntaxError
+							? actionFailure(`Beepboop answered HTTP ${response.status} with invalid JSON`)
+							: new ActionFailure({ message: errorMessage(error), retryable: true }),
 				});
 			}
 			const failure = yield* failureOf(response);
-			if (!failure.retryable || !idempotent || attempt >= attempts) return yield* fail(failure.message);
-			yield* Effect.sleep(1000 * 2 ** (attempt - 1));
-			return yield* once(attempt + 1);
-		});
+			return yield* new ActionFailure(failure);
+		}).pipe(Effect.catchIf(
+			error => error instanceof ActionFailure && error.retryable === true && idempotent && attempt < attempts,
+			() => Effect.sleep(1000 * 2 ** (attempt - 1)).pipe(Effect.andThen(() => once(attempt + 1))),
+		));
 	return once(1);
 }
 

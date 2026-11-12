@@ -1,4 +1,5 @@
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Mode } from '@root/actions/runtime/protocol.ts';
 import {
 	attempt,
@@ -19,7 +20,26 @@ function writeResult(mode: Mode, data: Record<string, unknown>) {
 		if (mode === 'begin') {
 			const id = yield* Effect.fromResult(text(data.id));
 			yield* writeOutput('execution-id', id);
-			yield* writeOutput('context', JSON.stringify(data));
+			const directory = yield* Effect.fromResult(required(process.env, 'RUNNER_TEMP'));
+			const contextFile = join(directory, `release-context-${crypto.randomUUID()}.json`);
+			yield* Effect.fromResult(attempt(() => writeFileSync(contextFile, JSON.stringify(data), { mode: 0o600 })));
+			const { repositoryId, repository, stream, operation, state, version, sourceSha, updatedAt, draftRelease } = data;
+			yield* writeOutput(
+				'context',
+				JSON.stringify({
+					id,
+					repositoryId,
+					repository,
+					stream,
+					operation,
+					state,
+					version,
+					sourceSha,
+					updatedAt,
+					draftRelease,
+					contextFile,
+				}),
+			);
 			const environment = yield* Effect.fromResult(required(process.env, 'GITHUB_ENV'));
 			yield* Effect.fromResult(attempt(() => appendFileSync(environment, `BEEPBOOP_EXECUTION_ID=${id}\n`)));
 		} else if (mode === 'credentials') {

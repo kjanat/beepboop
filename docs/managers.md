@@ -15,15 +15,15 @@ A manager implements discovery and can supply these capabilities:
 
 The registry merges discovery results, rejects duplicate manager registrations,
 reports duplicate package identities, and calculates publication order. Exactly
-one adapter must claim a version source. An absent verifier produces an uncertain
-result; a workflow's success does not supply registry verification.
+one adapter must claim a version source. Verifiers support discovery, pre-upload
+checks, and recovery of unknown outcomes. Successful publication reports from
+authenticated producers are recorded directly.
 
 Cargo and npm each own discovery, editing, and verification in their adapter.
 OCI supplies publication verification. Workflow discovery identifies release and
 container capabilities; GoReleaser, manifest, and pre-commit adapters provide
-discovery. GitHub release and manifest verification currently require the
-coordinator's authenticated gateway and remain separate from public registry
-verification.
+discovery. GitHub release publication uses the successful write response. Manifest
+publication uses the authenticated producer report.
 
 The `jsr` adapter reads `jsr.json`, `jsr.jsonc`, `deno.json` and
 `deno.jsonc`. A directory contributes one manifest, preferred in that order. A

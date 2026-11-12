@@ -2,7 +2,7 @@ name: Prepare release changes
 description: Apply an immutable release plan or submit generated release files for a pull request
 inputs:
   context:
-    description: JSON context returned by the begin action
+    description: JSON context returned by begin, including its runner-local contextFile
     required: true
   mode:
     description: apply before generators, submit after generators and checks

@@ -14,6 +14,7 @@ import type { Repository } from '@root/test/support/github.ts';
 import { filesAt } from '@root/test/support/github.ts';
 import { bearer, text } from '@root/test/support/http.ts';
 import { one } from '@root/test/support/lists.ts';
+import type { Exchange } from '@root/test/support/network.ts';
 import { approvePromotion, prepareRelease } from '@root/test/support/releases.ts';
 import { jsonFile, passChecks, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
 import type { SigningKey } from '@root/test/support/signing.ts';
@@ -58,6 +59,7 @@ export interface PackedRelease {
 	promotionId: string;
 	plan: PackedRefPlan;
 	tags: Record<string, string>;
+	refsCompletion: Exchange[];
 }
 
 export async function packedRelease(
@@ -116,7 +118,9 @@ export async function packedRelease(
 		prepareRun.status = 'in_progress';
 		const prepareIdentity = runIdentity(repository, prepareRun, 'prepare.yml');
 		const begun = await begin(world, prepareIdentity, text(prepared.body, 'id'), 'main', 'prepare');
-		const releaseContext = begun.outputs.context ?? '';
+		const contextFile = join(scratch, 'context.json');
+		writeFileSync(contextFile, begun.context ?? '{}');
+		const releaseContext = JSON.stringify({ ...JSON.parse(begun.outputs.context ?? '{}'), contextFile });
 		const source = contextFields.parse(JSON.parse(releaseContext));
 		if (source.sourceSha !== gitOutput(checkout.dir, ['rev-parse', 'HEAD'])) {
 			throw new Error('Checkout drifted from the planned source');
@@ -196,7 +200,9 @@ export async function packedRelease(
 			world.github.recordTag(repository, change.name, oid, commit, verified);
 		}
 		if (readdirSync(refsTemp).length) throw new Error('The refs runtime left files in RUNNER_TEMP');
+		const refsCompletionStart = world.network.mark();
 		await runAction(world, 'refs-complete', promoteIdentity, { EXECUTION_ID: promotionId });
+		const refsCompletion = world.network.since(refsCompletionStart);
 		if (githubRelease) await runAction(world, 'release', promoteIdentity, { EXECUTION_ID: promotionId });
 		world.npm.publish('widget', '1.1.0');
 		await runAction(world, 'report', promoteIdentity, {
@@ -209,7 +215,7 @@ export async function packedRelease(
 		promoteRun.conclusion = 'success';
 		await world.workflowRun(repository, promoteRun, 'success', 'workflow_dispatch');
 		await world.wait(2_000);
-		return { repository, promotionId, plan: planBody, tags };
+		return { repository, promotionId, plan: planBody, tags, refsCompletion };
 	} finally {
 		rmSync(checkout.dir, { recursive: true, force: true });
 		rmSync(scratch, { recursive: true, force: true });

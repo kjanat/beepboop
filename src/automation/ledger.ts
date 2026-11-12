@@ -154,14 +154,6 @@ export function reuse(record: LedgerRecord, holder: string, url: string, now: nu
 	return settle(record, holder, now, { state: 'reused', url }, 'reused');
 }
 
-export function upload(record: LedgerRecord, holder: string, now: number): LedgerRecord {
-	return settle(record, holder, now, { state: 'uploaded', holder, since: now, checkedAt: now }, 'uploaded');
-}
-
-export function rechecked(record: LedgerRecord, now: number): LedgerRecord {
-	return record.status.state === 'uploaded' ? { ...record, status: { ...record.status, checkedAt: now } } : record;
-}
-
 export function publish(record: LedgerRecord, holder: string, url: string, now: number): LedgerRecord {
 	return settle(record, holder, now, { state: 'published', url }, 'published');
 }
@@ -199,7 +191,7 @@ export function fail(
 }
 
 export function released(record: LedgerRecord): boolean {
-	return record.status.state === 'published' || record.status.state === 'reused';
+	return ['uploaded', 'published', 'reused'].includes(record.status.state);
 }
 
 export function entry(record: LedgerRecord): LedgerEntry {
@@ -245,7 +237,7 @@ export function publicationOf(record: LedgerRecord): Publication | undefined {
 				outcome: 'succeeded',
 			};
 		case 'uploaded':
-			return { ...fields, ...(record.digest ? { digest: record.digest } : {}), outcome: 'pending' };
+			return { ...fields, ...(record.digest ? { digest: record.digest } : {}), outcome: 'succeeded' };
 		case 'failed-retryable':
 		case 'failed-permanent':
 			return { ...fields, outcome: 'failed' };
