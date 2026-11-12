@@ -615,6 +615,31 @@ function bindings(state: Bindings, version: string): Runner['run'] {
 const npmId = 'pkg:npm/%40octo/lint', pypiId = 'pkg:pypi/lint-py';
 const bindingCredentials = { NODE_AUTH_TOKEN: 'npm-token', UV_PUBLISH_TOKEN: 'pypi-token' };
 
+test('an npm upload receipt settles its claim without reading the registry', async () => {
+	world.npm.publish(npm, '1.0.0');
+	const { repository, begun } = await released({ main: [npmId] }, bindingsLayout);
+	const { execution, identity } = started(begun, 'main');
+	await withIdentity(world, identity, async () => {
+		const purl = `${npmId}@1.1.0`;
+		const claimed = await Effect.runPromise(workflowCall(world, '/api/workflow/publish/claim', {
+			executionId: execution.id,
+			purl,
+			digest: npmIntegrity(npm, '1.1.0'),
+		}));
+		expect(claimed).toMatchObject({ kind: 'publish' });
+		world.network.serve('registry.npmjs.org', () => {
+			throw new Error('Post-upload registry reads are forbidden');
+		});
+		const recorded = await Effect.runPromise(workflowCall(world, '/api/workflow/publish/report', {
+			executionId: execution.id,
+			purl,
+			outcome: 'published',
+		}));
+		expect(recorded).toMatchObject({ kind: 'settled', entry: { purl, state: 'published' } });
+	});
+	expect((await executionOf(repository, execution.id)).publications.map(p => p.outcome)).toEqual(['succeeded']);
+}, 60_000);
+
 test('npm and PyPI packages publish through npm and uv and verify their integrity and sha256', async () => {
 	servePypi();
 	world.npm.publish(npm, '1.0.0');

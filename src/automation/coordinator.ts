@@ -1301,6 +1301,16 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 				return yield* this.settled(ledger, rateLimit(record, holder, until, now));
 			}
+			// npm acknowledges uploads before publish-time scanning makes them visible.
+			// The authenticated runner's exit status settles the upload, not a registry read.
+			if (record.manager === 'npm') {
+				return yield* this.settled(
+					ledger,
+					report.outcome === 'published'
+						? publish(record, holder, `https://www.npmjs.com/package/${record.name}/v/${record.version}`, now)
+						: fail(record, holder, report.message, false, now),
+				);
+			}
 			const found = yield* this.registry(execution, record);
 			const verified = yield* this.verified(
 				ledger,
@@ -1615,7 +1625,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					return yield* precondition('Ref results are verified by the ref completion endpoint');
 				}
 				yield* validatePublicationIdentity(execution, publication);
-				if (canVerifyPublication(publication.manager) && publication.outcome === 'succeeded') {
+				// A successful npm receipt must not be downgraded while npm scans the upload.
+				if (publication.manager !== 'npm' && canVerifyPublication(publication.manager) && publication.outcome === 'succeeded') {
 					const context = this.gateway().verification(execution.repository, execution.repositoryId);
 					verified.push(yield* verifyPublication(publication, fetch, context));
 				} else if (publication.manager === 'manifest' && publication.outcome === 'succeeded') {

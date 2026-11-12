@@ -115,7 +115,7 @@ test('a managed release travels from discovery to a verified publication', async
 	expect(world.network.unrouted).toEqual([]);
 });
 
-async function finishedPromotion(outcome: 'pending' | 'skipped') {
+async function finishedPromotion(outcome: 'pending' | 'skipped' | 'succeeded') {
 	const session = await world.cliSession();
 	const repository = await discoveredWidget(world, session);
 	const api = bearer(world, session);
@@ -140,6 +140,7 @@ async function finishedPromotion(outcome: 'pending' | 'skipped') {
 		PERMISSIONS: '{"contents":"read"}',
 		TOKEN_IDENTITY: 'true',
 	});
+	const reportedAt = world.network.mark();
 	await runAction(world, 'report', identity, {
 		EXECUTION_ID: promotion.id,
 		PUBLICATIONS: JSON.stringify([
@@ -154,8 +155,17 @@ async function finishedPromotion(outcome: 'pending' | 'skipped') {
 		entry.key === `execution:${promotion.id}`
 	);
 	const stored = z.record(z.string(), z.unknown()).parse(entry?.value);
-	return { api, repository, merged, promotion, stored, token, finished: await only(api, 'promote') };
+	return { api, repository, merged, promotion, stored, token, reportedAt, finished: await only(api, 'promote') };
 }
+
+test('a successful npm upload completes without any post-report registry checks', async () => {
+	const { api, reportedAt, finished } = await finishedPromotion('succeeded');
+	expect(finished.state).toBe('succeeded');
+	expect(finished.publications.map(publication => publication.outcome)).toEqual(['succeeded']);
+	await world.wait(61_000);
+	expect((await only(api, 'promote')).state).toBe('succeeded');
+	expect(world.network.since(reportedAt).filter(exchange => exchange.host === 'registry.npmjs.org')).toEqual([]);
+});
 
 test('the token action outputs the bot identity as an insertable Git environment', async () => {
 	const { token } = await finishedPromotion('pending');
