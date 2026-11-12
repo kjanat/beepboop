@@ -76,7 +76,7 @@ export const hookConfig = /(?:^|\/)\.pre-commit-config\.ya?ml$/;
 const packageJson = /(?:^|\/)package\.json$/;
 export const jsrManifest = /(?:^|\/)(?:jsr|deno)\.jsonc?$/;
 export const jsrPackageNamePattern = /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/;
-export const npmTargets = /(?:^|\/)npm\/targets\.json$/;
+export const npmTargets = /(?:^|\/)(?:targets?|platforms|build-matrix)\.json$/;
 
 export interface ManagerDestinations {
 	primary: ManagerDestinationId;

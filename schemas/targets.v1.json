@@ -1,0 +1,834 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://beepboop.kjanat.dev/schema/targets.v1.json",
+	"anyOf": [
+		{
+			"anyOf": [
+				{
+					"type": "object",
+					"properties": {
+						"$schema": {
+							"type": "string"
+						},
+						"versionSource": {
+							"type": "string",
+							"pattern": "^(?:tags:[^\\s]*|(?!(?:.*\\/)?\\.\\.?\\/)(?:[\\w.-]+\\/)*(?:Cargo\\.toml#(?:workspace\\.)?package\\.version|package\\.json#version))$"
+						},
+						"binaries": {
+							"minItems": 1,
+							"type": "array",
+							"items": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							}
+						},
+						"bundle": {
+							"type": "object",
+							"properties": {
+								"name": {
+									"type": "string",
+									"pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
+								}
+							},
+							"required": [
+								"name"
+							],
+							"additionalProperties": {}
+						},
+						"targets": {
+							"minItems": 1,
+							"type": "array",
+							"items": {
+								"type": "object",
+								"properties": {
+									"pkg": {
+										"type": "string",
+										"pattern": "^[a-z0-9][a-z0-9._-]*$"
+									},
+									"os": {
+										"anyOf": [
+											{
+												"type": "string",
+												"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+											},
+											{
+												"minItems": 1,
+												"type": "array",
+												"items": {
+													"type": "string",
+													"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+												}
+											}
+										]
+									},
+									"cpu": {
+										"anyOf": [
+											{
+												"type": "string",
+												"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+											},
+											{
+												"minItems": 1,
+												"type": "array",
+												"items": {
+													"type": "string",
+													"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+												}
+											}
+										]
+									},
+									"libc": {
+										"anyOf": [
+											{
+												"type": "string",
+												"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+											},
+											{
+												"minItems": 1,
+												"type": "array",
+												"items": {
+													"type": "string",
+													"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+												}
+											}
+										]
+									},
+									"rust": {
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									"rust_target": {
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									"target": {
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									"runner": {
+										"type": "string",
+										"minLength": 1
+									},
+									"build": {
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									"asset": {
+										"type": "string",
+										"minLength": 1
+									},
+									"zipFileName": {
+										"type": "string",
+										"minLength": 1
+									},
+									"format": {
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									"tier": {
+										"type": "integer",
+										"exclusiveMinimum": 0,
+										"maximum": 9007199254740991
+									},
+									"experimental": {
+										"type": "boolean"
+									}
+								},
+								"required": [
+									"pkg"
+								],
+								"additionalProperties": {}
+							}
+						},
+						"platformScope": {
+							"not": {}
+						},
+						"scope": {
+							"type": "string",
+							"pattern": "^@[a-z0-9][a-z0-9._-]*$"
+						},
+						"facade": {
+							"type": "string",
+							"pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
+						},
+						"facades": {
+							"not": {}
+						}
+					},
+					"required": [
+						"targets",
+						"scope",
+						"facade"
+					],
+					"additionalProperties": {}
+				},
+				{
+					"type": "object",
+					"properties": {
+						"$schema": {
+							"type": "string"
+						},
+						"versionSource": {
+							"type": "string",
+							"pattern": "^(?:tags:[^\\s]*|(?!(?:.*\\/)?\\.\\.?\\/)(?:[\\w.-]+\\/)*(?:Cargo\\.toml#(?:workspace\\.)?package\\.version|package\\.json#version))$"
+						},
+						"binaries": {
+							"minItems": 1,
+							"type": "array",
+							"items": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							}
+						},
+						"bundle": {
+							"type": "object",
+							"properties": {
+								"name": {
+									"type": "string",
+									"pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
+								}
+							},
+							"required": [
+								"name"
+							],
+							"additionalProperties": {}
+						},
+						"targets": {
+							"minItems": 1,
+							"type": "array",
+							"items": {
+								"type": "object",
+								"properties": {
+									"pkg": {
+										"type": "string",
+										"pattern": "^[a-z0-9][a-z0-9._-]*$"
+									},
+									"os": {
+										"anyOf": [
+											{
+												"type": "string",
+												"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+											},
+											{
+												"minItems": 1,
+												"type": "array",
+												"items": {
+													"type": "string",
+													"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+												}
+											}
+										]
+									},
+									"cpu": {
+										"anyOf": [
+											{
+												"type": "string",
+												"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+											},
+											{
+												"minItems": 1,
+												"type": "array",
+												"items": {
+													"type": "string",
+													"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+												}
+											}
+										]
+									},
+									"libc": {
+										"anyOf": [
+											{
+												"type": "string",
+												"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+											},
+											{
+												"minItems": 1,
+												"type": "array",
+												"items": {
+													"type": "string",
+													"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+												}
+											}
+										]
+									},
+									"rust": {
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									"rust_target": {
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									"target": {
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									"runner": {
+										"type": "string",
+										"minLength": 1
+									},
+									"build": {
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									"asset": {
+										"type": "string",
+										"minLength": 1
+									},
+									"zipFileName": {
+										"type": "string",
+										"minLength": 1
+									},
+									"format": {
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									"tier": {
+										"type": "integer",
+										"exclusiveMinimum": 0,
+										"maximum": 9007199254740991
+									},
+									"experimental": {
+										"type": "boolean"
+									}
+								},
+								"required": [
+									"pkg"
+								],
+								"additionalProperties": {}
+							}
+						},
+						"platformScope": {
+							"not": {}
+						},
+						"scope": {
+							"type": "string",
+							"pattern": "^@[a-z0-9][a-z0-9._-]*$"
+						},
+						"facades": {
+							"minItems": 1,
+							"type": "array",
+							"items": {
+								"type": "object",
+								"properties": {
+									"name": {
+										"type": "string",
+										"pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
+									},
+									"pkg": {
+										"type": "string",
+										"pattern": "^[a-z0-9][a-z0-9._-]*$"
+									},
+									"shim": {
+										"type": "string",
+										"pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
+									}
+								},
+								"required": [
+									"name"
+								],
+								"additionalProperties": {}
+							}
+						},
+						"facade": {
+							"not": {}
+						}
+					},
+					"required": [
+						"targets",
+						"scope",
+						"facades"
+					],
+					"additionalProperties": {}
+				},
+				{
+					"type": "object",
+					"properties": {
+						"$schema": {
+							"type": "string"
+						},
+						"versionSource": {
+							"type": "string",
+							"pattern": "^(?:tags:[^\\s]*|(?!(?:.*\\/)?\\.\\.?\\/)(?:[\\w.-]+\\/)*(?:Cargo\\.toml#(?:workspace\\.)?package\\.version|package\\.json#version))$"
+						},
+						"binaries": {
+							"minItems": 1,
+							"type": "array",
+							"items": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							}
+						},
+						"bundle": {
+							"type": "object",
+							"properties": {
+								"name": {
+									"type": "string",
+									"pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
+								}
+							},
+							"required": [
+								"name"
+							],
+							"additionalProperties": {}
+						},
+						"targets": {
+							"minItems": 1,
+							"type": "array",
+							"items": {
+								"type": "object",
+								"properties": {
+									"pkg": {
+										"type": "string",
+										"pattern": "^[a-z0-9][a-z0-9._-]*$"
+									},
+									"os": {
+										"anyOf": [
+											{
+												"type": "string",
+												"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+											},
+											{
+												"minItems": 1,
+												"type": "array",
+												"items": {
+													"type": "string",
+													"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+												}
+											}
+										]
+									},
+									"cpu": {
+										"anyOf": [
+											{
+												"type": "string",
+												"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+											},
+											{
+												"minItems": 1,
+												"type": "array",
+												"items": {
+													"type": "string",
+													"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+												}
+											}
+										]
+									},
+									"libc": {
+										"anyOf": [
+											{
+												"type": "string",
+												"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+											},
+											{
+												"minItems": 1,
+												"type": "array",
+												"items": {
+													"type": "string",
+													"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+												}
+											}
+										]
+									},
+									"rust": {
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									"rust_target": {
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									"target": {
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									"runner": {
+										"type": "string",
+										"minLength": 1
+									},
+									"build": {
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									"asset": {
+										"type": "string",
+										"minLength": 1
+									},
+									"zipFileName": {
+										"type": "string",
+										"minLength": 1
+									},
+									"format": {
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									"tier": {
+										"type": "integer",
+										"exclusiveMinimum": 0,
+										"maximum": 9007199254740991
+									},
+									"experimental": {
+										"type": "boolean"
+									}
+								},
+								"required": [
+									"pkg"
+								],
+								"additionalProperties": {}
+							}
+						},
+						"scope": {
+							"not": {}
+						},
+						"facades": {
+							"not": {}
+						},
+						"platformScope": {
+							"type": "string",
+							"pattern": "^@[a-z0-9][a-z0-9._-]*$"
+						},
+						"binary": {
+							"type": "string",
+							"pattern": "^[a-z0-9][a-z0-9._-]*$"
+						},
+						"facade": {
+							"type": "string",
+							"pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
+						}
+					},
+					"required": [
+						"targets",
+						"platformScope",
+						"binary",
+						"facade"
+					],
+					"additionalProperties": {}
+				}
+			]
+		},
+		{
+			"minItems": 1,
+			"type": "array",
+			"items": {
+				"anyOf": [
+					{
+						"type": "object",
+						"properties": {
+							"pkg": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"os": {
+								"anyOf": [
+									{
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									{
+										"minItems": 1,
+										"type": "array",
+										"items": {
+											"type": "string",
+											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+										}
+									}
+								]
+							},
+							"cpu": {
+								"anyOf": [
+									{
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									{
+										"minItems": 1,
+										"type": "array",
+										"items": {
+											"type": "string",
+											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+										}
+									}
+								]
+							},
+							"libc": {
+								"anyOf": [
+									{
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									{
+										"minItems": 1,
+										"type": "array",
+										"items": {
+											"type": "string",
+											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+										}
+									}
+								]
+							},
+							"rust": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"rust_target": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"target": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"runner": {
+								"type": "string",
+								"minLength": 1
+							},
+							"build": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"asset": {
+								"type": "string",
+								"minLength": 1
+							},
+							"zipFileName": {
+								"type": "string",
+								"minLength": 1
+							},
+							"format": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"tier": {
+								"type": "integer",
+								"exclusiveMinimum": 0,
+								"maximum": 9007199254740991
+							},
+							"experimental": {
+								"type": "boolean"
+							}
+						},
+						"required": [
+							"target",
+							"runner",
+							"build"
+						],
+						"additionalProperties": {}
+					},
+					{
+						"type": "object",
+						"properties": {
+							"pkg": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"os": {
+								"anyOf": [
+									{
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									{
+										"minItems": 1,
+										"type": "array",
+										"items": {
+											"type": "string",
+											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+										}
+									}
+								]
+							},
+							"cpu": {
+								"anyOf": [
+									{
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									{
+										"minItems": 1,
+										"type": "array",
+										"items": {
+											"type": "string",
+											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+										}
+									}
+								]
+							},
+							"libc": {
+								"anyOf": [
+									{
+										"type": "string",
+										"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+									},
+									{
+										"minItems": 1,
+										"type": "array",
+										"items": {
+											"type": "string",
+											"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+										}
+									}
+								]
+							},
+							"rust": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"rust_target": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"target": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"runner": {
+								"type": "string",
+								"minLength": 1
+							},
+							"build": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"asset": {
+								"type": "string",
+								"minLength": 1
+							},
+							"zipFileName": {
+								"type": "string",
+								"minLength": 1
+							},
+							"format": {
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							"tier": {
+								"type": "integer",
+								"exclusiveMinimum": 0,
+								"maximum": 9007199254740991
+							},
+							"experimental": {
+								"type": "boolean"
+							}
+						},
+						"required": [
+							"rust",
+							"runner",
+							"build"
+						],
+						"additionalProperties": {}
+					}
+				]
+			}
+		},
+		{
+			"type": "object",
+			"properties": {
+				"$schema": {
+					"type": "string"
+				}
+			},
+			"additionalProperties": {
+				"type": "object",
+				"properties": {
+					"pkg": {
+						"type": "string",
+						"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+					},
+					"os": {
+						"anyOf": [
+							{
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							{
+								"minItems": 1,
+								"type": "array",
+								"items": {
+									"type": "string",
+									"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+								}
+							}
+						]
+					},
+					"cpu": {
+						"anyOf": [
+							{
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							{
+								"minItems": 1,
+								"type": "array",
+								"items": {
+									"type": "string",
+									"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+								}
+							}
+						]
+					},
+					"libc": {
+						"anyOf": [
+							{
+								"type": "string",
+								"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+							},
+							{
+								"minItems": 1,
+								"type": "array",
+								"items": {
+									"type": "string",
+									"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+								}
+							}
+						]
+					},
+					"rust": {
+						"type": "string",
+						"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+					},
+					"rust_target": {
+						"type": "string",
+						"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+					},
+					"target": {
+						"type": "string",
+						"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+					},
+					"runner": {
+						"type": "string",
+						"minLength": 1
+					},
+					"build": {
+						"type": "string",
+						"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+					},
+					"asset": {
+						"type": "string",
+						"minLength": 1
+					},
+					"zipFileName": {
+						"type": "string",
+						"minLength": 1
+					},
+					"format": {
+						"type": "string",
+						"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+					},
+					"tier": {
+						"type": "integer",
+						"exclusiveMinimum": 0,
+						"maximum": 9007199254740991
+					},
+					"experimental": {
+						"type": "boolean"
+					}
+				},
+				"required": [
+					"os",
+					"cpu"
+				],
+				"additionalProperties": {}
+			}
+		}
+	]
+}

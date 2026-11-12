@@ -431,7 +431,7 @@ test('a publication workflow builds each binary in a platform matrix and release
 	for (const action of new Set(uses.filter(action => !action.startsWith('kjanat/beepboop/')))) {
 		expect(edit?.after).toContain(`uses: ${action} # v`);
 	}
-	expect(jobs['build-signer']?.['runs-on']).toBe('ubuntu-latest');
+	expect(jobs['build-signer']?.['runs-on']).toBe('ubuntu-26.04');
 	expect(jobs['build-signer']?.strategy?.matrix.include).toEqual([
 		{ goos: 'linux', goarch: 'amd64', asset: 'signer-linux-amd64' },
 		{ goos: 'darwin', goarch: 'arm64', asset: 'signer-darwin-arm64' },
@@ -439,10 +439,10 @@ test('a publication workflow builds each binary in a platform matrix and release
 	]);
 	expect(jobs['build-tool']?.['runs-on']).toBe('${{ matrix.runner }}');
 	expect(jobs['build-tool']?.strategy?.matrix.include).toEqual([
-		{ runner: 'ubuntu-latest', target: 'x86_64-unknown-linux-gnu', ext: '', asset: 'tool-x86_64-unknown-linux-gnu' },
-		{ runner: 'macos-latest', target: 'aarch64-apple-darwin', ext: '', asset: 'tool-aarch64-apple-darwin' },
+		{ runner: 'ubuntu-26.04', target: 'x86_64-unknown-linux-gnu', ext: '', asset: 'tool-x86_64-unknown-linux-gnu' },
+		{ runner: 'macos-26', target: 'aarch64-apple-darwin', ext: '', asset: 'tool-aarch64-apple-darwin' },
 		{
-			runner: 'windows-latest',
+			runner: 'windows-2025-vs2026',
 			target: 'x86_64-pc-windows-msvc',
 			ext: '.exe',
 			asset: 'tool-x86_64-pc-windows-msvc.exe',

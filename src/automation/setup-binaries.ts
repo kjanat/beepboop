@@ -1,76 +1,8 @@
 import { object } from '@/automation/managers/helpers';
 import { pinned } from '@/automation/setup-actions';
-import type { AssetPlaceholder, BinaryBuild, BinaryRelease, BinaryTarget } from '@/contract/setup';
-
-interface Platform {
-	names: Record<Exclude<AssetPlaceholder, 'name' | 'version'>, string>;
-	runner: string;
-}
-function platform(
-	go: [string, string],
-	rust: string,
-	node: [string, string],
-	uname: [string, string],
-	runner: string,
-): Platform {
-	return {
-		names: {
-			ext: go[0] === 'windows' ? '.exe' : '',
-			'go.os': go[0],
-			'go.arch': go[1],
-			'rust.target': rust,
-			'node.platform': node[0],
-			'node.arch': node[1],
-			'uname.os': uname[0],
-			'uname.arch': uname[1],
-		},
-		runner,
-	};
-}
-const platforms: Record<BinaryTarget, Platform> = {
-	'linux-amd64': platform(
-		['linux', 'amd64'],
-		'x86_64-unknown-linux-gnu',
-		['linux', 'x64'],
-		['Linux', 'x86_64'],
-		'ubuntu-latest',
-	),
-	'linux-arm64': platform(
-		['linux', 'arm64'],
-		'aarch64-unknown-linux-gnu',
-		['linux', 'arm64'],
-		['Linux', 'aarch64'],
-		'ubuntu-24.04-arm',
-	),
-	'darwin-amd64': platform(
-		['darwin', 'amd64'],
-		'x86_64-apple-darwin',
-		['darwin', 'x64'],
-		['Darwin', 'x86_64'],
-		'macos-15-intel',
-	),
-	'darwin-arm64': platform(
-		['darwin', 'arm64'],
-		'aarch64-apple-darwin',
-		['darwin', 'arm64'],
-		['Darwin', 'arm64'],
-		'macos-latest',
-	),
-	'windows-amd64': platform(
-		['windows', 'amd64'],
-		'x86_64-pc-windows-msvc',
-		['win32', 'x64'],
-		['Windows', 'x86_64'],
-		'windows-latest',
-	),
-	'windows-arm64': platform(
-		['windows', 'arm64'],
-		'aarch64-pc-windows-msvc',
-		['win32', 'arm64'],
-		['Windows', 'aarch64'],
-		'windows-11-arm',
-	),
-};
+import { platforms } from '@/contract/binary-platforms';
+import { hostedRunners } from '@/contract/runners';
+import type { BinaryBuild, BinaryRelease, BinaryTarget } from '@/contract/setup';
 
 // GitHub expressions, evaluated by Actions rather than JavaScript.
 export const expression = (value: string) => `\${{ ${value} }}`;
@@ -133,10 +65,13 @@ interface Toolchain {
 	build: { env: Record<string, string>; run: string };
 }
 function toolchain(build: BinaryBuild, targets: readonly BinaryTarget[]): Toolchain {
+	for (const target of targets) {
+		if (!platforms[target][build.toolchain]) throw new Error(`${build.toolchain} has no build recipe for ${target}`);
+	}
 	if (build.toolchain === 'go') {
 		return {
 			label: `${matrix('goos')}/${matrix('goarch')}`,
-			runner: 'ubuntu-latest',
+			runner: hostedRunners.linux,
 			include: targets.map(target => ({
 				goos: platforms[target].names['go.os'],
 				goarch: platforms[target].names['go.arch'],
@@ -160,20 +95,55 @@ function toolchain(build: BinaryBuild, targets: readonly BinaryTarget[]): Toolch
 			},
 		};
 	}
+	const cross = targets.some(target => platforms[target].cargo === 'cross');
 	return {
 		label: matrix('target'),
 		runner: matrix('runner'),
 		include: targets.map(target => ({
 			runner: platforms[target].runner,
+			...(cross ? { builder: platforms[target].cargo === 'cross' ? 'cross' : 'cargo' } : {}),
 			target: platforms[target].names['rust.target'],
 			ext: platforms[target].names.ext,
 			asset: assetName(build, target),
 		})),
-		setup: [{ uses: pinned('install'), with: { tool: `cargo-auditable@${cargoAuditable}`, fallback: 'none' } }],
+		setup: [
+			{ uses: pinned('install'), with: { tool: `cargo-auditable@${cargoAuditable}`, fallback: 'none' } },
+			...(cross
+				? [{
+					uses: pinned('install'),
+					if: "matrix.builder == 'cross'",
+					with: { tool: 'cross', fallback: 'none' },
+				}]
+				: []),
+		],
 		build: {
-			env: { MANIFEST: build.manifest, BINARY: build.name, TARGET: matrix('target'), EXT: matrix('ext') },
-			run: `rustup target add "\${TARGET}"
-cargo auditable build --manifest-path "\${MANIFEST}" --release --locked --bin "\${BINARY}" --target "\${TARGET}"
+			env: {
+				...Object.fromEntries(targets.flatMap(target => {
+					const platform = platforms[target];
+					return platform.cargo === 'cross'
+						? [[
+							`CROSS_TARGET_${platform.names['rust.target'].toUpperCase().replaceAll('-', '_')}_IMAGE`,
+							`ghcr.io/cross-rs/${platform.names['rust.target']}:main`,
+						]]
+						: [];
+				})),
+				MANIFEST: build.manifest,
+				BINARY: build.name,
+				TARGET: matrix('target'),
+				EXT: matrix('ext'),
+				...(cross ? { BUILDER: matrix('builder') } : {}),
+			},
+			run: `${
+				cross
+					? `if [[ "\${BUILDER}" == cross ]]; then
+  cross build --manifest-path "\${MANIFEST}" --release --locked --bin "\${BINARY}" --target "\${TARGET}"
+else
+  rustup target add "\${TARGET}"
+  cargo auditable build --manifest-path "\${MANIFEST}" --release --locked --bin "\${BINARY}" --target "\${TARGET}"
+fi`
+					: `rustup target add "\${TARGET}"
+cargo auditable build --manifest-path "\${MANIFEST}" --release --locked --bin "\${BINARY}" --target "\${TARGET}"`
+			}
 target="$(cargo metadata --manifest-path "\${MANIFEST}" --format-version 1 --no-deps | jq -r .target_directory)"
 cp "\${target}/\${TARGET}/release/\${BINARY}\${EXT}" "dist/\${ASSET}"
 `,
@@ -232,7 +202,7 @@ echo "name=\${TEMPLATE//\\{version\\}/\${VERSION}}" >> "\${GITHUB_OUTPUT}"
 	return Object.fromEntries([
 		[beginJobId, {
 			name: 'Begin release',
-			'runs-on': 'ubuntu-latest',
+			'runs-on': hostedRunners.linux,
 			'timeout-minutes': 10,
 			permissions: { contents: 'read', 'id-token': 'write' },
 			outputs: { sourceSha: expression(`${context}.sourceSha`), version: expression(`${context}.version`) },

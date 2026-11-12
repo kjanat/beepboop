@@ -39,6 +39,7 @@ import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget, Workflo
 import {
 	binaryTargets,
 	bumpable,
+	defaultBinaryTargets,
 	leftOut,
 	setupChoicesSchema,
 	startable,
@@ -288,7 +289,7 @@ function proposeBinaries(
 export function binaryRelease(candidates: readonly BinaryCandidate[]): BinaryRelease {
 	return {
 		builds: candidates.map(candidate => candidate.build),
-		targets: binaryTargets.filter(target => candidates.every(candidate => candidate.targets.includes(target))),
+		targets: defaultBinaryTargets.filter(target => candidates.every(candidate => candidate.targets.includes(target))),
 	};
 }
 export const branchConflictBlocker =
@@ -1092,7 +1093,7 @@ export function bodyChoices(body: string, options: SetupOption[], base: SetupCho
 				const ticked = own.flatMap(option => option.kind === 'target' && state(option) ? [option.target] : []);
 				const targets = ticked.length || chosen.binaries
 					? ticked
-					: binaryTargets.filter(target => kept.every(option => option.targets.includes(target)));
+					: defaultBinaryTargets.filter(target => kept.every(option => option.targets.includes(target)));
 				const { binaries: _binaries, ...rest } = chosen;
 				return builds.length && targets.length ? { ...rest, binaries: { builds, targets } } : rest;
 			};

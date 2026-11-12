@@ -4,7 +4,7 @@ import type { Selection } from '@/automation/setup-defaults';
 import { preparationReasons, suggestedCommands, suggestedWorkflowFile } from '@/automation/setup-defaults';
 import type { SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '@/contract/setup';
-import { binaryTargets, leftOut, setupWorkflow } from '@/contract/setup';
+import { binaryTargets, defaultBinaryTargets, leftOut, setupWorkflow } from '@/contract/setup';
 import type { Editors, WorkflowField } from '@/contract/setup-fields';
 import { existingTriggersNames, existingTriggersQuestion, existingTriggersSentences } from '@/contract/setup-terms';
 import { node, Refused } from '@/ui/browser/dom';
@@ -148,7 +148,8 @@ function binaryEditor(
 			if (!targetsEdited) {
 				const chosen = offered.filter(entry => checked(entry.build));
 				for (const [target, input] of targets) {
-					input.checked = chosen.every(entry => entry.candidate?.targets.includes(target) ?? true);
+					input.checked = defaultBinaryTargets.some(value => value === target)
+						&& chosen.every(entry => entry.candidate?.targets.includes(target) ?? true);
 				}
 			}
 			box.hidden = !offered.length;

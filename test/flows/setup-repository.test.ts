@@ -8,7 +8,7 @@ import { parse } from 'yaml';
 import { z } from 'zod';
 import { optionId } from '@/automation/setup';
 import type { SetupChoices } from '@/automation/setup-types';
-import { binaries, binaryTargets, workflowSetup } from '@/contract/setup';
+import { binaries, defaultBinaryTargets, workflowSetup } from '@/contract/setup';
 import type { VersionPrMerge } from '@/contract/setup-terms';
 import { versionPrMergeSentences } from '@/contract/setup-terms';
 
@@ -204,7 +204,7 @@ const engineChoices: SetupChoices = {
 		},
 	}],
 };
-const unixTargets = binaryTargets.filter(target => !target.startsWith('windows-'));
+const unixTargets = defaultBinaryTargets.filter(target => !target.startsWith('windows-'));
 
 test('the migration PR proposes each Cargo binary with the targets its dependencies build for', async () => {
 	const repository = engineRepository();

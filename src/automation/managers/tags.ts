@@ -1,5 +1,5 @@
 import { Result } from 'effect';
-import { goreleaserConfig } from '@/contract/catalog';
+import { goreleaserConfig, npmTargets } from '@/contract/catalog';
 import { compareVersions, semver } from '@/model';
 import { parentDirectory } from '@/relative-path';
 
@@ -26,7 +26,7 @@ export function latestTag(
 export function tagQueries(paths: readonly string[]): string[] {
 	const prefixes = new Set<string>();
 	for (const path of paths) {
-		if (goreleaserConfig.test(path)) prefixes.add('');
+		if (goreleaserConfig.test(path) || npmTargets.test(path)) prefixes.add('');
 		if (path !== 'go.mod' && !path.endsWith('/go.mod')) continue;
 		const dir = parentDirectory(path);
 		prefixes.add(dir ? `${dir}/` : '');

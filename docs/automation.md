@@ -627,12 +627,13 @@ any tool that the runner lacks.
 
 ## Generated npm packages
 
-For npm packages built from Rust binaries, keep a `npm/targets.json` descriptor
+For generated npm packages, keep a `targets.json` descriptor
 in the repository. It declares the package scope, facade packages and platform
 targets before their generated `package.json` files exist:
 
 ```json
 {
+  "$schema": "https://beepboop.kjanat.dev/schema/targets.v1.json",
   "scope": "@example",
   "versionSource": "crates/cli/Cargo.toml#package.version",
   "facades": [{ "name": "@example/cli", "pkg": "cli", "shim": "@example/fmt" }],
@@ -645,10 +646,42 @@ This declares `@example/cli-linux-x64-glibc`, `@example/cli-darwin-arm64`,
 the shim depends on the facade. A target with `experimental: true` is optional.
 The descriptor can also live under a directory such as `deployment/npm`.
 
-`versionSource` defaults to `Cargo.toml#workspace.package.version`. It can name
-`package.version` or `workspace.package.version` in a repository-relative
-`Cargo.toml`. Discovery reads that version, and version preparation updates
-the same Cargo manifest. The referenced value must be a string.
+The schema is generated from Beepboop's runtime target contract. Discovery reads
+`target.json`, `targets.json`, `platforms.json` and `build-matrix.json` at any
+directory depth. It supports:
+
+- `scope` plus a single `facade`, including unscoped names, or a `facades` array
+  with per-facade `pkg` prefixes and optional `shim` packages.
+- `platformScope`, `binary` and `facade`, producing
+  `<platformScope>/<binary>-<target.pkg>` packages.
+- Platform maps keyed by platform name with `os`, `cpu` and optional `libc`
+  and `rust_target`. Discovery uses a facade's checked-in optional dependencies
+  to identify the matching packages; a map alone supplies no package names.
+  Maps belong to the nearest enclosing directory containing a package manifest
+  or matching facades, and can cover nested packages. A more specific map takes
+  precedence; maps with the same ownership scope report an ambiguity. Each
+  facade supplies its own `package.json#version`. Missing or ambiguous platform
+  matches produce diagnostics without generating partial publication sets.
+- Build matrix arrays containing `target` or `rust`, `runner` and `build`.
+  These validate as build metadata and create no npm publications by themselves.
+
+OS, CPU and libc values accept strings or nonempty arrays. Platform names and
+build methods are open strings, so Android, BSD, alternative architectures and
+repository-specific build methods remain valid. Known fields retain type checks;
+extra repository metadata is preserved. Duplicate generated package names are
+reported as invalid descriptors. npm name segments (`target.pkg`, `facade.pkg`
+and `binary`) must be lowercase. Checked-in private packages and packages using
+another registry keep their exclusion policy; an excluded facade skips its
+entire generated group. Existing descriptors containing only `pkg`
+remain supported. Array documents can use an editor's external schema association.
+
+`versionSource` can name `package.version` or `workspace.package.version` in a
+repository-relative `Cargo.toml`, `package.json#version`, or `tags:<prefix>`.
+For explicit npm descriptors without an override, discovery uses the root Cargo
+workspace/package version, the root Go module's tags, or the single matching
+facade manifest's version,
+in that order. File values must be strings. Version preparation updates that
+same source; tag sources follow the existing tag-based release path.
 
 Use the descriptor in the package build too, so the declared package names
 and published packages stay aligned. Bind the generated package identities to
@@ -1231,7 +1264,7 @@ It skips Go directories named `internal`, `testdata`, `vendor` or `examples` and
 nested modules. The setup PR lists every build and every target as a checkbox
 under the publication workflow.
 
-Setup proposes all six targets unless the crate needs Unix. A crate needs Unix
+Setup initially selects the six macOS, Windows and Linux targets unless the crate needs Unix. Additional supported targets remain available for explicit selection. A crate needs Unix
 when its unconditional `[dependencies]`, followed through workspace path
 dependencies, include `nix`, `uzers`, `users`, `termios`, `daemonize`, `fork`,
 `pty-process`, or `rustix` with a feature other than `std`, `alloc`, `core`,
@@ -1239,7 +1272,7 @@ dependencies, include `nix`, `uzers`, `users`, `termios`, `daemonize`, `fork`,
 Windows targets and names the dependencies in the PR. A ticked target stays
 ticked. When a build is expected to fail on it, the box reads
 `windows-amd64 (tool expected to fail)` and a note names the dependencies.
-Setup never unticks a target and never blocks on one. Target-specific
+Setup preserves explicit selections. A toolchain/target combination without a build recipe fails configuration validation. Target-specific
 dependencies such as `[target.'cfg(unix)'.dependencies]` do not count. Setup
 proposes builds only for a workflow whose binding has no `setup` object yet. A
 binding with one keeps its builds, including none.
@@ -1265,15 +1298,37 @@ The builds live in the binding's `setup.binaries`:
 }
 ```
 
+Generated jobs use Ubuntu 26.04 (including ARM64), macOS 26 (including Intel),
+Windows Server 2025 with Visual Studio 2026, and Windows 11 ARM64 with Visual
+Studio 2026. The labels are centralized in `src/contract/runners.ts` and follow
+the [official runner image list](https://github.com/actions/runner-images#available-images).
+
 `targets` defaults to all six platforms. Setup generates a `begin` job and one
 matrix job per build. The `begin` job alone holds `id-token: write`. It runs
 `begin` and outputs the release commit and version. Go builds cross-compile on
-`ubuntu-latest` with `CGO_ENABLED=0` and set `main.version`. Cargo builds run on
-a native runner for each target with `cargo auditable build`, which embeds the
+`ubuntu-26.04` with `CGO_ENABLED=0` and set `main.version`. Cargo builds run on
+native runners for the default targets with `cargo auditable build`, which embeds the
 crates each binary was built with. `taiki-e/install-action` installs
 `cargo-auditable` from its checksummed release. Each build job has only
 `contents: read`. It
 checks out the release commit, builds it and uploads its file as an artifact.
+
+Additional Go targets use the same pure-Go cross-build recipe: FreeBSD (amd64,
+386, arm64), NetBSD (amd64, arm64), OpenBSD (amd64, arm64), DragonFly BSD
+(amd64), Solaris (amd64), illumos (amd64) and AIX (ppc64). Target names use Go
+architecture names, for example `freebsd-amd64` and `aix-ppc64`.
+
+Additional Cargo targets use the current `cross` release on Ubuntu: Android (amd64, arm64,
+arm and 386), FreeBSD (amd64 and 386) and NetBSD (amd64). Cross supplies the
+foreign compiler and sysroot. Cross images use upstream `main` tags for every
+cross target; the generator adds no Cross version or image digest pins.
+These builds use `cross build`; their release
+artifacts still receive checksums, an SBOM and attestations, but have no embedded
+cargo-auditable dependency metadata. Native legs in a mixed matrix keep
+`cargo auditable build`. Go Android builds require a C toolchain and are not
+covered by the pure-Go recipe; unsupported combinations are rejected before
+workflow generation. Existing project workflows can still supply other build
+recipes through observed publications.
 
 The publication job publishes its packages first, then runs these steps:
 

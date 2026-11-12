@@ -92,6 +92,7 @@ test('the route table answers every path the old router answered, and nothing el
 		'POST /api/workflow/publish/next',
 		'POST /api/workflow/publish/claim',
 		'POST /api/workflow/publish/report',
+		'GET /schema/targets.v1.json',
 	]);
 	expect(legacy.filter(entry => !served.has(entry))).toEqual([]);
 	for (const entry of legacy) {
@@ -433,4 +434,12 @@ test('the token action reads permission-* inputs, the permissions JSON, or neith
 	});
 	const both = permissions({ INPUTS: inputs, PERMISSIONS: '{"issues":"write"}' });
 	expect(Result.isFailure(both) && both.failure.message).toBe('Set either permissions or the permission-* inputs');
+});
+
+test('the public targets schema route serves the checked-in generated contract', async () => {
+	const response = await world.handle(new Request(`${origin}/schema/targets.v1.json`));
+	expect(response.status).toBe(200);
+	expect(await response.json()).toEqual(
+		await Bun.file(new URL('../../schemas/targets.v1.json', import.meta.url)).json(),
+	);
 });
