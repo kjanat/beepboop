@@ -7,7 +7,7 @@ import { latestVersion, publicationResult, registryRequest, unpublished } from '
 import { identityOf, parseExtension } from '@/automation/package-identity';
 import { excluded, registry } from '@/automation/package-publication';
 import { fileProblem } from '@/contract/diagnostics';
-import { fromPromise } from '@/failure';
+import { responseJson } from '@/runtime/http';
 import { mutableArray, mutableStruct, safeDecode } from '@/schema';
 
 const identifier = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
@@ -56,7 +56,7 @@ export const vscodeManager: Adapter<'vscode'> = {
 				body: galleryQuery(publication.name, false),
 			});
 			if (!response.ok) return result('uncertain');
-			const versions = marketplaceVersions(yield* fromPromise((): Promise<unknown> => response.json()));
+			const versions = marketplaceVersions(yield* responseJson(response));
 			if (!versions) return result('uncertain');
 			return result(versions.includes(publication.version) ? 'succeeded' : 'pending');
 		}).pipe(Effect.orElseSucceed(() => result('uncertain')));

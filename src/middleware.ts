@@ -31,6 +31,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
 						: failure(context.request, error)),
 				Effect.provide(jsonLogging),
 			),
+			{ signal: context.request.signal },
 		);
 		if (refused) return refused;
 	}

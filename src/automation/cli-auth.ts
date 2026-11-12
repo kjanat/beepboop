@@ -3,9 +3,10 @@ import type { AuthBindings, AuthenticationDependencies } from '@/automation/auth
 import type { DomainError } from '@/contract/errors';
 import { unauthenticated } from '@/contract/errors';
 import { cliToken, cliTokenPattern, confirmationCode, loginSecretPattern, sha256Hex } from '@/contract/ids';
-import { fromJson, fromPromise } from '@/failure';
+import { fromJson, fromPromise, toDomainError } from '@/failure';
 import { record, string } from '@/model';
 import type { CLISessionStore } from '@/persistence/d1/cli-sessions';
+import { responseText } from '@/runtime/http';
 
 type CLIEnvironment = Pick<AuthBindings, 'ADMIN_SUBJECT'> & Partial<Pick<AuthBindings, 'DB'>>;
 export function cliSubject(
@@ -37,7 +38,7 @@ export function cliAuthRoute(
 		const json = (value: unknown, status = 200) =>
 			Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
 		if (url.pathname === '/auth/cli/token' && request.method === 'POST') {
-			const verifier = yield* fromPromise(() => request.text());
+			const verifier = yield* responseText(request).pipe(Effect.mapError(({ cause }) => toDomainError(cause)));
 			if (!loginSecretPattern.test(verifier)) return json({ error: 'Invalid login verifier' }, 400);
 			const hash = yield* fromPromise(() => sha256Hex(verifier));
 			const document = yield* dependencies.sessions.take(`cli-approval:${hash}`);

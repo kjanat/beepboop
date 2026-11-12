@@ -22,23 +22,28 @@ interface Props {
 	section: Section;
 }
 const { section } = Astro.props;
-const [view, outage] = await Effect.runPromise(Effect.gen(function*() {
-	const { actor } = Astro.locals;
-	if (!actor) {
-		return yield* unauthenticated(
-			'Dashboard pages require a signed-in administrator',
+const [view, outage] = await Effect.runPromise(
+	Effect.gen(function*() {
+		const { actor } = Astro.locals;
+		if (!actor) {
+			return yield* unauthenticated(
+				'Dashboard pages require a signed-in administrator',
+			);
+		}
+		const env = yield* bindings;
+		return yield* Effect.all([
+			load(section, {
+				env,
+				actor,
+				repository: Astro.url.searchParams.get('repository') ?? undefined,
+			}),
+			panel('github-status', githubOutage),
+		], { concurrency: 'unbounded' }).pipe(
+			Effect.provide(applicationLayer(env)),
 		);
-	}
-	const env = yield* bindings;
-	return yield* Effect.all([
-		load(section, {
-			env,
-			actor,
-			repository: Astro.url.searchParams.get('repository') ?? undefined,
-		}),
-		panel('github-status', githubOutage),
-	], { concurrency: 'unbounded' }).pipe(Effect.provide(applicationLayer(env)));
-}));
+	}),
+	{ signal: Astro.request.signal },
+);
 ---
 <Layout
 	section={section}

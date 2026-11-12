@@ -12,8 +12,9 @@ import { fileProblem } from '@/contract/diagnostics';
 import type { DomainError } from '@/contract/errors';
 import { domainError, upstream } from '@/contract/errors';
 import { sha256Hex } from '@/contract/ids';
-import { fromPromise, fromSync } from '@/failure';
+import { fromJson, fromPromise, fromSync, toDomainError } from '@/failure';
 import { parentDirectory } from '@/relative-path';
+import { responseBytes, responseJson, responseText } from '@/runtime/http';
 
 const precedence = ['jsr.json', 'jsr.jsonc', 'deno.json', 'deno.jsonc'];
 function rank(path: string): number {
@@ -71,17 +72,25 @@ export function setUpJsrPackage(
 			}).pipe(Effect.flatMap(response => {
 				if (response.ok || (method === 'GET' && response.status === 404)) return Effect.succeed(response);
 				const failed = `JSR ${method} ${path} failed with HTTP ${response.status}`;
-				return fromPromise(() => response.text()).pipe(Effect.flatMap(detail =>
-					Effect.fail(
-						response.status >= 500 || response.status === 429
-							? upstream('registry', `${failed}: ${detail}`)
-							: setupRefused(`${failed}: ${detail}`),
-					)
-				));
+				return responseText(response).pipe(
+					Effect.mapError(({ cause }) => toDomainError(cause)),
+					Effect.flatMap(detail =>
+						Effect.fail(
+							response.status >= 500 || response.status === 429
+								? upstream('registry', `${failed}: ${detail}`)
+								: setupRefused(`${failed}: ${detail}`),
+						)
+					),
+				);
 			}));
 		const existing = yield* call(`/scopes/${scope}/packages/${bare}`);
 		if (existing.status === 404) yield* call(`/scopes/${scope}/packages`, 'POST', { package: bare });
-		const linked = existing.ok ? object(object(yield* fromPromise(() => existing.json())).githubRepository) : {};
+		const linked = existing.ok
+			? object(
+				object(yield* responseJson(existing).pipe(Effect.mapError(({ cause }) => toDomainError(cause))))
+					.githubRepository,
+			)
+			: {};
 		if (linked.owner === undefined) {
 			yield* call(`/scopes/${scope}/packages/${bare}`, 'PATCH', { githubRepository: { owner, name: repo } });
 		} else if (linked.owner !== owner || linked.name !== repo) {
@@ -170,7 +179,7 @@ export const jsrManager: Adapter<'jsr'> = {
 			);
 			const absent = unconfirmed(metadata);
 			if (absent) return result(absent);
-			const body = object(yield* fromPromise((): Promise<unknown> => metadata.json()));
+			const body = object(yield* responseJson(metadata));
 			const [scope, name] = publication.name.slice(1).split('/');
 			if (body.scope !== scope || body.name !== name) return result('failed');
 			if (!Object.hasOwn(object(body.versions), publication.version)) return result('pending');
@@ -180,8 +189,8 @@ export const jsrManager: Adapter<'jsr'> = {
 			);
 			const missing = unconfirmed(response);
 			if (missing) return result(missing);
-			const bytes = yield* fromPromise(() => response.arrayBuffer());
-			const version = object(JSON.parse(new TextDecoder().decode(bytes)));
+			const bytes = yield* responseBytes(response);
+			const version = object(yield* fromJson(new TextDecoder().decode(bytes)));
 			const files = Object.values(object(version.manifest));
 			if (
 				!files.length || !Object.keys(object(version.exports)).length
@@ -189,7 +198,7 @@ export const jsrManager: Adapter<'jsr'> = {
 			) {
 				return result('failed');
 			}
-			const digest = `sha256-${yield* fromPromise(() => sha256Hex(bytes))}`;
+			const digest = `sha256-${yield* fromPromise(() => sha256Hex(bytes.buffer))}`;
 			return result(publication.digest && publication.digest !== digest ? 'failed' : 'succeeded', digest);
 		}).pipe(Effect.orElseSucceed(() => result('uncertain')));
 	},

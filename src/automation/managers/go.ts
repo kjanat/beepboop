@@ -7,9 +7,9 @@ import { latestVersion, publicationResult, registryRequest, unconfirmed } from '
 import { excluded, registry } from '@/automation/package-publication';
 import type { Package, Publication } from '@/automation/types';
 import { fileProblem } from '@/contract/diagnostics';
-import { fromPromise } from '@/failure';
 import { packageIdentity } from '@/package-url';
 import { parentDirectory } from '@/relative-path';
+import { responseJson } from '@/runtime/http';
 import { ioConcurrency } from '@/runtime/policy';
 
 const pseudoVersion =
@@ -87,7 +87,7 @@ function verifyModule(publication: Publication, request: Fetcher): Effect.Effect
 		if (response.status === 410) return result('pending');
 		const missing = unconfirmed(response);
 		if (missing) return result(missing);
-		const info = object(yield* fromPromise((): Promise<unknown> => response.json()));
+		const info = object(yield* responseJson(response));
 		const hash = object(info.Origin).Hash;
 		if (info.Version !== version || (publication.digest && typeof hash === 'string' && hash !== publication.digest)) {
 			return result('failed');

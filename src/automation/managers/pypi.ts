@@ -8,8 +8,8 @@ import { latestVersion, publicationResult, registryRequest, unconfirmed } from '
 import { excluded, registry } from '@/automation/package-publication';
 import { fileProblem } from '@/contract/diagnostics';
 import { precondition } from '@/contract/errors';
-import { fromPromise } from '@/failure';
 import { packageIdentity } from '@/package-url';
+import { responseJson } from '@/runtime/http';
 
 const projectName = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
 const projectVersion = /^[0-9A-Za-z.+!-]+$/;
@@ -75,7 +75,7 @@ export const pypiManager: Adapter<'pypi'> = {
 			const response = yield* registryRequest(request, url, { headers: { Accept: 'application/json' } });
 			const missing = unconfirmed(response);
 			if (missing) return result(missing);
-			const body = object(yield* fromPromise((): Promise<unknown> => response.json()));
+			const body = object(yield* responseJson(response));
 			const info = object(body.info);
 			const files = Array.isArray(body.urls) ? body.urls.map(object) : [];
 			if (normalizedProject(String(info.name)) !== publication.name || info.version !== publication.version) {

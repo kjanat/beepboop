@@ -13,6 +13,7 @@ import { bearerHeaders } from '@/contract/http';
 import { cliTokenPattern, confirmationCode, loginSecret, sha256Hex } from '@/contract/ids';
 import type { Route } from '@/contract/routes';
 import { routes } from '@/contract/routes';
+import { responseJson } from '@/runtime/http';
 import type { Contract, Decoded, Encoded } from '@/schema';
 
 const codes = {
@@ -61,10 +62,13 @@ export function serverOrigin(value: string): Effect.Effect<string, CLIError> {
 		return url.origin;
 	});
 }
+function localFailure(error: unknown): CLIError {
+	return failure(error instanceof Error ? error.message : String(error), 'LOCAL_IO');
+}
 function local<A>(run: (signal: AbortSignal) => Promise<A>): Effect.Effect<A, CLIError> {
 	return Effect.tryPromise({
 		try: run,
-		catch: error => failure(error instanceof Error ? error.message : String(error), 'LOCAL_IO'),
+		catch: localFailure,
 	});
 }
 function refusal(error: ApiFailure): CLIError {
@@ -181,7 +185,7 @@ export class Client {
 			);
 			if (response.status === 401) return yield* Effect.fail(failure('Session revoked', 'SESSION_REVOKED', signIn));
 			if (!response.ok) return yield* rejected(response);
-			return yield* local((): Promise<unknown> => response.json());
+			return yield* responseJson(response).pipe(Effect.mapError(({ cause }) => localFailure(cause)));
 		});
 	}
 	elevated(prompts: SecurityKeyPrompts<CLIError>): Effect.Effect<string, CLIError> {
@@ -232,7 +236,9 @@ export class Client {
 					const problem = yield* failureOf(response);
 					return yield* Effect.fail(failure(`Login failed (${response.status}): ${problem.message}`, 'LOGIN_FAILED'));
 				}
-				const session = parseSession(yield* local((): Promise<unknown> => response.json()));
+				const session = parseSession(
+					yield* responseJson(response).pipe(Effect.mapError(({ cause }) => localFailure(cause))),
+				);
 				if (!session) return yield* Effect.fail(failure('Invalid login response', 'INVALID_RESPONSE'));
 				yield* this.save(session);
 				return;

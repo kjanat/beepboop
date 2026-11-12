@@ -4,6 +4,7 @@ import { Effect, Schema } from 'effect';
 import { packageId } from '@/automation/package-identity';
 import { checkoutAt } from '@/git';
 import { looseSchema } from '@/model';
+import { responseJson } from '@/runtime/http';
 import { mutableArray, mutableRecord, mutableStruct } from '@/schema';
 import { sha256Hex } from '@/sha256';
 import { packageManifest } from '@/tooling/cli/manifest';
@@ -35,7 +36,9 @@ function output(name: string, value: string): Effect.Effect<void, ToolFailure> {
 	);
 }
 function registry(url: string): Effect.Effect<Response, ToolFailure> {
-	return attemptPromise(() => fetch(url, { redirect: 'error', signal: AbortSignal.timeout(30_000) })).pipe(
+	return attemptPromise(signal =>
+		fetch(url, { redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]) })
+	).pipe(
 		Effect.filterOrElse(
 			response => response.ok || response.status === 404,
 			response => refuse(`Registry returned HTTP ${response.status}`),
@@ -43,7 +46,11 @@ function registry(url: string): Effect.Effect<Response, ToolFailure> {
 	);
 }
 function body(response: Response): Effect.Effect<unknown, ToolFailure> {
-	return attemptPromise((): Promise<unknown> => response.json());
+	return responseJson(response).pipe(
+		Effect.mapError(({ cause }) =>
+			new ToolFailure({ message: cause instanceof Error ? cause.message : String(cause), cause })
+		),
+	);
 }
 function checksum(path: string): Effect.Effect<string | undefined, ToolFailure> {
 	return attemptPromise(async () => {

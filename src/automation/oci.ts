@@ -4,6 +4,7 @@ import type { Outcome, Publication } from '@/automation/types';
 import { sha256DigestPattern, sha256Hex } from '@/contract/ids';
 import { fromPromise } from '@/failure';
 import { record } from '@/model';
+import { responseBytes, responseJson } from '@/runtime/http';
 
 /** Public distribution verification. Never forwards GitHub or vault credentials to registries. */
 export function verifyImage(publication: Publication, request: Fetcher = fetch): Effect.Effect<Publication> {
@@ -37,7 +38,7 @@ export function verifyImage(publication: Publication, request: Fetcher = fetch):
 				request(tokenUrl, { redirect: 'manual', signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) })
 			);
 			if (!auth.ok) return result('uncertain');
-			const data = yield* Effect.fromResult(record(yield* fromPromise((): Promise<unknown> => auth.json())));
+			const data = yield* Effect.fromResult(record(yield* responseJson(auth)));
 			const token = data.token ?? data.access_token;
 			if (typeof token !== 'string') return result('uncertain');
 			headers.Authorization = `Bearer ${token}`;
@@ -50,9 +51,9 @@ export function verifyImage(publication: Publication, request: Fetcher = fetch):
 			return result('failed');
 		}
 		// Verify the bytes as well as the registry's digest header.
-		const content = yield* fromPromise(() => response.arrayBuffer());
+		const content = yield* responseBytes(response);
 		if (content.byteLength > 4 * 1024 * 1024) return result('failed');
-		const hash = yield* fromPromise(() => sha256Hex(content));
+		const hash = yield* fromPromise(() => sha256Hex(content.buffer));
 		if (digest !== `sha256:${hash}`) return result('failed');
 		if (publication.channel) {
 			const channel = yield* verifyImage({ ...publication, version: publication.channel, channel: undefined }, request);

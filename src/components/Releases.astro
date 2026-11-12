@@ -67,25 +67,28 @@ const workflows = repository
 const packages = repository
 	? publishablePackages(repository.inventory.packages, stream?.packages)
 	: [];
-const [groups, recommended, bumps] = await Effect.runPromise(Effect.all([
-	Effect.forEach(
-		[...new Set(packages.map(p => p.versionSource))],
-		(source, index) => {
-			const members = packages.filter(p => p.versionSource === source);
-			return recommendedVersion(members).pipe(Effect.map(version => ({
-				id: `group-${index + 1}`,
-				packages: members,
-				recommended: version,
-			})));
-		},
-	),
-	recommendedVersion(packages),
-	Effect.all({
-		patch: bumpedVersion(packages, { bump: 'patch' }),
-		minor: bumpedVersion(packages, { bump: 'minor' }),
-		major: bumpedVersion(packages, { bump: 'major' }),
-	}),
-]));
+const [groups, recommended, bumps] = await Effect.runPromise(
+	Effect.all([
+		Effect.forEach(
+			[...new Set(packages.map(p => p.versionSource))],
+			(source, index) => {
+				const members = packages.filter(p => p.versionSource === source);
+				return recommendedVersion(members).pipe(Effect.map(version => ({
+					id: `group-${index + 1}`,
+					packages: members,
+					recommended: version,
+				})));
+			},
+		),
+		recommendedVersion(packages),
+		Effect.all({
+			patch: bumpedVersion(packages, { bump: 'patch' }),
+			minor: bumpedVersion(packages, { bump: 'minor' }),
+			major: bumpedVersion(packages, { bump: 'major' }),
+		}),
+	]),
+	{ signal: Astro.request.signal },
+);
 const bump = (kind: 'patch' | 'minor' | 'major') => {
 	const version = bumps[kind];
 	return version ? ` (${version})` : '';

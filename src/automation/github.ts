@@ -37,9 +37,9 @@ import { DomainError, domainError, invalid, precondition, upstream } from '@/con
 import { githubApiVersion } from '@/contract/http';
 import type { AutoMergeMethod } from '@/contract/setup-terms';
 import { parseRetryAfter } from '@/domain/http-date';
-import { fromPromise, fromSync } from '@/failure';
+import { fromPromise, fromSync, toDomainError } from '@/failure';
 import { decode, sha, textSchema } from '@/model';
-import { responseJson, responseText } from '@/runtime/http';
+import { responseBytes, responseJson, responseText } from '@/runtime/http';
 import { ioConcurrency, retryTransient } from '@/runtime/policy';
 import type { Contract, Decoded } from '@/schema';
 import { mutableArray, mutableStruct } from '@/schema';
@@ -259,7 +259,7 @@ export class RepositoryGateway {
 				const message = `GitHub HTTP ${download.status} downloading release asset ${asset.name}`;
 				return yield* (download.status >= 500 ? upstream('github', message) : precondition(message));
 			}
-			const content = yield* fromPromise(() => download.arrayBuffer());
+			const content = yield* responseBytes(download).pipe(Effect.mapError(({ cause }) => toDomainError(cause)));
 			const upload = yield* fromPromise(signal =>
 				self.transport(
 					`https://uploads.github.com/repos/${repository}/releases/${releaseId}/assets?name=${

@@ -75,7 +75,7 @@ export function verifyRegistry(
 				request(channel, { redirect: 'manual', signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]) })
 			);
 			if (!tagged.ok) return result('pending');
-			const tags: unknown = yield* fromPromise(() => tagged.json());
+			const tags: unknown = yield* responseJson(tagged);
 			if (!tags || typeof tags !== 'object' || Reflect.get(tags, publication.channel ?? '') !== publication.version) {
 				return result('pending');
 			}
