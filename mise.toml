@@ -7,9 +7,10 @@ python                        = "3.15.2"
 "github:kjanat/runner"        = "latest"
 "github:sharkdp/fd"           = "latest"
 "github:kjanat/shellcheck-rs" = "latest"
+deno                          = "2.9.8"
 
 [tools."http:actionlint"]
-version          = "343"
+version          = "master"
 url              = 'https://pkg.pr.new/kjanat/actionlint/@kjanat-actionlint/actionlint-{{ os(macos="darwin", windows="win32") }}-{{ arch() }}@{{ version }}'
 format           = "tar.gz"
 strip_components = 1

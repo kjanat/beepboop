@@ -145,7 +145,19 @@ await main(Effect.gen(function*() {
 				? (yield* parse(jsrPackage, yield* body(metadata))).versions?.[jsr.version]
 				: undefined;
 			if (published === undefined) {
-				return yield* run(['bunx', 'jsr', 'publish', '--config', 'packages/cli/jsr.json'], { cwd: root });
+				return yield* run([
+					'deno',
+					'publish',
+					'--unstable-bare-node-builtins',
+					'--unstable-sloppy-imports',
+					'--unstable-byonm',
+					'--no-check',
+					'--config',
+					'packages/cli/jsr.json',
+				], {
+					cwd: root,
+					env: { ...process.env, DENO_DISABLE_PEDANTIC_NODE_WARNINGS: 'true' },
+				});
 			}
 			if ((yield* parse(jsrVersion, published)).yanked === true) {
 				console.log(`::error::JSR ${jsr.name}@${jsr.version} is yanked. Release a new version.`);
