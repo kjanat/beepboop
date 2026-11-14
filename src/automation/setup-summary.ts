@@ -74,10 +74,9 @@ export function streamSummary(
 	const files = [...new Set(stream.observe?.map(entry => entry.file) ?? [])];
 	for (const file of files) {
 		const entries = stream.observe?.filter(entry => entry.file === file) ?? [];
-		const pushes = plan.workflows.find(workflow => workflow.file === file)?.events.includes('push');
-		const tags = pushes
-			? entries.flatMap(entry => entry.ref?.startsWith('refs/tags/') ? [entry.ref.slice('refs/tags/'.length)] : [])
-			: [];
+		const workflow = plan.workflows.find(workflow => workflow.file === file);
+		const tags = workflow?.events.includes('push') ? workflow.tagPatterns ?? [] : [];
+		const filters = [...new Set(entries.flatMap(entry => entry.ref ? [entry.ref] : []))];
 		const ids = [...new Set(entries.flatMap(entry => entry.publications))];
 		const start = tags.length
 			? `Tags matching ${listed(tags)} start ${file}`
@@ -86,6 +85,21 @@ export function streamSummary(
 			`${ids.length ? `${start}. It publishes ${publishes(ids)}` : start}, and Beepboop records each run. ${
 				tags.length ? 'Its triggers stay as they are.' : ''
 			}`.trimEnd(),
+		);
+		if (
+			filters.length
+			&& (filters.length !== tags.length || filters.some((ref, index) => ref !== `refs/tags/${tags[index]}`))
+		) {
+			lines.push(
+				`Beepboop's observation filter for ${file} is ${
+					listed(filters)
+				}; it selects runs to record and does not change the workflow's triggers.`,
+			);
+		}
+	}
+	if ([...observed].some(id => packages.get(id)?.manager === 'cargo')) {
+		lines.push(
+			'Cargo publisher readiness is unverified: adoption has not checked whether each crate exists on crates.io or whether its authentication is configured. Before starting a release with crates.io Trusted Publishing, manually publish any new crate first, then configure its trusted publisher. See https://crates.io/docs/trusted-publishing.',
 		);
 	}
 	for (const operation of stream.operations ?? []) {

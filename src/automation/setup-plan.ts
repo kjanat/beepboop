@@ -37,6 +37,7 @@ const publication = publicationSchema({
 	reason: 'Invalid exclusion reason',
 });
 const evidence: Schema.Codec<WorkflowEvidence, unknown> = mutableStruct({
+	tagPatterns: Schema.optional(strings),
 	file: Schema.String,
 	jobs: strings,
 	steps: mutableArray(mutableStruct({ job: Schema.String, id: Schema.String, label: Schema.String })),

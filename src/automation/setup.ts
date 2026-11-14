@@ -106,7 +106,10 @@ function storedConfiguration(snapshot: Snapshot): Effect.Effect<Record<string, u
 function evidence(snapshot: Snapshot, inventory: Inventory): Effect.Effect<WorkflowEvidence[], DomainError> {
 	return Effect.forEach(
 		inventory.workflows,
-		w => Effect.fromResult(workflowEvidence(w.file, snapshot.files[`.github/workflows/${w.file}`] ?? '')),
+		w =>
+			Effect.fromResult(workflowEvidence(w.file, snapshot.files[`.github/workflows/${w.file}`] ?? '')).pipe(
+				Effect.map(evidence => ({ ...evidence, ...(w.tagPatterns?.length ? { tagPatterns: w.tagPatterns } : {}) })),
+			),
 	);
 }
 export function suggestSetup(
@@ -469,7 +472,20 @@ function drafted(
 		for (const entry of inventory.diagnostics) {
 			if (entry.code !== 'package-metadata') notes.push(`Discovery: ${entry.message}`);
 			else if (entry.subject?.kind === 'package' && ticked.has(entry.subject.key)) {
-				notes.push(`${entry.message}. ${heldNote}`);
+				const id = entry.subject.key;
+				const managed = choices.streams.some(stream => stream.promote && stream.packages.includes(id));
+				const observed = choices.streams.some(stream =>
+					stream.observe?.some(workflow => workflow.publications.includes(id))
+				);
+				notes.push(
+					`${entry.message}. ${
+						managed
+							? heldNote
+							: observed
+							? 'Advisory: the existing publishing workflow controls publication; Beepboop only observes it.'
+							: 'Advisory: address this metadata before publishing.'
+					}`,
+				);
 			}
 		}
 		if (baseline.branchConflict) blockers.push(branchConflictBlocker);

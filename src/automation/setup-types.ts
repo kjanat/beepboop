@@ -33,6 +33,7 @@ export interface SetupEdit {
 	due: number;
 }
 export interface WorkflowEvidence {
+	tagPatterns?: string[];
 	file: string;
 	jobs: string[];
 	steps: { job: string; id: string; label: string }[];
