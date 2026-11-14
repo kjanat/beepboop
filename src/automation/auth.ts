@@ -7,15 +7,16 @@ import {
 	verifyRegistrationResponse,
 } from '@simplewebauthn/server';
 import { Clock, Context, Effect, Result, Schema, SchemaGetter } from 'effect';
-import type { JWKSCacheInput, JWTVerifyGetKey } from 'jose';
-import { createRemoteJWKSet, customFetch, errors, jwksCache, jwtVerify } from 'jose';
+import type { JwsKeyResolver, VerifiedJwt, VerifyJwtOptions } from 'micro509/jose';
+import { verifyJwt } from 'micro509/jose';
 import { cliAuthRoute, cliSubject } from '@/automation/cli-auth';
 import { logRecovered } from '@/automation/failure-log';
+import { remoteKeys } from '@/automation/jwks';
 import type { Fetcher } from '@/automation/managers/registry';
 import { documentRow } from '@/automation/schemas';
 import { decodeError } from '@/automation/store';
 import type { DomainError } from '@/contract/errors';
-import { decodeRequest, forbidden, precondition, unauthenticated } from '@/contract/errors';
+import { decodeRequest, forbidden, precondition, unauthenticated, upstream } from '@/contract/errors';
 import { loginSecretPattern } from '@/contract/ids';
 import { errorPage, fromJson, fromPromise, fromSync, recover, toDomainError } from '@/failure';
 import { integer, record, sha, text } from '@/model';
@@ -91,14 +92,12 @@ export interface AuthenticationDependencies {
 	readonly cliSessions: CLISessionStore;
 	readonly authenticators: Authenticators;
 	readonly client: (signal: AbortSignal) => ReturnType<typeof createClient>;
-	readonly administratorKeys: (signal: AbortSignal) => JWTVerifyGetKey;
-	readonly workflowKeys: (signal: AbortSignal) => JWTVerifyGetKey;
+	readonly administratorKeys: JwsKeyResolver;
+	readonly workflowKeys: JwsKeyResolver;
 }
 export class Authentication
 	extends Context.Service<Authentication, AuthenticationDependencies>()('beepboop/Authentication')
 {}
-
-const keyCaches = new WeakMap<Fetcher, Map<string, JWKSCacheInput>>();
 
 export function authentication(env: AuthBindings, db: Sql, transport: Fetcher): AuthenticationDependencies {
 	const sessions = new SessionStore(db);
@@ -106,24 +105,14 @@ export function authentication(env: AuthBindings, db: Sql, transport: Fetcher): 
 		...init,
 		signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
 	});
-	const caches = keyCaches.get(transport) ?? new Map<string, JWKSCacheInput>();
-	keyCaches.set(transport, caches);
-	const keys = (url: URL) => {
-		let cache = caches.get(url.href);
-		if (!cache) {
-			cache = {};
-			caches.set(url.href, cache);
-		}
-		return (signal: AbortSignal) => createRemoteJWKSet(url, { [customFetch]: http(signal), [jwksCache]: cache });
-	};
 	return {
 		sessions,
 		cliSessions: new CLISessionStore(db),
 		authenticators: new Authenticators(env, db, sessions),
 		client: signal =>
 			createClient({ clientID: env.OPENAUTH_CLIENT_ID, issuer: env.OPENAUTH_ISSUER, fetch: http(signal) }),
-		administratorKeys: keys(new URL('/.well-known/jwks.json', env.OPENAUTH_ISSUER)),
-		workflowKeys: keys(new URL('https://token.actions.githubusercontent.com/.well-known/jwks')),
+		administratorKeys: remoteKeys(new URL('/.well-known/jwks.json', env.OPENAUTH_ISSUER), transport),
+		workflowKeys: remoteKeys(new URL('https://token.actions.githubusercontent.com/.well-known/jwks'), transport),
 	};
 }
 export function base64(bytes: Uint8Array): string {
@@ -132,31 +121,44 @@ export function base64(bytes: Uint8Array): string {
 export function bytes(value: string): Uint8Array<ArrayBuffer> {
 	return Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
 }
-function verified<T>(verification: (signal: AbortSignal) => Promise<T>): Effect.Effect<T, DomainError> {
-	return Effect.tryPromise({
-		try: verification,
-		catch: error => error instanceof errors.JOSEError ? unauthenticated(error.message) : toDomainError(error),
-	});
+function verified(token: string, options: Omit<VerifyJwtOptions, 'signal'>): Effect.Effect<VerifiedJwt, DomainError> {
+	return fromPromise(signal => verifyJwt(token, { ...options, signal })).pipe(Effect.flatMap(result => {
+		if (result.ok) return Effect.succeed(result.value);
+		switch (result.code) {
+			case 'aborted':
+				return Effect.interrupt;
+			case 'invalid_options':
+			case 'key_resolution_failed':
+				return Effect.fail(toDomainError(new Error(result.message)));
+			case 'jwks_unavailable':
+				return Effect.fail(upstream('oidc', result.message));
+			default:
+				return Effect.fail(unauthenticated(result.message));
+		}
+	}));
 }
 export function workflowIdentity(
 	request: Request,
 	audience: string,
 	ownerId: number,
-	issuerKeys: (signal: AbortSignal) => JWTVerifyGetKey,
+	issuerKeys: JwsKeyResolver,
 ): Effect.Effect<WorkflowIdentity, DomainError> {
 	return Effect.gen(function*() {
 		const token = request.headers.get('authorization')?.replace(/^Bearer /, '');
 		if (!token || token.length > 20000) return yield* unauthenticated('Workflow authentication required');
 		const now = yield* Clock.currentTimeMillis;
-		const { payload } = yield* verified(signal =>
-			jwtVerify(token, issuerKeys(signal), {
+		const { claims: payload } = yield* verified(token, {
+			key: issuerKeys,
+			algorithms: ['RS256'],
+			tokenType: { unchecked: true },
+			claims: {
 				issuer: 'https://token.actions.githubusercontent.com',
-				currentDate: new Date(now),
+				now: () => new Date(now),
 				audience,
-				algorithms: ['RS256'],
 				requiredClaims: ['exp', 'iat', 'sub'],
-			})
-		);
+				futureIssuedAt: 'allow',
+			},
+		});
 		const identity: WorkflowIdentity = yield* Effect.fromResult(Result.gen(function*() {
 			return {
 				repositoryId: yield* integer(Number(payload.repository_id)),
@@ -219,15 +221,18 @@ export function administrator(
 		const token = cookie(request, '__Host-beepboop_access');
 		if (!token || token.length > 20000) return yield* unauthenticated('Administrator login required');
 		const now = yield* Clock.currentTimeMillis;
-		const { payload } = yield* verified(signal =>
-			jwtVerify(token, dependencies.administratorKeys(signal), {
+		const { claims: payload } = yield* verified(token, {
+			key: dependencies.administratorKeys,
+			algorithms: ['ES256', 'RS256'],
+			tokenType: { unchecked: true },
+			claims: {
 				issuer: env.OPENAUTH_ISSUER,
-				currentDate: new Date(now),
+				now: () => new Date(now),
 				audience: env.OPENAUTH_CLIENT_ID,
-				algorithms: ['ES256', 'RS256'],
 				requiredClaims: ['exp', 'sub'],
-			})
-		);
+				futureIssuedAt: 'allow',
+			},
+		});
 		if (payload.mode !== 'access' || payload.type !== 'user') {
 			return yield* unauthenticated('Administrator access token required');
 		}
