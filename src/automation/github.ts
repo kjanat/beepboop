@@ -399,11 +399,11 @@ export class RepositoryGateway {
 			return yield* precondition('Tag discovery limit exceeded');
 		});
 	}
-	verification(name: string, id: number): VerificationContext {
+	verification(name: string, id: number, permissions?: Permission): VerificationContext {
 		let token: string | undefined;
 		const installation = Effect.suspend(() =>
 			token === undefined
-				? this.token(name, id).pipe(Effect.tap(issued =>
+				? this.token(name, id, permissions).pipe(Effect.tap(issued =>
 					Effect.sync(() => {
 						token = issued;
 					})

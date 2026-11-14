@@ -15,6 +15,8 @@ import { inferReleaseGraph } from '@/automation/release-graph/graph';
 import { behaviourChanges, changeDetails, onboardingBranch } from '@/automation/setup-changes';
 import { completeTaggedStreams } from '@/automation/setup-completion';
 import { crateScript, refreshedCommands, suggestedCommands } from '@/automation/setup-defaults';
+import type { PublishingAccess } from '@/automation/setup-publishing';
+import { checkPublishing } from '@/automation/setup-publishing';
 import { startWorkflow } from '@/automation/setup-start';
 import { listed, streamSummary } from '@/automation/setup-summary';
 import type {
@@ -106,7 +108,10 @@ function storedConfiguration(snapshot: Snapshot): Effect.Effect<Record<string, u
 function evidence(snapshot: Snapshot, inventory: Inventory): Effect.Effect<WorkflowEvidence[], DomainError> {
 	return Effect.forEach(
 		inventory.workflows,
-		w => Effect.fromResult(workflowEvidence(w.file, snapshot.files[`.github/workflows/${w.file}`] ?? '')),
+		w =>
+			Effect.fromResult(workflowEvidence(w.file, snapshot.files[`.github/workflows/${w.file}`] ?? '')).pipe(
+				Effect.map(evidence => ({ ...evidence, ...(w.tagPatterns?.length ? { tagPatterns: w.tagPatterns } : {}) })),
+			),
 	);
 }
 export function suggestSetup(
@@ -295,6 +300,7 @@ export function binaryRelease(candidates: readonly BinaryCandidate[]): BinaryRel
 export const branchConflictBlocker =
 	'Someone else committed to the setup branch, so Beepboop stopped updating it. Take over to replace their commits with this proposal.';
 export interface SetupBaseline {
+	publishing?: PublishingAccess;
 	head: string | null;
 	workflowPermission?: boolean;
 	branchConflict?: boolean;
@@ -395,8 +401,12 @@ function draftSetup(
 				]
 				: []
 		);
+		const publishingChecks = baseline.publishing
+			? yield* checkPublishing(snapshot, inventory, choices, baseline.publishing)
+			: [];
 		const plan = {
 			...drafts,
+			...(publishingChecks.length ? { publishingChecks } : {}),
 			blockers: [...ineligible, ...drafts.blockers],
 			notes: [
 				...unanswered,
@@ -469,7 +479,20 @@ function drafted(
 		for (const entry of inventory.diagnostics) {
 			if (entry.code !== 'package-metadata') notes.push(`Discovery: ${entry.message}`);
 			else if (entry.subject?.kind === 'package' && ticked.has(entry.subject.key)) {
-				notes.push(`${entry.message}. ${heldNote}`);
+				const id = entry.subject.key;
+				const managed = choices.streams.some(stream => stream.promote && stream.packages.includes(id));
+				const observed = choices.streams.some(stream =>
+					stream.observe?.some(workflow => workflow.publications.includes(id))
+				);
+				notes.push(
+					`${entry.message}. ${
+						managed
+							? heldNote
+							: observed
+							? 'Advisory: the existing publishing workflow controls publication; Beepboop only observes it.'
+							: 'Advisory: address this metadata before publishing.'
+					}`,
+				);
 			}
 		}
 		if (baseline.branchConflict) blockers.push(branchConflictBlocker);

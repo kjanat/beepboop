@@ -26,7 +26,7 @@ function sentence(value: string): string {
 
 export function streamSummary(
 	stream: Stream,
-	plan: Pick<SetupPlan, 'inventory' | 'packageIds' | 'workflows'>,
+	plan: Pick<SetupPlan, 'inventory' | 'packageIds' | 'workflows' | 'publishingChecks'>,
 ): string[] {
 	const packages = new Map(plan.inventory.packages.map((pkg, index) => [plan.packageIds[index] ?? '', pkg]));
 	const existing = new Set(plan.workflows.map(workflow => workflow.file));
@@ -74,10 +74,9 @@ export function streamSummary(
 	const files = [...new Set(stream.observe?.map(entry => entry.file) ?? [])];
 	for (const file of files) {
 		const entries = stream.observe?.filter(entry => entry.file === file) ?? [];
-		const pushes = plan.workflows.find(workflow => workflow.file === file)?.events.includes('push');
-		const tags = pushes
-			? entries.flatMap(entry => entry.ref?.startsWith('refs/tags/') ? [entry.ref.slice('refs/tags/'.length)] : [])
-			: [];
+		const workflow = plan.workflows.find(workflow => workflow.file === file);
+		const tags = workflow?.events.includes('push') ? workflow.tagPatterns ?? [] : [];
+		const filters = [...new Set(entries.flatMap(entry => entry.ref ? [entry.ref] : []))];
 		const ids = [...new Set(entries.flatMap(entry => entry.publications))];
 		const start = tags.length
 			? `Tags matching ${listed(tags)} start ${file}`
@@ -87,6 +86,19 @@ export function streamSummary(
 				tags.length ? 'Its triggers stay as they are.' : ''
 			}`.trimEnd(),
 		);
+		if (
+			filters.length
+			&& (filters.length !== tags.length || filters.some((ref, index) => ref !== `refs/tags/${tags[index]}`))
+		) {
+			lines.push(
+				`Beepboop's observation filter for ${file} is ${
+					listed(filters)
+				}; it selects runs to record and does not change the workflow's triggers.`,
+			);
+		}
+	}
+	for (const check of plan.publishingChecks ?? []) {
+		if (files.includes(check.file)) lines.push(`${check.subject}: ${check.message}`);
 	}
 	for (const operation of stream.operations ?? []) {
 		const after = operation.needs.map(name => {

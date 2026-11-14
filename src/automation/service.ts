@@ -26,6 +26,7 @@ import { conflictMessage, streamModuleTagPrefixes, tagConflict } from '@/automat
 import { manifestProblems, releasedVersion, unreleasedManifestVersion } from '@/automation/release-version';
 import { bodyChoices, releaseAfterMerge } from '@/automation/setup';
 import { currentOptions, maintainSetup, rebuildingStatus, setupEdits } from '@/automation/setup-maintenance';
+import type { PublishingAccess } from '@/automation/setup-publishing';
 import { decodeError, Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
 import type {
@@ -182,6 +183,34 @@ export class AutomationService {
 		return this.dependencies.vault;
 	}
 
+	publishingAccess(repository: { name: string; id: number }): PublishingAccess {
+		return {
+			request: this.dependencies.transport,
+			github: this.gateway.verification(repository.name, repository.id, {
+				contents: 'read',
+				actions: 'read',
+				secrets: 'read',
+				variables: 'read',
+				environments: 'read',
+			}).github,
+			cargoToken: (file, secrets) => Effect.gen({ self: this }, function*() {
+				const documents = yield* this.credentials.grantDocuments({ repositoryId: repository.id });
+				const grants = yield* Effect.forEach(documents, parseGrant);
+				const aliases = [...new Set([
+					...grants.filter(grant => grant.workflow === file && grant.secretName && secrets.includes(grant.secretName))
+						.map(grant => grant.alias),
+					'crates-io',
+				])];
+				for (const alias of aliases) {
+					if (yield* this.credentials.activeVersion(alias)) {
+						return (yield* this.vault().reveal(alias, 'beepboop:setup-publishing')).value;
+					}
+				}
+				return undefined;
+			}),
+		};
+	}
+
 	setAccess(id: number, access: Access): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (yield* this.store.setAccess(id, access)) yield* fromPromise(() => this.coordinator(id).wake());
@@ -270,7 +299,7 @@ export class AutomationService {
 			yield* this.releaseFromManifest(repository).pipe(
 				this.store.auditFailure('beepboop', 'release.push.failed', name),
 			);
-			yield* maintainSetup(this.store, this.gateway, snapshot).pipe(
+			yield* maintainSetup(this.store, this.gateway, snapshot, this.publishingAccess(snapshot.repository)).pipe(
 				this.store.auditFailure('beepboop', 'repository.setup.failed', name),
 			);
 			yield* this.winget().watch(repository);
@@ -696,7 +725,13 @@ export class AutomationService {
 			if (saved.url !== `https://github.com/${repository.name}/pull/${pull.number}`) return;
 			const base = yield* fromSync(() => decodeSync(Schema.optional(setupChoicesSchema), saved.choices));
 			if (!base) return;
-			const options = yield* currentOptions(this.store, this.gateway, repository, base);
+			const options = yield* currentOptions(
+				this.store,
+				this.gateway,
+				repository,
+				base,
+				this.publishingAccess(repository),
+			);
 			const body = pull.body ?? '';
 			const choices = yield* fromSync(() => decodeSync(setupChoicesSchema, bodyChoices(body, options, base)));
 			const scheduled = yield* fromPromise(() =>

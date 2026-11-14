@@ -275,9 +275,11 @@ export function startCommand(stream: StreamProposal, snapshot: Snapshot): string
 			)
 			: '0.1.0';
 		const tag = `${prefix}${next}`;
-		return `${
-			latest ? `Latest release ${code(`${prefix}${latest}`)}. ` : 'No release tag yet. '
-		}Start the next release with ${
+		return `${latest ? `Latest release ${code(`${prefix}${latest}`)}. ` : 'No release tag yet. '}${
+			stream.targets.some(target => target.destination === 'crates-io')
+				? 'Once publishing prerequisites are satisfied, start'
+				: 'Start'
+		} the next release with ${
 			code(`git tag ${tag} && git push origin ${tag}`)
 		}; Beepboop observes the workflows it starts.`;
 	}
