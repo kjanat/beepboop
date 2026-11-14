@@ -1,6 +1,6 @@
 import { appendFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Mode } from '@root/actions/runtime/protocol.ts';
+import type { Environment, Mode } from '@root/actions/runtime/protocol.ts';
 import {
 	attempt,
 	endpoints,
@@ -10,17 +10,18 @@ import {
 	requestBody,
 	required,
 } from '@root/actions/runtime/protocol.ts';
-import { identityToken, mask, postJson, serviceOrigin } from '@root/actions/runtime/session.ts';
+import { identityToken, mask, postJson, readServiceOrigin } from '@root/actions/runtime/session.ts';
 import { Clock, Effect } from 'effect';
 import { record, text } from '@/model.ts';
-import { writeOutput } from '@/tooling/github-output.ts';
+import { writeOutputTo } from '@/tooling/github-output.ts';
 
-function writeResult(mode: Mode, data: Record<string, unknown>) {
+function writeResult(mode: Mode, data: Record<string, unknown>, environment: Environment) {
+	const writeOutput = (name: string, value: string) => writeOutputTo(environment.GITHUB_OUTPUT, name, value);
 	return Effect.gen(function*() {
 		if (mode === 'begin') {
 			const id = yield* Effect.fromResult(text(data.id));
 			yield* writeOutput('execution-id', id);
-			const directory = yield* Effect.fromResult(required(process.env, 'RUNNER_TEMP'));
+			const directory = yield* Effect.fromResult(required(environment, 'RUNNER_TEMP'));
 			const contextFile = join(directory, `release-context-${crypto.randomUUID()}.json`);
 			yield* Effect.fromResult(attempt(() => writeFileSync(contextFile, JSON.stringify(data), { mode: 0o600 })));
 			const { repositoryId, repository, stream, operation, state, version, sourceSha, updatedAt, draftRelease } = data;
@@ -40,8 +41,8 @@ function writeResult(mode: Mode, data: Record<string, unknown>) {
 					contextFile,
 				}),
 			);
-			const environment = yield* Effect.fromResult(required(process.env, 'GITHUB_ENV'));
-			yield* Effect.fromResult(attempt(() => appendFileSync(environment, `BEEPBOOP_EXECUTION_ID=${id}\n`)));
+			const environmentFile = yield* Effect.fromResult(required(environment, 'GITHUB_ENV'));
+			yield* Effect.fromResult(attempt(() => appendFileSync(environmentFile, `BEEPBOOP_EXECUTION_ID=${id}\n`)));
 		} else if (mode === 'credentials') {
 			for (const [alias, value] of Object.entries(data)) {
 				if (typeof value !== 'string') return yield* fail('Invalid credential response');
@@ -51,7 +52,7 @@ function writeResult(mode: Mode, data: Record<string, unknown>) {
 			yield* writeOutput('values', JSON.stringify(data));
 		} else if (mode === 'token') {
 			if (typeof data.token !== 'string') return yield* fail('Invalid token response');
-			if (process.env.TOKEN_IDENTITY === 'true') {
+			if (environment.TOKEN_IDENTITY === 'true') {
 				const bot = yield* Effect.fromResult(record(data.bot));
 				const login = bot.login, id = bot.id, email = bot.email;
 				if (
@@ -78,11 +79,17 @@ function writeResult(mode: Mode, data: Record<string, unknown>) {
 	});
 }
 
-await Effect.runPromise(Effect.gen(function*() {
-	const mode = yield* Effect.fromResult(parseMode(process.argv[2]));
-	const origin = yield* serviceOrigin;
-	const token = yield* identityToken(origin);
-	const body = JSON.stringify(yield* Effect.fromResult(requestBody(mode, process.env, yield* Clock.currentTimeMillis)));
-	const result = yield* exchange(mode, Effect.suspend(() => postJson(origin, endpoints[mode].path, token, body)));
-	yield* writeResult(mode, result);
-}));
+export function run(input: string | undefined, environment: Environment): Promise<void> {
+	return Effect.runPromise(Effect.gen(function*() {
+		const mode = yield* Effect.fromResult(parseMode(input));
+		const origin = yield* readServiceOrigin(environment);
+		const token = yield* identityToken(origin, environment);
+		const body = JSON.stringify(
+			yield* Effect.fromResult(requestBody(mode, environment, yield* Clock.currentTimeMillis)),
+		);
+		const result = yield* exchange(mode, Effect.suspend(() => postJson(origin, endpoints[mode].path, token, body)));
+		yield* writeResult(mode, result, environment);
+	}));
+}
+
+if (import.meta.main) await run(process.argv[2], process.env);

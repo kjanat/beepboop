@@ -1,11 +1,7 @@
 import { spyOn } from 'bun:test';
 
-export async function withEnvironment<A>(
-	variables: Record<string, string>,
-	work: () => Promise<A>,
-): Promise<A> {
+export async function withEnvironment<A>(variables: Record<string, string>, work: () => Promise<A>): Promise<A> {
 	const saved = { env: { ...process.env }, argv: [...process.argv] };
-	for (const key of Object.keys(process.env)) delete process.env[key];
 	Object.assign(process.env, variables);
 	try {
 		return await work();

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Repository, Run } from '@root/test/support/github.ts';
 import { botId } from '@root/test/support/github.ts';
-import { withConsoleLog, withEnvironment } from '@root/test/support/process.ts';
+import { withConsoleLog } from '@root/test/support/process.ts';
 import type { RunIdentity, World } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import { git } from '@/git';
@@ -14,7 +14,6 @@ export const tokenRequest = {
 	ACTIONS_ID_TOKEN_REQUEST_URL: `https://${tokenHost}/token?api-version=2.0`,
 	ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'request-token',
 };
-let invocation = 0;
 let runtime: Promise<string> | undefined;
 function sharedRuntime(): Promise<string> {
 	return runtime ??= (async () => {
@@ -75,26 +74,25 @@ export function runAction(
 			return Response.json({ value: token });
 		});
 		const logs: string[] = [];
-		return withEnvironment({
+		const variablesForRun = {
 			SERVICE_ORIGIN: world.env.APPLICATION_ORIGIN,
 			...tokenRequest,
 			RUNNER_TEMP: directory,
 			GITHUB_OUTPUT: output,
 			GITHUB_ENV: environment,
 			...variables,
-		}, () => {
-			process.argv[2] = mode;
-			return withConsoleLog((...values: unknown[]) => logs.push(values.map(String).join(' ')), async () => {
-				await import(`${client}?run=${++invocation}`);
-				const result = outputs(output);
-				const contextFile = result.context ? JSON.parse(result.context).contextFile : undefined;
-				return {
-					outputs: result,
-					environment: readFileSync(environment, 'utf8'),
-					logs,
-					...(contextFile ? { context: readFileSync(contextFile, 'utf8') } : {}),
-				};
-			});
+		};
+		return withConsoleLog((...values: unknown[]) => logs.push(values.map(String).join(' ')), async () => {
+			const action: typeof import('@root/actions/runtime/client') = await import(client);
+			await action.run(mode, variablesForRun);
+			const result = outputs(output);
+			const contextFile = result.context ? JSON.parse(result.context).contextFile : undefined;
+			return {
+				outputs: result,
+				environment: readFileSync(environment, 'utf8'),
+				logs,
+				...(contextFile ? { context: readFileSync(contextFile, 'utf8') } : {}),
+			};
 		});
 	});
 }
