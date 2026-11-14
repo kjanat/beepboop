@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { expect, spyOn, test } from 'bun:test';
 import { join } from 'node:path';
 import { begin, runAction, runIdentity } from '@root/test/support/actions.ts';
 import { discoveredWidget } from '@root/test/support/client.ts';
@@ -1336,6 +1336,17 @@ test('completion evidence survives execution pagination and later auxiliary work
 		createdAt: completion.completedAt - 1,
 		updatedAt: completion.completedAt - 1,
 	};
+	world.db.reset();
+	expect(await Effect.runPromise(store.completedReleases(undefined, [finished]))).toEqual([]);
+	expect(world.db.queries).toHaveLength(0);
+	expect(await Effect.runPromise(store.completedReleases(undefined, [failure]))).toEqual([completion]);
+	for (const candidate of [
+		{ ...failure, repositoryId: failure.repositoryId + 1 },
+		{ ...failure, stream: 'other-stream' },
+		{ ...failure, updatedAt: completion.completedAt + 1 },
+	]) {
+		expect(await Effect.runPromise(store.completedReleases(undefined, [candidate]))).toEqual([]);
+	}
 	await world.db.prepare('DELETE FROM executions').run();
 	const insert = world.db.prepare(
 		'INSERT INTO executions(id,repository_id,state,document,updated_at) VALUES(?,?,?,?,?)',
@@ -1402,7 +1413,9 @@ test('many legacy blocked run IDs are normalized once without hiding an older ve
 		1,
 	).run();
 	const store = new Store(world.db);
+	world.db.reset();
 	expect((await Effect.runPromise(store.executions()))[0]?.id).toBe('old-verifying');
+	expect(world.db.queries.length).toBeLessThan(30);
 	world.db.reset();
 	const runs = await Effect.runPromise(store.executions());
 	expect(runs).toHaveLength(200);
@@ -1534,4 +1547,36 @@ test('repository filters render only their own readable and unreadable runs even
 		expect(page.document.querySelectorAll('.run-card pre')).toHaveLength(broken);
 		await page.happyDOM.close();
 	}
+});
+
+test('legacy normalization bounds UTF-8 batch parameters and preserves concurrent document updates', async () => {
+	const { finished } = await finishedPromotion('pending');
+	await world.db.prepare('DELETE FROM executions').run();
+	const insert = world.db.prepare(
+		'INSERT INTO executions(id,repository_id,state,document,updated_at) VALUES(?,?,?,?,?)',
+	);
+	for (const [id, length] of [['small-a', 300_000], ['small-b', 300_000], ['large', 700_000]] as const) {
+		await insert.bind(id, finished.repositoryId, 'failed', JSON.stringify({ padding: 'λ'.repeat(length) }), 1).run();
+	}
+	const execute = world.db.execute.bind(world.db);
+	let replaced = false;
+	spyOn(world.db, 'execute').mockImplementation((query, values) => {
+		if (query.startsWith('UPDATE executions')) {
+			for (const value of values) {
+				if (typeof value === 'string') expect(new TextEncoder().encode(value).byteLength).toBeLessThan(2_000_000);
+			}
+			if (!replaced) {
+				replaced = true;
+				execute("UPDATE executions SET state='cancelled',document='{}' WHERE id='small-a'", []);
+			}
+		}
+		return execute(query, values);
+	});
+	const rows = await Effect.runPromise(new Store(world.db).readExecutions());
+	expect(rows).toHaveLength(3);
+	expect(rows.every(row => row.kind === 'unreadable')).toBe(true);
+	expect(await world.db.prepare("SELECT state,state_version,document FROM executions WHERE id='small-a'").first())
+		.toEqual({ state: 'cancelled', state_version: 1, document: '{}' });
+	expect(await world.db.prepare('SELECT COUNT(*) AS pending FROM executions WHERE state_version IS NULL').first())
+		.toEqual({ pending: 0 });
 });

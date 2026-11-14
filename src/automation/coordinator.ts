@@ -490,7 +490,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			]);
 		});
 	}
-	private releaseGroup(execution: Execution): CoordinatorEffect<Execution[] | undefined, DomainError> {
+	private releaseGroup(
+		execution: Execution,
+		history: CoordinatorEffect<Execution[], DomainError> = this.executions(),
+	): CoordinatorEffect<Execution[] | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (!execution.version) return;
 			const required = execution.releaseSet?.required ?? execution.configuration.streams[execution.stream]?.required
@@ -498,7 +501,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (!required.length) return;
 			const id = releaseEventId({ ...execution, version: execution.version });
 			if (yield* this.read(`release-emitted:${id}`)) return;
-			const group = (yield* this.executions())
+			const group = (yield* history)
 				.filter(e =>
 					e.state === 'succeeded' && e.stream === execution.stream && e.version === execution.version
 					&& e.sourceSha === execution.sourceSha && e.configurationSha === execution.configurationSha
@@ -3094,6 +3097,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private hasAdvanceWork(
 		execution: Execution,
 		unresolved: (execution: Execution) => boolean,
+		history: CoordinatorEffect<Execution[], DomainError>,
 	): CoordinatorEffect<boolean, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (
@@ -3109,7 +3113,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			return execution.state === 'succeeded'
 				&& ((yield* this.pendingContinuations(execution)).length > 0
-					|| (yield* this.releaseGroup(execution)) !== undefined);
+					|| (yield* this.releaseGroup(execution, history)) !== undefined);
 		});
 	}
 	private advance(
@@ -3232,11 +3236,22 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (active.some(e => !e.releaseSet?.workflowId) || executions.some(unresolved)) {
 				yield* this.requestReconcile(started + reconcileInterval);
 			}
+			let snapshot: Execution[] | undefined = journal.executions;
+			const history = Effect.suspend(() =>
+				snapshot
+					? Effect.succeed(snapshot)
+					: this.executions().pipe(Effect.tap(entries =>
+						Effect.sync(() => {
+							snapshot = entries;
+						})
+					))
+			);
 			for (const execution of executions) {
 				if (onlyExecution ? execution.id !== onlyExecution : Boolean(execution.releaseSet?.workflowId)) continue;
-				const work = yield* Effect.result(this.hasAdvanceWork(execution, unresolved));
+				const work = yield* Effect.result(this.hasAdvanceWork(execution, unresolved, history));
 				if (work._tag === 'Success' && !work.success) continue;
 				if (yield* this.suspended(execution.repositoryId)) return;
+				snapshot = undefined;
 				if (work._tag === 'Failure') {
 					yield* this.isolate(execution.id, work.failure);
 					continue;

@@ -253,10 +253,12 @@ test('settled history uses no per-execution D1 access budget before newer active
 			id: `history-${i}`,
 			eventId: `history-${i}`,
 			state: i % 3 === 0 ? 'cancelled' : i % 3 === 1 ? 'failed' : 'succeeded',
-			version: undefined,
+			version: '0.0.1',
+			publications: [],
 			createdAt: execution.createdAt - i - 1,
 		});
 	}
+	storage.operations.length = 0;
 	const execute = world.db.execute.bind(world.db);
 	let accessReads = 0;
 	spyOn(world.db, 'execute').mockImplementation((query, values) => {
@@ -273,4 +275,6 @@ test('settled history uses no per-execution D1 access budget before newer active
 	const before = accessReads;
 	await world.wait(20_000);
 	expect(accessReads - before).toBeLessThan(20);
+	expect(storage.operations.filter(operation => operation.kind === 'list' && operation.keys >= 1200).length)
+		.toBeLessThan(15);
 });

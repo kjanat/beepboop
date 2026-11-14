@@ -258,7 +258,7 @@ export class AutomationService {
 			const discovered: RepositoryDiscovery = {
 				...snapshot.repository,
 				sha: snapshot.sha,
-				inventory: discover(snapshot),
+				inventory: { packages: [], workflows: [], managers: [], diagnostics: [], publicationOrder: [] },
 				presetShas: {},
 				diagnostics: [],
 				updatedAt: clock.currentTimeMillisUnsafe(),
@@ -271,8 +271,6 @@ export class AutomationService {
 					discovered.configuration = resolved.configuration;
 					discovered.presetShas = resolved.presetShas;
 					discovered.diagnostics.push(...resolved.drift);
-					discovered.inventory = discover(snapshot, resolved.configuration.managers);
-					discovered.diagnostics.push(...validateAgainst(resolved.configuration, discovered.inventory, snapshot));
 				}).pipe(
 					Effect.catch(error =>
 						Effect.sync(() => {
@@ -292,6 +290,10 @@ export class AutomationService {
 						? 'The setup pull request is open. Merge it to enable releases.'
 						: 'Not configured yet. Configure releases opens a setup pull request.',
 				});
+			}
+			discovered.inventory = discover(snapshot, discovered.configuration?.managers);
+			if (discovered.configuration) {
+				discovered.diagnostics.push(...validateAgainst(discovered.configuration, discovered.inventory, snapshot));
 			}
 			const verification = this.gateway.verification(name, id);
 			discovered.inventory = yield* resolvePublished(discovered.inventory, this.dependencies.transport, verification);

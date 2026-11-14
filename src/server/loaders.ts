@@ -59,6 +59,15 @@ function executions(
 ): Effect.Effect<Rows<Execution, UnreadableExecution>, DomainError> {
 	return service.store.readExecutions(repositoryId).pipe(Effect.map(split));
 }
+function runsWithCompletions(service: AutomationService, repositoryId?: number) {
+	return executions(service, repositoryId).pipe(
+		Effect.flatMap(rows =>
+			service.store.completedReleases(repositoryId, rows.readable).pipe(
+				Effect.map(completed => [rows, completed] as const),
+			)
+		),
+	);
+}
 function grants(service: AutomationService) {
 	return service.credentials.grantDocuments().pipe(
 		Effect.flatMap(documents => Effect.forEach(documents, parseGrant)),
@@ -68,8 +77,8 @@ const concurrent = { concurrency: ioConcurrency } as const;
 
 export const loaders = {
 	overview: (_context) => withAutomation(service => {
-		return Effect.all([repositories(service), executions(service), service.store.completedReleases()], concurrent).pipe(
-			Effect.map(([repositoryRows, executionRows, completed]) => ({
+		return Effect.all([repositories(service), runsWithCompletions(service)], concurrent).pipe(
+			Effect.map(([repositoryRows, [executionRows, completed]]) => ({
 				section: 'overview' as const,
 				completed,
 				repositories: repositoryRows,
@@ -138,10 +147,7 @@ export const loaders = {
 		return repositories(service).pipe(
 			Effect.flatMap(repositoryRows => {
 				const selected = repositoryRows.readable.find(entry => entry.name === repository);
-				return Effect.all(
-					[executions(service, selected?.id), service.store.completedReleases(selected?.id)],
-					concurrent,
-				).pipe(
+				return runsWithCompletions(service, selected?.id).pipe(
 					Effect.map(([executionRows, completed]) => ({
 						section: 'runs' as const,
 						completed,

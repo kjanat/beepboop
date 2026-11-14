@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+	<meta charset="utf-8">
+	<title>Disclosure persistence fixture</title>
+	<details data-fold="release:1">
+		<summary>Release</summary>Release content
+	</details>
+	<details data-fold="run:a" open><summary>Run</summary>Run content</details>
+	<output id="writes">0</output>
+	<script type="module">
+		import { rememberFolds } from '/folds.js';
+
+		const params = new URLSearchParams(location.search);
+		if (params.has('default-open')) {
+			document.querySelector('details').open = true;
+		}
+		rememberFolds(document, () => {
+			if (params.has('denied')) {
+				throw new DOMException('Storage denied', 'SecurityError');
+			}
+			return {
+				getItem: key => sessionStorage.getItem(key),
+				setItem(key, value) {
+					const writes = document.querySelector('#writes');
+					writes.value = String(Number(writes.value) + 1);
+					if (params.has('quota')) {
+						throw new DOMException('Storage full', 'QuotaExceededError');
+					}
+					sessionStorage.setItem(key, value);
+				},
+			};
+		});
+		requestAnimationFrame(() =>
+			requestAnimationFrame(() => {
+				document.body.dataset.ready = 'true';
+			})
+		);
+	</script>
+</html>
