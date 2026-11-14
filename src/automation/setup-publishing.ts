@@ -173,12 +173,14 @@ export function checkPublishing(
 								: `GitHub Actions variable ${name} is missing; configure it before publishing.`,
 						);
 					}
+					const effectiveSecrets = new Map<string, string>();
 					for (const name of secretNames) {
 						const source = publisher.secret(name);
 						const local = source && environment
 							? yield* github(`${root}/environments/${encodeURIComponent(environment)}/secrets/${name.toUpperCase()}`)
 							: null;
 						const secret = local ?? (source ? yield* named('secrets', source) : undefined);
+						if (source) effectiveSecrets.set(name.toUpperCase(), local ? name.toUpperCase() : source);
 						add(
 							subject,
 							secret ? 'passed' : 'action-required',
@@ -208,7 +210,7 @@ export function checkPublishing(
 					if (!published.length) return;
 					const token = yield* access.cargoToken(
 						file,
-						references(tokenSources, 'secrets').flatMap(name => publisher.secret(name) ?? []),
+						references(tokenSources, 'secrets').flatMap(name => effectiveSecrets.get(name.toUpperCase()) ?? []),
 					);
 					for (const id of published) {
 						const pkg = packages.get(id);

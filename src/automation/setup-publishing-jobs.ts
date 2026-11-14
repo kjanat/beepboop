@@ -54,16 +54,18 @@ export function publishingJobs(snapshot: Snapshot, root: string): { jobs: Publis
 			return;
 		}
 		const document = object(bind(entry.document, inputs, {}));
-		for (const [id, original] of liveJobs(document)) {
-			const matrix = matrixCombinations(object(object(original.strategy).matrix));
+		for (const [id, original] of liveJobs(entry.document)) {
+			const matrix = matrixCombinations(object(object(bind(original.strategy, inputs, {})).matrix));
 			for (const assignment of matrix.length ? matrix : [{}]) {
-				const inactive = (condition: unknown) =>
-					disabled(condition) || condition === '' || condition === 0
-					|| staticGuard(condition, { inputs, matrix: assignment }) === false;
-				if (inactive(original.if)) continue;
-				const raw = object(bind(original, inputs, assignment));
-				if (Array.isArray(raw.steps)) {
-					raw.steps = raw.steps.filter(step => !inactive(object(step).if));
+				const executable = (value: Record<string, unknown>): Record<string, unknown> | undefined => {
+					const condition = staticGuard(value.if, { inputs, matrix: assignment }) ?? value.if;
+					if (disabled(condition) || condition === '' || condition === 0) return undefined;
+					return { ...object(bind(value, inputs, assignment)), if: condition };
+				};
+				const raw = executable(original);
+				if (!raw) continue;
+				if (Array.isArray(original.steps)) {
+					raw.steps = original.steps.flatMap(step => executable(object(step)) ?? []);
 				}
 				delete raw.strategy;
 				const permissions = raw.permissions ?? document.permissions;

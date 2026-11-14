@@ -29,10 +29,33 @@ jobs:
 `,
 };
 
-test.each(['crates-io', 'release-cargo'])(
+test.each(['crates-io', 'release-cargo', 'reusable-cargo'])(
 	'setup preview and apply use installation permissions and the Worker vault (%s)',
 	async alias => {
-		const repository = world.github.create('octo/tool', files);
+		const reusable = alias === 'reusable-cargo';
+		const secretName = reusable ? 'REGISTRY_TOKEN' : 'CARGO_TOKEN';
+		const repository = world.github.create(
+			'octo/tool',
+			reusable
+				? {
+					...files,
+					'.github/workflows/publish.yml': `on: { push: { tags: ['v[0-9]*'] } }
+jobs:
+  publish:
+    permissions: { id-token: write }
+    uses: ./.github/workflows/cargo.yml
+    secrets:
+      registry_token: \${{ secrets.OWNER_TOKEN }}
+`,
+					'.github/workflows/cargo.yml': files['.github/workflows/publish.yml']
+						.replace(
+							"on: { push: { tags: ['v[0-9]*'] } }",
+							'on: { workflow_call: { secrets: { registry_token: { required: true } } } }',
+						)
+						.replace('secrets.cargo_token', 'secrets.registry_token'),
+				}
+				: files,
+		);
 		const api = bearer(world, await world.cliSession());
 		await world.run(Effect.gen(function*() {
 			const service = yield* Automation;
@@ -48,7 +71,7 @@ test.each(['crates-io', 'release-cargo'])(
 					ref: 'refs/tags/v*',
 					delivery: 'environment',
 					environment: 'release',
-					secretName: 'CARGO_TOKEN',
+					secretName,
 				}, 'test');
 			}
 		}));
@@ -60,7 +83,7 @@ test.each(['crates-io', 'release-cargo'])(
 				permissions.push(body.permissions);
 			}
 			if (path.endsWith('/environments/release')) return Response.json({ name: 'release' });
-			if (path.endsWith('/environments/release/secrets/CARGO_TOKEN')) return Response.json({ name: 'CARGO_TOKEN' });
+			if (path.endsWith(`/environments/release/secrets/${secretName}`)) return Response.json({ name: secretName });
 			return world.github.handle(request);
 		});
 		let registryChecks = 0, publisherChecks = 0;

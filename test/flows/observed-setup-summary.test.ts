@@ -636,3 +636,57 @@ test.each(['string', 'boolean', 'number'])(
 		expect(checks.some(check => check.message.includes('returned 404'))).toBe(true);
 	},
 );
+
+test.each([
+	{ value: "'false'", active: true },
+	{ value: "'0'", active: true },
+	{ value: 'false', active: false },
+	{ value: '0', active: false },
+	{ value: "''", active: false },
+])('matrix step guards preserve the type of $value', async ({ value, active }) => {
+	const snapshot = cargoSnapshot();
+	const inventory = discover(snapshot);
+	const original = await checkedCargo(missingCrates(), snapshot);
+	snapshot.files['.github/workflows/publish.yml'] = `on: { push: { tags: ['v*'] } }
+jobs:
+  publish:
+    strategy:
+      matrix:
+        enabled: [${value}]
+    permissions: { id-token: write }
+    steps:
+      - if: \${{ matrix.enabled }}
+        uses: rust-lang/crates-io-auth-action@v1
+      - if: \${{ matrix.enabled }}
+        run: cargo publish -p tool
+        env:
+          CARGO_REGISTRY_TOKEN: \${{ secrets.CARGO_TOKEN }}
+`;
+	const access = registeredCrates();
+	const paths: string[] = [];
+	access.github = path => {
+		paths.push(path);
+		return Effect.succeed({ name: 'available' });
+	};
+	const checks = await Effect.runPromise(checkPublishing(snapshot, inventory, original.choices, access));
+	expect(paths.some(path => path.endsWith('/secrets/CARGO_TOKEN'))).toBe(active);
+	expect(checks.filter(check => check.message.includes('id-token: write'))).toHaveLength(active ? 1 : 0);
+	expect(checks.filter(check => check.message.includes('trusted publisher'))).toHaveLength(active ? 1 : 0);
+});
+
+test.each(['false', '0'])('reusable guards keep string input %s truthy', async value => {
+	const snapshot = reusableCargoSnapshot();
+	snapshot.files['.github/workflows/cargo.yml'] = snapshot.files['.github/workflows/cargo.yml']?.replace(
+		'    inputs:\n',
+		`    inputs:\n      enabled: { type: string, default: '${value}' }\n`,
+	).replace('  publish:\n', '  publish:\n    if: ${{ inputs.enabled }}\n')
+		.replace('      - uses:', '      - if: ${{ inputs.enabled }}\n        uses:')
+		.replace('      - run:', '      - if: ${{ inputs.enabled }}\n        run:') ?? '';
+	const access = registeredCrates();
+	access.github = () => Effect.succeed({ name: 'available' });
+	const plan = await checkedCargo(access, snapshot);
+	expect(plan.publishingChecks?.filter(check => check.message.includes('secret registry_token is available')))
+		.toHaveLength(2);
+	expect(plan.publishingChecks?.filter(check => check.message.includes('id-token: write'))).toHaveLength(2);
+	expect(plan.publishingChecks?.filter(check => check.message.includes('trusted publisher'))).toHaveLength(2);
+});
