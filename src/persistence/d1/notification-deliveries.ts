@@ -80,13 +80,14 @@ export class NotificationDeliveries {
 		});
 	}
 
-	owned(claim: ClaimedDelivery): Effect.Effect<boolean, DomainError> {
+	owned(claim: ClaimedDelivery, revision: number): Effect.Effect<boolean, DomainError> {
 		return Effect.clockWith(clock =>
 			this.sql.first(
-				"SELECT id FROM notification_deliveries WHERE id=? AND state='sending' AND lease=? AND lease_until>?",
+				"SELECT d.id FROM notification_deliveries d JOIN notification_destinations t ON t.id=d.destination_id WHERE d.id=? AND d.state='sending' AND d.lease=? AND d.lease_until>? AND t.enabled=1 AND t.revision=?",
 				claim.id,
 				claim.lease,
 				clock.currentTimeMillisUnsafe(),
+				revision,
 			).pipe(Effect.map(row => row !== null))
 		);
 	}

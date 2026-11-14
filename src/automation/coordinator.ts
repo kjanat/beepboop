@@ -3193,6 +3193,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			for (const execution of executions) {
 				if (onlyExecution ? execution.id !== onlyExecution : Boolean(execution.releaseSet?.workflowId)) continue;
+				if (yield* this.suspended(execution.repositoryId)) return;
 				const outcome = yield* this.advance(execution, executions, active, busy, unresolved).pipe(
 					recover(error => this.isolate(execution.id, error).pipe(Effect.as('continue' as const))),
 				);

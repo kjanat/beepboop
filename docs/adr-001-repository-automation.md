@@ -54,12 +54,21 @@ Observed workflow completion and the creation of its dependent executions share
 one journal transaction. A failed write leaves the observed execution unfinished
 and retryable. Reconciliation also fills missing continuations for successful
 executions written by older Workers. Continuation identifiers are deterministic,
-so reconciliation preserves existing children and their progress.
+so reconciliation preserves existing children and their progress. Legacy repair
+retains the parent's configuration and source commit but requires the currently
+discovered workflow and package inventory to derive missing children. It does not
+reconstruct historical discovery. If that inventory no longer supports a binding,
+repair fails closed and quarantines the parent with a diagnostic. Restore a
+compatible discovered inventory and explicitly reconcile the parent to retry;
+existing children remain unchanged.
 
 Repository access lives in D1's `access` and `suspended_at` columns. Discovery
 updates inventory and configuration without writing access, and returns the
-current persisted access state. Coordinators read that authority before advancing
-work; missing enrollment or a failed access read prevents execution. Database
+current persisted access state. Coordinators read that authority before each
+execution advances during reconciliation; missing enrollment or a failed access
+read prevents execution. Suspension stops subsequent executions in the pass.
+An execution already advancing may finish its current work, including external
+requests. The access read authorizes that execution advance. Database
 constraints reject active access with a suspension time and suspended access
 without one. Legacy document flags and Durable Object access copies no longer
 participate in authorization.
@@ -77,6 +86,22 @@ count. Only the current, unexpired owner can settle it. An abandoned claim becom
 eligible again after 60 seconds; five claims exhaust the retry budget. Delivered
 rows cannot carry errors, failed rows require errors, and only sending rows may
 carry ownership. Removing a destination invalidates outstanding claims.
+
+Each attempt reads fresh destination settings. Changes to its enabled state,
+kind, or credential alias increment a persisted revision. After secret retrieval,
+a single database read checks both the lease and that enabled destination's
+revision before starting HTTP. A changed revision leaves the attempt retryable;
+the next claim reads the replacement settings, or fails if the destination stays
+disabled. Disable followed by enable also invalidates the old snapshot. Cosmetic
+name/subscription changes do not invalidate it. Claims consumed before HTTP still
+count toward the five-claim budget.
+
+This final database read is the send authorization boundary. A change or removal
+that commits after it may race with an HTTP request already authorized to start;
+an in-flight request cannot be revoked at its receiver. Its lease still controls
+settlement. Malformed payloads fail without HTTP and remain visible in API and
+dashboard history with their delivery identity, attempt count, and error; their
+payload is null rather than preventing other deliveries from being read.
 
 The claim prevents overlapping passes from sending the same live attempt. A
 remote endpoint can accept a request before a Worker loses its response or crashes;

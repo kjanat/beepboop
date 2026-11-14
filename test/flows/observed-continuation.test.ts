@@ -169,3 +169,77 @@ test('an access read failure leaves work retryable and fails closed', async () =
 	await world.wait(120_000);
 	expect((await executions(repository)).find(item => item.id === execution.id)?.state).toBe('succeeded');
 });
+
+test('suspension during reconciliation prevents subsequent executions from advancing', async () => {
+	const { repository, app, execution, coordinator } = await observed();
+	const stored = await world.run(app.store.repository(repository.id));
+	if (!stored) throw new Error('Expected repository');
+	const ready = await world.run(requireReady(stored));
+	const next = await world.run(
+		createExecution(
+			{
+				...ready,
+				configuration: {
+					...ready.configuration,
+					streams: { ...ready.configuration.streams, second: ready.configuration.streams.main! },
+				},
+			},
+			{ stream: 'second', operation: 'follow0', eventId: 'second', sourceSha: stored.sha },
+		),
+	);
+	next.state = 'ready';
+	next.createdAt = execution.createdAt + 1;
+	await coordinator.enqueue(next);
+	const entered = Promise.withResolvers<void>(), resume = Promise.withResolvers<void>();
+	world.network.serve('api.github.com', async request => {
+		if (new URL(request.url).pathname.endsWith('/actions/runs/9001')) {
+			entered.resolve();
+			await resume.promise;
+		}
+		return world.github.handle(request);
+	});
+	const pass = world.wait(20_000);
+	await entered.promise;
+	try {
+		await world.run(app.store.setAccess(repository.id, { kind: 'suspended', since: Date.now() }));
+	} finally {
+		resume.resolve();
+	}
+	await pass;
+	expect(world.github.dispatches).toHaveLength(0);
+	expect((await executions(repository)).find(item => item.id === next.id)?.state).toBe('ready');
+	await world.run(app.setAccess(repository.id, { kind: 'active' }));
+	await world.wait(2_000);
+	expect(world.github.dispatches.length).toBeGreaterThan(0);
+});
+
+test('legacy continuation repair requires current inventory and can recover after discovery is restored', async () => {
+	const { repository, app, execution, coordinator, storage } = await observed();
+	await storage.put(`execution:${execution.id}`, { ...execution, state: 'succeeded' });
+	const record = await world.run(app.store.repository(repository.id));
+	if (!record) throw new Error('Expected repository');
+	await world.run(
+		app.store.saveDiscovery({
+			...record,
+			sha: 'b'.repeat(40),
+			inventory: {
+				...record.inventory,
+				workflows: record.inventory.workflows.filter(workflow => workflow.file !== 'follow.yml'),
+			},
+		}),
+	);
+	await coordinator.recover(execution.id, 'reconcile', 'admin');
+	await world.wait(2_000);
+	expect(await executions(repository)).toHaveLength(1);
+	expect(await storage.get(`quarantine:${execution.id}`)).toMatchObject({
+		error: expect.stringContaining('Workflow needs workflow_dispatch'),
+	});
+	await world.run(app.store.saveDiscovery(record));
+	await coordinator.recover(execution.id, 'reconcile', 'admin');
+	await world.wait(2_000);
+	expect((await executions(repository)).find(item => item.operation === 'follow0')).toMatchObject({
+		sourceSha: execution.sourceSha,
+		configurationSha: execution.configurationSha,
+	});
+	expect(await storage.get(`quarantine:${execution.id}`)).toBeUndefined();
+});
