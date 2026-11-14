@@ -23,7 +23,8 @@ import { CLISessionStore } from '@/persistence/d1/cli-sessions';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { replaceDocument } from '@/persistence/d1/database';
 import { SessionStore } from '@/persistence/d1/sessions';
-import { decodeSync, mapped, mutableArray, mutableStruct } from '@/schema';
+import type { Decoded } from '@/schema';
+import { decodeSync, mapped, mutableArray, mutableStruct, safeDecode } from '@/schema';
 
 const clientExtensionResults = Schema.Unknown.pipe(
 	Schema.decodeTo(mutableStruct({}), {
@@ -402,6 +403,21 @@ export function enrollmentRefusal(register: boolean, enrolled: number): string |
 	return !register && enrolled === 0 ? 'Enroll a security key first.' : undefined;
 }
 
+const challengeFields = { subject: Schema.String, challenge: Schema.String };
+const registrationFields = { ...challengeFields, label: Schema.optional(Schema.String) };
+const securityChallenge = Schema.Union([
+	mutableStruct({ kind: Schema.Literal('authenticate'), ...challengeFields }),
+	mutableStruct({ kind: Schema.Literal('register-initial'), ...registrationFields }),
+	mutableStruct({ kind: Schema.Literal('register-additional'), ...registrationFields }),
+]);
+type SecurityChallenge = Decoded<typeof securityChallenge>;
+type RegistrationChallenge = Exclude<SecurityChallenge, { kind: 'authenticate' }>;
+type SecurityRequest = { kind: 'authenticate' } | {
+	kind: 'register';
+	label?: string | undefined;
+	proof?: string | undefined;
+};
+
 interface SavedCredential {
 	label?: string;
 	id: string;
@@ -440,11 +456,15 @@ export class Authenticators {
 	}
 	options(
 		subject: string,
-		register: boolean,
-		label?: string,
+		request: SecurityRequest,
 	): Effect.Effect<{ id: string; options: unknown }, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const credentials = yield* this.credentials(subject);
+			const register = request.kind === 'register';
+			const kind = !register ? 'authenticate' : credentials.length === 0 ? 'register-initial' : 'register-additional';
+			if (request.kind === 'register' && kind === 'register-additional') {
+				yield* this.consume(subject, request.proof ?? '');
+			}
 			const rpID = new URL(this.env.APPLICATION_ORIGIN).hostname;
 			const refusal = enrollmentRefusal(register, credentials.length);
 			if (refusal) return yield* precondition(refusal);
@@ -473,25 +493,25 @@ export class Authenticators {
 					})
 				);
 			const id = crypto.randomUUID();
-			yield* this.sessions.open('security-challenge', id, {
+			const challenge: SecurityChallenge = {
+				kind,
 				subject,
-				register,
-				first: register && credentials.length === 0,
-				label: label?.slice(0, 80),
+				...(request.kind === 'register' && request.label !== undefined ? { label: request.label.slice(0, 80) } : {}),
 				challenge: options.challenge,
-			}, 120000);
+			};
+			yield* this.sessions.open('security-challenge', id, challenge, 120000);
 			return { id, options };
 		});
 	}
 	private register(
 		subject: string,
-		challenge: Record<string, unknown>,
+		challenge: RegistrationChallenge,
 		response: unknown,
 		rpID: string,
 	): Effect.Effect<{ proof?: string }, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const parsed = yield* decodeRequest(registrationResponse, response);
-			const expectedChallenge = yield* Effect.fromResult(text(challenge.challenge));
+			const expectedChallenge = challenge.challenge;
 			const result = yield* fromPromise(() =>
 				verifyRegistrationResponse({
 					response: parsed,
@@ -511,7 +531,7 @@ export class Authenticators {
 			}
 			const c = result.registrationInfo.credential;
 			const document = JSON.stringify({ ...c, label: challenge.label, publicKey: base64(c.publicKey) });
-			const insert = challenge.first === true
+			const insert = challenge.kind === 'register-initial'
 				? this.sql.run(
 					'INSERT INTO authenticators(id,subject,document) SELECT ?,?,? WHERE NOT EXISTS (SELECT 1 FROM authenticators WHERE subject=?)',
 					c.id,
@@ -530,16 +550,18 @@ export class Authenticators {
 		return Effect.gen({ self: this }, function*() {
 			const document = yield* this.sessions.take(id);
 			if (document === undefined) return yield* forbidden('Challenge expired');
-			const challenge = yield* Effect.fromResult(record(yield* fromJson(document)));
+			const parsedChallenge = safeDecode(securityChallenge, yield* fromJson(document));
+			if (!parsedChallenge.success) return yield* forbidden('Challenge expired; request a new security-key challenge');
+			const challenge = parsedChallenge.data;
 			if (challenge.subject !== subject) return yield* forbidden('Challenge subject mismatch');
 			const rpID = new URL(this.env.APPLICATION_ORIGIN).hostname;
-			if (challenge.register) return yield* this.register(subject, challenge, response, rpID);
+			if (challenge.kind !== 'authenticate') return yield* this.register(subject, challenge, response, rpID);
 			const responseId = (yield* Effect.fromResult(record(response))).id;
 			const stored = (yield* this.saved(subject)).find((entry) => entry.credential.id === responseId);
 			if (!stored) return yield* precondition('Unknown authenticator');
 			const saved = stored.credential;
 			const parsed = yield* decodeRequest(authenticationResponse, response);
-			const expectedChallenge = yield* Effect.fromResult(text(challenge.challenge));
+			const expectedChallenge = challenge.challenge;
 			const publicKey = yield* fromSync(() => bytes(saved.publicKey));
 			const result = yield* fromPromise(() =>
 				verifyAuthenticationResponse({
@@ -571,9 +593,6 @@ export class Authenticators {
 				return yield* forbidden('Invalid authentication proof');
 			}
 		});
-	}
-	enrolled(subject: string): Effect.Effect<number, DomainError> {
-		return this.credentials(subject).pipe(Effect.map(credentials => credentials.length));
 	}
 	list(subject: string): Effect.Effect<{ id: string; label: string }[], DomainError> {
 		return this.credentials(subject).pipe(

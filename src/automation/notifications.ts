@@ -11,12 +11,13 @@ import type { DestinationInput } from '@/contract/notifications';
 import { fromPromise, fromSync } from '@/failure';
 import type { Sql } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
+import type { ClaimedDelivery, DeliveryOutcome } from '@/persistence/d1/notification-deliveries';
+import { NotificationDeliveries } from '@/persistence/d1/notification-deliveries';
 import type { Decoded } from '@/schema';
 import { decodeSync, mutableArray, mutableStruct } from '@/schema';
 
-export const deliveryStates = ['pending', 'delivered', 'failed'] as const;
-export type DeliveryState = (typeof deliveryStates)[number];
-const maximumAttempts = 5;
+export type { DeliveryState } from '@/persistence/d1/notification-deliveries';
+export { deliveryStates } from '@/persistence/d1/notification-deliveries';
 
 export interface NotificationDestination {
 	id: string;
@@ -39,16 +40,22 @@ export interface VersionChangedPayload {
 	version: { previous: string | null; current: string };
 	url: string;
 }
-export interface NotificationDelivery {
+interface DeliveryFields {
 	id: string;
 	eventId: string;
 	destinationId: string;
 	payload: VersionChangedPayload;
-	state: DeliveryState;
 	attempts: number;
-	error?: string;
 	updatedAt: number;
 }
+
+export type NotificationDelivery =
+	& DeliveryFields
+	& (
+		| { state: 'pending' | 'sending'; error?: string }
+		| { state: 'delivered'; error?: never }
+		| { state: 'failed'; error: string }
+	);
 
 const destinationRow = mutableStruct({
 	id: Schema.String,
@@ -71,19 +78,6 @@ const payloadSchema: Schema.Codec<VersionChangedPayload, unknown> = mutableStruc
 	version: mutableStruct({ previous: Schema.NullOr(Schema.String), current: Schema.String }),
 	url: Schema.String,
 });
-const deliveryRow = mutableStruct({
-	id: Schema.String,
-	event_id: Schema.String,
-	destination_id: Schema.String,
-	document: Schema.String,
-	state: Schema.Literals(deliveryStates),
-	attempts: Schema.Finite,
-	error: Schema.NullOr(Schema.String),
-	updated_at: Schema.Finite,
-});
-
-type Outcome = { state: DeliveryState; error?: string };
-
 function destination(row: Decoded<typeof destinationRow>): NotificationDestination {
 	return {
 		id: row.id,
@@ -173,12 +167,14 @@ function retryable(status: number): boolean {
 
 export class Notifications {
 	private readonly sql: Sql;
+	private readonly deliveries: NotificationDeliveries;
 	constructor(
 		private store: Store,
-		private vault: () => Pick<Vault, keyof Vault>,
+		private vault: () => Pick<Vault, 'reveal'>,
 		private request: Fetcher = fetch,
 	) {
 		this.sql = sql(store.db);
+		this.deliveries = new NotificationDeliveries(this.sql);
 	}
 	destinations(): Effect.Effect<NotificationDestination[], DomainError> {
 		return this.sql.all('SELECT * FROM notification_destinations ORDER BY name, id').pipe(
@@ -196,19 +192,22 @@ export class Notifications {
 			);
 	}
 	recent(): Effect.Effect<NotificationDelivery[], DomainError> {
-		return this.sql.all('SELECT * FROM notification_deliveries ORDER BY updated_at DESC LIMIT 50').pipe(
+		return this.deliveries.recent().pipe(
 			Effect.flatMap(rows =>
 				fromSync(() =>
-					decodeSync(mutableArray(deliveryRow), rows).map(row => ({
-						id: row.id,
-						eventId: row.event_id,
-						destinationId: row.destination_id,
-						payload: decodeSync(payloadSchema, JSON.parse(row.document)),
-						state: row.state,
-						attempts: row.attempts,
-						...(row.error === null ? {} : { error: row.error }),
-						updatedAt: row.updated_at,
-					}))
+					rows.map((row): NotificationDelivery => {
+						const fields: DeliveryFields = {
+							id: row.id,
+							eventId: row.event_id,
+							destinationId: row.destination_id,
+							payload: decodeSync(payloadSchema, JSON.parse(row.document)),
+							attempts: row.attempts,
+							updatedAt: row.updated_at,
+						};
+						if (row.state === 'delivered') return { ...fields, state: row.state };
+						if (row.state === 'failed') return { ...fields, state: row.state, error: row.error };
+						return { ...fields, state: row.state, ...(row.error === null ? {} : { error: row.error }) };
+					})
 				)
 			),
 		);
@@ -247,7 +246,7 @@ export class Notifications {
 			return this.sql.batch([
 				this.sql.statement('DELETE FROM notification_subscriptions WHERE destination_id=?', id),
 				this.sql.statement(
-					"UPDATE notification_deliveries SET state='failed', error='Destination removed', updated_at=? WHERE destination_id=? AND state='pending'",
+					"UPDATE notification_deliveries SET state='failed', error='Destination removed', lease=NULL, lease_until=NULL, updated_at=? WHERE destination_id=? AND state IN ('pending','sending')",
 					clock.currentTimeMillisUnsafe(),
 					id,
 				),
@@ -295,33 +294,26 @@ export class Notifications {
 	}
 	deliver(): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const clock = yield* Clock.Clock;
-
-			const rows = yield* this.sql.all(
-				"SELECT * FROM notification_deliveries WHERE state='pending' ORDER BY updated_at LIMIT 50",
-			);
+			const ids = yield* this.deliveries.available();
 			const destinations = new Map((yield* this.destinations()).map(entry => [entry.id, entry]));
-			for (const row of yield* parse(mutableArray(deliveryRow), rows)) {
-				const attempts = row.attempts + 1;
-				const payload = yield* fromSync(() => decodeSync(payloadSchema, JSON.parse(row.document)));
-				const outcome = yield* this.send(destinations.get(row.destination_id), payload);
-				const state = outcome.state === 'pending' && attempts >= maximumAttempts ? 'failed' : outcome.state;
-				yield* this.sql.run(
-					'UPDATE notification_deliveries SET state=?, attempts=?, error=?, updated_at=? WHERE id=?',
-					state,
-					attempts,
-					outcome.error ?? null,
-					clock.currentTimeMillisUnsafe(),
-					row.id,
-				);
+			for (const id of ids) {
+				const claim = yield* this.deliveries.claim(id);
+				if (!claim) continue;
+				const outcome = yield* this.send(claim, destinations.get(claim.destination_id));
+				yield* this.deliveries.settle(claim, outcome);
 			}
 		});
 	}
 	private send(
+		claim: ClaimedDelivery,
 		destination: NotificationDestination | undefined,
-		payload: VersionChangedPayload,
-	): Effect.Effect<Outcome> {
+	): Effect.Effect<DeliveryOutcome> {
 		return Effect.gen({ self: this }, function*() {
+			const clock = yield* Clock.Clock;
+			const payload = yield* fromSync(() => decodeSync(payloadSchema, JSON.parse(claim.document))).pipe(
+				Effect.orElseSucceed(() => undefined),
+			);
+			if (!payload) return { state: 'failed', error: 'Invalid notification payload' };
 			if (!destination?.enabled) return { state: 'failed', error: 'Destination unavailable' };
 			const secret = yield* this.vault().reveal(destination.credential, `notify:${destination.id}`).pipe(
 				Effect.map(credential => credential.value),
@@ -336,11 +328,13 @@ export class Notifications {
 				};
 			}
 			const request = this.request;
+			const remaining = claim.lease_until - clock.currentTimeMillisUnsafe();
+			if (remaining <= 0) return { state: 'pending', error: 'Delivery lease expired before sending' };
 			const response = yield* fromPromise(signal =>
 				request(url, {
 					method: 'POST',
 					redirect: 'manual',
-					signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+					signal: AbortSignal.any([signal, AbortSignal.timeout(Math.min(10_000, remaining))]),
 					headers: {
 						'Content-Type': 'application/json',
 						'Idempotency-Key': payload.id,

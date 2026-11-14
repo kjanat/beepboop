@@ -6,6 +6,7 @@ import type { DomainError } from '@/contract/errors';
 import { domainError, precondition } from '@/contract/errors';
 
 export type Access = { kind: 'active' } | { kind: 'suspended'; since: number };
+export type RepositoryDiscovery = Omit<RepositoryRecord, 'access'>;
 
 declare const ready: unique symbol;
 export type ReadyRepository = RepositoryRecord & {

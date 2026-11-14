@@ -7,14 +7,13 @@ import type { Decoded } from '@/schema';
 import { decodeSync, mutableStruct } from '@/schema';
 
 export const repositoryColumns = 'id, name, document, access, suspended_at';
-export const enrollmentColumns =
-	"id, name, access, suspended_at, updated_at, CASE WHEN json_valid(document) THEN COALESCE(json_extract(document, '$.suspended'), 0) ELSE 0 END AS legacy_suspended";
+export const enrollmentColumns = 'id, name, access, suspended_at';
 
 const legacySuspension = 'App access removed or suspended';
 const active: Access = { kind: 'active' };
 
 const accessColumns = Schema.Union([
-	mutableStruct({ access: Schema.Literal('active') }),
+	mutableStruct({ access: Schema.Literal('active'), suspended_at: Schema.Null }),
 	mutableStruct({ access: Schema.Literal('suspended'), suspended_at: Schema.Finite }),
 ]);
 
@@ -32,8 +31,6 @@ export const enrollmentRow = mutableStruct({
 	name: Schema.String,
 	access: Schema.Unknown,
 	suspended_at: Schema.Unknown,
-	updated_at: Schema.Finite,
-	legacy_suspended: Schema.Finite,
 });
 export interface Enrollment {
 	id: number;
@@ -41,9 +38,9 @@ export interface Enrollment {
 	access: Access;
 }
 
-function accessOf(columns: { access: unknown; suspended_at: unknown }, document: Access): Access {
+function accessOf(columns: { access: unknown; suspended_at: unknown }): Access {
 	const parsed = decodeSync(accessColumns, { access: columns.access, suspended_at: columns.suspended_at });
-	return parsed.access === 'suspended' ? { kind: 'suspended', since: parsed.suspended_at } : document;
+	return parsed.access === 'suspended' ? { kind: 'suspended', since: parsed.suspended_at } : active;
 }
 
 function current(diagnostic: Diagnostic): boolean {
@@ -52,12 +49,11 @@ function current(diagnostic: Diagnostic): boolean {
 
 export function decodeRepository(row: RepositoryRow): RepositoryRecord {
 	const stored = decodeRepositoryV1(JSON.parse(row.document));
-	return { ...stored, access: accessOf(row, stored.access), diagnostics: stored.diagnostics.filter(current) };
+	return { ...stored, access: accessOf(row), diagnostics: stored.diagnostics.filter(current) };
 }
 
 export function decodeEnrollment(row: Decoded<typeof enrollmentRow>): Enrollment {
-	const document: Access = row.legacy_suspended === 1 ? { kind: 'suspended', since: row.updated_at } : active;
-	return { id: row.id, name: row.name, access: accessOf(row, document) };
+	return { id: row.id, name: row.name, access: accessOf(row) };
 }
 
 export function encodeAccess(access: Access): [string, number | null] {

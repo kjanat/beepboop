@@ -11,7 +11,7 @@ import type { World } from '@root/test/support/world.ts';
 import { adminSubject, eachWorld, origin } from '@root/test/support/world.ts';
 import { experimental_AstroContainer } from 'astro/container';
 import { Effect, Schema, Struct } from 'effect';
-import { withAutomation } from '@/automation/service';
+import { Automation, withAutomation } from '@/automation/service';
 import { Store } from '@/automation/store';
 import { errorEnvelope } from '@/contract/errors';
 import { readiness } from '@/domain/repository';
@@ -102,7 +102,7 @@ test('a suspended repository refuses releases and returns only where GitHub rest
 
 	expect((await api('/api/repositories/discover', { repository: 'octo/widget' })).status).toBe(200);
 	expect(readiness(await stored(repository))).toEqual({ kind: 'suspended', since: suspendedAt });
-	expect(await journalAccess(repository)).toEqual({ suspended: true });
+	expect(await journalAccess(repository)).toBeUndefined();
 	expect(field((await api('/api/repositories')).body, '0')).toMatchObject({ suspended: true });
 	expect(refusal(await api('/api/releases/plan', request))).toEqual(refused);
 	expect(world.github.dispatches).toEqual([]);
@@ -170,8 +170,8 @@ test('a suspended repository refuses releases and returns only where GitHub rest
 		Date.now(),
 		Date.now(),
 	).run();
-	expect(readiness(await stored(repository))).toEqual({ kind: 'suspended', since: Date.now() });
-	expect(await badge()).toBe('warn App access unavailable');
+	expect(readiness(await stored(repository)).kind).toBe('ready');
+	expect(await badge()).toBe('ok Configured +prepare');
 	expect((await installationEvent('installation', 'unsuspend')).status).toBe(202);
 	expect(readiness(await stored(repository)).kind).toBe('ready');
 	expect(await badge()).toBe('ok Configured +prepare');
@@ -194,7 +194,7 @@ test('a lost unsuspend webhook leaves refresh suspended until discover asks GitH
 	expect(refreshed.updatedAt).toBeGreaterThan(suspendedAt);
 	expect(readiness(refreshed)).toEqual({ kind: 'suspended', since: suspendedAt });
 	expect(refreshed.diagnostics).toEqual([]);
-	expect(await journalAccess(repository)).toEqual({ suspended: true });
+	expect(await journalAccess(repository)).toBeUndefined();
 
 	const document = decodeSync(
 		mutableStruct({ document: Schema.String }),
@@ -203,14 +203,20 @@ test('a lost unsuspend webhook leaves refresh suspended until discover asks GitH
 	const deployed = new TestD1(migrationFiles().filter(file => file < '0012'));
 	await deployed.prepare(
 		'INSERT INTO repositories(id,name,document,updated_at,added_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,document=excluded.document,updated_at=excluded.updated_at',
-	).bind(repository.id, repository.name, document, refreshed.updatedAt, refreshed.updatedAt).run();
+	).bind(
+		repository.id,
+		repository.name,
+		JSON.stringify({ ...JSON.parse(document), suspended: true }),
+		refreshed.updatedAt,
+		refreshed.updatedAt,
+	).run();
 	deployed.sqlite.run(readFileSync(join(migrationsDirectory, '0012_repository_access.sql'), 'utf8'));
 	const migrated = await Effect.runPromise(new Store(deployed).repository(repository.id));
 	expect(migrated && readiness(migrated)).toEqual({ kind: 'suspended', since: refreshed.updatedAt });
 
 	expect((await api('/api/repositories/discover', { repository: 'octo/widget' })).status).toBe(200);
 	expect(readiness(await stored(repository)).kind).toBe('ready');
-	expect(await journalAccess(repository)).toEqual({ suspended: false });
+	expect(await journalAccess(repository)).toBeUndefined();
 	expect((await api('/api/releases/plan', { repositoryId: repository.id, stream: 'main', version: '1.1.0' })).status)
 		.toBe(200);
 	expect(world.network.unrouted).toEqual([]);
@@ -233,4 +239,36 @@ test('discover and the cron refresh rewrite a repository row that no longer deco
 	await world.run(withAutomation(service => service.scheduled));
 	expect(readiness(await stored(repository)).kind).toBe('ready');
 	expect(world.network.unrouted).toEqual([]);
+});
+
+for (const startingSuspended of [false, true]) {
+	test(`discovery cannot overwrite access changed in flight: initially suspended=${startingSuspended}`, async () => {
+		const repository = await discoveredWidget(world, await world.cliSession());
+		const service = await world.run(Automation);
+		if (startingSuspended) await world.run(service.setAccess(repository.id, { kind: 'suspended', since: Date.now() }));
+		const entered = Promise.withResolvers<void>();
+		const resume = Promise.withResolvers<void>();
+		world.network.serve('registry.npmjs.org', async request => {
+			entered.resolve();
+			await resume.promise;
+			return world.npm.handle(request);
+		});
+		const refreshing = world.run(service.refresh(repository.name, repository.id));
+		await entered.promise;
+		const access = startingSuspended ? { kind: 'active' as const } : { kind: 'suspended' as const, since: Date.now() };
+		await world.run(service.setAccess(repository.id, access));
+		resume.resolve();
+		expect((await refreshing).access).toEqual(access);
+		expect((await stored(repository)).access).toEqual(access);
+		expect(await journalAccess(repository)).toBeUndefined();
+	});
+}
+
+test('repository access storage rejects contradictory access and suspension columns', async () => {
+	const repository = await discoveredWidget(world, await world.cliSession());
+	for (
+		const assignment of ["access='unknown'", "access='suspended',suspended_at=NULL", "access='active',suspended_at=123"]
+	) {
+		expect(() => world.db.execute(`UPDATE repositories SET ${assignment} WHERE id=?`, [repository.id])).toThrow();
+	}
 });
