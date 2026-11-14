@@ -299,9 +299,8 @@ export class RepositoryGateway {
 				).map(([name, level]) => `${name}: ${level}`);
 				if (missing.length) {
 					return yield* precondition(
-						`${missingInstallationPermissions} (${
-							missing.join(', ')
-						}). Update the App permissions and approve the installation update before retrying`,
+						`${missingInstallationPermissions} (${missing.join(', ')}). Update permissions for ${yield* self
+							.appPage} and approve the installation update before retrying`,
 					);
 				}
 			}
@@ -344,6 +343,10 @@ export class RepositoryGateway {
 			);
 		});
 	}
+	readonly appPage: Effect.Effect<string, DomainError> = Effect.gen({ self: this }, function*() {
+		const { slug } = yield* this.read(appSchema, '/app', yield* this.appToken());
+		return `https://github.com/apps/${encodeURIComponent(slug)}`;
+	});
 	readonly botIdentity: Effect.Effect<BotIdentity, DomainError> = Effect.gen({ self: this }, function*() {
 		const cached = botIdentities.get(this.credentials.GITHUB_APP_ID);
 		if (cached) return cached;

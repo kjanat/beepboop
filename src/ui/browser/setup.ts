@@ -351,7 +351,19 @@ function review(form: HTMLFormElement, plan: SetupPlan) {
 	const result = form.querySelector('.setup-result');
 	if (!result) return;
 	result.replaceChildren(element('h3', 'Review setup changes'), element('p', `Inspected commit: ${plan.sourceSha}`));
-	for (const message of [...plan.blockers, ...plan.notes]) result.append(element('p', message));
+	for (const message of [...plan.blockers, ...plan.notes]) {
+		const paragraph = element('p');
+		let start = 0;
+		for (const match of message.matchAll(/https:\/\/github\.com\/apps\/[a-z0-9-]+/g)) {
+			paragraph.append(message.slice(start, match.index));
+			const link = element('a', 'GitHub App');
+			link.href = match[0];
+			paragraph.append(link);
+			start = match.index + match[0].length;
+		}
+		paragraph.append(message.slice(start));
+		result.append(paragraph);
+	}
 	if (plan.prior) {
 		const link = element(
 			'a',

@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { appSlug } from '@root/test/support/github.ts';
 import { bearer } from '@root/test/support/http.ts';
 import { applySetup, previewSetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
@@ -146,6 +147,7 @@ test('missing installation permissions are reported as App access failures befor
 		expect(failed[0]?.message).toContain(permission);
 	}
 	expect(failed[0]?.message).toContain('approve the installation update');
+	expect(failed[0]?.message).toContain(`https://github.com/apps/${appSlug}`);
 	expect(failed[0]?.message).not.toContain('Publishing configuration check failed');
 	expect(rejectedTokenRequests).toBe(0);
 	expect(plan.notes.some(note => note.includes('GitHub App installation lacks'))).toBe(true);
@@ -206,6 +208,7 @@ test('missing workflow-write permission preserves safe setup previews without sw
 	expect(preview.status).toBe(200);
 	const blocked = preview.body as { blockers: string[] };
 	expect(blocked.blockers.some(message => message.includes('Workflows: write'))).toBe(true);
+	expect(blocked.blockers.some(message => message.includes(`https://github.com/apps/${appSlug}`))).toBe(true);
 	wrongOwner = true;
 	await expect(canEdit()).rejects.toThrow('Owner mismatch');
 });
