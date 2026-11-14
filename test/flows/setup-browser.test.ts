@@ -753,3 +753,33 @@ test('the dashboard selects versionPrMerge manual and writes the method chosen i
 		'"prepare":{"versionPrMerge":"rebase"}',
 	);
 });
+
+test('dashboard review displays Cargo publishing prerequisites for customized choices', async () => {
+	const repository = world.github.create('octo/cargo-tool', {
+		'Cargo.toml': '[package]\nname = "cargo-tool"\nversion = "0.1.0"\nlicense = "MIT"\n',
+		'src/lib.rs': '',
+		'.github/workflows/publish.yml': `on: { push: { tags: ['v*'] } }
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: \${{ secrets.CARGO_TOKEN }}
+`,
+	});
+	world.network.serve('api.github.com', request => {
+		const path = new URL(request.url).pathname;
+		if (path.includes('/actions/secrets/') || path.endsWith('/actions/organization-secrets')) {
+			return new Response(null, { status: 404 });
+		}
+		return world.github.handle(request);
+	});
+	world.network.serve('crates.io', () => new Response(null, { status: 404 }));
+	const form = await open(repository.name);
+	change(control(form, 'Release group name', window.HTMLInputElement), 'custom');
+	await act(form, 'preview');
+	expect(form.textContent).toContain('crates.io returned 404 for cargo-tool');
+	expect(form.textContent).toContain('Publish its first version with a crates.io API token');
+	expect(form.textContent).toContain('GitHub Actions secret CARGO_TOKEN is missing');
+});

@@ -5,8 +5,9 @@ import type { Fetcher, VerificationContext } from '@/automation/managers/registr
 import { registryRequest } from '@/automation/managers/verification';
 import { packageId } from '@/automation/package-identity';
 import { disabled, expandStep } from '@/automation/release-graph/bindings';
-import { localAction, workflowDocuments } from '@/automation/release-graph/calls';
-import { workflowModels } from '@/automation/release-graph/workflows';
+import { localAction } from '@/automation/release-graph/calls';
+import { cargoJobPackages } from '@/automation/release-graph/graph';
+import { publishingJobs } from '@/automation/setup-publishing-jobs';
 import type { PublishingCheck, SetupChoices } from '@/automation/setup-types';
 import type { Inventory, Snapshot } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
@@ -67,8 +68,6 @@ export function checkPublishing(
 			}
 		}
 		if (!files.size) return checks;
-		const models = workflowModels(snapshot);
-		const documents = workflowDocuments(Object.entries(snapshot.files));
 		const root = `/repos/${snapshot.repository.name}`;
 		const cache = new Map<string, Effect.Effect<unknown, DomainError>>();
 		const github = (path: string) => Effect.gen(function*() {
@@ -110,8 +109,7 @@ export function checkPublishing(
 		for (const [file, ids] of files) {
 			const add = (subject: string, status: PublishingCheck['status'], message: string) =>
 				checks.push({ file, subject, status, message });
-			const document = documents.find(entry => entry.file === file)?.document;
-			const model = models.find(entry => entry.file === file);
+
 			for (const id of ids) {
 				const pkg = packages.get(id), version = versions.get(id);
 				if (!pkg || !version) continue;
@@ -131,10 +129,13 @@ export function checkPublishing(
 					);
 				}
 			}
-			for (const job of model?.jobs ?? []) {
-				if (!job.effects.some(effect => effect.kind === 'publish' && effect.destination === 'crates-io')) continue;
-				const raw = object(object(document?.jobs)[job.id]);
-				const subject = `${file} / ${job.id}`;
+			const publishers = publishingJobs(snapshot, file);
+			for (const failure of publishers.failures) add(file, 'failed', failure);
+			for (const publisher of publishers.jobs) {
+				const { job, raw, document } = publisher;
+				const selected = cargoJobPackages(snapshot, inventory, publisher.file, job).filter(id => ids.has(id));
+				if (!selected.length) continue;
+				const subject = publisher.path;
 				const configured = { env: document?.env, job: raw };
 				const secretNames = references(configured, 'secrets').filter(name => name !== 'GITHUB_TOKEN');
 				const declaredEnvironment = typeof raw.environment === 'string'
@@ -173,7 +174,11 @@ export function checkPublishing(
 						);
 					}
 					for (const name of secretNames) {
-						const secret = yield* named('secrets', name, typeof environment === 'string' ? environment : undefined);
+						const local = environment
+							? yield* github(`${root}/environments/${encodeURIComponent(environment)}/secrets/${name}`)
+							: null;
+						const source = publisher.secret(name);
+						const secret = local ?? (source ? yield* named('secrets', source) : undefined);
 						add(
 							subject,
 							secret ? 'passed' : 'action-required',
@@ -186,8 +191,7 @@ export function checkPublishing(
 						/^rust-lang\/crates-io-auth-action@/.test(action)
 					);
 					if (!oidc) return;
-					const permissions = raw.permissions ?? document?.permissions;
-					const allowed = permissions === 'write-all' || object(permissions)['id-token'] === 'write';
+					const allowed = publisher.oidc;
 					add(
 						subject,
 						allowed ? 'passed' : 'action-required',
@@ -200,9 +204,12 @@ export function checkPublishing(
 						Object.entries(object(env)).filter(([key]) => /^CARGO_REGISTR(?:Y_TOKEN|IES_CRATES_IO_TOKEN)$/.test(key))
 							.map(([, value]) => value)
 					);
-					const published = [...ids].filter(id => versions.get(id)?.kind === 'published');
+					const published = selected.filter(id => versions.get(id)?.kind === 'published');
 					if (!published.length) return;
-					const token = yield* access.cargoToken(file, references(tokenSources, 'secrets'));
+					const token = yield* access.cargoToken(
+						file,
+						references(tokenSources, 'secrets').flatMap(name => publisher.secret(name) ?? []),
+					);
 					for (const id of published) {
 						const pkg = packages.get(id);
 						if (!pkg) continue;
@@ -218,7 +225,13 @@ export function checkPublishing(
 					}
 				}));
 				if (Result.isFailure(checked)) {
-					add(subject, 'failed', `Publishing configuration check failed: ${checked.failure.message}.`);
+					add(
+						subject,
+						'failed',
+						checked.failure.message.startsWith('GitHub App installation lacks')
+							? checked.failure.message
+							: `Publishing configuration check failed: ${checked.failure.message}.`,
+					);
 				}
 			}
 		}

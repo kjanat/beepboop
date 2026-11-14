@@ -415,6 +415,9 @@ function draftSetup(
 				...narrowed,
 				...companionProposals(choices, snapshot, inventory),
 				...drafts.notes,
+				...publishingChecks.filter(check => check.status !== 'passed').map(check =>
+					`${check.subject}: ${check.message}`
+				),
 			],
 			...(candidates.length ? { binaryCandidates: candidates } : {}),
 		};

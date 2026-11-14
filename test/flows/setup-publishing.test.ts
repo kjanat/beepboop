@@ -117,3 +117,37 @@ test('setup rechecks registry state and rejects applying a stale readiness propo
 	expect((await applySetup(api, repository.name, plan, plan.choices)).status).toBe(409);
 	expect(repository.pulls).toHaveLength(0);
 });
+
+test('missing installation permissions are reported as App access failures before requesting an elevated token', async () => {
+	const repository = world.github.create('octo/tool', files);
+	const api = bearer(world, await world.cliSession());
+	let rejectedTokenRequests = 0;
+	world.network.serve('api.github.com', async request => {
+		const path = new URL(request.url).pathname;
+		if (path.endsWith('/access_tokens')) {
+			const body = await request.clone().json() as { permissions?: Record<string, string> };
+			if (body.permissions?.secrets) rejectedTokenRequests++;
+		}
+		const response = await world.github.handle(request);
+		if (path.endsWith('/installation') && response.ok) {
+			return Response.json({
+				...await response.json() as object,
+				permissions: { contents: 'write', actions: 'write', pull_requests: 'write', workflows: 'write' },
+			});
+		}
+		return response;
+	});
+	world.network.serve('crates.io', () => new Response(null, { status: 404 }));
+	const plan = await previewSetup(api, repository.name);
+	const failed = plan.publishingChecks?.filter(check => check.status === 'failed') ?? [];
+	expect(failed).toHaveLength(1);
+	expect(failed[0]?.message).toContain('GitHub App installation lacks required permissions');
+	for (const permission of ['secrets: read', 'variables: read', 'environments: read']) {
+		expect(failed[0]?.message).toContain(permission);
+	}
+	expect(failed[0]?.message).toContain('approve the installation update');
+	expect(failed[0]?.message).not.toContain('Publishing configuration check failed');
+	expect(rejectedTokenRequests).toBe(0);
+	expect(plan.notes.some(note => note.includes('GitHub App installation lacks'))).toBe(true);
+	expect(plan.publishingChecks?.some(check => check.message.includes('returned 404'))).toBe(true);
+});

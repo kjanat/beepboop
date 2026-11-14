@@ -833,7 +833,7 @@ function triggerList(value: unknown, key: string): string[] {
 	return Array.isArray(list) ? list.map(String) : typeof list === 'string' ? [list] : [];
 }
 
-function buildJob(
+export function buildJob(
 	snapshot: Snapshot,
 	path: string,
 	document: Record<string, unknown>,

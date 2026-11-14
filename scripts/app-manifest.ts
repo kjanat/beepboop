@@ -23,6 +23,9 @@ await main(Effect.gen(function*() {
 					pull_requests: 'write',
 					checks: 'read',
 					statuses: 'read',
+					secrets: 'read',
+					variables: 'read',
+					environments: 'read',
 				},
 				default_events: [
 					'push',

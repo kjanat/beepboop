@@ -12,6 +12,7 @@ export const installationSchema = mutableStruct({
 	id: countSchema,
 	account: mutableStruct({ id: countSchema, login: textSchema }),
 	suspended_at: looseSchema,
+	permissions: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
 export const accessTokenSchema = mutableStruct({ token: textSchema });
 export const repositorySchema = mutableStruct({

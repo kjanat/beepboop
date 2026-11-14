@@ -292,6 +292,18 @@ export class RepositoryGateway {
 			if (installation.account.id !== self.ownerId) {
 				return yield* precondition('Owner mismatch');
 			}
+			if (installation.permissions) {
+				const missing = Object.entries(permissions).filter(([name, level]) =>
+					installation.permissions?.[name] !== 'write' && installation.permissions?.[name] !== level
+				).map(([name, level]) => `${name}: ${level}`);
+				if (missing.length) {
+					return yield* precondition(
+						`GitHub App installation lacks required permissions (${
+							missing.join(', ')
+						}). Update the App permissions and approve the installation update before retrying`,
+					);
+				}
+			}
 			const { token } = yield* self.read(
 				accessTokenSchema,
 				`/app/installations/${installation.id}/access_tokens`,

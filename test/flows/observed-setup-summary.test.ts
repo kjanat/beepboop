@@ -353,3 +353,183 @@ jobs:
 		),
 	).toBe(true);
 });
+
+test('each publishing job checks only its selected crate and environment', async () => {
+	const snapshot = cargoSnapshot();
+	snapshot.files['.github/workflows/publish.yml'] = `on: { push: { tags: ['v*'] } }
+jobs:
+  core:
+    environment: core
+    permissions: { id-token: write }
+    steps:
+      - uses: rust-lang/crates-io-auth-action@v1
+      - run: cargo publish -p tool-core
+  cli:
+    environment: cli
+    permissions: { id-token: write }
+    steps:
+      - uses: rust-lang/crates-io-auth-action@v1
+      - run: cargo publish --manifest-path crates/tool/Cargo.toml
+`;
+	const requested: string[] = [];
+	const access = registeredCrates([
+		{
+			crate: 'tool-core',
+			repository_owner: 'example',
+			repository_name: 'tool',
+			workflow_filename: 'publish.yml',
+			environment: 'core',
+		},
+		{
+			crate: 'tool',
+			repository_owner: 'example',
+			repository_name: 'tool',
+			workflow_filename: 'publish.yml',
+			environment: 'cli',
+		},
+	]);
+	const request = access.request;
+	access.request = (input, init) => {
+		const url = new URL(String(input));
+		if (url.pathname.includes('/trusted_publishing/')) requested.push(url.searchParams.get('crate') ?? '');
+		return request(input, init);
+	};
+	access.github = () => Effect.succeed({ name: 'environment' });
+	const plan = await checkedCargo(access, snapshot);
+	expect(requested.sort()).toEqual(['tool', 'tool-core']);
+	expect(plan.publishingChecks?.filter(check => check.status !== 'passed')).toEqual([]);
+});
+
+function reusableCargoSnapshot(): Snapshot {
+	const snapshot = cargoSnapshot();
+	snapshot.files['.github/workflows/publish.yml'] = `on: { push: { tags: ['v*'] } }
+jobs:
+  publish:
+    strategy:
+      matrix:
+        include:
+          - { crate: tool-core, environment: core }
+          - { crate: tool, environment: cli }
+    permissions: { id-token: write }
+    uses: ./.github/workflows/wrapper.yml
+    with:
+      crate: \${{ matrix.crate }}
+      environment: \${{ matrix.environment }}
+    secrets:
+      caller_token: \${{ secrets.OWNER_TOKEN }}
+`;
+	snapshot.files['.github/workflows/wrapper.yml'] = `on:
+  workflow_call:
+    inputs:
+      crate: { type: string }
+      environment: { type: string }
+jobs:
+  delegate:
+    uses: ./.github/workflows/cargo.yml
+    with:
+      crate: \${{ inputs.crate }}
+      environment: \${{ inputs.environment }}
+    secrets:
+      registry_token: \${{ secrets.caller_token }}
+`;
+	snapshot.files['.github/workflows/cargo.yml'] = `on:
+  workflow_call:
+    inputs:
+      crate: { type: string }
+      environment: { type: string }
+jobs:
+  publish:
+    environment: \${{ inputs.environment }}
+    steps:
+      - uses: rust-lang/crates-io-auth-action@v1
+      - run: cargo publish -p \${{ inputs.crate }}
+        env:
+          CARGO_REGISTRY_TOKEN: \${{ secrets.registry_token }}
+`;
+	snapshot.paths = Object.keys(snapshot.files);
+	return snapshot;
+}
+
+test('nested reusable publishers preserve matrix inputs, secret aliases, permissions and the entry workflow identity', async () => {
+	const snapshot = reusableCargoSnapshot();
+	const paths: string[] = [], credentials: unknown[] = [];
+	const access = registeredCrates([
+		{
+			crate: 'tool-core',
+			repository_owner: 'example',
+			repository_name: 'tool',
+			workflow_filename: 'publish.yml',
+			environment: 'core',
+		},
+		{
+			crate: 'tool',
+			repository_owner: 'example',
+			repository_name: 'tool',
+			workflow_filename: 'publish.yml',
+			environment: 'cli',
+		},
+	]);
+	access.github = path => {
+		paths.push(path);
+		return Effect.succeed(
+			/\/environments\/(core|cli)$|\/actions\/secrets\/OWNER_TOKEN$/.test(path) ? { name: 'available' } : null,
+		);
+	};
+	access.cargoToken = (file, names) => {
+		credentials.push({ file, names });
+		return Effect.undefined;
+	};
+	const plan = await checkedCargo(access, snapshot);
+	expect(plan.publishingChecks?.filter(check => check.status !== 'passed')).toEqual([]);
+	expect(plan.publishingChecks?.filter(check => check.message.includes('has a trusted publisher'))).toHaveLength(2);
+	expect(paths).toContain('/repos/example/tool/actions/secrets/OWNER_TOKEN');
+	expect(paths).not.toContain('/repos/example/tool/actions/secrets/registry_token');
+	expect(credentials).toEqual([
+		{ file: 'publish.yml', names: ['OWNER_TOKEN'] },
+		{ file: 'publish.yml', names: ['OWNER_TOKEN'] },
+	]);
+
+	snapshot.files['.github/workflows/publish.yml'] =
+		snapshot.files['.github/workflows/publish.yml']?.replace('id-token: write', 'contents: read') ?? '';
+	snapshot.files['.github/workflows/cargo.yml'] = snapshot.files['.github/workflows/cargo.yml']?.replace(
+		'    environment:',
+		'    permissions: { id-token: write }\n    environment:',
+	) ?? '';
+	const denied = await checkedCargo(access, snapshot);
+	expect(denied.publishingChecks?.filter(check => check.message.includes('needs id-token: write'))).toHaveLength(2);
+	const missingBindings = await checkedCargo({ ...access, request: registeredCrates().request }, snapshot);
+	expect(missingBindings.publishingChecks?.filter(check => check.message.includes('No matching publisher')))
+		.toHaveLength(2);
+});
+
+test('reusable workflow secrets require forwarding, with callee environment secrets taking precedence', async () => {
+	const snapshot = reusableCargoSnapshot();
+	snapshot.files['.github/workflows/wrapper.yml'] = snapshot.files['.github/workflows/wrapper.yml']?.replace(
+		'    secrets:\n      registry_token: ${{ secrets.caller_token }}\n',
+		'',
+	) ?? '';
+	const access = missingCrates();
+	access.github = path => Effect.succeed(/\/environments\/(core|cli)$/.test(path) ? { name: 'available' } : null);
+	const missing = await checkedCargo(access, snapshot);
+	expect(missing.publishingChecks?.filter(check => check.message.includes('secret registry_token is missing')))
+		.toHaveLength(2);
+	access.github = path =>
+		Effect.succeed(/\/environments\/(core|cli)(\/secrets\/registry_token)?$/.test(path) ? { name: 'available' } : null);
+	const available = await checkedCargo(access, snapshot);
+	expect(available.publishingChecks?.filter(check => check.message.includes('secret registry_token is available')))
+		.toHaveLength(2);
+});
+
+test('customized setup exposes publishing prerequisites in notes and its PR body without inferred adoption text', async () => {
+	const snapshot = cargoSnapshot();
+	const inferred = await checkedCargo(missingCrates(), snapshot);
+	const choices = { streams: inferred.choices.streams.map(stream => ({ ...stream, name: 'custom' })) };
+	const plan = await Effect.runPromise(
+		previewSetup(snapshot, discover(snapshot), choices, { head: null, publishing: missingCrates() }),
+	);
+	expect(plan.adoption).toBeUndefined();
+	expect(plan.notes.some(note => note.includes('crates.io returned 404 for tool-core'))).toBe(true);
+	const body = setupBody(plan, { branch: 'automation/onboarding', defaultBranch: 'main' });
+	expect(body).toContain('crates.io returned 404 for tool-core');
+	expect(body).toContain('Publish its first version with a crates.io API token');
+});
