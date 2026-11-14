@@ -243,3 +243,34 @@ test('legacy continuation repair requires current inventory and can recover afte
 	});
 	expect(await storage.get(`quarantine:${execution.id}`)).toBeUndefined();
 });
+
+test('settled history uses no per-execution D1 access budget before newer active work', async () => {
+	const { repository, execution, storage } = await observed();
+	const { runId: _runId, runAttempt: _runAttempt, workflowSha: _workflowSha, ...unstarted } = execution;
+	for (let i = 0; i < 1200; i++) {
+		await storage.put(`execution:history-${i}`, {
+			...unstarted,
+			id: `history-${i}`,
+			eventId: `history-${i}`,
+			state: i % 3 === 0 ? 'cancelled' : i % 3 === 1 ? 'failed' : 'succeeded',
+			version: undefined,
+			createdAt: execution.createdAt - i - 1,
+		});
+	}
+	const execute = world.db.execute.bind(world.db);
+	let accessReads = 0;
+	spyOn(world.db, 'execute').mockImplementation((query, values) => {
+		if (query.startsWith('SELECT id, name, access, suspended_at') && ++accessReads > 20) {
+			throw new Error('Access-query budget exhausted');
+		}
+		return execute(query, values);
+	});
+	await world.wait(20_000);
+	expect((await executions(repository)).find(run => run.id === execution.id)?.state).toBe('succeeded');
+	expect((await executions(repository)).filter(run => run.eventId === execution.eventId && run.operation === 'follow0'))
+		.toHaveLength(1);
+	expect(accessReads).toBeLessThan(20);
+	const before = accessReads;
+	await world.wait(20_000);
+	expect(accessReads - before).toBeLessThan(20);
+});

@@ -406,20 +406,30 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			Effect.flatMap(value => fromSync(() => decodeSync(Schema.optional(releaseSetRecord), value))),
 		);
 	}
-	private continuations(observed: Execution): CoordinatorEffect<Execution[], DomainError> {
+	private pendingContinuations(
+		observed: Execution,
+	): CoordinatorEffect<string[], DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (observed.state !== 'succeeded' || !observed.eventId.startsWith('observed:')) return [];
-			const stream = observed.configuration.streams[observed.stream];
-			const bindings = Object.entries(stream?.workflows ?? {}).filter(([, binding]) =>
-				binding.mode !== 'observe' && binding.needs?.includes(observed.operation)
-			);
-			if (!bindings.length) return [];
+			const bindings = Object.entries(observed.configuration.streams[observed.stream]?.workflows ?? {}).filter((
+				[, binding],
+			) => binding.mode !== 'observe' && binding.needs?.includes(observed.operation));
+			const missing: string[] = [];
+			for (const [operation] of bindings) {
+				const id = yield* executionId(observed.repositoryId, observed.stream, operation, observed.eventId);
+				if (!(yield* this.stored(id))) missing.push(operation);
+			}
+			return missing;
+		});
+	}
+	private continuations(observed: Execution): CoordinatorEffect<Execution[], DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const missing = yield* this.pendingContinuations(observed);
+			if (!missing.length) return [];
 			const record = yield* (yield* this.store).repository(observed.repositoryId);
 			if (!record) return yield* precondition('Repository unavailable while completing observed operation');
 			const next: Execution[] = [];
-			for (const [operation] of bindings) {
-				const id = yield* executionId(observed.repositoryId, observed.stream, operation, observed.eventId);
-				if (yield* this.stored(id)) continue;
+			for (const operation of missing) {
 				const execution = yield* deriveExecution(observed, record, {
 					stream: observed.stream,
 					operation,
@@ -480,7 +490,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			]);
 		});
 	}
-	private captureReleaseEvent(execution: Execution): CoordinatorEffect<void, DomainError> {
+	private releaseGroup(execution: Execution): CoordinatorEffect<Execution[] | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (!execution.version) return;
 			const required = execution.releaseSet?.required ?? execution.configuration.streams[execution.stream]?.required
@@ -502,6 +512,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			) {
 				return;
 			}
+			return group;
+		});
+	}
+	private captureReleaseEvent(execution: Execution): CoordinatorEffect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			if (!execution.version) return;
+			const group = yield* this.releaseGroup(execution);
+			if (!group) return;
+			const id = releaseEventId({ ...execution, version: execution.version });
 			const references = group.flatMap(e => e.release ? [e.release] : []);
 			if (references.some(r => r.tag !== references[0]?.tag || r.releaseId !== references[0]?.releaseId)) {
 				return yield* precondition('Conflicting release identities');
@@ -3072,6 +3091,27 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			),
 		);
 	}
+	private hasAdvanceWork(
+		execution: Execution,
+		unresolved: (execution: Execution) => boolean,
+	): CoordinatorEffect<boolean, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			if (
+				!['succeeded', 'failed', 'cancelled', 'pending'].includes(execution.state) || unresolved(execution)
+				|| publishedAfterFailure(execution)
+			) return true;
+			const stored = yield* this.read(`ledger:${execution.id}`);
+			if (stored !== undefined) {
+				const ledger = yield* fromSync(() => decodeSync(ledgerSchema, stored));
+				if (ledger.records.some(record => record.status.state === 'uploaded' || missingReceipt(execution, record))) {
+					return true;
+				}
+			}
+			return execution.state === 'succeeded'
+				&& ((yield* this.pendingContinuations(execution)).length > 0
+					|| (yield* this.releaseGroup(execution)) !== undefined);
+		});
+	}
 	private advance(
 		execution: Execution,
 		executions: Execution[],
@@ -3194,7 +3234,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			for (const execution of executions) {
 				if (onlyExecution ? execution.id !== onlyExecution : Boolean(execution.releaseSet?.workflowId)) continue;
+				const work = yield* Effect.result(this.hasAdvanceWork(execution, unresolved));
+				if (work._tag === 'Success' && !work.success) continue;
 				if (yield* this.suspended(execution.repositoryId)) return;
+				if (work._tag === 'Failure') {
+					yield* this.isolate(execution.id, work.failure);
+					continue;
+				}
 				const outcome = yield* this.advance(execution, executions, active, busy, unresolved).pipe(
 					recover(error => this.isolate(execution.id, error).pipe(Effect.as('continue' as const))),
 				);

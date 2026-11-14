@@ -1,4 +1,5 @@
 import { Effect } from 'effect';
+import { isDecodingFailure } from '@/automation/store';
 import type { ProjectedEntity } from '@/contract/changes';
 import type { DomainError } from '@/contract/errors';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
@@ -29,12 +30,18 @@ export class ProjectionStore {
 	}
 	private upsert(row: Projection): SqlStatement {
 		if (row.entity === 'execution') {
+			let state = row.state;
+			try {
+				state = decodeExecutionV1(JSON.parse(row.document)).state;
+			} catch (error) {
+				if (!isDecodingFailure(error)) throw error;
+			}
 			return this.db.statement(
 				'INSERT INTO executions(id,repository_id,state,document,updated_at,revision,state_version) VALUES(?,?,?,?,?,?,1) ON CONFLICT(id) DO UPDATE SET repository_id=excluded.repository_id,state=excluded.state,state_version=1,document=excluded.document,updated_at=excluded.updated_at,revision=excluded.revision WHERE executions.revision IS NULL OR excluded.revision>executions.revision',
 			).bind(
 				row.id,
 				row.repositoryId,
-				decodeExecutionV1(JSON.parse(row.document)).state,
+				state,
 				row.document,
 				row.updatedAt,
 				row.revision,
