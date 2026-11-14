@@ -4,6 +4,7 @@ import { editableConfiguration, publishWorkflow } from '@root/test/support/repos
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { createExecution } from '@/automation/execution';
+import { ReleaseHistory } from '@/automation/release-history';
 import { Automation } from '@/automation/service';
 import { requireReady } from '@/domain/repository';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
@@ -277,4 +278,20 @@ test('settled history uses no per-execution D1 access budget before newer active
 	expect(accessReads - before).toBeLessThan(20);
 	expect(storage.operations.filter(operation => operation.kind === 'list' && operation.keys >= 1200).length)
 		.toBeLessThan(15);
+});
+
+test('reconciliation updates its completion index after successful same-pass execution commits', async () => {
+	const { repository, execution, storage } = await observed(0);
+	const updates: string[] = [];
+	const update = ReleaseHistory.prototype.update;
+	spyOn(ReleaseHistory.prototype, 'update').mockImplementation(function(this: ReleaseHistory, entry) {
+		updates.push(`${entry.id}:${entry.state}`);
+		return update.call(this, entry);
+	});
+	await storage.put(`execution:${execution.id}`, { ...execution, version: '1.1.0' });
+	await world.wait(20_000);
+	expect(updates).toContain(`${execution.id}:running`);
+	expect(updates).toContain(`${execution.id}:succeeded`);
+	expect(updates.indexOf(`${execution.id}:running`)).toBeLessThan(updates.indexOf(`${execution.id}:succeeded`));
+	expect((await executions(repository)).find(entry => entry.id === execution.id)?.state).toBe('succeeded');
 });

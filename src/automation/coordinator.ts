@@ -86,6 +86,7 @@ import {
 	tagPayload,
 	tagPrefixes,
 } from '@/automation/refs';
+import { ReleaseHistory } from '@/automation/release-history';
 import { releaseNotes } from '@/automation/release-notes';
 import { compileReleaseSet } from '@/automation/release-set';
 import { manifestProblems } from '@/automation/release-version';
@@ -248,6 +249,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private readonly lock = Semaphore.makeUnsafe(1);
 	private readonly journal = new Journal(this.ctx.storage);
 	private projectionRetryAt: number | undefined;
+	private releaseHistory: ReleaseHistory | undefined;
 	private serialized<A>(work: CoordinatorEffect<A, DomainError>): CoordinatorEffect<A, DomainError> {
 		return Semaphore.withPermit(
 			this.lock,
@@ -280,7 +282,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		entries: readonly [Committed, ...Committed[]],
 		extra?: Record<string, unknown>,
 	): CoordinatorEffect<void, DomainError> {
-		return this.journal.commit(entries, extra);
+		return this.journal.commit(entries, extra).pipe(Effect.tap(() =>
+			fromSync(() => {
+				if (!this.releaseHistory) return;
+				for (const entry of entries) {
+					if (entry.entity === 'execution') this.releaseHistory.update(decodeExecutionV1(entry.value));
+				}
+			})
+		));
 	}
 	private arm(at: number | undefined): CoordinatorEffect<void, DomainError> {
 		return this.journal.arm(at);
@@ -492,7 +501,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private releaseGroup(
 		execution: Execution,
-		history: CoordinatorEffect<Execution[], DomainError> = this.executions(),
+		history: CoordinatorEffect<ReleaseHistory, DomainError> = Effect.suspend(() =>
+			this.releaseHistory
+				? Effect.succeed(this.releaseHistory)
+				: this.executions().pipe(Effect.map(entries => new ReleaseHistory(entries)))
+		),
 	): CoordinatorEffect<Execution[] | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (!execution.version) return;
@@ -501,21 +514,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (!required.length) return;
 			const id = releaseEventId({ ...execution, version: execution.version });
 			if (yield* this.read(`release-emitted:${id}`)) return;
-			const group = (yield* history)
-				.filter(e =>
-					e.state === 'succeeded' && e.stream === execution.stream && e.version === execution.version
-					&& e.sourceSha === execution.sourceSha && e.configurationSha === execution.configurationSha
-					&& e.releaseSet?.preparationId === execution.releaseSet?.preparationId
-					&& e.releaseSet?.group === execution.releaseSet?.group
-				);
-			if (
-				!required.every(key =>
-					group.some(e => e.publications.some(p => matchesPublication(key, p) && p.outcome === 'succeeded'))
-				)
-			) {
-				return;
-			}
-			return group;
+			return (yield* history).completed(execution, required);
 		});
 	}
 	private captureReleaseEvent(execution: Execution): CoordinatorEffect<void, DomainError> {
@@ -3097,7 +3096,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private hasAdvanceWork(
 		execution: Execution,
 		unresolved: (execution: Execution) => boolean,
-		history: CoordinatorEffect<Execution[], DomainError>,
+		history: CoordinatorEffect<ReleaseHistory, DomainError>,
 	): CoordinatorEffect<boolean, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (
@@ -3236,22 +3235,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (active.some(e => !e.releaseSet?.workflowId) || executions.some(unresolved)) {
 				yield* this.requestReconcile(started + reconcileInterval);
 			}
-			let snapshot: Execution[] | undefined = journal.executions;
-			const history = Effect.suspend(() =>
-				snapshot
-					? Effect.succeed(snapshot)
-					: this.executions().pipe(Effect.tap(entries =>
-						Effect.sync(() => {
-							snapshot = entries;
-						})
-					))
-			);
+			const releaseHistory = new ReleaseHistory(journal.executions);
+			this.releaseHistory = releaseHistory;
+			const history = Effect.succeed(releaseHistory);
 			for (const execution of executions) {
 				if (onlyExecution ? execution.id !== onlyExecution : Boolean(execution.releaseSet?.workflowId)) continue;
 				const work = yield* Effect.result(this.hasAdvanceWork(execution, unresolved, history));
 				if (work._tag === 'Success' && !work.success) continue;
 				if (yield* this.suspended(execution.repositoryId)) return;
-				snapshot = undefined;
 				if (work._tag === 'Failure') {
 					yield* this.isolate(execution.id, work.failure);
 					continue;
@@ -3261,6 +3252,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				);
 				if (outcome === 'stop') return;
 			}
-		});
+		}).pipe(Effect.ensuring(Effect.sync(() => {
+			this.releaseHistory = undefined;
+		})));
 	}
 }

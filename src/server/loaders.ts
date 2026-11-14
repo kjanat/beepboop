@@ -62,7 +62,7 @@ function executions(
 function runsWithCompletions(service: AutomationService, repositoryId?: number) {
 	return executions(service, repositoryId).pipe(
 		Effect.flatMap(rows =>
-			service.store.completedReleases(repositoryId, rows.readable).pipe(
+			service.store.completionEvidence(rows.readable).pipe(
 				Effect.map(completed => [rows, completed] as const),
 			)
 		),

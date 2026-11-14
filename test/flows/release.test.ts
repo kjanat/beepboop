@@ -1323,10 +1323,11 @@ test('completion evidence survives execution pagination and later auxiliary work
 			required: true,
 		}],
 	});
+	const candidate = { ...finished, state: 'failed' as const, version: '0.0.0', updatedAt: 0 };
 	await coordinator.enqueue(successful('part-one', 'widget'));
-	expect(await Effect.runPromise(store.completedReleases())).toEqual([]);
+	expect(await Effect.runPromise(store.completionEvidence([candidate]))).toEqual([]);
 	await coordinator.enqueue(successful('part-two', 'other'));
-	const [completion] = await Effect.runPromise(store.completedReleases());
+	const [completion] = await Effect.runPromise(store.completionEvidence([candidate]));
 	if (!completion) throw new Error('No completion record');
 	const failure = {
 		...finished,
@@ -1337,15 +1338,15 @@ test('completion evidence survives execution pagination and later auxiliary work
 		updatedAt: completion.completedAt - 1,
 	};
 	world.db.reset();
-	expect(await Effect.runPromise(store.completedReleases(undefined, [finished]))).toEqual([]);
+	expect(await Effect.runPromise(store.completionEvidence([finished]))).toEqual([]);
 	expect(world.db.queries).toHaveLength(0);
-	expect(await Effect.runPromise(store.completedReleases(undefined, [failure]))).toEqual([completion]);
+	expect(await Effect.runPromise(store.completionEvidence([failure]))).toEqual([completion]);
 	for (const candidate of [
 		{ ...failure, repositoryId: failure.repositoryId + 1 },
 		{ ...failure, stream: 'other-stream' },
 		{ ...failure, updatedAt: completion.completedAt + 1 },
 	]) {
-		expect(await Effect.runPromise(store.completedReleases(undefined, [candidate]))).toEqual([]);
+		expect(await Effect.runPromise(store.completionEvidence([candidate]))).toEqual([]);
 	}
 	await world.db.prepare('DELETE FROM executions').run();
 	const insert = world.db.prepare(
@@ -1366,12 +1367,12 @@ test('completion evidence survives execution pagination and later auxiliary work
 	await world.wait(1000);
 	await coordinator.enqueue({ ...successful('auxiliary', 'widget'), operation: 'extra' });
 	await coordinator.reindex(repository.id);
-	expect(await Effect.runPromise(store.completedReleases())).toEqual([completion]);
+	expect(await Effect.runPromise(store.completionEvidence([candidate]))).toEqual([completion]);
 	const laterFailure = { ...failure, updatedAt: completion.completedAt + 1 };
 	expect(
 		needingUser(
 			[laterFailure, ...(await load()).executions.readable],
-			await Effect.runPromise(store.completedReleases()),
+			await Effect.runPromise(store.completionEvidence([candidate])),
 		).has(failure.id),
 	).toBe(true);
 });

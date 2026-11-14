@@ -1,4 +1,4 @@
-import { Clock, Context, Data, Effect, Layer, Schema } from 'effect';
+import { Clock, Context, Data, Effect, Exit, Layer, Schema } from 'effect';
 import { importPKCS8, SignJWT } from 'jose';
 import { logRecovered } from '@/automation/failure-log';
 import type { GitObject } from '@/automation/github-resources';
@@ -39,7 +39,7 @@ import type { AutoMergeMethod } from '@/contract/setup-terms';
 import { parseRetryAfter } from '@/domain/http-date';
 import { fromPromise, fromSync, toDomainError } from '@/failure';
 import { decode, sha, textSchema } from '@/model';
-import { responseBytes, responseJson, responseText } from '@/runtime/http';
+import { responseBytes, responseJson, responseText, scopedResponse } from '@/runtime/http';
 import { ioConcurrency, retryTransient } from '@/runtime/policy';
 import type { Contract, Decoded } from '@/schema';
 import { looseStruct, mutableArray, mutableStruct } from '@/schema';
@@ -132,7 +132,7 @@ function detailOf(body: string): string {
 	}
 }
 
-class ServerError extends Data.TaggedError('ServerError')<{ readonly response: Response }> {}
+class ServerError extends Data.TaggedError('ServerError')<{ readonly message: string }> {}
 
 export class GitHubRejection extends DomainError {
 	constructor(readonly status: number, message: string, readonly retryAt?: number) {
@@ -180,43 +180,48 @@ export const gitHubRequest = Effect.fn('GitHub.request')(function*(
 			upstream('github', `GitHub unreachable on ${route}: ${error instanceof Error ? error.message : String(error)}`),
 	});
 	const failed = (response: Response) =>
-		responseText(response).pipe(
+		responseText(response, { maxBytes: 8192 }).pipe(
+			Effect.timeout('2 seconds'),
 			Effect.map(detailOf),
 			Effect.orElseSucceed(() => ''),
 			Effect.map(detail => `GitHub HTTP ${response.status} on ${route}${detail ? `: ${detail}` : ''}`),
 		);
-	const answered = method === 'GET' || readOnlyGraphql
-		? reach.pipe(
-			Effect.filterOrElse(
-				response => response.status < 500,
-				response => Effect.fail(new ServerError({ response })),
-			),
-			retryTransient<ServerError | DomainError>({
-				attempts: 3,
-				delay: 500,
-				while: failure => failure._tag === 'ServerError',
-			}),
-			Effect.catchTag('ServerError', ({ response }) => Effect.succeed(response)),
-		)
-		: reach;
-	const response = yield* answered;
-	if (response.status === 404 && method === 'GET') return null;
-	if (!response.ok) {
-		const message = yield* failed(response);
-		if (response.status >= 400 && response.status < 500 && response.status !== 408) {
-			const retryAt = response.status === 429 || response.status === 403 && rateLimited(message)
-				? parseRetryAfter(response.headers.get('retry-after') ?? '', clock.currentTimeMillisUnsafe())
-					?? clock.currentTimeMillisUnsafe() + 60_000
-				: undefined;
-			return yield* new GitHubRejection(response.status, message, retryAt);
+	const safeRead = method === 'GET' || readOnlyGraphql;
+	const maxAttempts = 3;
+	let attempt = 0;
+	const answered = Effect.gen(function*() {
+		attempt++;
+		const response = yield* scopedResponse(reach);
+		if (response.status === 404 && method === 'GET') return null;
+		if (!response.ok) {
+			if (safeRead && response.status >= 500 && attempt < maxAttempts) {
+				return yield* new ServerError({ message: `GitHub HTTP ${response.status} on ${route}` });
+			}
+			const message = yield* failed(response);
+			if (response.status >= 400 && response.status < 500 && response.status !== 408) {
+				const retryAt = response.status === 429 || response.status === 403 && rateLimited(message)
+					? parseRetryAfter(response.headers.get('retry-after') ?? '', clock.currentTimeMillisUnsafe())
+						?? clock.currentTimeMillisUnsafe() + 60_000
+					: undefined;
+				return yield* new GitHubRejection(response.status, message, retryAt);
+			}
+			if (response.status >= 500 && safeRead) return yield* new ServerError({ message });
+			return yield* response.status >= 500
+				? upstream('github', message)
+				: domainError({ code: 'precondition', diagnostics: [legacyDiagnostic(message)] }, message);
 		}
-		return yield* response.status >= 500
-			? upstream('github', message)
-			: domainError({ code: 'precondition', diagnostics: [legacyDiagnostic(message)] }, message);
-	}
-	if (response.status === 204) return null;
-	return yield* responseJson(response).pipe(
-		Effect.mapError(() => upstream('github', `GitHub sent invalid JSON on ${route}`)),
+		if (response.status === 204) return null;
+		return yield* responseJson(response).pipe(
+			Effect.mapError(() => upstream('github', `GitHub sent invalid JSON on ${route}`)),
+		);
+	}).pipe(Effect.scoped);
+	return yield* answered.pipe(
+		retryTransient<ServerError | DomainError>({
+			attempts: maxAttempts,
+			delay: 500,
+			while: failure => failure._tag === 'ServerError',
+		}),
+		Effect.catchTag('ServerError', ({ message }) => upstream('github', message)),
 	);
 });
 
@@ -267,18 +272,20 @@ export class RepositoryGateway {
 				'X-GitHub-Api-Version': githubApiVersion,
 				'User-Agent': 'beepboop',
 			};
-			const download = yield* fromPromise(signal =>
-				self.transport(`https://api.github.com/repos/${repository}/releases/assets/${asset.id}`, {
-					headers: { ...headers, Accept: 'application/octet-stream' },
-					signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
-				})
+			const download = yield* scopedResponse(
+				fromPromise(signal =>
+					self.transport(`https://api.github.com/repos/${repository}/releases/assets/${asset.id}`, {
+						headers: { ...headers, Accept: 'application/octet-stream' },
+						signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
+					})
+				),
 			);
 			if (!download.ok) {
 				const message = `GitHub HTTP ${download.status} downloading release asset ${asset.name}`;
 				return yield* (download.status >= 500 ? upstream('github', message) : precondition(message));
 			}
 			const content = yield* responseBytes(download).pipe(Effect.mapError(({ cause }) => toDomainError(cause)));
-			const upload = yield* fromPromise(signal =>
+			const upload = yield* scopedResponse(fromPromise(signal =>
 				self.transport(
 					`https://uploads.github.com/repos/${repository}/releases/${releaseId}/assets?name=${
 						encodeURIComponent(asset.name)
@@ -290,12 +297,12 @@ export class RepositoryGateway {
 						signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
 					},
 				)
-			);
+			));
 			if (!upload.ok) {
 				const message = `GitHub HTTP ${upload.status} uploading release asset ${asset.name}`;
 				return yield* (upload.status >= 500 ? upstream('github', message) : precondition(message));
 			}
-		});
+		}).pipe(Effect.scoped);
 	}
 	token(
 		name: string,
@@ -445,15 +452,8 @@ export class RepositoryGateway {
 		});
 	}
 	verification(name: string, id: number, permissions?: Permission): VerificationContext {
-		let token: string | undefined;
-		const installation = Effect.suspend(() =>
-			token === undefined
-				? this.token(name, id, permissions).pipe(Effect.tap(issued =>
-					Effect.sync(() => {
-						token = issued;
-					})
-				))
-				: Effect.succeed(token)
+		const installation = Effect.runSync(
+			Effect.cachedWithTTL(this.token(name, id, permissions), exit => Exit.isSuccess(exit) ? Infinity : 0),
 		);
 		return {
 			repository: name,
@@ -482,7 +482,7 @@ export class RepositoryGateway {
 		const self = this;
 		return Effect.gen(function*() {
 			const result = yield* self.call(
-				`/repos/${name}/contents/${path}?ref=${encodeURIComponent(ref)}`,
+				`/repos/${name}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`,
 				token,
 			);
 			if (result === null) return null;

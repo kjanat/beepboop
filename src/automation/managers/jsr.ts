@@ -14,7 +14,7 @@ import { domainError, upstream } from '@/contract/errors';
 import { sha256Hex } from '@/contract/ids';
 import { fromJson, fromPromise, fromSync, toDomainError } from '@/failure';
 import { parentDirectory } from '@/relative-path';
-import { responseBytes, responseJson, responseText } from '@/runtime/http';
+import { responseBytes, responseJson, responseText, scopedResponse } from '@/runtime/http';
 
 const precedence = ['jsr.json', 'jsr.jsonc', 'deno.json', 'deno.jsonc'];
 function rank(path: string): number {
@@ -59,7 +59,7 @@ export function setUpJsrPackage(
 		const [scope, bare] = name.slice(1).split('/');
 		const [owner, repo] = repository.split('/');
 		const call = (path: string, method = 'GET', body?: unknown) =>
-			registry.fetch(`https://api.jsr.io${path}`, {
+			scopedResponse(registry.fetch(`https://api.jsr.io${path}`, {
 				method,
 				redirect: 'manual',
 				signal: AbortSignal.timeout(15_000),
@@ -69,7 +69,7 @@ export function setUpJsrPackage(
 					...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
 				},
 				...(body === undefined ? {} : { body: JSON.stringify(body) }),
-			}).pipe(Effect.flatMap(response => {
+			})).pipe(Effect.flatMap(response => {
 				if (response.ok || (method === 'GET' && response.status === 404)) return Effect.succeed(response);
 				const failed = `JSR ${method} ${path} failed with HTTP ${response.status}`;
 				return responseText(response).pipe(
@@ -99,7 +99,7 @@ export function setUpJsrPackage(
 			);
 		}
 		yield* call(`/scopes/${scope}`, 'PATCH', { ghActionsVerifyActor: false });
-	});
+	}).pipe(Effect.scoped);
 }
 export function jsrTokenRefused(names: string[]): DomainError {
 	return setupRefused(`Store a JSR access token as ${jsrTokenAlias} so Beepboop can set up ${names.join(', ')}`);
@@ -171,11 +171,13 @@ export const jsrManager: Adapter<'jsr'> = {
 		};
 		const result = publicationResult(publication, url);
 		return Effect.gen(function*() {
-			const metadata = yield* fromPromise(signal =>
-				request(`https://jsr.io/${publication.name}/meta.json`, {
-					...options,
-					signal: AbortSignal.any([signal, options.signal]),
-				})
+			const metadata = yield* scopedResponse(
+				fromPromise(signal =>
+					request(`https://jsr.io/${publication.name}/meta.json`, {
+						...options,
+						signal: AbortSignal.any([signal, options.signal]),
+					})
+				),
 			);
 			const absent = unconfirmed(metadata);
 			if (absent) return result(absent);
@@ -184,8 +186,8 @@ export const jsrManager: Adapter<'jsr'> = {
 			if (body.scope !== scope || body.name !== name) return result('failed');
 			if (!Object.hasOwn(object(body.versions), publication.version)) return result('pending');
 			if (object(object(body.versions)[publication.version]).yanked === true) return result('failed');
-			const response = yield* fromPromise(signal =>
-				request(url, { ...options, signal: AbortSignal.any([signal, options.signal]) })
+			const response = yield* scopedResponse(
+				fromPromise(signal => request(url, { ...options, signal: AbortSignal.any([signal, options.signal]) })),
 			);
 			const missing = unconfirmed(response);
 			if (missing) return result(missing);
@@ -200,6 +202,6 @@ export const jsrManager: Adapter<'jsr'> = {
 			}
 			const digest = `sha256-${yield* fromPromise(() => sha256Hex(bytes.buffer))}`;
 			return result(publication.digest && publication.digest !== digest ? 'failed' : 'succeeded', digest);
-		}).pipe(Effect.orElseSucceed(() => result('uncertain')));
+		}).pipe(Effect.scoped, Effect.orElseSucceed(() => result('uncertain')));
 	},
 };

@@ -27,8 +27,11 @@ import {
 } from '@/persistence/codecs/repository';
 import { decodeDeliveryV1, decodeEventV1, decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { AuditStore } from '@/persistence/d1/audit';
+import type { CompletionCandidate } from '@/persistence/d1/completions';
+import { CompletionStore } from '@/persistence/d1/completions';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
+import { jsonBatches } from '@/persistence/d1/json-batches';
 import type { Decoded } from '@/schema';
 import { decodeSync, mutableArray, mutableStruct } from '@/schema';
 
@@ -177,56 +180,10 @@ export class Store {
 			id,
 		).pipe(Effect.map(result => result.meta.changes > 0));
 	}
-	completedReleases(repositoryId?: number, visible?: readonly Execution[]) {
-		const candidates = visible?.filter(run => run.state === 'failed' || run.state === 'cancelled').map(run => ({
-			repositoryId: run.repositoryId,
-			stream: run.stream,
-			group: run.releaseSet?.group ?? null,
-			after: run.updatedAt,
-		}));
-		if (candidates?.length === 0) return Effect.succeed([]);
-		const conditions: string[] = [];
-		const values: (string | number)[] = [];
-		if (repositoryId !== undefined) {
-			conditions.push('repository_id=?');
-			values.push(repositoryId);
-		}
-		if (candidates) {
-			conditions.push(`repository_id IN (SELECT json_extract(value,'$.repositoryId') FROM json_each(?))
-    AND EXISTS (SELECT 1 FROM json_each(?) AS candidate
-     WHERE json_extract(candidate.value,'$.repositoryId')=releases.repository_id
-      AND json_extract(candidate.value,'$.stream')=${validJson('$.release.stream')}
-      AND json_extract(candidate.value,'$.group') IS ${validJson('$.release.group')}
-      AND json_extract(candidate.value,'$.after')<COALESCE(${validJson('$.occurredAt')},updated_at))`);
-			const encoded = JSON.stringify(candidates);
-			values.push(encoded, encoded);
-		}
-		return this.sql.all(
-			`SELECT document,updated_at FROM releases ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}`,
-			...values,
-		).pipe(
-			Effect.flatMap(rows =>
-				parse(mutableArray(mutableStruct({ document: Schema.String, updated_at: Schema.Finite })), rows)
-			),
-			Effect.map(rows => rows.flatMap(row => {
-				try {
-					const event = decodeEventV1(JSON.parse(row.document));
-					return event.event === 'release' && event.release
-						? [{
-							repositoryId: event.release.repository.id,
-							stream: event.release.stream,
-							group: event.release.group,
-							version: event.release.version,
-							completedAt: event.occurredAt ?? row.updated_at,
-						}]
-						: [];
-				} catch (error) {
-					if (!isDecodingFailure(error)) throw error;
-					return [];
-				}
-			})),
-		);
+	completionEvidence(visible: readonly CompletionCandidate[]) {
+		return new CompletionStore(this.sql).evidence(visible);
 	}
+
 	execution(id: string): Effect.Effect<Execution | undefined, DomainError> {
 		return this.document('executions', id, decodeExecutionV1);
 	}
@@ -258,26 +215,9 @@ export class Store {
 					}
 					return { id: row.id, state, document: row.document };
 				});
-				const apply = (batch: string[]) =>
-					this.sql.run(
-						`UPDATE executions SET state=normalized.state,state_version=1
-      FROM (SELECT json_extract(value,'$.id') AS id,
-       json_extract(value,'$.state') AS state, json_extract(value,'$.document') AS document
-       FROM json_each(?)) AS normalized
-      WHERE executions.id=normalized.id AND executions.document=normalized.document
-       AND executions.state_version IS NULL`,
-						`[${batch.join(',')}]`,
-					);
-				let batch: string[] = [], bytes = 2;
-				for (const row of normalized) {
-					const encoded = JSON.stringify(row);
-					const size = new TextEncoder().encode(encoded).byteLength + 1;
-					if (batch.length && bytes + size > 1_000_000) {
-						yield* apply(batch);
-						batch = [];
-						bytes = 2;
-					}
-					if (size > 1_000_000) {
+				for (const batch of jsonBatches(normalized)) {
+					if ('row' in batch) {
+						const row = batch.row;
 						yield* this.sql.run(
 							'UPDATE executions SET state=?,state_version=1 WHERE id=? AND document=? AND state_version IS NULL',
 							row.state,
@@ -285,11 +225,15 @@ export class Store {
 							row.document,
 						);
 					} else {
-						batch.push(encoded);
-						bytes += size;
+						yield* this.sql.run(
+							`UPDATE executions SET state=normalized.state,state_version=1
+        FROM (SELECT json_extract(value,'$.id') AS id,
+         json_extract(value,'$.state') AS state,json_extract(value,'$.document') AS document FROM json_each(?)) AS normalized
+        WHERE executions.id=normalized.id AND executions.document=normalized.document AND executions.state_version IS NULL`,
+							batch.json,
+						);
 					}
 				}
-				if (batch.length) yield* apply(batch);
 			}
 		});
 	}

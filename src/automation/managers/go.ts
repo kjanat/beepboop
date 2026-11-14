@@ -94,7 +94,7 @@ function verifyModule(publication: Publication, request: Fetcher): Effect.Effect
 		}
 		if (typeof hash !== 'string') return result(publication.digest ? 'uncertain' : 'succeeded');
 		return result('succeeded', hash);
-	}).pipe(Effect.orElseSucceed(() => result('uncertain')));
+	}).pipe(Effect.scoped, Effect.orElseSucceed(() => result('uncertain')));
 }
 
 export const goManager: Adapter<'go'> = {

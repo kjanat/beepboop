@@ -35,3 +35,17 @@ export function compare(left: string, right: string): -1 | 0 | 1 {
 	}
 	return 0;
 }
+
+/** Binary text ordering equivalent to SemVer precedence; build metadata has no effect. */
+export function precedenceKey(version: string): string | undefined {
+	const normalized = version.replace(/^v/, '');
+	if (!bareSemverPattern.test(normalized)) return undefined;
+	const parsed = precedence(normalized);
+	// Fixed-width length prefixes order arbitrary-precision numbers without numeric conversion.
+	const number = (value: string) => `${value.length.toString(16).padStart(16, '0')}${value}`;
+	const core = parsed.core.map(value => number(String(value))).join('!');
+	const pre = parsed.pre.length
+		? `0${parsed.pre.map(value => /^\d+$/.test(value) ? `0${number(value)}` : `1${value}`).join('!')}!`
+		: '1';
+	return `${core}!${pre}`;
+}

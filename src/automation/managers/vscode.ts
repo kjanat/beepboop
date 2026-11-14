@@ -59,7 +59,7 @@ export const vscodeManager: Adapter<'vscode'> = {
 			const versions = marketplaceVersions(yield* responseJson(response));
 			if (!versions) return result('uncertain');
 			return result(versions.includes(publication.version) ? 'succeeded' : 'pending');
-		}).pipe(Effect.orElseSucceed(() => result('uncertain')));
+		}).pipe(Effect.scoped, Effect.orElseSucceed(() => result('uncertain')));
 	},
 	secondaryLatest: {
 		'open-vsx'(pkg, request) {

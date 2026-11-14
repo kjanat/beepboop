@@ -3,6 +3,7 @@ import { isDecodingFailure } from '@/automation/store';
 import type { ProjectedEntity } from '@/contract/changes';
 import type { DomainError } from '@/contract/errors';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
+import { completionMetadata } from '@/persistence/d1/completions';
 import type { Sql, SqlDatabase, SqlStatement } from '@/persistence/d1/database';
 import { sql } from '@/persistence/d1/database';
 
@@ -47,11 +48,35 @@ export class ProjectionStore {
 				row.revision,
 			);
 		}
+		if (row.entity === 'release') {
+			const meta = completionMetadata(row.document, row.repositoryId);
+			return this.db.statement(
+				`INSERT INTO releases(id,repository_id,revision,document,updated_at,completion_format,
+     completion_stream,completion_group,completion_release_version,completion_sort,completion_at)
+     VALUES(?,?,?,?,?,1,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+     repository_id=excluded.repository_id,revision=excluded.revision,document=excluded.document,
+     updated_at=MIN(releases.updated_at,excluded.updated_at),completion_format=1,
+     completion_stream=excluded.completion_stream,completion_group=excluded.completion_group,
+     completion_release_version=excluded.completion_release_version,completion_sort=excluded.completion_sort,
+     completion_at=CASE WHEN excluded.completion_sort IS NULL THEN NULL ELSE COALESCE(?,MIN(releases.updated_at,excluded.updated_at)) END
+     WHERE excluded.revision>releases.revision`,
+			).bind(
+				row.id,
+				row.repositoryId,
+				row.revision,
+				row.document,
+				row.updatedAt,
+				meta?.stream ?? null,
+				meta?.group ?? null,
+				meta?.version ?? null,
+				meta?.sort ?? null,
+				meta ? meta.at ?? row.updatedAt : null,
+				meta?.at ?? null,
+			);
+		}
 		const table = tables[row.entity];
 		return this.db.statement(
-			`INSERT INTO ${table}(id,repository_id,revision,document,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET repository_id=excluded.repository_id,revision=excluded.revision,document=excluded.document,updated_at=${
-				row.entity === 'release' ? `MIN(${table}.updated_at,excluded.updated_at)` : 'excluded.updated_at'
-			} WHERE excluded.revision>${table}.revision`,
+			`INSERT INTO ${table}(id,repository_id,revision,document,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET repository_id=excluded.repository_id,revision=excluded.revision,document=excluded.document,updated_at=excluded.updated_at WHERE excluded.revision>${table}.revision`,
 		).bind(row.id, row.repositoryId, row.revision, row.document, row.updatedAt);
 	}
 	private change(row: Projection, at: number): SqlStatement {

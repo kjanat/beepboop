@@ -1,10 +1,11 @@
+import type { Scope } from 'effect';
 import { Effect, Result } from 'effect';
 import type { Fetcher, RegistryVersion } from '@/automation/managers/registry';
 import type { Outcome, Publication } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
 import { fromPromise } from '@/failure';
 import { semver } from '@/model';
-import { responseJson, responseText } from '@/runtime/http';
+import { responseJson, responseText, scopedResponse } from '@/runtime/http';
 
 export interface RegistryRequest {
 	method?: 'POST';
@@ -21,8 +22,8 @@ export function registryRequest(
 	request: Fetcher,
 	url: string,
 	init: RegistryRequest = {},
-): Effect.Effect<Response, DomainError> {
-	return fromPromise(signal =>
+): Effect.Effect<Response, DomainError, Scope.Scope> {
+	return scopedResponse(fromPromise(signal =>
 		request(url, {
 			redirect: 'manual',
 			signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
@@ -30,7 +31,7 @@ export function registryRequest(
 			...(init.body === undefined ? {} : { body: init.body }),
 			headers: { 'User-Agent': 'beepboop release verification', ...init.headers },
 		})
-	);
+	));
 }
 export function unconfirmed(response: Response): Outcome | undefined {
 	if (response.status === 404) return 'pending';
@@ -71,9 +72,7 @@ export function verifyRegistry(
 			return result('failed');
 		}
 		if (channel) {
-			const tagged = yield* fromPromise(signal =>
-				request(channel, { redirect: 'manual', signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]) })
-			);
+			const tagged = yield* registryRequest(request, channel);
 			if (!tagged.ok) return result('pending');
 			const tags: unknown = yield* responseJson(tagged);
 			if (!tags || typeof tags !== 'object' || Reflect.get(tags, publication.channel ?? '') !== publication.version) {
@@ -81,7 +80,7 @@ export function verifyRegistry(
 			}
 		}
 		return result('succeeded', digest);
-	}).pipe(Effect.orElseSucceed(() => result('uncertain')));
+	}).pipe(Effect.scoped, Effect.orElseSucceed(() => result('uncertain')));
 }
 export const unpublished: unique symbol = Symbol('unpublished');
 export class LookupFailure {
@@ -126,5 +125,8 @@ function lookup(
 			onSuccess: (value): RegistryVersion => ({ kind: 'published', version: value.replace(/^v/, '') }),
 			onFailure: (): RegistryVersion => ({ kind: 'failed', url, reason: 'no valid version' }),
 		});
-	}).pipe(Effect.orElseSucceed((): RegistryVersion => ({ kind: 'failed', url, reason: 'request failed' })));
+	}).pipe(
+		Effect.scoped,
+		Effect.orElseSucceed((): RegistryVersion => ({ kind: 'failed', url, reason: 'request failed' })),
+	);
 }
