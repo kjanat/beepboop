@@ -2,7 +2,6 @@ import { expect, spyOn, test } from 'bun:test';
 import { join } from 'node:path';
 import { identityToken } from '@root/actions/runtime/session';
 import { tokenRequest } from '@root/test/support/actions';
-import { withEnvironment } from '@root/test/support/process';
 import type { World } from '@root/test/support/world';
 import { adminSubject, eachWorld, issuer, origin } from '@root/test/support/world';
 import { experimental_AstroContainer } from 'astro/container';
@@ -154,12 +153,12 @@ test('invalid JSR version JSON remains a typed verification failure', async () =
 });
 
 test('Action identity, CLI status, and CLI login response reads cancel and unlock', async () => {
-	await withEnvironment(tokenRequest, () => interruptBody(response => {
+	await interruptBody(response => {
 		spyOn(globalThis, 'fetch').mockImplementation(
 			Object.assign(() => Promise.resolve(response), { preconnect: fetch.preconnect }),
 		);
-		return identityToken(new URL(origin));
-	}));
+		return identityToken(new URL(origin), tokenRequest);
+	});
 	await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
 		const directory = yield* temporaryDirectory('beepboop-cancel-client-');
 		const client = yield* Client.at(origin, directory);

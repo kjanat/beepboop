@@ -12,8 +12,15 @@ export function outputEntry(name: string, value: string): Result.Result<string, 
 }
 
 export function writeOutput(name: string, value: string): Effect.Effect<void, OutputFailure> {
+	return Effect.suspend(() => writeOutputTo(process.env.GITHUB_OUTPUT, name, value));
+}
+
+export function writeOutputTo(
+	file: string | undefined,
+	name: string,
+	value: string,
+): Effect.Effect<void, OutputFailure> {
 	return Effect.gen(function*() {
-		const file = process.env.GITHUB_OUTPUT;
 		if (!file) return yield* new OutputFailure({ message: 'GITHUB_OUTPUT is required' });
 		const entry = yield* Effect.fromResult(outputEntry(name, value));
 		yield* Effect.try({

@@ -19,6 +19,9 @@ const verify = Effect.scoped(Effect.gen(function*() {
 		if (/Cannot find (module|package)/.test(report)) {
 			return yield* refuse(`actions/runtime/${entry}.ts needs installed packages: ${report.trim()}`);
 		}
+		if (entry === 'client' && (probe.exitCode === 0 || !report.includes('Unknown integration action'))) {
+			return yield* refuse(`The bundled action client did not reject its missing mode: ${report.trim()}`);
+		}
 	}
 	console.log(`Bundled ${entrypoints.length} Actions runtime entrypoints without installed packages`);
 }));

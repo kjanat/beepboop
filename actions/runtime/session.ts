@@ -1,4 +1,4 @@
-import type { Invalid } from '@root/actions/runtime/protocol.ts';
+import type { Environment, Invalid } from '@root/actions/runtime/protocol.ts';
 import { ActionFailure, attempt, fail, required, retried } from '@root/actions/runtime/protocol.ts';
 import { Effect } from 'effect';
 import { bearerHeaders } from '@/contract/http.ts';
@@ -20,21 +20,25 @@ export function post(url: URL | string, init: RequestInit): Effect.Effect<Respon
 	});
 }
 
-export const serviceOrigin: Effect.Effect<URL, ActionFailure> = Effect.gen(function*() {
-	const origin = yield* Effect.fromResult(
-		attempt(() => new URL(process.env.SERVICE_ORIGIN || 'https://beepboop.kjanat.dev')),
-	);
-	if (
-		origin.protocol !== 'https:' || origin.pathname !== '/' || origin.search || origin.hash || origin.username
-		|| origin.password
-	) return yield* fail('Expected an HTTPS service origin');
-	return origin;
-});
-
-export function identityToken(origin: URL): Effect.Effect<string, Invalid> {
+export function readServiceOrigin(environment: Environment): Effect.Effect<URL, ActionFailure> {
 	return Effect.gen(function*() {
-		const requestUrl = yield* Effect.fromResult(required(process.env, 'ACTIONS_ID_TOKEN_REQUEST_URL'));
-		const requestToken = yield* Effect.fromResult(required(process.env, 'ACTIONS_ID_TOKEN_REQUEST_TOKEN'));
+		const origin = yield* Effect.fromResult(
+			attempt(() => new URL(environment.SERVICE_ORIGIN || 'https://beepboop.kjanat.dev')),
+		);
+		if (
+			origin.protocol !== 'https:' || origin.pathname !== '/' || origin.search || origin.hash || origin.username
+			|| origin.password
+		) return yield* fail('Expected an HTTPS service origin');
+		return origin;
+	});
+}
+
+export const serviceOrigin = Effect.suspend(() => readServiceOrigin(process.env));
+
+export function identityToken(origin: URL, environment: Environment): Effect.Effect<string, Invalid> {
+	return Effect.gen(function*() {
+		const requestUrl = yield* Effect.fromResult(required(environment, 'ACTIONS_ID_TOKEN_REQUEST_URL'));
+		const requestToken = yield* Effect.fromResult(required(environment, 'ACTIONS_ID_TOKEN_REQUEST_TOKEN'));
 		const endpoint = yield* Effect.fromResult(attempt(() => new URL(requestUrl)));
 		endpoint.searchParams.set('audience', origin.origin);
 		const identity = yield* post(endpoint, {
@@ -74,7 +78,7 @@ export function call(
 ): Effect.Effect<unknown, Invalid> {
 	return retried(
 		Effect.gen(function*() {
-			const token = yield* identityToken(origin);
+			const token = yield* identityToken(origin, process.env);
 			return yield* postJson(origin, path, token, JSON.stringify(body));
 		}),
 		true,
