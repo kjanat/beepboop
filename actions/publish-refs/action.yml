@@ -10,16 +10,19 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Ensure Bun is available
+    - name: Setup Bun
       id: bun
       uses: $/actions/deps/bun
-    - id: plan
+    - name: Plan refs
+      id: plan
       shell: bash
       env: { SERVICE_ORIGIN: "${{ inputs.service }}" }
       run: bun "${GITHUB_ACTION_PATH}/../runtime/client.ts" refs-plan
-    - shell: bash
+    - name: Push refs
+      shell: bash
       env: { REF_PLAN: "${{ steps.plan.outputs.result }}", REF_TOKEN: "${{ inputs.token }}" }
       run: bun "${GITHUB_ACTION_PATH}/../runtime/refs.ts"
-    - shell: bash
+    - name: Confirm refs
+      shell: bash
       env: { SERVICE_ORIGIN: "${{ inputs.service }}" }
       run: bun "${GITHUB_ACTION_PATH}/../runtime/client.ts" refs-complete

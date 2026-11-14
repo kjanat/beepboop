@@ -17,10 +17,11 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Ensure Bun is available
+    - name: Setup Bun
       id: bun
       uses: $/actions/deps/bun
-    - id: client
+    - name: Start release
+      id: client
       shell: bash
       env:
         RELEASE_VERSION: ${{ inputs.version }}

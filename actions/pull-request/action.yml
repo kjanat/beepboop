@@ -41,16 +41,18 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Ensure Bun is available
+    - name: Setup Bun
       id: bun
       uses: $/actions/deps/bun
-    - id: token
+    - name: Get token
+      id: token
       uses: $/actions/token
       with:
         service: ${{ inputs.service }}
         permission-contents: write
         permission-pull-requests: write
-    - id: pull-request
+    - name: Open PR
+      id: pull-request
       shell: bash
       env:
         PR_ALLOW_EXISTING_BRANCH: ${{ inputs.allow-existing-branch }}

@@ -14,10 +14,11 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Ensure Bun is available
+    - name: Setup Bun
       id: bun
       uses: $/actions/deps/bun
-    - id: client
+    - name: Publish release
+      id: client
       shell: bash
       env: { SERVICE_ORIGIN: "${{ inputs.service }}", EXECUTION_ID: "${{ inputs.execution-id }}" }
       run: bun "${GITHUB_ACTION_PATH}/../runtime/client.ts" release
