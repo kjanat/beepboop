@@ -518,6 +518,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				artifacts: [...new Map(group.flatMap(e => e.artifacts).map(a => [a.id, a])).values()],
 			};
 			const event: AutomationEvent = {
+				occurredAt: (yield* Clock.Clock).currentTimeMillisUnsafe(),
 				id,
 				source: execution.repository,
 				event: 'release',

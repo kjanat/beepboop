@@ -3,8 +3,8 @@ import { readiness } from '@/domain/repository';
 import type { ViewOf } from '@/server/loaders.ts';
 import { activeStates, needingUser, releaseSummaries } from '@/server/releases.ts';
 
-export function overview({ repositories, executions }: ViewOf<'overview'>) {
-	const needing = needingUser(executions.readable);
+export function overview({ repositories, executions, completed }: ViewOf<'overview'>) {
+	const needing = needingUser(executions.readable, completed);
 	const waiting = executions.readable
 		.filter(run => needing.has(run.id))
 		.sort(newestActiveFirst);

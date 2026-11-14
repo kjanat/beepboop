@@ -68,9 +68,10 @@ const concurrent = { concurrency: ioConcurrency } as const;
 
 export const loaders = {
 	overview: (_context) => withAutomation(service => {
-		return Effect.all([repositories(service), executions(service)], concurrent).pipe(
-			Effect.map(([repositoryRows, executionRows]) => ({
+		return Effect.all([repositories(service), executions(service), service.store.completedReleases()], concurrent).pipe(
+			Effect.map(([repositoryRows, executionRows, completed]) => ({
 				section: 'overview' as const,
+				completed,
 				repositories: repositoryRows,
 				executions: executionRows,
 			})),
@@ -137,9 +138,13 @@ export const loaders = {
 		return repositories(service).pipe(
 			Effect.flatMap(repositoryRows => {
 				const selected = repositoryRows.readable.find(entry => entry.name === repository);
-				return executions(service, selected?.id).pipe(
-					Effect.map(executionRows => ({
+				return Effect.all(
+					[executions(service, selected?.id), service.store.completedReleases(selected?.id)],
+					concurrent,
+				).pipe(
+					Effect.map(([executionRows, completed]) => ({
 						section: 'runs' as const,
+						completed,
 						now: clock.currentTimeMillisUnsafe(),
 						executions: executionRows,
 						repositories: repositoryRows.readable.map(entry => entry.name).sort(),

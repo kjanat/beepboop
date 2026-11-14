@@ -42,7 +42,7 @@ import { decode, sha, textSchema } from '@/model';
 import { responseBytes, responseJson, responseText } from '@/runtime/http';
 import { ioConcurrency, retryTransient } from '@/runtime/policy';
 import type { Contract, Decoded } from '@/schema';
-import { mutableArray, mutableStruct } from '@/schema';
+import { looseStruct, mutableArray, mutableStruct } from '@/schema';
 
 type Permission = Record<string, 'read' | 'write'>;
 const missingInstallationPermissions = 'GitHub App installation lacks required permissions';
@@ -84,6 +84,9 @@ const tagTargetSchema: Schema.Codec<TagTarget, unknown> = mutableStruct({
 	__typename: textSchema,
 	oid: textSchema,
 	target: Schema.optional(Schema.suspend(() => tagTargetSchema)),
+});
+const graphqlEnvelope = looseStruct({
+	errors: Schema.optional(mutableArray(looseStruct({ message: Schema.String, type: Schema.optional(Schema.String) }))),
 });
 const tagRefsSchema = mutableStruct({
 	data: mutableStruct({
@@ -143,11 +146,19 @@ export const gitHubRequest = Effect.fn('GitHub.request')(function*(
 	token: string,
 	method = 'GET',
 	body?: unknown,
+	readOnlyGraphql = false,
 ) {
 	const clock = yield* Clock.Clock;
 
 	if (!path.startsWith('/')) {
 		return yield* invalid('Invalid API path');
+	}
+	if (
+		readOnlyGraphql
+		&& !(method === 'POST' && path === '/graphql' && typeof body === 'object' && body !== null && 'query' in body
+			&& typeof body.query === 'string' && /^\s*query\b/.test(body.query))
+	) {
+		return yield* invalid('Read-only retries require a GraphQL query');
 	}
 	const route = `${method} ${path.split('?')[0]}`;
 	const reach = Effect.tryPromise({
@@ -174,7 +185,7 @@ export const gitHubRequest = Effect.fn('GitHub.request')(function*(
 			Effect.orElseSucceed(() => ''),
 			Effect.map(detail => `GitHub HTTP ${response.status} on ${route}${detail ? `: ${detail}` : ''}`),
 		);
-	const answered = method === 'GET'
+	const answered = method === 'GET' || readOnlyGraphql
 		? reach.pipe(
 			Effect.filterOrElse(
 				response => response.status < 500,
@@ -217,10 +228,16 @@ export class RepositoryGateway {
 		private defer?: (work: Promise<void>) => void,
 		private api?: GitHub['Service'],
 	) {}
-	call(path: string, token: string, method = 'GET', body?: unknown): Effect.Effect<unknown, DomainError> {
+	call(
+		path: string,
+		token: string,
+		method = 'GET',
+		body?: unknown,
+		readOnlyGraphql = false,
+	): Effect.Effect<unknown, DomainError> {
 		return this.api
-			? this.api.call(path, token, method, body)
-			: gitHubRequest(this.transport, path, token, method, body);
+			? this.api.call(path, token, method, body, readOnlyGraphql)
+			: gitHubRequest(this.transport, path, token, method, body, readOnlyGraphql);
 	}
 	read<S extends Contract>(
 		schema: S,
@@ -395,10 +412,22 @@ export class RepositoryGateway {
 			const result: RefState[] = [];
 			let after: string | null = null;
 			for (let page = 1; page <= 100; page++) {
-				const response: Decoded<typeof tagRefsSchema> = yield* self.read(tagRefsSchema, '/graphql', token, 'POST', {
+				const raw: unknown = yield* self.call('/graphql', token, 'POST', {
 					query: tagRefsQuery,
 					variables: { owner, name: repository, after },
-				});
+				}, true);
+				const envelope = yield* Effect.fromResult(decode(graphqlEnvelope, raw));
+				if (envelope.errors?.length) {
+					const reason = `GitHub tag discovery failed: ${envelope.errors.map(error => error.message).join('; ')}`;
+					if (envelope.errors.some(error => rateLimited(error.message, error.type))) {
+						const clock = yield* Clock.Clock;
+						return yield* new GitHubRejection(429, reason, clock.currentTimeMillisUnsafe() + 60_000);
+					}
+					return yield* precondition(reason);
+				}
+				const response: Decoded<typeof tagRefsSchema> = yield* Effect.fromResult(decode(tagRefsSchema, raw)).pipe(
+					Effect.mapError(() => precondition('GitHub tag discovery returned missing or invalid repository/ref data')),
+				);
 				const { nodes, pageInfo } = response.data.repository.refs;
 				for (const { name: tag, target } of nodes) {
 					let peeled = target;
@@ -1210,11 +1239,18 @@ export interface Credentials {
 }
 
 export class GitHub extends Context.Service<GitHub, {
-	readonly call: (path: string, token: string, method?: string, body?: unknown) => Effect.Effect<unknown, DomainError>;
+	readonly call: (
+		path: string,
+		token: string,
+		method?: string,
+		body?: unknown,
+		readOnlyGraphql?: boolean,
+	) => Effect.Effect<unknown, DomainError>;
 }>()('beepboop/GitHub') {}
 
 export function gitHubLayer(transport: Fetcher): Layer.Layer<GitHub> {
 	return Layer.succeed(GitHub, {
-		call: (path, token, method, body) => gitHubRequest(transport, path, token, method, body),
+		call: (path, token, method, body, readOnlyGraphql) =>
+			gitHubRequest(transport, path, token, method, body, readOnlyGraphql),
 	});
 }

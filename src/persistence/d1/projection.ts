@@ -1,6 +1,7 @@
 import { Effect } from 'effect';
 import type { ProjectedEntity } from '@/contract/changes';
 import type { DomainError } from '@/contract/errors';
+import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import type { Sql, SqlDatabase, SqlStatement } from '@/persistence/d1/database';
 import { sql } from '@/persistence/d1/database';
 
@@ -29,12 +30,21 @@ export class ProjectionStore {
 	private upsert(row: Projection): SqlStatement {
 		if (row.entity === 'execution') {
 			return this.db.statement(
-				'INSERT INTO executions(id,repository_id,state,document,updated_at,revision) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET repository_id=excluded.repository_id,state=excluded.state,document=excluded.document,updated_at=excluded.updated_at,revision=excluded.revision WHERE executions.revision IS NULL OR excluded.revision>executions.revision',
-			).bind(row.id, row.repositoryId, row.state, row.document, row.updatedAt, row.revision);
+				'INSERT INTO executions(id,repository_id,state,document,updated_at,revision,state_version) VALUES(?,?,?,?,?,?,1) ON CONFLICT(id) DO UPDATE SET repository_id=excluded.repository_id,state=excluded.state,state_version=1,document=excluded.document,updated_at=excluded.updated_at,revision=excluded.revision WHERE executions.revision IS NULL OR excluded.revision>executions.revision',
+			).bind(
+				row.id,
+				row.repositoryId,
+				decodeExecutionV1(JSON.parse(row.document)).state,
+				row.document,
+				row.updatedAt,
+				row.revision,
+			);
 		}
 		const table = tables[row.entity];
 		return this.db.statement(
-			`INSERT INTO ${table}(id,repository_id,revision,document,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET repository_id=excluded.repository_id,revision=excluded.revision,document=excluded.document,updated_at=excluded.updated_at WHERE excluded.revision>${table}.revision`,
+			`INSERT INTO ${table}(id,repository_id,revision,document,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET repository_id=excluded.repository_id,revision=excluded.revision,document=excluded.document,updated_at=${
+				row.entity === 'release' ? `MIN(${table}.updated_at,excluded.updated_at)` : 'excluded.updated_at'
+			} WHERE excluded.revision>${table}.revision`,
 		).bind(row.id, row.repositoryId, row.revision, row.document, row.updatedAt);
 	}
 	private change(row: Projection, at: number): SqlStatement {

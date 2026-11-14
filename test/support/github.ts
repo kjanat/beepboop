@@ -62,12 +62,17 @@ export interface Release {
 	body: string;
 	assets?: string[];
 }
+export interface TreeEntry {
+	mode: string;
+	type: 'blob' | 'commit';
+	sha: string;
+}
 export interface Repository {
 	id: number;
 	name: string;
 	defaultBranch: string;
-	trees: Map<string, Map<string, string>>;
-	blobs: Map<string, string>;
+	trees: Map<string, Map<string, TreeEntry>>;
+	blobs: Map<string, Buffer>;
 	commits: Map<string, Commit>;
 	refs: Map<string, string>;
 	pulls: Pull[];
@@ -85,7 +90,15 @@ export function filesAt(repository: Repository, sha: string): Record<string, str
 	const commit = repository.commits.get(sha);
 	const tree = commit ? repository.trees.get(commit.tree) : undefined;
 	if (!tree) throw new Error('Missing tree');
-	return Object.fromEntries(tree);
+	return Object.fromEntries(
+		[...tree].flatMap(([path, entry]) =>
+			entry.type === 'blob' ? [[path, repository.blobs.get(entry.sha)?.toString() ?? '']] : []
+		),
+	);
+}
+
+function gitObject(type: string, bytes: Buffer): string {
+	return new Bun.CryptoHasher('sha1').update(Buffer.from(`${type} ${bytes.length}\0`)).update(bytes).digest('hex');
 }
 
 function hash(value: unknown): string {
@@ -164,6 +177,7 @@ export class FakeGitHub {
 			const repository = this.repository(match[1]);
 			return json({
 				id: repository.id,
+				node_id: `R_${repository.id}`,
 				full_name: repository.name,
 				owner: { id: ownerId, login: ownerLogin },
 				default_branch: repository.defaultBranch,
@@ -180,17 +194,19 @@ export class FakeGitHub {
 		this.route('GET', new RegExp(`^${repo}/git/trees/([0-9a-f]{40})$`), match => {
 			const repository = this.repository(match[1]);
 			const commit = this.resolve(repository, match[2] ?? '');
-			const files = this.files(repository, commit);
 			return json({
 				sha: commit.tree,
 				truncated: false,
-				tree: [...files.keys()].sort().map(path => ({ path, type: 'blob', mode: '100644' })),
+				tree: [...(repository.trees.get(commit.tree) ?? [])].sort(([a], [b]) => a.localeCompare(b)).map((
+					[path, entry],
+				) => ({ path, ...entry })),
 			});
 		});
 		this.route('GET', new RegExp(`^${repo}/contents/(.+)$`), (match, url) => {
 			const repository = this.repository(match[1]);
 			const commit = this.resolve(repository, url.searchParams.get('ref') ?? repository.defaultBranch);
-			const content = this.files(repository, commit).get(decodeURIComponent(match[2] ?? ''));
+			const entry = repository.trees.get(commit.tree)?.get(decodeURIComponent(match[2] ?? ''));
+			const content = entry?.type === 'blob' ? repository.blobs.get(entry.sha) : undefined;
 			if (content === undefined) throw new HttpError(404, 'Not Found');
 			return json({ encoding: 'base64', content: Buffer.from(content).toString('base64'), size: content.length });
 		});
@@ -235,22 +251,36 @@ export class FakeGitHub {
 			const base = repository.trees.get(stringField(body, 'base_tree'));
 			if (!base) throw new HttpError(422, 'Unknown base tree');
 			const files = new Map(base);
-			for (const entry of Array.isArray(body.tree) ? body.tree.map(object) : []) {
+			const updates = (Array.isArray(body.tree) ? body.tree : []).map(object);
+			for (const entry of updates.filter(entry => entry.sha === null)) {
 				const path = stringField(entry, 'path');
-				if (entry.sha === null) files.delete(path);
-				else if (typeof entry.sha === 'string') {
-					const blob = repository.blobs.get(entry.sha);
-					if (blob === undefined) throw new HttpError(422, 'Unknown blob');
-					files.set(path, blob);
-				} else files.set(path, stringField(entry, 'content'));
+				for (const key of files.keys()) if (key === path || key.startsWith(`${path}/`)) files.delete(key);
 			}
-			return json({ sha: this.tree(repository, files) }, 201);
+			for (const entry of updates.filter(entry => entry.sha !== null)) {
+				const path = stringField(entry, 'path');
+				const mode = typeof entry.mode === 'string' ? entry.mode : '100644';
+				const type = entry.type === 'commit' ? 'commit' : 'blob';
+				let sha: string;
+				if (typeof entry.sha === 'string') {
+					sha = entry.sha;
+					if (type === 'blob' && !repository.blobs.has(sha)) throw new HttpError(422, 'Unknown blob');
+				} else {
+					const bytes = Buffer.from(stringField(entry, 'content'));
+					sha = gitObject('blob', bytes);
+					repository.blobs.set(sha, bytes);
+				}
+				if ([...files.keys()].some(key => key !== path && (key.startsWith(`${path}/`) || path.startsWith(`${key}/`)))) {
+					throw new HttpError(422, 'File and directory conflict');
+				}
+				files.set(path, { mode, type, sha });
+			}
+			return json({ sha: this.typedTree(repository, files) }, 201);
 		});
 		this.route('POST', new RegExp(`^${repo}/git/blobs$`), (match, _url, body) => {
 			const repository = this.repository(match[1]);
 			if (body.encoding !== 'base64') throw new HttpError(422, 'Expected base64 content');
-			const content = Buffer.from(stringField(body, 'content'), 'base64').toString();
-			const sha = hash({ blob: content });
+			const content = Buffer.from(stringField(body, 'content'), 'base64');
+			const sha = gitObject('blob', content);
 			repository.blobs.set(sha, content);
 			return json({ sha }, 201);
 		});
@@ -307,6 +337,9 @@ export class FakeGitHub {
 		this.route('POST', new RegExp(`^${repo}/pulls$`), (match, _url, body) => {
 			const repository = this.repository(match[1]);
 			const ref = stringField(body, 'head');
+			if (repository.pulls.some(pull => pull.head.ref === ref && pull.state === 'open' && pull.base === body.base)) {
+				throw new HttpError(422, 'A pull request already exists');
+			}
 			const sha = repository.refs.get(`heads/${ref}`);
 			if (!sha) throw new HttpError(422, 'Head branch missing');
 			const pull: Pull = {
@@ -340,6 +373,30 @@ export class FakeGitHub {
 		});
 		this.route('POST', /^\/graphql$/, (_match, _url, body) => {
 			const variables = object(body.variables);
+			if (stringField(body, 'query').includes('updateRefs')) {
+				const input = object(variables.input);
+				const repository = [...this.repositories.values()].find(entry => `R_${entry.id}` === input.repositoryId);
+				if (!repository) return json({ data: null, errors: [{ message: 'Repository not found' }] });
+				const updates = (Array.isArray(input.refUpdates) ? input.refUpdates : []).map(object);
+				for (const update of updates) {
+					const ref = stringField(update, 'name').replace(/^refs\//, '');
+					if ((repository.refs.get(ref) ?? '0'.repeat(40)) !== update.beforeOid) {
+						return json({ data: null, errors: [{ message: 'Reference changed concurrently' }] });
+					}
+					if (repository.protectedBranches.has(ref.replace(/^heads\//, ''))) {
+						return json({ data: null, errors: [{ message: 'Protected branch update denied' }] });
+					}
+				}
+				for (const update of updates) {
+					const ref = stringField(update, 'name').replace(/^refs\//, '');
+					const sha = stringField(update, 'afterOid');
+					repository.refs.set(ref, sha);
+					for (const pull of repository.pulls) {
+						if (pull.state === 'open' && `heads/${pull.head.ref}` === ref) pull.head.sha = sha;
+					}
+				}
+				return json({ data: { updateRefs: { clientMutationId: null } } });
+			}
 			if (stringField(body, 'query').includes('enablePullRequestAutoMerge')) {
 				const [, repositoryId, number] = /^PR_(\d+)_(\d+)$/.exec(stringField(variables, 'id')) ?? [];
 				const repository = [...this.repositories.values()].find(entry => entry.id === Number(repositoryId));
@@ -365,15 +422,26 @@ export class FakeGitHub {
 				const tags = [...repository.refs].filter(([ref]) => ref.startsWith('tags/'));
 				const start = typeof variables.after === 'string' ? Number(variables.after) : 0;
 				const end = start + 100;
-				const nodes = tags.slice(start, end).map(([ref, oid]) => {
+				const depth = [...stringField(body, 'query').matchAll(/\.\.\.\s+on\s+Tag\s*\{\s*target\s*\{/g)].length;
+				const selectedTarget = (oid: string, remaining: number): Record<string, unknown> => {
 					const tag = repository.tagObjects.get(oid);
+					if (!tag) return { __typename: 'Commit', oid };
 					return {
-						name: ref.slice(5),
-						target: tag
-							? { __typename: 'Tag', oid, target: { __typename: tag.targetType ?? 'Commit', oid: tag.commit } }
-							: { __typename: 'Commit', oid },
+						__typename: 'Tag',
+						oid,
+						...(remaining > 0
+							? {
+								target: tag.targetType === 'Tag'
+									? selectedTarget(tag.commit, remaining - 1)
+									: { __typename: tag.targetType ?? 'Commit', oid: tag.commit },
+							}
+							: {}),
 					};
-				});
+				};
+				const nodes = tags.slice(start, end).map(([ref, oid]) => ({
+					name: ref.slice(5),
+					target: selectedTarget(oid, depth),
+				}));
 				const hasNextPage = end < tags.length;
 				return json({
 					data: {
@@ -765,12 +833,44 @@ export class FakeGitHub {
 		return commit;
 	}
 	private files(repository: Repository, commit: Commit): Map<string, string> {
-		const files = repository.trees.get(commit.tree);
-		if (!files) throw new HttpError(404, 'Tree missing');
-		return files;
+		return new Map(Object.entries(filesAt(repository, commit.sha)));
 	}
 	private tree(repository: Repository, files: Map<string, string>): string {
-		const sha = hash([...files].sort(([a], [b]) => a.localeCompare(b)));
+		const entries = new Map<string, TreeEntry>();
+		for (const [path, content] of files) {
+			const bytes = Buffer.from(content), sha = gitObject('blob', bytes);
+			repository.blobs.set(sha, bytes);
+			entries.set(path, { mode: '100644', type: 'blob', sha });
+		}
+		return this.typedTree(repository, entries);
+	}
+	private typedTree(repository: Repository, files: Map<string, TreeEntry>): string {
+		const encode = (prefix: string): string => {
+			const entries: { name: string; mode: string; sha: string }[] = [];
+			const directories = new Set<string>();
+			for (const [path, entry] of files) {
+				if (!path.startsWith(prefix)) continue;
+				const rest = path.slice(prefix.length), slash = rest.indexOf('/');
+				if (slash >= 0) directories.add(rest.slice(0, slash));
+				else entries.push({ name: rest, mode: entry.mode, sha: entry.sha });
+			}
+			for (const directory of directories) {
+				entries.push({ name: directory, mode: '40000', sha: encode(`${prefix}${directory}/`) });
+			}
+			entries.sort((a, b) =>
+				Buffer.compare(
+					Buffer.from(a.name + (a.mode === '40000' ? '/' : '')),
+					Buffer.from(b.name + (b.mode === '40000' ? '/' : '')),
+				)
+			);
+			return gitObject(
+				'tree',
+				Buffer.concat(
+					entries.flatMap(entry => [Buffer.from(`${entry.mode} ${entry.name}\0`), Buffer.from(entry.sha, 'hex')]),
+				),
+			);
+		};
+		const sha = encode('');
 		repository.trees.set(sha, files);
 		return sha;
 	}

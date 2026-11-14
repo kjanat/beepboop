@@ -8,6 +8,7 @@ import RunCard from '@/components/RunCard.astro';
 import { packageLabel } from '@/domain/package-label';
 import type { ViewOf } from '@/server/loaders.ts';
 import {
+	needingUser,
 	releaseSetSummaries,
 	releaseSummaries,
 	runStateLabel,
@@ -29,9 +30,11 @@ const latest = Math.max(0, ...executions.map(run => run.updatedAt));
 const position = new Map(executions.map((run, index) => [run.id, index]));
 const first = (runs: readonly { id: string }[]) =>
 	Math.min(...runs.map(run => position.get(run.id) ?? 0));
-const pipelines = releaseSummaries(executions).sort((a, b) =>
-	first(a.runs) - first(b.runs)
-);
+const pipelines = releaseSummaries(
+	executions,
+	[],
+	needingUser(executions, Astro.props.data.completed),
+).sort((a, b) => first(a.runs) - first(b.runs));
 ---
 <span data-runs-latest={latest} data-runs-repository={selected} hidden></span>
 {repositories.length > 1 && (

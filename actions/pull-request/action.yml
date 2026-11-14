@@ -2,8 +2,11 @@ name: Beepboop pull request
 description: Commit the checkout's changes as the Beepboop App and open or update a pull request
 inputs:
   branch:
-    description: Branch that holds the changes. Each run replaces it with one commit on top of the checked-out commit.
+    description: Exclusively owned automation branch. Serialize jobs by repository and branch; each run replaces its commit.
     required: true
+  allow-existing-branch:
+    description: Explicitly adopt an existing unowned branch. Requires exclusive ownership; human changes may be replaced.
+    default: "false"
   title:
     description: Pull request title
     required: true
@@ -11,7 +14,7 @@ inputs:
     description: Pull request body
     default: ""
   commit-message:
-    description: Commit message. Defaults to the title.
+    description: Commit message, reconciled on every run. Defaults to the title; an ownership trailer is appended.
     default: ""
   base:
     description: Branch the pull request targets. Defaults to the checked-out branch.
@@ -50,6 +53,7 @@ runs:
     - id: pull-request
       shell: bash
       env:
+        PR_ALLOW_EXISTING_BRANCH: ${{ inputs.allow-existing-branch }}
         PR_ADD_PATHS: ${{ inputs.add-paths }}
         PR_BASE: ${{ inputs.base }}
         PR_BODY: ${{ inputs.body }}

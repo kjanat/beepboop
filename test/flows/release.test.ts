@@ -13,9 +13,10 @@ import { eachWorld, origin } from '@root/test/support/world.ts';
 import { experimental_AstroContainer } from 'astro/container';
 import { Effect, Schema, Struct } from 'effect';
 import { Window } from 'happy-dom';
-import { runFailedNote } from '@/automation/execution';
+import { createExecution, runFailedNote } from '@/automation/execution';
 import { Store } from '@/automation/store';
 import type { Execution } from '@/automation/types';
+import { requireReady } from '@/domain/repository';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
@@ -206,6 +207,7 @@ test('a finished run whose registry publication appears late is verified without
 	const counts = (state: Execution['state']) => {
 		const { attention, running } = overview({
 			section: 'overview',
+			completed: [],
 			repositories: { readable: [], unreadable: [] },
 			executions: { readable: [{ ...finished, state }], unreadable: [] },
 		});
@@ -293,6 +295,7 @@ test('the overview counts only runs that still need the user and shows each vers
 	];
 	const view = overview({
 		section: 'overview',
+		completed: [],
 		repositories: { readable: [], unreadable: [] },
 		executions: { readable, unreadable: [] },
 	});
@@ -323,6 +326,7 @@ test('the overview counts only runs that still need the user and shows each vers
 		props: {
 			data: {
 				section: 'overview',
+				completed: [],
 				repositories: { readable: [record], unreadable: [] },
 				executions: { readable, unreadable: [] },
 			},
@@ -367,6 +371,7 @@ test('a run cancelled after a newer release started stays below the unfinished r
 	expect(releases).toEqual(['1.3.0', '1.2.0', '1.1.0', '1.0.0', '0.9.0']);
 	const view = overview({
 		section: 'overview',
+		completed: [],
 		repositories: { readable: [], unreadable: [] },
 		executions: { readable, unreadable: [] },
 	});
@@ -378,6 +383,7 @@ test('a run cancelled after a newer release started stays below the unfinished r
 		props: {
 			data: {
 				section: 'overview',
+				completed: [],
 				repositories: { readable: [record], unreadable: [] },
 				executions: { readable, unreadable: [] },
 			},
@@ -571,14 +577,21 @@ test('the runs page filters by repository and folds a settled release', async ()
 		{ id: 'broken-widget', repositoryId: finished.repositoryId, error: 'widget record' },
 		{ id: 'broken-gadget', repositoryId: 99, error: 'gadget record' },
 	];
-	expect([...needingUser(readable)]).toEqual([]);
+	const completed = [{
+		repositoryId: finished.repositoryId,
+		stream: finished.stream,
+		version: finished.version!,
+		group: undefined,
+		completedAt: 3,
+	}];
+	expect([...needingUser(readable, completed)]).toEqual([]);
 	const unpublished = readable.map(run => run.id === 'done' ? { ...run, publications: [] } : run);
 	expect([...needingUser(unpublished)]).toEqual(['old-b']);
 	const hotfix = readable.map(run => run.version === '1.0.0' ? { ...run, version: '2.0.0' } : run);
-	expect([...needingUser(hotfix)]).toEqual(['old-b']);
+	expect([...needingUser(hotfix, completed)]).toEqual(['old-b']);
 	const set = (group: string) => ({ preparationId: 'set', group, required: [] });
 	const groups = readable.map(run => ({ ...run, releaseSet: set(run.version === '1.0.0' ? 'widget' : 'gadget') }));
-	expect([...needingUser(groups)]).toEqual(['old-b']);
+	expect([...needingUser(groups, completed)]).toEqual(['old-b']);
 	const [old] = releaseSummaries(readable).filter(release => release.version === '1.0.0');
 	if (!old) throw new Error('No release');
 	expect(pipeline(old, Date.now())?.stages.map(stage => stage.note)).toEqual(['cancelled']);
@@ -591,6 +604,7 @@ test('the runs page filters by repository and folds a settled release', async ()
 			props: {
 				data: {
 					section: 'runs',
+					completed,
 					executions: { readable, unreadable },
 					repositories: ['octo/gadget', 'octo/widget'],
 					selected,
@@ -971,7 +985,7 @@ test('the state filter matches the state a stored blocked run decodes to and kee
 	for (const row of legacy) {
 		await world.db.prepare(
 			'INSERT INTO executions(id,repository_id,state,document,updated_at) VALUES(?,?,?,?,?) '
-				+ 'ON CONFLICT(id) DO UPDATE SET state=excluded.state, document=excluded.document, updated_at=excluded.updated_at',
+				+ 'ON CONFLICT(id) DO UPDATE SET state_version=NULL, state=excluded.state, document=excluded.document, updated_at=excluded.updated_at',
 		).bind(row.id, finished.repositoryId, 'blocked', JSON.stringify(row.document), row.updatedAt).run();
 	}
 	const store = new Store(world.db);
@@ -1286,3 +1300,238 @@ test('publish-release creates a missing release with the same cleaned notes', as
 		].join('\n'),
 	}]);
 }, 30_000);
+
+test('completion evidence survives execution pagination and later auxiliary work cannot move its timestamp', async () => {
+	const { finished, repository } = await finishedPromotion('pending');
+	const store = new Store(world.db), coordinator = world.coordinator(repository);
+	const required = ['pkg:npm/widget', 'pkg:npm/other'];
+	const configuration = {
+		...finished.configuration,
+		streams: { ...finished.configuration.streams, main: { ...finished.configuration.streams.main!, required } },
+	};
+	const successful = (id: string, name: string): Execution => ({
+		...finished,
+		id,
+		configuration,
+		state: 'succeeded' as const,
+		publications: [{
+			id: `pkg:npm/${name}`,
+			manager: 'npm',
+			name,
+			version: '1.1.0',
+			outcome: 'succeeded' as const,
+			required: true,
+		}],
+	});
+	await coordinator.enqueue(successful('part-one', 'widget'));
+	expect(await Effect.runPromise(store.completedReleases())).toEqual([]);
+	await coordinator.enqueue(successful('part-two', 'other'));
+	const [completion] = await Effect.runPromise(store.completedReleases());
+	if (!completion) throw new Error('No completion record');
+	const failure = {
+		...finished,
+		id: 'attention',
+		state: 'failed' as const,
+		version: '1.0.0',
+		createdAt: completion.completedAt - 1,
+		updatedAt: completion.completedAt - 1,
+	};
+	await world.db.prepare('DELETE FROM executions').run();
+	const insert = world.db.prepare(
+		'INSERT INTO executions(id,repository_id,state,document,updated_at) VALUES(?,?,?,?,?)',
+	);
+	await world.db.batch(Array.from({ length: 240 }, (_, i) => {
+		const run = { ...finished, id: `page-${i}`, state: 'succeeded', createdAt: completion.completedAt - i - 10 };
+		return insert.bind(run.id, run.repositoryId, run.state, JSON.stringify(run), run.updatedAt);
+	}));
+	await insert.bind(failure.id, failure.repositoryId, failure.state, JSON.stringify(failure), failure.updatedAt).run();
+	const load = (name?: string) =>
+		world.run(loaders.runs({ env: world.env, actor: 'admin', ...(name ? { repository: name } : {}) }));
+	for (const data of [await load(), await load(repository.name)]) {
+		expect(data.executions.readable).toHaveLength(200);
+		expect(data.executions.readable.some(run => run.id === 'part-one' || run.id === 'part-two')).toBe(false);
+		expect(needingUser(data.executions.readable, data.completed).has(failure.id)).toBe(false);
+	}
+	await world.wait(1000);
+	await coordinator.enqueue({ ...successful('auxiliary', 'widget'), operation: 'extra' });
+	await coordinator.reindex(repository.id);
+	expect(await Effect.runPromise(store.completedReleases())).toEqual([completion]);
+	const laterFailure = { ...failure, updatedAt: completion.completedAt + 1 };
+	expect(
+		needingUser(
+			[laterFailure, ...(await load()).executions.readable],
+			await Effect.runPromise(store.completedReleases()),
+		).has(failure.id),
+	).toBe(true);
+});
+
+test('many legacy blocked run IDs are normalized once without hiding an older verifying execution', async () => {
+	const { stored, finished } = await finishedPromotion('pending');
+	await world.db.prepare('DELETE FROM executions').run();
+	const insert = world.db.prepare(
+		'INSERT INTO executions(id,repository_id,state,document,updated_at) VALUES(?,?,?,?,?)',
+	);
+	const stuckWorkflow = {
+		...decodeSync(mutableRecord(Schema.String, Schema.Unknown), stored['workflow']),
+		publications: ['pkg:npm/missing'],
+	};
+	await world.db.batch(
+		Array.from(
+			{ length: 1200 },
+			(_, i) =>
+				insert.bind(
+					`stuck-${i}`,
+					finished.repositoryId,
+					'blocked',
+					JSON.stringify({
+						...stored,
+						id: `stuck-${i}`,
+						state: 'blocked',
+						workflow: stuckWorkflow,
+						createdAt: 100 + i,
+					}),
+					100 + i,
+				),
+		),
+	);
+	await insert.bind(
+		'old-verifying',
+		finished.repositoryId,
+		'blocked',
+		JSON.stringify({ ...stored, id: 'old-verifying', state: 'blocked', createdAt: 1 }),
+		1,
+	).run();
+	const store = new Store(world.db);
+	expect((await Effect.runPromise(store.executions()))[0]?.id).toBe('old-verifying');
+	world.db.reset();
+	const runs = await Effect.runPromise(store.executions());
+	expect(runs).toHaveLength(200);
+	expect(runs[0]?.state).toBe('verifying');
+	const reads = world.db.queries.filter(query => query.sql.includes('FROM executions'));
+	expect(reads).toHaveLength(2);
+	expect(reads.reduce((total, query) => total + world.db.sqlite.prepare(query.sql).all(...query.values).length, 0))
+		.toBe(200);
+	expect(world.db.queries.some(query => query.sql.startsWith('UPDATE executions'))).toBe(false);
+	const pending = reads.find(query => query.sql.includes('state_version IS NULL'))!;
+	expect(JSON.stringify(world.db.sqlite.prepare(`EXPLAIN QUERY PLAN ${pending.sql}`).all(...pending.values))).toContain(
+		'executions_state_pending',
+	);
+});
+
+test('the parent publishes a companion tag and the module stream reuses it only at the same commit', async () => {
+	const { repository, promotionId } = await packedRelease(
+		world,
+		undefined,
+		undefined,
+		false,
+		'github.com/octo/widget/go',
+		true,
+	);
+	const coordinator = world.coordinator(repository), store = new Store(world.db);
+	const parent = await coordinator.execution(promotionId);
+	if (!parent) throw new Error('Missing parent');
+	expect(parent.state).toBe('succeeded');
+	const original = repository.refs.get('tags/go/v1.1.0');
+	expect(original).toBeDefined();
+	const record = await Effect.runPromise(store.repository(repository.id));
+	if (!record) throw new Error('Missing repository');
+	const ready = await world.run(requireReady(record));
+	const identity = {
+		repositoryId: repository.id,
+		repository: repository.name,
+		ownerId: Number(world.env.OWNER_ID),
+		actorId: Number(world.env.OWNER_ID),
+		runId: parent.runId!,
+		attempt: parent.runAttempt!,
+		sha: parent.sourceSha,
+		workflowSha: parent.workflowSha!,
+		workflowRef: `${repository.name}/.github/workflows/publish.yml@refs/heads/main`,
+		ref: 'refs/heads/main',
+		event: 'workflow_dispatch',
+	};
+	const create = async (sourceSha: string) => {
+		const execution = await world.run(
+			createExecution(ready, {
+				stream: 'sdk',
+				operation: 'promote',
+				eventId: `sdk:${sourceSha}`,
+				sourceSha,
+				version: '1.1.0',
+			}),
+		);
+		await coordinator.enqueue({
+			...execution,
+			state: 'running',
+			runId: identity.runId,
+			runAttempt: identity.attempt,
+			workflowSha: identity.workflowSha,
+		});
+		return execution;
+	};
+	const same = await create(parent.sourceSha);
+	const plan = await coordinator.refs(same.id, identity);
+	expect(plan.changes).toHaveLength(1);
+	expect(plan.changes[0]).toMatchObject({ name: 'go/v1.1.0', expected: original, commit: parent.sourceSha });
+	await coordinator.refs(same.id, identity, true);
+	const newer = world.github.push(repository, { 'go/new.go': 'package sdk\n' }, 'Advance module');
+	const next = await create(newer.sha);
+	await expect(coordinator.refs(next.id, identity)).rejects.toThrow('Version tag go/v1.1.0 already targets');
+	expect(repository.refs.get('tags/go/v1.1.0')).toBe(original);
+	expect((await coordinator.execution(next.id))?.refPlan).toBeUndefined();
+}, 30000);
+
+test('repository filters render only their own readable and unreadable runs even outside the global page', async () => {
+	const { finished, repository } = await finishedPromotion('pending');
+	const store = new Store(world.db);
+	const original = await Effect.runPromise(store.repository(repository.id));
+	if (!original) throw new Error('Missing repository');
+	for (const [id, name] of [[99, 'octo/gadget'], [100, 'octo/broken']] as const) {
+		await Effect.runPromise(store.saveDiscovery({ ...original, id, name }));
+	}
+	await world.db.prepare('DELETE FROM executions').run();
+	const insert = world.db.prepare(
+		'INSERT INTO executions(id,repository_id,state,document,updated_at) VALUES(?,?,?,?,?)',
+	);
+	await world.db.batch(Array.from({ length: 210 }, (_, i) => {
+		const run = { ...finished, id: `widget-${i}`, state: 'running', createdAt: 1000 + i };
+		return insert.bind(run.id, repository.id, run.state, JSON.stringify(run), run.updatedAt);
+	}));
+	const gadget = {
+		...finished,
+		id: 'gadget-only',
+		repositoryId: 99,
+		repository: 'octo/gadget',
+		state: 'failed',
+		createdAt: 1,
+	};
+	await insert.bind(gadget.id, 99, gadget.state, JSON.stringify(gadget), 1).run();
+	await insert.bind('broken-only', 100, 'failed', '{bad', 1).run();
+	const load = (name?: string) =>
+		world.run(loaders.runs({ env: world.env, actor: 'admin', ...(name ? { repository: name } : {}) }));
+	const all = await load();
+	expect(all.executions.readable).toHaveLength(200);
+	expect(all.repositories).toEqual(['octo/broken', 'octo/gadget', 'octo/widget']);
+	const component =
+		decodeSync(componentModule, await import(join(import.meta.dir, '../../src/components/Runs.astro'))).default;
+	const container = await experimental_AstroContainer.create();
+	for (const [name, ids, broken] of [['octo/widget', 210, 0], ['octo/gadget', 1, 0], ['octo/broken', 0, 1]] as const) {
+		const data = await load(name);
+		expect(data.executions.readable).toHaveLength(Math.min(ids, 200));
+		expect(data.executions.unreadable).toHaveLength(broken);
+		expect(data.executions.readable.every(run => run.repository === name)).toBe(true);
+		const html = await container.renderToString(component, {
+			props: { data },
+			request: new Request(`${origin}/runs?repository=${name}`),
+		});
+		const page = new Window();
+		page.document.body.innerHTML = html;
+		expect(
+			[...page.document.querySelectorAll('.run-card .eyebrow')].every(element =>
+				element.textContent.includes(name) || (name === 'octo/broken' && element.textContent === 'Repository 100')
+			),
+		).toBe(true);
+		expect(page.document.querySelector('[data-runs-latest]')?.getAttribute('data-runs-repository')).toBe(name);
+		expect(page.document.querySelectorAll('.run-card pre')).toHaveLength(broken);
+		await page.happyDOM.close();
+	}
+});
