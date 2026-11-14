@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
+import { appSlug } from '@root/test/support/github.ts';
 import { bearer } from '@root/test/support/http.ts';
 import { passChecks, plugin, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
 import { applyChoices, applySetup } from '@root/test/support/setup.ts';
@@ -752,4 +753,47 @@ test('the dashboard selects versionPrMerge manual and writes the method chosen i
 	expect((form.querySelector('.setup-result')?.textContent ?? '').replace(/\s+/g, '')).toContain(
 		'"prepare":{"versionPrMerge":"rebase"}',
 	);
+});
+
+test('dashboard review displays Cargo publishing prerequisites for customized choices', async () => {
+	const repository = world.github.create('octo/cargo-tool', {
+		'Cargo.toml': '[package]\nname = "cargo-tool"\nversion = "0.1.0"\nlicense = "MIT"\n',
+		'src/lib.rs': '',
+		'.github/workflows/publish.yml': `on: { push: { tags: ['v*'] } }
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: \${{ secrets.CARGO_TOKEN }}
+`,
+	});
+	let missingPermissions = false;
+	world.network.serve('api.github.com', async request => {
+		const path = new URL(request.url).pathname;
+		if (path.includes('/actions/secrets/') || path.endsWith('/actions/organization-secrets')) {
+			return new Response(null, { status: 404 });
+		}
+		const response = await world.github.handle(request);
+		if (missingPermissions && path.endsWith('/installation') && response.ok) {
+			return Response.json({
+				...await response.json() as object,
+				permissions: { contents: 'write', actions: 'write', workflows: 'write', pull_requests: 'write' },
+			});
+		}
+		return response;
+	});
+	world.network.serve('crates.io', () => new Response(null, { status: 404 }));
+	const form = await open(repository.name);
+	change(control(form, 'Release group name', window.HTMLInputElement), 'custom');
+	await act(form, 'preview');
+	expect(form.textContent).toContain('crates.io returned 404 for cargo-tool');
+	expect(form.textContent).toContain('Publish its first version with a crates.io API token');
+	expect(form.textContent).toContain('GitHub Actions secret CARGO_TOKEN is missing');
+	missingPermissions = true;
+	await act(form, 'preview');
+	const appLink = form.querySelector(`.setup-result a[href="https://github.com/apps/${appSlug}"]`);
+	expect(appLink?.textContent).toBe('GitHub App');
+	expect(form.textContent).toContain('GitHub App installation lacks required permissions');
 });

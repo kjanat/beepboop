@@ -45,6 +45,7 @@ import type { Contract, Decoded } from '@/schema';
 import { mutableArray, mutableStruct } from '@/schema';
 
 type Permission = Record<string, 'read' | 'write'>;
+const missingInstallationPermissions = 'GitHub App installation lacks required permissions';
 const coAuthor = 'Co-authored-by: kjanat <6353477+kjanat@users.noreply.github.com>';
 const ownerLogins = new Map<number, string>();
 const botIdentities = new Map<string, BotIdentity>();
@@ -292,6 +293,17 @@ export class RepositoryGateway {
 			if (installation.account.id !== self.ownerId) {
 				return yield* precondition('Owner mismatch');
 			}
+			if (installation.permissions) {
+				const missing = Object.entries(permissions).filter(([name, level]) =>
+					installation.permissions?.[name] !== 'write' && installation.permissions?.[name] !== level
+				).map(([name, level]) => `${name}: ${level}`);
+				if (missing.length) {
+					return yield* precondition(
+						`${missingInstallationPermissions} (${missing.join(', ')}). Update permissions for ${yield* self
+							.appPage} and approve the installation update before retrying`,
+					);
+				}
+			}
 			const { token } = yield* self.read(
 				accessTokenSchema,
 				`/app/installations/${installation.id}/access_tokens`,
@@ -331,6 +343,10 @@ export class RepositoryGateway {
 			);
 		});
 	}
+	readonly appPage: Effect.Effect<string, DomainError> = Effect.gen({ self: this }, function*() {
+		const { slug } = yield* this.read(appSchema, '/app', yield* this.appToken());
+		return `https://github.com/apps/${encodeURIComponent(slug)}`;
+	});
 	readonly botIdentity: Effect.Effect<BotIdentity, DomainError> = Effect.gen({ self: this }, function*() {
 		const cached = botIdentities.get(this.credentials.GITHUB_APP_ID);
 		if (cached) return cached;
@@ -519,7 +535,12 @@ export class RepositoryGateway {
 	canEditWorkflows(name: string, id: number): Effect.Effect<boolean, DomainError> {
 		return this.token(name, id, { contents: 'read', workflows: 'write' }).pipe(
 			Effect.as(true),
-			Effect.catchIf(error => /^GitHub HTTP (403|422) /.test(error.message), () => Effect.succeed(false)),
+			Effect.catchIf(
+				error =>
+					/^GitHub HTTP (403|422) /.test(error.message)
+					|| (error.problem.code === 'precondition' && error.message.startsWith(missingInstallationPermissions)),
+				() => Effect.succeed(false),
+			),
 		);
 	}
 	/** Read the proposal head without modifying or creating a branch. */

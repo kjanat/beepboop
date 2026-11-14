@@ -392,6 +392,12 @@ function sourceKey(entry: { workflow: string; job: Job; effect: StepEffect }): s
 	const guard = entry.effect.kind === 'publish' ? entry.effect.condition : undefined;
 	return `${entry.workflow}#${entry.job.id}${guard ? `#${guard}` : ''}`;
 }
+export function cargoJobPackages(snapshot: Snapshot, inventory: Inventory, workflow: string, job: Job): string[] {
+	const graph = new Graph(snapshot, inventory, []);
+	return targetsOf(graph, [workflow], job.effects.map(effect => ({ workflow, job, effect })), new Map())
+		.filter(target => target.destination === 'crates-io').flatMap(target => target.packages);
+}
+
 function targetsOf(
 	graph: Graph,
 	files: string[],

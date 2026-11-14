@@ -152,6 +152,7 @@ export function maintainSetup(
 				...savedSetup(saved),
 				head: pull.head,
 				workflowPermission,
+				...(!workflowPermission ? { appPage: yield* gateway.appPage } : {}),
 				presetShas: resolved.presetShas,
 				prior: { url: pull.url, content: typeof saved.content === 'string' ? saved.content : undefined },
 			}, resolved.configuration);
@@ -289,11 +290,13 @@ function migrateSetup(
 		const stored = yield* store.repository(id);
 		const branch = setupBranch(snapshot);
 		const head = yield* gateway.setupHead(name, id, branch);
+		const workflowPermission = yield* gateway.canEditWorkflows(name, id);
 		const plan = yield* previewSetup(snapshot, withRegistryStatus(discover(snapshot), stored?.inventory), undefined, {
 			publishing,
 			saved: choices,
 			head,
-			workflowPermission: yield* gateway.canEditWorkflows(name, id),
+			workflowPermission,
+			...(!workflowPermission ? { appPage: yield* gateway.appPage } : {}),
 			presetShas: resolved.presetShas,
 		}, resolved.configuration);
 		if (plan.blockers.length || !plan.edits.length) return;

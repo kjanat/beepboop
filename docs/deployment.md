@@ -44,6 +44,12 @@ Generate the App manifest with `bun run app:manifest`. Review the requested
 permissions and events, then install the App on the repositories it will manage.
 Use `<APPLICATION_ORIGIN>/webhooks/github` as the webhook URL.
 
+Cargo adoption checks require repository Secrets, Variables and Environments read
+permissions. For an existing App, add these permissions in its GitHub settings,
+then approve the permission update for each installation. Regenerating the
+manifest only changes new Apps. A publishing-check access error identifies an
+App installation permission problem separately from missing workflow configuration.
+
 GitHub secret synchronization requires repository Secrets write and/or
 Environments write permissions, according to the grant's delivery type.
 

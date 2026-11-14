@@ -169,6 +169,7 @@ function setupReview(input: { repository: string; choices?: unknown }, context: 
 			...savedSetup(saved),
 			head,
 			workflowPermission,
+			...(!workflowPermission ? { appPage: yield* service.gateway.appPage } : {}),
 			branchConflict,
 			presetShas: resolved.presetShas,
 			...(typeof saved?.url === 'string'

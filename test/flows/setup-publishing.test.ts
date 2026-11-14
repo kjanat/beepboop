@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { appSlug } from '@root/test/support/github.ts';
 import { bearer } from '@root/test/support/http.ts';
 import { applySetup, previewSetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
@@ -24,14 +25,37 @@ jobs:
       - uses: rust-lang/crates-io-auth-action@v1
       - run: cargo publish
         env:
-          CARGO_REGISTRY_TOKEN: \${{ secrets.CARGO_TOKEN }}
+          CARGO_REGISTRY_TOKEN: \${{ secrets.cargo_token }}
 `,
 };
 
-test.each(['crates-io', 'release-cargo'])(
+test.each(['crates-io', 'release-cargo', 'reusable-cargo'])(
 	'setup preview and apply use installation permissions and the Worker vault (%s)',
 	async alias => {
-		const repository = world.github.create('octo/tool', files);
+		const reusable = alias === 'reusable-cargo';
+		const secretName = reusable ? 'REGISTRY_TOKEN' : 'CARGO_TOKEN';
+		const repository = world.github.create(
+			'octo/tool',
+			reusable
+				? {
+					...files,
+					'.github/workflows/publish.yml': `on: { push: { tags: ['v[0-9]*'] } }
+jobs:
+  publish:
+    permissions: { id-token: write }
+    uses: ./.github/workflows/cargo.yml
+    secrets:
+      registry_token: \${{ secrets.OWNER_TOKEN }}
+`,
+					'.github/workflows/cargo.yml': files['.github/workflows/publish.yml']
+						.replace(
+							"on: { push: { tags: ['v[0-9]*'] } }",
+							'on: { workflow_call: { secrets: { registry_token: { required: true } } } }',
+						)
+						.replace('secrets.cargo_token', 'secrets.registry_token'),
+				}
+				: files,
+		);
 		const api = bearer(world, await world.cliSession());
 		await world.run(Effect.gen(function*() {
 			const service = yield* Automation;
@@ -47,7 +71,7 @@ test.each(['crates-io', 'release-cargo'])(
 					ref: 'refs/tags/v*',
 					delivery: 'environment',
 					environment: 'release',
-					secretName: 'CARGO_TOKEN',
+					secretName,
 				}, 'test');
 			}
 		}));
@@ -59,7 +83,7 @@ test.each(['crates-io', 'release-cargo'])(
 				permissions.push(body.permissions);
 			}
 			if (path.endsWith('/environments/release')) return Response.json({ name: 'release' });
-			if (path.endsWith('/environments/release/secrets/CARGO_TOKEN')) return Response.json({ name: 'CARGO_TOKEN' });
+			if (path.endsWith(`/environments/release/secrets/${secretName}`)) return Response.json({ name: secretName });
 			return world.github.handle(request);
 		});
 		let registryChecks = 0, publisherChecks = 0;
@@ -107,7 +131,7 @@ test('setup rechecks registry state and rejects applying a stale readiness propo
 	const repository = world.github.create('octo/tool', {
 		...files,
 		'.github/workflows/publish.yml': files['.github/workflows/publish.yml'].replace('    environment: release\n', '')
-			.replace('        env:\n          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}\n', ''),
+			.replace('        env:\n          CARGO_REGISTRY_TOKEN: ${{ secrets.cargo_token }}\n', ''),
 	});
 	const api = bearer(world, await world.cliSession());
 	world.network.serve('crates.io', () => new Response(null, { status: 404 }));
@@ -116,4 +140,98 @@ test('setup rechecks registry state and rejects applying a stale readiness propo
 	world.network.serve('crates.io', () => new Response(null, { status: 503 }));
 	expect((await applySetup(api, repository.name, plan, plan.choices)).status).toBe(409);
 	expect(repository.pulls).toHaveLength(0);
+});
+
+test('missing installation permissions are reported as App access failures before requesting an elevated token', async () => {
+	const repository = world.github.create('octo/tool', files);
+	const api = bearer(world, await world.cliSession());
+	let rejectedTokenRequests = 0;
+	world.network.serve('api.github.com', async request => {
+		const path = new URL(request.url).pathname;
+		if (path.endsWith('/access_tokens')) {
+			const body = await request.clone().json() as { permissions?: Record<string, string> };
+			if (body.permissions?.secrets) rejectedTokenRequests++;
+		}
+		const response = await world.github.handle(request);
+		if (path.endsWith('/installation') && response.ok) {
+			return Response.json({
+				...await response.json() as object,
+				permissions: { contents: 'write', actions: 'write', pull_requests: 'write', workflows: 'write' },
+			});
+		}
+		return response;
+	});
+	world.network.serve('crates.io', () => new Response(null, { status: 404 }));
+	const plan = await previewSetup(api, repository.name);
+	const failed = plan.publishingChecks?.filter(check => check.status === 'failed') ?? [];
+	expect(failed).toHaveLength(1);
+	expect(failed[0]?.message).toContain('GitHub App installation lacks required permissions');
+	for (const permission of ['secrets: read', 'variables: read', 'environments: read']) {
+		expect(failed[0]?.message).toContain(permission);
+	}
+	expect(failed[0]?.message).toContain('approve the installation update');
+	expect(failed[0]?.message).toContain(`https://github.com/apps/${appSlug}`);
+	expect(failed[0]?.message).not.toContain('Publishing configuration check failed');
+	expect(rejectedTokenRequests).toBe(0);
+	expect(plan.notes.some(note => note.includes('GitHub App installation lacks'))).toBe(true);
+	expect(plan.publishingChecks?.some(check => check.message.includes('returned 404'))).toBe(true);
+});
+
+test('missing workflow-write permission preserves safe setup previews without swallowing owner failures', async () => {
+	const repository = world.github.create('octo/tool', files);
+	const api = bearer(world, await world.cliSession());
+	let wrongOwner = false;
+	world.network.serve('api.github.com', async request => {
+		const path = new URL(request.url).pathname;
+		if (path.endsWith('/environments/release')) return Response.json({ name: 'release' });
+		if (path.endsWith('/secrets/CARGO_TOKEN')) return Response.json({ name: 'CARGO_TOKEN' });
+		const response = await world.github.handle(request);
+		if (path.endsWith('/installation') && response.ok) {
+			const installation = await response.json() as { account: { id: number; login: string } };
+			return Response.json({
+				...installation,
+				...(wrongOwner ? { account: { ...installation.account, id: installation.account.id + 1 } } : {}),
+				permissions: {
+					contents: 'write',
+					actions: 'write',
+					pull_requests: 'write',
+					secrets: 'read',
+					variables: 'read',
+					environments: 'read',
+				},
+			});
+		}
+		return response;
+	});
+	world.network.serve('crates.io', () => new Response(null, { status: 404 }));
+	const canEdit = () => world.run(Effect.gen(function*() {
+		const service = yield* Automation;
+		return yield* service.gateway.canEditWorkflows(repository.name, repository.id);
+	}));
+	expect(await canEdit()).toBe(false);
+	const plan = await previewSetup(api, repository.name);
+	expect(plan.blockers).toEqual([]);
+	expect(plan.edits.map(edit => edit.path)).toEqual(['.github/beepboop.json']);
+	const choices = {
+		streams: [{
+			name: 'main',
+			packages: ['pkg:cargo/tool'],
+			required: ['pkg:cargo/tool'],
+			versioning: 'workspace',
+			promote: {
+				file: 'managed.yml',
+				job: 'publish',
+				triggers: 'review',
+				commands: 'cargo publish',
+				publicationSteps: {},
+			},
+		}],
+	};
+	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
+	expect(preview.status).toBe(200);
+	const blocked = preview.body as { blockers: string[] };
+	expect(blocked.blockers.some(message => message.includes('Workflows: write'))).toBe(true);
+	expect(blocked.blockers.some(message => message.includes(`https://github.com/apps/${appSlug}`))).toBe(true);
+	wrongOwner = true;
+	await expect(canEdit()).rejects.toThrow('Owner mismatch');
 });

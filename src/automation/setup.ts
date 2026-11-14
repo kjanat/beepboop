@@ -303,6 +303,7 @@ export interface SetupBaseline {
 	publishing?: PublishingAccess;
 	head: string | null;
 	workflowPermission?: boolean;
+	appPage?: string;
 	branchConflict?: boolean;
 	prior?: { url: string; content?: string; sourceSha?: string };
 	presetShas?: Record<string, string>;
@@ -415,6 +416,9 @@ function draftSetup(
 				...narrowed,
 				...companionProposals(choices, snapshot, inventory),
 				...drafts.notes,
+				...publishingChecks.filter(check => check.status !== 'passed').map(check =>
+					`${check.subject}: ${check.message}`
+				),
 			],
 			...(candidates.length ? { binaryCandidates: candidates } : {}),
 		};
@@ -796,7 +800,9 @@ function drafted(
 			: undefined;
 		if (baseline.workflowPermission === false && edits.some(edit => edit.path.startsWith('.github/workflows/'))) {
 			blockers.push(
-				'The GitHub App installation needs Workflows: write permission before this proposal can edit workflows. Update the app permission and approve the installation update, then preview again.',
+				`The GitHub App installation needs Workflows: write permission before this proposal can edit workflows. Update permissions for ${
+					baseline.appPage ?? 'the GitHub App'
+				} and approve the installation update, then preview again.`,
 			);
 		}
 		return {
