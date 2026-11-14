@@ -109,7 +109,8 @@ version PR, in place of `prepare.versionPrMerge`. `--merge squash`, `merge` or
 stream's method, or `squash` when the stream merges by hand. `--no-auto` leaves
 the version PR for you. A release that commits its version, prepares in its own
 workflow or already carries its version opens no version PR and refuses these
-flags.
+flags. A release already in preparation keeps its first choice and refuses a
+different one.
 
 ```sh
 beepboop release minor --merge rebase

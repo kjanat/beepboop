@@ -209,7 +209,15 @@ export function beginRelease(
 		if (started) execution.started = started;
 		if (versionPrMerge) execution.versionPrMerge = versionPrMerge;
 		yield* service.store.audit(actor, started ? 'release.start' : 'release.prepare', execution.id);
-		return yield* service.enqueue(repository, execution);
+		const queued = yield* service.enqueue(repository, execution);
+		if (versionPrMerge && queued.versionPrMerge !== versionPrMerge) {
+			return yield* precondition(
+				`${plan.version} of ${name} is already being prepared with versionPrMerge ${
+					queued.versionPrMerge ?? 'from the stream'
+				}`,
+			);
+		}
+		return queued;
 	});
 }
 

@@ -1239,24 +1239,39 @@ test('a failed build leg shows in the binary progress and the binaries table', a
 
 test('--auto, --no-auto and --merge send this release its version PR merge', async () => {
 	const repository = await seed();
-	const merges = async (...flags: string[]) => {
-		const before = prepareCalls().length;
-		const result = await run(['release', 'patch', '--repository', repository.name, '--json', '--yes', ...flags]);
+	const previewed = async (...flags: string[]) => {
+		const result = await run(['release', 'patch', '--repository', repository.name, '--json', ...flags]);
 		expect(result.exitCode).toBe(0);
-		return prepareCalls().slice(before).map(call => decodeSync(looseStruct({}), call.body).versionPrMerge);
+		return decodeSync(looseStruct({}), JSON.parse(result.stdout.join(''))).versionPrMerge;
 	};
-	expect(await merges()).toEqual([undefined]);
-	expect(await merges('--auto')).toEqual(['squash']);
-	expect(await merges('--merge', 'rebase')).toEqual(['rebase']);
-	expect(await merges('--auto', '--merge', 'merge')).toEqual(['merge']);
-	expect(await merges('--no-auto')).toEqual(['manual']);
+	expect(await previewed()).toBeUndefined();
+	expect(await previewed('--auto')).toBe('squash');
+	expect(await previewed('--merge', 'rebase')).toBe('rebase');
+	expect(await previewed('--auto', '--merge', 'merge')).toBe('merge');
+	expect(await previewed('--no-auto')).toBe('manual');
 	const configuration = widgetStreams();
 	configuration.streams.main = withMain(configuration, { prepare: { strategy: 'managed', versionPrMerge: 'merge' } });
 	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Merge version PRs');
 	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
-	expect(await merges('--auto')).toEqual(['merge']);
+	expect(await previewed('--auto')).toBe('merge');
 	const preview = await run(['release', 'patch', '--repository', repository.name, '--merge', 'rebase', '--dry-run']);
 	expect(preview.stdout.join('')).toContain('Version PR: Beepboop turns on GitHub auto-merge, and GitHub rebases');
+	expect(prepareCalls()).toHaveLength(0);
+	const prepared = await run([
+		'release',
+		'patch',
+		'--repository',
+		repository.name,
+		'--json',
+		'--yes',
+		'--merge',
+		'rebase',
+	]);
+	expect(prepared.exitCode).toBe(0);
+	expect(prepareCalls().map(call => decodeSync(looseStruct({}), call.body).versionPrMerge)).toEqual(['rebase']);
+	const changed = await run(['release', 'patch', '--repository', repository.name, '--json', '--yes', '--no-auto']);
+	expect(changed.exitCode).not.toBe(0);
+	expect(changed.stdout.join('')).toContain('already being prepared with versionPrMerge rebase');
 });
 
 test('--no-auto with --merge, or any merge flag on a release without a version PR, prepares nothing', async () => {

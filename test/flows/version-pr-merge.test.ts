@@ -155,6 +155,21 @@ for (
 	});
 }
 
+test('preparing the same release again refuses another version PR merge and keeps the first', async () => {
+	const { repository, api, prepared } = await requested('manual', true, { strategy: 'managed', bump: 'pr' }, 'manual');
+	const request = { repositoryId: repository.id, stream: 'main', version: '1.0.1' };
+	const again = await prepareRelease(api, request, { versionPrMerge: 'manual' });
+	expect([again.prepared.status, text(again.prepared.body, 'id')]).toEqual([200, text(prepared.body, 'id')]);
+	const changed = await prepareRelease(api, request, { versionPrMerge: 'rebase' });
+	expect(changed.prepared.status).toBe(422);
+	expect(JSON.stringify(changed.prepared.body)).toContain(
+		'1.0.1 of main is already being prepared with versionPrMerge manual',
+	);
+	await world.wait(16_000);
+	expect(one(repository.pulls, 'version PR').autoMerge).toBeUndefined();
+	expect((await only(api, 'prepare')).versionPrMerge).toBe('manual');
+});
+
 test('a repository that disallows auto-merge keeps the version PR open with a note', async () => {
 	const { repository, api } = await managed('squash', false);
 	const pull = one(repository.pulls, 'version PR');
