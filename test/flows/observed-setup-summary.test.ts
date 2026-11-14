@@ -533,3 +533,59 @@ test('customized setup exposes publishing prerequisites in notes and its PR body
 	expect(body).toContain('crates.io returned 404 for tool-core');
 	expect(body).toContain('Publish its first version with a crates.io API token');
 });
+
+test('matrix step guards restrict publisher bindings to the crates actually published in each environment', async () => {
+	const snapshot = cargoSnapshot();
+	snapshot.files['.github/workflows/publish.yml'] = `on: { push: { tags: ['v*'] } }
+jobs:
+  publish:
+    strategy:
+      matrix:
+        include:
+          - { crate: core, environment: core }
+          - { crate: cli, environment: cli }
+    environment: \${{ matrix.environment }}
+    permissions: { id-token: write }
+    steps:
+      - uses: rust-lang/crates-io-auth-action@v1
+      - if: matrix.crate == 'core'
+        run: cargo publish -p tool-core
+      - if: \${{ matrix.crate == 'cli' }}
+        run: cargo publish -p tool
+      - if: matrix.crate == 'disabled'
+        run: cargo publish -p tool-error
+        env:
+          CARGO_REGISTRY_TOKEN: \${{ secrets.UNUSED_TOKEN }}
+`;
+	const requested: string[] = [], paths: string[] = [];
+	const access = registeredCrates([
+		{
+			crate: 'tool-core',
+			repository_owner: 'example',
+			repository_name: 'tool',
+			workflow_filename: 'publish.yml',
+			environment: 'core',
+		},
+		{
+			crate: 'tool',
+			repository_owner: 'example',
+			repository_name: 'tool',
+			workflow_filename: 'publish.yml',
+			environment: 'cli',
+		},
+	]);
+	const request = access.request;
+	access.request = (input, init) => {
+		const url = new URL(String(input));
+		if (url.pathname.includes('/trusted_publishing/')) requested.push(url.searchParams.get('crate') ?? '');
+		return request(input, init);
+	};
+	access.github = path => {
+		paths.push(path);
+		return Effect.succeed({ name: 'environment' });
+	};
+	const plan = await checkedCargo(access, snapshot);
+	expect(requested.sort()).toEqual(['tool', 'tool-core']);
+	expect(plan.publishingChecks?.filter(check => check.status !== 'passed')).toEqual([]);
+	expect(paths.some(path => path.includes('UNUSED_TOKEN'))).toBe(false);
+});

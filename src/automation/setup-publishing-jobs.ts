@@ -58,6 +58,9 @@ export function publishingJobs(snapshot: Snapshot, root: string): { jobs: Publis
 			for (const assignment of matrix.length ? matrix : [{}]) {
 				if (staticGuard(original.if, { inputs, matrix: assignment }) === false) continue;
 				const raw = object(bind(original, inputs, assignment));
+				if (Array.isArray(raw.steps)) {
+					raw.steps = raw.steps.filter(step => staticGuard(object(step).if, { inputs, matrix: assignment }) !== false);
+				}
 				delete raw.strategy;
 				const permissions = raw.permissions ?? document.permissions;
 				const oidc = ceiling && (permissions === undefined
