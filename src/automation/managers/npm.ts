@@ -1,4 +1,5 @@
 import { Effect } from 'effect';
+import { applyEdits, modify, parseTree } from 'jsonc-parser';
 import { jsonIndent, object } from '@/automation/managers/helpers';
 import { discoverNpmTargets } from '@/automation/managers/npm-targets';
 import { packageManifests } from '@/automation/managers/package-json';
@@ -16,32 +17,39 @@ const defaultRegistry = /^https?:\/\/registry\.(?:npmjs\.org|yarnpkg\.com)(?:[/:
 function foreignRegistry(value: unknown): boolean {
 	return typeof value === 'string' && !defaultRegistry.test(value.trim());
 }
-function pinDependencies(
+type ManifestChange = readonly [path: readonly string[], value: string];
+function pinnedDependencies(
 	data: Record<string, unknown>,
 	sections: readonly string[],
 	packages: readonly Package[],
 	version: string,
-): boolean {
-	let altered = false;
-	for (const section of sections) {
-		if (data[section] === undefined) continue;
+): ManifestChange[] {
+	return sections.flatMap(section => {
+		if (data[section] === undefined) return [];
 		const dependencies = object(data[section]);
-		for (const pkg of packages.filter(p => p.manager === 'npm')) {
+		return packages.filter(p => p.manager === 'npm').flatMap((pkg): ManifestChange[] => {
 			const value = dependencies[pkg.name];
-			if (typeof value === 'string' && /^[~^]?\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(value)) {
-				const next = `${value.match(/^[~^]/)?.[0] ?? ''}${version}`;
-				if (next !== value) {
-					dependencies[pkg.name] = next;
-					altered = true;
-				}
-			}
-		}
-		data[section] = dependencies;
-	}
-	return altered;
+			if (typeof value !== 'string' || !/^[~^]?\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(value)) return [];
+			const next = `${value.match(/^[~^]/)?.[0] ?? ''}${version}`;
+			return next === value ? [] : [[[section, pkg.name], next]];
+		});
+	});
 }
-function manifestText(data: Record<string, unknown>, before: string): string {
-	return `${JSON.stringify(data, null, jsonIndent(before))}\n`;
+function editManifest(before: string, changes: readonly ManifestChange[]): string {
+	const indent = jsonIndent(before);
+	const formattingOptions = { insertSpaces: !indent.startsWith('\t'), tabSize: indent.length };
+	return changes.reduce(
+		(text, [path, value]) => applyEdits(text, modify(text, [...path], value, { formattingOptions })),
+		before,
+	);
+}
+function insertedVersion(before: string, version: string): string {
+	const properties = parseTree(before)?.children ?? [];
+	const anchor = properties.find(property => property.children?.[0]?.value === 'name') ?? properties.at(-1);
+	const eol = before.includes('\r\n') ? '\r\n' : '\n';
+	const line = `${eol}${jsonIndent(before)}"version": ${JSON.stringify(version)}`;
+	const end = anchor ? anchor.offset + anchor.length : before.indexOf('{') + 1;
+	return `${before.slice(0, end)}${anchor ? `,${line}` : `${line}${eol}`}${before.slice(end)}`;
 }
 export function npmLatest(name: string, request: Fetcher): Effect.Effect<RegistryVersion> {
 	return latestVersion(
@@ -127,9 +135,18 @@ export const npmManager: Adapter<'npm'> = {
 			const [path, key] = source.split('#');
 			if (!path || !key) return yield* precondition('Invalid version source');
 			const data = yield* fromSync(() => object(JSON.parse(before)));
-			data.version = version;
-			pinDependencies(data, ['dependencies', 'optionalDependencies', 'peerDependencies'], packages, version);
-			return manifestText(data, before);
+			const pins = pinnedDependencies(
+				data,
+				['dependencies', 'optionalDependencies', 'peerDependencies'],
+				packages,
+				version,
+			);
+			return yield* fromSync(() =>
+				editManifest(
+					'version' in data ? editManifest(before, [[['version'], version]]) : insertedVersion(before, version),
+					pins,
+				)
+			);
 		});
 	},
 	updateDependencies: ({ snapshot, packages, version, changed }) =>
@@ -140,9 +157,9 @@ export const npmManager: Adapter<'npm'> = {
 				)
 			) {
 				const before = changed.get(path) ?? original;
-				const data = object(JSON.parse(before));
 				const sections = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
-				if (pinDependencies(data, sections, packages, version)) changed.set(path, manifestText(data, before));
+				const pins = pinnedDependencies(object(JSON.parse(before)), sections, packages, version);
+				if (pins.length) changed.set(path, editManifest(before, pins));
 			}
 		}),
 };
