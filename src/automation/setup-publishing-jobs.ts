@@ -1,5 +1,6 @@
 import { object } from '@/automation/managers/helpers';
 import {
+	disabled,
 	forwardInput,
 	inputDefaults,
 	literalBindings,
@@ -56,10 +57,13 @@ export function publishingJobs(snapshot: Snapshot, root: string): { jobs: Publis
 		for (const [id, original] of liveJobs(document)) {
 			const matrix = matrixCombinations(object(object(original.strategy).matrix));
 			for (const assignment of matrix.length ? matrix : [{}]) {
-				if (staticGuard(original.if, { inputs, matrix: assignment }) === false) continue;
+				const inactive = (condition: unknown) =>
+					disabled(condition) || condition === '' || condition === 0
+					|| staticGuard(condition, { inputs, matrix: assignment }) === false;
+				if (inactive(original.if)) continue;
 				const raw = object(bind(original, inputs, assignment));
 				if (Array.isArray(raw.steps)) {
-					raw.steps = raw.steps.filter(step => staticGuard(object(step).if, { inputs, matrix: assignment }) !== false);
+					raw.steps = raw.steps.filter(step => !inactive(object(step).if));
 				}
 				delete raw.strategy;
 				const permissions = raw.permissions ?? document.permissions;
@@ -78,8 +82,11 @@ export function publishingJobs(snapshot: Snapshot, root: string): { jobs: Publis
 						...inputDefaults(object(object(callee?.document.on).workflow_call).inputs, Object.keys(supplied)),
 						...literalBindings(supplied),
 					};
+					const secrets = new Map(
+						Object.entries(object(raw.secrets)).map(([key, value]) => [key.toUpperCase(), value]),
+					);
 					const forwarded: PublishingJob['secret'] = raw.secrets === 'inherit' ? secret : name => {
-						const value = object(raw.secrets)[name];
+						const value = secrets.get(name.toUpperCase());
 						const match = typeof value === 'string' ? secretReference.exec(value) : null;
 						const source = match?.[1] ?? match?.[2];
 						return source ? secret(source) : undefined;
@@ -94,6 +101,6 @@ export function publishingJobs(snapshot: Snapshot, root: string): { jobs: Publis
 			}
 		}
 	};
-	visit(root, {}, name => name, true, false, []);
+	visit(root, {}, name => name.toUpperCase(), true, false, []);
 	return { jobs, failures };
 }

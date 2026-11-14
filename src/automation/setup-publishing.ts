@@ -137,7 +137,7 @@ export function checkPublishing(
 				if (!selected.length) continue;
 				const subject = publisher.path;
 				const configured = { env: document?.env, job: raw };
-				const secretNames = references(configured, 'secrets').filter(name => name !== 'GITHUB_TOKEN');
+				const secretNames = references(configured, 'secrets').filter(name => name.toUpperCase() !== 'GITHUB_TOKEN');
 				const declaredEnvironment = typeof raw.environment === 'string'
 					? raw.environment
 					: object(raw.environment).name;
@@ -174,10 +174,10 @@ export function checkPublishing(
 						);
 					}
 					for (const name of secretNames) {
-						const local = environment
-							? yield* github(`${root}/environments/${encodeURIComponent(environment)}/secrets/${name}`)
-							: null;
 						const source = publisher.secret(name);
+						const local = source && environment
+							? yield* github(`${root}/environments/${encodeURIComponent(environment)}/secrets/${name.toUpperCase()}`)
+							: null;
 						const secret = local ?? (source ? yield* named('secrets', source) : undefined);
 						add(
 							subject,

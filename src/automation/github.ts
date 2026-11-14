@@ -45,6 +45,7 @@ import type { Contract, Decoded } from '@/schema';
 import { mutableArray, mutableStruct } from '@/schema';
 
 type Permission = Record<string, 'read' | 'write'>;
+const missingInstallationPermissions = 'GitHub App installation lacks required permissions';
 const coAuthor = 'Co-authored-by: kjanat <6353477+kjanat@users.noreply.github.com>';
 const ownerLogins = new Map<number, string>();
 const botIdentities = new Map<string, BotIdentity>();
@@ -298,7 +299,7 @@ export class RepositoryGateway {
 				).map(([name, level]) => `${name}: ${level}`);
 				if (missing.length) {
 					return yield* precondition(
-						`GitHub App installation lacks required permissions (${
+						`${missingInstallationPermissions} (${
 							missing.join(', ')
 						}). Update the App permissions and approve the installation update before retrying`,
 					);
@@ -531,7 +532,12 @@ export class RepositoryGateway {
 	canEditWorkflows(name: string, id: number): Effect.Effect<boolean, DomainError> {
 		return this.token(name, id, { contents: 'read', workflows: 'write' }).pipe(
 			Effect.as(true),
-			Effect.catchIf(error => /^GitHub HTTP (403|422) /.test(error.message), () => Effect.succeed(false)),
+			Effect.catchIf(
+				error =>
+					/^GitHub HTTP (403|422) /.test(error.message)
+					|| (error.problem.code === 'precondition' && error.message.startsWith(missingInstallationPermissions)),
+				() => Effect.succeed(false),
+			),
 		);
 	}
 	/** Read the proposal head without modifying or creating a branch. */

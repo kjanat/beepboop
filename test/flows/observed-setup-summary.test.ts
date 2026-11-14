@@ -4,6 +4,7 @@ import { discover } from '@/automation/managers';
 import { previewSetup, setupBody } from '@/automation/setup';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { PublishingAccess } from '@/automation/setup-publishing';
+import { checkPublishing } from '@/automation/setup-publishing';
 import { streamSummary } from '@/automation/setup-summary';
 import type { Snapshot } from '@/automation/types';
 
@@ -452,6 +453,12 @@ jobs:
 
 test('nested reusable publishers preserve matrix inputs, secret aliases, permissions and the entry workflow identity', async () => {
 	const snapshot = reusableCargoSnapshot();
+	snapshot.files['.github/workflows/publish.yml'] =
+		snapshot.files['.github/workflows/publish.yml']?.replace('secrets.OWNER_TOKEN', 'secrets.owner_token') ?? '';
+	snapshot.files['.github/workflows/wrapper.yml'] =
+		snapshot.files['.github/workflows/wrapper.yml']?.replace('secrets.caller_token', 'secrets.CALLER_TOKEN') ?? '';
+	snapshot.files['.github/workflows/cargo.yml'] =
+		snapshot.files['.github/workflows/cargo.yml']?.replace('secrets.registry_token', 'secrets.REGISTRY_TOKEN') ?? '';
 	const paths: string[] = [], credentials: unknown[] = [];
 	const access = registeredCrates([
 		{
@@ -502,22 +509,38 @@ test('nested reusable publishers preserve matrix inputs, secret aliases, permiss
 		.toHaveLength(2);
 });
 
-test('reusable workflow secrets require forwarding, with callee environment secrets taking precedence', async () => {
-	const snapshot = reusableCargoSnapshot();
-	snapshot.files['.github/workflows/wrapper.yml'] = snapshot.files['.github/workflows/wrapper.yml']?.replace(
-		'    secrets:\n      registry_token: ${{ secrets.caller_token }}\n',
-		'',
-	) ?? '';
+test('reusable environment secrets require forwarding before taking precedence', async () => {
 	const access = missingCrates();
-	access.github = path => Effect.succeed(/\/environments\/(core|cli)$/.test(path) ? { name: 'available' } : null);
-	const missing = await checkedCargo(access, snapshot);
-	expect(missing.publishingChecks?.filter(check => check.message.includes('secret registry_token is missing')))
-		.toHaveLength(2);
-	access.github = path =>
-		Effect.succeed(/\/environments\/(core|cli)(\/secrets\/registry_token)?$/.test(path) ? { name: 'available' } : null);
-	const available = await checkedCargo(access, snapshot);
-	expect(available.publishingChecks?.filter(check => check.message.includes('secret registry_token is available')))
-		.toHaveLength(2);
+	const paths: string[] = [];
+	access.github = path => {
+		paths.push(path);
+		return Effect.succeed(
+			/\/environments\/(core|cli)(\/secrets\/REGISTRY_TOKEN)?$/.test(path) ? { name: 'available' } : null,
+		);
+	};
+	for (const forwarding of ['missing', 'explicit', 'inherit']) {
+		const snapshot = reusableCargoSnapshot();
+		if (forwarding === 'missing') {
+			snapshot.files['.github/workflows/wrapper.yml'] = snapshot.files['.github/workflows/wrapper.yml']?.replace(
+				'    secrets:\n      registry_token: ${{ secrets.caller_token }}\n',
+				'',
+			) ?? '';
+		} else if (forwarding === 'inherit') {
+			for (const file of ['publish.yml', 'wrapper.yml']) {
+				snapshot.files[`.github/workflows/${file}`] =
+					snapshot.files[`.github/workflows/${file}`]?.replace(/    secrets:\n      [^\n]+\n/, '    secrets: inherit\n')
+						?? '';
+			}
+		}
+		paths.length = 0;
+		const plan = await checkedCargo(access, snapshot);
+		const message = forwarding === 'missing'
+			? 'secret registry_token is missing'
+			: 'secret registry_token is available';
+		expect(plan.publishingChecks?.filter(check => check.message.includes(message))).toHaveLength(2);
+		expect(paths.some(path => path.includes('/secrets/'))).toBe(forwarding !== 'missing');
+		expect(paths.some(path => path.includes('/actions/secrets/'))).toBe(false);
+	}
 });
 
 test('customized setup exposes publishing prerequisites in notes and its PR body without inferred adoption text', async () => {
@@ -542,8 +565,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - { crate: core, environment: core }
-          - { crate: cli, environment: cli }
+          - { crate: core, environment: core, enabled: false }
+          - { crate: cli, environment: cli, enabled: false }
     environment: \${{ matrix.environment }}
     permissions: { id-token: write }
     steps:
@@ -552,6 +575,14 @@ jobs:
         run: cargo publish -p tool-core
       - if: \${{ matrix.crate == 'cli' }}
         run: cargo publish -p tool
+      - if: false
+        run: cargo publish -p tool-error
+        env:
+          CARGO_REGISTRY_TOKEN: \${{ secrets.FALSE_TOKEN }}
+      - if: \${{ matrix.enabled }}
+        run: cargo publish -p tool-error
+        env:
+          CARGO_REGISTRY_TOKEN: \${{ secrets.MATRIX_TOKEN }}
       - if: matrix.crate == 'disabled'
         run: cargo publish -p tool-error
         env:
@@ -587,5 +618,21 @@ jobs:
 	const plan = await checkedCargo(access, snapshot);
 	expect(requested.sort()).toEqual(['tool', 'tool-core']);
 	expect(plan.publishingChecks?.filter(check => check.status !== 'passed')).toEqual([]);
-	expect(paths.some(path => path.includes('UNUSED_TOKEN'))).toBe(false);
+	expect(paths.some(path => path.includes('/secrets/'))).toBe(false);
 });
+
+test.each(['string', 'boolean', 'number'])(
+	'reusable job guards respect the implicit falsy %s input default',
+	async type => {
+		const snapshot = reusableCargoSnapshot();
+		const inventory = discover(snapshot);
+		const original = await checkedCargo(missingCrates(), snapshot);
+		snapshot.files['.github/workflows/cargo.yml'] = snapshot.files['.github/workflows/cargo.yml']?.replace(
+			'    inputs:\n',
+			`    inputs:\n      enabled: { type: ${type} }\n`,
+		).replace('  publish:\n', '  publish:\n    if: ${{ inputs.enabled }}\n') ?? '';
+		const checks = await Effect.runPromise(checkPublishing(snapshot, inventory, original.choices, missingCrates()));
+		expect(checks.some(check => check.subject.includes(' / publish'))).toBe(false);
+		expect(checks.some(check => check.message.includes('returned 404'))).toBe(true);
+	},
+);
