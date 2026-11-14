@@ -83,7 +83,13 @@ export function refined<S extends Schema.Top>(
 		),
 	);
 }
-export function mapped<S extends Schema.Top, T extends Schema.Top>(
+interface RequiredValueSchema extends Schema.Top {
+	readonly '~type.optionality': 'required';
+	readonly '~encoded.optionality': 'required';
+}
+
+/** Maps present values; apply optional field modifiers to the resulting schema. */
+export function mapped<S extends RequiredValueSchema, T extends RequiredValueSchema>(
 	schema: S,
 	output: T,
 	map: (value: S['Type'], ctx: ValidationContext) => T['Encoded'],

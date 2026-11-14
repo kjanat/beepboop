@@ -1,4 +1,5 @@
 import { expect, spyOn, test } from 'bun:test';
+import { KeyObject, sign } from 'node:crypto';
 import { bearer, field, text } from '@root/test/support/http.ts';
 import type { World } from '@root/test/support/world.ts';
 import { adminSubject, eachWorld, origin } from '@root/test/support/world.ts';
@@ -12,8 +13,9 @@ eachWorld(created => {
 	world = created;
 });
 
-async function registration(challenge: string) {
-	const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+async function registration(challenge: string, keys?: CryptoKeyPair) {
+	const pair = keys
+		?? await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
 	const publicKey = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
 	const cose = await Effect.runPromise(Effect.fromResult(encode(new Map<number, CborValue>([
 		[1, 2],
@@ -56,6 +58,62 @@ async function registration(challenge: string) {
 		},
 	};
 }
+
+test.each(
+	[
+		['omitted', {}, true, 200],
+		['null', { userHandle: null }, true, 200],
+		['string', { userHandle: Buffer.from(adminSubject).toString('base64url') }, true, 200],
+		['invalid', { userHandle: 42 }, true, 400],
+		['omitted with a bad signature', {}, false, 422],
+	] as const,
+)('authentication handles %s userHandle', async (_name, userHandle, validSignature, status) => {
+	const api = bearer(world, await world.cliSession());
+	const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+	const enrollment = await api('/api/authenticators/options', { register: true });
+	const credential = await registration(text(field(enrollment.body, 'options'), 'challenge'), pair);
+	expect(
+		(await api('/api/authenticators/verify', {
+			id: text(enrollment.body, 'id'),
+			response: credential,
+		})).status,
+	).toBe(200);
+	const authentication = await api('/api/authenticators/options', { register: false });
+	expect(authentication.status).toBe(200);
+	const clientDataJSON = Buffer.from(JSON.stringify({
+		type: 'webauthn.get',
+		challenge: text(field(authentication.body, 'options'), 'challenge'),
+		origin,
+	}));
+	const rpIdHash = new Uint8Array(
+		await crypto.subtle.digest('SHA-256', new TextEncoder().encode(new URL(origin).hostname)),
+	);
+	const authenticatorData = Buffer.from([...rpIdHash, 0x05, 0, 0, 0, 1]);
+	const clientDataHash = Buffer.from(await crypto.subtle.digest('SHA-256', clientDataJSON));
+	const signature = sign(
+		'sha256',
+		validSignature ? Buffer.concat([authenticatorData, clientDataHash]) : Buffer.from('wrong assertion'),
+		KeyObject.from(pair.privateKey),
+	);
+	const verified = await api('/api/authenticators/verify', {
+		id: text(authentication.body, 'id'),
+		response: {
+			id: credential.id,
+			rawId: credential.rawId,
+			type: 'public-key',
+			clientExtensionResults: {},
+			response: {
+				clientDataJSON: clientDataJSON.toString('base64url'),
+				authenticatorData: authenticatorData.toString('base64url'),
+				signature: signature.toString('base64url'),
+				...userHandle,
+			},
+		},
+	});
+	expect(verified.status).toBe(status);
+	if (status === 200) expect(text(verified.body, 'proof')).not.toBe('');
+	else expect(verified.body).not.toHaveProperty('proof');
+});
 
 test('two initial enrollment challenges can commit only one first key', async () => {
 	const api = bearer(world, await world.cliSession());

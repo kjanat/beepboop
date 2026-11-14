@@ -54,12 +54,12 @@ const authenticationResponse: Schema.Codec<AuthenticationResponseJSON, unknown> 
 		clientDataJSON: Schema.String,
 		authenticatorData: Schema.String,
 		signature: Schema.String,
-		userHandle: mapped(
-			Schema.optional(Schema.NullOr(Schema.String)),
+		userHandle: Schema.optional(mapped(
+			Schema.NullOr(Schema.String),
 			Schema.UndefinedOr(Schema.String),
 			value => value ?? undefined,
-			value => value,
-		),
+			value => value ?? null,
+		)),
 	}),
 	clientExtensionResults,
 });
