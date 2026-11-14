@@ -1,5 +1,6 @@
 import { Clock, Context, Data, Effect, Exit, Layer, Schema } from 'effect';
-import { importPKCS8, SignJWT } from 'jose';
+import { signJwt } from 'micro509/jose';
+import { importPkcs8Pem } from 'micro509/keys';
 import { logRecovered } from '@/automation/failure-log';
 import type { GitObject } from '@/automation/github-resources';
 import {
@@ -355,15 +356,17 @@ export class RepositoryGateway {
 		return Effect.gen(function*() {
 			const clock = yield* Clock.Clock;
 
-			const key = yield* fromPromise(() => importPKCS8(self.credentials.GITHUB_APP_PRIVATE_KEY, 'RS256'));
+			const imported = yield* fromPromise(() =>
+				importPkcs8Pem(self.credentials.GITHUB_APP_PRIVATE_KEY, { kind: 'rsa', hash: 'SHA-256' })
+			);
+			if (!imported.ok) return yield* toDomainError(new Error(imported.message));
 			const now = Math.floor(clock.currentTimeMillisUnsafe() / 1000);
 			return yield* fromPromise(() =>
-				new SignJWT({})
-					.setProtectedHeader({ alg: 'RS256' })
-					.setIssuer(self.credentials.GITHUB_APP_ID)
-					.setIssuedAt(now - 60)
-					.setExpirationTime(now + 9 * 60)
-					.sign(key)
+				signJwt({
+					privateKey: imported.value,
+					algorithm: 'RS256',
+					claims: { iss: self.credentials.GITHUB_APP_ID, iat: now - 60, exp: now + 9 * 60 },
+				})
 			);
 		});
 	}
