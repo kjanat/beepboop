@@ -7,7 +7,7 @@ import type { Repository } from '@root/test/support/github.ts';
 import { bearer, text } from '@root/test/support/http.ts';
 import { one } from '@root/test/support/lists.ts';
 import { prepareWorkflow } from '@root/test/support/packed-release.ts';
-import { only, prepareRelease } from '@root/test/support/releases.ts';
+import { executions, only, prepareRelease } from '@root/test/support/releases.ts';
 import { editableConfiguration, passChecks, widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
@@ -21,8 +21,25 @@ eachWorld(created => {
 	world = created;
 });
 
-async function versionPr(merge: VersionPrMerge, allowAutoMerge: boolean, prepare: Record<string, unknown>) {
-	const repository = widget(world.github);
+async function versionPr(
+	merge: VersionPrMerge,
+	allowAutoMerge: boolean,
+	prepare: Record<string, unknown>,
+	override?: VersionPrMerge,
+) {
+	const { repository, api, prepared } = await requested(merge, allowAutoMerge, prepare, override);
+	expect(prepared.status).toBe(200);
+	return { repository, api, executionId: text(prepared.body, 'id') };
+}
+
+async function requested(
+	merge: VersionPrMerge,
+	allowAutoMerge: boolean,
+	prepare: Record<string, unknown>,
+	override?: VersionPrMerge,
+	manifest = '1.0.0',
+) {
+	const repository = widget(world.github, { version: manifest });
 	repository.allowAutoMerge = allowAutoMerge;
 	world.npm.publish('widget', '1.0.0');
 	const configuration = editableConfiguration();
@@ -38,13 +55,16 @@ async function versionPr(merge: VersionPrMerge, allowAutoMerge: boolean, prepare
 	passChecks(repository, head.sha);
 	const api = bearer(world, await world.cliSession());
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
-	const { prepared } = await prepareRelease(api, { repositoryId: repository.id, stream: 'main', version: '1.0.1' });
-	expect(prepared.status).toBe(200);
-	return { repository, api, executionId: text(prepared.body, 'id') };
+	const { prepared } = await prepareRelease(
+		api,
+		{ repositoryId: repository.id, stream: 'main', version: '1.0.1' },
+		override ? { versionPrMerge: override } : {},
+	);
+	return { repository, api, prepared };
 }
 
-async function managed(merge: VersionPrMerge, allowAutoMerge = true) {
-	const opened = await versionPr(merge, allowAutoMerge, { strategy: 'managed', bump: 'pr' });
+async function managed(merge: VersionPrMerge, allowAutoMerge = true, override?: VersionPrMerge) {
+	const opened = await versionPr(merge, allowAutoMerge, { strategy: 'managed', bump: 'pr' }, override);
 	await world.wait(16_000);
 	return opened;
 }
@@ -101,6 +121,39 @@ test('versionPrMerge manual leaves the version PR for you to merge', async () =>
 	expect([preparation.state, preparation.managed?.result?.autoMerge]).toEqual(['succeeded', undefined]);
 	expect(runCard(preparation, Date.now()).autoMerge).toBeUndefined();
 });
+
+test('a release auto-merges its version PR with its own method although the stream merges by hand', async () => {
+	const { repository, api } = await managed('manual', true, 'rebase');
+	expect(one(repository.pulls, 'version PR').autoMerge).toBe('REBASE');
+	const preparation = await only(api, 'prepare');
+	expect([preparation.versionPrMerge, preparation.managed?.result?.autoMerge]).toEqual([
+		'rebase',
+		{ method: 'rebase', state: 'enabled' },
+	]);
+});
+
+test('a release leaves its version PR for you although the stream auto-merges', async () => {
+	const { repository, api } = await managed('squash', true, 'manual');
+	expect(one(repository.pulls, 'version PR').autoMerge).toBeUndefined();
+	expect((await only(api, 'prepare')).managed?.result?.autoMerge).toBeUndefined();
+});
+
+for (
+	const [release, prepare, manifest] of [
+		['commits its version', { strategy: 'managed', bump: 'commit' }, '1.0.0'],
+		['prepares in its own workflow', { strategy: 'workflow', workflow: { file: 'prepare.yml' } }, '1.0.0'],
+		['already carries its version', { strategy: 'managed', bump: 'pr' }, '1.0.1'],
+	] as const
+) {
+	test(`a release that ${release} refuses a version PR merge and prepares nothing`, async () => {
+		const { repository, api, prepared } = await requested('manual', true, prepare, 'squash', manifest);
+		expect(prepared.status).toBe(422);
+		expect(JSON.stringify(prepared.body)).toContain('1.0.1 of main opens no version PR to merge');
+		await world.wait(16_000);
+		expect([repository.pulls, repository.runs]).toEqual([[], []]);
+		expect((await executions(api)).filter(execution => execution.initiatedBy !== undefined)).toEqual([]);
+	});
+}
 
 test('a repository that disallows auto-merge keeps the version PR open with a note', async () => {
 	const { repository, api } = await managed('squash', false);

@@ -26,7 +26,7 @@ import { managerDestinationIds, managerNames } from '@/contract/catalog';
 import { diagnostic, isDiagnosticCode } from '@/contract/diagnostics';
 import { startChannel } from '@/contract/release-start';
 import { setupChoicesSchema } from '@/contract/setup';
-import { autoMergeMethods } from '@/contract/setup-terms';
+import { autoMergeMethods, versionPrMerge } from '@/contract/setup-terms';
 import { executionStates } from '@/contract/views';
 import { stringsSchema as strings } from '@/model';
 import type { PackageIdentity } from '@/package-url';
@@ -327,6 +327,7 @@ const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
 	dispatchedAt: Schema.optional(Schema.Finite),
 	approvedBy: Schema.optional(Schema.Literals(['merge', 'start'])),
 	started: Schema.optional(mutableStruct({ via: startChannel, actor: Schema.String })),
+	versionPrMerge: Schema.optional(versionPrMerge),
 	approvedAt: Schema.optional(Schema.Finite),
 	publications: mutableArray(packagePublication),
 	artifacts: mutableArray(artifact),

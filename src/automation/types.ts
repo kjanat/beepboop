@@ -5,7 +5,7 @@ import type { ModuleTag, RefPlan } from '@/automation/refs';
 import type { ManagerName } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
 import type { StartChannel } from '@/contract/release-start';
-import type { AutoMergeMethod } from '@/contract/setup-terms';
+import type { AutoMergeMethod, VersionPrMerge } from '@/contract/setup-terms';
 import type { ExecutionStateView } from '@/contract/views';
 import type { Configuration, WorkflowBinding } from '@/domain/configuration';
 import type { Access } from '@/domain/repository';
@@ -202,6 +202,7 @@ export interface Execution {
 	dispatchedAt?: number;
 	approvedBy?: 'merge' | 'start';
 	started?: ReleaseStarted;
+	versionPrMerge?: VersionPrMerge;
 	approvedAt?: number;
 	publications: Publication[];
 	artifacts: Artifact[];

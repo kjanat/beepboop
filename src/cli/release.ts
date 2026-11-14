@@ -8,7 +8,14 @@ import { emit, failure, prompted, unprompted } from '@/cli/output';
 import { releaseStart, startsFrom, versionBump } from '@/contract/release-start';
 import { routes } from '@/contract/routes';
 import { semverPattern } from '@/contract/semver';
-import { publishWhenNames, publishWhenSentences, startFromEffect } from '@/contract/setup-terms';
+import type { AutoMergeMethod, VersionPrMerge } from '@/contract/setup-terms';
+import {
+	publishWhenNames,
+	publishWhenSentences,
+	startFromEffect,
+	versionPrMerge,
+	versionPrMergeSentences,
+} from '@/contract/setup-terms';
 import { decodeWith } from '@/decode';
 import { packageLabel } from '@/domain/package-label';
 import { git } from '@/git';
@@ -102,6 +109,7 @@ const streamSchema = looseStruct({
 		strategy: Schema.optional(Schema.String),
 		workflow: Schema.optional(mutableStruct({ file: Schema.String })),
 		bump: Schema.optional(versionBump),
+		versionPrMerge: Schema.optional(versionPrMerge),
 	}),
 	promote: looseStruct({
 		approval: Schema.Literals(['required', 'merge', 'push']),
@@ -135,6 +143,22 @@ export interface ReleaseOptions {
 	version?: string;
 	yes: boolean;
 	dryRun: boolean;
+	auto?: boolean | undefined;
+	merge?: AutoMergeMethod | undefined;
+}
+
+function versionPrMergeOf(
+	options: ReleaseOptions,
+	configured: VersionPrMerge | undefined,
+): Effect.Effect<VersionPrMerge | undefined, CLIError> {
+	if (options.auto === false) {
+		return options.merge
+			? Effect.fail(failure('--no-auto turns auto-merge off, and --merge turns it on', 'INVALID_FLAGS'))
+			: Effect.succeed('manual');
+	}
+	if (options.merge) return Effect.succeed(options.merge);
+	if (options.auto) return Effect.succeed(configured && configured !== 'manual' ? configured : 'squash');
+	return Effect.undefined;
 }
 
 export function releaseRepository(
@@ -282,7 +306,22 @@ export function releaseRepository(
 				`Publish it with beepboop runs publish, or add cli to startFrom of ${selected} to start it here`,
 			));
 		}
-		const preview = { repository: repository.name, stream: selected, defaultBranch: repository.defaultBranch, plan };
+		const merging = yield* versionPrMergeOf(options, stream.prepare.versionPrMerge);
+		const opensPr = pending && !committing && !(stream.prepare.workflow && stream.prepare.strategy === 'workflow');
+		if (merging && !opensPr) {
+			return yield* Effect.fail(failure(
+				`${summary.version} of ${selected} opens no version PR to merge`,
+				'NO_VERSION_PR',
+				'Drop --auto, --no-auto and --merge',
+			));
+		}
+		const preview = {
+			repository: repository.name,
+			stream: selected,
+			defaultBranch: repository.defaultBranch,
+			plan,
+			...(merging ? { versionPrMerge: merging } : {}),
+		};
 		if (out.jsonMode && (options.dryRun || !options.yes)) return yield* emit(out, preview);
 		const policy = stream.promote.approval;
 		const after = committing
@@ -326,6 +365,7 @@ export function releaseRepository(
 			} else if (!direct) out.log('The configured preparation workflow determines the package versions.');
 			for (const note of plan.diagnostics ?? []) out.log(look.note(note));
 			for (const edit of plan.edits) out.log(`\n${edit.path}\nCurrent:\n${edit.before}\nProposed:\n${edit.after}`);
+			if (merging) out.log(`Version PR: ${versionPrMergeSentences[merging].replaceAll('`', '')}`);
 			if (direct) out.log(release.summary);
 			else if (!pending) {
 				out.log(`${repository.defaultBranch} already carries ${look.version(summary.version)}. Starting publishes it.`);
@@ -356,7 +396,12 @@ export function releaseRepository(
 		const preparation = yield* step(
 			out,
 			started ? 'Starting the release' : direct ? 'Creating the publication run' : 'Preparing the release',
-			client.call(routes.releasesPrepare, { ...request, sourceSha: summary.sourceSha, planId: summary.planId }),
+			client.call(routes.releasesPrepare, {
+				...request,
+				sourceSha: summary.sourceSha,
+				planId: summary.planId,
+				...(merging ? { versionPrMerge: merging } : {}),
+			}),
 			created =>
 				`${created.operation === 'promote' ? 'Release' : 'Preparation'} ${look.id(created.id)} is ${created.state}`,
 		);

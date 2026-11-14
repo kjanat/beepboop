@@ -2,6 +2,7 @@ import type { Api, Reply } from '@root/test/support/http.ts';
 import { text } from '@root/test/support/http.ts';
 import { one } from '@root/test/support/lists.ts';
 import type { Execution } from '@/automation/types';
+import type { VersionPrMerge } from '@/contract/setup-terms';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 
 export interface ReleaseRequest {
@@ -10,10 +11,15 @@ export interface ReleaseRequest {
 	version: string;
 }
 
-export async function prepareRelease(api: Api, request: ReleaseRequest): Promise<{ plan: Reply; prepared: Reply }> {
+export async function prepareRelease(
+	api: Api,
+	request: ReleaseRequest,
+	preparation: { versionPrMerge?: VersionPrMerge } = {},
+): Promise<{ plan: Reply; prepared: Reply }> {
 	const plan = await api('/api/releases/plan', request);
 	const prepared = await api('/api/releases/prepare', {
 		...request,
+		...preparation,
 		sourceSha: text(plan.body, 'sourceSha'),
 		planId: text(plan.body, 'planId'),
 	});
