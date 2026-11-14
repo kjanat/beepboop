@@ -1,5 +1,5 @@
 import { Effect } from 'effect';
-import { applyEdits, modify } from 'jsonc-parser';
+import { applyEdits, modify, parseTree } from 'jsonc-parser';
 import { jsonIndent, object } from '@/automation/managers/helpers';
 import { discoverNpmTargets } from '@/automation/managers/npm-targets';
 import { packageManifests } from '@/automation/managers/package-json';
@@ -42,6 +42,14 @@ function editManifest(before: string, changes: readonly ManifestChange[]): strin
 		(text, [path, value]) => applyEdits(text, modify(text, [...path], value, { formattingOptions })),
 		before,
 	);
+}
+function insertedVersion(before: string, version: string): string {
+	const properties = parseTree(before)?.children ?? [];
+	const anchor = properties.find(property => property.children?.[0]?.value === 'name') ?? properties.at(-1);
+	const eol = before.includes('\r\n') ? '\r\n' : '\n';
+	const line = `${eol}${jsonIndent(before)}"version": ${JSON.stringify(version)}`;
+	const end = anchor ? anchor.offset + anchor.length : before.indexOf('{') + 1;
+	return `${before.slice(0, end)}${anchor ? `,${line}` : `${line}${eol}`}${before.slice(end)}`;
 }
 export function npmLatest(name: string, request: Fetcher): Effect.Effect<RegistryVersion> {
 	return latestVersion(
@@ -133,7 +141,12 @@ export const npmManager: Adapter<'npm'> = {
 				packages,
 				version,
 			);
-			return yield* fromSync(() => editManifest(before, [[['version'], version], ...pins]));
+			return yield* fromSync(() =>
+				editManifest(
+					'version' in data ? editManifest(before, [[['version'], version]]) : insertedVersion(before, version),
+					pins,
+				)
+			);
 		});
 	},
 	updateDependencies: ({ snapshot, packages, version, changed }) =>
