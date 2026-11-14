@@ -10,7 +10,7 @@ import { fileProblem } from '@/contract/diagnostics';
 import { precondition } from '@/contract/errors';
 import { packageIdentity } from '@/package-url';
 import { parentDirectory } from '@/relative-path';
-export const cargoManager: Adapter<'cargo'> = {
+export const cargoManager = {
 	name: 'cargo',
 	identity: pkg => packageIdentity({ type: 'cargo', name: pkg.name, version: pkg.version }),
 	latest(pkg, request) {
@@ -159,4 +159,4 @@ export const cargoManager: Adapter<'cargo'> = {
 			}
 		});
 	},
-};
+} satisfies Adapter<'cargo'>;

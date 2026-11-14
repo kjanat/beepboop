@@ -83,7 +83,7 @@ export const repositoryEndpoints = {
 			if (input.planId !== plan.planId) {
 				return yield* conflict(
 					'stale-plan',
-					'These choices produce a different plan than the reviewed preview. An outdated beepboop CLI drops choice fields it does not know. Upgrade beepboop, or preview again if presets changed.',
+					'These choices produce a different plan than the reviewed preview. An outdated beepboop CLI drops choice fields it does not know. Upgrade beepboop, or preview again if presets or publishing checks changed.',
 				);
 			}
 			const takeOver = input.takeOver === true && branchConflict;
@@ -165,6 +165,7 @@ function setupReview(input: { repository: string; choices?: unknown }, context: 
 		const choices = input.choices ?? (proposed ? saved?.choices : undefined);
 		const workflowPermission = yield* service.gateway.canEditWorkflows(name, id);
 		const plan = yield* previewSetup(snapshot, inventory, choices, {
+			publishing: service.publishingAccess(snapshot.repository),
 			...savedSetup(saved),
 			head,
 			workflowPermission,

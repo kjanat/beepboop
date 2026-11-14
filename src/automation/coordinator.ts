@@ -2771,7 +2771,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (repository && readiness(repository).kind !== 'suspended') {
 					const gateway = yield* this.gateway;
 					const snapshot = yield* gateway.snapshot(repository.name, repository.id);
-					yield* maintainSetup(store, gateway, snapshot, { number: edit.number, choices: edit.choices });
+					yield* maintainSetup(store, gateway, snapshot, (yield* Automation).publishingAccess(snapshot.repository), {
+						number: edit.number,
+						choices: edit.choices,
+					});
 				}
 			}).pipe(
 				store.auditFailure('beepboop', 'repository.setup.failed', `${edit.repositoryId} ${edit.head}`),

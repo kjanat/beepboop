@@ -15,6 +15,8 @@ import { inferReleaseGraph } from '@/automation/release-graph/graph';
 import { behaviourChanges, changeDetails, onboardingBranch } from '@/automation/setup-changes';
 import { completeTaggedStreams } from '@/automation/setup-completion';
 import { crateScript, refreshedCommands, suggestedCommands } from '@/automation/setup-defaults';
+import type { PublishingAccess } from '@/automation/setup-publishing';
+import { checkPublishing } from '@/automation/setup-publishing';
 import { startWorkflow } from '@/automation/setup-start';
 import { listed, streamSummary } from '@/automation/setup-summary';
 import type {
@@ -298,6 +300,7 @@ export function binaryRelease(candidates: readonly BinaryCandidate[]): BinaryRel
 export const branchConflictBlocker =
 	'Someone else committed to the setup branch, so Beepboop stopped updating it. Take over to replace their commits with this proposal.';
 export interface SetupBaseline {
+	publishing?: PublishingAccess;
 	head: string | null;
 	workflowPermission?: boolean;
 	branchConflict?: boolean;
@@ -398,8 +401,12 @@ function draftSetup(
 				]
 				: []
 		);
+		const publishingChecks = baseline.publishing
+			? yield* checkPublishing(snapshot, inventory, choices, baseline.publishing)
+			: [];
 		const plan = {
 			...drafts,
+			...(publishingChecks.length ? { publishingChecks } : {}),
 			blockers: [...ineligible, ...drafts.blockers],
 			notes: [
 				...unanswered,

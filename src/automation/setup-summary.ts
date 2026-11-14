@@ -26,7 +26,7 @@ function sentence(value: string): string {
 
 export function streamSummary(
 	stream: Stream,
-	plan: Pick<SetupPlan, 'inventory' | 'packageIds' | 'workflows'>,
+	plan: Pick<SetupPlan, 'inventory' | 'packageIds' | 'workflows' | 'publishingChecks'>,
 ): string[] {
 	const packages = new Map(plan.inventory.packages.map((pkg, index) => [plan.packageIds[index] ?? '', pkg]));
 	const existing = new Set(plan.workflows.map(workflow => workflow.file));
@@ -97,10 +97,8 @@ export function streamSummary(
 			);
 		}
 	}
-	if ([...observed].some(id => packages.get(id)?.manager === 'cargo')) {
-		lines.push(
-			'Cargo publisher readiness is unverified: adoption has not checked whether each crate exists on crates.io or whether its authentication is configured. Before starting a release with crates.io Trusted Publishing, manually publish any new crate first, then configure its trusted publisher. See https://crates.io/docs/trusted-publishing.',
-		);
+	for (const check of plan.publishingChecks ?? []) {
+		if (files.includes(check.file)) lines.push(`${check.subject}: ${check.message}`);
 	}
 	for (const operation of stream.operations ?? []) {
 		const after = operation.needs.map(name => {

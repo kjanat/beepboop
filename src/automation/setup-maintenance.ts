@@ -9,6 +9,7 @@ import { documentRow } from '@/automation/schemas';
 import { previewSetup, releaseAfterMerge, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import { marked } from '@/automation/setup-body';
 import { setupBranch, setupTitle } from '@/automation/setup-changes';
+import type { PublishingAccess } from '@/automation/setup-publishing';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Store } from '@/automation/store';
 import { decodeError } from '@/automation/store';
@@ -95,6 +96,7 @@ export function maintainSetup(
 	store: Store,
 	gateway: RepositoryGateway,
 	snapshot: Snapshot,
+	publishing: PublishingAccess,
 	requested?: { number: number; choices: SetupChoices },
 ): Effect.Effect<void, DomainError> {
 	return Effect.gen(function*() {
@@ -107,7 +109,7 @@ export function maintainSetup(
 		if (!row) return;
 		const saved = yield* Effect.fromResult(record(yield* fromJson(row.document)));
 		const pull = yield* gateway.openSetupPull(name, id);
-		if (!pull && !requested) return yield* migrateSetup(store, gateway, snapshot, saved, row.document);
+		if (!pull && !requested) return yield* migrateSetup(store, gateway, snapshot, saved, row.document, publishing);
 		if (!pull || (requested && pull.number !== requested.number)) return;
 		const generatedFiles = yield* gateway.generatedFiles(name, id, pull.head);
 		if (!generatedFiles && saved.head !== pull.head) return;
@@ -146,6 +148,7 @@ export function maintainSetup(
 			const workflowPermission = yield* gateway.canEditWorkflows(name, id);
 			const repaired = saved.observationsKept === true ? choices : storedObservation(choices, raw, inventory);
 			const plan = yield* previewSetup(snapshot, inventory, repaired, {
+				publishing,
 				...savedSetup(saved),
 				head: pull.head,
 				workflowPermission,
@@ -271,6 +274,7 @@ function migrateSetup(
 	snapshot: Snapshot,
 	saved: Record<string, unknown>,
 	document: string,
+	publishing: PublishingAccess,
 ): Effect.Effect<void, DomainError> {
 	return Effect.gen(function*() {
 		const { name, id } = snapshot.repository;
@@ -286,6 +290,7 @@ function migrateSetup(
 		const branch = setupBranch(snapshot);
 		const head = yield* gateway.setupHead(name, id, branch);
 		const plan = yield* previewSetup(snapshot, withRegistryStatus(discover(snapshot), stored?.inventory), undefined, {
+			publishing,
 			saved: choices,
 			head,
 			workflowPermission: yield* gateway.canEditWorkflows(name, id),
@@ -325,6 +330,7 @@ export function currentOptions(
 	gateway: RepositoryGateway,
 	repository: { name: string; id: number },
 	choices: SetupChoices,
+	publishing: PublishingAccess,
 ): Effect.Effect<ReturnType<typeof setupOptions>, DomainError> {
 	return Effect.gen(function*() {
 		const snapshot = yield* gateway.snapshot(repository.name, repository.id);
@@ -337,7 +343,7 @@ export function currentOptions(
 			snapshot,
 			withRegistryStatus(discover(snapshot), stored?.inventory),
 			choices,
-			{ head: null },
+			{ head: null, publishing },
 			resolved.configuration,
 		);
 		return setupOptions(plan);

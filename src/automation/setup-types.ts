@@ -47,6 +47,7 @@ export interface WorkflowEvidence {
 	publishes: boolean;
 }
 export interface SetupPlan {
+	publishingChecks?: PublishingCheck[];
 	repository: string;
 	sourceSha: string;
 	planId: string;
@@ -72,4 +73,11 @@ export interface SetupPlan {
 	binaryCandidates?: BinaryCandidate[];
 	branchConflict: boolean;
 	prior?: { url: string; superseded: boolean };
+}
+
+export interface PublishingCheck {
+	file: string;
+	subject: string;
+	status: 'passed' | 'action-required' | 'failed';
+	message: string;
 }

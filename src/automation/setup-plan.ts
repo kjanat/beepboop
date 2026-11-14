@@ -51,6 +51,12 @@ const evidence: Schema.Codec<WorkflowEvidence, unknown> = mutableStruct({
 	publishes: Schema.Boolean,
 });
 const setupPlan: Schema.Codec<SetupPlan, unknown> = mutableStruct({
+	publishingChecks: Schema.optional(mutableArray(mutableStruct({
+		file: Schema.String,
+		subject: Schema.String,
+		status: Schema.Literals(['passed', 'action-required', 'failed']),
+		message: Schema.String,
+	}))),
 	repository: Schema.String,
 	sourceSha: Schema.String,
 	planId: Schema.String,
