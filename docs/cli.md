@@ -103,6 +103,19 @@ beepboop release patch --repository owner/repository --stream main --dry-run
 beepboop release patch --repository owner/repository --stream main --yes --json
 ```
 
+`--auto`, `--no-auto` and `--merge` decide for this release who merges its
+version PR, in place of `prepare.versionPrMerge`. `--merge squash`, `merge` or
+`rebase` turns on GitHub auto-merge with that method. `--auto` uses the
+stream's method, or `squash` when the stream merges by hand. `--no-auto` leaves
+the version PR for you. A release that commits its version, prepares in its own
+workflow or already carries its version opens no version PR and refuses these
+flags. A release already in preparation keeps its first choice and refuses a
+different one.
+
+```sh
+beepboop release minor --merge rebase
+```
+
 When the default branch already carries the version, a stream with `cli` in
 `startFrom` publishes it after the same single confirmation, including a
 promotion that waits for you to publish it. Without `cli` in `startFrom`,

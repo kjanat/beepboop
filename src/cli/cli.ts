@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import type { CLIError, InteractiveResult, Out, SpinnerHandle } from '@kjanat/dreamcli';
-import { arg, cli, command, flag, group } from '@kjanat/dreamcli';
+import { arg, cli, command, flag, group, wasExplicit } from '@kjanat/dreamcli';
 import { Effect, Schema } from 'effect';
 import { Client } from '@/cli/client';
 import type { SecurityKeyPrompts } from '@/cli/fido2/index';
@@ -26,6 +26,7 @@ import { approvalPolicies, startChannels, versionBumps } from '@/contract/releas
 import { routes } from '@/contract/routes';
 import { binaryTargets, streamVersionings, workflowTriggers } from '@/contract/setup';
 import {
+	autoMergeMethods,
 	companionModulesSentence,
 	existingTriggerChoices,
 	existingTriggersQuestion,
@@ -377,6 +378,9 @@ const release = base('release', 'Release this Git checkout: preview a version on
 	.example('beepboop release major', 'No cli in startFrom, via-version-pr: open the version PR')
 	.example('beepboop release patch --yes', 'Skip only the confirmation')
 	.example('beepboop release patch --dry-run', 'Print the preview (packages, version file diffs), start nothing')
+	.example('beepboop release minor --auto', 'GitHub auto-merges this version PR with the stream method, else squash')
+	.example('beepboop release minor --merge rebase', 'GitHub auto-merges this version PR with a rebase')
+	.example('beepboop release minor --no-auto', 'You merge this version PR yourself')
 	.arg('version', arg.string().optional().describe('patch, minor, major or an explicit semantic version'))
 	.flag('repository', flag.string().describe('Repository override; otherwise resolve the current Git remote'))
 	.flag('stream', flag.string().describe('Release stream; inferred when only one is configured'))
@@ -385,11 +389,28 @@ const release = base('release', 'Release this Git checkout: preview a version on
 		'dry-run',
 		flag.boolean().default(false).describe('Plan on the server, print the preview and start nothing'),
 	)
-	.action(({ flags, args, ask, out }) =>
+	.flag(
+		'auto',
+		flag.boolean().negatable().describe(
+			'Turn GitHub auto-merge of this version PR on or off; otherwise the stream versionPrMerge decides',
+		),
+	)
+	.flag('merge', flag.enum(autoMergeMethods).describe('Auto-merge this version PR with squash, merge or rebase'))
+	.action(({ flags, args, ask, out, sources }) =>
 		Effect.runPromise(
 			Client.at(flags.server).pipe(
 				Effect.flatMap(client =>
-					releaseRepository(client, { ...flags, dryRun: flags['dry-run'], version: args.version }, ask, out)
+					releaseRepository(
+						client,
+						{
+							...flags,
+							dryRun: flags['dry-run'],
+							version: args.version,
+							auto: wasExplicit(sources.flags.auto) ? flags.auto : undefined,
+						},
+						ask,
+						out,
+					)
 				),
 			),
 		)

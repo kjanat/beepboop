@@ -534,7 +534,8 @@ merges it once its required checks pass. With
 touching it. Auto-merge needs **Allow auto-merge** in the repository settings
 and a branch rule that the PR has to satisfy. When GitHub refuses it, the PR
 stays open, and Beepboop comments GitHub's reason on it and shows that note on
-the runs page.
+the runs page. `beepboop release --auto`, `--no-auto` or `--merge` sets the
+method for one release; see [CLI usage](cli.md).
 
 A start through a channel the stream does not list prepares the release as
 before, and the version follows `promote.publishWhen`. A version raised on the

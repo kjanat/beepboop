@@ -1236,3 +1236,88 @@ test('a failed build leg shows in the binary progress and the binaries table', a
 	expect(output).toContain('widget  linux-amd64   ○ skipped');
 	expect(output).toContain('widget  darwin-arm64  ✖ failed');
 });
+
+test('--auto, --no-auto and --merge send this release its version PR merge', async () => {
+	const repository = await seed();
+	const previewed = async (...flags: string[]) => {
+		const result = await run(['release', 'patch', '--repository', repository.name, '--json', ...flags]);
+		expect(result.exitCode).toBe(0);
+		return decodeSync(looseStruct({}), JSON.parse(result.stdout.join(''))).versionPrMerge;
+	};
+	expect(await previewed()).toBeUndefined();
+	expect(await previewed('--auto')).toBe('squash');
+	expect(await previewed('--merge', 'rebase')).toBe('rebase');
+	expect(await previewed('--auto', '--merge', 'merge')).toBe('merge');
+	expect(await previewed('--no-auto')).toBe('manual');
+	const configuration = widgetStreams();
+	configuration.streams.main = withMain(configuration, { prepare: { strategy: 'managed', versionPrMerge: 'merge' } });
+	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Merge version PRs');
+	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	expect(await previewed('--auto')).toBe('merge');
+	const preview = await run(['release', 'patch', '--repository', repository.name, '--merge', 'rebase', '--dry-run']);
+	expect(preview.stdout.join('')).toContain('Version PR: Beepboop turns on GitHub auto-merge, and GitHub rebases');
+	expect(prepareCalls()).toHaveLength(0);
+	const prepared = await run([
+		'release',
+		'patch',
+		'--repository',
+		repository.name,
+		'--json',
+		'--yes',
+		'--merge',
+		'rebase',
+	]);
+	expect(prepared.exitCode).toBe(0);
+	expect(prepareCalls().map(call => decodeSync(looseStruct({}), call.body).versionPrMerge)).toEqual(['rebase']);
+	const changed = await run(['release', 'patch', '--repository', repository.name, '--json', '--yes', '--no-auto']);
+	expect(changed.exitCode).not.toBe(0);
+	expect(changed.stdout.join('')).toContain('already being prepared with versionPrMerge rebase');
+});
+
+test('--no-auto with --merge, or any merge flag on a release without a version PR, prepares nothing', async () => {
+	const repository = await seed();
+	const refused = async (code: string, ...flags: string[]) => {
+		const result = await run(['release', 'patch', '--repository', repository.name, '--json', '--yes', ...flags]);
+		expect(result.exitCode).not.toBe(0);
+		expect(result.stdout.join('')).toContain(code);
+	};
+	await refused('INVALID_FLAGS', '--no-auto', '--merge', 'squash');
+	const configuration = widgetStreams();
+	configuration.streams.main = withMain(configuration, { prepare: { strategy: 'managed', bump: 'commit' } });
+	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Commit version bumps');
+	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	await refused('NO_VERSION_PR', '--auto');
+	await refused('NO_VERSION_PR', '--no-auto');
+	expect(prepareCalls()).toHaveLength(0);
+});
+
+test('merge flags refuse a release that prepares in its own workflow or already carries its version', async () => {
+	const { repository } = await delegated();
+	const workflow = await run(['release', '1.2.4', '--repository', repository.name, '--json', '--yes', '--auto']);
+	expect(workflow.exitCode).not.toBe(0);
+	expect(workflow.stdout.join('')).toContain('NO_VERSION_PR');
+	const configuration = widgetStreams();
+	configuration.streams.main = withMain(configuration, {
+		start: [{ via: 'cli' }],
+		prepare: { strategy: 'managed' },
+		credentials: [],
+	});
+	world.github.push(repository, {
+		'.github/beepboop.json': JSON.stringify(configuration),
+		'package.json': npmManifest('widget', '1.2.4'),
+	}, 'Raise the version and start from the CLI');
+	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	const raised = await run([
+		'release',
+		'1.2.4',
+		'--repository',
+		repository.name,
+		'--json',
+		'--yes',
+		'--merge',
+		'squash',
+	]);
+	expect(raised.exitCode).not.toBe(0);
+	expect(raised.stdout.join('')).toContain('NO_VERSION_PR');
+	expect(prepareCalls()).toHaveLength(0);
+});

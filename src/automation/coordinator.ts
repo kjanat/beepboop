@@ -972,7 +972,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		);
 	}
 	private autoMerged(execution: Execution, result: PreparationResult): CoordinatorEffect<PreparationResult> {
-		const method = execution.configuration.streams[execution.stream]?.prepare.versionPrMerge;
+		const method = execution.versionPrMerge
+			?? execution.configuration.streams[execution.stream]?.prepare.versionPrMerge;
 		if (result.kind === 'commit' || result.autoMerge || !method || method === 'manual') return Effect.succeed(result);
 		return Effect.gen({ self: this }, function*() {
 			const work = (yield* this.gateway).enableAutoMerge(

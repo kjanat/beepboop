@@ -17,6 +17,7 @@ import { conflict, notFound, precondition } from '@/contract/errors';
 import type { StartChannel } from '@/contract/release-start';
 import { startsFrom } from '@/contract/release-start';
 import { routes } from '@/contract/routes';
+import type { VersionPrMerge } from '@/contract/setup-terms';
 import type { ReadyRepository } from '@/domain/repository';
 import { fromPromise } from '@/failure';
 import { semver } from '@/model';
@@ -153,6 +154,12 @@ function setPlan(input: { repositoryId: number; stream: string; plan: unknown },
 	});
 }
 
+function opensVersionPr(stream: Stream, plan: ReleasePlan): boolean {
+	return (plan.edits.length > 0 || plan.requiresPreparation === true)
+		&& stream.prepare.bump !== 'commit'
+		&& !(stream.prepare.workflow && stream.prepare.strategy === 'workflow');
+}
+
 export function beginRelease(
 	service: AutomationService,
 	selection: Selected,
@@ -161,11 +168,15 @@ export function beginRelease(
 	planId: string,
 	actor: string,
 	started?: ReleaseStarted,
+	versionPrMerge?: VersionPrMerge,
 ): Effect.Effect<Execution, DomainError> {
 	return Effect.gen(function*() {
 		const { repository, stream } = selection;
 		if (started && (stream.versionSource?.kind === 'tags' || stream.versioning === 'independent')) {
 			return yield* precondition(`${name} cannot start releases: it needs one shared version kept in its manifests`);
+		}
+		if (versionPrMerge && !opensVersionPr(stream, plan)) {
+			return yield* precondition(`${plan.version} of ${name} opens no version PR to merge`);
 		}
 		if (!plan.edits.length && !plan.requiresPreparation) {
 			const promotion = yield* createExecution(repository, {
@@ -196,8 +207,17 @@ export function beginRelease(
 		);
 		execution.initiatedBy = actor;
 		if (started) execution.started = started;
+		if (versionPrMerge) execution.versionPrMerge = versionPrMerge;
 		yield* service.store.audit(actor, started ? 'release.start' : 'release.prepare', execution.id);
-		return yield* service.enqueue(repository, execution);
+		const queued = yield* service.enqueue(repository, execution);
+		if (versionPrMerge && queued.versionPrMerge !== versionPrMerge) {
+			return yield* precondition(
+				`${plan.version} of ${name} is already being prepared with versionPrMerge ${
+					queued.versionPrMerge ?? 'from the stream'
+				}`,
+			);
+		}
+		return queued;
 	});
 }
 
@@ -219,7 +239,16 @@ export const releaseEndpoints = {
 			}
 			const via = channel(request);
 			const started = startsFrom(selection.stream.start, via) ? { via, actor } : undefined;
-			return yield* beginRelease(service, selection, input.stream, plan, planId, actor, started);
+			return yield* beginRelease(
+				service,
+				selection,
+				input.stream,
+				plan,
+				planId,
+				actor,
+				started,
+				input.versionPrMerge,
+			);
 		})),
 	releasesPlanSet: admin(
 		routes.releasesPlanSet,

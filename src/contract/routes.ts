@@ -9,6 +9,7 @@ import {
 	reportStep,
 } from '@/contract/ledger';
 import { destinationInput, subscriptionInput, watchInput } from '@/contract/notifications';
+import { versionPrMerge } from '@/contract/setup-terms';
 import {
 	acknowledged,
 	approvalReadiness,
@@ -247,6 +248,7 @@ export const routes = {
 			packages: Schema.optional(mutableArray(text)),
 			sourceSha: sha,
 			planId: Schema.String,
+			versionPrMerge: Schema.optional(versionPrMerge),
 		}),
 		response: executionView,
 	}),
