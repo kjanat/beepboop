@@ -37,6 +37,42 @@ test('unknown signing keys refresh after the successful-fetch cooldown', async (
 	}
 });
 
+test.each(['empty', 'expired'] as const)('overlapping refreshes cannot roll an %s cache backward', async state => {
+	const clock = spyOn(Date, 'now').mockReturnValue(1_000_000);
+	const delayed = Promise.withResolvers<Response>();
+	const started = Promise.withResolvers<void>();
+	let older: Promise<unknown> | undefined;
+	try {
+		let calls = 0;
+		const transport: Fetcher = () => {
+			calls++;
+			if (state === 'expired' && calls === 1) return Promise.resolve(Response.json(document()));
+			if (calls === (state === 'expired' ? 2 : 1)) {
+				started.resolve();
+				return delayed.promise;
+			}
+			return Promise.resolve(Response.json(document('rotated')));
+		};
+		const first = remoteKeys(endpoint, transport);
+		const second = remoteKeys(endpoint, transport);
+		if (state === 'expired') {
+			expect((await first(request())).ok).toBe(true);
+			clock.mockReturnValue(1_600_001);
+		}
+		older = Promise.resolve(first(request()));
+		await started.promise;
+		expect((await second(request('rotated'))).ok).toBe(true);
+		delayed.resolve(Response.json(document()));
+		expect(await older).toMatchObject({ ok: true });
+		expect((await second(request('rotated'))).ok).toBe(true);
+		expect(calls).toBe(state === 'expired' ? 3 : 2);
+	} finally {
+		delayed.resolve(Response.json(document()));
+		await older;
+		clock.mockRestore();
+	}
+});
+
 test.each(
 	[
 		['with the same kid', 'current'],
@@ -157,3 +193,51 @@ test('the signing key deadline cancels both stalled fetches and stalled response
 	expect(fetchSignal?.aborted).toBe(true);
 	expect(cancelled).toBe(true);
 }, 10_000);
+
+test.each(['cancellation', 'deadline'] as const)(
+	'%s settles cached and fresh key resolution before a late import completes',
+	async reason => {
+		const cached = remoteKeys(endpoint, async () => Response.json(document()));
+		const fresh = remoteKeys(endpoint, async () => Response.json(document()));
+		expect((await cached(request())).ok).toBe(true);
+		const key = await crypto.subtle.importKey('jwk', publicKey, { name: 'ECDSA', namedCurve: 'P-256' }, false, [
+			'verify',
+		]);
+		const imported = Promise.withResolvers<CryptoKey>();
+		const started = Promise.withResolvers<void>();
+		let imports = 0;
+		const importKey = spyOn(crypto.subtle, 'importKey').mockImplementation(() => {
+			if (++imports === 2) started.resolve();
+			return imported.promise;
+		});
+		const controller = new AbortController();
+		const resolutions = Promise.all([
+			cached(request('current', controller.signal)),
+			fresh(request('current', controller.signal)),
+		]);
+		let guard: ReturnType<typeof setTimeout> | undefined;
+		try {
+			await started.promise;
+			if (reason === 'cancellation') controller.abort();
+			const results = await Promise.race([
+				resolutions,
+				new Promise<undefined>(resolve => {
+					guard = setTimeout(() => resolve(undefined), reason === 'cancellation' ? 1000 : 6500);
+				}),
+			]);
+			expect(results).toBeDefined();
+			const failure = { ok: false, code: reason === 'cancellation' ? 'aborted' : 'jwks_unavailable' };
+			for (const result of results ?? []) expect(result).toMatchObject(failure);
+			imported.resolve(key);
+			for (const result of await resolutions) expect(result).toMatchObject(failure);
+		} finally {
+			clearTimeout(guard);
+			imported.resolve(key);
+			await resolutions;
+			importKey.mockRestore();
+		}
+		expect((await cached(request())).ok).toBe(true);
+		expect((await fresh(request())).ok).toBe(true);
+	},
+	10_000,
+);
