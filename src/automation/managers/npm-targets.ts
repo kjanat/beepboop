@@ -7,7 +7,7 @@ import { publishable, registry } from '@/automation/package-publication';
 import type { Inventory, Package, Snapshot } from '@/automation/types';
 import { npmTargets } from '@/contract/catalog';
 import { fileProblem } from '@/contract/diagnostics';
-import { npmTargetDescriptor, platformMap } from '@/contract/targets';
+import { npmTargetDescriptor, platformMap, targetFields, targetsSchema } from '@/contract/targets';
 import { safeVersionPath } from '@/contract/version-files';
 import { parentDirectory } from '@/relative-path';
 import { safeDecode } from '@/schema';
@@ -97,9 +97,13 @@ export function discoverNpmTargets(snapshot: Snapshot, inventory: Inventory): bo
 		} else documents.set(path, parsed.success);
 	}
 	const maps = ownedMaps(documents, manifests, originals);
-	let detected = false;
+	const candidates: { path: string; packages: Package[] }[] = [];
 	for (const [path, document] of documents) {
-		const invalid = (detail: string) => inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', detail));
+		let failed = false;
+		const invalid = (detail: string) => {
+			failed = true;
+			inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', detail));
+		};
 		const raw = object(document);
 		const parsed = safeDecode(npmTargetDescriptor, document);
 		const groups: Group[] = [];
@@ -131,7 +135,21 @@ export function discoverNpmTargets(snapshot: Snapshot, inventory: Inventory): bo
 				continue;
 			}
 			const map = maps.find(map => map.path === path);
-			if (!map) continue;
+			if (!map) {
+				const knownFields = Object.keys(targetFields.schema.fields);
+				const recognizable = Array.isArray(document)
+					|| Object.entries(raw).some(([key, value]) =>
+						key !== '$schema' && (knownFields.some(field => Object.hasOwn(object(value), field))
+							|| manifests.some(({ manifest }) =>
+								Object.keys(object(manifest.optionalDependencies)).some(name => name.endsWith(`-${key}`))
+							))
+					);
+				if (recognizable) {
+					const validated = safeDecode(targetsSchema, document);
+					if (!validated.success) invalid(`invalid target metadata: ${validated.error.message}`);
+				}
+				continue;
+			}
 			for (const facade of map.facades) {
 				const owners = maps.filter(other => other.facades.some(candidate => candidate.path === facade.path));
 				if (owners.some(other => other.directory.length > map.directory.length)) continue;
@@ -226,11 +244,28 @@ export function discoverNpmTargets(snapshot: Snapshot, inventory: Inventory): bo
 		if (bundle && bundleVersion) {
 			add(bundle, groups.map(group => group.name), bundleVersion.source, bundleVersion.version);
 		}
-		inventory.packages = inventory.packages.filter(pkg =>
-			pkg.manager !== 'npm' || !generated.some(entry => entry.name === pkg.name)
-		);
-		inventory.packages.push(...generated);
-		detected ||= generated.length > 0;
+		if (!failed && generated.length) candidates.push({ path, packages: generated });
 	}
-	return detected;
+	const owners = new Map<string, string[]>();
+	for (const candidate of candidates) {
+		for (const pkg of candidate.packages) owners.set(pkg.name, [...(owners.get(pkg.name) ?? []), candidate.path]);
+	}
+	const accepted = candidates.filter(candidate => {
+		const conflicts = candidate.packages.filter(pkg => (owners.get(pkg.name)?.length ?? 0) > 1);
+		for (const pkg of conflicts) {
+			inventory.diagnostics.push(
+				fileProblem(
+					candidate.path,
+					'invalid-manifest',
+					`generated npm package ${pkg.name} has competing descriptors: ${
+						[...(owners.get(pkg.name) ?? [])].sort().join(', ')
+					}`,
+				),
+			);
+		}
+		return conflicts.length === 0;
+	}).flatMap(candidate => candidate.packages);
+	const names = new Set(accepted.map(pkg => pkg.name));
+	inventory.packages = [...originals.filter(pkg => pkg.manager !== 'npm' || !names.has(pkg.name)), ...accepted];
+	return accepted.length > 0;
 }

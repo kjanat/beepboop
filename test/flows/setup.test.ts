@@ -27,6 +27,7 @@ import {
 import { cratePublishCommands, ledgerCommand, suggestedCommands } from '@/automation/setup-defaults';
 import { rebuildingStatus } from '@/automation/setup-maintenance';
 import { parseSetupPlan } from '@/automation/setup-plan';
+import { streamSummary } from '@/automation/setup-summary';
 import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
 import { publishMinutes } from '@/automation/setup-workflows';
 import { setupChoicesSchema } from '@/contract/setup';
@@ -2456,6 +2457,41 @@ test('a setup update body leads with old and new values, then held packages, cho
 		branchConflict: false,
 	};
 	const body = setupBody(plan, { branch: updateBranch, defaultBranch: 'master' });
+	for (const tagPatterns of [[], ['v*']]) {
+		const observedStream = {
+			...plan.choices.streams[0]!,
+			promote: undefined,
+			observe: [{ name: 'publish', file: 'release.yml', ref: 'refs/heads/main', publications: ['pkg:npm/widget'] }],
+		};
+		const summary = streamSummary(observedStream, {
+			...plan,
+			workflows: [{ ...evidence('release.yml'), events: ['push', 'workflow_dispatch'], tagPatterns }],
+		}).join('\n');
+		expect(summary).toContain(
+			tagPatterns.length ? 'Tags matching v* start release.yml' : 'Release.yml runs on its own triggers',
+		);
+	}
+
+	const observed = {
+		...plan,
+		choices: {
+			...plan.choices,
+			streams: [{
+				...plan.choices.streams[0]!,
+				promote: undefined,
+				observe: [
+					{ name: 'npm', file: 'release.yml', ref: 'refs/tags/v*', publications: ['pkg:npm/widget'] },
+					{ name: 'github', file: 'release.yml', ref: 'refs/tags/v*', publications: ['pkg:github/octo/widget'] },
+				],
+			}],
+		},
+	};
+	expect(
+		setupBody(observed, { branch: updateBranch, defaultBranch: 'master' }).split('\n').find(line =>
+			line.startsWith('  - Publication:')
+		),
+	).toBe('  - Publication: observes `release.yml`');
+
 	expect(body.slice(0, body.indexOf('### Choices'))).toBe(
 		`Beepboop inspected [\`${'a'.repeat(12)}\`](https://github.com/octo/shellcheck/commit/${
 			'a'.repeat(40)

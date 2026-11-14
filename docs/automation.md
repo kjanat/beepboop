@@ -1069,17 +1069,25 @@ steps:
 The action creates the commit through the GitHub API, so GitHub signs it and
 shows it as verified, with the App bot as author. The commit holds every change
 in the checkout, including new, deleted and executable files, on top of the
-checked-out commit. Each run replaces `branch` with that one commit. A run
-whose changes equal the branch pushes nothing.
+checked-out commit. The action stages the selected working-tree files in a temporary index; the checkout's existing staging is preserved. Each run reconciles `branch` to one commit. Reuse requires an identical tree, parent, and commit message, so changing only `commit-message` creates a new commit. Binary contents, executable modes, symlinks and submodule gitlinks retain their Git representation.
 
-| Input            | Meaning                                                              |
-| ---------------- | -------------------------------------------------------------------- |
-| `branch`         | Branch that holds the changes. Required.                             |
-| `title`          | Pull request title. Required.                                        |
-| `body`           | Pull request body.                                                   |
-| `commit-message` | Commit message. Defaults to the title.                               |
-| `base`           | Branch the pull request targets. Defaults to the checked-out branch. |
-| `add-paths`      | Git pathspecs to commit, one per line. Defaults to every change.     |
+Give this action exclusive ownership of its branch and serialize all jobs using that branch with a shared workflow concurrency group, for example `beepboop-pr-${{ github.repository }}-autofix-dprint` and `cancel-in-progress: false`. Each branch update also compares the current head with the head read during preflight. A competing update wins only once; a stale run fails instead of overwriting it. Concurrent runs requesting identical contents converge on one branch and pull request.
+
+Before uploading objects, the action verifies the base exists, refuses a head with an open pull request against another base, and checks its ownership trailer. Existing branches require explicit `allow-existing-branch: true` adoption unless their head carries this action's repository/branch/base trailer. Adopt only a branch reserved exclusively for this automation. The trailer is an ownership convention; repository writers can edit it.
+
+The branch and pull-request metadata are separate GitHub operations. A failure can leave uploaded objects, an updated branch, or an existing pull request. Rerunning reconciles that state, including an ambiguous response after branch or PR creation. The action keeps completed work and never blindly rolls the branch back. Outputs follow final branch and PR-head verification; another writer can still change either after that read.
+
+Changes are limited to 500 paths, 10 MiB per blob and 50 MiB of blob contents. Each Git subprocess has a 30-second timeout and a 16 MiB output cap. API requests share a five-minute budget from action start, with a 60-second request timeout; preparation also consumes that budget. An unchanged rerun skips blob, tree and commit uploads.
+
+| Input                   | Meaning                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------ |
+| `allow-existing-branch` | Explicitly adopt an existing branch for exclusive automation ownership. Defaults to false. |
+| `branch`                | Branch that holds the changes. Required.                                                   |
+| `title`                 | Pull request title. Required.                                                              |
+| `body`                  | Pull request body.                                                                         |
+| `commit-message`        | Commit message. Defaults to the title.                                                     |
+| `base`                  | Branch the pull request targets. Defaults to the checked-out branch.                       |
+| `add-paths`             | Git pathspecs to commit, one per line. Defaults to every change.                           |
 
 On a `pull_request` run, check out the pull request's branch with
 `ref: ${{ github.head_ref }}`. The default checkout of such a run is a merge
@@ -1541,3 +1549,13 @@ for the merge commit. Later default-branch commits release under the configured
 
 The GitHub App needs the **Pull request** event. The app manifest subscribes to
 it. Existing installations must tick the event in the App settings.
+
+## Discovery and dashboard consistency
+
+Tag discovery reads up to 100 refs per GraphQL page and stops at 10,000 tags. It resolves up to eight annotated-tag layers and rejects deeper or non-commit targets. Explicit read-only GraphQL queries retry transient server failures; mutation requests keep their existing single-attempt policy. GraphQL errors, including partial responses, stop discovery with their upstream diagnostics. Rate-limit errors remain distinguishable. Pages are separate reads, so discovery provides no atomic snapshot across concurrent tag changes. Historical reports of an 18-second discovery are observations, not a reproduced benchmark or a latency guarantee.
+
+A release completion record is captured once by the repository coordinator after all required publications for the same frozen release succeed. Dashboard attention reads those records independently of its 200-execution page. The recorded completion time stays fixed when auxiliary operations finish or the projection is rebuilt. Older records use their first retained projection timestamp; their original completion time cannot be recovered exactly. This fallback also stays fixed on reindex.
+
+Legacy execution states are decoded once into the indexed state projection. Unnormalized rows are processed in batches of 100 using a partial index and conditional updates; subsequent reads return at most 200 execution documents. New projections write the decoded state directly. The initial compatibility pass scales with legacy history, while steady-state page reads stay bounded. Malformed records remain visible as unreadable entries.
+
+Saved dashboard folds retain at most 1,024 explicit choices. Visible choices take precedence when older off-page choices are evicted. Initial rendering and programmatic changes keep their defaults; completed user summary clicks persist the choice. Storage quota failures leave the disclosure usable.

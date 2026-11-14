@@ -6,6 +6,7 @@
 			"scripts/**",
 			"actions/**",
 			"test/**",
+			"browser/**",
 			"!test/fixtures",
 			"*.json",
 			"!worker-configuration.d.ts",
@@ -19,6 +20,7 @@
 	},
 	"linter": {
 		"enabled": true,
+		"domains": { "playwright": "none" },
 		"rules": {
 			"preset": "recommended",
 			"style": {
@@ -45,6 +47,7 @@
 		}
 	},
 	"overrides": [
+		{ "includes": ["browser/**"], "linter": { "domains": { "playwright": "recommended" } } },
 		{
 			"includes": [
 				"**/*.astro"

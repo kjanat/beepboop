@@ -54,12 +54,21 @@ Observed workflow completion and the creation of its dependent executions share
 one journal transaction. A failed write leaves the observed execution unfinished
 and retryable. Reconciliation also fills missing continuations for successful
 executions written by older Workers. Continuation identifiers are deterministic,
-so reconciliation preserves existing children and their progress.
+so reconciliation preserves existing children and their progress. Legacy repair
+retains the parent's configuration and source commit but requires the currently
+discovered workflow and package inventory to derive missing children. It does not
+reconstruct historical discovery. If that inventory no longer supports a binding,
+repair fails closed and quarantines the parent with a diagnostic. Restore a
+compatible discovered inventory and explicitly reconcile the parent to retry;
+existing children remain unchanged.
 
 Repository access lives in D1's `access` and `suspended_at` columns. Discovery
 updates inventory and configuration without writing access, and returns the
-current persisted access state. Coordinators read that authority before advancing
-work; missing enrollment or a failed access read prevents execution. Database
+current persisted access state. Coordinators read that authority before each
+execution advances during reconciliation; missing enrollment or a failed access
+read prevents execution. Suspension stops subsequent executions in the pass.
+An execution already advancing may finish its current work, including external
+requests. The access read authorizes that execution advance. Database
 constraints reject active access with a suspension time and suspended access
 without one. Legacy document flags and Durable Object access copies no longer
 participate in authorization.
@@ -78,7 +87,76 @@ eligible again after 60 seconds; five claims exhaust the retry budget. Delivered
 rows cannot carry errors, failed rows require errors, and only sending rows may
 carry ownership. Removing a destination invalidates outstanding claims.
 
+Each attempt reads fresh destination settings. Changes to its enabled state,
+kind, or credential alias increment a persisted revision. After secret retrieval,
+a single database read checks both the lease and that enabled destination's
+revision before starting HTTP. A changed revision leaves the attempt retryable;
+the next claim reads the replacement settings, or fails if the destination stays
+disabled. Disable followed by enable also invalidates the old snapshot. Cosmetic
+name/subscription changes do not invalidate it. Claims consumed before HTTP still
+count toward the five-claim budget.
+
+This final database read is the send authorization boundary. A change or removal
+that commits after it may race with an HTTP request already authorized to start;
+an in-flight request cannot be revoked at its receiver. Its lease still controls
+settlement. Malformed payloads fail without HTTP and remain visible in API and
+dashboard history with their delivery identity, attempt count, and error; their
+payload is null rather than preventing other deliveries from being read.
+
 The claim prevents overlapping passes from sending the same live attempt. A
 remote endpoint can accept a request before a Worker loses its response or crashes;
 retrying that ambiguous attempt can still deliver again. Requests retain their
 stable event ID in `Idempotency-Key` so receivers can deduplicate them.
+
+## Bounded recovery and completion evidence
+
+A reconciliation pass indexes successful executions by release identity once.
+Completion results are shared within each group. Only successful journal commits
+update the index; detached snapshots prevent uncommitted execution changes from
+altering its receipts. The coordinator lock owns the index for the pass, and
+cleanup releases it on every exit. Terminal ledger and continuation repair still
+run, and fresh repository access still authorizes each advance.
+
+Migration `0019_release_completion.sql` adds validated, compact completion
+metadata and a frontier of release proofs for each repository, stream and group.
+A proof dominates another when its version and completion time are both at least
+as high. Keeping only non-dominated points makes completion times strictly
+fall as versions rise. A visible failed run therefore needs one indexed lookup:
+find the lowest version above its own, then check the returned completion time.
+The query returns at most one compact proof per candidate, including when no
+proof qualifies; it never loads historical artifact payloads.
+
+Binary version keys preserve SemVer precedence, including arbitrary-precision
+numeric identifiers, prereleases and ignored build metadata. Database triggers
+maintain the frontier in the same transaction as its release metadata. New points
+use indexed dominance and pruning boundaries. A material update or deletion of
+a frontier point rebuilds its affected group so previously dominated proofs can
+reappear. Reindexing unchanged metadata skips that work. Deployment applies SQL migrations and then runs typed projection maintenance before
+rolling out the new Worker. It uses the production decoders in pages of at most
+100 rows and 512 KB of documents, or one oversized document. Conditional updates
+protect concurrent writes; eight consecutive pages without progress stop deployment.
+Runtime reads repair only one tail page of at most ten rows under the same byte
+budget. Readiness and the selected records share an atomic D1 batch; a larger
+remaining backlog produces an explicit maintenance error instead of partial results.
+Revision stamps and compatibility triggers invalidate metadata when an older Worker
+writes during rollout, including removing stale frontier evidence. New projection
+writes update documents and their metadata stamps together. Invalid documents cannot provide
+completion evidence. Legacy completion timestamps retain their earliest projection
+time.
+
+## Response and polling ownership
+
+Registry responses require an Effect scope, and each GitHub retry owns its response
+inside a separate scope. Cleanup runs on early returns, failure and interruption.
+Cancellation has a one-second cleanup deadline so an unresponsive stream cannot
+hold a reader lock or block completion indefinitely. Intermediate retryable GitHub
+errors are cancelled without reading their bodies. Final diagnostic bodies are
+limited to 8 KiB and two seconds; normal successful payload decoding is unchanged.
+Verification contexts share a single in-flight token request and retain a successful
+result, while failed or fully interrupted acquisition can be retried.
+
+Dashboard polling schedules its next request only after the previous one settles.
+A request receives a 20-second cancellation deadline. Hidden pages and page teardown
+cancel work, and resumed pages restart visible polling. A cancelled result cannot
+reload the page; even a transport that delays cancellation retains its occupied slot
+until settlement, preventing overlapping requests.

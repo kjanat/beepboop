@@ -14,6 +14,7 @@ import { slimRun } from '@/cli/runs';
 import type { executionFilter } from '@/contract/routes';
 import { routes } from '@/contract/routes';
 import type { ExecutionView } from '@/contract/views';
+import { ProjectionBackfill } from '@/persistence/d1/backfill';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
 import {
 	decodeSync,
@@ -204,6 +205,7 @@ async function crowded() {
 			return statement.bind(`decoy-${index}`, 777, row.state, document, row.updated_at + 1 + index);
 		}),
 	);
+	await Effect.runPromise(new ProjectionBackfill(world.db).drain());
 	return run;
 }
 

@@ -117,6 +117,7 @@ export interface ReleaseReference {
 	publications: Publication[];
 }
 export interface AutomationEvent {
+	occurredAt?: number;
 	id: string;
 	source: string;
 	event: 'release' | 'workflow_run' | 'package.version.changed';

@@ -20,3 +20,4 @@ worker-configuration.d.ts
 # Publishable CLI bundle
 /packages/cli/cli.js
 /packages/cli/*.tgz
+.review-artifacts/

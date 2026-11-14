@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pullRequest } from '@root/actions/runtime/pull-request.ts';
@@ -98,7 +98,7 @@ test('changes in the checkout become one verified commit and a pull request', as
 	const commit = world.github.resolve(repository, pull.head.sha);
 	expect(commit).toMatchObject({
 		parents: [checkout.sha],
-		message: 'style: apply formatting',
+		message: 'style: apply formatting\n\nBeepboop-Pull-Request: octo/widget autofix/format main',
 		verified: true,
 		authorId: botId,
 	});
@@ -124,10 +124,11 @@ test('a rerun pushes nothing for the same changes and replaces the commit for ne
 	requests.length = 0;
 	const same = await open(repository, checkout.dir);
 	expect(same).toEqual({ ...created, operation: 'none' });
-	expect(requests.filter(request => /^(POST|PATCH) \/(git\/(commits|refs)|pulls)/.test(request))).toEqual([]);
+	expect(requests.filter(request => /^(POST|PATCH) /.test(request))).toEqual([]);
 
 	const retitled = await open(repository, checkout.dir, { PR_TITLE: 'style: format', PR_BODY: '' });
-	expect(retitled).toEqual({ ...created, operation: 'updated' });
+	expect(retitled).toMatchObject({ number: created.number, operation: 'updated' });
+	expect(retitled.headSha).not.toBe(created.headSha);
 	expect([repository.pulls[0]?.title, repository.pulls[0]?.body]).toEqual(['style: format', '']);
 
 	writeFileSync(join(checkout.dir, 'NOTES.md'), 'More drift\n');
@@ -142,7 +143,7 @@ test('a rerun pushes nothing for the same changes and replaces the commit for ne
 	expect(repository.pulls[0]?.head.sha).toBe(updated.headSha);
 	expect(world.github.resolve(repository, updated.headSha ?? '')).toMatchObject({
 		parents: [checkout.sha],
-		message: 'style: format again',
+		message: 'style: format again\n\nBeepboop-Pull-Request: octo/widget autofix/format main',
 	});
 	expect(Object.keys(filesAt(repository, updated.headSha ?? ''))).toContain('NOTES.md');
 });
@@ -180,8 +181,8 @@ test('a GitHub refusal fails the step with the status and route', async () => {
 	writeFileSync(join(checkout.dir, 'README.md'), '# widget\n\nFormatted.\n');
 	repository.protectedBranches.add('autofix/format');
 	repository.refs.set('heads/autofix/format', checkout.sha);
-	await expect(open(repository, checkout.dir)).rejects.toThrow(
-		'GitHub HTTP 422 on PATCH /repos/octo/widget/git/refs/heads/autofix/format',
+	await expect(open(repository, checkout.dir, { PR_ALLOW_EXISTING_BRANCH: 'true' })).rejects.toThrow(
+		'Protected branch',
 	);
 });
 
@@ -269,4 +270,216 @@ test('a pull request run that checked out its head branch opens a pull request a
 		GITHUB_SHA: 'a'.repeat(40),
 	});
 	expect(repository.pulls.map(pull => [pull.head.ref, pull.base])).toEqual([['autofix/format', 'feature']]);
+});
+
+test('binary bytes, symlinks, gitlinks and mode-only changes survive the full action', async () => {
+	const { repository, checkout } = checkedOut();
+	const bytes = Buffer.from([0, 255, 254, 128, 10]);
+	writeFileSync(join(checkout.dir, 'binary.dat'), bytes);
+	symlinkSync('README.md', join(checkout.dir, 'link'));
+	chmodSync(join(checkout.dir, 'README.md'), 0o755);
+	const sub = materialize({ 'nested.txt': 'nested' });
+	directories.push(sub.dir);
+	gitOutput(checkout.dir, ['-c', 'protocol.file.allow=always', 'submodule', 'add', sub.dir, 'module']);
+	const before = gitOutput(checkout.dir, ['diff', '--cached', '--binary']);
+	const result = await open(repository, checkout.dir);
+	expect(gitOutput(checkout.dir, ['diff', '--cached', '--binary'])).toBe(before);
+	const tree = repository.trees.get(world.github.resolve(repository, result.headSha ?? '').tree)!;
+	expect(repository.blobs.get(tree.get('binary.dat')!.sha)).toEqual(bytes);
+	expect(tree.get('link')?.mode).toBe('120000');
+	expect(repository.blobs.get(tree.get('link')!.sha)?.toString()).toBe('README.md');
+	expect(tree.get('README.md')?.mode).toBe('100755');
+	expect(tree.get('module')).toEqual({ mode: '160000', type: 'commit', sha: sub.sha });
+});
+
+test('file-directory transitions preserve the exact local tree', async () => {
+	const { repository, checkout } = checkedOut();
+	rmSync(join(checkout.dir, 'LICENSE'));
+	mkdirSync(join(checkout.dir, 'LICENSE'));
+	writeFileSync(join(checkout.dir, 'LICENSE', 'notice'), 'license');
+	rmSync(join(checkout.dir, '.github'), { recursive: true });
+	writeFileSync(join(checkout.dir, '.github'), 'file');
+	const result = await open(repository, checkout.dir);
+	expect(filesAt(repository, result.headSha ?? '')['LICENSE/notice']).toBe('license');
+	expect(filesAt(repository, result.headSha ?? '')['.github']).toBe('file');
+});
+
+test('preflight refuses a missing base and an unowned branch before writes and preserves partial staging', async () => {
+	const { repository, checkout, requests } = checkedOut();
+	writeFileSync(join(checkout.dir, 'README.md'), 'staged');
+	gitOutput(checkout.dir, ['add', 'README.md']);
+	writeFileSync(join(checkout.dir, 'README.md'), 'working');
+	const before = gitOutput(checkout.dir, ['diff', '--cached', '--binary']);
+	await expect(open(repository, checkout.dir, { PR_BASE: 'missing' })).rejects.toThrow('404');
+	repository.refs.set('heads/autofix/format', checkout.sha);
+	await expect(open(repository, checkout.dir)).rejects.toThrow('not owned');
+	expect(requests.filter(request => request.startsWith('POST'))).toEqual([]);
+	expect(repository.refs.get('heads/autofix/format')).toBe(checkout.sha);
+	expect(gitOutput(checkout.dir, ['diff', '--cached', '--binary'])).toBe(before);
+	await open(repository, checkout.dir, { PR_ALLOW_EXISTING_BRANCH: 'true' });
+	expect(gitOutput(checkout.dir, ['diff', '--cached', '--binary'])).toBe(before);
+	repository.refs.set('heads/other', checkout.sha);
+	await expect(open(repository, checkout.dir, { PR_BASE: 'other', PR_ALLOW_EXISTING_BRANCH: 'true' })).rejects.toThrow(
+		'another base',
+	);
+});
+
+test('a stale overlapping publisher cannot overwrite a newer branch', async () => {
+	const { repository, checkout } = checkedOut();
+	writeFileSync(join(checkout.dir, 'README.md'), 'initial');
+	await open(repository, checkout.dir);
+	let release!: () => void, entered!: () => void;
+	const held = new Promise<void>(resolve => {
+		release = resolve;
+	});
+	const reached = new Promise<void>(resolve => {
+		entered = resolve;
+	});
+	let first = true;
+	world.network.serve('api.github.com', async request => {
+		if (new URL(request.url).pathname === '/graphql' && first) {
+			first = false;
+			entered();
+			await held;
+		}
+		return world.github.handle(request);
+	});
+	writeFileSync(join(checkout.dir, 'README.md'), 'old overlapping update');
+	const stale = open(repository, checkout.dir).then(
+		value => ({ value, error: undefined }),
+		error => ({ value: undefined, error }),
+	);
+	await reached;
+	writeFileSync(join(checkout.dir, 'README.md'), 'new update');
+	const newer = await open(repository, checkout.dir);
+	release();
+	expect((await stale).error?.message).toContain('changed concurrently');
+	expect(repository.refs.get('heads/autofix/format')).toBe(newer.headSha);
+	expect(filesAt(repository, newer.headSha ?? '')['README.md']).toBe('new update');
+});
+
+test('simultaneous identical branch and PR creation converges', async () => {
+	const { repository, checkout } = checkedOut();
+	writeFileSync(join(checkout.dir, 'README.md'), 'same');
+	let release!: () => void, entered!: () => void;
+	const held = new Promise<void>(resolve => {
+		release = resolve;
+	});
+	const reached = new Promise<void>(resolve => {
+		entered = resolve;
+	});
+	let first = true;
+	world.network.serve('api.github.com', async request => {
+		if (new URL(request.url).pathname.endsWith('/pulls') && request.method === 'POST' && first) {
+			first = false;
+			entered();
+			await held;
+		}
+		return world.github.handle(request);
+	});
+	const a = open(repository, checkout.dir);
+	await reached;
+	const b = await open(repository, checkout.dir);
+	release();
+	const result = await a;
+	expect(result.headSha).toBe(b.headSha);
+	expect(repository.pulls).toHaveLength(1);
+});
+
+test.each(['/git/blobs', '/git/trees', '/git/commits', '/graphql', '/pulls'])(
+	'rerunning converges after a failed response at %s',
+	async route => {
+		const { repository, checkout } = checkedOut();
+		writeFileSync(join(checkout.dir, 'README.md'), 'retry');
+		let once = true;
+		world.network.serve('api.github.com', async request => {
+			if (once && request.method === 'POST' && new URL(request.url).pathname.endsWith(route)) {
+				once = false;
+				await world.github.handle(request);
+				return new Response('lost response', { status: 503 });
+			}
+			return world.github.handle(request);
+		});
+		await open(repository, checkout.dir).catch(() => undefined);
+		const result = await open(repository, checkout.dir);
+		expect(repository.pulls).toHaveLength(1);
+		expect(repository.pulls[0]?.head.sha).toBe(result.headSha);
+		expect(filesAt(repository, result.headSha ?? '')['README.md']).toBe('retry');
+	},
+);
+
+test('oversized blobs are refused before remote writes', async () => {
+	const { repository, checkout, requests } = checkedOut();
+	writeFileSync(join(checkout.dir, 'large'), Buffer.alloc(10 * 1024 * 1024 + 1));
+	await expect(open(repository, checkout.dir)).rejects.toThrow('10 MiB');
+	expect(requests).toEqual([]);
+});
+
+test.each([true, false])(
+	'simultaneous first branch creation converges only for identical work: %s',
+	async identical => {
+		const { repository, checkout } = checkedOut();
+		writeFileSync(join(checkout.dir, 'README.md'), 'first');
+		let release!: () => void, entered!: () => void;
+		const held = new Promise<void>(resolve => {
+			release = resolve;
+		});
+		const reached = new Promise<void>(resolve => {
+			entered = resolve;
+		});
+		let first = true;
+		world.network.serve('api.github.com', async request => {
+			if (new URL(request.url).pathname === '/graphql' && first) {
+				first = false;
+				entered();
+				await held;
+			}
+			return world.github.handle(request);
+		});
+		const a = open(repository, checkout.dir).then(
+			value => ({ value, error: undefined }),
+			error => ({ value: undefined, error }),
+		);
+		await reached;
+		if (!identical) writeFileSync(join(checkout.dir, 'README.md'), 'winner');
+		const b = await open(repository, checkout.dir);
+		release();
+		const result = await a;
+		if (identical) expect(result.value?.headSha).toBe(b.headSha);
+		else expect(result.error?.message).toContain('changed concurrently');
+		expect(repository.refs.get('heads/autofix/format')).toBe(b.headSha);
+		expect(repository.pulls).toHaveLength(1);
+	},
+);
+
+test('a metadata failure retains the new owned branch and the rerun completes the same PR', async () => {
+	const { repository, checkout } = checkedOut();
+	writeFileSync(join(checkout.dir, 'README.md'), 'one');
+	const first = await open(repository, checkout.dir);
+	writeFileSync(join(checkout.dir, 'README.md'), 'two');
+	let refuse = true;
+	world.network.serve(
+		'api.github.com',
+		request =>
+			request.method === 'PATCH' && new URL(request.url).pathname.includes('/pulls/') && refuse
+				? new Response('Unavailable', { status: 503 })
+				: world.github.handle(request),
+	);
+	await expect(open(repository, checkout.dir, { PR_TITLE: 'New title' })).rejects.toThrow('503');
+	const head = repository.refs.get('heads/autofix/format');
+	expect(head).not.toBe(first.headSha);
+	refuse = false;
+	const result = await open(repository, checkout.dir, { PR_TITLE: 'New title' });
+	expect(result.headSha).toBe(head);
+	expect(repository.pulls).toHaveLength(1);
+	expect(repository.pulls[0]?.title).toBe('New title');
+});
+
+test.each(['paths', 'bytes'])('aggregate %s limits fail before API calls', async kind => {
+	const { repository, checkout, requests } = checkedOut();
+	const count = kind === 'paths' ? 501 : 6,
+		content = kind === 'paths' ? Buffer.from('x') : Buffer.alloc(9 * 1024 * 1024);
+	for (let i = 0; i < count; i++) writeFileSync(join(checkout.dir, `file-${i}`), content);
+	await expect(open(repository, checkout.dir)).rejects.toThrow(kind === 'paths' ? '500-file' : '50 MiB');
+	expect(requests).toEqual([]);
 });

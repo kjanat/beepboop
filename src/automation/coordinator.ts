@@ -86,6 +86,7 @@ import {
 	tagPayload,
 	tagPrefixes,
 } from '@/automation/refs';
+import { ReleaseHistory } from '@/automation/release-history';
 import { releaseNotes } from '@/automation/release-notes';
 import { compileReleaseSet } from '@/automation/release-set';
 import { manifestProblems } from '@/automation/release-version';
@@ -248,6 +249,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private readonly lock = Semaphore.makeUnsafe(1);
 	private readonly journal = new Journal(this.ctx.storage);
 	private projectionRetryAt: number | undefined;
+	private releaseHistory: ReleaseHistory | undefined;
 	private serialized<A>(work: CoordinatorEffect<A, DomainError>): CoordinatorEffect<A, DomainError> {
 		return Semaphore.withPermit(
 			this.lock,
@@ -280,7 +282,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		entries: readonly [Committed, ...Committed[]],
 		extra?: Record<string, unknown>,
 	): CoordinatorEffect<void, DomainError> {
-		return this.journal.commit(entries, extra);
+		return this.journal.commit(entries, extra).pipe(Effect.tap(() =>
+			fromSync(() => {
+				if (!this.releaseHistory) return;
+				for (const entry of entries) {
+					if (entry.entity === 'execution') this.releaseHistory.update(decodeExecutionV1(entry.value));
+				}
+			})
+		));
 	}
 	private arm(at: number | undefined): CoordinatorEffect<void, DomainError> {
 		return this.journal.arm(at);
@@ -406,20 +415,30 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			Effect.flatMap(value => fromSync(() => decodeSync(Schema.optional(releaseSetRecord), value))),
 		);
 	}
-	private continuations(observed: Execution): CoordinatorEffect<Execution[], DomainError> {
+	private pendingContinuations(
+		observed: Execution,
+	): CoordinatorEffect<string[], DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (observed.state !== 'succeeded' || !observed.eventId.startsWith('observed:')) return [];
-			const stream = observed.configuration.streams[observed.stream];
-			const bindings = Object.entries(stream?.workflows ?? {}).filter(([, binding]) =>
-				binding.mode !== 'observe' && binding.needs?.includes(observed.operation)
-			);
-			if (!bindings.length) return [];
+			const bindings = Object.entries(observed.configuration.streams[observed.stream]?.workflows ?? {}).filter((
+				[, binding],
+			) => binding.mode !== 'observe' && binding.needs?.includes(observed.operation));
+			const missing: string[] = [];
+			for (const [operation] of bindings) {
+				const id = yield* executionId(observed.repositoryId, observed.stream, operation, observed.eventId);
+				if (!(yield* this.stored(id))) missing.push(operation);
+			}
+			return missing;
+		});
+	}
+	private continuations(observed: Execution): CoordinatorEffect<Execution[], DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const missing = yield* this.pendingContinuations(observed);
+			if (!missing.length) return [];
 			const record = yield* (yield* this.store).repository(observed.repositoryId);
 			if (!record) return yield* precondition('Repository unavailable while completing observed operation');
 			const next: Execution[] = [];
-			for (const [operation] of bindings) {
-				const id = yield* executionId(observed.repositoryId, observed.stream, operation, observed.eventId);
-				if (yield* this.stored(id)) continue;
+			for (const operation of missing) {
 				const execution = yield* deriveExecution(observed, record, {
 					stream: observed.stream,
 					operation,
@@ -480,7 +499,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			]);
 		});
 	}
-	private captureReleaseEvent(execution: Execution): CoordinatorEffect<void, DomainError> {
+	private releaseGroup(
+		execution: Execution,
+		history: CoordinatorEffect<ReleaseHistory, DomainError> = Effect.suspend(() =>
+			this.releaseHistory
+				? Effect.succeed(this.releaseHistory)
+				: this.executions().pipe(Effect.map(entries => new ReleaseHistory(entries)))
+		),
+	): CoordinatorEffect<Execution[] | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (!execution.version) return;
 			const required = execution.releaseSet?.required ?? execution.configuration.streams[execution.stream]?.required
@@ -488,20 +514,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (!required.length) return;
 			const id = releaseEventId({ ...execution, version: execution.version });
 			if (yield* this.read(`release-emitted:${id}`)) return;
-			const group = (yield* this.executions())
-				.filter(e =>
-					e.state === 'succeeded' && e.stream === execution.stream && e.version === execution.version
-					&& e.sourceSha === execution.sourceSha && e.configurationSha === execution.configurationSha
-					&& e.releaseSet?.preparationId === execution.releaseSet?.preparationId
-					&& e.releaseSet?.group === execution.releaseSet?.group
-				);
-			if (
-				!required.every(key =>
-					group.some(e => e.publications.some(p => matchesPublication(key, p) && p.outcome === 'succeeded'))
-				)
-			) {
-				return;
-			}
+			return (yield* history).completed(execution, required);
+		});
+	}
+	private captureReleaseEvent(execution: Execution): CoordinatorEffect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			if (!execution.version) return;
+			const group = yield* this.releaseGroup(execution);
+			if (!group) return;
+			const id = releaseEventId({ ...execution, version: execution.version });
 			const references = group.flatMap(e => e.release ? [e.release] : []);
 			if (references.some(r => r.tag !== references[0]?.tag || r.releaseId !== references[0]?.releaseId)) {
 				return yield* precondition('Conflicting release identities');
@@ -518,6 +539,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				artifacts: [...new Map(group.flatMap(e => e.artifacts).map(a => [a.id, a])).values()],
 			};
 			const event: AutomationEvent = {
+				occurredAt: (yield* Clock.Clock).currentTimeMillisUnsafe(),
 				id,
 				source: execution.repository,
 				event: 'release',
@@ -3071,6 +3093,28 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			),
 		);
 	}
+	private hasAdvanceWork(
+		execution: Execution,
+		unresolved: (execution: Execution) => boolean,
+		history: CoordinatorEffect<ReleaseHistory, DomainError>,
+	): CoordinatorEffect<boolean, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			if (
+				!['succeeded', 'failed', 'cancelled', 'pending'].includes(execution.state) || unresolved(execution)
+				|| publishedAfterFailure(execution)
+			) return true;
+			const stored = yield* this.read(`ledger:${execution.id}`);
+			if (stored !== undefined) {
+				const ledger = yield* fromSync(() => decodeSync(ledgerSchema, stored));
+				if (ledger.records.some(record => record.status.state === 'uploaded' || missingReceipt(execution, record))) {
+					return true;
+				}
+			}
+			return execution.state === 'succeeded'
+				&& ((yield* this.pendingContinuations(execution)).length > 0
+					|| (yield* this.releaseGroup(execution, history)) !== undefined);
+		});
+	}
 	private advance(
 		execution: Execution,
 		executions: Execution[],
@@ -3191,13 +3235,25 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (active.some(e => !e.releaseSet?.workflowId) || executions.some(unresolved)) {
 				yield* this.requestReconcile(started + reconcileInterval);
 			}
+			const releaseHistory = new ReleaseHistory(journal.executions);
+			this.releaseHistory = releaseHistory;
+			const history = Effect.succeed(releaseHistory);
 			for (const execution of executions) {
 				if (onlyExecution ? execution.id !== onlyExecution : Boolean(execution.releaseSet?.workflowId)) continue;
+				const work = yield* Effect.result(this.hasAdvanceWork(execution, unresolved, history));
+				if (work._tag === 'Success' && !work.success) continue;
+				if (yield* this.suspended(execution.repositoryId)) return;
+				if (work._tag === 'Failure') {
+					yield* this.isolate(execution.id, work.failure);
+					continue;
+				}
 				const outcome = yield* this.advance(execution, executions, active, busy, unresolved).pipe(
 					recover(error => this.isolate(execution.id, error).pipe(Effect.as('continue' as const))),
 				);
 				if (outcome === 'stop') return;
 			}
-		});
+		}).pipe(Effect.ensuring(Effect.sync(() => {
+			this.releaseHistory = undefined;
+		})));
 	}
 }

@@ -15,10 +15,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with: { persist-credentials: false }
-      - uses: jdx/mise-action@v5
+      - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5
       - run: runner i -fs types gate deploy:dry
         env:
           GITHUB_APP_ID: "0"
           GITHUB_APP_PRIVATE_KEY: "ci-build-placeholder"
           GITHUB_WEBHOOK_SECRET: "ci-build-placeholder"
           VAULT_KEYS: "{}"
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bunx playwright install --with-deps chromium --only-shell
+      - run: bun run test:browser
+      - name: Upload browser failure traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-traces
+          path: output/playwright/results/
+          retention-days: 7
+          if-no-files-found: ignore

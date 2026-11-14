@@ -309,6 +309,7 @@ function publisherConfiguration(
 		}
 		return { status: 'failed' as const, message: `crates.io trusted-publisher pagination failed for ${crate}.` };
 	}).pipe(
+		Effect.scoped,
 		Effect.orElseSucceed(() => ({
 			status: 'failed' as const,
 			message:

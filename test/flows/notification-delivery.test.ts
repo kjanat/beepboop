@@ -1,15 +1,20 @@
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { call, cliTransport } from '@root/test/support/client.ts';
 import { migrationFiles, migrationsDirectory, TestD1 } from '@root/test/support/d1.ts';
 import type { World } from '@root/test/support/world.ts';
-import { eachWorld } from '@root/test/support/world.ts';
-import { Effect } from 'effect';
+import { adminSubject, eachWorld, origin } from '@root/test/support/world.ts';
+import { experimental_AstroContainer } from 'astro/container';
+import { Effect, Schema } from 'effect';
 import type { Fetcher } from '@/automation/managers/registry';
 import { Notifications, versionChanged } from '@/automation/notifications';
 import { Store } from '@/automation/store';
+import { routes } from '@/contract/routes';
 import { sql } from '@/persistence/d1/database';
 import { deliveryLeaseDuration, NotificationDeliveries } from '@/persistence/d1/notification-deliveries';
+import { decodeSync, mutableStruct } from '@/schema';
+import { loaders } from '@/server/loaders';
 
 let world: World;
 eachWorld(created => {
@@ -18,7 +23,8 @@ eachWorld(created => {
 
 async function staged(
 	request: Fetcher,
-	reveal = () => Effect.succeed({ value: 'https://example.test/hook', version: 1 }),
+	reveal: (alias: string) => Effect.Effect<{ value: string; version: number }> = () =>
+		Effect.succeed({ value: 'https://example.test/hook', version: 1 }),
 ) {
 	const notifications = new Notifications(new Store(world.db), () => ({
 		reveal,
@@ -186,4 +192,156 @@ test('the delivery migration preserves old work and rejects contradictory states
 		expect(() => db.execute(`UPDATE notification_deliveries SET ${assignment} WHERE id='pending'`, [])).toThrow();
 	}
 	db.sqlite.close();
+});
+
+for (const change of ['disable', 'retarget', 'disable-enable'] as const) {
+	test(`destination ${change} during secret retrieval invalidates its snapshot`, async () => {
+		const entered = Promise.withResolvers<void>(), resume = Promise.withResolvers<void>();
+		const urls: string[] = [];
+		let reveals = 0;
+		const { notifications, destination } = await staged(async input => {
+			urls.push(String(input));
+			return new Response(null, { status: 204 });
+		}, alias => Effect.promise(async () => {
+			if (++reveals === 1) {
+				entered.resolve();
+				await resume.promise;
+			}
+			return { value: `https://example.test/${alias}`, version: 1 };
+		}));
+		await world.sealCredential('replacement-url');
+		const pending = world.run(notifications.deliver());
+		await entered.promise;
+		try {
+			const settings = {
+				id: destination,
+				name: 'Releases',
+				kind: 'http' as const,
+				credential: change === 'retarget' ? 'replacement-url' : 'notification-url',
+				enabled: change === 'retarget',
+				subscribeNew: false,
+			};
+			await world.run(notifications.saveDestination(settings, 'admin'));
+			if (change === 'disable-enable') {
+				await world.run(notifications.saveDestination({ ...settings, enabled: true }, 'admin'));
+			}
+		} finally {
+			resume.resolve();
+		}
+		await pending;
+		expect(urls).toEqual([]);
+		expect((await world.run(notifications.recent()))[0]).toMatchObject({
+			state: 'pending',
+			attempts: 1,
+			error: 'Delivery claim or destination changed before sending',
+		});
+		await world.run(notifications.deliver());
+		expect(urls).toEqual(
+			change === 'disable'
+				? []
+				: [`https://example.test/${change === 'retarget' ? 'replacement-url' : 'notification-url'}`],
+		);
+	});
+}
+
+for (const change of ['disable', 'retarget'] as const) {
+	test(`destination ${change} between deliveries is seen by the next attempt`, async () => {
+		const entered = Promise.withResolvers<void>(), resume = Promise.withResolvers<void>();
+		const urls: string[] = [];
+		const { notifications, destination } = await staged(async input => {
+			urls.push(String(input));
+			if (urls.length === 1) {
+				entered.resolve();
+				await resume.promise;
+			}
+			return new Response(null, { status: 204 });
+		}, alias => Effect.succeed({ value: `https://example.test/${alias}`, version: 1 }));
+		await world.sealCredential('replacement-url');
+		await world.run(notifications.stage(versionChanged('second', 'npm', 'widget', '1.1.0', '1.2.0')));
+		const pending = world.run(notifications.deliver());
+		await entered.promise;
+		try {
+			await world.run(
+				notifications.saveDestination({
+					id: destination,
+					name: 'Releases',
+					kind: 'http',
+					credential: 'replacement-url',
+					enabled: change !== 'disable',
+					subscribeNew: false,
+				}, 'admin'),
+			);
+		} finally {
+			resume.resolve();
+		}
+		await pending;
+		expect(urls).toEqual(
+			change === 'disable'
+				? ['https://example.test/notification-url']
+				: ['https://example.test/notification-url', 'https://example.test/replacement-url'],
+		);
+	});
+}
+
+test.each(['bad json', '{}'])('malformed payload %s stays readable through the API and dashboard', async document => {
+	const { notifications, id, destination } = await staged(async () => new Response(null, { status: 204 }));
+	await world.db.prepare('UPDATE notification_deliveries SET document=? WHERE id=?').bind(document, id).run();
+	await world.run(notifications.stage(versionChanged('healthy', 'npm', 'widget', '1.1.0', '1.2.0')));
+	await world.run(notifications.deliver());
+	const expected = {
+		id,
+		destinationId: destination,
+		eventId: 'event',
+		attempts: 1,
+		state: 'failed',
+		payload: null,
+		payloadError: 'Invalid notification payload',
+		error: 'Invalid notification payload',
+	};
+	expect((await world.run(notifications.recent())).find(row => row.id === id)).toMatchObject(expected);
+	const listed = await call(routes.notificationsList, {}, cliTransport(world, await world.cliSession()));
+	expect(listed.deliveries).toContainEqual(expect.objectContaining(expected));
+	expect(listed.deliveries).toHaveLength(2);
+	const data = await world.run(loaders.notifications({ env: world.env, actor: adminSubject }));
+	type Component = Parameters<experimental_AstroContainer['renderToString']>[0];
+	const module = mutableStruct({
+		default: Schema.declare<Component>((value): value is Component => typeof value === 'function'),
+	});
+	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Notifications.astro'));
+	const container = await experimental_AstroContainer.create();
+	const html = await container.renderToString(decodeSync(module, loaded).default, {
+		props: { data },
+		request: new Request(`${origin}/notifications`),
+	});
+	expect(html).toContain('Unavailable payload');
+	expect(html).toContain('Invalid notification payload');
+	expect(html).toContain('widget');
+});
+
+test('destination revisions migrate existing settings without losing deliveries', async () => {
+	const db = new TestD1(migrationFiles().filter(file => file < '0017'));
+	try {
+		db.execute(
+			"INSERT INTO notification_destinations(id,name,kind,credential,subscribe_new,enabled,created_at) VALUES('existing','Releases','http','hook',0,1,123)",
+			[],
+		);
+		db.execute(
+			"INSERT INTO notification_deliveries(id,event_id,destination_id,document,state,attempts,updated_at) VALUES('delivery','event','existing','{}','pending',0,123)",
+			[],
+		);
+		db.sqlite.run(readFileSync(join(migrationsDirectory, '0017_notification_destination_revision.sql'), 'utf8'));
+		expect(await db.prepare('SELECT id,credential,enabled,revision FROM notification_destinations').first()).toEqual({
+			id: 'existing',
+			credential: 'hook',
+			enabled: 1,
+			revision: 0,
+		});
+		expect(await db.prepare('SELECT state,attempts FROM notification_deliveries').first()).toEqual({
+			state: 'pending',
+			attempts: 0,
+		});
+		expect(() => db.execute('UPDATE notification_destinations SET revision=-1', [])).toThrow();
+	} finally {
+		db.sqlite.close();
+	}
 });

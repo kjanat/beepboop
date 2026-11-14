@@ -5,6 +5,28 @@ const readFailure = (cause: unknown) => new ResponseReadError({ cause });
 
 type Body = Pick<Response, 'body'>;
 
+function cancelBody(cancel: () => Promise<unknown>): Promise<void> {
+	return new Promise(resolve => {
+		const finish = () => {
+			clearTimeout(timer);
+			resolve();
+		};
+		const timer = setTimeout(finish, 1000);
+		Promise.resolve().then(cancel).then(finish, finish);
+	});
+}
+
+export function scopedResponse<E, R>(request: Effect.Effect<Response, E, R>) {
+	return Effect.acquireRelease(
+		request,
+		response => {
+			const body = response.body;
+			return body ? Effect.promise(() => cancelBody(() => body.cancel())) : Effect.void;
+		},
+		{ interruptible: true },
+	);
+}
+
 function readBody<A>(
 	response: Body,
 	read: (reader: ReadableStreamDefaultReader<Uint8Array> | undefined) => Effect.Effect<A, ResponseReadError>,
@@ -16,7 +38,7 @@ function readBody<A>(
 			reader
 				? Effect.promise(async () => {
 					try {
-						await reader.cancel().catch(() => undefined);
+						await cancelBody(() => reader.cancel());
 					} finally {
 						reader.releaseLock();
 					}
@@ -25,15 +47,22 @@ function readBody<A>(
 	);
 }
 
-export function responseText(response: Body): Effect.Effect<string, ResponseReadError> {
+export function responseText(
+	response: Body,
+	options: { readonly maxBytes?: number } = {},
+): Effect.Effect<string, ResponseReadError> {
 	return readBody(response, reader => Effect.gen(function*() {
 		if (!reader) return '';
 		const decoder = new TextDecoder();
 		let text = '';
+		let remaining = options.maxBytes ?? Infinity;
 		for (;;) {
+			if (remaining <= 0) return text + decoder.decode();
 			const chunk = yield* Effect.tryPromise({ try: () => reader.read(), catch: readFailure });
 			if (chunk.done) return text + decoder.decode();
-			text += decoder.decode(chunk.value, { stream: true });
+			const bytes = remaining < chunk.value.byteLength ? chunk.value.subarray(0, remaining) : chunk.value;
+			remaining -= bytes.byteLength;
+			text += decoder.decode(bytes, { stream: true });
 		}
 	}));
 }

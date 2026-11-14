@@ -60,7 +60,18 @@ bun run test
 bun run deploy:dry
 ```
 
-CI runs `bun run gate` and `bun run deploy:dry`.
+CI runs `bun run gate`, `bun run deploy:dry`, and a separate Chromium fixture suite.
+
+```sh
+bunx playwright install chromium --only-shell
+bun run test:browser
+```
+
+Browser tests in `browser/` use isolated contexts and a managed local fixture server
+that bundles the actual browser module once per run. They require no credentials or
+Cloudflare services. Failure traces are written to `output/playwright/results/`.
+To use a system Chromium instead of the pinned browser, set
+`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium`.
 
 `bun run dev` applies pending migrations to the local D1 database and starts the
 dashboard at `http://localhost:4321`. Local login works only when the OpenAuth

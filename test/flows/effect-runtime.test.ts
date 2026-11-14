@@ -132,7 +132,7 @@ test('interruption aborts client, GitHub and registry transports', async () => {
 				? send(signal => transport('https://test', { signal }))
 				: adapter === 'github'
 				? gitHubRequest(transport, '/test', '')
-				: registryRequest(transport, 'https://test');
+				: registryRequest(transport, 'https://test').pipe(Effect.scoped);
 			const fiber = yield* Effect.forkChild(work);
 			yield* Deferred.await(started);
 			yield* Fiber.interrupt(fiber);

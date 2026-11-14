@@ -21,4 +21,4 @@ prereleases = false
 
 [wrappers.actionlint]
 command = "mise"
-args    = ["exec", "http:actionlint", "--", "actionlint", "check"]
+args    = ["exec", "http:actionlint", "--", "actionlint"]

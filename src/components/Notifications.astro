@@ -155,19 +155,26 @@ const { destinations, deliveries } = notificationsPage(data);
 						<Time value={delivery.updatedAt} />
 					</td>
 					<td>
-						{registryPackageLabel(
-							delivery.payload.package.registry,
-							delivery.payload.package.name,
-						)}
+						{delivery.payload
+							? registryPackageLabel(
+								delivery.payload.package.registry,
+								delivery.payload.package.name,
+							)
+							: 'Unavailable payload'}
 					</td>
 					<td>
-						{delivery.payload.version.previous ?? 'new'} →
-						{delivery.payload.version.current}
+						{delivery.payload
+							? `${
+								delivery.payload.version.previous ?? 'new'
+							} → ${delivery.payload.version.current}`
+							: '—'}
 					</td>
 					<td>{delivery.destination}</td>
 					<td>
 						<Badge {...deliveryStatus(delivery)} />
-						{delivery.error && <small>{delivery.error}</small>}
+						{(delivery.error || delivery.payloadError) && (
+							<small>{delivery.error || delivery.payloadError}</small>
+						)}
 					</td>
 				</tr>
 			))}

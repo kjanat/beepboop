@@ -403,3 +403,96 @@ test('Rust Android and BSD targets install cross and preserve native auditable b
 		expect(safeDecode(binaries, release).success).toBe(false);
 	}
 });
+
+test.each(['facade', 'platform', 'shim', 'bundle'])(
+	'competing descriptor %s ownership is rejected in either order',
+	kind => {
+		const a = {
+			scope: '@a',
+			facades: [{ name: 'tool-a', pkg: 'a', shim: 'shim-a' }],
+			targets: [{ pkg: 'linux' }],
+			bundle: { name: 'bundle-a' },
+			versionSource: 'a/package.json#version',
+		};
+		const b = {
+			scope: '@b',
+			facades: [{ name: 'tool-b', pkg: 'b', shim: 'shim-b' }],
+			targets: [{ pkg: 'linux' }],
+			bundle: { name: 'bundle-b' },
+			versionSource: 'b/package.json#version',
+		};
+		if (kind === 'facade') b.facades[0]!.name = a.facades[0]!.name;
+		if (kind === 'platform') {
+			b.scope = a.scope;
+			b.facades[0]!.pkg = a.facades[0]!.pkg;
+		}
+		if (kind === 'shim') b.facades[0]!.shim = a.facades[0]!.shim;
+		if (kind === 'bundle') b.bundle.name = a.bundle.name;
+		for (
+			const descriptors of [
+				[['a/targets.json', a], ['b/targets.json', b]],
+				[['b/targets.json', b], ['a/targets.json', a]],
+			] as const
+		) {
+			const result = npmManager.discover(
+				snapshot({
+					'a/package.json': '{"name":"source-a","version":"1.0.0"}',
+					'b/package.json': '{"name":"source-b","version":"2.0.0"}',
+					...Object.fromEntries(descriptors.map(([path, descriptor]) => [path, JSON.stringify(descriptor)])),
+				}),
+			);
+			expect(result.packages.filter(pkg => pkg.generated)).toEqual([]);
+			expect(result.diagnostics).toHaveLength(2);
+			expect(
+				result.diagnostics.every(diagnostic =>
+					diagnostic.severity === 'blocking' && diagnostic.message.includes('competing descriptors')
+				),
+			).toBe(true);
+		}
+	},
+);
+
+test('a map and explicit descriptor cannot claim the same generated package', () => {
+	const result = npmManager.discover(snapshot({
+		'package.json': '{"name":"tool","version":"1.0.0","optionalDependencies":{"tool-linux-x64":"1.0.0"}}',
+		'platforms.json': '{"linux-x64":{"os":"linux","cpu":"x64"}}',
+		'nested/targets.json': JSON.stringify({
+			scope: '@example',
+			facade: 'tool',
+			targets: [{ pkg: 'linux-x64' }],
+			versionSource: 'package.json#version',
+		}),
+	}));
+	expect(result.packages.filter(pkg => pkg.generated)).toEqual([]);
+	expect(result.diagnostics).toHaveLength(2);
+});
+
+test.each([
+	{ document: { 'linux-x64': { os: 'linux', cpu: 64 } } },
+	{ document: [{ os: 'linux', cpu: 64, build: 'cargo' }] },
+])('recognizable malformed target metadata blocks runtime discovery: %j', ({ document }) => {
+	const result = npmManager.discover(
+		snapshot({
+			'package.json': '{"name":"tool","version":"1.0.0","optionalDependencies":{"tool-linux-x64":"1.0.0"}}',
+			'platforms.json': JSON.stringify(document),
+		}),
+	);
+	expect(result.diagnostics).toHaveLength(1);
+	expect(result.diagnostics[0]).toMatchObject({ severity: 'blocking', code: 'invalid-manifest' });
+});
+
+test('explicit null version sources fail rather than defaulting to a workspace', () => {
+	const result = npmManager.discover(
+		snapshot({
+			'Cargo.toml': '[workspace.package]\nversion="9.0.0"',
+			'targets.json': JSON.stringify({
+				scope: '@example',
+				facade: 'tool',
+				targets: [{ pkg: 'linux' }],
+				versionSource: null,
+			}),
+		}),
+	);
+	expect(result.packages).toEqual([]);
+	expect(result.diagnostics[0]?.severity).toBe('blocking');
+});

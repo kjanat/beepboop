@@ -1,4 +1,4 @@
-import { Clock, Effect, Schema } from 'effect';
+import { Clock, Effect, Result, Schema } from 'effect';
 import type { Fetcher } from '@/automation/managers/registry';
 import type { Store } from '@/automation/store';
 import type { Vault } from '@/automation/vault';
@@ -10,7 +10,7 @@ import { watchedPackageHref } from '@/contract/links';
 import type { DestinationInput } from '@/contract/notifications';
 import { fromPromise, fromSync } from '@/failure';
 import type { Sql } from '@/persistence/d1/database';
-import { parse, sql } from '@/persistence/d1/database';
+import { optionalColumn, parse, sql } from '@/persistence/d1/database';
 import type { ClaimedDelivery, DeliveryOutcome } from '@/persistence/d1/notification-deliveries';
 import { NotificationDeliveries } from '@/persistence/d1/notification-deliveries';
 import type { Decoded } from '@/schema';
@@ -44,7 +44,8 @@ interface DeliveryFields {
 	id: string;
 	eventId: string;
 	destinationId: string;
-	payload: VersionChangedPayload;
+	payload: VersionChangedPayload | null;
+	payloadError?: string;
 	attempts: number;
 	updatedAt: number;
 }
@@ -65,6 +66,7 @@ const destinationRow = mutableStruct({
 	subscribe_new: Schema.Finite,
 	enabled: Schema.Finite,
 	created_at: Schema.Finite,
+	revision: Schema.Int,
 });
 const subscriptionRow = mutableStruct({
 	destination_id: Schema.String,
@@ -196,11 +198,13 @@ export class Notifications {
 			Effect.flatMap(rows =>
 				fromSync(() =>
 					rows.map((row): NotificationDelivery => {
+						const decoded = Result.try(() => decodeSync(payloadSchema, JSON.parse(row.document)));
 						const fields: DeliveryFields = {
 							id: row.id,
 							eventId: row.event_id,
 							destinationId: row.destination_id,
-							payload: decodeSync(payloadSchema, JSON.parse(row.document)),
+							payload: Result.isSuccess(decoded) ? decoded.success : null,
+							...(Result.isFailure(decoded) ? { payloadError: 'Invalid notification payload' } : {}),
 							attempts: row.attempts,
 							updatedAt: row.updated_at,
 						};
@@ -228,7 +232,7 @@ export class Notifications {
 			yield* this.checkDestination(input);
 			const id = input.id ?? crypto.randomUUID();
 			yield* this.sql.run(
-				'INSERT INTO notification_destinations (id, name, kind, credential, subscribe_new, enabled, created_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, kind=excluded.kind, credential=excluded.credential, subscribe_new=excluded.subscribe_new, enabled=excluded.enabled',
+				'INSERT INTO notification_destinations (id, name, kind, credential, subscribe_new, enabled, created_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, kind=excluded.kind, credential=excluded.credential, subscribe_new=excluded.subscribe_new, enabled=excluded.enabled, revision=notification_destinations.revision + (notification_destinations.kind<>excluded.kind OR notification_destinations.credential<>excluded.credential OR notification_destinations.enabled<>excluded.enabled)',
 				id,
 				input.name,
 				input.kind,
@@ -295,18 +299,24 @@ export class Notifications {
 	deliver(): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const ids = yield* this.deliveries.available();
-			const destinations = new Map((yield* this.destinations()).map(entry => [entry.id, entry]));
 			for (const id of ids) {
 				const claim = yield* this.deliveries.claim(id);
 				if (!claim) continue;
-				const outcome = yield* this.send(claim, destinations.get(claim.destination_id));
+				const current = yield* this.sql.first(
+					'SELECT * FROM notification_destinations WHERE id=?',
+					claim.destination_id,
+				)
+					.pipe(
+						Effect.flatMap(optionalColumn(destinationRow, row => ({ ...destination(row), revision: row.revision }))),
+					);
+				const outcome = yield* this.send(claim, current);
 				yield* this.deliveries.settle(claim, outcome);
 			}
 		});
 	}
 	private send(
 		claim: ClaimedDelivery,
-		destination: NotificationDestination | undefined,
+		destination: (NotificationDestination & { revision: number }) | undefined,
 	): Effect.Effect<DeliveryOutcome, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const clock = yield* Clock.Clock;
@@ -328,8 +338,8 @@ export class Notifications {
 				};
 			}
 			const request = this.request;
-			if (!(yield* this.deliveries.owned(claim))) {
-				return { state: 'failed', error: 'Delivery claim is no longer owned' };
+			if (!(yield* this.deliveries.owned(claim, destination.revision))) {
+				return { state: 'pending', error: 'Delivery claim or destination changed before sending' };
 			}
 			const remaining = claim.lease_until - clock.currentTimeMillisUnsafe();
 			if (remaining <= 0) return { state: 'pending', error: 'Delivery lease expired before sending' };

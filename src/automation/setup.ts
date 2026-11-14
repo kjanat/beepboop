@@ -1310,7 +1310,9 @@ export function setupBody(plan: SetupPlan, context: SetupBodyContext): string {
 			`  - Preparation: ${workflow(stream.prepare)}`,
 			`  - Publication: ${
 				stream.promote ? workflow(stream.promote) : stream.observe?.some(entry => entry.publications.length)
-					? stream.observe.filter(entry => entry.publications.length).map(entry => `observes \`${entry.file}\``).join(
+					? [...new Set(stream.observe.filter(entry => entry.publications.length).map(entry => entry.file))].map(file =>
+						`observes \`${file}\``
+					).join(
 						', ',
 					)
 					: 'none'

@@ -46,7 +46,18 @@ export function byAge(a: Execution, b: Execution): number {
 	return a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 }
 
-export function needingUser(executions: readonly Execution[]): ReadonlySet<string> {
+export interface CompletedRelease {
+	repositoryId: number;
+	stream: string;
+	group?: string;
+	version: string;
+	completedAt: number;
+}
+
+export function needingUser(
+	executions: readonly Execution[],
+	completed: readonly CompletedRelease[] = [],
+): ReadonlySet<string> {
 	const keys = new Map(
 		executions.map(run => [run, JSON.stringify([run.repositoryId, run.stream, run.operation, target(run)])]),
 	);
@@ -59,20 +70,10 @@ export function needingUser(executions: readonly Execution[]): ReadonlySet<strin
 		const next = safeDecode(semVer, later), previous = safeDecode(semVer, earlier);
 		return next.success && (!previous.success || compare(next.data, previous.data) > 0);
 	};
-	const published = (run: Execution) => {
-		const required = run.releaseSet?.required ?? run.configuration.streams[run.stream]?.required ?? [];
-		const reports = executions.filter(other =>
-			other.repositoryId === run.repositoryId && other.stream === run.stream && other.version === run.version
-			&& other.releaseSet?.group === run.releaseSet?.group
-		).flatMap(other => other.publications);
-		return required.length > 0
-			&& required.every(id => reports.some(report => report.outcome === 'succeeded' && matchesPublication(id, report)));
-	};
-	const released = executions.filter(run => run.state === 'succeeded' && run.operation !== 'prepare' && published(run));
 	const superseded = (run: Execution) =>
-		released.some(other =>
-			other.repositoryId === run.repositoryId && other.stream === run.stream && other.updatedAt > run.updatedAt
-			&& other.releaseSet?.group === run.releaseSet?.group
+		completed.some(other =>
+			other.repositoryId === run.repositoryId && other.stream === run.stream && other.completedAt > run.updatedAt
+			&& other.group === run.releaseSet?.group
 			&& covers(other.version, run.version)
 		);
 	const needing = new Set<string>();

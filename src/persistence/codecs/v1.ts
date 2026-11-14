@@ -335,6 +335,7 @@ const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
 	reason: Schema.optional(Schema.String),
 });
 const automationEventSchema: Schema.Codec<AutomationEvent, unknown> = mutableStruct({
+	occurredAt: Schema.optional(Schema.Finite),
 	id: Schema.String,
 	source: Schema.String,
 	event: Schema.Literals(['release', 'workflow_run', 'package.version.changed']),

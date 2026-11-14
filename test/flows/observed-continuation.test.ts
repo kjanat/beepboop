@@ -4,6 +4,7 @@ import { editableConfiguration, publishWorkflow } from '@root/test/support/repos
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { createExecution } from '@/automation/execution';
+import { ReleaseHistory } from '@/automation/release-history';
 import { Automation } from '@/automation/service';
 import { requireReady } from '@/domain/repository';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
@@ -168,4 +169,129 @@ test('an access read failure leaves work retryable and fails closed', async () =
 	unavailable = false;
 	await world.wait(120_000);
 	expect((await executions(repository)).find(item => item.id === execution.id)?.state).toBe('succeeded');
+});
+
+test('suspension during reconciliation prevents subsequent executions from advancing', async () => {
+	const { repository, app, execution, coordinator } = await observed();
+	const stored = await world.run(app.store.repository(repository.id));
+	if (!stored) throw new Error('Expected repository');
+	const ready = await world.run(requireReady(stored));
+	const next = await world.run(
+		createExecution(
+			{
+				...ready,
+				configuration: {
+					...ready.configuration,
+					streams: { ...ready.configuration.streams, second: ready.configuration.streams.main! },
+				},
+			},
+			{ stream: 'second', operation: 'follow0', eventId: 'second', sourceSha: stored.sha },
+		),
+	);
+	next.state = 'ready';
+	next.createdAt = execution.createdAt + 1;
+	await coordinator.enqueue(next);
+	const entered = Promise.withResolvers<void>(), resume = Promise.withResolvers<void>();
+	world.network.serve('api.github.com', async request => {
+		if (new URL(request.url).pathname.endsWith('/actions/runs/9001')) {
+			entered.resolve();
+			await resume.promise;
+		}
+		return world.github.handle(request);
+	});
+	const pass = world.wait(20_000);
+	await entered.promise;
+	try {
+		await world.run(app.store.setAccess(repository.id, { kind: 'suspended', since: Date.now() }));
+	} finally {
+		resume.resolve();
+	}
+	await pass;
+	expect(world.github.dispatches).toHaveLength(0);
+	expect((await executions(repository)).find(item => item.id === next.id)?.state).toBe('ready');
+	await world.run(app.setAccess(repository.id, { kind: 'active' }));
+	await world.wait(2_000);
+	expect(world.github.dispatches.length).toBeGreaterThan(0);
+});
+
+test('legacy continuation repair requires current inventory and can recover after discovery is restored', async () => {
+	const { repository, app, execution, coordinator, storage } = await observed();
+	await storage.put(`execution:${execution.id}`, { ...execution, state: 'succeeded' });
+	const record = await world.run(app.store.repository(repository.id));
+	if (!record) throw new Error('Expected repository');
+	await world.run(
+		app.store.saveDiscovery({
+			...record,
+			sha: 'b'.repeat(40),
+			inventory: {
+				...record.inventory,
+				workflows: record.inventory.workflows.filter(workflow => workflow.file !== 'follow.yml'),
+			},
+		}),
+	);
+	await coordinator.recover(execution.id, 'reconcile', 'admin');
+	await world.wait(2_000);
+	expect(await executions(repository)).toHaveLength(1);
+	expect(await storage.get(`quarantine:${execution.id}`)).toMatchObject({
+		error: expect.stringContaining('Workflow needs workflow_dispatch'),
+	});
+	await world.run(app.store.saveDiscovery(record));
+	await coordinator.recover(execution.id, 'reconcile', 'admin');
+	await world.wait(2_000);
+	expect((await executions(repository)).find(item => item.operation === 'follow0')).toMatchObject({
+		sourceSha: execution.sourceSha,
+		configurationSha: execution.configurationSha,
+	});
+	expect(await storage.get(`quarantine:${execution.id}`)).toBeUndefined();
+});
+
+test('settled history uses no per-execution D1 access budget before newer active work', async () => {
+	const { repository, execution, storage } = await observed();
+	const { runId: _runId, runAttempt: _runAttempt, workflowSha: _workflowSha, ...unstarted } = execution;
+	for (let i = 0; i < 1200; i++) {
+		await storage.put(`execution:history-${i}`, {
+			...unstarted,
+			id: `history-${i}`,
+			eventId: `history-${i}`,
+			state: i % 3 === 0 ? 'cancelled' : i % 3 === 1 ? 'failed' : 'succeeded',
+			version: '0.0.1',
+			publications: [],
+			createdAt: execution.createdAt - i - 1,
+		});
+	}
+	storage.operations.length = 0;
+	const execute = world.db.execute.bind(world.db);
+	let accessReads = 0;
+	spyOn(world.db, 'execute').mockImplementation((query, values) => {
+		if (query.startsWith('SELECT id, name, access, suspended_at') && ++accessReads > 20) {
+			throw new Error('Access-query budget exhausted');
+		}
+		return execute(query, values);
+	});
+	await world.wait(20_000);
+	expect((await executions(repository)).find(run => run.id === execution.id)?.state).toBe('succeeded');
+	expect((await executions(repository)).filter(run => run.eventId === execution.eventId && run.operation === 'follow0'))
+		.toHaveLength(1);
+	expect(accessReads).toBeLessThan(20);
+	const before = accessReads;
+	await world.wait(20_000);
+	expect(accessReads - before).toBeLessThan(20);
+	expect(storage.operations.filter(operation => operation.kind === 'list' && operation.keys >= 1200).length)
+		.toBeLessThan(15);
+});
+
+test('reconciliation updates its completion index after successful same-pass execution commits', async () => {
+	const { repository, execution, storage } = await observed(0);
+	const updates: string[] = [];
+	const update = ReleaseHistory.prototype.update;
+	spyOn(ReleaseHistory.prototype, 'update').mockImplementation(function(this: ReleaseHistory, entry) {
+		updates.push(`${entry.id}:${entry.state}`);
+		return update.call(this, entry);
+	});
+	await storage.put(`execution:${execution.id}`, { ...execution, version: '1.1.0' });
+	await world.wait(20_000);
+	expect(updates).toContain(`${execution.id}:running`);
+	expect(updates).toContain(`${execution.id}:succeeded`);
+	expect(updates.indexOf(`${execution.id}:running`)).toBeLessThan(updates.indexOf(`${execution.id}:succeeded`));
+	expect((await executions(repository)).find(entry => entry.id === execution.id)?.state).toBe('succeeded');
 });

@@ -9,6 +9,7 @@ import { Store } from '@/automation/store';
 import type { Client } from '@/cli/client';
 import type { executionFilter } from '@/contract/routes';
 import { routes } from '@/contract/routes';
+import { ProjectionBackfill } from '@/persistence/d1/backfill';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
 import {
 	decodeSync,
@@ -69,6 +70,7 @@ async function insert(base: Awaited<ReturnType<typeof template>>, rows: Row[]) {
 			updatedAt,
 		)
 	));
+	await Effect.runPromise(new ProjectionBackfill(world.db).drain());
 }
 
 const listed = (input: Encoded<typeof executionFilter>) =>
@@ -236,21 +238,18 @@ test('the run list reads executions in index order and caps the blocked rows tha
 	]);
 	world.db.reset();
 	expect(await listed({})).toEqual(['new-running', 'legacy-awaiting', 'legacy-stuck']);
-	const lists = world.db.queries.filter(query => /FROM executions WHERE .* ORDER BY/.test(query.sql));
-	expect(lists).toHaveLength(3);
+	const lists = world.db.queries.filter(query => /FROM executions .*ORDER BY/s.test(query.sql));
+	expect(lists).toHaveLength(1);
 	for (const query of lists) {
 		const plan = world.db.sqlite.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).all(...query.values).map(step =>
 			String(Reflect.get(step ?? {}, 'detail'))
 		);
-		expect(plan).toEqual([
-			`SCAN executions USING INDEX ${
-				query.sql.includes("state='blocked'") ? 'executions_blocked' : 'executions_listed'
-			}`,
-		]);
+		expect(plan).toEqual(['SCAN executions USING INDEX executions_listed']);
 	}
-	expect(lists.filter(query => query.sql.includes("state='blocked'"))).toHaveLength(2);
-	expect(lists.filter(query => !query.sql.includes('LIMIT ?')).map(query => query.sql.includes(' AND COALESCE(')))
-		.toEqual([true]);
+	expect(lists.every(query => query.sql.includes('LIMIT ?'))).toBe(true);
+	world.db.reset();
+	await listed({});
+	expect(world.db.queries.filter(query => query.sql.startsWith('UPDATE executions'))).toEqual([]);
 });
 
 test('a short ID is found by an index search on the execution ID', async () => {

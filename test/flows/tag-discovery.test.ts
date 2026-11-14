@@ -3,7 +3,7 @@ import { widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
-import { RepositoryGateway } from '@/automation/github';
+import { gitHubRequest, RepositoryGateway } from '@/automation/github';
 
 let world: World;
 eachWorld(created => {
@@ -63,3 +63,124 @@ for (const endCursor of [null, 'same']) {
 		expect(pages).toBe(endCursor === null ? 1 : 2);
 	});
 }
+
+test('read-only tag queries retry server errors while mutation POSTs remain single-attempt', async () => {
+	const repository = widget(world.github, { configured: false });
+	let queries = 0;
+	world.network.serve('api.github.com', request => {
+		if (new URL(request.url).pathname === '/graphql' && ++queries === 1) {
+			return new Response('Temporary failure', { status: 503 });
+		}
+		return world.github.handle(request);
+	});
+	const gateway = new RepositoryGateway(world.env, Number(world.env.OWNER_ID));
+	expect(await Effect.runPromise(gateway.tagRefs(repository.name, repository.id))).toEqual([]);
+	expect(queries).toBe(2);
+	let mutations = 0;
+	const result = await Effect.runPromiseExit(gitHubRequest(
+		async () => {
+			mutations++;
+			return new Response('Unavailable', { status: 503 });
+		},
+		'/graphql',
+		'fixture',
+		'POST',
+		{ query: 'mutation { test }' },
+	));
+	expect(result._tag).toBe('Failure');
+	expect(mutations).toBe(1);
+});
+
+test.each([
+	{ errors: [{ message: 'Query rate limit exceeded', type: 'RATE_LIMITED' }], data: null },
+	{ errors: [{ message: 'Repository unavailable', type: 'NOT_FOUND' }] },
+	{
+		errors: [{ message: 'Incomplete tag data' }],
+		data: { repository: { refs: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } },
+	},
+])('GraphQL errors fail closed with their upstream explanation: %j', async answer => {
+	const repository = widget(world.github, { configured: false });
+	world.network.serve(
+		'api.github.com',
+		request => new URL(request.url).pathname === '/graphql' ? Response.json(answer) : world.github.handle(request),
+	);
+	const result = await Effect.runPromiseExit(
+		new RepositoryGateway(world.env, Number(world.env.OWNER_ID)).tagRefs(repository.name, repository.id),
+	);
+	expect(result._tag).toBe('Failure');
+	expect(JSON.stringify(result)).toContain(answer.errors[0]!.message);
+	if ('type' in answer.errors[0]! && answer.errors[0].type === 'RATE_LIMITED') {
+		expect(JSON.stringify(result)).toContain('retryAt');
+	}
+});
+
+test.each([8, 9])('tag query peels %i annotated layers only within its supported depth', async depth => {
+	const repository = widget(world.github, { configured: false });
+	const commit = world.github.head(repository);
+	for (let index = 0; index < depth; index++) {
+		world.github.recordTag(
+			repository,
+			`layer-${index}`,
+			oid(index + 1),
+			index === depth - 1 ? commit : oid(index + 2),
+			true,
+		);
+		if (index !== depth - 1) repository.tagObjects.get(oid(index + 1))!.targetType = 'Tag';
+		if (index > 0) repository.refs.delete(`tags/layer-${index}`);
+	}
+	const result = await Effect.runPromiseExit(
+		new RepositoryGateway(world.env, Number(world.env.OWNER_ID)).tagRefs(repository.name, repository.id),
+	);
+	if (depth === 8) {
+		expect(result._tag).toBe('Success');
+		if (result._tag === 'Success') expect(result.value).toEqual([{ name: 'layer-0', oid: oid(1), commit }]);
+	} else {
+		expect(result._tag).toBe('Failure');
+		expect(JSON.stringify(result)).toContain('Tag does not resolve to a commit');
+	}
+});
+
+test.each([0, 100, 10_000, 10_001])('tag pagination handles %i tags at page and discovery boundaries', async count => {
+	const repository = widget(world.github, { configured: false });
+	const commit = world.github.head(repository);
+	for (let index = 0; index < count; index++) repository.refs.set(`tags/v${index}`, commit);
+	let pages = 0;
+	world.network.serve('api.github.com', request => {
+		if (new URL(request.url).pathname === '/graphql') pages++;
+		return world.github.handle(request);
+	});
+	const result = await Effect.runPromiseExit(
+		new RepositoryGateway(world.env, Number(world.env.OWNER_ID)).tagRefs(repository.name, repository.id),
+	);
+	expect(pages).toBe(Math.max(1, Math.min(100, Math.ceil(count / 100))));
+	if (count <= 10_000) {
+		expect(result._tag).toBe('Success');
+		if (result._tag === 'Success') expect(result.value).toHaveLength(count);
+	} else {
+		expect(result._tag).toBe('Failure');
+		expect(JSON.stringify(result)).toContain('Tag discovery limit exceeded');
+	}
+});
+
+test.each([
+	{ data: null },
+	{ data: { repository: null } },
+	{
+		data: {
+			repository: {
+				refs: { nodes: [{ name: 'broken', target: null }], pageInfo: { hasNextPage: false, endCursor: null } },
+			},
+		},
+	},
+])('tag discovery rejects missing or malformed data: %j', async answer => {
+	const repository = widget(world.github, { configured: false });
+	world.network.serve(
+		'api.github.com',
+		request => new URL(request.url).pathname === '/graphql' ? Response.json(answer) : world.github.handle(request),
+	);
+	const result = await Effect.runPromiseExit(
+		new RepositoryGateway(world.env, Number(world.env.OWNER_ID)).tagRefs(repository.name, repository.id),
+	);
+	expect(result._tag).toBe('Failure');
+	expect(JSON.stringify(result)).toContain('missing or invalid repository/ref data');
+});

@@ -1,6 +1,9 @@
 import { Effect } from 'effect';
+import { isDecodingFailure } from '@/automation/store';
 import type { ProjectedEntity } from '@/contract/changes';
 import type { DomainError } from '@/contract/errors';
+import { decodeExecutionV1 } from '@/persistence/codecs/v1';
+import { completionMetadata } from '@/persistence/d1/completions';
 import type { Sql, SqlDatabase, SqlStatement } from '@/persistence/d1/database';
 import { sql } from '@/persistence/d1/database';
 
@@ -28,9 +31,50 @@ export class ProjectionStore {
 	}
 	private upsert(row: Projection): SqlStatement {
 		if (row.entity === 'execution') {
+			let state = row.state;
+			try {
+				state = decodeExecutionV1(JSON.parse(row.document)).state;
+			} catch (error) {
+				if (!isDecodingFailure(error)) throw error;
+			}
 			return this.db.statement(
-				'INSERT INTO executions(id,repository_id,state,document,updated_at,revision) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET repository_id=excluded.repository_id,state=excluded.state,document=excluded.document,updated_at=excluded.updated_at,revision=excluded.revision WHERE executions.revision IS NULL OR excluded.revision>executions.revision',
-			).bind(row.id, row.repositoryId, row.state, row.document, row.updatedAt, row.revision);
+				'INSERT INTO executions(id,repository_id,state,document,updated_at,revision,state_version,state_revision) VALUES(?,?,?,?,?,?,1,?) ON CONFLICT(id) DO UPDATE SET repository_id=excluded.repository_id,state=excluded.state,state_version=1,state_revision=excluded.state_revision,document=excluded.document,updated_at=excluded.updated_at,revision=excluded.revision WHERE executions.revision IS NULL OR excluded.revision>executions.revision',
+			).bind(
+				row.id,
+				row.repositoryId,
+				state,
+				row.document,
+				row.updatedAt,
+				row.revision,
+				row.revision,
+			);
+		}
+		if (row.entity === 'release') {
+			const meta = completionMetadata(row.document, row.repositoryId);
+			return this.db.statement(
+				`INSERT INTO releases(id,repository_id,revision,document,updated_at,completion_format,
+     completion_stream,completion_group,completion_release_version,completion_sort,completion_at,completion_revision)
+     VALUES(?,?,?,?,?,1,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+     repository_id=excluded.repository_id,revision=excluded.revision,document=excluded.document,
+     updated_at=MIN(releases.updated_at,excluded.updated_at),completion_format=1,completion_revision=excluded.completion_revision,
+     completion_stream=excluded.completion_stream,completion_group=excluded.completion_group,
+     completion_release_version=excluded.completion_release_version,completion_sort=excluded.completion_sort,
+     completion_at=CASE WHEN excluded.completion_sort IS NULL THEN NULL ELSE COALESCE(?,MIN(releases.updated_at,excluded.updated_at)) END
+     WHERE excluded.revision>releases.revision`,
+			).bind(
+				row.id,
+				row.repositoryId,
+				row.revision,
+				row.document,
+				row.updatedAt,
+				meta?.stream ?? null,
+				meta?.group ?? null,
+				meta?.version ?? null,
+				meta?.sort ?? null,
+				meta ? meta.at ?? row.updatedAt : null,
+				row.revision,
+				meta?.at ?? null,
+			);
 		}
 		const table = tables[row.entity];
 		return this.db.statement(

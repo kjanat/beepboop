@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { expect, spyOn, test } from 'bun:test';
 import { runAction } from '@root/test/support/actions.ts';
 import { call, cliTransport, discoveredWidget } from '@root/test/support/client.ts';
 import { botId } from '@root/test/support/github.ts';
@@ -10,6 +10,7 @@ import { passChecks } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
+import { Store } from '@/automation/store';
 import { routes } from '@/contract/routes';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
 import {
@@ -48,7 +49,17 @@ test('a D1 outage keeps the outbox, and the next alarm projects it', async () =>
 	const send = cliTransport(world, token);
 	const plan = await call(routes.releasesPlan, { repositoryId: repository.id, stream: 'main', version: '1.1.0' }, send);
 
-	world.db.failBatch = new Error('D1_ERROR: Network connection lost.');
+	let projectionUnavailable = true;
+	const batch = world.db.batch.bind(world.db);
+	spyOn(world.db, 'batch').mockImplementation(statements => {
+		const projects = statements.some(statement =>
+			'sql' in statement && typeof statement.sql === 'string'
+			&& /^INSERT INTO (executions|release_sets|releases)\b/.test(statement.sql)
+		);
+		return projectionUnavailable && projects
+			? Promise.reject(new Error('D1_ERROR: Network connection lost.'))
+			: batch(statements);
+	});
 	const logged = errors();
 	const prepared = await call(
 		routes.releasesPrepare,
@@ -65,7 +76,7 @@ test('a D1 outage keeps the outbox, and the next alarm projects it', async () =>
 		expect.objectContaining({ event: 'projection.failed', error: 'D1_ERROR: Network connection lost.' }),
 	]);
 
-	world.db.failBatch = undefined;
+	projectionUnavailable = false;
 	await world.wait(10_000);
 	expect((await call(routes.executionsList, {}, send)).map(execution => execution.id)).toEqual([prepared.id]);
 	expect([...journal.snapshot().keys()].filter(key => key.startsWith('outbox:'))).toEqual([]);
@@ -265,3 +276,35 @@ test('packed refs complete from the journal after the execution row is gone', as
 		true,
 	);
 }, 30_000);
+
+test('reindex preserves a quarantined unreadable execution without blocking healthy rows or later release batches', async () => {
+	const { repository, promotionId } = await packedRelease(world);
+	const coordinator = world.coordinator(repository),
+		storage = world.coordinators.instance(String(repository.id)).storage;
+	const source = await coordinator.execution(promotionId);
+	if (!source) throw new Error('Missing completed execution');
+	const corrupt = { id: '000-poisoned', repositoryId: repository.id, state: 'failed', updatedAt: 1 };
+	await storage.put('execution:000-poisoned', corrupt);
+	await storage.put('quarantine:000-poisoned', { error: 'Invalid execution', at: 1 });
+	for (let i = 0; i < 65; i++) await storage.put(`execution:healthy-${i}`, { ...source, id: `healthy-${i}` });
+	await world.db.prepare('DELETE FROM executions').run();
+	await world.db.prepare('DELETE FROM releases').run();
+	for (let attempt = 0; attempt < 2; attempt++) {
+		await coordinator.reindex(repository.id);
+		const rows = await world.db.prepare('SELECT id,document,state,state_version FROM executions').all();
+		expect(rows.results).toHaveLength(68);
+		expect(rows.results).toContainEqual({
+			id: '000-poisoned',
+			document: JSON.stringify(corrupt),
+			state: 'failed',
+			state_version: 1,
+		});
+		const releases = await world.db.prepare('SELECT id FROM releases').all();
+		expect(releases.results).toHaveLength(1);
+		expect([...storage.snapshot().keys()].filter(key => key.startsWith('outbox:'))).toEqual([]);
+		const listed = await Effect.runPromise(new Store(world.db).readExecutions());
+		expect(listed.filter(row => row.kind === 'readable')).toHaveLength(67);
+		expect(listed.filter(row => row.kind === 'unreadable').map(row => row.id)).toEqual(['000-poisoned']);
+		expect(await storage.get('execution:000-poisoned')).toEqual(corrupt);
+	}
+});

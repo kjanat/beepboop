@@ -81,6 +81,7 @@ export async function packedRelease(
 	signing?: PackedSigning,
 	githubRelease = false,
 	companionModule?: string,
+	moduleStream = false,
 ): Promise<PackedRelease> {
 	const repository = widget(world.github);
 	world.npm.publish('widget', '1.0.0');
@@ -108,6 +109,23 @@ export async function packedRelease(
 	if (companionModule !== undefined) {
 		configuration.streams.main.companionModules = [`pkg:golang/${companionModule}`];
 		configuration.managers = [...configuration.managers ?? [], 'go'];
+		if (moduleStream) {
+			configuration.streams.sdk = {
+				...configuration.streams.main,
+				packages: [`pkg:golang/${companionModule}`],
+				required: [`pkg:golang/${companionModule}`],
+				companionModules: [],
+				versionSource: { kind: 'tags', prefix: 'go/v' },
+				promote: {
+					...configuration.streams.main.promote,
+					workflow: {
+						...configuration.streams.main.promote.workflow,
+						publications: [],
+						refs: { phase: 'version', prefix: 'go/v', aliases: [], signed: false },
+					},
+				},
+			};
+		}
 	}
 	const pushed = world.github.push(repository, {
 		'.github/beepboop.json': jsonFile(configuration, '\t'),

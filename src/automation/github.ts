@@ -1,4 +1,4 @@
-import { Clock, Context, Data, Effect, Layer, Schema } from 'effect';
+import { Clock, Context, Data, Effect, Exit, Layer, Schema } from 'effect';
 import { importPKCS8, SignJWT } from 'jose';
 import { logRecovered } from '@/automation/failure-log';
 import type { GitObject } from '@/automation/github-resources';
@@ -39,10 +39,10 @@ import type { AutoMergeMethod } from '@/contract/setup-terms';
 import { parseRetryAfter } from '@/domain/http-date';
 import { fromPromise, fromSync, toDomainError } from '@/failure';
 import { decode, sha, textSchema } from '@/model';
-import { responseBytes, responseJson, responseText } from '@/runtime/http';
+import { responseBytes, responseJson, responseText, scopedResponse } from '@/runtime/http';
 import { ioConcurrency, retryTransient } from '@/runtime/policy';
 import type { Contract, Decoded } from '@/schema';
-import { mutableArray, mutableStruct } from '@/schema';
+import { looseStruct, mutableArray, mutableStruct } from '@/schema';
 
 type Permission = Record<string, 'read' | 'write'>;
 const missingInstallationPermissions = 'GitHub App installation lacks required permissions';
@@ -84,6 +84,9 @@ const tagTargetSchema: Schema.Codec<TagTarget, unknown> = mutableStruct({
 	__typename: textSchema,
 	oid: textSchema,
 	target: Schema.optional(Schema.suspend(() => tagTargetSchema)),
+});
+const graphqlEnvelope = looseStruct({
+	errors: Schema.optional(mutableArray(looseStruct({ message: Schema.String, type: Schema.optional(Schema.String) }))),
 });
 const tagRefsSchema = mutableStruct({
 	data: mutableStruct({
@@ -129,7 +132,7 @@ function detailOf(body: string): string {
 	}
 }
 
-class ServerError extends Data.TaggedError('ServerError')<{ readonly response: Response }> {}
+class ServerError extends Data.TaggedError('ServerError')<{ readonly message: string }> {}
 
 export class GitHubRejection extends DomainError {
 	constructor(readonly status: number, message: string, readonly retryAt?: number) {
@@ -143,11 +146,19 @@ export const gitHubRequest = Effect.fn('GitHub.request')(function*(
 	token: string,
 	method = 'GET',
 	body?: unknown,
+	readOnlyGraphql = false,
 ) {
 	const clock = yield* Clock.Clock;
 
 	if (!path.startsWith('/')) {
 		return yield* invalid('Invalid API path');
+	}
+	if (
+		readOnlyGraphql
+		&& !(method === 'POST' && path === '/graphql' && typeof body === 'object' && body !== null && 'query' in body
+			&& typeof body.query === 'string' && /^\s*query\b/.test(body.query))
+	) {
+		return yield* invalid('Read-only retries require a GraphQL query');
 	}
 	const route = `${method} ${path.split('?')[0]}`;
 	const reach = Effect.tryPromise({
@@ -169,43 +180,48 @@ export const gitHubRequest = Effect.fn('GitHub.request')(function*(
 			upstream('github', `GitHub unreachable on ${route}: ${error instanceof Error ? error.message : String(error)}`),
 	});
 	const failed = (response: Response) =>
-		responseText(response).pipe(
+		responseText(response, { maxBytes: 8192 }).pipe(
+			Effect.timeout('2 seconds'),
 			Effect.map(detailOf),
 			Effect.orElseSucceed(() => ''),
 			Effect.map(detail => `GitHub HTTP ${response.status} on ${route}${detail ? `: ${detail}` : ''}`),
 		);
-	const answered = method === 'GET'
-		? reach.pipe(
-			Effect.filterOrElse(
-				response => response.status < 500,
-				response => Effect.fail(new ServerError({ response })),
-			),
-			retryTransient<ServerError | DomainError>({
-				attempts: 3,
-				delay: 500,
-				while: failure => failure._tag === 'ServerError',
-			}),
-			Effect.catchTag('ServerError', ({ response }) => Effect.succeed(response)),
-		)
-		: reach;
-	const response = yield* answered;
-	if (response.status === 404 && method === 'GET') return null;
-	if (!response.ok) {
-		const message = yield* failed(response);
-		if (response.status >= 400 && response.status < 500 && response.status !== 408) {
-			const retryAt = response.status === 429 || response.status === 403 && rateLimited(message)
-				? parseRetryAfter(response.headers.get('retry-after') ?? '', clock.currentTimeMillisUnsafe())
-					?? clock.currentTimeMillisUnsafe() + 60_000
-				: undefined;
-			return yield* new GitHubRejection(response.status, message, retryAt);
+	const safeRead = method === 'GET' || readOnlyGraphql;
+	const maxAttempts = 3;
+	let attempt = 0;
+	const answered = Effect.gen(function*() {
+		attempt++;
+		const response = yield* scopedResponse(reach);
+		if (response.status === 404 && method === 'GET') return null;
+		if (!response.ok) {
+			if (safeRead && response.status >= 500 && attempt < maxAttempts) {
+				return yield* new ServerError({ message: `GitHub HTTP ${response.status} on ${route}` });
+			}
+			const message = yield* failed(response);
+			if (response.status >= 400 && response.status < 500 && response.status !== 408) {
+				const retryAt = response.status === 429 || response.status === 403 && rateLimited(message)
+					? parseRetryAfter(response.headers.get('retry-after') ?? '', clock.currentTimeMillisUnsafe())
+						?? clock.currentTimeMillisUnsafe() + 60_000
+					: undefined;
+				return yield* new GitHubRejection(response.status, message, retryAt);
+			}
+			if (response.status >= 500 && safeRead) return yield* new ServerError({ message });
+			return yield* response.status >= 500
+				? upstream('github', message)
+				: domainError({ code: 'precondition', diagnostics: [legacyDiagnostic(message)] }, message);
 		}
-		return yield* response.status >= 500
-			? upstream('github', message)
-			: domainError({ code: 'precondition', diagnostics: [legacyDiagnostic(message)] }, message);
-	}
-	if (response.status === 204) return null;
-	return yield* responseJson(response).pipe(
-		Effect.mapError(() => upstream('github', `GitHub sent invalid JSON on ${route}`)),
+		if (response.status === 204) return null;
+		return yield* responseJson(response).pipe(
+			Effect.mapError(() => upstream('github', `GitHub sent invalid JSON on ${route}`)),
+		);
+	}).pipe(Effect.scoped);
+	return yield* answered.pipe(
+		retryTransient<ServerError | DomainError>({
+			attempts: maxAttempts,
+			delay: 500,
+			while: failure => failure._tag === 'ServerError',
+		}),
+		Effect.catchTag('ServerError', ({ message }) => upstream('github', message)),
 	);
 });
 
@@ -217,10 +233,16 @@ export class RepositoryGateway {
 		private defer?: (work: Promise<void>) => void,
 		private api?: GitHub['Service'],
 	) {}
-	call(path: string, token: string, method = 'GET', body?: unknown): Effect.Effect<unknown, DomainError> {
+	call(
+		path: string,
+		token: string,
+		method = 'GET',
+		body?: unknown,
+		readOnlyGraphql = false,
+	): Effect.Effect<unknown, DomainError> {
 		return this.api
-			? this.api.call(path, token, method, body)
-			: gitHubRequest(this.transport, path, token, method, body);
+			? this.api.call(path, token, method, body, readOnlyGraphql)
+			: gitHubRequest(this.transport, path, token, method, body, readOnlyGraphql);
 	}
 	read<S extends Contract>(
 		schema: S,
@@ -250,18 +272,20 @@ export class RepositoryGateway {
 				'X-GitHub-Api-Version': githubApiVersion,
 				'User-Agent': 'beepboop',
 			};
-			const download = yield* fromPromise(signal =>
-				self.transport(`https://api.github.com/repos/${repository}/releases/assets/${asset.id}`, {
-					headers: { ...headers, Accept: 'application/octet-stream' },
-					signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
-				})
+			const download = yield* scopedResponse(
+				fromPromise(signal =>
+					self.transport(`https://api.github.com/repos/${repository}/releases/assets/${asset.id}`, {
+						headers: { ...headers, Accept: 'application/octet-stream' },
+						signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
+					})
+				),
 			);
 			if (!download.ok) {
 				const message = `GitHub HTTP ${download.status} downloading release asset ${asset.name}`;
 				return yield* (download.status >= 500 ? upstream('github', message) : precondition(message));
 			}
 			const content = yield* responseBytes(download).pipe(Effect.mapError(({ cause }) => toDomainError(cause)));
-			const upload = yield* fromPromise(signal =>
+			const upload = yield* scopedResponse(fromPromise(signal =>
 				self.transport(
 					`https://uploads.github.com/repos/${repository}/releases/${releaseId}/assets?name=${
 						encodeURIComponent(asset.name)
@@ -273,12 +297,12 @@ export class RepositoryGateway {
 						signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
 					},
 				)
-			);
+			));
 			if (!upload.ok) {
 				const message = `GitHub HTTP ${upload.status} uploading release asset ${asset.name}`;
 				return yield* (upload.status >= 500 ? upstream('github', message) : precondition(message));
 			}
-		});
+		}).pipe(Effect.scoped);
 	}
 	token(
 		name: string,
@@ -395,10 +419,22 @@ export class RepositoryGateway {
 			const result: RefState[] = [];
 			let after: string | null = null;
 			for (let page = 1; page <= 100; page++) {
-				const response: Decoded<typeof tagRefsSchema> = yield* self.read(tagRefsSchema, '/graphql', token, 'POST', {
+				const raw: unknown = yield* self.call('/graphql', token, 'POST', {
 					query: tagRefsQuery,
 					variables: { owner, name: repository, after },
-				});
+				}, true);
+				const envelope = yield* Effect.fromResult(decode(graphqlEnvelope, raw));
+				if (envelope.errors?.length) {
+					const reason = `GitHub tag discovery failed: ${envelope.errors.map(error => error.message).join('; ')}`;
+					if (envelope.errors.some(error => rateLimited(error.message, error.type))) {
+						const clock = yield* Clock.Clock;
+						return yield* new GitHubRejection(429, reason, clock.currentTimeMillisUnsafe() + 60_000);
+					}
+					return yield* precondition(reason);
+				}
+				const response: Decoded<typeof tagRefsSchema> = yield* Effect.fromResult(decode(tagRefsSchema, raw)).pipe(
+					Effect.mapError(() => precondition('GitHub tag discovery returned missing or invalid repository/ref data')),
+				);
 				const { nodes, pageInfo } = response.data.repository.refs;
 				for (const { name: tag, target } of nodes) {
 					let peeled = target;
@@ -416,15 +452,8 @@ export class RepositoryGateway {
 		});
 	}
 	verification(name: string, id: number, permissions?: Permission): VerificationContext {
-		let token: string | undefined;
-		const installation = Effect.suspend(() =>
-			token === undefined
-				? this.token(name, id, permissions).pipe(Effect.tap(issued =>
-					Effect.sync(() => {
-						token = issued;
-					})
-				))
-				: Effect.succeed(token)
+		const installation = Effect.runSync(
+			Effect.cachedWithTTL(this.token(name, id, permissions), exit => Exit.isSuccess(exit) ? Infinity : 0),
 		);
 		return {
 			repository: name,
@@ -453,7 +482,7 @@ export class RepositoryGateway {
 		const self = this;
 		return Effect.gen(function*() {
 			const result = yield* self.call(
-				`/repos/${name}/contents/${path}?ref=${encodeURIComponent(ref)}`,
+				`/repos/${name}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`,
 				token,
 			);
 			if (result === null) return null;
@@ -1210,11 +1239,18 @@ export interface Credentials {
 }
 
 export class GitHub extends Context.Service<GitHub, {
-	readonly call: (path: string, token: string, method?: string, body?: unknown) => Effect.Effect<unknown, DomainError>;
+	readonly call: (
+		path: string,
+		token: string,
+		method?: string,
+		body?: unknown,
+		readOnlyGraphql?: boolean,
+	) => Effect.Effect<unknown, DomainError>;
 }>()('beepboop/GitHub') {}
 
 export function gitHubLayer(transport: Fetcher): Layer.Layer<GitHub> {
 	return Layer.succeed(GitHub, {
-		call: (path, token, method, body) => gitHubRequest(transport, path, token, method, body),
+		call: (path, token, method, body, readOnlyGraphql) =>
+			gitHubRequest(transport, path, token, method, body, readOnlyGraphql),
 	});
 }

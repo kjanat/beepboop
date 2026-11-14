@@ -15,6 +15,21 @@ export const tokenRequest = {
 	ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'request-token',
 };
 let invocation = 0;
+let runtime: Promise<string> | undefined;
+function sharedRuntime(): Promise<string> {
+	return runtime ??= (async () => {
+		const directory = mkdtempSync(join(tmpdir(), 'beepboop-runtime-bundle-'));
+		process.once('exit', () => rmSync(directory, { recursive: true, force: true }));
+		try {
+			await Effect.runPromise(bundleRuntime(directory));
+			return directory;
+		} catch (error) {
+			rmSync(directory, { recursive: true, force: true });
+			runtime = undefined;
+			throw error;
+		}
+	})();
+}
 
 function outputs(file: string): Record<string, string> {
 	const entries: Record<string, string> = {};
@@ -32,11 +47,10 @@ export interface ActionResult {
 	context?: string;
 }
 
-async function withRuntime<A>(prefix: string, work: (directory: string) => Promise<A>): Promise<A> {
+async function withRuntime<A>(prefix: string, work: (directory: string, runtime: string) => Promise<A>): Promise<A> {
 	const directory = mkdtempSync(join(tmpdir(), prefix));
 	try {
-		await Effect.runPromise(bundleRuntime(join(directory, 'runtime')));
-		return await work(directory);
+		return await work(directory, await sharedRuntime());
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}
@@ -48,8 +62,8 @@ export function runAction(
 	run: RunIdentity,
 	variables: Record<string, string>,
 ): Promise<ActionResult> {
-	return withRuntime('beepboop-action-', async directory => {
-		const client = join(directory, 'runtime', 'client.ts');
+	return withRuntime('beepboop-action-', async (directory, runtime) => {
+		const client = join(runtime, 'client.ts');
 		const output = join(directory, 'output'), environment = join(directory, 'env');
 		writeFileSync(output, '');
 		writeFileSync(environment, '');
@@ -103,8 +117,8 @@ export function runRuntime(
 	entry: 'prepare' | 'pull-request' | 'refs',
 	env: Record<string, string>,
 ): Promise<void> {
-	return withRuntime('beepboop-runtime-', async directory => {
-		const result = Bun.spawnSync(['bun', '--no-install', join(directory, 'runtime', `${entry}.ts`)], {
+	return withRuntime('beepboop-runtime-', async (directory, runtime) => {
+		const result = Bun.spawnSync(['bun', '--no-install', join(runtime, `${entry}.ts`)], {
 			cwd: directory,
 			env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', ...env },
 			stdout: 'pipe',
