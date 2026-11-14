@@ -1,5 +1,5 @@
 import { Effect } from 'effect';
-import type { JoseErrorResult, Jwks, JwsKeyResolver } from 'micro509/jose';
+import type { Jwks, JwsKeyResolver } from 'micro509/jose';
 import { createJwksKeyResolver, DEFAULT_JWKS_LIMITS, parseJwks } from 'micro509/jose';
 import { failureResult } from 'micro509/result';
 import type { Fetcher } from '@/automation/managers/registry';
@@ -98,23 +98,34 @@ export function remoteKeys(url: URL, transport: Fetcher): JwsKeyResolver {
 	const endpoint = new URL(url);
 	return async request => {
 		if (request.signal?.aborted) return failureResult('aborted', 'Signing key resolution was cancelled');
-		const snapshot = snapshots.get(endpoint.href);
-		const age = snapshot ? Date.now() - snapshot.fetchedAt : Infinity;
-		if (snapshot && age < lifetime) {
-			const cached = await createJwksKeyResolver(snapshot.keys)(request);
-			if (cached.ok || (cached.code !== 'key_not_found' && cached.code !== 'key_unsuitable') || age < cooldown) {
-				return cached;
-			}
-		}
 		const deadline = new AbortController();
 		const timer = setTimeout(() => deadline.abort(), 5000);
 		const signal = request.signal ? AbortSignal.any([request.signal, deadline.signal]) : deadline.signal;
+		const resolve = (keys: Jwks) => Effect.tryPromise({
+			try: signal => createJwksKeyResolver(keys)({ ...request, signal }),
+			catch: () => failureResult('key_resolution_failed', 'Signing key resolution failed unexpectedly'),
+		});
 		try {
-			const loaded = await Effect.runPromise(
-				fetchKeys(endpoint, transport).pipe(
+			const result = await Effect.runPromise(
+				Effect.gen(function*() {
+					const snapshot = snapshots.get(endpoint.href);
+					const age = snapshot ? Date.now() - snapshot.fetchedAt : Infinity;
+					if (snapshot && age < lifetime) {
+						const cached = yield* resolve(snapshot.keys);
+						if (cached.ok || (cached.code !== 'key_not_found' && cached.code !== 'key_unsuitable') || age < cooldown) {
+							return cached;
+						}
+					}
+					const keys = yield* fetchKeys(endpoint, transport);
+					// Keep any snapshot published by a peer while this fetch was outstanding.
+					if (snapshots.get(endpoint.href) === snapshot) {
+						snapshots.set(endpoint.href, { keys, fetchedAt: Date.now() });
+					}
+					return yield* resolve(keys);
+				}).pipe(
 					Effect.match({
-						onFailure: (error): JoseErrorResult<'jwks_unavailable' | 'jwks_malformed'> => error,
-						onSuccess: keys => ({ ok: true, value: keys } as const),
+						onFailure: error => error,
+						onSuccess: result => result,
 					}),
 				),
 				{ signal },
@@ -124,9 +135,7 @@ export function remoteKeys(url: URL, transport: Fetcher): JwsKeyResolver {
 					? failureResult('aborted', 'Signing key resolution was cancelled')
 					: unavailable();
 			}
-			if (!loaded.ok) return loaded;
-			snapshots.set(endpoint.href, { keys: loaded.value, fetchedAt: Date.now() });
-			return await createJwksKeyResolver(loaded.value)(request);
+			return result;
 		} catch {
 			if (request.signal?.aborted) return failureResult('aborted', 'Signing key resolution was cancelled');
 			return deadline.signal.aborted

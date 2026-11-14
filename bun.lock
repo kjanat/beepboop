@@ -15,7 +15,7 @@
         "effect": "^4.1.2",
         "github-up": "^0.1.4",
         "jsonc-parser": "^3.3.1",
-        "micro509": "https://pkg.pr.new/micro509@9200bce",
+        "micro509": "0.18.0",
         "packageurl-js": "^2.0.1",
         "remark": "15.0.1",
         "remark-gfm": "4.0.1",
@@ -876,7 +876,7 @@
 
     "mdn-data": ["mdn-data@2.27.1", "", {}, "sha512-9Yubnt3e8A0OKwxYSXyhLymGW4sCufcLG6VdiDdUGVkPhpqLxlvP5vl1983gQjJl3tqbrM731mjaZaP68AgosQ=="],
 
-    "micro509": ["micro509@https://pkg.pr.new/micro509@9200bce", { "hasInstallScript": true }, "sha512-NCdvzQ47pHe1KdKI3hO9K5xWXcBZKkvS3FAyrjTlJSd2EdZ8uPRmlJAtSWEuIoaduzpYeUPJapUYXI1qz5C7PA=="],
+    "micro509": ["micro509@0.18.0", "", {}, "sha512-qV6CpUEbFVoeyjtTKOMlNb0w2rj59Pa28lq+9L2nwVsfPoc0P6Nu64FeGo8Ir/oGQfjTTcQ1zvZFvQCHZh/OwQ=="],
 
     "micromark": ["micromark@4.0.3", "", { "dependencies": { "@types/debug": "^4.0.0", "debug": "^4.0.0", "decode-named-character-reference": "^1.0.0", "devlop": "^1.0.0", "micromark-core-commonmark": "^2.0.0", "micromark-factory-space": "^2.0.0", "micromark-util-character": "^2.0.0", "micromark-util-chunked": "^2.0.0", "micromark-util-combine-extensions": "^2.0.0", "micromark-util-decode-numeric-character-reference": "^2.0.0", "micromark-util-edit-map": "^1.0.0", "micromark-util-encode": "^2.0.0", "micromark-util-normalize-identifier": "^2.0.0", "micromark-util-resolve-all": "^2.0.0", "micromark-util-sanitize-uri": "^2.0.0", "micromark-util-subtokenize": "^2.0.0", "micromark-util-symbol": "^2.0.0", "micromark-util-types": "^2.0.0" } }, "sha512-oGYfQzHSG5dOMovQcJ3fyTmZlWAWpi0XA0sJwJs+i6OT88o1+Jtw/8z0CmdowSLxGhhFK89rQ/oXph/wN02PNw=="],
 

@@ -69,7 +69,7 @@
 		"effect": "^4.1.2",
 		"github-up": "^0.1.4",
 		"jsonc-parser": "^3.3.1",
-		"micro509": "https://pkg.pr.new/micro509@9200bce",
+		"micro509": "0.18.0",
 		"packageurl-js": "^2.0.1",
 		"remark": "15.0.1",
 		"remark-gfm": "4.0.1",
@@ -99,6 +99,7 @@
 		"typescript": "7.1.0-beta",
 		"wrangler": "4.161.0"
 	},
+	"packageManager": "bun@1.4.4",
 	"devEngines": {
 		"packageManager": {
 			"name": "bun",
