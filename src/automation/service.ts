@@ -45,7 +45,7 @@ import { notFound, precondition } from '@/contract/errors';
 import { setupChoicesSchema } from '@/contract/setup';
 import { semVer } from '@/contract/version';
 import { configurationDiagnostics, configurationProblem } from '@/domain/configuration';
-import type { Access, ReadyRepository } from '@/domain/repository';
+import type { Access, ReadyRepository, RepositoryDiscovery } from '@/domain/repository';
 import { readiness, requireReady } from '@/domain/repository';
 import { validateAgainst } from '@/domain/validate';
 import { fromJson, fromPromise, fromSync, recover } from '@/failure';
@@ -184,8 +184,7 @@ export class AutomationService {
 
 	setAccess(id: number, access: Access): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			yield* this.store.setAccess(id, access);
-			yield* fromPromise(() => this.coordinator(id).setAccess(access.kind === 'suspended'));
+			if (yield* this.store.setAccess(id, access)) yield* fromPromise(() => this.coordinator(id).wake());
 		});
 	}
 	private access(name: string): Effect.Effect<Access, DomainError> {
@@ -227,10 +226,8 @@ export class AutomationService {
 			const clock = yield* Clock.Clock;
 
 			const snapshot = yield* this.gateway.snapshot(name, id);
-			const prior = yield* this.store.enrollment(id);
-			const repository: RepositoryRecord = {
+			const discovered: RepositoryDiscovery = {
 				...snapshot.repository,
-				access: prior?.access ?? { kind: 'active' },
 				sha: snapshot.sha,
 				inventory: discover(snapshot),
 				presetShas: {},
@@ -242,15 +239,15 @@ export class AutomationService {
 				yield* Effect.gen({ self: this }, function*() {
 					const raw = yield* fromSync((): unknown => JSON.parse(document));
 					const resolved = yield* resolveConfiguration(raw, ref => this.gateway.preset(ref));
-					repository.configuration = resolved.configuration;
-					repository.presetShas = resolved.presetShas;
-					repository.diagnostics.push(...resolved.drift);
-					repository.inventory = discover(snapshot, resolved.configuration.managers);
-					repository.diagnostics.push(...validateAgainst(resolved.configuration, repository.inventory, snapshot));
+					discovered.configuration = resolved.configuration;
+					discovered.presetShas = resolved.presetShas;
+					discovered.diagnostics.push(...resolved.drift);
+					discovered.inventory = discover(snapshot, resolved.configuration.managers);
+					discovered.diagnostics.push(...validateAgainst(resolved.configuration, discovered.inventory, snapshot));
 				}).pipe(
 					Effect.catch(error =>
 						Effect.sync(() => {
-							repository.diagnostics.push(
+							discovered.diagnostics.push(
 								...(error instanceof Schema.SchemaError
 									? configurationDiagnostics(error)
 									: [configurationProblem(decodeError(error))]),
@@ -259,7 +256,7 @@ export class AutomationService {
 					),
 				);
 			} else {
-				repository.diagnostics.push({
+				discovered.diagnostics.push({
 					code: 'unconfigured',
 					severity: 'blocking',
 					message: (yield* this.gateway.openSetupPull(name, id))
@@ -268,9 +265,8 @@ export class AutomationService {
 				});
 			}
 			const verification = this.gateway.verification(name, id);
-			repository.inventory = yield* resolvePublished(repository.inventory, this.dependencies.transport, verification);
-			yield* this.store.putRepository(repository);
-			yield* fromPromise(() => this.coordinator(id).setAccess(repository.access.kind === 'suspended'));
+			discovered.inventory = yield* resolvePublished(discovered.inventory, this.dependencies.transport, verification);
+			const repository = yield* this.store.saveDiscovery(discovered);
 			yield* this.releaseFromManifest(repository).pipe(
 				this.store.auditFailure('beepboop', 'release.push.failed', name),
 			);
@@ -441,7 +437,7 @@ export class AutomationService {
 			}
 			if (tagged.length) {
 				stored.diagnostics.push(...tagged);
-				yield* this.store.putRepository(stored);
+				yield* this.store.saveDiscovery(stored);
 			}
 		});
 	}

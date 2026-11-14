@@ -48,6 +48,7 @@ export const releaseSetTone = {
 
 const deliveryTone = {
 	pending: 'waiting',
+	sending: 'active',
 	delivered: 'ok',
 	failed: 'error',
 } as const satisfies Record<DeliveryState, Tone>;
@@ -55,6 +56,8 @@ const deliveryTone = {
 export function deliveryStatus(delivery: NotificationDelivery): Status {
 	const label = delivery.state === 'delivered'
 		? 'Delivered'
+		: delivery.state === 'sending'
+		? `Sending (${delivery.attempts})`
 		: delivery.state === 'failed'
 		? 'Failed'
 		: `Retrying (${delivery.attempts})`;

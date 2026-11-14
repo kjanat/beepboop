@@ -176,7 +176,6 @@ const reconcileDue = Schema.NullOr(Schema.Finite);
 const inboxAttempts = 8;
 const observationAttempts = 10;
 const jobPollInterval = 30_000;
-const access = mutableStruct({ suspended: Schema.Boolean });
 const reconcileInterval = 60_000;
 const settleInterval = 15_000;
 const projectionRetry = 10_000;
@@ -407,22 +406,30 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			Effect.flatMap(value => fromSync(() => decodeSync(Schema.optional(releaseSetRecord), value))),
 		);
 	}
-	private continueAfter(observed: Execution): CoordinatorEffect<void, DomainError> {
+	private continuations(observed: Execution): CoordinatorEffect<Execution[], DomainError> {
 		return Effect.gen({ self: this }, function*() {
+			if (observed.state !== 'succeeded' || !observed.eventId.startsWith('observed:')) return [];
 			const stream = observed.configuration.streams[observed.stream];
+			const bindings = Object.entries(stream?.workflows ?? {}).filter(([, binding]) =>
+				binding.mode !== 'observe' && binding.needs?.includes(observed.operation)
+			);
+			if (!bindings.length) return [];
 			const record = yield* (yield* this.store).repository(observed.repositoryId);
-			if (!stream || !record) return;
-			for (const [operation, binding] of Object.entries(stream.workflows)) {
-				if (binding.mode === 'observe' || !binding.needs?.includes(observed.operation)) continue;
-				const next = yield* deriveExecution(observed, record, {
+			if (!record) return yield* precondition('Repository unavailable while completing observed operation');
+			const next: Execution[] = [];
+			for (const [operation] of bindings) {
+				const id = yield* executionId(observed.repositoryId, observed.stream, operation, observed.eventId);
+				if (yield* this.stored(id)) continue;
+				const execution = yield* deriveExecution(observed, record, {
 					stream: observed.stream,
 					operation,
 					eventId: observed.eventId,
 					sourceSha: observed.sourceSha,
 					...(observed.version ? { version: observed.version } : {}),
 				});
-				if (!(yield* this.stored(next.id))) yield* this.put(next);
+				next.push(identifyExecution(execution));
 			}
+			return next;
 		});
 	}
 	private put(execution: Execution): CoordinatorEffect<void, DomainError> {
@@ -431,6 +438,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 
 			Object.assign(execution, identifyExecution(execution));
 			const previous = yield* this.stored(execution.id);
+			const continuations = yield* this.continuations(execution);
 			if (
 				previous && previous.state !== execution.state && ['running', 'succeeded'].includes(execution.state)
 				&& execution.reason === previous.reason
@@ -450,13 +458,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				extra[key] = { ...(members ? { members } : {}), due: now };
 			}
 			yield* this.commit(
-				[{ entity: 'execution', id: execution.id, repositoryId: execution.repositoryId, value: execution }],
+				[
+					{ entity: 'execution', id: execution.id, repositoryId: execution.repositoryId, value: execution },
+					...continuations.map((next): Committed => ({
+						entity: 'execution',
+						id: next.id,
+						repositoryId: next.repositoryId,
+						value: next,
+					})),
+				],
 				extra,
 			);
-			if (
-				execution.eventId.startsWith('observed:') && execution.state === 'succeeded'
-				&& previous?.state !== 'succeeded'
-			) yield* this.continueAfter(execution);
 			if (execution.state === 'succeeded') yield* this.captureReleaseEvent(execution);
 		});
 	}
@@ -539,25 +551,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	reindex(repositoryId: number): Promise<number> {
 		return this.serial(this.journal.reindex(repositoryId), 'coordinator.reindex', { repositoryId });
 	}
-	setAccess(suspended: boolean): Promise<void> {
-		return this.run(
-			Effect.gen({ self: this }, function*() {
-				const prior = safeDecode(access, yield* this.read('access'));
-				yield* this.write('access', { suspended });
-				if (prior.success && prior.data.suspended && !suspended) yield* this.wakeUp();
-			}),
-			'coordinator.setAccess',
-			{},
-		);
-	}
 	private suspended(repositoryId: number): CoordinatorEffect<boolean, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const copy = safeDecode(access, yield* this.read('access'));
-			if (copy.success) return copy.data.suspended;
-			const stored = yield* (yield* this.store).repository(repositoryId);
-			const suspended = stored !== undefined && readiness(stored).kind === 'suspended';
-			yield* this.write('access', { suspended });
-			return suspended;
+			const enrollment = yield* (yield* this.store).enrollment(repositoryId);
+			return enrollment?.access.kind !== 'active';
 		});
 	}
 	exportJournal(): Promise<{ key: string; value: unknown }[]> {
@@ -3112,7 +3109,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				yield* this.put(published);
 				return 'continue' as const;
 			}
-			if (execution.state === 'succeeded') yield* this.captureReleaseEvent(execution);
+			if (execution.state === 'succeeded') {
+				if ((yield* this.continuations(execution)).length) yield* this.put(execution);
+				else yield* this.captureReleaseEvent(execution);
+			}
 			if (!active.includes(execution) || execution.state === 'pending') return 'continue' as const;
 			if (execution.state === 'awaiting-approval') {
 				const incomplete = yield* this.metadataBlocks(execution);
@@ -3160,7 +3160,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const clock = yield* Clock.Clock;
 
 			const started = clock.currentTimeMillisUnsafe();
-			if (!onlyExecution) yield* this.write('reconcile-at', null);
+			if (!onlyExecution) yield* this.write('reconcile-at', started + reconcileInterval);
 			const journal = yield* this.readJournal();
 			const quarantined = new Set(
 				[...(yield* this.list({ prefix: 'quarantine:' })).keys()].map(key => key.slice('quarantine:'.length)),
@@ -3174,6 +3174,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (executions[0] && (yield* this.suspended(executions[0].repositoryId))) {
 				return;
 			}
+			if (!onlyExecution) yield* this.write('reconcile-at', null);
 			const active = executions.filter(
 				(e) => !['succeeded', 'cancelled', 'failed'].includes(e.state),
 			);

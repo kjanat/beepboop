@@ -19,7 +19,7 @@ import type {
 } from '@/automation/types';
 import { DomainError, precondition } from '@/contract/errors';
 import type { ExecutionFilter } from '@/contract/routes';
-import type { Access } from '@/domain/repository';
+import type { Access, RepositoryDiscovery } from '@/domain/repository';
 import { fromJson, fromSync, recover } from '@/failure';
 import { record } from '@/model';
 import { InvalidPackageUrl } from '@/package-url';
@@ -188,30 +188,31 @@ export class Store {
 			Effect.flatMap(onboardingPulls),
 		);
 	}
-	putRepository(repository: RepositoryRecord): Effect.Effect<void, DomainError> {
+	saveDiscovery(discovery: RepositoryDiscovery): Effect.Effect<RepositoryRecord, DomainError> {
 		return Effect.gen({ self: this }, function*() {
+			const repository = { ...discovery, access: { kind: 'active' as const } };
 			const document = yield* fromSync(() =>
 				JSON.stringify(encodeRepository(identifyRepository(encodeRepository(repository))))
 			);
-			yield* this.sql.run(
-				'INSERT INTO repositories(id,name,document,updated_at,added_at,access,suspended_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,document=excluded.document,updated_at=excluded.updated_at',
+			const row = yield* this.sql.first(
+				`INSERT INTO repositories(id,name,document,updated_at,added_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,document=excluded.document,updated_at=excluded.updated_at RETURNING ${repositoryColumns}`,
 				repository.id,
 				repository.name,
 				document,
 				repository.updatedAt,
 				repository.updatedAt,
-				...encodeAccess(repository.access),
 			);
+			return yield* fromSync(() => decodeRepository(decodeSync(repositoryRow, row)));
 		});
 	}
-	setAccess(id: number, access: Access): Effect.Effect<void, DomainError> {
+	setAccess(id: number, access: Access): Effect.Effect<boolean, DomainError> {
 		const [state, since] = encodeAccess(access);
 		return this.sql.run(
-			"UPDATE repositories SET access=?1, suspended_at=CASE WHEN ?1='active' THEN NULL WHEN access='suspended' THEN suspended_at ELSE ?2 END, document=CASE WHEN ?1='suspended' THEN json_set(document,'$.suspended',json('true')) ELSE json_remove(document,'$.suspended') END WHERE id=?3",
+			"UPDATE repositories SET access=?1, suspended_at=CASE WHEN ?1='active' THEN NULL WHEN access='suspended' THEN suspended_at ELSE ?2 END WHERE id=?3 AND access<>?1",
 			state,
 			since,
 			id,
-		).pipe(Effect.asVoid);
+		).pipe(Effect.map(result => result.meta.changes > 0));
 	}
 	execution(id: string): Effect.Effect<Execution | undefined, DomainError> {
 		return this.document('executions', id, decodeExecutionV1);

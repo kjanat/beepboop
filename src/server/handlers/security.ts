@@ -4,15 +4,16 @@ import { routes } from '@/contract/routes';
 import { admin, elevated } from '@/server/handlers/kit';
 
 export const securityEndpoints = {
-	authenticatorsOptions: admin(routes.authenticatorsOptions, (input, { service, actor }) =>
-		Effect.gen(function*() {
-			const authenticators = service.authentication.authenticators;
-			const register = input.register === true;
-			if (register && (yield* authenticators.enrolled(actor)) > 0) {
-				yield* authenticators.consume(actor, input.proof ?? '');
-			}
-			return yield* authenticators.options(actor, register, input.label);
-		})),
+	authenticatorsOptions: admin(
+		routes.authenticatorsOptions,
+		(input, { service, actor }) =>
+			service.authentication.authenticators.options(
+				actor,
+				input.register === true
+					? { kind: 'register', label: input.label, proof: input.proof }
+					: { kind: 'authenticate' },
+			),
+	),
 	authenticatorsVerify: admin(
 		routes.authenticatorsVerify,
 		(input, { service, actor }) => service.authentication.authenticators.verify(actor, input.id, input.response),
