@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { begin } from '@root/test/support/actions.ts';
 import type { Repository } from '@root/test/support/github.ts';
 import { bearer, field } from '@root/test/support/http.ts';
+import { withEnvironment } from '@root/test/support/process.ts';
 import { runWorkflow } from '@root/test/support/repositories.ts';
 import { applyChoices, applySetup, discoverSetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
@@ -551,7 +552,14 @@ test('a run that registers itself records the namespace of the ref it ran on', a
 			ref: `refs/${namespace}/${name}`,
 			event: 'push',
 		};
-		await begin(world, identity, '', stream.name, operation);
+		await withEnvironment({
+			BEEPBOOP_EXECUTION_ID: 'outer-workflow-execution',
+			RELEASE_VERSION: '9.9.9',
+		}, async () => {
+			await begin(world, identity, '', stream.name, operation);
+			expect(process.env.BEEPBOOP_EXECUTION_ID).toBe('outer-workflow-execution');
+			expect(process.env.RELEASE_VERSION).toBe('9.9.9');
+		});
 	}
 	const journal = await world.coordinator(repository).exportJournal();
 	for (const entry of journal.filter(candidate => candidate.key.startsWith('execution:'))) {
