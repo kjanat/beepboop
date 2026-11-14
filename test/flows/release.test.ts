@@ -18,6 +18,7 @@ import { Store } from '@/automation/store';
 import type { Execution } from '@/automation/types';
 import { requireReady } from '@/domain/repository';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
+import { ProjectionBackfill } from '@/persistence/d1/backfill';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
 import {
@@ -1357,6 +1358,7 @@ test('completion evidence survives execution pagination and later auxiliary work
 		return insert.bind(run.id, run.repositoryId, run.state, JSON.stringify(run), run.updatedAt);
 	}));
 	await insert.bind(failure.id, failure.repositoryId, failure.state, JSON.stringify(failure), failure.updatedAt).run();
+	await Effect.runPromise(new ProjectionBackfill(world.db).drain());
 	const load = (name?: string) =>
 		world.run(loaders.runs({ env: world.env, actor: 'admin', ...(name ? { repository: name } : {}) }));
 	for (const data of [await load(), await load(repository.name)]) {
@@ -1413,6 +1415,7 @@ test('many legacy blocked run IDs are normalized once without hiding an older ve
 		JSON.stringify({ ...stored, id: 'old-verifying', state: 'blocked', createdAt: 1 }),
 		1,
 	).run();
+	await Effect.runPromise(new ProjectionBackfill(world.db).drain());
 	const store = new Store(world.db);
 	world.db.reset();
 	expect((await Effect.runPromise(store.executions()))[0]?.id).toBe('old-verifying');
@@ -1422,7 +1425,7 @@ test('many legacy blocked run IDs are normalized once without hiding an older ve
 	expect(runs).toHaveLength(200);
 	expect(runs[0]?.state).toBe('verifying');
 	const reads = world.db.queries.filter(query => query.sql.includes('FROM executions'));
-	expect(reads).toHaveLength(2);
+	expect(reads).toHaveLength(3);
 	expect(reads.reduce((total, query) => total + world.db.sqlite.prepare(query.sql).all(...query.values).length, 0))
 		.toBe(200);
 	expect(world.db.queries.some(query => query.sql.startsWith('UPDATE executions'))).toBe(false);
@@ -1520,6 +1523,7 @@ test('repository filters render only their own readable and unreadable runs even
 	};
 	await insert.bind(gadget.id, 99, gadget.state, JSON.stringify(gadget), 1).run();
 	await insert.bind('broken-only', 100, 'failed', '{bad', 1).run();
+	await Effect.runPromise(new ProjectionBackfill(world.db).drain());
 	const load = (name?: string) =>
 		world.run(loaders.runs({ env: world.env, actor: 'admin', ...(name ? { repository: name } : {}) }));
 	const all = await load();
@@ -1573,6 +1577,7 @@ test('legacy normalization bounds UTF-8 batch parameters and preserves concurren
 		}
 		return execute(query, values);
 	});
+	await Effect.runPromise(new ProjectionBackfill(world.db).drain());
 	const rows = await Effect.runPromise(new Store(world.db).readExecutions());
 	expect(rows).toHaveLength(3);
 	expect(rows.every(row => row.kind === 'unreadable')).toBe(true);

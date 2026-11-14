@@ -3,6 +3,7 @@ import { TestD1 } from '@root/test/support/d1';
 import { Effect } from 'effect';
 import { Store } from '@/automation/store';
 import { compare, precedenceKey } from '@/contract/semver';
+import { ProjectionBackfill } from '@/persistence/d1/backfill';
 import type { Projection } from '@/persistence/d1/projection';
 import { ProjectionStore } from '@/persistence/d1/projection';
 
@@ -88,6 +89,7 @@ for (const legacy of [false, true]) {
 				);
 			} else await Effect.runPromise(new ProjectionStore(db).apply(rows));
 			const store = new Store(db);
+			if (legacy) await Effect.runPromise(new ProjectionBackfill(db).drain());
 			db.reset();
 			const proof = await Effect.runPromise(store.completionEvidence([candidate]));
 			expect(proof).toEqual([{ repositoryId: 1, stream: 'main', version: '2.999.0', completedAt: 1009 }]);
@@ -96,7 +98,7 @@ for (const legacy of [false, true]) {
 			expect(await Effect.runPromise(store.completionEvidence(Array.from({ length: 200 }, () => candidate)))).toEqual(
 				proof,
 			);
-			expect(db.queries).toHaveLength(2);
+			expect(db.queries).toHaveLength(3);
 			const query = db.queries.at(-1)!;
 			const returned = db.sqlite.query(query.sql).all(...query.values);
 			expect(returned).toHaveLength(1);
@@ -321,6 +323,7 @@ test('legacy metadata normalization retries replaced rows and quarantines malfor
 			}
 			return execute(query, values);
 		});
+		await Effect.runPromise(new ProjectionBackfill(db).drain());
 		expect(await Effect.runPromise(new Store(db).completionEvidence([candidate]))).toEqual([{
 			repositoryId: 1,
 			stream: 'main',

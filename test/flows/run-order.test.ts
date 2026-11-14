@@ -9,6 +9,7 @@ import { Store } from '@/automation/store';
 import type { Client } from '@/cli/client';
 import type { executionFilter } from '@/contract/routes';
 import { routes } from '@/contract/routes';
+import { ProjectionBackfill } from '@/persistence/d1/backfill';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
 import {
 	decodeSync,
@@ -69,6 +70,7 @@ async function insert(base: Awaited<ReturnType<typeof template>>, rows: Row[]) {
 			updatedAt,
 		)
 	));
+	await Effect.runPromise(new ProjectionBackfill(world.db).drain());
 }
 
 const listed = (input: Encoded<typeof executionFilter>) =>

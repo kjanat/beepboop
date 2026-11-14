@@ -131,9 +131,16 @@ numeric identifiers, prereleases and ignored build metadata. Database triggers
 maintain the frontier in the same transaction as its release metadata. New points
 use indexed dominance and pruning boundaries. A material update or deletion of
 a frontier point rebuilds its affected group so previously dominated proofs can
-reappear. Reindexing unchanged metadata skips that work. Existing release documents
-are normalized once in batches of 100, with byte-bounded parameters and conditional
-updates protecting concurrent projection writes. Invalid documents cannot provide
+reappear. Reindexing unchanged metadata skips that work. Deployment applies SQL migrations and then runs typed projection maintenance before
+rolling out the new Worker. It uses the production decoders in pages of at most
+100 rows and 512 KB of documents, or one oversized document. Conditional updates
+protect concurrent writes; eight consecutive pages without progress stop deployment.
+Runtime reads repair only one tail page of at most ten rows under the same byte
+budget. Readiness and the selected records share an atomic D1 batch; a larger
+remaining backlog produces an explicit maintenance error instead of partial results.
+Revision stamps and compatibility triggers invalidate metadata when an older Worker
+writes during rollout, including removing stale frontier evidence. New projection
+writes update documents and their metadata stamps together. Invalid documents cannot provide
 completion evidence. Legacy completion timestamps retain their earliest projection
 time.
 

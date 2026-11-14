@@ -27,11 +27,13 @@ import {
 } from '@/persistence/codecs/repository';
 import { decodeDeliveryV1, decodeEventV1, decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { AuditStore } from '@/persistence/d1/audit';
+import { backfillPage, drainBackfill } from '@/persistence/d1/backfill-page';
 import type { CompletionCandidate } from '@/persistence/d1/completions';
 import { CompletionStore } from '@/persistence/d1/completions';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
 import { jsonBatches } from '@/persistence/d1/json-batches';
+import { readyRead } from '@/persistence/d1/ready-read';
 import type { Decoded } from '@/schema';
 import { decodeSync, mutableArray, mutableStruct } from '@/schema';
 
@@ -199,53 +201,78 @@ export class Store {
 			Effect.map(rows => rows.map(row => ({ id: row.id, repositoryId: row.repository_id }))),
 		);
 	}
-	private normalizeExecutions(): Effect.Effect<void, DomainError> {
+	private normalizeExecutions(limit = 10, scope = '', values: (string | number)[] = []) {
 		return Effect.gen({ self: this }, function*() {
-			while (true) {
-				const rows = yield* this.sql.all(
-					`SELECT ${executionColumns} FROM executions WHERE state_version IS NULL LIMIT 100`,
-				).pipe(Effect.flatMap(rows => parse(mutableArray(executionRow), rows)));
-				if (!rows.length) return;
-				const normalized = rows.map(row => {
-					let state = row.state;
-					try {
-						state = decodeExecutionV1(JSON.parse(row.document)).state;
-					} catch (error) {
-						if (!isDecodingFailure(error)) throw error;
-					}
-					return { id: row.id, state, document: row.document };
-				});
-				for (const batch of jsonBatches(normalized)) {
-					if ('row' in batch) {
-						const row = batch.row;
-						yield* this.sql.run(
-							'UPDATE executions SET state=?,state_version=1 WHERE id=? AND document=? AND state_version IS NULL',
-							row.state,
-							row.id,
-							row.document,
-						);
-					} else {
-						yield* this.sql.run(
-							`UPDATE executions SET state=normalized.state,state_version=1
+			const rows = yield* this.sql.all(
+				backfillPage('executions', `${executionColumns},revision`, 'state_version IS NULL', scope),
+				...values,
+				limit,
+			).pipe(
+				Effect.flatMap(rows =>
+					parse(mutableArray(mutableStruct({ ...executionRow.fields, revision: Schema.NullOr(Schema.Finite) })), rows)
+				),
+			);
+			if (!rows.length) return { selected: 0, changed: 0 };
+			let changed = 0;
+			const normalized = rows.map(row => {
+				let state = row.state;
+				try {
+					state = decodeExecutionV1(JSON.parse(row.document)).state;
+				} catch (error) {
+					if (!isDecodingFailure(error)) throw error;
+				}
+				return { id: row.id, state, document: row.document, revision: row.revision };
+			});
+			for (const batch of jsonBatches(normalized)) {
+				if ('row' in batch) {
+					const row = batch.row;
+					changed += (yield* this.sql.all(
+						'UPDATE executions SET state=?,state_version=1,state_revision=? WHERE id=? AND document=? AND revision IS ? AND state_version IS NULL RETURNING id',
+						row.state,
+						row.revision,
+						row.id,
+						row.document,
+						row.revision,
+					)).length;
+				} else {
+					changed += (yield* this.sql.all(
+						`UPDATE executions SET state=normalized.state,state_version=1,state_revision=normalized.revision
         FROM (SELECT json_extract(value,'$.id') AS id,
-         json_extract(value,'$.state') AS state,json_extract(value,'$.document') AS document FROM json_each(?)) AS normalized
-        WHERE executions.id=normalized.id AND executions.document=normalized.document AND executions.state_version IS NULL`,
-							batch.json,
-						);
-					}
+         json_extract(value,'$.state') AS state,json_extract(value,'$.document') AS document,json_extract(value,'$.revision') AS revision FROM json_each(?)) AS normalized
+        WHERE executions.id=normalized.id AND executions.document=normalized.document AND executions.revision IS normalized.revision AND executions.state_version IS NULL RETURNING id`,
+						batch.json,
+					)).length;
 				}
 			}
+			return { selected: rows.length, changed };
 		});
 	}
+	backfillExecutions(): Effect.Effect<number, DomainError> {
+		return drainBackfill(() => this.normalizeExecutions(100));
+	}
+
 	private executionRows(repositoryId?: number): Effect.Effect<ExecutionRow[], DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			yield* this.normalizeExecutions();
-			return yield* this.sql.all(
-				`SELECT ${executionColumns} FROM executions ${
-					repositoryId === undefined ? '' : 'WHERE repository_id=?'
-				} ORDER BY ${executionOrderSql} LIMIT ?`,
-				...(repositoryId === undefined ? [] : [repositoryId]),
-				executionPage,
+			yield* this.normalizeExecutions(
+				10,
+				repositoryId === undefined ? '' : 'AND repository_id=?',
+				repositoryId === undefined ? [] : [repositoryId],
+			);
+			return yield* readyRead(
+				this.sql,
+				{
+					query: `SELECT id FROM executions WHERE state_version IS NULL ${
+						repositoryId === undefined ? '' : 'AND repository_id=?'
+					} LIMIT 1`,
+					values: repositoryId === undefined ? [] : [repositoryId],
+				},
+				{
+					query: `SELECT ${executionColumns} FROM executions ${
+						repositoryId === undefined ? '' : 'WHERE repository_id=?'
+					} ORDER BY ${executionOrderSql} LIMIT ?`,
+					values: [...(repositoryId === undefined ? [] : [repositoryId]), executionPage],
+				},
+				'Execution history maintenance is pending; run the database migration command before retrying',
 			).pipe(Effect.flatMap(rows => parse(mutableArray(executionRow), rows)));
 		});
 	}
@@ -280,13 +307,30 @@ export class Store {
 		}
 		const limit = Math.min(filter.limit ?? 200, 200);
 		return Effect.gen({ self: this }, function*() {
-			yield* this.normalizeExecutions();
-			const selected = yield* this.sql.all(
-				`SELECT ${executionColumns} FROM executions WHERE ${
-					conditions.join(' AND ')
-				} ORDER BY ${executionOrderSql} LIMIT ?`,
-				...values,
-				limit,
+			yield* this.normalizeExecutions(
+				10,
+				filter.repository === undefined
+					? ''
+					: 'AND repository_id IN (SELECT id FROM repositories WHERE LOWER(name)=LOWER(?))',
+				filter.repository === undefined ? [] : [filter.repository],
+			);
+			const selected = yield* readyRead(
+				this.sql,
+				{
+					query: `SELECT id FROM executions WHERE state_version IS NULL ${
+						filter.repository === undefined
+							? ''
+							: 'AND repository_id IN (SELECT id FROM repositories WHERE LOWER(name)=LOWER(?))'
+					} LIMIT 1`,
+					values: filter.repository === undefined ? [] : [filter.repository],
+				},
+				{
+					query: `SELECT ${executionColumns} FROM executions WHERE ${
+						conditions.join(' AND ')
+					} ORDER BY ${executionOrderSql} LIMIT ?`,
+					values: [...values, limit],
+				},
+				'Execution history maintenance is pending; run the database migration command before retrying',
 			).pipe(Effect.flatMap(rows => parse(mutableArray(executionRow), rows)));
 			const decoded = yield* fromSync(() => selected.map(row => decodeExecutionV1(JSON.parse(row.document))));
 			return decoded.sort(newestActiveFirst);

@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { expect, spyOn, test } from 'bun:test';
 import { runAction } from '@root/test/support/actions.ts';
 import { call, cliTransport, discoveredWidget } from '@root/test/support/client.ts';
 import { botId } from '@root/test/support/github.ts';
@@ -49,7 +49,17 @@ test('a D1 outage keeps the outbox, and the next alarm projects it', async () =>
 	const send = cliTransport(world, token);
 	const plan = await call(routes.releasesPlan, { repositoryId: repository.id, stream: 'main', version: '1.1.0' }, send);
 
-	world.db.failBatch = new Error('D1_ERROR: Network connection lost.');
+	let projectionUnavailable = true;
+	const batch = world.db.batch.bind(world.db);
+	spyOn(world.db, 'batch').mockImplementation(statements => {
+		const projects = statements.some(statement =>
+			'sql' in statement && typeof statement.sql === 'string'
+			&& /^INSERT INTO (executions|release_sets|releases)\b/.test(statement.sql)
+		);
+		return projectionUnavailable && projects
+			? Promise.reject(new Error('D1_ERROR: Network connection lost.'))
+			: batch(statements);
+	});
 	const logged = errors();
 	const prepared = await call(
 		routes.releasesPrepare,
@@ -66,7 +76,7 @@ test('a D1 outage keeps the outbox, and the next alarm projects it', async () =>
 		expect.objectContaining({ event: 'projection.failed', error: 'D1_ERROR: Network connection lost.' }),
 	]);
 
-	world.db.failBatch = undefined;
+	projectionUnavailable = false;
 	await world.wait(10_000);
 	expect((await call(routes.executionsList, {}, send)).map(execution => execution.id)).toEqual([prepared.id]);
 	expect([...journal.snapshot().keys()].filter(key => key.startsWith('outbox:'))).toEqual([]);

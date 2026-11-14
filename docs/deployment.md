@@ -12,14 +12,18 @@ repository includes the configuration for `beepboop.kjanat.dev` and the
    `ADMIN_SUBJECT` for your deployment.
 4. Register the OpenAuth callback URL: `<APPLICATION_ORIGIN>/auth/callback`.
 5. Deploy through Cloudflare Workers Builds. The deployment command applies
-   pending database migrations before uploading the Worker.
+   pending database migrations and backfills typed projection metadata before uploading
+   the Worker. The existing Worker keeps serving until both stages finish successfully.
 
 ## Local development
 
-Run `bun run dev` and open `http://localhost:4321`. Startup applies the D1
-migrations locally; it never migrates the deployed database. If you start Astro
+Run `bun run dev` (or `bun run start`) and open `http://localhost:4321`. Startup applies the D1
+migrations and projection backfill locally; it never migrates the deployed database. If you start Astro
 directly, first run `bun run db:local`. A missing `sessions` table means these
-migrations have not run against the local database.
+migrations have not run against the local database. To prepare an isolated persistence
+directory, run `bun run db:local -- --persist-to /absolute/path/to/state` and use the
+same persistence directory for the local Worker. The default is `.wrangler/state`
+in the repository.
 
 Development uses `http://localhost:4321` as the application origin, including
 login callbacks, mutation origin checks, and security-key registration. The port
@@ -94,15 +98,25 @@ bun run deploy
 For Cloudflare Workers Builds, set the deploy command to `bun run deploy`.
 The build-command field can stay empty: the deploy script runs `astro build`
 first, applies pending D1 migrations to the production `beepboop` database,
-then deploys its generated `dist/server/wrangler.json` configuration. Migration
-failure stops deployment. The Builds API token must have D1 edit access.
+then drains legacy execution-state and release-completion metadata in bounded
+pages before deploying its generated `dist/server/wrangler.json` configuration.
+SQL migration or backfill failure stops deployment. Backfill updates use compare-and-swap
+checks, resume safely after interruption, and print only final row counts. Request
+handlers perform only a bounded tail step and report pending maintenance when
+legacy rows remain; they never drain historical metadata during a request.
+The database tooling uses an isolated configuration containing only the public D1
+binding, does not load local environment files, and disposes its proxy after use.
+Both local and remote backfills run through the same Node.js subprocess because
+Wrangler remote bindings require Node's transport. The remote connection uses
+Wrangler's authenticated Workers preview session. The Builds API token must retain
+its Workers deployment access and D1 edit access.
 Dependency installation and `astro sync` do not build the Worker. Running
 `bunx wrangler deploy` directly from a fresh checkout instead bundles the source
 entrypoint and fails on Astro's virtual modules. Do not add aliases for those
 modules; Astro resolves them during its build.
 
 `bun run deploy:dry` builds Astro and checks the generated Worker with
-`wrangler deploy --dry-run`. It never applies remote migrations or publishes a
+`wrangler deploy --dry-run`. It never applies remote migrations, runs the database backfill, or publishes a
 Worker. Keep schema migrations compatible with the currently running Worker because
 migrations run before its replacement is uploaded.
 

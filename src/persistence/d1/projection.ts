@@ -38,7 +38,7 @@ export class ProjectionStore {
 				if (!isDecodingFailure(error)) throw error;
 			}
 			return this.db.statement(
-				'INSERT INTO executions(id,repository_id,state,document,updated_at,revision,state_version) VALUES(?,?,?,?,?,?,1) ON CONFLICT(id) DO UPDATE SET repository_id=excluded.repository_id,state=excluded.state,state_version=1,document=excluded.document,updated_at=excluded.updated_at,revision=excluded.revision WHERE executions.revision IS NULL OR excluded.revision>executions.revision',
+				'INSERT INTO executions(id,repository_id,state,document,updated_at,revision,state_version,state_revision) VALUES(?,?,?,?,?,?,1,?) ON CONFLICT(id) DO UPDATE SET repository_id=excluded.repository_id,state=excluded.state,state_version=1,state_revision=excluded.state_revision,document=excluded.document,updated_at=excluded.updated_at,revision=excluded.revision WHERE executions.revision IS NULL OR excluded.revision>executions.revision',
 			).bind(
 				row.id,
 				row.repositoryId,
@@ -46,16 +46,17 @@ export class ProjectionStore {
 				row.document,
 				row.updatedAt,
 				row.revision,
+				row.revision,
 			);
 		}
 		if (row.entity === 'release') {
 			const meta = completionMetadata(row.document, row.repositoryId);
 			return this.db.statement(
 				`INSERT INTO releases(id,repository_id,revision,document,updated_at,completion_format,
-     completion_stream,completion_group,completion_release_version,completion_sort,completion_at)
-     VALUES(?,?,?,?,?,1,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+     completion_stream,completion_group,completion_release_version,completion_sort,completion_at,completion_revision)
+     VALUES(?,?,?,?,?,1,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
      repository_id=excluded.repository_id,revision=excluded.revision,document=excluded.document,
-     updated_at=MIN(releases.updated_at,excluded.updated_at),completion_format=1,
+     updated_at=MIN(releases.updated_at,excluded.updated_at),completion_format=1,completion_revision=excluded.completion_revision,
      completion_stream=excluded.completion_stream,completion_group=excluded.completion_group,
      completion_release_version=excluded.completion_release_version,completion_sort=excluded.completion_sort,
      completion_at=CASE WHEN excluded.completion_sort IS NULL THEN NULL ELSE COALESCE(?,MIN(releases.updated_at,excluded.updated_at)) END
@@ -71,6 +72,7 @@ export class ProjectionStore {
 				meta?.version ?? null,
 				meta?.sort ?? null,
 				meta ? meta.at ?? row.updatedAt : null,
+				row.revision,
 				meta?.at ?? null,
 			);
 		}
