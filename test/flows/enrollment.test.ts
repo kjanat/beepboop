@@ -63,12 +63,14 @@ test('two initial enrollment challenges can commit only one first key', async ()
 	const second = await api('/api/authenticators/options', { register: true });
 	expect(first.status).toBe(200);
 	expect(second.status).toBe(200);
-	for (const [options, expected] of [[first, 200], [second, 422]] as const) {
-		const response = await registration(text(field(options.body, 'options'), 'challenge'));
+	const firstKey = await registration(text(field(first.body, 'options'), 'challenge'));
+	const secondKey = await registration(text(field(second.body, 'options'), 'challenge'));
+	for (const [options, response, expected] of [[first, firstKey, 200], [second, secondKey, 422]] as const) {
 		const verified = await api('/api/authenticators/verify', { id: text(options.body, 'id'), response });
 		expect(verified.status).toBe(expected);
 	}
-	expect(world.db.execute('SELECT id FROM authenticators WHERE subject=?', [adminSubject]).rows).toHaveLength(1);
+	expect(world.db.execute('SELECT id FROM authenticators WHERE subject=?', [adminSubject]).rows)
+		.toEqual([{ id: firstKey.id }]);
 });
 
 test('enrollment racing the credential read retains the guarded initial mode', async () => {
@@ -92,16 +94,17 @@ test('enrollment racing the credential read retains the guarded initial mode', a
 	expect(options.status).toBe(200);
 	const response = await registration(text(field(options.body, 'options'), 'challenge'));
 	expect((await api('/api/authenticators/verify', { id: text(options.body, 'id'), response })).status).toBe(422);
-	expect(execute('SELECT id FROM authenticators WHERE subject=?', [adminSubject]).rows).toHaveLength(1);
+	expect(execute('SELECT id FROM authenticators WHERE subject=?', [adminSubject]).rows).toEqual([{ id: 'a2V5' }]);
 });
 
 test('additional enrollment requires fresh proof and consumes it only once', async () => {
 	const api = bearer(world, await world.cliSession());
 	const initial = await api('/api/authenticators/options', { register: true });
+	const initialKey = await registration(text(field(initial.body, 'options'), 'challenge'));
 	expect(
 		(await api('/api/authenticators/verify', {
 			id: text(initial.body, 'id'),
-			response: await registration(text(field(initial.body, 'options'), 'challenge')),
+			response: initialKey,
 		})).status,
 	).toBe(200);
 	expect((await api('/api/authenticators/options', { register: true })).status).toBe(403);
@@ -109,13 +112,35 @@ test('additional enrollment requires fresh proof and consumes it only once', asy
 	const additional = await api('/api/authenticators/options', { register: true, proof: 'proof' });
 	expect(additional.status).toBe(200);
 	expect((await api('/api/authenticators/options', { register: true, proof: 'proof' })).status).toBe(403);
+	const additionalKey = await registration(text(field(additional.body, 'options'), 'challenge'));
 	expect(
 		(await api('/api/authenticators/verify', {
 			id: text(additional.body, 'id'),
-			response: await registration(text(field(additional.body, 'options'), 'challenge')),
+			response: additionalKey,
 		})).status,
 	).toBe(200);
-	expect(world.db.execute('SELECT id FROM authenticators WHERE subject=?', [adminSubject]).rows).toHaveLength(2);
+	expect(
+		world.db.execute('SELECT id FROM authenticators WHERE subject=? ORDER BY id', [adminSubject]).rows.map(row =>
+			row.id
+		),
+	)
+		.toEqual([initialKey.id, additionalKey.id].sort());
+});
+
+test('overlapping additional enrollment requests redeem the same proof only once', async () => {
+	const api = bearer(world, await world.cliSession());
+	const initial = await api('/api/authenticators/options', { register: true });
+	const initialKey = await registration(text(field(initial.body, 'options'), 'challenge'));
+	expect((await api('/api/authenticators/verify', { id: text(initial.body, 'id'), response: initialKey })).status).toBe(
+		200,
+	);
+	await world.elevate();
+	const first = api('/api/authenticators/options', { register: true, proof: 'proof' });
+	const second = api('/api/authenticators/options', { register: true, proof: 'proof' });
+	const replies = await Promise.all([first, second]);
+	expect(replies.map(reply => reply.status).sort()).toEqual([200, 403]);
+	expect(world.db.execute('SELECT id FROM authenticators WHERE subject=?', [adminSubject]).rows)
+		.toEqual([{ id: initialKey.id }]);
 });
 
 test('legacy enrollment challenges expire instead of inferring an authorized mode', async () => {

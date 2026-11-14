@@ -307,7 +307,7 @@ export class Notifications {
 	private send(
 		claim: ClaimedDelivery,
 		destination: NotificationDestination | undefined,
-	): Effect.Effect<DeliveryOutcome> {
+	): Effect.Effect<DeliveryOutcome, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const clock = yield* Clock.Clock;
 			const payload = yield* fromSync(() => decodeSync(payloadSchema, JSON.parse(claim.document))).pipe(
@@ -328,6 +328,9 @@ export class Notifications {
 				};
 			}
 			const request = this.request;
+			if (!(yield* this.deliveries.owned(claim))) {
+				return { state: 'failed', error: 'Delivery claim is no longer owned' };
+			}
 			const remaining = claim.lease_until - clock.currentTimeMillisUnsafe();
 			if (remaining <= 0) return { state: 'pending', error: 'Delivery lease expired before sending' };
 			const response = yield* fromPromise(signal =>

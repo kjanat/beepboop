@@ -80,6 +80,17 @@ export class NotificationDeliveries {
 		});
 	}
 
+	owned(claim: ClaimedDelivery): Effect.Effect<boolean, DomainError> {
+		return Effect.clockWith(clock =>
+			this.sql.first(
+				"SELECT id FROM notification_deliveries WHERE id=? AND state='sending' AND lease=? AND lease_until>?",
+				claim.id,
+				claim.lease,
+				clock.currentTimeMillisUnsafe(),
+			).pipe(Effect.map(row => row !== null))
+		);
+	}
+
 	settle(claim: ClaimedDelivery, outcome: DeliveryOutcome): Effect.Effect<void, DomainError> {
 		return Effect.clockWith(clock => {
 			const state = outcome.state === 'pending' && claim.attempts >= maximumDeliveryAttempts ? 'failed' : outcome.state;

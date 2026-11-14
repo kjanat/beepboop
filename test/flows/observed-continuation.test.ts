@@ -121,6 +121,27 @@ test('reconciliation repairs a legacy success with missing continuations', async
 	expect(await executions(repository)).toHaveLength(2);
 });
 
+test('reconciliation restores a missing sibling while preserving a completed child', async () => {
+	const { repository, execution, coordinator, storage } = await observed(2);
+	await world.wait(20_000);
+	const children = await executions(repository);
+	const progressed = children.find(child => child.operation === 'follow0');
+	const missing = children.find(child => child.operation === 'follow1');
+	if (!progressed || !missing) throw new Error('Expected both continuations');
+	const completed = { ...progressed, state: 'succeeded', runId: 9010, runAttempt: 3 };
+	await storage.put(`execution:${progressed.id}`, completed);
+	await storage.delete(`execution:${missing.id}`);
+	await coordinator.recover(execution.id, 'reconcile', 'admin');
+	await world.wait(2_000);
+	const recovered = await executions(repository);
+	expect(recovered.find(child => child.id === missing.id)).toMatchObject({ operation: 'follow1' });
+	expect(recovered.find(child => child.id === progressed.id)).toMatchObject({
+		state: completed.state,
+		runId: completed.runId,
+		runAttempt: completed.runAttempt,
+	});
+});
+
 test('stale coordinator access cannot resume work while the repository is suspended', async () => {
 	const { repository, app, execution, storage } = await observed();
 	await storage.put('access', { suspended: false });

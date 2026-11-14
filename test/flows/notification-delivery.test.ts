@@ -16,9 +16,12 @@ eachWorld(created => {
 	world = created;
 });
 
-async function staged(request: Fetcher) {
+async function staged(
+	request: Fetcher,
+	reveal = () => Effect.succeed({ value: 'https://example.test/hook', version: 1 }),
+) {
 	const notifications = new Notifications(new Store(world.db), () => ({
-		reveal: () => Effect.succeed({ value: 'https://example.test/hook', version: 1 }),
+		reveal,
 	}), request);
 	await world.sealCredential('notification-url');
 	const destination = await world.run(
@@ -106,6 +109,35 @@ test('destination removal invalidates an in-flight claim', async () => {
 	expect((await world.run(deliveries.recent()))[0]).toMatchObject({
 		state: 'failed',
 		error: 'Destination removed',
+		lease: null,
+	});
+});
+
+test('destination removal during secret retrieval prevents a request from starting', async () => {
+	const entered = Promise.withResolvers<void>();
+	const resume = Promise.withResolvers<void>();
+	let sends = 0;
+	const { notifications, destination, deliveries } = await staged(
+		async () => {
+			sends++;
+			return new Response(null, { status: 204 });
+		},
+		() => Effect.promise(async () => {
+			entered.resolve();
+			await resume.promise;
+			return { value: 'https://example.test/hook', version: 1 };
+		}),
+	);
+	const delivery = world.run(notifications.deliver());
+	await entered.promise;
+	await world.run(notifications.removeDestination(destination, 'admin'));
+	resume.resolve();
+	await delivery;
+	expect(sends).toBe(0);
+	expect((await world.run(deliveries.recent()))[0]).toMatchObject({
+		state: 'failed',
+		error: 'Destination removed',
+		attempts: 1,
 		lease: null,
 	});
 });
