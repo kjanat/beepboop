@@ -22,14 +22,15 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Ensure Bun is available
+    - name: Setup Bun
       id: bun
       uses: $/actions/deps/bun
-    - name: Install generator dependencies
+    - name: Install deps
       shell: bash
       working-directory: ${{ github.action_path }}/../..
       run: bun install --frozen-lockfile --production --ignore-scripts
-    - id: generate
+    - name: Generate manifest
+      id: generate
       shell: bash
       env:
         SCOOP_MANIFEST_CHECKSUMS: ${{ inputs.checksums }}

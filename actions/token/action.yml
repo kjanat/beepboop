@@ -45,10 +45,11 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Ensure Bun is available
+    - name: Setup Bun
       id: bun
       uses: $/actions/deps/bun
-    - id: client
+    - name: Get token
+      id: client
       shell: bash
       env:
         EXECUTION_ID: ${{ inputs.execution-id }}

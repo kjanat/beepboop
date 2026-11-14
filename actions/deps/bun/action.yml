@@ -14,7 +14,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Check for Bun
+    - name: Check Bun
       id: check-bun
       shell: bash
       run: |

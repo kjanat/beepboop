@@ -16,10 +16,11 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Ensure Bun is available
+    - name: Setup Bun
       id: bun
       uses: $/actions/deps/bun
-    - shell: bash
+    - name: Publish packages
+      shell: bash
       env:
         REPOSITORY_PRIVATE: ${{ toJSON(github.event.repository.private) }}
         CREDENTIALS: ${{ inputs.credentials }}

@@ -17,13 +17,15 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Ensure Bun is available
+    - name: Setup Bun
       id: bun
       uses: $/actions/deps/bun
-    - shell: bash
+    - name: Prepare changes
+      shell: bash
       env: { RELEASE_CONTEXT: "${{ inputs.context }}", PREPARATION_MODE: "${{ inputs.mode }}" }
       run: bun "${GITHUB_ACTION_PATH}/../runtime/prepare.ts"
-    - id: submit
+    - name: Submit changes
+      id: submit
       if: inputs.mode == 'submit'
       shell: bash
       env: { SERVICE_ORIGIN: "${{ inputs.service }}" }
