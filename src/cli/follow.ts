@@ -214,7 +214,8 @@ export function followRelease(client: Client, out: Out, followed: Followed): Eff
 			if (!announced && preparation) {
 				const prepared = preparation.managed?.result ?? preparation.prepared?.result;
 				if (preparation.state === 'failed' || preparation.state === 'cancelled') {
-					spinner.fail(`The version bump stopped: ${preparation.reason ?? preparation.state}`);
+					spinner.fail();
+					out.error(`The version bump stopped: ${preparation.reason ?? preparation.state}`);
 					out.setExitCode(1);
 					return;
 				}
@@ -255,8 +256,8 @@ export function followRelease(client: Client, out: Out, followed: Followed): Eff
 				if (started) {
 					advance(stages(promotion, binaries, false).filter(stage => bars.has(stage.label)));
 					for (const bar of open()) bar.handle.fail();
-					out.error(reason);
-				} else spinner.fail(reason);
+				} else spinner.fail();
+				out.error(reason);
 				report();
 				out.setExitCode(1);
 				return;

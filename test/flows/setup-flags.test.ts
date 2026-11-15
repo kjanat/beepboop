@@ -566,6 +566,15 @@ test('adopt completes --package, --must-publish and --binary from the server pla
 		'tool-js',
 	]);
 	expect(Client.at).toHaveBeenLastCalledWith('https://other.example');
+	const elsewhere = spyOn(process, 'cwd').mockReturnValue(directory);
+	try {
+		expect(
+			await completed(['adopt', '--server', 'https://other.example', '--apply', 'octo/tool', '--package', '']),
+		).toEqual(['tool', 'tool-js']);
+		expect(await completed(['adopt', '--stream=main', 'octo/tool', '--binary', ''])).toEqual(['tool']);
+	} finally {
+		elsewhere.mockRestore();
+	}
 	await completed(['adopt', 'octo/tool', '--server=https://inline.example', '--package', '']);
 	expect(Client.at).toHaveBeenLastCalledWith('https://inline.example');
 	await completed(['adopt', 'octo/tool', '--package', ''], { BEEPBOOP_SERVER: 'https://env.example' });

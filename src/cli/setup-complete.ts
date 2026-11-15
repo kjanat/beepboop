@@ -17,9 +17,16 @@ function flagValue(argv: readonly string[], name: string): string | undefined {
 	return value;
 }
 
+const switches = new Set(['--apply', '--json', '--quiet', '-q', '--help', '-h']);
+
 function adoptedRepository({ argv, commandPath }: CompletionContext): Effect.Effect<string, CLIError> {
-	const [first] = argv.slice(commandPath.length);
-	return first && !first.startsWith('-') ? Effect.succeed(first) : checkoutRepository(process.cwd());
+	const tokens = argv.slice(commandPath.length);
+	for (let index = 0; index < tokens.length; index++) {
+		const token = tokens[index] ?? '';
+		if (!token.startsWith('-')) return Effect.succeed(token);
+		if (!token.includes('=') && !switches.has(token)) index++;
+	}
+	return checkoutRepository(process.cwd());
 }
 
 function candidates(pick: (plan: SetupPlan) => readonly string[]): CompletionHandler {

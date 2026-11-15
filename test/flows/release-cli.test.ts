@@ -981,7 +981,8 @@ test('release shows the wait for checks and stops with the failing check', async
 			head.slice(0, 12)
 		}: Releases when the commit is verified and its checks pass: test is still running`,
 	});
-	expect(result.activity).toContainEqual({ type: 'spinner:fail', text: 'The release stopped: test failure' });
+	expect(result.activity.map(event => event.type)).toContain('spinner:fail');
+	expect(result.stderr.join('')).toBe('The release stopped: test failure\n');
 	expect(repository.runs).toEqual([]);
 });
 
@@ -1007,10 +1008,14 @@ test('release stops with the reason when the version bump fails', async () => {
 	spyOn(client, 'pause').mockImplementation(() => Effect.promise(() => world.wait(16_000)));
 	const result = await run(['release', 'patch', '--repository', repository.name], [true]);
 	expect(result.exitCode).toBe(1);
-	expect(result.activity).toContainEqual(expect.objectContaining({
-		type: 'spinner:fail',
-		text: expect.stringContaining('The version bump stopped: GitHub refused the version commit on main'),
-	}));
+	expect(result.activity.map(event => event.type)).toContain('spinner:fail');
+	expect(result.stderr.join('')).toContain('The version bump stopped: GitHub refused the version commit on main');
+	const piped = await app.execute(['release', 'patch', '--repository', repository.name, '--yes'], {
+		isTTY: false,
+		env: {},
+	});
+	expect(piped.exitCode).toBe(1);
+	expect(piped.stderr.join('')).toContain('The version bump stopped: GitHub refused the version commit on main');
 });
 
 test('release reports a failed release run with its link', async () => {

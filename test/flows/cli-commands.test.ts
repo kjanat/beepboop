@@ -205,6 +205,13 @@ test('secrets set reads the value from stdin, shows its read spinner and keeps n
 			return 'proof';
 		})
 	);
+	const stored: string[] = [];
+	world.network.serve(new URL(origin).host, async request => {
+		if (new URL(request.url).pathname === '/api/credentials/replace') {
+			stored.push(decodeSync(looseStruct({ value: Schema.String }), await request.clone().json()).value);
+		}
+		return world.handle(request);
+	});
 	const terminal = { isTTY: true, color: false, env: {} };
 	const saved = await app.execute(['secrets', 'set', 'npm-token'], { ...terminal, stdinData: 'secret\n' });
 	expect([saved.exitCode, saved.stderr.join('')]).toEqual([0, '']);
@@ -233,6 +240,9 @@ test('secrets set reads the value from stdin, shows its read spinner and keeps n
 	});
 	expect([redirected.exitCode, redirected.stderr.join('')]).toEqual([0, '']);
 	expect(redirected.stdout.join('')).toBe('✔ Saved npm-token as version 4.\n');
+	const padded = await app.execute(['secrets', 'set', 'npm-token'], { ...terminal, stdinData: '  padded \t\n' });
+	expect(padded.stdout.join('')).toBe('✔ Saved npm-token as version 5.\n');
+	expect([...new Set(stored)]).toEqual(['secret', 'rotated', 'value', 'typed', 'retyped', '  padded \t']);
 	const untyped = await app.execute(['secrets', 'set', 'empty-token'], terminal);
 	expect(untyped.exitCode).not.toBe(0);
 	expect(untyped.stderr.join('')).toContain('Secret value is empty');
