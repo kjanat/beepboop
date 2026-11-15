@@ -81,8 +81,23 @@ test('a managed release travels from discovery to a verified publication', async
 	expect(promotion.state).toBe('awaiting-approval');
 	expect(promotion.sourceSha).toBe(merged.sha);
 
+	let open = 0, peak = 0, failing = false;
+	world.network.serve('api.github.com', async request => {
+		peak = Math.max(peak, ++open);
+		for (let turn = 0; turn < 20; turn++) await Promise.resolve();
+		const response = failing && new URL(request.url).pathname.endsWith('/status')
+			? new Response(null, { status: 500 })
+			: await world.github.handle(request);
+		open--;
+		return response;
+	});
 	const readiness = await api('/api/executions/approval', { id: promotion.id });
 	expect(readiness.body).toEqual({ problems: [], blocked: [] });
+	expect(peak).toBeGreaterThanOrEqual(4);
+	failing = true;
+	const unreadable = await api('/api/executions/approval', { id: promotion.id });
+	expect(unreadable.status).not.toBe(200);
+	world.network.serve('api.github.com', request => world.github.handle(request));
 	const approved = await api('/api/executions/approve', { id: promotion.id, sourceSha: merged.sha });
 	expect(text(approved.body, 'state')).toBe('ready');
 
