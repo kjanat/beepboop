@@ -1,4 +1,5 @@
 export const shaPattern = /^[0-9a-f]{40}$/;
+export const approvalShaPattern = /^[0-9a-f]{7,40}$/;
 export const sha256DigestPattern = /^sha256:[a-f0-9]{64}$/;
 export const credentialAliasPattern = /^[\w-]{1,64}$/;
 export const githubSecretNamePattern = /^[A-Z_][A-Z0-9_]*$/;

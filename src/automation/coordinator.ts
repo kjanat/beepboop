@@ -113,7 +113,7 @@ import type {
 import { parseGrant, runtimeGrant } from '@/automation/vault';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
-import { sha256DigestPattern } from '@/contract/ids';
+import { approvalShaPattern, sha256DigestPattern } from '@/contract/ids';
 import type { ClaimStep, LedgerManager, NextStep, PublishReport, ReportStep } from '@/contract/ledger';
 import { ledgerManagers } from '@/contract/ledger';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
@@ -122,7 +122,7 @@ import { parseRetryAfter } from '@/domain/http-date';
 import type { ReadyRepository } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
 import { fromPromise, fromSync, recover, retryable, toDomainError } from '@/failure';
-import { sha } from '@/model';
+import { matches, sha } from '@/model';
 import { purl } from '@/package-url';
 import { decodeEventV1, decodeExecutionV1, decodeSetupEditV1 } from '@/persistence/codecs/v1';
 import type { SqlDatabase } from '@/persistence/d1/database';
@@ -1989,8 +1989,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const clock = yield* Clock.Clock;
 
 				const execution = yield* this.get(id);
-				const commit = yield* Effect.fromResult(sha(commitSha));
-				if (execution.state !== 'awaiting-approval' || execution.sourceSha !== commit) {
+				const reference = yield* Effect.fromResult(matches(commitSha, approvalShaPattern));
+				const commit = yield* Effect.fromResult(sha(execution.sourceSha));
+				if (execution.state !== 'awaiting-approval' || !commit.startsWith(reference)) {
 					return yield* precondition('This release is not waiting for you to publish that commit');
 				}
 				const token = yield* (yield* this.gateway).token(execution.repository, execution.repositoryId);
@@ -2009,7 +2010,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				yield* (yield* this.store).audit(
 					actor,
 					'promotion.approve',
-					`${id}:${commitSha}${problems.length ? ` overriding: ${problems.join('; ')}` : ''}`,
+					`${id}:${commit}${problems.length ? ` overriding: ${problems.join('; ')}` : ''}`,
 				);
 				const next: Execution = { ...execution, state: 'ready', approvedAt: clock.currentTimeMillisUnsafe() };
 				yield* this.supersedeVersion(next);

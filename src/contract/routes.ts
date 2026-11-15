@@ -1,5 +1,6 @@
 import { Schema } from 'effect';
 import { changesResponse } from '@/contract/changes';
+import { approvalShaPattern } from '@/contract/ids';
 import {
 	claimStep,
 	nextStep,
@@ -281,7 +282,15 @@ export const routes = {
 		path: '/api/executions/approve',
 		auth: 'admin',
 		idempotent: true,
-		request: mutableStruct({ ...executionRef.fields, ...{ sourceSha: sha, force: Schema.optional(Schema.Boolean) } }),
+		request: mutableStruct({
+			...executionRef.fields,
+			sourceSha: refined(
+				text,
+				value => approvalShaPattern.test(value),
+				'Expected a lowercase commit SHA with 7 to 40 hexadecimal characters',
+			),
+			force: Schema.optional(Schema.Boolean),
+		}),
 		response: executionView,
 	}),
 	executionsRecover: route({
