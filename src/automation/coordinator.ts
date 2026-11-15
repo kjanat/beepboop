@@ -1277,42 +1277,49 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const policy = execution.workflow?.refs;
 			const version = execution.version;
 			const target = yield* fromSync(() => githubRelease(execution));
+			const published = execution.publications.some(p => p.manager === 'github-release' && p.outcome === 'succeeded');
+			const tagged = !policy
+				|| execution.publications.some(p => p.id === `refs:${execution.operation}` && p.outcome === 'succeeded');
 			if (
 				execution.state !== 'failed' || execution.runId === undefined || !version || !target
-				|| !publishesGithubRelease(execution)
-				|| execution.publications.some(p => p.manager === 'github-release' && p.outcome === 'succeeded')
+				|| !publishesGithubRelease(execution) || (published && tagged)
 			) return execution;
 			const { tag, prerelease } = target;
 			const gateway = yield* this.gateway;
 			const refs = yield* gateway.tagRefs(execution.repository, execution.repositoryId);
-			if (!refs.some(ref => ref.name === tag && ref.commit === execution.sourceSha && ref.oid !== ref.commit)) {
-				return execution;
+			let next = execution;
+			if (!published) {
+				if (!refs.some(ref => ref.name === tag && ref.commit === execution.sourceSha && ref.oid !== ref.commit)) {
+					return execution;
+				}
+				const read = yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
+				const release = yield* gateway.read(
+					Schema.NullOr(releaseSchema),
+					`/repos/${execution.repository}/releases/tags/${encodeURIComponent(tag)}`,
+					read,
+				);
+				if (!release || release.tag_name !== tag || release.draft !== false || release.prerelease !== prerelease) {
+					return execution;
+				}
+				next = yield* this.released(execution, release, tag);
 			}
-			const read = yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
-			const release = yield* gateway.read(
-				Schema.NullOr(releaseSchema),
-				`/repos/${execution.repository}/releases/tags/${encodeURIComponent(tag)}`,
-				read,
-			);
-			if (!release || release.tag_name !== tag || release.draft !== false || release.prerelease !== prerelease) {
-				return execution;
-			}
-			const released = yield* this.released(execution, release, tag);
-			const next = policy
-					&& (yield* refsLanded(policy, version, execution.sourceSha, refs, yield* this.modulePrefixes(execution)))
-				? {
-					...released,
-					publications: yield* mergePublications(released.publications, [{
-						id: `refs:${released.operation}`,
+			if (
+				policy && !tagged
+				&& (yield* refsLanded(policy, version, execution.sourceSha, refs, yield* this.modulePrefixes(execution)))
+			) {
+				next = {
+					...next,
+					publications: yield* mergePublications(next.publications, [{
+						id: `refs:${next.operation}`,
 						manager: 'workflow',
-						name: released.repository,
+						name: next.repository,
 						version,
 						outcome: 'succeeded',
 						required: true,
 					}]),
-				}
-				: released;
-			return publishedAfterFailure(next) ?? next;
+				};
+			}
+			return next === execution ? execution : publishedAfterFailure(next) ?? next;
 		});
 	}
 	private draftRelease(execution: Execution): CoordinatorEffect<Execution['draftRelease'], DomainError> {

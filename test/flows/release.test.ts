@@ -1132,6 +1132,57 @@ test(
 	30_000,
 );
 
+test('a published release settles its failed operation only once the companion tag is on the commit too', async () => {
+	const states: unknown[] = [];
+	const scenario = async (promotionId: string) => {
+		const target = world.github.repository('octo/widget');
+		const api = bearer(world, await world.cliSession());
+		const snapshot = async () => {
+			const promotion = await only(api, 'promote');
+			states.push([
+				promotion.state,
+				decodeSync(mutableArray(looseStruct({ id: Schema.String })), promotion.publications).map(entry => entry.id)
+					.sort(),
+			]);
+		};
+		const run = target.runs.filter(entry => entry.path === '.github/workflows/publish.yml').at(-1);
+		if (!run) throw new Error('No promote run');
+		world.npm.publish('widget', '1.1.0');
+		await runAction(world, 'report', runIdentity(target, run, 'publish.yml'), {
+			EXECUTION_ID: promotionId,
+			PUBLICATIONS: JSON.stringify([
+				{ id: 'pkg:npm/widget', manager: 'npm', name: 'widget', version: '1.1.0', outcome: 'succeeded' },
+			]),
+		});
+		run.status = 'completed';
+		run.conclusion = 'failure';
+		await world.workflowRun(target, run, 'failure', 'workflow_dispatch');
+		await world.wait(16_000);
+		await snapshot();
+		const draft = target.releases.find(release => release.draft);
+		if (!draft) throw new Error('No draft release');
+		draft.draft = false;
+		const source = (await only(api, 'promote')).sourceSha;
+		world.github.recordTag(target, 'v1.1.0', 'a'.repeat(40), source, true);
+		await world.releasePublished(target, 'v1.1.0');
+		await world.wait(16_000);
+		await snapshot();
+		world.github.recordTag(target, 'go/v1.1.0', 'b'.repeat(40), source, true);
+		await world.releasePublished(target, 'v1.1.0');
+		await world.wait(16_000);
+		await snapshot();
+		throw new Error('scenario complete');
+	};
+	await expect(packedRelease(world, scenario, undefined, true, 'github.com/octo/widget/go')).rejects.toThrow(
+		'scenario complete',
+	);
+	expect(states).toEqual([
+		['failed', ['pkg:npm/widget']],
+		['failed', ['pkg:github/octo/widget', 'pkg:npm/widget']],
+		['succeeded', ['pkg:github/octo/widget', 'pkg:npm/widget', 'refs:promote']],
+	]);
+}, 30_000);
+
 test('a release stored without its companion modules reads them from discovery', async () => {
 	const { plan } = await packedRelease(
 		world,
