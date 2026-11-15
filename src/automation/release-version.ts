@@ -1,4 +1,5 @@
 import { Effect } from 'effect';
+import { tagPrefix } from '@/automation/managers/tags';
 import type { Inventory, Package } from '@/automation/types';
 import type { VersionRequest } from '@/automation/version';
 import { nextVersion } from '@/automation/version';
@@ -69,7 +70,9 @@ export function recommendedVersion(packages: Package[]): Effect.Effect<string | 
 }
 
 export function unreleasedManifestVersion(packages: Package[]): string | undefined {
-	const manifests = unique(packages.map(pkg => pkg.version));
+	// Tags record releases already made; they cannot carry the version being
+	// prepared in manifests. In a mixed stream those tags land during promotion.
+	const manifests = unique(packages.filter(pkg => tagPrefix(pkg.versionSource) === undefined).map(pkg => pkg.version));
 	const [manifest] = manifests;
 	if (manifests.length !== 1 || manifest === undefined || !packages.length) return undefined;
 	if (packages.some(pkg => pkg.publicationStatus !== 'published' && pkg.publicationStatus !== 'missing')) {

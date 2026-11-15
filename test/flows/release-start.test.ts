@@ -150,6 +150,54 @@ test('a start from the dashboard opens the version PR, and its merge publishes w
 	await publishedOnce(api, repository, 'dashboard');
 });
 
+test('merging a version PR promotes a mixed manifest and already-tagged Go stream', async () => {
+	const repository = widget(world.github, { configured: false });
+	world.npm.publish('widget', '1.0.0');
+	world.network.serve('proxy.golang.org', () => Response.json({ Version: 'v1.0.0' }));
+	world.github.recordTag(repository, 'go/v1.0.0', 'd'.repeat(40), world.github.head(repository), true);
+	const configuration = {
+		managers: ['npm', 'go', 'workflow'],
+		streams: {
+			main: {
+				packages: ['pkg:npm/widget', 'pkg:golang/github.com/octo/widget/go'],
+				mustPublish: ['pkg:npm/widget', 'pkg:golang/github.com/octo/widget/go'],
+				prepare: { strategy: 'managed' },
+				promote: {
+					publishWhen: 'version-pr-merged',
+					workflow: { file: 'publish.yml', publications: ['pkg:npm/widget', 'pkg:golang/github.com/octo/widget/go'] },
+				},
+			},
+		},
+	};
+	world.github.push(repository, {
+		'go/go.mod': 'module github.com/octo/widget/go\n\ngo 1.26\n',
+		'.github/beepboop.json': JSON.stringify(configuration),
+	}, 'Configure mixed release');
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const request = { repositoryId: repository.id, stream: 'main', version: '1.1.0' };
+	const planned = await api('/api/releases/plan', request);
+	expect(planned.status).toBe(200);
+	const { sourceSha, planId } = decodeSync(plan, planned.body);
+	expect((await api('/api/releases/prepare', { ...request, sourceSha, planId })).status).toBe(200);
+	await world.wait(16_000);
+	const [pull] = repository.pulls;
+	if (!pull) throw new Error('No version PR');
+	const merged = world.github.merge(repository, pull.number);
+	passChecks(repository, merged.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	expect(await promotions(api)).toEqual([
+		expect.objectContaining({ sourceSha: merged.sha, version: '1.1.0', approvedBy: 'merge' }),
+	]);
+	expect(repository.runs).toHaveLength(1);
+	expect(repository.runs[0]?.path).toBe('.github/workflows/publish.yml');
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	expect(await promotions(api)).toHaveLength(1);
+	expect(repository.runs).toHaveLength(1);
+});
+
 test('the release action starts a release from its workflow_dispatch run and refuses any other run', async () => {
 	const { repository, api } = await configured(
 		[{ via: 'action', workflow: 'start-release.yml' }],
