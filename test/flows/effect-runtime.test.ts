@@ -102,6 +102,41 @@ test('registry decoder defects remain observable instead of becoming outages', a
 	expect(outage.kind).toBe('failed');
 });
 
+test('registry lookup diagnostics distinguish transport, timeout and invalid responses without exposing error details', async () => {
+	const url = 'https://crates.io/api/v1/crates/svg-color';
+	const decode = () => '1.0.0';
+	const brokenBody = (error: Error) => Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+		start(controller) {
+			controller.error(error);
+		},
+	})));
+	const attempts = [
+		{ request: () => Promise.reject(new Error('server-only request parameters')), reason: 'network request failed' },
+		{
+			request: () => Promise.reject(new DOMException('server-only request parameters', 'TimeoutError')),
+			reason: 'request timed out',
+		},
+		{ request: () => Promise.resolve(new Response('server-only invalid JSON')), reason: 'invalid registry response' },
+		{
+			request: () => brokenBody(new DOMException('server-only stream timeout', 'TimeoutError')),
+			reason: 'request timed out',
+		},
+		{
+			request: () => brokenBody(new TypeError('server-only connection reset')),
+			reason: 'registry response could not be read',
+		},
+	];
+	for (const { request, reason } of attempts) {
+		expect(await Effect.runPromise(latestVersion(request, url, decode))).toEqual({ kind: 'failed', url, reason });
+	}
+	for (const status of [403, 429, 503]) {
+		expect(await Effect.runPromise(latestVersion(() => Promise.resolve(new Response('', { status })), url, decode)))
+			.toEqual({ kind: 'failed', url, reason: `HTTP ${status}` });
+	}
+	expect(await Effect.runPromise(latestVersion(() => Promise.resolve(new Response('', { status: 404 })), url, decode)))
+		.toEqual({ kind: 'missing', url });
+});
+
 test('malformed successful API responses are typed failures', async () => {
 	for (const body of ['{', '{"proof":42}']) {
 		const response = new Response(body, { headers: { 'Content-Type': 'application/json' } });

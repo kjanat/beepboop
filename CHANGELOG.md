@@ -23,6 +23,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Release approval preserves expected refusal diagnostics across Durable Object RPC instead of reporting an internal error. Cargo packages can satisfy license metadata with an SPDX expression or an explicit `license-file`. Registry lookup failures distinguish HTTP errors, timeouts, network failures and unreadable or invalid responses.
+- Editing release setup preserves explicitly optional packages. Published optional packages no longer produce a warning that proposes making them required.
+- CLI commands accept `--verbose` to show structured API error details on stderr. JSON errors retain the HTTP status and typed problem, including incident IDs, retryability and precondition diagnostics.
 - `beepboop runs approve` and `runs publish` accept 7–40 character commit references, including the abbreviated SHA shown by `runs list`. Approval records the full source commit in the audit log.
 - A failed or cancelled preparation stops asking for attention once the same version of its stream is released. The release stayed on "Needs attention" after every publication had succeeded.
 - A failed release operation ends as succeeded when its GitHub release is published afterwards. On the `release` webhook Beepboop checks that the release is public, that its annotated tag and the other tags of the operation are on the release commit, and records them. The operation stayed failed with the GitHub release `waiting`.

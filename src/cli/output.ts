@@ -1,5 +1,5 @@
 import type { Out } from '@kjanat/dreamcli';
-import { CLIError, isCLIError } from '@kjanat/dreamcli';
+import { CLIError, isCLIError, middleware } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 
 export function failure(message: string, code: string, suggest?: string): CLIError {
@@ -25,3 +25,14 @@ export const signIn = 'Run beepboop auth login';
 export function emit(out: Out, value: unknown): Effect.Effect<void> {
 	return Effect.sync(() => out.json(value));
 }
+
+export const diagnostics = middleware(async ({ flags, out, next }) => {
+	try {
+		await next({});
+	} catch (error) {
+		if (flags.verbose === true && !out.jsonMode && isCLIError(error) && error.details) {
+			out.error(JSON.stringify(error.details, null, 2));
+		}
+		throw error;
+	}
+});

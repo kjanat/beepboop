@@ -5,7 +5,7 @@ import type { Outcome, Publication } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
 import { fromPromise } from '@/failure';
 import { semver } from '@/model';
-import { responseJson, responseText, scopedResponse } from '@/runtime/http';
+import { ResponseReadError, responseJson, responseText, scopedResponse } from '@/runtime/http';
 
 export interface RegistryRequest {
 	method?: 'POST';
@@ -113,10 +113,20 @@ function lookup(
 	query?: RegistryRequest,
 ): Effect.Effect<RegistryVersion> {
 	return Effect.gen(function*() {
-		const response = yield* registryRequest(request, url, query);
+		const response = yield* registryRequest(request, url, query).pipe(
+			Effect.mapError(error =>
+				error.cause instanceof Error && error.cause.name === 'TimeoutError'
+					? 'request timed out'
+					: 'network request failed'
+			),
+		);
 		if (response.status === 404) return { kind: 'missing', url } satisfies RegistryVersion;
 		if (!response.ok) return { kind: 'failed', url, reason: `HTTP ${response.status}` } satisfies RegistryVersion;
-		const version = yield* read(response);
+		const version = yield* read(response).pipe(Effect.mapError(error => {
+			const cause = error instanceof ResponseReadError ? error.cause : error;
+			if (cause instanceof Error && cause.name === 'TimeoutError') return 'request timed out';
+			return cause instanceof SyntaxError ? 'invalid registry response' : 'registry response could not be read';
+		}));
 		if (version === unpublished) return { kind: 'missing', url } satisfies RegistryVersion;
 		if (version instanceof LookupFailure) {
 			return { kind: 'failed', url, reason: version.reason } satisfies RegistryVersion;
@@ -127,6 +137,6 @@ function lookup(
 		});
 	}).pipe(
 		Effect.scoped,
-		Effect.orElseSucceed((): RegistryVersion => ({ kind: 'failed', url, reason: 'request failed' })),
+		Effect.orElseSucceed((reason): RegistryVersion => ({ kind: 'failed', url, reason })),
 	);
 }

@@ -29,7 +29,7 @@ import type {
 } from '@/automation/setup-types';
 import { approvals, triggerHandovers, versionings } from '@/automation/setup-types';
 import { integrateReleaseWorkflow, integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
-import type { Configuration, Inventory, Package, RepositoryRecord, Snapshot } from '@/automation/types';
+import type { Configuration, Inventory, Package, Snapshot } from '@/automation/types';
 import { isLockfile } from '@/contract/catalog';
 import { blocking } from '@/contract/diagnostics';
 import type { DomainError } from '@/contract/errors';
@@ -74,22 +74,8 @@ import { validateAgainst } from '@/domain/validate';
 import { fromPromise, fromSync, toDomainError } from '@/failure';
 import { mutableArray, safeDecode } from '@/schema';
 
-function releasedPackage(pkg: Package | undefined): boolean {
-	return !!pkg && publishable(pkg) && pkg.published !== undefined
-		&& !(tagPrefix(pkg.versionSource) !== undefined && pkg.version === undefined);
-}
 function requirablePackage(pkg: Package | undefined): boolean {
 	return !!pkg && publishable(pkg) && !(tagPrefix(pkg.versionSource) !== undefined && pkg.version === undefined);
-}
-export function publishedOutsideRequired(repository: RepositoryRecord): { stream: string; packages: string[] }[] {
-	return Object.entries(repository.configuration?.streams ?? {}).flatMap(([stream, configuration]) => {
-		const packages = repository.inventory.packages.filter(pkg =>
-			releasedPackage(pkg)
-			&& (!configuration.packages || configuration.packages.some(reference => matchesPackage(reference, pkg)))
-			&& !configuration.required.some(reference => matchesPackage(reference, pkg))
-		).map(packageId);
-		return packages.length ? [{ stream, packages }] : [];
-	});
 }
 export function withRegistryStatus(inventory: Inventory, stored: Inventory | undefined): Inventory {
 	const checked = new Map(stored?.packages.map(pkg => [packageId(pkg), pkg.publicationStatus]));
@@ -260,15 +246,8 @@ function suggested(
 			versioning: current.versioning === 'independent' || current.versioning === 'none'
 				? current.versioning
 				: 'workspace',
-			required: Array.isArray(current.required) && observe.length
+			required: Array.isArray(current.required)
 				? current.required.map(value => selectorKey(String(value), inventory.packages))
-				: Array.isArray(current.required)
-				? [
-					...new Set([
-						...current.required.map(value => selectorKey(String(value), inventory.packages)),
-						...selected.filter(id => requirablePackage(inventory.packages.find(pkg => packageId(pkg) === id))),
-					]),
-				]
 				: selected.filter(id => requirablePackage(inventory.packages.find(pkg => packageId(pkg) === id))),
 			prepare: choose('prepare'),
 			promote: proposeBinaries(

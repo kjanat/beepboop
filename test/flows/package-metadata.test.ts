@@ -38,12 +38,11 @@ test('a crate without a README is blocked with its name, manifest and the field'
 		.toEqual(['core (crates/core/Cargo.toml) lacks README']);
 });
 
-test('a crate with only the license field and no license file is blocked', () => {
+test('a crate with an SPDX license needs no additional license file', () => {
 	const crate = { 'Cargo.toml': workspace, 'crates/core/README.md': '# core\n' };
 	const manifest = core(`${coreFields}license = "MIT"\n`);
-	expect(problems({ ...crate, LICENSE: licenseText, 'crates/core/Cargo.toml': manifest })).toEqual([
-		'core (crates/core/Cargo.toml) lacks a license file',
-	]);
+	expect(problems({ ...crate, 'crates/core/Cargo.toml': manifest })).toEqual([]);
+	expect(problems({ ...crate, LICENSE: licenseText, 'crates/core/Cargo.toml': manifest })).toEqual([]);
 	expect(problems({ ...crate, 'crates/core/LICENSE-MIT': licenseText, 'crates/core/Cargo.toml': manifest }))
 		.toEqual([]);
 	expect(problems({ ...crate, 'crates/core/copying.txt': licenseText, 'crates/core/Cargo.toml': manifest }))
@@ -56,7 +55,7 @@ test('a symlinked LICENSE in the crate directory counts as the license file', as
 		'Cargo.toml': workspace,
 		LICENSE: licenseText,
 		'crates/core/README.md': '# core\n',
-		'crates/core/Cargo.toml': core(`${coreFields}license = "MIT"\n`),
+		'crates/core/Cargo.toml': core(`${coreFields}license-file = "LICENSE"\n`),
 	};
 	const built = (link: boolean) =>
 		Effect.runPromise(buildSnapshot({
@@ -93,7 +92,7 @@ test('cargo finds a README in the crate directory and reads inherited workspace 
 		'[workspace]\nmembers = ["crates/core"]\n\n[workspace.package]\ndescription = "Shared"\nlicense-file = "LICENSE"\nrepository = "https://github.com/octo/example"\nreadme = "README.md"\n';
 	const inherited = core('description.workspace = true\nlicense-file.workspace = true\nrepository.workspace = true\n');
 	expect(problems({ 'Cargo.toml': workspace, 'crates/core/Cargo.toml': inherited }, ['crates/core/README.txt']))
-		.toEqual(['core (crates/core/Cargo.toml) lacks description, license, a license file, repository']);
+		.toEqual(['core (crates/core/Cargo.toml) lacks description, license, repository']);
 	expect(problems({ 'Cargo.toml': shared, 'crates/core/Cargo.toml': `${inherited}readme.workspace = true\n` }, [
 		'README.md',
 		'LICENSE',
@@ -161,6 +160,6 @@ test('the check reports only the selected packages', () => {
 	}));
 	const cli = inventory.packages.filter(pkg => pkg.name === 'cli');
 	expect(metadataProblems(inventory, cli)).toEqual([
-		'cli (crates/cli/Cargo.toml) lacks README, description, license, a license file, repository',
+		'cli (crates/cli/Cargo.toml) lacks README, description, license, repository',
 	]);
 });

@@ -2,7 +2,6 @@
 import { winget, wingetOutcome } from '@/automation/destinations';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
 import { streamReleases } from '@/automation/release-capability';
-import { publishedOutsideRequired } from '@/automation/setup';
 import type { RepositoryRecord } from '@/automation/types';
 import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
@@ -137,17 +136,6 @@ function wingetDestination(repository: RepositoryRecord) {
 			</dl>
 			{repository.diagnostics.map(entry => (
 				<p class="notice">{entry.message}</p>
-			))}
-			{publishedOutsideRequired(repository).map(gap => (
-				<div class="notice">
-					<p>
-						Published but not required in <strong>{gap.stream}</strong>. Edit
-						release setup proposes adding them.
-					</p>
-					<ul class="inline-list">
-						{gap.packages.map(id => <li>{packageLabel(id)}</li>)}
-					</ul>
-				</div>
 			))}
 			<div class="actions">
 				<form

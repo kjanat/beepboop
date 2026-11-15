@@ -2738,3 +2738,57 @@ jobs:
 	);
 	expect(jobs.ship.steps.find(step => step.uses === 'acme/tool@v1')).toMatchObject({ with: { version: '1.2.3' } });
 });
+
+for (const observed of [false, true]) {
+	test(`editing release setup preserves published optional packages (observed=${observed})`, async () => {
+		const optional = 'pkg:npm/widget-freebsd-arm64';
+		const configuration = {
+			streams: {
+				main: {
+					packages: ['pkg:npm/widget', optional],
+					required: ['pkg:npm/widget'],
+					credentials: ['npm-token'],
+					prepare: { strategy: 'managed' },
+					promote: {
+						approval: 'required',
+						workflow: { file: 'publish.yml', publications: ['pkg:npm/widget', optional] },
+					},
+					...(observed
+						? {
+							workflows: {
+								backfill: {
+									mode: 'observe',
+									file: 'backfill.yml',
+									ref: 'refs/heads/main',
+									publications: ['pkg:npm/widget', optional],
+								},
+							},
+						}
+						: {}),
+				},
+			},
+		};
+		const repository = widget(world.github);
+		world.github.push(repository, {
+			'.github/beepboop.json': jsonFile(configuration),
+			'packages/freebsd/package.json': npmManifest('widget-freebsd-arm64', '1.0.0'),
+			'packages/freebsd/README.md': '# Experimental FreeBSD package\n',
+			'packages/freebsd/LICENSE': licenseText,
+			...(observed ? { '.github/workflows/backfill.yml': publishWorkflow } : {}),
+		}, 'Add an optional experimental platform');
+		world.npm.publish('widget', '1.0.0');
+		world.npm.publish('widget-freebsd-arm64', '1.0.0');
+		const api = bearer(world, await world.cliSession());
+		const plan = await discoverSetup(api, repository.name);
+		expect(plan.choices.streams[0]?.packages).toContain(optional);
+		expect(plan.choices.streams[0]?.required).toEqual(['pkg:npm/widget']);
+		const edit = plan.edits.find(edit => edit.path === '.github/beepboop.json');
+		if (edit) {
+			const updated = decodeSync(
+				looseStruct({ streams: looseStruct({ main: looseStruct({ mustPublish: mutableArray(Schema.String) }) }) }),
+				JSON.parse(edit.after),
+			);
+			expect(updated.streams.main.mustPublish).toEqual(['pkg:npm/widget']);
+		}
+	});
+}
