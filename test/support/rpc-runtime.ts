@@ -1,13 +1,11 @@
-import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { convertV4MiniflareOptions, Log, LogLevel, Miniflare } from 'miniflare';
 
-const source = process.argv[2];
-if (!source) throw new Error('Expected the bundled RPC fixture');
 const runtime = new Miniflare(convertV4MiniflareOptions({
 	log: new Log(LogLevel.NONE),
 	modules: true,
 	compatibilityDate: '2026-10-26',
-	script: await readFile(source, 'utf8'),
+	script: readFileSync(0, 'utf8'),
 	durableObjects: { PROBE: 'Probe' },
 }));
 try {

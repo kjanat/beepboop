@@ -11,8 +11,7 @@ interface Classified {
 }
 
 const d1Failure = /^D1_ERROR\b/;
-const rpcDomainError = Schema.Struct({
-	_tag: Schema.Literal('DomainError'),
+const rpcDomainError = Schema.TaggedStruct('DomainError', {
 	problem: apiError,
 	message: Schema.String,
 });
