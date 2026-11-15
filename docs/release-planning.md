@@ -187,14 +187,34 @@ JSON and YAML rules select existing string values; array indices are numbers in
 `key`. TOML supports bare and dotted keys in ordinary tables, with single-line
 string values. Unsupported TOML layouts fail explicitly. YAML anchors, explicit
 tags, and block scalars are rejected to avoid changing other fields indirectly.
-Text rules require one occurrence of `prefix` and replace the content up to the
-following `suffix`.
+Text rules replace every occurrence between the literal `prefix` and its
+following `suffix`. At least one occurrence must exist, and each prefix must
+have a following suffix.
+
+For formatting-tolerant matches or versions mentioned throughout a text file,
+use `pattern` instead of `prefix` and `suffix`. The regular expression must
+capture the text to replace in a named `version` group. Every match is updated;
+the rest of each match stays unchanged. For example:
+
+```json
+{ "path": "README.md", "format": "text", "pattern": "\\bfujo\\s*=\\s*\"(?<version>[^\"\\r\\n]+)\"" }
+```
+
+This selects `fujo = "0.2.0"` with any amount of whitespace around `=`. A plain
+text file can select version mentions with
+`"pattern": "\\bversion\\s+(?<version>[0-9]+\\.[0-9]+\\.[0-9]+)"`.
+Patterns use JavaScript regular expression syntax with global, multiline and
+Unicode matching enabled. Captures must be nonempty and must not overlap;
+patterns that find no matches fail preparation. Choose enough context to select
+only the versions belonging to this release.
 
 Edits preserve surrounding content and comments. Paths must identify existing
 regular files inside the repository; symbolic links are rejected during snapshot
 loading. Duplicate rules and conflicts with ecosystem version edits fail instead
-of silently overwriting a different version. Rules become part of the immutable
-preparation plan. Lockfile regeneration still runs in a preparation workflow.
+of silently overwriting a different version. For text rules, conflict checks
+cover every selected occurrence, including changes to the number of matches.
+Rules become part of the immutable preparation plan. Lockfile regeneration still
+runs in a preparation workflow.
 
 ## Durable release coordination
 

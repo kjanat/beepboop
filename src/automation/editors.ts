@@ -7,6 +7,7 @@ import { isLockfile } from '@/contract/catalog';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import type { VersionFile } from '@/contract/version-files';
+import { textVersionPattern } from '@/contract/version-files';
 import { fromSync } from '@/failure';
 import { semver } from '@/model';
 
@@ -29,19 +30,50 @@ function valueAt(data: unknown, key: (string | number)[]): Effect.Effect<unknown
 	});
 }
 
-function edit(source: string, rule: VersionFile, version: string): Effect.Effect<string, DomainError> {
+function textMatches(source: string, rule: Extract<VersionFile, { format: 'text' }>) {
+	return Result.gen(function*() {
+		const spans: { from: number; to: number; value: string }[] = [];
+		if ('pattern' in rule) {
+			const pattern = yield* textVersionPattern(rule.pattern).pipe(
+				Result.mapError(() => precondition('Invalid text version pattern')),
+			);
+			for (const match of source.matchAll(pattern)) {
+				const span = match.indices?.groups?.version;
+				if (!span || span[0] === span[1]) {
+					return yield* Result.fail(
+						precondition('Text pattern must capture a nonempty named version group in every match'),
+					);
+				}
+				const previous = spans.at(-1);
+				if (previous && span[0] < previous.to) return yield* Result.fail(precondition('Text version captures overlap'));
+				spans.push({ from: span[0], to: span[1], value: source.slice(...span) });
+			}
+		} else {
+			let cursor = 0;
+			while (cursor < source.length) {
+				const start = source.indexOf(rule.prefix, cursor);
+				if (start < 0) break;
+				const from = start + rule.prefix.length;
+				const to = source.indexOf(rule.suffix, from);
+				if (to < 0) return yield* Result.fail(precondition('Text suffix is missing'));
+				const next = source.indexOf(rule.prefix, from);
+				if (next >= 0 && next < to) {
+					return yield* Result.fail(precondition('Text prefix appears before the preceding suffix'));
+				}
+				spans.push({ from, to, value: source.slice(from, to) });
+				cursor = to + rule.suffix.length;
+			}
+		}
+		if (!spans.length) return yield* Result.fail(precondition('Text version rule must match at least once'));
+		return spans;
+	});
+}
+
+type StructuredVersionFile = Exclude<VersionFile, { format: 'text' }>;
+
+function edit(source: string, rule: StructuredVersionFile, version: string): Effect.Effect<string, DomainError> {
 	return Effect.gen(function*() {
 		const value = rule.template.replaceAll('{version}', version);
-		if (rule.format === 'text') {
-			const start = source.indexOf(rule.prefix);
-			if (start < 0 || source.indexOf(rule.prefix, start + 1) >= 0) {
-				return yield* precondition('Text prefix must match exactly once');
-			}
-			const from = start + rule.prefix.length;
-			const to = source.indexOf(rule.suffix, from);
-			if (to < 0) return yield* precondition('Text suffix is missing');
-			return source.slice(0, from) + value + source.slice(to);
-		}
 		if (rule.format === 'toml') {
 			const prior = yield* valueAt(yield* toml(source), rule.key);
 			if (typeof prior !== 'string') return yield* precondition('TOML version field must be a string');
@@ -81,11 +113,7 @@ function edit(source: string, rule: VersionFile, version: string): Effect.Effect
 	});
 }
 
-function currentValue(source: string, rule: VersionFile): Effect.Effect<unknown, DomainError> {
-	if (rule.format === 'text') {
-		const from = source.indexOf(rule.prefix) + rule.prefix.length;
-		return Effect.succeed(source.slice(from, source.indexOf(rule.suffix, from)));
-	}
+function currentValue(source: string, rule: StructuredVersionFile): Effect.Effect<unknown, DomainError> {
 	const data = rule.format === 'toml'
 		? toml(source)
 		: fromSync((): unknown => rule.format === 'json' ? JSON.parse(source) : yamlData(yamlDocument(source)));
@@ -105,7 +133,10 @@ export function applyVersionFiles(
 			const group = rule.group ?? (Object.keys(versions).length === 1 ? Object.keys(versions)[0] : undefined);
 			const version = group && Object.hasOwn(versions, group) ? versions[group] : undefined;
 			if (!version) return yield* precondition(`Version file needs a known release group: ${rule.path}`);
-			const identity = JSON.stringify([rule.path, rule.format === 'text' ? [rule.prefix, rule.suffix] : rule.key]);
+			const selector = rule.format === 'text'
+				? 'pattern' in rule ? rule.pattern : [rule.prefix, rule.suffix]
+				: rule.key;
+			const identity = JSON.stringify([rule.path, selector]);
 			if (selected.has(identity)) return yield* precondition(`Duplicate version field: ${rule.path}`);
 			selected.add(identity);
 			const original = snapshot.files[rule.path];
@@ -113,9 +144,27 @@ export function applyVersionFiles(
 			if (original === undefined || current === undefined) {
 				return yield* precondition(`Version file is missing: ${rule.path}`);
 			}
+			const target = rule.template.replaceAll('{version}', version);
+			if (rule.format === 'text') {
+				const prior = yield* Effect.fromResult(textMatches(original, rule));
+				const existing = original === current ? prior : yield* Effect.fromResult(textMatches(current, rule));
+				if (
+					prior.length !== existing.length
+					|| existing.some((match, index) => match.value !== prior[index]?.value && match.value !== target)
+				) {
+					return yield* precondition(`Conflicting version edit: ${rule.path}`);
+				}
+				let result = '', cursor = 0;
+				for (const { from, to } of existing) {
+					result += current.slice(cursor, from) + target;
+					cursor = to;
+				}
+				files[rule.path] = result + current.slice(cursor);
+				continue;
+			}
 			yield* edit(original, rule, version);
 			const prior = yield* currentValue(original, rule), existing = yield* currentValue(current, rule);
-			if (prior !== existing && existing !== rule.template.replaceAll('{version}', version)) {
+			if (prior !== existing && existing !== target) {
 				return yield* precondition(`Conflicting version edit: ${rule.path}`);
 			}
 			files[rule.path] = yield* edit(current, rule, version);

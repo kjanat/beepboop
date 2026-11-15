@@ -1,10 +1,19 @@
-import { Effect, Schema } from 'effect';
+import { Effect, Result, Schema } from 'effect';
 import { unsafeRelativePath } from '@/relative-path';
 import type { Decoded } from '@/schema';
 import { matchesPattern, mutableArray, refined, strictStruct } from '@/schema';
 
 export function safeVersionPath(path: string): boolean {
 	return !path.includes('\\') && !unsafeRelativePath(path, ['', '.', '..', '.git']);
+}
+export function textVersionPattern(pattern: string) {
+	return Result.try({
+		try: () => new RegExp(pattern, 'dgmu'),
+		catch: error => {
+			if (error instanceof SyntaxError) return error;
+			throw error;
+		},
+	});
 }
 const common = {
 	path: refined(Schema.String, safeVersionPath, 'Expected a repository-relative path'),
@@ -42,6 +51,15 @@ export const versionFileSchema = Schema.Union([
 		format: Schema.Literal('text'),
 		prefix: Schema.String.check(Schema.isMinLength(1)),
 		suffix: Schema.String.check(Schema.isMinLength(1)),
+	}),
+	strictStruct({
+		...common,
+		format: Schema.Literal('text'),
+		pattern: refined(
+			Schema.String.check(Schema.isMinLength(1)),
+			pattern => Result.isSuccess(textVersionPattern(pattern)),
+			'Expected a valid Unicode regular expression',
+		),
 	}),
 ]);
 export type VersionFile = Decoded<typeof versionFileSchema>;
