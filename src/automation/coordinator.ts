@@ -2016,11 +2016,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (execution.state !== 'awaiting-approval') {
 					return { problems: [], blocked: ['This release is not waiting for you to publish it'] };
 				}
-				const conflict = yield* this.tagProblem(execution);
+				const [conflict, incomplete, problems] = yield* Effect.all([
+					this.tagProblem(execution),
+					this.metadataBlocks(execution),
+					Effect.result(this.approvalProblems(execution)),
+				], { concurrency: 'unbounded' });
 				if (conflict) return { problems: [], blocked: [`${conflict}. Release a new version.`] };
-				const incomplete = yield* this.metadataBlocks(execution);
 				if (incomplete.length) return { problems: [], blocked: incomplete };
-				return { problems: yield* this.approvalProblems(execution), blocked: [] };
+				return { problems: yield* Effect.fromResult(problems), blocked: [] };
 			}),
 			'coordinator.approvalReadiness',
 			{ executionId: id },
@@ -2082,15 +2085,23 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					),
 				));
 			}
-			const commit = yield* gateway.read(commitSchema, `${base}/commits/${execution.sourceSha}`, token);
+			const [commit, checks, { workflow_runs: workflowRuns }, status] = yield* Effect.all([
+				gateway.read(commitSchema, `${base}/commits/${execution.sourceSha}`, token),
+				gateway.read(
+					checkRunsSchema,
+					`${base}/commits/${execution.sourceSha}/check-runs?per_page=100&filter=latest`,
+					token,
+				),
+				gateway.read(
+					workflowRunsSchema,
+					`${base}/actions/runs?head_sha=${execution.sourceSha}&per_page=100`,
+					token,
+				),
+				gateway.read(commitStatusSchema, `${base}/commits/${execution.sourceSha}/status`, token),
+			], { concurrency: 'unbounded' });
 			if (commit.commit.verification.verified !== true) {
 				problems.push('The commit signature is not verified');
 			}
-			const checks = yield* gateway.read(
-				checkRunsSchema,
-				`${base}/commits/${execution.sourceSha}/check-runs?per_page=100&filter=latest`,
-				token,
-			);
 			const runs = checks.check_runs;
 			if (checks.total_count !== runs.length) problems.push('The commit has more than 100 check runs');
 			const releaseFiles = new Set(
@@ -2098,11 +2109,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					[stream.prepare.workflow, stream.promote.workflow, ...Object.values(stream.workflows)]
 						.flatMap(binding => binding ? [`.github/workflows/${binding.file}`] : [])
 				),
-			);
-			const { workflow_runs: workflowRuns } = yield* gateway.read(
-				workflowRunsSchema,
-				`${base}/actions/runs?head_sha=${execution.sourceSha}&per_page=100`,
-				token,
 			);
 			const paths = new Map(workflowRuns.map(run => [String(run.id), run.path]));
 			const gating = runs.filter(run => {
@@ -2116,7 +2122,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					problems.push(`${String(run.name)} ${String(run.conclusion)}`);
 				}
 			}
-			const status = yield* gateway.read(commitStatusSchema, `${base}/commits/${execution.sourceSha}/status`, token);
 			if (Number(status.total_count) > 0 && status.state !== 'success') {
 				(status.state === 'pending' ? pending : problems).push(`Commit status is ${String(status.state)}`);
 			}
