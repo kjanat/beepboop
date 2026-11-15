@@ -14,5 +14,5 @@ export async function savedClient(world: World, directory: string): Promise<{ cl
 }
 
 export function runCli(args: string[], answers?: unknown[]) {
-	return app.execute(args, { answers, isTTY: true, env: {} });
+	return app.execute(args, { answers, isTTY: true, color: false, env: {} });
 }

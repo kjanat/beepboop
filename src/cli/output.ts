@@ -1,7 +1,6 @@
 import type { Out } from '@kjanat/dreamcli';
 import { CLIError, isCLIError } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
-import { capture } from '@/tooling/runtime';
 
 export function failure(message: string, code: string, suggest?: string): CLIError {
 	return new CLIError(message, { code, ...(suggest === undefined ? {} : { suggest }) });
@@ -24,13 +23,5 @@ export function unprompted<A, B, E>(
 }
 export const signIn = 'Run beepboop auth login';
 export function emit(out: Out, value: unknown): Effect.Effect<void> {
-	return Effect.gen(function*() {
-		const jq = out.isTTY && !out.jsonMode ? Bun.which('jq') : null;
-		if (!jq) return out.json(value);
-		const text = yield* capture([jq, ...(out.color.isColorSupported ? ['--color-output'] : []), '.'], {
-			stdin: JSON.stringify(value),
-		}).pipe(Effect.orElseSucceed(() => undefined));
-		if (text === undefined) return out.json(value);
-		out.log(text.trimEnd());
-	});
+	return Effect.sync(() => out.json(value));
 }

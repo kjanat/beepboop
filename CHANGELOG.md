@@ -15,6 +15,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A stream can list `companionModules`, Go modules whose version tag its release pushes on the release commit beside its own tag, such as `go/v1.2.3` beside `rshellcheck-v1.2.3`. The module keeps its own stream. Setup takes the setting as a choices field, the `--companion-module` flag and a JSON editor in the dashboard. Discovery blocks an entry that matches no package and warns about one that is not a Go module versioned by tags.
 - `actions/publish` takes `npm-tarballs`, a directory of prebuilt npm tarballs. A generated npm package, such as a platform package from `npm/targets.json`, publishes from the tarball whose `package.json` name and version match, with the tarball's sha512 integrity as its digest.
 - When a run fails, the publishing job is its only failed job, and that attempt left every required package that has not published `failed-retryable`, Beepboop re-runs the failed jobs, up to the fourth run attempt.
+- Shell completion offers the repository's packages for `beepboop adopt --package` and `--must-publish`, its binaries for `--binary`, and the values of `--start-from` and `--target`. The packages and binaries come from the server's setup plan. Install the completion script again to get them.
+- `beepboop release --help` explains what a release does with and without `cli` in `startFrom`.
+- `beepboop release` shows the binary builds, the publications and the asset uploads of a running release as progress bars side by side. A failed release prints its reason on stderr, piped output included.
+- `beepboop` commands that print JSON in a terminal indent and color it themselves. The CLI needs `@kjanat/dreamcli` 5.1.0.
 - Adoption notes a Go module whose tags carry the same versions as another stream's tags, or whose tag name a file builds beside that stream's tag name. The note names both options, `companionModules` and moving the module into the stream's `packages`, and changes nothing until you choose.
 
 ### Fixed

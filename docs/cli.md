@@ -224,7 +224,9 @@ Beepboop starts watching later. `subscribe` takes a package as `npm:name` or
 
 ## Shell completions
 
-DreamCLI generates completions from the command definitions:
+DreamCLI generates completions from the command definitions. `beepboop adopt`
+completes `--package`, `--must-publish` and `--binary` with the packages and
+binaries of the repository, read from the server's setup plan:
 
 ```sh
 beepboop completions zsh

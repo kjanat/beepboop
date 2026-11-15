@@ -10,7 +10,8 @@ import { emit, failure, prompted, unprompted } from '@/cli/output';
 import { checkoutRepository, releaseRepository, releaseVersion } from '@/cli/release';
 import { listedRepository, serverFilter, slimRun } from '@/cli/runs';
 import { setupRepository } from '@/cli/setup';
-import { stdin } from '@/cli/stdin';
+import { defaultServer } from '@/cli/setup-complete';
+import { setupFlagRecord } from '@/cli/setup-flag-builders';
 import {
 	credentialTables,
 	executionTable,
@@ -22,25 +23,8 @@ import {
 } from '@/cli/views';
 import { notificationKinds, watchedPackagePattern, watchedRegistries } from '@/contract/catalog';
 import { credentialAliasPattern, githubSecretNamePattern, shaPattern } from '@/contract/ids';
-import { approvalPolicies, startChannels, versionBumps } from '@/contract/release-start';
 import { routes } from '@/contract/routes';
-import { binaryTargets, streamVersionings, workflowTriggers } from '@/contract/setup';
-import {
-	autoMergeMethods,
-	companionModulesSentence,
-	existingTriggerChoices,
-	existingTriggersQuestion,
-	mustPublishSentence,
-	publishWhenQuestion,
-	publishWhens,
-	startFromQuestion,
-	versionLandings,
-	versionLandsQuestion,
-	versionPrMergeQuestion,
-	versionPrMerges,
-	versionScopeQuestion,
-	versionScopes,
-} from '@/contract/setup-terms';
+import { autoMergeMethods } from '@/contract/setup-terms';
 import { executionStates, executionView as executionViewSchema } from '@/contract/views';
 import { looseStruct, safeDecode } from '@/schema';
 
@@ -52,9 +36,9 @@ const base = (name: string, description: string, promptServer = false) =>
 				? flag.string().env('BEEPBOOP_SERVER').prompt({
 					kind: 'input',
 					message: 'Beepboop server URL',
-					default: 'https://beepboop.kjanat.dev',
+					default: defaultServer,
 				})
-				: flag.string().env('BEEPBOOP_SERVER')).default('https://beepboop.kjanat.dev').describe(
+				: flag.string().env('BEEPBOOP_SERVER')).default(defaultServer).describe(
 					'Beepboop server origin',
 				),
 		);
@@ -142,57 +126,7 @@ const adoptCommand = (name: string, description: string, target: typeof reposito
 		.flag('output', flag.path().describe('Advanced: save the preview as JSON instead of opening the PR'))
 		.flag('plan', flag.path({ mustExist: true }).describe('Advanced: saved preview to apply with --apply'))
 		.flag('apply', flag.boolean().default(false).describe('Advanced: apply the exact saved --plan'))
-		.flag(
-			'stream',
-			flag.string().describe('Release group the setup flags change; needed when the proposal has several'),
-		)
-		.flag('package', flag.array(flag.string()).describe('Package to release, by name or package URL; repeat it'))
-		.flag(
-			'must-publish',
-			flag.array(flag.string()).describe(`${mustPublishSentence.slice(0, -1)}; repeat it; defaults to --package`),
-		)
-		.flag('version-scope', flag.enum(versionScopes).describe(versionScopeQuestion))
-		.flag('start-from', flag.array(flag.enum(startChannels)).describe(`${startFromQuestion}; repeat it`))
-		.flag('version-lands', flag.enum(versionLandings).describe(versionLandsQuestion))
-		.flag('publish-when', flag.enum(publishWhens).describe(publishWhenQuestion))
-		.flag('version-pr-merge', flag.enum(versionPrMerges).describe(versionPrMergeQuestion))
-		.flag('required', flag.array(flag.string()).deprecated('Use --must-publish'))
-		.flag('versioning', flag.enum(streamVersionings).deprecated('Use --version-scope'))
-		.flag('start', flag.array(flag.enum(startChannels)).deprecated('Use --start-from'))
-		.flag('bump', flag.enum(versionBumps).deprecated('Use --version-lands'))
-		.flag('approval', flag.enum(approvalPolicies).deprecated('Use --publish-when'))
-		.flag('version-source', flag.string().describe('Advanced: versionSource as JSON'))
-		.flag('version-files', flag.string().describe('Advanced: versionFiles as JSON'))
-		.flag('companion-module', flag.array(flag.string()).describe(`${companionModulesSentence.slice(0, -1)}; repeat it`))
-		.flag('observe', flag.string().describe('Advanced: observed workflows as JSON'))
-		.flag('needs', flag.string().describe('Advanced: package dependencies as JSON'))
-		.flag('operations', flag.string().describe('Advanced: extra operations as JSON'))
-		.flag('prepare-file', flag.string().describe('Preparation workflow file'))
-		.flag('prepare-job', flag.string().describe('Job in the preparation workflow'))
-		.flag(
-			'prepare-existing-triggers',
-			flag.enum(existingTriggerChoices).describe(`Preparation workflow: ${existingTriggersQuestion}`),
-		)
-		.flag('prepare-triggers', flag.enum(workflowTriggers).deprecated('Use --prepare-existing-triggers'))
-		.flag('prepare-commands', flag.string().describe('Bash commands of the preparation job'))
-		.flag('prepare-publication-steps', flag.string().describe('Advanced: preparation publicationSteps as JSON'))
-		.flag('prepare-credentials', flag.string().describe('Advanced: preparation credentials as JSON'))
-		.flag('prepare-tag-prefix', flag.string().describe('Version tag prefix of the preparation workflow'))
-		.flag('prepare-binaries', flag.string().describe('Advanced: preparation binaries as JSON'))
-		.flag('promote-file', flag.string().describe('Publishing workflow file'))
-		.flag('promote-job', flag.string().describe('Job in the publishing workflow'))
-		.flag(
-			'promote-existing-triggers',
-			flag.enum(existingTriggerChoices).describe(`Publishing workflow: ${existingTriggersQuestion}`),
-		)
-		.flag('promote-triggers', flag.enum(workflowTriggers).deprecated('Use --promote-existing-triggers'))
-		.flag('promote-commands', flag.string().describe('Bash commands of the publishing job'))
-		.flag('promote-publication-steps', flag.string().describe('Advanced: publicationSteps as JSON'))
-		.flag('promote-credentials', flag.string().describe('Advanced: publishing credentials as JSON'))
-		.flag('promote-tag-prefix', flag.string().describe('Version tag prefix of the publishing workflow'))
-		.flag('binary', flag.array(flag.string()).describe('Binary to build for the GitHub release; repeat it'))
-		.flag('target', flag.array(flag.enum(binaryTargets)).describe('Binary target to build; repeat it'))
-		.flag('actions-revision', flag.string().describe('Advanced: Actions version tag or full commit'))
+		.flags(setupFlagRecord())
 		.action(({ flags, args, ask, out }) =>
 			Effect.runPromise(Effect.gen(function*() {
 				const client = yield* Client.at(flags.server);
@@ -371,11 +305,16 @@ const runs = group('runs').description('Follow, publish, cancel and recover rele
 			),
 	);
 const release = base('release', 'Release this Git checkout: preview a version on the server, confirm, then act')
+	.details(
+		[
+			'The server plans the version from the repository default branch and prints a preview with the packages, their registries and the version file diffs. You confirm, and the stream setup decides what follows.',
+			'With `cli` in `startFrom`, the release bumps the version and publishes it, and nothing asks again. A version that is already on the default branch publishes as it is.',
+			'Without `cli` in `startFrom`, the release prepares the version: `versionLands: via-direct-commit` commits it to the default branch, and `versionLands: via-version-pr` opens the version PR. `publishWhen` decides how the prepared version publishes.',
+		].join('\n\n'),
+	)
 	.example('beepboop release', 'Ask for the stream (when several) and version, preview, confirm (default no)')
-	.example('beepboop release patch', 'cli in startFrom: bump, then publish; nothing asks again')
-	.example('beepboop release 1.2.0', 'cli in startFrom, 1.2.0 already on the default branch: publish it')
-	.example('beepboop release minor', 'No cli in startFrom, via-direct-commit: commit the new version')
-	.example('beepboop release major', 'No cli in startFrom, via-version-pr: open the version PR')
+	.example('beepboop release patch', 'Raise the patch version')
+	.example('beepboop release 1.2.0', 'Release an explicit version')
 	.example('beepboop release patch --yes', 'Skip only the confirmation')
 	.example('beepboop release patch --dry-run', 'Print the preview (packages, version file diffs), start nothing')
 	.example('beepboop release minor --auto', 'GitHub auto-merges this version PR with the stream method, else squash')
@@ -643,6 +582,7 @@ const secrets = group('secrets').description('Store secret values and list workf
 					'Secret name: 1-64 letters, numbers, underscores or hyphens',
 				),
 			)
+			.flag('value', flag.string().stdin({ argv: false, trim: true }).sensitive())
 			.action(({ flags, args, ask, out }) =>
 				Effect.runPromise(Effect.gen(function*() {
 					const client = yield* Client.at(flags.server);
@@ -653,11 +593,7 @@ const secrets = group('secrets').description('Store secret values and list workf
 						client.call(routes.credentialsList, {}),
 						() => `Read ${look.pkg(args.alias)}`,
 					)).credentials.find(row => row.alias === args.alias && row.active === 1)?.version;
-					const piped = yield* Effect.tryPromise({
-						try: () => stdin.piped(),
-						catch: () => failure('Could not read stdin', 'INPUT_FAILED'),
-					});
-					const value = piped === null
+					const value = flags.value === undefined
 						? yield* unprompted(
 							Effect.gen(function*() {
 								if (
@@ -676,7 +612,7 @@ const secrets = group('secrets').description('Store secret values and list workf
 							}),
 							() => Effect.succeed(''),
 						)
-						: piped.replace(/\r?\n$/, '');
+						: flags.value;
 					if (!value) {
 						return yield* Effect.fail(
 							failure('Secret value is empty', 'EMPTY_VALUE', 'Pipe the value on stdin or type it at the prompt'),
