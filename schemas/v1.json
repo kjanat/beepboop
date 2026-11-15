@@ -279,6 +279,52 @@
 												"suffix"
 											]
 										}
+									},
+									{
+										"type": "object",
+										"properties": {
+											"path": {
+												"type": "string"
+											},
+											"group": {
+												"type": "string",
+												"minLength": 1
+											},
+											"template": {
+												"type": "string",
+												"maxLength": 1000
+											},
+											"format": {
+												"type": "string",
+												"enum": [
+													"text"
+												]
+											},
+											"pattern": {
+												"type": "string",
+												"minLength": 1
+											}
+										},
+										"required": [
+											"path",
+											"format",
+											"pattern"
+										],
+										"allOf": [
+											{
+												"type": "object",
+												"additionalProperties": {}
+											}
+										],
+										"propertyNames": {
+											"enum": [
+												"path",
+												"group",
+												"template",
+												"format",
+												"pattern"
+											]
+										}
 									}
 								]
 							}
