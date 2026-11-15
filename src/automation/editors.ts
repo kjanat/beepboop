@@ -121,56 +121,54 @@ function currentValue(source: string, rule: StructuredVersionFile): Effect.Effec
 }
 
 /** Compose version fields without overwriting a different adapter's chosen version. */
-export function applyVersionFiles(
+export const applyVersionFiles = Effect.fn('applyVersionFiles')(function*(
 	snapshot: Snapshot,
 	files: Record<string, string>,
 	rules: VersionFile[],
 	versions: Record<string, string>,
-): Effect.Effect<void, DomainError> {
-	return Effect.gen(function*() {
-		const selected = new Set<string>();
-		for (const rule of rules) {
-			const group = rule.group ?? (Object.keys(versions).length === 1 ? Object.keys(versions)[0] : undefined);
-			const version = group && Object.hasOwn(versions, group) ? versions[group] : undefined;
-			if (!version) return yield* precondition(`Version file needs a known release group: ${rule.path}`);
-			const selector = rule.format === 'text'
-				? 'pattern' in rule ? rule.pattern : [rule.prefix, rule.suffix]
-				: rule.key;
-			const identity = JSON.stringify([rule.path, selector]);
-			if (selected.has(identity)) return yield* precondition(`Duplicate version field: ${rule.path}`);
-			selected.add(identity);
-			const original = snapshot.files[rule.path];
-			const current = files[rule.path];
-			if (original === undefined || current === undefined) {
-				return yield* precondition(`Version file is missing: ${rule.path}`);
-			}
-			const target = rule.template.replaceAll('{version}', version);
-			if (rule.format === 'text') {
-				const prior = yield* Effect.fromResult(textMatches(original, rule));
-				const existing = original === current ? prior : yield* Effect.fromResult(textMatches(current, rule));
-				if (
-					prior.length !== existing.length
-					|| existing.some((match, index) => match.value !== prior[index]?.value && match.value !== target)
-				) {
-					return yield* precondition(`Conflicting version edit: ${rule.path}`);
-				}
-				let result = '', cursor = 0;
-				for (const { from, to } of existing) {
-					result += current.slice(cursor, from) + target;
-					cursor = to;
-				}
-				files[rule.path] = result + current.slice(cursor);
-				continue;
-			}
-			yield* edit(original, rule, version);
-			const prior = yield* currentValue(original, rule), existing = yield* currentValue(current, rule);
-			if (prior !== existing && existing !== target) {
+): Effect.fn.Return<void, DomainError> {
+	const selected = new Set<string>();
+	for (const rule of rules) {
+		const group = rule.group ?? (Object.keys(versions).length === 1 ? Object.keys(versions)[0] : undefined);
+		const version = group && Object.hasOwn(versions, group) ? versions[group] : undefined;
+		if (!version) return yield* precondition(`Version file needs a known release group: ${rule.path}`);
+		const selector = rule.format === 'text'
+			? 'pattern' in rule ? rule.pattern : [rule.prefix, rule.suffix]
+			: rule.key;
+		const identity = JSON.stringify([rule.path, selector]);
+		if (selected.has(identity)) return yield* precondition(`Duplicate version field: ${rule.path}`);
+		selected.add(identity);
+		const original = snapshot.files[rule.path];
+		const current = files[rule.path];
+		if (original === undefined || current === undefined) {
+			return yield* precondition(`Version file is missing: ${rule.path}`);
+		}
+		const target = rule.template.replaceAll('{version}', version);
+		if (rule.format === 'text') {
+			const prior = yield* Effect.fromResult(textMatches(original, rule));
+			const existing = original === current ? prior : yield* Effect.fromResult(textMatches(current, rule));
+			if (
+				prior.length !== existing.length
+				|| existing.some((match, index) => match.value !== prior[index]?.value && match.value !== target)
+			) {
 				return yield* precondition(`Conflicting version edit: ${rule.path}`);
 			}
-			files[rule.path] = yield* edit(current, rule, version);
+			let result = '', cursor = 0;
+			for (const { from, to } of existing) {
+				result += current.slice(cursor, from) + target;
+				cursor = to;
+			}
+			files[rule.path] = result + current.slice(cursor);
+			continue;
 		}
-	});
-}
+		yield* edit(original, rule, version);
+		const prior = yield* currentValue(original, rule), existing = yield* currentValue(current, rule);
+		if (prior !== existing && existing !== target) {
+			return yield* precondition(`Conflicting version edit: ${rule.path}`);
+		}
+		files[rule.path] = yield* edit(current, rule, version);
+	}
+});
 
 export function fileEdits(
 	original: Readonly<Record<string, string>>,
@@ -187,21 +185,19 @@ export function fileEdits(
 	});
 }
 
-export function planVersionFiles(
+export const planVersionFiles = Effect.fn('planVersionFiles')(function*(
 	snapshot: Snapshot,
 	target: unknown,
 	rules: VersionFile[],
-): Effect.Effect<ReleasePlan, DomainError> {
-	return Effect.gen(function*() {
-		const version = (yield* Effect.fromResult(semver(target))).replace(/^v/, '');
-		const files = { ...snapshot.files };
-		yield* applyVersionFiles(snapshot, files, rules, { release: version });
-		const edits = yield* fileEdits(snapshot.files, Object.entries(files));
-		const requiresPreparation = edits.length > 0
-			&& Object.keys(files).some(isLockfile);
-		return planned(snapshot, version, edits, requiresPreparation);
-	});
-}
+): Effect.fn.Return<ReleasePlan, DomainError> {
+	const version = (yield* Effect.fromResult(semver(target))).replace(/^v/, '');
+	const files = { ...snapshot.files };
+	yield* applyVersionFiles(snapshot, files, rules, { release: version });
+	const edits = yield* fileEdits(snapshot.files, Object.entries(files));
+	const requiresPreparation = edits.length > 0
+		&& Object.keys(files).some(isLockfile);
+	return planned(snapshot, version, edits, requiresPreparation);
+});
 function planned(
 	snapshot: Snapshot,
 	version: string,
