@@ -74,7 +74,7 @@ export function needingUser(
 		completed.some(other =>
 			other.repositoryId === run.repositoryId && other.stream === run.stream && other.completedAt > run.updatedAt
 			&& other.group === run.releaseSet?.group
-			&& covers(other.version, run.version)
+			&& (covers(other.version, run.version) || (run.operation === 'prepare' && other.version === run.version))
 		);
 	const needing = new Set<string>();
 	for (const [run, key] of keys) {

@@ -593,6 +593,19 @@ test('the runs page filters by repository and folds a settled release', async ()
 	const set = (group: string) => ({ preparationId: 'set', group, required: [] });
 	const groups = readable.map(run => ({ ...run, releaseSet: set(run.version === '1.0.0' ? 'widget' : 'gadget') }));
 	expect([...needingUser(groups, completed)]).toEqual(['old-b']);
+	const prepared = {
+		...finished,
+		id: 'prepare-failed',
+		operation: 'prepare',
+		state: 'failed' as const,
+		publications: [],
+		createdAt: 1,
+		updatedAt: 1,
+	};
+	expect([...needingUser([prepared], completed)]).toEqual([]);
+	expect([...needingUser([prepared])]).toEqual(['prepare-failed']);
+	expect([...needingUser([{ ...prepared, updatedAt: 9 }], completed)]).toEqual(['prepare-failed']);
+	expect([...needingUser([{ ...prepared, operation: 'promote' }], completed)]).toEqual(['prepare-failed']);
 	const [old] = releaseSummaries(readable).filter(release => release.version === '1.0.0');
 	if (!old) throw new Error('No release');
 	expect(pipeline(old, Date.now())?.stages.map(stage => stage.note)).toEqual(['cancelled']);
