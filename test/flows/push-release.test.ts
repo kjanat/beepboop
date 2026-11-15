@@ -251,6 +251,15 @@ test(
 			problems: [],
 			blocked: ['widget (package.json) lacks license'],
 		});
+		world.network.serve('api.github.com', request =>
+			new URL(request.url).pathname.endsWith('/status')
+				? new Response(null, { status: 500 })
+				: world.github.handle(request));
+		expect((await api('/api/executions/approval', { id: blocked.id })).body).toEqual({
+			problems: [],
+			blocked: ['widget (package.json) lacks license'],
+		});
+		world.network.serve('api.github.com', request => world.github.handle(request));
 		const forced = await api('/api/executions/approve', { id: blocked.id, sourceSha: unlicensed.sha, force: true });
 		expect([forced.status, text(forced.body, 'error')]).toEqual([422, 'widget (package.json) lacks license']);
 
