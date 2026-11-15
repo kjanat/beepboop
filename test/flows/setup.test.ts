@@ -1,18 +1,3 @@
-import { describe, expect, test } from 'bun:test';
-import { bearer, field } from '@root/test/support/http.ts';
-import {
-	jsonFile,
-	licenseText,
-	npmManifest,
-	publishWorkflow,
-	widget,
-	widgetConfiguration,
-} from '@root/test/support/repositories.ts';
-import { applySetup, discoverSetup, editPull } from '@root/test/support/setup.ts';
-import type { World } from '@root/test/support/world.ts';
-import { eachWorld } from '@root/test/support/world.ts';
-import { Effect, Result, Schema, Struct } from 'effect';
-import { parse, parseDocument } from 'yaml';
 import { mergeConfiguration } from '@/automation/configuration';
 import { bodyChoices, releaseAfterMerge, setupBody, setupOptions } from '@/automation/setup';
 import { pinned } from '@/automation/setup-actions';
@@ -45,6 +30,21 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/schema';
+import { bearer, field } from '@root/test/support/http.ts';
+import {
+	jsonFile,
+	licenseText,
+	npmManifest,
+	publishWorkflow,
+	widget,
+	widgetConfiguration,
+} from '@root/test/support/repositories.ts';
+import { applySetup, discoverSetup, editPull } from '@root/test/support/setup.ts';
+import type { World } from '@root/test/support/world.ts';
+import { eachWorld } from '@root/test/support/world.ts';
+import { describe, expect, test } from 'bun:test';
+import { Effect, Result, Schema, Struct } from 'effect';
+import { parse, parseDocument } from 'yaml';
 
 const checkout = pinned('checkout');
 let world: World;
@@ -1033,7 +1033,7 @@ ${unpinnedBuild('signer')}${unpinnedBuild('tool')}  publish:
       - uses: actions/attest@v4
         with: { subject-checksums: dist/checksums.txt }
       - id: beepboop_binaries
-        run: gh release upload "\${TAG}" -- *
+        run: gh release upload "\${TAG}" --clobber -- *
       - uses: kjanat/beepboop/actions/publish-refs@v1
         with:
           token: \${{ github.token }}
