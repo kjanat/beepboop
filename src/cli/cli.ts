@@ -6,7 +6,7 @@ import { Client } from '@/cli/client';
 import type { SecurityKeyPrompts } from '@/cli/fido2/index';
 import { readJson } from '@/cli/json-file';
 import { lookOf, step } from '@/cli/look';
-import { emit, failure, prompted, unprompted } from '@/cli/output';
+import { diagnostics, emit, failure, prompted, unprompted } from '@/cli/output';
 import { checkoutRepository, releaseRepository, releaseVersion } from '@/cli/release';
 import { listedRepository, serverFilter, slimRun } from '@/cli/runs';
 import { setupRepository } from '@/cli/setup';
@@ -30,6 +30,8 @@ import { looseStruct, safeDecode } from '@/schema';
 
 const base = (name: string, description: string, promptServer = false) =>
 	command(name).description(description)
+		.flag('verbose', flag.boolean().default(false).describe('Show structured API error details on stderr'))
+		.middleware(diagnostics)
 		.flag(
 			'server',
 			(promptServer

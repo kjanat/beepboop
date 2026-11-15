@@ -478,8 +478,8 @@ function lintProposal(repository: { name: string }, sha: string) {
 		'The setup PR writes .github/beepboop.json, .github/workflows/prepare-release.yml, .github/workflows/release-lint.yml and .github/workflows/publish-crates.yml.',
 		'lint: tick `publishWhen`. Until you do, it is `approved-in-beepboop`: You publish it: the Publish button in Beepboop or `beepboop runs publish`. Approving or merging the version PR on GitHub does not publish.',
 		'lint: tick `versionLands`. Until you do, it is `via-version-pr`: Beepboop opens a version PR, and merging it puts the new version on the default branch.',
-		'lint (crates/cli/Cargo.toml) lacks README, description, license, a license file, repository. Beepboop holds its release until the package has them.',
-		'lint-core (crates/core/Cargo.toml) lacks README, description, license, a license file, repository. Beepboop holds its release until the package has them.',
+		'lint (crates/cli/Cargo.toml) lacks README, description, license, repository. Beepboop holds its release until the package has them.',
+		'lint-core (crates/core/Cargo.toml) lacks README, description, license, repository. Beepboop holds its release until the package has them.',
 		'@octo/lint (bindings/js/package.json) lacks README, description, license, a license file, repository. Beepboop holds its release until the package has them.',
 		'publish-crates.yml: when the repository owner merges this PR, Beepboop grants it the stored crates-io secret for the crates operation.',
 	];
@@ -551,7 +551,7 @@ test('one adopt in a terminal shows the proposal, asks once and opens the setup 
 		'- `prepare-release.yml`, `release-lint.yml` and `publish-crates.yml`: this PR creates them, and only Beepboop dispatches them.',
 	);
 	expect(body).toContain(
-		'### Held packages\n\n- `lint` (`crates/cli/Cargo.toml`) lacks README, description, license, a license file, repository. Beepboop holds its release until the package has them.\n',
+		'### Held packages\n\n- `lint` (`crates/cli/Cargo.toml`) lacks README, description, license, repository. Beepboop holds its release until the package has them.\n',
 	);
 	expect(body).toContain('- `@octo/lint` (`bindings/js/package.json`) lacks README');
 	expect(body).not.toMatch(/(?:^|[\s(])@octo\//m);

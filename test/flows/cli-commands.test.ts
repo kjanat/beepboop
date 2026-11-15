@@ -8,6 +8,8 @@ import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
 import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
+import type { ApiError } from '@/contract/errors';
+import { messageOf, statusOf } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
 import {
@@ -359,3 +361,37 @@ test('releases plan-set, prepare-set and start show the release set with spinner
 	expect(piped.exitCode).toBe(0);
 	expect([...piped.stdout, ...piped.stderr].join('')).not.toContain('Starting the release set');
 });
+
+for (
+	const problem of [
+		{ code: 'internal', incident: '14eaa401-e904-49ac-888f-8a1c91a10eaa' },
+		{ code: 'upstream', service: 'registry', retryable: true },
+		{
+			code: 'precondition',
+			diagnostics: [{ code: 'license-missing', severity: 'blocking', message: 'widget lacks a license' }],
+		},
+	] satisfies ApiError[]
+) {
+	test(`approval exposes structured ${problem.code} diagnostics through DreamCLI`, async () => {
+		const status = statusOf[problem.code];
+		const message = messageOf(problem);
+		const args = ['runs', 'approve', '3ff28b790954', '--sourceSha', '34bcd339d829'];
+		const respond = () =>
+			spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({ error: message, problem }, { status }));
+		respond();
+		const normal = await runCli(args);
+		expect(normal.exitCode).toBe(1);
+		expect(normal.stderr.join('')).toContain(message);
+		expect(normal.stderr.join('')).not.toContain('"status"');
+		respond();
+		const verbose = await runCli([...args, '--verbose']);
+		expect(verbose.exitCode).toBe(1);
+		expect(verbose.stderr.join('')).toContain(JSON.stringify({ status, problem }, null, 2));
+		expect(verbose.stderr.join('')).toContain(message);
+		respond();
+		const json = await runCli([...args, '--verbose', '--json']);
+		expect(json.exitCode).toBe(1);
+		expect(JSON.parse(json.stdout.join('')).error).toMatchObject({ message, details: { status, problem } });
+		expect(json.stderr.join('')).toBe('');
+	});
+}

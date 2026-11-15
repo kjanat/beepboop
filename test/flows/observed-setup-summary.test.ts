@@ -119,11 +119,7 @@ test('observed Cargo adoption distinguishes warnings, readiness, and tag filters
 	}]);
 	expect(plan.edits.map(edit => edit.path)).toEqual(['.github/beepboop.json']);
 	expect(plan.blockers).toEqual([]);
-	const warnings = plan.notes.filter(note => note.includes('lacks a license file'));
-	expect(warnings).toHaveLength(5);
-	for (const warning of warnings) {
-		expect(warning).toContain('Advisory: the existing publishing workflow controls publication');
-	}
+	expect(plan.notes.some(note => note.includes('lacks a license file'))).toBe(false);
 	const summary = streamSummary(stream, plan).join('\n');
 	expect(summary).toContain('Tags matching v[0-9]* start publish.yml');
 	expect(summary).not.toContain('Tags matching v* start');
@@ -135,7 +131,7 @@ test('observed Cargo adoption distinguishes warnings, readiness, and tag filters
 	expect(body).toContain('crates.io returned 404 for tool-core');
 	expect(body).not.toContain('unverified');
 	expect(body).toContain('Once publishing prerequisites are satisfied, start the next release');
-	expect(body).toContain('lacks a license file');
+	expect(body).not.toContain('lacks a license file');
 	expect(body).not.toContain('### Held packages');
 	expect(body).not.toContain('Beepboop holds its release');
 });
@@ -155,6 +151,7 @@ test('saved plans without workflow tag evidence do not infer triggers from obser
 
 test('metadata remains advisory when no publishing workflow is selected', async () => {
 	const snapshot = cargoSnapshot();
+	snapshot.files['Cargo.toml'] = snapshot.files['Cargo.toml']?.replace('license = "MIT"', '') ?? '';
 	const plan = await Effect.runPromise(
 		previewSetup(
 			snapshot,

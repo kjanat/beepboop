@@ -1,8 +1,9 @@
 import { Cause, Effect, Result, Schema } from 'effect';
 import { legacyDiagnostic } from '@/contract/diagnostics';
 import type { ApiError } from '@/contract/errors';
-import { DomainError, envelope, messageOf, statusOf } from '@/contract/errors';
+import { apiError, DomainError, envelope, messageOf, statusOf } from '@/contract/errors';
 import { InvalidPackageUrl } from '@/package-url';
+import { safeDecode } from '@/schema';
 
 interface Classified {
 	problem: ApiError;
@@ -10,9 +11,18 @@ interface Classified {
 }
 
 const d1Failure = /^D1_ERROR\b/;
+const rpcDomainError = Schema.Struct({
+	_tag: Schema.Literal('DomainError'),
+	problem: apiError,
+	message: Schema.String,
+});
 
 export function classify(error: unknown, incident: string): Classified {
 	if (error instanceof DomainError) return { problem: error.problem, message: error.message };
+	if (error instanceof Error) {
+		const decoded = safeDecode(rpcDomainError, error);
+		if (decoded.success) return { problem: decoded.data.problem, message: decoded.data.message };
+	}
 	if (error instanceof Schema.SchemaError) {
 		const problem: ApiError = { code: 'internal', incident };
 		return { problem, message: messageOf(problem) };

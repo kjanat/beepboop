@@ -1,7 +1,7 @@
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { CLIError } from '@kjanat/dreamcli';
+import { CLIError } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 import type { SecurityKeyPrompts } from '@/cli/fido2/index';
 import { securityKeyAssertion } from '@/cli/fido2/index';
@@ -74,7 +74,10 @@ function local<A>(run: (signal: AbortSignal) => Promise<A>): Effect.Effect<A, CL
 function refusal(error: ApiFailure): CLIError {
 	return error.status === 401
 		? failure('Session revoked', 'SESSION_REVOKED', signIn)
-		: failure(error.message, error.problem ? codes[error.problem.code] : `HTTP_${error.status}`);
+		: new CLIError(error.message, {
+			code: error.problem ? codes[error.problem.code] : `HTTP_${error.status}`,
+			details: { status: error.status, ...(error.problem ? { problem: error.problem } : {}) },
+		});
 }
 function unreachable(error: Unreachable): Effect.Effect<never, CLIError> {
 	return Effect.fail(failure(error.message, 'UNREACHABLE'));
@@ -84,7 +87,7 @@ function reached<A>(effect: Effect.Effect<A, Unreachable>): Effect.Effect<A, CLI
 }
 function rejected(response: Response): Effect.Effect<never, CLIError> {
 	return failureOf(response).pipe(
-		Effect.flatMap(problem => Effect.fail(failure(problem.message, `HTTP_${response.status}`))),
+		Effect.flatMap(problem => Effect.fail(refusal(problem))),
 	);
 }
 

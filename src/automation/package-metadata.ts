@@ -45,9 +45,8 @@ function cargoMissing(snapshot: Snapshot, pkg: Package): string[] {
 			: readme.value === undefined && cargoReadmes.some(name => exists(snapshot, dir, name)),
 		description: filled(field('description').value),
 		license: filled(field('license').value) || filled(licenseText.value),
-		'a license file': typeof licenseText.value === 'string'
-			? exists(snapshot, licenseText.base, licenseText.value)
-			: beside(snapshot, dir, licenseFile),
+		'a license file': licenseText.value === undefined
+			|| (typeof licenseText.value === 'string' && exists(snapshot, licenseText.base, licenseText.value)),
 		repository: filled(field('repository').value),
 	});
 }
