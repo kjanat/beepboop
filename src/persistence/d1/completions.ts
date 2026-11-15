@@ -44,9 +44,10 @@ const proofRow = mutableStruct({
 	completion_at: Schema.Finite,
 });
 
-export type CompletionCandidate = Pick<Execution, 'repositoryId' | 'stream' | 'state' | 'version' | 'updatedAt'> & {
-	releaseSet?: { group?: string };
-};
+export type CompletionCandidate =
+	& Pick<Execution, 'repositoryId' | 'stream' | 'state' | 'version' | 'updatedAt'>
+	& Partial<Pick<Execution, 'operation'>>
+	& { releaseSet?: { group?: string } };
 
 export class CompletionStore {
 	constructor(private readonly sql: Sql) {}
@@ -115,14 +116,15 @@ export class CompletionStore {
 			stream: run.stream,
 			group: run.releaseSet?.group ?? null,
 			sort: precedenceKey(run.version ?? '') ?? '',
+			same: run.operation === 'prepare' ? 1 : 0,
 			after: run.updatedAt,
 		}));
 		if (!candidates.length) return Effect.succeed([]);
 		return Effect.gen({ self: this }, function*() {
 			const repositories = [...new Set(candidates.map(candidate => candidate.repositoryId))];
 			yield* this.normalize(repositories);
-			// Frontier timestamps strictly decrease as versions increase. Its first version above the candidate
-			// is therefore the newest possible qualifying proof; test time after the bounded seek.
+			// Frontier timestamps strictly decrease as versions increase. Its first version above the candidate,
+			// or at it for a preparation, is therefore the newest possible qualifying proof; test time after the bounded seek.
 			const rows = yield* readyRead(
 				this.sql,
 				{
@@ -138,7 +140,8 @@ export class CompletionStore {
       WHERE proof.repository_id=json_extract(candidate.value,'$.repositoryId')
        AND proof.completion_stream=json_extract(candidate.value,'$.stream')
        AND proof.completion_group IS json_extract(candidate.value,'$.group')
-       AND proof.completion_sort>json_extract(candidate.value,'$.sort')
+       AND proof.completion_sort>=json_extract(candidate.value,'$.sort')
+       AND (json_extract(candidate.value,'$.same')=1 OR proof.completion_sort<>json_extract(candidate.value,'$.sort'))
       ORDER BY proof.completion_sort LIMIT 1)
      WHERE r.completion_at>json_extract(candidate.value,'$.after')`,
 					values: [JSON.stringify(candidates)],

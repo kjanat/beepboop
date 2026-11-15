@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A failed or cancelled preparation stops asking for attention once the same version of its stream is released. The release stayed on "Needs attention" after every publication had succeeded.
 - A failed release operation ends as succeeded when its GitHub release is published afterwards. On the `release` webhook Beepboop checks that the release is public, that its annotated tag and the other tags of the operation are on the release commit, and records them. The operation stayed failed with the GitHub release `waiting`.
 - The publish check on the runs page reads the commit, its check runs, its workflow runs, its status and the tags from GitHub at the same time. It read them one after another.
 - Generated binary uploads use `gh release upload --clobber`, so a re-run of a partial publish replaces assets already on the draft instead of failing.
