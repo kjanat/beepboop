@@ -257,7 +257,7 @@ export function assetSteps(id: string): Record<string, unknown>[] {
 				GH_REPO: expression('github.repository'),
 				TAG: expression(`fromJSON(steps.${id}.outputs.context).draftRelease.tag`),
 			},
-			run: `gh release upload "\${TAG}" -- *\n`,
+			run: `gh release upload "\${TAG}" --clobber -- *\n`,
 		},
 	];
 }
