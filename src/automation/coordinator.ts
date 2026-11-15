@@ -80,6 +80,7 @@ import type { RefPlan, TagSigner } from '@/automation/refs';
 import {
 	conflictMessage,
 	planRefs,
+	refsLanded,
 	streamModuleTagPrefixes,
 	tagConflict,
 	tagObject,
@@ -1227,16 +1228,24 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (release.tag_name !== tag || release.draft !== false || release.prerelease !== prerelease) {
 				return yield* precondition('Existing GitHub release does not match the release operation');
 			}
-			const publication: Publication = {
-				id: `github-release:${execution.repository}`,
-				manager: 'github-release',
-				name: execution.repository,
-				version: tag,
-				outcome: 'succeeded',
-				required: true,
-				...(typeof release.html_url === 'string' ? { url: release.html_url } : {}),
-			};
-			execution.release = {
+			const released = yield* this.released(execution, release, tag);
+			yield* this.put(released);
+			return released;
+		});
+	}
+	private released(execution: Execution, release: GitHubRelease, tag: string): Effect.Effect<Execution, DomainError> {
+		return mergePublications(execution.publications, [{
+			id: `github-release:${execution.repository}`,
+			manager: 'github-release',
+			name: execution.repository,
+			version: tag,
+			outcome: 'succeeded',
+			required: true,
+			...(typeof release.html_url === 'string' ? { url: release.html_url } : {}),
+		}]).pipe(Effect.map(publications => ({
+			...execution,
+			publications,
+			release: {
 				id: `github:${execution.repositoryId}:${release.id}`,
 				repository: { id: execution.repositoryId, name: execution.repository },
 				stream: execution.stream,
@@ -1246,10 +1255,71 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				releaseId: release.id,
 				artifacts: [],
 				publications: [],
-			};
-			execution.publications = yield* mergePublications(execution.publications, [publication]);
-			yield* this.put(execution);
-			return execution;
+			},
+		})));
+	}
+	releasePublished(tag: string): Promise<void> {
+		return this.serial(
+			Effect.gen({ self: this }, function*() {
+				for (const execution of yield* this.executions()) {
+					if (execution.state !== 'failed' || !execution.version) continue;
+					if ((yield* fromSync(() => githubRelease(execution)))?.tag !== tag) continue;
+					const next = yield* this.publishedRelease(execution);
+					if (next !== execution) yield* this.put(next);
+				}
+			}),
+			'coordinator.releasePublished',
+			{},
+		);
+	}
+	private publishedRelease(execution: Execution): CoordinatorEffect<Execution, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const policy = execution.workflow?.refs;
+			const version = execution.version;
+			const target = yield* fromSync(() => githubRelease(execution));
+			const published = execution.publications.some(p => p.manager === 'github-release' && p.outcome === 'succeeded');
+			const tagged = !policy
+				|| execution.publications.some(p => p.id === `refs:${execution.operation}` && p.outcome === 'succeeded');
+			if (
+				execution.state !== 'failed' || execution.runId === undefined || !version || !target
+				|| !publishesGithubRelease(execution) || (published && tagged)
+			) return execution;
+			const { tag, prerelease } = target;
+			const gateway = yield* this.gateway;
+			const refs = yield* gateway.tagRefs(execution.repository, execution.repositoryId);
+			let next = execution;
+			if (!published) {
+				if (!refs.some(ref => ref.name === tag && ref.commit === execution.sourceSha && ref.oid !== ref.commit)) {
+					return execution;
+				}
+				const read = yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
+				const release = yield* gateway.read(
+					Schema.NullOr(releaseSchema),
+					`/repos/${execution.repository}/releases/tags/${encodeURIComponent(tag)}`,
+					read,
+				);
+				if (!release || release.tag_name !== tag || release.draft !== false || release.prerelease !== prerelease) {
+					return execution;
+				}
+				next = yield* this.released(execution, release, tag);
+			}
+			if (
+				policy && !tagged
+				&& (yield* refsLanded(policy, version, execution.sourceSha, refs, yield* this.modulePrefixes(execution)))
+			) {
+				next = {
+					...next,
+					publications: yield* mergePublications(next.publications, [{
+						id: `refs:${next.operation}`,
+						manager: 'workflow',
+						name: next.repository,
+						version,
+						outcome: 'succeeded',
+						required: true,
+					}]),
+				};
+			}
+			return next === execution ? execution : publishedAfterFailure(next) ?? next;
 		});
 	}
 	private draftRelease(execution: Execution): CoordinatorEffect<Execution['draftRelease'], DomainError> {
@@ -2988,7 +3058,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						));
 						if (retried._tag === 'Success') return;
 					}
-					yield* this.put({ ...settled, runAttempt });
+					const ended = { ...settled, runAttempt };
+					yield* this.put(yield* this.publishedRelease(ended).pipe(Effect.orElseSucceed(() => ended)));
 				} else if (execution.state === 'uncertain') {
 					yield* this.put({ ...execution, state: 'running', runAttempt });
 				}
