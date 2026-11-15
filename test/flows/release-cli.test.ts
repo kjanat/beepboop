@@ -1336,6 +1336,77 @@ test('a release published after its run failed also records the tags the operati
 	]);
 });
 
+async function publishedBeforeFailedRun(readable: boolean) {
+	const repository = await binaryStarts();
+	const dispatched = () => {
+		const run = repository.runs.at(-1);
+		if (!run) throw new Error('The release dispatched no run');
+		return run;
+	};
+	const steps = [
+		() => world.wait(16_000),
+		async () => {
+			passChecks(repository, world.github.head(repository));
+			expect((await world.push(repository)).status).toBe(202);
+			await world.wait(16_000);
+		},
+		async () => {
+			const run = dispatched();
+			run.status = 'in_progress';
+			run.jobs = [
+				{ name: 'Build widget (x86_64-unknown-linux-gnu)', status: 'completed', conclusion: 'success' },
+				{ name: 'Build widget (aarch64-apple-darwin)', status: 'completed', conclusion: 'success' },
+			];
+			const identity = runIdentity(repository, run, 'publish.yml');
+			await begin(world, identity, run.inputs.beepboop_execution_id ?? '', 'main', 'promote');
+			world.npm.publish('widget', '1.0.1');
+			await runAction(world, 'report', identity, {
+				EXECUTION_ID: run.inputs.beepboop_execution_id ?? '',
+				PUBLICATIONS: JSON.stringify([
+					{ id: 'pkg:npm/widget', manager: 'npm', name: 'widget', version: '1.0.1', outcome: 'succeeded' },
+				]),
+			});
+		},
+		async () => {
+			const run = dispatched();
+			const draft = repository.releases.find(release => release.draft);
+			if (!draft) throw new Error('The release has no draft');
+			draft.assets = ['widget-x86_64-unknown-linux-gnu', 'widget-aarch64-apple-darwin'];
+			draft.draft = false;
+			world.github.recordTag(repository, 'v1.0.1', 'a'.repeat(40), world.github.head(repository), true);
+			expect((await world.releasePublished(repository, 'v1.0.1')).status).toBe(202);
+			await world.wait(16_000);
+			if (!readable) {
+				world.network.serve('api.github.com', request =>
+					new URL(request.url).pathname === '/graphql'
+						? new Response(null, { status: 500 })
+						: world.github.handle(request));
+			}
+			run.status = 'completed';
+			run.conclusion = 'failure';
+			await world.workflowRun(repository, run, 'failure', 'workflow_dispatch');
+			await world.wait(16_000);
+			world.network.serve('api.github.com', request => world.github.handle(request));
+		},
+	];
+	spyOn(client, 'pause').mockImplementation(() =>
+		Effect.promise(async () => {
+			await (steps.shift() ?? (() => world.wait(16_000)))();
+		})
+	);
+	await run(['release', 'patch', '--repository', repository.name], [true]);
+	const [promotion] = (await promotions()).filter(execution => execution.version === '1.0.1');
+	return [promotion?.state, promotion?.reason];
+}
+
+test('a release published before its failed run is observed settles when the run ends', async () => {
+	expect(await publishedBeforeFailedRun(true)).toEqual(['succeeded', runFailedNote]);
+});
+
+test('a failed run stays failed when GitHub cannot list the tags', async () => {
+	expect((await publishedBeforeFailedRun(false))[0]).toBe('failed');
+});
+
 test('--auto, --no-auto and --merge send this release its version PR merge', async () => {
 	const repository = await seed();
 	const previewed = async (...flags: string[]) => {
