@@ -1,6 +1,6 @@
 {
 	"name": "@kjanat/beepboop",
-	"version": "0.3.0",
+	"version": "0.4.0",
 	"description": "Authenticated CLI for Beepboop release automation",
 	"homepage": "https://beepboop.kjanat.dev",
 	"bugs": {
