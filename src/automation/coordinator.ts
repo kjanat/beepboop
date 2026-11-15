@@ -80,6 +80,7 @@ import type { RefPlan, TagSigner } from '@/automation/refs';
 import {
 	conflictMessage,
 	planRefs,
+	refsLanded,
 	streamModuleTagPrefixes,
 	tagConflict,
 	tagObject,
@@ -1227,16 +1228,24 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (release.tag_name !== tag || release.draft !== false || release.prerelease !== prerelease) {
 				return yield* precondition('Existing GitHub release does not match the release operation');
 			}
-			const publication: Publication = {
-				id: `github-release:${execution.repository}`,
-				manager: 'github-release',
-				name: execution.repository,
-				version: tag,
-				outcome: 'succeeded',
-				required: true,
-				...(typeof release.html_url === 'string' ? { url: release.html_url } : {}),
-			};
-			execution.release = {
+			const released = yield* this.released(execution, release, tag);
+			yield* this.put(released);
+			return released;
+		});
+	}
+	private released(execution: Execution, release: GitHubRelease, tag: string): Effect.Effect<Execution, DomainError> {
+		return mergePublications(execution.publications, [{
+			id: `github-release:${execution.repository}`,
+			manager: 'github-release',
+			name: execution.repository,
+			version: tag,
+			outcome: 'succeeded',
+			required: true,
+			...(typeof release.html_url === 'string' ? { url: release.html_url } : {}),
+		}]).pipe(Effect.map(publications => ({
+			...execution,
+			publications,
+			release: {
 				id: `github:${execution.repositoryId}:${release.id}`,
 				repository: { id: execution.repositoryId, name: execution.repository },
 				stream: execution.stream,
@@ -1246,10 +1255,71 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				releaseId: release.id,
 				artifacts: [],
 				publications: [],
-			};
-			execution.publications = yield* mergePublications(execution.publications, [publication]);
-			yield* this.put(execution);
-			return execution;
+			},
+		})));
+	}
+	releasePublished(tag: string): Promise<void> {
+		return this.serial(
+			Effect.gen({ self: this }, function*() {
+				for (const execution of yield* this.executions()) {
+					if (execution.state !== 'failed' || !execution.version) continue;
+					if ((yield* fromSync(() => githubRelease(execution)))?.tag !== tag) continue;
+					const next = yield* this.publishedRelease(execution);
+					if (next !== execution) yield* this.put(next);
+				}
+			}),
+			'coordinator.releasePublished',
+			{},
+		);
+	}
+	private publishedRelease(execution: Execution): CoordinatorEffect<Execution, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const policy = execution.workflow?.refs;
+			const version = execution.version;
+			const target = yield* fromSync(() => githubRelease(execution));
+			const published = execution.publications.some(p => p.manager === 'github-release' && p.outcome === 'succeeded');
+			const tagged = !policy
+				|| execution.publications.some(p => p.id === `refs:${execution.operation}` && p.outcome === 'succeeded');
+			if (
+				execution.state !== 'failed' || execution.runId === undefined || !version || !target
+				|| !publishesGithubRelease(execution) || (published && tagged)
+			) return execution;
+			const { tag, prerelease } = target;
+			const gateway = yield* this.gateway;
+			const refs = yield* gateway.tagRefs(execution.repository, execution.repositoryId);
+			let next = execution;
+			if (!published) {
+				if (!refs.some(ref => ref.name === tag && ref.commit === execution.sourceSha && ref.oid !== ref.commit)) {
+					return execution;
+				}
+				const read = yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
+				const release = yield* gateway.read(
+					Schema.NullOr(releaseSchema),
+					`/repos/${execution.repository}/releases/tags/${encodeURIComponent(tag)}`,
+					read,
+				);
+				if (!release || release.tag_name !== tag || release.draft !== false || release.prerelease !== prerelease) {
+					return execution;
+				}
+				next = yield* this.released(execution, release, tag);
+			}
+			if (
+				policy && !tagged
+				&& (yield* refsLanded(policy, version, execution.sourceSha, refs, yield* this.modulePrefixes(execution)))
+			) {
+				next = {
+					...next,
+					publications: yield* mergePublications(next.publications, [{
+						id: `refs:${next.operation}`,
+						manager: 'workflow',
+						name: next.repository,
+						version,
+						outcome: 'succeeded',
+						required: true,
+					}]),
+				};
+			}
+			return next === execution ? execution : publishedAfterFailure(next) ?? next;
 		});
 	}
 	private draftRelease(execution: Execution): CoordinatorEffect<Execution['draftRelease'], DomainError> {
@@ -2016,11 +2086,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (execution.state !== 'awaiting-approval') {
 					return { problems: [], blocked: ['This release is not waiting for you to publish it'] };
 				}
-				const conflict = yield* this.tagProblem(execution);
+				const [conflict, incomplete, problems] = yield* Effect.all([
+					this.tagProblem(execution),
+					this.metadataBlocks(execution),
+					Effect.result(this.approvalProblems(execution)),
+				], { concurrency: 'unbounded' });
 				if (conflict) return { problems: [], blocked: [`${conflict}. Release a new version.`] };
-				const incomplete = yield* this.metadataBlocks(execution);
 				if (incomplete.length) return { problems: [], blocked: incomplete };
-				return { problems: yield* this.approvalProblems(execution), blocked: [] };
+				return { problems: yield* Effect.fromResult(problems), blocked: [] };
 			}),
 			'coordinator.approvalReadiness',
 			{ executionId: id },
@@ -2082,15 +2155,23 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					),
 				));
 			}
-			const commit = yield* gateway.read(commitSchema, `${base}/commits/${execution.sourceSha}`, token);
+			const [commit, checks, { workflow_runs: workflowRuns }, status] = yield* Effect.all([
+				gateway.read(commitSchema, `${base}/commits/${execution.sourceSha}`, token),
+				gateway.read(
+					checkRunsSchema,
+					`${base}/commits/${execution.sourceSha}/check-runs?per_page=100&filter=latest`,
+					token,
+				),
+				gateway.read(
+					workflowRunsSchema,
+					`${base}/actions/runs?head_sha=${execution.sourceSha}&per_page=100`,
+					token,
+				),
+				gateway.read(commitStatusSchema, `${base}/commits/${execution.sourceSha}/status`, token),
+			], { concurrency: 'unbounded' });
 			if (commit.commit.verification.verified !== true) {
 				problems.push('The commit signature is not verified');
 			}
-			const checks = yield* gateway.read(
-				checkRunsSchema,
-				`${base}/commits/${execution.sourceSha}/check-runs?per_page=100&filter=latest`,
-				token,
-			);
 			const runs = checks.check_runs;
 			if (checks.total_count !== runs.length) problems.push('The commit has more than 100 check runs');
 			const releaseFiles = new Set(
@@ -2098,11 +2179,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					[stream.prepare.workflow, stream.promote.workflow, ...Object.values(stream.workflows)]
 						.flatMap(binding => binding ? [`.github/workflows/${binding.file}`] : [])
 				),
-			);
-			const { workflow_runs: workflowRuns } = yield* gateway.read(
-				workflowRunsSchema,
-				`${base}/actions/runs?head_sha=${execution.sourceSha}&per_page=100`,
-				token,
 			);
 			const paths = new Map(workflowRuns.map(run => [String(run.id), run.path]));
 			const gating = runs.filter(run => {
@@ -2116,7 +2192,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					problems.push(`${String(run.name)} ${String(run.conclusion)}`);
 				}
 			}
-			const status = yield* gateway.read(commitStatusSchema, `${base}/commits/${execution.sourceSha}/status`, token);
 			if (Number(status.total_count) > 0 && status.state !== 'success') {
 				(status.state === 'pending' ? pending : problems).push(`Commit status is ${String(status.state)}`);
 			}
@@ -2983,7 +3058,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						));
 						if (retried._tag === 'Success') return;
 					}
-					yield* this.put({ ...settled, runAttempt });
+					const ended = { ...settled, runAttempt };
+					yield* this.put(yield* this.publishedRelease(ended).pipe(Effect.orElseSucceed(() => ended)));
 				} else if (execution.state === 'uncertain') {
 					yield* this.put({ ...execution, state: 'running', runAttempt });
 				}

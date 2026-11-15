@@ -60,7 +60,7 @@ import { OnboardingStore } from '@/persistence/d1/onboarding';
 import { ScheduleStore } from '@/persistence/d1/schedules';
 import type { SessionStore } from '@/persistence/d1/sessions';
 import { executionId } from '@/persistence/identity-keys';
-import { decodeSync, mutableArray, mutableRecord, mutableStruct, safeDecode } from '@/schema';
+import { decodeSync, looseStruct, mutableArray, mutableRecord, mutableStruct, safeDecode } from '@/schema';
 import { readBody, verifySignature } from '@/webhook';
 
 const webhookInstallation = mutableStruct({ account: mutableStruct({ id: looseSchema }) });
@@ -615,7 +615,14 @@ export class AutomationService {
 			);
 		}
 		if (event === 'push') return Result.succeed({ kind: event, ref: payload.ref });
-		if (event === 'release') return Result.succeed({ kind: event, action: payload.action });
+		if (event === 'release') {
+			const release = safeDecode(looseStruct({ tag_name: Schema.String }), payload.release);
+			return Result.succeed({
+				kind: event,
+				action: payload.action,
+				...(release.success ? { tag: release.data.tag_name } : {}),
+			});
+		}
 		return Result.gen(function*() {
 			const run = yield* record(payload.workflow_run);
 			const headRepository = yield* record(run.head_repository ?? {});
@@ -639,7 +646,10 @@ export class AutomationService {
 			if (event.kind === 'pull_request') return yield* this.setupEdited(repository, event.edit);
 			if (event.kind === 'setup_merged') return yield* this.setupMerged(repository, event.merge);
 			if (event.kind === 'release') {
-				if (event.action === 'published') yield* this.winget().automatic(repository);
+				if (event.action !== 'published') return;
+				const tag = event.tag;
+				if (tag) yield* fromPromise(() => this.coordinator(repository.id).releasePublished(tag));
+				yield* this.winget().automatic(repository);
 				return;
 			}
 			if (event.kind === 'push') {

@@ -149,3 +149,20 @@ export function planRefs(
 		return changes;
 	});
 }
+export function refsLanded(
+	policy: RefPolicy,
+	version: string,
+	commit: string,
+	refs: RefState[],
+	modulePrefixes: string[] = [],
+): Effect.Effect<boolean> {
+	return planRefs(policy, version, commit, refs, modulePrefixes).pipe(Effect.match({
+		onFailure: () => false,
+		onSuccess: changes =>
+			changes.every(change =>
+				refs.some(ref =>
+					ref.name === change.name && ref.commit === change.commit && (!change.annotated || ref.oid !== ref.commit)
+				)
+			),
+	}));
+}

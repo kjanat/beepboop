@@ -41,7 +41,7 @@ export type SetupPullMerge = Decoded<typeof setupPullMerge>;
 
 export const inboxEvent = Schema.Union([
 	mutableStruct({ kind: Schema.Literal('push'), ref: Schema.String }),
-	mutableStruct({ kind: Schema.Literal('release'), action: Schema.String }),
+	mutableStruct({ kind: Schema.Literal('release'), action: Schema.String, tag: Schema.optional(Schema.String) }),
 	mutableStruct({
 		kind: Schema.Literal('workflow_run'),
 		action: Schema.String,
