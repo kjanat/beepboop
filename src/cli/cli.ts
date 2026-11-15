@@ -22,7 +22,7 @@ import {
 	repositoryView,
 } from '@/cli/views';
 import { notificationKinds, watchedPackagePattern, watchedRegistries } from '@/contract/catalog';
-import { credentialAliasPattern, githubSecretNamePattern, shaPattern } from '@/contract/ids';
+import { approvalShaPattern, credentialAliasPattern, githubSecretNamePattern, shaPattern } from '@/contract/ids';
 import { routes } from '@/contract/routes';
 import { autoMergeMethods } from '@/contract/setup-terms';
 import { executionStates, executionView as executionViewSchema } from '@/contract/views';
@@ -239,7 +239,8 @@ const runs = group('runs').description('Follow, publish, cancel and recover rele
 			.alias('approve')
 			.arg('id', arg.string().prompt({ kind: 'input', message: 'Execution ID' }).required()).flag(
 				'sourceSha',
-				flag.string({ pattern: shaPattern }).prompt({ kind: 'input', message: 'Reviewed source commit SHA' })
+				flag.string({ pattern: approvalShaPattern }).describe('Reviewed commit SHA, full or at least 7 characters')
+					.prompt({ kind: 'input', message: 'Reviewed source commit SHA (7+ characters)' })
 					.required(),
 			)
 			.flag('force', flag.boolean().default(false).describe('Publish even when the signature or checks fail'))

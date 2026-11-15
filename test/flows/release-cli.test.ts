@@ -415,6 +415,92 @@ async function tagged(approval: 'required' | 'push' = 'required') {
 }
 const promotions = async () => promotionsOf(await Effect.runPromise(client.call(routes.executionsList, {})));
 
+async function awaitingPromotion() {
+	const { repository, merged } = await tagged();
+	passChecks(repository, merged.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(1_000);
+	const [promotion] = await promotions();
+	if (!promotion || promotion.state !== 'awaiting-approval') throw new Error('No awaiting promotion');
+	return { repository, merged, promotion };
+}
+
+test.each([7, 12, 40])('publish accepts a %i-character reviewed commit and audits its full SHA', async length => {
+	const { merged, promotion } = await awaitingPromotion();
+	const result = await run([
+		'runs',
+		'publish',
+		promotion.id.slice(0, 12),
+		'--sourceSha',
+		merged.sha.slice(0, length),
+		'--json',
+	]);
+	expect([result.exitCode, result.stderr.join('')]).toEqual([0, '']);
+	expect(JSON.parse(result.stdout.join(''))).toMatchObject({ id: promotion.id, sourceSha: merged.sha, state: 'ready' });
+	const audit = await world.db.prepare("SELECT target FROM audit WHERE action='promotion.approve'").first();
+	expect(audit).toMatchObject({ target: `${promotion.id}:${merged.sha}` });
+});
+
+test.each([7, 12])('approve accepts table values with a %i-character prompted commit', async length => {
+	const { repository, merged, promotion } = await awaitingPromotion();
+	const listed = await run(['runs', 'list', '--repository', repository.name, '--operation', 'promote']);
+	const row = listed.stdout.join('').split('\n').find(line =>
+		line.includes(repository.name) && line.includes('promote')
+	);
+	const [id, , , , , commit] = row?.trim().split(/\s+/) ?? [];
+	if (!id || !commit) throw new Error('Missing run table row');
+	expect([id, commit]).toEqual([promotion.id.slice(0, 12), merged.sha.slice(0, 12)]);
+	const approved = await run(['runs', 'approve', id], [commit.slice(0, length)]);
+	expect([approved.exitCode, approved.stderr.join('')]).toEqual([0, '']);
+	expect(await promotions()).toEqual([
+		expect.objectContaining({ id: promotion.id, state: 'ready', sourceSha: merged.sha }),
+	]);
+});
+
+test('approval refuses wrong or malformed commit references without changing the operation', async () => {
+	const { merged, promotion } = await awaitingPromotion();
+	const other = merged.sha[0] === 'a' ? 'b' : 'a';
+	const suffix = merged.sha.endsWith('a') ? 'b' : 'a';
+	for (const reference of [
+		other + merged.sha.slice(1, 12),
+		merged.sha.slice(0, 39) + suffix,
+		merged.sha.slice(0, 6),
+		merged.sha + 'a',
+		'g'.repeat(7),
+	]) {
+		const refused = await run(['runs', 'approve', promotion.id.slice(0, 12), '--sourceSha', reference, '--force']);
+		expect(refused.exitCode).not.toBe(0);
+	}
+	expect((await promotions())[0]?.state).toBe('awaiting-approval');
+	expect(world.github.dispatches).toHaveLength(0);
+	expect(await world.db.prepare("SELECT target FROM audit WHERE action='promotion.approve'").first()).toBeNull();
+});
+
+test('approval with a short commit still rejects an advanced branch', async () => {
+	const { repository, merged, promotion } = await awaitingPromotion();
+	world.github.push(repository, { 'README.md': 'New head' }, 'Advance the branch');
+	const refused = await run(['runs', 'approve', promotion.id.slice(0, 12), '--sourceSha', merged.sha.slice(0, 7)]);
+	expect(refused.exitCode).not.toBe(0);
+	expect(refused.stderr.join('')).toContain('Publish the release for that commit');
+	expect((await promotions())[0]?.state).toBe('awaiting-approval');
+	expect(world.github.dispatches).toHaveLength(0);
+});
+
+test('a matching commit cannot disambiguate a shared run ID prefix', async () => {
+	const { merged, promotion } = await awaitingPromotion();
+	const prefix = promotion.id.slice(0, 12);
+	const next = promotion.id[12] === 'a' ? 'b' : 'a';
+	const twin = prefix + next + promotion.id.slice(13);
+	await world.db.prepare(
+		'INSERT INTO executions(id,repository_id,state,document,updated_at) SELECT ?,repository_id,state,document,updated_at FROM executions WHERE id=?',
+	)
+		.bind(twin, promotion.id).run();
+	const refused = await run(['runs', 'approve', prefix, '--sourceSha', merged.sha.slice(0, 7)]);
+	expect(refused.exitCode).not.toBe(0);
+	expect(refused.stderr.join('')).toContain(`Several operations start with ${prefix}`);
+	expect(world.github.dispatches).toHaveLength(0);
+});
+
 test('a version whose tag targets another commit gets no promotion and a repository warning', async () => {
 	const { repository, before, merged } = await tagged();
 	repository.refs.set('tags/v1.2.4', before);
