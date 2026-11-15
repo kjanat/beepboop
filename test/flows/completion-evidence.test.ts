@@ -128,6 +128,13 @@ test('a release of the same version is proof for a preparation and for no other 
 		expect(await Effect.runPromise(store.completionEvidence([{ ...preparation, version: '0.9.0' }]))).toEqual(proof);
 		expect(await Effect.runPromise(store.completionEvidence([{ ...candidate, operation: 'promote' }]))).toEqual([]);
 		expect(await Effect.runPromise(store.completionEvidence([candidate]))).toEqual([]);
+		await Effect.runPromise(new ProjectionStore(db).apply([
+			projection('build', '1.0.0+build', 100),
+			projection('next', '2.0.0', 60),
+		]));
+		const [built] = await Effect.runPromise(store.completionEvidence([preparation]));
+		expect(built?.completedAt).toBe(100);
+		expect(compare(built?.version ?? '', preparation.version)).toBe(0);
 		const query = db.queries.at(-1)!;
 		const plan = JSON.stringify(db.sqlite.query(`EXPLAIN QUERY PLAN ${query.sql}`).all(...query.values));
 		expect(plan).toContain('release_completion_frontier_lookup');

@@ -606,6 +606,13 @@ test('the runs page filters by repository and folds a settled release', async ()
 	expect([...needingUser([prepared])]).toEqual(['prepare-failed']);
 	expect([...needingUser([{ ...prepared, updatedAt: 9 }], completed)]).toEqual(['prepare-failed']);
 	expect([...needingUser([{ ...prepared, operation: 'promote' }], completed)]).toEqual(['prepare-failed']);
+	const built = completed.map(entry => ({ ...entry, version: `${entry.version}+build` }));
+	expect([...needingUser([prepared], built)]).toEqual([]);
+	expect([...needingUser([{ ...prepared, operation: 'promote' }], built)]).toEqual(['prepare-failed']);
+	expect([...needingUser([{ ...prepared, version: 'unversioned' }], completed)]).toEqual([]);
+	expect([...needingUser([prepared], completed.map(entry => ({ ...entry, version: 'unversioned' })))]).toEqual([
+		'prepare-failed',
+	]);
 	const [old] = releaseSummaries(readable).filter(release => release.version === '1.0.0');
 	if (!old) throw new Error('No release');
 	expect(pipeline(old, Date.now())?.stages.map(stage => stage.note)).toEqual(['cancelled']);

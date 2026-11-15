@@ -66,15 +66,18 @@ export function needingUser(
 		const current = newest.get(key);
 		if (!current || byAge(current, run) < 0) newest.set(key, run);
 	}
-	const covers = (later: string | undefined, earlier: string | undefined) => {
+	const covers = (later: string | undefined, earlier: string | undefined, same: boolean) => {
 		const next = safeDecode(semVer, later), previous = safeDecode(semVer, earlier);
-		return next.success && (!previous.success || compare(next.data, previous.data) > 0);
+		if (!next.success) return false;
+		if (!previous.success) return true;
+		const order = compare(next.data, previous.data);
+		return order > 0 || (same && order === 0);
 	};
 	const superseded = (run: Execution) =>
 		completed.some(other =>
 			other.repositoryId === run.repositoryId && other.stream === run.stream && other.completedAt > run.updatedAt
 			&& other.group === run.releaseSet?.group
-			&& (covers(other.version, run.version) || (run.operation === 'prepare' && other.version === run.version))
+			&& covers(other.version, run.version, run.operation === 'prepare')
 		);
 	const needing = new Set<string>();
 	for (const [run, key] of keys) {
