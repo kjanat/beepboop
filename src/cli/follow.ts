@@ -184,8 +184,25 @@ export function followRelease(client: Client, out: Out, followed: Followed): Eff
 				? `Applying the ${look.version(followed.version)} version bump`
 				: `Starting the release of ${look.version(followed.version)}`,
 		);
-		let progress: ProgressHandle | undefined;
-		let phase: string | undefined;
+		const bars = new Map<string, { handle: ProgressHandle; done: number }>();
+		const open = () => [...bars.values()].filter(bar => bar.done >= 0);
+		const advance = (phases: readonly Stage[]) => {
+			for (const stage of phases) {
+				const bar = bars.get(stage.label)
+					?? { handle: out.progress({ total: stage.total, label: stage.label, concurrent: true }), done: 0 };
+				if (bar.done < 0) continue;
+				if (!bars.has(stage.label)) {
+					bars.set(stage.label, bar);
+					bar.handle.update(stage.done);
+				} else if (bar.done !== stage.done) bar.handle.update(stage.done);
+				bar.done = stage.done;
+				if (!stage.complete) continue;
+				bar.done = -1;
+				if (stage.failed) bar.handle.fail(stage.summary);
+				else bar.handle.done(stage.summary);
+			}
+		};
+		let started = false;
 		let announced = !followed.bumped;
 		for (;;) {
 			yield* client.pause(followInterval);
@@ -235,30 +252,21 @@ export function followRelease(client: Client, out: Out, followed: Followed): Eff
 			};
 			if (promotion.state === 'failed' || promotion.state === 'cancelled') {
 				const reason = promotion.reason ?? `The release stopped: ${promotion.state}`;
-				if (progress) progress.fail(reason);
-				else spinner.fail(reason);
+				if (started) {
+					advance(stages(promotion, binaries, false).filter(stage => bars.has(stage.label)));
+					for (const bar of open()) bar.handle.fail();
+					out.error(reason);
+				} else spinner.fail(reason);
 				report();
 				out.setExitCode(1);
 				return;
 			}
-			if (phase === undefined) {
+			if (!started) {
+				started = true;
 				const run = runUrl(promotion);
 				spinner.succeed(run ? `Release run ${look.link(run)}` : `Release of ${sha} started`);
 			}
-			const phases = stages(promotion, binaries, finished);
-			let index = phase === undefined ? 0 : phases.findIndex(stage => stage.label === phase);
-			for (; index < phases.length; index++) {
-				const stage = phases[index];
-				if (!stage) break;
-				if (phase !== stage.label) {
-					phase = stage.label;
-					progress = out.progress({ total: stage.total, label: stage.label });
-				}
-				progress?.update(stage.done);
-				if (!stage.complete) break;
-				if (stage.failed) progress?.fail(stage.summary);
-				else progress?.done(stage.summary);
-			}
+			advance(stages(promotion, binaries, finished));
 			if (finished) {
 				out.log(
 					`${look.mark('published')} Released ${look.version(followed.version)} of ${look.pkg(followed.repository)}`,

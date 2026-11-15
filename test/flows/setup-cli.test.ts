@@ -507,7 +507,12 @@ test('a saved preview prints the proposal and how to apply it', async () => {
 test('one adopt in a terminal shows the proposal, asks once and opens the setup PR', async () => {
 	const repository = bindingsRepository();
 	const session = defaults({}, { [proposalPrompt]: true });
-	const result = await app.execute(['adopt', repository.name], { prompter: session.prompter, isTTY: true, env: {} });
+	const result = await app.execute(['adopt', repository.name], {
+		prompter: session.prompter,
+		isTTY: true,
+		color: false,
+		env: {},
+	});
 	expect(result.stderr.join('')).toBe('');
 	expect(result.exitCode).toBe(0);
 	expect(session.prompts.map(prompt => prompt.message)).toEqual([proposalPrompt]);
@@ -573,7 +578,7 @@ test('one adopt without arguments or a terminal opens the setup PR for the check
 	expect(result.exitCode).toBe(0);
 	expect(result.stdout.join('')).toContain('Setup PR: https://github.com/octo/lint/pull/1\n');
 	expect(repository.pulls).toHaveLength(1);
-	const again = await app.execute(['repo', 'adopt', repository.name], { isTTY: true, env: {} });
+	const again = await app.execute(['repo', 'adopt', repository.name], { isTTY: true, color: false, env: {} });
 	expect([again.exitCode, again.stderr.join('')]).toEqual([0, '']);
 	expect(again.stdout.join('')).toContain('Setup PR: https://github.com/octo/lint/pull/1\n');
 	const prompts: string[] = [];
@@ -802,6 +807,7 @@ test('automatic triggers default to review and retain an explicit saved handover
 	const blocked = await app.execute(['repositories', 'adopt', repository.name], {
 		prompter: initial.prompter,
 		isTTY: true,
+		color: false,
 		env: {},
 	});
 	expect(blocked.exitCode).toBe(1);
@@ -819,6 +825,7 @@ test('automatic triggers default to review and retain an explicit saved handover
 	const reviewed = await app.execute(['repositories', 'adopt', repository.name], {
 		prompter: saved.prompter,
 		isTTY: true,
+		color: false,
 		env: {},
 	});
 	expect(reviewed.exitCode).toBe(0);
@@ -844,12 +851,17 @@ test('shared preparation does not ask for a second trigger handover', async () =
 	const result = await app.execute(['repositories', 'adopt', repository.name], {
 		prompter: session.prompter,
 		isTTY: true,
+		color: false,
 		env: {},
 	});
 	expect(result.exitCode).toBe(1);
 	expect(session.prompts.filter(prompt => prompt.message.includes('existingTriggers'))).toHaveLength(1);
 	expect(result.stdout.join('')).toContain('shared workflows need separate preparation and publication jobs');
-	const headless = await app.execute(['repositories', 'adopt', repository.name], { isTTY: true, env: {} });
+	const headless = await app.execute(['repositories', 'adopt', repository.name], {
+		isTTY: true,
+		color: false,
+		env: {},
+	});
 	expect([headless.exitCode, headless.stderr.join('')]).toEqual([1, '']);
 	expect(headless.stdout.join('')).toContain('shared workflows need separate preparation and publication jobs');
 	expect(repository.pulls).toHaveLength(1);
@@ -861,6 +873,7 @@ test('an inferred stream is adopted by observing its existing workflow', async (
 	const result = await app.execute(['repositories', 'adopt', repository.name], {
 		prompter: session.prompter,
 		isTTY: true,
+		color: false,
 		env: {},
 	});
 	expect(result.exitCode).toBe(0);
@@ -918,7 +931,12 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 			'Open or refresh the setup PR with these exact changes?': true,
 		},
 	);
-	const result = await app.execute(['adopt', repository.name], { prompter: session.prompter, isTTY: true, env: {} });
+	const result = await app.execute(['adopt', repository.name], {
+		prompter: session.prompter,
+		isTTY: true,
+		color: false,
+		env: {},
+	});
 	expect(result.stderr.join('')).toBe('');
 	expect(result.exitCode).toBe(0);
 	const messages = session.prompts.map(prompt => prompt.message);
@@ -1012,7 +1030,12 @@ function stubborn(file: string, limit = 40) {
 test('a workflow with no usable job is withdrawn after its first pick, and repeated picks end in bounded prompts', async () => {
 	vwShaped();
 	const session = stubborn('publish.yml');
-	const result = await app.execute(['adopt', 'octo/vw'], { prompter: session.prompter, isTTY: true, env: {} });
+	const result = await app.execute(['adopt', 'octo/vw'], {
+		prompter: session.prompter,
+		isTTY: true,
+		color: false,
+		env: {},
+	});
 	expect(result.exitCode).not.toBe(0);
 	expect(result.stdout.join('')).toContain('publish.yml has no job Beepboop can add this step to');
 	expect(result.stderr.join('')).toContain('Too many invalid prompt answers');
@@ -1036,7 +1059,7 @@ test('a dependent matrix publish job is explained and steers to a generated rele
 			return answers.prompter.promptOne(config);
 		},
 	};
-	const result = await app.execute(['adopt', 'octo/vw'], { prompter, isTTY: true, env: {} });
+	const result = await app.execute(['adopt', 'octo/vw'], { prompter, isTTY: true, color: false, env: {} });
 	expect(retried).toBe(true);
 	const output = result.stdout.join('');
 	expect(output).toContain('publish.yml has no job Beepboop can add this step to');
@@ -1054,7 +1077,12 @@ test('a dispatch-only workflow whose only job is a dependent matrix names why it
 			.replace('    needs: [validate]\n', ''),
 	});
 	const session = stubborn('publish.yml');
-	const result = await app.execute(['adopt', 'octo/vw'], { prompter: session.prompter, isTTY: true, env: {} });
+	const result = await app.execute(['adopt', 'octo/vw'], {
+		prompter: session.prompter,
+		isTTY: true,
+		color: false,
+		env: {},
+	});
 	expect(result.stdout.join('')).toContain('publish is matrix');
 });
 
@@ -1066,7 +1094,12 @@ for (const name of ['constructor', 'toString', '__proto__']) {
 				`name: Publish\non: workflow_dispatch\njobs:\n  "${name}":\n    runs-on: ubuntu-latest\n    steps:\n      - run: bun run repo release publish\n`,
 		});
 		const session = stubborn('publish.yml');
-		const result = await app.execute(['adopt', 'octo/vw'], { prompter: session.prompter, isTTY: true, env: {} });
+		const result = await app.execute(['adopt', 'octo/vw'], {
+			prompter: session.prompter,
+			isTTY: true,
+			color: false,
+			env: {},
+		});
 		expect(result.stderr.join('')).toBe('');
 		expect(result.stdout.join('')).toContain(`publish.yml, ${name} job`);
 		expect(result.stdout.join('')).not.toContain('not offered');

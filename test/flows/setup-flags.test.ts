@@ -1,13 +1,16 @@
-import { beforeEach, expect, test } from 'bun:test';
+import { beforeEach, expect, spyOn, test } from 'bun:test';
 import { join } from 'node:path';
 import type { PromptEngine } from '@kjanat/dreamcli';
 import { generateCompletion } from '@kjanat/dreamcli/completion';
+import { gitOutput } from '@root/test/support/actions.ts';
 import { savedClient } from '@root/test/support/cli.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
 import { app } from '@/cli/cli';
+import { Client } from '@/cli/client';
+import { describedSetupFlags, setupFlagRecord } from '@/cli/setup-flag-builders';
 import { choicesFlagKinds, setupFlagPaths, streamFlagKinds, workflowFlagKinds } from '@/cli/setup-flags';
 import { startChannels } from '@/contract/release-start';
 import { binaryTargets, setupChoicesSchema } from '@/contract/setup';
@@ -385,7 +388,7 @@ test('a fully flagged adopt in a terminal asks no question and opens the setup P
 			'--binary',
 			'tool',
 		],
-		{ prompter: silent, isTTY: true, env: {} },
+		{ prompter: silent, isTTY: true, color: false, env: {} },
 	);
 	expect([result.exitCode, result.stderr.join('')]).toEqual([0, '']);
 	expect(result.stdout.join('')).toContain('Setup PR: https://github.com/octo/tool/pull/1');
@@ -422,7 +425,7 @@ test('a fully flagged adopt in a terminal asks no question and opens the setup P
 			'--binary',
 			'tool',
 		],
-		{ prompter: silent, isTTY: true, env: {} },
+		{ prompter: silent, isTTY: true, color: false, env: {} },
 	);
 	expect([again.exitCode, again.stderr.join('')]).toEqual([0, '']);
 	expect(again.stdout.join('')).toContain('Release setup already matches.');
@@ -443,6 +446,7 @@ test('flagged adopt saves a reviewable plan and stops on blockers', async () => 
 	], {
 		prompter: silent,
 		isTTY: true,
+		color: false,
 		env: {},
 	});
 	expect([saved.exitCode, saved.stderr.join('')]).toEqual([0, '']);
@@ -452,6 +456,7 @@ test('flagged adopt saves a reviewable plan and stops on blockers', async () => 
 	const blocked = await app.execute(['adopt', 'octo/tool', '--version-lands', 'via-direct-commit'], {
 		prompter: silent,
 		isTTY: true,
+		color: false,
 		env: {},
 	});
 	expect(blocked.exitCode).toBe(1);
@@ -464,6 +469,7 @@ test('fields given by no flag stay unanswered in the setup PR', async () => {
 	const result = await app.execute(['adopt', 'octo/tool', ...promote, '--version-lands', 'via-direct-commit'], {
 		prompter: silent,
 		isTTY: true,
+		color: false,
 		env: {},
 	});
 	expect([result.exitCode, result.stderr.join('')]).toEqual([0, '']);
@@ -522,7 +528,7 @@ test('completion scripts list every setup flag and the values of each single-val
 function runsListFlags(script: string, shell: (typeof shells)[number]): string[] {
 	if (shell === 'bash') {
 		const section = /\n\t\t"runs list"\)\n([\s\S]*?)\n\t\t\t;;/.exec(script)?.[1] ?? '';
-		return /compgen -W '([^']*)'/.exec(section)?.[1]?.split(' ').map(flag => flag.slice(2)) ?? [];
+		return /compgen -W '(--[^']*)'/.exec(section)?.[1]?.split(' ').map(flag => flag.slice(2)) ?? [];
 	}
 	if (shell === 'zsh') {
 		const section = /\n_beepboop_runs_list\(\) \{\n([\s\S]*?)\n\}/.exec(script)?.[1] ?? '';
@@ -542,6 +548,67 @@ test('completion scripts list the runs list flags in the runs list section', () 
 	}
 });
 
+async function completed(args: string[], env: Record<string, string> = {}) {
+	const result = await app.execute(['__complete', '--', ...args], { isTTY: false, env });
+	expect([result.exitCode, result.stderr.join('')]).toEqual([0, '']);
+	return result.stdout.join('').split('\n').filter(Boolean);
+}
+
+test('adopt completes --package, --must-publish and --binary from the server plan of the repository', async () => {
+	tool();
+	expect(await completed(['adopt', 'octo/tool', '--package', ''])).toEqual(['tool', 'tool-js']);
+	expect(await completed(['adopt', 'octo/missing', '--package', ''])).toEqual([]);
+	expect(await completed(['adopt', 'octo/tool', '--package', 'tool-'])).toEqual(['tool-js']);
+	expect(await completed(['repo', 'setup', 'octo/tool', '--must-publish', ''])).toEqual(['tool', 'tool-js']);
+	expect(await completed(['adopt', 'octo/tool', '--binary', ''])).toEqual(['tool']);
+	expect(await completed(['adopt', 'octo/tool', '--server', 'https://other.example', '--package', ''])).toEqual([
+		'tool',
+		'tool-js',
+	]);
+	expect(Client.at).toHaveBeenLastCalledWith('https://other.example');
+	await completed(['adopt', 'octo/tool', '--server=https://inline.example', '--package', '']);
+	expect(Client.at).toHaveBeenLastCalledWith('https://inline.example');
+	await completed(['adopt', 'octo/tool', '--package', ''], { BEEPBOOP_SERVER: 'https://env.example' });
+	expect(Client.at).toHaveBeenLastCalledWith('https://env.example');
+	await completed(['adopt', 'octo/tool', '--package', '']);
+	expect(Client.at).toHaveBeenLastCalledWith('https://beepboop.kjanat.dev');
+});
+
+test('adopt without a repository completes from the checkout remote', async () => {
+	tool();
+	gitOutput(directory, ['init']);
+	gitOutput(directory, ['remote', 'add', 'origin', 'https://github.com/octo/tool.git']);
+	const cwd = spyOn(process, 'cwd').mockReturnValue(directory);
+	try {
+		expect(await completed(['adopt', '--package', ''])).toEqual(['tool', 'tool-js']);
+	} finally {
+		cwd.mockRestore();
+	}
+});
+
+test('a setup field without a described flag gets a flag of its kind', () => {
+	const record = setupFlagRecord(
+		[
+			{ path: 'changelog', kind: 'text', names: ['changelog'] },
+			{ path: 'labels', kind: 'list', names: ['label'] },
+			{ path: 'hooks', kind: 'json', names: ['hooks'] },
+			{ path: 'packages', kind: 'packages', names: ['package'] },
+		],
+		{ package: describedSetupFlags.package },
+	);
+	expect(Object.keys(record).sort()).toEqual(['changelog', 'hooks', 'label', 'package']);
+	expect(record.package).toBe(describedSetupFlags.package);
+	expect([record.changelog?.schema.kind, record.label?.schema.kind, record.hooks?.schema.kind]).toEqual([
+		'string',
+		'array',
+		'string',
+	]);
+	expect(record.hooks?.schema.description).toBe('Advanced: hooks as JSON');
+	expect(Object.keys(setupFlagRecord()).sort()).toEqual(
+		[...new Set(setupFlagPaths.flatMap(entry => entry.names))].sort(),
+	);
+});
+
 test('a flag that only another command offers is not found in the runs list section', () => {
 	const scripts = {
 		bash:
@@ -556,7 +623,7 @@ test('a flag that only another command offers is not found in the runs list sect
 	}
 });
 
-test.failing('completion scripts list the values of repeatable enum flags (kjanat/dreamcli#199)', () => {
+test('completion scripts list the values of repeatable enum flags', () => {
 	for (const shell of shells) {
 		for (const [flag, values] of [['start-from', startChannels], ['target', binaryTargets]] as const) {
 			expect([shell, flag, offered(shell, flag)]).toEqual([shell, flag, [...values]]);
@@ -594,6 +661,7 @@ test('setup flags name what they cannot resolve', async () => {
 		'js/package.json': '{"name":"twin","version":"1.0.0"}',
 	});
 	await refused(['octo/twin', '--package', 'twin'], '--package twin names several packages');
+	expect(await completed(['adopt', 'octo/twin', '--package', ''])).toEqual(['pkg:cargo/twin', 'pkg:npm/twin']);
 });
 
 test('a flagged new workflow needs commands Beepboop cannot generate and a job it cannot infer', async () => {

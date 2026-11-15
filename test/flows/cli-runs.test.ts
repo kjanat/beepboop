@@ -88,6 +88,7 @@ test('runs list defaults to the checkout repository, and --all, --repository and
 	try {
 		const result = await app.execute(['runs', 'list', '--json'], {
 			isTTY: true,
+			color: false,
 			env: { BEEPBOOP_REPOSITORY: 'octo/widget' },
 		});
 		expect(ids(result)).toEqual([run.id]);

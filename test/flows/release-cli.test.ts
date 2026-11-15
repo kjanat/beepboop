@@ -2,7 +2,6 @@ import { beforeEach, expect, spyOn, test } from 'bun:test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { PromptEngine } from '@kjanat/dreamcli';
-import { createOutput } from '@kjanat/dreamcli';
 import { begin, gitOutput, runAction, runIdentity } from '@root/test/support/actions.ts';
 import { runCli, savedClient } from '@root/test/support/cli.ts';
 import { discoveredWidget } from '@root/test/support/client.ts';
@@ -23,7 +22,7 @@ import { strip } from 'ansispeck';
 import { Effect, Schema, Struct } from 'effect';
 import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
-import { checkoutRepository, releaseRepository } from '@/cli/release';
+import { checkoutRepository } from '@/cli/release';
 import { routes } from '@/contract/routes';
 import { planReview } from '@/contract/views';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
@@ -257,6 +256,7 @@ test('eligible streams are inferred and ambiguous stream choices describe their 
 	const selected = await app.execute(['release', 'patch', '--repository', repository.name], {
 		prompter,
 		isTTY: true,
+		color: false,
 		env: {},
 	});
 	expect(selected.exitCode).toBe(0);
@@ -297,6 +297,7 @@ test('a stale source is refused after confirmation without silently replanning o
 	const result = await app.execute(['release', 'patch', '--repository', repository.name], {
 		prompter,
 		isTTY: true,
+		color: false,
 		env: {},
 	});
 	expect(result.exitCode).not.toBe(0);
@@ -762,10 +763,21 @@ test('activity output stays out of JSON output', async () => {
 	expect(json.stderr.join('')).not.toContain('Planning');
 });
 
+test('release help explains the flow, and the command list keeps the one-line description', async () => {
+	const help = await app.execute(['release', '--help'], { isTTY: false, env: {} });
+	const text = help.stdout.join('').replace(/\s+/g, ' ');
+	expect(text).toContain('With `cli` in `startFrom`, the release bumps the version and publishes it');
+	expect(text).toContain('`versionLands: via-version-pr` opens the version PR');
+	const root = (await app.execute(['--help'], { isTTY: false, env: {} })).stdout.join('').replace(/\s+/g, ' ');
+	expect(root).toContain('release Release this Git checkout: preview a version on the server, confirm, then act');
+	expect(root).not.toContain('startFrom');
+});
+
 test('--dry-run plans and previews without a prompt or a release', async () => {
 	const repository = await cliStarts();
 	const previewed = await app.execute(['release', 'patch', '--repository', repository.name, '--dry-run'], {
 		isTTY: true,
+		color: false,
 		env: {},
 		prompter: { promptOne: config => Promise.reject(new Error(`Unexpected prompt: ${config.message}`)) },
 	});
@@ -819,6 +831,7 @@ test('an already raised version with the cli start publishes once after one conf
 	const prompts: string[] = [];
 	const started = await app.execute(['release', '1.0.1', '--repository', repository.name], {
 		isTTY: true,
+		color: false,
 		env: {},
 		prompter: {
 			promptOne: config => {
@@ -858,7 +871,7 @@ test('activity output stays out of piped output while the release is followed', 
 test('without terminal input the release asks nothing, requires a version and starts after the preview', async () => {
 	const repository = await seed();
 	const headless = (args: string[], isTTY: boolean) =>
-		app.execute(['release', ...args, '--repository', repository.name], { isTTY, env: {} });
+		app.execute(['release', ...args, '--repository', repository.name], { isTTY, color: false, env: {} });
 	const missing = await headless([], false);
 	expect(missing.exitCode).not.toBe(0);
 	expect(missing.stderr.join('')).toContain('Choose a release version or bump');
@@ -919,30 +932,16 @@ test('a release without a cli start says up front how the prepared version publi
 
 test('release output carries color and links in a terminal and the same text without them', async () => {
 	const repository = await cliStarts();
-	const capture = (color: boolean) => {
-		const lines: string[] = [];
-		const out = createOutput({
-			isTTY: true,
-			color,
-			hyperlinks: true,
-			stdout: line => lines.push(line),
-			stderr: () => undefined,
-		});
-		return { out, lines };
-	};
-	const normalized = (lines: string[]) => lines.join('').replace(/(?<![0-9a-f])[0-9a-f]{12,64}(?![0-9a-f])/g, '<id>');
-	const colored = capture(true);
+	const normalized = (lines: readonly string[]) =>
+		lines.join('').replace(/(?<![0-9a-f])[0-9a-f]{12,64}(?![0-9a-f])/g, '<id>');
 	releaseRun(repository);
-	await Effect.runPromise(
-		releaseRepository(
-			client,
-			{ repository: repository.name, version: 'patch', yes: true, dryRun: false },
-			() => Promise.reject(new Error('No prompt expected')),
-			colored.out,
-		),
-	);
-	colored.out.stopActive();
-	const text = normalized(colored.lines);
+	const colored = await app.execute(['release', 'patch', '--repository', repository.name, '--yes'], {
+		isTTY: true,
+		color: true,
+		env: {},
+	});
+	expect([colored.exitCode, colored.stderr.join('')]).toEqual([0, '']);
+	const text = normalized(colored.stdout);
 	expect(text).toContain('\u001b[');
 	expect(text).toContain('\u001b]8;;https://github.com/octo/widget/actions/runs/');
 	expect(text).toMatchSnapshot('colored');
@@ -1052,7 +1051,10 @@ test('release reports a failed release run with its link', async () => {
 	const result = await run(['release', 'patch', '--repository', repository.name], [true]);
 	expect(result.exitCode).toBe(1);
 	expect(result.activity).toContainEqual(expect.objectContaining({ type: 'progress:start', label: 'Publishing' }));
-	expect(result.activity).toContainEqual(expect.objectContaining({ type: 'progress:fail' }));
+	expect(result.activity.filter(event => event.type === 'progress:fail')).toEqual([
+		{ type: 'progress:fail', text: undefined },
+	]);
+	expect(result.stderr.join('')).toBe('The release stopped: failed\n');
 	expect(result.stdout.join('')).toContain(
 		`Run: https://github.com/octo/widget/actions/runs/${repository.runs.at(-1)?.id}`,
 	);
@@ -1161,13 +1163,14 @@ test('release follows each binary build leg and asset upload of a started releas
 	expect(progress).toEqual([
 		'start Building binaries 2',
 		'update 1',
-		'update 2',
-		'done Built 2 binaries',
 		'start Publishing 1',
 		'update 0',
+		'start Uploading assets 2',
+		'update 0',
+		'update 2',
+		'done Built 2 binaries',
 		'update 1',
 		'done Published 1 of 1',
-		'start Uploading assets 2',
 		'update 1',
 		'update 2',
 		'done Uploaded 2 of 2 assets',
@@ -1231,7 +1234,12 @@ test('a failed build leg shows in the binary progress and the binaries table', a
 	expect(result.activity).toContainEqual(
 		expect.objectContaining({ type: 'progress:start', label: 'Building binaries' }),
 	);
-	expect(result.activity).toContainEqual(expect.objectContaining({ type: 'progress:fail' }));
+	expect(result.activity.filter(event => event.type === 'progress:fail')).toEqual([
+		{ type: 'progress:fail', text: '1 of 2 builds failed' },
+		{ type: 'progress:fail', text: undefined },
+		{ type: 'progress:fail', text: undefined },
+	]);
+	expect(result.stderr.join('')).toBe('The release stopped: failed\n');
 	const output = result.stdout.join('');
 	expect(output).toContain('widget  linux-amd64   ○ skipped');
 	expect(output).toContain('widget  darwin-arm64  ✖ failed');

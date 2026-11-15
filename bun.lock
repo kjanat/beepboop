@@ -7,7 +7,7 @@
       "dependencies": {
         "@astrojs/cloudflare": "^14.4.4",
         "@cfworker/json-schema": "^4.1.6",
-        "@kjanat/dreamcli": "^5.0.0",
+        "@kjanat/dreamcli": "^5.1.0",
         "@kjanat/openauth": "^0.6.0",
         "@simplewebauthn/server": "^14.0.3",
         "astro": "^7.4.5",
@@ -314,7 +314,7 @@
 
     "@jsdevtools/ono": ["@jsdevtools/ono@7.1.3", "", {}, "sha512-4JQNk+3mVzK3xh2rqd6RB4J46qUR19azEHBneZyTZM+c456qOrbbM/5xcR8huNCCcbVt7+UmizG6GuUvPvKUYg=="],
 
-    "@kjanat/dreamcli": ["@kjanat/dreamcli@5.0.0", "", { "dependencies": { "ansispeck": "^0.4.3" } }, "sha512-pKQJu6KDnW8U4EQI2vZTwZz2v+H/z9uwfK4jnOV9BLrn2LDnmVNM91/iNxsxpZaFMZyhOU8AggMA6OhD5dqhdQ=="],
+    "@kjanat/dreamcli": ["@kjanat/dreamcli@5.1.0", "", { "dependencies": { "ansispeck": "^0.4.3" } }, "sha512-yWEWOE98UYhiozDymxPXfBEr8p9fR3TCOKIB8Jjrtu9zyHuTt2bNedaSkSGUtkcl4FGtyxO0l7mI3P8W1BpPcw=="],
 
     "@kjanat/fmt": ["@kjanat/fmt@0.62.0", "", { "dependencies": { "@kprint/kprint": "0.62.0" }, "bin": { "fmt": "fmt.cjs", "kfmt": "fmt.cjs" } }, "sha512-LSQ7UaEN9w2ECYd74jotb2DDcDcLd3Af4aWtxFxL6Si03zHq0I3Zo3uTcBNWUMpcXXMunGc2WNcruyNtRaYrDw=="],
 

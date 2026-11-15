@@ -8,7 +8,6 @@ import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
 import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
-import { stdin } from '@/cli/stdin';
 import { routes } from '@/contract/routes';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
 import {
@@ -206,8 +205,8 @@ test('secrets set reads the value from stdin, shows its read spinner and keeps n
 			return 'proof';
 		})
 	);
-	const piped = spyOn(stdin, 'piped').mockResolvedValue('secret\n');
-	const saved = await app.execute(['secrets', 'set', 'npm-token'], { isTTY: true, env: {} });
+	const terminal = { isTTY: true, color: false, env: {} };
+	const saved = await app.execute(['secrets', 'set', 'npm-token'], { ...terminal, stdinData: 'secret\n' });
 	expect([saved.exitCode, saved.stderr.join('')]).toEqual([0, '']);
 	expect(saved.stdout.join('')).toBe('✔ Saved npm-token as version 1.\n');
 	expect(saved.activity).toEqual([
@@ -216,14 +215,14 @@ test('secrets set reads the value from stdin, shows its read spinner and keeps n
 	]);
 	expect(elevated).toHaveBeenCalledTimes(1);
 	expect(open).toBe(0);
-	piped.mockResolvedValue('rotated\r\n');
-	const replaced = await app.execute(['secrets', 'set', 'npm-token', '--json'], { isTTY: true, env: {} });
+	const replaced = await app.execute(['secrets', 'set', 'npm-token', '--json'], {
+		...terminal,
+		stdinData: 'rotated\r\n',
+	});
 	expect(JSON.parse(replaced.stdout.join(''))).toEqual({ alias: 'npm-token', version: 2 });
-	piped.mockResolvedValue('value');
-	const plain = await app.execute(['secrets', 'set', 'other-token'], { isTTY: false, env: {} });
+	const plain = await app.execute(['secrets', 'set', 'other-token'], { isTTY: false, env: {}, stdinData: 'value' });
 	expect(plain.stdout.join('')).toBe('✔ Saved other-token as version 1.\n');
 	expect(plain.stderr.join('')).toBe('');
-	piped.mockResolvedValue(null);
 	const prompted = await runCli(['secrets', 'set', 'npm-token'], [true, 'typed']);
 	expect(prompted.exitCode).toBe(0);
 	expect(prompted.stdout.join('')).toBe('✔ Saved npm-token as version 3.\n');
@@ -234,48 +233,26 @@ test('secrets set reads the value from stdin, shows its read spinner and keeps n
 	});
 	expect([redirected.exitCode, redirected.stderr.join('')]).toEqual([0, '']);
 	expect(redirected.stdout.join('')).toBe('✔ Saved npm-token as version 4.\n');
-	const untyped = await app.execute(['secrets', 'set', 'empty-token'], { isTTY: true, env: {} });
+	const untyped = await app.execute(['secrets', 'set', 'empty-token'], terminal);
 	expect(untyped.exitCode).not.toBe(0);
 	expect(untyped.stderr.join('')).toContain('Secret value is empty');
-	piped.mockResolvedValue('\n');
-	const empty = await app.execute(['secrets', 'set', 'empty-token'], { isTTY: false, env: {} });
+	const empty = await app.execute(['secrets', 'set', 'empty-token'], { isTTY: false, env: {}, stdinData: '\n' });
 	expect(empty.exitCode).not.toBe(0);
 	expect(empty.stderr.join('')).toContain('Secret value is empty');
-	expect(piped).toHaveBeenCalledTimes(7);
 });
 
-test('the stdin reader returns piped bytes and nothing for a terminal', async () => {
-	const reader = join(import.meta.dir, '../../src/cli/stdin.ts');
-	const result = Bun.spawnSync(
-		[
-			'bun',
-			'--no-install',
-			'-e',
-			`const { stdin } = await import(${JSON.stringify(reader)});
-process.stdout.write(JSON.stringify(await stdin.piped()));`,
-		],
-		{ stdin: Buffer.from('secret\n') },
-	);
-	expect([result.exitCode, result.stderr.toString()]).toEqual([0, '']);
-	expect(JSON.parse(result.stdout.toString())).toBe('secret\n');
-	const terminal = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
-	Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
-	try {
-		expect(await stdin.piped()).toBeNull();
-	} finally {
-		if (terminal) Object.defineProperty(process.stdin, 'isTTY', terminal);
-		else Reflect.deleteProperty(process.stdin, 'isTTY');
-	}
-});
-
-test('secrets set refuses a value on the command line', async () => {
-	const piped = spyOn(stdin, 'piped').mockResolvedValue('secret');
-	const refused = await app.execute(['secrets', 'set', 'npm-token', '--value', 'secret'], { isTTY: false, env: {} });
+test('secrets set refuses a value on the command line and leaves it out of help', async () => {
+	const refused = await app.execute(['secrets', 'set', 'npm-token', '--value', 'secret'], {
+		isTTY: false,
+		env: {},
+		stdinData: 'secret',
+	});
 	expect(refused.exitCode).not.toBe(0);
 	expect(refused.stderr.join('')).toContain('Unknown flag --value');
 	expect(refused.stderr.join('')).not.toContain('secret');
 	expect(refused.stdout.join('')).toBe('');
-	expect(piped).not.toHaveBeenCalled();
+	const help = await app.execute(['secrets', 'set', '--help'], { isTTY: false, env: {} });
+	expect(help.stdout.join('')).not.toContain('--value');
 	const listed = await Effect.runPromise(client.call(routes.credentialsList, {}));
 	expect(listed.credentials).toEqual([]);
 });

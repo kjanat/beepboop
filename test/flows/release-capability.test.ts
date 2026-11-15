@@ -375,6 +375,7 @@ test('a direct release under version-commit-pushed says that it publishes withou
 			},
 		},
 		isTTY: true,
+		color: false,
 		env: {},
 	});
 	expect(cli.exitCode).toBe(0);
