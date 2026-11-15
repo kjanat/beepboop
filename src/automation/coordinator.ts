@@ -80,6 +80,7 @@ import type { RefPlan, TagSigner } from '@/automation/refs';
 import {
 	conflictMessage,
 	planRefs,
+	refsLanded,
 	streamModuleTagPrefixes,
 	tagConflict,
 	tagObject,
@@ -1227,16 +1228,24 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (release.tag_name !== tag || release.draft !== false || release.prerelease !== prerelease) {
 				return yield* precondition('Existing GitHub release does not match the release operation');
 			}
-			const publication: Publication = {
-				id: `github-release:${execution.repository}`,
-				manager: 'github-release',
-				name: execution.repository,
-				version: tag,
-				outcome: 'succeeded',
-				required: true,
-				...(typeof release.html_url === 'string' ? { url: release.html_url } : {}),
-			};
-			execution.release = {
+			const released = yield* this.released(execution, release, tag);
+			yield* this.put(released);
+			return released;
+		});
+	}
+	private released(execution: Execution, release: GitHubRelease, tag: string): Effect.Effect<Execution, DomainError> {
+		return mergePublications(execution.publications, [{
+			id: `github-release:${execution.repository}`,
+			manager: 'github-release',
+			name: execution.repository,
+			version: tag,
+			outcome: 'succeeded',
+			required: true,
+			...(typeof release.html_url === 'string' ? { url: release.html_url } : {}),
+		}]).pipe(Effect.map(publications => ({
+			...execution,
+			publications,
+			release: {
 				id: `github:${execution.repositoryId}:${release.id}`,
 				repository: { id: execution.repositoryId, name: execution.repository },
 				stream: execution.stream,
@@ -1246,11 +1255,64 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				releaseId: release.id,
 				artifacts: [],
 				publications: [],
-			};
-			execution.publications = yield* mergePublications(execution.publications, [publication]);
-			yield* this.put(execution);
-			return execution;
-		});
+			},
+		})));
+	}
+	releasePublished(tag: string): Promise<void> {
+		return this.serial(
+			Effect.gen({ self: this }, function*() {
+				for (const execution of yield* this.executions()) {
+					const policy = execution.workflow?.refs;
+					if (
+						execution.state !== 'failed' || execution.runId === undefined || !execution.version
+						|| !publishesGithubRelease(execution)
+						|| execution.publications.some(p => p.manager === 'github-release' && p.outcome === 'succeeded')
+					) continue;
+					const target = yield* fromSync(() => githubRelease(execution));
+					if (target?.tag !== tag) continue;
+					const gateway = yield* this.gateway;
+					const refs = yield* gateway.tagRefs(execution.repository, execution.repositoryId);
+					const landed = (name: string) =>
+						refs.some(ref => ref.name === name && ref.commit === execution.sourceSha && ref.oid !== ref.commit);
+					if (!landed(tag)) continue;
+					const read = yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
+					const release = yield* gateway.read(
+						Schema.NullOr(releaseSchema),
+						`/repos/${execution.repository}/releases/tags/${encodeURIComponent(tag)}`,
+						read,
+					);
+					if (
+						!release || release.tag_name !== tag || release.draft !== false || release.prerelease !== target.prerelease
+					) {
+						continue;
+					}
+					const released = yield* this.released(execution, release, tag);
+					const next = policy
+							&& (yield* refsLanded(
+								policy,
+								execution.version,
+								execution.sourceSha,
+								refs,
+								yield* this.modulePrefixes(execution),
+							))
+						? {
+							...released,
+							publications: yield* mergePublications(released.publications, [{
+								id: `refs:${released.operation}`,
+								manager: 'workflow',
+								name: released.repository,
+								version: execution.version,
+								outcome: 'succeeded',
+								required: true,
+							}]),
+						}
+						: released;
+					yield* this.put(publishedAfterFailure(next) ?? next);
+				}
+			}),
+			'coordinator.releasePublished',
+			{},
+		);
 	}
 	private draftRelease(execution: Execution): CoordinatorEffect<Execution['draftRelease'], DomainError> {
 		return Effect.gen({ self: this }, function*() {

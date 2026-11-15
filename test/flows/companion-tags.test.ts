@@ -7,7 +7,7 @@ import { createExecution } from '@/automation/execution';
 import { packageId } from '@/automation/package-identity';
 import { registry } from '@/automation/package-publication';
 import type { RefPolicy } from '@/automation/refs';
-import { planRefs, streamModuleTagPrefixes } from '@/automation/refs';
+import { planRefs, refsLanded, streamModuleTagPrefixes } from '@/automation/refs';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Inventory, Package, RepositoryRecord, Snapshot } from '@/automation/types';
 import { binaries } from '@/contract/setup';
@@ -61,6 +61,16 @@ test('a stream pushes the tag of each companion module beside its own tag', asyn
 		['rshellcheck-v1.1.0', commit, true],
 		['go/v1.1.0', commit, true],
 	]);
+});
+
+test('the refs of a release have landed when each planned tag is annotated on the release commit', async () => {
+	const tag = (name: string, target = commit, oid = 'b'.repeat(40)) => ({ name, oid, commit: target });
+	const landed = (refs: ReturnType<typeof tag>[]) =>
+		Effect.runPromise(refsLanded(policy, '1.1.0', commit, refs, ['go/v']));
+	expect(await landed([tag('rshellcheck-v1.1.0'), tag('go/v1.1.0')])).toBe(true);
+	expect(await landed([tag('rshellcheck-v1.1.0')])).toBe(false);
+	expect(await landed([tag('rshellcheck-v1.1.0'), tag('go/v1.1.0', commit, commit)])).toBe(false);
+	expect(await landed([tag('rshellcheck-v1.1.0'), tag('go/v1.1.0', 'c'.repeat(40))])).toBe(false);
 });
 
 test('a stream without companion modules pushes only its own tag', async () => {

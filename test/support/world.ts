@@ -244,6 +244,13 @@ export class World {
 			repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
 		}, delivery);
 	}
+	releasePublished(repository: Repository, tag: string): Promise<Response> {
+		return this.webhook('release', {
+			action: 'published',
+			release: { tag_name: tag },
+			repository: { id: repository.id, full_name: repository.name, owner: { id: ownerId } },
+		});
+	}
 	workflowRun(
 		repository: Repository,
 		run: { id: number; path: string },

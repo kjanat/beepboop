@@ -21,6 +21,7 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
 import { strip } from 'ansispeck';
 import { Effect, Schema, Struct } from 'effect';
+import { runFailedNote } from '@/automation/execution';
 import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
 import { checkoutRepository, releaseRepository } from '@/cli/release';
@@ -1235,6 +1236,104 @@ test('a failed build leg shows in the binary progress and the binaries table', a
 	const output = result.stdout.join('');
 	expect(output).toContain('widget  linux-amd64   ○ skipped');
 	expect(output).toContain('widget  darwin-arm64  ✖ failed');
+});
+
+async function publishedAfterFailedRun(refs: boolean) {
+	const repository = await binaryStarts();
+	if (refs) {
+		const configuration = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
+		configuration.streams.main.promote.workflow.refs = { phase: 'version', prefix: 'v' };
+		const head = world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Tag it');
+		passChecks(repository, head.sha);
+		await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	}
+	const dispatched = () => {
+		const run = repository.runs.at(-1);
+		if (!run) throw new Error('The release dispatched no run');
+		return run;
+	};
+	const steps = [
+		() => world.wait(16_000),
+		async () => {
+			passChecks(repository, world.github.head(repository));
+			expect((await world.push(repository)).status).toBe(202);
+			await world.wait(16_000);
+		},
+		async () => {
+			const run = dispatched();
+			run.status = 'in_progress';
+			run.jobs = [
+				{ name: 'Build widget (x86_64-unknown-linux-gnu)', status: 'completed', conclusion: 'success' },
+				{ name: 'Build widget (aarch64-apple-darwin)', status: 'completed', conclusion: 'success' },
+			];
+			const identity = runIdentity(repository, run, 'publish.yml');
+			await begin(world, identity, run.inputs.beepboop_execution_id ?? '', 'main', 'promote');
+			world.npm.publish('widget', '1.0.1');
+			await runAction(world, 'report', identity, {
+				EXECUTION_ID: run.inputs.beepboop_execution_id ?? '',
+				PUBLICATIONS: JSON.stringify([
+					{ id: 'pkg:npm/widget', manager: 'npm', name: 'widget', version: '1.0.1', outcome: 'succeeded' },
+				]),
+			});
+		},
+		async () => {
+			const run = dispatched();
+			run.status = 'completed';
+			run.conclusion = 'failure';
+			await world.workflowRun(repository, run, 'failure', 'workflow_dispatch');
+			await world.wait(16_000);
+		},
+	];
+	spyOn(client, 'pause').mockImplementation(() =>
+		Effect.promise(async () => {
+			await (steps.shift() ?? (() => world.wait(16_000)))();
+		})
+	);
+	const result = await run(['release', 'patch', '--repository', repository.name], [true]);
+	expect(result.exitCode).toBe(1);
+	const promotion = async () => {
+		const [found] = (await promotions()).filter(execution => execution.version === '1.0.1');
+		if (!found) throw new Error('The release has no promotion');
+		return found;
+	};
+	expect((await promotion()).state).toBe('failed');
+	const draft = repository.releases.find(release => release.draft);
+	if (!draft) throw new Error('The release has no draft');
+	draft.assets = ['widget-x86_64-unknown-linux-gnu', 'widget-aarch64-apple-darwin'];
+	expect((await world.releasePublished(repository, 'v1.0.1')).status).toBe(202);
+	await world.wait(16_000);
+	expect((await promotion()).state).toBe('failed');
+	world.github.recordTag(repository, 'v1.0.1', 'a'.repeat(40), world.github.head(repository), true);
+	expect((await world.releasePublished(repository, 'v1.0.1')).status).toBe(202);
+	await world.wait(16_000);
+	expect((await promotion()).state).toBe('failed');
+	draft.draft = false;
+	expect((await world.releasePublished(repository, 'v9.9.9')).status).toBe(202);
+	await world.wait(16_000);
+	expect((await promotion()).state).toBe('failed');
+	expect((await world.releasePublished(repository, 'v1.0.1')).status).toBe(202);
+	await world.wait(16_000);
+	const settled = await promotion();
+	expect([settled.state, settled.reason]).toEqual(['succeeded', runFailedNote]);
+	return decodeSync(
+		mutableArray(looseStruct({ id: Schema.String, outcome: Schema.String })),
+		settled.publications,
+	).map(publication => [publication.id, publication.outcome]).sort();
+}
+
+test('a release published after its run failed settles the failed operation', async () => {
+	expect(await publishedAfterFailedRun(false)).toEqual([
+		['pkg:github/octo/widget', 'succeeded'],
+		['pkg:npm/widget', 'succeeded'],
+	]);
+});
+
+test('a release published after its run failed also records the tags the operation had to push', async () => {
+	expect(await publishedAfterFailedRun(true)).toEqual([
+		['pkg:github/octo/widget', 'succeeded'],
+		['pkg:npm/widget', 'succeeded'],
+		['refs:promote', 'succeeded'],
+	]);
 });
 
 test('--auto, --no-auto and --merge send this release its version PR merge', async () => {
