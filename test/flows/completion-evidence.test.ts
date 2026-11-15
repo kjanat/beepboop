@@ -115,6 +115,27 @@ for (const legacy of [false, true]) {
 	});
 }
 
+test('a release of the same version is proof for a preparation and for no other operation', async () => {
+	const db = new TestD1();
+	try {
+		const store = new Store(db);
+		await Effect.runPromise(new ProjectionStore(db).apply([projection('same', '1.0.0', 50)]));
+		const proof = [{ repositoryId: 1, stream: 'main', version: '1.0.0', completedAt: 50 }];
+		const preparation = { ...candidate, operation: 'prepare' };
+		expect(await Effect.runPromise(store.completionEvidence([preparation]))).toEqual(proof);
+		expect(await Effect.runPromise(store.completionEvidence([{ ...preparation, updatedAt: 50 }]))).toEqual([]);
+		expect(await Effect.runPromise(store.completionEvidence([{ ...preparation, version: '1.0.1' }]))).toEqual([]);
+		expect(await Effect.runPromise(store.completionEvidence([{ ...preparation, version: '0.9.0' }]))).toEqual(proof);
+		expect(await Effect.runPromise(store.completionEvidence([{ ...candidate, operation: 'promote' }]))).toEqual([]);
+		expect(await Effect.runPromise(store.completionEvidence([candidate]))).toEqual([]);
+		const query = db.queries.at(-1)!;
+		const plan = JSON.stringify(db.sqlite.query(`EXPLAIN QUERY PLAN ${query.sql}`).all(...query.values));
+		expect(plan).toContain('release_completion_frontier_lookup');
+	} finally {
+		db.sqlite.close();
+	}
+});
+
 test('completion proof respects version, group, time, repository and corrupt history boundaries', async () => {
 	const db = new TestD1();
 	try {
