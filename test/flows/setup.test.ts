@@ -1033,7 +1033,7 @@ ${unpinnedBuild('signer')}${unpinnedBuild('tool')}  publish:
       - uses: actions/attest@v4
         with: { subject-checksums: dist/checksums.txt }
       - id: beepboop_binaries
-        run: gh release upload "\${TAG}" -- *
+        run: gh release upload "\${TAG}" --clobber -- *
       - uses: kjanat/beepboop/actions/publish-refs@v1
         with:
           token: \${{ github.token }}
