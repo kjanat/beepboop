@@ -483,8 +483,10 @@ job, leaves the execution `failed` for you to retry.
 
 A retry from the Retry button or `beepboop runs recover ID --action retry`
 re-runs the failed jobs of the execution's run when that run built the release
-commit. A retry refuses to start once the workflow branch moved past the release
-commit, unless every version tag of the release already targets that commit.
+commit. A retry refuses to start once the workflow branch no longer contains the
+release commit or a later commit changed the stream's manifests,
+`versionFiles`, workflow files or the reusable workflows they call, unless
+every version tag of the release already targets that commit.
 Such a release keeps its tags, its GitHub release and its run, and the retry
 publishes the packages that run left behind. A retry also refuses when the
 workflow branch no longer exists.
@@ -506,7 +508,8 @@ of the superseded run are dropped. The command follows the release like
 
 Starting a release also publishes it. Beepboop runs the version bump, the
 publication, the binaries, the tags and the GitHub release, and nothing asks
-again. Failing checks or package metadata problems stop the release with a
+again. A commit added to the version PR before the merge ends that: the
+release then follows `promote.publishWhen`. Failing checks or package metadata problems stop the release with a
 reason on the runs page. Each stream lists where a release starts in
 `startFrom`:
 
@@ -594,6 +597,28 @@ to its existing execution. You can retry failed jobs from the execution page.
 An ambiguous workflow dispatch offers reconciliation. If a promotion was
 cancelled before its first dispatch, retrying it waits for you to publish it
 again.
+
+A release is the commit that set its version: the merge of the version PR, the
+version commit Beepboop pushed, or the first pushed commit with the new
+version. Commits you add to the version PR before you merge it belong to that
+release. A started release whose version PR gained such commits follows
+`promote.publishWhen` instead of publishing on merge. The checks, the approval
+and the version tag all use the release commit.
+
+A later commit on the default branch creates no other promotion of the version
+when it leaves the stream's manifests, `versionFiles`, workflow files, the
+reusable workflows they call, and the package metadata problems as they were.
+The release keeps waiting for the checks of its own commit, and publishing it
+in Beepboop still works. Its run starts on the newer head of the workflow ref
+and checks out the release commit, so npm provenance names that newer head as
+the workflow commit. A later commit that changes one of those gets its own
+promotion, and the earlier promotion can no longer publish while the later one
+still matches the head. The merge of the version PR or the start of the
+release does not publish that new promotion; with `version-pr-merged` it waits
+for you to publish it. A cancelled promotion does not hold its version, so the
+next push creates a new one. A stream whose packages depend on another
+stream's package waits for that stream's pending promotion of the version in
+the manifests, also when the two version commits differ.
 
 ### Release a shared version with lockfiles
 

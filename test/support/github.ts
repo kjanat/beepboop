@@ -763,14 +763,14 @@ export class FakeGitHub {
 		}
 		return commit;
 	}
-	merge(repository: Repository, number: number): Commit {
+	merge(repository: Repository, number: number, method: 'merge' | 'squash' = 'merge'): Commit {
 		const pull = this.pull(repository, number);
 		const head = this.resolve(repository, pull.head.sha);
 		const base = this.resolve(repository, repository.defaultBranch);
 		const commit = this.commitObject(repository, {
 			tree: head.tree,
-			parents: [base.sha, head.sha],
-			message: `Merge pull request #${number}`,
+			parents: method === 'squash' ? [base.sha] : [base.sha, head.sha],
+			message: method === 'squash' ? `${pull.title} (#${number})` : `Merge pull request #${number}`,
 			verified: true,
 			authorId: ownerId,
 		});

@@ -476,9 +476,9 @@ test('approval refuses wrong or malformed commit references without changing the
 	expect(await world.db.prepare("SELECT target FROM audit WHERE action='promotion.approve'").first()).toBeNull();
 });
 
-test('approval with a short commit still rejects an advanced branch', async () => {
+test('approval with a short commit still rejects a branch whose version changed since', async () => {
 	const { repository, merged, promotion } = await awaitingPromotion();
-	world.github.push(repository, { 'README.md': 'New head' }, 'Advance the branch');
+	world.github.push(repository, { 'package.json': npmManifest('widget', '1.2.5') }, 'Raise the version again');
 	const refused = await run(['runs', 'approve', promotion.id.slice(0, 12), '--sourceSha', merged.sha.slice(0, 7)]);
 	expect(refused.exitCode).not.toBe(0);
 	expect(refused.stderr.join('')).toContain('Publish the release for that commit');

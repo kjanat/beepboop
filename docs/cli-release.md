@@ -57,10 +57,10 @@ files. The dashboard flow below remains available.
    commit's signature and CI results.
 4. Beepboop dispatches `publish-cli.yml`. `actions/begin` authenticates the
    execution, then the workflow checks out its reviewed source SHA and checks
-   that both package versions match the execution. The workflow commit must also
-   match the reviewed source so provenance identifies the code actually built;
-   if master moved, refresh and publish the current commit. It rebuilds and tests the
-   installable package before publishing.
+   that both package versions match the execution. When master moved on without
+   changing the manifests or the release workflows, the run starts on the newer
+   master and builds the reviewed source SHA, and npm provenance names the newer
+   master commit. It rebuilds and tests the installable package before publishing.
 5. npm publishes with provenance and its trusted-publisher transport. Stable
    versions use `latest`; prereleases use `next`. JSR publishes via OIDC. Both
    results are reported even if one publisher fails. Beepboop independently

@@ -150,6 +150,28 @@ test('a start from the dashboard opens the version PR, and its merge publishes w
 	await publishedOnce(api, repository, 'dashboard');
 });
 
+test('a started version PR that gained another commit waits for approval when merged', async () => {
+	const { repository, api } = await configured([{ via: 'dashboard' }], 'pr');
+	await release(fromDashboard, repository.id);
+	await world.wait(16_000);
+	const [pull] = repository.pulls;
+	if (!pull) throw new Error('No version PR');
+	world.github.push(repository, { 'CHANGELOG.md': '# 1.0.1\n' }, 'Write the release notes', pull.head.ref);
+	const merged = world.github.merge(repository, pull.number, 'squash');
+	passChecks(repository, merged.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	const [promotion, ...more] = await promotions(api);
+	expect(more).toEqual([]);
+	expect([promotion?.sourceSha, promotion?.state, promotion?.approvedBy, promotion?.started]).toEqual([
+		merged.sha,
+		'awaiting-approval',
+		undefined,
+		undefined,
+	]);
+	expect(repository.runs).toEqual([]);
+});
+
 test('merging a version PR promotes a mixed manifest and already-tagged Go stream', async () => {
 	const repository = widget(world.github, { configured: false });
 	world.npm.publish('widget', '1.0.0');

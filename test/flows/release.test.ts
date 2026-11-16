@@ -1233,7 +1233,9 @@ test('a retry after the branch moved refuses a release whose module tag is missi
 		const failed = await only(api, 'promote');
 		seen.push([failed.state, failed.moduleTags]);
 		target.refs.set('tags/v1.1.0', failed.sourceSha);
-		const moved = world.github.push(target, { 'README.md': '# widget\n\nMoved on.\n' }, 'Move the branch');
+		const file = '.github/workflows/publish.yml';
+		const workflow = world.github.file(target, file) ?? '';
+		const moved = world.github.push(target, { [file]: `${workflow}# changed\n` }, 'Change the release workflow');
 		refusal = `main is at ${moved.sha.slice(0, 12)} but this execution builds ${
 			failed.sourceSha.slice(0, 12)
 		}; prepare the release again`;

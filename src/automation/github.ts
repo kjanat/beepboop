@@ -27,6 +27,7 @@ import {
 import type { Fetcher, VerificationContext } from '@/automation/managers/registry';
 import { parsePresetReference } from '@/automation/preset';
 import type { RefState } from '@/automation/refs';
+import { callLimit, liveJobs, ownWorkflow, workflowDocuments } from '@/automation/release-graph/calls';
 import { repositoryNamePattern } from '@/automation/repository-name';
 import { marked, placeBlock, setupBlock, withStatus } from '@/automation/setup-body';
 import { setupBranches } from '@/automation/setup-changes';
@@ -47,6 +48,7 @@ import { looseStruct, mutableArray, mutableStruct } from '@/schema';
 
 type Permission = Record<string, 'read' | 'write'>;
 const missingInstallationPermissions = 'GitHub App installation lacks required permissions';
+const workflowDirectory = '.github/workflows/';
 const coAuthor = 'Co-authored-by: kjanat <6353477+kjanat@users.noreply.github.com>';
 const ownerLogins = new Map<number, string>();
 const botIdentities = new Map<string, BotIdentity>();
@@ -833,17 +835,17 @@ export class RepositoryGateway {
 		repositoryId: number,
 		result: { url: string; head: string },
 		token: string,
-	): Effect.Effect<{ mergeSha: string; base: string; defaultBranch: string }, DomainError> {
+	): Effect.Effect<{ mergeSha: string; base: string; defaultBranch: string; head: string }, DomainError> {
 		const self = this;
 		return Effect.gen(function*() {
 			const number = yield* preparationPullNumber(repository, result.url);
 			const pull = yield* self.read(pullSchema, `/repos/${repository}/pulls/${number}`, token);
 			const base = pull.base;
 			const mergeSha = pull.merged === true ? yield* self.mergeCommit(repository, number, token) : undefined;
-			if (!mergeSha || pull.head.sha !== result.head || base.repo.id !== repositoryId) {
+			if (!mergeSha || base.repo.id !== repositoryId) {
 				return yield* precondition('The preparation PR is not merged');
 			}
-			return { mergeSha, base: base.ref, defaultBranch: base.repo.default_branch };
+			return { mergeSha, base: base.ref, defaultBranch: base.repo.default_branch, head: pull.head.sha };
 		});
 	}
 	preparedSnapshot(
@@ -857,6 +859,7 @@ export class RepositoryGateway {
 		return Effect.gen(function*() {
 			const token = yield* self.token(repository, repositoryId, { contents: 'read', pull_requests: 'read' });
 			const pull = yield* self.mergedPreparationPull(repository, repositoryId, result, token);
+			if (pull.head !== result.head) return yield* precondition('The preparation PR is not merged');
 			if (pull.mergeSha !== (yield* Effect.fromResult(sha(target)))) {
 				return yield* precondition('Target is not the merged preparation revision');
 			}
@@ -872,18 +875,33 @@ export class RepositoryGateway {
 		repositoryId: number,
 		result: { url: string; head: string },
 		target: string,
-	): Effect.Effect<string | undefined, DomainError> {
+	): Effect.Effect<{ sha: string; extended: boolean } | undefined, DomainError> {
 		const self = this;
 		return Effect.gen(function*() {
 			const token = yield* self.token(repository, repositoryId, { contents: 'read', pull_requests: 'read' });
 			const pull = yield* self.mergedPreparationPull(repository, repositoryId, result, token);
 			if (pull.base !== pull.defaultBranch) return undefined;
+			const extended = pull.head !== result.head;
+			if (extended) {
+				const carried = yield* self.read(
+					comparisonSchema,
+					`/repos/${repository}/compare/${yield* Effect.fromResult(sha(result.head))}...${yield* Effect.fromResult(
+						sha(pull.head),
+					)}`,
+					token,
+				);
+				if (carried.status !== 'ahead') {
+					return yield* precondition('The merged preparation PR no longer carries its version commit');
+				}
+			}
 			const comparison = yield* self.read(
 				comparisonSchema,
 				`/repos/${repository}/compare/${pull.mergeSha}...${yield* Effect.fromResult(sha(target))}`,
 				token,
 			);
-			return comparison.status === 'identical' || comparison.status === 'ahead' ? pull.mergeSha : undefined;
+			return comparison.status === 'identical' || comparison.status === 'ahead'
+				? { sha: pull.mergeSha, extended }
+				: undefined;
 		});
 	}
 	contains(
@@ -903,6 +921,62 @@ export class RepositoryGateway {
 				token,
 			);
 			return comparison.status === 'identical' || comparison.status === 'ahead';
+		});
+	}
+	unchangedSince(
+		repository: string,
+		repositoryId: number,
+		commit: string,
+		target: string,
+		paths: ReadonlySet<string>,
+	): Effect.Effect<boolean, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			if (commit === target) return true;
+			const token = yield* self.token(repository, repositoryId, { contents: 'read' });
+			const comparison = yield* self.read(
+				comparisonSchema,
+				`/repos/${repository}/compare/${yield* Effect.fromResult(sha(commit))}...${yield* Effect.fromResult(
+					sha(target),
+				)}`,
+				token,
+			);
+			if (comparison.status !== 'ahead' || comparison.files.length >= 300) return false;
+			const changed = comparison.files.map(file => String(file.filename));
+			if (changed.some(path => paths.has(path))) return false;
+			if (!changed.some(path => path.startsWith(workflowDirectory))) return true;
+			const called = yield* self.calledWorkflows(
+				repository,
+				[...paths].filter(path => path.startsWith(workflowDirectory)),
+				target,
+				token,
+			);
+			return !changed.some(path => called.has(path));
+		});
+	}
+	private calledWorkflows(
+		repository: string,
+		roots: string[],
+		commit: string,
+		token: string,
+	): Effect.Effect<ReadonlySet<string>, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const seen = new Set<string>();
+			const queue = [...roots];
+			for (let path = queue.shift(); path !== undefined && seen.size < callLimit; path = queue.shift()) {
+				if (seen.has(path)) continue;
+				seen.add(path);
+				const source = yield* self.file(repository, path, commit, token);
+				if (source === null) continue;
+				for (const { document } of workflowDocuments([[path, source]])) {
+					for (const [, job] of liveJobs(document)) {
+						const callee = typeof job.uses === 'string' ? ownWorkflow(job.uses, repository) : undefined;
+						if (callee) queue.push(`${workflowDirectory}${callee.file}`);
+					}
+				}
+			}
+			return seen;
 		});
 	}
 	private mergeCommit(
