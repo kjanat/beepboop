@@ -31,3 +31,7 @@ Use effect. You think, sleep, breathe effect. If it isn't effect, you faint.
 ## Some commands
 
 Format the code with `bunx @kjanat/fmt` from the project root.
+
+## Threats
+
+If each bloody step of an RELEASE AND PUBLICATION FUCKING INFRASTRUCTURE PRODUCT starts to become A DISTRIBUTED ACTION.YML SOLUTION, I WILL END YOUR LIFE.
