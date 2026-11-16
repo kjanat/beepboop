@@ -2247,7 +2247,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private contains(execution: Execution, sha: string, token: string): CoordinatorEffect<boolean, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (sha === execution.sourceSha) return true;
-			if (!execution.eventId.startsWith('observed:')) return false;
+			if (!execution.eventId.startsWith('observed:') && !execution.currentWorkflow) return false;
 			const comparison = yield* (yield* this.gateway).read(
 				comparisonSchema,
 				`/repos/${execution.repository}/compare/${execution.sourceSha}...${sha}`,
@@ -2309,7 +2309,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					`Workflow run ${run.id} succeeded, so it has no failed jobs to re-run. Fix the reported problem and re-run the workflow on GitHub`,
 				);
 			}
-			if (run !== null && run.head_sha === execution.sourceSha) {
+			if (run !== null && (run.head_sha === execution.sourceSha || execution.currentWorkflow)) {
 				yield* gateway.call(
 					`/repos/${execution.repository}/actions/runs/${execution.runId}/rerun-failed-jobs`,
 					token,
@@ -2358,14 +2358,55 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return jobs.filter(job => job.conclusion === 'failure' || job.conclusion === 'timed_out').length === 1;
 		});
 	}
-	recover(id: string, action: 'reconcile' | 'retry', actor: string): Promise<Execution> {
+	private dispatchCurrentWorkflow(execution: Execution): CoordinatorEffect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const clock = yield* Clock.Clock;
+			if (execution.operation !== 'promote' || !['failed', 'cancelled'].includes(execution.state)) {
+				return yield* precondition('Only a failed or cancelled promotion can run the current workflow');
+			}
+			if (execution.attempts === 0 && execution.approvedAt === undefined) {
+				return yield* precondition('Publish this promotion first; it never ran');
+			}
+			const record = yield* (yield* this.store).repository(execution.repositoryId);
+			const current = record
+				&& (record.configuration?.streams[execution.stream]?.promote.workflow?.ref ?? record.defaultBranch);
+			const workflow = execution.workflow && current && current !== execution.workflow.ref
+				? { ...execution.workflow, ref: current }
+				: execution.workflow;
+			if (!(yield* this.versionTagged(execution))) {
+				return yield* precondition(
+					`The version tags of ${execution.version ?? 'this release'} do not all target ${
+						execution.sourceSha.slice(0, 12)
+					}; retry the operation instead`,
+				);
+			}
+			yield* this.put({
+				...execution,
+				state: 'ready',
+				currentWorkflow: true,
+				supersededRuns: [...(execution.supersededRuns ?? []), ...(execution.runId ? [execution.runId] : [])],
+				runId: undefined,
+				runAttempt: undefined,
+				workflowSha: undefined,
+				artifacts: execution.artifacts.filter(artifact => artifact.runId !== execution.runId),
+				...(workflow ? { workflow } : {}),
+				reason: `Dispatching the current ${execution.workflow?.file ?? 'workflow'} for ${
+					execution.sourceSha.slice(0, 12)
+				}`,
+				publications: reopened(execution.publications),
+			});
+			yield* this.requestReconcile(clock.currentTimeMillisUnsafe());
+		});
+	}
+	recover(id: string, action: 'reconcile' | 'retry' | 'redispatch', actor: string): Promise<Execution> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
 				const clock = yield* Clock.Clock;
 
 				if (action === 'reconcile') yield* this.remove(`quarantine:${id}`);
 				const execution = yield* this.get(id);
-				if (action === 'retry') {
+				if (action === 'redispatch') yield* this.dispatchCurrentWorkflow(execution);
+				else if (action === 'retry') {
 					if (!['failed', 'cancelled'].includes(execution.state)) {
 						return yield* precondition('Only failed or cancelled operations can be retried');
 					}

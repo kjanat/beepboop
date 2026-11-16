@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `beepboop runs recover ID --action redispatch` runs the current workflow of the default branch for a failed promotion whose version tag already targets its release commit, and follows the release to its end. A retry re-runs the old workflow, so a fix in the workflow could not release a tagged version.
 - `actions/generate-homebrew` and `bun run homebrew` write a Homebrew cask from cask metadata and the release checksums. Each architecture block carries its own `version`, `sha256` and `url`, the URL uses `#{version}`, and a prefixed tag adds a `livecheck` regex. `actions/generate-scoop` and `bun run scoop` write a Scoop manifest with each architecture's URL, executables and hash. See [Homebrew and Scoop](docs/homebrew-scoop.md).
 - `kjanat/beepboop/actions/pull-request` commits the changes in a workflow's checkout as the Beepboop App and opens or updates a pull request. It takes `branch`, `title`, `body`, `commit-message`, `base` and `add-paths`, requests the repository token itself and creates a verified commit through the GitHub API. https://github.com/kjanat/beepboop/issues/53
 - The runs page has a repository filter, `/runs?repository=<owner>/<name>`, and folds the publications and operations of each release. A release that waits, runs or needs attention starts unfolded.
