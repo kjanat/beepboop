@@ -164,7 +164,11 @@ function binaryRows(look: Look, binaries: BinaryProgress) {
 }
 
 function snapshot(client: Client, followed: Followed): Effect.Effect<Tracked[], CLIError> {
-	return client.call(routes.executionsList, {}).pipe(
+	return client.call(routes.executionsList, {
+		repository: followed.repository,
+		stream: followed.stream,
+		version: followed.version,
+	}).pipe(
 		Effect.flatMap(rows =>
 			Effect.try({
 				try: () =>

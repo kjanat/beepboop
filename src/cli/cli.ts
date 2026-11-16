@@ -292,7 +292,7 @@ const runs = group('runs').description('Follow, publish, cancel and recover rele
 			.details(
 				[
 					'`reconcile` rereads the operation from GitHub. `retry` re-runs the failed jobs of its workflow run, or dispatches a new run.',
-					'`redispatch` runs the current workflow of the default branch for a failed or cancelled promotion whose version tags already target its release commit. The workflow builds that commit. Use it when the fix for the failure is in the workflow and the version tag cannot move. The command follows the release.',
+					'`redispatch` runs the workflow at the head of the stream workflow ref for a failed or cancelled promotion whose version tags already target its release commit. The workflow must check out the `sourceSha` from `actions/begin`. Use it when the fix for the failure is in the workflow and the version tag cannot move. The command follows the release.',
 				].join('\n\n'),
 			)
 			.example('beepboop runs recover EXECUTION_ID --action retry', 'Re-run the failed jobs')

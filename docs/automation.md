@@ -491,13 +491,16 @@ workflow branch no longer exists.
 
 When the cause of the failure is in the workflow itself, re-running the failed
 jobs repeats it, because a re-run keeps the workflow file of the original
-commit. `beepboop runs recover ID --action redispatch` dispatches the current
-workflow of the default branch instead, for a failed or cancelled promotion
-whose version tags already target its release commit. The run builds that
-commit: it checks out the `sourceSha` that `actions/begin` returns, not
-`github.sha`. Beepboop accepts the run although the branch moved past the
-release commit, and the release keeps its version tag, its draft and its
-published packages. The command follows the release like `beepboop release`.
+commit. `beepboop runs recover ID --action redispatch` dispatches the workflow
+at the head of the stream's workflow ref instead, such as the default branch,
+for a failed or cancelled promotion whose version tags already target its
+release commit. The workflow must check out the `sourceSha` that
+`actions/begin` returns before it builds. The checkout that setup generates
+does this, and Beepboop cannot check what a hand-written workflow builds.
+Beepboop accepts the run while the ref contains the release commit, and the
+release keeps its version tag, its draft and its published packages. Outputs
+of the superseded run are dropped. The command follows the release like
+`beepboop release`.
 
 ## Start a release
 

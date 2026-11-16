@@ -12,6 +12,7 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema } from 'effect';
 import type { Execution } from '@/automation/types';
+import { routes } from '@/contract/routes';
 import { decodeSync, mutableArray, mutableStruct } from '@/schema';
 
 type Api = (path: string, body?: unknown) => Promise<Reply>;
@@ -294,7 +295,10 @@ test('runs recover --action redispatch follows the release of the current workfl
 			await world.wait(16_000);
 		})
 	);
+	const calls = spyOn(client, 'call');
 	const followed = await runCli(['runs', 'recover', promotion.id, '--action', 'redispatch']);
+	expect(calls.mock.calls.filter(([route]) => route === routes.executionsList).map(([, request]) => request))
+		.toContainEqual({ repository: 'octo/widget', stream: 'main', version: '1.0.0' });
 	expect(followed.exitCode).toBe(0);
 	const output = followed.stdout.join('');
 	expect(output).toContain('✔ Released 1.0.0 of octo/widget');
@@ -311,6 +315,36 @@ test('runs recover --action redispatch follows the release of the current workfl
 		{ type: 'spinner:start', text: `Dispatching ${promotion.id.slice(0, 12)}` },
 		{ type: 'spinner:succeed', text: `Release run https://github.com/octo/widget/actions/runs/${current?.id}` },
 	]));
+}, 60_000);
+
+test('a redispatch drops the outputs of the superseded run', async () => {
+	const { repository, api, merged } = await mergedSetup(true);
+	const [promotion] = await promotions(api);
+	const run = repository.runs.find(entry => entry.inputs.beepboop_execution_id === promotion?.id);
+	if (!promotion || !run) throw new Error('Expected a dispatched release');
+	run.status = 'in_progress';
+	const identity = runIdentity(repository, run, 'release.yml');
+	await begin(world, identity, promotion.id, 'main', 'promote');
+	const artifact = {
+		id: 7,
+		runId: run.id,
+		name: 'dist',
+		digest: `sha256:${'a'.repeat(64)}`,
+		expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+	};
+	await runAction(world, 'report', identity, {
+		EXECUTION_ID: promotion.id,
+		PUBLICATIONS: '[]',
+		ARTIFACTS: JSON.stringify([artifact]),
+	});
+	expect((await promotions(api))[0]?.artifacts).toEqual([artifact]);
+	run.status = 'completed';
+	run.conclusion = 'failure';
+	await world.workflowRun(repository, run, 'failure', 'workflow_dispatch');
+	await world.wait(16_000);
+	world.github.recordTag(repository, 'v1.0.0', 'f'.repeat(40), merged.sha, true);
+	expect((await api('/api/executions/recover', { id: promotion.id, action: 'redispatch' })).status).toBe(200);
+	expect((await promotions(api))[0]?.artifacts).toEqual([]);
 }, 60_000);
 
 test('a redispatch refuses a release whose version tag targets another commit', async () => {

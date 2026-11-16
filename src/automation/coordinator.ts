@@ -2367,9 +2367,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (execution.attempts === 0 && execution.approvedAt === undefined) {
 				return yield* precondition('Publish this promotion first; it never ran');
 			}
-			if (execution.artifacts.some(artifact => Date.parse(artifact.expiresAt) <= clock.currentTimeMillisUnsafe())) {
-				return yield* precondition('Artifacts expired; use the configured preparation/recovery producer');
-			}
 			if (!(yield* this.versionTagged(execution))) {
 				return yield* precondition(
 					`The version tags of ${execution.version ?? 'this release'} do not all target ${
@@ -2385,6 +2382,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				runId: undefined,
 				runAttempt: undefined,
 				workflowSha: undefined,
+				artifacts: execution.artifacts.filter(artifact => artifact.runId !== execution.runId),
 				reason: `Dispatching the current ${execution.workflow?.file ?? 'workflow'} for ${
 					execution.sourceSha.slice(0, 12)
 				}`,
