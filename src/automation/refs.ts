@@ -1,6 +1,7 @@
 import { Effect, Schema } from 'effect';
 import { matchesPackage, packageId } from '@/automation/package-identity';
 import type { Package } from '@/automation/types';
+import type { DistributionManifest, DistributionProvenance } from '@/contract/distribution';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import type { SemVer } from '@/contract/version';
@@ -30,6 +31,8 @@ export interface RefChange {
 	replaces?: boolean;
 }
 export interface DistributionEvidence {
+	manifest?: DistributionManifest;
+	provenance?: DistributionProvenance;
 	sourceSha: string;
 	commit: string;
 	tree: string;

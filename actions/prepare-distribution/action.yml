@@ -1,0 +1,32 @@
+name: Prepare release distribution
+description: Upload generated Git blobs and produce the manifest to attest before publication
+inputs:
+  context:
+    description: Context output from the begin action
+    required: true
+  files:
+    description: JSON array of configured exact generated distribution paths
+    required: true
+  token:
+    description: Destination repository token with contents write permission
+    required: true
+outputs:
+  manifest-path:
+    description: Canonical distribution manifest path
+    value: ${{ steps.prepare.outputs.manifest-path }}
+  subject-checksums:
+    description: Checksums file for the manifest and generated artifacts
+    value: ${{ steps.prepare.outputs.subject-checksums }}
+runs:
+  using: composite
+  steps:
+    - name: Setup Bun
+      uses: $/actions/deps/bun
+    - name: Prepare distribution
+      id: prepare
+      shell: bash
+      env:
+        CONTEXT: ${{ inputs.context }}
+        DISTRIBUTION_PATHS: ${{ inputs.files }}
+        DISTRIBUTION_TOKEN: ${{ inputs.token }}
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/distribution.ts"

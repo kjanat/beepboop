@@ -557,6 +557,15 @@ function integrate(
 		}
 	}
 	const integratedBeginIndex = steps.findIndex(step => actionRole(step.uses) === 'begin');
+	steps = steps.map((step, index) => {
+		const inputs = object(step.with);
+		return (distributionFiles !== undefined || operation === 'aliases' && choice.tagPrefix !== undefined)
+				&& typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@')
+				&& !inputs.repository && !inputs.path
+				&& (index < integratedBeginIndex && inputs.ref === undefined || inputs.ref === sourceRef)
+			? { ...step, with: { ...inputs, 'fetch-depth': 1 } }
+			: step;
+	});
 	const approvedIndex = steps.findIndex((step, index) =>
 		index > integratedBeginIndex && typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@')
 		&& object(step.with).ref === sourceRef
@@ -793,14 +802,64 @@ function integrate(
 			);
 		}
 	}
+	const ownedDistribution = (step: Record<string, unknown>) =>
+		step.id === 'beepboop_distribution'
+		&& typeof step.uses === 'string'
+		&& /^(?:(?:\$|\.)\/actions\/|kjanat\/beepboop\/actions\/)prepare-distribution(?:@|$)/.test(step.uses);
+	const ownedAttestation = (step: Record<string, unknown>) =>
+		step.id === 'beepboop_attest'
+		&& typeof step.uses === 'string' && step.uses.startsWith('actions/attest@');
+	if (distributionFiles !== undefined) {
+		steps = steps.filter(step => !ownedDistribution(step) && !ownedAttestation(step));
+	}
+	if (distributionFiles?.length) {
+		const before = steps.findIndex(refStep), token = object(steps[before]?.with).token;
+		const tokenId = typeof token === 'string'
+			? /^\$\{\{\s*steps\.([\w-]+)\.outputs\.token\s*\}\}$/.exec(token)?.[1]
+			: undefined;
+		const issued = steps.slice(0, before).some(step =>
+			step.id === tokenId && typeof step.uses === 'string'
+			&& /^(?:(?:\$|\.)\/actions\/|kjanat\/beepboop\/actions\/)token(?:@|$)/.test(step.uses)
+			&& object(step.with)['permission-contents'] === 'write'
+		);
+		if (!issued) fail('distribution preparation needs a contents-write Beepboop token before publication');
+		else if (steps.some(step => step.id === 'beepboop_distribution' || step.id === 'beepboop_attest')) {
+			fail('distribution preparation step IDs are already in use');
+		} else {
+			steps.splice(
+				before,
+				0,
+				{
+					id: 'beepboop_distribution',
+					name: 'Prepare action distribution manifest',
+					uses: action('prepare-distribution'),
+					with: { context, files: JSON.stringify(distributionFiles), token },
+				},
+				{
+					id: 'beepboop_attest',
+					name: 'Attest action distribution',
+					uses: pinned('attest'),
+					with: { 'subject-checksums': expression("steps.beepboop_distribution.outputs['subject-checksums']") },
+				},
+			);
+		}
+	}
 	const refs = steps.findIndex(refStep);
 	if (refs >= 0 && distributionFiles) {
 		const step = steps[refs];
 		if (step) {
-			const { files: _files, ...inputs } = object(step.with);
+			const { files: _files, 'manifest-path': _manifest, 'bundle-path': _bundle, ...inputs } = object(step.with);
 			steps[refs] = {
 				...step,
-				with: { ...inputs, ...(distributionFiles.length ? { files: JSON.stringify(distributionFiles) } : {}) },
+				with: {
+					...inputs,
+					...(distributionFiles.length
+						? {
+							'manifest-path': expression("steps.beepboop_distribution.outputs['manifest-path']"),
+							'bundle-path': expression("steps.beepboop_attest.outputs['bundle-path']"),
+						}
+						: {}),
+				},
 			};
 		}
 	}
@@ -869,6 +928,15 @@ function integrate(
 			contents: 'write',
 			'id-token': 'write',
 			attestations: 'write',
+		});
+	}
+	if (distributionFiles?.length) {
+		document.setIn(['jobs', jobName, 'permissions'], {
+			...granted,
+			contents: binaries ? 'write' : granted.contents ?? 'read',
+			'id-token': 'write',
+			attestations: 'write',
+			'artifact-metadata': 'write',
 		});
 	}
 	if (!blockers.length && job['timeout-minutes'] === undefined) {

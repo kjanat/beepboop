@@ -1,8 +1,8 @@
 import { DurableObject } from 'cloudflare:workers';
 import { Clock, Effect, Layer, Result, Schema, Semaphore } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
-import type { DistributionFile } from '@/automation/distribution';
-import { createDistribution, readDistributionFile, readDistributionMode } from '@/automation/distribution';
+import { authorizeDistribution, createDistribution } from '@/automation/distribution';
+import type { DistributionSubmission } from '@/contract/distribution';
 import {
 	createExecution,
 	dependenciesReady,
@@ -1298,7 +1298,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			{ executionId: id },
 		);
 	}
-	refs(id: string, identity: WorkflowIdentity, complete = false, files: DistributionFile[] = []): Promise<RefPlan> {
+	refs(
+		id: string,
+		identity: WorkflowIdentity,
+		complete = false,
+		submission?: DistributionSubmission,
+	): Promise<RefPlan> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
 				const execution = yield* this.get(id);
@@ -1348,18 +1353,21 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							return yield* precondition('Distribution publication requires signed version refs');
 						}
 						if (!this.env.SIGNER) return yield* precondition('Distribution publication requires the signing service');
+						if (!submission) return yield* precondition('Distribution publication requires an attested manifest');
 						distribution = yield* createDistribution(gateway, {
+							executionId: execution.id,
 							repository: execution.repository,
 							repositoryId: execution.repositoryId,
 							sourceSha: execution.sourceSha,
 							version,
 							paths: policy.distribution.files,
-							files,
+							submission,
+							identity,
 							signer: this.env.SIGNER,
 						});
 						target = distribution.commit;
 					} else {
-						if (files.length) return yield* precondition('No distribution files are configured');
+						if (submission) return yield* precondition('No distribution files are configured');
 						if (policy.phase === 'aliases') {
 							const targets = new Set<string>();
 							const visited = new Set<string>();
@@ -1401,40 +1409,20 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 				const plan = execution.refPlan;
 				if (!complete && plan.distribution && policy.distribution) {
-					if (
-						files.length !== policy.distribution.files.length
-						|| new Set(files.map(file => file.path)).size !== files.length
-						|| files.some(file => !policy.distribution?.files.includes(file.path))
-					) return yield* precondition('Distribution files differ from the frozen plan');
-					const token = yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
-					for (const file of files) {
-						if (
-							(yield* readDistributionFile(
-								gateway,
-								execution.repository,
-								file.path,
-								plan.distribution.commit,
-								file.encoding,
-								token,
-							)) !== file.after
-							|| (yield* readDistributionFile(
-								gateway,
-								execution.repository,
-								file.path,
-								execution.sourceSha,
-								file.encoding,
-								token,
-							))
-								!== file.before
-							|| (yield* readDistributionMode(
-								gateway,
-								execution.repository,
-								file.path,
-								plan.distribution.commit,
-								token,
-							))
-								!== (file.mode ?? '100644')
-						) return yield* precondition('Distribution files differ from the frozen plan');
+					if (!submission || !plan.distribution.manifest || !plan.distribution.provenance) {
+						return yield* precondition('Distribution publication requires an attested manifest');
+					}
+					const authorized = yield* authorizeDistribution({
+						executionId: execution.id,
+						repository: execution.repository,
+						repositoryId: execution.repositoryId,
+						sourceSha: execution.sourceSha,
+						paths: policy.distribution.files,
+						submission,
+						identity,
+					});
+					if (JSON.stringify(authorized.manifest.files) !== JSON.stringify(plan.distribution.manifest.files)) {
+						return yield* precondition('Distribution files differ from the frozen plan');
 					}
 				}
 				if (complete) {

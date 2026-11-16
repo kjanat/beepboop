@@ -1,4 +1,5 @@
 import { Schema, Struct } from 'effect';
+import { distributionManifestSchema, distributionProvenanceSchema } from '@/contract/distribution';
 import type { ChannelOutcome, RegistryOutcome } from '@/automation/destinations';
 import { completion } from '@/automation/execution';
 import type { ResolvedInput } from '@/automation/outputs';
@@ -244,6 +245,8 @@ const resolvedInput: Schema.Codec<ResolvedInput, unknown> = mutableStruct({
 });
 const refPlan: Schema.Codec<RefPlan, unknown> = mutableStruct({
 	distribution: Schema.optional(mutableStruct({
+		manifest: Schema.optional(distributionManifestSchema),
+		provenance: Schema.optional(distributionProvenanceSchema),
 		sourceSha: Schema.String,
 		commit: Schema.String,
 		tree: Schema.String,

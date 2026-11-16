@@ -192,7 +192,7 @@ export const workflowEndpoints = {
 		routes.workflowRefsPlan,
 		(input, { identity, service }) =>
 			fromPromise(() =>
-				service.coordinator(identity.repositoryId).refs(input.executionId, identity, false, input.files ?? [])
+				service.coordinator(identity.repositoryId).refs(input.executionId, identity, false, input.distribution)
 			),
 	),
 	workflowRefsComplete: workflow(

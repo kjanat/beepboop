@@ -1398,16 +1398,28 @@ distribution and require immutable GitHub Releases:
 }
 ```
 
-Build and test those files after `actions/begin`, then pass the same JSON path
-array to `actions/publish-refs` through its `files` input. Paths are exact file
-names, outside Git internals and workflow files. Every configured file must be
-present once. Beepboop compares the source bytes, signs a commit that overlays
-the generated files onto the reviewed source tree, and signs a two-parent merge
-whose tree is the original source tree. The signing service must be configured,
-and GitHub must verify both commit signatures.
+Build and test those files after `actions/begin` checks out the reviewed source
+SHA. Request a Beepboop token with contents write permission, then call
+`actions/prepare-distribution` with the begin context, that token and the exact
+JSON file list. The runner uploads the generated Git blobs directly to GitHub
+and prepares a manifest mapping each complete repository-relative path to its
+Git blob, mode and digest. Paths exclude Git internals and workflow files; every
+configured file must be present once.
+
+Run the pinned `actions/attest` action with `subject-checksums` from
+`steps.beepboop_distribution.outputs.subject-checksums`. This attests the exact
+file subjects and the manifest that binds their paths to Git blobs. Grant the
+job `id-token: write`, `attestations: write` and `artifact-metadata: write`.
+Pass the preparation step's `manifest-path` and the attestation step's
+`bundle-path` to `actions/publish-refs`. The runner supplies metadata and the
+attestation proof to Beepboop; artifact bytes stay on the runner and GitHub.
+Beepboop verifies the signed manifest-to-blob mapping and the workflow authority
+before signing the distribution commit and a two-parent merge whose tree is
+the original source tree. The signing service must be configured, and GitHub
+must verify both commit signatures.
 
 The authorized ref plan freezes the distribution target. Retries must provide
-the same bytes. The runtime verifies the signed commits, tree and parents, then
+the same attested mapping. The runtime verifies the signed commits, tree and parents, then
 atomically pushes the patch tag and ancestry merge with expected-old leases.
 The default branch keeps its source-only tree while the distribution becomes
 its ancestor. An aliases operation that depends on this promotion targets the

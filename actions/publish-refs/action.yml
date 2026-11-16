@@ -4,9 +4,12 @@ inputs:
   token:
     description: Destination repository token with contents write permission
     required: true
-  files:
-    description: JSON array of configured generated distribution paths; omit for source-only releases
-    default: "[]"
+  manifest-path:
+    description: Canonical manifest from prepare-distribution; omit for source-only releases
+    default: ""
+  bundle-path:
+    description: Sigstore bundle from the built-in provenance attestation action
+    default: ""
   service:
     description: Beepboop service origin
     default: https://beepboop.kjanat.dev
@@ -21,7 +24,8 @@ runs:
       shell: bash
       env:
         SERVICE_ORIGIN: "${{ inputs.service }}"
-        DISTRIBUTION_PATHS: "${{ inputs.files }}"
+        DISTRIBUTION_MANIFEST: "${{ inputs.manifest-path }}"
+        DISTRIBUTION_BUNDLE: "${{ inputs.bundle-path }}"
         SCRIPT: "${{ github.action_path }}/../runtime/client.ts"
       run: bun "${SCRIPT}" refs-plan
     - name: Push refs

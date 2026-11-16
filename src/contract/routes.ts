@@ -1,5 +1,6 @@
 import { Schema } from 'effect';
 import { changesResponse } from '@/contract/changes';
+import { distributionSubmissionSchema } from '@/contract/distribution';
 import { approvalShaPattern } from '@/contract/ids';
 import {
 	claimStep,
@@ -27,7 +28,15 @@ import {
 } from '@/contract/views';
 import { shaSchema as sha, textSchema as text } from '@/model';
 import type { Contract, Decoded, Encoded } from '@/schema';
-import { looseStruct, mutableArray, mutableRecord, mutableStruct, numberFromInput, refined } from '@/schema';
+import {
+	looseStruct,
+	mutableArray,
+	mutableRecord,
+	mutableStruct,
+	numberFromInput,
+	refined,
+	strictStruct,
+} from '@/schema';
 
 export type Method = 'GET' | 'POST';
 export type Auth = 'admin' | 'elevated' | 'workflow' | 'workflow-token';
@@ -535,16 +544,7 @@ export const routes = {
 		path: '/api/workflow/refs-plan',
 		auth: 'workflow',
 		idempotent: true,
-		request: mutableStruct({
-			executionId: text,
-			files: Schema.optional(mutableArray(mutableStruct({
-				path: text,
-				before: Schema.String,
-				after: Schema.String,
-				encoding: Schema.optional(Schema.Literal('base64')),
-				mode: Schema.optional(Schema.Literals(['100644', '100755'])),
-			}))),
-		}),
+		request: strictStruct({ executionId: text, distribution: Schema.optional(distributionSubmissionSchema) }),
 		response: Schema.Unknown,
 	}),
 	workflowRefsComplete: route({

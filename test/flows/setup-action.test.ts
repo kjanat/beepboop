@@ -1,10 +1,6 @@
 import { expect, test } from 'bun:test';
-import { rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { requestBody } from '@root/actions/runtime/protocol.ts';
-import { materialize } from '@root/test/support/actions.ts';
 import { npmManifest } from '@root/test/support/repositories.ts';
-import { Effect, Result } from 'effect';
+import { Effect } from 'effect';
 import { parse, stringify } from 'yaml';
 import { discover } from '@/automation/managers';
 import { previewSetup } from '@/automation/setup';
@@ -341,31 +337,42 @@ test('distribution adoption publishes the reviewed file list and builds using pa
 	expect(steps.find((step: { uses?: string }) => step.uses?.includes('oven-sh/setup-bun@'))).toEqual({
 		uses: 'oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6',
 	});
-	const input = steps.find((step: { uses?: string }) => step.uses?.includes('/publish-refs@')).with.files;
-	const checkout = materialize(source.files);
-	try {
-		for (const file of files) await Bun.write(join(checkout.dir, file), `built ${file}`);
-		const request = requestBody('refs-plan', {
-			EXECUTION_ID: 'execution',
-			DISTRIBUTION_PATHS: input,
-			GITHUB_WORKSPACE: checkout.dir,
-		}, 0);
-		expect(Result.isSuccess(request)).toBe(true);
-		if (Result.isSuccess(request)) {
-			expect(request.success).toEqual({
-				executionId: 'execution',
-				files: files.map(path => ({
-					path,
-					before: '',
-					encoding: 'base64',
-					mode: '100644',
-					after: Buffer.from(`built ${path}`).toString('base64'),
-				})),
-			});
-		}
-	} finally {
-		rmSync(checkout.dir, { recursive: true, force: true });
-	}
+	const prepareIndex = steps.findIndex((step: { id?: string }) => step.id === 'beepboop_distribution');
+	const attestIndex = steps.findIndex((step: { id?: string }) => step.id === 'beepboop_attest');
+	const refsIndex = steps.findIndex((step: { uses?: string }) => step.uses?.includes('/publish-refs@'));
+	const buildIndex = steps.findIndex((step: { run?: string }) => step.run?.includes('bun run build'));
+	const tokenIndex = steps.findIndex((step: { id?: string }) => step.id === 'beepboop_token');
+	const reviewedIndex = steps.findIndex((step: { with?: { ref?: string } }) => step.with?.ref?.includes('sourceSha'));
+	expect(buildIndex).toBeGreaterThan(reviewedIndex);
+	expect(reviewedIndex).toBeGreaterThanOrEqual(0);
+	expect(tokenIndex).toBeGreaterThanOrEqual(0);
+	expect(buildIndex).toBeLessThan(prepareIndex);
+	expect(tokenIndex).toBeLessThan(prepareIndex);
+	expect(prepareIndex).toBeLessThan(attestIndex);
+	expect(attestIndex).toBeLessThan(refsIndex);
+	expect(JSON.parse(steps[prepareIndex].with.files)).toEqual(files);
+	expect(steps[prepareIndex].with.context).toBe('${{ steps.beepboop.outputs.context }}');
+	expect(steps[prepareIndex].with.token).toBe(steps[refsIndex].with.token);
+	expect(steps[attestIndex]).toMatchObject({
+		uses: 'actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6',
+		with: { 'subject-checksums': "${{ steps.beepboop_distribution.outputs['subject-checksums'] }}" },
+	});
+	expect(steps[refsIndex].with).toMatchObject({
+		'manifest-path': "${{ steps.beepboop_distribution.outputs['manifest-path'] }}",
+		'bundle-path': "${{ steps.beepboop_attest.outputs['bundle-path'] }}",
+	});
+	expect(steps[refsIndex].with.files).toBeUndefined();
+	expect(workflow.jobs.promote.permissions).toMatchObject({
+		contents: 'read',
+		'id-token': 'write',
+		attestations: 'write',
+		'artifact-metadata': 'write',
+	});
+	expect(
+		steps.filter((step: { uses?: string }) => step.uses?.startsWith('actions/checkout@')).every((
+			step: { with: { 'fetch-depth': number } },
+		) => step.with['fetch-depth'] === 1),
+	).toBe(true);
 	expect(content).toContain('bun run build');
 	expect(content).not.toContain('bun-version');
 	const refreshed = await preview(
@@ -374,11 +381,17 @@ test('distribution adoption publishes the reviewed file list and builds using pa
 	expect(refreshed.blockers).toEqual([]);
 	expect(refreshed.choices.streams[0]?.actionRelease).toEqual({ kind: 'distribution', files });
 	expect(refreshed.edits).toEqual([]);
+	workflow.jobs.promote.steps.push({
+		id: 'owner_attestation',
+		uses: 'actions/attest@v4',
+		with: { 'subject-path': 'owner.bin' },
+	});
 	const committed = snapshot({
 		...source.files,
 		...Object.fromEntries(plan.edits.map(edit => [edit.path, edit.after])),
 		'output/start.mjs': 'built',
 		'output/finish.mjs': 'built',
+		'.github/workflows/release.yml': stringify(workflow),
 	});
 	const switched = await preview(committed, {
 		streams: [{
@@ -393,11 +406,16 @@ test('distribution adoption publishes the reviewed file list and builds using pa
 		step.uses?.includes('/publish-refs@')
 	);
 	expect(switchedRefs.with.files).toBeUndefined();
+	expect(switchedRefs.with['manifest-path']).toBeUndefined();
+	expect(switchedRefs.with['bundle-path']).toBeUndefined();
 	expect(
-		Result.getOrThrow(
-			requestBody('refs-plan', { EXECUTION_ID: 'execution', DISTRIBUTION_PATHS: switchedRefs.with.files }, 0),
+		switchedWorkflow.jobs.promote.steps.some((step: { id?: string }) =>
+			step.id === 'beepboop_attest' || step.id === 'beepboop_distribution'
 		),
-	).toEqual({ executionId: 'execution' });
+	).toBe(false);
+	expect(switchedWorkflow.jobs.promote.steps.some((step: { id?: string }) => step.id === 'owner_attestation')).toBe(
+		true,
+	);
 	const untouched = await preview(source, {
 		streams: choices.streams.map(({ actionRelease: _action, ...stream }) => stream),
 	});

@@ -1,144 +1,61 @@
 import { Clock, Effect, Schema } from 'effect';
+import type { WorkflowIdentity } from '@/automation/auth';
+import { verifyDistributionAttestation } from '@/automation/distribution-attestation';
 import type { RepositoryGateway } from '@/automation/github';
 import { createdSchema, gitCommitSchema, gitRefSchema, repositorySchema } from '@/automation/github-resources';
 import type { DistributionEvidence, TagSigner } from '@/automation/refs';
-import { repositoryNamePattern } from '@/automation/repository-name';
-import type { Edit } from '@/automation/types';
+import type { DistributionSubmission } from '@/contract/distribution';
+import { parseDistributionManifest, safeDistributionPath } from '@/contract/distribution';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
-import { shaPattern } from '@/contract/ids';
 import { semVer } from '@/contract/version';
 import { fromPromise, fromSync } from '@/failure';
 
 export type { DistributionEvidence } from '@/automation/refs';
 
-export interface DistributionFile extends Edit {
-	encoding?: 'base64';
-	mode?: '100644' | '100755';
-}
-
-interface DistributionRequest {
+interface DistributionAuthorization {
 	repository: string;
 	repositoryId: number;
 	sourceSha: string;
-	version: string;
+	executionId: string;
 	paths: readonly string[];
-	files: readonly DistributionFile[];
+	submission: DistributionSubmission;
+	identity: WorkflowIdentity;
+}
+interface DistributionRequest extends DistributionAuthorization {
+	version: string;
 	signer: TagSigner;
 }
+type Gateway = Pick<RepositoryGateway, 'token' | 'read'>;
 
-type Gateway = Pick<RepositoryGateway, 'token' | 'read' | 'file'>;
-
-export function readDistributionMode(
-	gateway: Gateway,
-	repository: string,
-	path: string,
-	ref: string,
-	token: string,
-): Effect.Effect<DistributionFile['mode'], DomainError> {
+export function authorizeDistribution(request: DistributionAuthorization) {
 	return Effect.gen(function*() {
-		let tree = ref;
-		const parts = path.split('/');
-		for (const [index, part] of parts.entries()) {
-			const entries = yield* gateway.read(
-				Schema.Struct({
-					tree: Schema.Array(Schema.Struct({ path: Schema.String, mode: Schema.String, sha: Schema.String })),
-				}),
-				`/repos/${repository}/git/trees/${tree}`,
-				token,
-			);
-			const entry = entries.tree.find(entry => entry.path === part);
-			if (!entry) return undefined;
-			if (index === parts.length - 1) {
-				if (entry.mode === '100644' || entry.mode === '100755') return entry.mode;
-				return yield* precondition(`Unsupported distribution file mode: ${path}`);
-			}
-			if (entry.mode !== '040000' || !shaPattern.test(entry.sha)) {
-				return yield* precondition(`Unsupported distribution directory: ${path}`);
-			}
-			tree = entry.sha;
-		}
-		return undefined;
-	});
-}
-
-function canonicalBase64(value: string): boolean {
-	try {
-		return btoa(atob(value)) === value;
-	} catch {
-		return false;
-	}
-}
-
-/** Read bytes through Git blobs, including files omitted by the Contents API's size limit. */
-export function readDistributionFile(
-	gateway: Gateway,
-	repository: string,
-	path: string,
-	ref: string,
-	encoding: DistributionFile['encoding'],
-	token: string,
-): Effect.Effect<string, DomainError> {
-	if (encoding !== 'base64') return gateway.file(repository, path, ref, token).pipe(Effect.map(value => value ?? ''));
-	return Effect.gen(function*() {
-		const metadata = yield* gateway.read(
-			Schema.NullOr(Schema.Struct({ sha: Schema.String, type: Schema.String })),
-			`/repos/${repository}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${
-				encodeURIComponent(ref)
-			}`,
-			token,
-		);
-		if (metadata === null) return '';
-		if (metadata.type !== 'file' || !shaPattern.test(metadata.sha)) {
-			return yield* precondition(`Unsupported distribution source file: ${path}`);
-		}
-		const blob = yield* gateway.read(
-			Schema.Struct({ encoding: Schema.String, content: Schema.String }),
-			`/repos/${repository}/git/blobs/${metadata.sha}`,
-			token,
-		);
-		const content = blob.content.replace(/\s/g, '');
-		if (blob.encoding !== 'base64' || !canonicalBase64(content)) {
-			return yield* precondition(`Unsupported distribution source encoding: ${path}`);
-		}
-		return content;
-	});
-}
-
-function safePath(path: string): boolean {
-	return path.length > 0 && !path.startsWith('/') && !path.includes('\\')
-		&& !path.split('/').some(part => !part || part === '.' || part === '..' || part.toLowerCase() === '.git')
-		&& path.toLowerCase() !== '.github' && path.toLowerCase() !== '.github/workflows'
-		&& !path.toLowerCase().startsWith('.github/workflows/');
-}
-
-function validateFiles(paths: readonly string[], files: readonly DistributionFile[]): Effect.Effect<void, DomainError> {
-	return Effect.gen(function*() {
-		const permitted = new Set(paths);
-		if (permitted.size === 0 || permitted.size !== paths.length || paths.some(path => !safePath(path))) {
-			return yield* precondition('Distribution paths must be unique exact file paths outside Git and workflows');
-		}
-		if (paths.some(path => paths.some(other => other !== path && path.startsWith(`${other}/`)))) {
-			return yield* precondition('Distribution paths must name files rather than overlapping directories');
-		}
-		const incoming = new Set(files.map(file => file.path));
+		const { repository, repositoryId, sourceSha, executionId, paths, submission, identity } = request;
+		const manifest = yield* Effect.fromResult(parseDistributionManifest(submission.manifest));
 		if (
-			incoming.size !== files.length || incoming.size !== permitted.size
-			|| files.some(file => !permitted.has(file.path))
+			manifest.executionId !== executionId || manifest.repository !== repository
+			|| manifest.repositoryId !== repositoryId
+			|| manifest.sourceSha !== sourceSha || manifest.repository !== identity.repository
+			|| manifest.repositoryId !== identity.repositoryId || manifest.workflowSha !== identity.workflowSha
+			|| manifest.workflowRef !== identity.workflowRef || manifest.runSha !== identity.sha
+			|| manifest.runId !== identity.runId || manifest.runAttempt !== identity.attempt
+		) {
+			return yield* precondition('Distribution manifest does not match the authorized release and workflow run');
+		}
+		const permitted = new Set(paths);
+		if (
+			!paths.length || paths.length !== permitted.size || paths.some(path => !safeDistributionPath(path))
+			|| paths.length !== manifest.files.length || manifest.files.some(file => !permitted.has(file.path))
 		) {
 			return yield* precondition('Distribution files must match every configured path exactly once');
 		}
-		if (files.some(file => file.after.length === 0)) {
-			return yield* precondition('Distribution files cannot be deleted or empty');
-		}
-		if (files.some(file => file.mode !== undefined && file.mode !== '100644' && file.mode !== '100755')) {
-			return yield* precondition('Distribution file mode must be a regular file mode');
-		}
-		if (
-			files.some(file => file.encoding === 'base64' && (!canonicalBase64(file.before) || !canonicalBase64(file.after)))
-		) {
-			return yield* precondition('Distribution file bytes must use canonical base64 encoding');
-		}
+		const provenance = yield* verifyDistributionAttestation({
+			manifest,
+			manifestText: submission.manifest,
+			bundle: submission.bundle,
+			identity,
+		});
+		return { manifest, provenance };
 	});
 }
 
@@ -147,15 +64,9 @@ export function createDistribution(
 	request: DistributionRequest,
 ): Effect.Effect<DistributionEvidence, DomainError> {
 	return Effect.gen(function*() {
-		const { repository, repositoryId, sourceSha, paths, files, signer } = request;
-		if (
-			!repositoryNamePattern.test(repository) || !shaPattern.test(sourceSha) || !Number.isSafeInteger(repositoryId)
-			|| repositoryId <= 0
-		) {
-			return yield* precondition('Distribution requires a repository identity and exact reviewed source commit');
-		}
+		const { repository, repositoryId, sourceSha, signer } = request;
+		const { manifest, provenance } = yield* authorizeDistribution(request);
 		const version = yield* fromSync(() => Schema.decodeSync(semVer)(request.version));
-		yield* validateFiles(paths, files);
 		const token = yield* gateway.token(repository, repositoryId, { contents: 'write' });
 		const base = `/repos/${repository}`;
 		const metadata = yield* gateway.read(repositorySchema, base, token);
@@ -173,13 +84,6 @@ export function createDistribution(
 		);
 		yield* assertHead;
 		const source = yield* gateway.read(gitCommitSchema, `${base}/git/commits/${sourceSha}`, token);
-		for (const file of files) {
-			if (
-				(yield* readDistributionFile(gateway, repository, file.path, sourceSha, file.encoding, token)) !== file.before
-			) {
-				return yield* precondition(`Distribution source file changed: ${file.path}`);
-			}
-		}
 		const identity = yield* fromPromise(() => signer.identity());
 		const user = /^([^<>\r\n]+) <([^<>\s]+)>$/.exec(identity.userId);
 		const name = user?.[1], email = user?.[2];
@@ -217,15 +121,7 @@ export function createDistribution(
 				}
 				return created.sha;
 			});
-		const entries = yield* Effect.forEach(files, file => Effect.gen(function*() {
-			const entry = { path: file.path, mode: file.mode ?? '100644', type: 'blob' };
-			if (file.encoding !== 'base64') return { ...entry, content: file.after };
-			const blob = yield* gateway.read(createdSchema, `${base}/git/blobs`, token, 'POST', {
-				encoding: 'base64',
-				content: file.after,
-			});
-			return { ...entry, sha: blob.sha };
-		}));
+		const entries = manifest.files.map(file => ({ path: file.path, mode: file.mode, type: 'blob', sha: file.blobSha }));
 		const tree = yield* gateway.read(createdSchema, `${base}/git/trees`, token, 'POST', {
 			base_tree: source.tree.sha,
 			tree: entries,
@@ -237,6 +133,6 @@ export function createDistribution(
 			`Record ${version} distribution ancestry`,
 		);
 		yield* assertHead;
-		return { sourceSha, commit, tree: tree.sha, ancestryCommit, branch, expected: sourceSha };
+		return { sourceSha, commit, tree: tree.sha, ancestryCommit, branch, expected: sourceSha, manifest, provenance };
 	});
 }
