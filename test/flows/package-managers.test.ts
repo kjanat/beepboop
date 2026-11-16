@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { withEnvironment } from '@root/test/support/process.ts';
 import { Effect, Schema, Struct } from 'effect';
 import { verifyPublication } from '@/automation/managers';
-import { crateIndexUrl } from '@/automation/managers/cargo';
-import type { Publication } from '@/automation/types';
+import { cargoManager, crateIndexUrl } from '@/automation/managers/cargo';
+import type { Package, Publication } from '@/automation/types';
 import type { HomebrewConfiguration } from '@/distribution/homebrew/generate';
 import { generateCask } from '@/distribution/homebrew/generate';
 import { writeRendered } from '@/distribution/output';
@@ -468,4 +468,39 @@ test('a crate that the crates.io API cannot answer is checked in the sparse inde
 		.toEqual(['failed', 'https://index.crates.io/sv/g-/svg-data']);
 	expect(crateIndexUrl('ab')).toBe('https://index.crates.io/2/ab');
 	expect(crateIndexUrl('Abc')).toBe('https://index.crates.io/3/a/abc');
+});
+
+test('a crate whose latest version the crates.io API cannot answer is read from the sparse index', async () => {
+	const pkg: Package = {
+		manager: 'cargo',
+		name: 'svg-data',
+		version: '0.5.0',
+		manifest: 'Cargo.toml',
+		versionSource: 'manifest:Cargo.toml',
+		publication: { kind: 'registry' },
+		dependencies: [],
+	};
+	const latest = (body: string | null) =>
+		Effect.runPromise(
+			cargoManager.latest?.(
+				pkg,
+				async input => {
+					const url = new URL(input instanceof Request ? input.url : input);
+					if (url.host === 'crates.io') return new Response(null, { status: 503 });
+					return body === null ? new Response(null, { status: 404 }) : new Response(body);
+				},
+			) ?? Effect.die('cargo has no latest lookup'),
+		);
+	const line = (vers: string, yanked = false) =>
+		JSON.stringify({ name: 'svg-data', vers, cksum: 'a'.repeat(64), yanked });
+	expect(await latest([line('0.3.0'), line('0.4.0'), line('0.5.0-rc.1'), line('0.4.1', true)].join('\n')))
+		.toEqual({ kind: 'published', version: '0.4.0' });
+	expect(await latest([line('1.1.0'), line('1.2.0+vendor-build')].join('\n')))
+		.toEqual({ kind: 'published', version: '1.2.0+vendor-build' });
+	expect(await latest(null)).toEqual({ kind: 'missing', url: 'https://index.crates.io/sv/g-/svg-data' });
+	expect(await latest('{"name"')).toEqual({
+		kind: 'failed',
+		url: 'https://index.crates.io/sv/g-/svg-data',
+		reason: 'invalid registry response',
+	});
 });
