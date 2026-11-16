@@ -25,6 +25,7 @@ export interface RefChange {
 	annotated: boolean;
 	signed: boolean;
 	object?: string;
+	replaces?: boolean;
 }
 export interface RefPlan {
 	repository: string;
@@ -85,18 +86,31 @@ function versionTags(policy: RefPolicy, version: SemVer, modulePrefixes: string[
 		? [tag, ...modulePrefixes.filter(prefix => prefix !== policy.prefix).map(prefix => `${prefix}${version}`)]
 		: [tag];
 }
+function reclaimed(tag: RefState, reclaims: readonly RefState[]): boolean {
+	return reclaims.some(entry => entry.name === tag.name && entry.oid === tag.oid && entry.commit === tag.commit);
+}
+export function tagConflicts(
+	policy: RefPolicy,
+	version: SemVer,
+	commit: string,
+	refs: RefState[],
+	modulePrefixes: string[] = [],
+	reclaims: readonly RefState[] = [],
+): RefState[] {
+	return versionTags(policy, version, modulePrefixes).flatMap(name => {
+		const existing = refs.find(ref => ref.name === name);
+		return existing && existing.commit !== commit && !reclaimed(existing, reclaims) ? [existing] : [];
+	});
+}
 export function tagConflict(
 	policy: RefPolicy,
 	version: SemVer,
 	commit: string,
 	refs: RefState[],
 	modulePrefixes: string[] = [],
+	reclaims: readonly RefState[] = [],
 ): RefState | undefined {
-	for (const name of versionTags(policy, version, modulePrefixes)) {
-		const existing = refs.find(ref => ref.name === name);
-		if (existing && existing.commit !== commit) return existing;
-	}
-	return undefined;
+	return tagConflicts(policy, version, commit, refs, modulePrefixes, reclaims)[0];
 }
 export function versionTagged(
 	policy: RefPolicy,
@@ -119,21 +133,26 @@ export function planRefs(
 	commit: string,
 	refs: RefState[],
 	modulePrefixes: string[] = [],
+	reclaims: readonly RefState[] = [],
 ): Effect.Effect<RefChange[], DomainError> {
 	return Effect.gen(function*() {
 		const normalized = yield* fromSync(() => Schema.decodeSync(semVer)(version));
-		const conflict = tagConflict(policy, normalized, commit, refs, modulePrefixes);
+		const conflict = tagConflict(policy, normalized, commit, refs, modulePrefixes, reclaims);
 		if (conflict) return yield* precondition(conflictMessage(conflict));
 		const tag = tagFor(policy, normalized);
 		const full = refs.find(ref => ref.name === tag);
 		if (policy.phase === 'version') {
-			return versionTags(policy, normalized, modulePrefixes).map(name => ({
-				name,
-				expected: refs.find(ref => ref.name === name)?.oid ?? null,
-				commit,
-				annotated: true,
-				signed: policy.signed,
-			}));
+			return versionTags(policy, normalized, modulePrefixes).map(name => {
+				const existing = refs.find(ref => ref.name === name);
+				return {
+					name,
+					expected: existing?.oid ?? null,
+					commit,
+					annotated: true,
+					signed: policy.signed,
+					...(existing && existing.commit !== commit ? { replaces: true } : {}),
+				};
+			});
 		}
 		if (!full) return yield* precondition('Publish the version tag before aliases');
 		if (isPrerelease(normalized)) return [];

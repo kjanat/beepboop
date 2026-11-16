@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- A release takes over the version tag of a failed or cancelled release of the same version that published nothing. Beepboop moves the tag to the new commit with a lease on the old tag object, and refuses once a registry lists the version or its GitHub release is published.
 - `actions/generate-homebrew` and `bun run homebrew` write a Homebrew cask from cask metadata and the release checksums. Each architecture block carries its own `version`, `sha256` and `url`, the URL uses `#{version}`, and a prefixed tag adds a `livecheck` regex. `actions/generate-scoop` and `bun run scoop` write a Scoop manifest with each architecture's URL, executables and hash. See [Homebrew and Scoop](docs/homebrew-scoop.md).
 - `kjanat/beepboop/actions/pull-request` commits the changes in a workflow's checkout as the Beepboop App and opens or updates a pull request. It takes `branch`, `title`, `body`, `commit-message`, `base` and `add-paths`, requests the repository token itself and creates a verified commit through the GitHub API. https://github.com/kjanat/beepboop/issues/53
 - The runs page has a repository filter, `/runs?repository=<owner>/<name>`, and folds the publications and operations of each release. A release that waits, runs or needs attention starts unfolded.

@@ -91,6 +91,11 @@ function createTag(git: Git, ref: string, change: RefChange, version: string): E
 
 function prepareTag(git: Git, ref: string, change: RefChange, version: string): Effect.Effect<string, ActionFailure> {
 	return Effect.gen(function*() {
+		if (
+			change.replaces && (yield* git.exists(ref)) && (yield* git.read('rev-parse', `${ref}^{commit}`)) !== change.commit
+		) {
+			yield* git.read('update-ref', '-d', ref);
+		}
 		if (yield* git.exists(ref)) {
 			yield* verifyTag(git, ref, change, 'Local tag differs from the ref plan');
 		} else {
@@ -112,7 +117,7 @@ function publish(plan: RefPlan, git: Git, remote: string): Effect.Effect<void, A
 			const ref = `refs/tags/${change.name}`;
 			yield* git.read('check-ref-format', ref);
 			yield* git.read('cat-file', '-e', `${change.commit}^{commit}`);
-			if (change.annotated && change.expected !== null) {
+			if (change.annotated && change.expected !== null && !change.replaces) {
 				yield* verifyPublishedTag(git, remote, ref, change);
 				continue;
 			}
@@ -150,6 +155,7 @@ function parseChange(entry: unknown): Result.Result<RefChange, Invalid> {
 			annotated: yield* boolean(change.annotated),
 			signed: yield* boolean(change.signed),
 			...(change.object === undefined ? {} : { object: yield* text(change.object) }),
+			...(change.replaces === undefined ? {} : { replaces: yield* boolean(change.replaces) }),
 		};
 	});
 }

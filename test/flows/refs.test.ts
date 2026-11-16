@@ -1,4 +1,9 @@
 import { expect, test } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { publishRefs } from '@root/actions/runtime/refs.ts';
+import { commitAll, gitOutput, materialize } from '@root/test/support/actions.ts';
 import { Effect, Exit, Schema } from 'effect';
 import { packageId } from '@/automation/package-identity';
 import { registry } from '@/automation/package-publication';
@@ -70,4 +75,58 @@ test('a release is version-tagged only when every version tag names its commit',
 	expect(versionTagged(policy, version, commit, tags.slice(0, 1), ['go/v'])).toBe(false);
 	expect(versionTagged(policy, version, other, tags)).toBe(false);
 	expect(versionTagged({ ...policy, phase: 'aliases' }, version, commit, tags)).toBe(false);
+});
+
+function moving() {
+	const checkout = materialize({ 'README.md': 'one\n' });
+	const origin = mkdtempSync(join(tmpdir(), 'beepboop-origin-'));
+	gitOutput(origin, ['init', '--bare', '-q']);
+	gitOutput(checkout.dir, ['tag', '-a', '-m', 'Release 1.0.0', 'v1.0.0', checkout.sha]);
+	gitOutput(checkout.dir, ['push', '-q', origin, 'refs/tags/v1.0.0']);
+	const old = gitOutput(origin, ['rev-parse', 'refs/tags/v1.0.0']);
+	writeFileSync(join(checkout.dir, 'README.md'), 'two\n');
+	const fixed = commitAll(checkout.dir, 'Fix');
+	const plan = (expected: string) => ({
+		repository: 'octo/widget',
+		executionId: 'e',
+		version: '1.0.0',
+		changes: [{ name: 'v1.0.0', expected, commit: fixed, annotated: true, signed: false, replaces: true }],
+	});
+	const dispose = () => {
+		rmSync(checkout.dir, { recursive: true, force: true });
+		rmSync(origin, { recursive: true, force: true });
+	};
+	return { checkout, origin, old, fixed, plan, dispose };
+}
+
+test('a replacing ref plan moves the version tag to the new release commit under a lease', async () => {
+	const { checkout, origin, old, fixed, plan, dispose } = moving();
+	try {
+		await Effect.runPromise(publishRefs(plan(old), checkout.dir, origin));
+		expect(gitOutput(origin, ['rev-parse', 'refs/tags/v1.0.0^{commit}'])).toBe(fixed);
+		expect(gitOutput(origin, ['cat-file', '-t', 'refs/tags/v1.0.0'])).toBe('tag');
+	} finally {
+		dispose();
+	}
+});
+
+test('a replacing ref plan leaves a tag alone that moved since the plan', async () => {
+	const { checkout, origin, old, plan, dispose } = moving();
+	try {
+		const exit = await Effect.runPromiseExit(publishRefs(plan('d'.repeat(40)), checkout.dir, origin));
+		expect(Exit.isFailure(exit)).toBe(true);
+		expect(gitOutput(origin, ['rev-parse', 'refs/tags/v1.0.0'])).toBe(old);
+	} finally {
+		dispose();
+	}
+});
+
+test('a version ref plan replaces a tag on another commit that the release reclaims', async () => {
+	const tag = { name: 'v1.1.0', oid, commit: other };
+	expect(await Effect.runPromise(planRefs({ ...policy, prefix: 'v' }, '1.1.0', commit, [tag], [], [tag]))).toEqual([
+		{ name: 'v1.1.0', expected: oid, commit, annotated: true, signed: false, replaces: true },
+	]);
+	const moved = { ...tag, oid: 'e'.repeat(40) };
+	const exit = await Effect.runPromiseExit(planRefs({ ...policy, prefix: 'v' }, '1.1.0', commit, [moved], [], [tag]));
+	expect(JSON.stringify(exit)).toContain(`Version tag v1.1.0 already targets ${other.slice(0, 12)}`);
 });

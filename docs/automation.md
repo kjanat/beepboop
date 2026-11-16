@@ -1239,6 +1239,17 @@ warns about an entry that is not a Go module versioned by tags, or that
 `packages` already lists. A version tag that already points at another commit
 stops the release, as for every other tag.
 
+A release can take over the version tag of an earlier release of the same
+version that published nothing. When a commit on the default branch carries a
+version whose tag Beepboop pushed for a failed or cancelled release, Beepboop
+creates the new release and records the tag it takes over. Its ref plan moves
+the tag to the new commit with a lease on the old tag object, so a tag that
+changed since the plan stays where it is. Beepboop refuses the takeover once a
+registry lists any package of the stream at that version, once the GitHub
+release of the tag is published, or while another release of the version
+runs. The publish step checks the registries again. A tag ruleset that blocks
+updates needs the Beepboop App in its bypass list.
+
 Once the stream pushed `go/v1.2.3`, that version of the module belongs to the
 stream's release. The module's own stream can release `1.2.3` only on the same
 commit. On any other commit Beepboop refuses the release with

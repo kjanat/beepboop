@@ -76,7 +76,7 @@ import { metadataProblems } from '@/automation/package-metadata';
 import { publishable } from '@/automation/package-publication';
 import { matchesRef } from '@/automation/policy';
 import type { PublishBudget } from '@/automation/publish-budget';
-import type { RefPlan, TagSigner } from '@/automation/refs';
+import type { RefPlan, RefState, TagSigner } from '@/automation/refs';
 import {
 	conflictMessage,
 	planRefs,
@@ -1105,6 +1105,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						execution.sourceSha,
 						refs,
 						yield* this.modulePrefixes(execution),
+						execution.reclaims ?? [],
 					);
 					execution.refPlan = yield* this.signRefs({
 						repository: execution.repository,
@@ -1143,15 +1144,18 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				return yield* precondition('The signing key needs a user ID with a name and email');
 			}
 			const tagger = `${identity.userId} ${Math.floor(clock.currentTimeMillisUnsafe() / 1000)} +0000`;
-			const changes = yield* Effect.forEach(plan.changes, change =>
-				change.annotated && change.expected === null
-					? fromPromise(() => signer.sign(tagPayload(change, plan.version, tagger), `beepboop:${plan.repository}`))
-						.pipe(Effect.map(signature => ({
-							...change,
-							signed: true,
-							object: tagObject(change, plan.version, tagger, signature),
-						})))
-					: Effect.succeed(change));
+			const changes = yield* Effect.forEach(
+				plan.changes,
+				change =>
+					change.annotated && (change.expected === null || change.replaces)
+						? fromPromise(() => signer.sign(tagPayload(change, plan.version, tagger), `beepboop:${plan.repository}`))
+							.pipe(Effect.map(signature => ({
+								...change,
+								signed: true,
+								object: tagObject(change, plan.version, tagger, signature),
+							})))
+						: Effect.succeed(change),
+			);
 			return { ...plan, changes, publicKey: identity.publicKey };
 		});
 	}
@@ -2002,7 +2006,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						`${head.ref} is at ${head.sha.slice(0, 12)}. Publish the release for that commit.`,
 					);
 				}
-				const conflict = yield* this.tagProblem(execution);
+				const conflict = yield* this.tagProblem(execution, true);
 				if (conflict) return yield* precondition(conflict);
 				const incomplete = yield* this.metadataBlocks(execution);
 				if (incomplete.length) return yield* precondition(incomplete.join('; '));
@@ -2109,7 +2113,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return metadataProblems(record.inventory, publishablePackages(record.inventory.packages, references));
 		});
 	}
-	private tagProblem(execution: Execution): CoordinatorEffect<string | undefined, DomainError> {
+	private tagProblem(execution: Execution, registries = false): CoordinatorEffect<string | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const policy = execution.workflow?.refs;
 			const version = safeDecode(semVer, execution.version);
@@ -2121,8 +2125,93 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				execution.sourceSha,
 				refs,
 				yield* this.modulePrefixes(execution),
+				execution.reclaims ?? [],
 			);
-			return conflict && conflictMessage(conflict);
+			if (conflict) return conflictMessage(conflict);
+			const pending = (execution.reclaims ?? []).filter(tag =>
+				refs.some(ref => ref.name === tag.name && ref.oid === tag.oid)
+			);
+			if (!pending.length) return undefined;
+			const kept = yield* this.reclaimableTags(execution, pending, registries);
+			const lost = pending.find(tag => !kept.some(entry => entry.name === tag.name));
+			return lost && `${conflictMessage(lost)}, and that release published packages`;
+		});
+	}
+	reclaimable(repositoryId: number, stream: string, version: string, conflicts: RefState[]): Promise<RefState[]> {
+		return this.run(
+			Effect.gen({ self: this }, function*() {
+				const record = yield* (yield* this.store).repository(repositoryId);
+				if (!record) return [];
+				const probe = { repository: record.name, repositoryId: record.id, stream, version };
+				return yield* this.reclaimableTags(probe, conflicts, true);
+			}),
+			'coordinator.reclaimable',
+			{ repositoryId, stream, version },
+		);
+	}
+	private reclaimableTags(
+		release: Pick<Execution, 'repository' | 'repositoryId' | 'stream' | 'version'> & { id?: string },
+		conflicts: readonly RefState[],
+		registries: boolean,
+	): CoordinatorEffect<RefState[], DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const version = release.version;
+			if (!version || !conflicts.length) return [];
+			const releases = (yield* this.executions()).filter(execution =>
+				execution.operation === 'promote' && execution.stream === release.stream
+				&& execution.version === version && execution.id !== release.id
+			);
+			const shipped = releases.some(execution =>
+				['succeeded', 'dispatching', 'running', 'uncertain', 'verifying'].includes(execution.state)
+				|| execution.publications.some(publication =>
+					publication.outcome === 'succeeded' && !publication.id.startsWith('refs:')
+				)
+			);
+			if (shipped) return [];
+			const owned = conflicts.filter(tag =>
+				releases.some(execution =>
+					['failed', 'cancelled'].includes(execution.state)
+					&& execution.refPlan?.changes.some(change => change.name === tag.name && change.commit === tag.commit)
+				)
+			);
+			if (owned.length !== conflicts.length) return [];
+			const gateway = yield* this.gateway;
+			const token = yield* gateway.token(release.repository, release.repositoryId, { contents: 'read' });
+			for (const tag of owned) {
+				const published = yield* gateway.read(
+					Schema.NullOr(releaseSchema),
+					`/repos/${release.repository}/releases/tags/${encodeURIComponent(tag.name)}`,
+					token,
+				);
+				if (published !== null) return [];
+			}
+			if (!registries) return owned;
+			const record = yield* (yield* this.store).repository(release.repositoryId);
+			const stream = record?.configuration?.streams[release.stream];
+			if (!record || !stream) return [];
+			const transport = (yield* Automation).dependencies.transport;
+			const context = gateway.verification(release.repository, release.repositoryId);
+			const outcomes = yield* Effect.forEach(
+				publishablePackages(record.inventory.packages, stream.packages).filter(pkg =>
+					canVerifyPublication(pkg.manager)
+				),
+				pkg =>
+					verifyPublication(
+						{
+							id: packageId(pkg),
+							identity: publicationIdentity(pkg, version),
+							manager: pkg.manager,
+							name: pkg.name,
+							version,
+							outcome: 'pending',
+							required: true,
+						},
+						transport,
+						context,
+					).pipe(Effect.map(publication => publication.outcome)),
+				{ concurrency: 8 },
+			);
+			return outcomes.every(outcome => outcome === 'pending') ? owned : [];
 		});
 	}
 	private versionTagged(execution: Execution): CoordinatorEffect<boolean, DomainError> {
