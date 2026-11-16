@@ -28,9 +28,19 @@ function delegatedStream() {
 	return stream;
 }
 
+function publishedAt(version: string) {
+	const inventory = discover(snapshot, ['cargo']);
+	inventory.packages = inventory.packages.map(pkg => ({
+		...pkg,
+		publicationStatus: 'published' as const,
+		published: version,
+	}));
+	return inventory;
+}
+
 test('a carried version that managed editing cannot plan still dispatches its preparation workflow', async () => {
 	const plan = await Effect.runPromise(
-		delegatedPlan(snapshot, discover(snapshot, ['cargo']), delegatedStream(), '1.2.0', ['pkg:cargo/a']),
+		delegatedPlan(snapshot, publishedAt('1.1.0'), delegatedStream(), '1.2.0', ['pkg:cargo/a']),
 	);
 	expect([plan.version, plan.sourceSha, plan.edits, plan.requiresPreparation]).toEqual([
 		'1.2.0',
@@ -38,4 +48,15 @@ test('a carried version that managed editing cannot plan still dispatches its pr
 		[],
 		true,
 	]);
+});
+
+test('a carried version its registries already publish is refused, not prepared again', async () => {
+	const released = await Effect.runPromise(Effect.flip(
+		delegatedPlan(snapshot, publishedAt('1.2.0'), delegatedStream(), '1.2.0', ['pkg:cargo/a']),
+	));
+	expect(released.message).toBe('1.2.0 is already released');
+	const older = await Effect.runPromise(Effect.flip(
+		delegatedPlan(snapshot, publishedAt('1.3.0'), delegatedStream(), '1.2.0', ['pkg:cargo/a']),
+	));
+	expect(older.message).toBe('Target version must be newer');
 });

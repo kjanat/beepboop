@@ -673,6 +673,20 @@ test('releasing a carried version refuses a version tag on another commit', asyn
 	expect(await promotions()).toEqual([]);
 });
 
+test('a delegated stream refuses a version its registries already publish or have passed', async () => {
+	const { repository } = await tagged();
+	world.npm.publish('widget', '1.2.4');
+	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	const released = await run(['release', '1.2.4', '--repository', repository.name, '--yes']);
+	expect(released.exitCode).not.toBe(0);
+	expect(released.stderr.join('')).toContain('1.2.4 is already released');
+	const older = await run(['release', '1.2.2', '--repository', repository.name, '--yes']);
+	expect(older.exitCode).not.toBe(0);
+	expect(older.stderr.join('')).toContain('Target version must be newer');
+	expect(prepareCalls()).toHaveLength(0);
+	expect(world.github.dispatches.map(dispatch => dispatch.file)).not.toContain('prepare.yml');
+});
+
 test('no approval overrides a version tag on another commit, and the CLI cancels the promotion', async () => {
 	const { repository, before, merged } = await tagged();
 	passChecks(repository, merged.sha);
@@ -866,6 +880,33 @@ test('workflow bump baselines use only the selected publishable package group', 
 	const selected = await run(['release', 'minor', '--repository', repository.name, '--json']);
 	expect(selected.exitCode).toBe(0);
 	expect(decodeSync(planReview, JSON.parse(selected.stdout.join('')).plan).version).toBe('1.3.0');
+});
+
+test('a tag-derived version its registry already publishes is refused, not prepared again', async () => {
+	const { repository, configuration } = await delegated(['widget'], { widget: '2.5.0' });
+	configuration.streams.main.versionSource = { kind: 'tags', prefix: 'v' };
+	world.github.push(
+		repository,
+		{ '.github/beepboop.json': JSON.stringify(configuration) },
+		'Take release versions from tags',
+	);
+	repository.refs.set('tags/v2.4.6', world.github.head(repository));
+	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	for (const version of ['minor', '2.5.0']) {
+		const refused = await run(['release', version, '--repository', repository.name, '--yes']);
+		expect([version, refused.exitCode === 0, refused.stderr.join('')]).toEqual([
+			version,
+			false,
+			expect.stringContaining('2.5.0 is already released'),
+		]);
+	}
+	const behind = await run(['release', 'patch', '--repository', repository.name, '--yes']);
+	expect([behind.exitCode === 0, behind.stderr.join('')]).toEqual([
+		false,
+		expect.stringContaining('Target version must be newer'),
+	]);
+	expect(prepareCalls()).toHaveLength(0);
+	expect(world.github.dispatches.map(dispatch => dispatch.file)).not.toContain('prepare.yml');
 });
 
 test('workflow tag-derived bumps remain authoritative when registry packages are unpublished', async () => {
