@@ -763,7 +763,7 @@ function drafted(
 					};
 					updated.workflows = bindings;
 					const generated = yield* Effect.fromResult(
-						integrateWorkflow(snapshot, selection.name, 'aliases', alias, [], choices.actionsRevision),
+						integrateWorkflow(snapshot, selection.name, 'aliases', alias, [], choices.actionsRevision, [], false, []),
 					);
 					blockers.push(...generated.blockers);
 					notes.push(...generated.notes);

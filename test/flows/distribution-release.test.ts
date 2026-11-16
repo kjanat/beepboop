@@ -1,5 +1,8 @@
 import { afterEach, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import type { TrustedRoot } from '@sigstore/protobuf-specs';
+import { signedDistributionFixture } from '@root/test/support/distribution-attestation.ts';
 import type { Repository } from '@root/test/support/github.ts';
 import { filesAt, ownerId } from '@root/test/support/github.ts';
 import { bearer } from '@root/test/support/http.ts';
@@ -8,7 +11,9 @@ import type { SigningKey } from '@root/test/support/signing.ts';
 import { fakeSigner, signingKey } from '@root/test/support/signing.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { Effect } from 'effect';
+import { Effect, Layer } from 'effect';
+import { DistributionAttestationRoots } from '@/automation/distribution-attestation';
+import type { DistributionManifest } from '@/contract/distribution';
 import type { WorkflowIdentity } from '@/automation/auth';
 import { createExecution, expectedRunTitle } from '@/automation/execution';
 import type { RefPlan } from '@/automation/refs';
@@ -18,8 +23,11 @@ import { requireReady } from '@/domain/repository';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 
 let world: World, key: SigningKey | undefined;
+const fixtureRoots: TrustedRoot[] = [];
 eachWorld(created => {
 	world = created;
+	fixtureRoots.length = 0;
+	world.withLayer(Layer.succeed(DistributionAttestationRoots, fixtureRoots));
 });
 afterEach(() => {
 	key?.dispose();
@@ -30,6 +38,41 @@ const files: Edit[] = [
 	{ path: 'dist/main.mjs', before: '', after: 'export const installed = true;\n' },
 	{ path: 'dist/post.mjs', before: '', after: 'export const cached = true;\n' },
 ];
+
+async function submission(
+	outputs: (Edit & { mode?: '100644' | '100755' })[],
+	promotion: { execution: { id: string; sourceSha: string }; identity: WorkflowIdentity },
+) {
+	const identity = promotion.identity;
+	const repository = world.github.repository(identity.repository);
+	const manifest: DistributionManifest = {
+		version: 1,
+		executionId: promotion.execution.id,
+		repositoryId: identity.repositoryId,
+		repository: identity.repository,
+		sourceSha: promotion.execution.sourceSha,
+		workflowSha: identity.workflowSha,
+		workflowRef: identity.workflowRef,
+		runSha: identity.sha,
+		runId: identity.runId,
+		runAttempt: identity.attempt,
+		files: outputs.map(file => {
+			const bytes = Buffer.from(file.after);
+			const blobSha = createHash('sha1').update(Buffer.from('blob ' + bytes.length + '\0')).update(bytes).digest('hex');
+			repository.blobs.set(blobSha, bytes);
+			return {
+				path: file.path,
+				blobSha,
+				sha256: createHash('sha256').update(bytes).digest('hex'),
+				size: bytes.length,
+				mode: file.mode ?? '100644',
+			};
+		}),
+	};
+	const signed = await signedDistributionFixture({ manifest, identity });
+	fixtureRoots.push(signed.root);
+	return { manifest: signed.request.manifestText, bundle: signed.request.bundle };
+}
 
 async function fixture(options: { enabled?: boolean; immutable?: boolean } = {}) {
 	key = signingKey('Release Maintainer <release@example.com>');
@@ -163,7 +206,7 @@ test('distribution authorization freezes a signed target while retaining source 
 		new Request('https://beepboop.kjanat.dev/api/workflow/refs-plan', {
 			method: 'POST',
 			headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-			body: JSON.stringify({ executionId: promotion.execution.id, files }),
+			body: JSON.stringify({ executionId: promotion.execution.id, distribution: await submission(files, promotion) }),
 		}),
 	);
 	expect(response.status).toBe(200);
@@ -186,35 +229,48 @@ test('distribution authorization freezes a signed target while retaining source 
 
 test('distribution planning rejects files outside the authorized exact paths before signing', async () => {
 	const { coordinator, promotion, signer } = await fixture();
-	await expect(coordinator.refs(promotion.execution.id, promotion.identity, false, [
-		...files,
-		{ path: 'README.md', before: '# widget\n', after: '# changed\n' },
-	])).rejects.toThrow('Distribution files must match');
+	await expect(coordinator.refs(
+		promotion.execution.id,
+		promotion.identity,
+		false,
+		await submission([
+			...files,
+			{ path: 'README.md', before: '# widget\n', after: '# changed\n' },
+		], promotion),
+	)).rejects.toThrow('Distribution files must match');
 	expect(signer.calls).toHaveLength(0);
 	expect((await coordinator.execution(promotion.execution.id))?.refPlan).toBeUndefined();
 });
 
 test('distribution authorization refuses disabled immutable releases before signing', async () => {
 	const { coordinator, promotion, signer } = await fixture({ enabled: false });
-	await expect(coordinator.refs(promotion.execution.id, promotion.identity, false, files)).rejects.toThrow(
-		'Enable immutable GitHub releases',
-	);
+	await expect(coordinator.refs(promotion.execution.id, promotion.identity, false, await submission(files, promotion)))
+		.rejects.toThrow(
+			'Enable immutable GitHub releases',
+		);
 	expect(signer.calls).toHaveLength(0);
 });
 
-test('distribution retries preserve the original plan and reject changed bytes or source text', async () => {
+test('distribution retries preserve the original plan and reject changed bytes or modes', async () => {
 	const { coordinator, promotion, signer } = await fixture();
-	const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
-	expect(await coordinator.refs(promotion.execution.id, promotion.identity, false, files)).toEqual(plan);
+	const plan = await coordinator.refs(
+		promotion.execution.id,
+		promotion.identity,
+		false,
+		await submission(files, promotion),
+	);
+	expect(await coordinator.refs(promotion.execution.id, promotion.identity, false, await submission(files, promotion)))
+		.toEqual(plan);
 	expect(signer.calls).toHaveLength(3);
 	for (const changed of [
 		files.map(file => ({ ...file, after: `${file.after}// changed\n` })),
-		files.map(file => ({ ...file, before: 'different reviewed source' })),
 		files.map(file => ({ ...file, mode: '100755' as const })),
 		files.slice(1),
 	]) {
-		await expect(coordinator.refs(promotion.execution.id, promotion.identity, false, changed)).rejects.toThrow(
-			'Distribution files differ from the frozen plan',
+		await expect(
+			coordinator.refs(promotion.execution.id, promotion.identity, false, await submission(changed, promotion)),
+		).rejects.toThrow(
+			/Distribution files (?:differ from the frozen plan|must match every configured path)/,
 		);
 	}
 	expect((await coordinator.execution(promotion.execution.id))?.refPlan).toEqual(plan);
@@ -224,16 +280,29 @@ test('distribution retries preserve the original plan and reject changed bytes o
 test('distribution retries cannot omit a frozen executable mode', async () => {
 	const { coordinator, promotion } = await fixture();
 	const executable = files.map(file => ({ ...file, mode: '100755' as const }));
-	const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, executable);
-	expect(await coordinator.refs(promotion.execution.id, promotion.identity, false, executable)).toEqual(plan);
-	await expect(coordinator.refs(promotion.execution.id, promotion.identity, false, files)).rejects.toThrow(
-		'Distribution files differ from the frozen plan',
+	const plan = await coordinator.refs(
+		promotion.execution.id,
+		promotion.identity,
+		false,
+		await submission(executable, promotion),
 	);
+	expect(
+		await coordinator.refs(promotion.execution.id, promotion.identity, false, await submission(executable, promotion)),
+	).toEqual(plan);
+	await expect(coordinator.refs(promotion.execution.id, promotion.identity, false, await submission(files, promotion)))
+		.rejects.toThrow(
+			'Distribution files differ from the frozen plan',
+		);
 });
 
 test('distribution completion requires the exact signed patch tag and landed ancestry', async () => {
 	const { coordinator, promotion, repository, source } = await fixture();
-	const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
+	const plan = await coordinator.refs(
+		promotion.execution.id,
+		promotion.identity,
+		false,
+		await submission(files, promotion),
+	);
 	if (!plan.distribution) throw new Error('Expected distribution');
 	await expect(coordinator.refs(promotion.execution.id, promotion.identity, true)).rejects.toThrow(
 		'Distribution tag object',
@@ -261,7 +330,12 @@ test('distribution completion requires the exact signed patch tag and landed anc
 
 test('immutable publication accepts only the frozen distribution commit and records its source separately', async () => {
 	const { coordinator, promotion, repository, source } = await fixture();
-	const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
+	const plan = await coordinator.refs(
+		promotion.execution.id,
+		promotion.identity,
+		false,
+		await submission(files, promotion),
+	);
 	if (!plan.distribution) throw new Error('Expected distribution');
 	land(repository, plan);
 	await coordinator.refs(promotion.execution.id, promotion.identity, true);
@@ -278,7 +352,12 @@ test('immutable publication accepts only the frozen distribution commit and reco
 
 test('an immutable release policy refuses a GitHub release whose immutable flag is false', async () => {
 	const { coordinator, promotion, repository } = await fixture({ immutable: false });
-	const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
+	const plan = await coordinator.refs(
+		promotion.execution.id,
+		promotion.identity,
+		false,
+		await submission(files, promotion),
+	);
 	land(repository, plan);
 	await coordinator.refs(promotion.execution.id, promotion.identity, true);
 	await expect(coordinator.publishRelease(promotion.execution.id, promotion.identity)).rejects.toThrow(
@@ -289,7 +368,12 @@ test('an immutable release policy refuses a GitHub release whose immutable flag 
 
 test('aliases inherit the completed promotion distribution without changing source identity', async () => {
 	const { coordinator, promotion, repository, source, create } = await fixture();
-	const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
+	const plan = await coordinator.refs(
+		promotion.execution.id,
+		promotion.identity,
+		false,
+		await submission(files, promotion),
+	);
 	if (!plan.distribution) throw new Error('Expected distribution');
 	land(repository, plan);
 	await coordinator.refs(promotion.execution.id, promotion.identity, true);
@@ -325,7 +409,12 @@ test('aliases inherit the completed promotion distribution without changing sour
 
 test('distribution publication requires confirmed refs even when the signed patch tag exists', async () => {
 	const { coordinator, promotion, repository } = await fixture();
-	const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
+	const plan = await coordinator.refs(
+		promotion.execution.id,
+		promotion.identity,
+		false,
+		await submission(files, promotion),
+	);
 	land(repository, plan);
 	await expect(coordinator.publishRelease(promotion.execution.id, promotion.identity)).rejects.toThrow(
 		'Confirm distribution refs and ancestry before publishing the release',
@@ -369,7 +458,12 @@ test('reconciliation refuses a source release when distribution publication has 
 for (const problem of ['missing ancestry', 'different signed tag object']) {
 	test(`publication rechecks confirmed distribution refs after ${problem}`, async () => {
 		const { coordinator, promotion, repository, source } = await fixture();
-		const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
+		const plan = await coordinator.refs(
+			promotion.execution.id,
+			promotion.identity,
+			false,
+			await submission(files, promotion),
+		);
 		if (!plan.distribution) throw new Error('Expected distribution');
 		land(repository, plan);
 		await coordinator.refs(promotion.execution.id, promotion.identity, true);
@@ -386,7 +480,12 @@ for (const problem of ['missing ancestry', 'different signed tag object']) {
 
 test('reconciliation after an ambiguous release response keeps the frozen target when master advances', async () => {
 	const { coordinator, promotion, repository, source, settings, signer } = await fixture({ immutable: false });
-	const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
+	const plan = await coordinator.refs(
+		promotion.execution.id,
+		promotion.identity,
+		false,
+		await submission(files, promotion),
+	);
 	if (!plan.distribution) throw new Error('Expected distribution');
 	land(repository, plan);
 	await coordinator.refs(promotion.execution.id, promotion.identity, true);
@@ -415,7 +514,12 @@ test('reconciliation after an ambiguous release response keeps the frozen target
 for (const problem of ['missing ancestry', 'different signed tag object']) {
 	test(`reconciliation refuses a distribution release with ${problem}`, async () => {
 		const { coordinator, promotion, repository, source } = await fixture();
-		const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
+		const plan = await coordinator.refs(
+			promotion.execution.id,
+			promotion.identity,
+			false,
+			await submission(files, promotion),
+		);
 		if (!plan.distribution) throw new Error('Expected distribution');
 		land(repository, plan);
 		if (problem === 'missing ancestry') repository.refs.set('heads/main', source);

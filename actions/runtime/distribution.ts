@@ -27,7 +27,6 @@ import { githubApiVersion } from '@/contract/http.ts';
 import { shaPattern } from '@/contract/ids.ts';
 import { array, record, text } from '@/model.ts';
 import { responseJson } from '@/runtime/http.ts';
-import { writeOutputTo } from '@/tooling/github-output.ts';
 
 function snapshot(root: string, path: string): { bytes: Buffer; mode: '100644' | '100755' } {
 	const parts = path.split('/');
@@ -171,12 +170,4 @@ export function prepareDistribution(
 		}));
 		return { manifestPath, subjectChecksums };
 	});
-}
-
-if (import.meta.main) {
-	await Effect.runPromise(Effect.gen(function*() {
-		const output = yield* prepareDistribution(process.env);
-		yield* writeOutputTo(process.env.GITHUB_OUTPUT, 'manifest-path', output.manifestPath);
-		yield* writeOutputTo(process.env.GITHUB_OUTPUT, 'subject-checksums', output.subjectChecksums);
-	}));
 }

@@ -1399,24 +1399,19 @@ distribution and require immutable GitHub Releases:
 ```
 
 Build and test those files after `actions/begin` checks out the reviewed source
-SHA. Request a Beepboop token with contents write permission, then call
-`actions/prepare-distribution` with the begin context, that token and the exact
-JSON file list. The runner uploads the generated Git blobs directly to GitHub
-and prepares a manifest mapping each complete repository-relative path to its
-Git blob, mode and digest. Paths exclude Git internals and workflow files; every
-configured file must be present once.
+SHA, then call `kjanat/beepboop/actions/publish@v1` once. The publisher reads the
+configured file list from the authorized execution and handles uploads,
+attestation, signed commits, refs and the immutable Release. Grant distribution
+jobs `id-token: write`, `attestations: write` and `artifact-metadata: write`.
+The dependent aliases workflow uses the same publisher. Workflow owners supply
+their build and test commands; Beepboop handles the publication process.
 
-Run the pinned `actions/attest` action with `subject-checksums` from
-`steps.beepboop_distribution.outputs.subject-checksums`. This attests the exact
-file subjects and the manifest that binds their paths to Git blobs. Grant the
-job `id-token: write`, `attestations: write` and `artifact-metadata: write`.
-Pass the preparation step's `manifest-path` and the attestation step's
-`bundle-path` to `actions/publish-refs`. The runner supplies metadata and the
-attestation proof to Beepboop; artifact bytes stay on the runner and GitHub.
-Beepboop verifies the signed manifest-to-blob mapping and the workflow authority
-before signing the distribution commit and a two-parent merge whose tree is
-the original source tree. The signing service must be configured, and GitHub
-must verify both commit signatures.
+Internally, the publisher uploads Git blobs directly from the runner to GitHub
+and attests the files and a manifest binding their complete paths, modes and
+digests to those blobs. Beepboop verifies the signed mapping and workflow
+authority before signing the distribution commit and source-preserving merge.
+Artifact bytes stay on the runner and GitHub. The signing service must be
+configured, and GitHub must verify both commit signatures.
 
 The authorized ref plan freezes the distribution target. Retries must provide
 the same attested mapping. The runtime verifies the signed commits, tree and parents, then

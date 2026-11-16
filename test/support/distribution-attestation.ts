@@ -1,13 +1,39 @@
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { bundleToJSON, toDSSEBundle } from '@sigstore/bundle';
 import { initializeCA, initializeCTLog, initializeTLog, initializeTSA } from '@sigstore/mock';
-import { HashAlgorithm, PublicKeyDetails, TrustedRoot } from '@sigstore/protobuf-specs';
+import {
+	CertificateAuthority,
+	HashAlgorithm,
+	PublicKeyDetails,
+	TransparencyLogInstance,
+	TrustedRoot,
+} from '@sigstore/protobuf-specs';
+import { Schema } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
 import type { DistributionManifest } from '@/contract/distribution';
 import { canonicalDistributionManifest, distributionManifestName } from '@/contract/distribution';
 
 const digest = (value: string | Buffer) => createHash('sha256').update(value).digest();
 const key = (curve = 'P-256') => generateKeyPairSync('ec', { namedCurve: curve });
+const bytes = (value: ArrayBufferView<ArrayBuffer>) => Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+const logEntry = Schema.Record(
+	Schema.String,
+	Schema.Struct({
+		body: Schema.String,
+	integratedTime: Schema.Finite,
+		logID: Schema.String,
+	logIndex: Schema.Finite,
+		verification: Schema.Struct({
+			signedEntryTimestamp: Schema.String,
+			inclusionProof: Schema.Struct({
+			logIndex: Schema.Finite,
+			treeSize: Schema.Finite,
+				rootHash: Schema.String,
+				checkpoint: Schema.String,
+			}),
+		}),
+	}),
+);
 export const attestationIdentity: WorkflowIdentity = {
 	repository: 'octo/action',
 	repositoryId: 1,
@@ -43,8 +69,8 @@ export async function signedDistributionFixture(options: {
 	subjects?: { name: string; digest: { sha256: string } }[];
 	predicate?: Record<string, unknown>;
 } = {}) {
-	const identity = options.identity ?? attestationIdentity;
-	const manifest = options.manifest ?? attestationManifest;
+	const identity = { ...(options.identity ?? attestationIdentity) };
+	const manifest = structuredClone(options.manifest ?? attestationManifest);
 	const manifestText = canonicalDistributionManifest(manifest);
 	const repository = `https://github.com/${identity.repository}`;
 	const workflow = `https://github.com/${identity.workflowRef}`;
@@ -68,7 +94,7 @@ export async function signedDistributionFixture(options: {
 		'21': invocation,
 		...options.extensions,
 	};
-	const certificate = Buffer.from(
+	const certificate = bytes(
 		await ca.issueCertificate({
 			publicKey: leafKey.publicKey.export({ type: 'spki', format: 'der' }),
 			subjectAltName: workflow,
@@ -109,7 +135,7 @@ export async function signedDistributionFixture(options: {
 	const root = TrustedRoot.fromJSON({
 		mediaType: 'application/vnd.dev.sigstore.trustedroot+json;version=0.1',
 		certificateAuthorities: [{
-			certChain: { certificates: [{ rawBytes: Buffer.from(ca.rootCertificate).toString('base64') }] },
+			certChain: { certificates: [{ rawBytes: bytes(ca.rootCertificate).toString('base64') }] },
 		}],
 	});
 	if (options.privateInstance) {
@@ -122,9 +148,18 @@ export async function signedDistributionFixture(options: {
 			certReq: true,
 		});
 		bundle.verificationMaterial.timestampVerificationData = {
-			rfc3161Timestamps: [{ signedTimestamp: Buffer.from(timestamp) }],
+			rfc3161Timestamps: [{ signedTimestamp: bytes(timestamp) }],
 		};
-		root.timestampAuthorities.push({ certChain: { certificates: [{ rawBytes: Buffer.from(tsa.intCertificate) }, { rawBytes: Buffer.from(tsa.rootCertificate) }] } });
+		root.timestampAuthorities.push(
+			CertificateAuthority.fromJSON({
+				certChain: {
+					certificates: [
+						{ rawBytes: bytes(tsa.intCertificate).toString('base64') },
+						{ rawBytes: bytes(tsa.rootCertificate).toString('base64') },
+					],
+				},
+			}),
+		);
 	} else {
 		const tlog = await initializeTLog('https://rekor.sigstore.test', key(), clock);
 		const pem = `-----BEGIN CERTIFICATE-----\n${
@@ -141,7 +176,7 @@ export async function signedDistributionFixture(options: {
 				},
 			},
 		});
-		const entry = Object.values(entries)[0];
+		const entry = Object.values(Schema.decodeUnknownSync(logEntry)(entries))[0];
 		if (!entry) throw new Error('Transparency log returned no entry');
 		const proof = entry.verification?.inclusionProof;
 		if (!proof) throw new Error('Transparency log returned no inclusion proof');
@@ -152,21 +187,27 @@ export async function signedDistributionFixture(options: {
 			integratedTime: String(entry.integratedTime),
 			canonicalizedBody: Buffer.from(String(entry.body), 'base64'),
 			inclusionPromise: { signedEntryTimestamp: Buffer.from(entry.verification?.signedEntryTimestamp ?? '', 'base64') },
-			inclusionProof: { logIndex: String(proof.logIndex), treeSize: String(proof.treeSize), rootHash: Buffer.from(proof.rootHash, 'hex'), hashes: [], checkpoint: { envelope: proof.checkpoint } },
+			inclusionProof: {
+				logIndex: String(proof.logIndex),
+				treeSize: String(proof.treeSize),
+				rootHash: Buffer.from(proof.rootHash, 'hex'),
+				hashes: [],
+				checkpoint: { envelope: proof.checkpoint },
+			},
 		}];
-		root.tlogs.push({
+		root.tlogs.push(TransparencyLogInstance.fromJSON({
 			baseUrl: 'https://rekor.sigstore.test',
 			hashAlgorithm: HashAlgorithm.SHA2_256,
-			logId: { keyId: digest(tlog.publicKey) },
-			publicKey: { rawBytes: tlog.publicKey, keyDetails: PublicKeyDetails.PKIX_ECDSA_P256_SHA_256 },
-		});
+			logId: { keyId: digest(tlog.publicKey).toString('base64') },
+			publicKey: { rawBytes: tlog.publicKey.toString('base64'), keyDetails: PublicKeyDetails.PKIX_ECDSA_P256_SHA_256 },
+		}));
 		if (!ctlog) throw new Error('CT log missing');
-		root.ctlogs.push({
+		root.ctlogs.push(TransparencyLogInstance.fromJSON({
 			baseUrl: 'https://ctfe.sigstore.test',
 			hashAlgorithm: HashAlgorithm.SHA2_256,
-			logId: { keyId: Buffer.from(ctlog.logID) },
-			publicKey: { rawBytes: ctlog.publicKey, keyDetails: PublicKeyDetails.PKIX_ECDSA_P256_SHA_256 },
-		});
+			logId: { keyId: bytes(ctlog.logID).toString('base64') },
+			publicKey: { rawBytes: ctlog.publicKey.toString('base64'), keyDetails: PublicKeyDetails.PKIX_ECDSA_P256_SHA_256 },
+		}));
 	}
 	return { request: { manifest, manifestText, bundle: bundleToJSON(bundle), identity }, root, statement };
 }

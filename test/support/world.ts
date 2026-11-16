@@ -8,7 +8,7 @@ import { Network } from '@root/test/support/network.ts';
 import { FakeNpm } from '@root/test/support/registries.ts';
 import { FakeNamespace } from '@root/test/support/rpc.ts';
 import { FakeWorkflow } from '@root/test/support/workflows.ts';
-import { Effect } from 'effect';
+import { Effect, Layer } from 'effect';
 import type { JWK } from 'jose';
 import { exportJWK, exportPKCS8, generateKeyPair, SignJWT } from 'jose';
 import type { CoordinatorBindings } from '@/automation/coordinator';
@@ -64,7 +64,7 @@ export class World {
 	readonly coordinators: FakeNamespace<AutomationCoordinator>;
 	readonly budgets: FakeNamespace<PublishBudget>;
 	readonly env: Environment;
-	readonly application: ReturnType<typeof applicationLayer>;
+	application: ReturnType<typeof applicationLayer>;
 	private constructor(
 		private readonly actions: SigningKey,
 		private readonly openauth: SigningKey,
@@ -120,6 +120,11 @@ export class World {
 	dispose(): void {
 		mock.restore();
 		setSystemTime();
+	}
+	withLayer(layer: Layer.Layer<never>): this {
+		if (this.coordinators.instances.size) throw new Error('Provide test services before creating a coordinator');
+		this.application = Layer.merge(this.application, layer);
+		return this;
 	}
 
 	run<A, E>(work: Effect.Effect<A, E, Automation>): Promise<A> {

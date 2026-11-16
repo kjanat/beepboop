@@ -1,0 +1,23 @@
+diff --git a/dist/crypto.js b/dist/crypto.js
+index 8d8110ee4234766dc639b4c01b3cc6d6ba980d40..1c554cbce35d318a4a9c38d9891e21c1d771547e 100644
+--- a/dist/crypto.js
++++ b/dist/crypto.js
+@@ -51,7 +51,17 @@ function verify(data, key, signature, algorithm) {
+     // The try/catch is to work around an issue in Node 14.x where verify throws
+     // an error in some scenarios if the signature is invalid.
+     try {
+-        return crypto_1.default.verify(algorithm, data, key, signature);
++        let verificationAlgorithm = algorithm;
++        if (verificationAlgorithm === undefined) {
++            const keyType = key instanceof crypto_1.default.KeyObject
++                ? key.asymmetricKeyType
++                : crypto_1.default.createPublicKey(key).asymmetricKeyType;
++            // Preserve key-specific defaults for EdDSA and restricted RSA-PSS keys.
++            if (keyType === 'ec' || keyType === 'rsa') {
++                verificationAlgorithm = 'sha256';
++            }
++        }
++        return crypto_1.default.verify(verificationAlgorithm, data, key, signature);
+     }
+     catch (e) {
+         /* istanbul ignore next */

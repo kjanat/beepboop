@@ -2,8 +2,10 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import type { Invalid } from '@root/actions/runtime/protocol.ts';
-import { ActionFailure, attempt, attemptAsync, fail, required } from '@root/actions/runtime/protocol.ts';
+import { prepareDistribution } from '@root/actions/runtime/distribution.ts';
+import type { Environment, Invalid } from '@root/actions/runtime/protocol.ts';
+import { ActionFailure, attempt, attemptAsync, fail, requestBody, required } from '@root/actions/runtime/protocol.ts';
+import { parseRefPlan, publishRefs } from '@root/actions/runtime/refs.ts';
 import { call, mask, serviceOrigin } from '@root/actions/runtime/session.ts';
 import type { Scope } from 'effect';
 import { Clock, Effect, Schema } from 'effect';
@@ -11,11 +13,13 @@ import { githubSecretNamePattern } from '@/contract/ids.ts';
 import type { LedgerEntry, LedgerPackage } from '@/contract/ledger.ts';
 import { claimStep, nextStep, publishWaitMinutes, settledStep } from '@/contract/ledger.ts';
 import { filled, lacking, licenseFile, readmeFile } from '@/contract/package-metadata.ts';
-import { textSchema } from '@/model.ts';
+import { workflowPublicationPlan } from '@/contract/publication.ts';
+import { record, text, textSchema } from '@/model.ts';
 import { terminate } from '@/runtime/process.ts';
 import type { Contract, Decoded } from '@/schema';
 import { decodeSync, matchesPattern, mutableArray, mutableRecord, mutableStruct } from '@/schema';
 import { sha256Hex } from '@/sha256.ts';
+import { writeOutputTo } from '@/tooling/github-output.ts';
 
 export interface Command {
 	code: number;
@@ -439,29 +443,136 @@ export function command(argv: string[], options: { cwd: string; env?: Record<str
 	);
 }
 
-export const main: Effect.Effect<void, Invalid> = Effect.gen(function*() {
-	const clock = yield* Clock.Clock;
-	const environment = process.env;
-	const origin = yield* serviceOrigin;
-	const executionId = yield* Effect.fromResult(
-		required({ EXECUTION_ID: environment.EXECUTION_ID || environment.BEEPBOOP_EXECUTION_ID }, 'EXECUTION_ID'),
-	);
-	const mapping = yield* Effect.fromResult(
-		attempt(() => decodeSync(credentials, JSON.parse(environment.CREDENTIALS || '{}'))),
-	);
-	const entries = yield* publishPackages({
-		executionId,
-		credentials: mapping,
-		provenance: publicRepository(environment.REPOSITORY_PRIVATE),
-		...(environment.NPM_TARBALLS ? { tarballs: environment.NPM_TARBALLS } : {}),
-		call: (path, body) => call(origin, path, body),
-		run: command,
-		sleep: milliseconds => Effect.sleep(milliseconds),
-		exists: path => existsSync(path),
-		now: () => clock.currentTimeMillisUnsafe(),
-		log: line => console.log(line),
+function packages(environment: Environment, api: Runner['call']): Effect.Effect<void, Invalid> {
+	return Effect.gen(function*() {
+		const clock = yield* Clock.Clock;
+		const executionId = yield* Effect.fromResult(
+			required({ EXECUTION_ID: environment.EXECUTION_ID || environment.BEEPBOOP_EXECUTION_ID }, 'EXECUTION_ID'),
+		);
+		const mapping = yield* Effect.fromResult(
+			attempt(() => decodeSync(credentials, JSON.parse(environment.CREDENTIALS || '{}'))),
+		);
+		const entries = yield* publishPackages({
+			executionId,
+			credentials: mapping,
+			provenance: publicRepository(environment.REPOSITORY_PRIVATE),
+			...(environment.NPM_TARBALLS ? { tarballs: environment.NPM_TARBALLS } : {}),
+			call: api,
+			run: command,
+			sleep: milliseconds => Effect.sleep(milliseconds),
+			exists: path => existsSync(path),
+			now: () => clock.currentTimeMillisUnsafe(),
+			log: line => console.log(line),
+		});
+		yield* requireAll(entries);
 	});
-	yield* requireAll(entries);
+}
+
+export interface PublicationRuntime {
+	call: Runner['call'];
+	packages: Effect.Effect<void, Invalid>;
+	prepare?: typeof prepareDistribution;
+	refs?: typeof publishRefs;
+}
+
+/** Internal stages let the product action run GitHub's provenance action between capture and publication. */
+export function publicationStage(
+	stage: 'prepare' | 'complete',
+	environment: Environment,
+	runtime: PublicationRuntime,
+): Effect.Effect<void, Invalid> {
+	return Effect.gen(function*() {
+		const executionId = yield* Effect.fromResult(
+			required({ EXECUTION_ID: environment.EXECUTION_ID || environment.BEEPBOOP_EXECUTION_ID }, 'EXECUTION_ID'),
+		);
+		const response = yield* runtime.call('/api/workflow/publication-plan', { executionId });
+		const plan = yield* Effect.fromResult(attempt(() => decodeSync(workflowPublicationPlan, response)));
+		if (plan.executionId !== executionId) return yield* fail('Publication plan belongs to another execution');
+		if (plan.distribution && !plan.refs) return yield* fail('Distribution publication requires planned refs');
+		const token = Effect.gen(function*() {
+			const issued = yield* Effect.fromResult(
+				record(
+					yield* runtime.call('/api/workflow/token', {
+						executionId,
+						permissions: { contents: 'write' },
+						identity: true,
+					}),
+				),
+			);
+			const value = yield* Effect.fromResult(text(issued.token));
+			yield* mask(value);
+			return { value, bot: issued.bot };
+		});
+		const output = (name: string, value: string) =>
+			environment.GITHUB_OUTPUT
+				? writeOutputTo(environment.GITHUB_OUTPUT, name, value).pipe(
+					Effect.mapError(error => new ActionFailure({ message: error.message })),
+				)
+				: Effect.void;
+		if (stage === 'prepare') {
+			if (plan.packages) yield* runtime.packages;
+			yield* output('distribution', plan.distribution ? 'true' : 'false');
+			if (plan.distribution) {
+				const uploaded = yield* (runtime.prepare ?? prepareDistribution)({
+					...environment,
+					CONTEXT: JSON.stringify({
+						id: executionId,
+						repositoryId: plan.repositoryId,
+						repository: plan.repository,
+						sourceSha: plan.sourceSha,
+					}),
+					DISTRIBUTION_PATHS: JSON.stringify(plan.distribution.files),
+					DISTRIBUTION_TOKEN: (yield* token).value,
+				});
+				yield* output('manifest-path', uploaded.manifestPath);
+				yield* output('subject-checksums', uploaded.subjectChecksums);
+			}
+			return;
+		}
+		if (plan.refs) {
+			if (plan.distribution && (!environment.DISTRIBUTION_MANIFEST || !environment.DISTRIBUTION_BUNDLE)) {
+				return yield* fail('Distribution publication requires its manifest and provenance bundle');
+			}
+			if (!plan.distribution && (environment.DISTRIBUTION_MANIFEST || environment.DISTRIBUTION_BUNDLE)) {
+				return yield* fail('No distribution proof is configured for this execution');
+			}
+			const body = yield* Effect.fromResult(requestBody('refs-plan', { ...environment, EXECUTION_ID: executionId }, 0));
+			const refs = yield* Effect.fromResult(parseRefPlan(yield* runtime.call('/api/workflow/refs-plan', body)));
+			if (refs.executionId !== executionId || refs.repository !== plan.repository) {
+				return yield* fail('Ref plan differs from the authorized publication');
+			}
+			const issued = yield* token;
+			let identity: { name: string; email: string } | undefined;
+			if (issued.bot !== undefined) {
+				const bot = yield* Effect.fromResult(record(issued.bot));
+				const login = yield* Effect.fromResult(text(bot.login));
+				const email = yield* Effect.fromResult(text(bot.email));
+				if (
+					!/^[a-z0-9-]+\[bot\]$/.test(login) || !Number.isSafeInteger(bot.id)
+					|| email !== `${bot.id}+${login}@users.noreply.github.com`
+				) return yield* fail('Invalid publication bot identity');
+				identity = { name: login, email };
+			}
+			const root = yield* Effect.fromResult(required(environment, 'GITHUB_WORKSPACE'));
+			yield* (runtime.refs ?? publishRefs)(
+				refs,
+				root,
+				`https://github.com/${plan.repository}.git`,
+				issued.value,
+				identity,
+			);
+			yield* runtime.call('/api/workflow/refs-complete', { executionId });
+		}
+		if (plan.release) yield* runtime.call('/api/workflow/release', { executionId });
+	});
+}
+
+export const main: Effect.Effect<void, Invalid> = Effect.gen(function*() {
+	const stage = process.argv[2] || 'prepare';
+	if (stage !== 'prepare' && stage !== 'complete') return yield* fail('Unknown publication stage');
+	const origin = yield* serviceOrigin;
+	const api: Runner['call'] = (path, body) => call(origin, path, body);
+	yield* publicationStage(stage, process.env, { call: api, packages: packages(process.env, api) });
 });
 
 if (import.meta.main) await Effect.runPromise(main);

@@ -1,6 +1,7 @@
 import { Schema } from 'effect';
 import { changesResponse } from '@/contract/changes';
 import { distributionSubmissionSchema } from '@/contract/distribution';
+import { workflowPublicationPlan } from '@/contract/publication';
 import { approvalShaPattern } from '@/contract/ids';
 import {
 	claimStep,
@@ -538,6 +539,14 @@ export const routes = {
 		idempotent: true,
 		request: mutableStruct({ executionId: text, aliases: mutableArray(text) }),
 		response: mutableRecord(Schema.String, Schema.String),
+	}),
+	workflowPublicationPlan: route({
+		method: 'POST',
+		path: '/api/workflow/publication-plan',
+		auth: 'workflow',
+		idempotent: true,
+		request: strictStruct({ executionId: text }),
+		response: workflowPublicationPlan,
 	}),
 	workflowRefsPlan: route({
 		method: 'POST',

@@ -777,7 +777,10 @@ function integrate(
 	});
 	const refStep = (step: Record<string, unknown>) =>
 		typeof step.uses === 'string' && /\/actions\/publish-refs\b/.test(step.uses);
-	const beforeRefs = steps.findIndex(refStep);
+	const publicationAnchor = (step: Record<string, unknown>) =>
+		refStep(step)
+		|| distributionFiles !== undefined && actionRole(step.uses) === 'publish';
+	const beforeRefs = steps.findIndex(publicationAnchor);
 	if (
 		distributionScript && beforeRefs >= 0
 		&& !steps.slice(approvedIndex + 1, beforeRefs).some(step =>
@@ -791,7 +794,7 @@ function integrate(
 		} else {
 			if (previousBuild >= 0) steps.splice(previousBuild, 1);
 			steps.splice(
-				steps.findIndex(refStep),
+				steps.findIndex(publicationAnchor),
 				0,
 				...commandSteps({
 					...build,
@@ -802,67 +805,37 @@ function integrate(
 			);
 		}
 	}
-	const ownedDistribution = (step: Record<string, unknown>) =>
-		step.id === 'beepboop_distribution'
-		&& typeof step.uses === 'string'
-		&& /^(?:(?:\$|\.)\/actions\/|kjanat\/beepboop\/actions\/)prepare-distribution(?:@|$)/.test(step.uses);
-	const ownedAttestation = (step: Record<string, unknown>) =>
-		step.id === 'beepboop_attest'
-		&& typeof step.uses === 'string' && step.uses.startsWith('actions/attest@');
 	if (distributionFiles !== undefined) {
-		steps = steps.filter(step => !ownedDistribution(step) && !ownedAttestation(step));
-	}
-	if (distributionFiles?.length) {
-		const before = steps.findIndex(refStep), token = object(steps[before]?.with).token;
-		const tokenId = typeof token === 'string'
-			? /^\$\{\{\s*steps\.([\w-]+)\.outputs\.token\s*\}\}$/.exec(token)?.[1]
-			: undefined;
-		const issued = steps.slice(0, before).some(step =>
-			step.id === tokenId && typeof step.uses === 'string'
-			&& /^(?:(?:\$|\.)\/actions\/|kjanat\/beepboop\/actions\/)token(?:@|$)/.test(step.uses)
-			&& object(step.with)['permission-contents'] === 'write'
+		const linkedTokens = new Set(
+			steps.filter(refStep).flatMap(step => {
+				const token = /^\$\{\{\s*steps\.([\w-]+)\.outputs\.token\s*\}\}$/.exec(String(object(step.with).token))?.[1];
+				return token ? [token] : [];
+			}),
 		);
-		if (!issued) fail('distribution preparation needs a contents-write Beepboop token before publication');
-		else if (steps.some(step => step.id === 'beepboop_distribution' || step.id === 'beepboop_attest')) {
-			fail('distribution preparation step IDs are already in use');
-		} else {
-			steps.splice(
-				before,
-				0,
-				{
-					id: 'beepboop_distribution',
-					name: 'Prepare action distribution manifest',
-					uses: action('prepare-distribution'),
-					with: { context, files: JSON.stringify(distributionFiles), token },
-				},
-				{
-					id: 'beepboop_attest',
-					name: 'Attest action distribution',
-					uses: pinned('attest'),
-					with: { 'subject-checksums': expression("steps.beepboop_distribution.outputs['subject-checksums']") },
-				},
-			);
-		}
+		const publisher = steps.find(step => actionRole(step.uses) === 'publish');
+		steps = steps.filter(step => {
+			if (actionRole(step.uses) === 'publish') return false;
+			if (typeof step.uses !== 'string') return true;
+			if (
+				/^(?:(?:\$|\.)\/actions\/|kjanat\/beepboop\/actions\/)(?:publish-refs|publish-release|prepare-distribution)(?:@|$)/
+					.test(step.uses)
+			) return false;
+			if (
+				/^(?:(?:\$|\.)\/actions\/|kjanat\/beepboop\/actions\/)token(?:@|$)/.test(step.uses)
+				&& (step.id === 'beepboop_token' || typeof step.id === 'string' && linkedTokens.has(step.id))
+			) return false;
+			if (step.id === 'beepboop_attest' && step.uses.startsWith('actions/attest@')) return false;
+			return !(actionRole(step.uses) === 'report' && String(object(step.with).publications).trim() === '[]'
+				&& object(step.with)['execution-id'] === expression(`steps.${id}.outputs.execution-id`));
+		});
+		const reportIndex = steps.findIndex(step => actionRole(step.uses) === 'report');
+		steps.splice(reportIndex < 0 ? steps.length : reportIndex, 0, {
+			...publisher,
+			uses: action('publish'),
+			with: { ...object(publisher?.with), 'execution-id': expression(`steps.${id}.outputs.execution-id`) },
+		});
 	}
 	const refs = steps.findIndex(refStep);
-	if (refs >= 0 && distributionFiles) {
-		const step = steps[refs];
-		if (step) {
-			const { files: _files, 'manifest-path': _manifest, 'bundle-path': _bundle, ...inputs } = object(step.with);
-			steps[refs] = {
-				...step,
-				with: {
-					...inputs,
-					...(distributionFiles.length
-						? {
-							'manifest-path': expression("steps.beepboop_distribution.outputs['manifest-path']"),
-							'bundle-path': expression("steps.beepboop_attest.outputs['bundle-path']"),
-						}
-						: {}),
-				},
-			};
-		}
-	}
 	if (
 		operation === 'promote' && release && refs >= 0
 		&& !steps.some(step => typeof step.uses === 'string' && /\/actions\/publish-release\b/.test(step.uses))

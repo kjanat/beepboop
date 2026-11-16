@@ -87,7 +87,7 @@
 		"@effect/tsgo": "0.69.0",
 		"@kjanat/fmt": "0.62.0",
 		"@playwright/test": "1.65.1",
-		"@sigstore/mock": "0.13.1",
+		"@sigstore/mock": "0.13.0",
 		"@types/bun": "1.4.4",
 		"@types/mdast": "4.0.4",
 		"ansispeck": "0.4.3",
@@ -114,5 +114,8 @@
 		"@kprint/kprint",
 		"esbuild",
 		"workerd"
-	]
+	],
+	"patchedDependencies": {
+		"@sigstore/core@4.0.1": "patches/@sigstore%2Fcore@4.0.1.patch"
+	}
 }

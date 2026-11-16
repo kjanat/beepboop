@@ -1,5 +1,5 @@
 name: Release automation publish
-description: Publish this execution's packages in the order Beepboop hands out, recording each outcome in its publication ledger
+description: Publish the execution's packages, attested distribution, refs and GitHub release as authorized by Beepboop
 inputs:
   service:
     description: Release automation service origin
@@ -19,7 +19,8 @@ runs:
     - name: Setup Bun
       id: bun
       uses: $/actions/deps/bun
-    - name: Publish packages
+    - name: Prepare publication
+      id: prepare
       shell: bash
       env:
         REPOSITORY_PRIVATE: ${{ toJSON(github.event.repository.private) }}
@@ -27,4 +28,18 @@ runs:
         NPM_TARBALLS: ${{ inputs.npm-tarballs }}
         EXECUTION_ID: ${{ inputs.execution-id }}
         SERVICE_ORIGIN: ${{ inputs.service }}
-      run: bun "${GITHUB_ACTION_PATH}/../runtime/publish.ts"
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/publish.ts" prepare
+    - name: Attest distribution provenance
+      id: provenance
+      if: ${{ steps.prepare.outputs.distribution == 'true' }}
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+      with:
+        subject-checksums: ${{ steps.prepare.outputs.subject-checksums }}
+    - name: Complete publication
+      shell: bash
+      env:
+        EXECUTION_ID: ${{ inputs.execution-id }}
+        SERVICE_ORIGIN: ${{ inputs.service }}
+        DISTRIBUTION_MANIFEST: ${{ steps.prepare.outputs.manifest-path }}
+        DISTRIBUTION_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/publish.ts" complete

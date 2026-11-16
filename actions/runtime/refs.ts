@@ -17,8 +17,12 @@ interface Git {
 	exists(ref: string): Effect.Effect<boolean>;
 }
 
-function createGit(root: string, token?: string, keyring?: string): Git {
+function createGit(root: string, token?: string, keyring?: string, identity?: { name: string; email: string }): Git {
 	const env = { ...process.env };
+	if (identity) {
+		env.GIT_AUTHOR_NAME = env.GIT_COMMITTER_NAME = identity.name;
+		env.GIT_AUTHOR_EMAIL = env.GIT_COMMITTER_EMAIL = identity.email;
+	}
 	if (token) {
 		env.GIT_CONFIG_COUNT = '1';
 		env.GIT_CONFIG_KEY_0 = 'http.https://github.com/.extraheader';
@@ -194,16 +198,19 @@ export function publishRefs(
 	root: string,
 	remote: string,
 	token?: string,
+	identity?: { name: string; email: string },
 ): Effect.Effect<void, ActionFailure> {
 	const publicKey = plan.publicKey;
 	if (plan.distribution && publicKey === undefined) {
 		return Effect.fail(new ActionFailure({ message: 'Distribution publication requires the signing key' }));
 	}
-	if (publicKey === undefined) return publish(plan, createGit(root, token), remote);
+	if (publicKey === undefined) return publish(plan, createGit(root, token, undefined, identity), remote);
 	return Effect.acquireUseRelease(
 		Effect.fromResult(attempt(() => mkdtempSync(join(process.env.RUNNER_TEMP || tmpdir(), 'beepboop-gnupg-')))),
 		keyring =>
-			importKey(keyring, publicKey).pipe(Effect.andThen(publish(plan, createGit(root, token, keyring), remote))),
+			importKey(keyring, publicKey).pipe(
+				Effect.andThen(publish(plan, createGit(root, token, keyring, identity), remote)),
+			),
 		keyring => Effect.sync(() => rmSync(keyring, { recursive: true, force: true })),
 	);
 }
@@ -237,7 +244,7 @@ function parseDistribution(value: unknown): Result.Result<DistributionEvidence, 
 	});
 }
 
-function parsePlan(value: unknown): Result.Result<RefPlan, Invalid> {
+export function parseRefPlan(value: unknown): Result.Result<RefPlan, Invalid> {
 	return Result.gen(function*() {
 		const plan = yield* record(value);
 		return {
@@ -258,7 +265,7 @@ if (import.meta.main) {
 		if (!REF_TOKEN) return yield* Effect.fromResult(refuse('Destination token required'));
 		if (!GITHUB_WORKSPACE) return yield* Effect.fromResult(refuse('Checkout directory required'));
 		const plan = yield* Effect.fromResult(
-			attempt((): unknown => JSON.parse(REF_PLAN)).pipe(Result.flatMap(parsePlan)),
+			attempt((): unknown => JSON.parse(REF_PLAN)).pipe(Result.flatMap(parseRefPlan)),
 		);
 		if (!repositoryNamePattern.test(plan.repository)) return yield* Effect.fromResult(refuse('Invalid destination'));
 		yield* publishRefs(plan, GITHUB_WORKSPACE, `https://github.com/${plan.repository}.git`, REF_TOKEN);

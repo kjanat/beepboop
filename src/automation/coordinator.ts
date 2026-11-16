@@ -2795,6 +2795,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private contains(execution: Execution, sha: string, token: string): CoordinatorEffect<boolean, DomainError> {
 		return Effect.gen({ self: this }, function*() {
+			if (execution.currentWorkflow && this.unpublishedDistribution(execution)) {
+				return (yield* this.currentDistributionProblem(execution, sha, token)) === undefined;
+			}
 			if (sha === execution.sourceSha) return true;
 			if (!execution.eventId.startsWith('observed:') && !execution.currentWorkflow) {
 				const executions = yield* this.executions();
@@ -2824,6 +2827,37 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				token,
 			);
 			return comparison.status === 'ahead';
+		});
+	}
+	private unpublishedDistribution(execution: Execution): boolean {
+		return execution.operation === 'promote' && Boolean(execution.workflow?.refs?.distribution)
+			&& !execution.refPlan && !execution.release && !execution.draftRelease
+			&& !execution.publications.some(publication => publication.outcome === 'succeeded');
+	}
+	private currentDistributionProblem(
+		execution: Execution,
+		sha: string,
+		token: string,
+	): CoordinatorEffect<string | undefined, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const record = yield* (yield* this.store).repository(execution.repositoryId);
+			if (!record || readiness(record).kind !== 'ready') return 'The repository is not ready for release recovery';
+			if (!(yield* this.versionKept(execution, sha))) {
+				return 'The release version or configuration changed; prepare and approve a new release';
+			}
+			if (sha !== execution.sourceSha) {
+				const comparison = yield* (yield* this.gateway).read(
+					comparisonSchema,
+					`/repos/${execution.repository}/compare/${execution.sourceSha}...${sha}`,
+					token,
+				);
+				if (comparison.status !== 'ahead' || comparison.merge_base_commit.sha !== execution.sourceSha) {
+					return 'The current workflow no longer contains the approved release source';
+				}
+			}
+			const { pending, failed } = yield* this.commitChecks({ ...execution, sourceSha: sha });
+			const problems = [...failed, ...pending];
+			return problems.length ? `The current workflow commit must be verified with passing checks: ${problems.join('; ')}` : undefined;
 		});
 	}
 	private versionKept(execution: Execution, sha: string): CoordinatorEffect<boolean, DomainError> {
@@ -2963,11 +2997,19 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				? { ...execution.workflow, ref: current }
 				: execution.workflow;
 			if (!(yield* this.versionTagged(execution))) {
+				if (this.unpublishedDistribution(execution) && workflow) {
+					const token = yield* (yield* this.gateway).token(execution.repository, execution.repositoryId);
+					const head = yield* this.refHead({ ...execution, workflow }, token);
+					if (!head || head.tag) return yield* precondition('Distribution recovery requires a current branch workflow');
+					const problem = yield* this.currentDistributionProblem(execution, head.sha, token);
+					if (problem) return yield* precondition(problem);
+				} else {
 				return yield* precondition(
 					`The version tags of ${execution.version ?? 'this release'} do not all target ${
 						execution.sourceSha.slice(0, 12)
 					}; retry the operation instead`,
 				);
+				}
 			}
 			yield* this.put({
 				...execution,

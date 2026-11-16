@@ -2,6 +2,7 @@ import { Effect, Schema } from 'effect';
 import { createExecution } from '@/automation/execution';
 import { logRecovered } from '@/automation/failure-log';
 import { matchesRef } from '@/automation/policy';
+import { selectorKey } from '@/automation/package-identity';
 import { issueWorkflowToken } from '@/automation/token';
 import type { Artifact, Edit, Execution, Publication } from '@/automation/types';
 import { isLockfile, reportableManagerNames } from '@/contract/catalog';
@@ -186,6 +187,26 @@ export const workflowEndpoints = {
 				resolvedInputs: registered.resolvedInputs,
 				package: registered.package,
 				draftRelease: registered.draftRelease,
+			};
+		})),
+	workflowPublicationPlan: workflow(routes.workflowPublicationPlan, (input, context) =>
+		Effect.gen(function*() {
+			const execution = yield* bound(context, input.executionId);
+			if (execution.state !== 'running' || !execution.workflow || execution.managed) {
+				return yield* precondition('Publication requires the running workflow execution');
+			}
+			const workflow = execution.workflow;
+			return {
+				executionId: execution.id,
+				repositoryId: execution.repositoryId,
+				repository: execution.repository,
+				sourceSha: execution.sourceSha,
+				packages: workflow.refs?.phase !== 'aliases',
+				refs: workflow.refs !== undefined,
+				release:
+					workflow.publications?.some(id => selectorKey(id) === selectorKey(`github-release:${execution.repository}`))
+						?? false,
+				...(workflow.refs?.distribution ? { distribution: { files: workflow.refs.distribution.files } } : {}),
 			};
 		})),
 	workflowRefsPlan: workflow(

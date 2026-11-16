@@ -61,7 +61,7 @@ test('a new distribution workflow builds the action and publishes selected npm p
 	expect(steps.some((step: { uses?: string }) => step.uses?.includes('/actions/report@'))).toBe(false);
 });
 
-test('manual publication workflows inherit their configured ref prefix and receive ref and Release steps', async () => {
+test('legacy action publication migrates to one publisher and retains its configured ref prefix', async () => {
 	const source = snapshot({ 'action.yml': 'runs: {using: composite, steps: []}' });
 	const first = await preview(source, {
 		streams: [{
@@ -89,7 +89,19 @@ test('manual publication workflows inherit their configured ref prefix and recei
 	delete files['.github/workflows/action-aliases.yml'];
 	const workflow = parse(files['.github/workflows/release.yml']!);
 	workflow.jobs.promote.steps = workflow.jobs.promote.steps.filter((step: { uses?: string }) =>
-		!/\/actions\/(?:publish-refs|publish-release|token)@/.test(step.uses ?? '')
+		!/\/actions\/(?:publish|publish-refs|publish-release|token)@/.test(step.uses ?? '')
+	);
+	workflow.jobs.promote.steps.push(
+		{ name: 'Owner tests', run: 'echo test' },
+		{ id: 'legacy_token', uses: 'kjanat/beepboop/actions/token@v1', with: { 'permission-contents': 'write' } },
+		{ id: 'beepboop_distribution', uses: 'kjanat/beepboop/actions/prepare-distribution@v1' },
+		{ id: 'beepboop_attest', uses: 'actions/attest@v4' },
+		{ uses: 'kjanat/beepboop/actions/publish-refs@v1', with: { token: '${{ steps.legacy_token.outputs.token }}' } },
+		{ uses: 'kjanat/beepboop/actions/publish-release@v1' },
+		{
+			uses: 'kjanat/beepboop/actions/report@v1',
+			with: { 'execution-id': '${{ steps.beepboop.outputs.execution-id }}', publications: '[]' },
+		},
 	);
 	files['.github/workflows/release.yml'] = stringify(workflow);
 	const plan = await preview(snapshot(files), {
@@ -107,8 +119,10 @@ test('manual publication workflows inherit their configured ref prefix and recei
 	expect(next.promote.workflow.refs.prefix).toBe('tool-v');
 	expect(next.workflows.aliases.refs.prefix).toBe('tool-v');
 	const content = plan.edits.find(edit => edit.path === '.github/workflows/release.yml')!.after;
-	expect(content).toContain('/actions/publish-refs@');
-	expect(content).toContain('/actions/publish-release@');
+	expect(content).toContain('/actions/publish@');
+	expect(content).not.toMatch(/\/actions\/(?:publish-refs|publish-release|prepare-distribution|token)@/);
+	expect(content).not.toContain('uses: actions/attest@');
+	expect(content).toContain('echo test');
 });
 
 test('an identical build before the reviewed checkout does not satisfy distribution publication', async () => {
@@ -138,7 +152,7 @@ test('an identical build before the reviewed checkout does not satisfy distribut
 	const nextSteps =
 		parse(plan.edits.find(edit => edit.path === '.github/workflows/release.yml')!.after).jobs.promote.steps;
 	const checkout = nextSteps.findIndex((step: { with?: { ref?: string } }) => step.with?.ref?.includes('sourceSha'));
-	const refs = nextSteps.findIndex((step: { uses?: string }) => step.uses?.includes('/actions/publish-refs@'));
+	const refs = nextSteps.findIndex((step: { uses?: string }) => step.uses?.includes('/actions/publish@'));
 	expect(nextSteps.slice(checkout + 1, refs).some((step: { run?: string }) => step.run?.includes('bun run build')))
 		.toBe(true);
 });
@@ -190,11 +204,12 @@ test('composite and Docker actions can adopt immutable patch releases and depend
 			refs: { phase: 'aliases', aliases: ['major', 'minor'] },
 		});
 		const release = plan.edits.find(edit => edit.path === '.github/workflows/release.yml')!.after;
-		expect(release).toContain('/actions/publish-release@');
+		expect(release).toContain('/actions/publish@');
 		expect(release).not.toContain('bun run build');
 		const aliases = plan.edits.find(edit => edit.path === '.github/workflows/action-aliases.yml')!.after;
 		expect(aliases).toContain('operation: aliases');
-		expect(aliases).toContain('/actions/publish-refs@');
+		expect(aliases).toContain('/actions/publish@');
+		expect(aliases).not.toMatch(/\/actions\/(?:publish-refs|publish-release|prepare-distribution|token)@/);
 	}
 });
 
@@ -295,7 +310,7 @@ test('switching an existing managed source action to distribution inserts the ch
 		const workflow = parse(plan.edits.find(edit => edit.path === '.github/workflows/release.yml')!.after);
 		const steps = workflow.jobs[shared ? 'publish' : 'promote'].steps;
 		const build = steps.findIndex((step: { run?: string }) => step.run?.trim() === commands);
-		const refs = steps.findIndex((step: { uses?: string }) => step.uses?.includes('/publish-refs@'));
+		const refs = steps.findIndex((step: { uses?: string }) => step.uses?.includes('/actions/publish@'));
 		expect(build).toBeGreaterThanOrEqual(0);
 		expect(build).toBeLessThan(refs);
 		expect(steps.some((step: { uses?: string }) => step.uses?.startsWith('oven-sh/setup-bun@'))).toBe(true);
@@ -337,31 +352,18 @@ test('distribution adoption publishes the reviewed file list and builds using pa
 	expect(steps.find((step: { uses?: string }) => step.uses?.includes('oven-sh/setup-bun@'))).toEqual({
 		uses: 'oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6',
 	});
-	const prepareIndex = steps.findIndex((step: { id?: string }) => step.id === 'beepboop_distribution');
-	const attestIndex = steps.findIndex((step: { id?: string }) => step.id === 'beepboop_attest');
-	const refsIndex = steps.findIndex((step: { uses?: string }) => step.uses?.includes('/publish-refs@'));
+	const publishers = steps.filter((step: { uses?: string }) => step.uses?.includes('/actions/publish@'));
+	const publisherIndex = steps.indexOf(publishers[0]);
 	const buildIndex = steps.findIndex((step: { run?: string }) => step.run?.includes('bun run build'));
-	const tokenIndex = steps.findIndex((step: { id?: string }) => step.id === 'beepboop_token');
 	const reviewedIndex = steps.findIndex((step: { with?: { ref?: string } }) => step.with?.ref?.includes('sourceSha'));
 	expect(buildIndex).toBeGreaterThan(reviewedIndex);
 	expect(reviewedIndex).toBeGreaterThanOrEqual(0);
-	expect(tokenIndex).toBeGreaterThanOrEqual(0);
-	expect(buildIndex).toBeLessThan(prepareIndex);
-	expect(tokenIndex).toBeLessThan(prepareIndex);
-	expect(prepareIndex).toBeLessThan(attestIndex);
-	expect(attestIndex).toBeLessThan(refsIndex);
-	expect(JSON.parse(steps[prepareIndex].with.files)).toEqual(files);
-	expect(steps[prepareIndex].with.context).toBe('${{ steps.beepboop.outputs.context }}');
-	expect(steps[prepareIndex].with.token).toBe(steps[refsIndex].with.token);
-	expect(steps[attestIndex]).toMatchObject({
-		uses: 'actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6',
-		with: { 'subject-checksums': "${{ steps.beepboop_distribution.outputs['subject-checksums'] }}" },
-	});
-	expect(steps[refsIndex].with).toMatchObject({
-		'manifest-path': "${{ steps.beepboop_distribution.outputs['manifest-path'] }}",
-		'bundle-path': "${{ steps.beepboop_attest.outputs['bundle-path'] }}",
-	});
-	expect(steps[refsIndex].with.files).toBeUndefined();
+	expect(buildIndex).toBeLessThan(publisherIndex);
+	expect(publishers).toHaveLength(1);
+	expect(publishers[0].with).toEqual({ 'execution-id': '${{ steps.beepboop.outputs.execution-id }}' });
+	expect(content).not.toMatch(
+		/\/actions\/(?:publish-refs|publish-release|prepare-distribution|token)@|uses: actions\/attest@/,
+	);
 	expect(workflow.jobs.promote.permissions).toMatchObject({
 		contents: 'read',
 		'id-token': 'write',
@@ -403,7 +405,7 @@ test('distribution adoption publishes the reviewed file list and builds using pa
 	expect(switched.blockers).toEqual([]);
 	const switchedWorkflow = parse(switched.edits.find(edit => edit.path === '.github/workflows/release.yml')!.after);
 	const switchedRefs = switchedWorkflow.jobs.promote.steps.find((step: { uses?: string }) =>
-		step.uses?.includes('/publish-refs@')
+		step.uses?.includes('/actions/publish@')
 	);
 	expect(switchedRefs.with.files).toBeUndefined();
 	expect(switchedRefs.with['manifest-path']).toBeUndefined();
