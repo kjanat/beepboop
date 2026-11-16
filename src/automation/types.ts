@@ -1,7 +1,7 @@
 import type { Channel, ChannelOutcome, RegistryOutcome } from '@/automation/destinations';
 import type { ResolvedInput } from '@/automation/outputs';
 import type { PackagePublication } from '@/automation/package-publication';
-import type { ModuleTag, RefPlan } from '@/automation/refs';
+import type { ModuleTag, RefPlan, RefState } from '@/automation/refs';
 import type { ManagerName } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
 import type { StartChannel } from '@/contract/release-start';
@@ -168,6 +168,7 @@ export interface Execution {
 	};
 	resolvedInputs?: ResolvedInput[];
 	refPlan?: RefPlan;
+	reclaims?: RefState[];
 	moduleTags?: ModuleTag[];
 	refNamespace?: RefNamespace;
 	upstreamRelease?: ReleaseReference;

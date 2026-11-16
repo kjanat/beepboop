@@ -158,7 +158,9 @@ Pass the exact `sourceSha` and `planId` from the preview. The server rejects a
 preparation whose plan changed. `runs publish` names one reviewed commit, and
 `runs approve` is its earlier name. `--force` publishes when the signature or
 checks fail, and the audit log records each failure it overrode. `--force`
-cannot publish a version whose tag already targets another commit. `runs cancel` cancels the operation and its running
+cannot publish a version whose tag already targets another commit, unless the
+release takes over the tag of an earlier release of that version that published
+nothing. See [Version selection and release refs](automation.md#version-selection-and-release-refs). `runs cancel` cancels the operation and its running
 workflow. `runs recover` reconciles by default. Pass
 `--action retry` to retry. The server applies its usual publishing and
 dispatch rules. `--action redispatch` runs the current workflow of the default

@@ -46,6 +46,12 @@ export function parseIdentity(
 		version,
 	});
 }
+export function identityPackageName(identity: PackageIdentity): string {
+	if (!identity.namespace) return identity.name;
+	return identity.type === 'vscode-extension'
+		? `${identity.namespace}.${identity.name}`
+		: `${identity.namespace}/${identity.name}`;
+}
 export function identityOf(pkg: PackageRecord, repository?: string): PackageIdentity {
 	return Result.getOrThrow(parseIdentity(pkg, repository));
 }

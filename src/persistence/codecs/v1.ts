@@ -253,6 +253,7 @@ const refPlan: Schema.Codec<RefPlan, unknown> = mutableStruct({
 		annotated: Schema.Boolean,
 		signed: Schema.Boolean,
 		object: Schema.optional(Schema.String),
+		replaces: Schema.optional(Schema.Boolean),
 	})),
 	publicKey: Schema.optional(Schema.String),
 });
@@ -293,6 +294,9 @@ const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
 	})),
 	resolvedInputs: Schema.optional(mutableArray(resolvedInput)),
 	refPlan: Schema.optional(refPlan),
+	reclaims: Schema.optional(
+		mutableArray(mutableStruct({ name: Schema.String, oid: Schema.String, commit: Schema.String })),
+	),
 	moduleTags: Schema.optional(mutableArray(mutableStruct({ id: Schema.String, prefix: Schema.String }))),
 	refNamespace: Schema.optional(Schema.Literals(['heads', 'tags'])),
 	upstreamRelease: Schema.optional(releaseReference),
