@@ -17,23 +17,34 @@ import type { SigningKey } from '@root/test/support/signing.ts';
 import { fakeSigner, signingKey } from '@root/test/support/signing.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { Result, Schema } from 'effect';
+import { Effect, Fiber, Result, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { parseRepositoryConfiguration } from '@/automation/configuration';
 import { excluded, registry } from '@/automation/package-publication';
-import { packageTagBase, packageTagGroups, packageTagRows, taggedReleases } from '@/automation/package-tags';
+import type { PackageTagRow } from '@/automation/package-tags';
+import {
+	packageTagBase,
+	packageTagBudget,
+	packageTagGroups,
+	packageTagPage,
+	packageTagPages,
+	packageTagRows,
+	packageTagWindow,
+	taggedReleases,
+} from '@/automation/package-tags';
 import type { Inventory, Package } from '@/automation/types';
-import { packageTagView } from '@/contract/views';
+import type { PackageTagView } from '@/contract/views';
+import { packageTagPage as pageSchema } from '@/contract/views';
 import { configurationDrift, configurationSchema } from '@/domain/configuration';
 import { validateAgainst } from '@/domain/validate';
 import { storedConfiguration } from '@/persistence/codecs/configuration';
-import { decodeSync, mutableArray } from '@/schema';
+import { decodeSync } from '@/schema';
 
 let world: World;
 eachWorld(created => {
 	world = created;
 });
 
-const results = mutableArray(packageTagView);
 const commit = 'a'.repeat(40), other = 'b'.repeat(40), oid = 'c'.repeat(40);
 
 function configuration(packageTags: string[]) {
@@ -79,9 +90,21 @@ async function released(packageTags = ['pkg:npm/widget'], fields: Record<string,
 	const api = bearer(world, await world.cliSession());
 	expect((await api('/api/repositories/discover', { repository: 'octo/widget' })).status).toBe(200);
 	const tags = async (apply: boolean) => {
-		const reply = await api('/api/repositories/package-tags', { repositoryId: repository.id, stream: 'main', apply });
-		expect(reply.status).toBe(200);
-		return decodeSync(results, reply.body);
+		const results: PackageTagView[] = [];
+		let after: string | undefined;
+		do {
+			const reply = await api('/api/repositories/package-tags', {
+				repositoryId: repository.id,
+				stream: 'main',
+				apply,
+				...(after === undefined ? {} : { after }),
+			});
+			expect(reply.status).toBe(200);
+			const page = decodeSync(pageSchema, reply.body);
+			results.push(...page.results);
+			after = page.next;
+		} while (after !== undefined);
+		return results;
 	};
 	return { repository, first, second, api, tags };
 }
@@ -468,11 +491,11 @@ test('a package that publishes to another registry gets no tag from a public nam
 	}
 }, 30_000);
 
-test('registry checks past their time budget report a failure the backfill can repeat', async () => {
+test('a backfill page stops starting checks past its window and names the next page', async () => {
 	const key = signingKey('Release Bot (CI) <release@example.com>');
 	try {
 		world.env.SIGNER = fakeSigner(key);
-		const { repository, first, tags } = await released();
+		const { repository, first, api, tags } = await released();
 		for (let minor = 1; minor <= 9; minor++) {
 			world.github.recordTag(repository, `v0.${minor}.1`, String(minor).repeat(40), first, true);
 		}
@@ -484,51 +507,130 @@ test('registry checks past their time budget report a failure the backfill can r
 			}
 			return world.npm.handle(request);
 		});
-		const results = await tags(false);
-		expect(
-			results.filter(result => result.reason === 'The package tag checks ran out of time; run beepboop tags backfill')
-				.length,
-		)
-			.toBeGreaterThan(0);
-		expect(
-			results.filter(result => result.outcome === 'failed').every(result => result.reason?.includes('ran out of time')),
-		)
-			.toBe(true);
+		const reply = await api('/api/repositories/package-tags', {
+			repositoryId: repository.id,
+			stream: 'main',
+			apply: false,
+		});
+		const page = decodeSync(pageSchema, reply.body);
+		expect(page.results.length).toBeLessThan(11);
+		expect(page.next).toBe(page.results.at(-1)?.tag);
+		const all = await tags(false);
+		expect(all.length).toBe(11);
+		expect(new Set(all.map(result => result.tag)).size).toBe(11);
+		expect(all.filter(result => result.outcome === 'failed')).toEqual([]);
+		const stale = await api('/api/repositories/package-tags', {
+			repositoryId: repository.id,
+			stream: 'main',
+			apply: false,
+			after: 'gadget-v1.0.0',
+		});
+		expect([stale.status, decodeSync(Schema.Struct({ error: Schema.String }), stale.body).error]).toEqual([
+			422,
+			'gadget-v1.0.0 is missing from the package tags of this stream; run the backfill again',
+		]);
 	} finally {
 		setSystemTime();
 		key.dispose();
 	}
 }, 30_000);
 
-test('tag creation past the time budget leaves the later tags to the next backfill', async () => {
-	const key = signingKey('Release Bot (CI) <release@example.com>');
-	try {
-		const signer = fakeSigner(key);
-		world.env.SIGNER = {
-			...signer,
-			sign: async (data, caller) => {
-				setSystemTime(new Date(Date.now() + 60_000));
-				return signer.sign(data, caller);
-			},
-		};
-		const { repository, first, second, tags } = await released();
-		world.npm.publish('widget', '0.9.0');
-		expect(await tags(true)).toEqual([
-			{ tag: 'widget-v0.9.0', version: '0.9.0', commit: first, outcome: 'created' },
+function pageRow(index: number): PackageTagRow {
+	return {
+		tag: `widget-v1.0.${index}`,
+		version: `1.0.${index}`,
+		commit,
+		references: ['pkg:npm/widget'],
+		state: 'missing',
+	};
+}
+
+test('a page checks eight rows at a time and starts none after its window', async () => {
+	const rows = Array.from({ length: 10 }, (_, index) => pageRow(index));
+	const page = await Effect.runPromise(
+		Effect.gen(function*() {
+			const fiber = yield* Effect.forkChild(
+				packageTagPage(rows, undefined, row =>
+					Effect.sleep(packageTagWindow + 1).pipe(
+						Effect.as({ tag: row.tag, version: row.version, commit: row.commit, outcome: 'unpublished' as const }),
+					)),
+			);
+			yield* TestClock.adjust(packageTagWindow + 1);
+			return yield* Fiber.join(fiber);
+		}).pipe(Effect.provide(TestClock.layer())),
+	);
+	expect(page).toEqual({
+		results: rows.slice(0, 8).map(row => ({
+			tag: row.tag,
+			version: row.version,
+			commit: row.commit,
+			outcome: 'unpublished',
+		})),
+		next: 'widget-v1.0.7',
+	});
+	const rest = await Effect.runPromise(
+		packageTagPage(
+			rows,
+			page.next,
+			row =>
+				Effect.succeed({ tag: row.tag, version: row.version, commit: row.commit, outcome: 'unpublished' as const }),
+		),
+	);
+	expect(rest).toEqual({
+		results: rows.slice(8).map(row => ({
+			tag: row.tag,
+			version: row.version,
+			commit: row.commit,
+			outcome: 'unpublished',
+		})),
+	});
+});
+
+test('a release follows the pages until every row has its answer', async () => {
+	const rows = Array.from({ length: 10 }, (_, index) => pageRow(index));
+	const started: string[] = [];
+	const results = await Effect.runPromise(
+		Effect.gen(function*() {
+			const fiber = yield* Effect.forkChild(
+				packageTagPages(rows, row =>
+					Effect.sync(() => started.push(row.tag)).pipe(
+						Effect.andThen(Effect.sleep(packageTagWindow + 1)),
+						Effect.as({ tag: row.tag, version: row.version, commit: row.commit, outcome: 'unpublished' as const }),
+					)),
+			);
+			yield* TestClock.adjust(packageTagWindow + 1);
+			yield* TestClock.adjust(packageTagWindow + 1);
+			return yield* Fiber.join(fiber);
+		}).pipe(Effect.provide(TestClock.layer())),
+	);
+	expect(results.map(result => result.tag)).toEqual(rows.map(row => row.tag));
+	expect(started).toEqual(rows.map(row => row.tag));
+});
+
+test('a row still running when the page budget ends reports a failure', async () => {
+	const rows = [pageRow(0), pageRow(1)];
+	const page = await Effect.runPromise(
+		Effect.gen(function*() {
+			const fiber = yield* Effect.forkChild(
+				packageTagPage(rows, undefined, row =>
+					row.tag === 'widget-v1.0.0'
+						? Effect.never
+						: Effect.succeed({ tag: row.tag, version: row.version, commit: row.commit, outcome: 'exists' as const })),
+			);
+			yield* TestClock.adjust(packageTagBudget);
+			return yield* Fiber.join(fiber);
+		}).pipe(Effect.provide(TestClock.layer())),
+	);
+	expect(page).toEqual({
+		results: [
 			{
 				tag: 'widget-v1.0.0',
 				version: '1.0.0',
-				commit: second,
+				commit,
 				outcome: 'failed',
-				reason: 'The package tag checks ran out of time; run beepboop tags backfill',
+				reason: 'The checks ran out of time; run beepboop tags backfill again',
 			},
-		]);
-		expect([repository.refs.has('tags/widget-v0.9.0'), repository.refs.has('tags/widget-v1.0.0')]).toEqual([
-			true,
-			false,
-		]);
-	} finally {
-		setSystemTime();
-		key.dispose();
-	}
-}, 30_000);
+			{ tag: 'widget-v1.0.1', version: '1.0.1', commit, outcome: 'exists' },
+		],
+	});
+});

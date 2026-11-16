@@ -34,7 +34,13 @@ export const repositoryEndpoints = {
 		routes.repositoriesPackageTags,
 		(input, { service, actor }) =>
 			fromPromise(() =>
-				service.coordinator(input.repositoryId).packageTags(input.repositoryId, input.stream, input.apply, actor)
+				service.coordinator(input.repositoryId).packageTags(
+					input.repositoryId,
+					input.stream,
+					input.apply,
+					input.after,
+					actor,
+				)
 			),
 	),
 	repositoriesList: admin(

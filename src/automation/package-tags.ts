@@ -1,8 +1,11 @@
+import { Clock, Effect, Option } from 'effect';
 import { matchesPackage } from '@/automation/package-identity';
 import type { RefState } from '@/automation/refs';
 import type { Package } from '@/automation/types';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
 import { parseTag } from '@/contract/version';
-import type { PackageTagView } from '@/contract/views';
+import type { PackageTagPage, PackageTagView } from '@/contract/views';
 
 export interface PackageTagGroup {
 	prefix: string;
@@ -20,6 +23,9 @@ export interface PackageTagRow extends Release {
 	target?: string;
 }
 export type PackageTagResult = PackageTagView;
+export const packageTagWindow = 10_000;
+export const packageTagBudget = 20_000;
+export const packageTagLate = 'The checks ran out of time; run beepboop tags backfill again';
 
 export function packageTagBase(name: string): string {
 	return name.replace(/^@/, '').replaceAll('/', '-');
@@ -72,4 +78,51 @@ export function packageTagRows(
 			};
 		})
 	);
+}
+
+export function packageTagPage<R>(
+	rows: readonly PackageTagRow[],
+	after: string | undefined,
+	check: (row: PackageTagRow) => Effect.Effect<PackageTagResult, never, R>,
+): Effect.Effect<PackageTagPage, DomainError, R> {
+	return Effect.gen(function*() {
+		const start = after === undefined ? 0 : rows.findIndex(row => row.tag === after) + 1;
+		if (start === 0 && after !== undefined) {
+			return yield* precondition(`${after} is missing from the package tags of this stream; run the backfill again`);
+		}
+		const pending = rows.slice(start);
+		const clock = yield* Clock.Clock;
+		const begin = clock.currentTimeMillisUnsafe();
+		const checked = yield* Effect.forEach(pending, (row, index) => {
+			const elapsed = clock.currentTimeMillisUnsafe() - begin;
+			if (index > 0 && elapsed >= packageTagWindow) return Effect.undefined;
+			const base = { tag: row.tag, version: row.version, commit: row.commit };
+			return check(row).pipe(
+				Effect.timeoutOption(packageTagBudget - elapsed),
+				Effect.map(answer =>
+					Option.getOrElse(answer, (): PackageTagResult => ({ ...base, outcome: 'failed', reason: packageTagLate }))
+				),
+			);
+		}, { concurrency: 8 });
+		const cut = checked.indexOf(undefined);
+		const results = (cut < 0 ? checked : checked.slice(0, cut)).filter(result => result !== undefined);
+		const last = results.at(-1);
+		return cut < 0 || !last ? { results } : { results, next: last.tag };
+	});
+}
+
+export function packageTagPages<R>(
+	rows: readonly PackageTagRow[],
+	check: (row: PackageTagRow) => Effect.Effect<PackageTagResult, never, R>,
+): Effect.Effect<PackageTagResult[], DomainError, R> {
+	return Effect.gen(function*() {
+		const results: PackageTagResult[] = [];
+		let after: string | undefined;
+		do {
+			const page = yield* packageTagPage(rows, after, check);
+			results.push(...page.results);
+			after = page.next;
+		} while (after !== undefined);
+		return results;
+	});
 }

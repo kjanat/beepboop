@@ -1,4 +1,4 @@
-import { beforeEach, expect, test } from 'bun:test';
+import { beforeEach, expect, setSystemTime, test } from 'bun:test';
 import { runCli, savedClient } from '@root/test/support/cli.ts';
 import { call, cliTransport } from '@root/test/support/client.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
@@ -146,6 +146,32 @@ test('tags backfill asks for --stream when several streams have packageTags', as
 		expect(refused.exitCode).not.toBe(0);
 		expect(refused.stderr.join('')).toContain('Choose a stream: main, second');
 	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
+test('tags backfill follows the pages of a long history', async () => {
+	try {
+		const { created, head } = await repository();
+		for (let minor = 1; minor <= 9; minor++) {
+			world.github.recordTag(created, `v0.${minor}.1`, String(minor).repeat(40), head, true);
+		}
+		let stalled = false;
+		world.network.serve('registry.npmjs.org', request => {
+			if (!stalled) {
+				stalled = true;
+				setSystemTime(new Date(Date.now() + 60_000));
+			}
+			return world.npm.handle(request);
+		});
+		const done = await runCli(['tags', 'backfill', '--repository', 'octo/widget', '--json', '--yes']);
+		expect(done.exitCode).toBe(0);
+		const rows = decodeSync(mutableArray(packageTagView), JSON.parse(done.stdout.join('')));
+		expect([rows.length, new Set(rows.map(row => row.tag)).size]).toEqual([11, 11]);
+		expect(rows.filter(row => row.outcome === 'created').map(row => row.tag)).toEqual(['widget-v1.0.0']);
+		expect(created.refs.has('tags/widget-v1.0.0')).toBe(true);
+	} finally {
+		setSystemTime();
 		key.dispose();
 	}
 }, 30_000);

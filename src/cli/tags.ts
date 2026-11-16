@@ -35,6 +35,25 @@ const labels: Record<PackageTagView['outcome'], string> = {
 	failed: 'failed',
 };
 
+function packageTags(
+	client: Client,
+	request: { repositoryId: number; stream: string; apply: boolean },
+): Effect.Effect<PackageTagView[], CLIError> {
+	return Effect.gen(function*() {
+		const results: PackageTagView[] = [];
+		let after: string | undefined;
+		do {
+			const page = yield* client.call(
+				routes.repositoriesPackageTags,
+				after === undefined ? request : { ...request, after },
+			);
+			results.push(...page.results);
+			after = page.next;
+		} while (after !== undefined);
+		return results;
+	});
+}
+
 function rows(look: Look, results: readonly PackageTagView[]) {
 	return results.map(result => ({
 		tag: look.pkg(result.tag),
@@ -80,7 +99,7 @@ export function backfillPackageTags(
 		const preview = yield* step(
 			out,
 			`Checking the package tags of ${look.pkg(repository.name)} / ${stream}`,
-			client.call(routes.repositoriesPackageTags, { repositoryId: repository.id, stream, apply: false }),
+			packageTags(client, { repositoryId: repository.id, stream, apply: false }),
 			found => `Checked ${found.length} package tags`,
 		);
 		const missing = preview.filter(result => result.outcome === 'publishable');
@@ -124,7 +143,7 @@ export function backfillPackageTags(
 		const results = yield* step(
 			out,
 			`Creating ${missing.length} package tags`,
-			client.call(routes.repositoriesPackageTags, { repositoryId: repository.id, stream, apply: true }),
+			packageTags(client, { repositoryId: repository.id, stream, apply: true }),
 			done => `Created ${done.filter(result => result.outcome === 'created').length} package tags`,
 		);
 		if (out.jsonMode) yield* emit(out, results);

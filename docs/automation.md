@@ -1267,8 +1267,10 @@ missing. It lists every version tag of the stream, prints which package tags
 exist, which it would create, which packages were not published at that version
 and which tag names already target another commit, and creates the missing
 tags after you confirm. Run it once after adding `packageTags` to a stream.
-Registry checks and tag creation share a 20 second budget per call. A tag the
-budget did not reach reports a failure, and the next backfill takes it up.
+Beepboop answers the backfill in pages. A page starts checks for 10 seconds and
+answers within 20, and the CLI requests pages until every tag has an answer. A
+check still running after 20 seconds reports a failure, and the next backfill
+checks that tag again.
 
 Discovery blocks a `packageTags` entry that matches no package, matches only
 packages that skip their public registry, or is not in the stream's

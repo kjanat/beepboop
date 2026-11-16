@@ -78,6 +78,11 @@ export const packageTagView = mutableStruct({
 	reason: Schema.optional(Schema.String),
 });
 export type PackageTagView = Decoded<typeof packageTagView>;
+export const packageTagPage = mutableStruct({
+	results: mutableArray(packageTagView),
+	next: Schema.optional(Schema.String),
+});
+export type PackageTagPage = Decoded<typeof packageTagPage>;
 
 export const planReview = looseStruct({
 	sourceSha: Schema.String,
