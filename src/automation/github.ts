@@ -188,7 +188,12 @@ export const gitHubRequest = Effect.fn('GitHub.request')(function*(
 			Effect.timeout('2 seconds'),
 			Effect.map(detailOf),
 			Effect.orElseSucceed(() => ''),
-			Effect.map(detail => `GitHub HTTP ${response.status} on ${route}${detail ? `: ${detail}` : ''}`),
+			Effect.map(detail => {
+				const accepted = response.headers.get('x-accepted-github-permissions');
+				return `GitHub HTTP ${response.status} on ${route}${detail ? `: ${detail}` : ''}${
+					accepted ? ` (GitHub accepts ${accepted})` : ''
+				}`;
+			}),
 		);
 	const safeRead = method === 'GET' || readOnlyGraphql;
 	const maxAttempts = 3;

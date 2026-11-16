@@ -464,3 +464,22 @@ test('GitHub error diagnostics time out while preserving the HTTP error', async 
 	expect(Result.isFailure(result) && result.failure.message).toBe('GitHub HTTP 400 on GET /repos/o/r');
 	expect(cancelled).toBe(true);
 });
+
+test('a GitHub refusal names the permissions GitHub accepts for the route', async () => {
+	const result = await Effect.runPromise(
+		gitHubRequest(
+			async () =>
+				Response.json(
+					{ message: 'Resource not accessible by integration' },
+					{ status: 403, headers: { 'x-accepted-github-permissions': 'contents=write; workflows=write' } },
+				),
+			'/repos/o/r/git/refs',
+			'',
+			'POST',
+			{ ref: 'refs/tags/x', sha: 'a'.repeat(40) },
+		).pipe(Effect.result),
+	);
+	expect(Result.isFailure(result) && result.failure.message).toBe(
+		'GitHub HTTP 403 on POST /repos/o/r/git/refs: Resource not accessible by integration (GitHub accepts contents=write; workflows=write)',
+	);
+});
