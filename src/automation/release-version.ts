@@ -39,7 +39,7 @@ export function resolvePackageVersion(
 			? yield* precondition('Select an explicit version for the first release')
 			: yield* nextVersion(first, request);
 		const answered = packages.filter(pkg => pkg.publicationStatus !== 'failed');
-		const completing = answered.some(pkg => releasedVersion(pkg) !== version);
+		const completing = answered.length < packages.length || answered.some(pkg => releasedVersion(pkg) !== version);
 		for (const previous of unique(answered.map(releasedVersion))) {
 			if (!completing || previous !== version) yield* nextVersion(previous, { version });
 		}
