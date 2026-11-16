@@ -421,7 +421,13 @@ export class AutomationService {
 					);
 					if (conflicts.length) {
 						const owned = yield* fromPromise(() =>
-							this.coordinator(repository.id).reclaimable(repository.id, name, version, conflicts)
+							this.coordinator(repository.id).reclaimable(
+								repository.id,
+								name,
+								version,
+								`${policy.prefix}${version}`,
+								conflicts,
+							)
 						);
 						if (owned.length === conflicts.length) reclaims = owned;
 					}

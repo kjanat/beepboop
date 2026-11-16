@@ -84,6 +84,7 @@ import {
 	streamModuleTagPrefixes,
 	tagConflict,
 	tagObject,
+	tagObjectId,
 	tagPayload,
 	tagPrefixes,
 	versionTagged,
@@ -1099,6 +1100,19 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const refs = complete ? [] : yield* gateway.tagRefs(execution.repository, execution.repositoryId);
 				if (!execution.refPlan) {
 					if (complete) return yield* precondition('Ref plan has not been authorized');
+					const pending = (execution.reclaims ?? []).filter(tag =>
+						refs.some(ref => ref.name === tag.name && ref.oid === tag.oid)
+					);
+					if (pending.length) {
+						const kept = yield* this.reclaimableTags(execution, pending, true, `${policy.prefix}${version}`);
+						if (kept.length !== pending.length) {
+							return yield* precondition(
+								`${
+									pending.map(tag => tag.name).join(', ')
+								} can no longer move: a release of ${version} published or runs`,
+							);
+						}
+					}
 					const changes = yield* planRefs(
 						policy,
 						version,
@@ -1892,7 +1906,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				yield* this.put({ ...execution, state: 'cancelled', reason: `Superseded by ${newer.id}` });
 				return true;
 			}
-			const conflict = yield* this.tagProblem(execution);
+			const conflict = yield* this.tagProblem(execution, true);
 			if (conflict) {
 				yield* this.put({ ...execution, state: 'cancelled', reason: conflict });
 				return true;
@@ -2132,18 +2146,24 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				refs.some(ref => ref.name === tag.name && ref.oid === tag.oid)
 			);
 			if (!pending.length) return undefined;
-			const kept = yield* this.reclaimableTags(execution, pending, registries);
+			const kept = yield* this.reclaimableTags(execution, pending, registries, tagFor(policy, version.data));
 			const lost = pending.find(tag => !kept.some(entry => entry.name === tag.name));
 			return lost && `${conflictMessage(lost)}, and that release published packages`;
 		});
 	}
-	reclaimable(repositoryId: number, stream: string, version: string, conflicts: RefState[]): Promise<RefState[]> {
+	reclaimable(
+		repositoryId: number,
+		stream: string,
+		version: string,
+		primary: string,
+		conflicts: RefState[],
+	): Promise<RefState[]> {
 		return this.run(
 			Effect.gen({ self: this }, function*() {
 				const record = yield* (yield* this.store).repository(repositoryId);
 				if (!record) return [];
 				const probe = { repository: record.name, repositoryId: record.id, stream, version };
-				return yield* this.reclaimableTags(probe, conflicts, true);
+				return yield* this.reclaimableTags(probe, conflicts, true, primary);
 			}),
 			'coordinator.reclaimable',
 			{ repositoryId, stream, version },
@@ -2153,10 +2173,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		release: Pick<Execution, 'repository' | 'repositoryId' | 'stream' | 'version'> & { id?: string },
 		conflicts: readonly RefState[],
 		registries: boolean,
+		primary: string,
 	): CoordinatorEffect<RefState[], DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const version = release.version;
-			if (!version || !conflicts.length) return [];
+			if (!version || !conflicts.length || conflicts.some(tag => tag.name !== primary)) return [];
 			const releases = (yield* this.executions()).filter(execution =>
 				execution.operation === 'promote' && execution.stream === release.stream
 				&& execution.version === version && execution.id !== release.id
@@ -2168,15 +2189,35 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				)
 			);
 			if (shipped) return [];
-			const owned = conflicts.filter(tag =>
-				releases.some(execution =>
-					['failed', 'cancelled'].includes(execution.state)
-					&& execution.refPlan?.changes.some(change => change.name === tag.name && change.commit === tag.commit)
-				)
-			);
+			const pushed: string[] = [];
+			for (const execution of releases) {
+				if (
+					!['failed', 'cancelled'].includes(execution.state)
+					|| !execution.publications.some(publication =>
+						publication.id === 'refs:promote' && publication.outcome === 'succeeded'
+					)
+				) continue;
+				for (const change of execution.refPlan?.changes ?? []) {
+					if (change.object === undefined || (change.expected !== null && !change.replaces)) continue;
+					pushed.push(`${change.name} ${change.commit} ${yield* tagObjectId(change.object)}`);
+				}
+			}
+			const owned = conflicts.filter(tag => pushed.includes(`${tag.name} ${tag.commit} ${tag.oid}`));
 			if (owned.length !== conflicts.length) return [];
 			const gateway = yield* this.gateway;
-			const token = yield* gateway.token(release.repository, release.repositoryId, { contents: 'read' });
+			const token = yield* gateway.token(release.repository, release.repositoryId, {
+				contents: 'read',
+				actions: 'read',
+			});
+			for (const execution of releases) {
+				if (execution.runId === undefined) continue;
+				const run = yield* gateway.read(
+					workflowRunSchema,
+					`/repos/${release.repository}/actions/runs/${execution.runId}`,
+					token,
+				);
+				if (run.status !== 'completed') return [];
+			}
 			for (const tag of owned) {
 				const published = yield* gateway.read(
 					Schema.NullOr(releaseSchema),
@@ -2457,6 +2498,16 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (action === 'retry') {
 					if (!['failed', 'cancelled'].includes(execution.state)) {
 						return yield* precondition('Only failed or cancelled operations can be retried');
+					}
+					const takeover = (yield* this.executions()).find(other =>
+						other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
+						&& other.version === execution.version && (other.reclaims?.length ?? 0) > 0
+						&& !['failed', 'cancelled'].includes(other.state)
+					);
+					if (takeover) {
+						return yield* precondition(
+							`Release ${takeover.id} takes over the version tag of ${execution.version}; retry that release instead`,
+						);
 					}
 					if (execution.operation === 'prepare' && !execution.plan && !execution.managed) {
 						return yield* precondition('This preparation has no plan; prepare the release from Prepare a release');

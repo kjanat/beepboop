@@ -130,3 +130,19 @@ test('a version ref plan replaces a tag on another commit that the release recla
 	const exit = await Effect.runPromiseExit(planRefs({ ...policy, prefix: 'v' }, '1.1.0', commit, [moved], [], [tag]));
 	expect(JSON.stringify(exit)).toContain(`Version tag v1.1.0 already targets ${other.slice(0, 12)}`);
 });
+
+test('a replacing ref plan that already landed pushes again without failing its lease', async () => {
+	const { checkout, origin, old, fixed, plan, dispose } = moving();
+	try {
+		await Effect.runPromise(publishRefs(plan(old), checkout.dir, origin));
+		const moved = gitOutput(origin, ['rev-parse', 'refs/tags/v1.0.0']);
+		await Effect.runPromise(publishRefs(plan(old), checkout.dir, origin));
+		expect([
+			gitOutput(origin, ['rev-parse', 'refs/tags/v1.0.0']),
+			gitOutput(origin, ['rev-parse', 'refs/tags/v1.0.0^{commit}']),
+		])
+			.toEqual([moved, fixed]);
+	} finally {
+		dispose();
+	}
+});

@@ -5,7 +5,7 @@ import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import type { SemVer } from '@/contract/version';
 import { compare, isPrerelease, parseTag, semVer, tagFor } from '@/contract/version';
-import { fromSync } from '@/failure';
+import { fromPromise, fromSync } from '@/failure';
 
 export interface RefPolicy {
 	phase: 'version' | 'aliases';
@@ -123,6 +123,16 @@ export function versionTagged(
 		&& versionTags(policy, version, modulePrefixes).every(name =>
 			refs.some(ref => ref.name === name && ref.commit === commit)
 		);
+}
+export function tagObjectId(object: string): Effect.Effect<string, DomainError> {
+	const bytes = new TextEncoder().encode(object);
+	const header = new TextEncoder().encode(`tag ${bytes.length}\0`);
+	const data = new Uint8Array(header.length + bytes.length);
+	data.set(header);
+	data.set(bytes, header.length);
+	return fromPromise(() => crypto.subtle.digest('SHA-1', data)).pipe(
+		Effect.map(digest => [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('')),
+	);
 }
 export function conflictMessage(tag: RefState): string {
 	return `Version tag ${tag.name} already targets ${tag.commit.slice(0, 12)}`;

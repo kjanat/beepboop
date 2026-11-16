@@ -1,4 +1,5 @@
-import { expect, test } from 'bun:test';
+import { afterEach, expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import { begin, runAction, runIdentity } from '@root/test/support/actions.ts';
 import type { Repository } from '@root/test/support/github.ts';
 import type { Reply } from '@root/test/support/http.ts';
@@ -6,26 +7,23 @@ import { bearer, field, text } from '@root/test/support/http.ts';
 import { promotions } from '@root/test/support/releases.ts';
 import { licenseText, npmManifest, passChecks, widget } from '@root/test/support/repositories.ts';
 import { applySetup, previewSetup } from '@root/test/support/setup.ts';
-import type { World } from '@root/test/support/world.ts';
+import type { SigningKey } from '@root/test/support/signing.ts';
+import { fakeSigner, signingKey } from '@root/test/support/signing.ts';
+import type { RunIdentity, World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Schema } from 'effect';
 import type { Execution } from '@/automation/types';
 import { decodeSync, mutableArray, mutableStruct } from '@/schema';
 
 type Api = (path: string, body?: unknown) => Promise<Reply>;
-const refPlan = mutableStruct({ changes: mutableArray(mutableStruct({ name: Schema.String, commit: Schema.String })) });
-const movedPlan = mutableStruct({
-	changes: mutableArray(mutableStruct({
-		name: Schema.String,
-		expected: Schema.NullOr(Schema.String),
-		commit: Schema.String,
-		replaces: Schema.optional(Schema.Boolean),
-	})),
-});
 
-let world: World;
+let world: World, key: SigningKey | undefined;
 eachWorld(created => {
 	world = created;
+});
+afterEach(() => {
+	key?.dispose();
+	key = undefined;
 });
 
 function manifest(name: string, version: string, dependencies?: Record<string, string>): string {
@@ -125,8 +123,39 @@ async function failedRelease(rerun = false) {
 	return { repository, merged, run, draft: promotion.draftRelease, retry, drafts };
 }
 
-async function taggedFailure(approval: 'push' | 'required' = 'push') {
+const signedPlan = mutableStruct({
+	changes: mutableArray(mutableStruct({
+		name: Schema.String,
+		expected: Schema.NullOr(Schema.String),
+		commit: Schema.String,
+		object: Schema.optional(Schema.String),
+		replaces: Schema.optional(Schema.Boolean),
+	})),
+});
+function objectId(object: string | undefined): string {
+	const hashed = spawnSync('git', ['hash-object', '-t', 'tag', '--stdin', '--literally'], {
+		input: object ?? '',
+		encoding: 'utf8',
+	});
+	return hashed.stdout.trim();
+}
+async function pushRefs(identity: RunIdentity, executionId: string, repository: Repository) {
+	const planned = await runAction(world, 'refs-plan', identity, { EXECUTION_ID: executionId });
+	const changes = decodeSync(signedPlan, JSON.parse(planned.outputs.result ?? '')).changes;
+	for (const change of changes) {
+		if (change.object !== undefined) {
+			world.github.recordTag(repository, change.name, objectId(change.object), change.commit, true);
+		}
+	}
+	await runAction(world, 'refs-complete', identity, { EXECUTION_ID: executionId });
+	return changes;
+}
+
+async function taggedFailure(approval: 'push' | 'required' = 'push', existing?: string) {
+	key = signingKey('Release Bot (CI) <release@example.com>');
+	world.env.SIGNER = fakeSigner(key);
 	const { repository, api, merged } = await mergedSetup(true, approval);
+	if (existing) world.github.recordTag(repository, 'v1.0.0', existing, merged.sha, true);
 	if (approval === 'required') {
 		const [waiting] = await promotions(api);
 		expect((await api('/api/executions/approve', { id: waiting?.id, sourceSha: merged.sha })).status).toBe(200);
@@ -138,46 +167,47 @@ async function taggedFailure(approval: 'push' | 'required' = 'push') {
 	run.status = 'in_progress';
 	const identity = runIdentity(repository, run, 'release.yml');
 	await begin(world, identity, first.id, 'main', 'promote');
-	const planned = await runAction(world, 'refs-plan', identity, { EXECUTION_ID: first.id });
-	expect(decodeSync(refPlan, JSON.parse(planned.outputs.result ?? '')).changes.map(change => change.name)).toEqual([
-		'v1.0.0',
-	]);
-	world.github.recordTag(repository, 'v1.0.0', 'a'.repeat(40), merged.sha, true);
-	await runAction(world, 'refs-complete', identity, { EXECUTION_ID: first.id });
+	const changes = await pushRefs(identity, first.id, repository);
+	expect(changes.map(change => [change.name, change.expected])).toEqual([['v1.0.0', existing ?? null]]);
 	run.status = 'completed';
 	run.conclusion = 'failure';
 	await world.workflowRun(repository, run, 'failure', 'workflow_dispatch');
 	await world.wait(16_000);
 	expect((await promotions(api)).map(promotion => promotion.state)).toEqual(['failed']);
-	return { repository, api, merged, first };
+	const oid = repository.refs.get('tags/v1.0.0') ?? '';
+	return { repository, api, merged, first, run, oid };
+}
+async function pushFix(repository: Repository, checks = true) {
+	const fixed = world.github.push(repository, { 'README.md': '# widget\n\nFixed.\n' }, 'Fix the release');
+	if (checks) passChecks(repository, fixed.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	return fixed;
 }
 
 test('a release of the same version takes over the tag of a failed release that published nothing', async () => {
-	const { repository, api, merged, first } = await taggedFailure();
-	const fixed = world.github.push(repository, { 'README.md': '# widget\n\nFixed.\n' }, 'Fix the release');
-	passChecks(repository, fixed.sha);
-	expect((await world.push(repository)).status).toBe(202);
-	await world.wait(16_000);
+	const { repository, api, merged, first, oid } = await taggedFailure();
+	const fixed = await pushFix(repository);
 	const second = (await promotions(api)).find(promotion => promotion.sourceSha === fixed.sha);
 	if (!second) throw new Error('Expected a release of the fixed commit');
-	expect([second.version, second.reclaims]).toEqual([
-		'1.0.0',
-		[{ name: 'v1.0.0', oid: 'a'.repeat(40), commit: merged.sha }],
-	]);
+	expect([second.version, second.reclaims]).toEqual(['1.0.0', [{ name: 'v1.0.0', oid, commit: merged.sha }]]);
 	const run = repository.runs.find(entry => entry.inputs.beepboop_execution_id === second.id);
 	if (!run) throw new Error('Expected the second release run');
 	expect(run.headSha).toBe(fixed.sha);
 	run.status = 'in_progress';
 	const identity = runIdentity(repository, run, 'release.yml');
 	await begin(world, identity, second.id, 'main', 'promote');
-	const planned = await runAction(world, 'refs-plan', identity, { EXECUTION_ID: second.id });
-	expect(decodeSync(movedPlan, JSON.parse(planned.outputs.result ?? '')).changes).toEqual([
-		{ name: 'v1.0.0', expected: 'a'.repeat(40), commit: fixed.sha, replaces: true },
+	const changes = await pushRefs(identity, second.id, repository);
+	expect(changes.map(change => [change.name, change.expected, change.commit, change.replaces])).toEqual([
+		['v1.0.0', oid, fixed.sha, true],
 	]);
-	world.github.recordTag(repository, 'v1.0.0', 'b'.repeat(40), fixed.sha, true);
-	await runAction(world, 'refs-complete', identity, { EXECUTION_ID: second.id });
 	const earlier = (await promotions(api)).find(promotion => promotion.id === first.id);
 	expect([earlier?.state, earlier?.reason]).toEqual(['cancelled', `Superseded by ${second.id}`]);
+	const retried = await api('/api/executions/recover', { id: first.id, action: 'retry' });
+	expect([retried.status, field(retried.body, 'error')]).toEqual([
+		422,
+		`Release ${second.id} takes over the version tag of 1.0.0; retry that release instead`,
+	]);
 	world.npm.publish('widget', '1.0.0');
 	await runAction(world, 'report', identity, {
 		EXECUTION_ID: second.id,
@@ -200,19 +230,57 @@ test('a release of the same version takes over the tag of a failed release that 
 test('a version already on its registry keeps its tag, and the new commit gets no release', async () => {
 	const { repository, api, first } = await taggedFailure();
 	world.npm.publish('widget', '1.0.0');
-	const fixed = world.github.push(repository, { 'README.md': '# widget\n\nFixed.\n' }, 'Fix the release');
-	passChecks(repository, fixed.sha);
-	expect((await world.push(repository)).status).toBe(202);
-	await world.wait(16_000);
+	await pushFix(repository);
 	expect((await promotions(api)).map(promotion => [promotion.id, promotion.state])).toEqual([[first.id, 'failed']]);
+}, 60_000);
+
+test('a tag that a failed release found and only checked never moves', async () => {
+	const { repository, api, merged } = await taggedFailure('push', 'a'.repeat(40));
+	await pushFix(repository);
+	expect((await promotions(api)).map(promotion => promotion.sourceSha)).toEqual([merged.sha]);
+	expect(repository.refs.get('tags/v1.0.0')).toBe('a'.repeat(40));
+}, 60_000);
+
+test('a run of the failed release that still runs keeps its tag', async () => {
+	const { repository, api, merged, run } = await taggedFailure();
+	run.status = 'in_progress';
+	await pushFix(repository);
+	expect((await promotions(api)).map(promotion => promotion.sourceSha)).toEqual([merged.sha]);
+}, 60_000);
+
+test('a takeover stops at its ref step once the version reached its registry', async () => {
+	const { repository, api, merged, oid } = await taggedFailure();
+	const fixed = await pushFix(repository);
+	const second = (await promotions(api)).find(promotion => promotion.sourceSha === fixed.sha);
+	const run = repository.runs.find(entry => entry.inputs.beepboop_execution_id === second?.id);
+	if (!second || !run) throw new Error('Expected the second release run');
+	run.status = 'in_progress';
+	const identity = runIdentity(repository, run, 'release.yml');
+	await begin(world, identity, second.id, 'main', 'promote');
+	world.npm.publish('widget', '1.0.0');
+	await expect(runAction(world, 'refs-plan', identity, { EXECUTION_ID: second.id })).rejects.toThrow(
+		'v1.0.0 can no longer move: a release of 1.0.0 published or runs',
+	);
+	expect([repository.refs.get('tags/v1.0.0'), merged.sha.length]).toEqual([oid, 40]);
+}, 60_000);
+
+test('a push-approved takeover checks the registries before it starts', async () => {
+	const { repository, api } = await taggedFailure();
+	const fixed = await pushFix(repository, false);
+	const second = (await promotions(api)).find(promotion => promotion.sourceSha === fixed.sha);
+	if (!second) throw new Error('Expected a release waiting for its checks');
+	world.npm.publish('widget', '1.0.0');
+	passChecks(repository, fixed.sha);
+	await world.wait(16_000);
+	const stopped = (await promotions(api)).find(promotion => promotion.id === second.id);
+	expect(stopped?.state).toBe('cancelled');
+	expect(stopped?.reason).toContain('and that release published packages');
+	expect(repository.runs.filter(entry => entry.inputs.beepboop_execution_id === second.id)).toEqual([]);
 }, 60_000);
 
 test('a takeover waits while nothing of the version is public, and stops once something is', async () => {
 	const { repository, api, merged } = await taggedFailure('required');
-	const fixed = world.github.push(repository, { 'README.md': '# widget\n\nFixed.\n' }, 'Fix the release');
-	passChecks(repository, fixed.sha);
-	expect((await world.push(repository)).status).toBe(202);
-	await world.wait(16_000);
+	const fixed = await pushFix(repository);
 	const second = (await promotions(api)).find(promotion => promotion.sourceSha === fixed.sha);
 	if (!second) throw new Error('Expected a release of the fixed commit');
 	expect([second.state, second.reclaims?.map(tag => tag.name)]).toEqual(['awaiting-approval', ['v1.0.0']]);
@@ -235,23 +303,6 @@ test('a takeover waits while nothing of the version is public, and stops once so
 		body: '',
 	});
 	expect(await readiness()).toEqual([`${lost}. Release a new version.`]);
-}, 60_000);
-
-test('a tag that no Beepboop release created never moves', async () => {
-	const { repository, api, merged } = await mergedSetup(true);
-	const [first] = await promotions(api);
-	const run = repository.runs.find(entry => entry.inputs.beepboop_execution_id === first?.id);
-	if (!first || !run) throw new Error('Expected a dispatched release');
-	world.github.recordTag(repository, 'v1.0.0', 'a'.repeat(40), merged.sha, true);
-	run.status = 'completed';
-	run.conclusion = 'failure';
-	await world.workflowRun(repository, run, 'failure', 'workflow_dispatch');
-	await world.wait(16_000);
-	const fixed = world.github.push(repository, { 'README.md': '# widget\n\nFixed.\n' }, 'Fix the release');
-	passChecks(repository, fixed.sha);
-	expect((await world.push(repository)).status).toBe(202);
-	await world.wait(16_000);
-	expect((await promotions(api)).map(promotion => promotion.sourceSha)).toEqual([merged.sha]);
 }, 60_000);
 
 test('a retry that re-runs the failed jobs of the same run keeps the recorded draft', async () => {
