@@ -124,23 +124,30 @@ const bindingsLayout: Layout = {
 	}),
 };
 
-function stream(name: string, packages: string[], layout: Layout) {
+function stream(name: string, packages: string[], layout: Layout, tagged: boolean) {
 	return {
 		packages,
 		required: packages,
 		credentials: Object.keys(layout.secrets),
 		prepare: { strategy: 'managed' },
-		promote: { approval: 'push', workflow: { file: `publish-${name}.yml`, publications: packages } },
+		promote: {
+			approval: 'push',
+			workflow: {
+				file: `publish-${name}.yml`,
+				publications: tagged ? [...packages, 'github-release:octo/lint'] : packages,
+				...(tagged ? { refs: { phase: 'version', prefix: 'v', aliases: [], signed: false } } : {}),
+			},
+		},
 	};
 }
 
-function repositoryWith(layout: Layout, streams: Record<string, string[]>): Repository {
+function repositoryWith(layout: Layout, streams: Record<string, string[]>, tagged: boolean): Repository {
 	const files: Record<string, string> = {
 		...layout.files('1.0.0'),
 		'.github/beepboop.json': JSON.stringify({
-			managers: layout.managers,
+			managers: tagged ? [...layout.managers, 'github-release'] : layout.managers,
 			streams: Object.fromEntries(
-				Object.entries(streams).map(([name, packages]) => [name, stream(name, packages, layout)]),
+				Object.entries(streams).map(([name, packages]) => [name, stream(name, packages, layout, tagged)]),
 			),
 		}),
 	};
@@ -290,9 +297,9 @@ async function grant(
 	}
 }
 
-async function released(streams: Record<string, string[]>, layout = cargoLayout, version = '1.1.0') {
+async function released(streams: Record<string, string[]>, layout = cargoLayout, version = '1.1.0', tagged = false) {
 	serveCrates();
-	const repository = repositoryWith(layout, streams);
+	const repository = repositoryWith(layout, streams, tagged);
 	const api = bearer(world, await world.cliSession());
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
 	await grant(api, repository, Object.keys(streams), layout.secrets);
@@ -523,6 +530,88 @@ test('a run with a failed job outside the publish job is never retried automatic
 	await publishing(identity, execution.id, { commands: [], outcomes: { 'lint-core': ['fail'] } });
 	const jobs = [...publishFailed, { name: 'Docker', status: 'completed' as const, conclusion: 'failure' }];
 	expect((await failRun(repository, identity, execution.id, jobs)).slice(0, 2)).toEqual([1, 'failed']);
+}, 60_000);
+
+test('a retry after the branch moved finishes a published release whose run left a crate behind', async () => {
+	const { repository, api, begun } = await released({ main: [core, cli] }, cargoLayout, '1.1.0', true);
+	const { execution, identity } = started(begun, 'main');
+	const run = repository.runs.find(entry => entry.id === identity.runId);
+	if (!run || !execution.draftRelease) throw new Error('Expected a dispatched run with a draft release');
+	const draft = execution.draftRelease.id, tag = 'a'.repeat(40);
+	await withIdentity(world, identity, async () => {
+		await Effect.runPromise(workflowCall(world, '/api/workflow/refs-plan', { executionId: execution.id }));
+		world.github.recordTag(repository, 'v1.1.0', tag, execution.sourceSha, false);
+		await Effect.runPromise(workflowCall(world, '/api/workflow/refs-complete', { executionId: execution.id }));
+		await Effect.runPromise(workflowCall(world, '/api/workflow/release', { executionId: execution.id }));
+	});
+	const published = () => repository.releases.map(release => [release.id, release.tag, release.draft]);
+	expect(published()).toEqual([[draft, 'v1.1.0', false]]);
+	const state: Cargo = { commands: [], outcomes: { lint: ['fail'] } };
+	const first = await publishing(identity, execution.id, state);
+	if (first.result._tag === 'Failure') throw new Error(first.result.failure.message);
+	expect(states(first.result.success)).toEqual([
+		['pkg:cargo/lint-core@1.1.0', 'published'],
+		['pkg:cargo/lint@1.1.0', 'failed-retryable', 'error: could not compile lint'],
+	]);
+	const jobs = [...publishFailed, { name: 'Binaries', status: 'completed' as const, conclusion: 'failure' }];
+	expect((await failRun(repository, identity, execution.id, jobs)).slice(0, 2)).toEqual([1, 'failed']);
+
+	world.github.push(repository, { 'README.md': '# lint\n\nMoved on.\n' }, 'Move the branch');
+	expect((await api('/api/executions/recover', { id: execution.id, action: 'retry' })).status).toBe(200);
+	await world.wait(2_000);
+	const reopened = await executionOf(repository, execution.id);
+	expect([reopened.state, reopened.runId, reopened.runAttempt, run.attempt]).toEqual(['running', run.id, 2, 2]);
+	expect(reopened.publications.map(p => [p.id, p.outcome])).toEqual([
+		['refs:promote', 'succeeded'],
+		['pkg:github/octo/lint', 'succeeded'],
+		[core, 'succeeded'],
+		[cli, 'pending'],
+	]);
+
+	const report = { executionId: execution.id, purl: 'pkg:cargo/lint@1.1.0', outcome: 'published' };
+	const stale = await withIdentity(
+		world,
+		identity,
+		() => Effect.runPromise(Effect.result(workflowCall(world, '/api/workflow/publish/report', report))),
+	);
+	expect(stale._tag === 'Failure' && stale.failure.message).toContain('Publication identity mismatch');
+
+	run.status = 'in_progress';
+	const retried = { ...identity, attempt: 2 };
+	await begin(world, retried, execution.id, 'main', 'promote');
+	const second = await publishing(retried, execution.id, state);
+	if (second.result._tag === 'Failure') throw new Error(second.result.failure.message);
+	expect(states(second.result.success)).toEqual([
+		['pkg:cargo/lint-core@1.1.0', 'published'],
+		['pkg:cargo/lint@1.1.0', 'published'],
+	]);
+	expect(state.commands.map(entry => entry.command).filter(command => command.startsWith('publish'))).toEqual([
+		'publish lint-core',
+		'publish lint',
+		'publish lint',
+	]);
+	expect((await ledgerOf(repository, execution.id)).records.map(record => record.attempts.map(a => a.event)))
+		.toEqual([
+			['claimed', 'published'],
+			['claimed', 'failed', 'claimed', 'published'],
+		]);
+
+	run.status = 'completed';
+	run.conclusion = 'success';
+	await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
+	await world.wait(2_000);
+	const finished = await executionOf(repository, execution.id);
+	expect([finished.state, finished.publications.map(p => [p.id, p.outcome])]).toEqual([
+		'succeeded',
+		[
+			['refs:promote', 'succeeded'],
+			['pkg:github/octo/lint', 'succeeded'],
+			[core, 'succeeded'],
+			[cli, 'succeeded'],
+		],
+	]);
+	expect(published()).toEqual([[draft, 'v1.1.0', false]]);
+	expect(repository.refs.get('tags/v1.1.0')).toBe(tag);
 }, 60_000);
 
 test('a package the registry holds with a different digest is never retried automatically', async () => {

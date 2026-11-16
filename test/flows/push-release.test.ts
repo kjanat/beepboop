@@ -173,6 +173,30 @@ test('a retry refuses a tagged release whose run built another commit after the 
 	expect(run.attempt).toBe(1);
 }, 60_000);
 
+test('a retry on an unmoved branch re-runs the failed jobs while a tag resolves to no commit', async () => {
+	const { repository, merged, run, draft, retry } = await failedRelease(true);
+	const oid = 'f'.repeat(40);
+	world.github.recordTag(repository, 'tree-v1', oid, merged.sha, true);
+	const tree = repository.tagObjects.get(oid);
+	if (!tree) throw new Error('Expected the tag object');
+	tree.targetType = 'Tree';
+	const retried = await retry();
+	expect([run.attempt, retried?.runId, retried?.draftRelease]).toEqual([2, run.id, draft]);
+}, 60_000);
+
+test('a retry of a tagged release refuses once its workflow branch no longer exists', async () => {
+	const { repository, merged, run, draft } = await failedRelease(true);
+	const api = bearer(world, await world.cliSession());
+	const [promotion] = await promotions(api);
+	if (!promotion) throw new Error('Expected the failed release');
+	repository.refs.set('tags/v1.0.0', merged.sha);
+	repository.refs.delete('heads/main');
+	const refused = await api('/api/executions/recover', { id: promotion.id, action: 'retry' });
+	expect([refused.status, field(refused.body, 'error')]).toEqual([422, 'Workflow ref main no longer exists']);
+	const [kept] = await promotions(api);
+	expect([kept?.state, kept?.draftRelease, run.attempt]).toEqual(['failed', draft, 1]);
+}, 60_000);
+
 test('a retried release reuses the draft its execution recorded', async () => {
 	const { merged, draft, retry, drafts } = await failedRelease();
 	const retried = await retry();
