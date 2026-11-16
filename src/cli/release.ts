@@ -299,13 +299,7 @@ export function releaseRepository(
 		const started = startsFrom(stream.start, 'cli') !== undefined;
 		const committing = stream.prepare.bump === 'commit';
 		const pending = plan.edits.length > 0 || plan.requiresPreparation === true;
-		if (!pending && !started && !direct) {
-			return yield* Effect.fail(failure(
-				`Version ${summary.version} is already prepared at ${summary.sourceSha}`,
-				'ALREADY_PREPARED',
-				`Publish it with beepboop runs publish, or add cli to startFrom of ${selected} to start it here`,
-			));
-		}
+		const publishes = direct || !pending;
 		const merging = yield* versionPrMergeOf(options, stream.prepare.versionPrMerge);
 		const opensPr = pending && !committing && !(stream.prepare.workflow && stream.prepare.strategy === 'workflow');
 		if (merging && !opensPr) {
@@ -368,7 +362,11 @@ export function releaseRepository(
 			if (merging) out.log(`Version PR: ${versionPrMergeSentences[merging].replaceAll('`', '')}`);
 			if (direct) out.log(release.summary);
 			else if (!pending) {
-				out.log(`${repository.defaultBranch} already carries ${look.version(summary.version)}. Starting publishes it.`);
+				out.log(
+					`${repository.defaultBranch} already carries ${look.version(summary.version)}. ${
+						started ? 'Starting publishes it.' : 'This creates its publication run.'
+					}`,
+				);
 			}
 		}
 		if (options.dryRun) return out.log(look.note('Dry run: Beepboop started nothing.'));
@@ -380,7 +378,7 @@ export function releaseRepository(
 						kind: 'confirm',
 						message: started
 							? `Start this release? ${startFromEffect}`
-							: direct
+							: publishes
 							? stream.promote.approval === 'push'
 								? `Publish ${summary.version} once its commit is verified and its checks pass?`
 								: `Create the publication run of ${summary.version}?`
@@ -395,7 +393,7 @@ export function releaseRepository(
 		) return out.log(started ? 'Release start cancelled.' : 'Release preparation cancelled.');
 		const preparation = yield* step(
 			out,
-			started ? 'Starting the release' : direct ? 'Creating the publication run' : 'Preparing the release',
+			started ? 'Starting the release' : publishes ? 'Creating the publication run' : 'Preparing the release',
 			client.call(routes.releasesPrepare, {
 				...request,
 				sourceSha: summary.sourceSha,
@@ -406,8 +404,8 @@ export function releaseRepository(
 				`${created.operation === 'promote' ? 'Release' : 'Preparation'} ${look.id(created.id)} is ${created.state}`,
 		);
 		if (out.jsonMode) return yield* emit(out, { ...preview, preparation });
-		out.log(`${started || direct ? 'Release' : 'Preparation'} ${look.id(preparation.id)}: ${preparation.state}`);
-		if (direct && !started) {
+		out.log(`${started || publishes ? 'Release' : 'Preparation'} ${look.id(preparation.id)}: ${preparation.state}`);
+		if (publishes && !started) {
 			return out.log(
 				policy === 'push'
 					? 'Beepboop publishes once the commit is verified and its checks pass.'

@@ -84,8 +84,9 @@ export const cargoManager = {
 				return crate.max_stable_version ?? crate.max_version;
 			},
 		).pipe(
-			Effect.flatMap(found =>
-				found.kind === 'failed' ? latestText(request, crateIndexUrl(pkg.name), indexLatest) : Effect.succeed(found)
+			Effect.filterOrElse(
+				found => found.kind !== 'failed',
+				() => latestText(request, crateIndexUrl(pkg.name), indexLatest),
 			),
 		);
 	},
@@ -97,8 +98,9 @@ export const cargoManager = {
 			const entry = object(object(body).version);
 			return { name: entry.crate, version: entry.num, withdrawn: entry.yanked !== false, digest: entry.checksum };
 		}).pipe(
-			Effect.flatMap(verified =>
-				verified.outcome === 'uncertain' ? verifyIndex(publication, request) : Effect.succeed(verified)
+			Effect.filterOrElse(
+				verified => verified.outcome !== 'uncertain',
+				() => verifyIndex(publication, request),
 			),
 		);
 	},

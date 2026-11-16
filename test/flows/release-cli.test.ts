@@ -309,18 +309,18 @@ test('a stale source is refused after confirmation without silently replanning o
 	expect(repository.pulls).toHaveLength(0);
 });
 
-test('independent streams and already-prepared versions cannot accidentally initiate promotion', async () => {
+test('a version the manifests already carry gets its promotion, and independent streams refuse a release', async () => {
 	const repository = await seed();
-	world.github.push(repository, {
+	const carried = world.github.push(repository, {
 		'package.json': npmManifest('widget', '1.1.0'),
 	}, 'Versions already prepared');
 	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
-	const existing = await Effect.runPromise(client.call(routes.executionsList, {}));
 	const prepared = await run(['release', '1.1.0', '--repository', repository.name, '--yes', '--json']);
-	expect(prepared.exitCode).not.toBe(0);
-	expect(prepared.stdout.join('')).toContain('ALREADY_PREPARED');
-	expect(prepareCalls()).toHaveLength(0);
-	expect(await Effect.runPromise(client.call(routes.executionsList, {}))).toEqual(existing);
+	expect(prepared.exitCode).toBe(0);
+	expect(prepareCalls()).toHaveLength(1);
+	expect(promotionsOf(await Effect.runPromise(client.call(routes.executionsList, {})))).toEqual([
+		expect.objectContaining({ version: '1.1.0', sourceSha: carried.sha, state: 'awaiting-approval' }),
+	]);
 	const configuration = widgetStreams();
 	configuration.streams.main = withMain(configuration, { versioning: 'independent' });
 	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Use independent releases');
@@ -337,7 +337,7 @@ test('independent streams and already-prepared versions cannot accidentally init
 	]);
 	expect(independent.exitCode).not.toBe(0);
 	expect(independent.stdout.join('')).toContain('INDEPENDENT_STREAM');
-	expect(prepareCalls()).toHaveLength(0);
+	expect(prepareCalls()).toHaveLength(1);
 });
 
 for (const [bump, version] of [['patch', '1.2.4'], ['minor', '1.3.0'], ['major', '2.0.0']] as const) {
@@ -632,6 +632,45 @@ test('the warnings of a slow discovery never replace a newer discovery', async (
 	await slow;
 	const row = await world.db.prepare('SELECT document FROM repositories WHERE name=?').bind(repository.name).first();
 	expect(decodeSync(looseStruct({ document: Schema.String }), row).document).toContain(`"sha":"${newer.sha}"`);
+});
+
+test('releasing the version a delegated stream already carries creates its promotion without preparing it', async () => {
+	const { repository, merged } = await tagged();
+	passChecks(repository, merged.sha);
+	world.network.serve('registry.npmjs.org', () => new Response(null, { status: 503 }));
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(1_000);
+	expect(await promotions()).toEqual([]);
+	const preview = await run(['release', '1.2.4', '--repository', repository.name, '--json']);
+	expect(preview.exitCode).toBe(0);
+	const plan = decodeSync(planReview, JSON.parse(preview.stdout.join('')).plan);
+	expect([plan.sourceSha, plan.edits, plan.requiresPreparation]).toEqual([merged.sha, [], false]);
+	const released = await run(['release', '1.2.4', '--repository', repository.name], [true]);
+	expect([released.exitCode, released.stderr.join('')]).toEqual([0, '']);
+	const output = released.stdout.join('');
+	expect(output).toContain('main already carries 1.2.4. This creates its publication run.');
+	expect(output).not.toContain('determined by preparation workflow');
+	const [promotion] = await promotions();
+	expect(promotion).toEqual(
+		expect.objectContaining({ version: '1.2.4', sourceSha: merged.sha, state: 'awaiting-approval' }),
+	);
+	expect(output).toContain(`Publish it with beepboop runs publish ${promotion?.id} --sourceSha ${merged.sha}.`);
+	expect(world.github.dispatches.map(dispatch => dispatch.file)).not.toContain('prepare.yml');
+});
+
+test('releasing a carried version refuses a version tag on another commit', async () => {
+	const { repository, before, merged } = await tagged();
+	repository.refs.set('tags/v1.2.4', before);
+	passChecks(repository, merged.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(1_000);
+	expect(await promotions()).toEqual([]);
+	const refused = await run(['release', '1.2.4', '--repository', repository.name, '--yes']);
+	expect(refused.exitCode).not.toBe(0);
+	expect(refused.stderr.join('')).toContain(
+		`Version tag v1.2.4 already targets ${before.slice(0, 12)}. Release a new version.`,
+	);
+	expect(await promotions()).toEqual([]);
 });
 
 test('no approval overrides a version tag on another commit, and the CLI cancels the promotion', async () => {

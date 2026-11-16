@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
-import { unreleasedManifestVersion } from '@/automation/release-version';
+import { Effect, Exit } from 'effect';
+import { resolvePackageVersion, unreleasedManifestVersion } from '@/automation/release-version';
 import type { Package } from '@/automation/types';
 
 function manifest(version = '1.2.0'): Package {
@@ -49,4 +50,26 @@ test('mixed releases still require synchronized manifests and verified registry 
 	expect(unreleasedManifestVersion([manifest(), { ...module(), published: '1.3.0' }])).toBeUndefined();
 	expect(unreleasedManifestVersion([{ ...manifest(), published: '1.2.0' }, { ...module('1.2.0'), published: '1.2.0' }]))
 		.toBeUndefined();
+});
+
+const unanswered = (version: string): Package => ({
+	...manifest(version),
+	name: 'gadget',
+	manifest: 'packages/gadget/package.json',
+	versionSource: 'packages/gadget/package.json#version',
+	published: undefined,
+	publicationStatus: 'failed',
+});
+const resolved = (packages: Package[], version: string) =>
+	Effect.runSyncExit(resolvePackageVersion(packages, { version }));
+
+test('a package without a registry answer still lets a partial release complete', () => {
+	expect(resolved([{ ...manifest('1.1.0'), published: '1.1.0' }, unanswered('1.0.0')], '1.1.0'))
+		.toEqual(Exit.succeed('1.1.0'));
+	expect(resolved([unanswered('1.2.4')], '1.2.4')).toEqual(Exit.succeed('1.2.4'));
+});
+
+test('answered packages already at the target still refuse it', () => {
+	expect(Exit.isFailure(resolved([{ ...manifest('1.1.0'), published: '1.1.0' }], '1.1.0'))).toBe(true);
+	expect(Exit.isFailure(resolved([manifest(), unanswered('1.0.0')], '1.0.0'))).toBe(true);
 });
