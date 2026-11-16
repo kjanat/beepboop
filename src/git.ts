@@ -10,7 +10,7 @@ export interface GitOptions {
 }
 
 export type GitResult =
-	| { readonly ok: true; readonly stdout: string }
+	| { readonly ok: true; readonly stdout: string; readonly stderr: string }
 	| { readonly ok: false; readonly stdout: string; readonly stderr: string };
 
 export function git(args: readonly string[], options: GitOptions = {}): GitResult {
@@ -18,7 +18,7 @@ export function git(args: readonly string[], options: GitOptions = {}): GitResul
 	const result = spawnSync('git', args, { ...rest, encoding: 'utf8', stdio: ['pipe', 'pipe', stderr] });
 	const stdout = result.stdout ?? '';
 	return result.status === 0 && result.error === undefined
-		? { ok: true, stdout: stdout.trim() }
+		? { ok: true, stdout: stdout.trim(), stderr: result.stderr ?? '' }
 		: { ok: false, stdout, stderr: result.stderr ?? '' };
 }
 

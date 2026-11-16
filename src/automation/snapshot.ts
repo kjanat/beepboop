@@ -38,6 +38,7 @@ export interface SnapshotSource {
 
 const excluded = /(?:^|\/)(?:node_modules|vendor|target|testdata|fixtures|\.git)\//;
 export const releaseEvidence: readonly RegExp[] = [
+	/(?:^|\/)action\.ya?ml$/,
 	/^\.github\/actions\/.+\.(?:ya?ml|[cm]?[jt]s|sh|py)$/,
 	/^\.github\/(?!workflows\/)[^/]+\/.+\.(?:py|sh|bash|ps1|[cm]?[jt]s|rb)$/,
 	/^\.github\/workflows\/[^/]+\.[cm]?[jt]s$/,

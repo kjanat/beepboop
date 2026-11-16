@@ -106,22 +106,50 @@ const cron = refined(
 	utcCronMessage,
 );
 
-const refPolicy = mapped(
+const refPolicyFields = {
+	prefix: refined(Schema.String.check(matchesPattern(tagPrefixPattern)), validTagPrefix, 'Invalid tag prefix').pipe(
+		Schema.withDecodingDefault(Effect.succeed('v')),
+	),
+	aliases: refined(
+		mutableArray(Schema.Literals(['major', 'minor'])),
+		aliases => new Set(aliases).size === aliases.length,
+		'Invalid aliases',
+	).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+};
+const refPolicyInput = Schema.Union([
 	strictStruct({
+		...refPolicyFields,
 		phase: Schema.Literals(['version', 'aliases']),
-		prefix: refined(Schema.String.check(matchesPattern(tagPrefixPattern)), validTagPrefix, 'Invalid tag prefix').pipe(
-			Schema.withDecodingDefault(Effect.succeed('v')),
-		),
-		aliases: refined(
-			mutableArray(Schema.Literals(['major', 'minor'])),
-			aliases => new Set(aliases).size === aliases.length,
-			'Invalid aliases',
-		).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 		signed: Schema.optional(Schema.Boolean),
+		immutable: Schema.optional(Schema.Boolean),
+		distribution: Schema.optional(Schema.Never),
 	}),
+	strictStruct({
+		...refPolicyFields,
+		phase: Schema.Literal('version'),
+		signed: Schema.Literal(true),
+		immutable: Schema.Literal(true),
+		distribution: strictStruct({
+			files: mutableArray(nonempty).check(Schema.isMinLength(1)),
+			ancestry: Schema.Literal('ours'),
+		}),
+	}),
+]);
+const refPolicy = mapped(
+	refPolicyInput,
 	Schema.toType(refPolicyValue),
-	({ phase, prefix, aliases, signed }) => ({ phase, prefix, aliases, signed: signed === true }),
-	value => value,
+	({ phase, prefix, aliases, signed, immutable, distribution }) => ({
+		phase,
+		prefix,
+		aliases,
+		signed: signed === true,
+		...(immutable === undefined ? {} : { immutable }),
+		...(distribution === undefined ? {} : { distribution }),
+	}),
+	(value): Decoded<typeof refPolicyInput> =>
+		value.distribution
+			? { ...value, phase: 'version', signed: true, immutable: true, distribution: value.distribution }
+			: { ...value, distribution: undefined },
 );
 
 function bindingSchema() {

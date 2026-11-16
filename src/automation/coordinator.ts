@@ -1,6 +1,8 @@
 import { DurableObject } from 'cloudflare:workers';
 import { Clock, Effect, Layer, Result, Schema, Semaphore } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
+import type { DistributionFile } from '@/automation/distribution';
+import { createDistribution, readDistributionFile, readDistributionMode } from '@/automation/distribution';
 import {
 	createExecution,
 	dependenciesReady,
@@ -29,6 +31,7 @@ import {
 	workflowRunSchema,
 	workflowRunsSchema,
 } from '@/automation/github-resources';
+import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
 import type { InboxEvent } from '@/automation/inbox';
 import { inboxEntry } from '@/automation/inbox';
 import type { RunJob, WorkflowJobs } from '@/automation/job-gate';
@@ -223,6 +226,9 @@ function githubRelease(execution: Execution): { tag: string; prerelease: boolean
 	if (!execution.version) return undefined;
 	const version = decodeSync(semVer, execution.version);
 	return { tag: tagFor(execution.workflow?.refs ?? defaultTagPolicy, version), prerelease: isPrerelease(version) };
+}
+function releaseCommit(execution: Execution): string {
+	return execution.refPlan?.distribution?.commit ?? execution.refPlan?.changes[0]?.commit ?? execution.sourceSha;
 }
 function publishesGithubRelease(execution: Execution): boolean {
 	const key = selectorKey(`github-release:${execution.repository}`);
@@ -1292,7 +1298,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			{ executionId: id },
 		);
 	}
-	refs(id: string, identity: WorkflowIdentity, complete = false): Promise<RefPlan> {
+	refs(id: string, identity: WorkflowIdentity, complete = false, files: DistributionFile[] = []): Promise<RefPlan> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
 				const execution = yield* this.get(id);
@@ -1310,7 +1316,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					return yield* precondition('Ref operation requires completed promotion');
 				}
 				const gateway = yield* this.gateway;
-				const refs = complete ? [] : yield* gateway.tagRefs(execution.repository, execution.repositoryId);
+				const refs = complete && !execution.refPlan?.distribution
+					? []
+					: yield* gateway.tagRefs(execution.repository, execution.repositoryId);
 				const pending = (execution.reclaims ?? []).filter(tag =>
 					refs.some(ref => ref.name === tag.name && ref.oid === tag.oid)
 				);
@@ -1326,10 +1334,58 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 				if (!execution.refPlan) {
 					if (complete) return yield* precondition('Ref plan has not been authorized');
+					const read = yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
+					yield* requireImmutableReleases({
+						gateway,
+						repository: execution.repository,
+						token: read,
+						required: policy.immutable,
+					});
+					let target = execution.sourceSha;
+					let distribution: RefPlan['distribution'];
+					if (policy.distribution) {
+						if (policy.phase !== 'version' || !policy.signed) {
+							return yield* precondition('Distribution publication requires signed version refs');
+						}
+						if (!this.env.SIGNER) return yield* precondition('Distribution publication requires the signing service');
+						distribution = yield* createDistribution(gateway, {
+							repository: execution.repository,
+							repositoryId: execution.repositoryId,
+							sourceSha: execution.sourceSha,
+							version,
+							paths: policy.distribution.files,
+							files,
+							signer: this.env.SIGNER,
+						});
+						target = distribution.commit;
+					} else {
+						if (files.length) return yield* precondition('No distribution files are configured');
+						if (policy.phase === 'aliases') {
+							const targets = new Set<string>();
+							const visited = new Set<string>();
+							const collect = (id: string): CoordinatorEffect<void, DomainError> =>
+								Effect.gen({ self: this }, function*() {
+									if (visited.has(id)) return;
+									visited.add(id);
+									const dependency = yield* this.get(id);
+									if (
+										dependency.state !== 'succeeded' || dependency.sourceSha !== execution.sourceSha
+										|| dependency.configurationSha !== execution.configurationSha
+									) return yield* precondition('Alias dependency identity changed');
+									if (dependency.refPlan?.distribution) targets.add(dependency.refPlan.distribution.commit);
+									for (const parent of dependency.dependencies) yield* collect(parent);
+								});
+							for (const id of execution.dependencies) yield* collect(id);
+							if (targets.size > 1) {
+								return yield* precondition('Alias dependencies contain different distribution targets');
+							}
+							target = targets.values().next().value ?? target;
+						}
+					}
 					const changes = yield* planRefs(
 						policy,
 						version,
-						execution.sourceSha,
+						target,
 						refs,
 						yield* this.modulePrefixes(execution),
 						execution.reclaims ?? [],
@@ -1339,11 +1395,51 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						executionId: id,
 						version,
 						changes,
+						...(distribution ? { distribution } : {}),
 					});
 					yield* this.put(execution);
 				}
 				const plan = execution.refPlan;
+				if (!complete && plan.distribution && policy.distribution) {
+					if (
+						files.length !== policy.distribution.files.length
+						|| new Set(files.map(file => file.path)).size !== files.length
+						|| files.some(file => !policy.distribution?.files.includes(file.path))
+					) return yield* precondition('Distribution files differ from the frozen plan');
+					const token = yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
+					for (const file of files) {
+						if (
+							(yield* readDistributionFile(
+								gateway,
+								execution.repository,
+								file.path,
+								plan.distribution.commit,
+								file.encoding,
+								token,
+							)) !== file.after
+							|| (yield* readDistributionFile(
+								gateway,
+								execution.repository,
+								file.path,
+								execution.sourceSha,
+								file.encoding,
+								token,
+							))
+								!== file.before
+							|| (yield* readDistributionMode(
+								gateway,
+								execution.repository,
+								file.path,
+								plan.distribution.commit,
+								token,
+							))
+								!== (file.mode ?? '100644')
+						) return yield* precondition('Distribution files differ from the frozen plan');
+					}
+				}
 				if (complete) {
+					const problem = yield* this.distributionProblem(execution, plan, refs);
+					if (problem) return yield* precondition(problem);
 					execution.publications = yield* mergePublications(execution.publications, [{
 						id: `refs:${execution.operation}`,
 						manager: 'workflow',
@@ -1359,6 +1455,53 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			'coordinator.refs',
 			{ executionId: id },
 		);
+	}
+	private distributionProblem(
+		execution: Execution,
+		plan: RefPlan,
+		refs: RefState[],
+	): CoordinatorEffect<string | undefined, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const evidence = plan.distribution;
+			if (!evidence) return undefined;
+			if (
+				evidence.sourceSha !== execution.sourceSha || plan.changes.some(change => change.commit !== evidence.commit)
+			) return 'Distribution refs differ from the authorized source and target';
+			for (const change of plan.changes) {
+				if (change.object) {
+					const expected = yield* tagObjectId(change.object);
+					if (!refs.some(ref => ref.name === change.name && ref.oid === expected)) {
+						return 'Distribution tag object differs from the signed plan';
+					}
+				}
+			}
+			if (
+				!plan.changes.every(change =>
+					refs.some(ref =>
+						ref.name === change.name && ref.commit === change.commit && (!change.annotated || ref.oid !== ref.commit)
+					)
+				)
+			) return 'Distribution refs did not land';
+			const gateway = yield* this.gateway;
+			const token = yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
+			const branch = yield* gateway.read(
+				gitRefSchema,
+				`/repos/${execution.repository}/git/ref/heads/${encodeURIComponent(evidence.branch)}`,
+				token,
+			);
+			if (branch.object.type !== 'commit') return 'Distribution ancestry did not land';
+			if (branch.object.sha !== evidence.ancestryCommit) {
+				const compared = yield* gateway.read(
+					comparisonSchema,
+					`/repos/${execution.repository}/compare/${evidence.ancestryCommit}...${branch.object.sha}`,
+					token,
+				);
+				if (compared.status !== 'ahead' || compared.merge_base_commit.sha !== evidence.ancestryCommit) {
+					return 'Distribution ancestry did not land';
+				}
+			}
+			return undefined;
+		});
 	}
 	private signRefs(plan: RefPlan): CoordinatorEffect<RefPlan, DomainError> {
 		const signer = this.env.SIGNER;
@@ -1423,12 +1566,32 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (!(yield* this.promoted(execution))) {
 				return yield* precondition('Release operation requires completed promotion');
 			}
+			if (
+				execution.workflow.refs?.distribution
+				&& (!execution.refPlan?.distribution
+					|| !execution.publications.some(publication =>
+						publication.id === `refs:${execution.operation}` && publication.outcome === 'succeeded'
+					))
+			) {
+				return yield* precondition('Confirm distribution refs and ancestry before publishing the release');
+			}
 			const target = yield* fromSync(() => githubRelease(execution));
 			if (!target) return yield* precondition('Release operation has no version');
 			const { tag, prerelease } = target;
 			const gateway = yield* this.gateway;
+			if (execution.refPlan?.distribution) {
+				const refs = yield* gateway.tagRefs(execution.repository, execution.repositoryId);
+				const problem = yield* this.distributionProblem(execution, execution.refPlan, refs);
+				if (problem) return yield* precondition(problem);
+			}
 			const repository = `/repos/${execution.repository}`;
 			const read = yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
+			yield* requireImmutableReleases({
+				gateway,
+				repository: execution.repository,
+				token: read,
+				required: execution.workflow?.refs?.immutable,
+			});
 			const ref = yield* gateway.read(
 				Schema.NullOr(gitRefSchema),
 				`${repository}/git/ref/tags/${encodeURIComponent(tag)}`,
@@ -1438,7 +1601,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const object = ref.object;
 			if (object.type !== 'tag') return yield* precondition('Release tag must be annotated');
 			const tagged = yield* gateway.peelTag(execution.repository, object, read);
-			if (tagged.type !== 'commit' || tagged.sha !== execution.sourceSha) {
+			if (tagged.type !== 'commit' || tagged.sha !== releaseCommit(execution)) {
 				return yield* precondition('Release tag points to another commit');
 			}
 			const write = yield* gateway.token(execution.repository, execution.repositoryId, {
@@ -1454,7 +1617,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				))
 					?? (yield* gateway.read(releaseSchema, `${repository}/releases`, write, 'POST', {
 						tag_name: tag,
-						target_commitish: execution.sourceSha,
+						target_commitish: releaseCommit(execution),
 						name: tag,
 						body: yield* this.releaseBody(execution, tag, write),
 						prerelease,
@@ -1462,6 +1625,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (release.tag_name !== tag || release.draft !== false || release.prerelease !== prerelease) {
 				return yield* precondition('Existing GitHub release does not match the release operation');
 			}
+			yield* verifyImmutableRelease(release, execution.workflow?.refs?.immutable);
 			const released = yield* this.released(execution, release, tag);
 			yield* this.put(released);
 			return released;
@@ -1483,7 +1647,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				id: `github:${execution.repositoryId}:${release.id}`,
 				repository: { id: execution.repositoryId, name: execution.repository },
 				stream: execution.stream,
-				commit: execution.sourceSha,
+				commit: releaseCommit(execution),
 				version: execution.version ?? tag.replace(/^v/, ''),
 				tag,
 				releaseId: release.id,
@@ -1518,12 +1682,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				execution.state !== 'failed' || execution.runId === undefined || !version || !target
 				|| !publishesGithubRelease(execution) || (published && tagged)
 			) return execution;
+			if (policy?.distribution && !execution.refPlan?.distribution) return execution;
 			const { tag, prerelease } = target;
 			const gateway = yield* this.gateway;
 			const refs = yield* gateway.tagRefs(execution.repository, execution.repositoryId);
+			if (execution.refPlan && (yield* this.distributionProblem(execution, execution.refPlan, refs))) return execution;
 			let next = execution;
 			if (!published) {
-				if (!refs.some(ref => ref.name === tag && ref.commit === execution.sourceSha && ref.oid !== ref.commit)) {
+				if (!refs.some(ref => ref.name === tag && ref.commit === releaseCommit(execution) && ref.oid !== ref.commit)) {
 					return execution;
 				}
 				const read = yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
@@ -1535,11 +1701,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (!release || release.tag_name !== tag || release.draft !== false || release.prerelease !== prerelease) {
 					return execution;
 				}
+				yield* verifyImmutableRelease(release, execution.workflow?.refs?.immutable);
 				next = yield* this.released(execution, release, tag);
 			}
 			if (
 				policy && !tagged
-				&& (yield* refsLanded(policy, version, execution.sourceSha, refs, yield* this.modulePrefixes(execution)))
+				&& (yield* refsLanded(policy, version, releaseCommit(execution), refs, yield* this.modulePrefixes(execution)))
 			) {
 				next = {
 					...next,
@@ -1560,6 +1727,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Effect.gen({ self: this }, function*() {
 			const target = yield* fromSync(() => githubRelease(execution));
 			if (!target || !publishesGithubRelease(execution)) return execution.draftRelease;
+			if (execution.workflow?.refs?.distribution && !execution.refPlan?.distribution) return undefined;
 			const gateway = yield* this.gateway;
 			const write = yield* gateway.token(execution.repository, execution.repositoryId, {
 				contents: 'write',
@@ -1576,7 +1744,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				write,
 			)).filter(release => release.draft === true && release.tag_name === target.tag);
 			const matches = (release: GitHubRelease) =>
-				release.target_commitish === execution.sourceSha && release.prerelease === target.prerelease;
+				release.target_commitish === releaseCommit(execution) && release.prerelease === target.prerelease;
 			for (const stale of drafts.filter(release => !matches(release) && release.author.id === bot.id)) {
 				yield* gateway.call(`/repos/${execution.repository}/releases/${stale.id}`, write, 'DELETE');
 			}
@@ -1588,7 +1756,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				'POST',
 				{
 					tag_name: target.tag,
-					target_commitish: execution.sourceSha,
+					target_commitish: releaseCommit(execution),
 					name: target.tag,
 					prerelease: target.prerelease,
 					draft: true,
@@ -1648,7 +1816,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				`/repos/${execution.repository}/releases/generate-notes`,
 				token,
 				'POST',
-				{ tag_name: tag, target_commitish: execution.sourceSha },
+				{ tag_name: tag, target_commitish: releaseCommit(execution) },
 			).pipe(Effect.map(generated => releaseNotes(generated.body)));
 		});
 	}
@@ -2524,7 +2692,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const version = safeDecode(semVer, execution.version);
 			if (!policy || !version.success) return false;
 			const refs = yield* (yield* this.gateway).tagRefs(execution.repository, execution.repositoryId);
-			return versionTagged(policy, version.data, execution.sourceSha, refs, yield* this.modulePrefixes(execution));
+			return versionTagged(policy, version.data, releaseCommit(execution), refs, yield* this.modulePrefixes(execution));
 		});
 	}
 	private modulePrefixes(execution: Execution): CoordinatorEffect<string[], DomainError> {
@@ -2641,11 +2809,25 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Effect.gen({ self: this }, function*() {
 			if (sha === execution.sourceSha) return true;
 			if (!execution.eventId.startsWith('observed:') && !execution.currentWorkflow) {
-				const promotion = execution.operation === 'promote'
+				const executions = yield* this.executions();
+				let promotion = execution.operation === 'promote'
 					? execution
-					: (yield* this.executions()).find(other =>
-						other.operation === 'promote' && other.dependencies.includes(execution.id)
-					);
+					: executions.find(other => other.operation === 'promote' && other.dependencies.includes(execution.id));
+				const pending = [...execution.dependencies];
+				const visited = new Set<string>();
+				while (!promotion && pending.length) {
+					const id = pending.pop();
+					if (id === undefined || visited.has(id)) continue;
+					visited.add(id);
+					const dependency = executions.find(other => other.id === id);
+					if (
+						dependency?.state !== 'succeeded' || dependency.sourceSha !== execution.sourceSha
+						|| dependency.configurationSha !== execution.configurationSha || dependency.stream !== execution.stream
+						|| dependency.version !== execution.version
+					) continue;
+					if (dependency.operation === 'promote') promotion = dependency;
+					else pending.push(...dependency.dependencies);
+				}
 				return promotion !== undefined && (yield* this.versionKept(promotion, sha));
 			}
 			const comparison = yield* (yield* this.gateway).read(

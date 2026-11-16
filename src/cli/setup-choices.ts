@@ -3,7 +3,13 @@ import type { Ask, CLIError, Out, SelectChoice } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 import { publishable } from '@/automation/package-publication';
 import type { Selection } from '@/automation/setup-defaults';
-import { preparationReasons, suggestedCommands, suggestedWorkflowFile, ungenerated } from '@/automation/setup-defaults';
+import {
+	ledgerCommand,
+	preparationReasons,
+	suggestedCommands,
+	suggestedWorkflowFile,
+	ungenerated,
+} from '@/automation/setup-defaults';
 import { streamSummary } from '@/automation/setup-summary';
 import type { SetupChoices, SetupPlan, SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
 import { lookOf } from '@/cli/look';
@@ -58,6 +64,7 @@ export const streamEditors = {
 	start: 'control',
 	bump: 'control',
 	versionPrMerge: 'control',
+	actionRelease: 'control',
 	observe: 'control',
 	prepare: 'control',
 	promote: 'control',
@@ -170,7 +177,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 			value: pkg.id,
 			label: `${packageLabel(pkg.id)} (${pkg.manifest})`,
 		}));
-		if (!packageChoices.length && !plan.choices.streams.some(stream => stream.observe?.length)) {
+		if (!packageChoices.length && !plan.actionRelease && !plan.choices.streams.some(stream => stream.observe?.length)) {
 			return yield* Effect.fail(
 				failure('No publishable packages discovered', 'NO_PACKAGES', 'Inspect the repository diagnostics first'),
 			);
@@ -366,7 +373,14 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 						{ ...covered, packages: covered.packages.filter(pkg => !missing.includes(pkg)) },
 						plan,
 					);
-				const commands = integrated || (!preparing && !remaining.length)
+				const commands = !preparing && stream.actionRelease?.kind === 'distribution'
+					? previous?.commands && previous.commands !== ledgerCommand
+						? previous.commands
+						: [
+							plan.actionRelease?.commands || (yield* typedCommands(ask, 'this action', 'build')),
+							previous?.commands || suggested,
+						].filter(Boolean).join('\n')
+					: integrated || (!preparing && !remaining.length)
 					? ''
 					: missing.length
 					? [
@@ -387,7 +401,9 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 					file,
 					job,
 					triggers,
-					commands: integrated && kept?.job === job ? kept.commands : commands,
+					commands: integrated && kept?.job === job && stream.actionRelease?.kind !== 'distribution'
+						? kept.commands
+						: commands,
 					publicationSteps,
 				};
 				if (selected === 'new') created.push({ choice, stream, role });
@@ -561,6 +577,55 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 		const configure = (stream: SetupChoices['streams'][number]) =>
 			Effect.gen(function*() {
 				const previousPackages = [...stream.packages];
+				if (plan.actionRelease) {
+					out.log(
+						`GitHub Action metadata: ${
+							plan.actionRelease.manifests.join(', ')
+						}. Enable immutable Releases in repository settings before publishing; major/minor refs advance after publication.`,
+					);
+					const mode = yield* select(
+						ask,
+						`${stream.name}: adopt action release refs?`,
+						preferring([
+							{ value: 'off', label: 'Keep the current release setup' },
+							{ value: 'source', label: 'Immutable patch GitHub Releases and mutable major/minor refs' },
+							...(plan.actionRelease.files.length
+								? [{
+									value: 'distribution',
+									label: 'Also publish generated files on version refs and retain source-only default-branch history',
+								}]
+								: []),
+						], stream.actionRelease?.kind ?? 'off'),
+					);
+					const previousDistribution = stream.actionRelease?.kind === 'distribution'
+						? stream.actionRelease.files
+						: undefined;
+					delete stream.actionRelease;
+					if (mode === 'source') stream.actionRelease = { kind: 'source' };
+					if (mode === 'distribution') {
+						const files = yield* prompted(() =>
+							ask({
+								kind: 'input',
+								message:
+									'Distribution files, comma-separated. Include every runtime asset, chunk and license; entry points are only a starting list.',
+								default: (previousDistribution ?? plan.actionRelease?.files)?.join(', ') ?? '',
+							})
+						);
+						stream.actionRelease = {
+							kind: 'distribution',
+							files: files.split(',').map(file => file.trim()).filter(Boolean),
+						};
+					}
+					if (stream.actionRelease && !stream.promote) {
+						stream.promote = {
+							file: 'release.yml',
+							triggers: 'dispatchOnly',
+							commands: stream.actionRelease.kind === 'distribution' ? plan.actionRelease.commands : '',
+							publicationSteps: {},
+							tagPrefix: stream.versionSource?.prefix ?? (stream.name === 'main' ? 'v' : `${stream.name}-v`),
+						};
+					}
+				}
 				if (stream.observe?.length) {
 					out.log(`Release group ${stream.name}:\n${streamSummary(stream, plan).map(line => `- ${line}`).join('\n')}`);
 					const observe = yield* prompted(() =>
@@ -578,7 +643,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 					delete stream.observe;
 					delete stream.versionSource;
 				}
-				stream.packages = yield* packages(stream.name, stream.packages);
+				stream.packages = packageChoices.length ? yield* packages(stream.name, stream.packages) : [];
 				stream.required = [...stream.packages];
 				choices.streams.push(stream);
 				stream.promote = yield* chooseWorkflow(stream, 'promote', stream.promote, previousPackages);

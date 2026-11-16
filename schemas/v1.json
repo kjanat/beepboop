@@ -490,50 +490,156 @@
 											]
 										},
 										"refs": {
-											"type": "object",
-											"properties": {
-												"phase": {
-													"type": "string",
-													"enum": [
-														"version",
-														"aliases"
-													]
-												},
-												"prefix": {
-													"type": "string",
-													"pattern": "^(?:[A-Za-z0-9._-]+\\/)*[A-Za-z0-9._-]*$"
-												},
-												"aliases": {
-													"type": "array",
-													"items": {
-														"type": "string",
+											"anyOf": [
+												{
+													"type": "object",
+													"properties": {
+														"prefix": {
+															"type": "string",
+															"pattern": "^(?:[A-Za-z0-9._-]+\\/)*[A-Za-z0-9._-]*$"
+														},
+														"aliases": {
+															"type": "array",
+															"items": {
+																"type": "string",
+																"enum": [
+																	"major",
+																	"minor"
+																]
+															}
+														},
+														"phase": {
+															"type": "string",
+															"enum": [
+																"version",
+																"aliases"
+															]
+														},
+														"signed": {
+															"type": "boolean"
+														},
+														"immutable": {
+															"type": "boolean"
+														},
+														"distribution": {
+															"not": {}
+														}
+													},
+													"required": [
+														"phase"
+													],
+													"allOf": [
+														{
+															"type": "object",
+															"additionalProperties": {}
+														}
+													],
+													"propertyNames": {
 														"enum": [
-															"major",
-															"minor"
+															"prefix",
+															"aliases",
+															"phase",
+															"signed",
+															"immutable",
+															"distribution"
 														]
 													}
 												},
-												"signed": {
-													"type": "boolean"
-												}
-											},
-											"required": [
-												"phase"
-											],
-											"allOf": [
 												{
 													"type": "object",
-													"additionalProperties": {}
+													"properties": {
+														"prefix": {
+															"type": "string",
+															"pattern": "^(?:[A-Za-z0-9._-]+\\/)*[A-Za-z0-9._-]*$"
+														},
+														"aliases": {
+															"type": "array",
+															"items": {
+																"type": "string",
+																"enum": [
+																	"major",
+																	"minor"
+																]
+															}
+														},
+														"phase": {
+															"type": "string",
+															"enum": [
+																"version"
+															]
+														},
+														"signed": {
+															"type": "boolean",
+															"enum": [
+																true
+															]
+														},
+														"immutable": {
+															"type": "boolean",
+															"enum": [
+																true
+															]
+														},
+														"distribution": {
+															"type": "object",
+															"properties": {
+																"files": {
+																	"type": "array",
+																	"items": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"minItems": 1
+																},
+																"ancestry": {
+																	"type": "string",
+																	"enum": [
+																		"ours"
+																	]
+																}
+															},
+															"required": [
+																"files",
+																"ancestry"
+															],
+															"allOf": [
+																{
+																	"type": "object",
+																	"additionalProperties": {}
+																}
+															],
+															"propertyNames": {
+																"enum": [
+																	"files",
+																	"ancestry"
+																]
+															}
+														}
+													},
+													"required": [
+														"phase",
+														"signed",
+														"immutable",
+														"distribution"
+													],
+													"allOf": [
+														{
+															"type": "object",
+															"additionalProperties": {}
+														}
+													],
+													"propertyNames": {
+														"enum": [
+															"prefix",
+															"aliases",
+															"phase",
+															"signed",
+															"immutable",
+															"distribution"
+														]
+													}
 												}
-											],
-											"propertyNames": {
-												"enum": [
-													"phase",
-													"prefix",
-													"aliases",
-													"signed"
-												]
-											}
+											]
 										},
 										"platform": {
 											"type": "object",
@@ -1067,50 +1173,156 @@
 											]
 										},
 										"refs": {
-											"type": "object",
-											"properties": {
-												"phase": {
-													"type": "string",
-													"enum": [
-														"version",
-														"aliases"
-													]
-												},
-												"prefix": {
-													"type": "string",
-													"pattern": "^(?:[A-Za-z0-9._-]+\\/)*[A-Za-z0-9._-]*$"
-												},
-												"aliases": {
-													"type": "array",
-													"items": {
-														"type": "string",
+											"anyOf": [
+												{
+													"type": "object",
+													"properties": {
+														"prefix": {
+															"type": "string",
+															"pattern": "^(?:[A-Za-z0-9._-]+\\/)*[A-Za-z0-9._-]*$"
+														},
+														"aliases": {
+															"type": "array",
+															"items": {
+																"type": "string",
+																"enum": [
+																	"major",
+																	"minor"
+																]
+															}
+														},
+														"phase": {
+															"type": "string",
+															"enum": [
+																"version",
+																"aliases"
+															]
+														},
+														"signed": {
+															"type": "boolean"
+														},
+														"immutable": {
+															"type": "boolean"
+														},
+														"distribution": {
+															"not": {}
+														}
+													},
+													"required": [
+														"phase"
+													],
+													"allOf": [
+														{
+															"type": "object",
+															"additionalProperties": {}
+														}
+													],
+													"propertyNames": {
 														"enum": [
-															"major",
-															"minor"
+															"prefix",
+															"aliases",
+															"phase",
+															"signed",
+															"immutable",
+															"distribution"
 														]
 													}
 												},
-												"signed": {
-													"type": "boolean"
-												}
-											},
-											"required": [
-												"phase"
-											],
-											"allOf": [
 												{
 													"type": "object",
-													"additionalProperties": {}
+													"properties": {
+														"prefix": {
+															"type": "string",
+															"pattern": "^(?:[A-Za-z0-9._-]+\\/)*[A-Za-z0-9._-]*$"
+														},
+														"aliases": {
+															"type": "array",
+															"items": {
+																"type": "string",
+																"enum": [
+																	"major",
+																	"minor"
+																]
+															}
+														},
+														"phase": {
+															"type": "string",
+															"enum": [
+																"version"
+															]
+														},
+														"signed": {
+															"type": "boolean",
+															"enum": [
+																true
+															]
+														},
+														"immutable": {
+															"type": "boolean",
+															"enum": [
+																true
+															]
+														},
+														"distribution": {
+															"type": "object",
+															"properties": {
+																"files": {
+																	"type": "array",
+																	"items": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"minItems": 1
+																},
+																"ancestry": {
+																	"type": "string",
+																	"enum": [
+																		"ours"
+																	]
+																}
+															},
+															"required": [
+																"files",
+																"ancestry"
+															],
+															"allOf": [
+																{
+																	"type": "object",
+																	"additionalProperties": {}
+																}
+															],
+															"propertyNames": {
+																"enum": [
+																	"files",
+																	"ancestry"
+																]
+															}
+														}
+													},
+													"required": [
+														"phase",
+														"signed",
+														"immutable",
+														"distribution"
+													],
+													"allOf": [
+														{
+															"type": "object",
+															"additionalProperties": {}
+														}
+													],
+													"propertyNames": {
+														"enum": [
+															"prefix",
+															"aliases",
+															"phase",
+															"signed",
+															"immutable",
+															"distribution"
+														]
+													}
 												}
-											],
-											"propertyNames": {
-												"enum": [
-													"phase",
-													"prefix",
-													"aliases",
-													"signed"
-												]
-											}
+											]
 										},
 										"platform": {
 											"type": "object",
@@ -1772,50 +1984,156 @@
 											]
 										},
 										"refs": {
-											"type": "object",
-											"properties": {
-												"phase": {
-													"type": "string",
-													"enum": [
-														"version",
-														"aliases"
-													]
-												},
-												"prefix": {
-													"type": "string",
-													"pattern": "^(?:[A-Za-z0-9._-]+\\/)*[A-Za-z0-9._-]*$"
-												},
-												"aliases": {
-													"type": "array",
-													"items": {
-														"type": "string",
+											"anyOf": [
+												{
+													"type": "object",
+													"properties": {
+														"prefix": {
+															"type": "string",
+															"pattern": "^(?:[A-Za-z0-9._-]+\\/)*[A-Za-z0-9._-]*$"
+														},
+														"aliases": {
+															"type": "array",
+															"items": {
+																"type": "string",
+																"enum": [
+																	"major",
+																	"minor"
+																]
+															}
+														},
+														"phase": {
+															"type": "string",
+															"enum": [
+																"version",
+																"aliases"
+															]
+														},
+														"signed": {
+															"type": "boolean"
+														},
+														"immutable": {
+															"type": "boolean"
+														},
+														"distribution": {
+															"not": {}
+														}
+													},
+													"required": [
+														"phase"
+													],
+													"allOf": [
+														{
+															"type": "object",
+															"additionalProperties": {}
+														}
+													],
+													"propertyNames": {
 														"enum": [
-															"major",
-															"minor"
+															"prefix",
+															"aliases",
+															"phase",
+															"signed",
+															"immutable",
+															"distribution"
 														]
 													}
 												},
-												"signed": {
-													"type": "boolean"
-												}
-											},
-											"required": [
-												"phase"
-											],
-											"allOf": [
 												{
 													"type": "object",
-													"additionalProperties": {}
+													"properties": {
+														"prefix": {
+															"type": "string",
+															"pattern": "^(?:[A-Za-z0-9._-]+\\/)*[A-Za-z0-9._-]*$"
+														},
+														"aliases": {
+															"type": "array",
+															"items": {
+																"type": "string",
+																"enum": [
+																	"major",
+																	"minor"
+																]
+															}
+														},
+														"phase": {
+															"type": "string",
+															"enum": [
+																"version"
+															]
+														},
+														"signed": {
+															"type": "boolean",
+															"enum": [
+																true
+															]
+														},
+														"immutable": {
+															"type": "boolean",
+															"enum": [
+																true
+															]
+														},
+														"distribution": {
+															"type": "object",
+															"properties": {
+																"files": {
+																	"type": "array",
+																	"items": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"minItems": 1
+																},
+																"ancestry": {
+																	"type": "string",
+																	"enum": [
+																		"ours"
+																	]
+																}
+															},
+															"required": [
+																"files",
+																"ancestry"
+															],
+															"allOf": [
+																{
+																	"type": "object",
+																	"additionalProperties": {}
+																}
+															],
+															"propertyNames": {
+																"enum": [
+																	"files",
+																	"ancestry"
+																]
+															}
+														}
+													},
+													"required": [
+														"phase",
+														"signed",
+														"immutable",
+														"distribution"
+													],
+													"allOf": [
+														{
+															"type": "object",
+															"additionalProperties": {}
+														}
+													],
+													"propertyNames": {
+														"enum": [
+															"prefix",
+															"aliases",
+															"phase",
+															"signed",
+															"immutable",
+															"distribution"
+														]
+													}
 												}
-											],
-											"propertyNames": {
-												"enum": [
-													"phase",
-													"prefix",
-													"aliases",
-													"signed"
-												]
-											}
+											]
 										},
 										"platform": {
 											"type": "object",

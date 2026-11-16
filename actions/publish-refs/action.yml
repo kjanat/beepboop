@@ -4,6 +4,9 @@ inputs:
   token:
     description: Destination repository token with contents write permission
     required: true
+  files:
+    description: JSON array of configured generated distribution paths; omit for source-only releases
+    default: "[]"
   service:
     description: Beepboop service origin
     default: https://beepboop.kjanat.dev
@@ -16,13 +19,21 @@ runs:
     - name: Plan refs
       id: plan
       shell: bash
-      env: { SERVICE_ORIGIN: "${{ inputs.service }}" }
-      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.ts" refs-plan
+      env:
+        SERVICE_ORIGIN: "${{ inputs.service }}"
+        DISTRIBUTION_PATHS: "${{ inputs.files }}"
+        SCRIPT: "${{ github.action_path }}/../runtime/client.ts"
+      run: bun "${SCRIPT}" refs-plan
     - name: Push refs
       shell: bash
-      env: { REF_PLAN: "${{ steps.plan.outputs.result }}", REF_TOKEN: "${{ inputs.token }}" }
-      run: bun "${GITHUB_ACTION_PATH}/../runtime/refs.ts"
+      env:
+        REF_PLAN: "${{ steps.plan.outputs.result }}"
+        REF_TOKEN: "${{ inputs.token }}"
+        SCRIPT: "${{ github.action_path }}/../runtime/refs.ts"
+      run: bun "${SCRIPT}"
     - name: Confirm refs
       shell: bash
-      env: { SERVICE_ORIGIN: "${{ inputs.service }}" }
-      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.ts" refs-complete
+      env:
+        SERVICE_ORIGIN: "${{ inputs.service }}"
+        SCRIPT: "${{ github.action_path }}/../runtime/client.ts"
+      run: bun "${SCRIPT}" refs-complete

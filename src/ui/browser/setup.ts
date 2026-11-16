@@ -41,6 +41,7 @@ export const streamEditors = {
 	start: 'control',
 	bump: 'control',
 	versionPrMerge: 'control',
+	actionRelease: 'control',
 	observe: 'control',
 	prepare: 'control',
 	promote: 'control',
@@ -59,6 +60,7 @@ const streamHelp: Record<StreamField, string> = {
 	start: '',
 	bump: '',
 	versionPrMerge: '',
+	actionRelease: '',
 	observe: '',
 	prepare: '',
 	promote: '',
@@ -120,6 +122,36 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 			return [{ input, pkg: { ...pkg, id } }];
 		});
 		body.dataset.field = 'packages required';
+		const action = plan.actionRelease
+			? select(body, 'GitHub Action release refs', [
+				['', 'Keep the current release setup'],
+				['source', 'Immutable patch GitHub Releases and mutable major/minor refs'],
+				...(plan.actionRelease.files.length
+					? [['distribution', 'Publish generated files on version refs; keep the default branch source-only']] as [
+						string,
+						string,
+					][]
+					: []),
+			], value.actionRelease?.kind ?? '')
+			: undefined;
+		if (action) action.dataset.field = 'actionRelease';
+		const distributionFiles = action
+			? text(
+				body,
+				'Distribution files (comma-separated; review entry points and add every runtime asset, chunk and license)',
+				value.actionRelease?.kind === 'distribution'
+					? value.actionRelease.files.join(', ')
+					: plan.actionRelease?.files.join(', ') ?? '',
+			)
+			: undefined;
+		if (action) {
+			hint(
+				body,
+				`Detected ${
+					plan.actionRelease?.manifests.join(', ')
+				}. Enable immutable Releases in repository settings before publishing. Review build commands and tool setup for generated files; publication requires permission to update the default branch with an ours merge.`,
+			);
+		}
 		const observing = element('input');
 		observing.dataset.field = 'observe';
 		observing.type = 'checkbox';
@@ -193,10 +225,19 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 		);
 		const selection = () => ({
 			name: name.value,
+			actionRelease: action?.value === 'distribution'
+				? 'distribution' as const
+				: action?.value === 'source'
+				? 'source' as const
+				: undefined,
 			packages: selected.filter(entry => entry.input.checked).map(entry => entry.pkg),
 		});
 		const publishing = workflow(body, 'promote', plan, selection, value.promote);
 		const preparing = workflow(body, 'prepare', plan, selection, value.prepare, publishing);
+		action?.addEventListener('change', () => {
+			publishing.refresh();
+			preparing.refresh();
+		});
 		publishing.onChange = () => preparing.refresh();
 		for (const { input } of selected) {
 			input.addEventListener('change', () => {
@@ -242,6 +283,16 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 				const chosenMerge = versionPrMerges.find(entry => entry === merging.value);
 				const started = starts.filter(entry => entry.input.checked).map(entry => entry.channel);
 				const extra: Record<string, unknown> = {
+					...(action?.value === 'source'
+						? { actionRelease: { kind: 'source' } }
+						: action?.value === 'distribution'
+						? {
+							actionRelease: {
+								kind: 'distribution',
+								files: distributionFiles?.value.split(',').map(file => file.trim()).filter(Boolean),
+							},
+						}
+						: {}),
 					...(chosenApproval ? { approval: chosenApproval } : {}),
 					...(chosenBump ? { bump: chosenBump } : {}),
 					...(chosenMerge && (chosenMerge !== 'manual' || value.versionPrMerge) ? { versionPrMerge: chosenMerge } : {}),
@@ -282,7 +333,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 						);
 					}
 				}
-				if (!observed && !packages.length) {
+				if (!observed && !packages.length && !action?.value) {
 					return yield* Result.fail(new Refused({ message: 'Select at least one package to release.' }));
 				}
 				const prepare = kept('prepare') ? yield* preparing.read() : undefined;

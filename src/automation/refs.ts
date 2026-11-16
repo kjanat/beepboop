@@ -12,6 +12,8 @@ export interface RefPolicy {
 	prefix: string;
 	aliases: ('major' | 'minor')[];
 	signed: boolean;
+	immutable?: boolean;
+	distribution?: { files: string[]; ancestry: 'ours' };
 }
 export interface RefState {
 	name: string;
@@ -27,7 +29,16 @@ export interface RefChange {
 	object?: string;
 	replaces?: boolean;
 }
+export interface DistributionEvidence {
+	sourceSha: string;
+	commit: string;
+	tree: string;
+	ancestryCommit: string;
+	branch: string;
+	expected: string;
+}
 export interface RefPlan {
+	distribution?: DistributionEvidence;
 	repository: string;
 	executionId: string;
 	version: string;

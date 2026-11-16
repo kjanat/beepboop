@@ -33,6 +33,7 @@ export const streamFlagKinds = {
 	start: 'list',
 	bump: 'text',
 	versionPrMerge: 'text',
+	actionRelease: 'json',
 	versionSource: 'json',
 	versionFiles: 'json',
 	companionModules: 'packages',

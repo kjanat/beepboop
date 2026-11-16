@@ -243,6 +243,14 @@ const resolvedInput: Schema.Codec<ResolvedInput, unknown> = mutableStruct({
 	artifact,
 });
 const refPlan: Schema.Codec<RefPlan, unknown> = mutableStruct({
+	distribution: Schema.optional(mutableStruct({
+		sourceSha: Schema.String,
+		commit: Schema.String,
+		tree: Schema.String,
+		ancestryCommit: Schema.String,
+		branch: Schema.String,
+		expected: Schema.String,
+	})),
 	repository: Schema.String,
 	executionId: Schema.String,
 	version: Schema.String,

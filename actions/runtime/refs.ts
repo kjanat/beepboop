@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { Invalid } from '@root/actions/runtime/protocol.ts';
 import { ActionFailure, attempt, refuse } from '@root/actions/runtime/protocol.ts';
 import { Effect, Result } from 'effect';
-import type { RefChange, RefPlan } from '@/automation/refs.ts';
+import type { DistributionEvidence, RefChange, RefPlan } from '@/automation/refs.ts';
 import { repositoryNamePattern } from '@/automation/repository-name.ts';
 import { shaPattern } from '@/contract/ids.ts';
 import { git } from '@/git.ts';
@@ -28,11 +28,20 @@ function createGit(root: string, token?: string, keyring?: string): Git {
 	const run = (input: string | undefined, args: string[]) =>
 		Effect.sync(() => git(args, { cwd: root, env, ...(input === undefined ? {} : { input }) }));
 	const output = (input: string | undefined, args: string[]) =>
-		run(input, args).pipe(Effect.flatMap(result =>
-			result.ok
-				? Effect.succeed(result.stdout)
-				: Effect.fail(new ActionFailure({ message: `Git ${args[0]} failed; inspect the repository and ref plan` }))
-		));
+		run(input, args).pipe(
+			Effect.flatMap(result =>
+				result.ok && args[0] === 'push'
+					&& /bypass(?:ed|ing)?[^\r\n]*(?:rule|protect)|(?:rule|protect)[^\r\n]*bypass/i.test(result.stderr)
+					? Effect.fail(
+						new ActionFailure({
+							message: 'Git push reported a repository protection bypass; stop and inspect the remote state',
+						}),
+					)
+					: result.ok
+					? Effect.succeed(result.stdout)
+					: Effect.fail(new ActionFailure({ message: `Git ${args[0]} failed; inspect the repository and ref plan` }))
+			),
+		);
 	return {
 		read: (...args) => output(undefined, args),
 		write: (input, ...args) => output(input, args),
@@ -106,22 +115,73 @@ function prepareTag(git: Git, ref: string, change: RefChange, version: string): 
 	});
 }
 
+function prepareAncestry(
+	evidence: DistributionEvidence,
+	git: Git,
+	remote: string,
+): Effect.Effect<boolean, ActionFailure> {
+	return Effect.gen(function*() {
+		if (
+			![evidence.sourceSha, evidence.commit, evidence.tree, evidence.ancestryCommit, evidence.expected].every(value =>
+				shaPattern.test(value)
+			) || evidence.sourceSha !== evidence.expected
+		) return yield* new ActionFailure({ message: 'Invalid distribution evidence' });
+		const ref = `refs/heads/${evidence.branch}`;
+		yield* git.read('check-ref-format', ref);
+		for (const commit of [evidence.commit, evidence.ancestryCommit]) {
+			yield* git.read('fetch', '--no-tags', remote, commit);
+			yield* git.read('verify-commit', commit);
+		}
+		if (
+			(yield* git.read('rev-parse', `${evidence.commit}^{tree}`)) !== evidence.tree
+			|| (yield* git.read('show', '-s', '--format=%P', evidence.commit)) !== evidence.sourceSha
+			|| (yield* git.read('show', '-s', '--format=%P', evidence.ancestryCommit))
+				!== `${evidence.sourceSha} ${evidence.commit}`
+			|| (yield* git.read('rev-parse', `${evidence.ancestryCommit}^{tree}`))
+				!== (yield* git.read('rev-parse', `${evidence.sourceSha}^{tree}`))
+		) return yield* new ActionFailure({ message: 'Distribution ancestry proof differs from the plan' });
+		const current = (yield* git.read('ls-remote', remote, ref)).split(/\s+/)[0];
+		if (current === evidence.expected) return true;
+		if (current === evidence.ancestryCommit) return false;
+		if (current) {
+			yield* git.read('fetch', '--no-tags', remote, ref);
+			yield* git.read('merge-base', '--is-ancestor', evidence.ancestryCommit, 'FETCH_HEAD');
+			return false;
+		}
+		return yield* new ActionFailure({ message: 'Distribution source branch disappeared' });
+	});
+}
+
 function publish(plan: RefPlan, git: Git, remote: string): Effect.Effect<void, ActionFailure> {
 	return Effect.gen(function*() {
+		if (
+			plan.distribution
+			&& (plan.changes.some(change => change.commit !== plan.distribution?.commit)
+				|| !plan.changes.some(change => change.annotated))
+		) return yield* new ActionFailure({ message: 'Distribution refs must target the authorized distribution commit' });
 		const leases: string[] = [];
 		const refspecs: string[] = [];
+		if (plan.distribution && (yield* prepareAncestry(plan.distribution, git, remote))) {
+			const ref = `refs/heads/${plan.distribution.branch}`;
+			leases.push(`--force-with-lease=${ref}:${plan.distribution.expected}`);
+			refspecs.push(`${plan.distribution.ancestryCommit}:${ref}`);
+		}
 		for (const change of plan.changes) {
 			if (
 				!shaPattern.test(change.commit) || change.expected !== null && !shaPattern.test(change.expected)
 			) return yield* new ActionFailure({ message: 'Invalid ref object' });
 			const ref = `refs/tags/${change.name}`;
 			yield* git.read('check-ref-format', ref);
+			if (!(yield* git.exists(`${change.commit}^{commit}`))) {
+				yield* git.read('fetch', '--no-tags', remote, change.commit);
+			}
 			yield* git.read('cat-file', '-e', `${change.commit}^{commit}`);
 			if (change.annotated && change.expected !== null && !change.replaces) {
 				yield* verifyPublishedTag(git, remote, ref, change);
 				continue;
 			}
 			const object = change.annotated ? yield* prepareTag(git, ref, change, plan.version) : change.commit;
+			if (plan.distribution && (yield* git.read('ls-remote', remote, ref)).split(/\s+/)[0] === object) continue;
 			leases.push(`--force-with-lease=${ref}:${change.expected ?? ''}`);
 			refspecs.push(`${object}:${ref}`);
 		}
@@ -136,6 +196,9 @@ export function publishRefs(
 	token?: string,
 ): Effect.Effect<void, ActionFailure> {
 	const publicKey = plan.publicKey;
+	if (plan.distribution && publicKey === undefined) {
+		return Effect.fail(new ActionFailure({ message: 'Distribution publication requires the signing key' }));
+	}
 	if (publicKey === undefined) return publish(plan, createGit(root, token), remote);
 	return Effect.acquireUseRelease(
 		Effect.fromResult(attempt(() => mkdtempSync(join(process.env.RUNNER_TEMP || tmpdir(), 'beepboop-gnupg-')))),
@@ -160,6 +223,20 @@ function parseChange(entry: unknown): Result.Result<RefChange, Invalid> {
 	});
 }
 
+function parseDistribution(value: unknown): Result.Result<DistributionEvidence, Invalid> {
+	return Result.gen(function*() {
+		const evidence = yield* record(value);
+		return {
+			sourceSha: yield* text(evidence.sourceSha),
+			commit: yield* text(evidence.commit),
+			tree: yield* text(evidence.tree),
+			ancestryCommit: yield* text(evidence.ancestryCommit),
+			branch: yield* text(evidence.branch),
+			expected: yield* text(evidence.expected),
+		};
+	});
+}
+
 function parsePlan(value: unknown): Result.Result<RefPlan, Invalid> {
 	return Result.gen(function*() {
 		const plan = yield* record(value);
@@ -168,6 +245,7 @@ function parsePlan(value: unknown): Result.Result<RefPlan, Invalid> {
 			executionId: yield* text(plan.executionId),
 			version: yield* text(plan.version),
 			changes: yield* Result.all((yield* array(plan.changes)).map(parseChange)),
+			...(plan.distribution === undefined ? {} : { distribution: yield* parseDistribution(plan.distribution) }),
 			...(plan.publicKey === undefined ? {} : { publicKey: yield* text(plan.publicKey) }),
 		};
 	});

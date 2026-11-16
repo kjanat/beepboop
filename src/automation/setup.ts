@@ -12,6 +12,7 @@ import { publishable } from '@/automation/package-publication';
 import { adoptionChoices, startCommand } from '@/automation/release-graph/adoption';
 import type { ReleaseGraph } from '@/automation/release-graph/graph';
 import { inferReleaseGraph } from '@/automation/release-graph/graph';
+import { actionReleaseOffer } from '@/automation/setup-action';
 import { behaviourChanges, changeDetails, onboardingBranch } from '@/automation/setup-changes';
 import { completeTaggedStreams } from '@/automation/setup-completion';
 import { crateScript, refreshedCommands, suggestedCommands } from '@/automation/setup-defaults';
@@ -228,8 +229,19 @@ function suggested(
 		const companionModules = Array.isArray(current.companionModules)
 			? current.companionModules.map(value => selectorKey(String(value), inventory.packages))
 			: [];
+		const policy = object(object(object(current.promote).workflow).refs);
+		const distribution = object(policy.distribution);
+		const aliasPolicy = object(object(object(current.workflows).aliases).refs);
+		const actionRelease = actionReleaseOffer(snapshot) && policy.immutable === true && policy.signed === true
+				&& Array.isArray(aliasPolicy.aliases) && aliasPolicy.aliases.includes('major')
+				&& aliasPolicy.aliases.includes('minor')
+			? Array.isArray(distribution.files) && distribution.files.every(file => typeof file === 'string')
+				? { kind: 'distribution' as const, files: distribution.files }
+				: { kind: 'source' as const }
+			: undefined;
 		streams.push({
 			name,
+			...(actionRelease ? { actionRelease } : {}),
 			...(observe.length ? { observe } : {}),
 			...(versionSource ? { versionSource } : {}),
 			...(companionModules.length ? { companionModules } : {}),
@@ -386,6 +398,7 @@ function draftSetup(
 			: [];
 		const plan = {
 			...drafts,
+			...(actionReleaseOffer(snapshot) ? { actionRelease: actionReleaseOffer(snapshot) } : {}),
 			...(publishingChecks.length ? { publishingChecks } : {}),
 			blockers: [...ineligible, ...drafts.blockers],
 			notes: [
@@ -488,6 +501,22 @@ function drafted(
 				: [],
 		);
 		for (const selection of choices.streams) {
+			const offer = actionReleaseOffer(snapshot);
+			if (selection.actionRelease && !offer) {
+				blockers.push(`${selection.name}: GitHub Action metadata is required to adopt action release refs.`);
+			}
+			if (selection.actionRelease?.kind === 'source' && offer?.missing.length) {
+				blockers.push(
+					`${selection.name}: action entry points are absent from source (${
+						offer.missing.join(', ')
+					}). Select generated distribution publication and review all required files.`,
+				);
+			}
+			if (selection.actionRelease?.kind === 'distribution' && !selection.promote?.commands.trim()) {
+				blockers.push(
+					`${selection.name}: enter the build commands that produce the selected action distribution files.`,
+				);
+			}
 			if (names.has(selection.name)) return yield* precondition('Duplicate selected stream');
 			names.add(selection.name);
 			const selected = inventory.packages.filter(pkg =>
@@ -496,7 +525,10 @@ function drafted(
 			const observedPublications = selection.observe?.flatMap(entry => entry.publications) ?? [];
 			const published = selected.filter(pkg => !observedPublications.some(reference => matchesPackage(reference, pkg)));
 			if (selection.promote?.binaries) managers.add('github-release');
-			if (!selection.packages.length && !selection.observe?.length && !selection.promote?.binaries) {
+			if (
+				!selection.packages.length && !selection.observe?.length && !selection.promote?.binaries
+				&& !selection.actionRelease
+			) {
 				blockers.push(`${selection.name}: select the packages in this release stream.`);
 			}
 			if (selection.packages.some(id => !selected.some(pkg => packageId(pkg) === id))) {
@@ -648,6 +680,17 @@ function drafted(
 						: {}),
 				};
 				const inputs = { ...object(inherited.inputs), ...object(previousBinding.inputs) };
+				if (operation === 'promote' && selection.actionRelease) {
+					binding.refs = {
+						phase: 'version',
+						prefix: workflow.tagPrefix ?? 'v',
+						signed: true,
+						immutable: true,
+						...(selection.actionRelease.kind === 'distribution'
+							? { distribution: { files: selection.actionRelease.files, ancestry: 'ours' } }
+							: {}),
+					};
+				}
 				if (shared) inputs.beepboop_operation = operation === 'promote' ? 'publish' : 'prepare';
 				else delete inputs.beepboop_operation;
 				if (Object.keys(inputs).length) binding.inputs = inputs;
@@ -677,6 +720,9 @@ function drafted(
 					choices.actionsRevision,
 					required,
 					releasing,
+					operation === 'promote' && selection.actionRelease
+						? selection.actionRelease.kind === 'distribution' ? selection.actionRelease.files : []
+						: undefined,
 				));
 				blockers.push(...generated.blockers);
 				notes.push(...generated.notes);
@@ -684,6 +730,47 @@ function drafted(
 				if (generated.content !== before) edits.push({ path, before, after: generated.content });
 			}
 			if (selection.bump) updated.prepare = { ...object(updated.prepare), bump: selection.bump };
+			if (selection.actionRelease && selection.promote) {
+				const file = `${selection.name === 'main' ? 'action' : selection.name}-aliases.yml`;
+				const previousAlias = object(object(current.workflows).aliases), aliasRefs = object(previousAlias.refs);
+				const ownedAlias = previousAlias.file === file && aliasRefs.phase === 'aliases'
+					&& Array.isArray(previousAlias.needs) && previousAlias.needs.length === 1
+					&& previousAlias.needs[0] === 'promote'
+					&& Array.isArray(aliasRefs.aliases) && aliasRefs.aliases.length === 2 && aliasRefs.aliases.includes('major')
+					&& aliasRefs.aliases.includes('minor');
+				if (
+					selectedFiles.has(file) || Object.keys(previousAlias).length > 0 && !ownedAlias
+					|| snapshot.paths.includes(`.github/workflows/${file}`) && !ownedAlias
+				) {
+					blockers.push(
+						`${file}: the aliases operation or workflow is already in use; resolve the collision before adopting action releases.`,
+					);
+				} else {
+					selectedFiles.add(file);
+					const alias: SetupWorkflow = {
+						file,
+						triggers: 'dispatchOnly',
+						commands: '',
+						publicationSteps: {},
+						tagPrefix: selection.promote.tagPrefix ?? 'v',
+					};
+					bindings.aliases = {
+						file,
+						ref: snapshot.repository.defaultBranch,
+						needs: ['promote'],
+						publications: [],
+						refs: { phase: 'aliases', prefix: alias.tagPrefix, aliases: ['major', 'minor'] },
+					};
+					updated.workflows = bindings;
+					const generated = yield* Effect.fromResult(
+						integrateWorkflow(snapshot, selection.name, 'aliases', alias, [], choices.actionsRevision),
+					);
+					blockers.push(...generated.blockers);
+					notes.push(...generated.notes);
+					const path = `.github/workflows/${file}`, before = snapshot.files[path] ?? '';
+					if (before !== generated.content) edits.push({ path, before, after: generated.content });
+				}
+			}
 			if (selection.versionPrMerge) {
 				updated.prepare = { ...object(updated.prepare), versionPrMerge: selection.versionPrMerge };
 			}
@@ -721,6 +808,9 @@ function drafted(
 					required,
 					published,
 					releases(snapshot, selection, selection.promote, object(object(current.promote).workflow)),
+					selection.actionRelease
+						? selection.actionRelease.kind === 'distribution' ? selection.actionRelease.files : []
+						: undefined,
 				));
 				blockers.push(...generated.blockers);
 				notes.push(...generated.notes);
@@ -829,6 +919,7 @@ function releases(
 	workflow: SetupWorkflow | undefined,
 	previous: Record<string, unknown>,
 ): boolean {
+	if (stream.actionRelease) return !!workflow;
 	if (!workflow || workflow.binaries || stream.observe?.length || stream.versionSource) return false;
 	const release = `github-release:${snapshot.repository.name}`;
 	return Array.isArray(previous.publications) && previous.publications.includes(release)
@@ -855,6 +946,10 @@ function completeChoices(
 		...choices,
 		streams: choices.streams.map(stream => {
 			const chosen = candidates.filter(pkg => stream.packages.includes(pkg.id));
+			const previousPolicy = object(object(object(object(object(raw.streams)[stream.name]).promote).workflow).refs);
+			const actionPrefix = typeof previousPolicy.prefix === 'string'
+				? previousPolicy.prefix
+				: stream.versionSource?.prefix ?? (stream.name === 'main' ? 'v' : `${stream.name}-v`);
 			const elsewhere = new Set([
 				...(stream.operations?.flatMap(entry => entry.publications) ?? []),
 				...(stream.observe?.flatMap(entry => entry.publications) ?? []),
@@ -867,18 +962,27 @@ function completeChoices(
 						? chosen
 						: chosen.filter(pkg => !elsewhere.has(pkg.id) && !workflow.publicationSteps[pkg.id]),
 				};
-				const commands = refreshedCommands(operation, workflow.commands, scope, candidates, context);
+				const build = actionReleaseOffer(snapshot)?.commands ?? '';
+				const publication = suggestedCommands(operation, scope, context);
+				const combined = operation === 'promote' && stream.actionRelease?.kind === 'distribution'
+						&& snapshot.files[`.github/workflows/${workflow.file}`] === undefined && workflow.commands === build
+						&& build
+					? [build, publication].filter(Boolean).join('\n')
+					: workflow.commands;
+				const commands = refreshedCommands(operation, combined, scope, candidates, context);
 				const generated = commands !== ''
 					&& (commands === suggestedCommands(operation, scope, context) || crateScript(commands));
 				const fresh = snapshot.files[`.github/workflows/${workflow.file}`] === undefined;
 				return {
 					...workflow,
 					commands,
+					...(operation === 'promote' && stream.actionRelease ? { tagPrefix: workflow.tagPrefix ?? actionPrefix } : {}),
 					...(operation === 'promote' && generated && !workflow.credentials
 							&& scope.packages.some(pkg => pkg.manager === 'cargo')
 						? { credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' } }
 						: {}),
 					...(operation === 'promote' && fresh && !workflow.tagPrefix && !workflow.binaries && !stream.observe?.length
+							&& !stream.actionRelease
 						? { tagPrefix: stream.versionSource?.prefix ?? (stream.name === 'main' ? 'v' : `${stream.name}-v`) }
 						: {}),
 				};
@@ -906,9 +1010,27 @@ function completeChoices(
 			const bump = stream.bump ?? (bumped.success ? bumped.data : undefined);
 			const merged = safeDecode(versionPrMerge, object(stored.prepare).versionPrMerge);
 			const merge = stream.versionPrMerge ?? (merged.success ? merged.data : undefined);
-			const prepare = complete('prepare', stream.prepare), promote = complete('promote', stream.promote);
+			const prepare = complete('prepare', stream.prepare),
+				promote = complete(
+					'promote',
+					stream.promote ?? (stream.actionRelease
+						? {
+							file: 'release.yml',
+							job: 'promote',
+							triggers: 'dispatchOnly',
+							commands: stream.actionRelease.kind === 'distribution'
+								? actionReleaseOffer(snapshot)?.commands ?? ''
+								: '',
+							publicationSteps: {},
+							tagPrefix: actionPrefix,
+						}
+						: undefined),
+				);
 			return {
 				...stream,
+				...(stream.actionRelease && !stream.packages.length && !stream.versionFiles?.length && !stream.versionSource
+					? { versionSource: { kind: 'tags' as const, prefix: promote?.tagPrefix ?? 'v' } }
+					: {}),
 				...(promote && approval ? { approval } : {}),
 				...(start ? { start } : {}),
 				...(bump ? { bump } : {}),

@@ -4,7 +4,7 @@ import type { SetupOperation, SetupPlan, SetupWorkflow, WorkflowEvidence } from 
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { startChannel, versionBump } from '@/contract/release-start';
-import { binaries, binaryBuild, binaryTargets } from '@/contract/setup';
+import { actionRelease, binaries, binaryBuild, binaryTargets } from '@/contract/setup';
 import { versionPrMerge } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
 import { stringsSchema as strings } from '@/model';
@@ -51,6 +51,9 @@ const evidence: Schema.Codec<WorkflowEvidence, unknown> = mutableStruct({
 	publishes: Schema.Boolean,
 });
 const setupPlan: Schema.Codec<SetupPlan, unknown> = mutableStruct({
+	actionRelease: Schema.optional(
+		mutableStruct({ manifests: strings, files: strings, missing: strings, commands: Schema.String }),
+	),
 	publishingChecks: Schema.optional(mutableArray(mutableStruct({
 		file: Schema.String,
 		subject: Schema.String,
@@ -72,6 +75,7 @@ const setupPlan: Schema.Codec<SetupPlan, unknown> = mutableStruct({
 					start: Schema.optional(mutableArray(startChannel)),
 					bump: Schema.optional(versionBump),
 					versionPrMerge: Schema.optional(versionPrMerge),
+					actionRelease: Schema.optional(actionRelease),
 					required: strings,
 					versionSource: Schema.optional(mutableStruct({ kind: Schema.Literal('tags'), prefix: Schema.String })),
 					versionFiles: Schema.optional(mutableArray(versionFileSchema)),

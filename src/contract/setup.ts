@@ -231,6 +231,20 @@ const operation = strictStruct(
 	}).fields,
 );
 export const setupWorkflow = workflow;
+/** Opt in to immutable patch releases and mutable major/minor action refs. */
+export const actionRelease = Schema.Union([
+	strictStruct({ kind: Schema.Literal('source') }),
+	strictStruct({
+		kind: Schema.Literal('distribution'),
+		files: mutableArray(refined(
+			Schema.String,
+			value =>
+				/^(?:[\w.-]+\/)*[\w.-]+$/.test(value)
+				&& !value.split('/').some(part => part === '.' || part === '..' || part === '.git'),
+			'Use exact repository-relative distribution file paths',
+		)).check(Schema.isMinLength(1)),
+	}),
+]);
 export const setupStream = strictStruct(
 	mutableStruct({
 		name: identifier,
@@ -240,6 +254,7 @@ export const setupStream = strictStruct(
 		start: Schema.optional(mutableArray(startChannel)),
 		bump: Schema.optional(versionBump),
 		versionPrMerge: Schema.optional(versionPrMerge),
+		actionRelease: Schema.optional(actionRelease),
 		required: mutableArray(Schema.String),
 		versionSource: Schema.optional(strictStruct(
 			mutableStruct({
