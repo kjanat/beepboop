@@ -217,6 +217,7 @@ test('a backfill creates signed tags only for the versions each package publishe
 			caller: 'beepboop:octo/widget',
 		}]);
 		expect(verifies(key, created?.raw ?? '')).toBe(true);
+		expect(world.github.tokenPermissions).toContainEqual({ contents: 'write', workflows: 'write' });
 		expect(await tags(true)).toEqual([
 			{ tag: 'widget-v0.9.0', version: '0.9.0', commit: first, outcome: 'unpublished' },
 			{ tag: 'widget-v1.0.0', version: '1.0.0', commit: second, outcome: 'exists' },

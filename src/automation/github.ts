@@ -429,7 +429,7 @@ export class RepositoryGateway {
 	): Effect.Effect<void, DomainError> {
 		const self = this;
 		return Effect.gen(function*() {
-			const token = yield* self.token(name, id, { contents: 'write' });
+			const token = yield* self.token(name, id, { contents: 'write', workflows: 'write' });
 			const created = yield* self.read(createdTagSchema, `/repos/${name}/git/tags`, token, 'POST', {
 				tag: tag.name,
 				message: tag.message,
