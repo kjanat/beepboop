@@ -495,6 +495,8 @@ test('a crate whose latest version the crates.io API cannot answer is read from 
 		JSON.stringify({ name: 'svg-data', vers, cksum: 'a'.repeat(64), yanked });
 	expect(await latest([line('0.3.0'), line('0.4.0'), line('0.5.0-rc.1'), line('0.4.1', true)].join('\n')))
 		.toEqual({ kind: 'published', version: '0.4.0' });
+	expect(await latest([line('1.1.0'), line('1.2.0+vendor-build')].join('\n')))
+		.toEqual({ kind: 'published', version: '1.2.0+vendor-build' });
 	expect(await latest(null)).toEqual({ kind: 'missing', url: 'https://index.crates.io/sv/g-/svg-data' });
 	expect(await latest('{"name"')).toEqual({
 		kind: 'failed',

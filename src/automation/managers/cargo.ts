@@ -18,6 +18,7 @@ import { excluded, registry } from '@/automation/package-publication';
 import type { Publication } from '@/automation/types';
 import { fileProblem } from '@/contract/diagnostics';
 import { precondition } from '@/contract/errors';
+import { isPrerelease } from '@/contract/semver';
 import { compareVersions } from '@/model';
 import { packageIdentity } from '@/package-url';
 import { parentDirectory } from '@/relative-path';
@@ -39,7 +40,7 @@ function indexLatest(body: string): unknown {
 			? [entry.success.vers]
 			: []
 	);
-	const stable = versions.filter(version => !version.includes('-'));
+	const stable = versions.filter(version => !isPrerelease(version));
 	const candidates = stable.length ? stable : versions;
 	return candidates.reduce<string | undefined>(
 		(best, version) => best === undefined || compareVersions(version, best) > 0 ? version : best,
