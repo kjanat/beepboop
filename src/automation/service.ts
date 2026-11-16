@@ -450,7 +450,10 @@ export class AutomationService {
 				const merge = started ? undefined : yield* this.mergedPreparation(repository, name, version, repository.sha);
 				const promotions = yield* fromPromise(() => this.coordinator(repository.id).promotions(name, version));
 				const prepared = started?.sha ?? merge;
-				const held = prepared === undefined
+				const retired = promotions.some(promotion =>
+					promotion.sourceSha === prepared && retiredStates.includes(promotion.state)
+				);
+				const held = prepared === undefined || retired
 					? undefined
 					: yield* this.releaseHeld(repository, stream, packages, prepared);
 				const snapshot = held ?? (yield* this.versionCommit(repository, name, stream, promotions, packages))

@@ -378,3 +378,16 @@ test('a change to a reusable workflow that the release workflow calls gets its o
 		`main is at ${changed.sha.slice(0, 12)}. Publish the release for that commit.`,
 	]);
 });
+
+test('a cancelled release of a merged version PR does not hold the version for a later commit', async () => {
+	const { repository, api, merged } = await squashedVersionPr('required');
+	passChecks(repository, merged.sha);
+	await pushed(repository);
+	const cancelled = one(await promotions(api), 'promotion');
+	expect(cancelled.sourceSha).toBe(merged.sha);
+	expect((await api('/api/executions/cancel', { id: cancelled.id })).status).toBe(200);
+	const later = moveOn(repository);
+	await pushed(repository);
+	const current = one((await promotions(api)).filter(entry => entry.state !== 'cancelled'), 'open promotion');
+	expect([current.sourceSha, current.state]).toEqual([later.sha, 'awaiting-approval']);
+});
