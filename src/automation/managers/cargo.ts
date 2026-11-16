@@ -4,10 +4,13 @@ import { editTomlVersion, object } from '@/automation/managers/helpers';
 import type { Adapter, Fetcher } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import {
+	LookupFailure,
+	latestText,
 	latestVersion,
 	publicationResult,
 	registryRequest,
 	unconfirmed,
+	unpublished,
 	verifyRegistry,
 } from '@/automation/managers/verification';
 import { cargoMembers } from '@/automation/managers/workspaces';
@@ -15,6 +18,7 @@ import { excluded, registry } from '@/automation/package-publication';
 import type { Publication } from '@/automation/types';
 import { fileProblem } from '@/contract/diagnostics';
 import { precondition } from '@/contract/errors';
+import { compareVersions } from '@/model';
 import { packageIdentity } from '@/package-url';
 import { parentDirectory } from '@/relative-path';
 import { responseText } from '@/runtime/http';
@@ -26,6 +30,21 @@ export function crateIndexUrl(name: string): string {
 		? `3/${lower[0]}/${lower}`
 		: `${lower.slice(0, 2)}/${lower.slice(2, 4)}/${lower}`;
 	return `https://index.crates.io/${path}`;
+}
+function indexLatest(body: string): unknown {
+	const entries = body.split('\n').filter(line => line.trim()).map(line => Result.try(() => object(JSON.parse(line))));
+	if (entries.some(Result.isFailure)) return new LookupFailure('invalid registry response');
+	const versions = entries.flatMap(entry =>
+		Result.isSuccess(entry) && entry.success.yanked === false && typeof entry.success.vers === 'string'
+			? [entry.success.vers]
+			: []
+	);
+	const stable = versions.filter(version => !version.includes('-'));
+	const candidates = stable.length ? stable : versions;
+	return candidates.reduce<string | undefined>(
+		(best, version) => best === undefined || compareVersions(version, best) > 0 ? version : best,
+		undefined,
+	) ?? unpublished;
 }
 function verifyIndex(publication: Publication, request: Fetcher): Effect.Effect<Publication> {
 	const url = crateIndexUrl(publication.name);
@@ -63,6 +82,10 @@ export const cargoManager = {
 				const crate = object(object(body).crate);
 				return crate.max_stable_version ?? crate.max_version;
 			},
+		).pipe(
+			Effect.flatMap(found =>
+				found.kind === 'failed' ? latestText(request, crateIndexUrl(pkg.name), indexLatest) : Effect.succeed(found)
+			),
 		);
 	},
 	verifyPublication(publication, request) {
