@@ -98,6 +98,18 @@ export function tagConflict(
 	}
 	return undefined;
 }
+export function versionTagged(
+	policy: RefPolicy,
+	version: SemVer,
+	commit: string,
+	refs: RefState[],
+	modulePrefixes: string[] = [],
+): boolean {
+	return policy.phase === 'version'
+		&& versionTags(policy, version, modulePrefixes).every(name =>
+			refs.some(ref => ref.name === name && ref.commit === commit)
+		);
+}
 export function conflictMessage(tag: RefState): string {
 	return `Version tag ${tag.name} already targets ${tag.commit.slice(0, 12)}`;
 }

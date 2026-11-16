@@ -86,6 +86,7 @@ import {
 	tagObject,
 	tagPayload,
 	tagPrefixes,
+	versionTagged,
 } from '@/automation/refs';
 import { ReleaseHistory } from '@/automation/release-history';
 import { releaseNotes } from '@/automation/release-notes';
@@ -2124,6 +2125,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return conflict && conflictMessage(conflict);
 		});
 	}
+	private versionTagged(execution: Execution): CoordinatorEffect<boolean, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const policy = execution.workflow?.refs;
+			const version = safeDecode(semVer, execution.version);
+			if (!policy || !version.success) return false;
+			const refs = yield* (yield* this.gateway).tagRefs(execution.repository, execution.repositoryId);
+			return versionTagged(policy, version.data, execution.sourceSha, refs, yield* this.modulePrefixes(execution));
+		});
+	}
 	private modulePrefixes(execution: Execution): CoordinatorEffect<string[], DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (execution.moduleTags) return tagPrefixes(execution.moduleTags);
@@ -2290,7 +2300,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				token,
 				typeof run?.head_branch === 'string' ? run.head_branch : undefined,
 			);
-			if (moved) return yield* precondition(moved);
+			if (
+				moved
+				&& !(run !== null && run.head_sha === execution.sourceSha && (yield* this.versionTagged(execution)))
+			) return yield* precondition(moved);
 			if (run !== null && execution.eventId.startsWith('observed:') && run.conclusion === 'success') {
 				return yield* precondition(
 					`Workflow run ${run.id} succeeded, so it has no failed jobs to re-run. Fix the reported problem and re-run the workflow on GitHub`,
