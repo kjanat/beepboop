@@ -17,6 +17,13 @@ after pr has been merged, check in 15 minutes after to check if coderabbit poste
 
 It usually contains worthwhile shit to address. Do that.
 
+## Tests
+
+Test crap wherever it is a useful behavioral thingy crappy thing.
+No waste my time and CI on shit.
+
+Please if you see that tests can be faster, proactively clean them up so they run way, way faster thx.
+
 ## Libraries
 
 Use effect. You think, sleep, breathe effect. If it isn't effect, you faint.
