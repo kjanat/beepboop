@@ -158,7 +158,11 @@ async function pushRefs(identity: RunIdentity, executionId: string, repository: 
 	return changes;
 }
 
-async function taggedFailure(approval: 'push' | 'required' = 'push', existing?: string) {
+async function taggedFailure(
+	approval: 'push' | 'required' = 'push',
+	existing?: string,
+	beforeFailure?: (identity: RunIdentity, id: string) => Promise<void>,
+) {
 	key = signingKey('Release Bot (CI) <release@example.com>');
 	world.env.SIGNER = fakeSigner(key);
 	const { repository, api, merged } = await mergedSetup(true, approval);
@@ -176,6 +180,7 @@ async function taggedFailure(approval: 'push' | 'required' = 'push', existing?: 
 	await begin(world, identity, first.id, 'main', 'promote');
 	const changes = await pushRefs(identity, first.id, repository);
 	expect(changes.map(change => [change.name, change.expected])).toEqual([['v1.0.0', existing ?? null]]);
+	if (beforeFailure) await beforeFailure(identity, first.id);
 	run.status = 'completed';
 	run.conclusion = 'failure';
 	await world.workflowRun(repository, run, 'failure', 'workflow_dispatch');
@@ -253,6 +258,36 @@ test('a run of the failed release that still runs keeps its tag', async () => {
 	run.status = 'in_progress';
 	await pushFix(repository);
 	expect((await promotions(api)).map(promotion => promotion.sourceSha)).toEqual([merged.sha]);
+}, 60_000);
+
+test('a version on its registry under another dist-tag stops the takeover at its ref step', async () => {
+	const { repository, api, oid } = await taggedFailure('push', undefined, async (identity, id) => {
+		await runAction(world, 'report', identity, {
+			EXECUTION_ID: id,
+			PUBLICATIONS: JSON.stringify([
+				{
+					id: 'pkg:npm/widget',
+					manager: 'npm',
+					name: 'widget',
+					version: '1.0.0',
+					outcome: 'failed',
+					channel: 'latest',
+				},
+			]),
+		});
+	});
+	const fixed = await pushFix(repository);
+	const second = (await promotions(api)).find(promotion => promotion.sourceSha === fixed.sha);
+	const run = repository.runs.find(entry => entry.inputs.beepboop_execution_id === second?.id);
+	if (!second || !run) throw new Error('Expected the second release run');
+	run.status = 'in_progress';
+	const identity = runIdentity(repository, run, 'release.yml');
+	await begin(world, identity, second.id, 'main', 'promote');
+	world.npm.publish('widget', '1.0.0', 'next');
+	await expect(runAction(world, 'refs-plan', identity, { EXECUTION_ID: second.id })).rejects.toThrow(
+		'v1.0.0 can no longer move: a release of 1.0.0 published or runs',
+	);
+	expect(repository.refs.get('tags/v1.0.0')).toBe(oid);
 }, 60_000);
 
 test('a publishing run on the tagged commit that still runs keeps its tag', async () => {

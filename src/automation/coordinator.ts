@@ -63,6 +63,7 @@ import { tagPrefix } from '@/automation/managers/tags';
 import { mergeArtifacts, resolveInputs } from '@/automation/outputs';
 import {
 	identifyExecution,
+	identityPackageName,
 	matchesPackage,
 	matchesPublication,
 	packageId,
@@ -246,7 +247,7 @@ function referenceProbe(reference: string, version: string): Publication | undef
 		id: reference,
 		identity: { ...identity, version },
 		manager,
-		name: identity.namespace ? `${identity.namespace}/${identity.name}` : identity.name,
+		name: identityPackageName(identity),
 		version,
 		outcome: 'pending',
 		required: true,
@@ -2292,7 +2293,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 				for (const publication of execution.publications) {
 					if (publication.manager === 'workflow' || publication.id.startsWith('refs:')) continue;
-					probes.set(`${publication.manager}:${publication.name}`, { ...publication, version, outcome: 'pending' });
+					probes.set(`${publication.manager}:${publication.name}`, {
+						id: publication.id,
+						...(publication.identity ? { identity: publication.identity } : {}),
+						manager: publication.manager,
+						name: publication.name,
+						version,
+						outcome: 'pending',
+						required: true,
+					});
 				}
 			}
 			const outcomes = yield* Effect.forEach(
