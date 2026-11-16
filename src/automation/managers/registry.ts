@@ -31,7 +31,9 @@ export interface Manager {
 	): Effect.Effect<Publication>;
 	latest?(pkg: Package, request: Fetcher, context?: VerificationContext): Effect.Effect<RegistryVersion>;
 	secondaryLatest?: Partial<Record<ManagerDestinationId, RegistryLookup>>;
+	secondaryPublication?: Partial<Record<ManagerDestinationId, PublicationCheck>>;
 }
+export type PublicationCheck = (publication: Publication, request: Fetcher) => Effect.Effect<Publication>;
 export type Adapter<M extends ManagerName> = Manager & { readonly name: M };
 export type RegistryLookup = (
 	pkg: Package,
@@ -101,6 +103,11 @@ export class ManagerRegistry {
 		return manager?.verifyPublication
 			? manager.verifyPublication(publication, request, context)
 			: Effect.succeed({ ...publication, outcome: 'uncertain' });
+	}
+	verifySecondaryPublications(publication: Publication, request: Fetcher): Effect.Effect<Publication[]> {
+		const checks = Object.values(this.managers.get(publication.manager)?.secondaryPublication ?? {})
+			.filter(check => check !== undefined);
+		return Effect.forEach(checks, check => check(publication, request), { concurrency: ioConcurrency });
 	}
 	resolvePublished(inventory: Inventory, request: Fetcher, context?: VerificationContext): Effect.Effect<Inventory> {
 		const packages: Package[] = inventory.packages.map(pkg => {
