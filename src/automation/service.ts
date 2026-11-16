@@ -22,7 +22,7 @@ import { publishable } from '@/automation/package-publication';
 import { pollPackages } from '@/automation/package-watch';
 import { matchesRef } from '@/automation/policy';
 import type { RefState } from '@/automation/refs';
-import { conflictMessage, streamModuleTagPrefixes, tagConflict } from '@/automation/refs';
+import { conflictMessage, streamModuleTagPrefixes, tagConflicts } from '@/automation/refs';
 import { manifestProblems, releasedVersion, unreleasedManifestVersion } from '@/automation/release-version';
 import { bodyChoices, releaseAfterMerge } from '@/automation/setup';
 import { currentOptions, maintainSetup, rebuildingStatus, setupEdits } from '@/automation/setup-maintenance';
@@ -409,15 +409,29 @@ export class AutomationService {
 				if (plan.edits.length || plan.requiresPreparation) continue;
 				const policy = stream.promote.workflow.refs;
 				const parsed = safeDecode(semVer, version);
+				let reclaims: RefState[] = [];
 				if (policy && parsed.success) {
 					tags ??= yield* this.gateway.tagRefs(repository.name, repository.id);
-					const conflict = tagConflict(
+					const conflicts = tagConflicts(
 						policy,
 						parsed.data,
 						plan.sourceSha,
 						tags,
 						streamModuleTagPrefixes(repository.inventory.packages, stream),
 					);
+					if (conflicts.length) {
+						const owned = yield* fromPromise(() =>
+							this.coordinator(repository.id).reclaimable(
+								repository.id,
+								name,
+								version,
+								`${policy.prefix}${version}`,
+								conflicts,
+							)
+						);
+						if (owned.length === conflicts.length) reclaims = owned;
+					}
+					const conflict = reclaims.length ? undefined : conflicts[0];
 					if (conflict) {
 						const missing = packages.filter(pkg => releasedVersion(pkg) !== version);
 						const backfill = yield* this.backfill(repository, name, conflict, version, missing);
@@ -456,6 +470,7 @@ export class AutomationService {
 						version,
 					})
 				);
+				if (reclaims.length) promotion.reclaims = reclaims;
 				if (yield* fromPromise(() => this.coordinator(repository.id).execution(promotion.id))) continue;
 				setupMerge ??= (yield* this.setupMerge(repository)) ?? null;
 				if (setupMerge?.sha === plan.sourceSha && !releaseAfterMerge(setupMerge.body)) continue;

@@ -11,7 +11,14 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Result, Schema, Struct } from 'effect';
 import { parseRepositoryConfiguration } from '@/automation/configuration';
-import { identityOf, parseIdentity, parseReleaseIdentity, releaseIdentity } from '@/automation/package-identity';
+import {
+	identityOf,
+	identityPackageName,
+	parseIdentity,
+	parseReleaseIdentity,
+	releaseIdentity,
+} from '@/automation/package-identity';
+import type { ManagerName } from '@/contract/catalog';
 import { workflowSetup } from '@/contract/setup';
 import { configurationDrift, configurationSchema, issueMessage } from '@/domain/configuration';
 import { validateAgainst } from '@/domain/validate';
@@ -652,6 +659,20 @@ test('stored rows and journal entries with keys this version does not know still
 	await storage.put(key, withRetiredKeys(await storage.get(key)));
 	await world.wait(20_000);
 	expect(repository.pulls.length).toBe(1);
+});
+
+test('a package identity names the package the way its registry does', () => {
+	const packages: { manager: ManagerName; name: string }[] = [
+		{ manager: 'vscode', name: 'acme.tool' },
+		{ manager: 'jsr', name: '@kjanat/micro509' },
+		{ manager: 'npm', name: '@kjanat/svg-toolkit' },
+		{ manager: 'npm', name: 'widget' },
+		{ manager: 'cargo', name: 'svg-data' },
+		{ manager: 'go', name: 'github.com/octo/widget/go' },
+	];
+	expect(packages.map(pkg => identityPackageName(identityOf({ ...pkg, version: '1.0.0' })))).toEqual(
+		packages.map(pkg => pkg.name),
+	);
 });
 
 test('stored identities crash and outside package input stays a Result', () => {

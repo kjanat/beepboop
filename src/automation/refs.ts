@@ -5,7 +5,7 @@ import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import type { SemVer } from '@/contract/version';
 import { compare, isPrerelease, parseTag, semVer, tagFor } from '@/contract/version';
-import { fromSync } from '@/failure';
+import { fromPromise, fromSync } from '@/failure';
 
 export interface RefPolicy {
 	phase: 'version' | 'aliases';
@@ -25,6 +25,7 @@ export interface RefChange {
 	annotated: boolean;
 	signed: boolean;
 	object?: string;
+	replaces?: boolean;
 }
 export interface RefPlan {
 	repository: string;
@@ -87,18 +88,31 @@ function versionTags(policy: RefPolicy, version: SemVer, modulePrefixes: string[
 		? [tag, ...modulePrefixes.filter(prefix => prefix !== policy.prefix).map(prefix => `${prefix}${version}`)]
 		: [tag];
 }
+function reclaimed(tag: RefState, reclaims: readonly RefState[]): boolean {
+	return reclaims.some(entry => entry.name === tag.name && entry.oid === tag.oid && entry.commit === tag.commit);
+}
+export function tagConflicts(
+	policy: RefPolicy,
+	version: SemVer,
+	commit: string,
+	refs: RefState[],
+	modulePrefixes: string[] = [],
+	reclaims: readonly RefState[] = [],
+): RefState[] {
+	return versionTags(policy, version, modulePrefixes).flatMap(name => {
+		const existing = refs.find(ref => ref.name === name);
+		return existing && existing.commit !== commit && !reclaimed(existing, reclaims) ? [existing] : [];
+	});
+}
 export function tagConflict(
 	policy: RefPolicy,
 	version: SemVer,
 	commit: string,
 	refs: RefState[],
 	modulePrefixes: string[] = [],
+	reclaims: readonly RefState[] = [],
 ): RefState | undefined {
-	for (const name of versionTags(policy, version, modulePrefixes)) {
-		const existing = refs.find(ref => ref.name === name);
-		if (existing && existing.commit !== commit) return existing;
-	}
-	return undefined;
+	return tagConflicts(policy, version, commit, refs, modulePrefixes, reclaims)[0];
 }
 export function versionTagged(
 	policy: RefPolicy,
@@ -112,6 +126,16 @@ export function versionTagged(
 			refs.some(ref => ref.name === name && ref.commit === commit)
 		);
 }
+export function tagObjectId(object: string): Effect.Effect<string, DomainError> {
+	const bytes = new TextEncoder().encode(object);
+	const header = new TextEncoder().encode(`tag ${bytes.length}\0`);
+	const data = new Uint8Array(header.length + bytes.length);
+	data.set(header);
+	data.set(bytes, header.length);
+	return fromPromise(() => crypto.subtle.digest('SHA-1', data)).pipe(
+		Effect.map(digest => [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('')),
+	);
+}
 export function conflictMessage(tag: RefState): string {
 	return `Version tag ${tag.name} already targets ${tag.commit.slice(0, 12)}`;
 }
@@ -121,21 +145,26 @@ export function planRefs(
 	commit: string,
 	refs: RefState[],
 	modulePrefixes: string[] = [],
+	reclaims: readonly RefState[] = [],
 ): Effect.Effect<RefChange[], DomainError> {
 	return Effect.gen(function*() {
 		const normalized = yield* fromSync(() => Schema.decodeSync(semVer)(version));
-		const conflict = tagConflict(policy, normalized, commit, refs, modulePrefixes);
+		const conflict = tagConflict(policy, normalized, commit, refs, modulePrefixes, reclaims);
 		if (conflict) return yield* precondition(conflictMessage(conflict));
 		const tag = tagFor(policy, normalized);
 		const full = refs.find(ref => ref.name === tag);
 		if (policy.phase === 'version') {
-			return versionTags(policy, normalized, modulePrefixes).map(name => ({
-				name,
-				expected: refs.find(ref => ref.name === name)?.oid ?? null,
-				commit,
-				annotated: true,
-				signed: policy.signed,
-			}));
+			return versionTags(policy, normalized, modulePrefixes).map(name => {
+				const existing = refs.find(ref => ref.name === name);
+				return {
+					name,
+					expected: existing?.oid ?? null,
+					commit,
+					annotated: true,
+					signed: policy.signed,
+					...(existing && existing.commit !== commit ? { replaces: true } : {}),
+				};
+			});
 		}
 		if (!full) return yield* precondition('Publish the version tag before aliases');
 		if (isPrerelease(normalized)) return [];
