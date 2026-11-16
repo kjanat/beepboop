@@ -25,9 +25,7 @@ eachWorld(created => {
 	world = created;
 });
 
-async function configured(approval: Approval) {
-	const repository = widget(world.github);
-	world.npm.publish('widget', '1.0.0');
+function taggedConfiguration(approval: Approval, lint = false) {
 	const configuration = editableConfiguration();
 	const main = configuration.streams.main;
 	configuration.streams.main = {
@@ -37,12 +35,31 @@ async function configured(approval: Approval) {
 		promote: {
 			...main.promote,
 			approval,
-			workflow: { ...main.promote.workflow, refs: { phase: 'version', prefix: 'v' } },
+			workflow: {
+				...main.promote.workflow,
+				refs: { phase: 'version', prefix: 'v' },
+				...(lint ? { needs: ['lint'] } : {}),
+			},
 		},
+		...(lint ? { workflows: { lint: { file: 'lint.yml' } } } : {}),
 	};
+	return JSON.stringify(configuration);
+}
+
+async function configured(approval: Approval, lint = false) {
+	const repository = widget(world.github);
+	world.npm.publish('widget', '1.0.0');
 	const head = world.github.push(
 		repository,
-		{ '.github/beepboop.json': JSON.stringify(configuration) },
+		{
+			'.github/beepboop.json': taggedConfiguration(approval, lint),
+			...(lint
+				? {
+					'.github/workflows/lint.yml':
+						'name: Lint\non:\n  workflow_dispatch:\n    inputs:\n      beepboop_execution_id:\n        required: true\n        type: string\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo lint\n',
+				}
+				: {}),
+		},
 		'Configure tagged releases',
 	);
 	passChecks(repository, head.sha);
@@ -51,8 +68,8 @@ async function configured(approval: Approval) {
 	return { repository, api };
 }
 
-async function squashedVersionPr(approval: Approval) {
-	const { repository, api } = await configured(approval);
+async function squashedVersionPr(approval: Approval, lint = false) {
+	const { repository, api } = await configured(approval, lint);
 	const request = { repositoryId: repository.id, stream: 'main', version: '1.0.1' };
 	expect((await prepareRelease(api, request)).prepared.status).toBe(200);
 	await world.wait(16_000);
@@ -390,4 +407,53 @@ test('a cancelled release of a merged version PR does not hold the version for a
 	await pushed(repository);
 	const current = one((await promotions(api)).filter(entry => entry.state !== 'cancelled'), 'open promotion');
 	expect([current.sourceSha, current.state]).toEqual([later.sha, 'awaiting-approval']);
+});
+
+test('a later commit that stops publishing a package of the release refuses the earlier version commit', async () => {
+	const { repository, api } = await configured('required');
+	const version = world.github.push(repository, { 'package.json': npmManifest('widget', '1.0.1') }, 'Release 1.0.1');
+	passChecks(repository, version.sha);
+	await pushed(repository);
+	const waiting = one(await promotions(api), 'promotion');
+	const hidden = world.github.push(
+		repository,
+		{ 'package.json': npmManifest('widget', '1.0.1', { private: true }) },
+		'Stop publishing widget',
+	);
+	passChecks(repository, hidden.sha);
+	await pushed(repository);
+	const refused = await api('/api/executions/approve', { id: waiting.id, sourceSha: version.sha });
+	expect([refused.status, text(refused.body, 'error')]).toEqual([
+		422,
+		`main is at ${hidden.sha.slice(0, 12)}. Publish the release for that commit.`,
+	]);
+});
+
+test('a later change to the release configuration refuses the earlier version commit', async () => {
+	const { repository, api } = await configured('required');
+	const version = world.github.push(repository, { 'package.json': npmManifest('widget', '1.0.1') }, 'Release 1.0.1');
+	passChecks(repository, version.sha);
+	await pushed(repository);
+	const waiting = one(await promotions(api), 'promotion');
+	const reconfigured = world.github.push(
+		repository,
+		{ '.github/beepboop.json': taggedConfiguration('push') },
+		'Publish on push',
+	);
+	passChecks(repository, reconfigured.sha);
+	await pushed(repository);
+	const refused = await api('/api/executions/approve', { id: waiting.id, sourceSha: version.sha });
+	expect(refused.status).toBe(422);
+	const current = one((await promotions(api)).filter(entry => entry.id !== waiting.id), 'new promotion');
+	expect(current.sourceSha).toBe(reconfigured.sha);
+});
+
+test('a prerequisite of a kept release still starts after the default branch moved on', async () => {
+	const { repository, api, merged } = await squashedVersionPr('push', true);
+	passChecks(repository, merged.sha);
+	moveOn(repository);
+	await pushed(repository);
+	const waiting = one(await promotions(api), 'promotion');
+	expect([waiting.sourceSha, waiting.dependencies.length]).toEqual([merged.sha, 1]);
+	expect(dispatched(repository)).toEqual(waiting.dependencies);
 });

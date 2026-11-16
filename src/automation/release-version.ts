@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
 import { tagPrefix } from '@/automation/managers/tags';
-import { publishablePackages } from '@/automation/package-identity';
+import { matchesPackage } from '@/automation/package-identity';
 import type { Inventory, Package, Stream } from '@/automation/types';
 import type { VersionRequest } from '@/automation/version';
 import { nextVersion } from '@/automation/version';
@@ -89,10 +89,11 @@ export function unreleasedManifestVersion(packages: Package[]): string | undefin
 
 export function releasePaths(packages: Package[], stream: Stream): ReadonlySet<string> {
 	return new Set([
-		...publishablePackages(packages, stream.packages).flatMap(pkg => [
-			pkg.manifest,
-			...(tagPrefix(pkg.versionSource) === undefined ? pkg.versionSource.split('#', 1) : []),
-		]),
+		...packages.filter(pkg => !stream.packages || stream.packages.some(reference => matchesPackage(reference, pkg)))
+			.flatMap(pkg => [
+				pkg.manifest,
+				...(tagPrefix(pkg.versionSource) === undefined ? pkg.versionSource.split('#', 1) : []),
+			]),
 		...(stream.versionFiles ?? []).map(rule => rule.path),
 		...[...operations(stream).values()].map(binding => `.github/workflows/${binding.file}`),
 	]);

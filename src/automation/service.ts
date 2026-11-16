@@ -403,6 +403,7 @@ export class AutomationService {
 		return Effect.gen({ self: this }, function*() {
 			for (const promotion of promotions) {
 				if (retiredStates.includes(promotion.state)) continue;
+				if (JSON.stringify(promotion.configuration.streams[streamName]) !== JSON.stringify(stream)) continue;
 				const held = yield* this.releaseHeld(repository, stream, packages, promotion.sourceSha).pipe(
 					recover(error =>
 						logFailure('version-commit.failed', error, {

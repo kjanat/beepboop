@@ -2641,7 +2641,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Effect.gen({ self: this }, function*() {
 			if (sha === execution.sourceSha) return true;
 			if (!execution.eventId.startsWith('observed:') && !execution.currentWorkflow) {
-				return execution.operation === 'promote' && (yield* this.versionKept(execution, sha));
+				const promotion = execution.operation === 'promote'
+					? execution
+					: (yield* this.executions()).find(other =>
+						other.operation === 'promote' && other.dependencies.includes(execution.id)
+					);
+				return promotion !== undefined && (yield* this.versionKept(promotion, sha));
 			}
 			const comparison = yield* (yield* this.gateway).read(
 				comparisonSchema,
@@ -2656,6 +2661,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const stream = execution.configuration.streams[execution.stream];
 			const record = yield* (yield* this.store).repository(execution.repositoryId);
 			if (!stream || !record) return false;
+			if (JSON.stringify(record.configuration?.streams[execution.stream]) !== JSON.stringify(stream)) return false;
 			const gateway = yield* this.gateway;
 			const paths = releasePaths(record.inventory.packages, stream);
 			const kept = (commit: string) =>
