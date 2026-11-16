@@ -583,7 +583,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const transport = (yield* Automation).dependencies.transport;
 			const context = gateway.verification(repository, repositoryId);
 			const deadline = clock.currentTimeMillisUnsafe() + packageTagBudget;
-			const late = 'The registry checks ran out of time; run the backfill again';
+			const late = 'The package tag checks ran out of time; run beepboop tags backfill';
 			const probe = (row: PackageTagRow): Effect.Effect<PackageTagResult> =>
 				Effect.gen(function*() {
 					const base = { tag: row.tag, version: row.version, commit: row.commit };
@@ -652,11 +652,20 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					results.push(result);
 					continue;
 				}
-				const created = yield* Effect.result(this.createPackageTag(repository, repositoryId, row));
+				const remaining = deadline - clock.currentTimeMillisUnsafe();
+				const created = remaining > 0
+					? yield* Effect.result(
+						this.createPackageTag(repository, repositoryId, row).pipe(Effect.timeoutOption(remaining)),
+					)
+					: undefined;
 				results.push(
-					created._tag === 'Success'
+					created?._tag === 'Success' && Option.isSome(created.success)
 						? { ...result, outcome: 'created' }
-						: { ...result, outcome: 'failed', reason: decodeError(created.failure) },
+						: {
+							...result,
+							outcome: 'failed',
+							reason: created?._tag === 'Failure' ? decodeError(created.failure) : late,
+						},
 				);
 			}
 			return results;
@@ -676,12 +685,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (!user?.[1] || !user[2]) return yield* precondition('The signing key needs a user ID with a name and email');
 			const seconds = Math.floor(clock.currentTimeMillisUnsafe() / 1000);
 			const change: RefChange = { name: row.tag, expected: null, commit: row.commit, annotated: true, signed: true };
-			const payload = tagPayload(change, row.version, `${identity.userId} ${seconds} +0000`);
+			const payload = tagPayload(change, row.tag, `${identity.userId} ${seconds} +0000`);
 			const signature = yield* fromPromise(() => signer.sign(payload, `beepboop:${repository}`));
 			yield* (yield* this.gateway).createTag(repository, repositoryId, {
 				name: row.tag,
 				commit: row.commit,
-				message: `Release ${row.version}\n${signature.endsWith('\n') ? signature : `${signature}\n`}`,
+				message: `${row.tag}\n${signature.endsWith('\n') ? signature : `${signature}\n`}`,
 				tagger: {
 					name: user[1],
 					email: user[2],
@@ -1343,7 +1352,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const tagger = `${identity.userId} ${Math.floor(clock.currentTimeMillisUnsafe() / 1000)} +0000`;
 			const changes = yield* Effect.forEach(plan.changes, change =>
 				change.annotated && change.expected === null
-					? fromPromise(() => signer.sign(tagPayload(change, plan.version, tagger), `beepboop:${plan.repository}`))
+					? fromPromise(() =>
+						signer.sign(tagPayload(change, `Release ${plan.version}`, tagger), `beepboop:${plan.repository}`)
+					)
 						.pipe(Effect.map(signature => ({
 							...change,
 							signed: true,

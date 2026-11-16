@@ -43,10 +43,12 @@ export interface TagSigner {
 	sign(data: string, caller: string): Promise<string>;
 }
 export function tagObject(change: RefChange, version: string, tagger: string, signature: string): string {
-	return `${tagPayload(change, version, tagger)}${signature.endsWith('\n') ? signature : `${signature}\n`}`;
+	return `${tagPayload(change, `Release ${version}`, tagger)}${
+		signature.endsWith('\n') ? signature : `${signature}\n`
+	}`;
 }
-export function tagPayload(change: RefChange, version: string, tagger: string): string {
-	return `object ${change.commit}\ntype commit\ntag ${change.name}\ntagger ${tagger}\n\nRelease ${version}\n`;
+export function tagPayload(change: RefChange, message: string, tagger: string): string {
+	return `object ${change.commit}\ntype commit\ntag ${change.name}\ntagger ${tagger}\n\n${message}\n`;
 }
 export interface ModuleTag {
 	id: string;

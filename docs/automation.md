@@ -1257,17 +1257,18 @@ Packages that share a name, such as a crate and an npm package both called
 
 When a promotion succeeds, Beepboop checks each listed package against its
 registry and creates a signed annotated tag for each package published at that
-version. The tag is created through the GitHub API from the `SIGNER` key, so
-the stream's workflow needs no step for it. A package that is not published
-gets no tag, and Beepboop never moves or replaces a tag that already exists.
+version. The tag message is the tag name. The tag is created through the GitHub
+API from the `SIGNER` key, so the stream's workflow needs no step for it. A
+package that is not published gets no tag, and Beepboop never moves or replaces
+a tag that already exists.
 
 `beepboop tags backfill` adds the package tags that earlier releases are
 missing. It lists every version tag of the stream, prints which package tags
 exist, which it would create, which packages were not published at that version
 and which tag names already target another commit, and creates the missing
-tags after you confirm. Run it once after adding `packageTags` to a stream. The
-registry checks of one backfill share a 20 second budget. A version the budget
-did not reach reports a failure, and the next backfill checks it again.
+tags after you confirm. Run it once after adding `packageTags` to a stream.
+Registry checks and tag creation share a 20 second budget per call. A tag the
+budget did not reach reports a failure, and the next backfill takes it up.
 
 Discovery blocks a `packageTags` entry that matches no package, matches only
 packages that skip their public registry, or is not in the stream's

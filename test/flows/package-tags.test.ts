@@ -186,7 +186,7 @@ test('a backfill creates signed tags only for the versions each package publishe
 		expect(signer.calls).toEqual([{
 			data: expect.stringMatching(
 				new RegExp(
-					`^object ${second}\\ntype commit\\ntag widget-v1\\.0\\.0\\ntagger Release Bot \\(CI\\) <release@example\\.com> \\d+ \\+0000\\n\\nRelease 1\\.0\\.0\\n$`,
+					`^object ${second}\\ntype commit\\ntag widget-v1\\.0\\.0\\ntagger Release Bot \\(CI\\) <release@example\\.com> \\d+ \\+0000\\n\\nwidget-v1\\.0\\.0\\n$`,
 				),
 			),
 			caller: 'beepboop:octo/widget',
@@ -486,13 +486,47 @@ test('registry checks past their time budget report a failure the backfill can r
 		});
 		const results = await tags(false);
 		expect(
-			results.filter(result => result.reason === 'The registry checks ran out of time; run the backfill again').length,
+			results.filter(result => result.reason === 'The package tag checks ran out of time; run beepboop tags backfill')
+				.length,
 		)
 			.toBeGreaterThan(0);
 		expect(
 			results.filter(result => result.outcome === 'failed').every(result => result.reason?.includes('ran out of time')),
 		)
 			.toBe(true);
+	} finally {
+		setSystemTime();
+		key.dispose();
+	}
+}, 30_000);
+
+test('tag creation past the time budget leaves the later tags to the next backfill', async () => {
+	const key = signingKey('Release Bot (CI) <release@example.com>');
+	try {
+		const signer = fakeSigner(key);
+		world.env.SIGNER = {
+			...signer,
+			sign: async (data, caller) => {
+				setSystemTime(new Date(Date.now() + 60_000));
+				return signer.sign(data, caller);
+			},
+		};
+		const { repository, first, second, tags } = await released();
+		world.npm.publish('widget', '0.9.0');
+		expect(await tags(true)).toEqual([
+			{ tag: 'widget-v0.9.0', version: '0.9.0', commit: first, outcome: 'created' },
+			{
+				tag: 'widget-v1.0.0',
+				version: '1.0.0',
+				commit: second,
+				outcome: 'failed',
+				reason: 'The package tag checks ran out of time; run beepboop tags backfill',
+			},
+		]);
+		expect([repository.refs.has('tags/widget-v0.9.0'), repository.refs.has('tags/widget-v1.0.0')]).toEqual([
+			true,
+			false,
+		]);
 	} finally {
 		setSystemTime();
 		key.dispose();
