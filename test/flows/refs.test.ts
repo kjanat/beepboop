@@ -1,10 +1,11 @@
 import { expect, test } from 'bun:test';
-import { Effect, Exit } from 'effect';
+import { Effect, Exit, Schema } from 'effect';
 import { packageId } from '@/automation/package-identity';
 import { registry } from '@/automation/package-publication';
 import type { RefPolicy } from '@/automation/refs';
-import { moduleTagPrefixes, planRefs } from '@/automation/refs';
+import { moduleTagPrefixes, planRefs, versionTagged } from '@/automation/refs';
 import type { Package } from '@/automation/types';
+import { semVer } from '@/contract/version';
 
 const commit = 'a'.repeat(40), other = 'b'.repeat(40), oid = 'c'.repeat(40);
 const policy: RefPolicy = { phase: 'version', prefix: 'rshellcheck-v', aliases: [], signed: false };
@@ -60,4 +61,13 @@ test('a version ref plan refuses a module tag on another commit', async () => {
 	);
 	expect(Exit.isFailure(exit)).toBe(true);
 	expect(JSON.stringify(exit)).toContain(`Version tag go/v1.1.0 already targets ${other.slice(0, 12)}`);
+});
+
+test('a release is version-tagged only when every version tag names its commit', () => {
+	const version = Schema.decodeSync(semVer)('1.1.0');
+	const tags = [{ name: 'rshellcheck-v1.1.0', oid, commit }, { name: 'go/v1.1.0', oid, commit }];
+	expect(versionTagged(policy, version, commit, tags, ['go/v'])).toBe(true);
+	expect(versionTagged(policy, version, commit, tags.slice(0, 1), ['go/v'])).toBe(false);
+	expect(versionTagged(policy, version, other, tags)).toBe(false);
+	expect(versionTagged({ ...policy, phase: 'aliases' }, version, commit, tags)).toBe(false);
 });

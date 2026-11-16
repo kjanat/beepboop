@@ -86,6 +86,7 @@ import {
 	tagObject,
 	tagPayload,
 	tagPrefixes,
+	versionTagged,
 } from '@/automation/refs';
 import { ReleaseHistory } from '@/automation/release-history';
 import { releaseNotes } from '@/automation/release-notes';
@@ -2124,6 +2125,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return conflict && conflictMessage(conflict);
 		});
 	}
+	private versionTagged(execution: Execution): CoordinatorEffect<boolean, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const policy = execution.workflow?.refs;
+			const version = safeDecode(semVer, execution.version);
+			if (!policy || !version.success) return false;
+			const refs = yield* (yield* this.gateway).tagRefs(execution.repository, execution.repositoryId);
+			return versionTagged(policy, version.data, execution.sourceSha, refs, yield* this.modulePrefixes(execution));
+		});
+	}
 	private modulePrefixes(execution: Execution): CoordinatorEffect<string[], DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (execution.moduleTags) return tagPrefixes(execution.moduleTags);
@@ -2285,7 +2295,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					token,
 				)
 				: null;
-			const moved = yield* this.headMoved(
+			const pinned = run !== null && run.head_sha === execution.sourceSha && (yield* this.versionTagged(execution));
+			const moved = pinned ? undefined : yield* this.headMoved(
 				execution,
 				token,
 				typeof run?.head_branch === 'string' ? run.head_branch : undefined,

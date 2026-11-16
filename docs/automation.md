@@ -481,6 +481,13 @@ re-runs the failed jobs. It does this after the first, second and third run
 attempts. A `failed-permanent` package, or a failed job besides the publishing
 job, leaves the execution `failed` for you to retry.
 
+A retry from the Retry button or `beepboop runs recover ID --action retry`
+re-runs the failed jobs of the execution's run when that run built the release
+commit. A retry refuses to start once the workflow branch moved past the release
+commit, unless every version tag of the release already targets that commit.
+Such a release keeps its tags, its GitHub release and its run, and the retry
+publishes the packages that run left behind.
+
 ## Start a release
 
 Starting a release also publishes it. Beepboop runs the version bump, the

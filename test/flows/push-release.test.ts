@@ -142,6 +142,37 @@ test('a retry refuses to run once the workflow branch has moved past the release
 	expect(repository.runs.filter(entry => entry.inputs.beepboop_execution_id === promotion.id).length).toBe(1);
 }, 60_000);
 
+test('a retry re-runs the failed jobs of a tagged release after the workflow branch moved', async () => {
+	const { repository, merged, run, draft } = await failedRelease(true);
+	const api = bearer(world, await world.cliSession());
+	repository.refs.set('tags/v1.0.0', merged.sha);
+	world.github.push(repository, { 'README.md': '# widget\n\nMoved on.\n' }, 'Move the branch');
+	const [promotion] = await promotions(api);
+	if (!promotion) throw new Error('Expected the failed release');
+	expect((await api('/api/executions/recover', { id: promotion.id, action: 'retry' })).status).toBe(200);
+	await world.wait(16_000);
+	const [retried] = await promotions(api);
+	expect([run.attempt, retried?.runId, retried?.draftRelease]).toEqual([2, run.id, draft]);
+	expect(repository.runs.filter(entry => entry.inputs.beepboop_execution_id === promotion.id).length).toBe(1);
+}, 60_000);
+
+test('a retry refuses a tagged release whose run built another commit after the branch moved', async () => {
+	const { repository, merged, run } = await failedRelease();
+	const api = bearer(world, await world.cliSession());
+	repository.refs.set('tags/v1.0.0', merged.sha);
+	const moved = world.github.push(repository, { 'README.md': '# widget\n\nMoved on.\n' }, 'Move the branch');
+	const [promotion] = await promotions(api);
+	if (!promotion) throw new Error('Expected the failed release');
+	const refused = await api('/api/executions/recover', { id: promotion.id, action: 'retry' });
+	expect([refused.status, field(refused.body, 'error')]).toEqual([
+		422,
+		`main is at ${moved.sha.slice(0, 12)} but this execution builds ${
+			merged.sha.slice(0, 12)
+		}; prepare the release again`,
+	]);
+	expect(run.attempt).toBe(1);
+}, 60_000);
+
 test('a retried release reuses the draft its execution recorded', async () => {
 	const { merged, draft, retry, drafts } = await failedRelease();
 	const retried = await retry();
