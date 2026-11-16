@@ -142,6 +142,7 @@ beepboop runs publish EXECUTION_ID --sourceSha REVIEWED_SOURCE_SHA --force
 beepboop runs cancel EXECUTION_ID
 beepboop runs recover EXECUTION_ID
 beepboop runs recover EXECUTION_ID --action retry
+beepboop runs recover EXECUTION_ID --action redispatch
 ```
 
 `runs list` shows the runs of the current checkout's repository, read from the
@@ -162,7 +163,11 @@ release takes over the tag of an earlier release of that version that published
 nothing. See [Version selection and release refs](automation.md#version-selection-and-release-refs). `runs cancel` cancels the operation and its running
 workflow. `runs recover` reconciles by default. Pass
 `--action retry` to retry. The server applies its usual publishing and
-dispatch rules.
+dispatch rules. `--action redispatch` runs the current workflow of the default
+branch for a failed promotion whose version tag already targets its release
+commit, and follows that release to its end. Use it when the fix for the
+failure is in the workflow; a retry would run the old workflow again. See
+[Publish through Beepboop](automation.md#publish-through-beepboop).
 
 Independent monorepo releases take a JSON plan, described in
 [release planning](release-planning.md):

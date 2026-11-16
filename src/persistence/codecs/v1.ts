@@ -326,6 +326,7 @@ const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
 	reservation: Schema.optional(Schema.Literals(['new', 'update'])),
 	notBefore: Schema.optional(Schema.Finite),
 	supersededRuns: Schema.optional(mutableArray(Schema.Finite)),
+	currentWorkflow: Schema.optional(Schema.Boolean),
 	draftRelease: Schema.optional(mutableStruct({ id: Schema.Finite, tag: Schema.String })),
 	titled: Schema.optional(Schema.Boolean),
 	dispatchedAt: Schema.optional(Schema.Finite),

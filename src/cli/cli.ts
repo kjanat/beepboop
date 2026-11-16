@@ -4,6 +4,7 @@ import { arg, cli, command, flag, group, wasExplicit } from '@kjanat/dreamcli';
 import { Effect, Schema } from 'effect';
 import { Client } from '@/cli/client';
 import type { SecurityKeyPrompts } from '@/cli/fido2/index';
+import { followRelease } from '@/cli/follow';
 import { readJson } from '@/cli/json-file';
 import { lookOf, step } from '@/cli/look';
 import { diagnostics, emit, failure, prompted, unprompted } from '@/cli/output';
@@ -28,6 +29,7 @@ import { autoMergeMethods } from '@/contract/setup-terms';
 import { executionStates, executionView as executionViewSchema } from '@/contract/views';
 import { looseStruct, safeDecode } from '@/schema';
 
+const recoveryVerb = { reconcile: 'Reconciling', retry: 'Retrying', redispatch: 'Dispatching' } as const;
 const base = (name: string, description: string, promptServer = false) =>
 	command(name).description(description)
 		.flag('verbose', flag.boolean().default(false).describe('Show structured API error details on stderr'))
@@ -286,24 +288,46 @@ const runs = group('runs').description('Follow, publish, cancel and recover rele
 			),
 	)
 	.command(
-		base('recover', 'Reconcile an operation, or explicitly retry it')
+		base('recover', 'Reconcile an operation, retry it, or run the current workflow for its release commit')
+			.details(
+				[
+					'`reconcile` rereads the operation from GitHub. `retry` re-runs the failed jobs of its workflow run, or dispatches a new run.',
+					'`redispatch` runs the workflow at the head of the stream workflow ref for a failed or cancelled promotion whose version tags already target its release commit. The workflow must check out the `sourceSha` from `actions/begin`. Use it when the fix for the failure is in the workflow and the version tag cannot move. The command follows the release.',
+				].join('\n\n'),
+			)
+			.example('beepboop runs recover EXECUTION_ID --action retry', 'Re-run the failed jobs')
+			.example(
+				'beepboop runs recover EXECUTION_ID --action redispatch',
+				'Release the tagged commit with the current workflow',
+			)
 			.arg('id', arg.string().prompt({ kind: 'input', message: 'Execution ID' }).required()).flag(
 				'action',
-				flag.enum(['reconcile', 'retry']).prompt({ kind: 'select', message: 'Recovery action' }).default('reconcile'),
+				flag.enum(['reconcile', 'retry', 'redispatch']).prompt({ kind: 'select', message: 'Recovery action' })
+					.default('reconcile'),
 			)
 			.action(({ flags, args, out }) =>
 				Effect.runPromise(Effect.gen(function*() {
 					const client = yield* Client.at(flags.server);
 					const look = lookOf(out);
-					yield* executionView(
+					const recovered = yield* step(
 						out,
-						yield* step(
-							out,
-							`${flags.action === 'retry' ? 'Retrying' : 'Reconciling'} ${look.id(args.id)}`,
-							client.call(routes.executionsRecover, { id: args.id, action: flags.action }),
-							recovered => `${look.id(recovered.id)} is ${recovered.state}`,
-						),
+						`${recoveryVerb[flags.action]} ${look.id(args.id)}`,
+						client.call(routes.executionsRecover, { id: args.id, action: flags.action }),
+						execution => `${look.id(execution.id)} is ${execution.state}`,
 					);
+					if (flags.action !== 'redispatch' || out.jsonMode || recovered.version === undefined) {
+						return yield* executionView(out, recovered);
+					}
+					return yield* followRelease(client, out, {
+						repository: recovered.repository,
+						repositoryId: recovered.repositoryId,
+						defaultBranch: '',
+						stream: recovered.stream,
+						version: recovered.version,
+						execution: recovered,
+						bumped: false,
+						promotion: recovered.id,
+					});
 				}))
 			),
 	);

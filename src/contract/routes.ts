@@ -298,7 +298,10 @@ export const routes = {
 		path: '/api/executions/recover',
 		auth: 'admin',
 		idempotent: false,
-		request: mutableStruct({ ...executionRef.fields, ...{ action: Schema.Literals(['retry', 'reconcile']) } }),
+		request: mutableStruct({
+			...executionRef.fields,
+			...{ action: Schema.Literals(['retry', 'reconcile', 'redispatch']) },
+		}),
 		response: executionView,
 	}),
 	cliSessionsRevoke: route({

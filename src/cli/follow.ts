@@ -56,6 +56,7 @@ export interface Followed {
 	version: string;
 	execution: { id: string };
 	bumped: boolean;
+	promotion?: string;
 }
 
 const outcomeState: Record<string, State> = {
@@ -163,7 +164,11 @@ function binaryRows(look: Look, binaries: BinaryProgress) {
 }
 
 function snapshot(client: Client, followed: Followed): Effect.Effect<Tracked[], CLIError> {
-	return client.call(routes.executionsList, {}).pipe(
+	return client.call(routes.executionsList, {
+		repository: followed.repository,
+		stream: followed.stream,
+		version: followed.version,
+	}).pipe(
 		Effect.flatMap(rows =>
 			Effect.try({
 				try: () =>
@@ -209,7 +214,9 @@ export function followRelease(client: Client, out: Out, followed: Followed): Eff
 			const rows = yield* snapshot(client, followed);
 			const preparation = rows.find(row => row.id === followed.execution.id);
 			const promotion = rows.find(row =>
-				row.operation === 'promote' && row.version === followed.version && row.approvedBy === 'start'
+				followed.promotion === undefined
+					? row.operation === 'promote' && row.version === followed.version && row.approvedBy === 'start'
+					: row.id === followed.promotion
 			);
 			if (!announced && preparation) {
 				const prepared = preparation.managed?.result ?? preparation.prepared?.result;
