@@ -83,7 +83,7 @@ test('tags backfill previews the missing tags, asks, creates them and then has n
 				+ 'Dry run: Beepboop created no tags.\n',
 		);
 		const declined = await runCli(args, [false]);
-		expect(declined.stdout.join('')).toEndWith('Package tags unchanged.\n');
+		expect([declined.exitCode, declined.stdout.join('').endsWith('Package tags unchanged.\n')]).toEqual([0, true]);
 		expect(created.refs.has('tags/widget-v1.0.0')).toBe(false);
 		const accepted = await runCli(args, [true]);
 		expect(accepted.exitCode).toBe(0);
@@ -115,7 +115,7 @@ test('tags backfill explains a repository without packageTags', async () => {
 	expect(refused.stderr.join('')).toContain('octo/plain names no packageTags in any stream');
 });
 
-test('tags backfill exits 1 when a tag name targets another commit or a tag fails', async () => {
+test('tags backfill exits 1 when a tag name targets another commit, also when declined, or a tag fails', async () => {
 	try {
 		const { created } = await repository();
 		const moved = world.github.push(created, { 'README.md': '# widget\n\nMoved.\n' }, 'Move on');
@@ -125,6 +125,8 @@ test('tags backfill exits 1 when a tag name targets another commit or a tag fail
 		const conflicted = await runCli([...args, '--dry-run']);
 		expect(conflicted.exitCode).toBe(1);
 		expect(conflicted.stdout.join('')).toContain('targets another commit');
+		const declined = await runCli(args, [false]);
+		expect([declined.exitCode, declined.stdout.join('').endsWith('Package tags unchanged.\n')]).toEqual([1, true]);
 		world.env.SIGNER = fakeSigner(key, { userId: 'release bot' });
 		const failed = await runCli([...args, '--yes']);
 		expect(failed.exitCode).toBe(1);

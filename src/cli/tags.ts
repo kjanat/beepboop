@@ -139,7 +139,10 @@ export function backfillPackageTags(
 				),
 				() => Effect.succeed(true),
 			))
-		) return out.log('Package tags unchanged.');
+		) {
+			if (broken) out.setExitCode(1);
+			return out.log('Package tags unchanged.');
+		}
 		const results = yield* step(
 			out,
 			`Creating ${missing.length} package tags`,
