@@ -160,6 +160,11 @@ export function releasePlan(input: ReleaseInput, { service }: Pick<AdminContext,
 			target = latest
 				? yield* nextVersion(latest, request)
 				: ('version' in request ? request.version : undefined);
+			if (typeof target === 'string' && publishablePackages(repository.inventory.packages, selected).length) {
+				yield* resolvePackageVersion(yield* selectedReleasePackages(repository.inventory, selected), {
+					version: target,
+				});
+			}
 		} else if (stream.prepare.strategy === 'workflow') {
 			const request = yield* parseVersionRequest(input.version);
 			target = 'version' in request && !publishablePackages(repository.inventory.packages, selected).length
