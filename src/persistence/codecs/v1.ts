@@ -294,6 +294,12 @@ const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
 	resolvedInputs: Schema.optional(mutableArray(resolvedInput)),
 	refPlan: Schema.optional(refPlan),
 	moduleTags: Schema.optional(mutableArray(mutableStruct({ id: Schema.String, prefix: Schema.String }))),
+	packageTags: Schema.optional(
+		mutableArray(mutableStruct({
+			prefix: Schema.String,
+			probes: mutableArray(mutableStruct({ reference: Schema.String, publication: packagePublication })),
+		})),
+	),
 	refNamespace: Schema.optional(Schema.Literals(['heads', 'tags'])),
 	upstreamRelease: Schema.optional(releaseReference),
 	release: Schema.optional(releaseReference),

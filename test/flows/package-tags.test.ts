@@ -151,11 +151,13 @@ const discoveredPackages = [
 test('a package tag joins an npm scope to the name the way npm pack names its archive', () => {
 	expect(packageTagBase('@kjanat/svg-toolkit')).toBe('kjanat-svg-toolkit');
 	expect(packageTagBase('svg-data')).toBe('svg-data');
-	expect(packageTagGroups(
-		['pkg:cargo/tree-sitter-svg', 'pkg:npm/tree-sitter-svg', 'pkg:cargo/svg-data', 'npm:@kjanat/svg-toolkit'],
-		'v',
-		discoveredPackages,
-	)).toEqual([
+	expect(
+		packageTagGroups(
+			['pkg:cargo/tree-sitter-svg', 'pkg:npm/tree-sitter-svg', 'pkg:cargo/svg-data', 'npm:@kjanat/svg-toolkit'],
+			'v',
+			discoveredPackages,
+		).map(group => ({ prefix: group.prefix, references: group.references })),
+	).toEqual([
 		{ prefix: 'tree-sitter-svg-v', references: ['pkg:cargo/tree-sitter-svg', 'pkg:npm/tree-sitter-svg'] },
 		{ prefix: 'svg-data-v', references: ['pkg:cargo/svg-data'] },
 		{ prefix: 'kjanat-svg-toolkit-v', references: ['npm:@kjanat/svg-toolkit'] },
@@ -540,7 +542,7 @@ function pageRow(index: number): PackageTagRow {
 		tag: `widget-v1.0.${index}`,
 		version: `1.0.${index}`,
 		commit,
-		references: ['pkg:npm/widget'],
+		probes: [],
 		state: 'missing',
 	};
 }

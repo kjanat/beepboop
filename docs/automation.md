@@ -1273,7 +1273,9 @@ registry and creates a signed annotated tag for each package published at that
 version. The tag message is the tag name. The tag is created through the GitHub
 API from the `SIGNER` key, so the stream's workflow needs no step for it. A
 package that is not published gets no tag, and Beepboop never moves or replaces
-a tag that already exists.
+a tag that already exists. A release keeps the packages and registries it had
+when Beepboop created it, so a later discovery change leaves its package tags
+alone.
 
 `beepboop tags backfill` adds the package tags that earlier releases are
 missing. It lists every version tag of the stream, prints which package tags

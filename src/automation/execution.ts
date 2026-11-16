@@ -2,6 +2,7 @@ import { Clock, Effect } from 'effect';
 import { canVerifyPublication } from '@/automation/managers';
 import { outputsComplete } from '@/automation/outputs';
 import { matchesPackage, matchesPublication, packageId, parseIdentity } from '@/automation/package-identity';
+import { freezePackageTags, packageTagGroups } from '@/automation/package-tags';
 import { streamModuleTags } from '@/automation/refs';
 import type {
 	Configuration,
@@ -137,6 +138,14 @@ function executionFrom(source: ExecutionSource, request: ExecutionRequest): Effe
 			dependencies,
 			workflow: { ...binding, ref: binding.ref ?? source.defaultBranch },
 			...(tagsModules ? { moduleTags: streamModuleTags(source.packages, stream) } : {}),
+			...(tagsModules && version && stream.packageTags?.length
+				? {
+					packageTags: freezePackageTags(
+						packageTagGroups(stream.packageTags, binding.refs?.prefix ?? '', source.packages),
+						version,
+					),
+				}
+				: {}),
 			...(workflow?.dispatchInputs.includes('beepboop_title') ? { titled: true } : {}),
 			attempts: 0,
 			publications: [],

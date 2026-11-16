@@ -74,8 +74,9 @@ import {
 } from '@/automation/package-identity';
 import { metadataProblems } from '@/automation/package-metadata';
 import { publishable } from '@/automation/package-publication';
-import type { PackageTagGroup, PackageTagResult, PackageTagRow, Release } from '@/automation/package-tags';
+import type { PackageTagResult, PackageTagRow, Release } from '@/automation/package-tags';
 import {
+	frozenPackageTagRows,
 	packageTagGroups,
 	packageTagPage,
 	packageTagPages,
@@ -517,14 +518,18 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const version = promotion?.version;
 			if (!promotion || !references?.length || policy?.phase !== 'version' || !version) return;
 			const release: Release = { version, commit: promotion.sourceSha };
+			const frozen = promotion.packageTags;
 			const work = Effect.gen({ self: this }, function*() {
-				const packages = (yield* (yield* this.store).repository(execution.repositoryId))?.inventory.packages ?? [];
+				const packages = frozen
+					? []
+					: (yield* (yield* this.store).repository(execution.repositoryId))?.inventory.packages ?? [];
 				const work = yield* this.packageTagWork(
 					execution.repository,
 					execution.repositoryId,
-					packageTagGroups(references, policy.prefix, packages),
-					() => [release],
-					packages,
+					refs =>
+						frozen
+							? frozenPackageTagRows(frozen, release, refs)
+							: packageTagRows(packageTagGroups(references, policy.prefix, packages), [release], refs),
 					true,
 				);
 				const results = yield* packageTagPages(work.rows, work.check);
@@ -558,12 +563,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (policy?.phase !== 'version') {
 					return yield* precondition(`Stream ${stream} pushes no version tag, so its packages get no tags`);
 				}
+				const groups = packageTagGroups(references, policy.prefix, record.inventory.packages);
 				const work = yield* this.packageTagWork(
 					record.name,
 					record.id,
-					packageTagGroups(references, policy.prefix, record.inventory.packages),
-					refs => taggedReleases(policy.prefix, refs),
-					record.inventory.packages,
+					refs => packageTagRows(groups, taggedReleases(policy.prefix, refs), refs),
 					apply,
 				);
 				const page = yield* packageTagPage(work.rows, after, work.check);
@@ -584,9 +588,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private packageTagWork(
 		repository: string,
 		repositoryId: number,
-		groups: PackageTagGroup[],
-		releases: (refs: RefState[]) => Release[],
-		packages: Package[],
+		rows: (refs: RefState[]) => PackageTagRow[],
 		apply: boolean,
 	): CoordinatorEffect<
 		{ rows: PackageTagRow[]; check: (row: PackageTagRow) => CoordinatorEffect<PackageTagResult> },
@@ -611,22 +613,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					}
 					let published = false;
 					const unanswered: string[] = [];
-					for (const reference of row.references) {
-						const pkg = packages.find(candidate => matchesPackage(reference, candidate));
-						if (!pkg || !publishable(pkg) || !canVerifyPublication(pkg.manager)) continue;
-						const verified = yield* verifyPublication(
-							{
-								id: packageId(pkg),
-								identity: publicationIdentity(pkg, row.version),
-								manager: pkg.manager,
-								name: pkg.name,
-								version: row.version,
-								outcome: 'pending',
-								required: true,
-							},
-							transport,
-							context,
-						);
+					for (const { reference, publication } of row.probes) {
+						const verified = yield* verifyPublication(publication, transport, context);
 						if (verified.outcome === 'succeeded') {
 							published = true;
 							break;
@@ -647,7 +635,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						? { ...base, outcome: 'created' }
 						: { ...base, outcome: 'failed', reason: decodeError(created.failure) };
 				});
-			return { rows: packageTagRows(groups, releases(refs), refs), check };
+			return { rows: rows(refs), check };
 		});
 	}
 	private createPackageTag(

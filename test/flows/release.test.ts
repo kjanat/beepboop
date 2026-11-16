@@ -6,7 +6,7 @@ import { bearer, text } from '@root/test/support/http.ts';
 import { packedRelease } from '@root/test/support/packed-release.ts';
 import { loggedErrors } from '@root/test/support/process.ts';
 import { approvePromotion, only, prepareRelease } from '@root/test/support/releases.ts';
-import { editableConfiguration, jsonFile, passChecks, widget } from '@root/test/support/repositories.ts';
+import { editableConfiguration, jsonFile, npmManifest, passChecks, widget } from '@root/test/support/repositories.ts';
 import { fakeSigner, signingKey } from '@root/test/support/signing.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
@@ -1143,6 +1143,35 @@ test('a successful release creates the signed tags of its published packages', a
 		const tag = ref === undefined ? undefined : repository.tagObjects.get(ref);
 		expect([tag?.name, tag?.commit, tag?.verified]).toEqual(['widget-v1.1.0', promotion.sourceSha, true]);
 		expect(signer.calls.map(call => /^tag (.+)$/m.exec(call.data)?.[1])).toEqual(['v1.1.0', 'widget-v1.1.0']);
+	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
+test('a release tags the packages it started with after discovery drops them', async () => {
+	const key = signingKey('Release Bot (CI) <release@example.com>');
+	try {
+		const api = bearer(world, await world.cliSession());
+		const { repository } = await packedRelease(
+			world,
+			async () => {
+				const source = world.github.repository('octo/widget');
+				world.github.push(source, { 'package.json': npmManifest('widget', '1.1.0', { private: true }) }, 'Hide widget');
+				expect((await api('/api/repositories/discover', { repository: 'octo/widget' })).status).toBe(200);
+			},
+			{ key, signer: fakeSigner(key) },
+			false,
+			undefined,
+			false,
+			true,
+		);
+		await settled(() => repository.refs.has('tags/widget-v1.1.0'));
+		const promotion = await only(api, 'promote');
+		const ref = repository.refs.get('tags/widget-v1.1.0');
+		expect([promotion.state, ref === undefined ? undefined : repository.tagObjects.get(ref)?.commit]).toEqual([
+			'succeeded',
+			promotion.sourceSha,
+		]);
 	} finally {
 		key.dispose();
 	}

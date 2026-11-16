@@ -1,7 +1,9 @@
 import { Clock, Effect, Option } from 'effect';
-import { matchesPackage } from '@/automation/package-identity';
+import { canVerifyPublication } from '@/automation/managers';
+import { matchesPackage, packageId, publicationIdentity } from '@/automation/package-identity';
+import { publishable } from '@/automation/package-publication';
 import type { RefState } from '@/automation/refs';
-import type { Package } from '@/automation/types';
+import type { Package, Publication } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { parseTag } from '@/contract/version';
@@ -10,6 +12,15 @@ import type { PackageTagPage, PackageTagView } from '@/contract/views';
 export interface PackageTagGroup {
 	prefix: string;
 	references: string[];
+	packages: Package[];
+}
+export interface PackageTagProbe {
+	reference: string;
+	publication: Publication;
+}
+export interface FrozenPackageTag {
+	prefix: string;
+	probes: PackageTagProbe[];
 }
 export interface Release {
 	version: string;
@@ -18,7 +29,7 @@ export interface Release {
 export type PackageTagState = 'exists' | 'conflict' | 'missing';
 export interface PackageTagRow extends Release {
 	tag: string;
-	references: string[];
+	probes: PackageTagProbe[];
 	state: PackageTagState;
 	target?: string;
 }
@@ -36,16 +47,36 @@ export function packageTagGroups(
 	prefix: string,
 	packages: readonly Package[],
 ): PackageTagGroup[] {
-	const groups = new Map<string, string[]>();
+	const groups = new Map<string, PackageTagGroup>();
 	for (const reference of references) {
 		for (const pkg of packages.filter(candidate => matchesPackage(reference, candidate))) {
 			const tagPrefix = `${packageTagBase(pkg.name)}-${prefix}`;
-			const grouped = groups.get(tagPrefix) ?? [];
-			if (!grouped.includes(reference)) grouped.push(reference);
-			groups.set(tagPrefix, grouped);
+			const group = groups.get(tagPrefix) ?? { prefix: tagPrefix, references: [], packages: [] };
+			if (!group.references.includes(reference)) group.references.push(reference);
+			if (!group.packages.includes(pkg)) group.packages.push(pkg);
+			groups.set(tagPrefix, group);
 		}
 	}
-	return [...groups].map(([tagPrefix, grouped]) => ({ prefix: tagPrefix, references: grouped }));
+	return [...groups.values()];
+}
+
+export function packageTagProbes(group: PackageTagGroup, version: string): PackageTagProbe[] {
+	return group.packages.filter(pkg => publishable(pkg) && canVerifyPublication(pkg.manager)).map(pkg => ({
+		reference: group.references.find(reference => matchesPackage(reference, pkg)) ?? packageId(pkg),
+		publication: {
+			id: packageId(pkg),
+			identity: publicationIdentity(pkg, version),
+			manager: pkg.manager,
+			name: pkg.name,
+			version,
+			outcome: 'pending',
+			required: true,
+		},
+	}));
+}
+
+export function freezePackageTags(groups: readonly PackageTagGroup[], version: string): FrozenPackageTag[] {
+	return groups.map(group => ({ prefix: group.prefix, probes: packageTagProbes(group, version) }));
 }
 
 export function taggedReleases(prefix: string, refs: readonly RefState[]): Release[] {
@@ -55,29 +86,44 @@ export function taggedReleases(prefix: string, refs: readonly RefState[]): Relea
 	});
 }
 
+function packageTagRow(
+	prefix: string,
+	probes: PackageTagProbe[],
+	release: Release,
+	refs: readonly RefState[],
+): PackageTagRow {
+	const tag = `${prefix}${release.version}`;
+	const existing = refs.find(ref => ref.name === tag);
+	const state: PackageTagState = existing === undefined
+		? 'missing'
+		: existing.commit === release.commit
+		? 'exists'
+		: 'conflict';
+	return {
+		...release,
+		tag,
+		probes,
+		state,
+		...(existing && state === 'conflict' ? { target: existing.commit } : {}),
+	};
+}
+
 export function packageTagRows(
 	groups: readonly PackageTagGroup[],
 	releases: readonly Release[],
 	refs: readonly RefState[],
 ): PackageTagRow[] {
 	return releases.flatMap(release =>
-		groups.map(group => {
-			const tag = `${group.prefix}${release.version}`;
-			const existing = refs.find(ref => ref.name === tag);
-			const state: PackageTagState = existing === undefined
-				? 'missing'
-				: existing.commit === release.commit
-				? 'exists'
-				: 'conflict';
-			return {
-				...release,
-				tag,
-				references: group.references,
-				state,
-				...(existing && state === 'conflict' ? { target: existing.commit } : {}),
-			};
-		})
+		groups.map(group => packageTagRow(group.prefix, packageTagProbes(group, release.version), release, refs))
 	);
+}
+
+export function frozenPackageTagRows(
+	frozen: readonly FrozenPackageTag[],
+	release: Release,
+	refs: readonly RefState[],
+): PackageTagRow[] {
+	return frozen.map(entry => packageTagRow(entry.prefix, entry.probes, release, refs));
 }
 
 export function packageTagPage<R>(
