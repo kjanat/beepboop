@@ -248,6 +248,25 @@ test('a run of the failed release that still runs keeps its tag', async () => {
 	expect((await promotions(api)).map(promotion => promotion.sourceSha)).toEqual([merged.sha]);
 }, 60_000);
 
+test('a publishing run on the tagged commit that still runs keeps its tag', async () => {
+	const { repository, api, merged, oid } = await taggedFailure();
+	repository.runs.push({
+		id: 900_001,
+		path: '.github/workflows/publish.yml',
+		event: 'push',
+		headSha: merged.sha,
+		headBranch: 'v1.0.0',
+		status: 'in_progress',
+		conclusion: null,
+		attempt: 1,
+		title: 'Publish v1.0.0',
+		inputs: {},
+	});
+	await pushFix(repository);
+	expect((await promotions(api)).map(promotion => promotion.sourceSha)).toEqual([merged.sha]);
+	expect(repository.refs.get('tags/v1.0.0')).toBe(oid);
+}, 60_000);
+
 test('a takeover stops at its ref step once the version reached its registry', async () => {
 	const { repository, api, merged, oid } = await taggedFailure();
 	const fixed = await pushFix(repository);

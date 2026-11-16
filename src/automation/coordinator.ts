@@ -2242,6 +2242,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				);
 				if (run.status !== 'completed') return [];
 			}
+			for (const commit of new Set(owned.map(tag => tag.commit))) {
+				for (let page = 1;; page++) {
+					const { workflow_runs: runs } = yield* gateway.read(
+						workflowRunsSchema,
+						`/repos/${release.repository}/actions/runs?head_sha=${commit}&per_page=100&page=${page}`,
+						token,
+					);
+					if (runs.some(run => run.status !== 'completed')) return [];
+					if (runs.length < 100) break;
+				}
+			}
 			for (const tag of owned) {
 				const published = yield* gateway.read(
 					Schema.NullOr(releaseSchema),
