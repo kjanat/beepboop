@@ -545,6 +545,56 @@ test('a package the registry cannot answer for gets no promotion and a repositor
 	]]);
 });
 
+test('a registry warning survives a later stream that fails', async () => {
+	const { repository, configuration } = await delegated(['widget', 'gadget'], { widget: '1.2.3', gadget: '1.0.0' });
+	const file = decodeSync(looseStruct({ streams: streamRecord }), JSON.parse(JSON.stringify(configuration)));
+	const widgetId = 'pkg:npm/widget';
+	const gadgetId = 'pkg:npm/gadget';
+	file.streams.main = withMain(file, {
+		packages: [widgetId],
+		required: [widgetId],
+		promote: {
+			...configuration.streams.main.promote,
+			workflow: { ...configuration.streams.main.promote.workflow, publications: [widgetId] },
+		},
+	});
+	file.streams.gadget = withMain(file, {
+		packages: [gadgetId],
+		required: [gadgetId],
+		promote: {
+			approval: 'required',
+			workflow: { file: 'gadget.yml', publications: [gadgetId], refs: { phase: 'version', prefix: 'gadget-v' } },
+		},
+	});
+	const head = world.github.push(repository, {
+		'.github/beepboop.json': JSON.stringify(file),
+		'.github/workflows/gadget.yml': publishWorkflow.replace('stream: main', 'stream: gadget'),
+		'packages/gadget/package.json': JSON.stringify({ name: 'gadget', version: '1.1.0' }),
+	}, 'Split gadget into its own stream');
+	passChecks(repository, head.sha);
+	world.network.serve('registry.npmjs.org', request =>
+		new URL(request.url).pathname === '/widget'
+			? new Response(null, { status: 503 })
+			: world.npm.handle(request));
+	let tagLookups = 0;
+	world.network.serve('api.github.com', async request => {
+		if (new URL(request.url).pathname === '/graphql' && (await request.clone().text()).includes('refs/tags/')) {
+			tagLookups++;
+			return Response.json({ message: 'Unicorn' }, { status: 502 });
+		}
+		return world.github.handle(request);
+	});
+	const discovered = await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	expect(tagLookups).toBeGreaterThan(0);
+	expect(discovered.findings).toContainEqual({
+		code: 'release-unchecked',
+		severity: 'warning',
+		subject: { kind: 'stream', name: 'main' },
+		message:
+			'Beepboop starts no release of stream main until its registries answer for pkg:npm/widget. The next push or discovery asks again.',
+	});
+});
+
 test('no approval overrides a version tag on another commit, and the CLI cancels the promotion', async () => {
 	const { repository, before, merged } = await tagged();
 	passChecks(repository, merged.sha);
