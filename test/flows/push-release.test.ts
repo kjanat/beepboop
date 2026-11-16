@@ -264,6 +264,57 @@ test('a takeover stops at its ref step once the version reached its registry', a
 	expect([repository.refs.get('tags/v1.0.0'), merged.sha.length]).toEqual([oid, 40]);
 }, 60_000);
 
+test('a cached takeover plan is checked again before the tag moves', async () => {
+	const { repository, api, oid } = await taggedFailure();
+	const fixed = await pushFix(repository);
+	const second = (await promotions(api)).find(promotion => promotion.sourceSha === fixed.sha);
+	const run = repository.runs.find(entry => entry.inputs.beepboop_execution_id === second?.id);
+	if (!second || !run) throw new Error('Expected the second release run');
+	run.status = 'in_progress';
+	const identity = runIdentity(repository, run, 'release.yml');
+	await begin(world, identity, second.id, 'main', 'promote');
+	await runAction(world, 'refs-plan', identity, { EXECUTION_ID: second.id });
+	world.npm.publish('widget', '1.0.0');
+	await expect(runAction(world, 'refs-plan', identity, { EXECUTION_ID: second.id })).rejects.toThrow(
+		'v1.0.0 can no longer move: a release of 1.0.0 published or runs',
+	);
+	expect(repository.refs.get('tags/v1.0.0')).toBe(oid);
+}, 60_000);
+
+for (const published of [true, false]) {
+	test(
+		`a package of the failed release that left the stream ${published ? 'blocks' : 'allows'} the takeover`,
+		async () => {
+			const { repository, api, first } = await taggedFailure();
+			const file = '.github/beepboop.json';
+			const renamed = (world.github.file(repository, file) ?? '').replaceAll('pkg:npm/widget', 'pkg:npm/gadget');
+			if (published) world.npm.publish('widget', '1.0.0');
+			const fixed = world.github.push(
+				repository,
+				{ [file]: renamed, 'package.json': manifest('gadget', '1.0.0') },
+				'Rename the package',
+			);
+			passChecks(repository, fixed.sha);
+			expect((await world.push(repository)).status).toBe(202);
+			await world.wait(16_000);
+			const takeover = (await promotions(api)).find(promotion => promotion.sourceSha === fixed.sha);
+			expect([(await promotions(api)).some(promotion => promotion.id === first.id), takeover?.reclaims?.length])
+				.toEqual([true, published ? undefined : 1]);
+		},
+		60_000,
+	);
+}
+
+test('a takeover leaves retries of other operations of its version alone', async () => {
+	const { repository, api } = await taggedFailure();
+	const fixed = await pushFix(repository);
+	const second = (await promotions(api)).find(promotion => promotion.sourceSha === fixed.sha);
+	if (!second) throw new Error('Expected the takeover release');
+	await world.coordinator(repository).enqueue({ ...second, id: 'downstream', operation: 'extra', state: 'failed' });
+	const retried = await api('/api/executions/recover', { id: 'downstream', action: 'retry' });
+	expect(field(retried.body, 'error') ?? '').not.toContain('takes over the version tag');
+}, 60_000);
+
 test('a push-approved takeover checks the registries before it starts', async () => {
 	const { repository, api } = await taggedFailure();
 	const fixed = await pushFix(repository, false);
