@@ -451,8 +451,8 @@ test('a crate that the crates.io API cannot answer is checked in the sparse inde
 		expect(url.toString()).toBe('https://index.crates.io/sv/g-/svg-data');
 		return lines.length ? new Response(`${lines.join('\n')}\n`) : new Response(null, { status: 404 });
 	};
-	const verify = (lines: string[]) =>
-		Effect.runPromise(verifyPublication(publication, index(lines))).then(found => [found.outcome, found.url]);
+	const verify = (lines: string[], expected: Publication = publication) =>
+		Effect.runPromise(verifyPublication(expected, index(lines))).then(found => [found.outcome, found.url]);
 	expect(await verify([])).toEqual(['pending', 'https://index.crates.io/sv/g-/svg-data']);
 	expect(await verify([JSON.stringify({ name: 'svg-data', vers: '0.4.0', cksum: 'a'.repeat(64), yanked: false })]))
 		.toEqual(['pending', 'https://index.crates.io/sv/g-/svg-data']);
@@ -462,6 +462,10 @@ test('a crate that the crates.io API cannot answer is checked in the sparse inde
 		.toEqual(['failed', 'https://index.crates.io/sv/g-/svg-data']);
 	expect(await verify(['{"name":"svg-data","vers":"0.5.0"', JSON.stringify({ name: 'svg-data', vers: '0.4.0' })]))
 		.toEqual(['uncertain', 'https://index.crates.io/sv/g-/svg-data']);
+	const listed = [JSON.stringify({ name: 'svg-data', vers: '0.5.0', cksum: 'b'.repeat(64), yanked: false })];
+	expect((await Effect.runPromise(verifyPublication(publication, index(listed)))).digest).toBe('b'.repeat(64));
+	expect(await verify(listed, { ...publication, digest: 'c'.repeat(64) }))
+		.toEqual(['failed', 'https://index.crates.io/sv/g-/svg-data']);
 	expect(crateIndexUrl('ab')).toBe('https://index.crates.io/2/ab');
 	expect(crateIndexUrl('Abc')).toBe('https://index.crates.io/3/a/abc');
 });
