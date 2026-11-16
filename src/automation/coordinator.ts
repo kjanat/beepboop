@@ -75,9 +75,18 @@ import {
 } from '@/automation/package-identity';
 import { metadataProblems } from '@/automation/package-metadata';
 import { publishable } from '@/automation/package-publication';
+import type { PackageTagResult, PackageTagRow, Release } from '@/automation/package-tags';
+import {
+	frozenPackageTagRows,
+	packageTagGroups,
+	packageTagPage,
+	packageTagPages,
+	packageTagRows,
+	taggedReleases,
+} from '@/automation/package-tags';
 import { matchesRef } from '@/automation/policy';
 import type { PublishBudget } from '@/automation/publish-budget';
-import type { RefPlan, RefState, TagSigner } from '@/automation/refs';
+import type { RefChange, RefPlan, RefState, TagSigner } from '@/automation/refs';
 import {
 	conflictMessage,
 	planRefs,
@@ -121,7 +130,7 @@ import { approvalShaPattern, sha256DigestPattern } from '@/contract/ids';
 import type { ClaimStep, LedgerManager, NextStep, PublishReport, ReportStep } from '@/contract/ledger';
 import { ledgerManagers } from '@/contract/ledger';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
-import type { BinaryProgress } from '@/contract/views';
+import type { BinaryProgress, PackageTagPage } from '@/contract/views';
 import { parseRetryAfter } from '@/domain/http-date';
 import type { ReadyRepository } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
@@ -517,6 +526,171 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				extra,
 			);
 			if (execution.state === 'succeeded') yield* this.captureReleaseEvent(execution);
+			if (execution.state === 'succeeded' && previous?.state !== 'succeeded') yield* this.tagPackagesLater(execution);
+		});
+	}
+	private tagPackagesLater(execution: Execution): CoordinatorEffect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const promotion = execution.operation === 'promote'
+				? execution
+				: execution.version === undefined
+				? undefined
+				: (yield* this.executions()).find(other =>
+					other.operation === 'promote' && other.state === 'succeeded' && other.stream === execution.stream
+					&& other.version === execution.version
+				);
+			const references = promotion?.configuration.streams[promotion.stream]?.packageTags;
+			const policy = promotion?.workflow?.refs;
+			const version = promotion?.version;
+			if (!promotion || !references?.length || policy?.phase !== 'version' || !version) return;
+			const release: Release = { version, commit: promotion.sourceSha };
+			const frozen = promotion.packageTags;
+			const work = Effect.gen({ self: this }, function*() {
+				const packages = frozen
+					? []
+					: (yield* (yield* this.store).repository(execution.repositoryId))?.inventory.packages ?? [];
+				const work = yield* this.packageTagWork(
+					execution.repository,
+					execution.repositoryId,
+					refs =>
+						frozen
+							? frozenPackageTagRows(frozen, release, refs)
+							: packageTagRows(packageTagGroups(references, policy.prefix, packages), [release], refs),
+					true,
+				);
+				const results = yield* packageTagPages(work.rows, work.check);
+				for (const result of results.filter(result => result.outcome === 'failed' || result.outcome === 'conflict')) {
+					yield* logFailure(
+						'package-tags.failed',
+						precondition(result.reason ?? `${result.tag} was not created`),
+						{ executionId: execution.id, tag: result.tag },
+					);
+				}
+			}).pipe(logRecovered('package-tags.failed', { executionId: execution.id }));
+			this.ctx.waitUntil(Effect.runPromiseWith(yield* Effect.context<Automation>())(work));
+		});
+	}
+	packageTags(
+		repositoryId: number,
+		stream: string,
+		apply: boolean,
+		after: string | undefined,
+		actor: string,
+	): Promise<PackageTagPage> {
+		return this.run(
+			Effect.gen({ self: this }, function*() {
+				const record = yield* (yield* this.store).repository(repositoryId);
+				if (!record?.configuration) return yield* precondition('Repository not configured');
+				const configured = record.configuration.streams[stream];
+				if (!configured) return yield* precondition(`Unknown stream ${stream}`);
+				const references = configured.packageTags ?? [];
+				if (!references.length) return yield* precondition(`Stream ${stream} names no packageTags`);
+				const policy = configured.promote.workflow?.refs;
+				if (policy?.phase !== 'version') {
+					return yield* precondition(`Stream ${stream} pushes no version tag, so its packages get no tags`);
+				}
+				const groups = packageTagGroups(references, policy.prefix, record.inventory.packages);
+				const work = yield* this.packageTagWork(
+					record.name,
+					record.id,
+					refs => packageTagRows(groups, taggedReleases(policy.prefix, refs), refs),
+					apply,
+				);
+				const page = yield* packageTagPage(work.rows, after, work.check);
+				if (apply) {
+					const created = page.results.filter(result => result.outcome === 'created').map(result => result.tag);
+					yield* (yield* this.store).audit(
+						actor,
+						'repository.package-tags',
+						`${record.name}: ${created.length ? created.join(', ') : 'none created'}`,
+					);
+				}
+				return page;
+			}),
+			'coordinator.packageTags',
+			{ repositoryId, stream },
+		);
+	}
+	private packageTagWork(
+		repository: string,
+		repositoryId: number,
+		rows: (refs: RefState[]) => PackageTagRow[],
+		apply: boolean,
+	): CoordinatorEffect<
+		{ rows: PackageTagRow[]; check: (row: PackageTagRow) => CoordinatorEffect<PackageTagResult> },
+		DomainError
+	> {
+		return Effect.gen({ self: this }, function*() {
+			const gateway = yield* this.gateway;
+			const refs = yield* gateway.tagRefs(repository, repositoryId);
+			const transport = (yield* Automation).dependencies.transport;
+			const context = gateway.verification(repository, repositoryId);
+			const create = (row: PackageTagRow) => this.createPackageTag(repository, repositoryId, row);
+			const check = (row: PackageTagRow): CoordinatorEffect<PackageTagResult> =>
+				Effect.gen(function*() {
+					const base = { tag: row.tag, version: row.version, commit: row.commit };
+					if (row.state === 'exists') return { ...base, outcome: 'exists' };
+					if (row.state === 'conflict') {
+						return {
+							...base,
+							outcome: 'conflict',
+							reason: `${row.tag} already targets ${(row.target ?? '').slice(0, 12)}`,
+						};
+					}
+					let published = false;
+					const unanswered: string[] = [];
+					for (const { reference, publication } of row.probes) {
+						const verified = yield* verifyPublication(publication, transport, context);
+						if (verified.outcome === 'succeeded') {
+							published = true;
+							break;
+						}
+						if (verified.outcome !== 'pending') unanswered.push(`${reference} is ${verified.outcome}`);
+					}
+					if (!published && unanswered.length) {
+						return {
+							...base,
+							outcome: 'failed',
+							reason: `The registry did not confirm ${row.version}: ${unanswered.join(', ')}`,
+						};
+					}
+					if (!published) return { ...base, outcome: 'unpublished' };
+					if (!apply) return { ...base, outcome: 'publishable' };
+					const created = yield* Effect.result(create(row));
+					return created._tag === 'Success'
+						? { ...base, outcome: 'created' }
+						: { ...base, outcome: 'failed', reason: decodeError(created.failure) };
+				});
+			return { rows: rows(refs), check };
+		});
+	}
+	private createPackageTag(
+		repository: string,
+		repositoryId: number,
+		row: PackageTagRow,
+	): CoordinatorEffect<void, DomainError> {
+		const signer = this.env.SIGNER;
+		return Effect.gen({ self: this }, function*() {
+			if (!signer) return yield* precondition('Package tags need the tag signer');
+			const clock = yield* Clock.Clock;
+			const identity = yield* fromPromise(() => signer.identity());
+			const user = /^([^<>\n]+) <([^<>\s]+)>$/.exec(identity.userId);
+			if (!user?.[1] || !user[2]) return yield* precondition('The signing key needs a user ID with a name and email');
+			const seconds = Math.floor(clock.currentTimeMillisUnsafe() / 1000);
+			const change: RefChange = { name: row.tag, expected: null, commit: row.commit, annotated: true, signed: true };
+			const payload = tagPayload(change, row.tag, `${identity.userId} ${seconds} +0000`);
+			const signature = yield* fromPromise(() => signer.sign(payload, `beepboop:${repository}`));
+			yield* (yield* this.gateway).createTag(repository, repositoryId, {
+				name: row.tag,
+				commit: row.commit,
+				message: `${row.tag}\n${signature.endsWith('\n') ? signature : `${signature}\n`}`,
+				tagger: {
+					name: user[1],
+					email: user[2],
+					date: new Date(seconds * 1000).toISOString().replace('.000Z', 'Z'),
+				},
+				signed: true,
+			});
 		});
 	}
 	private putReleaseSet(preparationId: string, record: ReleaseSetRecord): CoordinatorEffect<void, DomainError> {
@@ -1187,7 +1361,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				plan.changes,
 				change =>
 					change.annotated && (change.expected === null || change.replaces)
-						? fromPromise(() => signer.sign(tagPayload(change, plan.version, tagger), `beepboop:${plan.repository}`))
+						? fromPromise(() =>
+							signer.sign(tagPayload(change, `Release ${plan.version}`, tagger), `beepboop:${plan.repository}`)
+						)
 							.pipe(Effect.map(signature => ({
 								...change,
 								signed: true,

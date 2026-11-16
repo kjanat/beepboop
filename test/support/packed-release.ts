@@ -82,6 +82,7 @@ export async function packedRelease(
 	githubRelease = false,
 	companionModule?: string,
 	moduleStream = false,
+	packageTags = false,
 ): Promise<PackedRelease> {
 	const repository = widget(world.github);
 	world.npm.publish('widget', '1.0.0');
@@ -106,6 +107,7 @@ export async function packedRelease(
 		signed: signing !== undefined && signing.signer === undefined,
 	};
 	if (signing?.signer) world.env.SIGNER = signing.signer;
+	if (packageTags) configuration.streams.main.packageTags = ['pkg:npm/widget'];
 	if (companionModule !== undefined) {
 		configuration.streams.main.companionModules = [`pkg:golang/${companionModule}`];
 		configuration.managers = [...configuration.managers ?? [], 'go'];

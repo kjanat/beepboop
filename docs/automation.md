@@ -264,6 +264,7 @@ and promotes through branch workflows and observes publication from a tag:
 | `packages`               | Package IDs to select, such as `pkg:cargo/example-core` or `pkg:npm/%40example/cli`. Independent streams can also select packages in the preparation request.                                                                                                                                                                                                                                                                                                            |
 | `prepare.strategy`       | `managed` lets Beepboop edit the versions. `workflow` runs your own preparation script.                                                                                                                                                                                                                                                                                                                                                                                  |
 | `companionModules`       | Go modules whose version tag the stream also pushes on the release commit, such as `go/v1.2.3` beside `tool-v1.2.3`. See [Version selection and release refs](#version-selection-and-release-refs).                                                                                                                                                                                                                                                                      |
+| `packageTags`            | Packages that get their own tag, such as `svg-data-v1.2.3` beside `v1.2.3`, once the release published them. See [Package tags](#package-tags).                                                                                                                                                                                                                                                                                                                          |
 | `needs`                  | Operation names that must complete before this workflow starts.                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `publications`           | Report IDs that this operation needs to complete.                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `mustPublish`            | Packages that must publish for the release to count as successful. An operation named `publish` uses this list by default.                                                                                                                                                                                                                                                                                                                                               |
@@ -1273,6 +1274,39 @@ Once the stream pushed `go/v1.2.3`, that version of the module belongs to the
 stream's release. The module's own stream can release `1.2.3` only on the same
 commit. On any other commit Beepboop refuses the release with
 `Version tag go/v1.2.3 already targets <commit>` and asks for a new version.
+
+### Package tags
+
+`packageTags` lists packages of the stream that get their own tag on the release
+commit, named after the package and the version tag: `"packageTags":
+["pkg:cargo/svg-data", "pkg:npm/%40kjanat/svg-toolkit"]` on a stream tagged `v`
+gives `svg-data-v1.2.3` and `kjanat-svg-toolkit-v1.2.3` beside `v1.2.3`. An npm
+scope joins the name with a hyphen, as in the archive name `npm pack` writes.
+Packages that share a name, such as a crate and an npm package both called
+`tree-sitter-svg`, share one tag.
+
+When a promotion succeeds, Beepboop checks each listed package against its
+registry and creates a signed annotated tag for each package published at that
+version. The tag message is the tag name. The tag is created through the GitHub
+API from the `SIGNER` key, so the stream's workflow needs no step for it. A
+package that is not published gets no tag, and Beepboop never moves or replaces
+a tag that already exists. A release keeps the packages and registries it had
+when Beepboop created it, so a later discovery change leaves its package tags
+alone.
+
+`beepboop tags backfill` adds the package tags that earlier releases are
+missing. It lists every version tag of the stream, prints which package tags
+exist, which it would create, which packages were not published at that version
+and which tag names already target another commit, and creates the missing
+tags after you confirm. Run it once after adding `packageTags` to a stream.
+Beepboop answers the backfill in pages. A page starts checks for 10 seconds and
+answers within 20, and the CLI requests pages until every tag has an answer. A
+check still running after 20 seconds reports a failure, and the next backfill
+checks that tag again.
+
+Discovery blocks a `packageTags` entry that matches no package, matches only
+packages that skip their public registry, or is not in the stream's
+`packages`, and warns when the stream's promotion pushes no version tag.
 
 A release records its companion modules and their tag prefixes when Beepboop
 creates it, and plans its tags from that record. A discovery refresh during the

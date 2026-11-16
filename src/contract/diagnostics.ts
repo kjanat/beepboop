@@ -29,6 +29,7 @@ export const diagnosticCodes = [
 	'unconfigured',
 	'version-tagged',
 	'companion-module',
+	'package-tag',
 ] as const;
 export type DiagnosticCode = (typeof diagnosticCodes)[number];
 

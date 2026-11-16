@@ -69,6 +69,21 @@ export const binaryProgress = mutableStruct({
 });
 export type BinaryProgress = Decoded<typeof binaryProgress>;
 
+export const packageTagOutcomes = ['exists', 'conflict', 'unpublished', 'publishable', 'created', 'failed'] as const;
+export const packageTagView = mutableStruct({
+	tag: Schema.String,
+	version: Schema.String,
+	commit: Schema.String,
+	outcome: Schema.Literals(packageTagOutcomes),
+	reason: Schema.optional(Schema.String),
+});
+export type PackageTagView = Decoded<typeof packageTagView>;
+export const packageTagPage = mutableStruct({
+	results: mutableArray(packageTagView),
+	next: Schema.optional(Schema.String),
+});
+export type PackageTagPage = Decoded<typeof packageTagPage>;
+
 export const planReview = looseStruct({
 	sourceSha: Schema.String,
 	planId: Schema.String,

@@ -143,6 +143,8 @@ beepboop runs cancel EXECUTION_ID
 beepboop runs recover EXECUTION_ID
 beepboop runs recover EXECUTION_ID --action retry
 beepboop runs recover EXECUTION_ID --action redispatch
+beepboop tags backfill --dry-run
+beepboop tags backfill
 ```
 
 `runs list` shows the runs of the current checkout's repository, read from the
@@ -168,6 +170,14 @@ branch for a failed promotion whose version tag already targets its release
 commit, and follows that release to its end. Use it when the fix for the
 failure is in the workflow; a retry would run the old workflow again. See
 [Publish through Beepboop](automation.md#publish-through-beepboop).
+
+`tags backfill` creates the package tags of released versions for a stream
+with `packageTags`, such as `svg-data-v1.2.3` beside `v1.2.3`. It reads the
+current checkout's repository like `release`, prints the missing tags and asks
+before it creates them. `--dry-run` only prints, `--yes` skips the question, and
+`--json` prints the rows. Only packages the registry lists at that version get
+a tag, and existing tags never move. See
+[Package tags](automation.md#package-tags).
 
 Independent monorepo releases take a JSON plan, described in
 [release planning](release-planning.md):

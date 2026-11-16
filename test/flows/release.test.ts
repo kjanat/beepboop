@@ -6,7 +6,7 @@ import { bearer, text } from '@root/test/support/http.ts';
 import { packedRelease } from '@root/test/support/packed-release.ts';
 import { loggedErrors } from '@root/test/support/process.ts';
 import { approvePromotion, only, prepareRelease } from '@root/test/support/releases.ts';
-import { editableConfiguration, jsonFile, passChecks, widget } from '@root/test/support/repositories.ts';
+import { editableConfiguration, jsonFile, npmManifest, passChecks, widget } from '@root/test/support/repositories.ts';
 import { fakeSigner, signingKey } from '@root/test/support/signing.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
@@ -1118,6 +1118,134 @@ test('the signer binding signs the version tag without a signed ref policy', asy
 		}]);
 		expect(tags['v1.1.0']).toBe(plan.changes[0]?.object?.trimEnd());
 		expect(tags['v1.1.0']).toContain('-----BEGIN PGP SIGNATURE-----');
+	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
+async function settled(done: () => boolean): Promise<void> {
+	for (let attempt = 0; attempt < 100 && !done(); attempt++) {
+		await world.wait(100);
+		await Bun.sleep(10);
+	}
+}
+
+test('a successful release creates the signed tags of its published packages', async () => {
+	const key = signingKey('Release Bot (CI) <release@example.com>');
+	try {
+		const signer = fakeSigner(key);
+		const { repository, plan } = await packedRelease(world, undefined, { key, signer }, false, undefined, false, true);
+		await settled(() => repository.refs.has('tags/widget-v1.1.0'));
+		const promotion = await only(bearer(world, await world.cliSession()), 'promote');
+		expect(promotion.state).toBe('succeeded');
+		expect(plan.changes.map(change => change.name)).toEqual(['v1.1.0']);
+		const ref = repository.refs.get('tags/widget-v1.1.0');
+		const tag = ref === undefined ? undefined : repository.tagObjects.get(ref);
+		expect([tag?.name, tag?.commit, tag?.verified]).toEqual(['widget-v1.1.0', promotion.sourceSha, true]);
+		expect(signer.calls.map(call => /^tag (.+)$/m.exec(call.data)?.[1])).toEqual(['v1.1.0', 'widget-v1.1.0']);
+	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
+test('a release tags the packages it started with after discovery drops them', async () => {
+	const key = signingKey('Release Bot (CI) <release@example.com>');
+	try {
+		const api = bearer(world, await world.cliSession());
+		const { repository } = await packedRelease(
+			world,
+			async () => {
+				const source = world.github.repository('octo/widget');
+				world.github.push(source, { 'package.json': npmManifest('widget', '1.1.0', { private: true }) }, 'Hide widget');
+				expect((await api('/api/repositories/discover', { repository: 'octo/widget' })).status).toBe(200);
+			},
+			{ key, signer: fakeSigner(key) },
+			false,
+			undefined,
+			false,
+			true,
+		);
+		await settled(() => repository.refs.has('tags/widget-v1.1.0'));
+		const promotion = await only(api, 'promote');
+		const ref = repository.refs.get('tags/widget-v1.1.0');
+		expect([promotion.state, ref === undefined ? undefined : repository.tagObjects.get(ref)?.commit]).toEqual([
+			'succeeded',
+			promotion.sourceSha,
+		]);
+	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
+test('a package tag a release cannot create is logged and leaves the release succeeded', async () => {
+	const key = signingKey('Release Bot (CI) <release@example.com>');
+	try {
+		const logged = loggedErrors();
+		world.github.verifiesTags = false;
+		const { repository } = await packedRelease(
+			world,
+			undefined,
+			{ key, signer: fakeSigner(key) },
+			false,
+			undefined,
+			false,
+			true,
+		);
+		await settled(() => [...repository.tagObjects.values()].some(tag => tag.name === 'widget-v1.1.0'));
+		await settled(() => false);
+		const promotion = await only(bearer(world, await world.cliSession()), 'promote');
+		expect([promotion.state, repository.refs.has('tags/widget-v1.1.0')]).toEqual(['succeeded', false]);
+		expect(logged.events()).toContainEqual(expect.objectContaining({
+			event: 'package-tags.failed',
+			executionId: promotion.id,
+			tag: 'widget-v1.1.0',
+			error: 'GitHub did not verify the signature of widget-v1.1.0 (unsigned)',
+		}));
+	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
+test('a later publication of the released version creates the package tags the release could not', async () => {
+	const key = signingKey('Release Bot (CI) <release@example.com>');
+	try {
+		world.github.verifiesTags = false;
+		const { repository } = await packedRelease(
+			world,
+			undefined,
+			{ key, signer: fakeSigner(key) },
+			false,
+			undefined,
+			false,
+			true,
+		);
+		await settled(() => [...repository.tagObjects.values()].some(tag => tag.name === 'widget-v1.1.0'));
+		const promotion = await only(bearer(world, await world.cliSession()), 'promote');
+		expect([promotion.state, repository.refs.has('tags/widget-v1.1.0')]).toEqual(['succeeded', false]);
+		world.github.verifiesTags = true;
+		await world.coordinator(repository).enqueue({
+			...promotion,
+			id: 'observed-publication',
+			operation: 'npm-backfill',
+			eventId: 'observed:1',
+			state: 'succeeded',
+		});
+		await settled(() => repository.refs.has('tags/widget-v1.1.0'));
+		const ref = repository.refs.get('tags/widget-v1.1.0');
+		expect(ref === undefined ? undefined : repository.tagObjects.get(ref)?.commit).toBe(promotion.sourceSha);
+	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
+test('a release without packageTags creates no package tag', async () => {
+	const key = signingKey('Release Bot (CI) <release@example.com>');
+	try {
+		const signer = fakeSigner(key);
+		const { repository } = await packedRelease(world, undefined, { key, signer });
+		await world.wait(2_000);
+		expect([...repository.refs.keys()].filter(ref => ref.startsWith('tags/widget-'))).toEqual([]);
+		expect(signer.calls.length).toBe(1);
 	} finally {
 		key.dispose();
 	}

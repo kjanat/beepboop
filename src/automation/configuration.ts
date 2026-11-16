@@ -219,6 +219,7 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 				'versionSource',
 				'packages',
 				'companionModules',
+				'packageTags',
 				'prepare',
 				'promote',
 				'startFrom',
@@ -284,6 +285,7 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 		const companionModules = row.companionModules === undefined
 			? undefined
 			: yield* packageReferences(row.companionModules);
+		const packageTags = row.packageTags === undefined ? undefined : yield* packageReferences(row.packageTags);
 		let needs: Record<string, string[]> | undefined;
 		if (row.needs !== undefined) {
 			needs = {};
@@ -296,6 +298,7 @@ function stream(name: string, raw: unknown): Parsed<Stream> {
 			...(versionSource ? { versionSource } : {}),
 			...(packages === undefined ? {} : { packages }),
 			...(companionModules === undefined ? {} : { companionModules }),
+			...(packageTags === undefined ? {} : { packageTags }),
 			versioning,
 			concurrency,
 			prepare: {

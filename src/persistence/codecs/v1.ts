@@ -298,6 +298,12 @@ const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
 		mutableArray(mutableStruct({ name: Schema.String, oid: Schema.String, commit: Schema.String })),
 	),
 	moduleTags: Schema.optional(mutableArray(mutableStruct({ id: Schema.String, prefix: Schema.String }))),
+	packageTags: Schema.optional(
+		mutableArray(mutableStruct({
+			prefix: Schema.String,
+			probes: mutableArray(mutableStruct({ reference: Schema.String, publication: packagePublication })),
+		})),
+	),
 	refNamespace: Schema.optional(Schema.Literals(['heads', 'tags'])),
 	upstreamRelease: Schema.optional(releaseReference),
 	release: Schema.optional(releaseReference),

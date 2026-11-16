@@ -106,6 +106,8 @@ export const existingTriggersSentences: Record<TriggerHandover, string> = {
 export const existingTriggersQuestion = 'What happens to the existing triggers of a workflow Beepboop runs';
 
 export const mustPublishSentence = 'Packages that must publish for the release to count as successful.';
+export const packageTagsSentence =
+	'Packages that get their own tag, such as svg-data-v1.2.3 beside v1.2.3, on the release commit once the package is published at that version. An npm scope joins the name with a hyphen, as in kjanat-svg-toolkit-v1.2.3.';
 export const companionModulesSentence =
 	'Go modules whose version tag is pushed on the release commit together with the stream tag, such as go/v1.2.3 beside cli-v1.2.3. Each module keeps its own stream.';
 
