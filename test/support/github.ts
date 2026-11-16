@@ -131,6 +131,7 @@ export class FakeGitHub {
 	verifiesTags = true;
 	readonly unhandled: string[] = [];
 	readonly dispatches: { repository: string; file: string; ref: string; inputs: Record<string, string> }[] = [];
+	readonly tokenPermissions: unknown[] = [];
 	private nextId = 1000;
 	private readonly routes: [string, RegExp, Route][] = [];
 	private suspendedAt: string | null = null;
@@ -158,6 +159,7 @@ export class FakeGitHub {
 				if (missing) {
 					throw new HttpError(422, 'There is at least one repository that does not exist or is not accessible');
 				}
+				this.tokenPermissions.push(body.permissions);
 				return json({ token: `ghs_${this.id()}`, expires_at: new Date(Date.now() + 3600_000).toISOString() }, 201);
 			},
 		);
