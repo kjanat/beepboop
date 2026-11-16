@@ -125,13 +125,26 @@ export function integrateWorkflow(
 	actionsRevision?: string,
 	required: string[] = packages.map(packageId),
 	release = false,
+	distributionFiles?: string[],
 ): Result.Result<Integration, DomainError> {
 	const path = `.github/workflows/${choice.file}`, original = snapshot.files[path];
 	const document = parseDocument(original ?? `name: ${workflowName(stream, operation)}\non: {}\njobs: {}\n`);
 	if (document.errors.length) return Result.fail(precondition(`${choice.file}: invalid YAML`));
 	return Result.try({
 		try: () =>
-			integrate(document, snapshot, original, stream, operation, choice, packages, actionsRevision, required, release),
+			integrate(
+				document,
+				snapshot,
+				original,
+				stream,
+				operation,
+				choice,
+				packages,
+				actionsRevision,
+				required,
+				release,
+				distributionFiles,
+			),
 		catch: toDomainError,
 	});
 }
@@ -158,6 +171,7 @@ export function integrateReleaseWorkflow(
 	required: string[] = packages.map(packageId),
 	published: Package[] = packages,
 	release = false,
+	distributionFiles?: string[],
 ): Result.Result<Integration, DomainError> {
 	return Result.gen(function*() {
 		const path = `.github/workflows/${promote.file}`;
@@ -203,6 +217,7 @@ export function integrateReleaseWorkflow(
 				actionsRevision,
 				required,
 				operation === 'promote' && release,
+				operation === 'promote' ? distributionFiles : undefined,
 			);
 			source = result.content;
 			blockers.push(...result.blockers);
@@ -341,6 +356,7 @@ function integrate(
 	actionsRevision: string | undefined,
 	required: string[],
 	release: boolean,
+	distributionFiles?: string[],
 ): Integration {
 	const root = object(yamlData(document)), jobs = object(root.jobs);
 	const targets = aliasTargets(document);
@@ -551,7 +567,14 @@ function integrate(
 		['mise.toml', '.mise.toml', '.config/mise.toml', '.tool-versions'].some(path => snapshot.files[path] !== undefined)
 		&& !steps.some(step => typeof step.uses === 'string' && step.uses.startsWith('jdx/mise-action@'));
 	const commandSteps = (step: Record<string, unknown>): Record<string, unknown>[] => {
-		const toolchain = mise ? [{ uses: pinned('mise') }] : [];
+		const manifest = Result.getOrElse(
+			Result.try(() => object(JSON.parse(snapshot.files['package.json'] ?? '{}'))),
+			(): Record<string, unknown> => ({}),
+		);
+		const bun = distributionFiles && typeof manifest.packageManager === 'string'
+			&& manifest.packageManager.startsWith('bun@')
+			&& !steps.some(entry => typeof entry.uses === 'string' && entry.uses.startsWith('oven-sh/setup-bun@'));
+		const toolchain = mise ? [{ uses: pinned('mise') }] : bun ? [{ uses: pinned('setupBun') }] : [];
 		const script = typeof step.run === 'string' && step.run.includes('\n') && !step.run.endsWith('\n')
 			? { ...step, run: `${step.run}\n` }
 			: step;
@@ -733,7 +756,44 @@ function integrate(
 		const kept = Object.fromEntries(Object.entries(env).filter(([key]) => !stale(key)));
 		return { ...step, env: { ...kept, ...gitIdentity(source) } };
 	});
-	const refs = steps.findIndex(step => typeof step.uses === 'string' && /\/actions\/publish-refs\b/.test(step.uses));
+	const refStep = (step: Record<string, unknown>) =>
+		typeof step.uses === 'string' && /\/actions\/publish-refs\b/.test(step.uses);
+	const beforeRefs = steps.findIndex(refStep);
+	if (
+		distributionFiles?.length && choice.commands.trim() && beforeRefs >= 0
+		&& !steps.slice(0, beforeRefs).some(step =>
+			typeof step.run === 'string' && step.run.trim() === choice.commands.trim()
+		)
+	) {
+		const previousBuild = steps.findIndex(step => step.id === 'beepboop_action_build');
+		const build = previousBuild >= 0 ? steps[previousBuild] : undefined;
+		if (build && typeof build.run !== 'string') {
+			fail('step ID beepboop_action_build is already used by a different action');
+		} else {
+			if (previousBuild >= 0) steps.splice(previousBuild, 1);
+			steps.splice(
+				steps.findIndex(refStep),
+				0,
+				...commandSteps({
+					...build,
+					id: 'beepboop_action_build',
+					name: 'Build action distribution',
+					run: choice.commands,
+				}),
+			);
+		}
+	}
+	const refs = steps.findIndex(refStep);
+	if (refs >= 0 && distributionFiles) {
+		const step = steps[refs];
+		if (step) {
+			const { files: _files, ...inputs } = object(step.with);
+			steps[refs] = {
+				...step,
+				with: { ...inputs, ...(distributionFiles.length ? { files: JSON.stringify(distributionFiles) } : {}) },
+			};
+		}
+	}
 	if (
 		operation === 'promote' && release && refs >= 0
 		&& !steps.some(step => typeof step.uses === 'string' && /\/actions\/publish-release\b/.test(step.uses))

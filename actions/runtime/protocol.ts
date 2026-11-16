@@ -1,4 +1,6 @@
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Data, Effect, Result } from 'effect';
 import type { DomainError } from '@/contract/errors.ts';
 import { isJson } from '@/contract/http.ts';
@@ -122,7 +124,35 @@ export function requestBody(mode: Mode, environment: Environment, now: number): 
 			}
 			case 'credentials':
 				return { executionId, aliases: yield* array(yield* json(environment.ALIASES || '[]')) };
-			case 'refs-plan':
+			case 'refs-plan': {
+				const paths = yield* Result.all((yield* array(yield* json(environment.DISTRIBUTION_PATHS || '[]'))).map(text));
+				if (paths.length === 0) return { executionId };
+				const root = yield* required(environment, 'GITHUB_WORKSPACE');
+				const files = yield* Result.all(paths.map(path => Result.gen(function*() {
+					if (
+						!/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/.test(path)
+						|| path.split('/').some(part => part === '..' || part === '.')
+					) return yield* refuse('Invalid distribution path');
+					const listed = spawnSync('git', ['ls-tree', '--name-only', 'HEAD', '--', path], {
+						cwd: root,
+						encoding: 'utf8',
+					});
+					if (listed.status !== 0) return yield* refuse('Could not read the reviewed source tree');
+					let before = '';
+					if (listed.stdout.trim()) {
+						const original = spawnSync('git', ['show', `HEAD:${path}`], { cwd: root, maxBuffer: 64 * 1024 * 1024 });
+						if (original.status !== 0) return yield* refuse('Could not read the reviewed distribution file');
+						before = original.stdout.toString('base64');
+					}
+					return {
+						path,
+						before,
+						encoding: 'base64',
+						after: yield* attempt(() => readFileSync(join(root, path)).toString('base64')),
+					};
+				})));
+				return { executionId, files };
+			}
 			case 'refs-complete':
 			case 'release':
 				return { executionId };

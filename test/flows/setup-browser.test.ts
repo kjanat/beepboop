@@ -111,6 +111,26 @@ function role(form: HTMLFormElement, name: string): HTMLElement {
 	return section;
 }
 
+test('the dashboard offers action releases for nested metadata without requiring a package', async () => {
+	const repository = world.github.create('octo/composite', {
+		'actions/tool/action.yaml': 'name: Tool\nruns:\n  using: composite\n  steps: []\n',
+	});
+	const form = await open(repository.name);
+	const action = control(form, 'GitHub Action release refs', window.HTMLSelectElement);
+	expect(action.value).toBe('');
+	expect(form.textContent).toContain('Enable immutable Releases');
+	change(action, 'source');
+	const commands = control(
+		role(form, 'promote'),
+		'Shell commands that publish the selected packages',
+		window.HTMLTextAreaElement,
+	);
+	expect(commands.required).toBe(false);
+	await act(form, 'preview');
+	expect(form.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(false);
+	expect(form.querySelector('.setup-result')?.textContent).toContain('action-aliases.yml');
+});
+
 test('the dashboard asks for the security key only for a grant the server accepts', async () => {
 	const api: {
 		elevatedApi(
@@ -675,9 +695,13 @@ function toolRepository() {
 
 test('the dashboard renders a control for every stream and publication workflow field', async () => {
 	const form = await open(toolRepository().name);
-	for (const field of [...choicesFields.filter(field => field !== 'streams'), ...streamFields]) {
+	for (const field of [
+		...choicesFields.filter(field => field !== 'streams'),
+		...streamFields.filter(field => field !== 'actionRelease'),
+	]) {
 		expect([field, form.querySelector(`[data-field~="${field}"]`) !== null]).toEqual([field, true]);
 	}
+	expect(form.querySelector('[data-field="actionRelease"]')).toBeNull();
 	const publishing = role(form, 'promote');
 	for (const field of workflowFields) {
 		expect([field, publishing.querySelector(`[data-field~="${field}"]`) !== null]).toEqual([field, true]);

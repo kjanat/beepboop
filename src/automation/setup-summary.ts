@@ -45,6 +45,21 @@ export function streamSummary(
 		]);
 	};
 	const lines: string[] = [];
+	if (stream.actionRelease) {
+		lines.push(
+			'The repository owner must enable immutable Releases before publication. Distribution publication also requires permission to update the default branch; a rejected or bypassed rule stops publication.',
+		);
+		lines.push(
+			'Publishes an immutable signed patch tag and GitHub Release, then advances mutable major and minor refs in a dependent workflow.',
+		);
+		if (stream.actionRelease.kind === 'distribution') {
+			lines.push(
+				`Publishes the selected generated files (${
+					listed(stream.actionRelease.files)
+				}) on version refs. An ours merge preserves descendant history while retaining the source tree on the default branch. Review the build commands and include all runtime assets.`,
+			);
+		}
+	}
 	const observed = new Set(stream.observe?.flatMap(entry => entry.publications) ?? []);
 	const delegated = new Set(stream.operations?.flatMap(entry => entry.publications) ?? []);
 	const promote = stream.promote;

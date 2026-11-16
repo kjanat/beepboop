@@ -101,6 +101,12 @@ const cases: {
 	value: unknown;
 }[] = [
 	{
+		flags: ['action-release'],
+		args: ['--action-release', '{"kind":"source"}'],
+		read: c => main(c).actionRelease,
+		value: { kind: 'source' },
+	},
+	{
 		flags: ['stream'],
 		args: ['--stream', 'extra', '--package', 'tool'],
 		read: c => c.streams.map(s => s.name),

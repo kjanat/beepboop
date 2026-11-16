@@ -339,8 +339,12 @@ export function workflow(
 			&& (preparing || !mappingControls.size || [...mappingControls.values()].some(control => !control.value));
 		commandBox.hidden = !needsCommands;
 		commands.disabled = !needsCommands;
-		commands.required = needsCommands;
-		if (!commandsEdited) commands.value = suggestedCommands(role, selection(), plan);
+		commands.required = needsCommands && (preparing || selection().actionRelease !== 'source');
+		if (!commandsEdited) {
+			commands.value = !preparing && selection().actionRelease === 'distribution'
+				? initial?.commands || plan.actionRelease?.commands || ''
+				: suggestedCommands(role, selection(), plan);
+		}
 		commandNotice.textContent = commandsEdited
 			? ''
 			: commands.value

@@ -535,7 +535,15 @@ export const routes = {
 		path: '/api/workflow/refs-plan',
 		auth: 'workflow',
 		idempotent: true,
-		request: mutableStruct({ executionId: text }),
+		request: mutableStruct({
+			executionId: text,
+			files: Schema.optional(mutableArray(mutableStruct({
+				path: text,
+				before: Schema.String,
+				after: Schema.String,
+				encoding: Schema.optional(Schema.Literal('base64')),
+			}))),
+		}),
 		response: Schema.Unknown,
 	}),
 	workflowRefsComplete: route({

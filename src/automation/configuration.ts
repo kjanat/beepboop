@@ -133,7 +133,7 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 		let refs: WorkflowBinding['refs'];
 		if (data.refs !== undefined) {
 			const policy = yield* record(data.refs);
-			yield* keys(policy, ['phase', 'prefix', 'aliases', 'signed'], 'refs');
+			yield* keys(policy, ['phase', 'prefix', 'aliases', 'signed', 'immutable', 'distribution'], 'refs');
 			const phase = yield* oneOf(policy.phase, ['version', 'aliases'], 'Invalid ref phase');
 			const prefix = policy.prefix === undefined ? 'v' : String(policy.prefix);
 			if (!validTagPrefix(prefix)) return yield* invalid('Invalid tag prefix');
@@ -144,7 +144,33 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 			if (policy.signed !== undefined && typeof policy.signed !== 'boolean') {
 				return yield* invalid('Invalid signed policy');
 			}
-			refs = { phase, prefix, aliases, signed: policy.signed === true };
+			if (policy.immutable !== undefined && typeof policy.immutable !== 'boolean') {
+				return yield* invalid('Invalid immutable release policy');
+			}
+			let distribution: NonNullable<WorkflowBinding['refs']>['distribution'];
+			if (policy.distribution !== undefined) {
+				const value = yield* record(policy.distribution);
+				yield* keys(value, ['files', 'ancestry'], 'distribution');
+				const files = yield* strings(value.files);
+				if (!files.length || new Set(files).size !== files.length) {
+					return yield* invalid('Distribution files must be a nonempty unique list');
+				}
+				distribution = {
+					files,
+					ancestry: yield* oneOf(value.ancestry, ['ours'], 'Invalid distribution ancestry policy'),
+				};
+				if (phase !== 'version' || policy.signed !== true) {
+					return yield* invalid('Distribution publication requires signed version refs');
+				}
+			}
+			refs = {
+				phase,
+				prefix,
+				aliases,
+				signed: policy.signed === true,
+				...(policy.immutable === undefined ? {} : { immutable: policy.immutable }),
+				...(distribution === undefined ? {} : { distribution }),
+			};
 		}
 		const file = yield* text(data.file);
 		const ref = data.ref === undefined ? undefined : yield* text(data.ref);

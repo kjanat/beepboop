@@ -15,6 +15,8 @@ export const refPolicyValue = mutableStruct({
 	prefix: Schema.String,
 	aliases: mutableArray(Schema.Literals(['major', 'minor'])),
 	signed: Schema.Boolean,
+	immutable: Schema.optional(Schema.Boolean),
+	distribution: Schema.optional(mutableStruct({ files: strings, ancestry: Schema.Literal('ours') })),
 });
 const binding = {
 	outputs: Schema.optional(mutableArray(outputSchema)),

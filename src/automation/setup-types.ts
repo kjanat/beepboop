@@ -47,6 +47,7 @@ export interface WorkflowEvidence {
 	publishes: boolean;
 }
 export interface SetupPlan {
+	actionRelease?: { manifests: string[]; files: string[]; missing: string[]; commands: string };
 	publishingChecks?: PublishingCheck[];
 	repository: string;
 	sourceSha: string;

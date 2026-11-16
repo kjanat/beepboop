@@ -103,6 +103,26 @@ async function propose(repository: string, choices: unknown) {
 	return file;
 }
 
+test('interactive adoption offers action refs for a repository with no publishable packages', async () => {
+	const repository = world.github.create('octo/composite', {
+		'action.yaml': 'name: Tool\nruns:\n  using: composite\n  steps: []\n',
+	});
+	const session = defaults(
+		{ 'main: adopt action release refs?': 'source' },
+		{ 'Open or refresh the setup PR with these exact changes?': false },
+	);
+	const result = await app.execute(['adopt', repository.name], {
+		prompter: session.prompter,
+		isTTY: true,
+		color: false,
+		env: {},
+	});
+	expect([result.exitCode, result.stderr.join('')]).toEqual([0, '']);
+	expect(session.prompts.some(prompt => prompt.message === 'main: adopt action release refs?')).toBe(true);
+	expect(result.stdout.join('')).toContain('action-aliases.yml');
+	expect(repository.pulls).toHaveLength(0);
+});
+
 test('adopt enrolls a repository, reviews generated files and only opens a PR after confirmation', async () => {
 	const repository = widget(world.github, { configured: false });
 	const original = world.github.head(repository);

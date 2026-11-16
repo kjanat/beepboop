@@ -118,9 +118,20 @@ const refPolicy = mapped(
 			'Invalid aliases',
 		).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 		signed: Schema.optional(Schema.Boolean),
+		immutable: Schema.optional(Schema.Boolean),
+		distribution: Schema.optional(
+			strictStruct({ files: mutableArray(nonempty).check(Schema.isMinLength(1)), ancestry: Schema.Literal('ours') }),
+		),
 	}),
 	Schema.toType(refPolicyValue),
-	({ phase, prefix, aliases, signed }) => ({ phase, prefix, aliases, signed: signed === true }),
+	({ phase, prefix, aliases, signed, immutable, distribution }) => ({
+		phase,
+		prefix,
+		aliases,
+		signed: signed === true,
+		...(immutable === undefined ? {} : { immutable }),
+		...(distribution === undefined ? {} : { distribution }),
+	}),
 	value => value,
 );
 

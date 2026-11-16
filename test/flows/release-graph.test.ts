@@ -2913,7 +2913,8 @@ describe('release streams', () => {
 		expect(graph.streams).toEqual([]);
 		const snapshot = await snapshotFrom(files, 1, 'octo/widget');
 		expect(Object.keys(snapshot.files)).toContain('actions/build/action.yml');
-		expect(Object.keys(snapshot.files)).not.toContain('actions/build/unused/action.yml');
+		expect(Object.keys(snapshot.files)).toContain('actions/build/unused/action.yml');
+		expect(plan(snapshot).graph.streams).toEqual([]);
 	});
 
 	test('rehearsals, PyPI working directories and mise task scripts', async () => {

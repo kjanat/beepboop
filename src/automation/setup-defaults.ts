@@ -4,6 +4,7 @@ import { parentDirectory } from '@/relative-path';
 
 export interface Selection {
 	name: string;
+	actionRelease?: 'source' | 'distribution';
 	packages: { id: string; name: string; manifest: string; versionSource?: string; manager?: string }[];
 }
 export function preparationReasons(plan: SetupPlan, selection: Selection): string[] {

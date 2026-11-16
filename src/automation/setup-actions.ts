@@ -8,6 +8,7 @@ interface Pin {
 }
 
 const pins = {
+	setupBun: { repository: 'oven-sh/setup-bun', sha: '0c5077e51419868618aeaa5fe8019c62421857d6', version: 'v2.2.0' },
 	checkout: { repository: 'actions/checkout', sha: '3d3c42e5aac5ba805825da76410c181273ba90b1', version: 'v7.0.1' },
 	setupGo: { repository: 'actions/setup-go', sha: 'b7ad1dad31e06c5925ef5d2fc7ad053ef454303e', version: 'v7.0.0' },
 	upload: {

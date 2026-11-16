@@ -11,7 +11,7 @@ from the existing release workflows. It reads the workflows, the local actions,
 scripts and task recipes they run, and the repository's tags. It groups them
 into release streams. Each tag family, manually dispatched release and scheduled
 channel gets one stream. Each stream observes its existing workflows and keeps
-their triggers. Adoption changes only `.github/beepboop.json`.
+their triggers. The initial proposal changes `.github/beepboop.json`. Selecting managed publication can also create or update workflows.
 
 The setup PR body has a **Release plan** section. For each stream it lists:
 
@@ -35,6 +35,28 @@ A new workflow gets an editable filename based on the package or repository
 name, a publishing job and the required dispatch trigger. Beepboop selects the
 job in an existing workflow when the workflow has a single job or a recognized
 integration. You choose a job only when its purpose is ambiguous.
+
+Repositories containing a root or nested `action.yml` or `action.yaml` also
+get an opt-in action release offer in the CLI and dashboard. It publishes an
+immutable signed patch tag and GitHub Release, then advances mutable major and
+minor aliases through a dependent operation. Existing setup stays unchanged
+until you select the offer. The repository owner must enable immutable Releases
+before publication.
+
+Choose source publication for actions whose runnable files are already tracked,
+including composite and Docker actions. For generated JavaScript entry points,
+choose distribution publication and review the editable file list. The detected
+`main`, `pre` and `post` paths are a starting list: add runtime assets, licenses
+and chunks as needed. Review the inferred build commands and tool setup before
+accepting the proposal. Distribution publication keeps generated files out of
+the default branch and records their signed commit through a source-preserving
+ancestry merge. A required or bypassed repository rule stops that publication.
+
+JSON setup choices express the same selection per stream as
+`"actionRelease": {"kind": "source"}` or
+`"actionRelease": {"kind": "distribution", "files": ["dist/main.mjs"]}`.
+The selected tag prefix and version files are retained. Setup refuses to
+replace a distinct owner-defined aliases operation.
 
 When the repository has a `mise.toml`, `.mise.toml` or `.config/mise.toml`,
 setup adds a `jdx/mise-action` step before the step that runs the commands. A
@@ -1360,6 +1382,44 @@ The action publishes an authorized plan with atomic Git pushes and explicit
 expected old object IDs. Version tags target one commit. Stable aliases exclude
 prereleases and reject downgrades. Beepboop checks the resulting refs before it
 completes the operation. Beepboop reserves `refs:` report IDs for this check.
+
+For source-only repositories, a version ref policy can declare a generated
+distribution and require immutable GitHub Releases:
+
+```json
+{
+  "phase": "version",
+  "signed": true,
+  "immutable": true,
+  "distribution": {
+    "files": ["dist/main.mjs", "dist/post.mjs"],
+    "ancestry": "ours"
+  }
+}
+```
+
+Build and test those files after `actions/begin`, then pass the same JSON path
+array to `actions/publish-refs` through its `files` input. Paths are exact file
+names, outside Git internals and workflow files. Every configured file must be
+present once. Beepboop compares the source bytes, signs a commit that overlays
+the generated files onto the reviewed source tree, and signs a two-parent merge
+whose tree is the original source tree. The signing service must be configured,
+and GitHub must verify both commit signatures.
+
+The authorized ref plan freezes the distribution target. Retries must provide
+the same bytes. The runtime verifies the signed commits, tree and parents, then
+atomically pushes the patch tag and ancestry merge with expected-old leases.
+The default branch keeps its source-only tree while the distribution becomes
+its ancestor. An aliases operation that depends on this promotion targets the
+same frozen distribution commit. Source approval, CI and provenance continue
+to use the reviewed source SHA.
+
+With `immutable: true`, Beepboop requires repository-level immutable releases
+before authorizing refs and verifies the published Release's immutable flag.
+It creates no major/minor Releases; those aliases remain mutable. Distribution
+Release creation waits for independently confirmed ref and ancestry publication.
+The generated files live in Git rather than in Release assets. Existing source
+release flows retain their default behavior when these options are absent.
 
 When a dispatched operation lists `github-release:<owner>/<repo>` in its
 `publications`, Beepboop creates a draft release before it dispatches the run.

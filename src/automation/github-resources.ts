@@ -99,6 +99,7 @@ export const workflowJobsSchema = mutableStruct({
 export const dispatchSchema = Schema.NullOr(mutableStruct({ workflow_run_id: Schema.optional(countSchema) }));
 const assetSchema = mutableStruct({ id: countSchema, name: textSchema, state: looseSchema, content_type: textSchema });
 export const releaseSchema = mutableStruct({
+	immutable: Schema.optional(Schema.Boolean),
 	id: countSchema,
 	tag_name: looseSchema,
 	target_commitish: looseSchema,
