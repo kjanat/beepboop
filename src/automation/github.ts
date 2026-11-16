@@ -10,6 +10,7 @@ import {
 	comparisonSchema,
 	contentSchema,
 	createdSchema,
+	createdTagSchema,
 	gitCommitSchema,
 	gitRefSchema,
 	gitTagSchema,
@@ -412,6 +413,36 @@ export class RepositoryGateway {
 			const run = yield* self.read(workflowRunSchema, `/repos/${name}/actions/runs/${runId}`, token);
 			if (run.repository.id !== id) return yield* precondition('Run identity changed');
 			return { title: run.display_title, path: run.path };
+		});
+	}
+	/** GitHub builds the tag object from these fields; a signature appended to the message verifies when the fields reproduce the signed payload. */
+	createTag(
+		name: string,
+		id: number,
+		tag: {
+			name: string;
+			commit: string;
+			message: string;
+			tagger: { name: string; email: string; date: string };
+			signed: boolean;
+		},
+	): Effect.Effect<void, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const token = yield* self.token(name, id, { contents: 'write' });
+			const created = yield* self.read(createdTagSchema, `/repos/${name}/git/tags`, token, 'POST', {
+				tag: tag.name,
+				message: tag.message,
+				object: tag.commit,
+				type: 'commit',
+				tagger: tag.tagger,
+			});
+			if (tag.signed && !created.verification.verified) {
+				return yield* precondition(
+					`GitHub did not verify the signature of ${tag.name} (${created.verification.reason ?? 'unknown reason'})`,
+				);
+			}
+			yield* self.call(`/repos/${name}/git/refs`, token, 'POST', { ref: `refs/tags/${tag.name}`, sha: created.sha });
 		});
 	}
 	tagRefs(name: string, id: number): Effect.Effect<RefState[], DomainError> {

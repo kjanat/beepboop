@@ -1123,6 +1123,65 @@ test('the signer binding signs the version tag without a signed ref policy', asy
 	}
 }, 30_000);
 
+test('a successful release creates the signed tags of its published packages', async () => {
+	const key = signingKey('Release Bot (CI) <release@example.com>');
+	try {
+		const signer = fakeSigner(key);
+		const { repository, plan } = await packedRelease(world, undefined, { key, signer }, false, undefined, false, true);
+		await world.wait(2_000);
+		const promotion = await only(bearer(world, await world.cliSession()), 'promote');
+		expect(promotion.state).toBe('succeeded');
+		expect(plan.changes.map(change => change.name)).toEqual(['v1.1.0']);
+		const ref = repository.refs.get('tags/widget-v1.1.0');
+		const tag = ref === undefined ? undefined : repository.tagObjects.get(ref);
+		expect([tag?.name, tag?.commit, tag?.verified]).toEqual(['widget-v1.1.0', promotion.sourceSha, true]);
+		expect(signer.calls.map(call => /^tag (.+)$/m.exec(call.data)?.[1])).toEqual(['v1.1.0', 'widget-v1.1.0']);
+	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
+test('a package tag a release cannot create is logged and leaves the release succeeded', async () => {
+	const key = signingKey('Release Bot (CI) <release@example.com>');
+	try {
+		const logged = loggedErrors();
+		world.github.verifiesTags = false;
+		const { repository } = await packedRelease(
+			world,
+			undefined,
+			{ key, signer: fakeSigner(key) },
+			false,
+			undefined,
+			false,
+			true,
+		);
+		await world.wait(2_000);
+		const promotion = await only(bearer(world, await world.cliSession()), 'promote');
+		expect([promotion.state, repository.refs.has('tags/widget-v1.1.0')]).toEqual(['succeeded', false]);
+		expect(logged.events()).toContainEqual(expect.objectContaining({
+			event: 'package-tags.failed',
+			executionId: promotion.id,
+			tag: 'widget-v1.1.0',
+			error: 'GitHub did not verify the signature of widget-v1.1.0 (unsigned)',
+		}));
+	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
+test('a release without packageTags creates no package tag', async () => {
+	const key = signingKey('Release Bot (CI) <release@example.com>');
+	try {
+		const signer = fakeSigner(key);
+		const { repository } = await packedRelease(world, undefined, { key, signer });
+		await world.wait(2_000);
+		expect([...repository.refs.keys()].filter(ref => ref.startsWith('tags/widget-'))).toEqual([]);
+		expect(signer.calls.length).toBe(1);
+	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
 test('a companion module tag is pushed on the release commit beside the version tag', async () => {
 	const { plan, tags } = await packedRelease(world, undefined, undefined, false, 'github.com/octo/widget/go');
 	const promotion = await only(bearer(world, await world.cliSession()), 'promote');

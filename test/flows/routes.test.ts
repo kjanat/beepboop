@@ -39,6 +39,7 @@ const legacy = [
 	'POST /api/winget/releases',
 	'POST /api/winget/preview',
 	'POST /api/winget/submit',
+	'POST /api/repositories/package-tags',
 	'POST /api/repositories/discover',
 	'POST /api/repositories/setup/preview',
 	'POST /api/repositories/setup/apply',

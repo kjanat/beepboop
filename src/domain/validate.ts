@@ -97,6 +97,35 @@ export function validateAgainst(
 				);
 			}
 		}
+		for (const reference of stream.packageTags ?? []) {
+			const matched = inventory.packages.filter(pkg => matchesPackage(reference, pkg));
+			if (!matched.length) {
+				report(
+					'blocking',
+					'unknown-reference',
+					subject,
+					`Stream ${name} packageTags names ${reference}, which discovery did not find`,
+				);
+			} else if (
+				stream.packages !== undefined
+				&& !matched.some(pkg => stream.packages?.some(entry => matchesPackage(entry, pkg)))
+			) {
+				report(
+					'blocking',
+					'package-tag',
+					subject,
+					`Stream ${name} packageTags names ${reference}, which is not one of its packages`,
+				);
+			}
+		}
+		if (stream.packageTags?.length && stream.promote.workflow?.refs?.phase !== 'version') {
+			report(
+				'warning',
+				'package-tag',
+				subject,
+				`Stream ${name} pushes no version tag, so Beepboop creates no package tags for it`,
+			);
+		}
 		for (const [operation, binding] of operations) {
 			const at: DiagnosticSubject = { kind: 'binding', stream: name, operation };
 			const severity = dispatched.has(operation) ? 'blocking' : 'warning';

@@ -1,0 +1,393 @@
+import { expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { Repository } from '@root/test/support/github.ts';
+import { bearer } from '@root/test/support/http.ts';
+import {
+	ciWorkflow,
+	jsonFile,
+	licenseText,
+	npmManifest,
+	passChecks,
+	publishWorkflow,
+} from '@root/test/support/repositories.ts';
+import type { SigningKey } from '@root/test/support/signing.ts';
+import { fakeSigner, signingKey } from '@root/test/support/signing.ts';
+import type { World } from '@root/test/support/world.ts';
+import { eachWorld } from '@root/test/support/world.ts';
+import { Result, Schema } from 'effect';
+import { parseRepositoryConfiguration } from '@/automation/configuration';
+import { registry } from '@/automation/package-publication';
+import { packageTagBase, packageTagGroups, packageTagRows, taggedReleases } from '@/automation/package-tags';
+import type { Inventory, Package } from '@/automation/types';
+import { packageTagView } from '@/contract/views';
+import { configurationDrift, configurationSchema } from '@/domain/configuration';
+import { validateAgainst } from '@/domain/validate';
+import { storedConfiguration } from '@/persistence/codecs/configuration';
+import { decodeSync, mutableArray } from '@/schema';
+
+let world: World;
+eachWorld(created => {
+	world = created;
+});
+
+const results = mutableArray(packageTagView);
+const commit = 'a'.repeat(40), other = 'b'.repeat(40), oid = 'c'.repeat(40);
+
+function configuration(packageTags: string[]) {
+	return jsonFile({
+		$schema: 'https://beepboop.kjanat.dev/schema/v1.json',
+		managers: ['npm', 'workflow'],
+		streams: {
+			main: {
+				packages: ['pkg:npm/widget'],
+				packageTags,
+				required: ['pkg:npm/widget'],
+				credentials: ['npm-token'],
+				prepare: { strategy: 'managed' },
+				promote: {
+					approval: 'required',
+					workflow: {
+						file: 'publish.yml',
+						publications: ['pkg:npm/widget'],
+						refs: { phase: 'version', prefix: 'v', signed: true },
+					},
+				},
+			},
+		},
+	}, '\t');
+}
+
+async function released(packageTags = ['pkg:npm/widget']) {
+	const repository = world.github.create('octo/widget', {
+		'package.json': npmManifest('widget', '1.0.0'),
+		'README.md': '# widget\n',
+		LICENSE: licenseText,
+		'.github/workflows/publish.yml': publishWorkflow,
+		'.github/workflows/ci.yml': ciWorkflow,
+		'.github/beepboop.json': configuration(packageTags),
+	});
+	const first = world.github.head(repository);
+	passChecks(repository, first);
+	const second = world.github.push(repository, { 'README.md': '# widget\n\nUsage.\n' }, 'Document usage').sha;
+	passChecks(repository, second);
+	world.github.recordTag(repository, 'v0.9.0', '1'.repeat(40), first, true);
+	world.github.recordTag(repository, 'v1.0.0', '2'.repeat(40), second, true);
+	world.npm.publish('widget', '1.0.0');
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: 'octo/widget' })).status).toBe(200);
+	const tags = async (apply: boolean) => {
+		const reply = await api('/api/repositories/package-tags', { repositoryId: repository.id, stream: 'main', apply });
+		expect(reply.status).toBe(200);
+		return decodeSync(results, reply.body);
+	};
+	return { repository, first, second, api, tags };
+}
+
+function verifies(key: SigningKey, raw: string): boolean {
+	const dir = mkdtempSync(join(tmpdir(), 'beepboop-package-tag-'));
+	try {
+		spawnSync('git', ['init', '-q'], { cwd: dir });
+		const written = spawnSync('git', ['hash-object', '-t', 'tag', '-w', '--stdin', '--literally'], {
+			cwd: dir,
+			input: raw,
+			encoding: 'utf8',
+		});
+		return key.verifies(dir, written.stdout.trim());
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+function tagObject(repository: Repository, name: string) {
+	const ref = repository.refs.get(`tags/${name}`);
+	return ref === undefined ? undefined : repository.tagObjects.get(ref);
+}
+
+test('a package tag joins an npm scope to the name the way npm pack names its archive', () => {
+	expect(packageTagBase('pkg:npm/%40kjanat/svg-toolkit')).toBe('kjanat-svg-toolkit');
+	expect(packageTagBase('pkg:cargo/svg-data')).toBe('svg-data');
+	expect(packageTagGroups(['pkg:cargo/tree-sitter-svg', 'pkg:npm/tree-sitter-svg', 'pkg:cargo/svg-data'], 'v'))
+		.toEqual([
+			{ prefix: 'tree-sitter-svg-v', references: ['pkg:cargo/tree-sitter-svg', 'pkg:npm/tree-sitter-svg'] },
+			{ prefix: 'svg-data-v', references: ['pkg:cargo/svg-data'] },
+		]);
+});
+
+test('package tag rows cover each released version and keep tags on another commit apart', () => {
+	const refs = [
+		{ name: 'v1.0.0', oid, commit },
+		{ name: 'v1', oid, commit },
+		{ name: 'svg-data-v1.0.0', oid, commit: other },
+		{ name: 'v1.1.0', oid, commit: other },
+		{ name: 'svg-data-v1.1.0', oid, commit: other },
+	];
+	const releases = taggedReleases('v', refs);
+	expect(releases).toEqual([{ version: '1.0.0', commit }, { version: '1.1.0', commit: other }]);
+	expect(
+		packageTagRows(packageTagGroups(['pkg:cargo/svg-data', 'pkg:cargo/svg-tree'], 'v'), releases, refs).map(
+			row => [row.tag, row.state, row.target],
+		),
+	).toEqual([
+		['svg-data-v1.0.0', 'conflict', other],
+		['svg-tree-v1.0.0', 'missing', undefined],
+		['svg-data-v1.1.0', 'exists', undefined],
+		['svg-tree-v1.1.0', 'missing', undefined],
+	]);
+});
+
+test('a backfill creates signed tags only for the versions each package published', async () => {
+	const key = signingKey('Release Bot (CI) <release@example.com>');
+	try {
+		const signer = fakeSigner(key);
+		world.env.SIGNER = signer;
+		const { repository, first, second, tags } = await released();
+		expect(await tags(false)).toEqual([
+			{ tag: 'widget-v0.9.0', version: '0.9.0', commit: first, outcome: 'unpublished' },
+			{ tag: 'widget-v1.0.0', version: '1.0.0', commit: second, outcome: 'publishable' },
+		]);
+		expect([repository.refs.has('tags/widget-v1.0.0'), signer.calls]).toEqual([false, []]);
+		expect(await tags(true)).toEqual([
+			{ tag: 'widget-v0.9.0', version: '0.9.0', commit: first, outcome: 'unpublished' },
+			{ tag: 'widget-v1.0.0', version: '1.0.0', commit: second, outcome: 'created' },
+		]);
+		const created = tagObject(repository, 'widget-v1.0.0');
+		expect([created?.name, created?.commit, created?.verified]).toEqual(['widget-v1.0.0', second, true]);
+		expect(signer.calls).toEqual([{
+			data: expect.stringMatching(
+				new RegExp(
+					`^object ${second}\\ntype commit\\ntag widget-v1\\.0\\.0\\ntagger Release Bot \\(CI\\) <release@example\\.com> \\d+ \\+0000\\n\\nRelease 1\\.0\\.0\\n$`,
+				),
+			),
+			caller: 'beepboop:octo/widget',
+		}]);
+		expect(verifies(key, created?.raw ?? '')).toBe(true);
+		expect(await tags(true)).toEqual([
+			{ tag: 'widget-v0.9.0', version: '0.9.0', commit: first, outcome: 'unpublished' },
+			{ tag: 'widget-v1.0.0', version: '1.0.0', commit: second, outcome: 'exists' },
+		]);
+		expect(signer.calls.length).toBe(1);
+	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
+test('a backfill never moves a package tag that targets another commit', async () => {
+	const key = signingKey('Release Bot (CI) <release@example.com>');
+	try {
+		world.env.SIGNER = fakeSigner(key);
+		const { repository, first, second, tags } = await released();
+		world.github.recordTag(repository, 'widget-v1.0.0', '3'.repeat(40), first, true);
+		expect(await tags(true)).toEqual([
+			{ tag: 'widget-v0.9.0', version: '0.9.0', commit: first, outcome: 'unpublished' },
+			{
+				tag: 'widget-v1.0.0',
+				version: '1.0.0',
+				commit: second,
+				outcome: 'conflict',
+				reason: `widget-v1.0.0 already targets ${first.slice(0, 12)}`,
+			},
+		]);
+		expect(repository.refs.get('tags/widget-v1.0.0')).toBe('3'.repeat(40));
+	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
+test('a backfill without the tag signer creates no tag', async () => {
+	const { repository, second, tags } = await released();
+	expect(await tags(true)).toContainEqual({
+		tag: 'widget-v1.0.0',
+		version: '1.0.0',
+		commit: second,
+		outcome: 'failed',
+		reason: 'Package tags need the tag signer',
+	});
+	expect(repository.refs.has('tags/widget-v1.0.0')).toBe(false);
+}, 30_000);
+
+test('a backfill refuses a stream without packageTags', async () => {
+	const { repository, api } = await released([]);
+	const refused = await api('/api/repositories/package-tags', {
+		repositoryId: repository.id,
+		stream: 'main',
+		apply: false,
+	});
+	expect([refused.status, decodeSync(Schema.Struct({ error: Schema.String }), refused.body).error]).toEqual([
+		422,
+		'Stream main names no packageTags',
+	]);
+}, 30_000);
+
+const widgetPackage: Package = {
+	manager: 'npm',
+	name: 'widget',
+	version: '1.0.0',
+	manifest: 'package.json',
+	versionSource: 'manifest:package.json',
+	publication: registry,
+	dependencies: [],
+};
+const gadgetPackage: Package = { ...widgetPackage, name: 'gadget', manifest: 'gadget/package.json' };
+const paths = { paths: ['.github/workflows/publish.yml', '.github/workflows/ci.yml'] };
+
+test('packageTags survive parsing, storage and drift checks', () => {
+	const document = JSON.parse(configuration(['pkg:npm/widget']));
+	const parsed = decodeSync(configurationSchema, document);
+	expect(parsed.streams.main?.packageTags).toEqual(['pkg:npm/widget']);
+	const repository = parseRepositoryConfiguration(document);
+	if (Result.isFailure(repository)) throw repository.failure;
+	expect(repository.success.streams.main?.packageTags).toEqual(['pkg:npm/widget']);
+	expect(configurationDrift(document, repository.success)).toEqual([]);
+	const encoded = JSON.stringify(parsed);
+	expect(JSON.stringify(decodeSync(storedConfiguration, JSON.parse(encoded)))).toBe(encoded);
+	document.streams.main.packageTags = 'pkg:npm/widget';
+	expect(Result.isFailure(parseRepositoryConfiguration(document))).toBe(true);
+});
+
+test('validation blocks packageTags outside the stream packages and warns without a version tag', () => {
+	const inventory: Inventory = {
+		packages: [widgetPackage, gadgetPackage],
+		workflows: [],
+		managers: ['npm'],
+		diagnostics: [],
+		publicationOrder: [],
+	};
+	const document = JSON.parse(configuration(['pkg:npm/widget', 'pkg:npm/gadget', 'pkg:npm/missing']));
+	const found = (value: unknown) =>
+		validateAgainst(decodeSync(configurationSchema, value), inventory, paths)
+			.filter(entry => entry.message.includes('packageTags') || entry.code === 'package-tag')
+			.map(entry => [entry.severity, entry.code, entry.message]);
+	expect(found(document)).toEqual([
+		['blocking', 'package-tag', 'Stream main packageTags names pkg:npm/gadget, which is not one of its packages'],
+		['blocking', 'unknown-reference', 'Stream main packageTags names pkg:npm/missing, which discovery did not find'],
+	]);
+	document.streams.main.packageTags = ['pkg:npm/widget'];
+	delete document.streams.main.promote.workflow.refs;
+	expect(found(document)).toEqual([
+		['warning', 'package-tag', 'Stream main pushes no version tag, so Beepboop creates no package tags for it'],
+	]);
+});
+
+test('a tag GitHub cannot verify gets no ref', async () => {
+	const key = signingKey('Release Bot (CI) <release@example.com>');
+	try {
+		world.env.SIGNER = fakeSigner(key);
+		world.github.verifiesTags = false;
+		const { repository, second, tags } = await released();
+		expect(await tags(true)).toContainEqual({
+			tag: 'widget-v1.0.0',
+			version: '1.0.0',
+			commit: second,
+			outcome: 'failed',
+			reason: 'GitHub did not verify the signature of widget-v1.0.0 (unsigned)',
+		});
+		expect(repository.refs.has('tags/widget-v1.0.0')).toBe(false);
+	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
+test('a signing key without a name and email creates no tag', async () => {
+	const key = signingKey('Release Bot (CI) <release@example.com>');
+	try {
+		world.env.SIGNER = fakeSigner(key, { userId: 'release bot' });
+		const { repository, second, tags } = await released();
+		expect(await tags(true)).toContainEqual({
+			tag: 'widget-v1.0.0',
+			version: '1.0.0',
+			commit: second,
+			outcome: 'failed',
+			reason: 'The signing key needs a user ID with a name and email',
+		});
+		expect(repository.refs.has('tags/widget-v1.0.0')).toBe(false);
+	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
+test('a registry that does not answer leaves the tag out and says so', async () => {
+	const key = signingKey('Release Bot (CI) <release@example.com>');
+	try {
+		world.env.SIGNER = fakeSigner(key);
+		const { repository, first, second, tags } = await released();
+		world.network.serve('registry.npmjs.org', () => new Response('unavailable', { status: 503 }));
+		expect(await tags(true)).toEqual([
+			{
+				tag: 'widget-v0.9.0',
+				version: '0.9.0',
+				commit: first,
+				outcome: 'failed',
+				reason: 'The registry did not confirm 0.9.0: pkg:npm/widget is uncertain',
+			},
+			{
+				tag: 'widget-v1.0.0',
+				version: '1.0.0',
+				commit: second,
+				outcome: 'failed',
+				reason: 'The registry did not confirm 1.0.0: pkg:npm/widget is uncertain',
+			},
+		]);
+		expect(repository.refs.has('tags/widget-v1.0.0')).toBe(false);
+	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
+test('an applied backfill records the created tags in the audit log', async () => {
+	const key = signingKey('Release Bot (CI) <release@example.com>');
+	try {
+		world.env.SIGNER = fakeSigner(key);
+		const { tags } = await released();
+		await tags(true);
+		const rows = await world.db.prepare('SELECT target FROM audit WHERE action=?').bind('repository.package-tags')
+			.all();
+		expect(rows.results).toEqual([{ target: 'octo/widget: widget-v1.0.0' }]);
+	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
+test('a backfill names an unknown stream and a stream without a version tag', async () => {
+	const { repository, api } = await released();
+	const refusal = async (stream: string) => {
+		const reply = await api('/api/repositories/package-tags', { repositoryId: repository.id, stream, apply: false });
+		return [reply.status, decodeSync(Schema.Struct({ error: Schema.String }), reply.body).error];
+	};
+	expect(await refusal('other')).toEqual([422, 'Unknown stream other']);
+	const document = JSON.parse(configuration(['pkg:npm/widget']));
+	delete document.streams.main.promote.workflow.refs;
+	world.github.push(repository, { '.github/beepboop.json': jsonFile(document, '\t') }, 'Drop the version tag');
+	expect((await api('/api/repositories/discover', { repository: 'octo/widget' })).status).toBe(200);
+	expect(await refusal('main')).toEqual([422, 'Stream main pushes no version tag, so its packages get no tags']);
+}, 30_000);
+
+test('a stream without a packages list may tag any discovered package', () => {
+	const inventory: Inventory = {
+		packages: [widgetPackage],
+		workflows: [],
+		managers: ['npm'],
+		diagnostics: [],
+		publicationOrder: [],
+	};
+	const document = JSON.parse(configuration(['pkg:npm/widget']));
+	delete document.streams.main.packages;
+	expect(
+		validateAgainst(decodeSync(configurationSchema, document), inventory, paths).filter(entry =>
+			entry.message.includes('packageTags')
+		),
+	).toEqual([]);
+});
+
+test('a backfill refuses a repository without configuration', async () => {
+	const plain = world.github.create('octo/plain', { 'README.md': '# plain\n' });
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: 'octo/plain' })).status).toBe(200);
+	const refused = await api('/api/repositories/package-tags', { repositoryId: plain.id, stream: 'main', apply: false });
+	expect([refused.status, decodeSync(Schema.Struct({ error: Schema.String }), refused.body).error]).toEqual([
+		422,
+		'Repository not configured',
+	]);
+}, 30_000);

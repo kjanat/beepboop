@@ -19,6 +19,7 @@ import {
 	executionStates,
 	executionView,
 	notificationsView,
+	packageTagView,
 	planReview,
 	repositoryView,
 	securityChallenge,
@@ -154,6 +155,14 @@ export const routes = {
 		idempotent: true,
 		request: mutableStruct({ repository: text }),
 		response: repositoryView,
+	}),
+	repositoriesPackageTags: route({
+		method: 'POST',
+		path: '/api/repositories/package-tags',
+		auth: 'admin',
+		idempotent: false,
+		request: mutableStruct({ repositoryId: id, stream: text, apply: Schema.Boolean }),
+		response: mutableArray(packageTagView),
 	}),
 	repositoriesDiscover: route({
 		method: 'POST',

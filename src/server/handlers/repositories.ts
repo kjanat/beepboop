@@ -12,7 +12,7 @@ import type { DomainError } from '@/contract/errors';
 import { conflict, domainError, invalid, notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import { configurationDiagnostics } from '@/domain/configuration';
-import { fromJson } from '@/failure';
+import { fromJson, fromPromise } from '@/failure';
 import { record } from '@/model';
 import type { Context } from '@/server/handlers/kit';
 import { admin } from '@/server/handlers/kit';
@@ -30,6 +30,13 @@ function shown(repository: RepositoryRecord) {
 }
 
 export const repositoryEndpoints = {
+	repositoriesPackageTags: admin(
+		routes.repositoriesPackageTags,
+		(input, { service, actor }) =>
+			fromPromise(() =>
+				service.coordinator(input.repositoryId).packageTags(input.repositoryId, input.stream, input.apply, actor)
+			),
+	),
 	repositoriesList: admin(
 		routes.repositoriesList,
 		(_, { service }) => service.store.repositories().pipe(Effect.map(rows => rows.map(shown))),
