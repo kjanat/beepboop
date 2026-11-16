@@ -490,6 +490,19 @@ Such a release keeps its tags, its GitHub release and its run, and the retry
 publishes the packages that run left behind. A retry also refuses when the
 workflow branch no longer exists.
 
+When the cause of the failure is in the workflow itself, re-running the failed
+jobs repeats it, because a re-run keeps the workflow file of the original
+commit. `beepboop runs recover ID --action redispatch` dispatches the workflow
+at the head of the stream's workflow ref instead, such as the default branch,
+for a failed or cancelled promotion whose version tags already target its
+release commit. The workflow must check out the `sourceSha` that
+`actions/begin` returns before it builds. The checkout that setup generates
+does this, and Beepboop cannot check what a hand-written workflow builds.
+Beepboop accepts the run while the ref contains the release commit, and the
+release keeps its version tag, its draft and its published packages. Outputs
+of the superseded run are dropped. The command follows the release like
+`beepboop release`.
+
 ## Start a release
 
 Starting a release also publishes it. Beepboop runs the version bump, the

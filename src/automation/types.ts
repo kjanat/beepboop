@@ -197,6 +197,7 @@ export interface Execution {
 	reservation?: PublishKind;
 	notBefore?: number;
 	supersededRuns?: number[];
+	currentWorkflow?: boolean;
 	draftRelease?: { id: number; tag: string };
 	titled?: boolean;
 	dispatchedAt?: number;
