@@ -307,8 +307,8 @@ export class AutomationService {
 			}
 			const verification = this.gateway.verification(name, id);
 			discovered.inventory = yield* resolvePublished(discovered.inventory, this.dependencies.transport, verification);
-			const repository = yield* this.store.saveDiscovery(discovered);
-			yield* this.releaseFromManifest(repository).pipe(
+			const { repository, document: saved } = yield* this.store.saveDiscovery(discovered);
+			yield* this.releaseFromManifest(repository, saved).pipe(
 				this.store.auditFailure('beepboop', 'release.push.failed', name),
 			);
 			yield* maintainSetup(this.store, this.gateway, snapshot, this.publishingAccess(snapshot.repository)).pipe(
@@ -434,7 +434,7 @@ export class AutomationService {
 			for (const name of names) yield* setUpJsrPackage(name, repository, token);
 		}).pipe(Effect.provide(Layer.mergeAll(registryLayer(this.dependencies.transport), secretsLayer(this.vault()))));
 	}
-	private releaseFromManifest(stored: RepositoryRecord): Effect.Effect<void, DomainError> {
+	private releaseFromManifest(stored: RepositoryRecord, saved: string): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const state = readiness(stored);
 			if (state.kind !== 'ready') return;
@@ -442,7 +442,7 @@ export class AutomationService {
 			const exit = yield* Effect.exit(this.releaseStreams(state.repository, tagged));
 			if (tagged.length) {
 				stored.diagnostics.push(...tagged);
-				yield* this.store.saveDiscovery(stored);
+				yield* this.store.replaceDiscovery(saved, stored);
 			}
 			return yield* exit;
 		});

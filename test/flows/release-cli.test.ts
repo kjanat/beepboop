@@ -545,7 +545,7 @@ test('a package the registry cannot answer for gets no promotion and a repositor
 	]]);
 });
 
-test('a registry warning survives a later stream that fails', async () => {
+async function uncheckedBesideGadget() {
 	const { repository, configuration } = await delegated(['widget', 'gadget'], { widget: '1.2.3', gadget: '1.0.0' });
 	const file = decodeSync(looseStruct({ streams: streamRecord }), JSON.parse(JSON.stringify(configuration)));
 	const widgetId = 'pkg:npm/widget';
@@ -576,9 +576,16 @@ test('a registry warning survives a later stream that fails', async () => {
 		new URL(request.url).pathname === '/widget'
 			? new Response(null, { status: 503 })
 			: world.npm.handle(request));
+	return repository;
+}
+const tagLookup = async (request: Request) =>
+	new URL(request.url).pathname === '/graphql' && (await request.clone().text()).includes('refs/tags/');
+
+test('a registry warning survives a later stream that fails', async () => {
+	const repository = await uncheckedBesideGadget();
 	let tagLookups = 0;
 	world.network.serve('api.github.com', async request => {
-		if (new URL(request.url).pathname === '/graphql' && (await request.clone().text()).includes('refs/tags/')) {
+		if (await tagLookup(request)) {
 			tagLookups++;
 			return Response.json({ message: 'Unicorn' }, { status: 502 });
 		}
@@ -593,6 +600,38 @@ test('a registry warning survives a later stream that fails', async () => {
 		message:
 			'Beepboop starts no release of stream main until its registries answer for pkg:npm/widget. The next push or discovery asks again.',
 	});
+});
+
+test('the warnings of a slow discovery never replace a newer discovery', async () => {
+	const repository = await uncheckedBesideGadget();
+	let release!: () => void, entered!: () => void;
+	const held = new Promise<void>(resolve => {
+		release = resolve;
+	});
+	const reached = new Promise<void>(resolve => {
+		entered = resolve;
+	});
+	let first = true;
+	world.network.serve('api.github.com', async request => {
+		if (await tagLookup(request)) {
+			if (first) {
+				first = false;
+				entered();
+				await held;
+			}
+			return Response.json({ message: 'Unicorn' }, { status: 502 });
+		}
+		return world.github.handle(request);
+	});
+	const slow = Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	await reached;
+	const newer = world.github.push(repository, { 'README.md': '# widget, newer\n' }, 'Move the default branch');
+	passChecks(repository, newer.sha);
+	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	release();
+	await slow;
+	const row = await world.db.prepare('SELECT document FROM repositories WHERE name=?').bind(repository.name).first();
+	expect(decodeSync(looseStruct({ document: Schema.String }), row).document).toContain(`"sha":"${newer.sha}"`);
 });
 
 test('no approval overrides a version tag on another commit, and the CLI cancels the promotion', async () => {

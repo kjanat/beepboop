@@ -58,6 +58,10 @@ const executionRow = mutableStruct({
 	created: Schema.NullOr(Schema.Finite).pipe(Schema.catchDecoding(() => Effect.succeedSome(null))),
 });
 type ExecutionRow = Decoded<typeof executionRow>;
+function discoveryDocument(discovery: RepositoryDiscovery): Effect.Effect<string, DomainError> {
+	const repository = { ...discovery, access: { kind: 'active' as const } };
+	return fromSync(() => JSON.stringify(encodeRepository(identifyRepository(encodeRepository(repository)))));
+}
 const executionColumns = `id, repository_id, state, document, ${validJson('$.createdAt')} AS created`;
 const executionPage = 200;
 
@@ -156,22 +160,29 @@ export class Store {
 			Effect.flatMap(onboardingPulls),
 		);
 	}
-	saveDiscovery(discovery: RepositoryDiscovery): Effect.Effect<RepositoryRecord, DomainError> {
+	saveDiscovery(
+		discovery: RepositoryDiscovery,
+	): Effect.Effect<{ repository: RepositoryRecord; document: string }, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const repository = { ...discovery, access: { kind: 'active' as const } };
-			const document = yield* fromSync(() =>
-				JSON.stringify(encodeRepository(identifyRepository(encodeRepository(repository))))
-			);
+			const document = yield* discoveryDocument(discovery);
 			const row = yield* this.sql.first(
 				`INSERT INTO repositories(id,name,document,updated_at,added_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,document=excluded.document,updated_at=excluded.updated_at RETURNING ${repositoryColumns}`,
-				repository.id,
-				repository.name,
+				discovery.id,
+				discovery.name,
 				document,
-				repository.updatedAt,
-				repository.updatedAt,
+				discovery.updatedAt,
+				discovery.updatedAt,
 			);
-			return yield* fromSync(() => decodeRepository(decodeSync(repositoryRow, row)));
+			return { repository: yield* fromSync(() => decodeRepository(decodeSync(repositoryRow, row))), document };
 		});
+	}
+	replaceDiscovery(document: string, discovery: RepositoryDiscovery): Effect.Effect<void, DomainError> {
+		return discoveryDocument(discovery).pipe(
+			Effect.flatMap(next =>
+				this.sql.run('UPDATE repositories SET document=? WHERE id=? AND document=?', next, discovery.id, document)
+			),
+			Effect.asVoid,
+		);
 	}
 	setAccess(id: number, access: Access): Effect.Effect<boolean, DomainError> {
 		const [state, since] = encodeAccess(access);
