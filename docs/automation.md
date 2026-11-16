@@ -486,7 +486,8 @@ re-runs the failed jobs of the execution's run when that run built the release
 commit. A retry refuses to start once the workflow branch moved past the release
 commit, unless every version tag of the release already targets that commit.
 Such a release keeps its tags, its GitHub release and its run, and the retry
-publishes the packages that run left behind.
+publishes the packages that run left behind. A retry also refuses when the
+workflow branch no longer exists.
 
 ## Start a release
 

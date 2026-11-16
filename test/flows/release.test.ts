@@ -1218,6 +1218,50 @@ test('a published release settles its failed operation only once the companion t
 	]);
 }, 30_000);
 
+test('a retry after the branch moved refuses a release whose module tag is missing or on another commit', async () => {
+	const seen: unknown[] = [];
+	let refusal = '';
+	const scenario = async (promotionId: string) => {
+		const target = world.github.repository('octo/widget');
+		const api = bearer(world, await world.cliSession());
+		const run = target.runs.filter(entry => entry.path === '.github/workflows/publish.yml').at(-1);
+		if (!run) throw new Error('No promote run');
+		run.status = 'completed';
+		run.conclusion = 'failure';
+		await world.workflowRun(target, run, 'failure', 'workflow_dispatch');
+		await world.wait(16_000);
+		const failed = await only(api, 'promote');
+		seen.push([failed.state, failed.moduleTags]);
+		target.refs.set('tags/v1.1.0', failed.sourceSha);
+		const moved = world.github.push(target, { 'README.md': '# widget\n\nMoved on.\n' }, 'Move the branch');
+		refusal = `main is at ${moved.sha.slice(0, 12)} but this execution builds ${
+			failed.sourceSha.slice(0, 12)
+		}; prepare the release again`;
+		const retry = async () => {
+			const reply = await api('/api/executions/recover', { id: promotionId, action: 'retry' });
+			seen.push([reply.status, reply.status === 200 ? run.attempt : text(reply.body, 'error')]);
+		};
+		await retry();
+		target.refs.set('tags/go/v1.1.0', moved.sha);
+		await retry();
+		target.refs.set('tags/go/v1.1.0', failed.sourceSha);
+		await retry();
+		await world.wait(16_000);
+		seen.push([(await only(api, 'promote')).runAttempt, run.attempt]);
+		throw new Error('scenario complete');
+	};
+	await expect(packedRelease(world, scenario, undefined, false, 'github.com/octo/widget/go')).rejects.toThrow(
+		'scenario complete',
+	);
+	expect(seen).toEqual([
+		['failed', [{ id: 'pkg:golang/github.com/octo/widget/go', prefix: 'go/v' }]],
+		[422, refusal],
+		[422, refusal],
+		[200, 2],
+		[2, 2],
+	]);
+}, 30_000);
+
 test('a release stored without its companion modules reads them from discovery', async () => {
 	const { plan } = await packedRelease(
 		world,
