@@ -74,6 +74,7 @@ export function releaseStatus(release: ReturnType<typeof releaseSummaries>[numbe
 	if (release.publications.length && release.verified === release.publications.length) {
 		return { tone: 'ok', label: 'Required publications verified' };
 	}
+	if (release.publishing) return { tone: 'active', label: 'Publishing' };
 	if (latest.state === 'succeeded' && latest.operation === 'prepare') {
 		return { tone: 'waiting', label: 'Prepared, no publication run yet' };
 	}

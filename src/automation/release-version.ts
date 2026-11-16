@@ -1,12 +1,14 @@
 import { Effect } from 'effect';
 import { tagPrefix } from '@/automation/managers/tags';
-import type { Inventory, Package } from '@/automation/types';
+import { matchesPackage } from '@/automation/package-identity';
+import type { Inventory, Package, Stream } from '@/automation/types';
 import type { VersionRequest } from '@/automation/version';
 import { nextVersion } from '@/automation/version';
 import { blocking } from '@/contract/diagnostics';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { distinct } from '@/distinct';
+import { operations } from '@/domain/configuration';
 import { compareVersions } from '@/model';
 
 export function releasedVersion(pkg: Package): string | undefined {
@@ -83,6 +85,18 @@ export function unreleasedManifestVersion(packages: Package[]): string | undefin
 	return released.some(version => version === undefined || compareVersions(manifest, version) > 0)
 		? manifest
 		: undefined;
+}
+
+export function releasePaths(packages: Package[], stream: Stream): ReadonlySet<string> {
+	return new Set([
+		...packages.filter(pkg => !stream.packages || stream.packages.some(reference => matchesPackage(reference, pkg)))
+			.flatMap(pkg => [
+				pkg.manifest,
+				...(tagPrefix(pkg.versionSource) === undefined ? pkg.versionSource.split('#', 1) : []),
+			]),
+		...(stream.versionFiles ?? []).map(rule => rule.path),
+		...[...operations(stream).values()].map(binding => `.github/workflows/${binding.file}`),
+	]);
 }
 
 export function manifestProblems(inventory: Inventory, packages: Package[]): string[] {

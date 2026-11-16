@@ -103,7 +103,7 @@ import {
 import { ReleaseHistory } from '@/automation/release-history';
 import { releaseNotes } from '@/automation/release-notes';
 import { compileReleaseSet } from '@/automation/release-set';
-import { manifestProblems } from '@/automation/release-version';
+import { manifestProblems, releasePaths } from '@/automation/release-version';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
 import type { AutomationBindings } from '@/automation/service';
 import { Automation, applicationLayer, withAutomation } from '@/automation/service';
@@ -770,6 +770,19 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				})
 			)),
 			'coordinator.preparationResults',
+			{},
+		);
+	}
+	promotions(stream: string, version: string): Promise<Execution[]> {
+		return this.run(
+			this.executions().pipe(Effect.map(executions =>
+				executions
+					.filter(execution =>
+						execution.operation === 'promote' && execution.stream === stream && execution.version === version
+					)
+					.sort((left, right) => right.createdAt - left.createdAt)
+			)),
+			'coordinator.promotions',
 			{},
 		);
 	}
@@ -2193,10 +2206,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			for (const other of executions) {
 				if (
 					other.id === execution.id || other.operation !== 'promote' || other.stream === execution.stream
-					|| other.repositoryId !== execution.repositoryId || other.sourceSha !== execution.sourceSha
+					|| other.repositoryId !== execution.repositoryId
 					|| ['succeeded', 'cancelled', 'failed'].includes(other.state)
 				) continue;
-				const provided = packagesOf(other).filter(pkg => needed.has(`${pkg.manager}:${pkg.name}`));
+				const provided = packagesOf(other).filter(pkg =>
+					needed.has(`${pkg.manager}:${pkg.name}`)
+					&& (other.sourceSha === execution.sourceSha || pkg.version === other.version)
+				);
 				if (provided.length) {
 					return `Releases after the ${other.stream} release publishes ${provided.map(packageId).join(', ')}`;
 				}
@@ -2217,7 +2233,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 				const token = yield* (yield* this.gateway).token(execution.repository, execution.repositoryId);
 				const head = yield* this.refHead(execution, token);
-				if (head && head.sha !== execution.sourceSha) {
+				if (
+					head
+					&& (head.tag ? head.sha !== execution.sourceSha : !(yield* this.contains(execution, head.sha, token)))
+				) {
 					return yield* precondition(
 						`${head.ref} is at ${head.sha.slice(0, 12)}. Publish the release for that commit.`,
 					);
@@ -2621,13 +2640,39 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private contains(execution: Execution, sha: string, token: string): CoordinatorEffect<boolean, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (sha === execution.sourceSha) return true;
-			if (!execution.eventId.startsWith('observed:') && !execution.currentWorkflow) return false;
+			if (!execution.eventId.startsWith('observed:') && !execution.currentWorkflow) {
+				const promotion = execution.operation === 'promote'
+					? execution
+					: (yield* this.executions()).find(other =>
+						other.operation === 'promote' && other.dependencies.includes(execution.id)
+					);
+				return promotion !== undefined && (yield* this.versionKept(promotion, sha));
+			}
 			const comparison = yield* (yield* this.gateway).read(
 				comparisonSchema,
 				`/repos/${execution.repository}/compare/${execution.sourceSha}...${sha}`,
 				token,
 			);
 			return comparison.status === 'ahead';
+		});
+	}
+	private versionKept(execution: Execution, sha: string): CoordinatorEffect<boolean, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const stream = execution.configuration.streams[execution.stream];
+			const record = yield* (yield* this.store).repository(execution.repositoryId);
+			if (!stream || !record) return false;
+			if (JSON.stringify(record.configuration?.streams[execution.stream]) !== JSON.stringify(stream)) return false;
+			const gateway = yield* this.gateway;
+			const paths = releasePaths(record.inventory.packages, stream);
+			const kept = (commit: string) =>
+				gateway.unchangedSince(execution.repository, execution.repositoryId, commit, sha, paths);
+			const newer = (yield* this.executions()).filter(other =>
+				other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
+				&& other.version === execution.version && other.createdAt > execution.createdAt
+				&& other.state !== 'cancelled' && other.state !== 'failed'
+			);
+			for (const other of newer) if (yield* kept(other.sourceSha)) return false;
+			return yield* kept(execution.sourceSha);
 		});
 	}
 	private headMoved(

@@ -843,6 +843,62 @@ test('stages follow the configured order and leave out the ones a release skippe
 	]);
 });
 
+test('a release stays publishing until the observed workflow that owns its packages finishes', async () => {
+	const { finished } = await finishedPromotion('pending');
+	const stream = finished.configuration.streams[finished.stream];
+	const workflow = stream?.promote.workflow;
+	if (!stream || !workflow) throw new Error('No promote workflow');
+	const [npm] = finished.publications;
+	if (!npm) throw new Error('No publication');
+	const owned = {
+		publish: {
+			file: 'packages.yml',
+			inputs: {},
+			required: true,
+			mode: 'observe' as const,
+			ref: 'refs/tags/v*',
+			needs: ['promote'],
+			publications: ['pkg:npm/widget'],
+		},
+	};
+	const configured = (workflows: typeof stream.workflows) => ({
+		...finished.configuration,
+		streams: {
+			...finished.configuration.streams,
+			[finished.stream]: {
+				...stream,
+				promote: { ...stream.promote, workflow: { ...workflow, publications: [] } },
+				workflows,
+			},
+		},
+	});
+	const configuration = configured(owned);
+	const promoted: Execution = { ...finished, configuration, state: 'succeeded', publications: [], createdAt: 1 };
+	const observed = (state: Execution['state'], outcome: 'succeeded' | 'failed'): Execution => ({
+		...promoted,
+		id: 'observed',
+		operation: 'publish',
+		eventId: 'observed:1',
+		state,
+		publications: [{ ...npm, outcome }],
+		createdAt: 2,
+	});
+	const shown = (runs: Execution[]) => {
+		const [release] = releaseSummaries(runs);
+		if (!release) throw new Error('No release');
+		return [releaseStatus(release), release.unfinished, pipeline(release, Date.now())?.open];
+	};
+	expect(shown([promoted])).toEqual([{ tone: 'active', label: 'Publishing' }, true, true]);
+	expect(shown([promoted, observed('succeeded', 'succeeded')])).toEqual([
+		{ tone: 'ok', label: 'Required publications verified' },
+		false,
+		false,
+	]);
+	expect(shown([promoted, observed('failed', 'failed')])[0]).toEqual({ tone: 'warn', label: 'Needs attention' });
+	const alone = { ...promoted, configuration: configured({}) };
+	expect(shown([alone])[0]).toEqual({ tone: 'ok', label: 'succeeded' });
+});
+
 test('two releases of one repository with different tags both stay in the publication table', async () => {
 	const { finished } = await finishedPromotion('pending');
 	const [npm] = finished.publications;
@@ -1361,7 +1417,9 @@ test('a retry after the branch moved refuses a release whose module tag is missi
 		const failed = await only(api, 'promote');
 		seen.push([failed.state, failed.moduleTags]);
 		target.refs.set('tags/v1.1.0', failed.sourceSha);
-		const moved = world.github.push(target, { 'README.md': '# widget\n\nMoved on.\n' }, 'Move the branch');
+		const file = '.github/workflows/publish.yml';
+		const workflow = world.github.file(target, file) ?? '';
+		const moved = world.github.push(target, { [file]: `${workflow}# changed\n` }, 'Change the release workflow');
 		refusal = `main is at ${moved.sha.slice(0, 12)} but this execution builds ${
 			failed.sourceSha.slice(0, 12)
 		}; prepare the release again`;

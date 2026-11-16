@@ -1,7 +1,8 @@
 import { listOrder, unfinishedStates } from '@/automation/execution-order.ts';
-import { matchesPackage, matchesPublication } from '@/automation/package-identity';
+import { matchesPackage, matchesPublication, selectorKey } from '@/automation/package-identity';
 import type { Execution, Publication, RepositoryRecord } from '@/automation/types.ts';
 import { compare, semVer } from '@/contract/version';
+import { operations } from '@/domain/configuration';
 import { safeDecode } from '@/schema';
 
 export const activeStates: readonly string[] = ['running', 'ready', 'dispatching', 'verifying'];
@@ -40,6 +41,31 @@ function target(run: Execution): string {
 		groups,
 		known ? null : run.id,
 	]);
+}
+
+const settledStates: readonly string[] = ['succeeded', 'failed', 'cancelled'];
+const awaitedOutcomes: readonly string[] = ['waiting', 'pending', 'rate-limited'];
+
+function publishing(
+	runs: readonly Execution[],
+	latest: Execution,
+	publications: readonly { id: string; outcome: string }[],
+): boolean {
+	const stream = latest.configuration.streams[latest.stream];
+	if (
+		!stream || latest.state !== 'succeeded'
+		|| !runs.some(run => run.operation === 'promote' && run.state === 'succeeded')
+		|| publications.some(publication => publication.outcome === 'failed' || publication.outcome === 'uncertain')
+	) return false;
+	const owners = [...operations(stream)].filter(([operation]) =>
+		!runs.some(run => run.operation === operation && settledStates.includes(run.state))
+	);
+	return publications.some(publication =>
+		awaitedOutcomes.includes(publication.outcome)
+		&& owners.some(([, binding]) =>
+			binding.publications?.some(reference => selectorKey(reference) === selectorKey(publication.id))
+		)
+	);
 }
 
 export function byAge(a: Execution, b: Execution): number {
@@ -127,6 +153,7 @@ export function releaseSummaries(
 			return { id, outcome };
 		});
 		const verified = publications.filter(p => p.outcome === 'succeeded').length;
+		const awaiting = publishing(runs, latest, publications);
 		return {
 			repository: latest.repository,
 			stream: latest.stream,
@@ -137,7 +164,8 @@ export function releaseSummaries(
 			publications,
 			verified,
 			updatedAt: Math.max(...runs.map(run => run.updatedAt)),
-			unfinished: runs.some(run => unfinishedStates.includes(run.state)),
+			publishing: awaiting,
+			unfinished: awaiting || runs.some(run => unfinishedStates.includes(run.state)),
 			attention: runs.some(run => needing.has(run.id)),
 			needing: runs.filter(run => needing.has(run.id)).map(run => run.id),
 		};

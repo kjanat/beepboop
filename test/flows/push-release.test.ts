@@ -602,12 +602,16 @@ test('a retry that re-runs the failed jobs of the same run keeps the recorded dr
 	expect(drafts().map(release => [release.id, release.target])).toEqual([[draft.id, merged.sha]]);
 }, 60_000);
 
+function changeWorkflow(repository: Repository, sha: string) {
+	const file = '.github/workflows/release.yml';
+	const workflow = world.github.file(repository, file, sha) ?? '';
+	return world.github.push(repository, { [file]: `${workflow}# changed\n` }, 'Change the release workflow');
+}
+
 test('a retry refuses to run once the workflow branch has moved past the release commit', async () => {
 	const { repository, merged, run, draft } = await failedRelease(true);
 	const api = bearer(world, await world.cliSession());
-	const file = '.github/workflows/release.yml';
-	const workflow = world.github.file(repository, file, merged.sha) ?? '';
-	const moved = world.github.push(repository, { [file]: `${workflow}# changed\n` }, 'Change the release workflow');
+	const moved = changeWorkflow(repository, merged.sha);
 	const [promotion] = await promotions(api);
 	if (!promotion) throw new Error('Expected the failed release');
 	const refused = await api('/api/executions/recover', { id: promotion.id, action: 'retry' });
@@ -627,7 +631,7 @@ test('a retry re-runs the failed jobs of a tagged release after the workflow bra
 	const { repository, merged, run, draft } = await failedRelease(true);
 	const api = bearer(world, await world.cliSession());
 	repository.refs.set('tags/v1.0.0', merged.sha);
-	world.github.push(repository, { 'README.md': '# widget\n\nMoved on.\n' }, 'Move the branch');
+	changeWorkflow(repository, merged.sha);
 	const [promotion] = await promotions(api);
 	if (!promotion) throw new Error('Expected the failed release');
 	expect((await api('/api/executions/recover', { id: promotion.id, action: 'retry' })).status).toBe(200);
@@ -641,7 +645,7 @@ test('a retry refuses a tagged release whose run built another commit after the 
 	const { repository, merged, run } = await failedRelease();
 	const api = bearer(world, await world.cliSession());
 	repository.refs.set('tags/v1.0.0', merged.sha);
-	const moved = world.github.push(repository, { 'README.md': '# widget\n\nMoved on.\n' }, 'Move the branch');
+	const moved = changeWorkflow(repository, merged.sha);
 	const [promotion] = await promotions(api);
 	if (!promotion) throw new Error('Expected the failed release');
 	const refused = await api('/api/executions/recover', { id: promotion.id, action: 'retry' });
@@ -652,6 +656,14 @@ test('a retry refuses a tagged release whose run built another commit after the 
 		}; prepare the release again`,
 	]);
 	expect(run.attempt).toBe(1);
+}, 60_000);
+
+test('a retry after an unrelated commit dispatches a new run for the release commit', async () => {
+	const { repository, merged, retry } = await failedRelease();
+	const moved = world.github.push(repository, { 'README.md': '# widget\n\nMoved on.\n' }, 'Move the branch');
+	const retried = await retry();
+	const runs = repository.runs.filter(entry => entry.inputs.beepboop_execution_id === retried?.id);
+	expect([retried?.sourceSha, runs.at(-1)?.headSha]).toEqual([merged.sha, moved.sha]);
 }, 60_000);
 
 test('a retry on an unmoved branch re-runs the failed jobs while a tag resolves to no commit', async () => {
@@ -1134,4 +1146,50 @@ test('a promotion waits for the promotion of the same commit that publishes its 
 	expect(second.get('main')?.state).toBe('succeeded');
 	expect(second.get('cli')?.reason).toBeUndefined();
 	expect(world.github.dispatches.map(dispatch => dispatch.inputs.beepboop_execution_id)).toEqual([main.id, cli.id]);
+}, 60_000);
+
+test('a promotion waits for the pending release of its dependency from an earlier version commit', async () => {
+	const promote = (name: string) => ({
+		packages: [`pkg:npm/${name}`],
+		required: [`pkg:npm/${name}`],
+		prepare: { strategy: 'managed' },
+		promote: { approval: 'push', workflow: { file: 'publish.yml', publications: [`pkg:npm/${name}`] } },
+	});
+	const repository = widget(world.github, { configured: false });
+	world.github.push(repository, {
+		'.github/beepboop.json': JSON.stringify({
+			managers: ['npm', 'workflow'],
+			streams: { main: promote('widget'), cli: promote('gadget') },
+		}),
+		'packages/gadget/package.json': manifest('gadget', '1.0.0', { widget: '^1.0.0' }),
+		'packages/gadget/README.md': '# gadget\n',
+		'packages/gadget/LICENSE': licenseText,
+	}, 'Release the gadget CLI separately');
+	passChecks(repository, world.github.head(repository));
+	world.npm.publish('widget', '1.0.0');
+	world.npm.publish('gadget', '1.0.0');
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const raised = world.github.push(repository, {
+		'package.json': manifest('widget', '1.1.0'),
+		'packages/gadget/package.json': manifest('gadget', '1.0.0', { widget: '^1.1.0' }),
+	}, 'Release widget 1.1.0');
+	repository.checks.set(raised.sha, [{ name: 'test', status: 'in_progress', conclusion: null, runId: 1 }]);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	const gadget = world.github.push(
+		repository,
+		{ 'packages/gadget/package.json': manifest('gadget', '1.1.0', { widget: '^1.1.0' }) },
+		'Release gadget 1.1.0',
+	);
+	passChecks(repository, gadget.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	const byStream = new Map((await promotions(api)).map(promotion => [promotion.stream, promotion]));
+	expect([byStream.get('main')?.sourceSha, byStream.get('cli')?.sourceSha]).toEqual([raised.sha, gadget.sha]);
+	expect([byStream.get('cli')?.state, byStream.get('cli')?.reason]).toEqual([
+		'awaiting-approval',
+		'Releases after the main release publishes pkg:npm/widget',
+	]);
+	expect(world.github.dispatches).toEqual([]);
 }, 60_000);

@@ -18,12 +18,18 @@ import type { Fetcher } from '@/automation/managers/registry';
 import { registryLayer } from '@/automation/managers/registry';
 import { Notifications } from '@/automation/notifications';
 import { matchesPackage, packageId, publishablePackages } from '@/automation/package-identity';
+import { metadataProblems } from '@/automation/package-metadata';
 import { publishable } from '@/automation/package-publication';
 import { pollPackages } from '@/automation/package-watch';
 import { matchesRef } from '@/automation/policy';
 import type { RefState } from '@/automation/refs';
 import { conflictMessage, streamModuleTagPrefixes, tagConflicts } from '@/automation/refs';
-import { manifestProblems, releasedVersion, unreleasedManifestVersion } from '@/automation/release-version';
+import {
+	manifestProblems,
+	releasedVersion,
+	releasePaths,
+	unreleasedManifestVersion,
+} from '@/automation/release-version';
 import { bodyChoices, releaseAfterMerge } from '@/automation/setup';
 import { currentOptions, maintainSetup, rebuildingStatus, setupEdits } from '@/automation/setup-maintenance';
 import type { PublishingAccess } from '@/automation/setup-publishing';
@@ -35,6 +41,8 @@ import type {
 	Package,
 	ReleaseStarted,
 	RepositoryRecord,
+	Snapshot,
+	Stream,
 	SubscriptionDelivery,
 } from '@/automation/types';
 import { parseGrant, Secrets, secretsLayer, Vault } from '@/automation/vault';
@@ -79,6 +87,8 @@ export interface AutomationBindings extends AuthBindings, Credentials, WinGetBin
 	VAULT_KEYS: string;
 	VAULT_ACTIVE_KEY: string;
 }
+const retiredStates: readonly string[] = ['cancelled', 'failed'];
+
 export class AutomationService {
 	constructor(
 		readonly env: AutomationBindings,
@@ -321,12 +331,12 @@ export class AutomationService {
 			const results = yield* fromPromise(() => this.coordinator(repository.id).preparationResults(stream, version));
 			for (const { started, ...result } of results) {
 				if (!started) continue;
-				const sha = result.kind === 'commit'
+				const merge = result.kind === 'commit'
 					? (yield* this.gateway.contains(repository.name, repository.id, result.head, target))
-						? result.head
+						? { sha: result.head, extended: false }
 						: undefined
 					: yield* this.gateway.preparationMerge(repository.name, repository.id, result, target);
-				if (sha) return { sha, started };
+				if (merge && !merge.extended) return { sha: merge.sha, started };
 			}
 			return undefined;
 		}).pipe(
@@ -354,7 +364,56 @@ export class AutomationService {
 						)
 					),
 				);
-				if (merge) return merge;
+				if (merge) return merge.sha;
+			}
+			return undefined;
+		});
+	}
+	private releaseHeld(
+		repository: ReadyRepository,
+		stream: Stream,
+		packages: Package[],
+		commit: string,
+	): Effect.Effect<Snapshot | undefined, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const paths = releasePaths(repository.inventory.packages, stream);
+			if (!(yield* this.gateway.unchangedSince(repository.name, repository.id, commit, repository.sha, paths))) {
+				return undefined;
+			}
+			const snapshot = yield* this.gateway.snapshot(
+				repository.name,
+				repository.id,
+				commit,
+				(stream.versionFiles ?? []).map(rule => rule.path),
+			);
+			if (commit === repository.sha) return snapshot;
+			const metadata = metadataProblems(discover(snapshot, repository.configuration.managers), packages);
+			return metadata.join('\n') === metadataProblems(repository.inventory, packages).join('\n')
+				? snapshot
+				: undefined;
+		});
+	}
+	private versionCommit(
+		repository: ReadyRepository,
+		streamName: string,
+		stream: Stream,
+		promotions: Execution[],
+		packages: Package[],
+	): Effect.Effect<Snapshot | undefined, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			for (const promotion of promotions) {
+				if (retiredStates.includes(promotion.state)) continue;
+				if (JSON.stringify(promotion.configuration.streams[streamName]) !== JSON.stringify(stream)) continue;
+				const held = yield* this.releaseHeld(repository, stream, packages, promotion.sourceSha).pipe(
+					recover(error =>
+						logFailure('version-commit.failed', error, {
+							repository: repository.name,
+							stream: streamName,
+							promotion: promotion.id,
+						}).pipe(Effect.as(undefined))
+					),
+				);
+				if (held) return held;
 			}
 			return undefined;
 		});
@@ -389,15 +448,22 @@ export class AutomationService {
 				const version = unreleasedManifestVersion(packages);
 				if (!version || manifestProblems(repository.inventory, packages).length) continue;
 				const started = yield* this.startedPreparation(repository, name, version, repository.sha);
-				const merge = !started && stream.promote.approval === 'merge'
-					? yield* this.mergedPreparation(repository, name, version, repository.sha)
-					: undefined;
-				const snapshot = yield* this.gateway.snapshot(
-					repository.name,
-					repository.id,
-					started?.sha ?? merge ?? repository.sha,
-					(stream.versionFiles ?? []).map(rule => rule.path),
+				const merge = started ? undefined : yield* this.mergedPreparation(repository, name, version, repository.sha);
+				const promotions = yield* fromPromise(() => this.coordinator(repository.id).promotions(name, version));
+				const prepared = started?.sha ?? merge;
+				const retired = promotions.some(promotion =>
+					promotion.sourceSha === prepared && retiredStates.includes(promotion.state)
 				);
+				const held = prepared === undefined || retired
+					? undefined
+					: yield* this.releaseHeld(repository, stream, packages, prepared);
+				const snapshot = held ?? (yield* this.versionCommit(repository, name, stream, promotions, packages))
+					?? (yield* this.gateway.snapshot(
+						repository.name,
+						repository.id,
+						repository.sha,
+						(stream.versionFiles ?? []).map(rule => rule.path),
+					));
 				const plan = yield* planRelease(
 					snapshot,
 					repository.inventory,
@@ -474,10 +540,10 @@ export class AutomationService {
 				if (yield* fromPromise(() => this.coordinator(repository.id).execution(promotion.id))) continue;
 				setupMerge ??= (yield* this.setupMerge(repository)) ?? null;
 				if (setupMerge?.sha === plan.sourceSha && !releaseAfterMerge(setupMerge.body)) continue;
-				if (started) {
+				if (started && held) {
 					promotion.approvedBy = 'start';
 					promotion.started = started.started;
-				} else if (merge) promotion.approvedBy = 'merge';
+				} else if (merge && held && stream.promote.approval === 'merge') promotion.approvedBy = 'merge';
 				yield* this.store.audit('beepboop', 'release.push', promotion.id);
 				yield* this.enqueue(repository, promotion);
 			}
