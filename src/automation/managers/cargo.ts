@@ -1,15 +1,54 @@
 import { Effect, Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
 import { editTomlVersion, object } from '@/automation/managers/helpers';
-import type { Adapter } from '@/automation/managers/registry';
+import type { Adapter, Fetcher } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
-import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
+import {
+	latestVersion,
+	publicationResult,
+	registryRequest,
+	unconfirmed,
+	verifyRegistry,
+} from '@/automation/managers/verification';
 import { cargoMembers } from '@/automation/managers/workspaces';
 import { excluded, registry } from '@/automation/package-publication';
+import type { Publication } from '@/automation/types';
 import { fileProblem } from '@/contract/diagnostics';
 import { precondition } from '@/contract/errors';
 import { packageIdentity } from '@/package-url';
 import { parentDirectory } from '@/relative-path';
+import { responseText } from '@/runtime/http';
+export function crateIndexUrl(name: string): string {
+	const lower = name.toLowerCase();
+	const path = lower.length <= 2
+		? `${lower.length}/${lower}`
+		: lower.length === 3
+		? `3/${lower[0]}/${lower}`
+		: `${lower.slice(0, 2)}/${lower.slice(2, 4)}/${lower}`;
+	return `https://index.crates.io/${path}`;
+}
+function verifyIndex(publication: Publication, request: Fetcher): Effect.Effect<Publication> {
+	const url = crateIndexUrl(publication.name);
+	const result = publicationResult(publication, url);
+	return Effect.gen(function*() {
+		const response = yield* registryRequest(request, url);
+		const missing = unconfirmed(response);
+		if (missing) return result(missing);
+		const entry = (yield* responseText(response)).split('\n').flatMap(line => {
+			const parsed = Result.try(() => object(JSON.parse(line)));
+			return Result.isSuccess(parsed) && parsed.success.vers === publication.version ? [parsed.success] : [];
+		})[0];
+		if (!entry) return result('pending');
+		const digest = entry.cksum;
+		if (
+			entry.name !== publication.name || entry.yanked !== false || typeof digest !== 'string' || !digest
+			|| (publication.digest && publication.digest !== digest)
+		) {
+			return result('failed');
+		}
+		return result('succeeded', digest);
+	}).pipe(Effect.scoped, Effect.orElseSucceed(() => result('uncertain')));
+}
 export const cargoManager = {
 	name: 'cargo',
 	identity: pkg => packageIdentity({ type: 'cargo', name: pkg.name, version: pkg.version }),
@@ -30,7 +69,11 @@ export const cargoManager = {
 		return verifyRegistry(publication, request, url, body => {
 			const entry = object(object(body).version);
 			return { name: entry.crate, version: entry.num, withdrawn: entry.yanked !== false, digest: entry.checksum };
-		});
+		}).pipe(
+			Effect.flatMap(verified =>
+				verified.outcome === 'uncertain' ? verifyIndex(publication, request) : Effect.succeed(verified)
+			),
+		);
 	},
 
 	discover(snapshot) {
