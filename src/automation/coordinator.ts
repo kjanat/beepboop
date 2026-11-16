@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { Clock, Effect, Layer, Schema, Semaphore } from 'effect';
+import { Clock, Effect, Layer, Option, Schema, Semaphore } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
 import {
 	createExecution,
@@ -229,6 +229,7 @@ function moved(execution: Execution, head: { ref: string; sha: string }): string
 		release ? 'prepare the release again' : 'trigger the operation again'
 	}`;
 }
+const packageTagBudget = 20_000;
 type CoordinatorEffect<A, E = never> = Effect.Effect<A, E, Automation>;
 
 export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
@@ -576,67 +577,86 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		apply: boolean,
 	): CoordinatorEffect<PackageTagResult[], DomainError> {
 		return Effect.gen({ self: this }, function*() {
+			const clock = yield* Clock.Clock;
 			const gateway = yield* this.gateway;
 			const refs = yield* gateway.tagRefs(repository, repositoryId);
 			const transport = (yield* Automation).dependencies.transport;
 			const context = gateway.verification(repository, repositoryId);
-			const results: PackageTagResult[] = [];
-			for (const row of packageTagRows(groups, releases(refs), refs)) {
-				const base = { tag: row.tag, version: row.version, commit: row.commit };
-				if (row.state === 'exists') {
-					results.push({ ...base, outcome: 'exists' });
-					continue;
-				}
-				if (row.state === 'conflict') {
-					results.push({
-						...base,
-						outcome: 'conflict',
-						reason: `${row.tag} already targets ${(row.target ?? '').slice(0, 12)}`,
-					});
-					continue;
-				}
-				let published = false;
-				const unanswered: string[] = [];
-				for (const reference of row.references) {
-					const pkg = packages.find(candidate => matchesPackage(reference, candidate));
-					if (!pkg || !canVerifyPublication(pkg.manager)) continue;
-					const publication: Publication = {
-						id: packageId(pkg),
-						identity: publicationIdentity(pkg, row.version),
-						manager: pkg.manager,
-						name: pkg.name,
-						version: row.version,
-						outcome: 'pending',
-						required: true,
-					};
-					const verified = yield* verifyPublication(publication, transport, context);
-					if (verified.outcome === 'succeeded') {
-						published = true;
-						break;
+			const deadline = clock.currentTimeMillisUnsafe() + packageTagBudget;
+			const late = 'The registry checks ran out of time; run the backfill again';
+			const probe = (row: PackageTagRow): Effect.Effect<PackageTagResult> =>
+				Effect.gen(function*() {
+					const base = { tag: row.tag, version: row.version, commit: row.commit };
+					let published = false;
+					const unanswered: string[] = [];
+					for (const reference of row.references) {
+						const pkg = packages.find(candidate => matchesPackage(reference, candidate));
+						if (!pkg || !publishable(pkg) || !canVerifyPublication(pkg.manager)) continue;
+						const verified = yield* verifyPublication(
+							{
+								id: packageId(pkg),
+								identity: publicationIdentity(pkg, row.version),
+								manager: pkg.manager,
+								name: pkg.name,
+								version: row.version,
+								outcome: 'pending',
+								required: true,
+							},
+							transport,
+							context,
+						);
+						if (verified.outcome === 'succeeded') {
+							published = true;
+							break;
+						}
+						if (verified.outcome !== 'pending') unanswered.push(`${reference} is ${verified.outcome}`);
 					}
-					if (verified.outcome !== 'pending') unanswered.push(`${reference} is ${verified.outcome}`);
-				}
-				if (!published && unanswered.length) {
-					results.push({
-						...base,
-						outcome: 'failed',
-						reason: `The registry did not confirm ${row.version}: ${unanswered.join(', ')}`,
-					});
-					continue;
-				}
-				if (!published) {
-					results.push({ ...base, outcome: 'unpublished' });
-					continue;
-				}
-				if (!apply) {
-					results.push({ ...base, outcome: 'publishable' });
+					if (!published && unanswered.length) {
+						return {
+							...base,
+							outcome: 'failed',
+							reason: `The registry did not confirm ${row.version}: ${unanswered.join(', ')}`,
+						};
+					}
+					return { ...base, outcome: published ? 'publishable' : 'unpublished' };
+				});
+			const checked = yield* Effect.forEach(
+				packageTagRows(groups, releases(refs), refs),
+				(row): Effect.Effect<[PackageTagRow, PackageTagResult]> => {
+					const base = { tag: row.tag, version: row.version, commit: row.commit };
+					if (row.state === 'exists') return Effect.succeed([row, { ...base, outcome: 'exists' }]);
+					if (row.state === 'conflict') {
+						return Effect.succeed([row, {
+							...base,
+							outcome: 'conflict',
+							reason: `${row.tag} already targets ${(row.target ?? '').slice(0, 12)}`,
+						}]);
+					}
+					const remaining = deadline - clock.currentTimeMillisUnsafe();
+					if (remaining <= 0) return Effect.succeed([row, { ...base, outcome: 'failed', reason: late }]);
+					return probe(row).pipe(
+						Effect.timeoutOption(remaining),
+						Effect.map(
+							answer => [
+								row,
+								Option.getOrElse(answer, (): PackageTagResult => ({ ...base, outcome: 'failed', reason: late })),
+							],
+						),
+					);
+				},
+				{ concurrency: 8 },
+			);
+			const results: PackageTagResult[] = [];
+			for (const [row, result] of checked) {
+				if (!apply || result.outcome !== 'publishable') {
+					results.push(result);
 					continue;
 				}
 				const created = yield* Effect.result(this.createPackageTag(repository, repositoryId, row));
 				results.push(
 					created._tag === 'Success'
-						? { ...base, outcome: 'created' }
-						: { ...base, outcome: 'failed', reason: decodeError(created.failure) },
+						? { ...result, outcome: 'created' }
+						: { ...result, outcome: 'failed', reason: decodeError(created.failure) },
 				);
 			}
 			return results;

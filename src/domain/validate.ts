@@ -1,5 +1,6 @@
 import { Result } from 'effect';
 import { matchesPackage, parseReleaseIdentity, publishablePackages } from '@/automation/package-identity';
+import { publishable } from '@/automation/package-publication';
 import type { Configuration, Inventory, Snapshot, Stream } from '@/automation/types';
 import type { Diagnostic, DiagnosticSubject } from '@/contract/diagnostics';
 import { operations as operationsOf } from '@/domain/configuration';
@@ -105,6 +106,13 @@ export function validateAgainst(
 					'unknown-reference',
 					subject,
 					`Stream ${name} packageTags names ${reference}, which discovery did not find`,
+				);
+			} else if (!matched.some(publishable)) {
+				report(
+					'blocking',
+					'package-tag',
+					subject,
+					`Stream ${name} packageTags names ${reference}, which does not publish to its public registry`,
 				);
 			} else if (
 				stream.packages !== undefined

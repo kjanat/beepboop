@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { expect, setSystemTime, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,7 +19,7 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Result, Schema } from 'effect';
 import { parseRepositoryConfiguration } from '@/automation/configuration';
-import { registry } from '@/automation/package-publication';
+import { excluded, registry } from '@/automation/package-publication';
 import { packageTagBase, packageTagGroups, packageTagRows, taggedReleases } from '@/automation/package-tags';
 import type { Inventory, Package } from '@/automation/types';
 import { packageTagView } from '@/contract/views';
@@ -60,9 +60,9 @@ function configuration(packageTags: string[]) {
 	}, '\t');
 }
 
-async function released(packageTags = ['pkg:npm/widget']) {
+async function released(packageTags = ['pkg:npm/widget'], fields: Record<string, unknown> = {}) {
 	const repository = world.github.create('octo/widget', {
-		'package.json': npmManifest('widget', '1.0.0'),
+		'package.json': npmManifest('widget', '1.0.0', fields),
 		'README.md': '# widget\n',
 		LICENSE: licenseText,
 		'.github/workflows/publish.yml': publishWorkflow,
@@ -259,6 +259,12 @@ const widgetPackage: Package = {
 	dependencies: [],
 };
 const gadgetPackage: Package = { ...widgetPackage, name: 'gadget', manifest: 'gadget/package.json' };
+const secretPackage: Package = {
+	...widgetPackage,
+	name: 'secret',
+	manifest: 'secret/package.json',
+	publication: excluded('private'),
+};
 const paths = { paths: ['.github/workflows/publish.yml', '.github/workflows/ci.yml'] };
 
 test('packageTags survive parsing, storage and drift checks', () => {
@@ -275,21 +281,28 @@ test('packageTags survive parsing, storage and drift checks', () => {
 	expect(Result.isFailure(parseRepositoryConfiguration(document))).toBe(true);
 });
 
-test('validation blocks packageTags outside the stream packages and warns without a version tag', () => {
+test('validation blocks packageTags outside the stream packages or its registry and warns without a version tag', () => {
 	const inventory: Inventory = {
-		packages: [widgetPackage, gadgetPackage],
+		packages: [widgetPackage, gadgetPackage, secretPackage],
 		workflows: [],
 		managers: ['npm'],
 		diagnostics: [],
 		publicationOrder: [],
 	};
-	const document = JSON.parse(configuration(['pkg:npm/widget', 'pkg:npm/gadget', 'pkg:npm/missing']));
+	const document = JSON.parse(
+		configuration(['pkg:npm/widget', 'pkg:npm/gadget', 'pkg:npm/secret', 'pkg:npm/missing']),
+	);
 	const found = (value: unknown) =>
 		validateAgainst(decodeSync(configurationSchema, value), inventory, paths)
 			.filter(entry => entry.message.includes('packageTags') || entry.code === 'package-tag')
 			.map(entry => [entry.severity, entry.code, entry.message]);
 	expect(found(document)).toEqual([
 		['blocking', 'package-tag', 'Stream main packageTags names pkg:npm/gadget, which is not one of its packages'],
+		[
+			'blocking',
+			'package-tag',
+			'Stream main packageTags names pkg:npm/secret, which does not publish to its public registry',
+		],
 		['blocking', 'unknown-reference', 'Stream main packageTags names pkg:npm/missing, which discovery did not find'],
 	]);
 	document.streams.main.packageTags = ['pkg:npm/widget'];
@@ -432,6 +445,56 @@ test('a legacy package reference names its tag after the discovered package', as
 			outcome: 'created',
 		});
 	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
+test('a package that publishes to another registry gets no tag from a public namesake', async () => {
+	const key = signingKey('Release Bot (CI) <release@example.com>');
+	try {
+		world.env.SIGNER = fakeSigner(key);
+		const { repository, second, tags } = await released(['pkg:npm/widget'], {
+			publishConfig: { registry: 'https://npm.pkg.github.com' },
+		});
+		expect(await tags(true)).toContainEqual({
+			tag: 'widget-v1.0.0',
+			version: '1.0.0',
+			commit: second,
+			outcome: 'unpublished',
+		});
+		expect(repository.refs.has('tags/widget-v1.0.0')).toBe(false);
+	} finally {
+		key.dispose();
+	}
+}, 30_000);
+
+test('registry checks past their time budget report a failure the backfill can repeat', async () => {
+	const key = signingKey('Release Bot (CI) <release@example.com>');
+	try {
+		world.env.SIGNER = fakeSigner(key);
+		const { repository, first, tags } = await released();
+		for (let minor = 1; minor <= 9; minor++) {
+			world.github.recordTag(repository, `v0.${minor}.1`, String(minor).repeat(40), first, true);
+		}
+		let stalled = false;
+		world.network.serve('registry.npmjs.org', request => {
+			if (!stalled) {
+				stalled = true;
+				setSystemTime(new Date(Date.now() + 60_000));
+			}
+			return world.npm.handle(request);
+		});
+		const results = await tags(false);
+		expect(
+			results.filter(result => result.reason === 'The registry checks ran out of time; run the backfill again').length,
+		)
+			.toBeGreaterThan(0);
+		expect(
+			results.filter(result => result.outcome === 'failed').every(result => result.reason?.includes('ran out of time')),
+		)
+			.toBe(true);
+	} finally {
+		setSystemTime();
 		key.dispose();
 	}
 }, 30_000);

@@ -1265,11 +1265,13 @@ gets no tag, and Beepboop never moves or replaces a tag that already exists.
 missing. It lists every version tag of the stream, prints which package tags
 exist, which it would create, which packages were not published at that version
 and which tag names already target another commit, and creates the missing
-tags after you confirm. Run it once after adding `packageTags` to a stream.
+tags after you confirm. Run it once after adding `packageTags` to a stream. The
+registry checks of one backfill share a 20 second budget. A version the budget
+did not reach reports a failure, and the next backfill checks it again.
 
-Discovery blocks a `packageTags` entry that matches no package or is not in the
-stream's `packages`, and warns when the stream's promotion pushes no version
-tag.
+Discovery blocks a `packageTags` entry that matches no package, matches only
+packages that skip their public registry, or is not in the stream's
+`packages`, and warns when the stream's promotion pushes no version tag.
 
 A release records its companion modules and their tag prefixes when Beepboop
 creates it, and plans its tags from that record. A discovery refresh during the
