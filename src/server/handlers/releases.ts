@@ -84,7 +84,7 @@ function latestTagVersion(service: AutomationService, repository: ReadyRepositor
 	);
 }
 
-function delegatedPlan(
+export function delegatedPlan(
 	snapshot: Snapshot,
 	inventory: Inventory,
 	stream: Stream,
@@ -97,8 +97,10 @@ function delegatedPlan(
 		const carried = packages.length > 0
 			&& packages.every(pkg => tagPrefix(pkg.versionSource) === undefined && pkg.version === version);
 		if (carried) {
-			const prepared = yield* planRelease(snapshot, inventory, version, selected, undefined, stream.versionFiles);
-			if (!prepared.edits.length && !prepared.requiresPreparation) return prepared;
+			const prepared = yield* planRelease(snapshot, inventory, version, selected, undefined, stream.versionFiles).pipe(
+				Effect.orElseSucceed(() => undefined),
+			);
+			if (prepared && !prepared.edits.length && !prepared.requiresPreparation) return prepared;
 		}
 		return {
 			version,
