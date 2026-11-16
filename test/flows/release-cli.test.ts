@@ -521,6 +521,119 @@ test('a version whose tag targets another commit gets no promotion and a reposit
 	expect(await promotions()).toEqual([]);
 });
 
+test('a package the registry cannot answer for gets no promotion and a repository warning', async () => {
+	const { repository, merged } = await tagged();
+	passChecks(repository, merged.sha);
+	world.network.serve('registry.npmjs.org', () => new Response(null, { status: 503 }));
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(1_000);
+	expect(await promotions()).toEqual([]);
+	const discovered = await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	expect(discovered.findings).toContainEqual({
+		code: 'release-unchecked',
+		severity: 'warning',
+		subject: { kind: 'stream', name: 'main' },
+		message:
+			'Beepboop starts no release of stream main until its registries answer for pkg:npm/widget. The next push or discovery asks again.',
+	});
+	world.network.serve('registry.npmjs.org', request => world.npm.handle(request));
+	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	await world.wait(1_000);
+	expect((await promotions()).map(promotion => [promotion.version, promotion.sourceSha])).toEqual([[
+		'1.2.4',
+		merged.sha,
+	]]);
+});
+
+async function uncheckedBesideGadget() {
+	const { repository, configuration } = await delegated(['widget', 'gadget'], { widget: '1.2.3', gadget: '1.0.0' });
+	const file = decodeSync(looseStruct({ streams: streamRecord }), JSON.parse(JSON.stringify(configuration)));
+	const widgetId = 'pkg:npm/widget';
+	const gadgetId = 'pkg:npm/gadget';
+	file.streams.main = withMain(file, {
+		packages: [widgetId],
+		required: [widgetId],
+		promote: {
+			...configuration.streams.main.promote,
+			workflow: { ...configuration.streams.main.promote.workflow, publications: [widgetId] },
+		},
+	});
+	file.streams.gadget = withMain(file, {
+		packages: [gadgetId],
+		required: [gadgetId],
+		promote: {
+			approval: 'required',
+			workflow: { file: 'gadget.yml', publications: [gadgetId], refs: { phase: 'version', prefix: 'gadget-v' } },
+		},
+	});
+	const head = world.github.push(repository, {
+		'.github/beepboop.json': JSON.stringify(file),
+		'.github/workflows/gadget.yml': publishWorkflow.replace('stream: main', 'stream: gadget'),
+		'packages/gadget/package.json': JSON.stringify({ name: 'gadget', version: '1.1.0' }),
+	}, 'Split gadget into its own stream');
+	passChecks(repository, head.sha);
+	world.network.serve('registry.npmjs.org', request =>
+		new URL(request.url).pathname === '/widget'
+			? new Response(null, { status: 503 })
+			: world.npm.handle(request));
+	return repository;
+}
+const tagLookup = async (request: Request) =>
+	new URL(request.url).pathname === '/graphql' && (await request.clone().text()).includes('refs/tags/');
+
+test('a registry warning survives a later stream that fails', async () => {
+	const repository = await uncheckedBesideGadget();
+	let tagLookups = 0;
+	world.network.serve('api.github.com', async request => {
+		if (await tagLookup(request)) {
+			tagLookups++;
+			return Response.json({ message: 'Unicorn' }, { status: 502 });
+		}
+		return world.github.handle(request);
+	});
+	const discovered = await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	expect(tagLookups).toBeGreaterThan(0);
+	expect(discovered.findings).toContainEqual({
+		code: 'release-unchecked',
+		severity: 'warning',
+		subject: { kind: 'stream', name: 'main' },
+		message:
+			'Beepboop starts no release of stream main until its registries answer for pkg:npm/widget. The next push or discovery asks again.',
+	});
+});
+
+test('the warnings of a slow discovery never replace a newer discovery', async () => {
+	const repository = await uncheckedBesideGadget();
+	let release!: () => void, entered!: () => void;
+	const held = new Promise<void>(resolve => {
+		release = resolve;
+	});
+	const reached = new Promise<void>(resolve => {
+		entered = resolve;
+	});
+	let first = true;
+	world.network.serve('api.github.com', async request => {
+		if (await tagLookup(request)) {
+			if (first) {
+				first = false;
+				entered();
+				await held;
+			}
+			return Response.json({ message: 'Unicorn' }, { status: 502 });
+		}
+		return world.github.handle(request);
+	});
+	const slow = Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	await reached;
+	const newer = world.github.push(repository, { 'README.md': '# widget, newer\n' }, 'Move the default branch');
+	passChecks(repository, newer.sha);
+	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	release();
+	await slow;
+	const row = await world.db.prepare('SELECT document FROM repositories WHERE name=?').bind(repository.name).first();
+	expect(decodeSync(looseStruct({ document: Schema.String }), row).document).toContain(`"sha":"${newer.sha}"`);
+});
+
 test('no approval overrides a version tag on another commit, and the CLI cancels the promotion', async () => {
 	const { repository, before, merged } = await tagged();
 	passChecks(repository, merged.sha);

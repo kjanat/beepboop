@@ -307,8 +307,8 @@ export class AutomationService {
 			}
 			const verification = this.gateway.verification(name, id);
 			discovered.inventory = yield* resolvePublished(discovered.inventory, this.dependencies.transport, verification);
-			const repository = yield* this.store.saveDiscovery(discovered);
-			yield* this.releaseFromManifest(repository).pipe(
+			const { repository, document: saved } = yield* this.store.saveDiscovery(discovered);
+			yield* this.releaseFromManifest(repository, saved).pipe(
 				this.store.auditFailure('beepboop', 'release.push.failed', name),
 			);
 			yield* maintainSetup(this.store, this.gateway, snapshot, this.publishingAccess(snapshot.repository)).pipe(
@@ -434,17 +434,38 @@ export class AutomationService {
 			for (const name of names) yield* setUpJsrPackage(name, repository, token);
 		}).pipe(Effect.provide(Layer.mergeAll(registryLayer(this.dependencies.transport), secretsLayer(this.vault()))));
 	}
-	private releaseFromManifest(stored: RepositoryRecord): Effect.Effect<void, DomainError> {
+	private releaseFromManifest(stored: RepositoryRecord, saved: string): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const state = readiness(stored);
 			if (state.kind !== 'ready') return;
-			const repository = state.repository;
+			const tagged: Diagnostic[] = [];
+			const exit = yield* Effect.exit(this.releaseStreams(state.repository, tagged));
+			if (tagged.length) {
+				stored.diagnostics.push(...tagged);
+				yield* this.store.replaceDiscovery(saved, stored);
+			}
+			return yield* exit;
+		});
+	}
+	private releaseStreams(repository: ReadyRepository, tagged: Diagnostic[]): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
 			let tags: RefState[] | undefined;
 			let setupMerge: { sha: string; body: string } | null | undefined;
-			const tagged: Diagnostic[] = [];
 			for (const [name, stream] of Object.entries(repository.configuration.streams)) {
 				if (!stream.promote.workflow || stream.versionSource?.kind === 'tags') continue;
 				const packages = publishablePackages(repository.inventory.packages, stream.packages);
+				const unread = packages.filter(pkg => pkg.publicationStatus === 'failed');
+				if (unread.length) {
+					tagged.push({
+						code: 'release-unchecked',
+						severity: 'warning',
+						subject: { kind: 'stream', name },
+						message: `Beepboop starts no release of stream ${name} until its registries answer for ${
+							unread.map(packageId).join(', ')
+						}. The next push or discovery asks again.`,
+					});
+					continue;
+				}
 				const version = unreleasedManifestVersion(packages);
 				if (!version || manifestProblems(repository.inventory, packages).length) continue;
 				const started = yield* this.startedPreparation(repository, name, version, repository.sha);
@@ -546,10 +567,6 @@ export class AutomationService {
 				} else if (merge && held && stream.promote.approval === 'merge') promotion.approvedBy = 'merge';
 				yield* this.store.audit('beepboop', 'release.push', promotion.id);
 				yield* this.enqueue(repository, promotion);
-			}
-			if (tagged.length) {
-				stored.diagnostics.push(...tagged);
-				yield* this.store.saveDiscovery(stored);
 			}
 		});
 	}

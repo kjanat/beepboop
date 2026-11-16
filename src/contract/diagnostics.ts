@@ -28,6 +28,7 @@ export const diagnosticCodes = [
 	'lookup-failed',
 	'unconfigured',
 	'version-tagged',
+	'release-unchecked',
 	'companion-module',
 	'package-tag',
 ] as const;
