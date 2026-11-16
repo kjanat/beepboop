@@ -1265,7 +1265,8 @@ or of the earlier release, at that version, once the GitHub release of the tag
 is published, while another release of the version runs, and while a workflow
 run of the earlier release or any workflow run on the tagged commit has not
 finished. It checks again before approval and when the release plans its
-refs, and a retry of the earlier release is refused while the takeover runs. A
+refs, and a retry or redispatch of the earlier release is refused while the
+takeover runs. A
 tag ruleset that blocks updates needs the Beepboop App in its bypass list.
 
 Once the stream pushed `go/v1.2.3`, that version of the module belongs to the

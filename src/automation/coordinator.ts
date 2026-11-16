@@ -2584,22 +2584,22 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 
 				if (action === 'reconcile') yield* this.remove(`quarantine:${id}`);
 				const execution = yield* this.get(id);
+				const takeover = action === 'reconcile' || execution.operation !== 'promote' || execution.reclaims?.length
+					? undefined
+					: (yield* this.executions()).find(other =>
+						other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
+						&& other.version === execution.version && (other.reclaims?.length ?? 0) > 0
+						&& !['failed', 'cancelled'].includes(other.state)
+					);
+				if (takeover) {
+					return yield* precondition(
+						`Release ${takeover.id} takes over the version tag of ${execution.version}; retry that release instead`,
+					);
+				}
 				if (action === 'redispatch') yield* this.dispatchCurrentWorkflow(execution);
 				else if (action === 'retry') {
 					if (!['failed', 'cancelled'].includes(execution.state)) {
 						return yield* precondition('Only failed or cancelled operations can be retried');
-					}
-					const takeover = execution.operation !== 'promote' || execution.reclaims?.length
-						? undefined
-						: (yield* this.executions()).find(other =>
-							other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
-							&& other.version === execution.version && (other.reclaims?.length ?? 0) > 0
-							&& !['failed', 'cancelled'].includes(other.state)
-						);
-					if (takeover) {
-						return yield* precondition(
-							`Release ${takeover.id} takes over the version tag of ${execution.version}; retry that release instead`,
-						);
 					}
 					if (execution.operation === 'prepare' && !execution.plan && !execution.managed) {
 						return yield* precondition('This preparation has no plan; prepare the release from Prepare a release');

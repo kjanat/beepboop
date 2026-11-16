@@ -341,6 +341,22 @@ test('a takeover leaves retries of other operations of its version alone', async
 	expect(field(retried.body, 'error') ?? '').not.toContain('takes over the version tag');
 }, 60_000);
 
+test('a takeover refuses a redispatch of the release it supersedes before the tag moves', async () => {
+	const { repository, api, first, oid } = await taggedFailure();
+	const fixed = await pushFix(repository);
+	const second = (await promotions(api)).find(promotion => promotion.sourceSha === fixed.sha);
+	if (!second) throw new Error('Expected the takeover release');
+	const superseded = (await promotions(api)).find(entry => entry.id === first.id);
+	expect(superseded?.state).toBe('cancelled');
+	const redispatched = await api('/api/executions/recover', { id: first.id, action: 'redispatch' });
+	expect([redispatched.status, field(redispatched.body, 'error')]).toEqual([
+		422,
+		`Release ${second.id} takes over the version tag of 1.0.0; retry that release instead`,
+	]);
+	expect([repository.refs.get('tags/v1.0.0'), (await promotions(api)).find(entry => entry.id === first.id)])
+		.toEqual([oid, superseded]);
+}, 60_000);
+
 test('a push-approved takeover checks the registries before it starts', async () => {
 	const { repository, api } = await taggedFailure();
 	const fixed = await pushFix(repository, false);
