@@ -36,6 +36,10 @@ export const gitCommitSchema = mutableStruct({
 	verification,
 });
 export const createdSchema = mutableStruct({ sha: shaSchema });
+export const createdTagSchema = mutableStruct({
+	sha: shaSchema,
+	verification: mutableStruct({ verified: Schema.Boolean, reason: Schema.optional(Schema.String) }),
+});
 export const treeSchema = mutableStruct({
 	truncated: looseSchema,
 	tree: mutableArray(mutableStruct({ path: textSchema, type: textSchema, mode: textSchema })),

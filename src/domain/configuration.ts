@@ -27,6 +27,7 @@ import {
 	bumpOfVersionLands,
 	companionModulesSentence,
 	mustPublishSentence,
+	packageTagsSentence,
 	publishWhen,
 	publishWhenDescription,
 	versioningOfVersionScope,
@@ -210,6 +211,7 @@ function streamSchema() {
 		})),
 		packages: Schema.optional(packageReferences),
 		companionModules: Schema.optional(packageReferences).annotate({ description: companionModulesSentence }),
+		packageTags: Schema.optional(packageReferences).annotate({ description: packageTagsSentence }),
 		prepare: strictStruct({
 			version: Schema.optional(Schema.Literal('manual')),
 			workflow: Schema.optional(binding),
@@ -262,6 +264,7 @@ function streamSchema() {
 		...(stream.versionSource ? { versionSource: stream.versionSource } : {}),
 		...(stream.packages === undefined ? {} : { packages: stream.packages }),
 		...(stream.companionModules === undefined ? {} : { companionModules: stream.companionModules }),
+		...(stream.packageTags === undefined ? {} : { packageTags: stream.packageTags }),
 		versioning: stream.versionScope ? versioningOfVersionScope[stream.versionScope] : stream.versioning ?? 'workspace',
 		concurrency: stream.concurrency,
 		prepare: {

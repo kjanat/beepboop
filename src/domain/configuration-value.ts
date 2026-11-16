@@ -41,6 +41,7 @@ export const streamValue = mutableStruct({
 	versionSource: Schema.optional(mutableStruct({ kind: Schema.Literal('tags'), prefix: Schema.String })),
 	packages: Schema.optional(strings),
 	companionModules: Schema.optional(strings),
+	packageTags: Schema.optional(strings),
 	versioning: Schema.Literals(['workspace', 'independent', 'none']),
 	concurrency: Schema.Literals(['queue', 'supersede-pending']),
 	prepare: mutableStruct({

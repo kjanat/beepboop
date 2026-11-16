@@ -13,6 +13,7 @@ import { listedRepository, serverFilter, slimRun } from '@/cli/runs';
 import { setupRepository } from '@/cli/setup';
 import { defaultServer } from '@/cli/setup-complete';
 import { setupFlagRecord } from '@/cli/setup-flag-builders';
+import { backfillPackageTags } from '@/cli/tags';
 import {
 	credentialTables,
 	executionTable,
@@ -192,6 +193,37 @@ const repositories = group('repositories').alias('repo').description('Inspect an
 					);
 				})),
 		),
+	);
+const tags = group('tags').description('Create the package tags of released versions')
+	.command(
+		base('backfill', 'Create the missing package tags of every released version')
+			.details(
+				[
+					'A stream with `packageTags` gets a tag per package, such as `svg-data-v1.2.3` beside `v1.2.3`, on the release commit. Beepboop creates these tags when a release succeeds. This command adds the tags that released versions are missing.',
+					'Beepboop lists every version tag of the stream, checks each package against its registry, and creates a signed tag only for a package that is published at that version. It never moves or replaces a tag.',
+				].join('\n\n'),
+			)
+			.example('beepboop tags backfill', "Preview and create the missing tags of this checkout's repository")
+			.example('beepboop tags backfill --dry-run', 'Print the missing tags and create nothing')
+			.example('beepboop tags backfill --repository octo/widget --stream main --yes', 'Create them without asking')
+			.flag('repository', flag.string().describe('Repository override; otherwise resolve the current Git remote'))
+			.flag('stream', flag.string().describe('Stream with packageTags; inferred when only one has them'))
+			.flag('yes', flag.boolean().default(false).describe('Skip the confirmation; the preview still prints'))
+			.flag('dry-run', flag.boolean().default(false).describe('Print the missing tags and create nothing'))
+			.action(({ flags, ask, out }) =>
+				Effect.runPromise(
+					Client.at(flags.server).pipe(
+						Effect.flatMap(client =>
+							backfillPackageTags(
+								client,
+								{ repository: flags.repository, stream: flags.stream, yes: flags.yes, dryRun: flags['dry-run'] },
+								ask,
+								out,
+							)
+						),
+					),
+				)
+			),
 	);
 const runs = group('runs').description('Follow, publish, cancel and recover release operations')
 	.command(
@@ -830,6 +862,6 @@ const notifications = group('notifications').description('Send package releases 
 export const app = cli('beepboop')
 	.manifest({ from: import.meta.url })
 	.links()
-	.command(auth).command(adopt).command(repositories).command(release).command(releases).command(runs)
+	.command(auth).command(adopt).command(repositories).command(release).command(releases).command(runs).command(tags)
 	.command(secrets).command(notifications).completions();
 if (import.meta.main) await app.run();

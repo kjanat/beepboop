@@ -23,7 +23,7 @@ import { publishable } from '@/automation/package-publication';
 import { pollPackages } from '@/automation/package-watch';
 import { matchesRef } from '@/automation/policy';
 import type { RefState } from '@/automation/refs';
-import { conflictMessage, streamModuleTagPrefixes, tagConflict } from '@/automation/refs';
+import { conflictMessage, streamModuleTagPrefixes, tagConflicts } from '@/automation/refs';
 import {
 	manifestProblems,
 	releasedVersion,
@@ -87,6 +87,8 @@ export interface AutomationBindings extends AuthBindings, Credentials, WinGetBin
 	VAULT_KEYS: string;
 	VAULT_ACTIVE_KEY: string;
 }
+const retiredStates: readonly string[] = ['cancelled', 'failed'];
+
 export class AutomationService {
 	constructor(
 		readonly env: AutomationBindings,
@@ -395,13 +397,12 @@ export class AutomationService {
 		repository: ReadyRepository,
 		streamName: string,
 		stream: Stream,
-		version: string,
+		promotions: Execution[],
 		packages: Package[],
 	): Effect.Effect<Snapshot | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const promotions = yield* fromPromise(() => this.coordinator(repository.id).promotions(streamName, version));
 			for (const promotion of promotions) {
-				if (promotion.state === 'cancelled') continue;
+				if (retiredStates.includes(promotion.state)) continue;
 				const held = yield* this.releaseHeld(repository, stream, packages, promotion.sourceSha).pipe(
 					recover(error =>
 						logFailure('version-commit.failed', error, {
@@ -447,11 +448,12 @@ export class AutomationService {
 				if (!version || manifestProblems(repository.inventory, packages).length) continue;
 				const started = yield* this.startedPreparation(repository, name, version, repository.sha);
 				const merge = started ? undefined : yield* this.mergedPreparation(repository, name, version, repository.sha);
+				const promotions = yield* fromPromise(() => this.coordinator(repository.id).promotions(name, version));
 				const prepared = started?.sha ?? merge;
 				const held = prepared === undefined
 					? undefined
 					: yield* this.releaseHeld(repository, stream, packages, prepared);
-				const snapshot = held ?? (yield* this.versionCommit(repository, name, stream, version, packages))
+				const snapshot = held ?? (yield* this.versionCommit(repository, name, stream, promotions, packages))
 					?? (yield* this.gateway.snapshot(
 						repository.name,
 						repository.id,
@@ -469,15 +471,29 @@ export class AutomationService {
 				if (plan.edits.length || plan.requiresPreparation) continue;
 				const policy = stream.promote.workflow.refs;
 				const parsed = safeDecode(semVer, version);
+				let reclaims: RefState[] = [];
 				if (policy && parsed.success) {
 					tags ??= yield* this.gateway.tagRefs(repository.name, repository.id);
-					const conflict = tagConflict(
+					const conflicts = tagConflicts(
 						policy,
 						parsed.data,
 						plan.sourceSha,
 						tags,
 						streamModuleTagPrefixes(repository.inventory.packages, stream),
 					);
+					if (conflicts.length) {
+						const owned = yield* fromPromise(() =>
+							this.coordinator(repository.id).reclaimable(
+								repository.id,
+								name,
+								version,
+								`${policy.prefix}${version}`,
+								conflicts,
+							)
+						);
+						if (owned.length === conflicts.length) reclaims = owned;
+					}
+					const conflict = reclaims.length ? undefined : conflicts[0];
 					if (conflict) {
 						const missing = packages.filter(pkg => releasedVersion(pkg) !== version);
 						const backfill = yield* this.backfill(repository, name, conflict, version, missing);
@@ -516,6 +532,7 @@ export class AutomationService {
 						version,
 					})
 				);
+				if (reclaims.length) promotion.reclaims = reclaims;
 				if (yield* fromPromise(() => this.coordinator(repository.id).execution(promotion.id))) continue;
 				setupMerge ??= (yield* this.setupMerge(repository)) ?? null;
 				if (setupMerge?.sha === plan.sourceSha && !releaseAfterMerge(setupMerge.body)) continue;

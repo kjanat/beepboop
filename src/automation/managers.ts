@@ -112,6 +112,12 @@ export function verifyPublication(
 ): Effect.Effect<Publication> {
 	return managerRegistry.verifyPublication(publication, request, context);
 }
+export function verifySecondaryPublications(
+	publication: Publication,
+	request: Fetcher = fetch,
+): Effect.Effect<Publication[]> {
+	return managerRegistry.verifySecondaryPublications(publication, request);
+}
 export function resolvePublished(
 	inventory: Inventory,
 	request: Fetcher = fetch,

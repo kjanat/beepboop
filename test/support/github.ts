@@ -83,7 +83,7 @@ export interface Repository {
 	signatures: boolean;
 	protectedBranches: Set<string>;
 	allowAutoMerge: boolean;
-	tagObjects: Map<string, { name: string; commit: string; verified: boolean; targetType?: string }>;
+	tagObjects: Map<string, { name: string; commit: string; verified: boolean; targetType?: string; raw?: string }>;
 }
 
 export function filesAt(repository: Repository, sha: string): Record<string, string> {
@@ -128,8 +128,10 @@ type Route = (match: RegExpExecArray, url: URL, body: Record<string, unknown>) =
 
 export class FakeGitHub {
 	readonly repositories = new Map<string, Repository>();
+	verifiesTags = true;
 	readonly unhandled: string[] = [];
 	readonly dispatches: { repository: string; file: string; ref: string; inputs: Record<string, string> }[] = [];
+	readonly tokenPermissions: unknown[] = [];
 	private nextId = 1000;
 	private readonly routes: [string, RegExp, Route][] = [];
 	private suspendedAt: string | null = null;
@@ -157,6 +159,7 @@ export class FakeGitHub {
 				if (missing) {
 					throw new HttpError(422, 'There is at least one repository that does not exist or is not accessible');
 				}
+				this.tokenPermissions.push(body.permissions);
 				return json({ token: `ghs_${this.id()}`, expires_at: new Date(Date.now() + 3600_000).toISOString() }, 201);
 			},
 		);
@@ -296,11 +299,26 @@ export class FakeGitHub {
 			});
 			return json({ sha: commit.sha }, 201);
 		});
+		this.route('POST', new RegExp(`^${repo}/git/tags$`), (match, _url, body) => {
+			const repository = this.repository(match[1]);
+			const commit = this.resolve(repository, stringField(body, 'object'));
+			const tagger = object(body.tagger);
+			const seconds = Math.floor(Date.parse(stringField(tagger, 'date')) / 1000);
+			const name = stringField(body, 'tag'), message = stringField(body, 'message');
+			const raw = `object ${commit.sha}\ntype ${stringField(body, 'type')}\ntag ${name}\ntagger ${
+				stringField(tagger, 'name')
+			} <${stringField(tagger, 'email')}> ${seconds} +0000\n\n${message}`;
+			const oid = gitObject('tag', Buffer.from(raw));
+			const verified = this.verifiesTags && message.includes('-----BEGIN PGP SIGNATURE-----');
+			repository.tagObjects.set(oid, { name, commit: commit.sha, verified, raw });
+			return json({ sha: oid, verification: { verified, reason: verified ? 'valid' : 'unsigned' } }, 201);
+		});
 		this.route('POST', new RegExp(`^${repo}/git/refs$`), (match, _url, body) => {
 			const repository = this.repository(match[1]);
 			const ref = stringField(body, 'ref').replace(/^refs\//, '');
 			if (repository.refs.has(ref)) throw new HttpError(422, 'Reference already exists');
-			repository.refs.set(ref, this.resolve(repository, stringField(body, 'sha')).sha);
+			const target = stringField(body, 'sha');
+			repository.refs.set(ref, repository.tagObjects.has(target) ? target : this.resolve(repository, target).sha);
 			return json({ ref: `refs/${ref}` }, 201);
 		});
 		this.route('PATCH', new RegExp(`^${repo}/git/refs/heads/(.+)$`), (match, _url, body) => {
