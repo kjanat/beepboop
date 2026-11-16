@@ -106,14 +106,38 @@ function tagObject(repository: Repository, name: string) {
 	return ref === undefined ? undefined : repository.tagObjects.get(ref);
 }
 
+function discovered(manager: 'cargo' | 'npm', name: string): Package {
+	return {
+		manager,
+		name,
+		version: '1.0.0',
+		manifest: `${name}/${manager === 'npm' ? 'package.json' : 'Cargo.toml'}`,
+		versionSource: 'manifest:',
+		publication: registry,
+		dependencies: [],
+	};
+}
+const discoveredPackages = [
+	discovered('cargo', 'tree-sitter-svg'),
+	discovered('npm', 'tree-sitter-svg'),
+	discovered('cargo', 'svg-data'),
+	discovered('cargo', 'svg-tree'),
+	discovered('npm', '@kjanat/svg-toolkit'),
+];
+
 test('a package tag joins an npm scope to the name the way npm pack names its archive', () => {
-	expect(packageTagBase('pkg:npm/%40kjanat/svg-toolkit')).toBe('kjanat-svg-toolkit');
-	expect(packageTagBase('pkg:cargo/svg-data')).toBe('svg-data');
-	expect(packageTagGroups(['pkg:cargo/tree-sitter-svg', 'pkg:npm/tree-sitter-svg', 'pkg:cargo/svg-data'], 'v'))
-		.toEqual([
-			{ prefix: 'tree-sitter-svg-v', references: ['pkg:cargo/tree-sitter-svg', 'pkg:npm/tree-sitter-svg'] },
-			{ prefix: 'svg-data-v', references: ['pkg:cargo/svg-data'] },
-		]);
+	expect(packageTagBase('@kjanat/svg-toolkit')).toBe('kjanat-svg-toolkit');
+	expect(packageTagBase('svg-data')).toBe('svg-data');
+	expect(packageTagGroups(
+		['pkg:cargo/tree-sitter-svg', 'pkg:npm/tree-sitter-svg', 'pkg:cargo/svg-data', 'npm:@kjanat/svg-toolkit'],
+		'v',
+		discoveredPackages,
+	)).toEqual([
+		{ prefix: 'tree-sitter-svg-v', references: ['pkg:cargo/tree-sitter-svg', 'pkg:npm/tree-sitter-svg'] },
+		{ prefix: 'svg-data-v', references: ['pkg:cargo/svg-data'] },
+		{ prefix: 'kjanat-svg-toolkit-v', references: ['npm:@kjanat/svg-toolkit'] },
+	]);
+	expect(packageTagGroups(['pkg:cargo/missing'], 'v', discoveredPackages)).toEqual([]);
 });
 
 test('package tag rows cover each released version and keep tags on another commit apart', () => {
@@ -127,7 +151,11 @@ test('package tag rows cover each released version and keep tags on another comm
 	const releases = taggedReleases('v', refs);
 	expect(releases).toEqual([{ version: '1.0.0', commit }, { version: '1.1.0', commit: other }]);
 	expect(
-		packageTagRows(packageTagGroups(['pkg:cargo/svg-data', 'pkg:cargo/svg-tree'], 'v'), releases, refs).map(
+		packageTagRows(
+			packageTagGroups(['pkg:cargo/svg-data', 'pkg:cargo/svg-tree'], 'v', discoveredPackages),
+			releases,
+			refs,
+		).map(
 			row => [row.tag, row.state, row.target],
 		),
 	).toEqual([
@@ -390,4 +418,20 @@ test('a backfill refuses a repository without configuration', async () => {
 		422,
 		'Repository not configured',
 	]);
+}, 30_000);
+
+test('a legacy package reference names its tag after the discovered package', async () => {
+	const key = signingKey('Release Bot (CI) <release@example.com>');
+	try {
+		world.env.SIGNER = fakeSigner(key);
+		const { second, tags } = await released(['npm:widget']);
+		expect(await tags(true)).toContainEqual({
+			tag: 'widget-v1.0.0',
+			version: '1.0.0',
+			commit: second,
+			outcome: 'created',
+		});
+	} finally {
+		key.dispose();
+	}
 }, 30_000);

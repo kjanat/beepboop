@@ -496,21 +496,29 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (execution.state === 'succeeded' && previous?.state !== 'succeeded') yield* this.tagPackagesLater(execution);
 		});
 	}
-	private tagPackagesLater(execution: Execution): CoordinatorEffect<void> {
+	private tagPackagesLater(execution: Execution): CoordinatorEffect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const references = execution.configuration.streams[execution.stream]?.packageTags;
-			const policy = execution.workflow?.refs;
-			const version = execution.version;
-			if (execution.operation !== 'promote' || !references?.length || policy?.phase !== 'version' || !version) return;
-			const release: Release = { version, commit: execution.sourceSha };
+			const promotion = execution.operation === 'promote'
+				? execution
+				: execution.version === undefined
+				? undefined
+				: (yield* this.executions()).find(other =>
+					other.operation === 'promote' && other.state === 'succeeded' && other.stream === execution.stream
+					&& other.version === execution.version
+				);
+			const references = promotion?.configuration.streams[promotion.stream]?.packageTags;
+			const policy = promotion?.workflow?.refs;
+			const version = promotion?.version;
+			if (!promotion || !references?.length || policy?.phase !== 'version' || !version) return;
+			const release: Release = { version, commit: promotion.sourceSha };
 			const work = Effect.gen({ self: this }, function*() {
-				const record = yield* (yield* this.store).repository(execution.repositoryId);
+				const packages = (yield* (yield* this.store).repository(execution.repositoryId))?.inventory.packages ?? [];
 				const results = yield* this.packageTagResults(
 					execution.repository,
 					execution.repositoryId,
-					packageTagGroups(references, policy.prefix),
+					packageTagGroups(references, policy.prefix, packages),
 					() => [release],
-					record?.inventory.packages ?? [],
+					packages,
 					true,
 				);
 				for (const result of results.filter(result => result.outcome === 'failed' || result.outcome === 'conflict')) {
@@ -540,7 +548,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const results = yield* this.packageTagResults(
 					record.name,
 					record.id,
-					packageTagGroups(references, policy.prefix),
+					packageTagGroups(references, policy.prefix, record.inventory.packages),
 					refs => taggedReleases(policy.prefix, refs),
 					record.inventory.packages,
 					apply,
