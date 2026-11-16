@@ -445,6 +445,18 @@ export class AutomationService {
 			for (const [name, stream] of Object.entries(repository.configuration.streams)) {
 				if (!stream.promote.workflow || stream.versionSource?.kind === 'tags') continue;
 				const packages = publishablePackages(repository.inventory.packages, stream.packages);
+				const unread = packages.filter(pkg => pkg.publicationStatus === 'failed');
+				if (unread.length) {
+					tagged.push({
+						code: 'release-unchecked',
+						severity: 'warning',
+						subject: { kind: 'stream', name },
+						message: `Beepboop starts no release of stream ${name} until its registries answer for ${
+							unread.map(packageId).join(', ')
+						}. The next push or discovery asks again.`,
+					});
+					continue;
+				}
 				const version = unreleasedManifestVersion(packages);
 				if (!version || manifestProblems(repository.inventory, packages).length) continue;
 				const started = yield* this.startedPreparation(repository, name, version, repository.sha);

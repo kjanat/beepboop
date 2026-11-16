@@ -521,6 +521,30 @@ test('a version whose tag targets another commit gets no promotion and a reposit
 	expect(await promotions()).toEqual([]);
 });
 
+test('a package the registry cannot answer for gets no promotion and a repository warning', async () => {
+	const { repository, merged } = await tagged();
+	passChecks(repository, merged.sha);
+	world.network.serve('registry.npmjs.org', () => new Response(null, { status: 503 }));
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(1_000);
+	expect(await promotions()).toEqual([]);
+	const discovered = await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	expect(discovered.findings).toContainEqual({
+		code: 'release-unchecked',
+		severity: 'warning',
+		subject: { kind: 'stream', name: 'main' },
+		message:
+			'Beepboop starts no release of stream main until its registries answer for pkg:npm/widget. The next push or discovery asks again.',
+	});
+	world.network.serve('registry.npmjs.org', request => world.npm.handle(request));
+	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
+	await world.wait(1_000);
+	expect((await promotions()).map(promotion => [promotion.version, promotion.sourceSha])).toEqual([[
+		'1.2.4',
+		merged.sha,
+	]]);
+});
+
 test('no approval overrides a version tag on another commit, and the CLI cancels the promotion', async () => {
 	const { repository, before, merged } = await tagged();
 	passChecks(repository, merged.sha);
