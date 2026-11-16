@@ -239,6 +239,19 @@ test('a release of the same version takes over the tag of a failed release that 
 		.toEqual([[false, fixed.sha]]);
 }, 60_000);
 
+test('beepboop release takes over the tag of a failed release that the push left alone', async () => {
+	await savedClient(world, directory);
+	const { repository, api, merged, oid } = await taggedFailure();
+	world.network.serve('registry.npmjs.org', () => new Response(null, { status: 503 }));
+	const fixed = await pushFix(repository);
+	expect((await promotions(api)).map(promotion => promotion.sourceSha)).toEqual([merged.sha]);
+	world.network.serve('registry.npmjs.org', request => world.npm.handle(request));
+	const released = await runCli(['release', '1.0.0', '--repository', repository.name, '--yes']);
+	expect([released.exitCode, released.stderr.join('')]).toEqual([0, '']);
+	const second = (await promotions(api)).find(promotion => promotion.sourceSha === fixed.sha);
+	expect([second?.version, second?.reclaims]).toEqual(['1.0.0', [{ name: 'v1.0.0', oid, commit: merged.sha }]]);
+}, 60_000);
+
 test('a version already on its registry keeps its tag, and the new commit gets no release', async () => {
 	const { repository, api, first } = await taggedFailure();
 	world.npm.publish('widget', '1.0.0');

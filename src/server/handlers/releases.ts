@@ -3,14 +3,15 @@ import { planVersionFiles } from '@/automation/editors';
 import { createExecution } from '@/automation/execution';
 import { createReleasePreparation } from '@/automation/managed';
 import { planRelease, selectedReleasePackages, versionsInFiles } from '@/automation/managers';
-import { latestTag } from '@/automation/managers/tags';
-import { matchesPackage } from '@/automation/package-identity';
+import { latestTag, tagPrefix } from '@/automation/managers/tags';
+import { matchesPackage, publishablePackages } from '@/automation/package-identity';
 import { planReleaseSet } from '@/automation/planning';
 import { planHookUpdates } from '@/automation/precommit';
+import { conflictMessage } from '@/automation/refs';
 import { capabilitySentence, releasable, releaseCapability } from '@/automation/release-capability';
 import { resolvePackageVersion } from '@/automation/release-version';
 import type { AutomationService } from '@/automation/service';
-import type { Execution, ReleasePlan, ReleaseStarted, Snapshot, Stream } from '@/automation/types';
+import type { Execution, Inventory, ReleasePlan, ReleaseStarted, Snapshot, Stream } from '@/automation/types';
 import { nextVersion, parseVersionRequest } from '@/automation/version';
 import type { DomainError } from '@/contract/errors';
 import { conflict, notFound, precondition } from '@/contract/errors';
@@ -83,6 +84,33 @@ function latestTagVersion(service: AutomationService, repository: ReadyRepositor
 	);
 }
 
+function delegatedPlan(
+	snapshot: Snapshot,
+	inventory: Inventory,
+	stream: Stream,
+	target: unknown,
+	selected: string[] | undefined,
+): Effect.Effect<ReleasePlan, DomainError> {
+	return Effect.gen(function*() {
+		const version = (yield* Effect.fromResult(semver(target))).replace(/^v/, '');
+		const packages = publishablePackages(inventory.packages, selected);
+		const carried = packages.length > 0
+			&& packages.every(pkg => tagPrefix(pkg.versionSource) === undefined && pkg.version === version);
+		if (carried) {
+			const prepared = yield* planRelease(snapshot, inventory, version, selected, undefined, stream.versionFiles);
+			if (!prepared.edits.length && !prepared.requiresPreparation) return prepared;
+		}
+		return {
+			version,
+			sourceSha: snapshot.sha,
+			packages,
+			edits: [],
+			diagnostics: stream.prepare.workflow ? ['Preparation is delegated to the configured repository workflow'] : [],
+			requiresPreparation: stream.prepare.workflow !== undefined,
+		};
+	});
+}
+
 export function releasePlan(input: ReleaseInput, { service }: Pick<AdminContext, 'service'>) {
 	return Effect.gen(function*() {
 		const selection = yield* configured(service, input.repositoryId, input.stream);
@@ -122,16 +150,7 @@ export function releasePlan(input: ReleaseInput, { service }: Pick<AdminContext,
 			? yield* planRelease(snapshot, repository.inventory, target, selected, undefined, stream.versionFiles)
 			: stream.prepare.strategy !== 'workflow' && stream.versionFiles?.length
 			? yield* planVersionFiles(snapshot, target, stream.versionFiles)
-			: {
-				version: (yield* Effect.fromResult(semver(target))).replace(/^v/, ''),
-				sourceSha: snapshot.sha,
-				packages: [],
-				edits: [],
-				diagnostics: stream.prepare.workflow
-					? ['Preparation is delegated to the configured repository workflow']
-					: [],
-				requiresPreparation: stream.prepare.workflow !== undefined,
-			};
+			: yield* delegatedPlan(snapshot, repository.inventory, stream, target, selected);
 		const planId = yield* planIdentity(plan, repository);
 		return { selection, plan, planId };
 	});
@@ -179,6 +198,8 @@ export function beginRelease(
 			return yield* precondition(`${plan.version} of ${name} opens no version PR to merge`);
 		}
 		if (!plan.edits.length && !plan.requiresPreparation) {
+			const claim = yield* service.tagClaims(repository, name, stream, plan.version, plan.sourceSha);
+			if (claim.conflict) return yield* precondition(`${conflictMessage(claim.conflict)}. Release a new version.`);
 			const promotion = yield* createExecution(repository, {
 				stream: name,
 				operation: 'promote',
@@ -187,6 +208,7 @@ export function beginRelease(
 				version: plan.version,
 			});
 			promotion.initiatedBy = actor;
+			if (claim.reclaims.length) promotion.reclaims = claim.reclaims;
 			if (started) {
 				promotion.approvedBy = 'start';
 				promotion.started = started;
