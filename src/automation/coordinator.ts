@@ -2295,13 +2295,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					token,
 				)
 				: null;
-			const pinned = run !== null && run.head_sha === execution.sourceSha && (yield* this.versionTagged(execution));
-			const moved = pinned ? undefined : yield* this.headMoved(
+			const moved = yield* this.headMoved(
 				execution,
 				token,
 				typeof run?.head_branch === 'string' ? run.head_branch : undefined,
 			);
-			if (moved) return yield* precondition(moved);
+			if (
+				moved
+				&& !(run !== null && run.head_sha === execution.sourceSha && (yield* this.versionTagged(execution)))
+			) return yield* precondition(moved);
 			if (run !== null && execution.eventId.startsWith('observed:') && run.conclusion === 'success') {
 				return yield* precondition(
 					`Workflow run ${run.id} succeeded, so it has no failed jobs to re-run. Fix the reported problem and re-run the workflow on GitHub`,
