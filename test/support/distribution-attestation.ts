@@ -124,7 +124,7 @@ export async function signedDistributionFixture(options: {
 		bundle.verificationMaterial.timestampVerificationData = {
 			rfc3161Timestamps: [{ signedTimestamp: Buffer.from(timestamp) }],
 		};
-		root.timestampAuthorities.push({ certChain: { certificates: [{ rawBytes: Buffer.from(tsa.rootCertificate) }] } });
+		root.timestampAuthorities.push({ certChain: { certificates: [{ rawBytes: Buffer.from(tsa.intCertificate) }, { rawBytes: Buffer.from(tsa.rootCertificate) }] } });
 	} else {
 		const tlog = await initializeTLog('https://rekor.sigstore.test', key(), clock);
 		const pem = `-----BEGIN CERTIFICATE-----\n${
@@ -141,7 +141,10 @@ export async function signedDistributionFixture(options: {
 				},
 			},
 		});
-		const entry = Object.values(entries)[0]!;
+		const entry = Object.values(entries)[0];
+		if (!entry) throw new Error('Transparency log returned no entry');
+		const proof = entry.verification?.inclusionProof;
+		if (!proof) throw new Error('Transparency log returned no inclusion proof');
 		bundle.verificationMaterial.tlogEntries = [{
 			logIndex: String(entry.logIndex),
 			logId: { keyId: Buffer.from(entry.logID, 'hex') },
@@ -149,6 +152,7 @@ export async function signedDistributionFixture(options: {
 			integratedTime: String(entry.integratedTime),
 			canonicalizedBody: Buffer.from(String(entry.body), 'base64'),
 			inclusionPromise: { signedEntryTimestamp: Buffer.from(entry.verification?.signedEntryTimestamp ?? '', 'base64') },
+			inclusionProof: { logIndex: String(proof.logIndex), treeSize: String(proof.treeSize), rootHash: Buffer.from(proof.rootHash, 'hex'), hashes: [], checkpoint: { envelope: proof.checkpoint } },
 		}];
 		root.tlogs.push({
 			baseUrl: 'https://rekor.sigstore.test',

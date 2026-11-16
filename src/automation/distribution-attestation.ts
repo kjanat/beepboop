@@ -5,7 +5,7 @@ import { toSignedEntity, toTrustMaterial, Verifier } from '@sigstore/verify';
 import { Context, Effect, Schema } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
 import trustedRoots from '@/automation/trust/github-sigstore.json';
-import type { DistributionManifest } from '@/contract/distribution';
+import type { DistributionManifest, DistributionProvenance } from '@/contract/distribution';
 import { canonicalDistributionManifest, distributionManifestName } from '@/contract/distribution';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
@@ -18,16 +18,7 @@ export const DistributionAttestationRoots = Context.Reference<readonly TrustedRo
 	{ defaultValue: () => trustedRoots.map(root => TrustedRoot.fromJSON(root)) },
 );
 
-export const verifiedDistributionProvenanceSchema = mutableStruct({
-	manifestSha256: Schema.String,
-	bundleSha256: Schema.String,
-	runId: Schema.Number,
-	runAttempt: Schema.Number,
-	workflowSha: Schema.String,
-	workflowRef: Schema.String,
-	runSha: Schema.String,
-});
-export type VerifiedDistributionProvenance = typeof verifiedDistributionProvenanceSchema.Type;
+export type VerifiedDistributionProvenance = DistributionProvenance;
 
 const statementSchema = mutableStruct({
 	_type: Schema.Literal('https://in-toto.io/Statement/v1'),
