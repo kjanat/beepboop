@@ -113,6 +113,23 @@ export function delegatedPlan(
 	});
 }
 
+function carriedPlan(
+	service: AutomationService,
+	{ repository, stream }: Selected,
+	name: string,
+	head: ReleasePlan,
+	selected: string[] | undefined,
+	planAt: (at: Snapshot) => Effect.Effect<ReleasePlan, DomainError>,
+): Effect.Effect<ReleasePlan, DomainError> {
+	return Effect.gen(function*() {
+		const packages = publishablePackages(repository.inventory.packages, selected);
+		const { snapshot } = yield* service.releaseSource(repository, name, stream, head.version, packages);
+		if (snapshot.sha === head.sourceSha) return head;
+		const held = yield* planAt(snapshot);
+		return held.edits.length || held.requiresPreparation ? head : held;
+	});
+}
+
 export function releasePlan(input: ReleaseInput, { service }: Pick<AdminContext, 'service'>) {
 	return Effect.gen(function*() {
 		const selection = yield* configured(service, input.repositoryId, input.stream);
@@ -148,11 +165,16 @@ export function releasePlan(input: ReleaseInput, { service }: Pick<AdminContext,
 				? request.version
 				: yield* resolvePackageVersion(yield* selectedReleasePackages(repository.inventory, selected), request);
 		}
-		const plan: ReleasePlan = stream.prepare.strategy !== 'workflow' && versionsInFiles(repository.inventory)
-			? yield* planRelease(snapshot, repository.inventory, target, selected, undefined, stream.versionFiles)
-			: stream.prepare.strategy !== 'workflow' && stream.versionFiles?.length
-			? yield* planVersionFiles(snapshot, target, stream.versionFiles)
-			: yield* delegatedPlan(snapshot, repository.inventory, stream, target, selected);
+		const planAt = (at: Snapshot): Effect.Effect<ReleasePlan, DomainError> =>
+			stream.prepare.strategy !== 'workflow' && versionsInFiles(repository.inventory)
+				? planRelease(at, repository.inventory, target, selected, undefined, stream.versionFiles)
+				: stream.prepare.strategy !== 'workflow' && stream.versionFiles?.length
+				? planVersionFiles(at, target, stream.versionFiles)
+				: delegatedPlan(at, repository.inventory, stream, target, selected);
+		const head = yield* planAt(snapshot);
+		const plan = stream.versionSource?.kind === 'tags' || head.edits.length || head.requiresPreparation
+			? head
+			: yield* carriedPlan(service, selection, input.stream, head, selected, planAt);
 		const planId = yield* planIdentity(plan, repository);
 		return { selection, plan, planId };
 	});

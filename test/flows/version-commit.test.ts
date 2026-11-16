@@ -201,6 +201,22 @@ test('publishing the version commit in Beepboop works after the default branch m
 	expect(repository.refs.get('tags/v1.0.1')).toBe(merged.sha);
 });
 
+test('releasing a version the default branch already carries pins the version commit', async () => {
+	const { repository, api, merged } = await squashedVersionPr('required');
+	passChecks(repository, merged.sha);
+	const later = moveOn(repository);
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const { plan, prepared } = await prepareRelease(api, {
+		repositoryId: repository.id,
+		stream: 'main',
+		version: '1.0.1',
+	});
+	expect([plan.status, text(plan.body, 'sourceSha')]).toEqual([200, merged.sha]);
+	expect(prepared.status).toBe(200);
+	expect(world.github.head(repository)).toBe(later.sha);
+	expect((await promotions(api)).map(entry => entry.sourceSha)).toEqual([merged.sha]);
+});
+
 test('a pushed version commit publishes itself although a later commit landed before its checks passed', async () => {
 	const { repository, api } = await configured('push');
 	const version = world.github.push(repository, { 'package.json': npmManifest('widget', '1.0.1') }, 'Release 1.0.1');

@@ -468,23 +468,13 @@ export class AutomationService {
 				}
 				const version = unreleasedManifestVersion(packages);
 				if (!version || manifestProblems(repository.inventory, packages).length) continue;
-				const started = yield* this.startedPreparation(repository, name, version, repository.sha);
-				const merge = started ? undefined : yield* this.mergedPreparation(repository, name, version, repository.sha);
-				const promotions = yield* fromPromise(() => this.coordinator(repository.id).promotions(name, version));
-				const prepared = started?.sha ?? merge;
-				const retired = promotions.some(promotion =>
-					promotion.sourceSha === prepared && retiredStates.includes(promotion.state)
+				const { started, merge, held, snapshot } = yield* this.releaseSource(
+					repository,
+					name,
+					stream,
+					version,
+					packages,
 				);
-				const held = prepared === undefined || retired
-					? undefined
-					: yield* this.releaseHeld(repository, stream, packages, prepared);
-				const snapshot = held ?? (yield* this.versionCommit(repository, name, stream, promotions, packages))
-					?? (yield* this.gateway.snapshot(
-						repository.name,
-						repository.id,
-						repository.sha,
-						(stream.versionFiles ?? []).map(rule => rule.path),
-					));
 				const plan = yield* planRelease(
 					snapshot,
 					repository.inventory,
@@ -549,6 +539,42 @@ export class AutomationService {
 				yield* this.store.audit('beepboop', 'release.push', promotion.id);
 				yield* this.enqueue(repository, promotion);
 			}
+		});
+	}
+	releaseSource(
+		repository: ReadyRepository,
+		name: string,
+		stream: Stream,
+		version: string,
+		packages: Package[],
+	): Effect.Effect<
+		{
+			snapshot: Snapshot;
+			started: { sha: string; started: ReleaseStarted } | undefined;
+			merge: string | undefined;
+			held: Snapshot | undefined;
+		},
+		DomainError
+	> {
+		return Effect.gen({ self: this }, function*() {
+			const started = yield* this.startedPreparation(repository, name, version, repository.sha);
+			const merge = started ? undefined : yield* this.mergedPreparation(repository, name, version, repository.sha);
+			const promotions = yield* fromPromise(() => this.coordinator(repository.id).promotions(name, version));
+			const prepared = started?.sha ?? merge;
+			const retired = promotions.some(promotion =>
+				promotion.sourceSha === prepared && retiredStates.includes(promotion.state)
+			);
+			const held = prepared === undefined || retired
+				? undefined
+				: yield* this.releaseHeld(repository, stream, packages, prepared);
+			const snapshot = held ?? (yield* this.versionCommit(repository, name, stream, promotions, packages))
+				?? (yield* this.gateway.snapshot(
+					repository.name,
+					repository.id,
+					repository.sha,
+					(stream.versionFiles ?? []).map(rule => rule.path),
+				));
+			return { snapshot, started, merge, held };
 		});
 	}
 	tagClaims(
