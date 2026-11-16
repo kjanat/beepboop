@@ -58,6 +58,7 @@ import {
 	observedVersion,
 	placeholderVersion,
 	verifyPublication,
+	verifySecondaryPublications,
 } from '@/automation/managers';
 import { tagPrefix } from '@/automation/managers/tags';
 import { mergeArtifacts, resolveInputs } from '@/automation/outputs';
@@ -2371,7 +2372,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		);
 	}
 	private reclaimableTags(
-		release: Pick<Execution, 'repository' | 'repositoryId' | 'stream' | 'version'> & { id?: string },
+		release: Pick<Execution, 'repository' | 'repositoryId' | 'stream' | 'version' | 'moduleTags'> & { id?: string },
 		conflicts: readonly RefState[],
 		registries: boolean,
 		primary: string,
@@ -2405,6 +2406,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			const owned = conflicts.filter(tag => pushed.includes(`${tag.name} ${tag.commit} ${tag.oid}`));
 			if (owned.length !== conflicts.length) return [];
+			const record = yield* (yield* this.store).repository(release.repositoryId);
+			const stream = record?.configuration?.streams[release.stream];
+			const modulePrefixes = [
+				...streamModuleTagPrefixes(record?.inventory.packages ?? [], stream),
+				...tagPrefixes(release.moduleTags ?? []),
+			];
+			for (const execution of releases) modulePrefixes.push(...yield* this.modulePrefixes(execution));
+			if (modulePrefixes.some(prefix => `${prefix}${version}` === primary)) return [];
 			const gateway = yield* this.gateway;
 			const token = yield* gateway.token(release.repository, release.repositoryId, {
 				contents: 'read',
@@ -2439,8 +2448,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (published !== null) return [];
 			}
 			if (!registries) return owned;
-			const record = yield* (yield* this.store).repository(release.repositoryId);
-			const stream = record?.configuration?.streams[release.stream];
 			if (!record || !stream) return [];
 			const transport = (yield* Automation).dependencies.transport;
 			const context = gateway.verification(release.repository, release.repositoryId);
@@ -2483,10 +2490,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const outcomes = yield* Effect.forEach(
 				[...probes.values()].filter(publication => canVerifyPublication(publication.manager)),
 				publication =>
-					verifyPublication(publication, transport, context).pipe(Effect.map(verified => verified.outcome)),
+					Effect.all([
+						verifyPublication(publication, transport, context),
+						verifySecondaryPublications(publication, transport),
+					]).pipe(Effect.map(([primary, secondary]) => [primary, ...secondary].map(verified => verified.outcome))),
 				{ concurrency: 8 },
 			);
-			return outcomes.every(outcome => outcome === 'pending') ? owned : [];
+			return outcomes.flat().every(outcome => outcome === 'pending') ? owned : [];
 		});
 	}
 	private versionTagged(execution: Execution): CoordinatorEffect<boolean, DomainError> {
@@ -2769,7 +2779,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 
 				if (action === 'reconcile') yield* this.remove(`quarantine:${id}`);
 				const execution = yield* this.get(id);
-				const takeover = action === 'reconcile' || execution.operation !== 'promote' || execution.reclaims?.length
+				const takeover = action === 'reconcile' || execution.operation !== 'promote'
 					? undefined
 					: (yield* this.executions()).find(other =>
 						other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream

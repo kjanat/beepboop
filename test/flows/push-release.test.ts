@@ -16,7 +16,7 @@ import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema } from 'effect';
 import type { Execution } from '@/automation/types';
 import { routes } from '@/contract/routes';
-import { decodeSync, mutableArray, mutableStruct } from '@/schema';
+import { decodeSync, looseStruct, mutableArray, mutableStruct } from '@/schema';
 
 type Api = (path: string, body?: unknown) => Promise<Reply>;
 const refPlan = mutableStruct({ changes: mutableArray(mutableStruct({ name: Schema.String, commit: Schema.String })) });
@@ -390,6 +390,168 @@ test('a takeover refuses a redispatch of the release it supersedes before the ta
 	]);
 	expect([repository.refs.get('tags/v1.0.0'), (await promotions(api)).find(entry => entry.id === first.id)])
 		.toEqual([oid, superseded]);
+}, 60_000);
+
+test('a takeover that a later takeover supersedes cannot be retried or redispatched', async () => {
+	const { repository, api } = await taggedFailure();
+	const fixed = await pushFix(repository);
+	const second = (await promotions(api)).find(promotion => promotion.sourceSha === fixed.sha);
+	const run = repository.runs.find(entry => entry.inputs.beepboop_execution_id === second?.id);
+	if (!second || !run) throw new Error('Expected the takeover release');
+	run.status = 'in_progress';
+	const identity = runIdentity(repository, run, 'release.yml');
+	await begin(world, identity, second.id, 'main', 'promote');
+	await pushRefs(identity, second.id, repository);
+	run.status = 'completed';
+	run.conclusion = 'failure';
+	await world.workflowRun(repository, run, 'failure', 'workflow_dispatch');
+	await world.wait(16_000);
+	const moved = repository.refs.get('tags/v1.0.0');
+	const again = world.github.push(repository, { 'README.md': '# widget\n\nFixed again.\n' }, 'Fix the release again');
+	passChecks(repository, again.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	const third = (await promotions(api)).find(promotion => promotion.sourceSha === again.sha);
+	if (!third) throw new Error('Expected the second takeover');
+	expect(third.reclaims?.map(tag => [tag.name, tag.commit])).toEqual([['v1.0.0', fixed.sha]]);
+	for (const action of ['retry', 'redispatch']) {
+		const refused = await api('/api/executions/recover', { id: second.id, action });
+		expect([refused.status, field(refused.body, 'error')]).toEqual([
+			422,
+			`Release ${third.id} takes over the version tag of 1.0.0; retry that release instead`,
+		]);
+	}
+	expect(repository.refs.get('tags/v1.0.0')).toBe(moved);
+}, 60_000);
+
+interface Registries {
+	marketplace?: string;
+	openVsx?: string;
+}
+async function earlierRelease(change: (execution: Execution) => Execution, registries: Registries = {}) {
+	const { repository, api, merged, first, oid } = await taggedFailure();
+	world.network.serve('marketplace.visualstudio.com', async request => {
+		const listed = registries.marketplace !== undefined
+			&& (await request.text()).includes(`"value":"${registries.marketplace}"`);
+		return Response.json({ results: [{ extensions: listed ? [{ versions: [{ version: '1.0.0' }] }] : [] }] });
+	});
+	world.network.serve('open-vsx.org', request =>
+		new URL(request.url).pathname === `/api/${registries.openVsx}/1.0.0`
+			? Response.json({ version: '1.0.0' })
+			: Response.json({ error: 'Not found' }, { status: 404 }));
+	const coordinator = world.coordinator(repository);
+	const failed = (await promotions(api)).find(promotion => promotion.id === first.id);
+	if (!failed) throw new Error('Expected the failed release');
+	await coordinator.enqueue(change({ ...failed, id: 'earlier' }));
+	const conflict = { name: 'v1.0.0', oid, commit: merged.sha };
+	const reclaim = () => coordinator.reclaimable(repository.id, 'main', '1.0.0', 'v1.0.0', [conflict]);
+	return { repository, api, conflict, reclaim };
+}
+function withPackage(execution: Execution, reference: string): Execution {
+	const stream = execution.configuration.streams.main;
+	if (!stream) throw new Error('Expected the main stream');
+	return {
+		...execution,
+		configuration: {
+			...execution.configuration,
+			streams: {
+				...execution.configuration.streams,
+				main: { ...stream, packages: [...stream.packages ?? [], reference] },
+			},
+		},
+	};
+}
+
+for (const published of [true, false]) {
+	test(
+		`a takeover ${published ? 'refuses' : 'accepts'} a version the registry ${
+			published ? 'lists' : 'lacks'
+		} while the earlier release waited for a channel`,
+		async () => {
+			const { conflict, reclaim } = await earlierRelease(execution => ({
+				...execution,
+				publications: [...execution.publications, {
+					id: 'pkg:npm/widget',
+					manager: 'npm',
+					name: 'widget',
+					version: '1.0.0',
+					channel: 'next',
+					outcome: 'pending',
+					required: true,
+				}],
+			}));
+			if (published) world.npm.publish('widget', '1.0.0');
+			expect(await reclaim()).toEqual(published ? [] : [conflict]);
+		},
+		60_000,
+	);
+
+	test(
+		`a takeover ${published ? 'refuses' : 'accepts'} an extension of the earlier release that the Marketplace ${
+			published ? 'lists' : 'lacks'
+		}`,
+		async () => {
+			const { conflict, reclaim } = await earlierRelease(
+				execution => withPackage(execution, 'pkg:vscode-extension/acme/tool'),
+				published ? { marketplace: 'acme.tool' } : {},
+			);
+			expect(await reclaim()).toEqual(published ? [] : [conflict]);
+		},
+		60_000,
+	);
+
+	test(
+		`a takeover ${published ? 'refuses' : 'accepts'} an extension of the earlier release that Open VSX ${
+			published ? 'lists' : 'lacks'
+		}`,
+		async () => {
+			const { conflict, reclaim } = await earlierRelease(
+				execution => withPackage(execution, 'pkg:vscode-extension/acme/tool'),
+				published ? { openVsx: 'acme/tool' } : {},
+			);
+			expect(await reclaim()).toEqual(published ? [] : [conflict]);
+		},
+		60_000,
+	);
+
+	test(
+		`a takeover ${published ? 'refuses' : 'accepts'} a version tag that ${
+			published ? 'is' : 'is not'
+		} the module tag of the earlier release`,
+		async () => {
+			const { conflict, reclaim } = await earlierRelease(execution => ({
+				...execution,
+				moduleTags: [{ id: 'pkg:golang/github.com/octo/widget', prefix: published ? 'v' : 'go/v' }],
+			}));
+			expect(await reclaim()).toEqual(published ? [] : [conflict]);
+		},
+		60_000,
+	);
+}
+
+test('a takeover refuses a version tag that a companion module of the stream shares', async () => {
+	const { repository, api, reclaim } = await earlierRelease(execution => execution);
+	const file = '.github/beepboop.json';
+	const configuration = decodeSync(
+		looseStruct({
+			managers: Schema.optional(mutableArray(Schema.String)),
+			streams: looseStruct({ main: looseStruct({}) }),
+		}),
+		JSON.parse(world.github.file(repository, file) ?? ''),
+	);
+	world.github.push(repository, {
+		'go.mod': 'module github.com/octo/widget\n\ngo 1.22\n',
+		[file]: JSON.stringify({
+			...configuration,
+			...(configuration.managers ? { managers: [...configuration.managers, 'go'] } : {}),
+			streams: {
+				...configuration.streams,
+				main: { ...configuration.streams.main, companionModules: ['pkg:golang/github.com/octo/widget'] },
+			},
+		}),
+	}, 'Release the root module with the stream');
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	expect(await reclaim()).toEqual([]);
 }, 60_000);
 
 test('a push-approved takeover checks the registries before it starts', async () => {

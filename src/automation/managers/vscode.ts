@@ -3,9 +3,16 @@ import { object } from '@/automation/managers/helpers';
 import { packageManifests } from '@/automation/managers/package-json';
 import type { Adapter, RegistryVersion } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
-import { latestVersion, publicationResult, registryRequest, unpublished } from '@/automation/managers/verification';
+import {
+	latestVersion,
+	publicationResult,
+	registryRequest,
+	unconfirmed,
+	unpublished,
+} from '@/automation/managers/verification';
 import { identityOf, parseExtension } from '@/automation/package-identity';
 import { excluded, registry } from '@/automation/package-publication';
+import type { Publication } from '@/automation/types';
 import { fileProblem } from '@/contract/diagnostics';
 import { responseJson } from '@/runtime/http';
 import { mutableArray, mutableStruct, safeDecode } from '@/schema';
@@ -72,6 +79,26 @@ export const vscodeManager: Adapter<'vscode'> = {
 						`https://open-vsx.org/api/${encodeURIComponent(publisher)}/${encodeURIComponent(extension)}`,
 						body => safeDecode(openVsxExtension, body).data?.version,
 					),
+			});
+		},
+	},
+	secondaryPublication: {
+		'open-vsx'(publication, request) {
+			return Result.match(parseExtension(publication.name), {
+				onFailure: () => Effect.succeed<Publication>({ ...publication, outcome: 'uncertain' }),
+				onSuccess: ({ publisher, extension }) => {
+					const url = `https://open-vsx.org/api/${encodeURIComponent(publisher)}/${encodeURIComponent(extension)}/${
+						encodeURIComponent(publication.version)
+					}`;
+					const result = publicationResult(publication, url);
+					return Effect.gen(function*() {
+						const response = yield* registryRequest(request, url);
+						const missing = unconfirmed(response);
+						if (missing) return result(missing);
+						const found = safeDecode(openVsxExtension, yield* responseJson(response));
+						return result(found.success && found.data.version === publication.version ? 'succeeded' : 'uncertain');
+					}).pipe(Effect.scoped, Effect.orElseSucceed(() => result('uncertain')));
+				},
 			});
 		},
 	},
