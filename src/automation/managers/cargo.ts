@@ -34,10 +34,13 @@ function verifyIndex(publication: Publication, request: Fetcher): Effect.Effect<
 		const response = yield* registryRequest(request, url);
 		const missing = unconfirmed(response);
 		if (missing) return result(missing);
-		const entry = (yield* responseText(response)).split('\n').flatMap(line => {
-			const parsed = Result.try(() => object(JSON.parse(line)));
-			return Result.isSuccess(parsed) && parsed.success.vers === publication.version ? [parsed.success] : [];
-		})[0];
+		const lines = (yield* responseText(response)).split('\n').filter(line => line.trim());
+		const entries = lines.map(line => Result.try(() => object(JSON.parse(line))));
+		if (entries.some(Result.isFailure)) return result('uncertain');
+		const entry =
+			entries.flatMap(parsed =>
+				Result.isSuccess(parsed) && parsed.success.vers === publication.version ? [parsed.success] : []
+			)[0];
 		if (!entry) return result('pending');
 		const digest = entry.cksum;
 		if (
