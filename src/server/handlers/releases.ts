@@ -97,6 +97,7 @@ export function delegatedPlan(
 		const carried = packages.length > 0
 			&& packages.every(pkg => tagPrefix(pkg.versionSource) === undefined && pkg.version === version);
 		if (carried) {
+			yield* resolvePackageVersion(yield* selectedReleasePackages(inventory, selected), { version });
 			const prepared = yield* planRelease(snapshot, inventory, version, selected, undefined, stream.versionFiles).pipe(
 				Effect.orElseSucceed(() => undefined),
 			);
@@ -161,7 +162,7 @@ export function releasePlan(input: ReleaseInput, { service }: Pick<AdminContext,
 				: ('version' in request ? request.version : undefined);
 		} else if (stream.prepare.strategy === 'workflow') {
 			const request = yield* parseVersionRequest(input.version);
-			target = 'version' in request
+			target = 'version' in request && !publishablePackages(repository.inventory.packages, selected).length
 				? request.version
 				: yield* resolvePackageVersion(yield* selectedReleasePackages(repository.inventory, selected), request);
 		}
