@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { appSlug } from '@root/test/support/github.ts';
 import { bearer } from '@root/test/support/http.ts';
-import { passChecks, plugin, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
+import { npmManifest, passChecks, plugin, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
 import { applyChoices, applySetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
@@ -129,6 +129,35 @@ test('the dashboard offers action releases for nested metadata without requiring
 	await act(form, 'preview');
 	expect(form.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(false);
 	expect(form.querySelector('.setup-result')?.textContent).toContain('action-aliases.yml');
+});
+
+test('distribution commands stay editable and are read from an existing reporting job', async () => {
+	const repository = widget(world.github);
+	world.github.push(repository, {
+		'action.yml': 'runs: {using: node24, main: dist/main.mjs}',
+		'package.json': JSON.stringify({
+			...JSON.parse(npmManifest('widget', '1.0.0')),
+			packageManager: 'bun@1.4.4',
+			scripts: { build: 'tsdown' },
+		}),
+	}, 'Add action metadata');
+	const form = await open(repository.name);
+	change(control(form, 'GitHub Action release refs', window.HTMLSelectElement), 'distribution');
+	const commands = control(
+		role(form, 'promote'),
+		'Shell commands that publish the selected packages',
+		window.HTMLTextAreaElement,
+	);
+	expect(commands.disabled).toBe(false);
+	expect(commands.required).toBe(true);
+	commands.value = 'bun run build --custom';
+	commands.dispatchEvent(new window.Event('input', { bubbles: true }));
+	await act(form, 'preview');
+	expect(form.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(false);
+	await act(form, 'apply');
+	expect(world.github.file(repository, '.github/workflows/publish.yml', 'automation/setup-update')).toContain(
+		'bun run build --custom',
+	);
 });
 
 test('the dashboard asks for the security key only for a grant the server accepts', async () => {

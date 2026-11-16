@@ -21,6 +21,7 @@ import {
 import type { ManagerName } from '@/contract/catalog';
 import { workflowSetup } from '@/contract/setup';
 import { configurationDrift, configurationSchema, issueMessage } from '@/domain/configuration';
+import { refPolicyValue } from '@/domain/configuration-value';
 import { validateAgainst } from '@/domain/validate';
 import { record } from '@/model';
 import { packageIdentity, parsePackageIdentity, purlDefinitions } from '@/package-url';
@@ -734,6 +735,31 @@ test('the parser and schema agree on tag prefixes with directories', () => {
 	) {
 		expect(Result.isSuccess(parseRepositoryConfiguration(document(prefix)))).toBe(valid);
 		expect(safeDecode(configurationSchema, document(prefix)).success).toBe(valid);
+	}
+});
+
+test('distribution refs require signed immutable version publication in every configuration decoder', async () => {
+	const published = new Validator(Result.getOrThrow(record(await Bun.file(schemaPath).json())), '2020-12', false);
+	for (
+		const [phase, signed, immutable, valid] of [
+			['version', true, true, true],
+			['version', true, false, false],
+			['version', true, undefined, false],
+			['version', false, true, false],
+			['aliases', true, true, false],
+		] as const
+	) {
+		const policy = {
+			phase,
+			signed,
+			...(immutable === undefined ? {} : { immutable }),
+			distribution: { files: ['dist/main.mjs'], ancestry: 'ours' },
+		};
+		const document = { streams: { main: { promote: { workflow: { file: 'publish.yml', refs: policy } } } } };
+		expect(Result.isSuccess(parseRepositoryConfiguration(document))).toBe(valid);
+		expect(safeDecode(configurationSchema, document).success).toBe(valid);
+		expect(safeDecode(refPolicyValue, { ...policy, prefix: 'v', aliases: [] }).success).toBe(valid);
+		expect(published.validate(document).valid).toBe(valid);
 	}
 });
 

@@ -3,8 +3,9 @@ import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { requestBody } from '@root/actions/runtime/protocol.ts';
 import { materialize } from '@root/test/support/actions.ts';
+import { npmManifest } from '@root/test/support/repositories.ts';
 import { Effect, Result } from 'effect';
-import { parse } from 'yaml';
+import { parse, stringify } from 'yaml';
 import { discover } from '@/automation/managers';
 import { previewSetup } from '@/automation/setup';
 import { actionReleaseOffer } from '@/automation/setup-action';
@@ -23,6 +24,128 @@ function snapshot(files: Record<string, string>): Snapshot {
 function preview(source: Snapshot, choices?: SetupChoices) {
 	return Effect.runPromise(previewSetup(source, discover(source), choices, { head: null }));
 }
+
+test('Yarn build suggestions respect the packageManager major version', () => {
+	for (const [version, install] of [['1.22.22', '--frozen-lockfile'], ['4.10.3', '--immutable']]) {
+		const offer = actionReleaseOffer(
+			snapshot({
+				'action.yml': 'runs: {using: node24, main: main.mjs}',
+				'package.json': JSON.stringify({ packageManager: `yarn@${version}`, scripts: { build: 'tsdown' } }),
+			}),
+		);
+		expect(offer?.commands).toBe(`yarn install ${install}\nyarn build`);
+	}
+});
+
+test('a new distribution workflow builds the action and publishes selected npm packages', async () => {
+	const source = snapshot({
+		'action.yml': 'runs: {using: node24, main: dist/main.mjs}',
+		'package.json': JSON.stringify({
+			...JSON.parse(npmManifest('widget', '1.0.0')),
+			packageManager: 'bun@1.4.4',
+			scripts: { build: 'tsdown' },
+		}),
+	});
+	const plan = await preview(source, {
+		streams: [{
+			name: 'main',
+			packages: ['pkg:npm/widget'],
+			required: ['pkg:npm/widget'],
+			versioning: 'workspace',
+			actionRelease: { kind: 'distribution', files: ['dist/main.mjs'] },
+		}],
+	});
+	expect(plan.blockers).toEqual([]);
+	const workflow = parse(plan.edits.find(edit => edit.path === '.github/workflows/release.yml')!.after);
+	const steps = workflow.jobs.promote.steps;
+	const build = steps.findIndex((step: { run?: string }) => step.run?.includes('bun run build'));
+	const publish = steps.findIndex((step: { uses?: string }) => step.uses?.includes('/actions/publish@'));
+	expect(build).toBeGreaterThanOrEqual(0);
+	expect(publish).toBeGreaterThan(build);
+	expect(steps.some((step: { uses?: string }) => step.uses?.includes('/actions/report@'))).toBe(false);
+});
+
+test('manual publication workflows inherit their configured ref prefix and receive ref and Release steps', async () => {
+	const source = snapshot({ 'action.yml': 'runs: {using: composite, steps: []}' });
+	const first = await preview(source, {
+		streams: [{
+			name: 'main',
+			packages: [],
+			required: [],
+			versioning: 'none',
+			actionRelease: { kind: 'source' },
+			promote: {
+				file: 'release.yml',
+				job: 'promote',
+				commands: '',
+				triggers: 'dispatchOnly',
+				publicationSteps: {},
+				tagPrefix: 'tool-v',
+			},
+		}],
+	});
+	const files = { ...source.files, ...Object.fromEntries(first.edits.map(edit => [edit.path, edit.after])) };
+	const config = JSON.parse(files['.github/beepboop.json']!);
+	delete config.streams.main.promote.workflow.setup;
+	config.streams.main.promote.workflow.refs = { phase: 'version', prefix: 'tool-v', signed: true };
+	delete config.streams.main.workflows;
+	files['.github/beepboop.json'] = JSON.stringify(config);
+	delete files['.github/workflows/action-aliases.yml'];
+	const workflow = parse(files['.github/workflows/release.yml']!);
+	workflow.jobs.promote.steps = workflow.jobs.promote.steps.filter((step: { uses?: string }) =>
+		!/\/actions\/(?:publish-refs|publish-release|token)@/.test(step.uses ?? '')
+	);
+	files['.github/workflows/release.yml'] = stringify(workflow);
+	const plan = await preview(snapshot(files), {
+		streams: [{
+			name: 'main',
+			packages: [],
+			required: [],
+			versioning: 'none',
+			actionRelease: { kind: 'source' },
+			promote: { file: 'release.yml', job: 'promote', commands: '', triggers: 'dispatchOnly', publicationSteps: {} },
+		}],
+	});
+	expect(plan.blockers).toEqual([]);
+	const next = JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')!.after).streams.main;
+	expect(next.promote.workflow.refs.prefix).toBe('tool-v');
+	expect(next.workflows.aliases.refs.prefix).toBe('tool-v');
+	const content = plan.edits.find(edit => edit.path === '.github/workflows/release.yml')!.after;
+	expect(content).toContain('/actions/publish-refs@');
+	expect(content).toContain('/actions/publish-release@');
+});
+
+test('an identical build before the reviewed checkout does not satisfy distribution publication', async () => {
+	const source = snapshot({
+		'action.yml': 'runs: {using: node24, main: main.mjs}',
+		'main.mjs': 'source',
+		'package.json': JSON.stringify({ private: true, packageManager: 'bun@1.4.4', scripts: { build: 'tsdown' } }),
+	});
+	const first = await preview(source, {
+		streams: [{
+			name: 'main',
+			packages: [],
+			required: [],
+			versioning: 'none',
+			actionRelease: { kind: 'distribution', files: ['main.mjs'] },
+		}],
+	});
+	const files = { ...source.files, ...Object.fromEntries(first.edits.map(edit => [edit.path, edit.after])) };
+	const workflow = parse(files['.github/workflows/release.yml']!);
+	const steps = workflow.jobs.promote.steps;
+	const [build] = steps.splice(steps.findIndex((step: { run?: string }) => step.run?.includes('bun run build')), 1);
+	const reviewed = steps.findIndex((step: { with?: { ref?: string } }) => step.with?.ref?.includes('sourceSha'));
+	steps.splice(reviewed, 0, build);
+	files['.github/workflows/release.yml'] = stringify(workflow);
+	const plan = await preview(snapshot(files), first.choices);
+	expect(plan.blockers).toEqual([]);
+	const nextSteps =
+		parse(plan.edits.find(edit => edit.path === '.github/workflows/release.yml')!.after).jobs.promote.steps;
+	const checkout = nextSteps.findIndex((step: { with?: { ref?: string } }) => step.with?.ref?.includes('sourceSha'));
+	const refs = nextSteps.findIndex((step: { uses?: string }) => step.uses?.includes('/actions/publish-refs@'));
+	expect(nextSteps.slice(checkout + 1, refs).some((step: { run?: string }) => step.run?.includes('bun run build')))
+		.toBe(true);
+});
 
 test('adoption offers action refs only for action metadata at root or nested paths', async () => {
 	expect(actionReleaseOffer(snapshot({ 'README.md': 'hi' }))).toBeUndefined();
@@ -235,6 +358,7 @@ test('distribution adoption publishes the reviewed file list and builds using pa
 					path,
 					before: '',
 					encoding: 'base64',
+					mode: '100644',
 					after: Buffer.from(`built ${path}`).toString('base64'),
 				})),
 			});

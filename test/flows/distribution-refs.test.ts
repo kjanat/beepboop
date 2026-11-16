@@ -139,6 +139,29 @@ test('Git publication atomically records signed distribution ancestry while keep
 	}
 });
 
+test('aliases fetch their inherited distribution target in a fresh shallow source-only checkout', async () => {
+	const scenario = fixture();
+	const shallow = mkdtempSync(join(tmpdir(), 'beepboop-alias-shallow-'));
+	try {
+		expect(Result.isSuccess(await scenario.publish())).toBe(true);
+		for (const name of ['v1', 'v1.2']) gitOutput(scenario.origin, ['update-ref', '-d', `refs/tags/${name}`]);
+		gitOutput(shallow, ['clone', '-q', '--depth=1', '--no-tags', '--branch=master', `file://${scenario.origin}`, '.']);
+		const target = scenario.plan.changes[0]?.commit;
+		if (!target) throw new Error('Missing target');
+		expect(exists(shallow, `${target}^{commit}`)).toBe(false);
+		const { distribution: _proof, ...plan } = scenario.plan;
+		plan.changes = plan.changes.filter(change => !change.annotated);
+		const result = await Effect.runPromise(publishRefs(plan, shallow, scenario.origin).pipe(Effect.result));
+		expect(Result.isSuccess(result)).toBe(true);
+		for (const name of ['v1', 'v1.2']) {
+			expect(gitOutput(scenario.origin, ['rev-parse', `refs/tags/${name}`])).toBe(target);
+		}
+	} finally {
+		rmSync(shallow, { recursive: true, force: true });
+		scenario.dispose();
+	}
+});
+
 test('retry after the atomic push is idempotent, including after master advances', async () => {
 	const scenario = fixture();
 	try {

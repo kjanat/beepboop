@@ -598,7 +598,12 @@ function integrate(
 			},
 		];
 	};
-	const plainStep = operation !== 'prepare' && choice.commands.trim() === ledgerCommand
+	const distributionScript = distributionFiles?.length
+		? choice.commands.split('\n').filter(line => line.trim() !== ledgerCommand).join('\n').trim()
+		: undefined;
+	const usesLedger = choice.commands.trim() === ledgerCommand || !!distributionFiles?.length
+			&& choice.commands.split('\n').some(line => line.trim() === ledgerCommand);
+	const plainStep = operation !== 'prepare' && usesLedger
 		? steps.findIndex(step =>
 			step.id === 'beepboop_publish' && typeof step.run === 'string' && plainCrateNames(step.run)
 		)
@@ -679,7 +684,12 @@ function integrate(
 		}
 	} else if (!steps.some(step => ['report', 'publish'].includes(actionRole(step.uses) ?? ''))) {
 		if (!original && !choice.commands.trim() && !binaries && !choice.tagPrefix) fail('supply publication commands');
-		const ledger = choice.commands.trim() === ledgerCommand;
+		const ledger = usesLedger;
+		if (ledger && distributionScript) {
+			steps.push(
+				...commandSteps({ id: 'beepboop_action_build', name: 'Build action distribution', run: distributionScript }),
+			);
+		}
 		if (choice.commands.trim()) {
 			if (steps.some(step => step.id === 'beepboop_publish')) fail('step ID beepboop_publish is already used');
 			steps.push(
@@ -760,9 +770,9 @@ function integrate(
 		typeof step.uses === 'string' && /\/actions\/publish-refs\b/.test(step.uses);
 	const beforeRefs = steps.findIndex(refStep);
 	if (
-		distributionFiles?.length && choice.commands.trim() && beforeRefs >= 0
-		&& !steps.slice(0, beforeRefs).some(step =>
-			typeof step.run === 'string' && step.run.trim() === choice.commands.trim()
+		distributionScript && beforeRefs >= 0
+		&& !steps.slice(approvedIndex + 1, beforeRefs).some(step =>
+			typeof step.run === 'string' && step.run.trim() === distributionScript
 		)
 	) {
 		const previousBuild = steps.findIndex(step => step.id === 'beepboop_action_build');
@@ -778,7 +788,7 @@ function integrate(
 					...build,
 					id: 'beepboop_action_build',
 					name: 'Build action distribution',
-					run: choice.commands,
+					run: distributionScript,
 				}),
 			);
 		}

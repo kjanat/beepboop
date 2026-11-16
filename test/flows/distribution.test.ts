@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { Effect, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import type { DistributionFile } from '@/automation/distribution';
-import { createDistribution, readDistributionFile } from '@/automation/distribution';
+import { createDistribution, readDistributionFile, readDistributionMode } from '@/automation/distribution';
 import { RepositoryGateway } from '@/automation/github';
 import type { Edit } from '@/automation/types';
 import { decodeSync, mutableArray, mutableStruct } from '@/schema';
@@ -151,14 +151,14 @@ test('binary distributions compare source blob bytes and create base64 Git blobs
 	const after = btoa(String.fromCharCode(255, 0, 254, 128, 66));
 	const scenario = fixture({ sourceBytes: before });
 	const result = await scenario.run(
-		[{ path: 'assets/tool.wasm', before, after, encoding: 'base64' }],
+		[{ path: 'assets/tool.wasm', before, after, encoding: 'base64', mode: '100755' }],
 		['assets/tool.wasm'],
 	);
 	expect(Result.isSuccess(result)).toBe(true);
 	expect(scenario.blobs).toEqual([{ encoding: 'base64', content: after }]);
 	expect(scenario.trees).toEqual([{
 		base_tree: sourceTree,
-		tree: [{ path: 'assets/tool.wasm', mode: '100644', type: 'blob', sha: other }],
+		tree: [{ path: 'assets/tool.wasm', mode: '100755', type: 'blob', sha: other }],
 	}]);
 	expect(
 		await Effect.runPromise(
@@ -191,6 +191,22 @@ test('binary distribution source mismatches fail before creating blobs or commit
 	);
 	expect(Result.isFailure(result) && result.failure.message).toContain('Distribution source file changed');
 	expect(scenario.calls.some(call => call.method !== 'GET')).toBe(false);
+});
+
+test('distribution mode reads traverse exact Git subtrees and preserve executable regular files', async () => {
+	const seen: string[] = [];
+	const gateway = new TokenGateway({ GITHUB_APP_ID: 'synthetic', GITHUB_APP_PRIVATE_KEY: '' }, 1, async input => {
+		const path = new URL(String(input)).pathname;
+		seen.push(path);
+		return Response.json({
+			tree: path.endsWith(sourceSha)
+				? [{ path: 'dist', mode: '040000', sha: sourceTree }]
+				: [{ path: 'tool binary', mode: '100755', sha: other }],
+		});
+	});
+	expect(await Effect.runPromise(readDistributionMode(gateway, repository, 'dist/tool binary', sourceSha, 'synthetic')))
+		.toBe('100755');
+	expect(seen).toEqual([`/repos/${repository}/git/trees/${sourceSha}`, `/repos/${repository}/git/trees/${sourceTree}`]);
 });
 
 test('distribution overlays the full reviewed tree and signs an ours ancestry commit without publishing refs', async () => {

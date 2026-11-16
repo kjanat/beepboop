@@ -1,7 +1,12 @@
 import type { Schema } from 'effect';
 import { Result } from 'effect';
 import type { Selection } from '@/automation/setup-defaults';
-import { preparationReasons, suggestedCommands, suggestedWorkflowFile } from '@/automation/setup-defaults';
+import {
+	ledgerCommand,
+	preparationReasons,
+	suggestedCommands,
+	suggestedWorkflowFile,
+} from '@/automation/setup-defaults';
 import type { SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '@/contract/setup';
 import { binaryTargets, defaultBinaryTargets, leftOut, setupWorkflow } from '@/contract/setup';
@@ -335,14 +340,18 @@ export function workflow(
 		const integrated = preparing
 			? evidence?.preparationJobs.includes(selectedJob())
 			: evidence?.reportingJobs.includes(selectedJob());
-		const needsCommands = !integrated
-			&& (preparing || !mappingControls.size || [...mappingControls.values()].some(control => !control.value));
+		const needsCommands = !preparing && selection().actionRelease === 'distribution' || !integrated
+				&& (preparing || !mappingControls.size || [...mappingControls.values()].some(control => !control.value));
 		commandBox.hidden = !needsCommands;
 		commands.disabled = !needsCommands;
 		commands.required = needsCommands && (preparing || selection().actionRelease !== 'source');
 		if (!commandsEdited) {
 			commands.value = !preparing && selection().actionRelease === 'distribution'
-				? initial?.commands || plan.actionRelease?.commands || ''
+				? initial?.commands && initial.commands !== ledgerCommand
+					? initial.commands
+					: [plan.actionRelease?.commands, initial?.commands || suggestedCommands(role, selection(), plan)].filter(
+						Boolean,
+					).join('\n')
 				: suggestedCommands(role, selection(), plan);
 		}
 		commandNotice.textContent = commandsEdited

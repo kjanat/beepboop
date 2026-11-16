@@ -3,7 +3,13 @@ import type { Ask, CLIError, Out, SelectChoice } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 import { publishable } from '@/automation/package-publication';
 import type { Selection } from '@/automation/setup-defaults';
-import { preparationReasons, suggestedCommands, suggestedWorkflowFile, ungenerated } from '@/automation/setup-defaults';
+import {
+	ledgerCommand,
+	preparationReasons,
+	suggestedCommands,
+	suggestedWorkflowFile,
+	ungenerated,
+} from '@/automation/setup-defaults';
 import { streamSummary } from '@/automation/setup-summary';
 import type { SetupChoices, SetupPlan, SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
 import { lookOf } from '@/cli/look';
@@ -368,7 +374,12 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 						plan,
 					);
 				const commands = !preparing && stream.actionRelease?.kind === 'distribution'
-					? previous?.commands || plan.actionRelease?.commands || (yield* typedCommands(ask, 'this action', 'build'))
+					? previous?.commands && previous.commands !== ledgerCommand
+						? previous.commands
+						: [
+							plan.actionRelease?.commands || (yield* typedCommands(ask, 'this action', 'build')),
+							previous?.commands || suggested,
+						].filter(Boolean).join('\n')
 					: integrated || (!preparing && !remaining.length)
 					? ''
 					: missing.length
@@ -390,7 +401,9 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 					file,
 					job,
 					triggers,
-					commands: integrated && kept?.job === job ? kept.commands : commands,
+					commands: integrated && kept?.job === job && stream.actionRelease?.kind !== 'distribution'
+						? kept.commands
+						: commands,
 					publicationSteps,
 				};
 				if (selected === 'new') created.push({ choice, stream, role });
@@ -584,6 +597,9 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 								: []),
 						], stream.actionRelease?.kind ?? 'off'),
 					);
+					const previousDistribution = stream.actionRelease?.kind === 'distribution'
+						? stream.actionRelease.files
+						: undefined;
 					delete stream.actionRelease;
 					if (mode === 'source') stream.actionRelease = { kind: 'source' };
 					if (mode === 'distribution') {
@@ -592,7 +608,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 								kind: 'input',
 								message:
 									'Distribution files, comma-separated. Include every runtime asset, chunk and license; entry points are only a starting list.',
-								default: plan.actionRelease?.files.join(', ') ?? '',
+								default: (previousDistribution ?? plan.actionRelease?.files)?.join(', ') ?? '',
 							})
 						);
 						stream.actionRelease = {

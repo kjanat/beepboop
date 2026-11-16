@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Data, Effect, Result } from 'effect';
 import type { DomainError } from '@/contract/errors.ts';
@@ -130,9 +130,18 @@ export function requestBody(mode: Mode, environment: Environment, now: number): 
 				const root = yield* required(environment, 'GITHUB_WORKSPACE');
 				const files = yield* Result.all(paths.map(path => Result.gen(function*() {
 					if (
-						!/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/.test(path)
-						|| path.split('/').some(part => part === '..' || part === '.')
+						!path || path.startsWith('/') || path.includes('\\') || path.includes('\0')
+						|| path.split('/').some(part => !part || part === '..' || part === '.' || part.toLowerCase() === '.git')
+						|| path.toLowerCase() === '.github' || path.toLowerCase() === '.github/workflows'
+						|| path.toLowerCase().startsWith('.github/workflows/')
 					) return yield* refuse('Invalid distribution path');
+					const parts = path.split('/');
+					for (let index = 1; index < parts.length; index++) {
+						const directory = yield* attempt(() => lstatSync(join(root, ...parts.slice(0, index))));
+						if (!directory.isDirectory()) return yield* refuse('Distribution directories must not be symlinks');
+					}
+					const status = yield* attempt(() => lstatSync(join(root, path)));
+					if (!status.isFile()) return yield* refuse('Distribution paths must be regular files');
 					const listed = spawnSync('git', ['ls-tree', '--name-only', 'HEAD', '--', path], {
 						cwd: root,
 						encoding: 'utf8',
@@ -148,6 +157,7 @@ export function requestBody(mode: Mode, environment: Environment, now: number): 
 						path,
 						before,
 						encoding: 'base64',
+						mode: status.mode & 0o111 ? '100755' : '100644',
 						after: yield* attempt(() => readFileSync(join(root, path)).toString('base64')),
 					};
 				})));

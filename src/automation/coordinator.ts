@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { Clock, Effect, Layer, Result, Schema, Semaphore } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
 import type { DistributionFile } from '@/automation/distribution';
-import { createDistribution, readDistributionFile } from '@/automation/distribution';
+import { createDistribution, readDistributionFile, readDistributionMode } from '@/automation/distribution';
 import {
 	createExecution,
 	dependenciesReady,
@@ -1426,6 +1426,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 								token,
 							))
 								!== file.before
+							|| (yield* readDistributionMode(
+								gateway,
+								execution.repository,
+								file.path,
+								plan.distribution.commit,
+								token,
+							))
+								!== (file.mode ?? '100644')
 						) return yield* precondition('Distribution files differ from the frozen plan');
 					}
 				}
@@ -1559,10 +1567,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				return yield* precondition('Release operation requires completed promotion');
 			}
 			if (
-				execution.refPlan?.distribution
-				&& !execution.publications.some(publication =>
-					publication.id === `refs:${execution.operation}` && publication.outcome === 'succeeded'
-				)
+				execution.workflow.refs?.distribution
+				&& (!execution.refPlan?.distribution
+					|| !execution.publications.some(publication =>
+						publication.id === `refs:${execution.operation}` && publication.outcome === 'succeeded'
+					))
 			) {
 				return yield* precondition('Confirm distribution refs and ancestry before publishing the release');
 			}
@@ -1570,6 +1579,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (!target) return yield* precondition('Release operation has no version');
 			const { tag, prerelease } = target;
 			const gateway = yield* this.gateway;
+			if (execution.refPlan?.distribution) {
+				const refs = yield* gateway.tagRefs(execution.repository, execution.repositoryId);
+				const problem = yield* this.distributionProblem(execution, execution.refPlan, refs);
+				if (problem) return yield* precondition(problem);
+			}
 			const repository = `/repos/${execution.repository}`;
 			const read = yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
 			yield* requireImmutableReleases({
@@ -1668,6 +1682,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				execution.state !== 'failed' || execution.runId === undefined || !version || !target
 				|| !publishesGithubRelease(execution) || (published && tagged)
 			) return execution;
+			if (policy?.distribution && !execution.refPlan?.distribution) return execution;
 			const { tag, prerelease } = target;
 			const gateway = yield* this.gateway;
 			const refs = yield* gateway.tagRefs(execution.repository, execution.repositoryId);

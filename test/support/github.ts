@@ -194,15 +194,31 @@ export class FakeGitHub {
 				commit: { message: commit.message, verification: { verified: commit.verified } },
 			});
 		});
-		this.route('GET', new RegExp(`^${repo}/git/trees/([0-9a-f]{40})$`), match => {
+		this.route('GET', new RegExp(`^${repo}/git/trees/([0-9a-f]{40})$`), (match, url) => {
 			const repository = this.repository(match[1]);
-			const commit = this.resolve(repository, match[2] ?? '');
+			const ref = match[2] ?? '';
+			const sha = repository.trees.has(ref) ? ref : this.resolve(repository, ref).tree;
+			const files = repository.trees.get(sha) ?? new Map<string, TreeEntry>();
+			const entries: { path: string; mode: string; type: string; sha: string }[] = [];
+			const directories = new Set<string>();
+			for (const [path, entry] of files) {
+				const slash = path.indexOf('/');
+				if (slash < 0 || url.searchParams.has('recursive')) entries.push({ path, ...entry });
+				if (slash >= 0) directories.add(path.slice(0, slash));
+			}
+			for (const path of directories) {
+				const prefix = `${path}/`;
+				const subtree = new Map(
+					[...files].filter(([file]) => file.startsWith(prefix)).map((
+						[file, entry],
+					) => [file.slice(prefix.length), entry]),
+				);
+				entries.push({ path, mode: '040000', type: 'tree', sha: this.typedTree(repository, subtree) });
+			}
 			return json({
-				sha: commit.tree,
+				sha,
 				truncated: false,
-				tree: [...(repository.trees.get(commit.tree) ?? [])].sort(([a], [b]) => a.localeCompare(b)).map((
-					[path, entry],
-				) => ({ path, ...entry })),
+				tree: entries.sort((a, b) => a.path.localeCompare(b.path)),
 			});
 		});
 		this.route('GET', new RegExp(`^${repo}/contents/(.+)$`), (match, url) => {
@@ -211,7 +227,13 @@ export class FakeGitHub {
 			const entry = repository.trees.get(commit.tree)?.get(decodeURIComponent(match[2] ?? ''));
 			const content = entry?.type === 'blob' ? repository.blobs.get(entry.sha) : undefined;
 			if (content === undefined) throw new HttpError(404, 'Not Found');
-			return json({ encoding: 'base64', content: Buffer.from(content).toString('base64'), size: content.length });
+			return json({
+				sha: entry?.sha,
+				type: 'file',
+				encoding: 'base64',
+				content: Buffer.from(content).toString('base64'),
+				size: content.length,
+			});
 		});
 		this.route('GET', new RegExp(`^${repo}/git/matching-refs/tags(?:/(.*))?$`), match => {
 			const repository = this.repository(match[1]);
@@ -881,12 +903,21 @@ export class FakeGitHub {
 					Buffer.from(b.name + (b.mode === '40000' ? '/' : '')),
 				)
 			);
-			return gitObject(
+			const sha = gitObject(
 				'tree',
 				Buffer.concat(
 					entries.flatMap(entry => [Buffer.from(`${entry.mode} ${entry.name}\0`), Buffer.from(entry.sha, 'hex')]),
 				),
 			);
+			repository.trees.set(
+				sha,
+				new Map(
+					[...files].filter(([path]) => path.startsWith(prefix)).map((
+						[path, entry],
+					) => [path.slice(prefix.length), entry]),
+				),
+			);
+			return sha;
 		};
 		const sha = encode('');
 		repository.trees.set(sha, files);

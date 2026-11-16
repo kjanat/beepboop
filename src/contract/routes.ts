@@ -542,6 +542,7 @@ export const routes = {
 				before: Schema.String,
 				after: Schema.String,
 				encoding: Schema.optional(Schema.Literal('base64')),
+				mode: Schema.optional(Schema.Literals(['100644', '100755'])),
 			}))),
 		}),
 		response: Schema.Unknown,

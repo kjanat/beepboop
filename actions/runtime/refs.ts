@@ -172,6 +172,9 @@ function publish(plan: RefPlan, git: Git, remote: string): Effect.Effect<void, A
 			) return yield* new ActionFailure({ message: 'Invalid ref object' });
 			const ref = `refs/tags/${change.name}`;
 			yield* git.read('check-ref-format', ref);
+			if (!(yield* git.exists(`${change.commit}^{commit}`))) {
+				yield* git.read('fetch', '--no-tags', remote, change.commit);
+			}
 			yield* git.read('cat-file', '-e', `${change.commit}^{commit}`);
 			if (change.annotated && change.expected !== null && !change.replaces) {
 				yield* verifyPublishedTag(git, remote, ref, change);

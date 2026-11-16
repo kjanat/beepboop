@@ -946,6 +946,10 @@ function completeChoices(
 		...choices,
 		streams: choices.streams.map(stream => {
 			const chosen = candidates.filter(pkg => stream.packages.includes(pkg.id));
+			const previousPolicy = object(object(object(object(object(raw.streams)[stream.name]).promote).workflow).refs);
+			const actionPrefix = typeof previousPolicy.prefix === 'string'
+				? previousPolicy.prefix
+				: stream.versionSource?.prefix ?? (stream.name === 'main' ? 'v' : `${stream.name}-v`);
 			const elsewhere = new Set([
 				...(stream.operations?.flatMap(entry => entry.publications) ?? []),
 				...(stream.observe?.flatMap(entry => entry.publications) ?? []),
@@ -958,18 +962,27 @@ function completeChoices(
 						? chosen
 						: chosen.filter(pkg => !elsewhere.has(pkg.id) && !workflow.publicationSteps[pkg.id]),
 				};
-				const commands = refreshedCommands(operation, workflow.commands, scope, candidates, context);
+				const build = actionReleaseOffer(snapshot)?.commands ?? '';
+				const publication = suggestedCommands(operation, scope, context);
+				const combined = operation === 'promote' && stream.actionRelease?.kind === 'distribution'
+						&& snapshot.files[`.github/workflows/${workflow.file}`] === undefined && workflow.commands === build
+						&& build
+					? [build, publication].filter(Boolean).join('\n')
+					: workflow.commands;
+				const commands = refreshedCommands(operation, combined, scope, candidates, context);
 				const generated = commands !== ''
 					&& (commands === suggestedCommands(operation, scope, context) || crateScript(commands));
 				const fresh = snapshot.files[`.github/workflows/${workflow.file}`] === undefined;
 				return {
 					...workflow,
 					commands,
+					...(operation === 'promote' && stream.actionRelease ? { tagPrefix: workflow.tagPrefix ?? actionPrefix } : {}),
 					...(operation === 'promote' && generated && !workflow.credentials
 							&& scope.packages.some(pkg => pkg.manager === 'cargo')
 						? { credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' } }
 						: {}),
 					...(operation === 'promote' && fresh && !workflow.tagPrefix && !workflow.binaries && !stream.observe?.length
+							&& !stream.actionRelease
 						? { tagPrefix: stream.versionSource?.prefix ?? (stream.name === 'main' ? 'v' : `${stream.name}-v`) }
 						: {}),
 				};
@@ -1009,7 +1022,7 @@ function completeChoices(
 								? actionReleaseOffer(snapshot)?.commands ?? ''
 								: '',
 							publicationSteps: {},
-							tagPrefix: stream.versionSource?.prefix ?? (stream.name === 'main' ? 'v' : `${stream.name}-v`),
+							tagPrefix: actionPrefix,
 						}
 						: undefined),
 				);

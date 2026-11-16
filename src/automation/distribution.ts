@@ -14,6 +14,7 @@ export type { DistributionEvidence } from '@/automation/refs';
 
 export interface DistributionFile extends Edit {
 	encoding?: 'base64';
+	mode?: '100644' | '100755';
 }
 
 interface DistributionRequest {
@@ -27,6 +28,39 @@ interface DistributionRequest {
 }
 
 type Gateway = Pick<RepositoryGateway, 'token' | 'read' | 'file'>;
+
+export function readDistributionMode(
+	gateway: Gateway,
+	repository: string,
+	path: string,
+	ref: string,
+	token: string,
+): Effect.Effect<DistributionFile['mode'], DomainError> {
+	return Effect.gen(function*() {
+		let tree = ref;
+		const parts = path.split('/');
+		for (const [index, part] of parts.entries()) {
+			const entries = yield* gateway.read(
+				Schema.Struct({
+					tree: Schema.Array(Schema.Struct({ path: Schema.String, mode: Schema.String, sha: Schema.String })),
+				}),
+				`/repos/${repository}/git/trees/${tree}`,
+				token,
+			);
+			const entry = entries.tree.find(entry => entry.path === part);
+			if (!entry) return undefined;
+			if (index === parts.length - 1) {
+				if (entry.mode === '100644' || entry.mode === '100755') return entry.mode;
+				return yield* precondition(`Unsupported distribution file mode: ${path}`);
+			}
+			if (entry.mode !== '040000' || !shaPattern.test(entry.sha)) {
+				return yield* precondition(`Unsupported distribution directory: ${path}`);
+			}
+			tree = entry.sha;
+		}
+		return undefined;
+	});
+}
 
 function canonicalBase64(value: string): boolean {
 	try {
@@ -96,6 +130,9 @@ function validateFiles(paths: readonly string[], files: readonly DistributionFil
 		}
 		if (files.some(file => file.after.length === 0)) {
 			return yield* precondition('Distribution files cannot be deleted or empty');
+		}
+		if (files.some(file => file.mode !== undefined && file.mode !== '100644' && file.mode !== '100755')) {
+			return yield* precondition('Distribution file mode must be a regular file mode');
 		}
 		if (
 			files.some(file => file.encoding === 'base64' && (!canonicalBase64(file.before) || !canonicalBase64(file.after)))
@@ -181,7 +218,7 @@ export function createDistribution(
 				return created.sha;
 			});
 		const entries = yield* Effect.forEach(files, file => Effect.gen(function*() {
-			const entry = { path: file.path, mode: '100644', type: 'blob' };
+			const entry = { path: file.path, mode: file.mode ?? '100644', type: 'blob' };
 			if (file.encoding !== 'base64') return { ...entry, content: file.after };
 			const blob = yield* gateway.read(createdSchema, `${base}/git/blobs`, token, 'POST', {
 				encoding: 'base64',

@@ -35,8 +35,11 @@ export function actionReleaseOffer(snapshot: Snapshot): SetupPlan['actionRelease
 			const manager = String(manifest.packageManager ?? '').split('@')[0];
 			if (manager === 'bun') commands = 'bun install --frozen-lockfile\nbun run build';
 			else if (manager === 'pnpm') commands = 'pnpm install --frozen-lockfile\npnpm run build';
-			else if (manager === 'yarn') commands = 'yarn install --immutable\nyarn build';
-			else if (manager === 'npm' || snapshot.paths.includes('package-lock.json')) commands = 'npm ci\nnpm run build';
+			else if (manager === 'yarn') {
+				commands = /^yarn@1(?:\.|$)/.test(String(manifest.packageManager))
+					? 'yarn install --frozen-lockfile\nyarn build'
+					: 'yarn install --immutable\nyarn build';
+			} else if (manager === 'npm' || snapshot.paths.includes('package-lock.json')) commands = 'npm ci\nnpm run build';
 		}
 	} catch { /* Invalid package metadata is reported by discovery. */ }
 	const entries = [...files].sort();

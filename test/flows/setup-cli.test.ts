@@ -5,7 +5,7 @@ import type { PromptEngine, ResolvedPromptConfig } from '@kjanat/dreamcli';
 import { gitOutput } from '@root/test/support/actions.ts';
 import { runCli, savedClient } from '@root/test/support/cli.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
-import { plugin, widget } from '@root/test/support/repositories.ts';
+import { plugin, publishWorkflow, widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
@@ -121,6 +121,65 @@ test('interactive adoption offers action refs for a repository with no publishab
 	expect(session.prompts.some(prompt => prompt.message === 'main: adopt action release refs?')).toBe(true);
 	expect(result.stdout.join('')).toContain('action-aliases.yml');
 	expect(repository.pulls).toHaveLength(0);
+});
+
+test('interactive distribution adoption preserves reviewed assets and new commands in an integrated job', async () => {
+	const files = ['dist/main.mjs', 'dist/chunk.mjs', 'dist/LICENSES.txt'];
+	const repository = world.github.create('octo/action', {
+		'action.yml': 'runs: {using: node24, main: dist/main.mjs}',
+		'package.json': JSON.stringify({ private: true, packageManager: 'bun@1.4.4', scripts: { build: 'tsdown' } }),
+		'.github/workflows/publish.yml': publishWorkflow.replaceAll('pkg:npm/widget', 'unused'),
+		'.github/beepboop.json': JSON.stringify({
+			managers: ['workflow', 'github-release'],
+			streams: {
+				main: {
+					packages: [],
+					versioning: 'none',
+					versionSource: { kind: 'tags', prefix: 'v' },
+					promote: {
+						workflow: {
+							file: 'publish.yml',
+							setup: { job: 'publish', commands: '', tagPrefix: 'v' },
+							refs: { phase: 'version', signed: true, immutable: true, distribution: { files, ancestry: 'ours' } },
+						},
+					},
+					workflows: {
+						aliases: {
+							file: 'action-aliases.yml',
+							ref: 'main',
+							needs: ['promote'],
+							publications: [],
+							refs: { phase: 'aliases', aliases: ['major', 'minor'] },
+						},
+					},
+				},
+			},
+		}),
+	});
+	const session = defaults(
+		{},
+		{ [proposalPrompt]: false, 'Open or refresh the setup PR with these exact changes?': true },
+	);
+	const result = await app.execute(['adopt', repository.name], {
+		prompter: {
+			async promptOne(config) {
+				if (config.kind === 'input' && config.message.startsWith('Distribution files,')) {
+					session.prompts.push(config);
+					return { answered: true, value: '' };
+				}
+				return session.prompter.promptOne(config);
+			},
+		},
+		isTTY: true,
+		color: false,
+		env: {},
+	});
+	expect([result.exitCode, result.stderr.join('')]).toEqual([0, '']);
+	const prompt = session.prompts.find(prompt => prompt.message.startsWith('Distribution files,'));
+	expect(prompt?.kind).toBe('input');
+	const config = JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/setup-update')!);
+	expect(config.streams.main.promote.workflow.refs.distribution.files).toEqual(files);
+	expect(config.streams.main.promote.workflow.setup.commands).toContain('bun run build');
 });
 
 test('adopt enrolls a repository, reviews generated files and only opens a PR after confirmation', async () => {

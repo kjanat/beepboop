@@ -159,8 +159,8 @@ function binding(value: unknown): Parsed<WorkflowBinding> {
 					files,
 					ancestry: yield* oneOf(value.ancestry, ['ours'], 'Invalid distribution ancestry policy'),
 				};
-				if (phase !== 'version' || policy.signed !== true) {
-					return yield* invalid('Distribution publication requires signed version refs');
+				if (phase !== 'version' || policy.signed !== true || policy.immutable !== true) {
+					return yield* invalid('Distribution publication requires signed version refs and immutable Releases');
 				}
 			}
 			refs = {

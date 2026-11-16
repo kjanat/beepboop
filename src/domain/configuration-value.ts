@@ -6,18 +6,22 @@ import { workflowSetupValue } from '@/contract/setup';
 import { versionPrMerges } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
 import { stringsSchema as strings } from '@/model';
-import { mutableArray, mutableRecord, mutableStruct } from '@/schema';
+import { mutableArray, mutableRecord, mutableStruct, refined } from '@/schema';
 
 const managerName = Schema.Literals(managerNames);
 
-export const refPolicyValue = mutableStruct({
-	phase: Schema.Literals(['version', 'aliases']),
-	prefix: Schema.String,
-	aliases: mutableArray(Schema.Literals(['major', 'minor'])),
-	signed: Schema.Boolean,
-	immutable: Schema.optional(Schema.Boolean),
-	distribution: Schema.optional(mutableStruct({ files: strings, ancestry: Schema.Literal('ours') })),
-});
+export const refPolicyValue = refined(
+	mutableStruct({
+		phase: Schema.Literals(['version', 'aliases']),
+		prefix: Schema.String,
+		aliases: mutableArray(Schema.Literals(['major', 'minor'])),
+		signed: Schema.Boolean,
+		immutable: Schema.optional(Schema.Boolean),
+		distribution: Schema.optional(mutableStruct({ files: strings, ancestry: Schema.Literal('ours') })),
+	}),
+	value => !value.distribution || (value.phase === 'version' && value.signed && value.immutable === true),
+	'Distribution publication requires signed version refs and immutable Releases',
+);
 const binding = {
 	outputs: Schema.optional(mutableArray(outputSchema)),
 	artifactInputs: Schema.optional(mutableArray(inputSchema)),

@@ -210,6 +210,7 @@ test('distribution retries preserve the original plan and reject changed bytes o
 	for (const changed of [
 		files.map(file => ({ ...file, after: `${file.after}// changed\n` })),
 		files.map(file => ({ ...file, before: 'different reviewed source' })),
+		files.map(file => ({ ...file, mode: '100755' as const })),
 		files.slice(1),
 	]) {
 		await expect(coordinator.refs(promotion.execution.id, promotion.identity, false, changed)).rejects.toThrow(
@@ -218,6 +219,16 @@ test('distribution retries preserve the original plan and reject changed bytes o
 	}
 	expect((await coordinator.execution(promotion.execution.id))?.refPlan).toEqual(plan);
 	expect(signer.calls).toHaveLength(3);
+});
+
+test('distribution retries cannot omit a frozen executable mode', async () => {
+	const { coordinator, promotion } = await fixture();
+	const executable = files.map(file => ({ ...file, mode: '100755' as const }));
+	const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, executable);
+	expect(await coordinator.refs(promotion.execution.id, promotion.identity, false, executable)).toEqual(plan);
+	await expect(coordinator.refs(promotion.execution.id, promotion.identity, false, files)).rejects.toThrow(
+		'Distribution files differ from the frozen plan',
+	);
 });
 
 test('distribution completion requires the exact signed patch tag and landed ancestry', async () => {
@@ -256,7 +267,7 @@ test('immutable publication accepts only the frozen distribution commit and reco
 	await coordinator.refs(promotion.execution.id, promotion.identity, true);
 	world.github.recordTag(repository, 'v1.2.3', 'd'.repeat(40), source, true);
 	await expect(coordinator.publishRelease(promotion.execution.id, promotion.identity)).rejects.toThrow(
-		'Release tag points to another commit',
+		'Distribution tag object differs from the signed plan',
 	);
 	land(repository, plan);
 	const published = await coordinator.publishRelease(promotion.execution.id, promotion.identity);
@@ -321,6 +332,57 @@ test('distribution publication requires confirmed refs even when the signed patc
 	);
 	expect(repository.releases).toEqual([]);
 });
+
+test('distribution publication requires an authorized plan even when a source version tag exists', async () => {
+	const { coordinator, promotion, repository, source } = await fixture();
+	world.github.recordTag(repository, 'v1.2.3', 'd'.repeat(40), source, true);
+	await expect(coordinator.publishRelease(promotion.execution.id, promotion.identity)).rejects.toThrow(
+		'Confirm distribution refs and ancestry before publishing the release',
+	);
+	expect(repository.releases).toEqual([]);
+});
+
+test('reconciliation refuses a source release when distribution publication has no authorized plan', async () => {
+	const { coordinator, promotion, repository, source } = await fixture();
+	world.github.recordTag(repository, 'v1.2.3', 'd'.repeat(40), source, true);
+	repository.releases.push({
+		id: 999,
+		tag: 'v1.2.3',
+		target: source,
+		draft: false,
+		prerelease: false,
+		authorId: ownerId,
+		body: '',
+	});
+	const run = repository.runs.find(run => run.id === promotion.identity.runId);
+	if (!run) throw new Error('Expected promotion run');
+	run.status = 'completed';
+	run.conclusion = 'failure';
+	await world.workflowRun(repository, run, 'failure', 'workflow_dispatch');
+	await world.wait(2000);
+	const reconciled = await coordinator.execution(promotion.execution.id);
+	expect(reconciled?.state).toBe('failed');
+	expect(reconciled?.release).toBeUndefined();
+	expect(reconciled?.refPlan).toBeUndefined();
+});
+
+for (const problem of ['missing ancestry', 'different signed tag object']) {
+	test(`publication rechecks confirmed distribution refs after ${problem}`, async () => {
+		const { coordinator, promotion, repository, source } = await fixture();
+		const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
+		if (!plan.distribution) throw new Error('Expected distribution');
+		land(repository, plan);
+		await coordinator.refs(promotion.execution.id, promotion.identity, true);
+		if (problem === 'missing ancestry') repository.refs.set('heads/main', source);
+		else world.github.recordTag(repository, 'v1.2.3', 'd'.repeat(40), plan.distribution.commit, true);
+		await expect(coordinator.publishRelease(promotion.execution.id, promotion.identity)).rejects.toThrow(
+			problem === 'missing ancestry'
+				? 'Distribution ancestry did not land'
+				: 'Distribution tag object differs from the signed plan',
+		);
+		expect(repository.releases).toEqual([]);
+	});
+}
 
 test('reconciliation after an ambiguous release response keeps the frozen target when master advances', async () => {
 	const { coordinator, promotion, repository, source, settings, signer } = await fixture({ immutable: false });
