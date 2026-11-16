@@ -2367,6 +2367,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (execution.attempts === 0 && execution.approvedAt === undefined) {
 				return yield* precondition('Publish this promotion first; it never ran');
 			}
+			const record = yield* (yield* this.store).repository(execution.repositoryId);
+			const current = record
+				&& (record.configuration?.streams[execution.stream]?.promote.workflow?.ref ?? record.defaultBranch);
+			const workflow = execution.workflow && current && current !== execution.workflow.ref
+				? { ...execution.workflow, ref: current }
+				: execution.workflow;
 			if (!(yield* this.versionTagged(execution))) {
 				return yield* precondition(
 					`The version tags of ${execution.version ?? 'this release'} do not all target ${
@@ -2383,6 +2389,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				runAttempt: undefined,
 				workflowSha: undefined,
 				artifacts: execution.artifacts.filter(artifact => artifact.runId !== execution.runId),
+				...(workflow ? { workflow } : {}),
 				reason: `Dispatching the current ${execution.workflow?.file ?? 'workflow'} for ${
 					execution.sourceSha.slice(0, 12)
 				}`,

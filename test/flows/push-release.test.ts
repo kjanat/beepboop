@@ -347,6 +347,29 @@ test('a redispatch drops the outputs of the superseded run', async () => {
 	expect((await promotions(api))[0]?.artifacts).toEqual([]);
 }, 60_000);
 
+test('a redispatch runs the workflow of the renamed default branch', async () => {
+	const { repository, merged } = await failedRelease(true);
+	const api = bearer(world, await world.cliSession());
+	world.github.recordTag(repository, 'v1.0.0', 'f'.repeat(40), merged.sha, true);
+	const config = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
+	expect(config.streams.main.promote.workflow.ref).toBe('main');
+	repository.refs.set('heads/trunk', merged.sha);
+	repository.refs.delete('heads/main');
+	repository.defaultBranch = 'trunk';
+	config.streams.main.promote.workflow.ref = 'trunk';
+	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(config, null, '\t') }, 'Rename the branch');
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const [promotion] = await promotions(api);
+	if (!promotion) throw new Error('Expected the failed release');
+	expect((await api('/api/executions/recover', { id: promotion.id, action: 'redispatch' })).status).toBe(200);
+	await world.wait(16_000);
+	expect(
+		world.github.dispatches.filter(entry => entry.inputs.beepboop_execution_id === promotion.id).map(entry =>
+			entry.ref
+		),
+	).toEqual(['main', 'trunk']);
+}, 60_000);
+
 test('a redispatch refuses a release whose version tag targets another commit', async () => {
 	const { repository, merged, run } = await failedRelease(true);
 	const api = bearer(world, await world.cliSession());
