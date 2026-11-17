@@ -243,8 +243,9 @@ export function beginRelease(
 				promotion.approvedBy = 'start';
 				promotion.started = started;
 			}
-			yield* service.store.audit(actor, 'release.prepare', promotion.id);
-			return yield* service.enqueue(repository, promotion);
+			const queued = yield* service.enqueue(repository, promotion);
+			yield* service.store.audit(actor, 'release.prepare', queued.id);
+			return queued;
 		}
 		const execution = yield* (
 			stream.prepare.workflow && stream.prepare.strategy === 'workflow'
@@ -260,15 +261,8 @@ export function beginRelease(
 		execution.initiatedBy = actor;
 		if (started) execution.started = started;
 		if (versionPrMerge) execution.versionPrMerge = versionPrMerge;
-		yield* service.store.audit(actor, started ? 'release.start' : 'release.prepare', execution.id);
 		const queued = yield* service.enqueue(repository, execution);
-		if (versionPrMerge && queued.versionPrMerge !== versionPrMerge) {
-			return yield* precondition(
-				`${plan.version} of ${name} is already being prepared with versionPrMerge ${
-					queued.versionPrMerge ?? 'from the stream'
-				}`,
-			);
-		}
+		yield* service.store.audit(actor, started ? 'release.start' : 'release.prepare', queued.id);
 		return queued;
 	});
 }
