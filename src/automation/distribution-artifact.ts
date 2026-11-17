@@ -14,6 +14,9 @@ export interface DistributionArtifact {
 }
 
 const manifestPath = 'beepboop-distribution.json';
+const maxDistributionFiles = 64;
+const maxDirectoryEntries = 128;
+const maxTransportFiles = maxDistributionFiles + 2;
 const manifestSchema = Schema.Struct({
 	version: Schema.Literal(1),
 	files: Schema.Array(Schema.Struct({ path: Schema.String, mode: Schema.Literals(['100644', '100755']) })),
@@ -31,13 +34,19 @@ function filesFromZip(bytes: Uint8Array): Map<string, Buffer> {
 	const directorySize = zip.readUInt32LE(end + 12);
 	let cursor = zip.readUInt32LE(end + 16);
 	if (
-		zip.readUInt32LE(end + 4) !== 0 || zip.readUInt16LE(end + 8) !== count || count > 64
+		zip.readUInt32LE(end + 4) !== 0 || zip.readUInt16LE(end + 8) !== count
 		|| cursor + directorySize !== end
 	) {
 		throw precondition('Unsupported distribution ZIP directory');
 	}
+	if (count > maxTransportFiles + maxDirectoryEntries) {
+		throw precondition(
+			'Distribution ZIP exceeds 194 entries (64 distribution files, 2 metadata files, 128 directories)',
+		);
+	}
 	const files = new Map<string, Buffer>();
 	let total = 0;
+	let directories = 0;
 	for (let index = 0; index < count; index++) {
 		if (cursor + 46 > end || zip.readUInt32LE(cursor) !== 0x02014b50) {
 			throw precondition('Invalid distribution ZIP entry');
@@ -66,7 +75,11 @@ function filesFromZip(bytes: Uint8Array): Map<string, Buffer> {
 			|| name.split('/').some(part => part === '.' || part === '..' || part.toLowerCase() === '.git')
 		) throw precondition('Unsupported distribution ZIP entry');
 		cursor = entryEnd;
-		if (name.endsWith('/')) continue;
+		if (name.endsWith('/')) {
+			if (++directories > maxDirectoryEntries) throw precondition('Distribution ZIP exceeds 128 directory entries');
+			continue;
+		}
+		if (files.size >= maxTransportFiles) throw precondition('Distribution ZIP exceeds 66 file entries');
 		total += size;
 		if (total > 16 * 1024 * 1024) throw precondition('Unpacked distribution exceeds 16 MiB');
 		const compressed = zip.subarray(start, start + compressedSize);
@@ -89,6 +102,21 @@ export function readDistributionArtifact(
 ) {
 	return Effect.gen(function*() {
 		const { artifact, identity, sourceSha, paths } = input;
+		if (paths.some(path => path === manifestPath || path.startsWith(`${manifestPath}/`))) {
+			return yield* precondition(
+				'beepboop-distribution.json is reserved for artifact transport metadata; use direct-file transport to publish that path',
+			);
+		}
+		if (!paths.length || paths.length > maxDistributionFiles || new Set(paths).size !== paths.length) {
+			return yield* precondition('Distribution artifacts require 1 to 64 distinct configured files');
+		}
+		const directories = new Set(paths.flatMap(path => {
+			const parts = path.split('/');
+			return parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join('/'));
+		}));
+		if (directories.size > maxDirectoryEntries) {
+			return yield* precondition('Distribution artifact paths require more than 128 directories');
+		}
 		if (!Number.isSafeInteger(artifact.id) || artifact.id <= 0 || !/^[a-f0-9]{64}$/.test(artifact.digest)) {
 			return yield* precondition('Invalid distribution artifact ID or digest');
 		}
@@ -138,7 +166,7 @@ export function readDistributionArtifact(
 		}
 		const entries = yield* fromSync(() => filesFromZip(bytes));
 		const manifest = entries.get(manifestPath);
-		if (!manifest?.byteLength || manifest.byteLength > 65_536 || paths.includes(manifestPath)) {
+		if (!manifest?.byteLength || manifest.byteLength > 65_536) {
 			return yield* precondition(
 				'Distribution artifact requires a root beepboop-distribution.json manifest (at most 64 KiB)',
 			);

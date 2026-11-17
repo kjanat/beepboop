@@ -42,9 +42,10 @@ class TokenGateway extends RepositoryGateway {
 	}
 }
 
-function zip(files: Record<string, Uint8Array>): Buffer {
+function zip(files: Record<string, Uint8Array>, directories: string[] = []): Buffer {
 	const directory = mkdtempSync(join(tmpdir(), 'beepboop-distribution-artifact-'));
 	try {
+		for (const path of directories) mkdirSync(join(directory, path), { recursive: true });
 		for (const [path, content] of Object.entries(files)) {
 			mkdirSync(dirname(join(directory, path)), { recursive: true });
 			writeFileSync(join(directory, path), content);
@@ -63,6 +64,7 @@ const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest(
 const signedUrl = 'https://artifact-storage.example/distribution.zip?signature=synthetic';
 
 function fixture(options: {
+	paths?: string[];
 	archive?: Uint8Array;
 	download?: Uint8Array | ReadableStream<Uint8Array>;
 	metadata?: Partial<{
@@ -140,7 +142,7 @@ function fixture(options: {
 			artifact: { id: 456, digest: hash },
 			identity,
 			sourceSha,
-			paths,
+			paths: options.paths ?? paths,
 		})),
 	};
 }
@@ -262,6 +264,75 @@ test('distribution manifests require exact configured paths without duplicate or
 		await expect(fixture({ archive: zip({ ...entries, [manifestPath]: manifest(files) }) }).run())
 			.rejects.toThrow('must declare every configured path exactly once');
 	}
+});
+
+for (const nested of [false, true]) {
+	test(`distribution artifacts support 64 configured files and both metadata files with directories ${nested}`, async () => {
+		const configured = Array.from(
+			{ length: 64 },
+			(_, index) => nested ? `dir${index}/nested/file.mjs` : `file${index}.mjs`,
+		);
+		const files = Object.fromEntries(configured.map(path => [path, post]));
+		const scenario = fixture({
+			paths: configured,
+			archive: zip({
+				...files,
+				[manifestPath]: manifest(configured.map(path => ({ path, mode: '100644' }))),
+				'attestation.json': Buffer.from('{}'),
+			}),
+		});
+		expect((await scenario.run()).map(file => file.path)).toEqual(configured);
+	});
+}
+
+test('distribution artifacts reject invalid file budgets before any network requests', async () => {
+	for (const configured of [[], [mainPath, mainPath], Array.from({ length: 65 }, (_, index) => `file${index}.mjs`)]) {
+		const scenario = fixture({ paths: configured });
+		await expect(scenario.run()).rejects.toThrow('require 1 to 64 distinct configured files');
+		expect(scenario.calls).toEqual([]);
+	}
+});
+
+test('distribution artifacts reject the reserved manifest path before any network requests', async () => {
+	for (const path of [manifestPath, `${manifestPath}/main.mjs`]) {
+		const scenario = fixture({ paths: [path] });
+		await expect(scenario.run()).rejects.toThrow('reserved for artifact transport metadata');
+		expect(scenario.calls).toEqual([]);
+	}
+});
+
+test('distribution artifacts reject configured paths needing more than 128 directories before network requests', async () => {
+	const scenario = fixture({
+		paths: [`${Array.from({ length: 129 }, (_, index) => `dir${index}`).join('/')}/file.mjs`],
+	});
+	await expect(scenario.run()).rejects.toThrow('paths require more than 128 directories');
+	expect(scenario.calls).toEqual([]);
+});
+
+test('distribution ZIP metadata entries have a separate bounded directory budget', async () => {
+	const directories = Array.from({ length: 129 }, (_, index) => `extra${index}`);
+	await expect(fixture({ archive: zip(entries, directories) }).run()).rejects.toThrow('exceeds 128 directory entries');
+});
+
+test('distribution ZIP file entries remain bounded independently of directory entries', async () => {
+	const extra = Object.fromEntries(Array.from({ length: 64 }, (_, index) => [`extra${index}`, post]));
+	await expect(fixture({ archive: zip({ ...entries, ...extra }) }).run()).rejects.toThrow('exceeds 66 file entries');
+});
+
+test('distribution artifacts reject missing, empty and oversized manifests', async () => {
+	for (const content of [undefined, Buffer.alloc(0), Buffer.alloc(65_537, ' ')]) {
+		const files = { [mainPath]: main, [postPath]: post, ...(content === undefined ? {} : { [manifestPath]: content }) };
+		await expect(fixture({ archive: zip(files) }).run()).rejects.toThrow(
+			'requires a root beepboop-distribution.json manifest',
+		);
+	}
+});
+
+test('distribution artifacts accept a valid manifest at the 64 KiB boundary', async () => {
+	const content = Buffer.alloc(65_536, ' ');
+	manifest().copy(content);
+	const result = await fixture({ archive: zip({ ...entries, [manifestPath]: content }) }).run();
+	expect(result.map(file => file.path)).toEqual(paths);
 });
 
 test('distribution downloads reject insecure redirect destinations without sending the token', async () => {
