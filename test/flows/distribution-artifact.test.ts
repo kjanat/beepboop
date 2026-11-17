@@ -30,7 +30,10 @@ const postPath = 'dist/post.mjs';
 const paths = [mainPath, postPath];
 const main = Buffer.from([0, 0xff, 0xfe, 0x61]);
 const post = Buffer.from('export const saved = true;\n');
-const entries = { 'dist/main.mjs': main, 'dist/post.mjs': post, 'attestation.json': Buffer.from('{}\n') };
+const manifestPath = 'beepboop-distribution.json';
+const manifest = (files = paths.map(path => ({ path, mode: '100644' }))) =>
+	Buffer.from(JSON.stringify({ version: 1, files }));
+const entries = { 'dist/main.mjs': main, 'dist/post.mjs': post, [manifestPath]: manifest() };
 const workflowRun = { id: 123, repository_id: 1, head_sha: runSha };
 
 class TokenGateway extends RepositoryGateway {
@@ -39,13 +42,13 @@ class TokenGateway extends RepositoryGateway {
 	}
 }
 
-function zip(files: Record<string, Uint8Array>, executables: string[] = []): Buffer {
+function zip(files: Record<string, Uint8Array>): Buffer {
 	const directory = mkdtempSync(join(tmpdir(), 'beepboop-distribution-artifact-'));
 	try {
 		for (const [path, content] of Object.entries(files)) {
 			mkdirSync(dirname(join(directory, path)), { recursive: true });
 			writeFileSync(join(directory, path), content);
-			if (executables.includes(path)) chmodSync(join(directory, path), 0o755);
+			chmodSync(join(directory, path), 0o644);
 		}
 		const result = spawnSync('zip', ['-q', '-r', '-', '.'], { cwd: directory });
 		if (result.status !== 0) throw new Error(`Could not create ZIP fixture: ${result.stderr.toString()}`);
@@ -177,8 +180,13 @@ test('new distribution files use empty reviewed source bytes', async () => {
 	expect((await fixture().run()).map(file => file.before)).toEqual(['', '']);
 });
 
-test('distribution artifacts preserve executable file modes from the uploaded ZIP', async () => {
-	const result = await fixture({ archive: zip(entries, [mainPath]) }).run();
+test('distribution artifacts preserve manifest executable modes when upload-artifact normalizes ZIP files to 0644', async () => {
+	const result = await fixture({
+		archive: zip({
+			...entries,
+			[manifestPath]: manifest([{ path: mainPath, mode: '100755' }, { path: postPath, mode: '100644' }]),
+		}),
+	}).run();
 	expect(result.map(file => ({ path: file.path, mode: file.mode }))).toEqual([
 		{ path: mainPath, mode: '100755' },
 		{ path: postPath, mode: '100644' },
@@ -222,8 +230,38 @@ test('distribution artifacts verify downloaded bytes independently of GitHub met
 test('distribution artifacts reject unconfigured files and require every configured file', async () => {
 	await expect(fixture({ archive: zip({ ...entries, 'README.md': Buffer.from('unexpected') }) }).run())
 		.rejects.toThrow('contains unconfigured files');
-	await expect(fixture({ archive: zip({ 'dist/post.mjs': post }) }).run())
+	await expect(fixture({ archive: zip({ 'dist/post.mjs': post, [manifestPath]: manifest() }) }).run())
 		.rejects.toThrow('missing dist/main.mjs');
+});
+
+test('distribution uploads require the root manifest instead of accepting flattened two-path uploads', async () => {
+	await expect(fixture({ archive: zip({ 'main.mjs': main, 'post.mjs': post }) }).run())
+		.rejects.toThrow('requires a root beepboop-distribution.json manifest');
+	const result = await fixture({ archive: zip(entries) }).run();
+	expect(result.map(file => file.path)).toEqual(paths);
+});
+
+test('distribution manifests reject invalid modes, versions, and JSON', async () => {
+	for (const content of [
+		manifest([{ path: mainPath, mode: '120000' }, { path: postPath, mode: '100644' }]),
+		Buffer.from(JSON.stringify({ version: 2, files: [] })),
+		Buffer.from('not JSON'),
+	]) {
+		await expect(fixture({ archive: zip({ ...entries, [manifestPath]: content }) }).run())
+			.rejects.toThrow('Invalid distribution artifact manifest');
+	}
+});
+
+test('distribution manifests require exact configured paths without duplicate or extra entries', async () => {
+	for (const files of [
+		[{ path: mainPath, mode: '100644' }],
+		[...paths, mainPath].map(path => ({ path, mode: '100644' })),
+		[...paths, '../outside'].map(path => ({ path, mode: '100644' })),
+		['main.mjs', 'post.mjs'].map(path => ({ path, mode: '100644' })),
+	]) {
+		await expect(fixture({ archive: zip({ ...entries, [manifestPath]: manifest(files) }) }).run())
+			.rejects.toThrow('must declare every configured path exactly once');
+	}
 });
 
 test('distribution downloads reject insecure redirect destinations without sending the token', async () => {

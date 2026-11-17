@@ -8,7 +8,7 @@ inputs:
     description: JSON array of configured generated distribution paths; omit for source-only releases
     default: "[]"
   artifact-id:
-    description: GitHub Actions artifact uploaded by this workflow containing the distribution paths
+    description: GitHub Actions artifact containing repository-relative distribution paths and root beepboop-distribution.json manifest (see this action's README)
   artifact-digest:
     description: SHA-256 digest returned by actions/upload-artifact
   service:
