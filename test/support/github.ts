@@ -44,7 +44,13 @@ export interface Run {
 	attempt: number;
 	title: string;
 	inputs: Record<string, string>;
-	jobs?: { name: string; status: 'queued' | 'in_progress' | 'completed'; conclusion: string | null }[];
+	jobs?: {
+		name: string;
+		status: 'queued' | 'in_progress' | 'completed';
+		conclusion: string | null;
+		runner_id?: number | null;
+		steps?: unknown[];
+	}[];
 }
 export interface CheckRun {
 	name: string;

@@ -532,6 +532,40 @@ test('a run with a failed job outside the publish job is never retried automatic
 	expect((await failRun(repository, identity, execution.id, jobs)).slice(0, 2)).toEqual([1, 'failed']);
 }, 60_000);
 
+const strandedJobs = [
+	{ name: 'Build', status: 'completed' as const, conclusion: 'success', runner_id: 7, steps: [{}] },
+	{ name: 'Test (macos-latest)', status: 'completed' as const, conclusion: 'cancelled', runner_id: 0, steps: [] },
+	{ name: 'Publish', status: 'completed' as const, conclusion: 'skipped', runner_id: null, steps: [] },
+];
+
+test('a job that never got a runner is retried automatically although the publish job never ran', async () => {
+	const { repository, begun } = await released({ main: [core] });
+	const { execution, identity } = started(begun, 'main');
+	expect((await failRun(repository, identity, execution.id, strandedJobs)).slice(0, 2)).toEqual([2, 'running']);
+}, 60_000);
+
+test('a job that failed on a runner is never retried automatically while the publish job never ran', async () => {
+	const { repository, begun } = await released({ main: [core] });
+	const { execution, identity } = started(begun, 'main');
+	const jobs = strandedJobs.map(job =>
+		job.name === 'Test (macos-latest)' ? { ...job, conclusion: 'failure', runner_id: 9, steps: [{}] } : job
+	);
+	expect((await failRun(repository, identity, execution.id, jobs)).slice(0, 2)).toEqual([1, 'failed']);
+}, 60_000);
+
+test('a cancelled run is never retried automatically even when its jobs never got a runner', async () => {
+	const { repository, begun } = await released({ main: [core] });
+	const { execution, identity } = started(begun, 'main');
+	const run = repository.runs.find(entry => entry.id === identity.runId);
+	if (!run) throw new Error('Missing run');
+	run.status = 'completed';
+	run.conclusion = 'cancelled';
+	run.jobs = strandedJobs;
+	await world.workflowRun(repository, run, 'cancelled', 'workflow_dispatch');
+	await world.wait(2_000);
+	expect([run.attempt, (await executionOf(repository, execution.id)).state]).toEqual([1, 'failed']);
+}, 60_000);
+
 test('a retry after the branch moved finishes a published release whose run left a crate behind', async () => {
 	const { repository, api, begun } = await released({ main: [core, cli] }, cargoLayout, '1.1.0', true);
 	const { execution, identity } = started(begun, 'main');

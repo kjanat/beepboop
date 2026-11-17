@@ -94,6 +94,8 @@ export const workflowJobsSchema = mutableStruct({
 		conclusion: Schema.NullOr(Schema.String),
 		started_at: Schema.optional(Schema.NullOr(Schema.String)),
 		completed_at: Schema.optional(Schema.NullOr(Schema.String)),
+		runner_id: Schema.optional(Schema.NullOr(Schema.Finite)),
+		steps: Schema.optional(Schema.NullOr(mutableArray(Schema.Unknown))),
 	})),
 });
 export const dispatchSchema = Schema.NullOr(mutableStruct({ workflow_run_id: Schema.optional(countSchema) }));
