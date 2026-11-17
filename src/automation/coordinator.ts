@@ -16,6 +16,7 @@ import {
 	recheckable,
 	runTitle,
 	settle,
+	settleRun,
 	validatePublicationIdentity,
 } from '@/automation/execution';
 import { logFailure, logRecovered } from '@/automation/failure-log';
@@ -34,6 +35,8 @@ import {
 	workflowRunSchema,
 	workflowRunsSchema,
 } from '@/automation/github-resources';
+import type { GitHubRunResult } from '@/automation/github-state';
+import { classifyJob, classifyRun, githubFailureReason } from '@/automation/github-state';
 import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
 import type { InboxEvent } from '@/automation/inbox';
 import { inboxEntry } from '@/automation/inbox';
@@ -205,10 +208,6 @@ const dependencyPoll = 30_000;
 const automaticRetries = 3;
 const defaultRetryAfter = 60_000;
 const metadataReason = 'Fix the package metadata before this release: ';
-/** A job GitHub gave up on before any runner took it: it has no runner and ran no steps. */
-function stranded(job: RunJob): boolean {
-	return (job.runner_id === 0 || job.runner_id === null) && job.steps?.length === 0;
-}
 function missingReceipt(execution: Execution, record: LedgerRecord): boolean {
 	return released(record)
 		&& !execution.publications.some(publication =>
@@ -1295,7 +1294,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 				const resolvedInputs = yield* resolveInputs(execution, dependencies);
 				const next: Execution = {
-					...execution,
+					...settleRun(execution, classifyRun(run)),
 					resolvedInputs,
 					state: 'running',
 					runId: identity.runId,
@@ -2539,20 +2538,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				return {
 					legs: legs.map(leg => {
 						const job = jobs.find(entry => entry.name === leg.job);
-						const state = !job || job.status === 'queued' || job.status === 'waiting'
-							? 'waiting' as const
-							: job.status !== 'completed'
-							? 'running' as const
-							: job.conclusion === 'success'
-							? 'succeeded' as const
-							: job.conclusion === 'skipped' || job.conclusion === 'cancelled'
-							? 'skipped' as const
-							: 'failed' as const;
+						const state = job ? classifyJob(job).kind : 'waiting';
 						return {
 							build: leg.build,
 							target: leg.target,
 							job: leg.job,
 							state,
+							...(job ? { status: job.status, conclusion: job.conclusion } : {}),
 							...(job?.started_at ? { startedAt: job.started_at } : {}),
 							...(job?.completed_at ? { completedAt: job.completed_at } : {}),
 						};
@@ -3000,6 +2992,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				yield* this.put({
 					...execution,
 					state: 'uncertain',
+					github: undefined,
 					runAttempt: run.run_attempt,
 					reason: `${requested}; re-running the failed jobs`,
 					publications,
@@ -3011,6 +3004,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					supersededRuns: [...(execution.supersededRuns ?? []), ...(execution.runId ? [execution.runId] : [])],
 					runId: undefined,
 					runAttempt: undefined,
+					github: undefined,
 					workflowSha: undefined,
 					reason: `${requested}; dispatching a new run`,
 					publications,
@@ -3021,41 +3015,28 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private retryable(
 		execution: Execution,
-		run: Pick<WorkflowRun, 'id' | 'run_attempt' | 'conclusion'>,
-		token: string,
+		run: Pick<WorkflowRun, 'id' | 'run_attempt'>,
+		result: GitHubRunResult,
 	): CoordinatorEffect<boolean, DomainError> {
 		return Effect.gen({ self: this }, function*() {
+			// Classify GitHub first: ledger evidence must never override cancellation,
+			// action required, a startup failure, or incomplete/unknown job evidence.
+			if (!result.retry) return false;
 			const stored = yield* this.read(`ledger:${execution.id}`);
-			const holder = `${run.id}:${run.run_attempt}`;
-			const failedHere = (record: LedgerRecord) =>
-				record.status.state === 'failed-retryable' && record.status.holder === holder;
-			// Without a ledger the publish job never asked for a package to publish.
-			let open: LedgerRecord[] = [];
-			if (stored !== undefined) {
-				const ledger = yield* fromSync(() => decodeSync(ledgerSchema, stored));
-				open = ledger.records.filter(record =>
-					record.required && !released(record) && record.status.state !== 'uploaded'
-				);
-				if (!open.length) return false;
-				if (open.every(failedHere)) {
-					const jobs = yield* this.runJobs(execution.repository, run, token);
-					return jobs.filter(job => job.conclusion === 'failure' || job.conclusion === 'timed_out').length === 1;
-				}
-			}
-			// A job the publish job needs never got a runner. GitHub cancels such a job
-			// without steps and fails the run, and the skipped publish job leaves its
-			// packages planned. Re-running the failed jobs retries both.
-			if (
-				run.conclusion !== 'failure'
-				|| !open.every(record => record.status.state === 'planned' || failedHere(record))
-			) return false;
-			const jobs = yield* this.runJobs(execution.repository, run, token);
-			const failed = jobs.filter(job =>
-				job.conclusion === 'failure' || job.conclusion === 'timed_out' || job.conclusion === 'cancelled'
+			if (stored === undefined) return result.retry === 'runner-unassigned';
+			const ledger = yield* fromSync(() => decodeSync(ledgerSchema, stored));
+			const open = ledger.records.filter(record =>
+				record.required && !released(record) && record.status.state !== 'uploaded'
 			);
-			return failed.length > 0 && failed.every(stranded);
+			if (!open.length) return false;
+			const holder = `${run.id}:${run.run_attempt}`;
+			return open.every(record =>
+				(record.status.state === 'failed-retryable' && record.status.holder === holder)
+				|| (result.retry === 'runner-unassigned' && record.status.state === 'planned')
+			);
 		});
 	}
+
 	private dispatchCurrentWorkflow(execution: Execution): CoordinatorEffect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const clock = yield* Clock.Clock;
@@ -3085,6 +3066,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				supersededRuns: [...(execution.supersededRuns ?? []), ...(execution.runId ? [execution.runId] : [])],
 				runId: undefined,
 				runAttempt: undefined,
+				github: undefined,
 				workflowSha: undefined,
 				artifacts: execution.artifacts.filter(artifact => artifact.runId !== execution.runId),
 				...(workflow ? { workflow } : {}),
@@ -3790,12 +3772,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 				const runAttempt = run.run_attempt;
 				if (
-					run.status === 'completed' && execution.state === 'uncertain' && runAttempt <= (execution.runAttempt ?? 0)
+					run.status === 'completed' && execution.state === 'uncertain' && !execution.github
+					&& runAttempt <= (execution.runAttempt ?? 0)
 					&& !execution.publications.some(recheckable)
 				) {
 					return;
 				}
-				if (run.status === 'completed') {
+				const result = classifyRun(
+					run,
+					run.status === 'completed' ? yield* this.runJobs(execution.repository, run, token) : [],
+				);
+				if (result.observation.completed) {
 					for (let i = 0; i < execution.publications.length; i++) {
 						const publication = execution.publications[i];
 						if (publication && recheckable(publication)) {
@@ -3807,7 +3794,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					const limited = execution.publications.flatMap(publication =>
 						publication.outcome === 'rate-limited' ? [Date.parse(publication.retryAfter)] : []
 					);
-					if (limited.length) {
+					if (
+						limited.length && (result.retry || result.observation.kind === 'succeeded'
+							|| (!result.jobs.length && ['failed', 'timed-out'].includes(result.observation.kind)))
+					) {
 						const until = Math.max(clock.currentTimeMillisUnsafe(), ...limited);
 						if (execution.package?.manager === 'cargo') {
 							yield* fromPromise(() => this.env.PUBLISH_BUDGET.getByName('crates-io').defer(until));
@@ -3818,6 +3808,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							supersededRuns: [...(execution.supersededRuns ?? []), runId],
 							runId: undefined,
 							runAttempt: undefined,
+							github: undefined,
 							workflowSha: undefined,
 							notBefore: until,
 							reason: `Registry rate limit until ${new Date(until).toISOString()}`,
@@ -3827,15 +3818,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						});
 						return;
 					}
-					const settled = settle(execution, run.conclusion === 'success');
+					const settled = settleRun(execution, result);
 					if (
-						settled.state === 'failed' && run.conclusion !== 'success' && runAttempt <= automaticRetries
-						&& (yield* this.retryable(execution, run, token))
+						settled.state === 'failed' && runAttempt <= automaticRetries
+						&& (yield* this.retryable(execution, run, result))
 					) {
 						const retried = yield* Effect.result(this.redispatch(
 							{ ...execution, runAttempt },
 							reopened(execution.publications),
-							`Attempt ${runAttempt} left publications the next attempt retries`,
+							`Attempt ${runAttempt}: ${githubFailureReason(result)}; retrying open publications`,
 						));
 						if (retried._tag === 'Success') return;
 					}
@@ -3846,8 +3837,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							: runAttempt,
 					};
 					yield* this.put(yield* this.publishedRelease(ended).pipe(Effect.orElseSucceed(() => ended)));
-				} else if (execution.state === 'uncertain') {
-					yield* this.put({ ...execution, state: 'running', runAttempt });
+				} else {
+					const next = { ...settleRun(execution, result), runAttempt };
+					if (
+						next.state !== execution.state || next.reason !== execution.reason || runAttempt !== execution.runAttempt
+						|| JSON.stringify(next.github) !== JSON.stringify(execution.github)
+					) yield* this.put(next);
 				}
 				return;
 			}

@@ -104,8 +104,10 @@ interface Stage {
 
 function stages(promotion: Tracked, binaries: BinaryProgress, finished: boolean): Stage[] {
 	const legs = binaries.legs;
-	const ended = legs.filter(leg => ['succeeded', 'failed', 'skipped'].includes(leg.state)).length;
-	const broken = legs.filter(leg => leg.state === 'failed').length;
+	const ended =
+		legs.filter(leg => leg.status === 'completed' || !['waiting', 'running', 'unknown'].includes(leg.state)).length;
+	const broken =
+		legs.filter(leg => !['waiting', 'running', 'succeeded', 'skipped', 'neutral'].includes(leg.state)).length;
 	const total = promotion.configuration?.streams[promotion.stream]?.required?.length
 		|| promotion.publications.length;
 	const published = promotion.publications.filter(publication => publication.outcome === 'succeeded').length;
@@ -146,7 +148,7 @@ function binaryRows(look: Look, binaries: BinaryProgress) {
 	return binaries.legs.map(leg => {
 		const built: State = leg.state === 'succeeded'
 			? 'published'
-			: leg.state === 'failed'
+			: !['waiting', 'running', 'skipped', 'neutral'].includes(leg.state)
 			? 'failed'
 			: leg.state === 'skipped'
 			? 'skipped'

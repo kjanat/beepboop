@@ -5,6 +5,7 @@ import type { FrozenPackageTag } from '@/automation/package-tags';
 import type { ModuleTag, RefPlan, RefState } from '@/automation/refs';
 import type { ManagerName } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
+import type { GitHubRunState } from '@/contract/github';
 import type { StartChannel } from '@/contract/release-start';
 import type { AutoMergeMethod, VersionPrMerge } from '@/contract/setup-terms';
 import type { ExecutionStateView } from '@/contract/views';
@@ -194,6 +195,7 @@ export interface Execution {
 	workflow?: WorkflowBinding & { ref: string };
 	runId?: number;
 	runAttempt?: number;
+	github?: GitHubRunState;
 	attempts: number;
 	initiatedBy?: string;
 	package?: PackageTarget;

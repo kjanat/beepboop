@@ -24,6 +24,7 @@ import type {
 } from '@/automation/types';
 import { managerDestinationIds, managerNames } from '@/contract/catalog';
 import { diagnostic, isDiagnosticCode } from '@/contract/diagnostics';
+import { githubRunState } from '@/contract/github';
 import { startChannel } from '@/contract/release-start';
 import { setupChoicesSchema } from '@/contract/setup';
 import { autoMergeMethods, versionPrMerge } from '@/contract/setup-terms';
@@ -334,6 +335,7 @@ const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
 	workflow: Schema.optional(mutableStruct({ ...storedBinding.fields, ...{ ref: Schema.String } })),
 	runId: Schema.optional(Schema.Finite),
 	runAttempt: Schema.optional(Schema.Finite),
+	github: Schema.optional(githubRunState),
 	attempts: Schema.Finite,
 	initiatedBy: Schema.optional(Schema.String),
 	package: Schema.optional(mutableStruct({ id: Schema.String, manager: managerName })),
@@ -382,7 +384,7 @@ export function decodeRepositoryV1(value: unknown): RepositoryRecord {
 	return identifyRepository(decodeSync(repositorySchema, value));
 }
 function currentState(execution: Execution): Execution {
-	if (execution.state !== 'blocked') return execution;
+	if (execution.state !== 'blocked' || execution.github?.kind === 'action-required') return execution;
 	if (execution.operation === 'promote' && execution.attempts === 0 && execution.approvedAt === undefined) {
 		return { ...execution, state: 'awaiting-approval' };
 	}

@@ -1,4 +1,5 @@
 import { listOrder, unfinishedStates } from '@/automation/execution-order.ts';
+import { githubRunLabel } from '@/automation/github-state';
 import { matchesPackage, matchesPublication, selectorKey } from '@/automation/package-identity';
 import type { Execution, Publication, RepositoryRecord } from '@/automation/types.ts';
 import { compare, semVer } from '@/contract/version';
@@ -13,7 +14,13 @@ export function publishesAutomatically(run: Execution): boolean {
 }
 
 export function runStateLabel(run: Execution): string {
-	return publishesAutomatically(run) ? 'publishing once its checks pass' : runStateLabels[run.state];
+	if (publishesAutomatically(run)) return 'publishing once its checks pass';
+	if (
+		run.github && run.github.kind !== 'succeeded' && ['running', 'blocked', 'uncertain', 'failed'].includes(run.state)
+	) {
+		return githubRunLabel(run.github);
+	}
+	return runStateLabels[run.state];
 }
 
 const runStateLabels = {
