@@ -3,6 +3,9 @@ import { Clock, Effect, Layer, Result, Schema, Semaphore } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
 import type { DistributionFile } from '@/automation/distribution';
 import { createDistribution, readDistributionFile, readDistributionMode } from '@/automation/distribution';
+import type { DistributionArtifact } from '@/automation/distribution-artifact';
+import { readDistributionArtifact } from '@/automation/distribution-artifact';
+import { observedDistribution } from '@/automation/distribution-observation';
 import {
 	createExecution,
 	dependenciesReady,
@@ -1298,7 +1301,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			{ executionId: id },
 		);
 	}
-	refs(id: string, identity: WorkflowIdentity, complete = false, files: DistributionFile[] = []): Promise<RefPlan> {
+	refs(
+		id: string,
+		identity: WorkflowIdentity,
+		complete = false,
+		suppliedFiles: DistributionFile[] = [],
+		artifact?: DistributionArtifact,
+	): Promise<RefPlan> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
 				const execution = yield* this.get(id);
@@ -1316,6 +1325,18 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					return yield* precondition('Ref operation requires completed promotion');
 				}
 				const gateway = yield* this.gateway;
+				const files = yield* Effect.gen(function*() {
+					if (!artifact) return suppliedFiles;
+					if (complete || suppliedFiles.length || !policy.distribution) {
+						return yield* precondition('Unexpected distribution artifact');
+					}
+					return yield* readDistributionArtifact(gateway, {
+						artifact,
+						identity,
+						sourceSha: execution.sourceSha,
+						paths: policy.distribution.files,
+					});
+				});
 				const refs = complete && !execution.refPlan?.distribution
 					? []
 					: yield* gateway.tagRefs(execution.repository, execution.repositoryId);
@@ -1670,8 +1691,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			{},
 		);
 	}
-	private publishedRelease(execution: Execution): CoordinatorEffect<Execution, DomainError> {
+	private publishedRelease(input: Execution): CoordinatorEffect<Execution, DomainError> {
 		return Effect.gen({ self: this }, function*() {
+			let execution = input;
 			const policy = execution.workflow?.refs;
 			const version = execution.version;
 			const target = yield* fromSync(() => githubRelease(execution));
@@ -1679,18 +1701,29 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const tagged = !policy
 				|| execution.publications.some(p => p.id === `refs:${execution.operation}` && p.outcome === 'succeeded');
 			if (
-				execution.state !== 'failed' || execution.runId === undefined || !version || !target
+				!['failed', 'blocked', 'cancelled'].includes(execution.state) || execution.runId === undefined || !version
+				|| !target
 				|| !publishesGithubRelease(execution) || (published && tagged)
 			) return execution;
-			if (policy?.distribution && !execution.refPlan?.distribution) return execution;
 			const { tag, prerelease } = target;
 			const gateway = yield* this.gateway;
 			const refs = yield* gateway.tagRefs(execution.repository, execution.repositoryId);
-			if (execution.refPlan && (yield* this.distributionProblem(execution, execution.refPlan, refs))) return execution;
+			let native = false;
+			if (policy?.distribution && !execution.refPlan?.distribution) {
+				const plan = yield* observedDistribution(gateway, execution, refs);
+				if (!plan) return input;
+				execution = { ...execution, refPlan: plan };
+				native = true;
+			}
+			if (execution.refPlan && (yield* this.distributionProblem(execution, execution.refPlan, refs))) return input;
 			let next = execution;
 			if (!published) {
-				if (!refs.some(ref => ref.name === tag && ref.commit === releaseCommit(execution) && ref.oid !== ref.commit)) {
-					return execution;
+				if (
+					!refs.some(ref =>
+						ref.name === tag && ref.commit === releaseCommit(execution) && (native || ref.oid !== ref.commit)
+					)
+				) {
+					return input;
 				}
 				const read = yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
 				const release = yield* gateway.read(
@@ -1699,14 +1732,29 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					read,
 				);
 				if (!release || release.tag_name !== tag || release.draft !== false || release.prerelease !== prerelease) {
-					return execution;
+					return input;
 				}
 				yield* verifyImmutableRelease(release, execution.workflow?.refs?.immutable);
+				const fresh = yield* gateway.read(
+					Schema.NullOr(gitRefSchema),
+					`/repos/${execution.repository}/git/ref/tags/${encodeURIComponent(tag)}`,
+					read,
+				);
+				if (!fresh || !refs.some(ref => ref.name === tag && ref.oid === fresh.object.sha)) return input;
+				const pinned = yield* gateway.peelTag(execution.repository, fresh.object, read);
+				if (pinned.type !== 'commit' || pinned.sha !== releaseCommit(execution)) return input;
 				next = yield* this.released(execution, release, tag);
 			}
 			if (
 				policy && !tagged
-				&& (yield* refsLanded(policy, version, releaseCommit(execution), refs, yield* this.modulePrefixes(execution)))
+				&& (native
+					|| (yield* refsLanded(
+						policy,
+						version,
+						releaseCommit(execution),
+						refs,
+						yield* this.modulePrefixes(execution),
+					)))
 			) {
 				next = {
 					...next,
@@ -1720,7 +1768,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					}]),
 				};
 			}
-			return next === execution ? execution : publishedAfterFailure(next) ?? next;
+			if (next === execution) return input;
+			if (native) {
+				const settled = settle(next, true);
+				if (settled.state === 'succeeded') delete settled.reason;
+				return settled;
+			}
+			return publishedAfterFailure(next) ?? next;
 		});
 	}
 	private draftRelease(execution: Execution): CoordinatorEffect<Execution['draftRelease'], DomainError> {
@@ -3035,7 +3089,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						delete next.reason;
 						yield* this.put(next);
 					} else yield* this.redispatch(execution, publications, 'Retry requested');
-				} else yield* this.wakeUp();
+				} else {
+					const published = yield* this.publishedRelease(execution);
+					if (published !== execution) yield* this.put(published);
+					yield* this.wakeUp();
+				}
 				const releaseSet = execution.releaseSet;
 				const workflowId = releaseSet?.workflowId;
 				if (releaseSet && workflowId) {
@@ -3060,15 +3118,27 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (['succeeded', 'cancelled'].includes(execution.state)) {
 					return yield* precondition('Execution has already finished');
 				}
-				if (execution.runId && ['dispatching', 'running', 'uncertain'].includes(execution.state)) {
+				if (execution.runId) {
 					const gateway = yield* this.gateway;
 					const token = yield* gateway.token(execution.repository, execution.repositoryId, {
 						contents: 'read',
 						actions: 'write',
 					});
 					const path = `/repos/${execution.repository}/actions/runs/${execution.runId}`;
-					if ((yield* gateway.read(workflowRunSchema, path, token)).status !== 'completed') {
-						yield* gateway.call(`${path}/cancel`, token, 'POST');
+					const run = yield* gateway.read(workflowRunSchema, path, token);
+					if (run.status === 'completed' && run.conclusion === 'success') {
+						return yield* precondition('Workflow run has already completed successfully; reconcile this operation');
+					}
+					if (run.status !== 'completed') {
+						const cancelled = yield* Effect.result(gateway.call(`${path}/cancel`, token, 'POST'));
+						const checked = yield* Effect.result(gateway.read(workflowRunSchema, path, token));
+						if (
+							checked._tag === 'Success' && checked.success.status === 'completed'
+							&& checked.success.conclusion === 'success'
+						) {
+							return yield* precondition('Workflow run has already completed successfully; reconcile this operation');
+						}
+						if (cancelled._tag === 'Failure') return yield* cancelled.failure;
 					}
 				}
 				const next: Execution = { ...execution, state: 'cancelled', reason: `Cancelled by ${actor}` };
@@ -3726,7 +3796,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						));
 						if (retried._tag === 'Success') return;
 					}
-					const ended = { ...settled, runAttempt };
+					const ended = {
+						...settled,
+						runAttempt: execution.workflow?.refs?.distribution && !execution.refPlan
+							? execution.runAttempt
+							: runAttempt,
+					};
 					yield* this.put(yield* this.publishedRelease(ended).pipe(Effect.orElseSucceed(() => ended)));
 				} else if (execution.state === 'uncertain') {
 					yield* this.put({ ...execution, state: 'running', runAttempt });

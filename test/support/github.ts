@@ -192,6 +192,7 @@ export class FakeGitHub {
 			return json({
 				sha: commit.sha,
 				commit: { message: commit.message, verification: { verified: commit.verified } },
+				author: { id: commit.authorId },
 			});
 		});
 		this.route('GET', new RegExp(`^${repo}/git/trees/([0-9a-f]{40})$`), (match, url) => {
@@ -546,7 +547,12 @@ export class FakeGitHub {
 				merge_base_commit: { sha: common.sha },
 				commits: since.map(sha => {
 					const commit = this.resolve(repository, sha);
-					return { sha, author: { id: commit.authorId }, commit: { verification: { verified: commit.verified } } };
+					return {
+						sha,
+						author: { id: commit.authorId },
+						parents: commit.parents.map(sha => ({ sha })),
+						commit: { tree: { sha: commit.tree }, verification: { verified: commit.verified } },
+					};
 				}),
 				files: changed.map(filename => ({ filename })),
 			});

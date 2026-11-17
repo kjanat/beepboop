@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import type { Repository } from '@root/test/support/github.ts';
-import { filesAt, ownerId } from '@root/test/support/github.ts';
+import { botId, filesAt, ownerId } from '@root/test/support/github.ts';
 import { bearer } from '@root/test/support/http.ts';
 import { npmManifest, passChecks, publishWorkflow } from '@root/test/support/repositories.ts';
 import type { SigningKey } from '@root/test/support/signing.ts';
@@ -31,7 +31,15 @@ const files: Edit[] = [
 	{ path: 'dist/post.mjs', before: '', after: 'export const cached = true;\n' },
 ];
 
-async function fixture(options: { enabled?: boolean; immutable?: boolean } = {}) {
+async function fixture(
+	options: {
+		enabled?: boolean;
+		immutable?: boolean;
+		cancelled?: boolean;
+		foreignRun?: boolean;
+		moveTagOnReleaseRead?: boolean;
+	} = {},
+) {
 	key = signingKey('Release Maintainer <release@example.com>');
 	const signer = fakeSigner(key);
 	world.env.SIGNER = signer;
@@ -75,8 +83,16 @@ async function fixture(options: { enabled?: boolean; immutable?: boolean } = {})
 		const url = new URL(request.url);
 		if (url.pathname.endsWith('/immutable-releases')) return Response.json({ enabled: settings.enabled });
 		const response = await world.github.handle(request);
+		if (options.foreignRun && url.pathname.endsWith('/actions/runs/123') && response.ok) {
+			const value: unknown = await response.json();
+			if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('Expected workflow run');
+			return Response.json({ ...value, repository: { id: repository.id + 1 } }, { status: response.status });
+		}
 		if (url.pathname.includes('/releases') && response.ok && response.headers.get('content-type')?.includes('json')) {
 			const value: unknown = await response.json();
+			if (options.moveTagOnReleaseRead && url.pathname.endsWith('/releases/tags/v1.2.3')) {
+				repository.refs.set('tags/v1.2.3', source);
+			}
 			return typeof value === 'object' && value !== null && !Array.isArray(value) && 'tag_name' in value
 				? Response.json({ ...value, immutable: settings.immutable }, { status: response.status })
 				: Response.json(value, { status: response.status });
@@ -133,7 +149,13 @@ async function fixture(options: { enabled?: boolean; immutable?: boolean } = {})
 			dependencies,
 			...(register
 				? { state: 'dispatching' as const, attempts: 1 }
-				: { state: 'running' as const, runId: identity.runId, runAttempt: identity.attempt, workflowSha }),
+				: {
+					state: options.cancelled ? 'cancelled' as const : 'running' as const,
+					runId: identity.runId,
+					runAttempt: identity.attempt,
+					workflowSha,
+					...(options.cancelled ? { reason: 'Cancelled by a stale client' } : {}),
+				}),
 		});
 		return { execution, identity };
 	};
@@ -153,6 +175,138 @@ function land(repository: Repository, plan: RefPlan) {
 	}
 	if (!plan.distribution) throw new Error('Expected distribution evidence');
 	repository.refs.set(`heads/${repository.defaultBranch}`, plan.distribution.ancestryCommit);
+}
+
+async function nativePublication(options: Parameters<typeof fixture>[0] = {}) {
+	const scenario = await fixture(options);
+	const { repository, promotion, source } = scenario;
+	const distribution = world.github.push(
+		repository,
+		Object.fromEntries(files.map(file => [file.path, file.after])),
+		'Build distribution',
+	);
+	distribution.authorId = botId;
+	const ancestry = world.github.push(
+		repository,
+		Object.fromEntries(files.map(file => [file.path, null])),
+		'Record distribution ancestry',
+	);
+	ancestry.parents = [source, distribution.sha];
+	repository.refs.set('tags/v1.2.3', distribution.sha);
+	repository.releases.push({
+		id: 999,
+		tag: 'v1.2.3',
+		target: repository.defaultBranch,
+		draft: false,
+		prerelease: false,
+		authorId: botId,
+		body: '',
+	});
+	const run = repository.runs.find(run => run.id === promotion.identity.runId);
+	if (!run) throw new Error('Expected native publication run');
+	run.status = 'completed';
+	run.conclusion = 'success';
+	return { ...scenario, distribution, ancestry, run };
+}
+
+test('a completed native workflow reconciles its signed distribution commit and lightweight patch ref', async () => {
+	const { coordinator, promotion, repository, source, distribution, ancestry, run, signer } = await nativePublication();
+	expect((await world.workflowRun(repository, run, 'success', 'workflow_dispatch')).status).toBe(202);
+	await world.wait(2000);
+	const completed = await coordinator.execution(promotion.execution.id);
+	expect(completed?.state).toBe('succeeded');
+	expect(completed?.sourceSha).toBe(source);
+	expect(completed?.release?.commit).toBe(distribution.sha);
+	expect(completed?.refPlan?.distribution?.ancestryCommit).toBe(ancestry.sha);
+	expect(completed?.publications.map(publication => [publication.id, publication.outcome])).toEqual([
+		['pkg:github/octo/widget', 'succeeded'],
+		['refs:promote', 'succeeded'],
+	]);
+	expect(filesAt(repository, ancestry.sha)).toEqual(filesAt(repository, source));
+	expect(signer.calls).toHaveLength(0);
+});
+
+test('native publication observation keeps the distribution target when the default branch advances', async () => {
+	const { coordinator, promotion, repository, source, distribution, ancestry, run } = await nativePublication();
+	const next = world.github.push(repository, { 'README.md': '# Next work\n' }, 'Continue development');
+	expect((await world.workflowRun(repository, run, 'success', 'workflow_dispatch')).status).toBe(202);
+	await world.wait(2000);
+	const completed = await coordinator.execution(promotion.execution.id);
+	expect(completed?.state).toBe('succeeded');
+	expect(completed?.sourceSha).toBe(source);
+	expect(completed?.release?.commit).toBe(distribution.sha);
+	expect(completed?.refPlan?.distribution?.ancestryCommit).toBe(ancestry.sha);
+	expect(world.github.head(repository)).toBe(next.sha);
+});
+
+test('native publication reconciliation refuses a patch tag moved while reading the immutable release', async () => {
+	const { coordinator, promotion, repository, source, run } = await nativePublication({ moveTagOnReleaseRead: true });
+	expect((await world.workflowRun(repository, run, 'success', 'workflow_dispatch')).status).toBe(202);
+	await world.wait(2000);
+	const reconciled = await coordinator.execution(promotion.execution.id);
+	expect(repository.refs.get('tags/v1.2.3')).toBe(source);
+	expect(reconciled?.state).not.toBe('succeeded');
+	expect(reconciled?.release).toBeUndefined();
+	expect(reconciled?.refPlan).toBeUndefined();
+	expect(reconciled?.publications.some(publication => publication.outcome === 'succeeded')).toBe(false);
+});
+
+test('explicit reconciliation repairs a cancelled native publication without cancelling or retrying its workflow', async () => {
+	const { coordinator, promotion, repository, source, distribution, ancestry, run } = await nativePublication({
+		cancelled: true,
+	});
+	const mark = world.network.mark();
+	const completed = await coordinator.recover(promotion.execution.id, 'reconcile', 'release-maintainer');
+	expect(completed.state).toBe('succeeded');
+	expect(completed.reason).toBeUndefined();
+	expect(completed.release?.commit).toBe(distribution.sha);
+	expect(completed.refPlan?.distribution?.ancestryCommit).toBe(ancestry.sha);
+	expect(completed.sourceSha).toBe(source);
+	expect(run.status).toBe('completed');
+	expect(run.conclusion).toBe('success');
+	expect(run.attempt).toBe(1);
+	expect(repository.releases).toHaveLength(1);
+	expect(
+		world.network.since(mark).filter(exchange =>
+			exchange.method === 'POST' && /\/(cancel|rerun|rerun-failed-jobs)$/.test(new URL(exchange.url).pathname)
+		),
+	).toEqual([]);
+});
+
+for (const problem of [
+	'unsigned distribution',
+	'different author',
+	'extra file',
+	'wrong parent',
+	'missing ancestry',
+	'changed ancestry tree',
+	'wrong run attempt',
+	'different workflow source',
+	'foreign run',
+]) {
+	test(`native publication reconciliation rejects ${problem}`, async () => {
+		const { coordinator, promotion, repository, source, distribution, ancestry, run } = await nativePublication({
+			foreignRun: problem === 'foreign run',
+		});
+		if (problem === 'unsigned distribution') distribution.verified = false;
+		if (problem === 'different author') distribution.authorId = ownerId;
+		if (problem === 'extra file') {
+			const tree = repository.trees.get(distribution.tree);
+			if (!tree) throw new Error('Distribution tree missing');
+			tree.set('unexpected.txt', { mode: '100644', type: 'blob', sha: 'f'.repeat(40) });
+		}
+		if (problem === 'wrong parent') distribution.parents = [];
+		if (problem === 'missing ancestry') repository.refs.set(`heads/${repository.defaultBranch}`, source);
+		if (problem === 'changed ancestry tree') ancestry.tree = distribution.tree;
+		if (problem === 'wrong run attempt') run.attempt++;
+		if (problem === 'different workflow source') run.headSha = 'e'.repeat(40);
+		expect((await world.workflowRun(repository, run, 'success', 'workflow_dispatch')).status).toBe(202);
+		await world.wait(2000);
+		const reconciled = await coordinator.execution(promotion.execution.id);
+		expect(reconciled?.state).not.toBe('succeeded');
+		expect(reconciled?.release).toBeUndefined();
+		expect(reconciled?.refPlan).toBeUndefined();
+	});
 }
 
 test('distribution authorization freezes a signed target while retaining source identity and source-only master', async () => {
