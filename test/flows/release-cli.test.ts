@@ -7,6 +7,7 @@ import { runCli, savedClient } from '@root/test/support/cli.ts';
 import { discoveredWidget } from '@root/test/support/client.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
 import type { Repository } from '@root/test/support/github.ts';
+import { bearer } from '@root/test/support/http.ts';
 import { promotionsOf } from '@root/test/support/releases.ts';
 import {
 	editableConfiguration,
@@ -439,6 +440,24 @@ test.each([7, 12, 40])('publish accepts a %i-character reviewed commit and audit
 	expect(JSON.parse(result.stdout.join(''))).toMatchObject({ id: promotion.id, sourceSha: merged.sha, state: 'ready' });
 	const audit = await world.db.prepare("SELECT target FROM audit WHERE action='promotion.approve'").first();
 	expect(audit).toMatchObject({ target: `${promotion.id}:${merged.sha}` });
+});
+
+test('approval API rejects malformed commit references and audits a valid short reference as its full SHA', async () => {
+	const { merged, promotion } = await awaitingPromotion();
+	const api = bearer(world, token);
+	const before = await promotions();
+	for (const sourceSha of [merged.sha.slice(0, 6), merged.sha + 'a', 'ABCDEF0', 'ggggggg']) {
+		const response = await api('/api/executions/approve', { id: promotion.id, sourceSha, force: true });
+		expect(response.status).toBe(400);
+		expect(await promotions()).toEqual(before);
+		expect(await world.db.prepare("SELECT target FROM audit WHERE action='promotion.approve'").first()).toBeNull();
+	}
+	const response = await api('/api/executions/approve', { id: promotion.id, sourceSha: merged.sha.slice(0, 7) });
+	expect(response.status).toBe(200);
+	expect(response.body).toMatchObject({ id: promotion.id, sourceSha: merged.sha, state: 'ready' });
+	expect(await world.db.prepare("SELECT target FROM audit WHERE action='promotion.approve'").first()).toEqual({
+		target: `${promotion.id}:${merged.sha}`,
+	});
 });
 
 test.each([7, 12])('approve accepts table values with a %i-character prompted commit', async length => {

@@ -563,6 +563,9 @@ async function completed(args: string[], env: Record<string, string> = {}) {
 test('adopt completes --package, --must-publish and --binary from the server plan of the repository', async () => {
 	tool();
 	expect(await completed(['adopt', 'octo/tool', '--package', ''])).toEqual(['tool', 'tool-js']);
+	expect(await completed(['--quiet', 'adopt', 'octo/tool', '--package', ''])).toEqual(['tool', 'tool-js']);
+	expect(await completed(['--quiet', 'repo', 'setup', 'octo/tool', '--package', ''])).toEqual(['tool', 'tool-js']);
+	expect(await completed(['adopt', '--verbose', 'octo/tool', '--package', ''])).toEqual(['tool', 'tool-js']);
 	expect(await completed(['adopt', 'octo/missing', '--package', ''])).toEqual([]);
 	expect(await completed(['adopt', 'octo/tool', '--package', 'tool-'])).toEqual(['tool-js']);
 	expect(await completed(['repo', 'setup', 'octo/tool', '--must-publish', ''])).toEqual(['tool', 'tool-js']);
@@ -596,6 +599,8 @@ test('adopt without a repository completes from the checkout remote', async () =
 	const cwd = spyOn(process, 'cwd').mockReturnValue(directory);
 	try {
 		expect(await completed(['adopt', '--package', ''])).toEqual(['tool', 'tool-js']);
+		expect(await completed(['--quiet', 'adopt', '--package', ''])).toEqual(['tool', 'tool-js']);
+		expect(await completed(['--quiet', 'repo', 'setup', '--package', ''])).toEqual(['tool', 'tool-js']);
 	} finally {
 		cwd.mockRestore();
 	}

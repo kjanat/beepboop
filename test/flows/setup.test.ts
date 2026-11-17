@@ -1033,7 +1033,7 @@ ${unpinnedBuild('signer')}${unpinnedBuild('tool')}  publish:
       - uses: actions/attest@v4
         with: { subject-checksums: dist/checksums.txt }
       - id: beepboop_binaries
-        run: gh release upload "\${TAG}" --clobber -- *
+        run: gh release upload "\${TAG}" *
       - uses: kjanat/beepboop/actions/publish-refs@v1
         with:
           token: \${{ github.token }}
@@ -1062,6 +1062,9 @@ test('setup moves OIDC out of earlier build jobs and pins their release steps', 
 	expect(Object.keys(jobs)).toEqual(['begin', 'build-signer', 'build-tool', 'publish']);
 	expect(jobs['build-signer']?.permissions).toEqual({ contents: 'read' });
 	expect(jobs['build-tool']?.steps.some(step => step.uses?.includes('/actions/begin@'))).toBe(false);
+	expect(jobs.publish?.steps.find(step => step.id === 'beepboop_binaries')?.run).toBe(
+		'gh release upload "${TAG}" --clobber -- *\n',
+	);
 	expect(jobs.publish?.steps.map(step => step.uses ?? step.id ?? step.name)).toEqual([
 		'actions/checkout@v7',
 		'kjanat/beepboop/actions/begin@v1',

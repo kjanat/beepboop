@@ -3,6 +3,33 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
+async function collected(child: Bun.Subprocess<'ignore', 'pipe', 'pipe'>, deadline: number) {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]),
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(() => reject(new Error('Subprocess deadline exceeded')), deadline);
+			}),
+		]);
+	} finally {
+		clearTimeout(timer);
+		if (child.exitCode === null) child.kill('SIGKILL');
+		await child.exited;
+	}
+}
+
+test('a stalled regression subprocess is killed and reaped at its deadline', async () => {
+	const child = Bun.spawn([process.execPath, '-e', 'setInterval(() => {}, 1000)'], {
+		stdin: 'ignore',
+		stdout: 'pipe',
+		stderr: 'pipe',
+	});
+	await expect(collected(child, 50)).rejects.toThrow('Subprocess deadline exceeded');
+	expect(child.signalCode).toBe('SIGKILL');
+	expect(await child.exited).not.toBe(0);
+});
+
 test('action fixtures ignore the enclosing workflow context and leave its output files untouched', async () => {
 	const directory = await mkdtemp(join(tmpdir(), 'beepboop-outer-workflow-'));
 	try {
@@ -29,14 +56,11 @@ test('action fixtures ignore the enclosing workflow context and leave its output
 				GITHUB_ENV: environment,
 				RUNNER_TEMP: directory,
 			},
+			stdin: 'ignore',
 			stdout: 'pipe',
 			stderr: 'pipe',
 		});
-		const [stdout, stderr, exitCode] = await Promise.all([
-			new Response(child.stdout).text(),
-			new Response(child.stderr).text(),
-			child.exited,
-		]);
+		const [stdout, stderr, exitCode] = await collected(child, 10_000);
 		expect({ exitCode, failed: `${stdout}${stderr}`.includes('(fail)') }).toEqual({ exitCode: 0, failed: false });
 		expect(stderr).toContain('1 pass');
 		expect(await readFile(output, 'utf8')).toBe('outer output\n');
