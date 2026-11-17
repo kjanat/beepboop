@@ -155,6 +155,37 @@ function land(repository: Repository, plan: RefPlan) {
 	repository.refs.set(`heads/${repository.defaultBranch}`, plan.distribution.ancestryCommit);
 }
 
+test('distribution upload accepts real bundle sizes while retaining bounded, authenticated request handling', async () => {
+	const { coordinator, promotion, repository, source, signer } = await fixture();
+	const token = await world.runToken({ repository, runId: promotion.identity.runId, sha: source, file: 'publish.yml' });
+	const large = files.map((file, index) => ({
+		path: file.path,
+		before: '',
+		after: Buffer.alloc(index === 0 ? 1_261_338 : 1_069_176, 65).toString('base64'),
+		encoding: 'base64',
+	}));
+	const request = (path: string, body: string, authorization = `Bearer ${token}`) =>
+		new Request(`https://beepboop.kjanat.dev/api/workflow/${path}`, {
+			method: 'POST',
+			headers: { authorization, 'content-type': 'application/json' },
+			body,
+		});
+	const body = JSON.stringify({ executionId: promotion.execution.id, files: large });
+	expect(Buffer.byteLength(body)).toBeGreaterThan(3_000_000);
+	expect((await world.handle(request('refs-plan', body, ''))).status).toBe(401);
+	expect(signer.calls).toHaveLength(0);
+	expect((await world.handle(request('refs-plan', ' '.repeat(8 * 1024 * 1024 + 1)))).status).toBe(422);
+	expect((await world.handle(request('report', body))).status).toBe(422);
+	expect(signer.calls).toHaveLength(0);
+	const response = await world.handle(request('refs-plan', body));
+	expect([response.status, response.status === 200 ? '' : await response.text()]).toEqual([200, '']);
+	const plan = (await coordinator.execution(promotion.execution.id))?.refPlan;
+	if (!plan?.distribution) throw new Error('Expected distribution evidence');
+	expect(filesAt(repository, plan.distribution.commit)['dist/main.mjs']?.length).toBe(1_261_338);
+	expect(filesAt(repository, plan.distribution.commit)['dist/post.mjs']?.length).toBe(1_069_176);
+	expect(signer.calls).toHaveLength(3);
+});
+
 test('distribution authorization freezes a signed target while retaining source identity and source-only master', async () => {
 	const scenario = await fixture();
 	const { coordinator, promotion, repository, source, signer } = scenario;

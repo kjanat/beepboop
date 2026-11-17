@@ -4,7 +4,7 @@ import { precondition } from '@/contract/errors';
 import { fromPromise } from '@/failure';
 
 const MAX_BODY = 1_048_576;
-export function readBody(request: Request): Effect.Effect<Uint8Array, DomainError> {
+export function readBody(request: Request, maxBytes = MAX_BODY): Effect.Effect<Uint8Array, DomainError> {
 	return Effect.acquireUseRelease(
 		Effect.sync(() => request.body?.getReader()),
 		reader => Effect.gen(function*() {
@@ -15,7 +15,7 @@ export function readBody(request: Request): Effect.Effect<Uint8Array, DomainErro
 				const chunk = yield* fromPromise(() => reader.read());
 				if (chunk.done) break;
 				size += chunk.value.byteLength;
-				if (size > MAX_BODY) {
+				if (size > maxBytes) {
 					yield* fromPromise(() => reader.cancel());
 					return yield* precondition('Body too large');
 				}

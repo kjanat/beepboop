@@ -44,9 +44,9 @@ function methodNotAllowed(allowed: readonly Method[]) {
 	return domainError({ code: 'method-not-allowed', allowed: [...allowed] });
 }
 
-function input(request: Request, method: Method): Effect.Effect<unknown, DomainError> {
+function input(request: Request, method: Method, maxBytes?: number): Effect.Effect<unknown, DomainError> {
 	if (method === 'GET') return Effect.sync(() => Object.fromEntries(new URL(request.url).searchParams));
-	return readBody(request).pipe(
+	return readBody(request, maxBytes).pipe(
 		Effect.flatMap(bytes => fromSync((): unknown => JSON.parse(new TextDecoder().decode(bytes)))),
 	);
 }
@@ -73,6 +73,7 @@ export function dispatch(
 		if (!id) return yield* methodNotAllowed([...methods.keys()]);
 		const method = routes[id].method;
 		const endpoint: Pick<Endpoint<never>, 'run'> = endpoints[id];
-		return Response.json(yield* endpoint.run({ request, env, service }, input(request, method)));
+		const maxBytes = id === 'workflowRefsPlan' ? 8 * 1024 * 1024 : undefined;
+		return Response.json(yield* endpoint.run({ request, env, service }, input(request, method, maxBytes)));
 	}));
 }

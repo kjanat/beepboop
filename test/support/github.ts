@@ -301,6 +301,16 @@ export class FakeGitHub {
 			}
 			return json({ sha: this.typedTree(repository, files) }, 201);
 		});
+		this.route('GET', new RegExp(`^${repo}/git/blobs/([0-9a-f]{40})$`), match => {
+			const bytes = this.repository(match[1]).blobs.get(match[2] ?? '');
+			if (bytes === undefined) throw new HttpError(404, 'Not Found');
+			return json({
+				sha: match[2],
+				encoding: 'base64',
+				content: Buffer.from(bytes).toString('base64'),
+				size: bytes.length,
+			});
+		});
 		this.route('POST', new RegExp(`^${repo}/git/blobs$`), (match, _url, body) => {
 			const repository = this.repository(match[1]);
 			if (body.encoding !== 'base64') throw new HttpError(422, 'Expected base64 content');
