@@ -117,6 +117,14 @@ export function readDistributionArtifact(
 		if (!Number.isFinite(createdAt) || !Number.isFinite(startedAt) || createdAt < startedAt) {
 			return yield* precondition('Distribution artifact predates this workflow attempt');
 		}
+		const currentRun = yield* gateway.read(
+			Schema.Struct({ run_attempt: Schema.Finite }),
+			`/repos/${identity.repository}/actions/runs/${identity.runId}`,
+			token,
+		);
+		if (currentRun.run_attempt !== identity.attempt) {
+			return yield* precondition('Distribution artifact belongs to a different workflow attempt');
+		}
 		const bytes = yield* gateway.downloadWorkflowArtifact(identity.repository, artifact.id, token);
 		const hash = yield* fromPromise(() => crypto.subtle.digest('SHA-256', new Uint8Array(bytes)));
 		if (Buffer.from(hash).toString('hex') !== artifact.digest) {

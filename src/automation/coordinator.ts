@@ -1697,65 +1697,81 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const policy = execution.workflow?.refs;
 			const version = execution.version;
 			const target = yield* fromSync(() => githubRelease(execution));
-			const published = execution.publications.some(p => p.manager === 'github-release' && p.outcome === 'succeeded');
 			const tagged = !policy
 				|| execution.publications.some(p => p.id === `refs:${execution.operation}` && p.outcome === 'succeeded');
 			if (
 				!['failed', 'blocked', 'cancelled'].includes(execution.state) || execution.runId === undefined || !version
 				|| !target
-				|| !publishesGithubRelease(execution) || (published && tagged)
+				|| !publishesGithubRelease(execution)
 			) return execution;
 			const { tag, prerelease } = target;
 			const gateway = yield* this.gateway;
 			const refs = yield* gateway.tagRefs(execution.repository, execution.repositoryId);
+			const modulePrefixes = yield* this.modulePrefixes(execution);
 			let native = false;
 			if (policy?.distribution && !execution.refPlan?.distribution) {
-				const plan = yield* observedDistribution(gateway, execution, refs);
+				const plan = yield* observedDistribution(gateway, execution, refs, modulePrefixes);
 				if (!plan) return input;
 				execution = { ...execution, refPlan: plan };
 				native = true;
 			}
 			if (execution.refPlan && (yield* this.distributionProblem(execution, execution.refPlan, refs))) return input;
-			let next = execution;
-			if (!published) {
-				if (
-					!refs.some(ref =>
-						ref.name === tag && ref.commit === releaseCommit(execution) && (native || ref.oid !== ref.commit)
-					)
-				) {
-					return input;
-				}
-				const read = yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
-				const release = yield* gateway.read(
-					Schema.NullOr(releaseSchema),
-					`/repos/${execution.repository}/releases/tags/${encodeURIComponent(tag)}`,
-					read,
-				);
-				if (!release || release.tag_name !== tag || release.draft !== false || release.prerelease !== prerelease) {
-					return input;
-				}
-				yield* verifyImmutableRelease(release, execution.workflow?.refs?.immutable);
-				const fresh = yield* gateway.read(
-					Schema.NullOr(gitRefSchema),
-					`/repos/${execution.repository}/git/ref/tags/${encodeURIComponent(tag)}`,
-					read,
-				);
-				if (!fresh || !refs.some(ref => ref.name === tag && ref.oid === fresh.object.sha)) return input;
-				const pinned = yield* gateway.peelTag(execution.repository, fresh.object, read);
-				if (pinned.type !== 'commit' || pinned.sha !== releaseCommit(execution)) return input;
-				next = yield* this.released(execution, release, tag);
-			}
 			if (
-				policy && !tagged
-				&& (native
-					|| (yield* refsLanded(
-						policy,
-						version,
-						releaseCommit(execution),
-						refs,
-						yield* this.modulePrefixes(execution),
-					)))
+				!refs.some(ref =>
+					ref.name === tag && ref.commit === releaseCommit(execution) && (native || ref.oid !== ref.commit)
+				)
 			) {
+				return input;
+			}
+			const read = yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
+			const release = yield* gateway.read(
+				Schema.NullOr(releaseSchema),
+				`/repos/${execution.repository}/releases/tags/${encodeURIComponent(tag)}`,
+				read,
+			);
+			if (!release || release.tag_name !== tag || release.draft !== false || release.prerelease !== prerelease) {
+				return input;
+			}
+			yield* verifyImmutableRelease(release, execution.workflow?.refs?.immutable);
+			const fresh = yield* gateway.read(
+				Schema.NullOr(gitRefSchema),
+				`/repos/${execution.repository}/git/ref/tags/${encodeURIComponent(tag)}`,
+				read,
+			);
+			if (!fresh || !refs.some(ref => ref.name === tag && ref.oid === fresh.object.sha)) return input;
+			const pinned = yield* gateway.peelTag(execution.repository, fresh.object, read);
+			if (pinned.type !== 'commit' || pinned.sha !== releaseCommit(execution)) return input;
+			if (native) {
+				for (const change of execution.refPlan?.changes ?? []) {
+					if (change.name === tag) continue;
+					const companion = yield* gateway.read(
+						Schema.NullOr(gitRefSchema),
+						`/repos/${execution.repository}/git/ref/tags/${encodeURIComponent(change.name)}`,
+						read,
+					);
+					if (!companion || companion.object.sha !== change.expected) return input;
+					const pinnedCompanion = yield* gateway.peelTag(execution.repository, companion.object, read);
+					if (pinnedCompanion.type !== 'commit' || pinnedCompanion.sha !== releaseCommit(execution)) return input;
+				}
+			}
+			let next = yield* this.released(execution, release, tag);
+			const landed = !policy || (native
+				? versionTagged(
+					policy,
+					yield* fromSync(() => decodeSync(semVer, version)),
+					releaseCommit(execution),
+					refs,
+					modulePrefixes,
+				)
+				: (yield* refsLanded(
+					policy,
+					version,
+					releaseCommit(execution),
+					refs,
+					modulePrefixes,
+				)));
+			if (!landed) return native ? input : next;
+			if (policy && !tagged) {
 				next = {
 					...next,
 					publications: yield* mergePublications(next.publications, [{
@@ -1768,10 +1784,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					}]),
 				};
 			}
-			if (next === execution) return input;
-			if (native) {
+			if (native || next.state === 'cancelled' || next.state === 'blocked') {
 				const settled = settle(next, true);
-				if (settled.state === 'succeeded') delete settled.reason;
+				if (settled.state !== 'succeeded') return input;
+				delete settled.reason;
 				return settled;
 			}
 			return publishedAfterFailure(next) ?? next;

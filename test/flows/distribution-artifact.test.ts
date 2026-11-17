@@ -71,6 +71,7 @@ function fixture(options: {
 		workflow_run: typeof workflowRun;
 	}>;
 	startedAt?: string;
+	currentAttempt?: number;
 	location?: string;
 	redirectStatus?: number;
 	sourceBytes?: Uint8Array;
@@ -111,6 +112,9 @@ function fixture(options: {
 			}
 			if (url.pathname === `/repos/${repository}/actions/runs/123/attempts/2`) {
 				return Response.json({ run_started_at: options.startedAt ?? '2026-11-17T12:00:00Z' });
+			}
+			if (url.pathname === `/repos/${repository}/actions/runs/123`) {
+				return Response.json({ run_attempt: options.currentAttempt ?? identity.attempt });
 			}
 			if (url.pathname.includes('/contents/')) {
 				expect(url.searchParams.get('ref')).toBe(sourceSha);
@@ -200,6 +204,15 @@ test('distribution artifacts reject uploads from an earlier workflow attempt', a
 	const scenario = fixture({ startedAt: '2026-11-17T12:02:00Z' });
 	await expect(scenario.run()).rejects.toThrow('predates this workflow attempt');
 	expect(scenario.calls.some(call => call.url === signedUrl)).toBe(false);
+});
+
+test('distribution artifacts reject a superseded attempt before downloading newer bytes', async () => {
+	const scenario = fixture({
+		currentAttempt: 3,
+		metadata: { created_at: '2026-11-17T12:03:00Z' },
+	});
+	await expect(scenario.run()).rejects.toThrow('belongs to a different workflow attempt');
+	expect(scenario.calls.some(call => call.url.endsWith('/456/zip') || call.url === signedUrl)).toBe(false);
 });
 
 test('distribution artifacts verify downloaded bytes independently of GitHub metadata', async () => {

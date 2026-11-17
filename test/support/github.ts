@@ -530,7 +530,7 @@ export class FakeGitHub {
 			pull.reviewers = [...new Set([...pull.reviewers, ...added])];
 			return json(this.pullJson(this.repository(match[1]), pull), 201);
 		});
-		this.route('GET', new RegExp(`^${repo}/compare/([^.]+)\\.\\.\\.(.+)$`), match => {
+		this.route('GET', new RegExp(`^${repo}/compare/([^.]+)\\.\\.\\.(.+)$`), (match, url) => {
 			const repository = this.repository(match[1]);
 			const base = this.resolve(repository, decodeURIComponent(match[2] ?? ''));
 			const head = this.resolve(repository, decodeURIComponent(match[3] ?? ''));
@@ -541,11 +541,12 @@ export class FakeGitHub {
 				before.get(path) !== after.get(path)
 			);
 			const since = this.ancestry(repository, head.sha, common.sha) ?? [];
+			const size = Number(url.searchParams.get('per_page') ?? 250), page = Number(url.searchParams.get('page') ?? 1);
 			return json({
 				status: base.sha === head.sha ? 'identical' : ahead ? 'ahead' : 'diverged',
 				ahead_by: since.length,
 				merge_base_commit: { sha: common.sha },
-				commits: since.map(sha => {
+				commits: since.slice((page - 1) * size, page * size).map(sha => {
 					const commit = this.resolve(repository, sha);
 					return {
 						sha,

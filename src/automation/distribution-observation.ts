@@ -20,7 +20,12 @@ const comparison = Schema.Struct({
 });
 
 /** Observe a distribution already published by the execution's completed, bound workflow. */
-export function observedDistribution(gateway: RepositoryGateway, execution: Execution, refs: RefState[]) {
+export function observedDistribution(
+	gateway: RepositoryGateway,
+	execution: Execution,
+	refs: RefState[],
+	modulePrefixes: readonly string[] = [],
+) {
 	return Effect.gen(function*() {
 		const workflow = execution.workflow;
 		const policy = workflow?.refs;
@@ -32,6 +37,13 @@ export function observedDistribution(gateway: RepositoryGateway, execution: Exec
 		const name = `${policy.prefix}${execution.version}`;
 		const ref = refs.find(ref => ref.name === name);
 		if (!ref || ref.commit === execution.sourceSha) return undefined;
+		const names = [...new Set([name, ...modulePrefixes.map(prefix => `${prefix}${execution.version}`)])];
+		const publicationRefs: RefState[] = [];
+		for (const name of names) {
+			const required = refs.find(candidate => candidate.name === name);
+			if (!required || required.commit !== ref.commit) return undefined;
+			publicationRefs.push(required);
+		}
 		const token = yield* gateway.token(execution.repository, execution.repositoryId, {
 			contents: 'read',
 			actions: 'read',
@@ -87,17 +99,21 @@ export function observedDistribution(gateway: RepositoryGateway, execution: Exec
 		const branch = repository.default_branch;
 		const head = yield* gateway.read(gitRefSchema, `${base}/git/ref/heads/${encodeURIComponent(branch)}`, token);
 		if (head.object.type !== 'commit') return undefined;
-		const compared = yield* gateway.read(
-			comparison,
-			`${base}/compare/${execution.sourceSha}...${head.object.sha}`,
-			token,
-		);
-		if (compared.status !== 'ahead' || compared.merge_base_commit.sha !== execution.sourceSha) return undefined;
-		const ancestry = compared.commits.find(candidate =>
-			candidate.parents.length === 2
-			&& candidate.parents[0]?.sha === execution.sourceSha && candidate.parents[1]?.sha === ref.commit
-			&& candidate.commit.tree.sha === source.tree.sha
-		);
+		let ancestry: typeof comparison.Type.commits[number] | undefined;
+		for (let page = 1;; page++) {
+			const compared = yield* gateway.read(
+				comparison,
+				`${base}/compare/${execution.sourceSha}...${head.object.sha}?per_page=100&page=${page}`,
+				token,
+			);
+			if (compared.status !== 'ahead' || compared.merge_base_commit.sha !== execution.sourceSha) return undefined;
+			ancestry = compared.commits.find(candidate =>
+				candidate.parents.length === 2
+				&& candidate.parents[0]?.sha === execution.sourceSha && candidate.parents[1]?.sha === ref.commit
+				&& candidate.commit.tree.sha === source.tree.sha
+			);
+			if (ancestry || compared.commits.length < 100) break;
+		}
 		if (!ancestry) return undefined;
 		const verified = yield* gateway.read(gitCommitSchema, `${base}/git/commits/${ancestry.sha}`, token);
 		if (
@@ -108,7 +124,13 @@ export function observedDistribution(gateway: RepositoryGateway, execution: Exec
 			repository: execution.repository,
 			executionId: execution.id,
 			version: execution.version,
-			changes: [{ name, expected: ref.oid, commit: ref.commit, annotated: ref.oid !== ref.commit, signed: false }],
+			changes: publicationRefs.map(ref => ({
+				name: ref.name,
+				expected: ref.oid,
+				commit: ref.commit,
+				annotated: ref.oid !== ref.commit,
+				signed: false,
+			})),
 			distribution: {
 				sourceSha: execution.sourceSha,
 				commit: ref.commit,

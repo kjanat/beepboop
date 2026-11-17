@@ -38,6 +38,9 @@ async function fixture(
 		cancelled?: boolean;
 		foreignRun?: boolean;
 		moveTagOnReleaseRead?: boolean;
+		moveCompanionOnReleaseRead?: boolean;
+		companion?: boolean;
+		longComparison?: boolean;
 	} = {},
 ) {
 	key = signingKey('Release Maintainer <release@example.com>');
@@ -82,6 +85,25 @@ async function fixture(
 	world.network.serve('api.github.com', async request => {
 		const url = new URL(request.url);
 		if (url.pathname.endsWith('/immutable-releases')) return Response.json({ enabled: settings.enabled });
+		if (options.longComparison && url.pathname.includes('/compare/')) {
+			const complete = new URL(url);
+			complete.search = '';
+			const response = await world.github.handle(new Request(complete, request));
+			const value: unknown = await response.json();
+			if (typeof value !== 'object' || value === null || !('commits' in value) || !Array.isArray(value.commits)) {
+				throw new Error('Expected comparison commits');
+			}
+			const commits = [
+				...Array.from({ length: 250 }, (_, index) => ({
+					sha: (index + 1).toString(16).padStart(40, '0'),
+					parents: [{ sha: source }],
+					commit: { tree: { sha: source } },
+				})),
+				...value.commits,
+			];
+			const size = Number(url.searchParams.get('per_page') ?? 250), page = Number(url.searchParams.get('page') ?? 1);
+			return Response.json({ ...value, commits: commits.slice((page - 1) * size, page * size) });
+		}
 		const response = await world.github.handle(request);
 		if (options.foreignRun && url.pathname.endsWith('/actions/runs/123') && response.ok) {
 			const value: unknown = await response.json();
@@ -92,6 +114,9 @@ async function fixture(
 			const value: unknown = await response.json();
 			if (options.moveTagOnReleaseRead && url.pathname.endsWith('/releases/tags/v1.2.3')) {
 				repository.refs.set('tags/v1.2.3', source);
+			}
+			if (options.moveCompanionOnReleaseRead && url.pathname.endsWith('/releases/tags/v1.2.3')) {
+				repository.refs.set('tags/go/v1.2.3', source);
 			}
 			return typeof value === 'object' && value !== null && !Array.isArray(value) && 'tag_name' in value
 				? Response.json({ ...value, immutable: settings.immutable }, { status: response.status })
@@ -146,6 +171,7 @@ async function fixture(
 		});
 		await coordinator.enqueue({
 			...execution,
+			...(options.companion ? { moduleTags: [{ id: 'pkg:golang/github.com/octo/widget/go', prefix: 'go/v' }] } : {}),
 			dependencies,
 			...(register
 				? { state: 'dispatching' as const, attempts: 1 }
@@ -249,6 +275,23 @@ test('native publication reconciliation refuses a patch tag moved while reading 
 	expect(reconciled?.release).toBeUndefined();
 	expect(reconciled?.refPlan).toBeUndefined();
 	expect(reconciled?.publications.some(publication => publication.outcome === 'succeeded')).toBe(false);
+});
+
+test('native publication reconciliation finds ancestry beyond the first 250 comparison commits', async () => {
+	const { coordinator, promotion, distribution, ancestry } = await nativePublication({
+		cancelled: true,
+		longComparison: true,
+	});
+	const mark = world.network.mark();
+	const completed = await coordinator.recover(promotion.execution.id, 'reconcile', 'release-maintainer');
+	expect(completed.state).toBe('succeeded');
+	expect(completed.release?.commit).toBe(distribution.sha);
+	expect(completed.refPlan?.distribution?.ancestryCommit).toBe(ancestry.sha);
+	const pages = world.network.since(mark)
+		.map(exchange => new URL(exchange.url))
+		.filter(url => url.pathname.includes('/compare/'))
+		.map(url => url.searchParams.get('page'));
+	expect(pages).toEqual(['1', '2', '3']);
 });
 
 test('explicit reconciliation repairs a cancelled native publication without cancelling or retrying its workflow', async () => {
@@ -600,3 +643,99 @@ for (const problem of ['missing ancestry', 'different signed tag object']) {
 		expect(reconciled?.refPlan).toEqual(plan);
 	});
 }
+
+for (const problem of ['none', 'deleted release', 'mutable release', 'moved tag']) {
+	test(`native reconciliation revalidates an existing release receipt: ${problem}`, async () => {
+		const { coordinator, promotion, repository, source, distribution, settings, run } = await nativePublication({
+			moveTagOnReleaseRead: problem === 'moved tag',
+		});
+		const reported = await coordinator.report(
+			promotion.execution.id,
+			promotion.identity,
+			[{
+				id: `github-release:${repository.name}`,
+				manager: 'github-release',
+				name: repository.name,
+				version: 'v1.2.3',
+				outcome: 'succeeded',
+				required: true,
+			}],
+			[],
+		);
+		expect(reported.release?.commit).toBe(source);
+		if (problem === 'deleted release') repository.releases.length = 0;
+		if (problem === 'mutable release') settings.immutable = false;
+		await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
+		await world.wait(2000);
+		const completed = await coordinator.execution(promotion.execution.id);
+		if (problem === 'none') {
+			expect(completed?.state).toBe('succeeded');
+			expect(completed?.release?.commit).toBe(distribution.sha);
+		} else {
+			expect(completed?.state).not.toBe('succeeded');
+			expect(completed?.refPlan).toBeUndefined();
+			expect(completed?.publications.some(p => p.id === 'refs:promote' && p.outcome === 'succeeded')).toBe(false);
+		}
+	});
+}
+
+for (const companion of ['missing', 'wrong commit', 'correct']) {
+	test(`native reconciliation requires companion module tags: ${companion}`, async () => {
+		const { coordinator, promotion, repository, source, distribution, run } = await nativePublication({
+			companion: true,
+		});
+		if (companion !== 'missing') {
+			repository.refs.set('tags/go/v1.2.3', companion === 'correct' ? distribution.sha : source);
+		}
+		await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
+		await world.wait(2000);
+		const completed = await coordinator.execution(promotion.execution.id);
+		if (companion === 'correct') {
+			expect(completed?.state).toBe('succeeded');
+			expect(completed?.refPlan?.changes.map(change => change.name)).toEqual(['v1.2.3', 'go/v1.2.3']);
+		} else {
+			expect(completed?.state).not.toBe('succeeded');
+			expect(completed?.refPlan).toBeUndefined();
+		}
+	});
+}
+
+for (const receipt of [false, true]) {
+	test(`cancelled service distribution reconciles with existing release receipt ${receipt}`, async () => {
+		const { coordinator, promotion, repository } = await fixture();
+		const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
+		if (!plan.distribution) throw new Error('Expected distribution');
+		land(repository, plan);
+		await coordinator.refs(promotion.execution.id, promotion.identity, true);
+		if (receipt) await coordinator.publishRelease(promotion.execution.id, promotion.identity);
+		else {
+			repository.releases.push({
+				id: 999,
+				tag: 'v1.2.3',
+				target: plan.distribution.commit,
+				draft: false,
+				prerelease: false,
+				authorId: botId,
+				body: '',
+			});
+		}
+		await coordinator.cancel(promotion.execution.id, 'maintainer');
+		const completed = await coordinator.recover(promotion.execution.id, 'reconcile', 'maintainer');
+		expect(completed.state).toBe('succeeded');
+		expect(completed.reason).toBeUndefined();
+		expect(completed.release?.commit).toBe(plan.distribution.commit);
+	});
+}
+
+test('native reconciliation rejects a companion tag moved during the release read', async () => {
+	const { coordinator, promotion, repository, distribution, run } = await nativePublication({
+		companion: true,
+		moveCompanionOnReleaseRead: true,
+	});
+	repository.refs.set('tags/go/v1.2.3', distribution.sha);
+	await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
+	await world.wait(2000);
+	const completed = await coordinator.execution(promotion.execution.id);
+	expect(completed?.state).not.toBe('succeeded');
+	expect(completed?.refPlan).toBeUndefined();
+});
