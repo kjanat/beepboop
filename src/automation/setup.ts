@@ -1,4 +1,3 @@
-import { Effect, Result } from 'effect';
 import { binaryCandidates } from '@/automation/binary-candidates';
 import { companionProposals } from '@/automation/companion-detection';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
@@ -62,8 +61,8 @@ import {
 	versionLandsSentences,
 	versionPrMerge,
 	versionPrMergeQuestion,
-	versionPrMergeSentences,
 	versionPrMerges,
+	versionPrMergeSentences,
 	versionScopeNames,
 	versionScopeSentences,
 } from '@/contract/setup-terms';
@@ -74,6 +73,7 @@ import { publicationStages } from '@/domain/publication-stages';
 import { validateAgainst } from '@/domain/validate';
 import { fromPromise, fromSync, toDomainError } from '@/failure';
 import { mutableArray, safeDecode } from '@/schema';
+import { Effect, Result } from 'effect';
 
 function requirablePackage(pkg: Package | undefined): boolean {
 	return !!pkg && publishable(pkg) && !(tagPrefix(pkg.versionSource) !== undefined && pkg.version === undefined);
@@ -1318,11 +1318,11 @@ function fixedStream(stream: SetupChoices['streams'][number]): string | undefine
 		}
 		return `\`${stream.name}\` has no publishing workflow, so it has no \`startFrom\`, \`versionLands\` or \`publishWhen\`.`;
 	}
-	if (stream.versionSource?.kind === 'tags') {
-		return `\`${stream.name}\` takes its version from \`${stream.versionSource.prefix}\` tags. Beepboop raises no version for it, so it offers no \`startFrom\` or \`versionLands\`.`;
-	}
 	if (!startable(stream)) {
 		return `\`${stream.name}\` versions each package on its own. Starting a release raises one version for the whole release group, so it offers no \`startFrom\`.`;
+	}
+	if (stream.versionSource?.kind === 'tags') {
+		return `\`${stream.name}\` takes its version from \`${stream.versionSource.prefix}\` tags. A started release must publish a version tag with that prefix.`;
 	}
 	return undefined;
 }

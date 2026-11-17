@@ -1,18 +1,3 @@
-import { describe, expect, test } from 'bun:test';
-import { bearer, field } from '@root/test/support/http.ts';
-import {
-	jsonFile,
-	licenseText,
-	npmManifest,
-	publishWorkflow,
-	widget,
-	widgetConfiguration,
-} from '@root/test/support/repositories.ts';
-import { applySetup, discoverSetup, editPull } from '@root/test/support/setup.ts';
-import type { World } from '@root/test/support/world.ts';
-import { eachWorld } from '@root/test/support/world.ts';
-import { Effect, Result, Schema, Struct } from 'effect';
-import { parse, parseDocument } from 'yaml';
 import { mergeConfiguration } from '@/automation/configuration';
 import { bodyChoices, releaseAfterMerge, setupBody, setupOptions } from '@/automation/setup';
 import { pinned } from '@/automation/setup-actions';
@@ -45,6 +30,21 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/schema';
+import { bearer, field } from '@root/test/support/http.ts';
+import {
+	jsonFile,
+	licenseText,
+	npmManifest,
+	publishWorkflow,
+	widget,
+	widgetConfiguration,
+} from '@root/test/support/repositories.ts';
+import { applySetup, discoverSetup, editPull } from '@root/test/support/setup.ts';
+import type { World } from '@root/test/support/world.ts';
+import { eachWorld } from '@root/test/support/world.ts';
+import { describe, expect, test } from 'bun:test';
+import { Effect, Result, Schema, Struct } from 'effect';
+import { parse, parseDocument } from 'yaml';
 
 const checkout = pinned('checkout');
 let world: World;
@@ -2506,7 +2506,7 @@ test('a setup update body leads with old and new values, then held packages, cho
 		'  - `versionLands`: How a new version reaches the default branch, here `master`. Tick one.\n',
 	);
 	expect(body).toContain(
-		'  - `go` takes its version from `go/v` tags. Beepboop raises no version for it, so it offers no `startFrom` or `versionLands`.\n',
+		'  - `go` takes its version from `go/v` tags. A started release must publish a version tag with that prefix.\n',
 	);
 	expect(body.match(/existingTriggers: keep-and-report/g)).toHaveLength(1);
 	expect(body).toContain(

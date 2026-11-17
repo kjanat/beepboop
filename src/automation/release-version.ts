@@ -1,4 +1,3 @@
-import { Effect } from 'effect';
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage } from '@/automation/package-identity';
 import type { Inventory, Package, Stream } from '@/automation/types';
@@ -10,6 +9,7 @@ import { precondition } from '@/contract/errors';
 import { distinct } from '@/distinct';
 import { operations } from '@/domain/configuration';
 import { compareVersions } from '@/model';
+import { Effect } from 'effect';
 
 export function releasedVersion(pkg: Package): string | undefined {
 	if (pkg.publicationStatus === 'published') return pkg.published;
@@ -89,6 +89,12 @@ export function unreleasedManifestVersion(packages: Package[]): string | undefin
 	return released.some(version => version === undefined || compareVersions(manifest, version) > 0)
 		? manifest
 		: undefined;
+}
+
+export function hasTagPromotion(stream: Stream, prefix: string): boolean {
+	const workflow = stream.promote.workflow;
+	return workflow !== undefined && workflow.mode !== 'observe' && !workflow.ref?.includes('*')
+		&& workflow.refs?.phase === 'version' && workflow.refs.prefix === prefix;
 }
 
 export function releasePaths(packages: Package[], stream: Stream): ReadonlySet<string> {

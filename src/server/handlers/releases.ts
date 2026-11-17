@@ -1,4 +1,3 @@
-import { Effect } from 'effect';
 import { planVersionFiles } from '@/automation/editors';
 import { createExecution } from '@/automation/execution';
 import { createReleasePreparation } from '@/automation/managed';
@@ -9,7 +8,7 @@ import { planReleaseSet } from '@/automation/planning';
 import { planHookUpdates } from '@/automation/precommit';
 import { conflictMessage } from '@/automation/refs';
 import { capabilitySentence, releasable, releaseCapability } from '@/automation/release-capability';
-import { resolvePackageVersion } from '@/automation/release-version';
+import { hasTagPromotion, resolvePackageVersion } from '@/automation/release-version';
 import type { AutomationService } from '@/automation/service';
 import type { Execution, Inventory, ReleasePlan, ReleaseStarted, Snapshot, Stream } from '@/automation/types';
 import { nextVersion, parseVersionRequest } from '@/automation/version';
@@ -25,6 +24,7 @@ import { semver } from '@/model';
 import { planIdentity } from '@/persistence/identity-keys';
 import type { AdminContext } from '@/server/handlers/kit';
 import { admin, readyRepository } from '@/server/handlers/kit';
+import { Effect } from 'effect';
 
 export interface Selected {
 	repository: ReadyRepository;
@@ -221,8 +221,13 @@ export function beginRelease(
 ): Effect.Effect<Execution, DomainError> {
 	return Effect.gen(function*() {
 		const { repository, stream } = selection;
-		if (started && (stream.versionSource?.kind === 'tags' || stream.versioning === 'independent')) {
-			return yield* precondition(`${name} cannot start releases: it needs one shared version kept in its manifests`);
+		if (started && stream.versioning === 'independent') {
+			return yield* precondition(`${name} cannot start releases: it needs one shared version`);
+		}
+		if (started && stream.versionSource?.kind === 'tags' && !hasTagPromotion(stream, stream.versionSource.prefix)) {
+			return yield* precondition(
+				`${name} needs a dispatchable promotion that publishes a version tag with prefix "${stream.versionSource.prefix}"`,
+			);
 		}
 		if (versionPrMerge && !opensVersionPr(stream, plan)) {
 			return yield* precondition(`${plan.version} of ${name} opens no version PR to merge`);

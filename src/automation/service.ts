@@ -1,10 +1,9 @@
-import { CronExpressionParser } from 'cron-parser';
-import { Clock, Context, Effect, Layer, Result, Schema } from 'effect';
 import { configuredGrant } from '@/automation/access';
 import type { AuthBindings, AuthenticationDependencies } from '@/automation/auth';
 import { Authentication, authentication } from '@/automation/auth';
 import { resolveConfiguration } from '@/automation/configuration';
 import type { AutomationCoordinator } from '@/automation/coordinator';
+import { planVersionFiles } from '@/automation/editors';
 import { createExecution, deriveExecution } from '@/automation/execution';
 import { logFailure, logRecovered } from '@/automation/failure-log';
 import type { Credentials } from '@/automation/github';
@@ -16,6 +15,7 @@ import { discover, planRelease, resolvePublished, versionsInFiles } from '@/auto
 import { jsrTokenAlias, jsrTokenRefused, setUpJsrPackage } from '@/automation/managers/jsr';
 import type { Fetcher } from '@/automation/managers/registry';
 import { registryLayer } from '@/automation/managers/registry';
+import { latestTag } from '@/automation/managers/tags';
 import { Notifications } from '@/automation/notifications';
 import { matchesPackage, packageId, publishablePackages } from '@/automation/package-identity';
 import { metadataProblems } from '@/automation/package-metadata';
@@ -25,6 +25,7 @@ import { matchesRef } from '@/automation/policy';
 import type { RefState } from '@/automation/refs';
 import { conflictMessage, streamModuleTagPrefixes, tagConflicts } from '@/automation/refs';
 import {
+	hasTagPromotion,
 	manifestProblems,
 	releasedVersion,
 	releasePaths,
@@ -59,7 +60,7 @@ import { readiness, requireReady } from '@/domain/repository';
 import { validateAgainst } from '@/domain/validate';
 import { fromJson, fromPromise, fromSync, recover } from '@/failure';
 import type { Parsed } from '@/model';
-import { countSchema, decode, integer, looseSchema, record } from '@/model';
+import { compareVersions, countSchema, decode, integer, looseSchema, record } from '@/model';
 import { ChangeLog } from '@/persistence/d1/changes';
 import type { CLISessionStore } from '@/persistence/d1/cli-sessions';
 import { CredentialStore } from '@/persistence/d1/credentials';
@@ -70,6 +71,8 @@ import type { SessionStore } from '@/persistence/d1/sessions';
 import { executionId } from '@/persistence/identity-keys';
 import { decodeSync, looseStruct, mutableArray, mutableRecord, mutableStruct, safeDecode } from '@/schema';
 import { readBody, verifySignature } from '@/webhook';
+import { CronExpressionParser } from 'cron-parser';
+import { Clock, Context, Effect, Layer, Result, Schema } from 'effect';
 
 const webhookInstallation = mutableStruct({ account: mutableStruct({ id: looseSchema }) });
 const webhookRepositoryIds = Schema.optional(Schema.NullOr(mutableArray(mutableStruct({ id: countSchema }))));
@@ -452,7 +455,11 @@ export class AutomationService {
 			let tags: RefState[] | undefined;
 			let setupMerge: { sha: string; body: string } | null | undefined;
 			for (const [name, stream] of Object.entries(repository.configuration.streams)) {
-				if (!stream.promote.workflow || stream.versionSource?.kind === 'tags') continue;
+				if (!stream.promote.workflow) continue;
+				if (stream.versionSource?.kind === 'tags') {
+					yield* this.releaseStartedTags(repository, name, stream, stream.versionSource.prefix);
+					continue;
+				}
 				const packages = publishablePackages(repository.inventory.packages, stream.packages);
 				const unread = packages.filter(pkg => pkg.publicationStatus === 'failed');
 				if (unread.length) {
@@ -536,6 +543,51 @@ export class AutomationService {
 					promotion.approvedBy = 'start';
 					promotion.started = started.started;
 				} else if (merge && held && stream.promote.approval === 'merge') promotion.approvedBy = 'merge';
+				yield* this.store.audit('beepboop', 'release.push', promotion.id);
+				yield* this.enqueue(repository, promotion);
+			}
+		});
+	}
+	private releaseStartedTags(
+		repository: ReadyRepository,
+		name: string,
+		stream: Stream,
+		prefix: string,
+	): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			if (!stream.start?.length || !hasTagPromotion(stream, prefix)) return;
+			const coordinator = this.coordinator(repository.id);
+			const versions = yield* fromPromise(() => coordinator.startedPreparationVersions(name));
+			if (!versions.length) return;
+			const tags = yield* this.gateway.tagRefs(repository.name, repository.id);
+			const latest = latestTag(tags.map(ref => ref.name), prefix);
+			const packages = publishablePackages(repository.inventory.packages, stream.packages);
+			for (const version of versions.sort(compareVersions)) {
+				if (latest && compareVersions(version, latest) <= 0) continue;
+				const started = yield* this.startedPreparation(repository, name, version, repository.sha);
+				if (!started) continue;
+				const snapshot = yield* this.releaseHeld(repository, stream, packages, started.sha);
+				if (!snapshot) continue;
+				const plan = versionsInFiles(repository.inventory)
+					? yield* planRelease(snapshot, repository.inventory, version, stream.packages, undefined, stream.versionFiles)
+					: stream.versionFiles?.length
+					? yield* planVersionFiles(snapshot, version, stream.versionFiles)
+					: undefined;
+				if (plan?.edits.length || plan?.requiresPreparation) continue;
+				const promotion = yield* createExecution(repository, {
+					stream: name,
+					operation: 'promote',
+					eventId: `release:${version}:${snapshot.sha}`,
+					sourceSha: snapshot.sha,
+					version,
+				});
+				if (yield* fromPromise(() => coordinator.execution(promotion.id))) continue;
+				const claim = yield* this.tagClaims(repository, name, stream, version, snapshot.sha, tags);
+				if (claim.conflict) continue;
+				promotion.reclaims = claim.reclaims;
+				promotion.approvedBy = 'start';
+				promotion.started = started.started;
+				promotion.initiatedBy = started.started.actor;
 				yield* this.store.audit('beepboop', 'release.push', promotion.id);
 				yield* this.enqueue(repository, promotion);
 			}
