@@ -54,7 +54,7 @@ export interface Run {
 }
 export interface CheckRun {
 	name: string;
-	status: string;
+	status: 'queued' | 'in_progress' | 'completed';
 	conclusion: string | null;
 	runId?: number;
 }

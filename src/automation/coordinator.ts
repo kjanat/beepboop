@@ -36,7 +36,7 @@ import {
 	workflowRunsSchema,
 } from '@/automation/github-resources';
 import type { GitHubRunResult } from '@/automation/github-state';
-import { classifyJob, classifyRun, githubFailureReason } from '@/automation/github-state';
+import { classifyJob, classifyRun, githubFailureReason, jobProgressState } from '@/automation/github-state';
 import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
 import type { InboxEvent } from '@/automation/inbox';
 import { inboxEntry } from '@/automation/inbox';
@@ -2538,12 +2538,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				return {
 					legs: legs.map(leg => {
 						const job = jobs.find(entry => entry.name === leg.job);
-						const state = job ? classifyJob(job).kind : 'waiting';
+						const kind = job ? classifyJob(job).kind : 'waiting';
 						return {
 							build: leg.build,
 							target: leg.target,
 							job: leg.job,
-							state,
+							state: jobProgressState(kind, job?.status === 'completed'),
+							kind,
 							...(job ? { status: job.status, conclusion: job.conclusion } : {}),
 							...(job?.started_at ? { startedAt: job.started_at } : {}),
 							...(job?.completed_at ? { completedAt: job.completed_at } : {}),

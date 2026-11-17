@@ -50,6 +50,23 @@ export function classifyJob(job: RunJob): GitHubJobState {
 	};
 }
 
+/** Keep the original progress API decodable by already-installed clients. */
+export function jobProgressState(kind: GitHubJobKind, completed: boolean) {
+	switch (kind) {
+		case 'waiting':
+		case 'running':
+		case 'succeeded':
+		case 'skipped':
+			return kind;
+		case 'neutral':
+			return 'skipped';
+		case 'unknown':
+			return completed ? 'failed' : 'waiting';
+		default:
+			return 'failed';
+	}
+}
+
 export interface GitHubRunResult {
 	observation: GitHubRunState;
 	jobs: GitHubJobState[];

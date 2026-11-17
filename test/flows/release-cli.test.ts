@@ -26,7 +26,7 @@ import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
 import { checkoutRepository } from '@/cli/release';
 import { routes } from '@/contract/routes';
-import { planReview } from '@/contract/views';
+import { binaryProgress, planReview } from '@/contract/views';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
 import {
 	decodeSync,
@@ -1409,13 +1409,37 @@ test('binary progress preserves waiting and cancelled GitHub states through the 
 					conclusion: null,
 				});
 			}
+			const legacyState = mutableArray(
+				mutableStruct({ state: Schema.Literals(['waiting', 'running', 'succeeded', 'failed', 'skipped']) }),
+			);
+			for (const conclusion of [
+				'success',
+				'failure',
+				'cancelled',
+				'skipped',
+				'neutral',
+				'timed_out',
+				'action_required',
+				'startup_failure',
+				'stale',
+				'future_conclusion',
+				null,
+			]) {
+				workflow.jobs = [{ name, status: 'completed', conclusion }];
+				const progress = await Effect.runPromise(client.call(routes.executionsBinaries, { id }));
+				expect(safeDecode(legacyState, progress.legs).success).toBe(true);
+			}
+			workflow.jobs = [{ name, status: 'future_status', conclusion: null }];
+			const unknown = await Effect.runPromise(client.call(routes.executionsBinaries, { id }));
+			expect(unknown.legs.find(leg => leg.job === name)).toMatchObject({ state: 'waiting', kind: 'unknown' });
 			workflow.jobs = [
 				{ name, status: 'completed', conclusion: 'cancelled', runner_id: 7, steps: [{}] },
 				{ name: 'Build widget (x86_64-unknown-linux-gnu)', status: 'completed', conclusion: 'success' },
 			];
 			const progress = await Effect.runPromise(client.call(routes.executionsBinaries, { id }));
 			expect(progress.legs.find(leg => leg.job === name)).toMatchObject({
-				state: 'cancelled',
+				state: 'failed',
+				kind: 'cancelled',
 				status: 'completed',
 				conclusion: 'cancelled',
 			});
@@ -1439,8 +1463,22 @@ test('binary progress preserves waiting and cancelled GitHub states through the 
 	expect(result.activity).toContainEqual({ type: 'progress:fail', text: '1 of 2 builds failed' });
 });
 
-test('release follows each binary build leg and asset upload of a started release', async () => {
+test.each([false, true])('release follows each binary build leg and asset upload (legacy server: %s)', async legacy => {
 	const repository = await binaryStarts();
+	if (legacy) {
+		world.network.serve(new URL(origin).host, async request => {
+			const response = await world.handle(request);
+			if (new URL(request.url).pathname !== routes.executionsBinaries.path || !response.ok) return response;
+			const progress = decodeSync(binaryProgress, await response.json());
+			for (const leg of progress.legs) {
+				delete leg.kind;
+				delete leg.status;
+				delete leg.conclusion;
+			}
+			return Response.json(progress);
+		});
+	}
+
 	const legs = ['Build widget (x86_64-unknown-linux-gnu)', 'Build widget (aarch64-apple-darwin)'];
 	const assets = ['widget-x86_64-unknown-linux-gnu', 'widget-aarch64-apple-darwin'];
 	const dispatched = () => {
