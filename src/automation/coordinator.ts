@@ -205,6 +205,10 @@ const dependencyPoll = 30_000;
 const automaticRetries = 3;
 const defaultRetryAfter = 60_000;
 const metadataReason = 'Fix the package metadata before this release: ';
+/** A job GitHub gave up on before any runner took it: it has no runner and ran no steps. */
+function stranded(job: RunJob): boolean {
+	return (job.runner_id === 0 || job.runner_id === null) && job.steps?.length === 0;
+}
 function missingReceipt(execution: Execution, record: LedgerRecord): boolean {
 	return released(record)
 		&& !execution.publications.some(publication =>
@@ -3010,23 +3014,39 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private retryable(
 		execution: Execution,
-		run: Pick<WorkflowRun, 'id' | 'run_attempt'>,
+		run: Pick<WorkflowRun, 'id' | 'run_attempt' | 'conclusion'>,
 		token: string,
 	): CoordinatorEffect<boolean, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const stored = yield* this.read(`ledger:${execution.id}`);
-			if (stored === undefined) return false;
-			const ledger = yield* fromSync(() => decodeSync(ledgerSchema, stored));
 			const holder = `${run.id}:${run.run_attempt}`;
-			const open = ledger.records.filter(record =>
-				record.required && !released(record) && record.status.state !== 'uploaded'
-			);
+			const failedHere = (record: LedgerRecord) =>
+				record.status.state === 'failed-retryable' && record.status.holder === holder;
+			// Without a ledger the publish job never asked for a package to publish.
+			let open: LedgerRecord[] = [];
+			if (stored !== undefined) {
+				const ledger = yield* fromSync(() => decodeSync(ledgerSchema, stored));
+				open = ledger.records.filter(record =>
+					record.required && !released(record) && record.status.state !== 'uploaded'
+				);
+				if (!open.length) return false;
+				if (open.every(failedHere)) {
+					const jobs = yield* this.runJobs(execution.repository, run, token);
+					return jobs.filter(job => job.conclusion === 'failure' || job.conclusion === 'timed_out').length === 1;
+				}
+			}
+			// A job the publish job needs never got a runner. GitHub cancels such a job
+			// without steps and fails the run, and the skipped publish job leaves its
+			// packages planned. Re-running the failed jobs retries both.
 			if (
-				!open.length
-				|| !open.every(record => record.status.state === 'failed-retryable' && record.status.holder === holder)
+				run.conclusion !== 'failure'
+				|| !open.every(record => record.status.state === 'planned' || failedHere(record))
 			) return false;
 			const jobs = yield* this.runJobs(execution.repository, run, token);
-			return jobs.filter(job => job.conclusion === 'failure' || job.conclusion === 'timed_out').length === 1;
+			const failed = jobs.filter(job =>
+				job.conclusion === 'failure' || job.conclusion === 'timed_out' || job.conclusion === 'cancelled'
+			);
+			return failed.length > 0 && failed.every(stranded);
 		});
 	}
 	private dispatchCurrentWorkflow(execution: Execution): CoordinatorEffect<void, DomainError> {

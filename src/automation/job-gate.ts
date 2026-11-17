@@ -21,6 +21,8 @@ export interface RunJob {
 	conclusion: string | null;
 	started_at?: string | null | undefined;
 	completed_at?: string | null | undefined;
+	runner_id?: number | null | undefined;
+	steps?: readonly unknown[] | null | undefined;
 }
 export type GateState = 'ready' | 'blocked' | 'waiting';
 type JobStatus = 'passed' | 'failed' | 'pending';
