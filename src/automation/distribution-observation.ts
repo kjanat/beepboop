@@ -7,7 +7,13 @@ import { shaSchema } from '@/model';
 
 const tree = Schema.Struct({
 	truncated: Schema.Boolean,
-	tree: Schema.Array(Schema.Struct({ path: Schema.String, type: Schema.String, mode: Schema.String, sha: shaSchema })),
+	tree: Schema.Array(Schema.Struct({
+		path: Schema.String,
+		type: Schema.String,
+		mode: Schema.String,
+		sha: shaSchema,
+		size: Schema.optional(Schema.Finite),
+	})),
 });
 const comparison = Schema.Struct({
 	status: Schema.String,
@@ -85,7 +91,9 @@ export function observedDistribution(
 		const current = new Map(after.tree.filter(entry => entry.type !== 'tree').map(entry => [entry.path, entry]));
 		for (const path of paths) {
 			const file = current.get(path);
-			if (file?.type !== 'blob' || !['100644', '100755'].includes(file.mode)) return undefined;
+			if (file?.type !== 'blob' || !['100644', '100755'].includes(file.mode) || !file.size || file.size < 0) {
+				return undefined;
+			}
 		}
 		for (const path of new Set([...old.keys(), ...current.keys()])) {
 			const a = old.get(path), b = current.get(path);

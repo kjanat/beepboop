@@ -203,12 +203,12 @@ function land(repository: Repository, plan: RefPlan) {
 	repository.refs.set(`heads/${repository.defaultBranch}`, plan.distribution.ancestryCommit);
 }
 
-async function nativePublication(options: Parameters<typeof fixture>[0] = {}) {
+async function nativePublication(options: Parameters<typeof fixture>[0] = {}, empty = false) {
 	const scenario = await fixture(options);
 	const { repository, promotion, source } = scenario;
 	const distribution = world.github.push(
 		repository,
-		Object.fromEntries(files.map(file => [file.path, file.after])),
+		Object.fromEntries(files.map(file => [file.path, empty ? '' : file.after])),
 		'Build distribution',
 	);
 	distribution.authorId = botId;
@@ -234,6 +234,15 @@ async function nativePublication(options: Parameters<typeof fixture>[0] = {}) {
 	run.conclusion = 'success';
 	return { ...scenario, distribution, ancestry, run };
 }
+
+test('native publication reconciliation rejects empty distribution blobs', async () => {
+	const { coordinator, promotion, repository, run } = await nativePublication({}, true);
+	await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
+	await world.wait(2000);
+	const reconciled = await coordinator.execution(promotion.execution.id);
+	expect(reconciled?.state).not.toBe('succeeded');
+	expect(reconciled?.refPlan).toBeUndefined();
+});
 
 test('a completed native workflow reconciles its signed distribution commit and lightweight patch ref', async () => {
 	const { coordinator, promotion, repository, source, distribution, ancestry, run, signer } = await nativePublication();

@@ -200,11 +200,17 @@ export class FakeGitHub {
 			const ref = match[2] ?? '';
 			const sha = repository.trees.has(ref) ? ref : this.resolve(repository, ref).tree;
 			const files = repository.trees.get(sha) ?? new Map<string, TreeEntry>();
-			const entries: { path: string; mode: string; type: string; sha: string }[] = [];
+			const entries: { path: string; mode: string; type: string; sha: string; size?: number }[] = [];
 			const directories = new Set<string>();
 			for (const [path, entry] of files) {
 				const slash = path.indexOf('/');
-				if (slash < 0 || url.searchParams.has('recursive')) entries.push({ path, ...entry });
+				if (slash < 0 || url.searchParams.has('recursive')) {
+					entries.push({
+						path,
+						...entry,
+						...(entry.type === 'blob' ? { size: Buffer.byteLength(repository.blobs.get(entry.sha) ?? '') } : {}),
+					});
+				}
 				if (slash >= 0) directories.add(path.slice(0, slash));
 			}
 			for (const path of directories) {
