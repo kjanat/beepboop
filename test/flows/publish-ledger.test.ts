@@ -13,7 +13,7 @@ import {
 } from '@root/actions/runtime/publish.ts';
 import { begin, runIdentity } from '@root/test/support/actions.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
-import type { Repository } from '@root/test/support/github.ts';
+import type { Repository, Run } from '@root/test/support/github.ts';
 import type { Reply } from '@root/test/support/http.ts';
 import { bearer } from '@root/test/support/http.ts';
 import type { Publishing } from '@root/test/support/ledger.ts';
@@ -492,7 +492,12 @@ const publishFailed = [
 	{ name: 'Build', status: 'completed' as const, conclusion: 'success' },
 	{ name: 'Publish', status: 'completed' as const, conclusion: 'failure' },
 ];
-async function failRun(repository: Repository, identity: RunIdentity, executionId: string, jobs = publishFailed) {
+async function failRun(
+	repository: Repository,
+	identity: RunIdentity,
+	executionId: string,
+	jobs: Run['jobs'] = publishFailed,
+) {
 	const run = repository.runs.find(entry => entry.id === identity.runId);
 	if (!run) throw new Error('Missing run');
 	run.status = 'completed';
@@ -564,6 +569,118 @@ test('a cancelled run is never retried automatically even when its jobs never go
 	await world.workflowRun(repository, run, 'cancelled', 'workflow_dispatch');
 	await world.wait(2_000);
 	expect([run.attempt, (await executionOf(repository, execution.id)).state]).toEqual([1, 'failed']);
+}, 60_000);
+
+// Retryable publication records must never turn provider intervention into a retry.
+for (
+	const [conclusion, state, kind] of [
+		['cancelled', 'failed', 'cancelled'],
+		['action_required', 'blocked', 'action-required'],
+		['startup_failure', 'failed', 'startup-failure'],
+		['neutral', 'failed', 'neutral'],
+		['skipped', 'failed', 'skipped'],
+		['stale', 'failed', 'stale'],
+		['future_conclusion', 'uncertain', 'unknown'],
+		[null, 'uncertain', 'unknown'],
+	] as const
+) {
+	test(`a ${conclusion} run keeps its provider outcome despite a retryable publication`, async () => {
+		const { repository, begun } = await released({ main: [core] });
+		const { execution, identity } = started(begun, 'main');
+		await publishing(identity, execution.id, { commands: [], outcomes: { 'lint-core': ['fail'] } });
+		const run = repository.runs.find(entry => entry.id === identity.runId);
+		if (!run) throw new Error('Missing run');
+		run.status = 'completed';
+		run.conclusion = conclusion;
+		run.jobs = publishFailed;
+		await world.workflowRun(repository, run, conclusion, 'workflow_dispatch');
+		await world.wait(2_000);
+		const after = await executionOf(repository, execution.id);
+		expect([run.attempt, after.state, after.github]).toEqual([1, state, {
+			kind,
+			status: 'completed',
+			conclusion,
+			completed: true,
+		}]);
+		expect(after.reason).toBeTruthy();
+	}, 60_000);
+}
+
+for (const conclusion of ['cancelled', 'action_required', 'startup_failure', 'future_conclusion', null]) {
+	test(`a second ${conclusion} job prevents an automatic publication retry`, async () => {
+		const { repository, begun } = await released({ main: [core] });
+		const { execution, identity } = started(begun, 'main');
+		await publishing(identity, execution.id, { commands: [], outcomes: { 'lint-core': ['fail'] } });
+		const jobs = [...publishFailed, { name: 'Other', status: 'completed' as const, conclusion }];
+		expect((await failRun(repository, identity, execution.id, jobs)).slice(0, 2)).toEqual([1, 'failed']);
+	}, 60_000);
+}
+
+test('retry classification includes jobs after the first page of the current attempt', async () => {
+	const { repository, begun } = await released({ main: [core] });
+	const { execution, identity } = started(begun, 'main');
+	await publishing(identity, execution.id, { commands: [], outcomes: { 'lint-core': ['fail'] } });
+	const jobs = [
+		...publishFailed,
+		...Array.from({ length: 99 }, (_, index) => ({
+			name: `Build ${index}`,
+			status: 'completed' as const,
+			conclusion: 'success',
+		})),
+		{ name: 'Other', status: 'completed' as const, conclusion: 'cancelled' },
+	];
+	expect((await failRun(repository, identity, execution.id, jobs)).slice(0, 2)).toEqual([1, 'failed']);
+}, 60_000);
+
+for (const conclusion of ['cancelled', 'action_required', 'failure']) {
+	test(`registry rate limits do not redispatch a ${conclusion} run with incompatible jobs`, async () => {
+		const { repository, begun } = await released({ main: [core] });
+		const { execution, identity } = started(begun, 'main');
+		await publishing(identity, execution.id, { commands: [], outcomes: { 'lint-core': ['tomorrow'] } });
+		const run = repository.runs.find(entry => entry.id === identity.runId);
+		if (!run) throw new Error('Missing run');
+		run.status = 'completed';
+		run.conclusion = conclusion;
+		run.jobs = [...publishFailed, { name: 'Other', status: 'completed', conclusion: 'cancelled' }];
+		await world.workflowRun(repository, run, conclusion, 'workflow_dispatch');
+		await world.wait(61_000);
+		const after = await executionOf(repository, execution.id);
+		expect([repository.runs.length, run.attempt, after.state]).toEqual([
+			1,
+			1,
+			conclusion === 'action_required' ? 'blocked' : 'failed',
+		]);
+	}, 60_000);
+}
+
+test('a run waiting on GitHub resumes without retaining its intervention reason', async () => {
+	const { repository, begun } = await released({ main: [core] });
+	const { execution, identity } = started(begun, 'main');
+	const run = repository.runs.find(entry => entry.id === identity.runId);
+	if (!run) throw new Error('Missing run');
+	run.status = 'completed';
+	run.conclusion = 'action_required';
+	await world.workflowRun(repository, run, run.conclusion, 'workflow_dispatch');
+	await world.wait(2_000);
+	expect((await executionOf(repository, execution.id)).state).toBe('blocked');
+	for (const status of ['requested', 'pending', 'waiting', 'in_progress']) {
+		run.status = status;
+		run.conclusion = null;
+		if (status === 'in_progress') {
+			await begin(world, identity, execution.id, 'main', 'promote');
+			expect((await executionOf(repository, execution.id)).reason).toBeUndefined();
+		}
+		await world.wait(61_000);
+		const after = await executionOf(repository, execution.id);
+		expect(after.github).toEqual({
+			kind: status === 'in_progress' ? 'running' : 'waiting',
+			status,
+			conclusion: null,
+			completed: false,
+		});
+		if (status === 'in_progress') expect(after.reason).toBeUndefined();
+		else expect(after.reason).toContain(status);
+	}
 }, 60_000);
 
 test('a retry after the branch moved finishes a published release whose run left a crate behind', async () => {

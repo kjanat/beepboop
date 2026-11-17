@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+import { githubJobKinds } from '@/contract/github';
 import type { Decoded } from '@/schema';
 import { looseStruct, mutableArray, mutableRecord, mutableStruct } from '@/schema';
 
@@ -60,6 +61,9 @@ export const binaryProgress = mutableStruct({
 		target: Schema.String,
 		job: Schema.String,
 		state: Schema.Literals(['waiting', 'running', 'succeeded', 'failed', 'skipped']),
+		kind: Schema.optional(Schema.Literals(githubJobKinds)),
+		status: Schema.optional(Schema.String),
+		conclusion: Schema.optional(Schema.NullOr(Schema.String)),
 		startedAt: Schema.optional(Schema.String),
 		completedAt: Schema.optional(Schema.String),
 	})),

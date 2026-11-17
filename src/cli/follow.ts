@@ -104,8 +104,14 @@ interface Stage {
 
 function stages(promotion: Tracked, binaries: BinaryProgress, finished: boolean): Stage[] {
 	const legs = binaries.legs;
-	const ended = legs.filter(leg => ['succeeded', 'failed', 'skipped'].includes(leg.state)).length;
-	const broken = legs.filter(leg => leg.state === 'failed').length;
+	const ended =
+		legs.filter(leg => leg.status === 'completed' || !['waiting', 'running', 'unknown'].includes(leg.kind ?? leg.state))
+			.length;
+	const broken =
+		legs.filter(leg =>
+			!['waiting', 'running', 'succeeded', 'skipped', 'neutral'].includes(leg.kind ?? leg.state)
+			&& (leg.kind !== 'unknown' || leg.status === 'completed')
+		).length;
 	const total = promotion.configuration?.streams[promotion.stream]?.required?.length
 		|| promotion.publications.length;
 	const published = promotion.publications.filter(publication => publication.outcome === 'succeeded').length;
@@ -144,11 +150,14 @@ function stages(promotion: Tracked, binaries: BinaryProgress, finished: boolean)
 
 function binaryRows(look: Look, binaries: BinaryProgress) {
 	return binaries.legs.map(leg => {
-		const built: State = leg.state === 'succeeded'
+		const kind = leg.kind ?? leg.state;
+		const built: State = kind === 'succeeded'
 			? 'published'
-			: leg.state === 'failed'
+			: kind === 'unknown' && leg.status !== 'completed'
+			? 'waiting'
+			: !['waiting', 'running', 'skipped', 'neutral'].includes(kind)
 			? 'failed'
-			: leg.state === 'skipped'
+			: kind === 'skipped' || kind === 'neutral'
 			? 'skipped'
 			: 'waiting';
 		const asset = binaries.assets.find(entry => entry.build === leg.build && entry.target === leg.target);
@@ -156,7 +165,7 @@ function binaryRows(look: Look, binaries: BinaryProgress) {
 		return {
 			binary: look.pkg(leg.build),
 			target: leg.target,
-			build: `${look.mark(built)} ${look.state(built, leg.state)}`,
+			build: `${look.mark(built)} ${look.state(built, kind)}`,
 			asset: asset?.name ?? '',
 			upload: `${look.mark(upload)} ${look.state(upload, asset?.uploaded ? 'uploaded' : 'waiting')}`,
 		};

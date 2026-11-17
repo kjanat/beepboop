@@ -1,4 +1,6 @@
 import { Clock, Effect } from 'effect';
+import type { GitHubRunResult } from '@/automation/github-state';
+import { githubFailureReason, githubRunLabel } from '@/automation/github-state';
 import { canVerifyPublication } from '@/automation/managers';
 import { outputsComplete } from '@/automation/outputs';
 import { matchesPackage, matchesPublication, packageId, parseIdentity } from '@/automation/package-identity';
@@ -209,9 +211,35 @@ export function settle(execution: Execution, runSucceeded: boolean): Execution {
 		? { ...execution, state, reason: runFailedNote }
 		: { ...execution, state };
 }
+/** Settle the publication lifecycle without discarding the provider's outcome. */
+export function settleRun(execution: Execution, result: GitHubRunResult): Execution {
+	const prior = execution.github && githubRunLabel(execution.github);
+	const next: Execution = { ...execution, github: result.observation };
+	if (prior && next.reason?.startsWith(prior)) delete next.reason;
+	if (!result.observation.completed) {
+		next.state = result.observation.kind === 'unknown' ? 'uncertain' : 'running';
+		if (result.observation.kind !== 'running') next.reason = githubRunLabel(result.observation);
+		return next;
+	}
+	const succeeded = result.observation.kind === 'succeeded';
+	const settled = settle(next, succeeded);
+	if (settled.state === 'succeeded') {
+		if (succeeded) delete settled.reason;
+		else if (result.observation.kind !== 'failed') {
+			settled.reason = `${githubRunLabel(result.observation)} after every required publication succeeded.`;
+		}
+	} else if (!succeeded) {
+		if (result.observation.kind === 'action-required') settled.state = 'blocked';
+		else if (result.observation.kind === 'unknown') settled.state = 'uncertain';
+		settled.reason = githubFailureReason(result);
+	}
+	return settled;
+}
 export function publishedAfterFailure(execution: Execution): Execution | undefined {
 	if (execution.state !== 'failed' || execution.runId === undefined) return undefined;
-	const settled = settle(execution, false);
+	const settled = execution.github?.completed
+		? settleRun(execution, { observation: execution.github, jobs: [], retry: undefined })
+		: settle(execution, false);
 	return settled.state === 'succeeded' ? settled : undefined;
 }
 export function recheckable(publication: Publication): boolean {

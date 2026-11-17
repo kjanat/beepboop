@@ -504,6 +504,22 @@ re-runs the failed jobs. It does this after the first, second and third run
 attempts. A `failed-permanent` package, or a failed job besides the publishing
 job, leaves the execution `failed` for you to retry.
 
+GitHub runs and jobs retain their raw status and conclusion. Requested, pending,
+queued and waiting jobs appear as waiting; cancellation is distinct from skipping.
+A completed `action_required` run blocks for action on GitHub, a startup failure
+stops the execution, and an unrecognized outcome stays uncertain. These outcomes
+never trigger an automatic retry; the conclusion alone does not identify who
+cancelled a run, what action is required, or why startup failed.
+
+A failed run can also retry when every unsuccessful job explicitly has no runner
+(`runner_id` is zero or null) and an empty step list. Its remaining required
+packages must still be planned or retryable failures from this attempt, or the
+ledger must not yet exist. Missing job fields, mixed failures and cancelled runs
+do not qualify. Both retry paths use the complete job list of the current attempt
+and retain the three-retry limit. Deferred registry rate limits also respect
+explicit incompatible job outcomes. Successful required publications remain
+successful even if the workflow subsequently fails.
+
 A retry from the Retry button or `beepboop runs recover ID --action retry`
 re-runs the failed jobs of the execution's run when that run built the release
 commit. A retry refuses to start once the workflow branch no longer contains the

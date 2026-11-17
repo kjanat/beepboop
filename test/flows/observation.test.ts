@@ -368,7 +368,7 @@ test('a failed run counts as succeeded once every required publication is on the
 	repository.refs.set('tags/widget-v1.2.0', world.github.head(repository));
 	const failure = { id: 9001, event: 'push', branch: 'widget-v1.2.0', conclusion: 'failure', attempt: 1 };
 	const [first] = await complete(repository, failure);
-	expect([first?.state, first?.reason]).toEqual(['failed', undefined]);
+	expect([first?.state, first?.reason]).toEqual(['failed', 'GitHub workflow failed']);
 	world.npm.publish('widget', '1.2.0');
 	await world.coordinator(repository).recover(first?.id ?? '', 'reconcile', 'test');
 	await world.wait(2_000);

@@ -39,14 +39,14 @@ export interface Run {
 	event: string;
 	headSha: string;
 	headBranch: string | null;
-	status: 'queued' | 'in_progress' | 'completed';
+	status: string;
 	conclusion: string | null;
 	attempt: number;
 	title: string;
 	inputs: Record<string, string>;
 	jobs?: {
 		name: string;
-		status: 'queued' | 'in_progress' | 'completed';
+		status: string;
 		conclusion: string | null;
 		runner_id?: number | null;
 		steps?: unknown[];

@@ -26,7 +26,7 @@ import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
 import { checkoutRepository } from '@/cli/release';
 import { routes } from '@/contract/routes';
-import { planReview } from '@/contract/views';
+import { binaryProgress, planReview } from '@/contract/views';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
 import {
 	decodeSync,
@@ -1358,7 +1358,7 @@ test('release reports a failed release run with its link', async () => {
 	expect(result.activity.filter(event => event.type === 'progress:fail')).toEqual([
 		{ type: 'progress:fail', text: undefined },
 	]);
-	expect(result.stderr.join('')).toBe('The release stopped: failed\n');
+	expect(result.stderr.join('')).toBe('GitHub workflow failed\n');
 	expect(result.stdout.join('')).toContain(
 		`Run: https://github.com/octo/widget/actions/runs/${repository.runs.at(-1)?.id}`,
 	);
@@ -1384,8 +1384,101 @@ async function binaryStarts() {
 	return repository;
 }
 
-test('release follows each binary build leg and asset upload of a started release', async () => {
+test('binary progress preserves waiting and cancelled GitHub states through the API and CLI', async () => {
 	const repository = await binaryStarts();
+	const name = 'Build widget (aarch64-apple-darwin)';
+	const steps = [
+		() => world.wait(16_000),
+		async () => {
+			passChecks(repository, world.github.head(repository));
+			await world.push(repository);
+			await world.wait(16_000);
+		},
+		async () => {
+			const workflow = repository.runs.at(-1);
+			if (!workflow) throw new Error('No run');
+			const id = workflow.inputs.beepboop_execution_id ?? '';
+			workflow.status = 'in_progress';
+			await begin(world, runIdentity(repository, workflow, 'publish.yml'), id, 'main', 'promote');
+			for (const status of ['queued', 'requested', 'pending', 'waiting', 'in_progress']) {
+				workflow.jobs = [{ name, status, conclusion: null }];
+				const progress = await Effect.runPromise(client.call(routes.executionsBinaries, { id }));
+				expect(progress.legs.find(leg => leg.job === name)).toMatchObject({
+					state: status === 'in_progress' ? 'running' : 'waiting',
+					status,
+					conclusion: null,
+				});
+			}
+			const legacyState = mutableArray(
+				mutableStruct({ state: Schema.Literals(['waiting', 'running', 'succeeded', 'failed', 'skipped']) }),
+			);
+			for (const conclusion of [
+				'success',
+				'failure',
+				'cancelled',
+				'skipped',
+				'neutral',
+				'timed_out',
+				'action_required',
+				'startup_failure',
+				'stale',
+				'future_conclusion',
+				null,
+			]) {
+				workflow.jobs = [{ name, status: 'completed', conclusion }];
+				const progress = await Effect.runPromise(client.call(routes.executionsBinaries, { id }));
+				expect(safeDecode(legacyState, progress.legs).success).toBe(true);
+			}
+			workflow.jobs = [{ name, status: 'future_status', conclusion: null }];
+			const unknown = await Effect.runPromise(client.call(routes.executionsBinaries, { id }));
+			expect(unknown.legs.find(leg => leg.job === name)).toMatchObject({ state: 'waiting', kind: 'unknown' });
+			workflow.jobs = [
+				{ name, status: 'completed', conclusion: 'cancelled', runner_id: 7, steps: [{}] },
+				{ name: 'Build widget (x86_64-unknown-linux-gnu)', status: 'completed', conclusion: 'success' },
+			];
+			const progress = await Effect.runPromise(client.call(routes.executionsBinaries, { id }));
+			expect(progress.legs.find(leg => leg.job === name)).toMatchObject({
+				state: 'failed',
+				kind: 'cancelled',
+				status: 'completed',
+				conclusion: 'cancelled',
+			});
+		},
+		async () => {
+			const workflow = repository.runs.at(-1);
+			if (!workflow) throw new Error('No run');
+			workflow.status = 'completed';
+			workflow.conclusion = 'failure';
+			await world.workflowRun(repository, workflow, 'failure', 'workflow_dispatch');
+			await world.wait(16_000);
+		},
+	];
+	spyOn(client, 'pause').mockImplementation(() => Effect.promise(async () => {
+		await (steps.shift() ?? (() => world.wait(16_000)))();
+	}));
+	const result = await run(['release', 'patch', '--repository', repository.name], [true]);
+	expect(result.exitCode).not.toBe(0);
+	expect(result.stderr.join('')).toContain('GitHub workflow failed');
+	expect(result.stdout.join('')).toContain('cancelled');
+	expect(result.activity).toContainEqual({ type: 'progress:fail', text: '1 of 2 builds failed' });
+});
+
+test.each([false, true])('release follows each binary build leg and asset upload (legacy server: %s)', async legacy => {
+	const repository = await binaryStarts();
+	if (legacy) {
+		world.network.serve(new URL(origin).host, async request => {
+			const response = await world.handle(request);
+			if (new URL(request.url).pathname !== routes.executionsBinaries.path || !response.ok) return response;
+			const progress = decodeSync(binaryProgress, await response.json());
+			for (const leg of progress.legs) {
+				delete leg.kind;
+				delete leg.status;
+				delete leg.conclusion;
+			}
+			return Response.json(progress);
+		});
+	}
+
 	const legs = ['Build widget (x86_64-unknown-linux-gnu)', 'Build widget (aarch64-apple-darwin)'];
 	const assets = ['widget-x86_64-unknown-linux-gnu', 'widget-aarch64-apple-darwin'];
 	const dispatched = () => {
@@ -1539,13 +1632,15 @@ test('a failed build leg shows in the binary progress and the binaries table', a
 		expect.objectContaining({ type: 'progress:start', label: 'Building binaries' }),
 	);
 	expect(result.activity.filter(event => event.type === 'progress:fail')).toEqual([
-		{ type: 'progress:fail', text: '1 of 2 builds failed' },
+		{ type: 'progress:fail', text: '2 of 2 builds failed' },
 		{ type: 'progress:fail', text: undefined },
 		{ type: 'progress:fail', text: undefined },
 	]);
-	expect(result.stderr.join('')).toBe('The release stopped: failed\n');
+	expect(result.stderr.join('')).toContain(
+		'GitHub workflow failed: Build widget (x86_64-unknown-linux-gnu) (cancelled), Build widget (aarch64-apple-darwin) (failed)',
+	);
 	const output = result.stdout.join('');
-	expect(output).toContain('widget  linux-amd64   ○ skipped');
+	expect(output).toContain('widget  linux-amd64   ✖ cancelled');
 	expect(output).toContain('widget  darwin-arm64  ✖ failed');
 });
 

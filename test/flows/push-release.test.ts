@@ -1108,7 +1108,7 @@ test(
 		const settled = new Map((await promotions(api)).map(promotion => [promotion.sourceSha, promotion]));
 		expect(settled.get(unlicensed.sha)?.state).toBe('cancelled');
 		const released = settled.get(licensed.sha);
-		expect([released?.reason, typeof released?.approvedAt]).toEqual([undefined, 'number']);
+		expect([released?.reason, typeof released?.approvedAt]).toEqual(['waiting on GitHub (queued)', 'number']);
 		expect(world.github.dispatches.map(dispatch => dispatch.inputs.beepboop_execution_id)).toEqual([released?.id]);
 	},
 	60_000,
