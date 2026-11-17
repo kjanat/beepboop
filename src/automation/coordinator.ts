@@ -1090,6 +1090,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					return yield* precondition('Execution needs exactly one runner');
 				}
 				const prior = yield* this.stored(execution.id);
+				if (prior?.operation === 'prepare' && prior.versionPrMerge !== execution.versionPrMerge) {
+					return yield* precondition(
+						`${execution.version} of ${execution.stream} is already being prepared with versionPrMerge ${
+							prior.versionPrMerge ?? 'from the stream'
+						}`,
+					);
+				}
 				if (
 					prior?.state === 'awaiting-approval' && prior.approvedBy === undefined && execution.approvedBy === 'start'
 				) {

@@ -38,6 +38,7 @@ async function requested(
 	prepare: Record<string, unknown>,
 	override?: VersionPrMerge,
 	manifest = '1.0.0',
+	start = false,
 ) {
 	const repository = widget(world.github, { version: manifest });
 	repository.allowAutoMerge = allowAutoMerge;
@@ -46,6 +47,7 @@ async function requested(
 	configuration.streams.main = {
 		...configuration.streams.main,
 		credentials: [],
+		...(start ? { start: [{ via: 'cli' }] } : {}),
 		prepare: { ...prepare, versionPrMerge: merge },
 	};
 	const head = world.github.push(repository, {
@@ -296,3 +298,36 @@ test('a preparation rerun never receives the stored before and after lockfile co
 	expect(JSON.parse(begun.context ?? '{}').prepared).toBeUndefined();
 	expect(begun.context).not.toContain('beforebeforebefore');
 });
+
+for (const start of [false, true]) {
+	for (const initial of [undefined, 'rebase'] as const) {
+		test(`a ${start ? 'started' : 'prepared'} release rejects ${initial ? 'omitting its explicit' : 'adding an explicit'} merge override without an acceptance audit`, async () => {
+			const { repository, api, prepared } = await requested(
+				'manual',
+				true,
+				{ strategy: 'managed', bump: 'pr' },
+				initial,
+				'1.0.0',
+				start,
+			);
+			expect(prepared.status).toBe(200);
+			const request = { repositoryId: repository.id, stream: 'main', version: '1.0.1' };
+			const action = start ? 'release.start' : 'release.prepare';
+			const audit = () => world.db.prepare('SELECT id FROM audit WHERE action = ?').bind(action).all();
+			const accepted = await audit();
+			expect(accepted.results).toHaveLength(1);
+			const same = await prepareRelease(api, request, initial ? { versionPrMerge: initial } : {});
+			expect(same.prepared.status).toBe(200);
+			expect(text(same.prepared.body, 'id')).toBe(text(prepared.body, 'id'));
+			const before = await audit();
+			expect(before.results).toHaveLength(2);
+			const conflicting = await prepareRelease(api, request, initial ? {} : { versionPrMerge: 'rebase' });
+			expect(conflicting.prepared.status).toBe(422);
+			expect(JSON.stringify(conflicting.prepared.body)).toContain(`versionPrMerge ${initial ?? 'from the stream'}`);
+			expect(await audit()).toEqual(before);
+			await world.wait(16_000);
+			expect((await only(api, 'prepare')).versionPrMerge).toBe(initial);
+			expect(one(repository.pulls, 'version PR').autoMerge).toBe(initial ? 'REBASE' : undefined);
+		});
+	}
+}
