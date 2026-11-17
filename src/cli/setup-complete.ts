@@ -1,4 +1,5 @@
-import type { CLIError, CompletionContext, CompletionHandler } from '@kjanat/dreamcli';
+import type { CLIError, CLISchema, CommandSchema, CompletionContext, CompletionHandler } from '@kjanat/dreamcli';
+import { flag, parse } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupPlan } from '@/automation/setup-types';
@@ -17,25 +18,46 @@ function flagValue(argv: readonly string[], name: string): string | undefined {
 	return value;
 }
 
-const switches = new Set(['--apply', '--json', '--quiet', '-q', '--help', '-h']);
-
-function adoptedRepository({ argv, commandPath }: CompletionContext): Effect.Effect<string, CLIError> {
-	const tokens = argv.slice(commandPath.length);
-	for (let index = 0; index < tokens.length; index++) {
-		const token = tokens[index] ?? '';
-		if (!token.startsWith('-')) return Effect.succeed(token);
-		if (!token.includes('=') && !switches.has(token)) index++;
+function adoptedRepository(
+	{ argv, commandPath }: CompletionContext,
+	schema: CLISchema,
+): Effect.Effect<string, CLIError> {
+	let commands = schema.commands, offset = 0, selected: CommandSchema | undefined;
+	for (const name of commandPath) {
+		selected = commands.find(command => command.name === name);
+		if (!selected) return checkoutRepository(process.cwd());
+		const command = selected;
+		const index = argv.findIndex((token, index) =>
+			index >= offset && (token === command.name || command.aliases.includes(token))
+		);
+		if (index < 0) return checkoutRepository(process.cwd());
+		offset = index + 1;
+		commands = selected.commands;
 	}
+	if (!selected) return checkoutRepository(process.cwd());
+	const builtins = Object.fromEntries(
+		Object.entries(schema.builtins)
+			.filter(([, mode]) => mode === 'on')
+			.map(([name]) => [
+				name,
+				(name === 'quiet' ? flag.boolean().alias('q') : name === 'help' ? flag.boolean().alias('h') : flag.boolean())
+					.schema,
+			]),
+	);
+	const repository =
+		parse({ ...selected, flags: { ...builtins, ...selected.flags } }, argv.slice(offset)).args.repository;
+	if (typeof repository === 'string' && repository) return Effect.succeed(repository);
 	return checkoutRepository(process.cwd());
 }
 
 function candidates(pick: (plan: SetupPlan) => readonly string[]): CompletionHandler {
 	return context =>
 		Effect.runPromise(Effect.gen(function*() {
+			const { app } = yield* Effect.promise(() => import('@/cli/cli'));
 			const client = yield* Client.at(
 				flagValue(context.argv, 'server') ?? context.env.BEEPBOOP_SERVER ?? defaultServer,
 			);
-			const repository = yield* adoptedRepository(context);
+			const repository = yield* adoptedRepository(context, app.schema);
 			return pick(yield* parseSetupPlan(yield* client.call(routes.setupPreview, { repository })));
 		}));
 }
