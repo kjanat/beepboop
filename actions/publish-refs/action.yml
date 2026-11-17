@@ -7,6 +7,10 @@ inputs:
   files:
     description: JSON array of configured generated distribution paths; omit for source-only releases
     default: "[]"
+  artifact-id:
+    description: GitHub Actions artifact uploaded by this workflow containing the distribution paths
+  artifact-digest:
+    description: SHA-256 digest returned by actions/upload-artifact
   service:
     description: Beepboop service origin
     default: https://beepboop.kjanat.dev
@@ -22,6 +26,8 @@ runs:
       env:
         SERVICE_ORIGIN: "${{ inputs.service }}"
         DISTRIBUTION_PATHS: "${{ inputs.files }}"
+        DISTRIBUTION_ARTIFACT_ID: "${{ inputs.artifact-id }}"
+        DISTRIBUTION_ARTIFACT_DIGEST: "${{ inputs.artifact-digest }}"
         SCRIPT: "${{ github.action_path }}/../runtime/client.ts"
       run: bun "${SCRIPT}" refs-plan
     - name: Push refs

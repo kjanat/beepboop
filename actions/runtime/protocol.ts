@@ -125,6 +125,14 @@ export function requestBody(mode: Mode, environment: Environment, now: number): 
 			case 'credentials':
 				return { executionId, aliases: yield* array(yield* json(environment.ALIASES || '[]')) };
 			case 'refs-plan': {
+				if (environment.DISTRIBUTION_ARTIFACT_ID || environment.DISTRIBUTION_ARTIFACT_DIGEST) {
+					const id = Number(yield* required(environment, 'DISTRIBUTION_ARTIFACT_ID'));
+					const digest = yield* required(environment, 'DISTRIBUTION_ARTIFACT_DIGEST');
+					if (!Number.isSafeInteger(id) || id <= 0 || !/^[a-f0-9]{64}$/.test(digest)) {
+						return yield* refuse('Invalid distribution artifact ID or SHA-256 digest');
+					}
+					return { executionId, artifact: { id, digest } };
+				}
 				const paths = yield* Result.all((yield* array(yield* json(environment.DISTRIBUTION_PATHS || '[]'))).map(text));
 				if (paths.length === 0) return { executionId };
 				const root = yield* required(environment, 'GITHUB_WORKSPACE');

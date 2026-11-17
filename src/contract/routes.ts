@@ -537,6 +537,7 @@ export const routes = {
 		idempotent: true,
 		request: mutableStruct({
 			executionId: text,
+			artifact: Schema.optional(mutableStruct({ id, digest: text })),
 			files: Schema.optional(mutableArray(mutableStruct({
 				path: text,
 				before: Schema.String,
