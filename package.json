@@ -80,7 +80,7 @@
 	},
 	"devDependencies": {
 		"@astrojs/ts-content-mapper": "0.2.0",
-		"@biomejs/biome": "2.6.7",
+		"@biomejs/biome": "2.6.8",
 		"@effect/tsgo": "0.67.7",
 		"@kjanat/fmt": "0.62.0",
 		"@playwright/test": "1.65.1",
