@@ -203,8 +203,10 @@ the rest of each match stays unchanged. For example:
 This selects `fujo = "0.2.0"` with any amount of whitespace around `=`. A plain
 text file can select version mentions with
 `"pattern": "\\bversion\\s+(?<version>[0-9]+\\.[0-9]+\\.[0-9]+)"`.
-Patterns use JavaScript regular expression syntax with global, multiline and
-Unicode matching enabled. Captures must be nonempty and must not overlap;
+Patterns use [RE2 syntax](https://github.com/google/re2/wiki/Syntax) with multiline
+and Unicode matching, and scan every occurrence. Matching uses RE2JS to avoid
+backtracking CPU exhaustion. Patterns are limited to 4096 characters; backreferences
+and lookaround are rejected. Named captures use `(?<version>...)`. Captures must be nonempty and must not overlap;
 patterns that find no matches fail preparation. Choose enough context to select
 only the versions belonging to this release.
 

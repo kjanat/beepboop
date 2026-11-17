@@ -1,4 +1,5 @@
 import { Effect, Result, Schema } from 'effect';
+import { RE2JS, RE2JSSyntaxException } from 're2js';
 import { unsafeRelativePath } from '@/relative-path';
 import type { Decoded } from '@/schema';
 import { matchesPattern, mutableArray, refined, strictStruct } from '@/schema';
@@ -8,9 +9,12 @@ export function safeVersionPath(path: string): boolean {
 }
 export function textVersionPattern(pattern: string) {
 	return Result.try({
-		try: () => new RegExp(pattern, 'dgmu'),
+		try: () => {
+			if (pattern.length > 4096) throw new SyntaxError('Text version pattern exceeds 4096 characters');
+			return RE2JS.compile(RE2JS.translateRegExp(pattern), RE2JS.MULTILINE);
+		},
 		catch: error => {
-			if (error instanceof SyntaxError) return error;
+			if (error instanceof SyntaxError || error instanceof RE2JSSyntaxException) return error;
 			throw error;
 		},
 	});
@@ -58,7 +62,7 @@ export const versionFileSchema = Schema.Union([
 		pattern: refined(
 			Schema.String.check(Schema.isMinLength(1)),
 			pattern => Result.isSuccess(textVersionPattern(pattern)),
-			'Expected a valid Unicode regular expression',
+			'Expected an RE2-compatible regular expression of at most 4096 characters',
 		),
 	}),
 ]);

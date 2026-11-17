@@ -71,6 +71,7 @@
 		"jsonc-parser": "^3.3.1",
 		"micro509": "0.18.0",
 		"packageurl-js": "^2.0.1",
+		"re2js": "2.10.0",
 		"remark": "15.0.1",
 		"remark-gfm": "4.0.1",
 		"smol-toml": "^1.9.1",

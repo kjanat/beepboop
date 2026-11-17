@@ -1,11 +1,37 @@
 import { expect, spyOn, test } from 'bun:test';
 import { Cause, Effect, Exit, Result } from 'effect';
+import { RE2JS } from 're2js';
 import { applyVersionFiles } from '@/automation/editors';
 import { versionFileSchema } from '@/contract/version-files';
 import { decodeSync, safeDecode } from '@/schema';
 
 const literal = { path: 'README.md', format: 'text', prefix: 'version="', suffix: '"' };
 const pattern = { path: 'README.md', format: 'text', pattern: 'version="(?<version>[^"\\n]+)"' };
+
+test('adversarial version patterns finish within an externally enforced deadline', () => {
+	const child = Bun.spawnSync([
+		process.execPath,
+		'-e',
+		`
+		import { textVersionPattern } from './src/contract/version-files.ts';
+		import { Result } from 'effect';
+		for (const expression of ['(?<version>(a+)+)$', '(?<version>(a|aa)+)$']) {
+			const compiled = textVersionPattern(expression);
+			if (Result.isFailure(compiled)) throw new Error('Expected supported pattern');
+			if (compiled.success.matcher('a'.repeat(100_000) + '!').find()) throw new Error('Unexpected match');
+		}
+	`,
+	], { cwd: new URL('../..', import.meta.url).pathname, timeout: 5000, killSignal: 'SIGKILL' });
+	expect(child.exitedDueToTimeout).not.toBe(true);
+	expect({ code: child.exitCode, error: child.stderr.toString() }).toEqual({ code: 0, error: '' });
+});
+
+test('pattern replacement preserves UTF-16 offsets around astral Unicode characters', async () => {
+	const source = '😀 version="1.0.0" 🦀\n𐐀 version="1.0.0"';
+	const { result, content } = await update(source, [pattern]);
+	expect(Result.isSuccess(result)).toBe(true);
+	expect(content).toBe('😀 version="1.1.0" 🦀\n𐐀 version="1.1.0"');
+});
 
 async function update(original: string, rules: unknown[], current = original) {
 	const files = { 'README.md': current };
@@ -123,7 +149,6 @@ test('patterns reject missing, empty, unmatched and overlapping version captures
 			['1.0.0', '1\\.0\\.0'],
 			['version=', 'version=(?<version>)'],
 			['other', '(?<version>1\\.0\\.0)?other'],
-			['aaa', '(?=(?<version>aa))'],
 		] as const
 	) {
 		const { result, content } = await update(source, [{ path: 'README.md', format: 'text', pattern: expression }]);
@@ -136,6 +161,9 @@ test('configuration rejects invalid regex syntax and mixed text selectors', () =
 	for (const rule of [
 		{ ...pattern, pattern: '(' },
 		{ ...pattern, pattern: '' },
+		{ ...pattern, pattern: '(?=(?<version>aa))' },
+		{ ...pattern, pattern: '(?<version>a)\\1' },
+		{ ...pattern, pattern: 'a'.repeat(4097) },
 		{ ...literal, pattern: pattern.pattern },
 	]) expect(safeDecode(versionFileSchema, rule).success).toBe(false);
 });
@@ -168,7 +196,7 @@ test('invalid regex syntax remains a recoverable failure when applying a rule di
 test('unexpected scanner exceptions remain defects and leave the file unchanged', () => {
 	for (const bug of [new Error('scanner defect'), new SyntaxError('unexpected scanner syntax failure')]) {
 		const { effect, files, original } = patternEdit(pattern.pattern);
-		const scanner = spyOn(String.prototype, 'matchAll').mockImplementation(() => {
+		const scanner = spyOn(RE2JS.prototype, 'matcher').mockImplementation(() => {
 			throw bug;
 		});
 		let exit: Exit.Exit<void, unknown>;

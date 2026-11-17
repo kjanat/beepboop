@@ -37,16 +37,22 @@ function textMatches(source: string, rule: Extract<VersionFile, { format: 'text'
 			const pattern = yield* textVersionPattern(rule.pattern).pipe(
 				Result.mapError(() => precondition('Invalid text version pattern')),
 			);
-			for (const match of source.matchAll(pattern)) {
-				const span = match.indices?.groups?.version;
-				if (!span || span[0] === span[1]) {
+			if (!Object.hasOwn(pattern.namedGroups(), 'version')) {
+				return yield* Result.fail(
+					precondition('Text pattern must capture a nonempty named version group in every match'),
+				);
+			}
+			const matcher = pattern.matcher(source);
+			while (matcher.find()) {
+				const from = matcher.start('version'), to = matcher.end('version');
+				if (from < 0 || from === to) {
 					return yield* Result.fail(
 						precondition('Text pattern must capture a nonempty named version group in every match'),
 					);
 				}
 				const previous = spans.at(-1);
-				if (previous && span[0] < previous.to) return yield* Result.fail(precondition('Text version captures overlap'));
-				spans.push({ from: span[0], to: span[1], value: source.slice(...span) });
+				if (previous && from < previous.to) return yield* Result.fail(precondition('Text version captures overlap'));
+				spans.push({ from, to, value: source.slice(from, to) });
 			}
 		} else {
 			let cursor = 0;
