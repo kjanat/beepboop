@@ -13,8 +13,14 @@ export interface DistributionArtifact {
 	digest: string;
 }
 
+const manifestPath = 'beepboop-distribution.json';
+const manifestSchema = Schema.Struct({
+	version: Schema.Literal(1),
+	files: Schema.Array(Schema.Struct({ path: Schema.String, mode: Schema.Literals(['100644', '100755']) })),
+});
+
 // Read the bounded ZIP produced by actions/upload-artifact without extracting to a filesystem.
-function filesFromZip(bytes: Uint8Array): Map<string, { content: Buffer; mode: '100644' | '100755' }> {
+function filesFromZip(bytes: Uint8Array): Map<string, Buffer> {
 	const zip = Buffer.from(bytes);
 	let end = zip.length - 22;
 	for (; end >= Math.max(0, zip.length - 65_557); end--) {
@@ -30,7 +36,7 @@ function filesFromZip(bytes: Uint8Array): Map<string, { content: Buffer; mode: '
 	) {
 		throw precondition('Unsupported distribution ZIP directory');
 	}
-	const files = new Map<string, { content: Buffer; mode: '100644' | '100755' }>();
+	const files = new Map<string, Buffer>();
 	let total = 0;
 	for (let index = 0; index < count; index++) {
 		if (cursor + 46 > end || zip.readUInt32LE(cursor) !== 0x02014b50) {
@@ -66,7 +72,7 @@ function filesFromZip(bytes: Uint8Array): Map<string, { content: Buffer; mode: '
 		const compressed = zip.subarray(start, start + compressedSize);
 		const content = method === 0 ? compressed : inflateRawSync(compressed, { maxOutputLength: Math.max(1, size) });
 		if (content.byteLength !== size) throw precondition('Distribution ZIP size mismatch');
-		files.set(name, { content, mode: mode & 0o111 ? '100755' : '100644' });
+		files.set(name, content);
 	}
 	if (cursor !== end) throw precondition('Invalid distribution ZIP directory size');
 	return files;
@@ -131,18 +137,36 @@ export function readDistributionArtifact(
 			return yield* precondition('Distribution artifact digest mismatch');
 		}
 		const entries = yield* fromSync(() => filesFromZip(bytes));
-		if ([...entries.keys()].some(path => path !== 'attestation.json' && !paths.includes(path))) {
+		const manifest = entries.get(manifestPath);
+		if (!manifest?.byteLength || manifest.byteLength > 65_536 || paths.includes(manifestPath)) {
+			return yield* precondition(
+				'Distribution artifact requires a root beepboop-distribution.json manifest (at most 64 KiB)',
+			);
+		}
+		const declared = yield* Schema.decodeEffect(Schema.fromJsonString(manifestSchema))(manifest.toString('utf8'))
+			.pipe(
+				Effect.mapError(() => precondition('Invalid distribution artifact manifest')),
+			);
+		const modes = new Map(declared.files.map(file => [file.path, file.mode]));
+		if (modes.size !== declared.files.length || modes.size !== paths.length || paths.some(path => !modes.has(path))) {
+			return yield* precondition('Distribution manifest must declare every configured path exactly once');
+		}
+		if (
+			[...entries.keys()].some(path => path !== manifestPath && path !== 'attestation.json' && !paths.includes(path))
+		) {
 			return yield* precondition('Distribution artifact contains unconfigured files');
 		}
 		return yield* Effect.forEach(paths, path => Effect.gen(function*() {
 			const file = entries.get(path);
-			if (!file?.content.byteLength) return yield* precondition(`Distribution artifact is missing ${path}`);
+			if (!file?.byteLength) return yield* precondition(`Distribution artifact is missing ${path}`);
+			const mode = modes.get(path);
+			if (!mode) return yield* precondition(`Distribution manifest is missing ${path}`);
 			return {
 				path,
 				before: yield* readDistributionFile(gateway, identity.repository, path, sourceSha, 'base64', token),
-				after: file.content.toString('base64'),
+				after: file.toString('base64'),
 				encoding: 'base64',
-				mode: file.mode,
+				mode,
 			} satisfies DistributionFile;
 		}));
 	});
