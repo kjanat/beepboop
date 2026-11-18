@@ -86,10 +86,7 @@ export function issueWorkflowToken(
 	log: TokenAudit,
 ): Effect.Effect<{ token: string; bot?: BotIdentity }, DomainError> {
 	return Effect.gen(function*() {
-		if (identity.actorId !== ownerId) {
-			if (body.purpose === 'publish-actions') {
-				return yield* forbidden('Actions publication requires an owner-started run');
-			}
+		if (identity.actorId !== ownerId && body.purpose !== 'publish-actions') {
 			if (!(yield* dispatchedByBeepboop(identity, body.executionId, issuer, log))) {
 				return yield* forbidden('Workflow run was not started by the owner or a Beepboop operation');
 			}
@@ -102,6 +99,12 @@ export function issueWorkflowToken(
 				|| identity.workflowRef !== `${identity.repository}/.github/workflows/publish-actions.yml@${identity.ref}`
 			) {
 				return yield* forbidden('Actions publication requires its own workflow on the default branch');
+			}
+			if (
+				identity.actorId !== ownerId
+				&& (identity.event !== 'push' || identity.actorId !== (yield* issuer.botIdentity).id)
+			) {
+				return yield* forbidden('Actions publication requires the owner or a Beepboop push');
 			}
 			const requested = yield* Effect.fromResult(record(body.permissions));
 			if (Object.keys(requested).length !== 2 || requested.contents !== 'write' || requested.workflows !== 'write') {

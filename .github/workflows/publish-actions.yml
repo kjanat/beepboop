@@ -13,9 +13,10 @@ jobs:
     needs: verify
     if: >-
       github.ref == 'refs/heads/master'
-      && github.actor_id == github.repository_owner_id
-      && (github.event_name == 'workflow_dispatch'
-      || (needs.verify.outputs.actions_changed == 'true'
+      && ((github.event_name == 'workflow_dispatch' && github.actor_id == github.repository_owner_id)
+      || (github.event_name == 'push'
+      && (github.actor_id == github.repository_owner_id || github.actor_id == '345459130')
+      && needs.verify.outputs.actions_changed == 'true'
       && !contains(github.event.head_commit.message, 'Actions-Release: skip')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
