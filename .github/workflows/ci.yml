@@ -1,8 +1,11 @@
 name: Verify
 on:
-  push: { branches: [master] }
   pull_request: null
-  workflow_call: null
+  workflow_call:
+    outputs:
+      actions_changed:
+        description: Whether the push changed the Actions distribution inputs
+        value: ${{ jobs.verify.outputs.actions_changed }}
 permissions: { contents: read }
 concurrency:
   group: verify-${{ github.workflow }}-${{ github.ref }}
@@ -11,10 +14,35 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs: { actions_changed: "${{ steps.actions.outputs.changed }}" }
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-        with: { persist-credentials: false }
+        with:
+          persist-credentials: false
+          fetch-depth: ${{ case(github.event_name == 'push', '0', '1') }}
+      - name: Check for Actions distribution changes
+        if: github.event_name == 'push'
+        id: actions
+        env: { BEFORE: "${{ github.event.before }}" }
+        shell: bash
+        run: |
+          if [[ "$BEFORE" == 0000000000000000000000000000000000000000 ]]; then
+            BEFORE=$(git hash-object -t tree -w /dev/null)
+          else
+            git cat-file -e "$BEFORE^{commit}" || git fetch --no-tags origin "$BEFORE"
+          fi
+          result=0
+          git diff --quiet "$BEFORE" "$GITHUB_SHA" -- actions/ src/ \
+            ':(exclude)src/components/' ':(exclude)src/layouts/' ':(exclude)src/pages/' \
+            ':(exclude)src/server/' ':(exclude)src/styles/' ':(exclude)src/ui/' \
+            ':(exclude)src/index.ts' ':(exclude)src/middleware.ts' \
+            package.json bun.lock bunfig.toml tsconfig.json mise.toml || result=$?
+          case "$result" in
+            0) echo 'changed=false' >> "$GITHUB_OUTPUT" ;;
+            1) echo 'changed=true' >> "$GITHUB_OUTPUT" ;;
+            *) exit "$result" ;;
+          esac
       - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5
       - run: runner i -fs types gate deploy:dry
         env:

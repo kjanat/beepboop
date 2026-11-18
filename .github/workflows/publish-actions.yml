@@ -1,63 +1,28 @@
-name: Publish Actions
+name: Verify and publish Actions
 on:
-  push:
-    branches: [master]
-    paths:
-      - actions/**
-      - src/**
-      - "!src/components/**"
-      - "!src/layouts/**"
-      - "!src/pages/**"
-      - "!src/server/**"
-      - "!src/styles/**"
-      - "!src/ui/**"
-      - "!src/index.ts"
-      - "!src/middleware.ts"
-      - package.json
-      - bun.lock
-      - bunfig.toml
-      - tsconfig.json
-      - mise.toml
+  push: { branches: [master] }
   workflow_dispatch: null
 permissions: { contents: read }
 jobs:
   verify:
     if: >-
-      github.event_name == 'workflow_dispatch'
-      && github.ref == 'refs/heads/master'
-      && github.actor_id == github.repository_owner_id
+      github.ref == 'refs/heads/master'
+      && (github.event_name == 'push' || github.actor_id == github.repository_owner_id)
     uses: $/.github/workflows/ci.yml
   publish:
     needs: verify
     if: >-
-      !cancelled()
-      && github.ref == 'refs/heads/master'
+      github.ref == 'refs/heads/master'
       && github.actor_id == github.repository_owner_id
-      && (needs.verify.result == 'success'
-      || (github.event_name == 'push' && !contains(github.event.head_commit.message, 'Actions-Release: skip')))
+      && (github.event_name == 'workflow_dispatch'
+      || (needs.verify.outputs.actions_changed == 'true'
+      && !contains(github.event.head_commit.message, 'Actions-Release: skip')))
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions: { actions: read, contents: read, id-token: write }
+    timeout-minutes: 10
+    permissions: { contents: read, id-token: write }
     environment: { name: tag, deployment: false }
     concurrency: { group: publish-actions, cancel-in-progress: false }
     steps:
-      - name: Require Verify on the pushed commit
-        if: github.event_name == 'push'
-        env: { GH_TOKEN: "${{ github.token }}" }
-        shell: bash
-        run: |
-          for ((attempt = 0; attempt < 40; attempt++)); do
-            conclusion=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
-              --branch master --event push --commit "$GITHUB_SHA" --limit 1 \
-              --json status,conclusion --jq '.[0] | select(.status == "completed") | .conclusion')
-            case "$conclusion" in
-              success) exit 0 ;;
-              '') sleep 15 ;;
-              *) echo "::error::Verify concluded ${conclusion} for ${GITHUB_SHA}"; exit 1 ;;
-            esac
-          done
-          echo "::error::Verify did not complete for ${GITHUB_SHA} within 10 minutes"
-          exit 1
       - name: Authenticate as Beepboop
         id: bot
         uses: $/actions/token
