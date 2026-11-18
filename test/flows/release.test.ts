@@ -1248,7 +1248,7 @@ test('a package tag a release cannot create is logged and leaves the release suc
 			true,
 		);
 		await settled(() => [...repository.tagObjects.values()].some(tag => tag.name === 'widget-v1.1.0'));
-		await settled(() => false);
+		await world.wait(10_000);
 		const promotion = await only(bearer(world, await world.cliSession()), 'promote');
 		expect([promotion.state, repository.refs.has('tags/widget-v1.1.0')]).toEqual(['succeeded', false]);
 		expect(logged.events()).toContainEqual(expect.objectContaining({

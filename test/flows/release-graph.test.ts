@@ -57,8 +57,13 @@ async function snapshotOf(name: string): Promise<Snapshot> {
 	snapshots.set(name, snapshot);
 	return snapshot;
 }
+const plans = new Map<string, ReturnType<typeof plan>>();
 async function load(name: string) {
-	return plan(await snapshotOf(name));
+	const known = plans.get(name);
+	if (known) return known;
+	const planned = plan(await snapshotOf(name));
+	plans.set(name, planned);
+	return planned;
 }
 function plan(snapshot: Snapshot) {
 	const inventory = discover(snapshot);
@@ -3008,8 +3013,7 @@ describe('release streams', () => {
 			.map(file => file.replace(/\.json$/, '')).sort();
 		expect(names).toHaveLength(26);
 		for (const name of names) {
-			const snapshot = await snapshotOf(name);
-			const first = plan(snapshot), second = plan(snapshot);
+			const first = await load(name), second = plan(await snapshotOf(name));
 			expect(second.markdown).toBe(first.markdown);
 			expect(second.choices).toEqual(first.choices);
 			expect(first.markdown).toStartWith('## Release plan');
