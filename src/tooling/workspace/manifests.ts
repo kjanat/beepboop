@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { Effect, Schema } from 'effect';
 import type { ToolFailure } from '@/tooling/runtime';
 import { parse, readJson } from '@/tooling/runtime';
+import type { ReferenceKind } from '@/tooling/workspace/modules';
 import { candidatePaths, packageOf, repositoryPath, splitQuery } from '@/tooling/workspace/modules';
 
 type ExportTarget = string | null | { readonly [key: string]: ExportTarget };
@@ -11,7 +12,10 @@ const exportTarget: Schema.Codec<ExportTarget> = Schema.Union([
 	Schema.Record(Schema.String, Schema.suspend(() => exportTarget)),
 ]);
 const dependencyMap = Schema.optional(Schema.Record(Schema.String, Schema.String));
-const conditions = new Set(['bun', 'import', 'module', 'node', 'default']);
+const conditions: Readonly<Record<ReferenceKind, ReadonlySet<string>>> = {
+	import: new Set(['bun', 'import', 'module', 'node', 'default']),
+	require: new Set(['bun', 'require', 'node', 'default']),
+};
 const manifestSchema = Schema.Struct({
 	name: Schema.String,
 	dependencies: dependencyMap,
@@ -41,11 +45,14 @@ function subpaths(field: ExportTarget | undefined): Map<string, ExportTarget> {
 		: new Map([['.', field]]);
 }
 
-function conditional(target: ExportTarget | undefined): string | undefined {
-	if (target === undefined || target === null) return undefined;
-	if (typeof target === 'string') return target;
-	const key = Object.keys(target).find(name => conditions.has(name));
-	return key === undefined ? undefined : conditional(target[key]);
+function conditional(target: ExportTarget | undefined, kind: ReferenceKind): string | null | undefined {
+	if (target === undefined || target === null || typeof target === 'string') return target;
+	for (const [name, branch] of Object.entries(target)) {
+		if (!conditions[kind].has(name)) continue;
+		const resolved = conditional(branch, kind);
+		if (resolved !== undefined) return resolved;
+	}
+	return undefined;
 }
 
 function values(field: string | Readonly<Record<string, string>> | undefined, key: string): [string, string][] {
@@ -94,34 +101,40 @@ export function workspaceOf(workspaces: Iterable<Workspace>, specifier: string):
 	return undefined;
 }
 
-export function exported(workspace: Workspace, files: ReadonlySet<string>, specifier: string): string | undefined {
+export function exported(
+	workspace: Workspace,
+	files: ReadonlySet<string>,
+	specifier: string,
+	kind: ReferenceKind,
+): string | undefined {
 	const [path] = splitQuery(specifier);
 	const subpath = `.${path.slice(workspace.name.length)}`;
 	let selected: { target: ExportTarget | undefined; rest: string } | undefined = workspace.exports.has(subpath)
 		? { target: workspace.exports.get(subpath), rest: '' }
 		: undefined;
 	if (!selected) {
-		let prefix = -1;
+		let best: { readonly star: number; readonly length: number } | undefined;
 		for (const [key, target] of workspace.exports) {
 			const star = key.indexOf('*');
-			if (star < 0 || star <= prefix) continue;
+			if (star < 0) continue;
 			const head = key.slice(0, star), tail = key.slice(star + 1);
-			if (!subpath.startsWith(head) || !subpath.endsWith(tail) || subpath.length < head.length + tail.length) continue;
-			prefix = star;
+			if (!subpath.startsWith(head) || !subpath.endsWith(tail) || subpath.length < key.length) continue;
+			if (best && (star < best.star || (star === best.star && key.length <= best.length))) continue;
+			best = { star, length: key.length };
 			selected = { target, rest: subpath.slice(head.length, subpath.length - tail.length) };
 		}
 	}
-	const target = conditional(selected?.target);
-	if (target === undefined || !selected) return undefined;
+	const target = conditional(selected?.target, kind);
+	if (typeof target !== 'string' || !selected) return undefined;
 	const base = repositoryPath(join(workspace.base, target.replaceAll('*', selected.rest)));
 	return candidatePaths(base).find(candidate => files.has(candidate));
 }
 
-export function exportSpecifiers(workspace: Workspace, path: string, query: string): string[] {
+export function exportSpecifiers(workspace: Workspace, path: string, query: string, kind: ReferenceKind): string[] {
 	const found: string[] = [];
 	for (const [key, entry] of workspace.exports) {
-		const target = conditional(entry);
-		if (target === undefined) continue;
+		const target = conditional(entry, kind);
+		if (typeof target !== 'string') continue;
 		const resolved = repositoryPath(join(workspace.base, target));
 		const star = resolved.indexOf('*');
 		if (star < 0) {

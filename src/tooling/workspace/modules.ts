@@ -4,25 +4,19 @@ import { parse as parseJsonc } from 'jsonc-parser';
 import type { ToolFailure } from '@/tooling/runtime';
 import { attemptPromise, capture, parse } from '@/tooling/runtime';
 
-const codeExtensions = ['.ts', '.tsx', '.mts', '.mjs', '.js', '.astro'];
+const codeExtensions = ['.ts', '.tsx', '.mts', '.cts', '.mjs', '.cjs', '.js', '.jsx', '.astro'];
+const runtimeExtensions = ['.tsx', '.jsx', '.mts', '.ts', '.mjs', '.js', '.cts', '.cjs'];
 const probes = [
 	'',
-	'.ts',
-	'.tsx',
-	'.mts',
+	...runtimeExtensions,
 	'.d.ts',
-	'.js',
-	'.mjs',
-	'/index.ts',
-	'/index.tsx',
-	'/index.mts',
-	'/index.js',
-	'/index.mjs',
+	...runtimeExtensions.map(extension => `/index${extension}`),
 	'/index.astro',
 ];
 const javascriptExtensions: readonly (readonly [string, readonly string[]])[] = [
 	['.js', ['.ts', '.tsx', '.d.ts']],
 	['.mjs', ['.mts', '.d.mts']],
+	['.cjs', ['.cts', '.d.cts']],
 	['.jsx', ['.tsx']],
 ];
 
@@ -31,10 +25,13 @@ export interface Alias {
 	readonly targets: readonly string[];
 }
 
+export type ReferenceKind = 'import' | 'require';
+
 export interface Reference {
 	readonly specifier: string;
 	readonly start: number;
 	readonly end: number;
+	readonly kind: ReferenceKind;
 }
 
 export interface PathReference {
@@ -44,6 +41,8 @@ export interface PathReference {
 	readonly quote: string;
 	readonly dynamic: boolean;
 	readonly rewritable: boolean;
+	readonly encoded: boolean;
+	readonly literal: string;
 	readonly line: number;
 }
 
@@ -55,18 +54,29 @@ const tsconfigSchema = Schema.Struct({
 
 const quoted = String.raw`(['"])([^'"\n]+)\1`;
 const callable = String.raw`(['"\x60])([^'"\x60\n$]+)\1`;
-const moduleReferences = [
-	new RegExp(String.raw`\b(?:from|import)\s*${quoted}`, 'g'),
-	new RegExp(String.raw`\bimport\s*\(\s*(?:/\*[\s\S]*?\*/\s*)*${callable}`, 'g'),
-	new RegExp(String.raw`\brequire\s*\(\s*${callable}`, 'g'),
-	new RegExp(String.raw`\b(?:require|import\.meta)\.resolve\s*\(\s*${callable}`, 'g'),
-	new RegExp(String.raw`\bmock\.module\s*\(\s*${callable}`, 'g'),
+const moduleReferences: readonly (readonly [RegExp, ReferenceKind])[] = [
+	[new RegExp(String.raw`\b(?:from|import)\s*${quoted}`, 'g'), 'import'],
+	[new RegExp(String.raw`\bimport\s*\(\s*(?:/\*[\s\S]*?\*/\s*)*${callable}`, 'g'), 'import'],
+	[new RegExp(String.raw`\brequire\s*\(\s*${callable}`, 'g'), 'require'],
+	[new RegExp(String.raw`\brequire\.resolve\s*\(\s*${callable}`, 'g'), 'require'],
+	[new RegExp(String.raw`\bimport\.meta\.resolve\s*\(\s*${callable}`, 'g'), 'import'],
+	[new RegExp(String.raw`\bmock\.module\s*\(\s*${callable}`, 'g'), 'import'],
 ];
 const scriptSource = new RegExp(String.raw`<script\b[^>]*\bsrc=${quoted}`, 'g');
 const joinCall = /\b(join|resolve)\(\s*import\.meta\.(?:dir|dirname)\s*,\s*/g;
 const absolute = /^(?:[a-z][a-z\d+.-]*:|\/)/i;
-const urlCall = /\bnew URL\(\s*(['"\x60])([^'"\x60\n]*)\1\s*,\s*import\.meta\.url\s*\)/g;
-const dirTemplate = /\x60\$\{import\.meta\.(?:dir|dirname)\}\/([^\x60\n]*)\x60/g;
+const urlCall =
+	/\bnew URL\(\s*(?:'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"|\x60((?:[^\x60\\\n]|\\.)*)\x60)\s*,\s*import\.meta\.url\s*\)/g;
+const dirTemplate = /\x60\$\{import\.meta\.(?:dir|dirname)\}\/((?:[^\x60\\\n]|\\.)*)\x60/g;
+const singleEscapes: Readonly<Record<string, string>> = {
+	n: '\n',
+	r: '\r',
+	t: '\t',
+	b: '\b',
+	f: '\f',
+	v: '\v',
+	0: '\0',
+};
 const locationSensitive = /\bimport\.meta\.(?:dir|dirname|url|filename|path)\b/g;
 
 export function isCode(path: string): boolean {
@@ -77,6 +87,7 @@ const regexKeywords = new Set([
 	'return',
 	'typeof',
 	'case',
+	'default',
 	'do',
 	'else',
 	'in',
@@ -97,9 +108,33 @@ export function shebangLength(source: string): number {
 	return end < 0 ? source.length : end;
 }
 
-export function codeMask(source: string): Uint8Array {
+export function isJsx(path: string): boolean {
+	return path.endsWith('.jsx') || path.endsWith('.tsx');
+}
+
+export function codeMask(source: string, jsx = false): Uint8Array {
+	return lex(source, jsx).code;
+}
+
+interface Element {
+	depth: number;
+	inTag: boolean;
+	closing: boolean;
+}
+
+type Nesting =
+	| { readonly kind: 'template'; level: number }
+	| { readonly kind: 'jsx'; level: number; readonly element: Element };
+
+const typeParameters = /^<[A-Za-z_$][\w$]*\s*(?:,|extends\b)/;
+
+function lex(
+	source: string,
+	jsx: boolean,
+): { readonly code: Uint8Array; readonly comments: readonly (readonly [number, number])[] } {
 	const code = new Uint8Array(source.length);
-	const templates: number[] = [];
+	const comments: (readonly [number, number])[] = [];
+	const nesting: Nesting[] = [];
 	const parens: boolean[] = [];
 	let i = shebangLength(source);
 	let operand = false, word = '', previous = '', wordAfterDot = false, lastPunctuation = '';
@@ -114,10 +149,48 @@ export function codeMask(source: string): Uint8Array {
 			else if (source[i] === '`') return void i++;
 			else if (source[i] === '$' && source[i + 1] === '{') {
 				i += 2;
-				templates.push(0);
+				nesting.push({ kind: 'template', level: 0 });
 				return;
 			} else i++;
 		}
+	};
+	const skipJsx = (element: Element): boolean => {
+		while (i < source.length) {
+			const char = source[i];
+			if (char === '{') {
+				code[i] = 1;
+				i++;
+				nesting.push({ kind: 'jsx', level: 0, element });
+				return false;
+			}
+			if (!element.inTag) {
+				if (char === '<') {
+					element.inTag = true;
+					element.closing = source[i + 1] === '/';
+					i += element.closing ? 2 : 1;
+				} else i++;
+				continue;
+			}
+			if (char === '"' || char === "'") {
+				skipString(char);
+			} else if (char === '/' && source[i + 1] === '>') {
+				i += 2;
+				element.inTag = false;
+				if (element.depth === 0) return true;
+			} else if (char === '>') {
+				i++;
+				element.inTag = false;
+				element.depth += element.closing ? -1 : 1;
+				if (element.depth === 0) return true;
+			} else i++;
+		}
+		return true;
+	};
+	const finishJsx = (element: Element) => {
+		if (skipJsx(element)) {
+			operand = true;
+			previous = '';
+		} else operand = false;
 	};
 	while (i < source.length) {
 		const char = source[i] ?? '';
@@ -136,10 +209,15 @@ export function codeMask(source: string): Uint8Array {
 			lastPunctuation = '';
 		}
 		if (char === '/' && next === '/') {
-			while (i < source.length && source[i] !== '\n') i++;
+			const end = source.indexOf('\n', i);
+			const stop = end < 0 ? source.length : end;
+			comments.push([i, stop]);
+			i = stop;
 		} else if (char === '/' && next === '*') {
 			const end = source.indexOf('*/', i + 2);
-			i = end < 0 ? source.length : end + 2;
+			const stop = end < 0 ? source.length : end + 2;
+			comments.push([i, stop]);
+			i = stop;
 		} else if (char === '"' || char === "'") {
 			skipString(char);
 			operand = true;
@@ -164,18 +242,26 @@ export function codeMask(source: string): Uint8Array {
 			while (/[a-z]/i.test(source[i] ?? '')) i++;
 			operand = true;
 			previous = '';
-		} else if (templates.length && (char === '{' || char === '}')) {
-			const depth = templates.length - 1;
-			const level = templates[depth] ?? 0;
-			if (char === '}' && level === 0) {
-				templates.pop();
+		} else if (
+			jsx && char === '<' && !operand && /[A-Za-z_$>]/.test(next ?? '')
+			&& !typeParameters.test(source.slice(i, i + 80))
+		) {
+			i++;
+			finishJsx({ depth: 0, inTag: true, closing: false });
+		} else if (nesting.length && (char === '{' || char === '}')) {
+			const top = nesting.at(-1);
+			if (top && char === '}' && top.level === 0) {
+				nesting.pop();
+				code[i] = 1;
 				i++;
-				skipTemplate();
-				operand = true;
-				previous = '';
+				if (top.kind === 'template') {
+					skipTemplate();
+					operand = true;
+					previous = '';
+				} else finishJsx(top.element);
 				continue;
 			}
-			templates[depth] = level + (char === '{' ? 1 : -1);
+			if (top) top.level += char === '{' ? 1 : -1;
 			code[i] = 1;
 			operand = false;
 			previous = '';
@@ -205,17 +291,30 @@ export function codeMask(source: string): Uint8Array {
 			i++;
 		}
 	}
-	return code;
+	return { code, comments };
 }
 
-function scan(source: string, offset: number, into: Map<number, Reference>, masked: boolean): void {
-	const code = masked ? codeMask(source) : undefined;
-	for (const pattern of moduleReferences) {
-		for (const match of source.matchAll(pattern)) {
+function blankComments(source: string, comments: readonly (readonly [number, number])[]): string {
+	const parts: string[] = [];
+	let from = 0;
+	for (const [start, stop] of comments) {
+		parts.push(source.slice(from, start), source.slice(start, stop).replace(/[^\n]/g, ' '));
+		from = stop;
+	}
+	parts.push(source.slice(from));
+	return parts.join('');
+}
+
+function scan(source: string, offset: number, into: Map<number, Reference>, masked: boolean, jsx: boolean): void {
+	const lexed = masked ? lex(source, jsx) : undefined;
+	const code = lexed?.code;
+	const text = lexed ? blankComments(source, lexed.comments) : source;
+	for (const [pattern, kind] of moduleReferences) {
+		for (const match of text.matchAll(pattern)) {
 			const [whole, quote, specifier] = match;
 			if (quote === undefined || specifier === undefined || (code && !code[match.index])) continue;
 			const start = offset + match.index + whole.lastIndexOf(`${quote}${specifier}${quote}`) + 1;
-			into.set(start, { specifier, start, end: start + specifier.length });
+			into.set(start, { specifier, start, end: start + specifier.length, kind });
 		}
 	}
 }
@@ -241,13 +340,13 @@ function scriptRegions(path: string, source: string): Region[] {
 
 function collect(path: string, source: string, masked: boolean): Reference[] {
 	const found = new Map<number, Reference>();
-	for (const region of scriptRegions(path, source)) scan(region.text, region.offset, found, masked);
+	for (const region of scriptRegions(path, source)) scan(region.text, region.offset, found, masked, isJsx(path));
 	if (path.endsWith('.astro')) {
 		for (const match of source.matchAll(scriptSource)) {
 			const [whole, quote, specifier] = match;
 			if (quote === undefined || specifier === undefined) continue;
 			const start = match.index + whole.lastIndexOf(`${quote}${specifier}${quote}`) + 1;
-			found.set(start, { specifier, start, end: start + specifier.length });
+			found.set(start, { specifier, start, end: start + specifier.length, kind: 'import' });
 		}
 	}
 	return [...found.values()].sort((left, right) => left.start - right.start);
@@ -279,8 +378,9 @@ function literalArguments(text: string, from: number): { list: Argument[]; compl
 	while (i < text.length) {
 		const quote = text[i] ?? '';
 		if (quote !== "'" && quote !== '"' && quote !== '`') return { list, complete: false };
-		const close = text.indexOf(quote, i + 1);
-		if (close < 0) return { list, complete: false };
+		let close = i + 1;
+		while (close < text.length && text[close] !== quote) close += text[close] === '\\' ? 2 : 1;
+		if (close >= text.length) return { list, complete: false };
 		const body = text.slice(i + 1, close);
 		const dynamic = quote === '`' && body.includes('${');
 		list.push({ quote, text: dynamic ? body.split('${')[0] ?? '' : body, start: i, end: close + 1, dynamic });
@@ -295,11 +395,41 @@ function literalArguments(text: string, from: number): { list: Argument[]; compl
 	return { list, complete: false };
 }
 
+export function unescaped(text: string): string {
+	return text.replace(
+		/\\(?:x([\da-fA-F]{2})|u\{([\da-fA-F]+)\}|u([\da-fA-F]{4})|(\r\n|[\s\S]))/g,
+		(_: string, hex: string | undefined, point: string | undefined, unit: string | undefined, other = '') => {
+			const digits = hex ?? point ?? unit;
+			if (digits !== undefined) return String.fromCodePoint(Number.parseInt(digits, 16));
+			if (/^[\r\n\u2028\u2029]/.test(other)) return '';
+			return singleEscapes[other] ?? other;
+		},
+	);
+}
+
+export function escapedFor(text: string, quote: string): string {
+	const escaped = text.replace(/[\\\n\r]/g, char => char === '\\' ? '\\\\' : char === '\n' ? '\\n' : '\\r')
+		.replaceAll(quote, `\\${quote}`);
+	return quote === '`' ? escaped.replaceAll('${', '\\${') : escaped;
+}
+
+function decodedPath(path: string): string | undefined {
+	try {
+		return decodeURIComponent(path);
+	} catch {
+		return undefined;
+	}
+}
+
+export function encodedPath(path: string): string {
+	return path.split('/').map(segment => encodeURIComponent(segment).replaceAll("'", '%27')).join('/');
+}
+
 export function pathReferences(path: string, source: string): PathReference[] {
 	const found: PathReference[] = [];
 	for (const region of scriptRegions(path, source)) {
 		const text = region.text;
-		const code = codeMask(text);
+		const code = codeMask(text, isJsx(path));
 		for (const match of text.matchAll(joinCall)) {
 			if (!code[match.index]) continue;
 			const { list, complete } = literalArguments(text, match.index + match[0].length);
@@ -307,7 +437,7 @@ export function pathReferences(path: string, source: string): PathReference[] {
 			const last = list.at(-1);
 			if (!first || !last || (match[1] === 'resolve' && list.some(argument => argument.text.startsWith('/')))) continue;
 			const single = list.length === 1;
-			const joined = list.map(argument => argument.text).filter(Boolean);
+			const joined = list.map(argument => unescaped(argument.text)).filter(Boolean);
 			found.push({
 				path: joined.length ? posix.join(...joined) : '',
 				start: region.offset + (single ? first.start + 1 : first.start),
@@ -315,22 +445,32 @@ export function pathReferences(path: string, source: string): PathReference[] {
 				quote: single ? '' : first.quote,
 				dynamic: last.dynamic || !complete,
 				rewritable: single || !last.dynamic,
+				encoded: false,
+				literal: first.quote,
 				line: lineOf(source, region.offset + match.index),
 			});
 		}
 		for (const match of text.matchAll(urlCall)) {
-			const [, quote, body] = match;
-			if (quote === undefined || body === undefined || !code[match.index] || absolute.test(body)) continue;
+			const [, single, double, template] = match;
+			const quote = single !== undefined ? "'" : double !== undefined ? '"' : '`';
+			const body = single ?? double ?? template;
+			if (body === undefined || !code[match.index] || absolute.test(body)) continue;
 			const dynamic = quote === '`' && body.includes('${');
-			const [head] = splitQuery(dynamic ? body.split('${')[0] ?? '' : body);
+			const prefix = dynamic ? body.split('${')[0] ?? '' : body;
+			const [head] = splitQuery(prefix);
+			const open = dynamic && !/[?#]/.test(prefix);
+			if (head === '' && !open) continue;
+			const decoded = decodedPath(unescaped(head));
 			const start = region.offset + match.index + match[0].indexOf(body);
 			found.push({
-				path: head,
+				path: decoded ?? unescaped(head),
 				start,
 				end: start + head.length,
 				quote: '',
-				dynamic: dynamic && !/[?#]/.test(body.split('${')[0] ?? ''),
+				dynamic: open,
 				rewritable: true,
+				encoded: decoded !== undefined,
+				literal: quote,
 				line: lineOf(source, start),
 			});
 		}
@@ -341,12 +481,14 @@ export function pathReferences(path: string, source: string): PathReference[] {
 			const head = dynamic ? body.split('${')[0] ?? '' : body;
 			const start = region.offset + match.index + match[0].indexOf(body);
 			found.push({
-				path: head,
+				path: unescaped(head),
 				start,
 				end: start + head.length,
 				quote: '',
 				dynamic,
 				rewritable: true,
+				encoded: false,
+				literal: '`',
 				line: lineOf(source, start),
 			});
 		}
@@ -357,7 +499,7 @@ export function pathReferences(path: string, source: string): PathReference[] {
 export function locationSensitiveLines(path: string, source: string): number[] {
 	const lines = new Set<number>();
 	for (const region of scriptRegions(path, source)) {
-		const code = codeMask(region.text);
+		const code = codeMask(region.text, isJsx(path));
 		for (const match of region.text.matchAll(locationSensitive)) {
 			if (!code[match.index]) continue;
 			lines.add(lineOf(source, region.offset + match.index));

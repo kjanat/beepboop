@@ -86,6 +86,25 @@ export function capture(args: string[], options: Command = {}): Effect.Effect<st
 	return command(args, options, 'ignore', 'pipe', child => new Response(child.stdout).text());
 }
 
+export function captureMatches(args: string[], options: Command = {}): Effect.Effect<string, ToolFailure> {
+	return Effect.acquireUseRelease(
+		attempt(() =>
+			Bun.spawn(args, { cwd: options.cwd, env: options.env, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' })
+		),
+		child => attemptPromise(async () => {
+			const [stdout, stderr, code] = await Promise.all([
+				new Response(child.stdout).text(),
+				new Response(child.stderr).text(),
+				child.exited,
+			]);
+			const errors = [...new Set(stderr.split('\n').map(line => line.trim()).filter(Boolean))];
+			if (code > 1 || errors.length) throw new Error(errors.join('; ') || `${args[0]} failed (exit ${code})`);
+			return stdout;
+		}),
+		terminate,
+	);
+}
+
 export function checkArguments(allowPositionals: boolean) {
 	return attempt(() =>
 		parseArgs({ args: Bun.argv.slice(2), options: { check: { type: 'boolean' } }, allowPositionals, strict: true })

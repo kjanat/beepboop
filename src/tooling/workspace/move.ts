@@ -1,13 +1,15 @@
-import { lstat, mkdir } from 'node:fs/promises';
+import { lstat, mkdir, rmdir } from 'node:fs/promises';
 import { basename, dirname, join, posix, relative } from 'node:path';
 import { Effect } from 'effect';
 import { findNodeAtLocation, parseTree } from 'jsonc-parser';
 import type { ToolFailure } from '@/tooling/runtime';
-import { attemptPromise, capture, checkArguments, main, refuse, run } from '@/tooling/runtime';
+import { attemptPromise, captureMatches, checkArguments, main, refuse, run } from '@/tooling/runtime';
 import type { Workspace } from '@/tooling/workspace/manifests';
 import { exported, exportSpecifiers, readWorkspaces, workspaceOf } from '@/tooling/workspace/manifests';
-import type { Alias } from '@/tooling/workspace/modules';
+import type { Alias, ReferenceKind } from '@/tooling/workspace/modules';
 import {
+	encodedPath,
+	escapedFor,
 	isCode,
 	isRelative,
 	locationSensitiveLines,
@@ -41,18 +43,23 @@ interface Layout {
 	readonly workspaces: readonly Workspace[];
 }
 
-function resolve(layout: Layout, importer: string, specifier: string): string | undefined {
+interface Use {
+	readonly specifier: string;
+	readonly kind: ReferenceKind;
+}
+
+function resolve(layout: Layout, importer: string, { specifier, kind }: Use): string | undefined {
 	const local = resolveReference(layout.aliases, layout.files, importer, specifier);
 	if (local !== undefined) return local;
 	const workspace = workspaceOf(layout.workspaces, specifier);
-	return workspace ? exported(workspace, layout.files, specifier) : undefined;
+	return workspace ? exported(workspace, layout.files, specifier, kind) : undefined;
 }
 
-function candidates(layout: Layout, importer: string, specifier: string, expected: string): string[] {
+function candidates(layout: Layout, importer: string, { specifier, kind }: Use, expected: string): string[] {
 	const query = queryOf(specifier);
 	const workspace = workspaceOf(layout.workspaces, specifier);
 	return workspace
-		? exportSpecifiers(workspace, expected, query)
+		? exportSpecifiers(workspace, expected, query, kind)
 		: specifierCandidates(layout.aliases, importer, expected, query);
 }
 
@@ -192,7 +199,7 @@ function rewrite(
 	const review: string[] = [];
 	const moved = destination !== importer;
 	for (const reference of references(importer, source)) {
-		const target = resolve(before, importer, reference.specifier);
+		const target = resolve(before, importer, reference);
 		const [path, query] = splitQuery(reference.specifier);
 		if (target === undefined) {
 			if (!moved || !isRelative(path)) continue;
@@ -201,9 +208,9 @@ function rewrite(
 			continue;
 		}
 		const expected = plan.files.get(target) ?? target;
-		if (resolve(after, destination, reference.specifier) === expected) continue;
-		const replacement = candidates(after, destination, reference.specifier, expected).find(candidate =>
-			resolve(after, destination, candidate) === expected
+		if (resolve(after, destination, reference) === expected) continue;
+		const replacement = candidates(after, destination, reference, expected).find(candidate =>
+			resolve(after, destination, { specifier: candidate, kind: reference.kind }) === expected
 		);
 		if (replacement === undefined) problems.push(`${importer}: no specifier reaches ${expected} from ${destination}`);
 		else edits.push({ start: reference.start, end: reference.end, text: replacement });
@@ -223,7 +230,8 @@ function rewrite(
 			review.push(`${destination}:${reference.line} ${reference.path} needs a manual rewrite to reach ${mapped}`);
 			continue;
 		}
-		const path = `${relativePath(dirname(destination), mapped, reference.path)}${trailing}`;
+		const relativeTarget = `${relativePath(dirname(destination), mapped, reference.path)}${trailing}`;
+		const path = escapedFor(reference.encoded ? encodedPath(relativeTarget) : relativeTarget, reference.literal);
 		edits.push({
 			start: reference.start,
 			end: reference.end,
@@ -246,16 +254,22 @@ const transpilers = {
 	ts: new Bun.Transpiler({ loader: 'ts' }),
 	tsx: new Bun.Transpiler({ loader: 'tsx' }),
 	js: new Bun.Transpiler({ loader: 'js' }),
+	jsx: new Bun.Transpiler({ loader: 'jsx' }),
 };
 
-function scannedImports(path: string, source: string): string[] {
-	const loader = path.endsWith('.js') || path.endsWith('.mjs')
-		? transpilers.js
-		: path.endsWith('.tsx')
-		? transpilers.tsx
-		: transpilers.ts;
+function transpilerFor(path: string): Bun.Transpiler {
+	if (/\.[cm]?js$/.test(path)) return transpilers.js;
+	if (path.endsWith('.jsx')) return transpilers.jsx;
+	return path.endsWith('.tsx') ? transpilers.tsx : transpilers.ts;
+}
+
+function scannedImports(path: string, source: string): Use[] {
+	const loader = transpilerFor(path);
 	const body = path.endsWith('.astro') ? /^---\r?\n([\s\S]*?)\r?\n---/.exec(source)?.[1] ?? '' : source;
-	return loader.scanImports(body.slice(shebangLength(body))).map(entry => entry.path);
+	return loader.scanImports(body.slice(shebangLength(body))).map(entry => ({
+		specifier: entry.path,
+		kind: entry.kind === 'require-call' || entry.kind === 'require-resolve' ? 'require' : 'import',
+	}));
 }
 
 export const verify = Effect.fn('verify')(function*(
@@ -273,25 +287,20 @@ export const verify = Effect.fn('verify')(function*(
 			try: () => scannedImports(path, body),
 			catch: error => `${importer}: Bun cannot scan its imports (${String(error)})`,
 		}).pipe(Effect.catch(problem => Effect.sync(() => problems.push(problem)).pipe(Effect.as([]))));
+	const key = (use: Use) => `${use.kind} ${use.specifier}`;
 	const expected = new Map<string, string>();
-	const original = [
-		...looseReferences(importer, source).map(reference => reference.specifier),
-		...(yield* scan(importer, source)),
-	];
-	for (const specifier of original) {
-		const target = resolve(before, importer, specifier);
-		if (target !== undefined) expected.set(specifier, plan.files.get(target) ?? target);
+	for (const use of [...looseReferences(importer, source), ...(yield* scan(importer, source))]) {
+		const target = resolve(before, importer, use);
+		if (target !== undefined) expected.set(key(use), plan.files.get(target) ?? target);
 	}
-	const specifiers = new Set([
-		...looseReferences(destination, text).map(reference => reference.specifier),
-		...(yield* scan(destination, text)),
-	]);
-	for (const specifier of specifiers) {
-		const want = expected.get(specifier);
+	const uses = new Map<string, Use>();
+	for (const use of [...looseReferences(destination, text), ...(yield* scan(destination, text))]) {
+		uses.set(key(use), { specifier: use.specifier, kind: use.kind });
+	}
+	for (const [name, use] of uses) {
+		const want = expected.get(name);
 		if (want === undefined) continue;
-		if (resolve(after, destination, specifier) !== want) {
-			problems.push(`${importer}: the move would break ${specifier}`);
-		}
+		if (resolve(after, destination, use) !== want) problems.push(`${importer}: the move would break ${use.specifier}`);
 	}
 	return problems;
 });
@@ -299,15 +308,61 @@ export const verify = Effect.fn('verify')(function*(
 const aliasEdit = Effect.fn('aliasEdit')(function*(root: string, aliases: readonly Alias[]) {
 	const path = join(root, 'tsconfig.json');
 	const text = yield* attemptPromise(() => Bun.file(path).text());
-	if (!aliases.length) return { path, text, problem: undefined };
+	if (!aliases.length) return { path, original: text, text, problem: undefined };
 	const tree = parseTree(text);
 	const last = tree && findNodeAtLocation(tree, ['compilerOptions', 'paths'])?.children?.at(-1);
-	if (!last) return { path, text, problem: 'tsconfig.json has no compilerOptions.paths entries' };
+	if (!last) return { path, original: text, text, problem: 'tsconfig.json has no compilerOptions.paths entries' };
 	const end = last.offset + last.length;
 	const indent = /[\t ]*$/.exec(text.slice(0, last.offset))?.[0] ?? '';
 	const lines = aliases.map(alias => `,\n${indent}${JSON.stringify(alias.pattern)}: ${JSON.stringify(alias.targets)}`);
-	return { path, text: `${text.slice(0, end)}${lines.join('')}${text.slice(end)}`, problem: undefined };
+	return {
+		path,
+		original: text,
+		text: `${text.slice(0, end)}${lines.join('')}${text.slice(end)}`,
+		problem: undefined,
+	};
 });
+
+export interface Journal {
+	readonly moves: (readonly [string, string])[];
+	readonly texts: Map<string, string>;
+	readonly directories: string[];
+}
+
+async function restore(path: string, text: string): Promise<void> {
+	const current = await Bun.file(path).text().catch(() => undefined);
+	if (current !== text) await Bun.write(path, text);
+}
+
+export const undo = Effect.fn('undo')(function*(root: string, journal: Journal) {
+	const problems: string[] = [];
+	const step = (effect: Effect.Effect<void, ToolFailure>, action: string) =>
+		effect.pipe(Effect.catch(failure => Effect.sync(() => void problems.push(`${action}: ${failure.message}`))));
+	for (const [path, text] of journal.texts) {
+		yield* step(attemptPromise(() => restore(join(root, path), text)), `restore ${path}`);
+	}
+	for (const [from, to] of [...journal.moves].reverse()) {
+		yield* step(
+			attemptPromise(() => mkdir(dirname(join(root, from)), { recursive: true })).pipe(
+				Effect.andThen(run(['git', 'mv', to, from], { cwd: root })),
+			),
+			`move ${to} back to ${from}`,
+		);
+	}
+	for (const directory of [...journal.directories].sort((left, right) => right.length - left.length)) {
+		yield* step(attemptPromise(() => rmdir(join(root, directory))), `remove ${directory}`);
+	}
+	return problems;
+});
+
+function createdDirectories(root: string, target: string, first: string | undefined): string[] {
+	if (first === undefined) return [];
+	const created: string[] = [];
+	for (let directory = target; join(root, directory).length >= first.length; directory = dirname(directory)) {
+		created.push(directory);
+	}
+	return created;
+}
 
 export const move = Effect.fn('move')(function*(
 	root: string,
@@ -330,7 +385,7 @@ export const move = Effect.fn('move')(function*(
 	const problems = [...aliasProblems, ...(yield* preflight(root, plan))];
 	const tsconfig = yield* aliasEdit(root, addedAliases);
 	if (tsconfig.problem) problems.push(tsconfig.problem);
-	const writes = new Map<string, string>();
+	const writes = new Map<string, { readonly text: string; readonly original: string }>();
 	const review: string[] = [];
 	let rewritten = 0;
 	for (const file of files.filter(isCode)) {
@@ -342,20 +397,47 @@ export const move = Effect.fn('move')(function*(
 		review.push(...result.review);
 		if (result.count === 0) continue;
 		rewritten += result.count;
-		writes.set(destination, result.text);
+		writes.set(destination, { text: result.text, original: source });
 	}
 	if (problems.length) return yield* refuse(`Nothing moved:\n${problems.join('\n')}`);
-	for (const [from, to] of plan.files) {
-		yield* attemptPromise(() => mkdir(dirname(join(root, to)), { recursive: true }));
-		yield* run(['git', 'mv', from, to], { cwd: root });
-	}
-	for (const [path, text] of writes) yield* attemptPromise(() => Bun.write(join(root, path), text));
-	if (addedAliases.length) yield* attemptPromise(() => Bun.write(tsconfig.path, tsconfig.text));
+	const journal: Journal = { moves: [], texts: new Map(), directories: [] };
+	const apply = Effect.gen(function*() {
+		for (const [from, to] of plan.files) {
+			const parent = dirname(to);
+			const first = yield* attemptPromise(() => mkdir(join(root, parent), { recursive: true }));
+			journal.directories.push(...createdDirectories(root, parent, first));
+			yield* run(['git', 'mv', from, to], { cwd: root });
+			journal.moves.push([from, to]);
+		}
+		for (const [path, { text, original }] of writes) {
+			journal.texts.set(path, original);
+			yield* attemptPromise(() => Bun.write(join(root, path), text));
+		}
+		if (addedAliases.length) {
+			journal.texts.set('tsconfig.json', tsconfig.original);
+			yield* attemptPromise(() => Bun.write(tsconfig.path, tsconfig.text));
+		}
+	});
+	yield* apply.pipe(Effect.catch(failure =>
+		Effect.gen(function*() {
+			const left = yield* undo(root, journal);
+			return yield* refuse(
+				[`Move failed and was rolled back: ${failure.message}`, ...left.map(problem => `Rollback could not ${problem}`)]
+					.join('\n'),
+			);
+		})
+	));
 	const mentions = new Set<string>();
 	for (const from of new Set([...plan.files.keys(), ...plan.directories.map(([from]) => from)])) {
-		const found = yield* capture(['git', 'grep', '-n', '-F', '-e', from, '--', ':!bun.lock'], { cwd: root }).pipe(
-			Effect.orElseSucceed(() => ''),
-		);
+		const found = yield* captureMatches(['git', 'grep', '-n', '-F', '-e', from, '--', ':!bun.lock'], { cwd: root })
+			.pipe(
+				Effect.catch(failure =>
+					Effect.sync(() => {
+						review.push(`could not scan for mentions of ${from}: ${failure.message}`);
+						return '';
+					})
+				),
+			);
 		const boundary = new RegExp(`(?<![\\w./-])${from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`);
 		for (const line of found.split('\n')) {
 			const content = /^[^:]*:\d+:(.*)$/.exec(line)?.[1];

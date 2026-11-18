@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { eachDirectory } from '@root/test/support/directories.ts';
 import { Cause, Effect, Exit } from 'effect';
 import { boundariesCommand, checkBoundaries, describe as describeViolation } from '@/tooling/workspace/boundaries.ts';
 import { codeMask, references } from '@/tooling/workspace/modules.ts';
-import { move, moveCommand, verify } from '@/tooling/workspace/move.ts';
+import { move, moveCommand, undo, verify } from '@/tooling/workspace/move.ts';
 
 let root = '';
 eachDirectory('beepboop-workspace-', directory => {
@@ -65,6 +65,10 @@ describe('module references', () => {
 			"import d = require('./d');",
 			"await import(/* lazy */ './e');",
 			"mock.module('./f', () => ({}));",
+			"import /* why */ './g';",
+			"import { h } from /* why */ './h';",
+			"const i = import( // lazy\n './i');",
+			"const j = require /* cjs */ ('./j');",
 		].join('\n');
 
 		expect(references('x.ts', source).map(reference => reference.specifier)).toEqual([
@@ -74,7 +78,31 @@ describe('module references', () => {
 			'./d',
 			'./e',
 			'./f',
+			'./g',
+			'./h',
+			'./i',
+			'./j',
 		]);
+	});
+
+	test('JSX text and attributes are never imports, while expressions inside JSX and type parameters stay code', () => {
+		const source = [
+			'const f = <T,>(x: T) => x;',
+			'const g = <T extends object>(x: T) => x;',
+			"const v = <div title=\"from './no'\" data={{ a: 1 }}>Don't import './no' {on && <b>{import('./c')}</b>}<br/></div>;",
+			"const w = <>from './fragment'</>;",
+			"import d from './d';",
+		].join('\n');
+
+		expect(references('view.tsx', source).map(reference => reference.specifier)).toEqual(['./c', './d']);
+		expect(references('view.jsx', "export default <p>from './a'</p>;\nimport b from './b';\n").map(r => r.specifier))
+			.toEqual(['./b']);
+	});
+
+	test('comment openers inside strings never hide later imports', () => {
+		const source = `import './first';\n${"const s = 'from /*';\n".repeat(3000)}import './last';\n`;
+
+		expect(references('x.ts', source).map(reference => reference.specifier)).toEqual(['./first', './last']);
 	});
 
 	test('a shebang line is neither code nor an import, with or without a following line', () => {
@@ -497,6 +525,195 @@ describe('move', () => {
 		expect(git('status', '--short')).toBe('');
 	});
 
+	test('self-referencing URLs stay put and percent-encoded URL paths follow their file', async () => {
+		repository({
+			'src/other.ts': 'export const other = 1;\n',
+			'src/data file.json': '{}\n',
+			"src/it's.json": '{}\n',
+			'src/a.ts': [
+				"const raw = new URL('?raw', import.meta.url);",
+				"const part = new URL('#part', import.meta.url);",
+				"const data = new URL('./data%20file.json', import.meta.url);",
+				"const quote = new URL('./it%27s.json', import.meta.url);",
+				'const double = new URL("./it\'s.json", import.meta.url);',
+				"const template = new URL(`./it's.json`, import.meta.url);",
+				"const escaped = new URL('./data\\x20file.json', import.meta.url);",
+				"const joined = join(import.meta.dir, 'it\\'s.json');",
+			].join('\n'),
+		});
+		await Effect.runPromise(move(root, [
+			['src/a.ts', 'packages/kernel/src/a.ts'],
+			['src/data file.json', 'src/assets/data file.json'],
+			["src/it's.json", "src/assets/it's.json"],
+		]));
+
+		expect(read('packages/kernel/src/a.ts')).toBe([
+			"const raw = new URL('?raw', import.meta.url);",
+			"const part = new URL('#part', import.meta.url);",
+			"const data = new URL('../../../src/assets/data%20file.json', import.meta.url);",
+			"const quote = new URL('../../../src/assets/it%27s.json', import.meta.url);",
+			'const double = new URL("../../../src/assets/it%27s.json", import.meta.url);',
+			'const template = new URL(`../../../src/assets/it%27s.json`, import.meta.url);',
+			"const escaped = new URL('../../../src/assets/data%20file.json', import.meta.url);",
+			"const joined = join(import.meta.dir, '../../../src/assets/it\\'s.json');",
+		].join('\n'));
+	});
+
+	test('import and require references follow the export condition they resolve through', async () => {
+		repository({
+			'packages/kernel/package.json': JSON.stringify({
+				name: '@beepboop/kernel',
+				exports: { './*': { import: './src/esm/*.ts', require: './src/cjs/*.ts' } },
+			}),
+			'packages/kernel/src/esm/a.ts': 'export const a = 1;\n',
+			'packages/kernel/src/cjs/a.ts': 'exports.a = 1;\n',
+			'src/use.ts': "import { a } from '@beepboop/kernel/a';\nconst b = require('@beepboop/kernel/a');\n",
+		});
+		await Effect.runPromise(move(root, [['packages/kernel/src/esm/a.ts', 'packages/kernel/src/esm/b.ts']]));
+
+		expect(read('src/use.ts')).toBe(
+			"import { a } from '@beepboop/kernel/b';\nconst b = require('@beepboop/kernel/a');\n",
+		);
+	});
+
+	test('a require falls through an export condition whose nested branch does not match', async () => {
+		repository({
+			'packages/kernel/package.json': JSON.stringify({
+				name: '@beepboop/kernel',
+				exports: { './*': { require: { browser: './browser/*.cjs' }, default: './src/*.cjs' } },
+			}),
+			'packages/kernel/src/a.cjs': 'module.exports = 1;\n',
+			'packages/kernel/browser/a.cjs': 'module.exports = 2;\n',
+			'src/use.cjs': "const a = require('@beepboop/kernel/a');\n",
+		});
+		await Effect.runPromise(move(root, [['packages/kernel/src/a.cjs', 'packages/kernel/src/b.cjs']]));
+
+		expect(read('src/use.cjs')).toBe("const a = require('@beepboop/kernel/b');\n");
+	});
+
+	test('import-shaped JSX text refuses a move of the file it names and stays as written', async () => {
+		repository({ 'src/a.ts': 'export const a = 1;\n', 'src/view.jsx': "export default <p>from './a'</p>;\n" });
+
+		expect(await refusal(move(root, [['src/a.ts', 'lib/a.ts']]))).toContain('src/view.jsx: the move would break ./a');
+		expect(read('src/view.jsx')).toBe("export default <p>from './a'</p>;\n");
+	});
+
+	test('CommonJS, CTS and JSX files have their imports rewritten, and extensionless imports reach CommonJS files', async () => {
+		repository({
+			'src/b.ts': 'export const b = 1;\n',
+			'src/legacy.cjs': "const { b } = require('./b.ts');\nmodule.exports = b;\n",
+			'src/typed.cts': "import b = require('./b');\nexport = b;\n",
+			'src/view.jsx': "import { b } from './b';\nexport const view = <p>{b}</p>;\n",
+			'src/use.ts': "const legacy = require('./legacy');\n",
+		});
+		await Effect.runPromise(move(root, [
+			['src/b.ts', 'packages/kernel/src/b.ts'],
+			['src/legacy.cjs', 'packages/kernel/src/legacy.cjs'],
+		]));
+
+		expect(read('packages/kernel/src/legacy.cjs')).toBe("const { b } = require('./b.ts');\nmodule.exports = b;\n");
+		expect(read('src/typed.cts')).toBe("import b = require('@/kernel/b.ts');\nexport = b;\n");
+		expect(read('src/view.jsx')).toBe("import { b } from '@/kernel/b.ts';\nexport const view = <p>{b}</p>;\n");
+		expect(read('src/use.ts')).toBe("const legacy = require('@/kernel/legacy.cjs');\n");
+	});
+
+	test('an extensionless import resolves in Bun order, so moving the JSX file Bun loads rewrites it', async () => {
+		repository({
+			'src/x.ts': 'export const x = 1;\n',
+			'src/x.jsx': 'export const x = 2;\n',
+			'src/use.ts': "import { x } from './x';\n",
+		});
+		await Effect.runPromise(move(root, [['src/x.jsx', 'packages/kernel/src/x.jsx']]));
+
+		expect(read('src/use.ts')).toBe("import { x } from '@/kernel/x.jsx';\n");
+	});
+
+	test('a failed git mv rolls back the moves already made', async () => {
+		repository({
+			'src/lib/a.ts': 'export const a = 1;\n',
+			'src/b.ts': 'export const b = 1;\n',
+			'src/use.ts': "import { a } from './lib/a.ts';\nimport { b } from './b.ts';\n",
+		});
+		mkdirSync(join(root, 'locked'));
+		chmodSync(join(root, 'locked'), 0o555);
+		const failed = await refusal(
+			move(root, [['src/lib/a.ts', 'packages/kernel/src/a.ts'], ['src/b.ts', 'locked/b.ts']]),
+		);
+		chmodSync(join(root, 'locked'), 0o755);
+
+		expect(failed).toContain('Move failed and was rolled back: git failed');
+		expect(failed).not.toContain('Rollback could not');
+		expect(git('status', '--short')).toBe('');
+		expect(read('tsconfig.json')).toBe(tsconfig);
+		expect([existsSync(join(root, 'packages')), existsSync(join(root, 'src/lib/a.ts'))]).toEqual([false, true]);
+	});
+
+	test('a failed tsconfig write moves everything back and leaves tsconfig as it was', async () => {
+		repository({ 'src/a.ts': 'export const a = 1;\n', 'src/use.ts': "import { a } from './a';\n" });
+		chmodSync(join(root, 'tsconfig.json'), 0o444);
+		const failed = await refusal(move(root, [['src/a.ts', 'packages/kernel/src/a.ts']]));
+		chmodSync(join(root, 'tsconfig.json'), 0o644);
+
+		expect(failed).toContain('Move failed and was rolled back');
+		expect(failed).not.toContain('Rollback could not');
+		expect(git('status', '--short')).toBe('');
+		expect(read('src/use.ts')).toBe("import { a } from './a';\n");
+	});
+
+	test('a failed rewrite restores the files already rewritten and moves everything back', async () => {
+		repository({
+			'src/a.ts': 'export const a = 1;\n',
+			'src/x.ts': "import { a } from './a';\n",
+			'src/y.ts': "import { a } from './a';\n",
+		});
+		chmodSync(join(root, 'src/y.ts'), 0o444);
+		const failed = await refusal(move(root, [['src/a.ts', 'packages/kernel/src/a.ts']]));
+		chmodSync(join(root, 'src/y.ts'), 0o644);
+
+		expect(failed).toContain('Move failed and was rolled back');
+		expect(failed).not.toContain('Rollback could not');
+		expect(git('status', '--short')).toBe('');
+		expect(read('src/x.ts')).toBe("import { a } from './a';\n");
+	});
+
+	test('rollback reports each step it cannot undo and keeps going', async () => {
+		repository({ 'src/a.ts': 'export const a = 1;\n', 'src/same.ts': 'same\n' });
+		mkdirSync(join(root, 'directory'));
+		mkdirSync(join(root, 'made/empty'), { recursive: true });
+		chmodSync(join(root, 'src/same.ts'), 0o444);
+		const left = await Effect.runPromise(undo(root, {
+			moves: [['src/a.ts', 'src/gone.ts']],
+			texts: new Map([['directory', 'text'], ['src/b.ts', 'restored\n'], ['src/same.ts', 'same\n']]),
+			directories: ['made', 'made/empty', 'src'],
+		}));
+		chmodSync(join(root, 'src/same.ts'), 0o644);
+
+		expect(left.map(problem => problem.split(':')[0])).toEqual([
+			'restore directory',
+			'move src/gone.ts back to src/a.ts',
+			'remove src',
+		]);
+		expect([read('src/b.ts'), existsSync(join(root, 'made'))]).toEqual(['restored\n', false]);
+	});
+
+	test('a mention scan that fails is reported for review after the move', async () => {
+		repository({ 'src/a.ts': 'export const a = 1;\n', 'README.md': 'Edit src/a.ts and src/b.ts.\n' });
+		chmodSync(join(root, 'README.md'), 0o000);
+		const unreadable = await Effect.runPromise(move(root, [['src/a.ts', 'src/b.ts']]));
+		chmodSync(join(root, 'README.md'), 0o644);
+		git('config', 'grep.threads', 'broken');
+		const broken = await Effect.runPromise(move(root, [['src/b.ts', 'src/c.ts']]));
+
+		expect([unreadable.mentions, unreadable.review]).toEqual([
+			[],
+			["could not scan for mentions of src/a.ts: error: failed to stat 'README.md': Permission denied"],
+		]);
+		expect([broken.mentions, broken.review]).toEqual([
+			[],
+			["could not scan for mentions of src/b.ts: fatal: bad numeric config value 'broken' for 'grep.threads' in file .git/config: invalid unit"],
+		]);
+	});
+
 	test('the command takes pairs, reports what still mentions the old path, and refuses an odd argument list', async () => {
 		repository({
 			'src/a.ts': 'export const a = 1;\n',
@@ -573,6 +790,8 @@ describe('boundaries', () => {
 			'src/legacy.ts': 'export const legacy = 1;\n',
 		});
 		write('packages/domain/node_modules/effect/package.json', '{}');
+		write('node_modules/effect/package.json', '{}');
+		write('node_modules/dep/node_modules/effect/package.json', '{}');
 		const report = await Effect.runPromise(checkBoundaries(root));
 
 		expect(report.violations.map(describeViolation)).toEqual([
@@ -584,9 +803,10 @@ describe('boundaries', () => {
 			'packages/kernel/src/a.ts imports @/kernel/gone.ts, which resolves to no tracked file',
 			'Package cycle: @beepboop/kernel -> @beepboop/domain -> @beepboop/kernel',
 			'Package cycle: @beepboop/cli -> @beepboop/kernel -> @beepboop/domain -> @beepboop/cli',
+			'A second copy of effect is installed at node_modules/dep/node_modules/effect/package.json',
 			'A second copy of effect is installed at packages/domain/node_modules/effect/package.json',
 		]);
-		expect(await refusal(boundariesCommand(root))).toContain('9 package boundary violations');
+		expect(await refusal(boundariesCommand(root))).toContain('10 package boundary violations');
 	});
 
 	test('exports resolve exact keys first, then the most specific pattern, through conditions and every wildcard', async () => {
@@ -598,6 +818,7 @@ describe('boundaries', () => {
 					'./*': './src/*.ts',
 					'./ui/*': './src/ui/*/*.ts',
 					'./feature': './missing.ts',
+					'./sealed/*': { require: null, default: './src/*.ts' },
 				},
 			}),
 			'packages/kernel/src/index.ts': 'export const index = 1;\n',
@@ -606,11 +827,15 @@ describe('boundaries', () => {
 			'packages/domain/package.json':
 				'{ "name": "@beepboop/domain", "dependencies": { "@beepboop/kernel": "workspace:*" } }',
 			'packages/domain/src/view.tsx': "import '@/legacy.ts';\n",
+			'packages/domain/src/old.cjs': "require('@/legacy.ts');\n",
+			'packages/domain/src/old.jsx': "import '@/legacy.ts';\n",
 			'packages/domain/src/c.ts': [
 				"import '@beepboop/kernel';",
 				"import '@beepboop/kernel/ui/button';",
 				"import '@beepboop/kernel/feature';",
 				'await import(`@/legacy.ts`);',
+				"import '@beepboop/kernel/sealed/index';",
+				"require('@beepboop/kernel/sealed/index');",
 			].join('\n'),
 			'src/legacy.ts': 'export const legacy = 1;\n',
 		});
@@ -619,7 +844,42 @@ describe('boundaries', () => {
 		expect(report.violations.map(describeViolation)).toEqual([
 			'packages/domain/src/c.ts imports @beepboop/kernel/feature, which resolves to no tracked file',
 			'packages/domain/src/c.ts imports @/legacy.ts, which resolves outside any package (src/legacy.ts)',
+			'packages/domain/src/c.ts imports @beepboop/kernel/sealed/index, which resolves to no tracked file',
+			'packages/domain/src/old.cjs imports @/legacy.ts, which resolves outside any package (src/legacy.ts)',
+			'packages/domain/src/old.jsx imports @/legacy.ts, which resolves outside any package (src/legacy.ts)',
 			'packages/domain/src/view.tsx imports @/legacy.ts, which resolves outside any package (src/legacy.ts)',
+		]);
+	});
+
+	test('a pattern with a longer suffix beats an equal prefix in either declaration order, and a star never matches nothing', async () => {
+		const exports = [['./*', './src/*.ts'], ['./*.js', './specific/*.ts']];
+		repository({
+			'packages/one/package.json': JSON.stringify({ name: '@beepboop/one', exports: Object.fromEntries(exports) }),
+			'packages/two/package.json': JSON.stringify({
+				name: '@beepboop/two',
+				exports: Object.fromEntries([...exports].reverse()),
+			}),
+			'packages/one/src/a.js.ts': 'export const decoy = 1;\n',
+			'packages/two/src/a.js.ts': 'export const decoy = 1;\n',
+			'packages/one/specific/b.ts': 'export const b = 1;\n',
+			'packages/two/specific/.ts': 'export const empty = 1;\n',
+			'packages/use/package.json': JSON.stringify({
+				name: '@beepboop/use',
+				dependencies: { '@beepboop/one': 'workspace:*', '@beepboop/two': 'workspace:*' },
+			}),
+			'packages/use/src/u.ts': [
+				"import '@beepboop/one/a.js';",
+				"import '@beepboop/two/a.js';",
+				"import '@beepboop/one/b.js';",
+				"import '@beepboop/two/.js';",
+			].join('\n'),
+		});
+		const report = await Effect.runPromise(checkBoundaries(root));
+
+		expect(report.violations.map(describeViolation)).toEqual([
+			'packages/use/src/u.ts imports @beepboop/one/a.js, which resolves to no tracked file',
+			'packages/use/src/u.ts imports @beepboop/two/a.js, which resolves to no tracked file',
+			'packages/use/src/u.ts imports @beepboop/two/.js, which resolves to no tracked file',
 		]);
 	});
 

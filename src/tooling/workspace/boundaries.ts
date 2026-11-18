@@ -20,6 +20,7 @@ import {
 const platformModules = /^(?:node:|bun:|cloudflare:|astro:|virtual:)|^bun$/;
 const builtins = new Set(builtinModules);
 const rootAssets = ['schemas/', 'presets/'];
+const effectManifests = new Bun.Glob('**/node_modules/effect/package.json');
 
 export type Violation =
 	| { readonly _tag: 'OutsidePackage'; readonly file: string; readonly specifier: string; readonly target: string }
@@ -81,7 +82,7 @@ export const checkBoundaries = Effect.fn('checkBoundaries')(function*(
 		const owner = packages.get(packageOf(file) ?? '');
 		if (!owner) continue;
 		const source = yield* attemptPromise(() => Bun.file(join(root, file)).text());
-		for (const { specifier } of references(file, source)) {
+		for (const { specifier, kind } of references(file, source)) {
 			const [path] = splitQuery(specifier);
 			const named = names.get(packageName(specifier));
 			if (isLocal(aliases, specifier)) {
@@ -108,7 +109,7 @@ export const checkBoundaries = Effect.fn('checkBoundaries')(function*(
 			if (named && named.directory !== owner.directory) {
 				edges.set(owner.name, (edges.get(owner.name) ?? new Set()).add(named.name));
 			}
-			if (named && exported(named, known, specifier) === undefined) {
+			if (named && exported(named, known, specifier, kind) === undefined) {
 				violations.push({ _tag: 'Unresolved', file, specifier });
 				continue;
 			}
@@ -118,11 +119,11 @@ export const checkBoundaries = Effect.fn('checkBoundaries')(function*(
 		}
 	}
 	for (const cycle of cycles(edges)) violations.push({ _tag: 'Cycle', packages: cycle });
-	for (const workspace of packages.values()) {
-		const path = `packages/${workspace.directory}/node_modules/effect/package.json`;
-		if (yield* attemptPromise(() => Bun.file(join(root, path)).exists())) {
-			violations.push({ _tag: 'DuplicateEffect', path });
-		}
+	const installed = yield* attemptPromise(() =>
+		Array.fromAsync(effectManifests.scan({ cwd: root, dot: true, followSymlinks: false }))
+	);
+	for (const path of installed.sort()) {
+		if (path !== 'node_modules/effect/package.json') violations.push({ _tag: 'DuplicateEffect', path });
 	}
 	return { files: checked.length, packages: packages.size, violations };
 });
