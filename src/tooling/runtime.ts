@@ -66,12 +66,13 @@ function command<A>(
 	stdin: 'inherit' | 'ignore',
 	stdout: 'inherit' | 'pipe',
 	read: (child: ReturnType<typeof spawn>) => Promise<A>,
+	accepted: (code: number) => boolean = code => code === 0,
 ): Effect.Effect<A, ToolFailure> {
 	return Effect.acquireUseRelease(
 		attempt(() => spawn(args, options, stdin, stdout)),
 		child => attemptPromise(async () => {
 			const [value, code] = await Promise.all([read(child), child.exited]);
-			if (code !== 0) throw new Error(`${args[0]} failed (exit ${code})`);
+			if (!accepted(code)) throw new Error(`${args[0]} failed (exit ${code})`);
 			return value;
 		}),
 		terminate,
@@ -84,6 +85,10 @@ export function run(args: string[], options: Command = {}): Effect.Effect<void, 
 
 export function capture(args: string[], options: Command = {}): Effect.Effect<string, ToolFailure> {
 	return command(args, options, 'ignore', 'pipe', child => new Response(child.stdout).text());
+}
+
+export function captureMatches(args: string[], options: Command = {}): Effect.Effect<string, ToolFailure> {
+	return command(args, options, 'ignore', 'pipe', child => new Response(child.stdout).text(), code => code <= 1);
 }
 
 export function checkArguments(allowPositionals: boolean) {

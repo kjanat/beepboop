@@ -616,6 +616,18 @@ describe('move', () => {
 		expect(read('src/b.ts')).toBe('restored\n');
 	});
 
+	test('a mention scan that fails is reported for review after the move', async () => {
+		repository({ 'src/a.ts': 'export const a = 1;\n', 'README.md': 'Edit src/a.ts.\n' });
+		git('config', 'grep.threads', 'broken');
+		const report = await Effect.runPromise(move(root, [['src/a.ts', 'src/b.ts']]));
+
+		expect([report.moved, report.mentions, report.review]).toEqual([
+			1,
+			[],
+			['could not scan for mentions of src/a.ts: git failed (exit 128)'],
+		]);
+	});
+
 	test('the command takes pairs, reports what still mentions the old path, and refuses an odd argument list', async () => {
 		repository({
 			'src/a.ts': 'export const a = 1;\n',

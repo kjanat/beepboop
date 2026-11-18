@@ -3,7 +3,7 @@ import { basename, dirname, join, posix, relative } from 'node:path';
 import { Effect } from 'effect';
 import { findNodeAtLocation, parseTree } from 'jsonc-parser';
 import type { ToolFailure } from '@/tooling/runtime';
-import { attemptPromise, capture, checkArguments, main, refuse, run } from '@/tooling/runtime';
+import { attemptPromise, captureMatches, checkArguments, main, refuse, run } from '@/tooling/runtime';
 import type { Workspace } from '@/tooling/workspace/manifests';
 import { exported, exportSpecifiers, readWorkspaces, workspaceOf } from '@/tooling/workspace/manifests';
 import type { Alias, ReferenceKind } from '@/tooling/workspace/modules';
@@ -400,9 +400,15 @@ export const move = Effect.fn('move')(function*(
 	));
 	const mentions = new Set<string>();
 	for (const from of new Set([...plan.files.keys(), ...plan.directories.map(([from]) => from)])) {
-		const found = yield* capture(['git', 'grep', '-n', '-F', '-e', from, '--', ':!bun.lock'], { cwd: root }).pipe(
-			Effect.orElseSucceed(() => ''),
-		);
+		const found = yield* captureMatches(['git', 'grep', '-n', '-F', '-e', from, '--', ':!bun.lock'], { cwd: root })
+			.pipe(
+				Effect.catch(failure =>
+					Effect.sync(() => {
+						review.push(`could not scan for mentions of ${from}: ${failure.message}`);
+						return '';
+					})
+				),
+			);
 		const boundary = new RegExp(`(?<![\\w./-])${from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`);
 		for (const line of found.split('\n')) {
 			const content = /^[^:]*:\d+:(.*)$/.exec(line)?.[1];
