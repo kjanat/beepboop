@@ -1412,6 +1412,67 @@ test(
 	60_000,
 );
 
+test.each([
+	['bun.lock', 'bun pm pack --destination'],
+	['pnpm-lock.yaml', 'pnpm pack --pack-destination'],
+])('a repository with %s packs its npm package with %s and publishes that tarball', async (lockfile, packer) => {
+	world.npm.publish(npm, '1.0.0');
+	const { begun } = await released({ main: [npmId] }, bindingsLayout);
+	const { execution, identity } = started(begun, 'main');
+	const commands: string[] = [];
+	let tarball = '';
+	const run: Runner['run'] = (argv, options) =>
+		Effect.sync((): Command => {
+			if (argv[0] === 'bun' || argv[0] === 'pnpm') {
+				commands.push(`${argv.slice(0, -1).join(' ')} in ${options.cwd}`);
+				tarball = join(argv.at(-1) ?? '', 'octo-lint-1.1.0.tgz');
+				writeFileSync(tarball, `${argv[0]} tarball\n`);
+				return { code: 0, stdout: '$ tsc\n', output: '$ tsc\n' };
+			}
+			commands.push(`${argv.slice(0, 3).join(' ')} in ${options.cwd}`);
+			if (argv[1] === '-tzf') {
+				const listing = ['package.json', 'README.md', 'LICENSE', 'index.js'].map(file => `package/${file}\n`).join('');
+				return { code: 0, stdout: listing, output: listing };
+			}
+			if (argv[0] === 'tar') {
+				const manifest = JSON.stringify({ name: npm, version: '1.1.0', ...npmMetadata, main: 'index.js' });
+				return { code: 0, stdout: manifest, output: manifest };
+			}
+			const digest = `sha512-${createHash('sha512').update(readFileSync(tarball)).digest('base64')}`;
+			world.npm.publish(npm, '1.1.0', undefined, digest);
+			return { code: 0, stdout: `+ ${npm}@1.1.0`, output: '' };
+		});
+	const { result } = await publishing(identity, execution.id, {
+		run,
+		credentials: bindingCredentials,
+		exists: path => path === lockfile,
+	});
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual([['pkg:npm/%40octo/lint@1.1.0', 'published']]);
+	expect(commands).toEqual([
+		`${packer} in bindings/js`,
+		'tar -tzf ' + tarball + ' in .',
+		'tar -xzOf ' + tarball + ' in .',
+		'npm publish ' + tarball + ' in bindings/js',
+	]);
+}, 60_000);
+
+test('a workspace packer that writes no tarball fails the package before its claim', async () => {
+	world.npm.publish(npm, '1.0.0');
+	const { begun } = await released({ main: [npmId] }, bindingsLayout);
+	const { execution, identity } = started(begun, 'main');
+	const { result } = await publishing(identity, execution.id, {
+		run: () => Effect.succeed({ code: 0, stdout: '', output: '' }),
+		exists: path => path === 'bun.lock',
+	});
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual([[
+		'pkg:npm/%40octo/lint@1.1.0',
+		'failed-retryable',
+		'bun pm pack --destination wrote 0 tarballs for @octo/lint',
+	]]);
+}, 60_000);
+
 test('npm and PyPI packages built without a license file fail before their claims', async () => {
 	servePypi();
 	world.npm.publish(npm, '1.0.0');

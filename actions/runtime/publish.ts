@@ -41,6 +41,10 @@ interface Artifact {
 }
 
 const longestWait = publishWaitMinutes * 60_000;
+const workspacePackers: readonly { readonly lockfiles: readonly string[]; readonly command: readonly string[] }[] = [
+	{ lockfiles: ['bun.lock', 'bun.lockb'], command: ['bun', 'pm', 'pack', '--destination'] },
+	{ lockfiles: ['pnpm-lock.yaml'], command: ['pnpm', 'pack', '--pack-destination'] },
+];
 const packageAttempts = 8;
 
 function sha256(path: string): Effect.Effect<string, ActionFailure> {
@@ -274,6 +278,16 @@ function build(
 			);
 		}
 		const out = yield* scratch(pkg.name);
+		const packer = workspacePackers.find(({ lockfiles }) => lockfiles.some(file => runner.exists(file)));
+		if (packer) {
+			yield* checked(runner, [...packer.command, out], dir);
+			const written = yield* Effect.fromResult(attempt(() => readdirSync(out).filter(name => name.endsWith('.tgz'))));
+			const [file, ...extra] = written;
+			if (!file || extra.length) {
+				return yield* fail(`${packer.command.join(' ')} wrote ${written.length} tarballs for ${pkg.name}`);
+			}
+			return yield* prebuilt(runner, join(out, file));
+		}
 		const output = yield* checked(runner, ['npm', 'pack', '--json', '--pack-destination', out], dir);
 		const start = output.startsWith('[') ? 0 : output.lastIndexOf('\n[') + 1;
 		const [first] = yield* Effect.fromResult(attempt(() => decodeSync(packed, JSON.parse(output.slice(start)))));
