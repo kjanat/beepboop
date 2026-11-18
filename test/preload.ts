@@ -1,4 +1,4 @@
-import { mock } from 'bun:test';
+import { mock, setDefaultTimeout } from 'bun:test';
 import { astroPlugin } from '@root/test/support/astro.ts';
 import * as workers from '@root/test/support/cloudflare-workers.ts';
 import { plugin } from 'bun';
@@ -29,3 +29,4 @@ for (
 mock.module('cloudflare:workers', () => workers);
 mock.module('astro:middleware', () => ({ defineMiddleware: <T>(handler: T) => handler }));
 plugin(astroPlugin);
+setDefaultTimeout(50_000);

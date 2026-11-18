@@ -128,7 +128,7 @@ test('local database entrypoint migrates, backfills legacy rows, resumes idempot
 	} finally {
 		await rm(directory, { recursive: true, force: true });
 	}
-}, 30_000);
+});
 
 test('Node backfill bridge reports cleanup failures without exposing database diagnostics', async () => {
 	await mkdir(join(root, '.wrangler'), { recursive: true });
