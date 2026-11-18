@@ -65,6 +65,10 @@ describe('module references', () => {
 			"import d = require('./d');",
 			"await import(/* lazy */ './e');",
 			"mock.module('./f', () => ({}));",
+			"import /* why */ './g';",
+			"import { h } from /* why */ './h';",
+			"const i = import( // lazy\n './i');",
+			"const j = require /* cjs */ ('./j');",
 		].join('\n');
 
 		expect(references('x.ts', source).map(reference => reference.specifier)).toEqual([
@@ -74,6 +78,10 @@ describe('module references', () => {
 			'./d',
 			'./e',
 			'./f',
+			'./g',
+			'./h',
+			'./i',
+			'./j',
 		]);
 	});
 

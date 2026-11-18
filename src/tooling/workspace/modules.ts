@@ -60,12 +60,13 @@ const tsconfigSchema = Schema.Struct({
 const quoted = String.raw`(['"])([^'"\n]+)\1`;
 const callable = String.raw`(['"\x60])([^'"\x60\n$]+)\1`;
 const moduleReferences: readonly (readonly [RegExp, ReferenceKind])[] = [
-	[new RegExp(String.raw`\b(?:from|import)\s*${quoted}`, 'g'), 'import'],
-	[new RegExp(String.raw`\bimport\s*\(\s*(?:/\*[\s\S]*?\*/\s*)*${callable}`, 'g'), 'import'],
-	[new RegExp(String.raw`\brequire\s*\(\s*${callable}`, 'g'), 'require'],
-	[new RegExp(String.raw`\brequire\.resolve\s*\(\s*${callable}`, 'g'), 'require'],
-	[new RegExp(String.raw`\bimport\.meta\.resolve\s*\(\s*${callable}`, 'g'), 'import'],
-	[new RegExp(String.raw`\bmock\.module\s*\(\s*${callable}`, 'g'), 'import'],
+	[new RegExp(String.raw`\b(?:from|import)${gap}${quoted}`, 'g'), 'import'],
+	[new RegExp(String.raw`\bimport${gap}\(${gap}${callable}`, 'g'), 'import'],
+	[new RegExp(String.raw`\brequire${gap}\(${gap}${callable}`, 'g'), 'require'],
+	[new RegExp(String.raw`\brequire\.resolve${gap}\(${gap}${callable}`, 'g'), 'require'],
+	[new RegExp(String.raw`\bimport\.meta\.resolve${gap}\(${gap}${callable}`, 'g'), 'import'],
+	[new RegExp(String.raw`\bmock\.module${gap}\(${gap}${callable}`, 'g'), 'import'],
+const gap = String.raw`(?:\s|/\*(?:[^*]|\*(?!/))*\*/|//[^\n]*\n)*`;
 ];
 const scriptSource = new RegExp(String.raw`<script\b[^>]*\bsrc=${quoted}`, 'g');
 const joinCall = /\b(join|resolve)\(\s*import\.meta\.(?:dir|dirname)\s*,\s*/g;
