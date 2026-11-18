@@ -657,14 +657,20 @@ describe('move', () => {
 	});
 
 	test('a mention scan that fails is reported for review after the move', async () => {
-		repository({ 'src/a.ts': 'export const a = 1;\n', 'README.md': 'Edit src/a.ts.\n' });
+		repository({ 'src/a.ts': 'export const a = 1;\n', 'README.md': 'Edit src/a.ts and src/b.ts.\n' });
+		chmodSync(join(root, 'README.md'), 0o000);
+		const unreadable = await Effect.runPromise(move(root, [['src/a.ts', 'src/b.ts']]));
+		chmodSync(join(root, 'README.md'), 0o644);
 		git('config', 'grep.threads', 'broken');
-		const report = await Effect.runPromise(move(root, [['src/a.ts', 'src/b.ts']]));
+		const broken = await Effect.runPromise(move(root, [['src/b.ts', 'src/c.ts']]));
 
-		expect([report.moved, report.mentions, report.review]).toEqual([
-			1,
+		expect([unreadable.mentions, unreadable.review]).toEqual([
 			[],
-			['could not scan for mentions of src/a.ts: git failed (exit 128)'],
+			["could not scan for mentions of src/a.ts: error: failed to stat 'README.md': Permission denied"],
+		]);
+		expect([broken.mentions, broken.review]).toEqual([
+			[],
+			["could not scan for mentions of src/b.ts: fatal: bad numeric config value 'broken' for 'grep.threads' in file .git/config: invalid unit"],
 		]);
 	});
 

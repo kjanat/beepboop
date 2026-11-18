@@ -66,13 +66,12 @@ function command<A>(
 	stdin: 'inherit' | 'ignore',
 	stdout: 'inherit' | 'pipe',
 	read: (child: ReturnType<typeof spawn>) => Promise<A>,
-	accepted: (code: number) => boolean = code => code === 0,
 ): Effect.Effect<A, ToolFailure> {
 	return Effect.acquireUseRelease(
 		attempt(() => spawn(args, options, stdin, stdout)),
 		child => attemptPromise(async () => {
 			const [value, code] = await Promise.all([read(child), child.exited]);
-			if (!accepted(code)) throw new Error(`${args[0]} failed (exit ${code})`);
+			if (code !== 0) throw new Error(`${args[0]} failed (exit ${code})`);
 			return value;
 		}),
 		terminate,
@@ -88,7 +87,22 @@ export function capture(args: string[], options: Command = {}): Effect.Effect<st
 }
 
 export function captureMatches(args: string[], options: Command = {}): Effect.Effect<string, ToolFailure> {
-	return command(args, options, 'ignore', 'pipe', child => new Response(child.stdout).text(), code => code <= 1);
+	return Effect.acquireUseRelease(
+		attempt(() =>
+			Bun.spawn(args, { cwd: options.cwd, env: options.env, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' })
+		),
+		child => attemptPromise(async () => {
+			const [stdout, stderr, code] = await Promise.all([
+				new Response(child.stdout).text(),
+				new Response(child.stderr).text(),
+				child.exited,
+			]);
+			const errors = [...new Set(stderr.split('\n').map(line => line.trim()).filter(Boolean))];
+			if (code > 1 || errors.length) throw new Error(errors.join('; ') || `${args[0]} failed (exit ${code})`);
+			return stdout;
+		}),
+		terminate,
+	);
 }
 
 export function checkArguments(allowPositionals: boolean) {
