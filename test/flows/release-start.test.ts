@@ -383,7 +383,7 @@ test('a default branch that moved past the bump source stops the commit bump wit
 	});
 });
 
-test('a stream with tag versions cannot start a release', async () => {
+test('a tag-based start requires a promotion that publishes the version tag', async () => {
 	const { repository, api } = await configured([{ via: 'cli' }], 'commit');
 	const configuration = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
 	configuration.streams.main.versionSource = { kind: 'tags', prefix: 'v' };
@@ -401,8 +401,73 @@ test('a stream with tag versions cannot start a release', async () => {
 	const refused = await api('/api/releases/prepare', { ...request, sourceSha, planId });
 	expect(refused.status).toBe(422);
 	expect(JSON.stringify(refused.body)).toContain(
-		'main cannot start releases: it needs one shared version kept in its manifests',
+		'main needs a dispatchable promotion that publishes a version tag',
 	);
+});
+
+test('a tag-based dashboard start promotes the reviewed version after its version PR merges', async () => {
+	const { repository, api } = await configured([{ via: 'dashboard' }]);
+	const configuration = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
+	configuration.managers = ['workflow'];
+	const stream = configuration.streams.main;
+	stream.packages = [];
+	stream.required = [];
+	stream.versionSource = { kind: 'tags', prefix: 'v' };
+	stream.versionFiles = [{ path: 'package.json', format: 'json', key: ['version'] }];
+	stream.promote.workflow.refs = { phase: 'version', prefix: 'v' };
+	stream.promote.workflow.publications = [];
+	repository.refs.set('tags/v2.3.4', world.github.head(repository));
+	const configuredHead = world.github.push(
+		repository,
+		{ '.github/beepboop.json': JSON.stringify(configuration) },
+		'Configure a tag-based release',
+	);
+	passChecks(repository, configuredHead.sha);
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	expect(await promotions(api)).toEqual([]);
+
+	expect(await release(fromDashboard, repository.id)).toMatchObject({ operation: 'prepare' });
+	await world.wait(16_000);
+	const [pull] = repository.pulls;
+	if (!pull) throw new Error('No version PR');
+	expect(await promotions(api)).toEqual([]);
+	const merged = world.github.merge(repository, pull.number);
+	passChecks(repository, merged.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	expect(await promotions(api)).toEqual([
+		expect.objectContaining({
+			version: '2.3.5',
+			sourceSha: merged.sha,
+			approvedBy: 'start',
+			started: { via: 'dashboard', actor: expect.any(String) },
+		}),
+	]);
+});
+
+test('a tag-based start refuses delegated preparation before dispatching it', async () => {
+	const { repository, api } = await configured([{ via: 'cli' }]);
+	const configuration = editableConfiguration();
+	const stream = configuration.streams.main;
+	stream.start = [{ via: 'cli' }];
+	stream.versionSource = { kind: 'tags', prefix: 'v' };
+	stream.prepare = { strategy: 'workflow', workflow: { file: 'publish.yml' } };
+	stream.promote.workflow.refs = { phase: 'version', prefix: 'v' };
+	const head = world.github.push(
+		repository,
+		{ '.github/beepboop.json': JSON.stringify(configuration) },
+		'Delegate preparation',
+	);
+	passChecks(repository, head.sha);
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const request = { repositoryId: repository.id, stream: 'main', version: '1.0.1' };
+	const planned = await api('/api/releases/plan', request);
+	expect(planned.status).toBe(200);
+	const { sourceSha, planId } = decodeSync(plan, planned.body);
+	const refused = await api('/api/releases/prepare', { ...request, sourceSha, planId });
+	expect(refused.status).toBe(422);
+	expect(JSON.stringify(refused.body)).toContain('main needs managed preparation to start a tag-based release');
+	expect(await executions(api)).toEqual([]);
 });
 
 test('the release action refreshes a stale branch head and refuses a run on another branch or an old commit', async () => {

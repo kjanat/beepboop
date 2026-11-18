@@ -45,6 +45,7 @@ import {
 	configurationValue,
 	refPolicyValue,
 	streamValue,
+	subscriptionIssue,
 	subscriptionValue,
 	wingetValue,
 } from '@/domain/configuration-value';
@@ -331,6 +332,12 @@ function subscriptionSchema() {
 		publication: Schema.optional(nonempty),
 	});
 	const packageChanged = strictStruct({ ...subscriptionCommon, event: Schema.Literal('package.version.changed') });
+	const packageIssue = strictStruct({
+		id: identifier,
+		source: nonempty,
+		event: Schema.Literal('package.version.changed'),
+		issue: subscriptionIssue,
+	});
 	const workflowRun = strictStruct({
 		...subscriptionCommon,
 		event: Schema.Literal('workflow_run'),
@@ -339,7 +346,7 @@ function subscriptionSchema() {
 		),
 	});
 	return mapped(
-		Schema.Union([release, packageChanged, workflowRun]),
+		Schema.Union([release, packageChanged, packageIssue, workflowRun]),
 		Schema.toType(subscriptionValue).check(
 			Schema.makeFilter(value => value.event !== 'workflow_run' || typeof value.workflow === 'string'),
 		),
@@ -459,6 +466,7 @@ export const configurationSchema = mapped(
 					issue(ctx, 'duplicate-identity', 'Duplicate subscription', ['subscriptions', index, 'id']);
 				}
 				ids.add(subscription.id);
+				if ('issue' in subscription) return;
 				const stream = configuration.streams[subscription.stream];
 				if (!stream || !Object.hasOwn(stream.workflows, subscription.operation)) {
 					issue(ctx, 'unknown-reference', 'Subscription references an unknown operation', [

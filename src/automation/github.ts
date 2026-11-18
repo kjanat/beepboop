@@ -262,6 +262,22 @@ export class RepositoryGateway {
 	): Effect.Effect<Decoded<S>, DomainError> {
 		return this.call(path, token, method, body).pipe(Effect.flatMap(value => Effect.fromResult(decode(schema, value))));
 	}
+	ensureIssue(name: string, id: number, issue: { title: string; body: string }): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const token = yield* this.token(name, id, { issues: 'write' });
+			const path = `/repos/${name}/issues`;
+			const issueList = mutableArray(looseStruct({
+				title: Schema.String,
+				pull_request: Schema.optional(Schema.Unknown),
+			}));
+			for (let page = 1;; page++) {
+				const existing = yield* this.read(issueList, `${path}?state=all&per_page=100&page=${page}`, token);
+				if (existing.some(candidate => !candidate.pull_request && candidate.title === issue.title)) return;
+				if (existing.length < 100) break;
+			}
+			yield* this.call(path, token, 'POST', issue);
+		});
+	}
 	peelTag(repository: string, object: GitObject, token: string): Effect.Effect<GitObject, DomainError> {
 		if (object.type !== 'tag') return Effect.succeed(object);
 		return this.read(gitTagSchema, `/repos/${repository}/git/tags/${object.sha}`, token).pipe(

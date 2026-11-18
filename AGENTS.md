@@ -28,6 +28,15 @@ Please if you see that tests can be faster, proactively clean them up so they ru
 
 Use effect. You think, sleep, breathe effect. If it isn't effect, you faint.
 
+**Learning more about Effect**\
+This repository uses the Effect Typescript library.
+
+Before writing any Effect code, first read `node_modules/effect/AGENTS.md`
+**completely**, and follow the links in the file when required.
+
+If you need to learn more about particular Effect api's and concepts that the
+guide doesn't cover, search through the source code in `node_modules/effect/src`.
+
 ## Some commands
 
 Format the code with `bunx @kjanat/fmt` from the project root.

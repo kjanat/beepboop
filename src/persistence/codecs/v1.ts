@@ -365,12 +365,15 @@ const automationEventSchema: Schema.Codec<AutomationEvent, unknown> = mutableStr
 	workflow: Schema.optional(Schema.String),
 	release: Schema.optional(releaseReference),
 });
-const deliverySchema: Schema.Codec<SubscriptionDelivery, unknown> = mutableStruct({
+const deliveryFields = {
 	id: Schema.String,
 	eventId: Schema.String,
 	repositoryId: Schema.Finite,
-	execution: executionSchema,
-});
+};
+const deliverySchema: Schema.Codec<SubscriptionDelivery, unknown> = Schema.Union([
+	mutableStruct({ ...deliveryFields, execution: executionSchema }),
+	mutableStruct({ ...deliveryFields, issue: mutableStruct({ title: Schema.String, body: Schema.String }) }),
+]);
 const setupEditSchema: Schema.Codec<SetupEdit, unknown> = mutableStruct({
 	repositoryId: Schema.Finite,
 	number: Schema.Finite,
@@ -401,7 +404,9 @@ export function decodeEventV1(value: unknown): AutomationEvent {
 }
 export function decodeDeliveryV1(value: unknown): SubscriptionDelivery {
 	const delivery = decodeSync(deliverySchema, value);
-	return { ...delivery, execution: currentState(identifyExecution(delivery.execution)) };
+	return 'execution' in delivery
+		? { ...delivery, execution: currentState(identifyExecution(delivery.execution)) }
+		: delivery;
 }
 export function decodeSetupEditV1(value: unknown): SetupEdit {
 	return decodeSync(setupEditSchema, value);

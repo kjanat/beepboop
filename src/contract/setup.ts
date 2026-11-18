@@ -276,7 +276,7 @@ export function bumpable(stream: SetupStream): boolean {
 	return !!stream.promote && stream.versionSource?.kind !== 'tags';
 }
 export function startable(stream: SetupStream): boolean {
-	return bumpable(stream) && stream.versioning !== 'independent';
+	return !!stream.promote && stream.versioning !== 'independent';
 }
 export const setupChoicesSchema = strictStruct(
 	mutableStruct({

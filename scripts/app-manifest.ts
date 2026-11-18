@@ -21,6 +21,7 @@ await main(Effect.gen(function*() {
 					workflows: 'write',
 					metadata: 'read',
 					pull_requests: 'write',
+					issues: 'write',
 					checks: 'read',
 					statuses: 'read',
 					secrets: 'read',

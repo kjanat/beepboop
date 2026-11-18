@@ -123,9 +123,10 @@ promotion that waits for you to publish it. Without `cli` in `startFrom`,
 shared-version streams. Independent package versions use `plan-set` and
 `prepare-set` below.
 
-For a stream whose `versionSource` reads tags, the flow ends at preparation.
-Merging the preparation PR starts no publication run, and the CLI has no
-shared-version counterpart to `releases start`.
+For a stream whose `versionSource` reads tags, an explicit start uses the
+latest matching tag to choose the next version. The promotion workflow must
+publish a version tag with the same prefix. If preparation is needed, merging
+the version PR starts publication for that reviewed commit.
 
 The lower-level commands split preview, preparation and publishing into
 separate steps. Take stream names from `repositories show`. The CLI looks up the

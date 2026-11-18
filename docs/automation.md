@@ -581,6 +581,9 @@ reason on the runs page. Each stream lists where a release starts in
 - **CLI.** Run `beepboop release [patch|minor|major|VERSION]` in a checkout, or
   pass `--repository owner/repo` and `--stream main`.
 
+When a tag-based release needs a version change, a start requires managed
+preparation so Beepboop can track the version PR through merge.
+
 With `"versionLands": "via-direct-commit"`, Beepboop pushes
 `chore(release): <version>` to the default branch as a signed bot commit, and
 the release publishes that commit once its checks pass. When branch protection
@@ -1206,6 +1209,17 @@ Start an operation when a package changes:
 The source is `<registry>:<package-name>` for an npm or JSR package. Beepboop
 polls every [watched package](#watched-packages) on its schedule and fires the
 event once per new version. Event IDs deduplicate delivery.
+
+To open a GitHub issue in the subscribed repository, provide an `issue` with
+`title` and `body` in place of `stream` and `operation`. Beepboop expands
+`{version}` in both fields and creates the issue through the GitHub App. An
+existing issue with the same title counts as delivery.
+
+The app manifest requests read and write access to Issues. For an existing
+GitHub App, set the Issues repository permission to **Read and write** in the
+app settings. The installation owner must approve the new permission before
+Beepboop can open issues. Enable issue subscriptions after deploying the server
+and schema that support them.
 
 A `release` subscription names a source repository. It fires after the
 repository's required publications succeed. A `workflow_run` subscription also

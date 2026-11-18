@@ -2506,7 +2506,7 @@ test('a setup update body leads with old and new values, then held packages, cho
 		'  - `versionLands`: How a new version reaches the default branch, here `master`. Tick one.\n',
 	);
 	expect(body).toContain(
-		'  - `go` takes its version from `go/v` tags. Beepboop raises no version for it, so it offers no `startFrom` or `versionLands`.\n',
+		'  - `go` takes its version from `go/v` tags. A started release must publish a version tag with that prefix.\n',
 	);
 	expect(body.match(/existingTriggers: keep-and-report/g)).toHaveLength(1);
 	expect(body).toContain(

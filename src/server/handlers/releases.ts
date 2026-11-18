@@ -9,7 +9,7 @@ import { planReleaseSet } from '@/automation/planning';
 import { planHookUpdates } from '@/automation/precommit';
 import { conflictMessage } from '@/automation/refs';
 import { capabilitySentence, releasable, releaseCapability } from '@/automation/release-capability';
-import { resolvePackageVersion } from '@/automation/release-version';
+import { hasTagPromotion, resolvePackageVersion } from '@/automation/release-version';
 import type { AutomationService } from '@/automation/service';
 import type { Execution, Inventory, ReleasePlan, ReleaseStarted, Snapshot, Stream } from '@/automation/types';
 import { nextVersion, parseVersionRequest } from '@/automation/version';
@@ -221,8 +221,18 @@ export function beginRelease(
 ): Effect.Effect<Execution, DomainError> {
 	return Effect.gen(function*() {
 		const { repository, stream } = selection;
-		if (started && (stream.versionSource?.kind === 'tags' || stream.versioning === 'independent')) {
-			return yield* precondition(`${name} cannot start releases: it needs one shared version kept in its manifests`);
+		if (started && stream.versioning === 'independent') {
+			return yield* precondition(`${name} cannot start releases: it needs one shared version`);
+		}
+		if (started && stream.versionSource?.kind === 'tags') {
+			if (!hasTagPromotion(stream, stream.versionSource.prefix)) {
+				return yield* precondition(
+					`${name} needs a dispatchable promotion that publishes a version tag with prefix "${stream.versionSource.prefix}"`,
+				);
+			}
+			if (plan.requiresPreparation && stream.prepare.strategy === 'workflow') {
+				return yield* precondition(`${name} needs managed preparation to start a tag-based release`);
+			}
 		}
 		if (versionPrMerge && !opensVersionPr(stream, plan)) {
 			return yield* precondition(`${plan.version} of ${name} opens no version PR to merge`);

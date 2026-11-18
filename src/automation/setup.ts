@@ -1318,11 +1318,11 @@ function fixedStream(stream: SetupChoices['streams'][number]): string | undefine
 		}
 		return `\`${stream.name}\` has no publishing workflow, so it has no \`startFrom\`, \`versionLands\` or \`publishWhen\`.`;
 	}
-	if (stream.versionSource?.kind === 'tags') {
-		return `\`${stream.name}\` takes its version from \`${stream.versionSource.prefix}\` tags. Beepboop raises no version for it, so it offers no \`startFrom\` or \`versionLands\`.`;
-	}
 	if (!startable(stream)) {
 		return `\`${stream.name}\` versions each package on its own. Starting a release raises one version for the whole release group, so it offers no \`startFrom\`.`;
+	}
+	if (stream.versionSource?.kind === 'tags') {
+		return `\`${stream.name}\` takes its version from \`${stream.versionSource.prefix}\` tags. A started release must publish a version tag with that prefix.`;
 	}
 	return undefined;
 }
