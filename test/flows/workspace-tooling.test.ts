@@ -558,6 +558,21 @@ describe('move', () => {
 		);
 	});
 
+	test('a require falls through an export condition whose nested branch does not match', async () => {
+		repository({
+			'packages/kernel/package.json': JSON.stringify({
+				name: '@beepboop/kernel',
+				exports: { './*': { require: { browser: './browser/*.cjs' }, default: './src/*.cjs' } },
+			}),
+			'packages/kernel/src/a.cjs': 'module.exports = 1;\n',
+			'packages/kernel/browser/a.cjs': 'module.exports = 2;\n',
+			'src/use.cjs': "const a = require('@beepboop/kernel/a');\n",
+		});
+		await Effect.runPromise(move(root, [['packages/kernel/src/a.cjs', 'packages/kernel/src/b.cjs']]));
+
+		expect(read('src/use.cjs')).toBe("const a = require('@beepboop/kernel/b');\n");
+	});
+
 	test('CommonJS, CTS and JSX files have their imports rewritten, and extensionless imports reach CommonJS files', async () => {
 		repository({
 			'src/b.ts': 'export const b = 1;\n',
@@ -778,6 +793,7 @@ describe('boundaries', () => {
 					'./*': './src/*.ts',
 					'./ui/*': './src/ui/*/*.ts',
 					'./feature': './missing.ts',
+					'./sealed/*': { require: null, default: './src/*.ts' },
 				},
 			}),
 			'packages/kernel/src/index.ts': 'export const index = 1;\n',
@@ -793,6 +809,8 @@ describe('boundaries', () => {
 				"import '@beepboop/kernel/ui/button';",
 				"import '@beepboop/kernel/feature';",
 				'await import(`@/legacy.ts`);',
+				"import '@beepboop/kernel/sealed/index';",
+				"require('@beepboop/kernel/sealed/index');",
 			].join('\n'),
 			'src/legacy.ts': 'export const legacy = 1;\n',
 		});
@@ -801,6 +819,7 @@ describe('boundaries', () => {
 		expect(report.violations.map(describeViolation)).toEqual([
 			'packages/domain/src/c.ts imports @beepboop/kernel/feature, which resolves to no tracked file',
 			'packages/domain/src/c.ts imports @/legacy.ts, which resolves outside any package (src/legacy.ts)',
+			'packages/domain/src/c.ts imports @beepboop/kernel/sealed/index, which resolves to no tracked file',
 			'packages/domain/src/old.cjs imports @/legacy.ts, which resolves outside any package (src/legacy.ts)',
 			'packages/domain/src/old.jsx imports @/legacy.ts, which resolves outside any package (src/legacy.ts)',
 			'packages/domain/src/view.tsx imports @/legacy.ts, which resolves outside any package (src/legacy.ts)',

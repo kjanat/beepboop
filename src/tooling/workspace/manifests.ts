@@ -45,11 +45,14 @@ function subpaths(field: ExportTarget | undefined): Map<string, ExportTarget> {
 		: new Map([['.', field]]);
 }
 
-function conditional(target: ExportTarget | undefined, kind: ReferenceKind): string | undefined {
-	if (target === undefined || target === null) return undefined;
-	if (typeof target === 'string') return target;
-	const key = Object.keys(target).find(name => conditions[kind].has(name));
-	return key === undefined ? undefined : conditional(target[key], kind);
+function conditional(target: ExportTarget | undefined, kind: ReferenceKind): string | null | undefined {
+	if (target === undefined || target === null || typeof target === 'string') return target;
+	for (const [name, branch] of Object.entries(target)) {
+		if (!conditions[kind].has(name)) continue;
+		const resolved = conditional(branch, kind);
+		if (resolved !== undefined) return resolved;
+	}
+	return undefined;
 }
 
 function values(field: string | Readonly<Record<string, string>> | undefined, key: string): [string, string][] {
@@ -122,7 +125,7 @@ export function exported(
 		}
 	}
 	const target = conditional(selected?.target, kind);
-	if (target === undefined || !selected) return undefined;
+	if (typeof target !== 'string' || !selected) return undefined;
 	const base = repositoryPath(join(workspace.base, target.replaceAll('*', selected.rest)));
 	return candidatePaths(base).find(candidate => files.has(candidate));
 }
@@ -131,7 +134,7 @@ export function exportSpecifiers(workspace: Workspace, path: string, query: stri
 	const found: string[] = [];
 	for (const [key, entry] of workspace.exports) {
 		const target = conditional(entry, kind);
-		if (target === undefined) continue;
+		if (typeof target !== 'string') continue;
 		const resolved = repositoryPath(join(workspace.base, target));
 		const star = resolved.indexOf('*');
 		if (star < 0) {
