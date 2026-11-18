@@ -1,5 +1,5 @@
 import { Schema } from 'effect';
-import { distinct } from '@/distinct';
+import { distinct } from '@/kernel/collections/distinct.ts';
 import type { Decoded } from '@/schema';
 import { mutableStruct } from '@/schema';
 

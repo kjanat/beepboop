@@ -12,11 +12,15 @@
 		"beepboop": "src/cli/cli.ts",
 		"winget": "src/distribution/winget/cli.ts"
 	},
+	"workspaces": [
+		"packages/*"
+	],
 	"scripts": {
 		"actions:check": "bun src/tooling/actions/bundle.ts --check",
 		"app:manifest": "./scripts/app-manifest.ts",
 		"astro": "astro",
 		"beepboop": "bun src/cli/cli.ts",
+		"boundaries": "bun src/tooling/workspace/boundaries.ts",
 		"prebuild": "run -s types check",
 		"build": "astro build",
 		"build:cli": "bun src/tooling/cli/build.ts",
@@ -34,9 +38,10 @@
 		"dev": "astro dev",
 		"discover": "./scripts/discover.ts",
 		"fmt": "kfmt",
-		"gate": "run -pk check lint test purl:check schema:check actions:check && run -s build:cli check:cli check:jsr",
+		"gate": "run -pk check lint test purl:check schema:check actions:check boundaries && run -s build:cli check:cli check:jsr",
 		"homebrew": "bun src/distribution/homebrew/cli.ts",
 		"lint": "biome check . --error-on-warnings",
+		"move": "bun src/tooling/workspace/move.ts",
 		"prepare": "run -qs types sync && effect-tsgo patch --typescript --oxlint",
 		"prepreview": "wrangler types",
 		"preview": "astro preview",
@@ -59,12 +64,12 @@
 		"wrangler": "$wrangler"
 	},
 	"dependencies": {
-		"@astrojs/cloudflare": "^14.4.4",
+		"@astrojs/cloudflare": "^14.4.9",
 		"@cfworker/json-schema": "^4.1.6",
-		"@kjanat/dreamcli": "^5.1.0",
+		"@kjanat/dreamcli": "^5.4.0",
 		"@kjanat/openauth": "^0.6.0",
 		"@simplewebauthn/server": "^14.0.3",
-		"astro": "^7.4.5",
+		"astro": "^7.4.13",
 		"cron-parser": "^5.10.3",
 		"effect": "^4.1.2",
 		"github-up": "^0.1.4",
@@ -83,7 +88,7 @@
 		"@astrojs/ts-content-mapper": "0.2.0",
 		"@biomejs/biome": "2.6.8",
 		"@effect/tsgo": "0.70.0",
-		"@kjanat/fmt": "0.63.0",
+		"@kjanat/fmt": "0.64.0",
 		"@playwright/test": "1.65.1",
 		"@types/bun": "1.4.4",
 		"@types/mdast": "4.0.4",
@@ -104,7 +109,8 @@
 	"devEngines": {
 		"packageManager": {
 			"name": "bun",
-			"version": "1.4.4"
+			"version": "1.4.4",
+			"onFail": "warn"
 		}
 	},
 	"trustedDependencies": [

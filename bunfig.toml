@@ -4,3 +4,6 @@ preload = ["./test/preload.ts"]
 
 [lint]
 typeAware = true
+
+[install]
+linker = "hoisted"

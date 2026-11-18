@@ -4,7 +4,8 @@
 	"compilerOptions": {
 		"paths": {
 			"@/*": ["./src/*"],
-			"@root/*": ["./*"]
+			"@root/*": ["./*"],
+			"@/kernel/*": ["./packages/kernel/src/*"]
 		},
 		"target": "ES2022",
 		"module": "ESNext",
@@ -33,6 +34,7 @@
 		"src/**/*.ts",
 		"scripts/**/*.ts",
 		"actions/**/*.ts",
+		"packages/*/src/**/*.ts",
 		"test/**/*.ts"
 	]
 }

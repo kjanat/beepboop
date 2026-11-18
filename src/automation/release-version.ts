@@ -7,8 +7,8 @@ import { nextVersion } from '@/automation/version';
 import { blocking } from '@/contract/diagnostics';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
-import { distinct } from '@/distinct';
 import { operations } from '@/domain/configuration';
+import { distinct } from '@/kernel/collections/distinct.ts';
 import { compareVersions } from '@/model';
 
 export function releasedVersion(pkg: Package): string | undefined {

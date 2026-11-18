@@ -1,0 +1,8 @@
+{
+	"name": "@beepboop/kernel",
+	"private": true,
+	"type": "module",
+	"exports": {
+		"./*": "./src/*"
+	}
+}
