@@ -577,6 +577,17 @@ describe('move', () => {
 		expect(read('src/use.ts')).toBe("const legacy = require('@/kernel/legacy.cjs');\n");
 	});
 
+	test('an extensionless import resolves in Bun order, so moving the JSX file Bun loads rewrites it', async () => {
+		repository({
+			'src/x.ts': 'export const x = 1;\n',
+			'src/x.jsx': 'export const x = 2;\n',
+			'src/use.ts': "import { x } from './x';\n",
+		});
+		await Effect.runPromise(move(root, [['src/x.jsx', 'packages/kernel/src/x.jsx']]));
+
+		expect(read('src/use.ts')).toBe("import { x } from '@/kernel/x.jsx';\n");
+	});
+
 	test('a failed git mv rolls back the moves already made', async () => {
 		repository({
 			'src/lib/a.ts': 'export const a = 1;\n',

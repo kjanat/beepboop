@@ -5,25 +5,12 @@ import type { ToolFailure } from '@/tooling/runtime';
 import { attemptPromise, capture, parse } from '@/tooling/runtime';
 
 const codeExtensions = ['.ts', '.tsx', '.mts', '.cts', '.mjs', '.cjs', '.js', '.jsx', '.astro'];
+const runtimeExtensions = ['.tsx', '.jsx', '.mts', '.ts', '.mjs', '.js', '.cts', '.cjs'];
 const probes = [
 	'',
-	'.ts',
-	'.tsx',
-	'.mts',
+	...runtimeExtensions,
 	'.d.ts',
-	'.js',
-	'.mjs',
-	'.jsx',
-	'.cts',
-	'.cjs',
-	'/index.ts',
-	'/index.tsx',
-	'/index.mts',
-	'/index.js',
-	'/index.mjs',
-	'/index.jsx',
-	'/index.cts',
-	'/index.cjs',
+	...runtimeExtensions.map(extension => `/index${extension}`),
 	'/index.astro',
 ];
 const javascriptExtensions: readonly (readonly [string, readonly string[]])[] = [
