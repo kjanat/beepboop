@@ -1207,6 +1207,11 @@ The source is `<registry>:<package-name>` for an npm or JSR package. Beepboop
 polls every [watched package](#watched-packages) on its schedule and fires the
 event once per new version. Event IDs deduplicate delivery.
 
+To open a GitHub issue in the subscribed repository, provide an `issue` with
+`title` and `body` in place of `stream` and `operation`. Beepboop expands
+`{version}` in both fields and creates the issue through the GitHub App. An
+existing issue with the same title counts as delivery.
+
 A `release` subscription names a source repository. It fires after the
 repository's required publications succeed. A `workflow_run` subscription also
 names an exact `workflow` filename. It fires after that workflow completes

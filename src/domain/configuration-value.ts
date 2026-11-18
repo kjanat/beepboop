@@ -6,7 +6,7 @@ import { workflowSetupValue } from '@/contract/setup';
 import { versionPrMerges } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
 import { stringsSchema as strings } from '@/model';
-import { mutableArray, mutableRecord, mutableStruct, refined } from '@/schema';
+import { mutableArray, mutableRecord, mutableStruct, refined, strictStruct } from '@/schema';
 
 const managerName = Schema.Literals(managerNames);
 
@@ -68,17 +68,27 @@ export const streamValue = mutableStruct({
 	credentials: strings,
 	channels: mutableStruct({ stable: Schema.String, prerelease: Schema.String }),
 });
-export const subscriptionValue = mutableStruct({
+const subscriptionFields = {
 	id: Schema.String,
 	sourceStream: Schema.optional(Schema.String),
 	sourceGroup: Schema.optional(Schema.String),
 	publication: Schema.optional(Schema.String),
 	source: Schema.String,
-	event: Schema.Literals(['release', 'package.version.changed', 'workflow_run']),
-	stream: Schema.String,
-	operation: Schema.String,
 	workflow: Schema.optional(Schema.String),
+};
+export const subscriptionIssue = strictStruct({
+	title: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+	body: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(60_000)),
 });
+export const subscriptionValue = Schema.Union([
+	mutableStruct({
+		...subscriptionFields,
+		event: Schema.Literals(['release', 'package.version.changed', 'workflow_run']),
+		stream: Schema.String,
+		operation: Schema.String,
+	}),
+	mutableStruct({ ...subscriptionFields, event: Schema.Literal('package.version.changed'), issue: subscriptionIssue }),
+]);
 export const wingetValue = mutableStruct({
 	config: Schema.String,
 	tagPrefix: Schema.String,

@@ -39,6 +39,7 @@ import {
 	parseUtcCron,
 	utcCronMessage,
 } from '@/domain/configuration';
+import { subscriptionIssue } from '@/domain/configuration-value';
 import { toDomainError } from '@/failure';
 import { array, invalid, oneOf, record, strings, text } from '@/model';
 import { purl } from '@/package-url';
@@ -402,13 +403,25 @@ function subscription(raw: unknown, streams: Record<string, Stream>): Parsed<Con
 			'sourceStream',
 			'sourceGroup',
 			'publication',
+			'issue',
 		], 'subscription');
 		const id = yield* text(row.id),
 			kind = yield* text(row.event),
-			stream = yield* text(row.stream),
-			operation = yield* text(row.operation);
+			source = yield* text(row.source);
 		if (!identifierPattern.test(id)) return yield* invalid('Invalid subscription');
 		const event = yield* oneOf(kind, ['release', 'package.version.changed', 'workflow_run'], 'Invalid subscription');
+		if (row.issue !== undefined) {
+			if (
+				event !== 'package.version.changed'
+				|| ['stream', 'operation', 'workflow', 'sourceStream', 'sourceGroup', 'publication'].some(key => key in row)
+			) {
+				return yield* invalid('An issue subscription requires a package event and no workflow');
+			}
+			const issue = safeDecode(subscriptionIssue, row.issue);
+			if (!issue.success) return yield* invalid('Invalid issue template');
+			return { id, source, event, issue: issue.data };
+		}
+		const stream = yield* text(row.stream), operation = yield* text(row.operation);
 		if (!streams[stream]?.workflows[operation]) return yield* invalid('Subscription references an unknown operation');
 		if (event === 'workflow_run' && (typeof row.workflow !== 'string' || !workflowFilePattern.test(row.workflow))) {
 			return yield* invalid('Workflow subscription requires an exact filename');
@@ -418,7 +431,7 @@ function subscription(raw: unknown, streams: Record<string, Stream>): Parsed<Con
 			...(row.sourceStream === undefined ? {} : { sourceStream: yield* text(row.sourceStream) }),
 			...(row.sourceGroup === undefined ? {} : { sourceGroup: yield* text(row.sourceGroup) }),
 			...(row.publication === undefined ? {} : { publication: yield* text(row.publication) }),
-			source: yield* text(row.source),
+			source,
 			event,
 			stream,
 			operation,

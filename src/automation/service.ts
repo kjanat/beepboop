@@ -964,6 +964,20 @@ export class AutomationService {
 				const repository = state.repository;
 				for (const subscription of repository.configuration.subscriptions) {
 					if (!matchesSubscription(subscription, event)) continue;
+					if ('issue' in subscription) {
+						if (!event.version) continue;
+						const id = yield* executionId(repository.id, subscription.id, 'issue', `package:${event.id}`);
+						deliveries.push({
+							id,
+							eventId: event.id,
+							repositoryId: repository.id,
+							issue: {
+								title: subscription.issue.title.replaceAll('{version}', event.version),
+								body: subscription.issue.body.replaceAll('{version}', event.version),
+							},
+						});
+						continue;
+					}
 					const execution = yield* (
 						createExecution(repository, {
 							stream: subscription.stream,
@@ -990,7 +1004,11 @@ export class AutomationService {
 				const repository = yield* this.store.repository(delivery.repositoryId);
 				if (!repository) return yield* precondition('Destination unavailable');
 				const ready = yield* requireReady(repository);
-				yield* this.enqueue(ready, delivery.execution);
+				if ('issue' in delivery) {
+					yield* fromPromise(() =>
+						this.coordinator(ready.id).openSubscriptionIssue(ready.name, ready.id, delivery.id, delivery.issue)
+					);
+				} else yield* this.enqueue(ready, delivery.execution);
 			}).pipe(Effect.as(true), Effect.orElseSucceed(() => false));
 			yield* this.store.deliveryResult(delivery.id, delivered);
 		}

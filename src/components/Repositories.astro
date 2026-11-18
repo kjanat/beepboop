@@ -394,7 +394,9 @@ function wingetDestination(repository: RepositoryRecord) {
 					</dl>
 					{repository.configuration.subscriptions.map(s => (
 						<p>
-							When {s.source} emits {s.event}, start {s.stream} / {s.operation}.
+							When {s.source} emits {s.event}, {'issue' in s
+								? `open an issue: ${s.issue.title}`
+								: `start ${s.stream} / ${s.operation}`}.
 						</p>
 					))}
 				</details>

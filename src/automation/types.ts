@@ -127,12 +127,11 @@ export interface AutomationEvent {
 	workflow?: string;
 	release?: ReleaseReference;
 }
-export interface SubscriptionDelivery {
+export type SubscriptionDelivery = {
 	id: string;
 	eventId: string;
 	repositoryId: number;
-	execution: Execution;
-}
+} & ({ execution: Execution } | { issue: { title: string; body: string } });
 export type AutoMerge =
 	| { method: AutoMergeMethod; state: 'enabled' }
 	| { method: AutoMergeMethod; state: 'refused'; note: string };

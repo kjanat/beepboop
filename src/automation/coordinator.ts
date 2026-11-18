@@ -770,6 +770,23 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	execution(id: string): Promise<Execution | undefined> {
 		return this.run(this.stored(id), 'coordinator.execution', { executionId: id });
 	}
+	openSubscriptionIssue(
+		repository: string,
+		repositoryId: number,
+		id: string,
+		issue: { title: string; body: string },
+	): Promise<void> {
+		return this.serial(
+			Effect.gen({ self: this }, function*() {
+				const key = `subscription-issue:${id}`;
+				if ((yield* this.read(key)) === true) return;
+				yield* (yield* this.gateway).ensureIssue(repository, repositoryId, issue);
+				yield* this.write(key, true);
+			}),
+			'coordinator.subscription.issue',
+			{ repositoryId, deliveryId: id },
+		);
+	}
 	startedPreparationVersions(stream: string): Promise<string[]> {
 		return this.run(
 			this.executions().pipe(
