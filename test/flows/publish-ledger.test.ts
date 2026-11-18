@@ -928,7 +928,10 @@ test('npm publishes an SDK before the CLI it optionally installs when the CLI ne
 		files: version => ({
 			'packages/sdk/README.md': '# SDK\n',
 			'packages/sdk/LICENSE': licenseText,
-			'packages/sdk/package.json': npmManifest(sdk, version, { optionalDependencies: { [cli]: 'workspace:*' } }),
+			'packages/sdk/package.json': npmManifest(sdk, version, {
+				dependencies: { [cli]: 'workspace:*' },
+				optionalDependencies: { [cli]: 'workspace:*' },
+			}),
 			'apps/cli/README.md': '# CLI\n',
 			'apps/cli/LICENSE': licenseText,
 			'apps/cli/package.json': npmManifest(cli, version, { peerDependencies: { [sdk]: 'workspace:*' } }),
@@ -949,6 +952,12 @@ test('npm publishes an SDK before the CLI it optionally installs when the CLI ne
 			digest: npmIntegrity(sdk, '1.1.0'),
 		}));
 		expect(claimed).toMatchObject({ kind: 'publish' });
+		const early = await Effect.runPromise(workflowCall(world, '/api/workflow/publish/claim', {
+			executionId,
+			purl: 'pkg:npm/%40octo/cli@1.1.0',
+			digest: npmIntegrity(cli, '1.1.0'),
+		}));
+		expect(early).toMatchObject({ kind: 'wait' });
 		world.npm.publish(sdk, '1.1.0');
 		await Effect.runPromise(workflowCall(world, '/api/workflow/publish/report', {
 			executionId,
@@ -959,7 +968,7 @@ test('npm publishes an SDK before the CLI it optionally installs when the CLI ne
 	});
 }, 60_000);
 
-test('the publisher reports a hard dependency cycle instead of waiting', async () => {
+test.each(['one ledger', 'two ledgers'])('the publisher reports a hard dependency cycle in %s', async (scope) => {
 	const a = '@octo/a', b = '@octo/b';
 	const layout: Layout = {
 		managers: ['npm', 'workflow'],
@@ -975,15 +984,22 @@ test('the publisher reports a hard dependency cycle instead of waiting', async (
 	};
 	world.npm.publish(a, '1.0.0');
 	world.npm.publish(b, '1.0.0');
-	const { begun } = await released({ main: ['pkg:npm/%40octo/a', 'pkg:npm/%40octo/b'] }, layout);
-	const { execution, identity } = started(begun, 'main');
-	const result = await withIdentity(
-		world,
-		identity,
-		() =>
-			Effect.runPromise(Effect.flip(workflowCall(world, '/api/workflow/publish/next', { executionId: execution.id }))),
-	);
-	expect(result.message).toContain('Publication dependency cycle at pkg:npm/%40octo/a');
+	const aId = 'pkg:npm/%40octo/a', bId = 'pkg:npm/%40octo/b';
+	const streams: Record<string, string[]> = scope === 'one ledger'
+		? { main: [aId, bId] }
+		: { main: [aId], other: [bId] };
+	const { begun } = await released(streams, layout);
+	const next = (stream: string) => {
+		const { execution, identity } = started(begun, stream);
+		return withIdentity(world, identity, () => Effect.runPromise(Effect.result(
+			workflowCall(world, '/api/workflow/publish/next', { executionId: execution.id }),
+		)));
+	};
+	if (scope === 'two ledgers') {
+		expect(await next('main')).toMatchObject({ _tag: 'Success', success: { kind: 'wait' } });
+	}
+	const result = await next(scope === 'one ledger' ? 'main' : 'other');
+	expect(result._tag === 'Failure' && result.failure.message).toContain('Publication dependency cycle at');
 }, 60_000);
 
 test('npm and PyPI packages publish through npm and uv and verify their integrity and sha256', async () => {

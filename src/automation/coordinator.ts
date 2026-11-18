@@ -141,7 +141,6 @@ import type { ClaimStep, LedgerManager, NextStep, PublishReport, ReportStep } fr
 import { ledgerManagers } from '@/contract/ledger';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
 import type { BinaryProgress, PackageTagPage } from '@/contract/views';
-import { dependencyOrder } from '@/dependency-order';
 import { parseRetryAfter } from '@/domain/http-date';
 import type { ReadyRepository } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
@@ -1976,15 +1975,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 				const [wait] = waits.sort((a, b) => a.until - b.until);
 				if (wait) {
-					const outstanding = new Map(
-						ledger.records.filter(record => !released(record)).map(record => [record.id, record]),
+					const cycle = this.publicationDeadlock(
+						ledger,
+						[ledger, ...ledgers.filter(other => other.executionId !== id)],
+						executions,
+						now,
 					);
-					const order = dependencyOrder(
-						outstanding.keys(),
-						key => Result.succeed(outstanding.get(key)?.dependencies),
-						key => Result.fail(key),
-					);
-					if (Result.isFailure(order)) return yield* precondition(`Publication dependency cycle at ${order.failure}`);
+					if (cycle) return yield* precondition(`Publication dependency cycle at ${cycle.id}`);
 				}
 				return wait
 					? { kind: 'wait' as const, ...wait }
@@ -2187,6 +2184,35 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		const record = ledger.records.find(entry => entry.purl === purl);
 		return record ? Effect.succeed(record) : Effect.fail(precondition(`${purl} is not in this execution's plan`));
 	}
+	private publicationDeadlock(current: Ledger, ledgers: Ledger[], executions: Execution[], now: number) {
+		const active = new Map(
+			executions.filter(execution => execution.state === 'running').map(execution => [
+				execution.id,
+				execution,
+			]),
+		);
+		const waiting = new Map<LedgerRecord, LedgerRecord[]>();
+		for (const ledger of ledgers) {
+			if (ledger.sourceSha !== current.sourceSha) continue;
+			const execution = active.get(ledger.executionId);
+			if (!execution?.runId) continue;
+			const holder = `${execution.runId}:${execution.runAttempt ?? 1}`;
+			for (const record of ledger.records) {
+				if (availability(record, holder, now).kind !== 'open') continue;
+				const blocker = this.blocker(execution, record, holder, ledgers, executions, now);
+				if (blocker?.kind === 'pending' && blocker.producers.length) waiting.set(record, blocker.producers);
+			}
+		}
+		// A package can move if any producer it waits on can move.
+		let before: number;
+		do {
+			before = waiting.size;
+			for (const [record, producers] of waiting) {
+				if (producers.some(producer => !waiting.has(producer))) waiting.delete(record);
+			}
+		} while (waiting.size !== before);
+		return current.records.find(record => waiting.has(record));
+	}
 	private blocker(
 		execution: Execution,
 		record: LedgerRecord,
@@ -2194,7 +2220,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		ledgers: Ledger[],
 		executions: Execution[],
 		now: number,
-	): { kind: 'failed'; reason: string } | { kind: 'pending'; reason: string; until: number } | undefined {
+	):
+		| { kind: 'failed'; reason: string }
+		| { kind: 'pending'; reason: string; until: number; producers: LedgerRecord[] }
+		| undefined
+	{
 		const live = (id: string) =>
 			executions.some(other => other.id === id && !['succeeded', 'cancelled', 'failed'].includes(other.state));
 		for (const dependency of record.dependencies) {
@@ -2209,16 +2239,19 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				)
 			) continue;
 			const reason = `${label(record)} waits for ${dependency}`;
-			const pending = records.filter(({ other, candidate }) =>
+			const producers = records.filter(({ other, candidate }) =>
 				candidate.status.state !== 'failed-permanent'
 				&& !(candidate.status.state === 'failed-retryable' && candidate.status.holder === holder)
 				&& live(other.executionId)
-			).map(({ candidate }) =>
-				candidate.status.state === 'rate-limited'
-					? candidate.status.retryAfter
-					: Math.max(candidate.notBefore ?? 0, now + dependencyPoll)
-			);
-			if (pending.length) return { kind: 'pending', reason, until: Math.min(...pending) };
+			).map(({ candidate }) => candidate);
+			if (producers.length) {
+				const until = Math.min(...producers.map(candidate =>
+					candidate.status.state === 'rate-limited'
+						? candidate.status.retryAfter
+						: Math.max(candidate.notBefore ?? 0, now + dependencyPoll)
+				));
+				return { kind: 'pending', reason, until, producers };
+			}
 			if (records.length) return { kind: 'failed', reason: `${dependency} did not publish` };
 			if (
 				executions.some(other =>
@@ -2226,7 +2259,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					&& other.sourceSha === execution.sourceSha && live(other.id)
 					&& (other.workflow?.publications ?? []).some(reference => selectorKey(reference) === dependency)
 				)
-			) return { kind: 'pending', reason, until: now + dependencyPoll };
+			) return { kind: 'pending', reason, until: now + dependencyPoll, producers: [] };
 		}
 		return undefined;
 	}
