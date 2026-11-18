@@ -1,5 +1,7 @@
 import { expect, test } from 'bun:test';
+import { virtualTime } from '@root/test/support/time.ts';
 import { Deferred, Effect, Exit, Fiber, Result } from 'effect';
+import { TestClock } from 'effect/testing';
 import { exportPKCS8, generateKeyPair } from 'jose';
 import { gitHubRequest, RepositoryGateway } from '@/automation/github';
 import { goManager } from '@/automation/managers/go';
@@ -77,7 +79,7 @@ test('channel verification releases rejected response after consuming version me
 
 test('GitHub read retries release prior bodies and preserve final server error detail', async () => {
 	const responses: Response[] = [];
-	const result = await Effect.runPromise(Effect.result(gitHubRequest(
+	const result = await virtualTime(Effect.result(gitHubRequest(
 		async () => {
 			for (const response of responses) expect(response.bodyUsed).toBe(true);
 			const response = Response.json({ message: `server attempt ${responses.length + 1}` }, { status: 503 });
@@ -106,6 +108,31 @@ test('GitHub mutations are attempted once and preserve their error', async () =>
 	)));
 	expect(calls).toBe(1);
 	expect(Result.isFailure(result) && result.failure.message).toContain('mutation failed');
+});
+
+test('GitHub read retries wait 500 milliseconds and then one second', async () => {
+	let requests = 0;
+	const attempts = await Effect.runPromise(
+		Effect.gen(function*() {
+			const fiber = yield* Effect.forkChild(Effect.result(gitHubRequest(
+				async () => {
+					requests++;
+					return Response.json({ message: 'unavailable' }, { status: 503 });
+				},
+				'/repos/o/r',
+				'',
+			)));
+			const seen: number[] = [];
+			for (const step of [0, 499, 1, 999, 1]) {
+				yield* TestClock.adjust(step);
+				yield* Effect.promise(() => new Promise<void>(resolve => setImmediate(resolve)));
+				seen.push(requests);
+			}
+			yield* Fiber.join(fiber);
+			return seen;
+		}).pipe(Effect.provide(TestClock.layer())),
+	);
+	expect(attempts).toEqual([1, 1, 2, 2, 3]);
 });
 
 test('scoped response cleanup preserves primary failure when cancellation rejects', async () => {
@@ -306,7 +333,7 @@ test('only explicitly read-only GraphQL queries opt into POST retries', async ()
 			? Response.json({ message: 'temporary outage' }, { status: 503 })
 			: Response.json({ data: { repository: {} } });
 	expect(
-		await Effect.runPromise(
+		await virtualTime(
 			gitHubRequest(transport, '/graphql', '', 'POST', { query: 'query { viewer { login } }' }, true),
 		),
 	)
@@ -327,7 +354,7 @@ test('a stalled cancellation cannot delay an early HTTP result indefinitely', as
 			return new Promise<void>(() => {});
 		},
 	}));
-	const result = await Effect.runPromise(
+	const result = await virtualTime(
 		Effect.gen(function*() {
 			yield* scopedResponse(Effect.succeed(response));
 			return yield* Effect.fail('primary failure');
@@ -339,7 +366,7 @@ test('a stalled cancellation cannot delay an early HTTP result indefinitely', as
 });
 
 test('reader interruption releases its lock even when cancellation never settles', async () => {
-	await Effect.runPromise(Effect.gen(function*() {
+	await virtualTime(Effect.gen(function*() {
 		const started = yield* Deferred.make<void>();
 		let cancelStarted = false;
 		const response = new Response(new ReadableStream<Uint8Array>(
@@ -375,7 +402,7 @@ test('cancellation rejection after the cleanup deadline is still handled', async
 			});
 		},
 	}));
-	const result = await Effect.runPromise(
+	const result = await virtualTime(
 		Effect.gen(function*() {
 			yield* scopedResponse(Effect.succeed(response));
 			return 'primary result';
@@ -413,7 +440,7 @@ test('intermediate GitHub server errors cancel without reading and attempts rese
 		'',
 	);
 	for (let evaluation = 1; evaluation <= 2; evaluation++) {
-		const result = await Effect.runPromise(work.pipe(Effect.result, Effect.timeout('2500 millis')));
+		const result = await virtualTime(work.pipe(Effect.result, Effect.timeout('2500 millis')));
 		expect(Result.isFailure(result) && result.failure.message).toContain('final server detail');
 		expect(requests).toBe(3 * evaluation);
 		expect(cancelled).toBe(2 * evaluation);
@@ -452,7 +479,7 @@ test('GitHub diagnostics stop after a bounded prefix of a streaming error body',
 
 test('GitHub error diagnostics time out while preserving the HTTP error', async () => {
 	let cancelled = false;
-	const result = await Effect.runPromise(
+	const result = await virtualTime(
 		gitHubRequest(
 			async () => openResponse(400, () => {
 				cancelled = true;

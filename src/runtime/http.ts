@@ -5,15 +5,8 @@ const readFailure = (cause: unknown) => new ResponseReadError({ cause });
 
 type Body = Pick<Response, 'body'>;
 
-function cancelBody(cancel: () => Promise<unknown>): Promise<void> {
-	return new Promise(resolve => {
-		const finish = () => {
-			clearTimeout(timer);
-			resolve();
-		};
-		const timer = setTimeout(finish, 1000);
-		Promise.resolve().then(cancel).then(finish, finish);
-	});
+export function cancelStream(cancel: () => Promise<unknown>): Effect.Effect<void> {
+	return Effect.tryPromise(cancel).pipe(Effect.interruptible, Effect.timeout('1 second'), Effect.ignore);
 }
 
 export function scopedResponse<E, R>(request: Effect.Effect<Response, E, R>) {
@@ -21,7 +14,7 @@ export function scopedResponse<E, R>(request: Effect.Effect<Response, E, R>) {
 		request,
 		response => {
 			const body = response.body;
-			return body ? Effect.promise(() => cancelBody(() => body.cancel())) : Effect.void;
+			return body ? cancelStream(() => body.cancel()) : Effect.void;
 		},
 		{ interruptible: true },
 	);
@@ -36,13 +29,7 @@ function readBody<A>(
 		read,
 		reader =>
 			reader
-				? Effect.promise(async () => {
-					try {
-						await cancelBody(() => reader.cancel());
-					} finally {
-						reader.releaseLock();
-					}
-				})
+				? cancelStream(() => reader.cancel()).pipe(Effect.ensuring(Effect.sync(() => reader.releaseLock())))
 				: Effect.void,
 	);
 }

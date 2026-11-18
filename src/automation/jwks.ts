@@ -1,9 +1,9 @@
-import { Effect } from 'effect';
+import { Clock, Effect, Option } from 'effect';
 import type { Jwks, JwsKeyResolver } from 'micro509/jose';
 import { createJwksKeyResolver, DEFAULT_JWKS_LIMITS, parseJwks } from 'micro509/jose';
 import { failureResult } from 'micro509/result';
 import type { Fetcher } from '@/automation/managers/registry';
-import { scopedResponse } from '@/runtime/http';
+import { cancelStream, scopedResponse } from '@/runtime/http';
 
 interface Snapshot {
 	readonly keys: Jwks;
@@ -17,6 +17,7 @@ const lifetime = 600_000;
 const cooldown = 30_000;
 const unavailable = () => failureResult('jwks_unavailable', 'Could not retrieve signing keys');
 const malformed = () => failureResult('jwks_malformed', 'Invalid signing key set');
+const aborted = () => failureResult('aborted', 'Signing key resolution was cancelled');
 
 function boundedBody(response: Response) {
 	return Effect.acquireUseRelease(
@@ -43,20 +44,7 @@ function boundedBody(response: Response) {
 		}),
 		reader =>
 			reader
-				? Effect.promise(async () => {
-					let timer: ReturnType<typeof setTimeout> | undefined;
-					try {
-						await Promise.race([
-							reader.cancel().catch(() => {}),
-							new Promise<void>(resolve => {
-								timer = setTimeout(resolve, 1000);
-							}),
-						]);
-					} finally {
-						clearTimeout(timer);
-						reader.releaseLock();
-					}
-				})
+				? cancelStream(() => reader.cancel()).pipe(Effect.ensuring(Effect.sync(() => reader.releaseLock())))
 				: Effect.void,
 	);
 }
@@ -88,7 +76,8 @@ function fetchKeys(url: URL, transport: Fetcher) {
 	}));
 }
 
-export function remoteKeys(url: URL, transport: Fetcher): JwsKeyResolver {
+export const remoteKeys = Effect.fnUntraced(function*(url: URL, transport: Fetcher) {
+	const run = Effect.runPromiseWith(yield* Effect.context<never>());
 	let cache = caches.get(transport);
 	if (!cache) {
 		cache = new Map();
@@ -96,53 +85,38 @@ export function remoteKeys(url: URL, transport: Fetcher): JwsKeyResolver {
 	}
 	const snapshots = cache;
 	const endpoint = new URL(url);
-	return async request => {
-		if (request.signal?.aborted) return failureResult('aborted', 'Signing key resolution was cancelled');
-		const deadline = new AbortController();
-		const timer = setTimeout(() => deadline.abort(), 5000);
-		const signal = request.signal ? AbortSignal.any([request.signal, deadline.signal]) : deadline.signal;
+	const resolver: JwsKeyResolver = async request => {
+		if (request.signal?.aborted) return aborted();
 		const resolve = (keys: Jwks) => Effect.tryPromise({
 			try: signal => createJwksKeyResolver(keys)({ ...request, signal }),
 			catch: () => failureResult('key_resolution_failed', 'Signing key resolution failed unexpectedly'),
 		});
-		try {
-			const result = await Effect.runPromise(
-				Effect.gen(function*() {
-					const snapshot = snapshots.get(endpoint.href);
-					const age = snapshot ? Date.now() - snapshot.fetchedAt : Infinity;
-					if (snapshot && age < lifetime) {
-						const cached = yield* resolve(snapshot.keys);
-						if (cached.ok || (cached.code !== 'key_not_found' && cached.code !== 'key_unsuitable') || age < cooldown) {
-							return cached;
-						}
-					}
-					const keys = yield* fetchKeys(endpoint, transport);
-					// Keep any snapshot published by a peer while this fetch was outstanding.
-					if (snapshots.get(endpoint.href) === snapshot) {
-						snapshots.set(endpoint.href, { keys, fetchedAt: Date.now() });
-					}
-					return yield* resolve(keys);
-				}).pipe(
-					Effect.match({
-						onFailure: error => error,
-						onSuccess: result => result,
-					}),
-				),
-				{ signal },
-			);
-			if (signal.aborted) {
-				return request.signal?.aborted
-					? failureResult('aborted', 'Signing key resolution was cancelled')
-					: unavailable();
+		const work = Effect.gen(function*() {
+			const snapshot = snapshots.get(endpoint.href);
+			const age = snapshot ? (yield* Clock.currentTimeMillis) - snapshot.fetchedAt : Infinity;
+			if (snapshot && age < lifetime) {
+				const cached = yield* resolve(snapshot.keys);
+				if (cached.ok || (cached.code !== 'key_not_found' && cached.code !== 'key_unsuitable') || age < cooldown) {
+					return cached;
+				}
 			}
-			return result;
+			const keys = yield* fetchKeys(endpoint, transport);
+			// Keep any snapshot published by a peer while this fetch was outstanding.
+			if (snapshots.get(endpoint.href) === snapshot) {
+				snapshots.set(endpoint.href, { keys, fetchedAt: yield* Clock.currentTimeMillis });
+			}
+			return yield* resolve(keys);
+		}).pipe(
+			Effect.timeoutOption('5 seconds'),
+			Effect.match({ onFailure: error => error, onSuccess: Option.getOrElse(unavailable) }),
+		);
+		try {
+			return await run(work, request.signal ? { signal: request.signal } : undefined);
 		} catch {
-			if (request.signal?.aborted) return failureResult('aborted', 'Signing key resolution was cancelled');
-			return deadline.signal.aborted
-				? unavailable()
+			return request.signal?.aborted
+				? aborted()
 				: failureResult('key_resolution_failed', 'Signing key resolution failed unexpectedly');
-		} finally {
-			clearTimeout(timer);
 		}
 	};
-}
+	return resolver;
+});
