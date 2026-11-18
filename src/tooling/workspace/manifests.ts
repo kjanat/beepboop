@@ -110,13 +110,14 @@ export function exported(
 		? { target: workspace.exports.get(subpath), rest: '' }
 		: undefined;
 	if (!selected) {
-		let prefix = -1;
+		let best: { readonly star: number; readonly length: number } | undefined;
 		for (const [key, target] of workspace.exports) {
 			const star = key.indexOf('*');
-			if (star < 0 || star <= prefix) continue;
+			if (star < 0) continue;
 			const head = key.slice(0, star), tail = key.slice(star + 1);
-			if (!subpath.startsWith(head) || !subpath.endsWith(tail) || subpath.length < head.length + tail.length) continue;
-			prefix = star;
+			if (!subpath.startsWith(head) || !subpath.endsWith(tail) || subpath.length < key.length) continue;
+			if (best && (star < best.star || (star === best.star && key.length <= best.length))) continue;
+			best = { star, length: key.length };
 			selected = { target, rest: subpath.slice(head.length, subpath.length - tail.length) };
 		}
 	}

@@ -670,6 +670,38 @@ describe('boundaries', () => {
 		]);
 	});
 
+	test('a pattern with a longer suffix beats an equal prefix in either declaration order, and a star never matches nothing', async () => {
+		const exports = [['./*', './src/*.ts'], ['./*.js', './specific/*.ts']];
+		repository({
+			'packages/one/package.json': JSON.stringify({ name: '@beepboop/one', exports: Object.fromEntries(exports) }),
+			'packages/two/package.json': JSON.stringify({
+				name: '@beepboop/two',
+				exports: Object.fromEntries([...exports].reverse()),
+			}),
+			'packages/one/src/a.js.ts': 'export const decoy = 1;\n',
+			'packages/two/src/a.js.ts': 'export const decoy = 1;\n',
+			'packages/one/specific/b.ts': 'export const b = 1;\n',
+			'packages/two/specific/.ts': 'export const empty = 1;\n',
+			'packages/use/package.json': JSON.stringify({
+				name: '@beepboop/use',
+				dependencies: { '@beepboop/one': 'workspace:*', '@beepboop/two': 'workspace:*' },
+			}),
+			'packages/use/src/u.ts': [
+				"import '@beepboop/one/a.js';",
+				"import '@beepboop/two/a.js';",
+				"import '@beepboop/one/b.js';",
+				"import '@beepboop/two/.js';",
+			].join('\n'),
+		});
+		const report = await Effect.runPromise(checkBoundaries(root));
+
+		expect(report.violations.map(describeViolation)).toEqual([
+			'packages/use/src/u.ts imports @beepboop/one/a.js, which resolves to no tracked file',
+			'packages/use/src/u.ts imports @beepboop/two/a.js, which resolves to no tracked file',
+			'packages/use/src/u.ts imports @beepboop/two/.js, which resolves to no tracked file',
+		]);
+	});
+
 	test('the boundaries script exits non-zero on violations', () => {
 		repository({
 			'packages/kernel/package.json': '{ "name": "@beepboop/kernel" }',
