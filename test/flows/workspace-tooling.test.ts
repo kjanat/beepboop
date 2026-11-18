@@ -101,6 +101,7 @@ describe('module references', () => {
 			'async function f() { return await /`/.exec(s); }',
 			'if (x) /`/.test(y);',
 			'const n = obj.in / 2 + `/`;',
+			'const ratio = value! / 2 + `/`;',
 		];
 
 		for (const prefix of prefixes) {
@@ -393,6 +394,74 @@ describe('move', () => {
 		expect(git('status', '--short')).toBe('');
 	});
 
+	test('absolute URLs and absolute resolve arguments stay untouched when their file moves', async () => {
+		repository({
+			'src/lib/use.ts': [
+				"const api = new URL('https://example.invalid/x', import.meta.url);",
+				"const root = new URL('/etc/hosts', import.meta.url);",
+				"const hosts = resolve(import.meta.dir, '/etc/hosts');",
+			].join('\n'),
+		});
+		await Effect.runPromise(move(root, [['src/lib', 'packages/kernel/src/lib']]));
+
+		expect(read('packages/kernel/src/lib/use.ts')).toBe([
+			"const api = new URL('https://example.invalid/x', import.meta.url);",
+			"const root = new URL('/etc/hosts', import.meta.url);",
+			"const hosts = resolve(import.meta.dir, '/etc/hosts');",
+		].join('\n'));
+	});
+
+	test('a target under another planned file target, an alias name already taken and a target outside the repository refuse', async () => {
+		repository({
+			'tsconfig.json': tsconfig.replace(
+				'"@root/*": ["./*"]',
+				'"@root/*": ["./*"],\n\t\t\t"@/kernel/*": ["./src/kernel/*"]',
+			),
+			'src/a.ts': 'export const a = 1;\n',
+			'src/b.ts': 'export const b = 1;\n',
+		});
+
+		expect(await refusal(move(root, [['src/a.ts', 'out/file'], ['src/b.ts', 'out/file/b.ts']]))).toContain(
+			'out/file/b.ts would sit under the planned file out/file',
+		);
+		expect(await refusal(move(root, [['src/a.ts', 'packages/kernel/src/a.ts']]))).toContain(
+			'tsconfig.json already maps @/kernel/* to ./src/kernel/*',
+		);
+		expect(await refusal(move(root, [['src/a.ts', '../elsewhere/a.ts']]))).toContain(
+			'Move target leaves the repository: ../elsewhere/a.ts',
+		);
+		expect(git('status', '--short')).toBe('');
+	});
+
+	test('a directory moved to the repository root lands at the root', async () => {
+		repository({ 'src/lib/a.ts': 'export const a = 1;\n', 'src/use.ts': "import { a } from './lib/a.ts';\n" });
+		await Effect.runPromise(move(root, [['src/lib', '.']]));
+
+		expect(read('a.ts')).toBe('export const a = 1;\n');
+		expect(read('src/use.ts')).toBe("import { a } from '@root/a.ts';\n");
+	});
+
+	test('an extensionless import of a JavaScript file follows its move', async () => {
+		repository({ 'src/a.js': 'export const a = 1;\n', 'src/use.ts': "import { a } from './a';\n" });
+		await Effect.runPromise(move(root, [['src/a.js', 'packages/kernel/src/a.js']]));
+
+		expect(read('src/use.ts')).toBe("import { a } from '@/kernel/a.js';\n");
+	});
+
+	test('a directory move with a per-file override asks for a review of dynamic paths into it', async () => {
+		repository({
+			'src/widgets/a.ts': 'export const a = 1;\n',
+			'src/widgets/b.ts': 'export const b = 1;\n',
+			'test/load.ts': 'const load = (name: string) => import(join(import.meta.dir, `../src/widgets/${name}.ts`));\n',
+		});
+		const report = await Effect.runPromise(move(root, [
+			['src/widgets', 'packages/kernel/src/widgets'],
+			['src/widgets/b.ts', 'packages/ui/src/b.ts'],
+		]));
+
+		expect(report.review).toEqual(['test/load.ts:1 ../src/widgets/ names files that move to different places']);
+	});
+
 	test('the command takes pairs, reports what still mentions the old path, and refuses an odd argument list', async () => {
 		repository({
 			'src/a.ts': 'export const a = 1;\n',
@@ -483,6 +552,38 @@ describe('boundaries', () => {
 			'A second copy of effect is installed at packages/domain/node_modules/effect/package.json',
 		]);
 		expect(await refusal(boundariesCommand(root))).toContain('9 package boundary violations');
+	});
+
+	test('exports resolve exact keys first, then the most specific pattern, through conditions and every wildcard', async () => {
+		repository({
+			'packages/kernel/package.json': JSON.stringify({
+				name: '@beepboop/kernel',
+				exports: {
+					'.': { types: './src/index.d.ts', import: './src/index.ts' },
+					'./*': './src/*.ts',
+					'./ui/*': './src/ui/*/*.ts',
+					'./feature': './missing.ts',
+				},
+			}),
+			'packages/kernel/src/index.ts': 'export const index = 1;\n',
+			'packages/kernel/src/feature.ts': 'export const feature = 1;\n',
+			'packages/kernel/src/ui/button/button.ts': 'export const button = 1;\n',
+			'packages/domain/package.json':
+				'{ "name": "@beepboop/domain", "dependencies": { "@beepboop/kernel": "workspace:*" } }',
+			'packages/domain/src/c.ts': [
+				"import '@beepboop/kernel';",
+				"import '@beepboop/kernel/ui/button';",
+				"import '@beepboop/kernel/feature';",
+				'await import(`@/legacy.ts`);',
+			].join('\n'),
+			'src/legacy.ts': 'export const legacy = 1;\n',
+		});
+		const report = await Effect.runPromise(checkBoundaries(root));
+
+		expect(report.violations.map(describeViolation)).toEqual([
+			'packages/domain/src/c.ts imports @beepboop/kernel/feature, which resolves to no tracked file',
+			'packages/domain/src/c.ts imports @/legacy.ts, which resolves outside any package (src/legacy.ts)',
+		]);
 	});
 
 	test('the boundaries script exits non-zero on violations', () => {

@@ -62,10 +62,14 @@ const expandPairs = Effect.fn('expandPairs')(function*(
 		if (files.includes(from)) moves.set(from, to);
 		else if (inside.length) {
 			directories.push([from, to]);
-			for (const file of inside) moves.set(file, `${to}/${file.slice(from.length + 1)}`);
+			for (const file of inside) moves.set(file, repositoryPath(posix.join(to, file.slice(from.length + 1))));
 		} else return yield* refuse(`Not a tracked file or directory: ${rawFrom}`);
 	}
 	const targets = [...moves.values()];
+	const outside = targets.find(target =>
+		target === '' || target === '..' || target.startsWith('../') || target.startsWith('/')
+	);
+	if (outside !== undefined) return yield* refuse(`Move target leaves the repository: ${outside || '.'}`);
 	const clash = targets.find((target, index) => targets.indexOf(target) !== index || files.includes(target));
 	if (clash) return yield* refuse(`Move target already exists or repeats: ${clash}`);
 	return { files: moves, directories };
@@ -77,26 +81,32 @@ const preflight = Effect.fn('preflight')(function*(root: string, plan: Plan) {
 		attemptPromise(() =>
 			lstat(join(root, path)).then(stats => stats.isDirectory() ? 'directory' : 'file', () => 'none')
 		);
+	const targets = new Set(plan.files.values());
 	for (const [source, target] of plan.files) {
 		if ((yield* kind(source)) !== 'file') problems.push(`${source} is tracked but missing from the worktree`);
 		if ((yield* kind(target)) !== 'none') problems.push(`${target} already exists on disk`);
-		for (let parent = dirname(target); parent !== '.'; parent = dirname(parent)) {
-			if ((yield* kind(parent)) === 'file') problems.push(`${target} would sit under the file ${parent}`);
+		for (let parent = dirname(target); parent !== '.' && parent !== '/'; parent = dirname(parent)) {
+			if (targets.has(parent)) problems.push(`${target} would sit under the planned file ${parent}`);
+			else if ((yield* kind(parent)) === 'file') problems.push(`${target} would sit under the file ${parent}`);
 		}
 	}
 	return problems;
 });
 
-function packageAliases(aliases: readonly Alias[], moves: ReadonlyMap<string, string>): Alias[] {
+function packageAliases(aliases: readonly Alias[], moves: ReadonlyMap<string, string>) {
 	const added = new Map<string, Alias>();
+	const problems: string[] = [];
 	for (const target of moves.values()) {
 		const name = packageOf(target);
-		if (!name || !target.startsWith(`packages/${name}/src/`)) continue;
+		if (!name || !target.startsWith(`packages/${name}/src/`) || added.has(name)) continue;
 		const source = `./packages/${name}/src/*`;
 		if (aliases.some(alias => alias.targets.includes(source))) continue;
-		added.set(name, { pattern: `@/${name}/*`, targets: [source] });
+		const pattern = `@/${name}/*`;
+		const taken = aliases.find(alias => alias.pattern === pattern);
+		if (taken) problems.push(`tsconfig.json already maps ${pattern} to ${taken.targets.join(', ')}`);
+		else added.set(name, { pattern, targets: [source] });
 	}
-	return [...added.values()];
+	return { added: [...added.values()], problems };
 }
 
 function isDirectory(files: ReadonlySet<string>, path: string): boolean {
@@ -106,11 +116,15 @@ function isDirectory(files: ReadonlySet<string>, path: string): boolean {
 }
 
 function mapDirectory(plan: Plan, files: ReadonlySet<string>, path: string, dynamic: boolean): string | undefined {
-	for (const [from, to] of plan.directories) {
-		if (path === from || path.startsWith(`${from}/`)) return `${to}${path.slice(from.length)}`;
-	}
 	const prefix = path === '' ? '' : `${path}/`;
 	const inside = [...files].filter(candidate => candidate.startsWith(prefix));
+	const follows = (mapped: string) =>
+		inside.every(candidate => plan.files.get(candidate) === `${mapped}/${candidate.slice(prefix.length)}`);
+	for (const [from, to] of plan.directories) {
+		if (path !== from && !path.startsWith(`${from}/`)) continue;
+		const mapped = repositoryPath(posix.join(to, path.slice(from.length)));
+		if (follows(mapped)) return mapped;
+	}
 	const moved = inside.filter(candidate => plan.files.has(candidate));
 	if (!moved.length || (!dynamic && moved.length < inside.length)) return path;
 	const [first] = moved;
@@ -277,13 +291,13 @@ export const move = Effect.fn('move')(function*(
 	const files = yield* trackedFiles(root);
 	const plan = yield* expandPairs(files, pairs);
 	const aliases = yield* readAliases(root);
-	const addedAliases = packageAliases(aliases, plan.files);
+	const { added: addedAliases, problems: aliasProblems } = packageAliases(aliases, plan.files);
 	const before: Layout = { aliases, files: new Set(files) };
 	const after: Layout = {
 		aliases: [...aliases, ...addedAliases],
 		files: new Set(files.map(file => plan.files.get(file) ?? file)),
 	};
-	const problems = yield* preflight(root, plan);
+	const problems = [...aliasProblems, ...(yield* preflight(root, plan))];
 	const tsconfig = yield* aliasEdit(root, addedAliases);
 	if (tsconfig.problem) problems.push(tsconfig.problem);
 	const writes = new Map<string, string>();

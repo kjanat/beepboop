@@ -17,7 +17,14 @@ import {
 	trackedFiles,
 } from '@/tooling/workspace/modules';
 
+type ExportTarget = string | null | { readonly [key: string]: ExportTarget };
+const exportTarget: Schema.Codec<ExportTarget> = Schema.Union([
+	Schema.String,
+	Schema.Null,
+	Schema.Record(Schema.String, Schema.suspend(() => exportTarget)),
+]);
 const dependencyMap = Schema.optional(Schema.Record(Schema.String, Schema.String));
+const conditions = new Set(['bun', 'import', 'module', 'node', 'default']);
 const manifestSchema = Schema.Struct({
 	name: Schema.String,
 	dependencies: dependencyMap,
@@ -26,7 +33,7 @@ const manifestSchema = Schema.Struct({
 	optionalDependencies: dependencyMap,
 	files: Schema.optional(Schema.Array(Schema.String)),
 	bin: Schema.optional(Schema.Union([Schema.String, Schema.Record(Schema.String, Schema.String)])),
-	exports: Schema.optional(Schema.Union([Schema.String, Schema.Record(Schema.String, Schema.String)])),
+	exports: Schema.optional(exportTarget),
 });
 
 const platformModules = /^(?:node:|bun:|cloudflare:|astro:|virtual:)|^bun$/;
@@ -50,8 +57,25 @@ interface Workspace {
 	readonly directory: string;
 	readonly name: string;
 	readonly dependencies: ReadonlySet<string>;
+	readonly base: string;
 	readonly outputs: ReadonlySet<string>;
-	readonly exports: ReadonlyMap<string, string>;
+	readonly exports: ReadonlyMap<string, ExportTarget>;
+}
+
+function subpaths(field: ExportTarget | undefined): Map<string, ExportTarget> {
+	if (field === undefined || field === null) return new Map();
+	if (typeof field === 'string') return new Map([['.', field]]);
+	const keys = Object.keys(field);
+	return keys.length && keys.every(key => key.startsWith('.'))
+		? new Map(Object.entries(field))
+		: new Map([['.', field]]);
+}
+
+function conditional(target: ExportTarget | undefined): string | undefined {
+	if (target === undefined || target === null) return undefined;
+	if (typeof target === 'string') return target;
+	const key = Object.keys(target).find(name => conditions.has(name));
+	return key === undefined ? undefined : conditional(target[key]);
 }
 
 function values(field: string | Readonly<Record<string, string>> | undefined, key: string): [string, string][] {
@@ -80,8 +104,9 @@ const workspaces = Effect.fn('workspaces')(function*(
 			directory,
 			name: manifest.name,
 			dependencies: new Set(declared),
+			base,
 			outputs: new Set(outputs.map(path => repositoryPath(join(base, path)))),
-			exports: new Map(values(manifest.exports, '.').map(([key, path]) => [key, repositoryPath(join(base, path))])),
+			exports: subpaths(manifest.exports),
 		});
 	}
 	return found;
@@ -113,15 +138,24 @@ function packageName(specifier: string): string {
 function exported(workspace: Workspace, files: ReadonlySet<string>, specifier: string): string | undefined {
 	const [path] = splitQuery(specifier);
 	const subpath = `.${path.slice(workspace.name.length)}`;
-	for (const [key, target] of workspace.exports) {
-		const star = key.indexOf('*');
-		if (star < 0 && key !== subpath) continue;
-		if (star >= 0 && !(subpath.startsWith(key.slice(0, star)) && subpath.endsWith(key.slice(star + 1)))) continue;
-		const rest = star < 0 ? '' : subpath.slice(star, subpath.length - (key.length - star - 1));
-		const found = candidatePaths(target.replace('*', rest)).find(candidate => files.has(candidate));
-		if (found) return found;
+	let selected: { target: ExportTarget | undefined; rest: string } | undefined = workspace.exports.has(subpath)
+		? { target: workspace.exports.get(subpath), rest: '' }
+		: undefined;
+	if (!selected) {
+		let prefix = -1;
+		for (const [key, target] of workspace.exports) {
+			const star = key.indexOf('*');
+			if (star < 0 || star <= prefix) continue;
+			const head = key.slice(0, star), tail = key.slice(star + 1);
+			if (!subpath.startsWith(head) || !subpath.endsWith(tail) || subpath.length < head.length + tail.length) continue;
+			prefix = star;
+			selected = { target, rest: subpath.slice(head.length, subpath.length - tail.length) };
+		}
 	}
-	return undefined;
+	const target = conditional(selected?.target);
+	if (target === undefined || !selected) return undefined;
+	const base = repositoryPath(join(workspace.base, target.replaceAll('*', selected.rest)));
+	return candidatePaths(base).find(candidate => files.has(candidate));
 }
 
 export function describe(violation: Violation): string {

@@ -11,6 +11,8 @@ const probes = [
 	'.tsx',
 	'.mts',
 	'.d.ts',
+	'.js',
+	'.mjs',
 	'/index.ts',
 	'/index.tsx',
 	'/index.mts',
@@ -52,15 +54,17 @@ const tsconfigSchema = Schema.Struct({
 });
 
 const quoted = String.raw`(['"])([^'"\n]+)\1`;
+const callable = String.raw`(['"\x60])([^'"\x60\n$]+)\1`;
 const moduleReferences = [
 	new RegExp(String.raw`\b(?:from|import)\s*${quoted}`, 'g'),
-	new RegExp(String.raw`\bimport\s*\(\s*(?:/\*[\s\S]*?\*/\s*)*${quoted}`, 'g'),
-	new RegExp(String.raw`\brequire\s*\(\s*${quoted}`, 'g'),
-	new RegExp(String.raw`\b(?:require|import\.meta)\.resolve\s*\(\s*${quoted}`, 'g'),
-	new RegExp(String.raw`\bmock\.module\s*\(\s*${quoted}`, 'g'),
+	new RegExp(String.raw`\bimport\s*\(\s*(?:/\*[\s\S]*?\*/\s*)*${callable}`, 'g'),
+	new RegExp(String.raw`\brequire\s*\(\s*${callable}`, 'g'),
+	new RegExp(String.raw`\b(?:require|import\.meta)\.resolve\s*\(\s*${callable}`, 'g'),
+	new RegExp(String.raw`\bmock\.module\s*\(\s*${callable}`, 'g'),
 ];
 const scriptSource = new RegExp(String.raw`<script\b[^>]*\bsrc=${quoted}`, 'g');
-const joinCall = /\b(?:join|resolve)\(\s*import\.meta\.(?:dir|dirname)\s*,\s*/g;
+const joinCall = /\b(join|resolve)\(\s*import\.meta\.(?:dir|dirname)\s*,\s*/g;
+const absolute = /^(?:[a-z][a-z\d+.-]*:|\/)/i;
 const urlCall = /\bnew URL\(\s*(['"\x60])([^'"\x60\n]*)\1\s*,\s*import\.meta\.url\s*\)/g;
 const dirTemplate = /\x60\$\{import\.meta\.(?:dir|dirname)\}\/([^\x60\n]*)\x60/g;
 const locationSensitive = /\bimport\.meta\.(?:dir|dirname|url|filename|path)\b/g;
@@ -183,6 +187,11 @@ export function codeMask(source: string): Uint8Array {
 				i++;
 				continue;
 			}
+			if (char === '!' && operand && next !== '=') {
+				lastPunctuation = char;
+				i++;
+				continue;
+			}
 			if ((char === '+' || char === '-') && next === char) {
 				code[i + 1] = 1;
 				i += 2;
@@ -296,7 +305,7 @@ export function pathReferences(path: string, source: string): PathReference[] {
 			const { list, complete } = literalArguments(text, match.index + match[0].length);
 			const [first] = list;
 			const last = list.at(-1);
-			if (!first || !last) continue;
+			if (!first || !last || (match[1] === 'resolve' && list.some(argument => argument.text.startsWith('/')))) continue;
 			const single = list.length === 1;
 			const joined = list.map(argument => argument.text).filter(Boolean);
 			found.push({
@@ -311,7 +320,7 @@ export function pathReferences(path: string, source: string): PathReference[] {
 		}
 		for (const match of text.matchAll(urlCall)) {
 			const [, quote, body] = match;
-			if (quote === undefined || body === undefined || !code[match.index]) continue;
+			if (quote === undefined || body === undefined || !code[match.index] || absolute.test(body)) continue;
 			const dynamic = quote === '`' && body.includes('${');
 			const head = dynamic ? body.split('${')[0] ?? '' : body;
 			const start = region.offset + match.index + match[0].indexOf(body);
@@ -419,7 +428,7 @@ export function candidatePaths(base: string): string[] {
 export function aliasBases(aliases: readonly Alias[], specifier: string): string[] {
 	const [path] = splitQuery(specifier);
 	const matched = matchingAlias(aliases, path);
-	return matched ? matched.alias.targets.map(target => target.replace('*', matched.rest)) : [];
+	return matched ? matched.alias.targets.map(target => target.replaceAll('*', matched.rest)) : [];
 }
 
 export function resolveReference(
