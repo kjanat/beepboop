@@ -87,6 +87,7 @@ const regexKeywords = new Set([
 	'return',
 	'typeof',
 	'case',
+	'default',
 	'do',
 	'else',
 	'in',
@@ -107,14 +108,33 @@ export function shebangLength(source: string): number {
 	return end < 0 ? source.length : end;
 }
 
-export function codeMask(source: string): Uint8Array {
-	return lex(source).code;
+export function isJsx(path: string): boolean {
+	return path.endsWith('.jsx') || path.endsWith('.tsx');
 }
 
-function lex(source: string): { readonly code: Uint8Array; readonly comments: readonly (readonly [number, number])[] } {
+export function codeMask(source: string, jsx = false): Uint8Array {
+	return lex(source, jsx).code;
+}
+
+interface Element {
+	depth: number;
+	inTag: boolean;
+	closing: boolean;
+}
+
+type Nesting =
+	| { readonly kind: 'template'; level: number }
+	| { readonly kind: 'jsx'; level: number; readonly element: Element };
+
+const typeParameters = /^<[A-Za-z_$][\w$]*\s*(?:,|extends\b)/;
+
+function lex(
+	source: string,
+	jsx: boolean,
+): { readonly code: Uint8Array; readonly comments: readonly (readonly [number, number])[] } {
 	const code = new Uint8Array(source.length);
 	const comments: (readonly [number, number])[] = [];
-	const templates: number[] = [];
+	const nesting: Nesting[] = [];
 	const parens: boolean[] = [];
 	let i = shebangLength(source);
 	let operand = false, word = '', previous = '', wordAfterDot = false, lastPunctuation = '';
@@ -129,10 +149,48 @@ function lex(source: string): { readonly code: Uint8Array; readonly comments: re
 			else if (source[i] === '`') return void i++;
 			else if (source[i] === '$' && source[i + 1] === '{') {
 				i += 2;
-				templates.push(0);
+				nesting.push({ kind: 'template', level: 0 });
 				return;
 			} else i++;
 		}
+	};
+	const skipJsx = (element: Element): boolean => {
+		while (i < source.length) {
+			const char = source[i];
+			if (char === '{') {
+				code[i] = 1;
+				i++;
+				nesting.push({ kind: 'jsx', level: 0, element });
+				return false;
+			}
+			if (!element.inTag) {
+				if (char === '<') {
+					element.inTag = true;
+					element.closing = source[i + 1] === '/';
+					i += element.closing ? 2 : 1;
+				} else i++;
+				continue;
+			}
+			if (char === '"' || char === "'") {
+				skipString(char);
+			} else if (char === '/' && source[i + 1] === '>') {
+				i += 2;
+				element.inTag = false;
+				if (element.depth === 0) return true;
+			} else if (char === '>') {
+				i++;
+				element.inTag = false;
+				element.depth += element.closing ? -1 : 1;
+				if (element.depth === 0) return true;
+			} else i++;
+		}
+		return true;
+	};
+	const finishJsx = (element: Element) => {
+		if (skipJsx(element)) {
+			operand = true;
+			previous = '';
+		} else operand = false;
 	};
 	while (i < source.length) {
 		const char = source[i] ?? '';
@@ -184,18 +242,26 @@ function lex(source: string): { readonly code: Uint8Array; readonly comments: re
 			while (/[a-z]/i.test(source[i] ?? '')) i++;
 			operand = true;
 			previous = '';
-		} else if (templates.length && (char === '{' || char === '}')) {
-			const depth = templates.length - 1;
-			const level = templates[depth] ?? 0;
-			if (char === '}' && level === 0) {
-				templates.pop();
+		} else if (
+			jsx && char === '<' && !operand && /[A-Za-z_$>]/.test(next ?? '')
+			&& !typeParameters.test(source.slice(i, i + 80))
+		) {
+			i++;
+			finishJsx({ depth: 0, inTag: true, closing: false });
+		} else if (nesting.length && (char === '{' || char === '}')) {
+			const top = nesting.at(-1);
+			if (top && char === '}' && top.level === 0) {
+				nesting.pop();
+				code[i] = 1;
 				i++;
-				skipTemplate();
-				operand = true;
-				previous = '';
+				if (top.kind === 'template') {
+					skipTemplate();
+					operand = true;
+					previous = '';
+				} else finishJsx(top.element);
 				continue;
 			}
-			templates[depth] = level + (char === '{' ? 1 : -1);
+			if (top) top.level += char === '{' ? 1 : -1;
 			code[i] = 1;
 			operand = false;
 			previous = '';
@@ -239,8 +305,8 @@ function blankComments(source: string, comments: readonly (readonly [number, num
 	return parts.join('');
 }
 
-function scan(source: string, offset: number, into: Map<number, Reference>, masked: boolean): void {
-	const lexed = masked ? lex(source) : undefined;
+function scan(source: string, offset: number, into: Map<number, Reference>, masked: boolean, jsx: boolean): void {
+	const lexed = masked ? lex(source, jsx) : undefined;
 	const code = lexed?.code;
 	const text = lexed ? blankComments(source, lexed.comments) : source;
 	for (const [pattern, kind] of moduleReferences) {
@@ -274,7 +340,7 @@ function scriptRegions(path: string, source: string): Region[] {
 
 function collect(path: string, source: string, masked: boolean): Reference[] {
 	const found = new Map<number, Reference>();
-	for (const region of scriptRegions(path, source)) scan(region.text, region.offset, found, masked);
+	for (const region of scriptRegions(path, source)) scan(region.text, region.offset, found, masked, isJsx(path));
 	if (path.endsWith('.astro')) {
 		for (const match of source.matchAll(scriptSource)) {
 			const [whole, quote, specifier] = match;
@@ -363,7 +429,7 @@ export function pathReferences(path: string, source: string): PathReference[] {
 	const found: PathReference[] = [];
 	for (const region of scriptRegions(path, source)) {
 		const text = region.text;
-		const code = codeMask(text);
+		const code = codeMask(text, isJsx(path));
 		for (const match of text.matchAll(joinCall)) {
 			if (!code[match.index]) continue;
 			const { list, complete } = literalArguments(text, match.index + match[0].length);
@@ -433,7 +499,7 @@ export function pathReferences(path: string, source: string): PathReference[] {
 export function locationSensitiveLines(path: string, source: string): number[] {
 	const lines = new Set<number>();
 	for (const region of scriptRegions(path, source)) {
-		const code = codeMask(region.text);
+		const code = codeMask(region.text, isJsx(path));
 		for (const match of region.text.matchAll(locationSensitive)) {
 			if (!code[match.index]) continue;
 			lines.add(lineOf(source, region.offset + match.index));

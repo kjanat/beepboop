@@ -85,6 +85,20 @@ describe('module references', () => {
 		]);
 	});
 
+	test('JSX text and attributes are never imports, while expressions inside JSX and type parameters stay code', () => {
+		const source = [
+			'const f = <T,>(x: T) => x;',
+			'const g = <T extends object>(x: T) => x;',
+			"const v = <div title=\"from './no'\" data={{ a: 1 }}>Don't import './no' {on && <b>{import('./c')}</b>}<br/></div>;",
+			"const w = <>from './fragment'</>;",
+			"import d from './d';",
+		].join('\n');
+
+		expect(references('view.tsx', source).map(reference => reference.specifier)).toEqual(['./c', './d']);
+		expect(references('view.jsx', "export default <p>from './a'</p>;\nimport b from './b';\n").map(r => r.specifier))
+			.toEqual(['./b']);
+	});
+
 	test('comment openers inside strings never hide later imports', () => {
 		const source = `import './first';\n${"const s = 'from /*';\n".repeat(3000)}import './last';\n`;
 
@@ -575,6 +589,13 @@ describe('move', () => {
 		await Effect.runPromise(move(root, [['packages/kernel/src/a.cjs', 'packages/kernel/src/b.cjs']]));
 
 		expect(read('src/use.cjs')).toBe("const a = require('@beepboop/kernel/b');\n");
+	});
+
+	test('import-shaped JSX text refuses a move of the file it names and stays as written', async () => {
+		repository({ 'src/a.ts': 'export const a = 1;\n', 'src/view.jsx': "export default <p>from './a'</p>;\n" });
+
+		expect(await refusal(move(root, [['src/a.ts', 'lib/a.ts']]))).toContain('src/view.jsx: the move would break ./a');
+		expect(read('src/view.jsx')).toBe("export default <p>from './a'</p>;\n");
 	});
 
 	test('CommonJS, CTS and JSX files have their imports rewritten, and extensionless imports reach CommonJS files', async () => {
