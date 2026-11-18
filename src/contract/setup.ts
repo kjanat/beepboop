@@ -1,3 +1,4 @@
+import { Effect, Schema, Struct } from 'effect';
 import { supportedTargets } from '@/contract/binary-platforms';
 import {
 	jobKeyPattern,
@@ -27,7 +28,6 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/schema';
-import { Effect, Schema, Struct } from 'effect';
 
 export const defaultBinaryTargets = [
 	'linux-amd64',

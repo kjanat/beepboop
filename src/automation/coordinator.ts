@@ -1,3 +1,5 @@
+import { DurableObject } from 'cloudflare:workers';
+import { Clock, Effect, Layer, Result, Schema, Semaphore } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
 import type { DistributionFile } from '@/automation/distribution';
 import { createDistribution, readDistributionFile, readDistributionMode } from '@/automation/distribution';
@@ -113,7 +115,7 @@ import { compileReleaseSet } from '@/automation/release-set';
 import { manifestProblems, releasePaths } from '@/automation/release-version';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
 import type { AutomationBindings } from '@/automation/service';
-import { applicationLayer, Automation, withAutomation } from '@/automation/service';
+import { Automation, applicationLayer, withAutomation } from '@/automation/service';
 import { binaryLegs } from '@/automation/setup-binaries';
 import { maintainSetup } from '@/automation/setup-maintenance';
 import type { SetupEdit } from '@/automation/setup-types';
@@ -155,8 +157,6 @@ import { jsonLogging } from '@/runtime/logging';
 import { retryTransient } from '@/runtime/policy';
 import type { Decoded } from '@/schema';
 import { decodeSync, mutableArray, mutableStruct, safeDecode } from '@/schema';
-import { DurableObject } from 'cloudflare:workers';
-import { Clock, Effect, Layer, Result, Schema, Semaphore } from 'effect';
 
 export interface CoordinatorBindings extends AutomationBindings {
 	DB: SqlDatabase;

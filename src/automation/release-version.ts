@@ -1,3 +1,4 @@
+import { Effect } from 'effect';
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage } from '@/automation/package-identity';
 import type { Inventory, Package, Stream } from '@/automation/types';
@@ -9,7 +10,6 @@ import { precondition } from '@/contract/errors';
 import { distinct } from '@/distinct';
 import { operations } from '@/domain/configuration';
 import { compareVersions } from '@/model';
-import { Effect } from 'effect';
 
 export function releasedVersion(pkg: Package): string | undefined {
 	if (pkg.publicationStatus === 'published') return pkg.published;

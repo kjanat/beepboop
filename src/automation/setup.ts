@@ -1,3 +1,4 @@
+import { Effect, Result } from 'effect';
 import { binaryCandidates } from '@/automation/binary-candidates';
 import { companionProposals } from '@/automation/companion-detection';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
@@ -61,8 +62,8 @@ import {
 	versionLandsSentences,
 	versionPrMerge,
 	versionPrMergeQuestion,
-	versionPrMerges,
 	versionPrMergeSentences,
+	versionPrMerges,
 	versionScopeNames,
 	versionScopeSentences,
 } from '@/contract/setup-terms';
@@ -73,7 +74,6 @@ import { publicationStages } from '@/domain/publication-stages';
 import { validateAgainst } from '@/domain/validate';
 import { fromPromise, fromSync, toDomainError } from '@/failure';
 import { mutableArray, safeDecode } from '@/schema';
-import { Effect, Result } from 'effect';
 
 function requirablePackage(pkg: Package | undefined): boolean {
 	return !!pkg && publishable(pkg) && !(tagPrefix(pkg.versionSource) !== undefined && pkg.version === undefined);

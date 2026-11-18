@@ -1,3 +1,14 @@
+import { expect, test } from 'bun:test';
+import { begin, runAction, runIdentity } from '@root/test/support/actions.ts';
+import type { Repository } from '@root/test/support/github.ts';
+import { botId } from '@root/test/support/github.ts';
+import type { Reply } from '@root/test/support/http.ts';
+import { bearer } from '@root/test/support/http.ts';
+import { executions, promotions } from '@root/test/support/releases.ts';
+import { editableConfiguration, passChecks, widget } from '@root/test/support/repositories.ts';
+import type { World } from '@root/test/support/world.ts';
+import { eachWorld, origin } from '@root/test/support/world.ts';
+import { Effect, Schema, Struct } from 'effect';
 import type { Execution } from '@/automation/types';
 import type { ReleaseStart, VersionBump } from '@/contract/release-start';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
@@ -13,17 +24,6 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/schema';
-import { begin, runAction, runIdentity } from '@root/test/support/actions.ts';
-import type { Repository } from '@root/test/support/github.ts';
-import { botId } from '@root/test/support/github.ts';
-import type { Reply } from '@root/test/support/http.ts';
-import { bearer } from '@root/test/support/http.ts';
-import { executions, promotions } from '@root/test/support/releases.ts';
-import { editableConfiguration, passChecks, widget } from '@root/test/support/repositories.ts';
-import type { World } from '@root/test/support/world.ts';
-import { eachWorld, origin } from '@root/test/support/world.ts';
-import { expect, test } from 'bun:test';
-import { Effect, Schema, Struct } from 'effect';
 
 type Api = (path: string, body?: unknown) => Promise<Reply>;
 
