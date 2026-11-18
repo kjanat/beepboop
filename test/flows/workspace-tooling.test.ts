@@ -85,6 +85,12 @@ describe('module references', () => {
 		]);
 	});
 
+	test('comment openers inside strings never hide later imports', () => {
+		const source = `import './first';\n${"const s = 'from /*';\n".repeat(3000)}import './last';\n`;
+
+		expect(references('x.ts', source).map(reference => reference.specifier)).toEqual(['./first', './last']);
+	});
+
 	test('a shebang line is neither code nor an import, with or without a following line', () => {
 		expect(references('cli.ts', "#!/usr/bin/env bun\nimport { a } from './a';\n").map(r => r.specifier)).toEqual([
 			'./a',

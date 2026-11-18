@@ -66,14 +66,13 @@ const tsconfigSchema = Schema.Struct({
 
 const quoted = String.raw`(['"])([^'"\n]+)\1`;
 const callable = String.raw`(['"\x60])([^'"\x60\n$]+)\1`;
-const gap = String.raw`(?:\s|/\*(?:[^*]|\*(?!/))*\*/|//[^\n]*\n)*`;
 const moduleReferences: readonly (readonly [RegExp, ReferenceKind])[] = [
-	[new RegExp(String.raw`\b(?:from|import)${gap}${quoted}`, 'g'), 'import'],
-	[new RegExp(String.raw`\bimport${gap}\(${gap}${callable}`, 'g'), 'import'],
-	[new RegExp(String.raw`\brequire${gap}\(${gap}${callable}`, 'g'), 'require'],
-	[new RegExp(String.raw`\brequire\.resolve${gap}\(${gap}${callable}`, 'g'), 'require'],
-	[new RegExp(String.raw`\bimport\.meta\.resolve${gap}\(${gap}${callable}`, 'g'), 'import'],
-	[new RegExp(String.raw`\bmock\.module${gap}\(${gap}${callable}`, 'g'), 'import'],
+	[new RegExp(String.raw`\b(?:from|import)\s*${quoted}`, 'g'), 'import'],
+	[new RegExp(String.raw`\bimport\s*\(\s*(?:/\*[\s\S]*?\*/\s*)*${callable}`, 'g'), 'import'],
+	[new RegExp(String.raw`\brequire\s*\(\s*${callable}`, 'g'), 'require'],
+	[new RegExp(String.raw`\brequire\.resolve\s*\(\s*${callable}`, 'g'), 'require'],
+	[new RegExp(String.raw`\bimport\.meta\.resolve\s*\(\s*${callable}`, 'g'), 'import'],
+	[new RegExp(String.raw`\bmock\.module\s*\(\s*${callable}`, 'g'), 'import'],
 ];
 const scriptSource = new RegExp(String.raw`<script\b[^>]*\bsrc=${quoted}`, 'g');
 const joinCall = /\b(join|resolve)\(\s*import\.meta\.(?:dir|dirname)\s*,\s*/g;
@@ -111,7 +110,12 @@ export function shebangLength(source: string): number {
 }
 
 export function codeMask(source: string): Uint8Array {
+	return lex(source).code;
+}
+
+function lex(source: string): { readonly code: Uint8Array; readonly comments: readonly (readonly [number, number])[] } {
 	const code = new Uint8Array(source.length);
+	const comments: (readonly [number, number])[] = [];
 	const templates: number[] = [];
 	const parens: boolean[] = [];
 	let i = shebangLength(source);
@@ -149,10 +153,15 @@ export function codeMask(source: string): Uint8Array {
 			lastPunctuation = '';
 		}
 		if (char === '/' && next === '/') {
-			while (i < source.length && source[i] !== '\n') i++;
+			const end = source.indexOf('\n', i);
+			const stop = end < 0 ? source.length : end;
+			comments.push([i, stop]);
+			i = stop;
 		} else if (char === '/' && next === '*') {
 			const end = source.indexOf('*/', i + 2);
-			i = end < 0 ? source.length : end + 2;
+			const stop = end < 0 ? source.length : end + 2;
+			comments.push([i, stop]);
+			i = stop;
 		} else if (char === '"' || char === "'") {
 			skipString(char);
 			operand = true;
@@ -218,13 +227,26 @@ export function codeMask(source: string): Uint8Array {
 			i++;
 		}
 	}
-	return code;
+	return { code, comments };
+}
+
+function blankComments(source: string, comments: readonly (readonly [number, number])[]): string {
+	const parts: string[] = [];
+	let from = 0;
+	for (const [start, stop] of comments) {
+		parts.push(source.slice(from, start), source.slice(start, stop).replace(/[^\n]/g, ' '));
+		from = stop;
+	}
+	parts.push(source.slice(from));
+	return parts.join('');
 }
 
 function scan(source: string, offset: number, into: Map<number, Reference>, masked: boolean): void {
-	const code = masked ? codeMask(source) : undefined;
+	const lexed = masked ? lex(source) : undefined;
+	const code = lexed?.code;
+	const text = lexed ? blankComments(source, lexed.comments) : source;
 	for (const [pattern, kind] of moduleReferences) {
-		for (const match of source.matchAll(pattern)) {
+		for (const match of text.matchAll(pattern)) {
 			const [whole, quote, specifier] = match;
 			if (quote === undefined || specifier === undefined || (code && !code[match.index])) continue;
 			const start = offset + match.index + whole.lastIndexOf(`${quote}${specifier}${quote}`) + 1;
