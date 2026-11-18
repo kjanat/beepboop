@@ -521,6 +521,8 @@ describe('move', () => {
 				"const part = new URL('#part', import.meta.url);",
 				"const data = new URL('./data%20file.json', import.meta.url);",
 				"const quote = new URL('./it%27s.json', import.meta.url);",
+				'const double = new URL("./it\'s.json", import.meta.url);',
+				"const template = new URL(`./it's.json`, import.meta.url);",
 			].join('\n'),
 		});
 		await Effect.runPromise(move(root, [
@@ -534,6 +536,8 @@ describe('move', () => {
 			"const part = new URL('#part', import.meta.url);",
 			"const data = new URL('../../../src/assets/data%20file.json', import.meta.url);",
 			"const quote = new URL('../../../src/assets/it%27s.json', import.meta.url);",
+			'const double = new URL("../../../src/assets/it%27s.json", import.meta.url);',
+			'const template = new URL(`../../../src/assets/it%27s.json`, import.meta.url);',
 		].join('\n'));
 	});
 

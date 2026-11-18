@@ -77,7 +77,7 @@ const moduleReferences: readonly (readonly [RegExp, ReferenceKind])[] = [
 const scriptSource = new RegExp(String.raw`<script\b[^>]*\bsrc=${quoted}`, 'g');
 const joinCall = /\b(join|resolve)\(\s*import\.meta\.(?:dir|dirname)\s*,\s*/g;
 const absolute = /^(?:[a-z][a-z\d+.-]*:|\/)/i;
-const urlCall = /\bnew URL\(\s*(['"\x60])([^'"\x60\n]*)\1\s*,\s*import\.meta\.url\s*\)/g;
+const urlCall = /\bnew URL\(\s*(?:'([^'\n]*)'|"([^"\n]*)"|\x60([^\x60\n]*)\x60)\s*,\s*import\.meta\.url\s*\)/g;
 const dirTemplate = /\x60\$\{import\.meta\.(?:dir|dirname)\}\/([^\x60\n]*)\x60/g;
 const locationSensitive = /\bimport\.meta\.(?:dir|dirname|url|filename|path)\b/g;
 
@@ -367,8 +367,10 @@ export function pathReferences(path: string, source: string): PathReference[] {
 			});
 		}
 		for (const match of text.matchAll(urlCall)) {
-			const [, quote, body] = match;
-			if (quote === undefined || body === undefined || !code[match.index] || absolute.test(body)) continue;
+			const [, single, double, template] = match;
+			const quote = single !== undefined ? "'" : double !== undefined ? '"' : '`';
+			const body = single ?? double ?? template;
+			if (body === undefined || !code[match.index] || absolute.test(body)) continue;
 			const dynamic = quote === '`' && body.includes('${');
 			const prefix = dynamic ? body.split('${')[0] ?? '' : body;
 			const [head] = splitQuery(prefix);
