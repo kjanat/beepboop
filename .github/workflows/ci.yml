@@ -1,6 +1,5 @@
 name: Verify
 on:
-  push: { branches: [master] }
   pull_request: null
   workflow_call: null
 permissions: { contents: read }

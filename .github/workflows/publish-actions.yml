@@ -18,32 +18,17 @@ on:
       - bunfig.toml
       - tsconfig.json
       - mise.toml
-      - .github/workflows/publish-actions.yml
   workflow_dispatch: null
 permissions: { contents: read }
 jobs:
-  verify: { if: github.ref == 'refs/heads/master', uses: $/.github/workflows/ci.yml }
-  trailers:
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    concurrency: { group: "check-trailers-${{ github.ref }}", cancel-in-progress: true }
-    env: { hasTrailer: "${{ github.event_name == 'push' && contains(github.event.head_commit.message, 'Actions-Release: skip') }}" }
-    outputs: { publish: "${{ !fromJsOn(env.hasTrailer) }}" }
-    steps:
-      - name: Report skipped release
-        if: fromJson(env.hasTrailer)
-        env:
-          step_summary: |
-            The pushed commit carries `Actions-Release: skip` trailer, so the Actions release will be skipped.
-            To publish Actions, remove the trailer and push again.
-
-            <details open><summary>Commit message</summary><pre><code>
-            ${{ github.event.head_commit.message }}
-            </code></pre></details>
-        run: printf '%s\n' "${step_summary}" >> "${GITHUB_STEP_SUMMARY}"
+  verify:
+    if: >-
+      github.ref == 'refs/heads/master'
+      && github.actor_id == github.repository_owner_id
+      && (github.event_name != 'push' || !contains(github.event.head_commit.message, 'Actions-Release: skip'))
+    uses: $/.github/workflows/ci.yml
   publish:
-    needs: [verify, trailers]
-    if: fromJsOn(needs.trailers.outputs.publish) && github.actor_id == github.repository_owner_id
+    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions: { contents: read, id-token: write }
