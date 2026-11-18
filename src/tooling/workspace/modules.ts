@@ -310,7 +310,7 @@ function decodedPath(path: string): string | undefined {
 }
 
 export function encodedPath(path: string): string {
-	return path.split('/').map(encodeURIComponent).join('/');
+	return path.split('/').map(segment => encodeURIComponent(segment).replaceAll("'", '%27')).join('/');
 }
 
 export function pathReferences(path: string, source: string): PathReference[] {

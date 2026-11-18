@@ -509,21 +509,25 @@ describe('move', () => {
 		repository({
 			'src/other.ts': 'export const other = 1;\n',
 			'src/data file.json': '{}\n',
+			"src/it's.json": '{}\n',
 			'src/a.ts': [
 				"const raw = new URL('?raw', import.meta.url);",
 				"const part = new URL('#part', import.meta.url);",
 				"const data = new URL('./data%20file.json', import.meta.url);",
+				"const quote = new URL('./it%27s.json', import.meta.url);",
 			].join('\n'),
 		});
 		await Effect.runPromise(move(root, [
 			['src/a.ts', 'packages/kernel/src/a.ts'],
 			['src/data file.json', 'src/assets/data file.json'],
+			["src/it's.json", "src/assets/it's.json"],
 		]));
 
 		expect(read('packages/kernel/src/a.ts')).toBe([
 			"const raw = new URL('?raw', import.meta.url);",
 			"const part = new URL('#part', import.meta.url);",
 			"const data = new URL('../../../src/assets/data%20file.json', import.meta.url);",
+			"const quote = new URL('../../../src/assets/it%27s.json', import.meta.url);",
 		].join('\n'));
 	});
 
