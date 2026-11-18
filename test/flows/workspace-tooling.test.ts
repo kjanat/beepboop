@@ -497,6 +497,45 @@ describe('move', () => {
 		expect(git('status', '--short')).toBe('');
 	});
 
+	test('self-referencing URLs stay put and percent-encoded URL paths follow their file', async () => {
+		repository({
+			'src/other.ts': 'export const other = 1;\n',
+			'src/data file.json': '{}\n',
+			'src/a.ts': [
+				"const raw = new URL('?raw', import.meta.url);",
+				"const part = new URL('#part', import.meta.url);",
+				"const data = new URL('./data%20file.json', import.meta.url);",
+			].join('\n'),
+		});
+		await Effect.runPromise(move(root, [
+			['src/a.ts', 'packages/kernel/src/a.ts'],
+			['src/data file.json', 'src/assets/data file.json'],
+		]));
+
+		expect(read('packages/kernel/src/a.ts')).toBe([
+			"const raw = new URL('?raw', import.meta.url);",
+			"const part = new URL('#part', import.meta.url);",
+			"const data = new URL('../../../src/assets/data%20file.json', import.meta.url);",
+		].join('\n'));
+	});
+
+	test('import and require references follow the export condition they resolve through', async () => {
+		repository({
+			'packages/kernel/package.json': JSON.stringify({
+				name: '@beepboop/kernel',
+				exports: { './*': { import: './src/esm/*.ts', require: './src/cjs/*.ts' } },
+			}),
+			'packages/kernel/src/esm/a.ts': 'export const a = 1;\n',
+			'packages/kernel/src/cjs/a.ts': 'exports.a = 1;\n',
+			'src/use.ts': "import { a } from '@beepboop/kernel/a';\nconst b = require('@beepboop/kernel/a');\n",
+		});
+		await Effect.runPromise(move(root, [['packages/kernel/src/esm/a.ts', 'packages/kernel/src/esm/b.ts']]));
+
+		expect(read('src/use.ts')).toBe(
+			"import { a } from '@beepboop/kernel/b';\nconst b = require('@beepboop/kernel/a');\n",
+		);
+	});
+
 	test('the command takes pairs, reports what still mentions the old path, and refuses an odd argument list', async () => {
 		repository({
 			'src/a.ts': 'export const a = 1;\n',

@@ -6,8 +6,9 @@ import type { ToolFailure } from '@/tooling/runtime';
 import { attemptPromise, capture, checkArguments, main, refuse, run } from '@/tooling/runtime';
 import type { Workspace } from '@/tooling/workspace/manifests';
 import { exported, exportSpecifiers, readWorkspaces, workspaceOf } from '@/tooling/workspace/manifests';
-import type { Alias } from '@/tooling/workspace/modules';
+import type { Alias, ReferenceKind } from '@/tooling/workspace/modules';
 import {
+	encodedPath,
 	isCode,
 	isRelative,
 	locationSensitiveLines,
@@ -41,18 +42,23 @@ interface Layout {
 	readonly workspaces: readonly Workspace[];
 }
 
-function resolve(layout: Layout, importer: string, specifier: string): string | undefined {
+interface Use {
+	readonly specifier: string;
+	readonly kind: ReferenceKind;
+}
+
+function resolve(layout: Layout, importer: string, { specifier, kind }: Use): string | undefined {
 	const local = resolveReference(layout.aliases, layout.files, importer, specifier);
 	if (local !== undefined) return local;
 	const workspace = workspaceOf(layout.workspaces, specifier);
-	return workspace ? exported(workspace, layout.files, specifier) : undefined;
+	return workspace ? exported(workspace, layout.files, specifier, kind) : undefined;
 }
 
-function candidates(layout: Layout, importer: string, specifier: string, expected: string): string[] {
+function candidates(layout: Layout, importer: string, { specifier, kind }: Use, expected: string): string[] {
 	const query = queryOf(specifier);
 	const workspace = workspaceOf(layout.workspaces, specifier);
 	return workspace
-		? exportSpecifiers(workspace, expected, query)
+		? exportSpecifiers(workspace, expected, query, kind)
 		: specifierCandidates(layout.aliases, importer, expected, query);
 }
 
@@ -192,7 +198,7 @@ function rewrite(
 	const review: string[] = [];
 	const moved = destination !== importer;
 	for (const reference of references(importer, source)) {
-		const target = resolve(before, importer, reference.specifier);
+		const target = resolve(before, importer, reference);
 		const [path, query] = splitQuery(reference.specifier);
 		if (target === undefined) {
 			if (!moved || !isRelative(path)) continue;
@@ -201,9 +207,9 @@ function rewrite(
 			continue;
 		}
 		const expected = plan.files.get(target) ?? target;
-		if (resolve(after, destination, reference.specifier) === expected) continue;
-		const replacement = candidates(after, destination, reference.specifier, expected).find(candidate =>
-			resolve(after, destination, candidate) === expected
+		if (resolve(after, destination, reference) === expected) continue;
+		const replacement = candidates(after, destination, reference, expected).find(candidate =>
+			resolve(after, destination, { specifier: candidate, kind: reference.kind }) === expected
 		);
 		if (replacement === undefined) problems.push(`${importer}: no specifier reaches ${expected} from ${destination}`);
 		else edits.push({ start: reference.start, end: reference.end, text: replacement });
@@ -223,7 +229,8 @@ function rewrite(
 			review.push(`${destination}:${reference.line} ${reference.path} needs a manual rewrite to reach ${mapped}`);
 			continue;
 		}
-		const path = `${relativePath(dirname(destination), mapped, reference.path)}${trailing}`;
+		const relativeTarget = `${relativePath(dirname(destination), mapped, reference.path)}${trailing}`;
+		const path = reference.encoded ? encodedPath(relativeTarget) : relativeTarget;
 		edits.push({
 			start: reference.start,
 			end: reference.end,
@@ -248,14 +255,17 @@ const transpilers = {
 	js: new Bun.Transpiler({ loader: 'js' }),
 };
 
-function scannedImports(path: string, source: string): string[] {
+function scannedImports(path: string, source: string): Use[] {
 	const loader = path.endsWith('.js') || path.endsWith('.mjs')
 		? transpilers.js
 		: path.endsWith('.tsx')
 		? transpilers.tsx
 		: transpilers.ts;
 	const body = path.endsWith('.astro') ? /^---\r?\n([\s\S]*?)\r?\n---/.exec(source)?.[1] ?? '' : source;
-	return loader.scanImports(body.slice(shebangLength(body))).map(entry => entry.path);
+	return loader.scanImports(body.slice(shebangLength(body))).map(entry => ({
+		specifier: entry.path,
+		kind: entry.kind === 'require-call' || entry.kind === 'require-resolve' ? 'require' : 'import',
+	}));
 }
 
 export const verify = Effect.fn('verify')(function*(
@@ -273,25 +283,20 @@ export const verify = Effect.fn('verify')(function*(
 			try: () => scannedImports(path, body),
 			catch: error => `${importer}: Bun cannot scan its imports (${String(error)})`,
 		}).pipe(Effect.catch(problem => Effect.sync(() => problems.push(problem)).pipe(Effect.as([]))));
+	const key = (use: Use) => `${use.kind} ${use.specifier}`;
 	const expected = new Map<string, string>();
-	const original = [
-		...looseReferences(importer, source).map(reference => reference.specifier),
-		...(yield* scan(importer, source)),
-	];
-	for (const specifier of original) {
-		const target = resolve(before, importer, specifier);
-		if (target !== undefined) expected.set(specifier, plan.files.get(target) ?? target);
+	for (const use of [...looseReferences(importer, source), ...(yield* scan(importer, source))]) {
+		const target = resolve(before, importer, use);
+		if (target !== undefined) expected.set(key(use), plan.files.get(target) ?? target);
 	}
-	const specifiers = new Set([
-		...looseReferences(destination, text).map(reference => reference.specifier),
-		...(yield* scan(destination, text)),
-	]);
-	for (const specifier of specifiers) {
-		const want = expected.get(specifier);
+	const uses = new Map<string, Use>();
+	for (const use of [...looseReferences(destination, text), ...(yield* scan(destination, text))]) {
+		uses.set(key(use), { specifier: use.specifier, kind: use.kind });
+	}
+	for (const [name, use] of uses) {
+		const want = expected.get(name);
 		if (want === undefined) continue;
-		if (resolve(after, destination, specifier) !== want) {
-			problems.push(`${importer}: the move would break ${specifier}`);
-		}
+		if (resolve(after, destination, use) !== want) problems.push(`${importer}: the move would break ${use.specifier}`);
 	}
 	return problems;
 });

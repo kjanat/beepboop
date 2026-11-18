@@ -81,7 +81,7 @@ export const checkBoundaries = Effect.fn('checkBoundaries')(function*(
 		const owner = packages.get(packageOf(file) ?? '');
 		if (!owner) continue;
 		const source = yield* attemptPromise(() => Bun.file(join(root, file)).text());
-		for (const { specifier } of references(file, source)) {
+		for (const { specifier, kind } of references(file, source)) {
 			const [path] = splitQuery(specifier);
 			const named = names.get(packageName(specifier));
 			if (isLocal(aliases, specifier)) {
@@ -108,7 +108,7 @@ export const checkBoundaries = Effect.fn('checkBoundaries')(function*(
 			if (named && named.directory !== owner.directory) {
 				edges.set(owner.name, (edges.get(owner.name) ?? new Set()).add(named.name));
 			}
-			if (named && exported(named, known, specifier) === undefined) {
+			if (named && exported(named, known, specifier, kind) === undefined) {
 				violations.push({ _tag: 'Unresolved', file, specifier });
 				continue;
 			}
