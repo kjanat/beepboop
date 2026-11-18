@@ -141,6 +141,7 @@ import type { ClaimStep, LedgerManager, NextStep, PublishReport, ReportStep } fr
 import { ledgerManagers } from '@/contract/ledger';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
 import type { BinaryProgress, PackageTagPage } from '@/contract/views';
+import { dependencyOrder } from '@/dependency-order';
 import { parseRetryAfter } from '@/domain/http-date';
 import type { ReadyRepository } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
@@ -1974,6 +1975,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					else return { kind: 'publish' as const, package: view(record) };
 				}
 				const [wait] = waits.sort((a, b) => a.until - b.until);
+				if (wait) {
+					const outstanding = new Map(
+						ledger.records.filter(record => !released(record)).map(record => [record.id, record]),
+					);
+					const order = dependencyOrder(
+						outstanding.keys(),
+						key => Result.succeed(outstanding.get(key)?.dependencies),
+						key => Result.fail(key),
+					);
+					if (Result.isFailure(order)) return yield* precondition(`Publication dependency cycle at ${order.failure}`);
+				}
 				return wait
 					? { kind: 'wait' as const, ...wait }
 					: { kind: 'done' as const, entries: ledger.records.map(entry) };

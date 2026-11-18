@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 import { applyEdits, modify, parseTree } from 'jsonc-parser';
 import { jsonIndent, object } from '@/automation/managers/helpers';
 import { discoverNpmTargets } from '@/automation/managers/npm-targets';
@@ -10,6 +10,7 @@ import { excluded, registry } from '@/automation/package-publication';
 import type { Package } from '@/automation/types';
 import { fileProblem } from '@/contract/diagnostics';
 import { precondition } from '@/contract/errors';
+import { dependencyOrder } from '@/dependency-order';
 import { fromSync } from '@/failure';
 import { packageIdentity } from '@/package-url';
 
@@ -91,6 +92,7 @@ export const npmManager: Adapter<'npm'> = {
 	discover(snapshot) {
 		const inventory = emptyInventory();
 		const detected = new Set<import('@/contract/catalog').ManagerName>();
+		const optional = new Map<string, string[]>();
 		for (const { path, manifest: pkg } of packageManifests(snapshot, inventory.diagnostics)) {
 			if (typeof object(pkg.engines).vscode === 'string') continue;
 			if (typeof pkg.name !== 'string' || !pkg.name.trim()) {
@@ -102,6 +104,7 @@ export const npmManager: Adapter<'npm'> = {
 				continue;
 			}
 			// Standalone nested packages are still inventoried; independent versions are not silently synchronized.
+			optional.set(pkg.name, Object.keys(object(pkg.optionalDependencies)));
 			inventory.packages.push({
 				manager: 'npm',
 				name: pkg.name,
@@ -115,14 +118,26 @@ export const npmManager: Adapter<'npm'> = {
 					: registry,
 				dependencies: Object.keys({
 					...object(pkg.dependencies),
-					...object(pkg.optionalDependencies),
 					...object(pkg.peerDependencies),
 				}),
 			});
 			detected.add('npm');
 		}
 		if (discoverNpmTargets(snapshot, inventory)) detected.add('npm');
-
+		const packages = new Map(inventory.packages.map(pkg => [pkg.name, pkg]));
+		// Keep optional publication ordering wherever it can be satisfied.
+		for (const pkg of [...packages.values()].sort((a, b) => a.name.localeCompare(b.name))) {
+			for (const name of (optional.get(pkg.name) ?? []).sort()) {
+				if (pkg.dependencies.includes(name)) continue;
+				pkg.dependencies.push(name);
+				const order = dependencyOrder(
+					[pkg.name],
+					key => Result.succeed(packages.get(key)?.dependencies),
+					key => Result.fail(key),
+				);
+				if (Result.isFailure(order)) pkg.dependencies.pop();
+			}
+		}
 		inventory.managers = [...detected];
 		return inventory;
 	},
