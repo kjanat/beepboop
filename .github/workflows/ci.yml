@@ -37,7 +37,8 @@ jobs:
             ':(exclude)src/components/' ':(exclude)src/layouts/' ':(exclude)src/pages/' \
             ':(exclude)src/server/' ':(exclude)src/styles/' ':(exclude)src/ui/' \
             ':(exclude)src/index.ts' ':(exclude)src/middleware.ts' \
-            package.json bun.lock bunfig.toml tsconfig.json mise.toml || result=$?
+            package.json packages/cli/package.json packages/cli/jsr.json \
+            bun.lock bunfig.toml tsconfig.json mise.toml || result=$?
           case "$result" in
             0) echo 'changed=false' >> "$GITHUB_OUTPUT" ;;
             1) echo 'changed=true' >> "$GITHUB_OUTPUT" ;;

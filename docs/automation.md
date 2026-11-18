@@ -1127,7 +1127,8 @@ purpose.
 Actions publication uses `purpose: publish-actions` and requests exactly
 `contents: write` and `workflows: write`. Set `permission-workflows: write` for
 this purpose. The distribution tree includes workflow files. The token route
-requires an owner-started `workflow_dispatch` or `push` run of
+accepts an owner-started `workflow_dispatch` or a push by the owner or the
+Beepboop App bot. It requires a run of
 `.github/workflows/publish-actions.yml` at the current default-branch SHA. The
 source and workflow SHAs must match, and the run must have no reusable workflow
 identity. PR runs, other workflow files and stale revisions cannot obtain this
