@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { eachDirectory } from '@root/test/support/directories.ts';
 import { Cause, Effect, Exit } from 'effect';
@@ -605,6 +605,19 @@ describe('move', () => {
 		expect(failed).not.toContain('Rollback could not');
 		expect(git('status', '--short')).toBe('');
 		expect(read('tsconfig.json')).toBe(tsconfig);
+		expect([existsSync(join(root, 'packages')), existsSync(join(root, 'src/lib/a.ts'))]).toEqual([false, true]);
+	});
+
+	test('a failed tsconfig write moves everything back and leaves tsconfig as it was', async () => {
+		repository({ 'src/a.ts': 'export const a = 1;\n', 'src/use.ts': "import { a } from './a';\n" });
+		chmodSync(join(root, 'tsconfig.json'), 0o444);
+		const failed = await refusal(move(root, [['src/a.ts', 'packages/kernel/src/a.ts']]));
+		chmodSync(join(root, 'tsconfig.json'), 0o644);
+
+		expect(failed).toContain('Move failed and was rolled back');
+		expect(failed).not.toContain('Rollback could not');
+		expect(git('status', '--short')).toBe('');
+		expect(read('src/use.ts')).toBe("import { a } from './a';\n");
 	});
 
 	test('a failed rewrite restores the files already rewritten and moves everything back', async () => {
@@ -624,17 +637,23 @@ describe('move', () => {
 	});
 
 	test('rollback reports each step it cannot undo and keeps going', async () => {
-		repository({ 'src/a.ts': 'export const a = 1;\n' });
+		repository({ 'src/a.ts': 'export const a = 1;\n', 'src/same.ts': 'same\n' });
 		mkdirSync(join(root, 'directory'));
-		const left = await Effect.runPromise(
-			undo(root, [['src/a.ts', 'src/gone.ts']], new Map([['directory', 'text'], ['src/b.ts', 'restored\n']])),
-		);
+		mkdirSync(join(root, 'made/empty'), { recursive: true });
+		chmodSync(join(root, 'src/same.ts'), 0o444);
+		const left = await Effect.runPromise(undo(root, {
+			moves: [['src/a.ts', 'src/gone.ts']],
+			texts: new Map([['directory', 'text'], ['src/b.ts', 'restored\n'], ['src/same.ts', 'same\n']]),
+			directories: ['made', 'made/empty', 'src'],
+		}));
+		chmodSync(join(root, 'src/same.ts'), 0o644);
 
 		expect(left.map(problem => problem.split(':')[0])).toEqual([
 			'restore directory',
 			'move src/gone.ts back to src/a.ts',
+			'remove src',
 		]);
-		expect(read('src/b.ts')).toBe('restored\n');
+		expect([read('src/b.ts'), existsSync(join(root, 'made'))]).toEqual(['restored\n', false]);
 	});
 
 	test('a mention scan that fails is reported for review after the move', async () => {
