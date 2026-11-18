@@ -1,10 +1,10 @@
 import { builtinModules } from 'node:module';
 import { dirname, join } from 'node:path';
-import { Effect, Schema } from 'effect';
+import { Effect } from 'effect';
 import type { ToolFailure } from '@/tooling/runtime';
-import { attemptPromise, main, parse, readJson, refuse } from '@/tooling/runtime';
+import { attemptPromise, main, refuse } from '@/tooling/runtime';
+import { exported, packageName, readWorkspaces } from '@/tooling/workspace/manifests';
 import {
-	candidatePaths,
 	isCode,
 	isLocal,
 	isRelative,
@@ -16,25 +16,6 @@ import {
 	splitQuery,
 	trackedFiles,
 } from '@/tooling/workspace/modules';
-
-type ExportTarget = string | null | { readonly [key: string]: ExportTarget };
-const exportTarget: Schema.Codec<ExportTarget> = Schema.Union([
-	Schema.String,
-	Schema.Null,
-	Schema.Record(Schema.String, Schema.suspend(() => exportTarget)),
-]);
-const dependencyMap = Schema.optional(Schema.Record(Schema.String, Schema.String));
-const conditions = new Set(['bun', 'import', 'module', 'node', 'default']);
-const manifestSchema = Schema.Struct({
-	name: Schema.String,
-	dependencies: dependencyMap,
-	devDependencies: dependencyMap,
-	peerDependencies: dependencyMap,
-	optionalDependencies: dependencyMap,
-	files: Schema.optional(Schema.Array(Schema.String)),
-	bin: Schema.optional(Schema.Union([Schema.String, Schema.Record(Schema.String, Schema.String)])),
-	exports: Schema.optional(exportTarget),
-});
 
 const platformModules = /^(?:node:|bun:|cloudflare:|astro:|virtual:)|^bun$/;
 const builtins = new Set(builtinModules);
@@ -53,65 +34,6 @@ export interface BoundaryReport {
 	readonly violations: readonly Violation[];
 }
 
-interface Workspace {
-	readonly directory: string;
-	readonly name: string;
-	readonly dependencies: ReadonlySet<string>;
-	readonly base: string;
-	readonly outputs: ReadonlySet<string>;
-	readonly exports: ReadonlyMap<string, ExportTarget>;
-}
-
-function subpaths(field: ExportTarget | undefined): Map<string, ExportTarget> {
-	if (field === undefined || field === null) return new Map();
-	if (typeof field === 'string') return new Map([['.', field]]);
-	const keys = Object.keys(field);
-	return keys.length && keys.every(key => key.startsWith('.'))
-		? new Map(Object.entries(field))
-		: new Map([['.', field]]);
-}
-
-function conditional(target: ExportTarget | undefined): string | undefined {
-	if (target === undefined || target === null) return undefined;
-	if (typeof target === 'string') return target;
-	const key = Object.keys(target).find(name => conditions.has(name));
-	return key === undefined ? undefined : conditional(target[key]);
-}
-
-function values(field: string | Readonly<Record<string, string>> | undefined, key: string): [string, string][] {
-	if (field === undefined) return [];
-	return typeof field === 'string' ? [[key, field]] : Object.entries(field);
-}
-
-const workspaces = Effect.fn('workspaces')(function*(
-	root: string,
-	files: readonly string[],
-): Effect.fn.Return<Map<string, Workspace>, ToolFailure> {
-	const found = new Map<string, Workspace>();
-	for (const file of files) {
-		const directory = packageOf(file);
-		if (!directory || file !== `packages/${directory}/package.json`) continue;
-		const manifest = yield* parse(manifestSchema, yield* readJson(join(root, file)));
-		const declared = [
-			manifest.dependencies,
-			manifest.devDependencies,
-			manifest.peerDependencies,
-			manifest.optionalDependencies,
-		].flatMap(map => Object.keys(map ?? {}));
-		const base = `packages/${directory}`;
-		const outputs = [...(manifest.files ?? []), ...values(manifest.bin, manifest.name).map(([, path]) => path)];
-		found.set(directory, {
-			directory,
-			name: manifest.name,
-			dependencies: new Set(declared),
-			base,
-			outputs: new Set(outputs.map(path => repositoryPath(join(base, path)))),
-			exports: subpaths(manifest.exports),
-		});
-	}
-	return found;
-});
-
 function cycles(edges: ReadonlyMap<string, ReadonlySet<string>>): string[][] {
 	const found: string[][] = [];
 	const done = new Set<string>();
@@ -127,35 +49,6 @@ function cycles(edges: ReadonlyMap<string, ReadonlySet<string>>): string[][] {
 	};
 	for (const node of edges.keys()) visit(node, []);
 	return found;
-}
-
-function packageName(specifier: string): string {
-	const [path] = splitQuery(specifier);
-	const [scope, name] = path.split('/');
-	return path.startsWith('@') && name ? `${scope}/${name}` : scope ?? path;
-}
-
-function exported(workspace: Workspace, files: ReadonlySet<string>, specifier: string): string | undefined {
-	const [path] = splitQuery(specifier);
-	const subpath = `.${path.slice(workspace.name.length)}`;
-	let selected: { target: ExportTarget | undefined; rest: string } | undefined = workspace.exports.has(subpath)
-		? { target: workspace.exports.get(subpath), rest: '' }
-		: undefined;
-	if (!selected) {
-		let prefix = -1;
-		for (const [key, target] of workspace.exports) {
-			const star = key.indexOf('*');
-			if (star < 0 || star <= prefix) continue;
-			const head = key.slice(0, star), tail = key.slice(star + 1);
-			if (!subpath.startsWith(head) || !subpath.endsWith(tail) || subpath.length < head.length + tail.length) continue;
-			prefix = star;
-			selected = { target, rest: subpath.slice(head.length, subpath.length - tail.length) };
-		}
-	}
-	const target = conditional(selected?.target);
-	if (target === undefined || !selected) return undefined;
-	const base = repositoryPath(join(workspace.base, target.replaceAll('*', selected.rest)));
-	return candidatePaths(base).find(candidate => files.has(candidate));
 }
 
 export function describe(violation: Violation): string {
@@ -179,7 +72,7 @@ export const checkBoundaries = Effect.fn('checkBoundaries')(function*(
 	const files = yield* trackedFiles(root);
 	const known = new Set(files);
 	const aliases = yield* readAliases(root);
-	const packages = yield* workspaces(root, files);
+	const packages = yield* readWorkspaces(root, files);
 	const names = new Map([...packages.values()].map(workspace => [workspace.name, workspace]));
 	const violations: Violation[] = [];
 	const edges = new Map<string, Set<string>>();

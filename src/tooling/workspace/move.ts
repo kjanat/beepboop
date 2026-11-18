@@ -4,10 +4,11 @@ import { Effect } from 'effect';
 import { findNodeAtLocation, parseTree } from 'jsonc-parser';
 import type { ToolFailure } from '@/tooling/runtime';
 import { attemptPromise, capture, checkArguments, main, refuse, run } from '@/tooling/runtime';
+import type { Workspace } from '@/tooling/workspace/manifests';
+import { exported, exportSpecifiers, readWorkspaces, workspaceOf } from '@/tooling/workspace/manifests';
 import type { Alias } from '@/tooling/workspace/modules';
 import {
 	isCode,
-	isLocal,
 	isRelative,
 	locationSensitiveLines,
 	looseReferences,
@@ -37,6 +38,22 @@ export interface MoveReport {
 interface Layout {
 	readonly aliases: readonly Alias[];
 	readonly files: ReadonlySet<string>;
+	readonly workspaces: readonly Workspace[];
+}
+
+function resolve(layout: Layout, importer: string, specifier: string): string | undefined {
+	const local = resolveReference(layout.aliases, layout.files, importer, specifier);
+	if (local !== undefined) return local;
+	const workspace = workspaceOf(layout.workspaces, specifier);
+	return workspace ? exported(workspace, layout.files, specifier) : undefined;
+}
+
+function candidates(layout: Layout, importer: string, specifier: string, expected: string): string[] {
+	const query = queryOf(specifier);
+	const workspace = workspaceOf(layout.workspaces, specifier);
+	return workspace
+		? exportSpecifiers(workspace, expected, query)
+		: specifierCandidates(layout.aliases, importer, expected, query);
 }
 
 interface Plan {
@@ -175,7 +192,7 @@ function rewrite(
 	const review: string[] = [];
 	const moved = destination !== importer;
 	for (const reference of references(importer, source)) {
-		const target = resolveReference(before.aliases, before.files, importer, reference.specifier);
+		const target = resolve(before, importer, reference.specifier);
 		const [path, query] = splitQuery(reference.specifier);
 		if (target === undefined) {
 			if (!moved || !isRelative(path)) continue;
@@ -184,9 +201,9 @@ function rewrite(
 			continue;
 		}
 		const expected = plan.files.get(target) ?? target;
-		if (resolveReference(after.aliases, after.files, destination, reference.specifier) === expected) continue;
-		const replacement = specifierCandidates(after.aliases, destination, expected, queryOf(reference.specifier)).find(
-			candidate => resolveReference(after.aliases, after.files, destination, candidate) === expected,
+		if (resolve(after, destination, reference.specifier) === expected) continue;
+		const replacement = candidates(after, destination, reference.specifier, expected).find(candidate =>
+			resolve(after, destination, candidate) === expected
 		);
 		if (replacement === undefined) problems.push(`${importer}: no specifier reaches ${expected} from ${destination}`);
 		else edits.push({ start: reference.start, end: reference.end, text: replacement });
@@ -225,10 +242,18 @@ function rewrite(
 	return { text, count: edits.length, problems, review };
 }
 
-const transpilers = { ts: new Bun.Transpiler({ loader: 'ts' }), js: new Bun.Transpiler({ loader: 'js' }) };
+const transpilers = {
+	ts: new Bun.Transpiler({ loader: 'ts' }),
+	tsx: new Bun.Transpiler({ loader: 'tsx' }),
+	js: new Bun.Transpiler({ loader: 'js' }),
+};
 
 function scannedImports(path: string, source: string): string[] {
-	const loader = path.endsWith('.js') || path.endsWith('.mjs') ? transpilers.js : transpilers.ts;
+	const loader = path.endsWith('.js') || path.endsWith('.mjs')
+		? transpilers.js
+		: path.endsWith('.tsx')
+		? transpilers.tsx
+		: transpilers.ts;
 	const body = path.endsWith('.astro') ? /^---\r?\n([\s\S]*?)\r?\n---/.exec(source)?.[1] ?? '' : source;
 	return loader.scanImports(body.slice(shebangLength(body))).map(entry => entry.path);
 }
@@ -254,7 +279,7 @@ export const verify = Effect.fn('verify')(function*(
 		...(yield* scan(importer, source)),
 	];
 	for (const specifier of original) {
-		const target = resolveReference(before.aliases, before.files, importer, specifier);
+		const target = resolve(before, importer, specifier);
 		if (target !== undefined) expected.set(specifier, plan.files.get(target) ?? target);
 	}
 	const specifiers = new Set([
@@ -263,8 +288,8 @@ export const verify = Effect.fn('verify')(function*(
 	]);
 	for (const specifier of specifiers) {
 		const want = expected.get(specifier);
-		if (want === undefined || !isLocal(before.aliases, specifier)) continue;
-		if (resolveReference(after.aliases, after.files, destination, specifier) !== want) {
+		if (want === undefined) continue;
+		if (resolve(after, destination, specifier) !== want) {
 			problems.push(`${importer}: the move would break ${specifier}`);
 		}
 	}
@@ -292,10 +317,15 @@ export const move = Effect.fn('move')(function*(
 	const plan = yield* expandPairs(files, pairs);
 	const aliases = yield* readAliases(root);
 	const { added: addedAliases, problems: aliasProblems } = packageAliases(aliases, plan.files);
-	const before: Layout = { aliases, files: new Set(files) };
+	const workspaces = [...(yield* readWorkspaces(root, files)).values()];
+	const before: Layout = { aliases, files: new Set(files), workspaces };
 	const after: Layout = {
 		aliases: [...aliases, ...addedAliases],
 		files: new Set(files.map(file => plan.files.get(file) ?? file)),
+		workspaces: workspaces.map(workspace => {
+			const manifest = plan.files.get(`${workspace.base}/package.json`);
+			return manifest ? { ...workspace, base: dirname(manifest) } : workspace;
+		}),
 	};
 	const problems = [...aliasProblems, ...(yield* preflight(root, plan))];
 	const tsconfig = yield* aliasEdit(root, addedAliases);

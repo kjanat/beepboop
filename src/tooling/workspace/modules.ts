@@ -4,7 +4,7 @@ import { parse as parseJsonc } from 'jsonc-parser';
 import type { ToolFailure } from '@/tooling/runtime';
 import { attemptPromise, capture, parse } from '@/tooling/runtime';
 
-const codeExtensions = ['.ts', '.mts', '.mjs', '.js', '.astro'];
+const codeExtensions = ['.ts', '.tsx', '.mts', '.mjs', '.js', '.astro'];
 const probes = [
 	'',
 	'.ts',
@@ -322,14 +322,14 @@ export function pathReferences(path: string, source: string): PathReference[] {
 			const [, quote, body] = match;
 			if (quote === undefined || body === undefined || !code[match.index] || absolute.test(body)) continue;
 			const dynamic = quote === '`' && body.includes('${');
-			const head = dynamic ? body.split('${')[0] ?? '' : body;
+			const [head] = splitQuery(dynamic ? body.split('${')[0] ?? '' : body);
 			const start = region.offset + match.index + match[0].indexOf(body);
 			found.push({
 				path: head,
 				start,
 				end: start + head.length,
 				quote: '',
-				dynamic,
+				dynamic: dynamic && !/[?#]/.test(body.split('${')[0] ?? ''),
 				rewritable: true,
 				line: lineOf(source, start),
 			});

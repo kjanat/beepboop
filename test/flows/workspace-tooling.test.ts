@@ -344,8 +344,12 @@ describe('move', () => {
 	});
 
 	test('verification also checks import-shaped text the lexer treats as data', async () => {
-		const layout = { aliases: [{ pattern: '@/*', targets: ['./src/*'] }], files: new Set(['src/a.ts', 'src/b.ts']) };
-		const moved = { aliases: layout.aliases, files: new Set(['packages/k/src/b.ts', 'src/a.ts']) };
+		const layout = {
+			aliases: [{ pattern: '@/*', targets: ['./src/*'] }],
+			files: new Set(['src/a.ts', 'src/b.ts']),
+			workspaces: [],
+		};
+		const moved = { aliases: layout.aliases, files: new Set(['packages/k/src/b.ts', 'src/a.ts']), workspaces: [] };
 		const plan = { files: new Map([['src/b.ts', 'packages/k/src/b.ts']]), directories: [] };
 		const source = 'const text = "import { a } from \'./a.ts\'";\n';
 
@@ -462,6 +466,37 @@ describe('move', () => {
 		expect(report.review).toEqual(['test/load.ts:1 ../src/widgets/ names files that move to different places']);
 	});
 
+	test('TSX importers, URL queries and workspace package imports follow a move', async () => {
+		repository({
+			'packages/kernel/package.json': '{ "name": "@beepboop/kernel", "exports": { "./*": "./src/*" } }',
+			'packages/kernel/src/a.ts': 'export const a = 1;\n',
+			'src/data.json': '{}\n',
+			'src/view.tsx':
+				"import { a } from '@beepboop/kernel/a.ts';\nconst raw = new URL('./data.json?raw#part', import.meta.url);\n",
+		});
+		await Effect.runPromise(move(root, [
+			['packages/kernel/src/a.ts', 'packages/kernel/src/b.ts'],
+			['src/data.json', 'src/assets/data.json'],
+		]));
+
+		expect(read('src/view.tsx')).toBe(
+			"import { a } from '@beepboop/kernel/b.ts';\nconst raw = new URL('./assets/data.json?raw#part', import.meta.url);\n",
+		);
+	});
+
+	test('a workspace package import whose file leaves the package exports refuses the move', async () => {
+		repository({
+			'packages/kernel/package.json': '{ "name": "@beepboop/kernel", "exports": { "./*": "./src/*" } }',
+			'packages/kernel/src/a.ts': 'export const a = 1;\n',
+			'src/use.ts': "import { a } from '@beepboop/kernel/a.ts';\n",
+		});
+
+		expect(await refusal(move(root, [['packages/kernel/src/a.ts', 'packages/kernel/lib/a.ts']]))).toContain(
+			'src/use.ts: no specifier reaches packages/kernel/lib/a.ts from src/use.ts',
+		);
+		expect(git('status', '--short')).toBe('');
+	});
+
 	test('the command takes pairs, reports what still mentions the old path, and refuses an odd argument list', async () => {
 		repository({
 			'src/a.ts': 'export const a = 1;\n',
@@ -570,6 +605,7 @@ describe('boundaries', () => {
 			'packages/kernel/src/ui/button/button.ts': 'export const button = 1;\n',
 			'packages/domain/package.json':
 				'{ "name": "@beepboop/domain", "dependencies": { "@beepboop/kernel": "workspace:*" } }',
+			'packages/domain/src/view.tsx': "import '@/legacy.ts';\n",
 			'packages/domain/src/c.ts': [
 				"import '@beepboop/kernel';",
 				"import '@beepboop/kernel/ui/button';",
@@ -583,6 +619,7 @@ describe('boundaries', () => {
 		expect(report.violations.map(describeViolation)).toEqual([
 			'packages/domain/src/c.ts imports @beepboop/kernel/feature, which resolves to no tracked file',
 			'packages/domain/src/c.ts imports @/legacy.ts, which resolves outside any package (src/legacy.ts)',
+			'packages/domain/src/view.tsx imports @/legacy.ts, which resolves outside any package (src/legacy.ts)',
 		]);
 	});
 
