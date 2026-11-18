@@ -20,6 +20,7 @@ import {
 const platformModules = /^(?:node:|bun:|cloudflare:|astro:|virtual:)|^bun$/;
 const builtins = new Set(builtinModules);
 const rootAssets = ['schemas/', 'presets/'];
+const effectManifests = new Bun.Glob('**/node_modules/effect/package.json');
 
 export type Violation =
 	| { readonly _tag: 'OutsidePackage'; readonly file: string; readonly specifier: string; readonly target: string }
@@ -118,11 +119,11 @@ export const checkBoundaries = Effect.fn('checkBoundaries')(function*(
 		}
 	}
 	for (const cycle of cycles(edges)) violations.push({ _tag: 'Cycle', packages: cycle });
-	for (const workspace of packages.values()) {
-		const path = `packages/${workspace.directory}/node_modules/effect/package.json`;
-		if (yield* attemptPromise(() => Bun.file(join(root, path)).exists())) {
-			violations.push({ _tag: 'DuplicateEffect', path });
-		}
+	const installed = yield* attemptPromise(() =>
+		Array.fromAsync(effectManifests.scan({ cwd: root, dot: true, followSymlinks: false }))
+	);
+	for (const path of installed.sort()) {
+		if (path !== 'node_modules/effect/package.json') violations.push({ _tag: 'DuplicateEffect', path });
 	}
 	return { files: checked.length, packages: packages.size, violations };
 });

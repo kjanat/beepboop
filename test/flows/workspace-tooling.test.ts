@@ -643,6 +643,8 @@ describe('boundaries', () => {
 			'src/legacy.ts': 'export const legacy = 1;\n',
 		});
 		write('packages/domain/node_modules/effect/package.json', '{}');
+		write('node_modules/effect/package.json', '{}');
+		write('node_modules/dep/node_modules/effect/package.json', '{}');
 		const report = await Effect.runPromise(checkBoundaries(root));
 
 		expect(report.violations.map(describeViolation)).toEqual([
@@ -654,9 +656,10 @@ describe('boundaries', () => {
 			'packages/kernel/src/a.ts imports @/kernel/gone.ts, which resolves to no tracked file',
 			'Package cycle: @beepboop/kernel -> @beepboop/domain -> @beepboop/kernel',
 			'Package cycle: @beepboop/cli -> @beepboop/kernel -> @beepboop/domain -> @beepboop/cli',
+			'A second copy of effect is installed at node_modules/dep/node_modules/effect/package.json',
 			'A second copy of effect is installed at packages/domain/node_modules/effect/package.json',
 		]);
-		expect(await refusal(boundariesCommand(root))).toContain('9 package boundary violations');
+		expect(await refusal(boundariesCommand(root))).toContain('10 package boundary violations');
 	});
 
 	test('exports resolve exact keys first, then the most specific pattern, through conditions and every wildcard', async () => {
