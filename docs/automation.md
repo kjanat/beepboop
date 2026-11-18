@@ -1069,10 +1069,10 @@ repository. Pushes and pull requests that use this token start workflow runs.
 Pushes and pull requests that use `GITHUB_TOKEN` start none.
 
 The job needs `id-token: write`. The repository must belong to the owner
-account. The owner account must have started the run, or a Beepboop operation
-must have dispatched it. Push runs and same-repository `pull_request` runs
-qualify. Beepboop refuses `pull_request_target` runs. Unenrolled repositories
-qualify too. Other bots, apps and users get no token.
+account. By default, the owner account must have started the run, or a
+Beepboop operation must have dispatched it. Push runs and same-repository
+`pull_request` runs qualify. Beepboop refuses `pull_request_target` runs.
+Unenrolled repositories qualify too.
 
 ```yaml
 - uses: kjanat/beepboop/actions/token@v1
@@ -1135,6 +1135,12 @@ identity. PR runs, other workflow files and stale revisions cannot obtain this
 token. Deploy the service through Cloudflare Builds before you use the updated
 action. The App installation must have approved Contents and Workflows write
 access. The action leaves installation permissions unchanged.
+
+Vendor hash autofix uses `purpose: autofix-vendor-hash` and requests only
+`permission-contents: write`. Beepboop accepts a direct `workflow_run` of
+`.github/workflows/autofix-vendor-hash.yml` at the current default-branch SHA.
+This lets a trusted workflow update a dependency bot's branch. Keep the token
+in a job that executes only default-branch code.
 
 ## Pull request from a workflow
 

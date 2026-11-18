@@ -86,7 +86,8 @@ export function issueWorkflowToken(
 	log: TokenAudit,
 ): Effect.Effect<{ token: string; bot?: BotIdentity }, DomainError> {
 	return Effect.gen(function*() {
-		if (identity.actorId !== ownerId && body.purpose !== 'publish-actions') {
+		const fixesVendorHash = body.purpose === 'autofix-vendor-hash';
+		if (identity.actorId !== ownerId && body.purpose !== 'publish-actions' && !fixesVendorHash) {
 			if (!(yield* dispatchedByBeepboop(identity, body.executionId, issuer, log))) {
 				return yield* forbidden('Workflow run was not started by the owner or a Beepboop operation');
 			}
@@ -115,6 +116,22 @@ export function issueWorkflowToken(
 				return yield* forbidden('Actions publication requires the current default branch revision');
 			}
 			permissions = { contents: 'write', workflows: 'write' };
+		} else if (fixesVendorHash) {
+			if (
+				identity.event !== 'workflow_run' || identity.helperSha
+				|| identity.workflowSha !== identity.sha
+				|| identity.workflowRef !== `${identity.repository}/.github/workflows/autofix-vendor-hash.yml@${identity.ref}`
+			) {
+				return yield* forbidden('Vendor hash autofix requires its own workflow on the default branch');
+			}
+			permissions = yield* tokenPermissions(body.permissions);
+			if (Object.keys(permissions).length !== 1 || permissions.contents !== 'write') {
+				return yield* forbidden('Vendor hash autofix requires only contents:write');
+			}
+			const source = yield* issuer.defaultRevision(identity.repository, identity.repositoryId);
+			if (source.ref !== identity.ref || source.sha !== identity.sha) {
+				return yield* forbidden('Vendor hash autofix requires the current default branch revision');
+			}
 		} else {
 			if (body.purpose !== undefined && body.purpose !== '') {
 				return yield* invalid('Unknown token purpose', ['purpose']);
