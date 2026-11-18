@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, posix, resolve } from 'node:path';
 import type { Invalid } from '@root/actions/runtime/protocol.ts';
 import { ActionFailure, attempt, attemptAsync, fail, required } from '@root/actions/runtime/protocol.ts';
 import { call, mask, serviceOrigin } from '@root/actions/runtime/session.ts';
@@ -76,6 +76,15 @@ const npmManifest = mutableStruct({
 	repository: Schema.optional(Schema.Union([Schema.String, mutableStruct({ url: Schema.Unknown })])).pipe(
 		Schema.catchDecoding(() => Effect.succeedSome(undefined)),
 	),
+	main: Schema.optional(Schema.Unknown),
+	module: Schema.optional(Schema.Unknown),
+	types: Schema.optional(Schema.Unknown),
+	typings: Schema.optional(Schema.Unknown),
+	bin: Schema.optional(Schema.Unknown),
+	exports: Schema.optional(Schema.Unknown),
+	dependencies: Schema.optional(Schema.Unknown),
+	optionalDependencies: Schema.optional(Schema.Unknown),
+	peerDependencies: Schema.optional(Schema.Unknown),
 });
 const secretValues = mutableRecord(Schema.String, Schema.String);
 const tarball = mutableStruct({
@@ -118,15 +127,44 @@ export function distributionLicensed(file: string, entries: readonly string[]): 
 	});
 }
 
+function targets(value: unknown): string[] {
+	if (typeof value === 'string') return [posix.normalize(value)];
+	if (value !== null && typeof value === 'object') return Object.values(value).flatMap(targets);
+	return [];
+}
+
+function shipped(files: ReadonlySet<string>, target: string, probes: readonly string[]): boolean {
+	if (!target.includes('*')) return probes.some(probe => files.has(`${target}${probe}`));
+	const parts = target.split('*').map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'));
+	const pattern = new RegExp(`^${parts.join('.+')}$`);
+	return [...files].some(file => pattern.test(file));
+}
+
+function unresolved(field: unknown): string[] {
+	if (field === null || typeof field !== 'object') return [];
+	return Object.entries(field).flatMap(([name, range]) =>
+		typeof range === 'string' && /^(?:workspace|catalog):/.test(range)
+			? [`a published version for ${name} (${range})`]
+			: []
+	);
+}
+
 function npmMissing(files: readonly string[], manifest: Decoded<typeof npmManifest>): string[] {
 	const repository = manifest.repository;
-	return lacking({
-		README: files.some(path => readmeFile.test(path)),
-		description: filled(manifest.description),
-		license: filled(manifest.license),
-		'a license file': files.some(path => licenseFile.test(path)),
-		repository: typeof repository === 'string' ? filled(repository) : filled(repository?.url),
-	});
+	const packed = new Set(files);
+	const main = targets(manifest.main).filter(target => !shipped(packed, target, ['', '.js', '.json', '/index.js']));
+	const declared = [manifest.module, manifest.types, manifest.typings, manifest.bin, manifest.exports].flatMap(targets);
+	return [
+		...lacking({
+			README: files.some(path => readmeFile.test(path)),
+			description: filled(manifest.description),
+			license: filled(manifest.license),
+			'a license file': files.some(path => licenseFile.test(path)),
+			repository: typeof repository === 'string' ? filled(repository) : filled(repository?.url),
+		}),
+		...new Set([...main, ...declared.filter(target => !shipped(packed, target, ['']))]),
+		...[manifest.dependencies, manifest.optionalDependencies, manifest.peerDependencies].flatMap(unresolved),
+	];
 }
 
 function packedManifest(runner: Runner, file: string): Effect.Effect<Decoded<typeof npmManifest>, ActionFailure> {

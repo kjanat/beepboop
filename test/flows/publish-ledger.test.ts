@@ -851,6 +851,7 @@ interface Bindings {
 	empty?: boolean;
 	limited?: number;
 	stripped?: string[];
+	entries?: Record<string, unknown>;
 }
 function bindings(state: Bindings, version: string): Runner['run'] {
 	return (argv, options) =>
@@ -877,7 +878,7 @@ function bindings(state: Bindings, version: string): Runner['run'] {
 				return { code: 0, stdout: 'Uploading lint_py', output: 'Uploading lint_py' };
 			}
 			if (argv[0] === 'tar' && argv[3] === 'package/package.json') {
-				const manifest = JSON.stringify({ name: npm, version, ...npmMetadata });
+				const manifest = JSON.stringify({ name: npm, version, ...npmMetadata, ...state.entries });
 				return { code: 0, stdout: manifest, output: manifest };
 			}
 			if (argv[0] === 'tar' && argv[1] === '-tzf') {
@@ -1366,6 +1367,50 @@ test('a crate whose license-file path is in the package passes without a LICENSE
 	if (result._tag === 'Failure') throw new Error(result.failure.message);
 	expect(states(result.success)).toEqual([['pkg:cargo/lint-core@1.1.0', 'published']]);
 }, 60_000);
+
+test(
+	'an npm package whose manifest names missing files or unresolved workspace versions fails before its claim',
+	async () => {
+		world.npm.publish(npm, '1.0.0');
+		const { begun } = await released({ main: [npmId] }, bindingsLayout);
+		const { execution, identity } = started(begun, 'main');
+		const state: Bindings = {
+			commands: [],
+			entries: {
+				main: 'index',
+				bin: { lint: './dist/main.mjs' },
+				exports: {
+					'.': { types: './index.d.ts', import: './index.js', default: null },
+					'./worker': './dist/worker.mjs',
+					'./rules/*': ['./rules/*.js'],
+					'./data/*': './*.json',
+				},
+				dependencies: { micro509: 'catalog:', fflate: '0.8.3' },
+				optionalDependencies: { '@octo/cli': 'workspace:*' },
+				peerDependencies: { '@octo/sdk': 'workspace:^' },
+			},
+		};
+		const { result } = await publishing(identity, execution.id, {
+			run: bindings(state, '1.1.0'),
+			credentials: bindingCredentials,
+		});
+		if (result._tag === 'Failure') throw new Error(result.failure.message);
+		expect(states(result.success)).toEqual([[
+			'pkg:npm/%40octo/lint@1.1.0',
+			'failed-retryable',
+			[
+				'The @octo/lint 1.1.0 package lacks dist/main.mjs, index.d.ts, dist/worker.mjs, rules/*.js,',
+				'a published version for micro509 (catalog:), a published version for @octo/cli (workspace:*),',
+				'a published version for @octo/sdk (workspace:^)',
+			].join(' '),
+		]]);
+		expect(state.commands.map(entry => entry.command)).toEqual([
+			'npm pack --json --pack-destination',
+			'tar -xzOf package/package.json',
+		]);
+	},
+	60_000,
+);
 
 test('npm and PyPI packages built without a license file fail before their claims', async () => {
 	servePypi();
