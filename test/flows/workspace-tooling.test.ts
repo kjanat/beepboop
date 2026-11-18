@@ -548,6 +548,25 @@ describe('move', () => {
 		);
 	});
 
+	test('CommonJS, CTS and JSX files have their imports rewritten, and extensionless imports reach CommonJS files', async () => {
+		repository({
+			'src/b.ts': 'export const b = 1;\n',
+			'src/legacy.cjs': "const { b } = require('./b.ts');\nmodule.exports = b;\n",
+			'src/typed.cts': "import b = require('./b');\nexport = b;\n",
+			'src/view.jsx': "import { b } from './b';\nexport const view = <p>{b}</p>;\n",
+			'src/use.ts': "const legacy = require('./legacy');\n",
+		});
+		await Effect.runPromise(move(root, [
+			['src/b.ts', 'packages/kernel/src/b.ts'],
+			['src/legacy.cjs', 'packages/kernel/src/legacy.cjs'],
+		]));
+
+		expect(read('packages/kernel/src/legacy.cjs')).toBe("const { b } = require('./b.ts');\nmodule.exports = b;\n");
+		expect(read('src/typed.cts')).toBe("import b = require('@/kernel/b.ts');\nexport = b;\n");
+		expect(read('src/view.jsx')).toBe("import { b } from '@/kernel/b.ts';\nexport const view = <p>{b}</p>;\n");
+		expect(read('src/use.ts')).toBe("const legacy = require('@/kernel/legacy.cjs');\n");
+	});
+
 	test('the command takes pairs, reports what still mentions the old path, and refuses an odd argument list', async () => {
 		repository({
 			'src/a.ts': 'export const a = 1;\n',
@@ -657,6 +676,8 @@ describe('boundaries', () => {
 			'packages/domain/package.json':
 				'{ "name": "@beepboop/domain", "dependencies": { "@beepboop/kernel": "workspace:*" } }',
 			'packages/domain/src/view.tsx': "import '@/legacy.ts';\n",
+			'packages/domain/src/old.cjs': "require('@/legacy.ts');\n",
+			'packages/domain/src/old.jsx': "import '@/legacy.ts';\n",
 			'packages/domain/src/c.ts': [
 				"import '@beepboop/kernel';",
 				"import '@beepboop/kernel/ui/button';",
@@ -670,6 +691,8 @@ describe('boundaries', () => {
 		expect(report.violations.map(describeViolation)).toEqual([
 			'packages/domain/src/c.ts imports @beepboop/kernel/feature, which resolves to no tracked file',
 			'packages/domain/src/c.ts imports @/legacy.ts, which resolves outside any package (src/legacy.ts)',
+			'packages/domain/src/old.cjs imports @/legacy.ts, which resolves outside any package (src/legacy.ts)',
+			'packages/domain/src/old.jsx imports @/legacy.ts, which resolves outside any package (src/legacy.ts)',
 			'packages/domain/src/view.tsx imports @/legacy.ts, which resolves outside any package (src/legacy.ts)',
 		]);
 	});

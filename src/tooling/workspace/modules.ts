@@ -4,7 +4,7 @@ import { parse as parseJsonc } from 'jsonc-parser';
 import type { ToolFailure } from '@/tooling/runtime';
 import { attemptPromise, capture, parse } from '@/tooling/runtime';
 
-const codeExtensions = ['.ts', '.tsx', '.mts', '.mjs', '.js', '.astro'];
+const codeExtensions = ['.ts', '.tsx', '.mts', '.cts', '.mjs', '.cjs', '.js', '.jsx', '.astro'];
 const probes = [
 	'',
 	'.ts',
@@ -13,16 +13,23 @@ const probes = [
 	'.d.ts',
 	'.js',
 	'.mjs',
+	'.jsx',
+	'.cts',
+	'.cjs',
 	'/index.ts',
 	'/index.tsx',
 	'/index.mts',
 	'/index.js',
 	'/index.mjs',
+	'/index.jsx',
+	'/index.cts',
+	'/index.cjs',
 	'/index.astro',
 ];
 const javascriptExtensions: readonly (readonly [string, readonly string[]])[] = [
 	['.js', ['.ts', '.tsx', '.d.ts']],
 	['.mjs', ['.mts', '.d.mts']],
+	['.cjs', ['.cts', '.d.cts']],
 	['.jsx', ['.tsx']],
 ];
 
