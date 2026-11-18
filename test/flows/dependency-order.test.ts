@@ -73,6 +73,19 @@ test('publication order puts dependencies first, skips unpublishable packages an
 	});
 });
 
+test('npm preserves optional ordering through independent hard cycles and private packages', () => {
+	const source = snapshot('1.0.0');
+	const files = {
+		'a/package.json': jsonFile({ name: 'a', dependencies: { c: '*' }, optionalDependencies: { b: '*' } }),
+		'b/package.json': jsonFile({ name: 'b', dependencies: { private: '*' } }),
+		'c/package.json': jsonFile({ name: 'c', dependencies: { d: '*' } }),
+		'd/package.json': jsonFile({ name: 'd', dependencies: { c: '*' } }),
+		'private/package.json': jsonFile({ name: 'private', private: true, dependencies: { a: '*' } }),
+	};
+	const { packages } = discover({ ...source, files, paths: Object.keys(files) }, ['npm']);
+	expect(packages.find(pkg => pkg.name === 'a')?.dependencies).toEqual(['c', 'b']);
+});
+
 test('a release set plan orders operations by needs and inputs and refuses broken graphs', async () => {
 	const planned = await Effect.runPromise(plan([
 		{ id: 'publish', group: 'widget', inputs: [{ operation: 'build', output: 'bin' }] },

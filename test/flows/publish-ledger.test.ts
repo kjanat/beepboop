@@ -920,6 +920,88 @@ function bindings(state: Bindings, version: string): Runner['run'] {
 const npmId = 'pkg:npm/%40octo/lint', pypiId = 'pkg:pypi/lint-py';
 const bindingCredentials = { NODE_AUTH_TOKEN: 'npm-token', UV_PUBLISH_TOKEN: 'pypi-token' };
 
+test('npm publishes an SDK before the CLI it optionally installs when the CLI needs the SDK', async () => {
+	const sdk = '@octo/sdk', cli = '@octo/cli';
+	const layout: Layout = {
+		managers: ['npm', 'workflow'],
+		secrets: {},
+		files: version => ({
+			'packages/sdk/README.md': '# SDK\n',
+			'packages/sdk/LICENSE': licenseText,
+			'packages/sdk/package.json': npmManifest(sdk, version, {
+				dependencies: { [cli]: 'workspace:*' },
+				optionalDependencies: { [cli]: 'workspace:*' },
+			}),
+			'apps/cli/README.md': '# CLI\n',
+			'apps/cli/LICENSE': licenseText,
+			'apps/cli/package.json': npmManifest(cli, version, { peerDependencies: { [sdk]: 'workspace:*' } }),
+		}),
+	};
+	world.npm.publish(sdk, '1.0.0');
+	world.npm.publish(cli, '1.0.0');
+	const { begun } = await released({ main: ['pkg:npm/%40octo/cli', 'pkg:npm/%40octo/sdk'] }, layout);
+	const { execution, identity } = started(begun, 'main');
+	const executionId = execution.id;
+	await withIdentity(world, identity, async () => {
+		const next = () => Effect.runPromise(workflowCall(world, '/api/workflow/publish/next', { executionId }));
+		const purl = 'pkg:npm/%40octo/sdk@1.1.0';
+		expect(await next()).toMatchObject({ kind: 'publish', package: { purl } });
+		const claimed = await Effect.runPromise(workflowCall(world, '/api/workflow/publish/claim', {
+			executionId,
+			purl,
+			digest: npmIntegrity(sdk, '1.1.0'),
+		}));
+		expect(claimed).toMatchObject({ kind: 'publish' });
+		const early = await Effect.runPromise(workflowCall(world, '/api/workflow/publish/claim', {
+			executionId,
+			purl: 'pkg:npm/%40octo/cli@1.1.0',
+			digest: npmIntegrity(cli, '1.1.0'),
+		}));
+		expect(early).toMatchObject({ kind: 'wait' });
+		world.npm.publish(sdk, '1.1.0');
+		await Effect.runPromise(workflowCall(world, '/api/workflow/publish/report', {
+			executionId,
+			purl,
+			outcome: 'published',
+		}));
+		expect(await next()).toMatchObject({ kind: 'publish', package: { purl: 'pkg:npm/%40octo/cli@1.1.0' } });
+	});
+}, 60_000);
+
+test.each(['one ledger', 'two ledgers'])('the publisher reports a hard dependency cycle in %s', async (scope) => {
+	const a = '@octo/a', b = '@octo/b';
+	const layout: Layout = {
+		managers: ['npm', 'workflow'],
+		secrets: {},
+		files: version => ({
+			'a/README.md': '# A\n',
+			'a/LICENSE': licenseText,
+			'a/package.json': npmManifest(a, version, { dependencies: { [b]: 'workspace:*' } }),
+			'b/README.md': '# B\n',
+			'b/LICENSE': licenseText,
+			'b/package.json': npmManifest(b, version, { dependencies: { [a]: 'workspace:*' } }),
+		}),
+	};
+	world.npm.publish(a, '1.0.0');
+	world.npm.publish(b, '1.0.0');
+	const aId = 'pkg:npm/%40octo/a', bId = 'pkg:npm/%40octo/b';
+	const streams: Record<string, string[]> = scope === 'one ledger'
+		? { main: [aId, bId] }
+		: { main: [aId], other: [bId] };
+	const { begun } = await released(streams, layout);
+	const next = (stream: string) => {
+		const { execution, identity } = started(begun, stream);
+		return withIdentity(world, identity, () => Effect.runPromise(Effect.result(
+			workflowCall(world, '/api/workflow/publish/next', { executionId: execution.id }),
+		)));
+	};
+	if (scope === 'two ledgers') {
+		expect(await next('main')).toMatchObject({ _tag: 'Success', success: { kind: 'wait' } });
+	}
+	const result = await next(scope === 'one ledger' ? 'main' : 'other');
+	expect(result._tag === 'Failure' && result.failure.message).toContain('Publication dependency cycle at');
+}, 60_000);
+
 test('npm and PyPI packages publish through npm and uv and verify their integrity and sha256', async () => {
 	servePypi();
 	world.npm.publish(npm, '1.0.0');

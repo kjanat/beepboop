@@ -6,7 +6,7 @@ import { packageManifests } from '@/automation/managers/package-json';
 import type { Adapter, Fetcher, RegistryVersion } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
-import { excluded, registry } from '@/automation/package-publication';
+import { excluded, publishable, registry } from '@/automation/package-publication';
 import type { Package } from '@/automation/types';
 import { fileProblem } from '@/contract/diagnostics';
 import { precondition } from '@/contract/errors';
@@ -16,6 +16,17 @@ import { packageIdentity } from '@/package-url';
 const defaultRegistry = /^https?:\/\/registry\.(?:npmjs\.org|yarnpkg\.com)(?:[/:?#]|$)/;
 function foreignRegistry(value: unknown): boolean {
 	return typeof value === 'string' && !defaultRegistry.test(value.trim());
+}
+
+function reaches(packages: ReadonlyMap<string, Package>, from: string, target: string): boolean {
+	const next = [from], seen = new Set<string>();
+	for (const name of next) {
+		if (name === target) return true;
+		if (seen.has(name)) continue;
+		seen.add(name);
+		next.push(...(packages.get(name)?.dependencies ?? []));
+	}
+	return false;
 }
 type ManifestChange = readonly [path: readonly string[], value: string];
 function pinnedDependencies(
@@ -91,6 +102,7 @@ export const npmManager: Adapter<'npm'> = {
 	discover(snapshot) {
 		const inventory = emptyInventory();
 		const detected = new Set<import('@/contract/catalog').ManagerName>();
+		const optional = new Map<string, string[]>();
 		for (const { path, manifest: pkg } of packageManifests(snapshot, inventory.diagnostics)) {
 			if (typeof object(pkg.engines).vscode === 'string') continue;
 			if (typeof pkg.name !== 'string' || !pkg.name.trim()) {
@@ -102,6 +114,8 @@ export const npmManager: Adapter<'npm'> = {
 				continue;
 			}
 			// Standalone nested packages are still inventoried; independent versions are not silently synchronized.
+			const optionalNames = Object.keys(object(pkg.optionalDependencies));
+			optional.set(pkg.name, optionalNames);
 			inventory.packages.push({
 				manager: 'npm',
 				name: pkg.name,
@@ -113,16 +127,22 @@ export const npmManager: Adapter<'npm'> = {
 					: foreignRegistry(object(pkg.publishConfig).registry)
 					? excluded('other-registry')
 					: registry,
-				dependencies: Object.keys({
-					...object(pkg.dependencies),
-					...object(pkg.optionalDependencies),
-					...object(pkg.peerDependencies),
-				}),
+				dependencies: [...new Set([
+					...Object.keys(object(pkg.dependencies)).filter(name => !optionalNames.includes(name)),
+					...Object.keys(object(pkg.peerDependencies)),
+				])],
 			});
 			detected.add('npm');
 		}
 		if (discoverNpmTargets(snapshot, inventory)) detected.add('npm');
-
+		const packages = new Map(inventory.packages.filter(publishable).map(pkg => [pkg.name, pkg]));
+		// Keep optional publication ordering wherever it can be satisfied.
+		for (const pkg of [...inventory.packages].sort((a, b) => a.name.localeCompare(b.name))) {
+			for (const name of (optional.get(pkg.name) ?? []).sort()) {
+				if (pkg.dependencies.includes(name)) continue;
+				if (!publishable(pkg) || !reaches(packages, name, pkg.name)) pkg.dependencies.push(name);
+			}
+		}
 		inventory.managers = [...detected];
 		return inventory;
 	},
