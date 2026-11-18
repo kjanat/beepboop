@@ -9,6 +9,7 @@ import { exported, exportSpecifiers, readWorkspaces, workspaceOf } from '@/tooli
 import type { Alias, ReferenceKind } from '@/tooling/workspace/modules';
 import {
 	encodedPath,
+	escapedFor,
 	isCode,
 	isRelative,
 	locationSensitiveLines,
@@ -230,7 +231,7 @@ function rewrite(
 			continue;
 		}
 		const relativeTarget = `${relativePath(dirname(destination), mapped, reference.path)}${trailing}`;
-		const path = reference.encoded ? encodedPath(relativeTarget) : relativeTarget;
+		const path = escapedFor(reference.encoded ? encodedPath(relativeTarget) : relativeTarget, reference.literal);
 		edits.push({
 			start: reference.start,
 			end: reference.end,

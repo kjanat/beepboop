@@ -42,6 +42,7 @@ export interface PathReference {
 	readonly dynamic: boolean;
 	readonly rewritable: boolean;
 	readonly encoded: boolean;
+	readonly literal: string;
 	readonly line: number;
 }
 
@@ -64,8 +65,18 @@ const moduleReferences: readonly (readonly [RegExp, ReferenceKind])[] = [
 const scriptSource = new RegExp(String.raw`<script\b[^>]*\bsrc=${quoted}`, 'g');
 const joinCall = /\b(join|resolve)\(\s*import\.meta\.(?:dir|dirname)\s*,\s*/g;
 const absolute = /^(?:[a-z][a-z\d+.-]*:|\/)/i;
-const urlCall = /\bnew URL\(\s*(?:'([^'\n]*)'|"([^"\n]*)"|\x60([^\x60\n]*)\x60)\s*,\s*import\.meta\.url\s*\)/g;
-const dirTemplate = /\x60\$\{import\.meta\.(?:dir|dirname)\}\/([^\x60\n]*)\x60/g;
+const urlCall =
+	/\bnew URL\(\s*(?:'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"|\x60((?:[^\x60\\\n]|\\.)*)\x60)\s*,\s*import\.meta\.url\s*\)/g;
+const dirTemplate = /\x60\$\{import\.meta\.(?:dir|dirname)\}\/((?:[^\x60\\\n]|\\.)*)\x60/g;
+const singleEscapes: Readonly<Record<string, string>> = {
+	n: '\n',
+	r: '\r',
+	t: '\t',
+	b: '\b',
+	f: '\f',
+	v: '\v',
+	0: '\0',
+};
 const locationSensitive = /\bimport\.meta\.(?:dir|dirname|url|filename|path)\b/g;
 
 export function isCode(path: string): boolean {
@@ -301,8 +312,9 @@ function literalArguments(text: string, from: number): { list: Argument[]; compl
 	while (i < text.length) {
 		const quote = text[i] ?? '';
 		if (quote !== "'" && quote !== '"' && quote !== '`') return { list, complete: false };
-		const close = text.indexOf(quote, i + 1);
-		if (close < 0) return { list, complete: false };
+		let close = i + 1;
+		while (close < text.length && text[close] !== quote) close += text[close] === '\\' ? 2 : 1;
+		if (close >= text.length) return { list, complete: false };
 		const body = text.slice(i + 1, close);
 		const dynamic = quote === '`' && body.includes('${');
 		list.push({ quote, text: dynamic ? body.split('${')[0] ?? '' : body, start: i, end: close + 1, dynamic });
@@ -315,6 +327,24 @@ function literalArguments(text: string, from: number): { list: Argument[]; compl
 		while (/\s/.test(text[i] ?? '')) i++;
 	}
 	return { list, complete: false };
+}
+
+export function unescaped(text: string): string {
+	return text.replace(
+		/\\(?:x([\da-fA-F]{2})|u\{([\da-fA-F]+)\}|u([\da-fA-F]{4})|(\r\n|[\s\S]))/g,
+		(_: string, hex: string | undefined, point: string | undefined, unit: string | undefined, other = '') => {
+			const digits = hex ?? point ?? unit;
+			if (digits !== undefined) return String.fromCodePoint(Number.parseInt(digits, 16));
+			if (/^[\r\n\u2028\u2029]/.test(other)) return '';
+			return singleEscapes[other] ?? other;
+		},
+	);
+}
+
+export function escapedFor(text: string, quote: string): string {
+	const escaped = text.replace(/[\\\n\r]/g, char => char === '\\' ? '\\\\' : char === '\n' ? '\\n' : '\\r')
+		.replaceAll(quote, `\\${quote}`);
+	return quote === '`' ? escaped.replaceAll('${', '\\${') : escaped;
 }
 
 function decodedPath(path: string): string | undefined {
@@ -341,7 +371,7 @@ export function pathReferences(path: string, source: string): PathReference[] {
 			const last = list.at(-1);
 			if (!first || !last || (match[1] === 'resolve' && list.some(argument => argument.text.startsWith('/')))) continue;
 			const single = list.length === 1;
-			const joined = list.map(argument => argument.text).filter(Boolean);
+			const joined = list.map(argument => unescaped(argument.text)).filter(Boolean);
 			found.push({
 				path: joined.length ? posix.join(...joined) : '',
 				start: region.offset + (single ? first.start + 1 : first.start),
@@ -350,6 +380,7 @@ export function pathReferences(path: string, source: string): PathReference[] {
 				dynamic: last.dynamic || !complete,
 				rewritable: single || !last.dynamic,
 				encoded: false,
+				literal: first.quote,
 				line: lineOf(source, region.offset + match.index),
 			});
 		}
@@ -363,16 +394,17 @@ export function pathReferences(path: string, source: string): PathReference[] {
 			const [head] = splitQuery(prefix);
 			const open = dynamic && !/[?#]/.test(prefix);
 			if (head === '' && !open) continue;
-			const decoded = decodedPath(head);
+			const decoded = decodedPath(unescaped(head));
 			const start = region.offset + match.index + match[0].indexOf(body);
 			found.push({
-				path: decoded ?? head,
+				path: decoded ?? unescaped(head),
 				start,
 				end: start + head.length,
 				quote: '',
 				dynamic: open,
 				rewritable: true,
 				encoded: decoded !== undefined,
+				literal: quote,
 				line: lineOf(source, start),
 			});
 		}
@@ -383,13 +415,14 @@ export function pathReferences(path: string, source: string): PathReference[] {
 			const head = dynamic ? body.split('${')[0] ?? '' : body;
 			const start = region.offset + match.index + match[0].indexOf(body);
 			found.push({
-				path: head,
+				path: unescaped(head),
 				start,
 				end: start + head.length,
 				quote: '',
 				dynamic,
 				rewritable: true,
 				encoded: false,
+				literal: '`',
 				line: lineOf(source, start),
 			});
 		}
