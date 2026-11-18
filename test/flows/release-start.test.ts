@@ -445,6 +445,31 @@ test('a tag-based dashboard start promotes the reviewed version after its versio
 	]);
 });
 
+test('a tag-based start refuses delegated preparation before dispatching it', async () => {
+	const { repository, api } = await configured([{ via: 'cli' }]);
+	const configuration = editableConfiguration();
+	const stream = configuration.streams.main;
+	stream.start = [{ via: 'cli' }];
+	stream.versionSource = { kind: 'tags', prefix: 'v' };
+	stream.prepare = { strategy: 'workflow', workflow: { file: 'publish.yml' } };
+	stream.promote.workflow.refs = { phase: 'version', prefix: 'v' };
+	const head = world.github.push(
+		repository,
+		{ '.github/beepboop.json': JSON.stringify(configuration) },
+		'Delegate preparation',
+	);
+	passChecks(repository, head.sha);
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const request = { repositoryId: repository.id, stream: 'main', version: '1.0.1' };
+	const planned = await api('/api/releases/plan', request);
+	expect(planned.status).toBe(200);
+	const { sourceSha, planId } = decodeSync(plan, planned.body);
+	const refused = await api('/api/releases/prepare', { ...request, sourceSha, planId });
+	expect(refused.status).toBe(422);
+	expect(JSON.stringify(refused.body)).toContain('main needs managed preparation to start a tag-based release');
+	expect(await executions(api)).toEqual([]);
+});
+
 test('the release action refreshes a stale branch head and refuses a run on another branch or an old commit', async () => {
 	const { repository, api } = await configured([{ via: 'action', workflow: 'start-release.yml' }], 'commit');
 	const old = world.github.head(repository);

@@ -581,6 +581,9 @@ reason on the runs page. Each stream lists where a release starts in
 - **CLI.** Run `beepboop release [patch|minor|major|VERSION]` in a checkout, or
   pass `--repository owner/repo` and `--stream main`.
 
+When a tag-based release needs a version change, a start requires managed
+preparation so Beepboop can track the version PR through merge.
+
 With `"versionLands": "via-direct-commit"`, Beepboop pushes
 `chore(release): <version>` to the default branch as a signed bot commit, and
 the release publishes that commit once its checks pass. When branch protection

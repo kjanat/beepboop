@@ -224,10 +224,15 @@ export function beginRelease(
 		if (started && stream.versioning === 'independent') {
 			return yield* precondition(`${name} cannot start releases: it needs one shared version`);
 		}
-		if (started && stream.versionSource?.kind === 'tags' && !hasTagPromotion(stream, stream.versionSource.prefix)) {
-			return yield* precondition(
-				`${name} needs a dispatchable promotion that publishes a version tag with prefix "${stream.versionSource.prefix}"`,
-			);
+		if (started && stream.versionSource?.kind === 'tags') {
+			if (!hasTagPromotion(stream, stream.versionSource.prefix)) {
+				return yield* precondition(
+					`${name} needs a dispatchable promotion that publishes a version tag with prefix "${stream.versionSource.prefix}"`,
+				);
+			}
+			if (plan.requiresPreparation && stream.prepare.strategy === 'workflow') {
+				return yield* precondition(`${name} needs managed preparation to start a tag-based release`);
+			}
 		}
 		if (versionPrMerge && !opensVersionPr(stream, plan)) {
 			return yield* precondition(`${plan.version} of ${name} opens no version PR to merge`);
