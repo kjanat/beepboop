@@ -1,4 +1,7 @@
-extends = "https://raw.githubusercontent.com/kjanat/kjanat/refs/heads/master/configs/dprint.remote.json"
+#:schema https://raw.githubusercontent.com/kjanat/kjanat/master/schemas/dprint.schema.json
+
+extends  = "https://raw.githubusercontent.com/kjanat/kjanat/refs/heads/master/configs/dprint.remote.json"
+excludes = ["test/fixtures/**"]
 
 [typescript]
 "module.sortImportDeclarations"         = "maintain"
