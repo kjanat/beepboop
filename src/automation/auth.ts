@@ -99,7 +99,11 @@ export class Authentication
 	extends Context.Service<Authentication, AuthenticationDependencies>()('beepboop/Authentication')
 {}
 
-export function authentication(env: AuthBindings, db: Sql, transport: Fetcher): AuthenticationDependencies {
+export const authentication = Effect.fnUntraced(function*(
+	env: AuthBindings,
+	db: Sql,
+	transport: Fetcher,
+): Effect.fn.Return<AuthenticationDependencies> {
 	const sessions = new SessionStore(db);
 	const http = (signal: AbortSignal): Fetcher => (input, init) => transport(input, {
 		...init,
@@ -111,10 +115,10 @@ export function authentication(env: AuthBindings, db: Sql, transport: Fetcher): 
 		authenticators: new Authenticators(env, db, sessions),
 		client: signal =>
 			createClient({ clientID: env.OPENAUTH_CLIENT_ID, issuer: env.OPENAUTH_ISSUER, fetch: http(signal) }),
-		administratorKeys: remoteKeys(new URL('/.well-known/jwks.json', env.OPENAUTH_ISSUER), transport),
-		workflowKeys: remoteKeys(new URL('https://token.actions.githubusercontent.com/.well-known/jwks'), transport),
+		administratorKeys: yield* remoteKeys(new URL('/.well-known/jwks.json', env.OPENAUTH_ISSUER), transport),
+		workflowKeys: yield* remoteKeys(new URL('https://token.actions.githubusercontent.com/.well-known/jwks'), transport),
 	};
-}
+});
 export function base64(bytes: Uint8Array): string {
 	return btoa(String.fromCharCode(...bytes));
 }

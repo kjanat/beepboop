@@ -8,7 +8,7 @@ import { Network } from '@root/test/support/network.ts';
 import { FakeNpm } from '@root/test/support/registries.ts';
 import { FakeNamespace } from '@root/test/support/rpc.ts';
 import { FakeWorkflow } from '@root/test/support/workflows.ts';
-import { Effect } from 'effect';
+import { Effect, Layer, Schedule } from 'effect';
 import type { JWK } from 'jose';
 import { exportJWK, exportPKCS8, generateKeyPair, SignJWT } from 'jose';
 import type { CoordinatorBindings } from '@/automation/coordinator';
@@ -18,6 +18,7 @@ import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
 import type { Automation, AutomationBindings } from '@/automation/service';
 import { applicationLayer } from '@/automation/service';
 import { cliToken, sha256Hex } from '@/contract/ids';
+import { TransientBackoff } from '@/runtime/policy';
 import { serve } from '@/server/endpoint';
 
 export const origin = 'https://beepboop.kjanat.dev';
@@ -91,7 +92,10 @@ export class World {
 			OPENAUTH_CLIENT_ID: 'beepboop',
 			ADMIN_SUBJECT: adminSubject,
 		};
-		this.application = applicationLayer(this.env, deferBackground, this.network.fetch);
+		this.application = Layer.merge(
+			applicationLayer(this.env, deferBackground, this.network.fetch),
+			Layer.succeed(TransientBackoff, () => Schedule.forever),
+		);
 		this.network.serve('api.github.com', request => this.github.handle(request));
 		this.network.serve('registry.npmjs.org', request => this.npm.handle(request));
 		this.network.serve(

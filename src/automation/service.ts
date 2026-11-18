@@ -1142,7 +1142,7 @@ export const authenticationLayer = Layer.effect(
 		const { env } = yield* ApplicationConfiguration;
 		const db = yield* Database;
 		const { fetch: transport } = yield* HttpTransport;
-		return authentication(env, db, transport);
+		return yield* authentication(env, db, transport);
 	}),
 );
 
