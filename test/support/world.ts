@@ -53,7 +53,10 @@ export interface RunIdentity {
 	actorId?: number;
 }
 
-export type Environment = Omit<Cloudflare.Env, 'DB' | 'SIGNER'> & AutomationBindings & CoordinatorBindings;
+export type Environment =
+	& Omit<Cloudflare.Env, 'DB' | 'SIGNER' | 'WORKFLOW_RUN_CONTENTS_WRITE'>
+	& AutomationBindings
+	& CoordinatorBindings;
 
 export class World {
 	readonly network = new Network();

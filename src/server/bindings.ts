@@ -1,12 +1,14 @@
 import { env } from 'cloudflare:workers';
 import { Data, Effect, Result, Schema } from 'effect';
 import type { AutomationBindings } from '@/automation/service.ts';
+import { workflowFilePattern } from '@/contract/catalog';
 import { decodeSync, mapped, matchesPattern, mutableRecord, mutableStruct, safeDecode, schemaIssues } from '@/schema';
 
 export class ConfigurationError extends Data.TaggedError('ConfigurationError')<{ readonly message: string }> {}
 
-const required = mutableStruct({
-	OWNER_ID: Schema.String.check(matchesPattern(/^[1-9][0-9]*$/)),
+const githubId = Schema.String.check(matchesPattern(/^[1-9][0-9]*$/));
+const configuration = mutableStruct({
+	OWNER_ID: githubId,
 	ADMIN_SUBJECT: Schema.String.check(Schema.isMinLength(1)),
 	APPLICATION_ORIGIN: Schema.String.check(Schema.makeFilter(value => URL.canParse(value))),
 	OPENAUTH_ISSUER: Schema.String.check(Schema.makeFilter(value => URL.canParse(value))),
@@ -17,10 +19,13 @@ const required = mutableStruct({
 		context.addIssue({ code: 'custom', message: 'VAULT_KEYS must be a JSON object of strings' });
 		return undefined as never;
 	}, value => JSON.stringify(value)),
+	WORKFLOW_RUN_CONTENTS_WRITE: Schema.optional(
+		mutableRecord(githubId, Schema.Array(Schema.String.check(matchesPattern(workflowFilePattern)))),
+	),
 });
 
 export function parseBindings<T extends AutomationBindings>(source: T): Effect.Effect<T, ConfigurationError> {
-	const result = safeDecode(required, source);
+	const result = safeDecode(configuration, source);
 	return result.success
 		? Effect.succeed(source)
 		: Effect.fail(

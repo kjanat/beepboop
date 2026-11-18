@@ -89,6 +89,7 @@ export interface AutomationBindings extends AuthBindings, Credentials, WinGetBin
 	GITHUB_WEBHOOK_SECRET: string;
 	VAULT_KEYS: string;
 	VAULT_ACTIVE_KEY: string;
+	WORKFLOW_RUN_CONTENTS_WRITE?: Readonly<Record<string, readonly string[]>>;
 }
 const retiredStates: readonly string[] = ['cancelled', 'failed'];
 

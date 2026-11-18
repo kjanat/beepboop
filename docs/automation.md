@@ -1136,11 +1136,18 @@ token. Deploy the service through Cloudflare Builds before you use the updated
 action. The App installation must have approved Contents and Workflows write
 access. The action leaves installation permissions unchanged.
 
-Vendor hash autofix uses `purpose: autofix-vendor-hash` and requests only
-`permission-contents: write`. Beepboop accepts a direct `workflow_run` of
-`.github/workflows/autofix-vendor-hash.yml` at the current default-branch SHA.
-This lets a trusted workflow update a dependency bot's branch. Keep the token
-in a job that executes only default-branch code.
+The Beepboop operator can approve specific workflows under
+`[vars.WORKFLOW_RUN_CONTENTS_WRITE]` in `wrangler.toml`. Each entry maps a numeric
+GitHub repository ID to filenames in `.github/workflows`. For example:
+
+```toml
+[vars.WORKFLOW_RUN_CONTENTS_WRITE]
+"1326162482" = ["autofix-vendor-hash.yml"]
+```
+
+An approved workflow can request `permission-contents: write` in a direct
+`workflow_run` at the current default-branch SHA. Omit `purpose`. Keep the
+token in a job that executes only default-branch code.
 
 ## Pull request from a workflow
 

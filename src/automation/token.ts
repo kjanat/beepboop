@@ -84,16 +84,32 @@ export function issueWorkflowToken(
 	ownerId: number,
 	issuer: TokenIssuer,
 	log: TokenAudit,
+	workflowRunGrants?: Readonly<Record<string, readonly string[]>>,
 ): Effect.Effect<{ token: string; bot?: BotIdentity }, DomainError> {
 	return Effect.gen(function*() {
-		const fixesVendorHash = body.purpose === 'autofix-vendor-hash';
-		if (identity.actorId !== ownerId && body.purpose !== 'publish-actions' && !fixesVendorHash) {
-			if (!(yield* dispatchedByBeepboop(identity, body.executionId, issuer, log))) {
+		let permissions: TokenPermissions;
+		if (
+			identity.actorId !== ownerId && body.purpose !== 'publish-actions'
+			&& !(yield* dispatchedByBeepboop(identity, body.executionId, issuer, log))
+		) {
+			const files = workflowRunGrants?.[identity.repositoryId];
+			if (
+				body.purpose || identity.event !== 'workflow_run' || identity.helperSha || identity.workflowSha !== identity.sha
+				|| !files?.some(file =>
+					identity.workflowRef === `${identity.repository}/.github/workflows/${file}@${identity.ref}`
+				)
+			) {
 				return yield* forbidden('Workflow run was not started by the owner or a Beepboop operation');
 			}
-		}
-		let permissions: TokenPermissions;
-		if (body.purpose === 'publish-actions') {
+			permissions = yield* tokenPermissions(body.permissions);
+			if (Object.keys(permissions).length !== 1 || permissions.contents !== 'write') {
+				return yield* forbidden('An approved workflow_run may request only contents:write');
+			}
+			const source = yield* issuer.defaultRevision(identity.repository, identity.repositoryId);
+			if (source.ref !== identity.ref || source.sha !== identity.sha) {
+				return yield* forbidden('An approved workflow_run requires the current default branch revision');
+			}
+		} else if (body.purpose === 'publish-actions') {
 			if (
 				!['workflow_dispatch', 'push'].includes(identity.event) || identity.helperSha
 				|| identity.workflowSha !== identity.sha
@@ -116,22 +132,6 @@ export function issueWorkflowToken(
 				return yield* forbidden('Actions publication requires the current default branch revision');
 			}
 			permissions = { contents: 'write', workflows: 'write' };
-		} else if (fixesVendorHash) {
-			if (
-				identity.event !== 'workflow_run' || identity.helperSha
-				|| identity.workflowSha !== identity.sha
-				|| identity.workflowRef !== `${identity.repository}/.github/workflows/autofix-vendor-hash.yml@${identity.ref}`
-			) {
-				return yield* forbidden('Vendor hash autofix requires its own workflow on the default branch');
-			}
-			permissions = yield* tokenPermissions(body.permissions);
-			if (Object.keys(permissions).length !== 1 || permissions.contents !== 'write') {
-				return yield* forbidden('Vendor hash autofix requires only contents:write');
-			}
-			const source = yield* issuer.defaultRevision(identity.repository, identity.repositoryId);
-			if (source.ref !== identity.ref || source.sha !== identity.sha) {
-				return yield* forbidden('Vendor hash autofix requires the current default branch revision');
-			}
 		} else {
 			if (body.purpose !== undefined && body.purpose !== '') {
 				return yield* invalid('Unknown token purpose', ['purpose']);

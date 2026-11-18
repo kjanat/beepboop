@@ -113,10 +113,17 @@ export const workflowEndpoints = {
 	workflowToken: workflowToken(
 		routes.workflowToken,
 		(input, { env, identity, service }) =>
-			issueWorkflowToken(identity, input, Number(env.OWNER_ID), service.gateway, {
-				audit: (actor, action, target) => service.store.audit(actor, action, target),
-				execution: id => fromPromise(() => service.coordinator(identity.repositoryId).execution(id)),
-			}),
+			issueWorkflowToken(
+				identity,
+				input,
+				Number(env.OWNER_ID),
+				service.gateway,
+				{
+					audit: (actor, action, target) => service.store.audit(actor, action, target),
+					execution: id => fromPromise(() => service.coordinator(identity.repositoryId).execution(id)),
+				},
+				env.WORKFLOW_RUN_CONTENTS_WRITE,
+			),
 	),
 	workflowStart: workflow(routes.workflowStart, (input, context) =>
 		Effect.gen(function*() {
