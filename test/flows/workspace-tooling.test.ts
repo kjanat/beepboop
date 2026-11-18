@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { eachDirectory } from '@root/test/support/directories.ts';
 import { Cause, Effect, Exit } from 'effect';
 import { boundariesCommand, checkBoundaries, describe as describeViolation } from '@/tooling/workspace/boundaries.ts';
 import { codeMask, references } from '@/tooling/workspace/modules.ts';
-import { move, moveCommand, verify } from '@/tooling/workspace/move.ts';
+import { move, moveCommand, undo, verify } from '@/tooling/workspace/move.ts';
 
 let root = '';
 eachDirectory('beepboop-workspace-', directory => {
@@ -565,6 +565,55 @@ describe('move', () => {
 		expect(read('src/typed.cts')).toBe("import b = require('@/kernel/b.ts');\nexport = b;\n");
 		expect(read('src/view.jsx')).toBe("import { b } from '@/kernel/b.ts';\nexport const view = <p>{b}</p>;\n");
 		expect(read('src/use.ts')).toBe("const legacy = require('@/kernel/legacy.cjs');\n");
+	});
+
+	test('a failed git mv rolls back the moves already made', async () => {
+		repository({
+			'src/lib/a.ts': 'export const a = 1;\n',
+			'src/b.ts': 'export const b = 1;\n',
+			'src/use.ts': "import { a } from './lib/a.ts';\nimport { b } from './b.ts';\n",
+		});
+		mkdirSync(join(root, 'locked'));
+		chmodSync(join(root, 'locked'), 0o555);
+		const failed = await refusal(
+			move(root, [['src/lib/a.ts', 'packages/kernel/src/a.ts'], ['src/b.ts', 'locked/b.ts']]),
+		);
+		chmodSync(join(root, 'locked'), 0o755);
+
+		expect(failed).toContain('Move failed and was rolled back: git failed');
+		expect(failed).not.toContain('Rollback could not');
+		expect(git('status', '--short')).toBe('');
+		expect(read('tsconfig.json')).toBe(tsconfig);
+	});
+
+	test('a failed rewrite restores the files already rewritten and moves everything back', async () => {
+		repository({
+			'src/a.ts': 'export const a = 1;\n',
+			'src/x.ts': "import { a } from './a';\n",
+			'src/y.ts': "import { a } from './a';\n",
+		});
+		chmodSync(join(root, 'src/y.ts'), 0o444);
+		const failed = await refusal(move(root, [['src/a.ts', 'packages/kernel/src/a.ts']]));
+		chmodSync(join(root, 'src/y.ts'), 0o644);
+
+		expect(failed).toContain('Move failed and was rolled back');
+		expect(failed).not.toContain('Rollback could not');
+		expect(git('status', '--short')).toBe('');
+		expect(read('src/x.ts')).toBe("import { a } from './a';\n");
+	});
+
+	test('rollback reports each step it cannot undo and keeps going', async () => {
+		repository({ 'src/a.ts': 'export const a = 1;\n' });
+		mkdirSync(join(root, 'directory'));
+		const left = await Effect.runPromise(
+			undo(root, [['src/a.ts', 'src/gone.ts']], new Map([['directory', 'text'], ['src/b.ts', 'restored\n']])),
+		);
+
+		expect(left.map(problem => problem.split(':')[0])).toEqual([
+			'restore directory',
+			'move src/gone.ts back to src/a.ts',
+		]);
+		expect(read('src/b.ts')).toBe('restored\n');
 	});
 
 	test('the command takes pairs, reports what still mentions the old path, and refuses an odd argument list', async () => {

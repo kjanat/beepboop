@@ -317,6 +317,28 @@ const aliasEdit = Effect.fn('aliasEdit')(function*(root: string, aliases: readon
 	return { path, text: `${text.slice(0, end)}${lines.join('')}${text.slice(end)}`, problem: undefined };
 });
 
+export const undo = Effect.fn('undo')(function*(
+	root: string,
+	moves: readonly (readonly [string, string])[],
+	texts: ReadonlyMap<string, string>,
+) {
+	const problems: string[] = [];
+	const step = (effect: Effect.Effect<void, ToolFailure>, action: string) =>
+		effect.pipe(Effect.catch(failure => Effect.sync(() => void problems.push(`${action}: ${failure.message}`))));
+	for (const [path, text] of texts) {
+		yield* step(attemptPromise(() => Bun.write(join(root, path), text).then(() => undefined)), `restore ${path}`);
+	}
+	for (const [from, to] of [...moves].reverse()) {
+		yield* step(
+			attemptPromise(() => mkdir(dirname(join(root, from)), { recursive: true })).pipe(
+				Effect.andThen(run(['git', 'mv', to, from], { cwd: root })),
+			),
+			`move ${to} back to ${from}`,
+		);
+	}
+	return problems;
+});
+
 export const move = Effect.fn('move')(function*(
 	root: string,
 	pairs: readonly (readonly [string, string])[],
@@ -338,7 +360,7 @@ export const move = Effect.fn('move')(function*(
 	const problems = [...aliasProblems, ...(yield* preflight(root, plan))];
 	const tsconfig = yield* aliasEdit(root, addedAliases);
 	if (tsconfig.problem) problems.push(tsconfig.problem);
-	const writes = new Map<string, string>();
+	const writes = new Map<string, { readonly text: string; readonly original: string }>();
 	const review: string[] = [];
 	let rewritten = 0;
 	for (const file of files.filter(isCode)) {
@@ -350,15 +372,32 @@ export const move = Effect.fn('move')(function*(
 		review.push(...result.review);
 		if (result.count === 0) continue;
 		rewritten += result.count;
-		writes.set(destination, result.text);
+		writes.set(destination, { text: result.text, original: source });
 	}
 	if (problems.length) return yield* refuse(`Nothing moved:\n${problems.join('\n')}`);
-	for (const [from, to] of plan.files) {
-		yield* attemptPromise(() => mkdir(dirname(join(root, to)), { recursive: true }));
-		yield* run(['git', 'mv', from, to], { cwd: root });
-	}
-	for (const [path, text] of writes) yield* attemptPromise(() => Bun.write(join(root, path), text));
-	if (addedAliases.length) yield* attemptPromise(() => Bun.write(tsconfig.path, tsconfig.text));
+	const done: (readonly [string, string])[] = [];
+	const restores = new Map<string, string>();
+	const apply = Effect.gen(function*() {
+		for (const [from, to] of plan.files) {
+			yield* attemptPromise(() => mkdir(dirname(join(root, to)), { recursive: true }));
+			yield* run(['git', 'mv', from, to], { cwd: root });
+			done.push([from, to]);
+		}
+		for (const [path, { text, original }] of writes) {
+			yield* attemptPromise(() => Bun.write(join(root, path), text));
+			restores.set(path, original);
+		}
+		if (addedAliases.length) yield* attemptPromise(() => Bun.write(tsconfig.path, tsconfig.text));
+	});
+	yield* apply.pipe(Effect.catch(failure =>
+		Effect.gen(function*() {
+			const left = yield* undo(root, done, restores);
+			return yield* refuse(
+				[`Move failed and was rolled back: ${failure.message}`, ...left.map(problem => `Rollback could not ${problem}`)]
+					.join('\n'),
+			);
+		})
+	));
 	const mentions = new Set<string>();
 	for (const from of new Set([...plan.files.keys(), ...plan.directories.map(([from]) => from)])) {
 		const found = yield* capture(['git', 'grep', '-n', '-F', '-e', from, '--', ':!bun.lock'], { cwd: root }).pipe(
