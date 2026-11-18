@@ -1,8 +1,10 @@
+import { builtinModules } from 'node:module';
 import { dirname, join } from 'node:path';
 import { Effect, Schema } from 'effect';
 import type { ToolFailure } from '@/tooling/runtime';
-import { attemptPromise, capture, main, parse, readJson, refuse } from '@/tooling/runtime';
+import { attemptPromise, main, parse, readJson, refuse } from '@/tooling/runtime';
 import {
+	candidatePaths,
 	isCode,
 	isLocal,
 	isRelative,
@@ -11,6 +13,7 @@ import {
 	references,
 	repositoryPath,
 	resolveReference,
+	splitQuery,
 	trackedFiles,
 } from '@/tooling/workspace/modules';
 
@@ -21,9 +24,14 @@ const manifestSchema = Schema.Struct({
 	devDependencies: dependencyMap,
 	peerDependencies: dependencyMap,
 	optionalDependencies: dependencyMap,
+	files: Schema.optional(Schema.Array(Schema.String)),
+	bin: Schema.optional(Schema.Union([Schema.String, Schema.Record(Schema.String, Schema.String)])),
+	exports: Schema.optional(Schema.Union([Schema.String, Schema.Record(Schema.String, Schema.String)])),
 });
 
 const platformModules = /^(?:node:|bun:|cloudflare:|astro:|virtual:)|^bun$/;
+const builtins = new Set(builtinModules);
+const rootAssets = ['schemas/', 'presets/'];
 
 export type Violation =
 	| { readonly _tag: 'OutsidePackage'; readonly file: string; readonly specifier: string; readonly target: string }
@@ -42,6 +50,13 @@ interface Workspace {
 	readonly directory: string;
 	readonly name: string;
 	readonly dependencies: ReadonlySet<string>;
+	readonly outputs: ReadonlySet<string>;
+	readonly exports: ReadonlyMap<string, string>;
+}
+
+function values(field: string | Readonly<Record<string, string>> | undefined, key: string): [string, string][] {
+	if (field === undefined) return [];
+	return typeof field === 'string' ? [[key, field]] : Object.entries(field);
 }
 
 const workspaces = Effect.fn('workspaces')(function*(
@@ -59,7 +74,15 @@ const workspaces = Effect.fn('workspaces')(function*(
 			manifest.peerDependencies,
 			manifest.optionalDependencies,
 		].flatMap(map => Object.keys(map ?? {}));
-		found.set(directory, { directory, name: manifest.name, dependencies: new Set(declared) });
+		const base = `packages/${directory}`;
+		const outputs = [...(manifest.files ?? []), ...values(manifest.bin, manifest.name).map(([, path]) => path)];
+		found.set(directory, {
+			directory,
+			name: manifest.name,
+			dependencies: new Set(declared),
+			outputs: new Set(outputs.map(path => repositoryPath(join(base, path)))),
+			exports: new Map(values(manifest.exports, '.').map(([key, path]) => [key, repositoryPath(join(base, path))])),
+		});
 	}
 	return found;
 });
@@ -82,8 +105,23 @@ function cycles(edges: ReadonlyMap<string, ReadonlySet<string>>): string[][] {
 }
 
 function packageName(specifier: string): string {
-	const [scope, name] = specifier.split('/');
-	return specifier.startsWith('@') && name ? `${scope}/${name}` : scope ?? specifier;
+	const [path] = splitQuery(specifier);
+	const [scope, name] = path.split('/');
+	return path.startsWith('@') && name ? `${scope}/${name}` : scope ?? path;
+}
+
+function exported(workspace: Workspace, files: ReadonlySet<string>, specifier: string): string | undefined {
+	const [path] = splitQuery(specifier);
+	const subpath = `.${path.slice(workspace.name.length)}`;
+	for (const [key, target] of workspace.exports) {
+		const star = key.indexOf('*');
+		if (star < 0 && key !== subpath) continue;
+		if (star >= 0 && !(subpath.startsWith(key.slice(0, star)) && subpath.endsWith(key.slice(star + 1)))) continue;
+		const rest = star < 0 ? '' : subpath.slice(star, subpath.length - (key.length - star - 1));
+		const found = candidatePaths(target.replace('*', rest)).find(candidate => files.has(candidate));
+		if (found) return found;
+	}
+	return undefined;
 }
 
 export function describe(violation: Violation): string {
@@ -101,13 +139,6 @@ export function describe(violation: Violation): string {
 	}
 }
 
-const ignored = Effect.fn('ignored')(function*(root: string, path: string) {
-	return yield* capture(['git', 'check-ignore', '-q', path], { cwd: root }).pipe(
-		Effect.as(true),
-		Effect.orElseSucceed(() => false),
-	);
-});
-
 export const checkBoundaries = Effect.fn('checkBoundaries')(function*(
 	root: string,
 ): Effect.fn.Return<BoundaryReport, ToolFailure> {
@@ -124,26 +155,39 @@ export const checkBoundaries = Effect.fn('checkBoundaries')(function*(
 		if (!owner) continue;
 		const source = yield* attemptPromise(() => Bun.file(join(root, file)).text());
 		for (const { specifier } of references(file, source)) {
-			const local = isLocal(aliases, specifier);
-			const target = resolveReference(aliases, known, file, specifier);
-			if (local && target === undefined) {
-				const generated = isRelative(specifier)
-					&& (yield* ignored(root, repositoryPath(join(dirname(file), specifier))));
-				if (!generated) violations.push({ _tag: 'Unresolved', file, specifier });
+			const [path] = splitQuery(specifier);
+			const named = names.get(packageName(specifier));
+			if (isLocal(aliases, specifier)) {
+				const target = resolveReference(aliases, known, file, specifier);
+				if (target === undefined) {
+					const output = isRelative(path) && owner.outputs.has(repositoryPath(join(dirname(file), path)));
+					if (!output) violations.push({ _tag: 'Unresolved', file, specifier });
+					continue;
+				}
+				if (rootAssets.some(asset => target.startsWith(asset))) continue;
+				const dependency = packages.get(packageOf(target) ?? '');
+				if (!dependency) {
+					violations.push({ _tag: 'OutsidePackage', file, specifier, target });
+					continue;
+				}
+				if (dependency.directory === owner.directory) continue;
+				edges.set(owner.name, (edges.get(owner.name) ?? new Set()).add(dependency.name));
+				if (!owner.dependencies.has(dependency.name)) {
+					violations.push({ _tag: 'Undeclared', file, specifier, dependency: dependency.name });
+				}
 				continue;
 			}
-			if (!local && platformModules.test(specifier)) continue;
-			const dependency = target ? packages.get(packageOf(target) ?? '') : names.get(packageName(specifier));
-			if (target && !dependency) {
-				violations.push({ _tag: 'OutsidePackage', file, specifier, target });
+			if (platformModules.test(path) || builtins.has(path)) continue;
+			if (named && named.directory !== owner.directory) {
+				edges.set(owner.name, (edges.get(owner.name) ?? new Set()).add(named.name));
+			}
+			if (named && exported(named, known, specifier) === undefined) {
+				violations.push({ _tag: 'Unresolved', file, specifier });
 				continue;
 			}
-			if (dependency?.directory === owner.directory) continue;
-			const declared = dependency?.name ?? packageName(specifier);
-			if (dependency) edges.set(owner.name, (edges.get(owner.name) ?? new Set()).add(dependency.name));
-			if (!owner.dependencies.has(declared)) {
-				violations.push({ _tag: 'Undeclared', file, specifier, dependency: declared });
-			}
+			if (named?.directory === owner.directory) continue;
+			const dependency = named?.name ?? packageName(specifier);
+			if (!owner.dependencies.has(dependency)) violations.push({ _tag: 'Undeclared', file, specifier, dependency });
 		}
 	}
 	for (const cycle of cycles(edges)) violations.push({ _tag: 'Cycle', packages: cycle });

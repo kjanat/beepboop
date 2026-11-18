@@ -1,5 +1,5 @@
 import { lstat, mkdir } from 'node:fs/promises';
-import { dirname, join, relative } from 'node:path';
+import { basename, dirname, join, posix, relative } from 'node:path';
 import { Effect } from 'effect';
 import { findNodeAtLocation, parseTree } from 'jsonc-parser';
 import type { ToolFailure } from '@/tooling/runtime';
@@ -8,16 +8,20 @@ import type { Alias } from '@/tooling/workspace/modules';
 import {
 	isCode,
 	isLocal,
+	isRelative,
 	locationSensitiveLines,
+	looseReferences,
 	packageOf,
 	pathReferences,
 	queryOf,
 	readAliases,
 	references,
+	relativeSpecifier,
 	repositoryPath,
 	resolveReference,
 	shebangLength,
 	specifierCandidates,
+	splitQuery,
 	trackedFiles,
 } from '@/tooling/workspace/modules';
 
@@ -67,16 +71,17 @@ const expandPairs = Effect.fn('expandPairs')(function*(
 	return { files: moves, directories };
 });
 
-const occupied = Effect.fn('occupied')(function*(root: string, targets: Iterable<string>) {
+const preflight = Effect.fn('preflight')(function*(root: string, plan: Plan) {
 	const problems: string[] = [];
-	const exists = (path: string) =>
+	const kind = (path: string) =>
 		attemptPromise(() =>
 			lstat(join(root, path)).then(stats => stats.isDirectory() ? 'directory' : 'file', () => 'none')
 		);
-	for (const target of targets) {
-		if ((yield* exists(target)) !== 'none') problems.push(`${target} already exists on disk`);
+	for (const [source, target] of plan.files) {
+		if ((yield* kind(source)) !== 'file') problems.push(`${source} is tracked but missing from the worktree`);
+		if ((yield* kind(target)) !== 'none') problems.push(`${target} already exists on disk`);
 		for (let parent = dirname(target); parent !== '.'; parent = dirname(parent)) {
-			if ((yield* exists(parent)) === 'file') problems.push(`${target} would sit under the file ${parent}`);
+			if ((yield* kind(parent)) === 'file') problems.push(`${target} would sit under the file ${parent}`);
 		}
 	}
 	return problems;
@@ -100,26 +105,35 @@ function isDirectory(files: ReadonlySet<string>, path: string): boolean {
 	return false;
 }
 
-function mapPath(plan: Plan, files: ReadonlySet<string>, path: string, dynamic: boolean): string | undefined {
-	const file = plan.files.get(path);
-	if (file !== undefined) return file;
-	if (files.has(path)) return path;
+function mapDirectory(plan: Plan, files: ReadonlySet<string>, path: string, dynamic: boolean): string | undefined {
 	for (const [from, to] of plan.directories) {
 		if (path === from || path.startsWith(`${from}/`)) return `${to}${path.slice(from.length)}`;
 	}
-	const inside = [...files].filter(candidate => path === '' || candidate.startsWith(`${path}/`));
+	const prefix = path === '' ? '' : `${path}/`;
+	const inside = [...files].filter(candidate => candidate.startsWith(prefix));
 	const moved = inside.filter(candidate => plan.files.has(candidate));
 	if (!moved.length || (!dynamic && moved.length < inside.length)) return path;
 	const [first] = moved;
 	const target = first === undefined ? undefined : plan.files.get(first);
-	if (target === undefined || first === undefined) return undefined;
-	const suffix = path === '' ? first : first.slice(path.length);
-	if (!target.endsWith(suffix)) return undefined;
-	const mapped = target.slice(0, target.length - suffix.length);
+	if (first === undefined || target === undefined) return undefined;
+	const suffix = first.slice(prefix.length);
+	if (!target.endsWith(`/${suffix}`)) return undefined;
+	const mapped = target.slice(0, target.length - suffix.length - 1);
 	const consistent = inside.every(candidate =>
-		(plan.files.get(candidate) ?? candidate) === `${mapped}${path === '' ? candidate : candidate.slice(path.length)}`
+		(plan.files.get(candidate) ?? candidate) === `${mapped}/${candidate.slice(prefix.length)}`
 	);
-	return consistent ? repositoryPath(mapped) : undefined;
+	return consistent ? mapped : undefined;
+}
+
+function mapLocation(plan: Plan, files: ReadonlySet<string>, path: string, dynamic: boolean): string | undefined {
+	const file = plan.files.get(path);
+	if (file !== undefined) return file;
+	if (files.has(path)) return path;
+	if (isDirectory(files, path)) return mapDirectory(plan, files, path, dynamic);
+	if (!dynamic) return path;
+	const parent = repositoryPath(dirname(path));
+	const mapped = isDirectory(files, parent) ? mapDirectory(plan, files, parent, true) : parent;
+	return mapped === undefined ? undefined : posix.join(mapped, basename(path));
 }
 
 function relativePath(from: string, to: string, original: string): string {
@@ -144,41 +158,52 @@ function rewrite(
 ): Rewritten {
 	const edits: Edit[] = [];
 	const problems: string[] = [];
+	const review: string[] = [];
+	const moved = destination !== importer;
 	for (const reference of references(importer, source)) {
 		const target = resolveReference(before.aliases, before.files, importer, reference.specifier);
-		if (target === undefined) continue;
+		const [path, query] = splitQuery(reference.specifier);
+		if (target === undefined) {
+			if (!moved || !isRelative(path)) continue;
+			const text = `${relativeSpecifier(destination, repositoryPath(join(dirname(importer), path)))}${query}`;
+			if (text !== reference.specifier) edits.push({ start: reference.start, end: reference.end, text });
+			continue;
+		}
 		const expected = plan.files.get(target) ?? target;
 		if (resolveReference(after.aliases, after.files, destination, reference.specifier) === expected) continue;
-		const query = queryOf(reference.specifier);
-		const replacement = specifierCandidates(after.aliases, destination, expected, query).find(candidate =>
-			resolveReference(after.aliases, after.files, destination, candidate) === expected
+		const replacement = specifierCandidates(after.aliases, destination, expected, queryOf(reference.specifier)).find(
+			candidate => resolveReference(after.aliases, after.files, destination, candidate) === expected,
 		);
 		if (replacement === undefined) problems.push(`${importer}: no specifier reaches ${expected} from ${destination}`);
 		else edits.push({ start: reference.start, end: reference.end, text: replacement });
 	}
 	const handled = new Set<number>();
 	for (const reference of pathReferences(importer, source)) {
-		const line = source.slice(0, reference.start).split('\n').length;
-		handled.add(line);
-		const trailing = reference.specifier.endsWith('/');
-		const old = repositoryPath(join(dirname(importer), reference.specifier));
-		if (!before.files.has(old) && !isDirectory(before.files, old)) continue;
-		const mapped = mapPath(plan, before.files, old, reference.dynamic);
+		handled.add(reference.line);
+		const trailing = reference.path.endsWith('/') ? '/' : '';
+		const old = repositoryPath(join(dirname(importer), reference.path));
+		const mapped = mapLocation(plan, before.files, old, reference.dynamic);
 		if (mapped === undefined) {
-			problems.push(
-				`${importer}:${line}: ${reference.specifier} names a directory whose files move to different places`,
-			);
+			review.push(`${destination}:${reference.line} ${reference.path} names files that move to different places`);
 			continue;
 		}
-		if (repositoryPath(join(dirname(destination), reference.specifier)) === mapped) continue;
-		const text = `${relativePath(dirname(destination), mapped, reference.specifier)}${trailing ? '/' : ''}`;
-		edits.push({ start: reference.start, end: reference.end, text });
+		if (repositoryPath(join(dirname(destination), reference.path)) === mapped) continue;
+		if (!reference.rewritable) {
+			review.push(`${destination}:${reference.line} ${reference.path} needs a manual rewrite to reach ${mapped}`);
+			continue;
+		}
+		const path = `${relativePath(dirname(destination), mapped, reference.path)}${trailing}`;
+		edits.push({
+			start: reference.start,
+			end: reference.end,
+			text: reference.quote ? `${reference.quote}${path}${reference.quote}` : path,
+		});
 	}
-	const review = dirname(importer) === dirname(destination)
-		? []
-		: locationSensitiveLines(importer, source).filter(line => !handled.has(line)).map(line =>
-			`${destination}:${line} uses import.meta in a way the move cannot rewrite`
-		);
+	if (moved) {
+		for (const line of locationSensitiveLines(importer, source)) {
+			if (!handled.has(line)) review.push(`${destination}:${line} uses import.meta in a way the move cannot rewrite`);
+		}
+	}
 	let text = source;
 	for (const edit of edits.sort((left, right) => right.start - left.start)) {
 		text = `${text.slice(0, edit.start)}${edit.text}${text.slice(edit.end)}`;
@@ -191,47 +216,58 @@ const transpilers = { ts: new Bun.Transpiler({ loader: 'ts' }), js: new Bun.Tran
 function scannedImports(path: string, source: string): string[] {
 	const loader = path.endsWith('.js') || path.endsWith('.mjs') ? transpilers.js : transpilers.ts;
 	const body = path.endsWith('.astro') ? /^---\r?\n([\s\S]*?)\r?\n---/.exec(source)?.[1] ?? '' : source;
-	const text = body.slice(shebangLength(body));
-	return loader.scanImports(text).map(entry => entry.path);
+	return loader.scanImports(body.slice(shebangLength(body))).map(entry => entry.path);
 }
 
-const verify = Effect.fn('verify')(function*(
+export const verify = Effect.fn('verify')(function*(
 	importer: string,
 	destination: string,
 	source: string,
 	text: string,
 	before: Layout,
 	after: Layout,
+	plan: Plan,
 ) {
 	const problems: string[] = [];
-	const scanned = yield* Effect.try({
-		try: () => scannedImports(destination, text),
-		catch: error => `${importer}: Bun cannot scan its imports (${String(error)})`,
-	}).pipe(Effect.catch(problem => Effect.sync(() => problems.push(problem)).pipe(Effect.as([]))));
-	for (const specifier of scanned) {
-		if (!isLocal(before.aliases, specifier) && !isLocal(after.aliases, specifier)) continue;
-		if (resolveReference(after.aliases, after.files, destination, specifier) !== undefined) continue;
-		if (
-			!source.includes(specifier) || resolveReference(before.aliases, before.files, importer, specifier) === undefined
-		) {
-			continue;
+	const scan = (path: string, body: string) =>
+		Effect.try({
+			try: () => scannedImports(path, body),
+			catch: error => `${importer}: Bun cannot scan its imports (${String(error)})`,
+		}).pipe(Effect.catch(problem => Effect.sync(() => problems.push(problem)).pipe(Effect.as([]))));
+	const expected = new Map<string, string>();
+	const original = [
+		...looseReferences(importer, source).map(reference => reference.specifier),
+		...(yield* scan(importer, source)),
+	];
+	for (const specifier of original) {
+		const target = resolveReference(before.aliases, before.files, importer, specifier);
+		if (target !== undefined) expected.set(specifier, plan.files.get(target) ?? target);
+	}
+	const specifiers = new Set([
+		...looseReferences(destination, text).map(reference => reference.specifier),
+		...(yield* scan(destination, text)),
+	]);
+	for (const specifier of specifiers) {
+		const want = expected.get(specifier);
+		if (want === undefined || !isLocal(before.aliases, specifier)) continue;
+		if (resolveReference(after.aliases, after.files, destination, specifier) !== want) {
+			problems.push(`${importer}: the move would break ${specifier}`);
 		}
-		problems.push(`${importer}: the move would break ${specifier}`);
 	}
 	return problems;
 });
 
-const addAliases = Effect.fn('addAliases')(function*(root: string, aliases: readonly Alias[]) {
-	if (!aliases.length) return;
+const aliasEdit = Effect.fn('aliasEdit')(function*(root: string, aliases: readonly Alias[]) {
 	const path = join(root, 'tsconfig.json');
 	const text = yield* attemptPromise(() => Bun.file(path).text());
+	if (!aliases.length) return { path, text, problem: undefined };
 	const tree = parseTree(text);
 	const last = tree && findNodeAtLocation(tree, ['compilerOptions', 'paths'])?.children?.at(-1);
-	if (!last) return yield* refuse('tsconfig.json has no compilerOptions.paths entries');
+	if (!last) return { path, text, problem: 'tsconfig.json has no compilerOptions.paths entries' };
 	const end = last.offset + last.length;
 	const indent = /[\t ]*$/.exec(text.slice(0, last.offset))?.[0] ?? '';
 	const lines = aliases.map(alias => `,\n${indent}${JSON.stringify(alias.pattern)}: ${JSON.stringify(alias.targets)}`);
-	yield* attemptPromise(() => Bun.write(path, `${text.slice(0, end)}${lines.join('')}${text.slice(end)}`));
+	return { path, text: `${text.slice(0, end)}${lines.join('')}${text.slice(end)}`, problem: undefined };
 });
 
 export const move = Effect.fn('move')(function*(
@@ -247,15 +283,18 @@ export const move = Effect.fn('move')(function*(
 		aliases: [...aliases, ...addedAliases],
 		files: new Set(files.map(file => plan.files.get(file) ?? file)),
 	};
-	const problems = yield* occupied(root, plan.files.values());
+	const problems = yield* preflight(root, plan);
+	const tsconfig = yield* aliasEdit(root, addedAliases);
+	if (tsconfig.problem) problems.push(tsconfig.problem);
 	const writes = new Map<string, string>();
 	const review: string[] = [];
 	let rewritten = 0;
 	for (const file of files.filter(isCode)) {
+		if (problems.some(problem => problem.startsWith(`${file} is tracked but missing`))) continue;
 		const destination = plan.files.get(file) ?? file;
 		const source = yield* attemptPromise(() => Bun.file(join(root, file)).text());
 		const result = rewrite(source, file, destination, before, after, plan);
-		problems.push(...result.problems, ...(yield* verify(file, destination, source, result.text, before, after)));
+		problems.push(...result.problems, ...(yield* verify(file, destination, source, result.text, before, after, plan)));
 		review.push(...result.review);
 		if (result.count === 0) continue;
 		rewritten += result.count;
@@ -267,13 +306,17 @@ export const move = Effect.fn('move')(function*(
 		yield* run(['git', 'mv', from, to], { cwd: root });
 	}
 	for (const [path, text] of writes) yield* attemptPromise(() => Bun.write(join(root, path), text));
-	yield* addAliases(root, addedAliases);
+	if (addedAliases.length) yield* attemptPromise(() => Bun.write(tsconfig.path, tsconfig.text));
 	const mentions = new Set<string>();
 	for (const from of new Set([...plan.files.keys(), ...plan.directories.map(([from]) => from)])) {
 		const found = yield* capture(['git', 'grep', '-n', '-F', '-e', from, '--', ':!bun.lock'], { cwd: root }).pipe(
 			Effect.orElseSucceed(() => ''),
 		);
-		for (const line of found.split('\n')) if (line) mentions.add(line);
+		const boundary = new RegExp(`(?<![\\w./-])${from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`);
+		for (const line of found.split('\n')) {
+			const content = /^[^:]*:\d+:(.*)$/.exec(line)?.[1];
+			if (content !== undefined && boundary.test(content)) mentions.add(line);
+		}
 	}
 	return {
 		moved: plan.files.size,

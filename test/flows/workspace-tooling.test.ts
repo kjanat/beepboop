@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { eachDirectory } from '@root/test/support/directories.ts';
 import { Cause, Effect, Exit } from 'effect';
 import { boundariesCommand, checkBoundaries, describe as describeViolation } from '@/tooling/workspace/boundaries.ts';
 import { codeMask, references } from '@/tooling/workspace/modules.ts';
-import { move, moveCommand } from '@/tooling/workspace/move.ts';
+import { move, moveCommand, verify } from '@/tooling/workspace/move.ts';
 
 let root = '';
 eachDirectory('beepboop-workspace-', directory => {
@@ -92,6 +92,24 @@ describe('module references', () => {
 		expect(references('x.ts', source).map(reference => reference.specifier)).toEqual(['./x']);
 	});
 
+	test('postfix operators, keyword-named properties, line-broken identifiers and statement headers keep the lexer in step', () => {
+		const prefixes = [
+			'const h = i++ / 2 + `/`;',
+			'const h = i-- / 2 + `/`;',
+			'const b = a\nreturn /`/.test(b);',
+			'for (const m of /`/g.exec(s) ?? []) {}',
+			'async function f() { return await /`/.exec(s); }',
+			'if (x) /`/.test(y);',
+			'const n = obj.in / 2 + `/`;',
+		];
+
+		for (const prefix of prefixes) {
+			expect([prefix, references('x.ts', `${prefix}\nimport('./a');\n`).map(r => r.specifier)]).toEqual([prefix, [
+				'./a',
+			]]);
+		}
+	});
+
 	test('Astro files contribute frontmatter, inline script imports and script sources', () => {
 		const source = [
 			'---',
@@ -129,8 +147,8 @@ describe('move', () => {
 
 		expect(report).toEqual({
 			moved: 1,
-			rewritten: 9,
-			files: 5,
+			rewritten: 10,
+			files: 6,
 			addedAliases: ['@/kernel/*'],
 			mentions: ['docs/notes.md:1:See src/distinct.ts.'],
 			review: [],
@@ -150,10 +168,10 @@ describe('move', () => {
 		expect(read('test/mocked.test.ts')).toBe(
 			"mock.module('@/kernel/collections/distinct.ts', () => ({}));\nimport '@/kernel/collections/distinct.ts';\n",
 		);
-		expect(read('test/fixtures/copy.ts')).toBe("import { distinct } from '@/distinct';\n");
+		expect(read('test/fixtures/copy.ts')).toBe("import { distinct } from '@/kernel/collections/distinct.ts';\n");
 		expect(read('tsconfig.json')).toBe(tsconfig.replace('"@root/*": ["./*"]', kernelAlias));
 		expect(git('status', '--short')).toBe(
-			'RM src/distinct.ts -> packages/kernel/src/collections/distinct.ts\n M src/Page.astro\n M src/nested/near.ts\n M src/uses.ts\n M test/mocked.test.ts\n M tsconfig.json\n',
+			'RM src/distinct.ts -> packages/kernel/src/collections/distinct.ts\n M src/Page.astro\n M src/nested/near.ts\n M src/uses.ts\n M test/fixtures/copy.ts\n M test/mocked.test.ts\n M tsconfig.json\n',
 		);
 	});
 
@@ -252,18 +270,86 @@ describe('move', () => {
 		]);
 	});
 
-	test('a dynamic path into a directory whose files scatter refuses the move', async () => {
+	test('a dynamic path into a directory whose files scatter moves the files and asks for a review', async () => {
 		repository({
 			'src/components/Runs.astro': '<p>runs</p>\n',
 			'src/components/Overview.astro': '<p>overview</p>\n',
 			'test/flows/runs.test.ts':
 				'const any = (name: string) => join(import.meta.dir, `../../src/components/${name}.astro`);\n',
 		});
+		const report = await Effect.runPromise(move(root, [['src/components/Runs.astro', 'packages/ui/src/Runs.astro']]));
 
-		expect(await refusal(move(root, [['src/components/Runs.astro', 'packages/ui/src/Runs.astro']]))).toContain(
-			'test/flows/runs.test.ts:1: ../../src/components/ names a directory whose files move to different places',
+		expect(report.review).toEqual([
+			'test/flows/runs.test.ts:1 ../../src/components/ names files that move to different places',
+		]);
+		expect(read('test/flows/runs.test.ts')).toBe(
+			'const any = (name: string) => join(import.meta.dir, `../../src/components/${name}.astro`);\n',
 		);
-		expect(git('status', '--short')).toBe('');
+	});
+
+	test('a moved file keeps reaching untracked, generated and out-of-repo paths at their old location', async () => {
+		repository({
+			'.gitignore': 'dist/\nsrc/tooling/generated.ts\n',
+			'src/env.d.ts': 'declare const env: string;\n',
+			'src/tooling/build.ts': [
+				"import type { Env } from '../env';",
+				"import { built } from './generated.ts';",
+				"const cli = join(import.meta.dir, '../../dist/cli.js');",
+				"const local = new URL('../../wrangler.local.jsonc', import.meta.url);",
+				"const sibling = join(import.meta.dir, '../../../sibling-repo/config.ts');",
+				'const data = `${import.meta.dir}/../../data/v.json`;',
+				"const parts = join(import.meta.dir, '..', '..', 'dist', 'cli.js');",
+			].join('\n'),
+		});
+		const report = await Effect.runPromise(move(root, [['src/tooling', 'packages/tooling/src']]));
+
+		expect(read('packages/tooling/src/build.ts')).toBe([
+			"import type { Env } from '@/env';",
+			"import { built } from '../../../src/tooling/generated.ts';",
+			"const cli = join(import.meta.dir, '../../../dist/cli.js');",
+			"const local = new URL('../../../wrangler.local.jsonc', import.meta.url);",
+			"const sibling = join(import.meta.dir, '../../../../sibling-repo/config.ts');",
+			'const data = `${import.meta.dir}/../../../data/v.json`;',
+			"const parts = join(import.meta.dir, '../../../dist/cli.js');",
+		].join('\n'));
+		expect(report.review).toEqual([]);
+	});
+
+	test('a tracked file deleted from the worktree refuses the move before anything changes', async () => {
+		repository({
+			'src/lib/a.ts': 'export const a = 1;\n',
+			'src/lib/data.json': '{}\n',
+			'src/use.ts': "import { a } from './lib/a';\n",
+		});
+		rmSync(join(root, 'src/lib/data.json'));
+
+		expect(await refusal(move(root, [['src/lib', 'packages/kernel/src/lib']]))).toContain(
+			'src/lib/data.json is tracked but missing from the worktree',
+		);
+		expect(git('status', '--short')).toBe(' D src/lib/data.json\n');
+		expect(read('tsconfig.json')).toBe(tsconfig);
+	});
+
+	test('require.resolve and import.meta.resolve follow the move like imports', async () => {
+		repository({
+			'src/a.ts': 'export const a = 1;\n',
+			'src/lib/use.ts': "const path = require.resolve('../a.ts');\nconst url = import.meta.resolve('../a.ts');\n",
+		});
+		await Effect.runPromise(move(root, [['src/lib', 'packages/kernel/src/lib']]));
+
+		expect(read('packages/kernel/src/lib/use.ts')).toBe(
+			"const path = require.resolve('@/a.ts');\nconst url = import.meta.resolve('@/a.ts');\n",
+		);
+	});
+
+	test('verification also checks import-shaped text the lexer treats as data', async () => {
+		const layout = { aliases: [{ pattern: '@/*', targets: ['./src/*'] }], files: new Set(['src/a.ts', 'src/b.ts']) };
+		const moved = { aliases: layout.aliases, files: new Set(['packages/k/src/b.ts', 'src/a.ts']) };
+		const plan = { files: new Map([['src/b.ts', 'packages/k/src/b.ts']]), directories: [] };
+		const source = 'const text = "import { a } from \'./a.ts\'";\n';
+
+		expect(await Effect.runPromise(verify('src/b.ts', 'packages/k/src/b.ts', source, source, layout, moved, plan)))
+			.toEqual(['src/b.ts: the move would break ./a.ts']);
 	});
 
 	test('a missing source, a repeated or occupied target, an untracked file in the way and a file parent each refuse before anything moves', async () => {
@@ -304,10 +390,15 @@ describe('move', () => {
 		expect(await refusal(move(root, [['src/a.ts', 'packages/kernel/src/a.ts']]))).toContain(
 			'tsconfig.json has no compilerOptions.paths entries',
 		);
+		expect(git('status', '--short')).toBe('');
 	});
 
 	test('the command takes pairs, reports what still mentions the old path, and refuses an odd argument list', async () => {
-		repository({ 'src/a.ts': 'export const a = 1;\n', 'README.md': 'Edit src/a.ts.\n' });
+		repository({
+			'src/a.ts': 'export const a = 1;\n',
+			'README.md': 'Edit src/a.ts.\n',
+			'docs/other.md': 'See packages/x/src/a.ts and lib/src/a.ts.\n',
+		});
 
 		expect(await refusal(moveCommand(root, ['src/a.ts']))).toContain('Usage: move <from> <to> [<from> <to>...]');
 		expect(await refusal(moveCommand(root, []))).toContain('Usage: move <from> <to> [<from> <to>...]');
@@ -339,13 +430,14 @@ describe('boundaries', () => {
 		`${kernelAlias},\n\t\t\t"@/domain/*": ["./packages/domain/src/*"]`,
 	);
 
-	test('declared package and npm edges, own-package imports, platform modules and ignored build output pass', async () => {
+	test('declared package and npm edges, own-package imports, builtins, root assets and declared build output pass', async () => {
 		repository({
-			'.gitignore': 'packages/kernel/built.js\n',
 			'tsconfig.json': aliases,
-			'packages/kernel/package.json': '{ "name": "@beepboop/kernel", "dependencies": { "effect": "4" } }',
+			'schemas/v1.json': '{}\n',
+			'packages/kernel/package.json':
+				'{ "name": "@beepboop/kernel", "files": ["built.js"], "exports": { "./*": "./src/*" }, "dependencies": { "effect": "4", "yaml": "2" } }',
 			'packages/kernel/src/a.ts':
-				"import { Effect } from 'effect';\nimport { b } from './b.ts';\nimport { c } from '@/kernel/b.ts';\nimport { join } from 'node:path';\nimport { mock } from 'bun:test';\n",
+				"import { Effect } from 'effect';\nimport { b } from './b.ts';\nimport { c } from '@/kernel/b.ts';\nimport { join } from 'node:path';\nimport { readFileSync } from 'fs';\nimport { mock } from 'bun:test';\nimport raw from 'yaml?raw';\nimport schema from '@root/schemas/v1.json';\n",
 			'packages/kernel/src/b.ts': 'export const b = 1;\n',
 			'packages/kernel/mod.ts': "export * from './built.js';\n",
 			'packages/domain/package.json':
@@ -366,20 +458,21 @@ describe('boundaries', () => {
 				'"@/domain/*": ["./packages/domain/src/*"],\n\t\t\t"@/cli/*": ["./packages/cli/src/*"]',
 			),
 			'packages/kernel/package.json':
-				'{ "name": "@beepboop/kernel", "dependencies": { "@beepboop/domain": "workspace:*" } }',
+				'{ "name": "@beepboop/kernel", "exports": { "./*": "./src/*" }, "dependencies": { "@beepboop/domain": "workspace:*" } }',
 			'packages/kernel/src/a.ts':
 				"import { legacy } from '@/legacy.ts';\nconst c = await import('@/domain/c.ts');\nimport l = require('../../../src/legacy');\nimport 'jsonc-parser';\nimport { gone } from '@/kernel/gone.ts';\n",
 			'packages/domain/package.json':
 				'{ "name": "@beepboop/domain", "dependencies": { "@beepboop/cli": "workspace:*" } }',
 			'packages/domain/src/c.ts': "export { a } from '@/kernel/a.ts';\nimport '@/cli/d.ts';\n",
 			'packages/cli/package.json': '{ "name": "@beepboop/cli", "dependencies": { "@beepboop/kernel": "workspace:*" } }',
-			'packages/cli/src/d.ts': "import '@beepboop/kernel/a.ts';\n",
+			'packages/cli/src/d.ts': "import '@beepboop/kernel/a.ts';\nimport '@beepboop/kernel/nope.ts';\n",
 			'src/legacy.ts': 'export const legacy = 1;\n',
 		});
 		write('packages/domain/node_modules/effect/package.json', '{}');
 		const report = await Effect.runPromise(checkBoundaries(root));
 
 		expect(report.violations.map(describeViolation)).toEqual([
+			'packages/cli/src/d.ts imports @beepboop/kernel/nope.ts, which resolves to no tracked file',
 			'packages/domain/src/c.ts imports @/kernel/a.ts without declaring @beepboop/kernel',
 			'packages/kernel/src/a.ts imports @/legacy.ts, which resolves outside any package (src/legacy.ts)',
 			'packages/kernel/src/a.ts imports ../../../src/legacy, which resolves outside any package (src/legacy.ts)',
@@ -389,7 +482,7 @@ describe('boundaries', () => {
 			'Package cycle: @beepboop/cli -> @beepboop/kernel -> @beepboop/domain -> @beepboop/cli',
 			'A second copy of effect is installed at packages/domain/node_modules/effect/package.json',
 		]);
-		expect(await refusal(boundariesCommand(root))).toContain('8 package boundary violations');
+		expect(await refusal(boundariesCommand(root))).toContain('9 package boundary violations');
 	});
 
 	test('the boundaries script exits non-zero on violations', () => {
