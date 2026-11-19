@@ -159,7 +159,7 @@ function validTarget(value: string): boolean {
 			segment.replace(/%([0-9a-f]{2})/gi, (_, byte: string) => String.fromCharCode(parseInt(byte, 16))),
 		)
 	);
-	return value.startsWith('./') && !forbidden;
+	return value.startsWith('./') && !forbidden && new URL(value, 'file:///package/').pathname.startsWith('/package/');
 }
 
 function exportTarget(value: string, pattern: boolean): Chosen {
