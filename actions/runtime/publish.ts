@@ -133,7 +133,7 @@ export function distributionLicensed(file: string, entries: readonly string[]): 
 
 type EntryPoint =
 	| { readonly kind: 'file'; readonly path: string }
-	| { readonly kind: 'pattern'; readonly path: string; readonly parts: readonly string[] };
+	| { readonly kind: 'pattern'; readonly path: string; readonly parts: readonly string[]; readonly suffix: string };
 
 const mainProbes = ['', '.js', '.json', '.node', '/index.js', '/index.json', '/index.node'];
 const declarationProbes = ['', '.d.ts', '.ts', '.tsx', '/index.d.ts', '/index.ts', '/index.tsx'];
@@ -163,16 +163,19 @@ function validTarget(value: string): boolean {
 }
 
 function exportTarget(value: string, pattern: boolean): Chosen {
-	const { href, pathname } = new URL(value, 'file:///package/');
+	const { href, pathname, search, hash } = new URL(value, 'file:///package/');
 	const path = posix.normalize(pathname.slice('/package/'.length));
-	const pieces = pattern && path.includes('*') ? path.split('*') : [path];
-	const parts = Result.getOrUndefined(Result.all(pieces.map(piece => attempt(() => decodeURIComponent(piece)))));
-	if (parts === undefined || /%2f|%5c/i.test(href)) return { kind: 'unusable', value };
-	const [file = ''] = parts;
-	return {
-		kind: 'target',
-		entry: parts.length > 1 ? { kind: 'pattern', path: parts.join('*'), parts } : { kind: 'file', path: file },
-	};
+	if (/%2f|%5c/i.test(href)) return { kind: 'unusable', value };
+	const decoded = Result.getOrUndefined(attempt(() => decodeURIComponent(path)));
+	if (pattern && path.includes('*')) {
+		return {
+			kind: 'target',
+			entry: { kind: 'pattern', path: decoded ?? path, parts: path.split('*'), suffix: search + hash },
+		};
+	}
+	return decoded === undefined
+		? { kind: 'unusable', value }
+		: { kind: 'target', entry: { kind: 'file', path: decoded } };
 }
 
 function arrayIndex(key: string): boolean {
@@ -366,17 +369,77 @@ function packageExports(field: unknown): Resolution[] {
 		: exportResolutions(field, false);
 }
 
+// A complete %HH occupies three URL characters and contributes one filename byte.
+// This count is additive even when a wildcard splits the escape.
+function urlByteLength(text: string): number {
+	return text.length - 2 * (text.match(/%/g)?.length ?? 0);
+}
+
+// Offsets into a filename spelled entirely as %HH triplets. Immediately after
+// a '%' the length above counts one fewer byte than before that triplet.
+function tripletOffset(length: number, partial: number): number {
+	return 3 * (length + (partial === 1 ? 1 : 0)) + partial;
+}
+
+function* wildcardSpellings(raw: string, partial: number, suffix: string) {
+	// A leading hex nibble can also appear as literal text at a repeated star.
+	const head = raw.slice(0, partial === 0 ? 0 : 3 - partial);
+	const body = raw.slice(head.length).replace(/%([\da-f]{2})/gi, (encoded, hex: string) => {
+		const char = String.fromCharCode(parseInt(hex, 16));
+		return /^[\w./~-]$/.test(char) ? char : encoded;
+	});
+	const first = head.slice(0, 1);
+	const second = head.slice(1);
+	for (
+		const leading of new Set([head, head.toUpperCase(), first.toUpperCase() + second, first + second.toUpperCase()])
+	) {
+		const capture = leading + body;
+		yield capture;
+		// The same capture can complete a forbidden %2F or %5C in the query or fragment.
+		if (suffix.includes('*')) {
+			for (const index of [0, 1]) {
+				const digit = capture.charAt(index);
+				if (/^[\da-f]$/i.test(digit)) {
+					yield `${capture.slice(0, index)}%${digit.charCodeAt(0).toString(16)}${capture.slice(index + 1)}`;
+				}
+			}
+		}
+	}
+}
+
+function patternShipped(files: ReadonlySet<string>, entry: Extract<EntryPoint, { kind: 'pattern' }>): boolean {
+	const [prefix = ''] = entry.parts;
+	const [literalPrefix = ''] = prefix.split('%', 1);
+	const fixedLength = entry.parts.reduce((sum, part) => sum + urlByteLength(part), 0);
+	const prefixLength = urlByteLength(prefix);
+	const partial = /%[\da-f]?$/i.exec(prefix)?.[0].length ?? 0;
+	const start = tripletOffset(prefixLength, partial);
+	return [...files].some(file => {
+		if (!file.startsWith(literalPrefix)) return false;
+		const bytes = Buffer.from(file);
+		const captureLength = (bytes.length - fixedLength) / (entry.parts.length - 1);
+		if (!Number.isInteger(captureLength) || start < 0 || start >= bytes.length * 3) return false;
+		const triplets = bytes.toString('hex').replace(/../g, '%$&');
+		for (const tail of [0, 1, 2]) {
+			const end = tripletOffset(prefixLength + captureLength, tail);
+			if (end <= start || end > triplets.length) continue;
+			for (const capture of wildcardSpellings(triplets.slice(start, end), partial, entry.suffix)) {
+				if (!validTarget(`./${capture}`)) continue;
+				const path = entry.parts.join(capture);
+				if (/%2f|%5c/i.test(path + entry.suffix.replaceAll('*', () => capture))) continue;
+				if (Result.getOrUndefined(attempt(() => decodeURIComponent(path))) === file) return true;
+			}
+		}
+		return false;
+	});
+}
+
 function shipped(files: ReadonlySet<string>, entry: EntryPoint, probes: readonly string[]): boolean {
 	if (entry.kind === 'file') {
 		const candidates = entry.path.endsWith('/') ? probes.filter(probe => probe.startsWith('/')) : probes;
 		return candidates.some(probe => files.has(posix.normalize(`${entry.path}${probe}`)));
 	}
-	const [head = '', ...rest] = entry.parts.map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-	const pattern = new RegExp(`^${head}(?<wildcard>.+)${rest.join('\\k<wildcard>')}$`);
-	return [...files].some(file => {
-		const wildcard = pattern.exec(file)?.groups?.wildcard;
-		return wildcard !== undefined && !wildcard.split('/').some(segment => /^node_modules$/i.test(segment));
-	});
+	return patternShipped(files, entry);
 }
 
 function unresolved(field: unknown): string[] {

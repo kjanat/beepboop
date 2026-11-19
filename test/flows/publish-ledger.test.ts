@@ -1425,7 +1425,7 @@ test(
 	60_000,
 );
 
-const exportFallbacks: [string, unknown, string | undefined, string[]?][] = [
+const exportFallbacks: [string, unknown, string | undefined, string[]?, string?][] = [
 	['checks the fallback after an invalid path', ['./dist/../index.js', './missing.js'], 'missing.js'],
 	['skips encoded parent segments', ['./dist/%2E%2e/index.js', './index.js'], undefined],
 	['skips encoded node_modules segments', ['./%4eode_modules/index.js', './index.js'], undefined],
@@ -1507,6 +1507,20 @@ const exportFallbacks: [string, unknown, string | undefined, string[]?][] = [
 	['skips a pattern match inside node_modules', { './*': './lib/*' }, 'lib/*', ['lib/node_modules/x.js']],
 	['rejects a malformed escape', './100%.js', 'a resolvable exports target (found "./100%.js")', ['100%.js']],
 	['decodes an escaped pattern target', { './*': './lib/%2e*.js' }, undefined, ['lib/.x.js']],
+	['completes an escape with the wildcard', { './*': './lib/%*.cjs' }, undefined, ['lib/%61.cjs'], 'pkg/2561'],
+	['completes a wildcard escape with the suffix', { './*': './lib/*1.cjs' }, undefined, ['lib/a.cjs'], 'pkg/%6'],
+	['decodes UTF-8 across a wildcard', { './*': './lib/%C3*.cjs' }, undefined, ['lib/é.cjs'], 'pkg/%A9'],
+	['reuses the raw wildcard in each position', { './*': './lib/%4*-*.cjs' }, undefined, ['lib/J-A.cjs'], 'pkg/A'],
+	['completes an escape around a wildcard', { './*': './lib/%*1-*.cjs' }, undefined, ['lib/a-6.cjs'], 'pkg/6'],
+	['uses the same escape in the path and query', { './*': './x*/%4*.cjs?q=%*' }, undefined, ['x2f/Bf.cjs'], 'pkg/2%66'],
+	['requires the same raw wildcard twice', { './*': './lib/%*-*.cjs' }, 'lib/%*-*.cjs', ['lib/a-a.cjs'], 'pkg/61'],
+	[
+		'rejects a separator completed by a wildcard',
+		{ './*': './lib/a%2*.cjs' },
+		'lib/a%2*.cjs',
+		['lib/a/b.cjs'],
+		'pkg/fb',
+	],
 	[
 		'rejects a numeric condition key',
 		{ 0: './index.js', default: './index.js' },
@@ -1567,7 +1581,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 const { root, cases } = JSON.parse(await new Response(process.stdin).text());
 const verdicts = [];
-for (const [index, { exports, files }] of cases.entries()) {
+for (const [index, { exports, files, specifier }] of cases.entries()) {
 	const home = join(root, String(index));
 	const pkg = join(home, 'node_modules', 'pkg');
 	mkdirSync(pkg, { recursive: true });
@@ -1576,7 +1590,6 @@ for (const [index, { exports, files }] of cases.entries()) {
 		mkdirSync(dirname(join(pkg, file)), { recursive: true });
 		writeFileSync(join(pkg, file), 'module.exports = 1;');
 	}
-	const specifier = typeof exports === 'object' && exports !== null && Object.keys(exports).includes('./*') ? 'pkg/x' : 'pkg';
 	writeFileSync(join(home, 'entry.mjs'), 'export * from ' + JSON.stringify(specifier) + ';');
 	const failures = [];
 	try { createRequire(join(home, 'entry.cjs'))(specifier); } catch (error) { failures.push(error.code); }
@@ -1593,7 +1606,11 @@ test('node loads or excludes exactly the npm exports the publisher accepts', () 
 		const loaded = spawnSync('node', ['--input-type=module', '--eval', nodeLoader], {
 			input: JSON.stringify({
 				root,
-				cases: cases.map(([, exports, , added]) => ({ exports, files: ['index.js', ...added ?? []] })),
+				cases: cases.map(([, exports, , added, request]) => ({
+					exports,
+					files: ['index.js', ...added ?? []],
+					specifier: request ?? (exports !== null && typeof exports === 'object' && './*' in exports ? 'pkg/x' : 'pkg'),
+				})),
 			}),
 			encoding: 'utf8',
 		});
