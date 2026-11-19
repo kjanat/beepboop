@@ -31,9 +31,9 @@ filename; duplicate filenames and missing selected assets are errors.
 
 `v1` follows the latest compatible Actions release. Pin `vX.Y.Z` or a
 distribution commit for a fixed version. Distribution commits live on the
-`actions` branch and run the source directly with Bun. Each composite Action uses Bun from PATH
-or installs the latest Bun with `oven-sh/setup-bun` v2.2.0, pinned by commit SHA. The generator installs
-locked production dependencies in the Action checkout with lifecycle scripts disabled.
+`actions` branch and run the bundled `actions/runtime/generate-winget.ts` with
+Bun. Each composite Action uses Bun from PATH or installs the latest Bun with
+`oven-sh/setup-bun` v2.2.0, pinned by commit SHA.
 The `release` step in this example supplies the release version and date.
 The Action outputs `directory` and `files` (a JSON path array).
 Attach those files as build artifacts or pass them to your submission operation.
@@ -66,15 +66,18 @@ installer success codes are only emitted when explicitly configured.
 
 ## Development
 
-The generator is in `src/distribution/winget`. The CLI and Action run the same
-source. No Action bundle is built or committed.
+The generator is in `src/distribution/winget`. `bun run winget` and the Action
+run `actions/runtime/generate-winget.ts`. Publication bundles it with the other
+Action runtimes, so the Action installs no packages.
 
 ## Publish the Action
 
 The **Publish Actions** workflow runs on every push to `master` and can also
-be dispatched manually. It verifies the source commit, then publishes the
-complete source repository snapshot to the `actions` branch. Other Actions and
-their shared runtime keep their paths.
+be dispatched manually. It verifies the source commit and bundles the Action
+runtimes. When the resulting `actions/` tree differs from the previous
+distribution commit, it publishes the source snapshot with the bundles to the
+`actions` branch. An unchanged `actions/` tree publishes no new commit. Other
+Actions and their shared runtime keep their paths.
 
 A push whose head commit message contains `Actions-Release: skip` publishes
 and tags nothing. The next push without it publishes the complete snapshot,
@@ -88,8 +91,9 @@ annotated tag `vX.Y.Z` and moves `vX` and `vX.Y` to the same commit.
 
 Publication preserves the previous distribution commit as a parent and uses a
 normal fast-forward push. It rejects an older source revision and concurrent
-branch changes. Repeating publication with the same source reuses the
-existing distribution commit. Repository branch rules apply to `actions`; the
+branch changes. When the `actions/` tree matches the previous distribution
+commit, the workflow reuses that commit and tags it only if the latest release
+tag points elsewhere. Repository branch rules apply to `actions`; the
 workflow does not force-push the branch or create GitHub releases.
 
 The generator performs no network requests and uses the checksums supplied by

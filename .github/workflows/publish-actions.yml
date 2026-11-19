@@ -16,7 +16,6 @@ jobs:
       && ((github.event_name == 'workflow_dispatch' && github.actor_id == github.repository_owner_id)
       || (github.event_name == 'push'
       && (github.actor_id == github.repository_owner_id || github.actor_id == '345459130')
-      && needs.verify.outputs.actions_changed == 'true'
       && !contains(github.event.head_commit.message, 'Actions-Release: skip')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -54,7 +53,9 @@ jobs:
           bun src/tooling/actions/bundle.ts "${bundle_dir}"
           for bundled in "${bundle_dir}"/*.ts; do
             blob=$(git hash-object -w "${bundled}")
-            git update-index --cacheinfo "100644,${blob},actions/runtime/${bundled##*/}"
+            mode=100644
+            if [[ "$(head -c2 "${bundled}")" == '#!' ]]; then mode=100755; fi
+            git update-index --cacheinfo "${mode},${blob},actions/runtime/${bundled##*/}"
           done
           tree=$(git write-tree)
           parents=(-p "${GITHUB_SHA}")
@@ -68,9 +69,8 @@ jobs:
             previous_source=$(git rev-parse "${previous}^1")
             git merge-base --is-ancestor "${previous_source}" "${GITHUB_SHA}"
             parents+=(-p "${previous}")
-            previous_tree=$(git rev-parse "${previous}^{tree}")
-            if [[ "${previous_source}" == "${GITHUB_SHA}" && "${previous_tree}" == "${tree}" ]]; then
-              echo "Actions already published at [\`${previous}\`](${repository_url}/commit/${previous})." >> "${GITHUB_STEP_SUMMARY}"
+            if [[ "$(git rev-parse "${previous}:actions")" == "$(git rev-parse "${tree}:actions")" ]]; then
+              echo "Actions are unchanged since [\`${previous}\`](${repository_url}/commit/${previous})." >> "${GITHUB_STEP_SUMMARY}"
               echo "commit=${previous}" >> "${GITHUB_OUTPUT}"
               exit 0
             fi

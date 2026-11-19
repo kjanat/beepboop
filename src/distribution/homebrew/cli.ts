@@ -1,6 +1,3 @@
-#!/usr/bin/env bun
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { cli, command, flag } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 import { stableVersion } from '@/distribution/assets';
@@ -40,5 +37,3 @@ export const app = cli('beepboop-homebrew')
 	.help({ flagSpelling: 'kebab' })
 	.description('Generate a Homebrew cask from cask metadata and release checksums')
 	.default(generate, { route: true });
-
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) await app.run();

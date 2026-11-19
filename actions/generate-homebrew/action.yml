@@ -25,10 +25,6 @@ runs:
     - name: Setup Bun
       id: bun
       uses: $/actions/deps/bun
-    - name: Install deps
-      shell: bash
-      working-directory: ${{ github.action_path }}/../..
-      run: bun install --frozen-lockfile --production --ignore-scripts
     - name: Generate cask
       id: generate
       shell: bash
@@ -38,4 +34,4 @@ runs:
         HOMEBREW_CASK_OUT: ${{ inputs.out }}
         HOMEBREW_CASK_TAG: ${{ inputs.tag }}
         HOMEBREW_CASK_VERSION: ${{ inputs.version }}
-      run: bun "${GITHUB_ACTION_PATH}/../../src/distribution/homebrew/cli.ts"
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/generate-homebrew.ts"
