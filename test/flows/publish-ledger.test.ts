@@ -1423,6 +1423,41 @@ test(
 	60_000,
 );
 
+const exportFallbacks: [string, unknown[], string | undefined][] = [
+	['checks the fallback after an invalid path', ['./dist/../index.js', './missing.js'], 'missing.js'],
+	['skips encoded parent segments', ['./dist/%2E%2e/index.js', './index.js'], undefined],
+	['skips encoded node_modules segments', ['./%4eode_modules/index.js', './index.js'], undefined],
+	['rejects an invalid-only array', ['../outside.js'], 'a valid exports target (found "../outside.js")'],
+	['allows a final null to exclude the export', ['../outside.js', null], undefined],
+	['allows a nested empty array to exclude the export', ['../outside.js', [[]]], undefined],
+	[
+		'rejects an invalid target after an exclusion',
+		[null, '../outside.js'],
+		'a valid exports target (found "../outside.js")',
+	],
+	['uses a nested valid first target', [['./index.js'], './missing.js'], undefined],
+	['checks a missing valid first target', ['./missing.js', './index.js'], 'missing.js'],
+	['checks the fallback when a condition may be inactive', [{ import: './index.js' }, './missing.js'], 'missing.js'],
+];
+
+test.each(exportFallbacks)('npm exports %s', async (_scenario, exports, missing) => {
+	world.npm.publish(npm, '1.0.0');
+	const { begun } = await released({ main: [npmId] }, bindingsLayout);
+	const { execution, identity } = started(begun, 'main');
+	const state: Bindings = { commands: [], entries: { exports } };
+	const { result } = await publishing(identity, execution.id, {
+		run: bindings(state, '1.1.0'),
+		credentials: bindingCredentials,
+	});
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual(
+		missing
+			? [['pkg:npm/%40octo/lint@1.1.0', 'failed-retryable', `The @octo/lint 1.1.0 package lacks ${missing}`]]
+			: [['pkg:npm/%40octo/lint@1.1.0', 'published']],
+	);
+	expect(state.commands.some(entry => entry.command.startsWith('npm publish'))).toBe(missing === undefined);
+}, 60_000);
+
 function workspacePacker(files: readonly string[], main: string) {
 	const commands: string[] = [];
 	let tarball = '';

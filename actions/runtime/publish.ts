@@ -139,25 +139,61 @@ interface EntryPoint {
 const mainProbes = ['', '.js', '.json', '.node', '/index.js', '/index.json', '/index.node'];
 const declarationProbes = ['', '.d.ts', '.ts', '.tsx', '/index.d.ts', '/index.ts', '/index.tsx'];
 
-function reachable(fallbacks: readonly unknown[]): unknown[] {
-	const first = fallbacks.findIndex(target => typeof target === 'string' && target.startsWith('./'));
-	return (first < 0 ? fallbacks : fallbacks.slice(0, first + 1))
-		.filter(target => typeof target !== 'string' || target.startsWith('./'));
+function entryPoint(value: string, pattern: boolean): EntryPoint {
+	return { path: posix.normalize(value), pattern: pattern && value.includes('*') };
 }
 
-function entryPoints(value: unknown, pattern = false): EntryPoint[] {
-	if (typeof value === 'string') return [{ path: posix.normalize(value), pattern: pattern && value.includes('*') }];
-	if (value === null || typeof value !== 'object') return [];
-	const branches = Array.isArray(value) ? reachable(value) : Object.values(value);
-	return branches.flatMap(branch => entryPoints(branch, pattern));
+function entryPoints(value: unknown): EntryPoint[] {
+	if (typeof value === 'string') return [entryPoint(value, false)];
+	return value !== null && typeof value === 'object' ? Object.values(value).flatMap(entryPoints) : [];
 }
 
-function exportEntryPoints(field: unknown): EntryPoint[] {
-	if (field === null || typeof field !== 'object' || Array.isArray(field)) return entryPoints(field);
+type ExportTarget = EntryPoint | { invalid: unknown } | null | undefined;
+
+function isEntryPoint(target: ExportTarget): target is EntryPoint {
+	return target != null && 'path' in target;
+}
+
+function exportTargets(value: unknown, pattern: boolean): ExportTarget[] {
+	if (typeof value === 'string') {
+		const forbidden = value.slice(2).split(/[/\\]/).some(segment =>
+			/^(?:\.{1,2}|node_modules)$/i.test(
+				segment.replace(/%([0-9a-f]{2})/gi, (_, byte: string) => String.fromCharCode(parseInt(byte, 16))),
+			)
+		);
+		return value.startsWith('./') && !forbidden ? [entryPoint(value, pattern)] : [{ invalid: value }];
+	}
+	if (value == null) return [value];
+	if (Array.isArray(value)) {
+		if (value.length === 0) return [null];
+		const selected: EntryPoint[] = [];
+		let pending: ExportTarget[] = [undefined];
+		for (const fallback of value) {
+			const outcomes = exportTargets(fallback, pattern);
+			selected.push(...outcomes.filter(isEntryPoint));
+			// An unmatched condition retains the last rejection or exclusion.
+			const missed = outcomes.filter(outcome => outcome !== undefined && !isEntryPoint(outcome));
+			pending = outcomes.includes(undefined) ? [...pending, ...missed] : missed;
+			if (pending.length === 0) break;
+		}
+		return [...selected, ...pending];
+	}
+	if (typeof value !== 'object') return [{ invalid: value }];
+	const outcomes: ExportTarget[] = [];
+	for (const [condition, target] of Object.entries(value)) {
+		const branch = exportTargets(target, pattern);
+		outcomes.push(...branch.filter(outcome => outcome !== undefined));
+		if (condition === 'default' && !branch.includes(undefined)) return outcomes;
+	}
+	return [...outcomes, undefined];
+}
+
+function packageExports(field: unknown): ExportTarget[] {
+	if (field === null || typeof field !== 'object' || Array.isArray(field)) return exportTargets(field, false);
 	const subpaths = Object.entries(field);
 	return subpaths.length && subpaths.every(([key]) => key.startsWith('.'))
-		? subpaths.flatMap(([key, value]) => entryPoints(value, key.includes('*')))
-		: entryPoints(field);
+		? subpaths.flatMap(([key, value]) => exportTargets(value, key.includes('*')))
+		: exportTargets(field, false);
 }
 
 function shipped(files: ReadonlySet<string>, entry: EntryPoint, probes: readonly string[]): boolean {
@@ -183,9 +219,10 @@ function npmMissing(files: readonly string[], manifest: Decoded<typeof npmManife
 	const main = entryPoints(manifest.main).filter(entry => !shipped(packed, entry, mainProbes));
 	const declarations = [manifest.types, manifest.typings].flatMap(field => entryPoints(field))
 		.filter(entry => !shipped(packed, entry, declarationProbes));
+	const exports = packageExports(manifest.exports);
 	const declared = [
 		...[manifest.module, manifest.bin].flatMap(field => entryPoints(field)),
-		...exportEntryPoints(manifest.exports),
+		...exports.filter(isEntryPoint),
 	].filter(entry => !shipped(packed, entry, ['']));
 	return [
 		...lacking({
@@ -196,6 +233,11 @@ function npmMissing(files: readonly string[], manifest: Decoded<typeof npmManife
 			repository: typeof repository === 'string' ? filled(repository) : filled(repository?.url),
 		}),
 		...new Set([...main, ...declarations, ...declared].map(entry => entry.path)),
+		...new Set(exports.flatMap(target =>
+			target != null && 'invalid' in target
+				? [`a valid exports target (found ${JSON.stringify(target.invalid)})`]
+				: []
+		)),
 		...[manifest.dependencies, manifest.optionalDependencies, manifest.peerDependencies].flatMap(unresolved),
 	];
 }
