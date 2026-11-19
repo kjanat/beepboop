@@ -1,5 +1,205 @@
 [
 	{
+		"file": "packages/cli/src/cli.ts",
+		"specifier": "@/contract/catalog"
+	},
+	{
+		"file": "packages/cli/src/cli.ts",
+		"specifier": "@/contract/routes"
+	},
+	{
+		"file": "packages/cli/src/cli.ts",
+		"specifier": "@/contract/setup-terms"
+	},
+	{
+		"file": "packages/cli/src/cli.ts",
+		"specifier": "@/contract/views"
+	},
+	{
+		"file": "packages/cli/src/client.ts",
+		"specifier": "@/contract/client"
+	},
+	{
+		"file": "packages/cli/src/client.ts",
+		"specifier": "@/contract/http"
+	},
+	{
+		"file": "packages/cli/src/client.ts",
+		"specifier": "@/contract/routes"
+	},
+	{
+		"file": "packages/cli/src/follow.ts",
+		"specifier": "@/contract/routes"
+	},
+	{
+		"file": "packages/cli/src/follow.ts",
+		"specifier": "@/contract/views"
+	},
+	{
+		"file": "packages/cli/src/look.ts",
+		"specifier": "@/contract/catalog"
+	},
+	{
+		"file": "packages/cli/src/release.ts",
+		"specifier": "@/automation/repository-name"
+	},
+	{
+		"file": "packages/cli/src/release.ts",
+		"specifier": "@/contract/release-start"
+	},
+	{
+		"file": "packages/cli/src/release.ts",
+		"specifier": "@/contract/routes"
+	},
+	{
+		"file": "packages/cli/src/release.ts",
+		"specifier": "@/contract/semver"
+	},
+	{
+		"file": "packages/cli/src/release.ts",
+		"specifier": "@/contract/setup-terms"
+	},
+	{
+		"file": "packages/cli/src/release.ts",
+		"specifier": "@/domain/package-label"
+	},
+	{
+		"file": "packages/cli/src/runs.ts",
+		"specifier": "@/contract/routes"
+	},
+	{
+		"file": "packages/cli/src/runs.ts",
+		"specifier": "@/contract/views"
+	},
+	{
+		"file": "packages/cli/src/setup-choices.ts",
+		"specifier": "@/automation/package-publication"
+	},
+	{
+		"file": "packages/cli/src/setup-choices.ts",
+		"specifier": "@/automation/setup-defaults"
+	},
+	{
+		"file": "packages/cli/src/setup-choices.ts",
+		"specifier": "@/automation/setup-summary"
+	},
+	{
+		"file": "packages/cli/src/setup-choices.ts",
+		"specifier": "@/automation/setup-types"
+	},
+	{
+		"file": "packages/cli/src/setup-choices.ts",
+		"specifier": "@/contract/binary-platforms"
+	},
+	{
+		"file": "packages/cli/src/setup-choices.ts",
+		"specifier": "@/contract/catalog"
+	},
+	{
+		"file": "packages/cli/src/setup-choices.ts",
+		"specifier": "@/contract/release-start"
+	},
+	{
+		"file": "packages/cli/src/setup-choices.ts",
+		"specifier": "@/contract/setup"
+	},
+	{
+		"file": "packages/cli/src/setup-choices.ts",
+		"specifier": "@/contract/setup-fields"
+	},
+	{
+		"file": "packages/cli/src/setup-choices.ts",
+		"specifier": "@/contract/setup-terms"
+	},
+	{
+		"file": "packages/cli/src/setup-choices.ts",
+		"specifier": "@/domain/package-label"
+	},
+	{
+		"file": "packages/cli/src/setup-complete.ts",
+		"specifier": "@/automation/setup-plan"
+	},
+	{
+		"file": "packages/cli/src/setup-complete.ts",
+		"specifier": "@/automation/setup-types"
+	},
+	{
+		"file": "packages/cli/src/setup-complete.ts",
+		"specifier": "@/contract/routes"
+	},
+	{
+		"file": "packages/cli/src/setup-flag-builders.ts",
+		"specifier": "@/contract/release-start"
+	},
+	{
+		"file": "packages/cli/src/setup-flag-builders.ts",
+		"specifier": "@/contract/setup"
+	},
+	{
+		"file": "packages/cli/src/setup-flag-builders.ts",
+		"specifier": "@/contract/setup-terms"
+	},
+	{
+		"file": "packages/cli/src/setup-flags.ts",
+		"specifier": "@/automation/setup-defaults"
+	},
+	{
+		"file": "packages/cli/src/setup-flags.ts",
+		"specifier": "@/automation/setup-types"
+	},
+	{
+		"file": "packages/cli/src/setup-flags.ts",
+		"specifier": "@/contract/setup"
+	},
+	{
+		"file": "packages/cli/src/setup-flags.ts",
+		"specifier": "@/contract/setup-fields"
+	},
+	{
+		"file": "packages/cli/src/setup-flags.ts",
+		"specifier": "@/contract/setup-terms"
+	},
+	{
+		"file": "packages/cli/src/setup-flags.ts",
+		"specifier": "@/domain/package-label"
+	},
+	{
+		"file": "packages/cli/src/setup.ts",
+		"specifier": "@/automation/repository-name"
+	},
+	{
+		"file": "packages/cli/src/setup.ts",
+		"specifier": "@/automation/setup-plan"
+	},
+	{
+		"file": "packages/cli/src/setup.ts",
+		"specifier": "@/automation/setup-summary"
+	},
+	{
+		"file": "packages/cli/src/setup.ts",
+		"specifier": "@/automation/setup-types"
+	},
+	{
+		"file": "packages/cli/src/setup.ts",
+		"specifier": "@/contract/routes"
+	},
+	{
+		"file": "packages/cli/src/setup.ts",
+		"specifier": "@/contract/setup"
+	},
+	{
+		"file": "packages/cli/src/tags.ts",
+		"specifier": "@/contract/routes"
+	},
+	{
+		"file": "packages/cli/src/tags.ts",
+		"specifier": "@/contract/views"
+	},
+	{
+		"file": "packages/cli/src/views.ts",
+		"specifier": "@/contract/views"
+	},
+	{
 		"file": "packages/persistence/src/codecs/configuration.ts",
 		"specifier": "@/domain/configuration"
 	},
