@@ -1,7 +1,6 @@
 import { Effect, Result } from 'effect';
 import { parse as parseToml, TomlError } from 'smol-toml';
 import { isScalar } from 'yaml';
-import { validYaml, yamlData, yamlDocument } from '@/automation/managers/helpers';
 import type { Edit, ReleasePlan, Snapshot } from '@/automation/types';
 import { isLockfile } from '@/contract/catalog';
 import type { DomainError } from '@/contract/errors';
@@ -10,6 +9,7 @@ import type { VersionFile } from '@/contract/version-files';
 import { textVersionPattern } from '@/contract/version-files';
 import { fromSync } from '@/failure';
 import { semver } from '@/model';
+import { validYaml, yamlData, yamlDocument } from '@/parse/yaml';
 
 function toml(source: string) {
 	return Effect.suspend(() => Result.match(Result.try(() => parseToml(source)), {

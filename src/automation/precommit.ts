@@ -1,12 +1,12 @@
 import { Effect, Result } from 'effect';
 import type { Scalar } from 'yaml';
 import { isMap, isScalar, isSeq } from 'yaml';
-import { validYaml } from '@/automation/managers/helpers';
 import type { Edit, ReleaseReference, Snapshot } from '@/automation/types';
 import { hookConfig } from '@/contract/catalog';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { shaPattern } from '@/contract/ids';
+import { validYaml } from '@/parse/yaml';
 
 export interface HookReference {
 	repository: string;

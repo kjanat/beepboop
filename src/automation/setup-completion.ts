@@ -3,11 +3,12 @@ import { slug, unusedName } from '@/automation/naming';
 import { packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import type { ReleaseGraph } from '@/automation/release-graph/graph';
-import { ledgerCommand, shellQuote } from '@/automation/setup-defaults';
+import { ledgerCommand } from '@/automation/setup-defaults';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Inventory, Package, Snapshot } from '@/automation/types';
 import { isLockfile } from '@/contract/catalog';
 import { parentDirectory } from '@/relative-path';
+import { shellQuote } from '@/text/shell-quote';
 
 type Stream = SetupChoices['streams'][number];
 

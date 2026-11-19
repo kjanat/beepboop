@@ -1,7 +1,7 @@
 import { Effect, Schema } from 'effect';
-import { isDecodingFailure } from '@/automation/store';
 import type { Execution } from '@/automation/types';
 import { precedenceKey } from '@/contract/semver';
+import { isDecodingFailure } from '@/errors/decoding';
 import { decodeEventV1 } from '@/persistence/codecs/v1';
 import { backfillPage, drainBackfill } from '@/persistence/d1/backfill-page';
 import type { Sql } from '@/persistence/d1/database';

@@ -1,5 +1,5 @@
 import { Result } from 'effect';
-import { object, yaml } from '@/automation/managers/helpers';
+import { object } from '@/automation/managers/helpers';
 import {
 	disabled,
 	forwardInput,
@@ -9,7 +9,8 @@ import {
 	matrixLimit,
 	staticGuard,
 } from '@/automation/release-graph/bindings';
-import { escapeRegExp } from '@/automation/release-graph/shell';
+import { yaml } from '@/parse/yaml';
+import { escapeRegExp } from '@/text/patterns';
 
 export interface WorkflowDocument {
 	file: string;

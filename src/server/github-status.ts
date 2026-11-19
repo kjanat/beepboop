@@ -1,11 +1,11 @@
 import { Effect, Option, Schema, Semaphore } from 'effect';
 import { Automation } from '@/automation/service';
-import { listed } from '@/automation/setup-summary';
 import type { DomainError } from '@/contract/errors';
 import { fromPromise, toDomainError } from '@/failure';
 import { decode } from '@/model';
 import { responseJson } from '@/runtime/http';
 import { looseStruct, mutableArray, safeDecode } from '@/schema';
+import { listed } from '@/text/listing';
 
 export interface GitHubOutage {
 	description: string;

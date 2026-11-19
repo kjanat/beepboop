@@ -10,7 +10,6 @@ import { Cause, Deferred, Effect, Exit, Fiber, Layer, Result, Schema } from 'eff
 import { applyVersionFiles } from '@/automation/editors';
 import { RepositoryGateway } from '@/automation/github';
 import { goManager } from '@/automation/managers/go';
-import { yamlData, yamlDocument } from '@/automation/managers/helpers';
 import { jsrManager, setUpJsrPackage } from '@/automation/managers/jsr';
 import { pypiManager } from '@/automation/managers/pypi';
 import type { Fetcher, Manager } from '@/automation/managers/registry';
@@ -22,6 +21,7 @@ import type { Publication } from '@/automation/types';
 import { Client } from '@/cli/client';
 import { fromSync, recover } from '@/failure';
 import { onRequest } from '@/middleware';
+import { yamlData, yamlDocument } from '@/parse/yaml';
 import { responseBytes } from '@/runtime/http';
 import { decodeSync, mutableStruct } from '@/schema';
 import { loaders } from '@/server/loaders';

@@ -1,7 +1,7 @@
 import { packageId } from '@/automation/package-identity';
-import { escapeRegExp } from '@/automation/release-graph/shell';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Inventory, Package, Snapshot } from '@/automation/types';
+import { escapeRegExp } from '@/text/patterns';
 
 type Stream = SetupChoices['streams'][number];
 

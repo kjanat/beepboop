@@ -1,4 +1,4 @@
-import { walkRelative } from '@/relative-path';
+import { within } from '@/text/patterns';
 
 const dryRun =
 	/--dry-run(?![\w-]|=(?:false|0)\b)|\bnpm_config_dry_run=["']?(?:true|1)\b|\bcargo\s+(?:\+\S+\s+)?publish\b[^\n;&|]*\s-[a-z]*n[a-z]*\b/i;
@@ -139,32 +139,6 @@ export function executed(command: string): string[] {
 	).filter(Boolean);
 }
 
-export function within(directory: string, change: string): string {
-	if (change.startsWith('/') || change.includes('$')) return directory;
-	return walkRelative(directory, change).path;
-}
-
-export function escapeRegExp(value: string): string {
-	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 export function isolatedLines(recipe: string): string {
 	return logicalLines(recipe).map(line => line.startsWith('#') ? line : `(${line})`).join('\n');
-}
-
-export function globMatches(pattern: string, name: string): boolean {
-	const source = [...pattern].map(character =>
-		character === '*'
-			? '.*'
-			: character === '?'
-			? '.'
-			: character === '[' || character === ']'
-			? character
-			: escapeRegExp(character)
-	).join('');
-	try {
-		return new RegExp(`^${source}$`).test(name);
-	} catch {
-		return pattern === name;
-	}
 }

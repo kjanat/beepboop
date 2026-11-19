@@ -5,8 +5,8 @@ import type { Execution, Inventory, Package, Publication, RepositoryRecord } fro
 import { identifiedManagers, legacyJsrIdentity } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
 import { blocking, legacyDiagnostic, messages } from '@/contract/diagnostics';
-import type { PackageIdentity } from '@/package-url';
-import { InvalidPackageUrl, packageIdentity, parsePackageIdentity, purl } from '@/package-url';
+import type { InvalidPackageUrl, PackageIdentity } from '@/package-url';
+import { invalidPackageUrl, packageIdentity, parsePackageIdentity, purl } from '@/package-url';
 
 type PackageRecord = Pick<Package, 'manager' | 'name' | 'version' | 'identity'>;
 /** Legacy records acquire a typed identity at the boundary; adapters stay independent of purl types. */
@@ -18,7 +18,7 @@ export function parseIdentity(
 	if (pkg.manager === 'jsr') {
 		const [namespace, name] = pkg.name.split('/');
 		if (!namespace?.startsWith('@') || !name) {
-			return Result.fail(new InvalidPackageUrl({ message: 'Invalid JSR package name' }));
+			return Result.fail(invalidPackageUrl('Invalid JSR package name'));
 		}
 		return parsePackageIdentity({ type: 'jsr', namespace, name, version: pkg.version });
 	}
@@ -58,7 +58,7 @@ export function identityOf(pkg: PackageRecord, repository?: string): PackageIden
 export function parseExtension(id: string): Result.Result<{ publisher: string; extension: string }, InvalidPackageUrl> {
 	const dot = id.indexOf('.');
 	return dot < 1 || dot === id.length - 1
-		? Result.fail(new InvalidPackageUrl({ message: 'Invalid VS Code extension ID' }))
+		? Result.fail(invalidPackageUrl('Invalid VS Code extension ID'))
 		: Result.succeed({ publisher: id.slice(0, dot), extension: id.slice(dot + 1) });
 }
 /** An adapter explicitly selects a new publication version; other identity components stay unchanged. */

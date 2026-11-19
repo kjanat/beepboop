@@ -1,5 +1,7 @@
-import { Data, Result } from 'effect';
+import { Result } from 'effect';
 import { PackageURL } from 'packageurl-js';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
 import type { ComponentDefinition, TypeDefinition } from '@/package-url/definition';
 import { parseTypeDefinition } from '@/package-url/definition';
 import definitions from '@/package-url/definitions';
@@ -44,10 +46,10 @@ function stringIdentity(
 	};
 }
 
-export class InvalidPackageUrl extends Data.TaggedError('InvalidPackageUrl')<{ readonly message: string }> {}
+export type InvalidPackageUrl = DomainError;
 
-function invalidPackageUrl(message: string): InvalidPackageUrl {
-	return new InvalidPackageUrl({ message });
+export function invalidPackageUrl(message: string): InvalidPackageUrl {
+	return precondition(message);
 }
 const invalid = rejectWith(invalidPackageUrl);
 const library = attemptWith(invalidPackageUrl);

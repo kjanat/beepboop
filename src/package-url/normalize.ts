@@ -1,6 +1,6 @@
 import { Result } from 'effect';
-import type { PackageIdentity } from '@/package-url';
-import { InvalidPackageUrl, parsePackageIdentity } from '@/package-url';
+import type { InvalidPackageUrl, PackageIdentity } from '@/package-url';
+import { invalidPackageUrl, parsePackageIdentity } from '@/package-url';
 
 /** Repair qualifier-key casing explicitly; strict parsing never silently accepts invalid keys. */
 export function normalizePackage(input: PackageIdentity | string): Result.Result<PackageIdentity, InvalidPackageUrl> {
@@ -19,7 +19,7 @@ export function normalizePackage(input: PackageIdentity | string): Result.Result
 	for (const [key, value] of Object.entries(input.qualifiers ?? {})) {
 		const normalized = key.toLowerCase();
 		if (Object.hasOwn(qualifiers, normalized)) {
-			return Result.fail(new InvalidPackageUrl({ message: `Duplicate qualifier key: ${normalized}` }));
+			return Result.fail(invalidPackageUrl(`Duplicate qualifier key: ${normalized}`));
 		}
 		qualifiers[normalized] = value;
 	}

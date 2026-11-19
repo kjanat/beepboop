@@ -1,6 +1,5 @@
 import { parse } from 'yaml';
 import { readableConfiguration } from '@/automation/configuration-names';
-import { listed } from '@/automation/setup-summary';
 import type { Edit, Snapshot } from '@/automation/types';
 import {
 	approvalOfPublishWhen,
@@ -11,6 +10,7 @@ import {
 	versionPrMergeSentences,
 	versionPrMerges,
 } from '@/contract/setup-terms';
+import { listed } from '@/text/listing';
 
 export const onboardingBranch = 'automation/onboarding';
 export const updateBranch = 'automation/setup-update';

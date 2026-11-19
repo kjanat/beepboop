@@ -14,7 +14,7 @@ import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { fromPromise } from '@/failure';
 import type { PackageIdentity } from '@/package-url';
-import { InvalidPackageUrl, parsePackageIdentity } from '@/package-url';
+import { invalidPackageUrl, parsePackageIdentity } from '@/package-url';
 import { ioConcurrency } from '@/runtime/policy';
 
 export interface Manager {
@@ -210,7 +210,7 @@ export class ManagerRegistry {
 			for (const pkg of inventory.packages) {
 				const identified = pkg.identity ?? manager.identity?.(pkg, snapshot);
 				const identity = identified === undefined
-					? Result.fail(new InvalidPackageUrl({ message: `Manager ${name} did not identify package ${pkg.name}` }))
+					? Result.fail(invalidPackageUrl(`Manager ${name} did not identify package ${pkg.name}`))
 					: parsePackageIdentity(identified);
 				if (Result.isFailure(identity)) {
 					result.diagnostics.push(fileProblem(pkg.manifest, 'invalid-manifest', identity.failure.message));

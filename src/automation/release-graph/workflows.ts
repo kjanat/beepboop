@@ -2,7 +2,7 @@ import { Result } from 'effect';
 import type { ParseError } from 'jsonc-parser';
 import { parse as parseJsonc } from 'jsonc-parser';
 import { parse as parseToml } from 'smol-toml';
-import { glob, object, yaml } from '@/automation/managers/helpers';
+import { glob, object } from '@/automation/managers/helpers';
 import { bindInputs, bindStep, disabled, expandStep, staticGuard } from '@/automation/release-graph/bindings';
 import {
 	actionBindings,
@@ -23,16 +23,10 @@ import {
 	workspaceScope,
 	workspaceSelectors,
 } from '@/automation/release-graph/package-managers';
-import {
-	escapeRegExp,
-	executed,
-	globMatches,
-	isolatedLines,
-	posixShell,
-	walkDirectories,
-	within,
-} from '@/automation/release-graph/shell';
+import { executed, isolatedLines, posixShell, walkDirectories } from '@/automation/release-graph/shell';
 import type { Snapshot } from '@/automation/types';
+import { yaml } from '@/parse/yaml';
+import { escapeRegExp, globMatches, within } from '@/text/patterns';
 
 export const destinations = [
 	'npm',

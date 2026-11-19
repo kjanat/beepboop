@@ -1,6 +1,6 @@
 import { Effect, Result } from 'effect';
 import { cargoManager } from '@/automation/managers/cargo';
-import { object, yaml } from '@/automation/managers/helpers';
+import { object } from '@/automation/managers/helpers';
 import type { Fetcher, VerificationContext } from '@/automation/managers/registry';
 import { registryRequest } from '@/automation/managers/verification';
 import { packageId } from '@/automation/package-identity';
@@ -12,6 +12,7 @@ import type { PublishingCheck, SetupChoices } from '@/automation/setup-types';
 import type { Inventory, Snapshot } from '@/automation/types';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
+import { yaml } from '@/parse/yaml';
 import { responseJson } from '@/runtime/http';
 import { ioConcurrency } from '@/runtime/policy';
 

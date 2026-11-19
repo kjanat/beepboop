@@ -1,8 +1,6 @@
 import { Cause, Effect, Result, Schema } from 'effect';
-import { legacyDiagnostic } from '@/contract/diagnostics';
 import type { ApiError } from '@/contract/errors';
 import { apiError, DomainError, envelope, messageOf, statusOf } from '@/contract/errors';
-import { InvalidPackageUrl } from '@/package-url';
 import { safeDecode } from '@/schema';
 
 interface Classified {
@@ -33,12 +31,6 @@ export function classify(error: unknown, incident: string): Classified {
 	if (error instanceof SyntaxError) {
 		const message = 'Invalid JSON in request or configuration';
 		return { problem: { code: 'invalid', issues: [{ path: [], message }] }, message };
-	}
-	if (error instanceof InvalidPackageUrl) {
-		return {
-			problem: { code: 'precondition', diagnostics: [legacyDiagnostic(error.message)] },
-			message: error.message,
-		};
 	}
 	const problem: ApiError = { code: 'internal', incident };
 	return { problem, message: messageOf(problem) };
@@ -124,7 +116,6 @@ export function fromSync<A>(run: () => A): Effect.Effect<A, DomainError> {
 		onSuccess: Effect.succeed,
 		onFailure: error =>
 			error instanceof DomainError || error instanceof Schema.SchemaError || error instanceof SyntaxError
-				|| error instanceof InvalidPackageUrl
 				? Effect.fail(toDomainError(error))
 				: Effect.die(error),
 	}));

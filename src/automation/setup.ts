@@ -19,7 +19,7 @@ import { crateScript, refreshedCommands, suggestedCommands } from '@/automation/
 import type { PublishingAccess } from '@/automation/setup-publishing';
 import { checkPublishing } from '@/automation/setup-publishing';
 import { startWorkflow } from '@/automation/setup-start';
-import { listed, streamSummary } from '@/automation/setup-summary';
+import { streamSummary } from '@/automation/setup-summary';
 import type {
 	SetupChoices,
 	SetupOption,
@@ -74,6 +74,7 @@ import { publicationStages } from '@/domain/publication-stages';
 import { validateAgainst } from '@/domain/validate';
 import { fromPromise, fromSync, toDomainError } from '@/failure';
 import { mutableArray, safeDecode } from '@/schema';
+import { listed } from '@/text/listing';
 
 function requirablePackage(pkg: Package | undefined): boolean {
 	return !!pkg && publishable(pkg) && !(tagPrefix(pkg.versionSource) !== undefined && pkg.version === undefined);
