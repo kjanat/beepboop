@@ -1379,6 +1379,8 @@ test(
 			commands: [],
 			entries: {
 				main: './native/',
+				types: './typed/',
+				typings: './typed/extra',
 				bin: { lint: './dist/main.mjs' },
 				exports: {
 					'.': { types: './index.d.ts', import: './index.js', default: null },
@@ -1388,12 +1390,13 @@ test(
 					'./double/*': './*.*',
 					'./literal': './*.json',
 					'./digits/*': './*/*2.js',
+					'./alias/*': './index.js',
 				},
 				dependencies: { micro509: 'catalog:', fflate: '0.8.3' },
 				optionalDependencies: { '@octo/cli': 'workspace:*' },
 				peerDependencies: { '@octo/sdk': 'workspace:^' },
 			},
-			added: ['native/index.node', 'nested/nested2.js'],
+			added: ['native/index.node', 'nested/nested2.js', 'typed/index.d.ts', 'typed/extra.d.ts'],
 		};
 		const { result } = await publishing(identity, execution.id, {
 			run: bindings(state, '1.1.0'),

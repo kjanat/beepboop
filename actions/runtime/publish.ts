@@ -137,9 +137,10 @@ interface EntryPoint {
 }
 
 const mainProbes = ['', '.js', '.json', '.node', '/index.js', '/index.json', '/index.node'];
+const declarationProbes = ['', '.d.ts', '.ts', '.tsx', '/index.d.ts', '/index.ts', '/index.tsx'];
 
 function entryPoints(value: unknown, pattern = false): EntryPoint[] {
-	if (typeof value === 'string') return [{ path: posix.normalize(value), pattern }];
+	if (typeof value === 'string') return [{ path: posix.normalize(value), pattern: pattern && value.includes('*') }];
 	if (value === null || typeof value !== 'object') return [];
 	return Object.values(value).flatMap(branch => entryPoints(branch, pattern));
 }
@@ -172,8 +173,10 @@ function npmMissing(files: readonly string[], manifest: Decoded<typeof npmManife
 	const repository = manifest.repository;
 	const packed = new Set(files);
 	const main = entryPoints(manifest.main).filter(entry => !shipped(packed, entry, mainProbes));
+	const declarations = [manifest.types, manifest.typings].flatMap(field => entryPoints(field))
+		.filter(entry => !shipped(packed, entry, declarationProbes));
 	const declared = [
-		...[manifest.module, manifest.types, manifest.typings, manifest.bin].flatMap(field => entryPoints(field)),
+		...[manifest.module, manifest.bin].flatMap(field => entryPoints(field)),
 		...exportEntryPoints(manifest.exports),
 	].filter(entry => !shipped(packed, entry, ['']));
 	return [
@@ -184,7 +187,7 @@ function npmMissing(files: readonly string[], manifest: Decoded<typeof npmManife
 			'a license file': files.some(path => licenseFile.test(path)),
 			repository: typeof repository === 'string' ? filled(repository) : filled(repository?.url),
 		}),
-		...new Set([...main, ...declared].map(entry => entry.path)),
+		...new Set([...main, ...declarations, ...declared].map(entry => entry.path)),
 		...[manifest.dependencies, manifest.optionalDependencies, manifest.peerDependencies].flatMap(unresolved),
 	];
 }
