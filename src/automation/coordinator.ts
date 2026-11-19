@@ -1325,6 +1325,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (execution.runId && execution.runId !== identity.runId) {
 					return yield* precondition('Execution is already bound to a run');
 				}
+				if (execution.supersededRuns?.includes(identity.runId)) {
+					return yield* precondition('A newer run of this execution replaced this run');
+				}
 				if (execution.runAttempt && identity.attempt < execution.runAttempt) {
 					return yield* precondition('Stale run attempt');
 				}

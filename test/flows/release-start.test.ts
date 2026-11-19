@@ -383,11 +383,19 @@ test('forcing a release whose workflow failed dispatches the workflow again', as
 	expect((await promotions(api))[0]?.state).toBe('failed');
 	repository.checks.set(head.sha, [{ name: 'test', status: 'completed', conclusion: 'failure', runId: 1 }]);
 	await release(api, repository.id, { version: '1.0.1', force: true });
+	first.status = 'in_progress';
+	await expect(begin(world, runIdentity(repository, first, 'publish.yml'), promotion.id, 'main', 'promote'))
+		.rejects.toThrow('A newer run of this execution replaced this run');
 	await world.wait(16_000);
 	expect(repository.runs.map(run => [run.inputs.beepboop_execution_id, run.id === first.id])).toEqual([
 		[promotion.id, true],
 		[promotion.id, false],
 	]);
+	const [, second] = repository.runs;
+	if (!second) throw new Error('The forced release dispatched no second run');
+	second.status = 'in_progress';
+	const begun = await begin(world, runIdentity(repository, second, 'publish.yml'), promotion.id, 'main', 'promote');
+	expect(JSON.parse(begun.outputs.context ?? '{}')).toMatchObject({ id: promotion.id, force: true });
 });
 
 test('forcing a release whose version PR is open carries the force to its promotion', async () => {
