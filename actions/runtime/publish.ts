@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, posix, resolve } from 'node:path';
 import type { Invalid } from '@root/actions/runtime/protocol.ts';
 import { ActionFailure, attempt, attemptAsync, fail, required } from '@root/actions/runtime/protocol.ts';
 import { call, mask, serviceOrigin } from '@root/actions/runtime/session.ts';
@@ -41,6 +41,10 @@ interface Artifact {
 }
 
 const longestWait = publishWaitMinutes * 60_000;
+const workspacePackers: readonly { readonly lockfiles: readonly string[]; readonly command: readonly string[] }[] = [
+	{ lockfiles: ['bun.lock', 'bun.lockb'], command: ['bun', 'pm', 'pack', '--destination'] },
+	{ lockfiles: ['pnpm-lock.yaml'], command: ['pnpm', 'pack', '--pack-destination'] },
+];
 const packageAttempts = 8;
 
 function sha256(path: string): Effect.Effect<string, ActionFailure> {
@@ -76,6 +80,15 @@ const npmManifest = mutableStruct({
 	repository: Schema.optional(Schema.Union([Schema.String, mutableStruct({ url: Schema.Unknown })])).pipe(
 		Schema.catchDecoding(() => Effect.succeedSome(undefined)),
 	),
+	main: Schema.optional(Schema.Unknown),
+	module: Schema.optional(Schema.Unknown),
+	types: Schema.optional(Schema.Unknown),
+	typings: Schema.optional(Schema.Unknown),
+	bin: Schema.optional(Schema.Unknown),
+	exports: Schema.optional(Schema.Unknown),
+	dependencies: Schema.optional(Schema.Unknown),
+	optionalDependencies: Schema.optional(Schema.Unknown),
+	peerDependencies: Schema.optional(Schema.Unknown),
 });
 const secretValues = mutableRecord(Schema.String, Schema.String);
 const tarball = mutableStruct({
@@ -118,15 +131,65 @@ export function distributionLicensed(file: string, entries: readonly string[]): 
 	});
 }
 
+interface EntryPoint {
+	readonly path: string;
+	readonly pattern: boolean;
+}
+
+const mainProbes = ['', '.js', '.json', '.node', '/index.js', '/index.json', '/index.node'];
+const declarationProbes = ['', '.d.ts', '.ts', '.tsx', '/index.d.ts', '/index.ts', '/index.tsx'];
+
+function entryPoints(value: unknown, pattern = false): EntryPoint[] {
+	if (typeof value === 'string') return [{ path: posix.normalize(value), pattern: pattern && value.includes('*') }];
+	if (value === null || typeof value !== 'object') return [];
+	return Object.values(value).flatMap(branch => entryPoints(branch, pattern));
+}
+
+function exportEntryPoints(field: unknown): EntryPoint[] {
+	if (field === null || typeof field !== 'object' || Array.isArray(field)) return entryPoints(field);
+	const subpaths = Object.entries(field);
+	return subpaths.length && subpaths.every(([key]) => key.startsWith('.'))
+		? subpaths.flatMap(([key, value]) => entryPoints(value, key.includes('*')))
+		: entryPoints(field);
+}
+
+function shipped(files: ReadonlySet<string>, entry: EntryPoint, probes: readonly string[]): boolean {
+	if (!entry.pattern) return probes.some(probe => files.has(posix.normalize(`${entry.path}${probe}`)));
+	const [head = '', ...rest] = entry.path.split('*').map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'));
+	const pattern = new RegExp(`^${head}(?<wildcard>.+)${rest.join('\\k<wildcard>')}$`);
+	return [...files].some(file => pattern.test(file));
+}
+
+function unresolved(field: unknown): string[] {
+	if (field === null || typeof field !== 'object') return [];
+	return Object.entries(field).flatMap(([name, range]) =>
+		typeof range === 'string' && /^(?:workspace|catalog):/.test(range)
+			? [`a published version for ${name} (${range})`]
+			: []
+	);
+}
+
 function npmMissing(files: readonly string[], manifest: Decoded<typeof npmManifest>): string[] {
 	const repository = manifest.repository;
-	return lacking({
-		README: files.some(path => readmeFile.test(path)),
-		description: filled(manifest.description),
-		license: filled(manifest.license),
-		'a license file': files.some(path => licenseFile.test(path)),
-		repository: typeof repository === 'string' ? filled(repository) : filled(repository?.url),
-	});
+	const packed = new Set(files);
+	const main = entryPoints(manifest.main).filter(entry => !shipped(packed, entry, mainProbes));
+	const declarations = [manifest.types, manifest.typings].flatMap(field => entryPoints(field))
+		.filter(entry => !shipped(packed, entry, declarationProbes));
+	const declared = [
+		...[manifest.module, manifest.bin].flatMap(field => entryPoints(field)),
+		...exportEntryPoints(manifest.exports),
+	].filter(entry => !shipped(packed, entry, ['']));
+	return [
+		...lacking({
+			README: files.some(path => readmeFile.test(path)),
+			description: filled(manifest.description),
+			license: filled(manifest.license),
+			'a license file': files.some(path => licenseFile.test(path)),
+			repository: typeof repository === 'string' ? filled(repository) : filled(repository?.url),
+		}),
+		...new Set([...main, ...declarations, ...declared].map(entry => entry.path)),
+		...[manifest.dependencies, manifest.optionalDependencies, manifest.peerDependencies].flatMap(unresolved),
+	];
 }
 
 function packedManifest(runner: Runner, file: string): Effect.Effect<Decoded<typeof npmManifest>, ActionFailure> {
@@ -157,7 +220,8 @@ function tarballIndex(runner: Runner): Effect.Effect<Map<string, string>, Action
 function prebuilt(runner: Runner, file: string): Effect.Effect<Artifact, ActionFailure> {
 	return Effect.gen(function*() {
 		const listing = yield* checked(runner, ['tar', '-tzf', file], '.');
-		const files = listing.split('\n').map(line => line.trim().replace(/^package\//, '')).filter(Boolean);
+		const files = listing.split('\n').map(line => line.trim().replace(/^package\//, ''))
+			.filter(line => line !== '' && !line.endsWith('/'));
 		const manifest = yield* packedManifest(runner, file);
 		const bytes = yield* Effect.fromResult(attempt(() => readFileSync(file)));
 		return {
@@ -236,6 +300,16 @@ function build(
 			);
 		}
 		const out = yield* scratch(pkg.name);
+		const packer = workspacePackers.find(({ lockfiles }) => lockfiles.some(file => runner.exists(file)));
+		if (packer) {
+			yield* checked(runner, [...packer.command, out], dir);
+			const written = yield* Effect.fromResult(attempt(() => readdirSync(out).filter(name => name.endsWith('.tgz'))));
+			const [file, ...extra] = written;
+			if (!file || extra.length) {
+				return yield* fail(`${packer.command.join(' ')} wrote ${written.length} tarballs for ${pkg.name}`);
+			}
+			return yield* prebuilt(runner, join(out, file));
+		}
 		const output = yield* checked(runner, ['npm', 'pack', '--json', '--pack-destination', out], dir);
 		const start = output.startsWith('[') ? 0 : output.lastIndexOf('\n[') + 1;
 		const [first] = yield* Effect.fromResult(attempt(() => decodeSync(packed, JSON.parse(output.slice(start)))));

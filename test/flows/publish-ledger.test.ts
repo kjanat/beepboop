@@ -851,6 +851,8 @@ interface Bindings {
 	empty?: boolean;
 	limited?: number;
 	stripped?: string[];
+	entries?: Record<string, unknown>;
+	added?: string[];
 }
 function bindings(state: Bindings, version: string): Runner['run'] {
 	return (argv, options) =>
@@ -877,7 +879,7 @@ function bindings(state: Bindings, version: string): Runner['run'] {
 				return { code: 0, stdout: 'Uploading lint_py', output: 'Uploading lint_py' };
 			}
 			if (argv[0] === 'tar' && argv[3] === 'package/package.json') {
-				const manifest = JSON.stringify({ name: npm, version, ...npmMetadata });
+				const manifest = JSON.stringify({ name: npm, version, ...npmMetadata, ...state.entries });
 				return { code: 0, stdout: manifest, output: manifest };
 			}
 			if (argv[0] === 'tar' && argv[1] === '-tzf') {
@@ -900,7 +902,7 @@ function bindings(state: Bindings, version: string): Runner['run'] {
 			}
 			if (argv[1] === 'pack') {
 				writeFileSync(join(after('--pack-destination'), `octo-lint-${version}.tgz`), 'tarball\n');
-				const files = ['package.json', 'LICENSE', 'README.md', 'index.js'].filter(path =>
+				const files = ['package.json', 'LICENSE', 'README.md', 'index.js', ...state.added ?? []].filter(path =>
 					!state.stripped?.includes(path)
 				)
 					.map(path => ({ path }));
@@ -1365,6 +1367,139 @@ test('a crate whose license-file path is in the package passes without a LICENSE
 	});
 	if (result._tag === 'Failure') throw new Error(result.failure.message);
 	expect(states(result.success)).toEqual([['pkg:cargo/lint-core@1.1.0', 'published']]);
+}, 60_000);
+
+test(
+	'an npm package whose manifest names missing files or unresolved workspace versions fails before its claim',
+	async () => {
+		world.npm.publish(npm, '1.0.0');
+		const { begun } = await released({ main: [npmId] }, bindingsLayout);
+		const { execution, identity } = started(begun, 'main');
+		const state: Bindings = {
+			commands: [],
+			entries: {
+				main: './native/',
+				types: './typed/',
+				typings: './typed/extra',
+				bin: { lint: './dist/main.mjs' },
+				exports: {
+					'.': { types: './index.d.ts', import: './index.js', default: null },
+					'./worker': './dist/worker.mjs',
+					'./rules/*': ['./rules/*.js'],
+					'./data/*': './*.json',
+					'./double/*': './*.*',
+					'./literal': './*.json',
+					'./digits/*': './*/*2.js',
+					'./alias/*': './index.js',
+				},
+				dependencies: { micro509: 'catalog:', fflate: '0.8.3' },
+				optionalDependencies: { '@octo/cli': 'workspace:*' },
+				peerDependencies: { '@octo/sdk': 'workspace:^' },
+			},
+			added: ['native/index.node', 'nested/nested2.js', 'typed/index.d.ts', 'typed/extra.d.ts'],
+		};
+		const { result } = await publishing(identity, execution.id, {
+			run: bindings(state, '1.1.0'),
+			credentials: bindingCredentials,
+		});
+		if (result._tag === 'Failure') throw new Error(result.failure.message);
+		expect(states(result.success)).toEqual([[
+			'pkg:npm/%40octo/lint@1.1.0',
+			'failed-retryable',
+			[
+				'The @octo/lint 1.1.0 package lacks dist/main.mjs, index.d.ts, dist/worker.mjs, rules/*.js, *.*, *.json,',
+				'a published version for micro509 (catalog:), a published version for @octo/cli (workspace:*),',
+				'a published version for @octo/sdk (workspace:^)',
+			].join(' '),
+		]]);
+		expect(state.commands.map(entry => entry.command)).toEqual([
+			'npm pack --json --pack-destination',
+			'tar -xzOf package/package.json',
+		]);
+	},
+	60_000,
+);
+
+function workspacePacker(files: readonly string[], main: string) {
+	const commands: string[] = [];
+	let tarball = '';
+	const run: Runner['run'] = (argv, options) =>
+		Effect.sync((): Command => {
+			if (argv[0] === 'bun' || argv[0] === 'pnpm') {
+				commands.push(`${argv.slice(0, -1).join(' ')} in ${options.cwd}`);
+				tarball = join(argv.at(-1) ?? '', 'octo-lint-1.1.0.tgz');
+				writeFileSync(tarball, `${argv[0]} tarball\n`);
+				return { code: 0, stdout: '$ tsc\n', output: '$ tsc\n' };
+			}
+			commands.push(`${argv.slice(0, 3).join(' ')} in ${options.cwd}`);
+			if (argv[1] === '-tzf') {
+				const listing = files.map(file => `package/${file}\n`).join('');
+				return { code: 0, stdout: listing, output: listing };
+			}
+			if (argv[0] === 'tar') {
+				const manifest = JSON.stringify({ name: npm, version: '1.1.0', ...npmMetadata, main });
+				return { code: 0, stdout: manifest, output: manifest };
+			}
+			const digest = `sha512-${createHash('sha512').update(readFileSync(tarball)).digest('base64')}`;
+			world.npm.publish(npm, '1.1.0', undefined, digest);
+			return { code: 0, stdout: `+ ${npm}@1.1.0`, output: '' };
+		});
+	return { run, commands, tarball: () => tarball };
+}
+
+test.each([
+	['bun.lock', 'bun pm pack --destination'],
+	['pnpm-lock.yaml', 'pnpm pack --pack-destination'],
+])('a repository with %s packs its npm package with %s and publishes that tarball', async (lockfile, packer) => {
+	world.npm.publish(npm, '1.0.0');
+	const { begun } = await released({ main: [npmId] }, bindingsLayout);
+	const { execution, identity } = started(begun, 'main');
+	const packing = workspacePacker(['package.json', 'README.md', 'LICENSE', 'index.js'], 'index.js');
+	const { result } = await publishing(identity, execution.id, {
+		run: packing.run,
+		credentials: bindingCredentials,
+		exists: path => path === lockfile,
+	});
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual([['pkg:npm/%40octo/lint@1.1.0', 'published']]);
+	const tarball = packing.tarball();
+	expect(packing.commands).toEqual([
+		`${packer} in bindings/js`,
+		`tar -tzf ${tarball} in .`,
+		`tar -xzOf ${tarball} in .`,
+		`npm publish ${tarball} in bindings/js`,
+	]);
+}, 60_000);
+
+test('a tarball directory entry never stands in for the index file of a directory main', async () => {
+	world.npm.publish(npm, '1.0.0');
+	const { begun } = await released({ main: [npmId] }, bindingsLayout);
+	const { execution, identity } = started(begun, 'main');
+	const packing = workspacePacker(['package.json', 'README.md', 'LICENSE', 'lib/', 'lib/helper.js'], './lib/');
+	const { result } = await publishing(identity, execution.id, {
+		run: packing.run,
+		exists: path => path === 'bun.lock',
+	});
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual([
+		['pkg:npm/%40octo/lint@1.1.0', 'failed-retryable', 'The @octo/lint 1.1.0 package lacks lib/'],
+	]);
+}, 60_000);
+
+test('a workspace packer that writes no tarball fails the package before its claim', async () => {
+	world.npm.publish(npm, '1.0.0');
+	const { begun } = await released({ main: [npmId] }, bindingsLayout);
+	const { execution, identity } = started(begun, 'main');
+	const { result } = await publishing(identity, execution.id, {
+		run: () => Effect.succeed({ code: 0, stdout: '', output: '' }),
+		exists: path => path === 'bun.lock',
+	});
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual([[
+		'pkg:npm/%40octo/lint@1.1.0',
+		'failed-retryable',
+		'bun pm pack --destination wrote 0 tarballs for @octo/lint',
+	]]);
 }, 60_000);
 
 test('npm and PyPI packages built without a license file fail before their claims', async () => {

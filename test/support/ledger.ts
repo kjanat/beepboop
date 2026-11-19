@@ -15,6 +15,7 @@ export interface Publishing {
 	credentials?: Record<string, string>;
 	provenance?: boolean;
 	tarballs?: string;
+	exists?: Runner['exists'];
 }
 
 export async function withIdentity<A>(
@@ -41,7 +42,7 @@ export async function publishWith(world: World, identity: RunIdentity, execution
 		call: (path, body) => workflowCall(world, path, body),
 		run: options.run,
 		sleep: milliseconds => Effect.sync(() => world.advance(milliseconds)),
-		exists: () => false,
+		exists: options.exists ?? (() => false),
 		now: () => Date.now(),
 		log: line => logs.push(line),
 	};
