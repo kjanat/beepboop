@@ -10,6 +10,7 @@ import { repositoryNamePattern } from '@/automation/repository-name.ts';
 import { githubApiVersion } from '@/contract/http.ts';
 import type { OutputFailure } from '@/host/github-output.ts';
 import { writeOutput } from '@/host/github-output.ts';
+import { runMain } from '@/host/main.ts';
 import { responseJson, responseText } from '@/kernel/http/body.ts';
 import { shaPattern } from '@/kernel/schema/ids.ts';
 import { array, record, text } from '@/kernel/schema/result.ts';
@@ -315,5 +316,5 @@ export function writeResult(result: PullRequestResult): Effect.Effect<void, Outp
 }
 
 if (import.meta.main) {
-	await Effect.runPromise(pullRequest(process.env).pipe(Effect.flatMap(writeResult)));
+	await runMain(pullRequest(process.env).pipe(Effect.flatMap(writeResult)));
 }

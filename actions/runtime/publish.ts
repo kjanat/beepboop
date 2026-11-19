@@ -10,6 +10,7 @@ import { Clock, Effect, Result, Schema } from 'effect';
 import type { LedgerEntry, LedgerPackage } from '@/contract/ledger.ts';
 import { claimStep, nextStep, publishWaitMinutes, settledStep } from '@/contract/ledger.ts';
 import { filled, lacking, licenseFile, readmeFile } from '@/contract/package-metadata.ts';
+import { runMain } from '@/host/main.ts';
 import { terminate } from '@/host/process.ts';
 import { sha256Hex } from '@/kernel/crypto/sha256.ts';
 import { githubSecretNamePattern } from '@/kernel/schema/ids.ts';
@@ -835,4 +836,4 @@ export const main: Effect.Effect<void, Invalid> = Effect.gen(function*() {
 	yield* requireAll(entries);
 });
 
-if (import.meta.main) await Effect.runPromise(main);
+if (import.meta.main) await runMain(main);

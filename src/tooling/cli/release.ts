@@ -9,6 +9,7 @@ import { responseJson } from '@/kernel/http/body.ts';
 import { looseSchema } from '@/kernel/schema/result.ts';
 import { mutableArray, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
 import { packageManifest } from '@/tooling/cli/manifest';
+import { registry } from '@/tooling/cli/registry';
 import {
 	attempt,
 	attemptPromise,
@@ -33,16 +34,6 @@ const jsrFiles = mutableStruct({ manifest: mutableRecord(Schema.String, mutableS
 function output(name: string, value: string): Effect.Effect<void, ToolFailure> {
 	return writeOutput(name, value).pipe(
 		Effect.mapError(error => new ToolFailure({ message: error.message, cause: error })),
-	);
-}
-function registry(url: string): Effect.Effect<Response, ToolFailure> {
-	return attemptPromise(signal =>
-		fetch(url, { redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]) })
-	).pipe(
-		Effect.filterOrElse(
-			response => response.ok || response.status === 404,
-			response => refuse(`Registry returned HTTP ${response.status}`),
-		),
 	);
 }
 function body(response: Response): Effect.Effect<unknown, ToolFailure> {
