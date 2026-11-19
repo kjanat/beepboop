@@ -28,8 +28,8 @@
 		"@kjanat/dreamcli": "^5.1.0"
 	},
 	"devDependencies": {
-		"@beepboop/host": "workspace:*",
-		"@beepboop/kernel": "workspace:*",
+		"@beepboopbot/host": "workspace:*",
+		"@beepboopbot/kernel": "workspace:*",
 		"effect": "4.1.4"
 	},
 	"engines": {
