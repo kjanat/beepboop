@@ -1438,6 +1438,17 @@ const exportFallbacks: [string, unknown[], string | undefined][] = [
 	['uses a nested valid first target', [['./index.js'], './missing.js'], undefined],
 	['checks a missing valid first target', ['./missing.js', './index.js'], 'missing.js'],
 	['checks the fallback when a condition may be inactive', [{ import: './index.js' }, './missing.js'], 'missing.js'],
+	[
+		'skips a later branch that only an earlier match could reach',
+		[{ import: './index.js' }, { import: './dist/../index.js', default: './index.js' }],
+		undefined,
+	],
+	[
+		'rejects an invalid target an active condition reaches',
+		[{ import: '../bad.js' }],
+		'a valid exports target (found "../bad.js")',
+	],
+	['skips a condition after default', [{ default: './index.js', import: '../bad.js' }], undefined],
 ];
 
 test.each(exportFallbacks)('npm exports %s', async (_scenario, exports, missing) => {

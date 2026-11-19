@@ -148,52 +148,73 @@ function entryPoints(value: unknown): EntryPoint[] {
 	return value !== null && typeof value === 'object' ? Object.values(value).flatMap(entryPoints) : [];
 }
 
-type ExportTarget = EntryPoint | { invalid: unknown } | null | undefined;
+type Resolution =
+	| { readonly kind: 'target'; readonly entry: EntryPoint }
+	| { readonly kind: 'invalid'; readonly value: unknown }
+	| { readonly kind: 'excluded' }
+	| { readonly kind: 'unmatched' };
 
-function isEntryPoint(target: ExportTarget): target is EntryPoint {
-	return target != null && 'path' in target;
+function validTarget(value: string): boolean {
+	const forbidden = value.slice(2).split(/[/\\]/).some(segment =>
+		/^(?:\.{1,2}|node_modules)$/i.test(
+			segment.replace(/%([0-9a-f]{2})/gi, (_, byte: string) => String.fromCharCode(parseInt(byte, 16))),
+		)
+	);
+	return value.startsWith('./') && !forbidden;
 }
 
-function exportTargets(value: unknown, pattern: boolean): ExportTarget[] {
+function resolveTarget(value: unknown, active: ReadonlySet<string>, pattern: boolean): Resolution {
 	if (typeof value === 'string') {
-		const forbidden = value.slice(2).split(/[/\\]/).some(segment =>
-			/^(?:\.{1,2}|node_modules)$/i.test(
-				segment.replace(/%([0-9a-f]{2})/gi, (_, byte: string) => String.fromCharCode(parseInt(byte, 16))),
-			)
-		);
-		return value.startsWith('./') && !forbidden ? [entryPoint(value, pattern)] : [{ invalid: value }];
+		return validTarget(value) ? { kind: 'target', entry: entryPoint(value, pattern) } : { kind: 'invalid', value };
 	}
-	if (value == null) return [value];
+	if (value === null) return { kind: 'excluded' };
 	if (Array.isArray(value)) {
-		if (value.length === 0) return [null];
-		const selected: EntryPoint[] = [];
-		let pending: ExportTarget[] = [undefined];
+		if (value.length === 0) return { kind: 'excluded' };
+		let last: Resolution = { kind: 'unmatched' };
 		for (const fallback of value) {
-			const outcomes = exportTargets(fallback, pattern);
-			selected.push(...outcomes.filter(isEntryPoint));
-			// An unmatched condition retains the last rejection or exclusion.
-			const missed = outcomes.filter(outcome => outcome !== undefined && !isEntryPoint(outcome));
-			pending = outcomes.includes(undefined) ? [...pending, ...missed] : missed;
-			if (pending.length === 0) break;
+			const resolved = resolveTarget(fallback, active, pattern);
+			if (resolved.kind === 'target') return resolved;
+			if (resolved.kind !== 'unmatched') last = resolved;
 		}
-		return [...selected, ...pending];
+		return last;
 	}
-	if (typeof value !== 'object') return [{ invalid: value }];
-	const outcomes: ExportTarget[] = [];
-	for (const [condition, target] of Object.entries(value)) {
-		const branch = exportTargets(target, pattern);
-		outcomes.push(...branch.filter(outcome => outcome !== undefined));
-		if (condition === 'default' && !branch.includes(undefined)) return outcomes;
+	if (typeof value !== 'object') return { kind: 'invalid', value };
+	for (const [condition, branch] of Object.entries(value)) {
+		const resolved: Resolution = condition === 'default' || active.has(condition)
+			? resolveTarget(branch, active, pattern)
+			: { kind: 'unmatched' };
+		if (resolved.kind !== 'unmatched') return resolved;
 	}
-	return [...outcomes, undefined];
+	return { kind: 'unmatched' };
 }
 
-function packageExports(field: unknown): ExportTarget[] {
-	if (field === null || typeof field !== 'object' || Array.isArray(field)) return exportTargets(field, false);
+function conditionNames(value: unknown, into: Set<string>): Set<string> {
+	if (Array.isArray(value)) {
+		for (const fallback of value) conditionNames(fallback, into);
+	} else if (value !== null && typeof value === 'object') {
+		for (const [condition, branch] of Object.entries(value)) {
+			if (condition !== 'default') into.add(condition);
+			conditionNames(branch, into);
+		}
+	}
+	return into;
+}
+
+function exportResolutions(value: unknown, pattern: boolean): Resolution[] {
+	const names = [...conditionNames(value, new Set())];
+	return Array.from(
+		{ length: 2 ** names.length },
+		(_, mask) => resolveTarget(value, new Set(names.filter((_, bit) => (mask >> bit) % 2 === 1)), pattern),
+	);
+}
+
+function packageExports(field: unknown): Resolution[] {
+	if (field === undefined) return [];
+	if (field === null || typeof field !== 'object' || Array.isArray(field)) return exportResolutions(field, false);
 	const subpaths = Object.entries(field);
 	return subpaths.length && subpaths.every(([key]) => key.startsWith('.'))
-		? subpaths.flatMap(([key, value]) => exportTargets(value, key.includes('*')))
-		: exportTargets(field, false);
+		? subpaths.flatMap(([key, value]) => exportResolutions(value, key.includes('*')))
+		: exportResolutions(field, false);
 }
 
 function shipped(files: ReadonlySet<string>, entry: EntryPoint, probes: readonly string[]): boolean {
@@ -222,7 +243,7 @@ function npmMissing(files: readonly string[], manifest: Decoded<typeof npmManife
 	const exports = packageExports(manifest.exports);
 	const declared = [
 		...[manifest.module, manifest.bin].flatMap(field => entryPoints(field)),
-		...exports.filter(isEntryPoint),
+		...exports.flatMap(resolution => resolution.kind === 'target' ? [resolution.entry] : []),
 	].filter(entry => !shipped(packed, entry, ['']));
 	return [
 		...lacking({
@@ -233,11 +254,11 @@ function npmMissing(files: readonly string[], manifest: Decoded<typeof npmManife
 			repository: typeof repository === 'string' ? filled(repository) : filled(repository?.url),
 		}),
 		...new Set([...main, ...declarations, ...declared].map(entry => entry.path)),
-		...new Set(exports.flatMap(target =>
-			target != null && 'invalid' in target
-				? [`a valid exports target (found ${JSON.stringify(target.invalid)})`]
-				: []
-		)),
+		...new Set(
+			exports.flatMap(resolution =>
+				resolution.kind === 'invalid' ? [`a valid exports target (found ${JSON.stringify(resolution.value)})`] : []
+			),
+		),
 		...[manifest.dependencies, manifest.optionalDependencies, manifest.peerDependencies].flatMap(unresolved),
 	];
 }
