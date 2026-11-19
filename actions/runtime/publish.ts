@@ -131,16 +131,31 @@ export function distributionLicensed(file: string, entries: readonly string[]): 
 	});
 }
 
-function targets(value: unknown): string[] {
-	if (typeof value === 'string') return [posix.normalize(value)];
-	if (value !== null && typeof value === 'object') return Object.values(value).flatMap(targets);
-	return [];
+interface EntryPoint {
+	readonly path: string;
+	readonly pattern: boolean;
 }
 
-function shipped(files: ReadonlySet<string>, target: string, probes: readonly string[]): boolean {
-	if (!target.includes('*')) return probes.some(probe => files.has(posix.normalize(`${target}${probe}`)));
-	const [head = '', ...rest] = target.split('*').map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'));
-	const pattern = new RegExp(`^${head}(.+)${rest.join('\\1')}$`);
+const mainProbes = ['', '.js', '.json', '.node', '/index.js', '/index.json', '/index.node'];
+
+function entryPoints(value: unknown, pattern = false): EntryPoint[] {
+	if (typeof value === 'string') return [{ path: posix.normalize(value), pattern }];
+	if (value === null || typeof value !== 'object') return [];
+	return Object.values(value).flatMap(branch => entryPoints(branch, pattern));
+}
+
+function exportEntryPoints(field: unknown): EntryPoint[] {
+	if (field === null || typeof field !== 'object' || Array.isArray(field)) return entryPoints(field);
+	const subpaths = Object.entries(field);
+	return subpaths.length && subpaths.every(([key]) => key.startsWith('.'))
+		? subpaths.flatMap(([key, value]) => entryPoints(value, key.includes('*')))
+		: entryPoints(field);
+}
+
+function shipped(files: ReadonlySet<string>, entry: EntryPoint, probes: readonly string[]): boolean {
+	if (!entry.pattern) return probes.some(probe => files.has(posix.normalize(`${entry.path}${probe}`)));
+	const [head = '', ...rest] = entry.path.split('*').map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'));
+	const pattern = new RegExp(`^${head}(?<wildcard>.+)${rest.join('\\k<wildcard>')}$`);
 	return [...files].some(file => pattern.test(file));
 }
 
@@ -156,8 +171,11 @@ function unresolved(field: unknown): string[] {
 function npmMissing(files: readonly string[], manifest: Decoded<typeof npmManifest>): string[] {
 	const repository = manifest.repository;
 	const packed = new Set(files);
-	const main = targets(manifest.main).filter(target => !shipped(packed, target, ['', '.js', '.json', '/index.js']));
-	const declared = [manifest.module, manifest.types, manifest.typings, manifest.bin, manifest.exports].flatMap(targets);
+	const main = entryPoints(manifest.main).filter(entry => !shipped(packed, entry, mainProbes));
+	const declared = [
+		...[manifest.module, manifest.types, manifest.typings, manifest.bin].flatMap(field => entryPoints(field)),
+		...exportEntryPoints(manifest.exports),
+	].filter(entry => !shipped(packed, entry, ['']));
 	return [
 		...lacking({
 			README: files.some(path => readmeFile.test(path)),
@@ -166,7 +184,7 @@ function npmMissing(files: readonly string[], manifest: Decoded<typeof npmManife
 			'a license file': files.some(path => licenseFile.test(path)),
 			repository: typeof repository === 'string' ? filled(repository) : filled(repository?.url),
 		}),
-		...new Set([...main, ...declared.filter(target => !shipped(packed, target, ['']))]),
+		...new Set([...main, ...declared].map(entry => entry.path)),
 		...[manifest.dependencies, manifest.optionalDependencies, manifest.peerDependencies].flatMap(unresolved),
 	];
 }
@@ -199,7 +217,8 @@ function tarballIndex(runner: Runner): Effect.Effect<Map<string, string>, Action
 function prebuilt(runner: Runner, file: string): Effect.Effect<Artifact, ActionFailure> {
 	return Effect.gen(function*() {
 		const listing = yield* checked(runner, ['tar', '-tzf', file], '.');
-		const files = listing.split('\n').map(line => line.trim().replace(/^package\//, '')).filter(Boolean);
+		const files = listing.split('\n').map(line => line.trim().replace(/^package\//, ''))
+			.filter(line => line !== '' && !line.endsWith('/'));
 		const manifest = yield* packedManifest(runner, file);
 		const bytes = yield* Effect.fromResult(attempt(() => readFileSync(file)));
 		return {

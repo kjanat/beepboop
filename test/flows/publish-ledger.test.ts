@@ -852,6 +852,7 @@ interface Bindings {
 	limited?: number;
 	stripped?: string[];
 	entries?: Record<string, unknown>;
+	added?: string[];
 }
 function bindings(state: Bindings, version: string): Runner['run'] {
 	return (argv, options) =>
@@ -901,7 +902,7 @@ function bindings(state: Bindings, version: string): Runner['run'] {
 			}
 			if (argv[1] === 'pack') {
 				writeFileSync(join(after('--pack-destination'), `octo-lint-${version}.tgz`), 'tarball\n');
-				const files = ['package.json', 'LICENSE', 'README.md', 'index.js'].filter(path =>
+				const files = ['package.json', 'LICENSE', 'README.md', 'index.js', ...state.added ?? []].filter(path =>
 					!state.stripped?.includes(path)
 				)
 					.map(path => ({ path }));
@@ -1377,7 +1378,7 @@ test(
 		const state: Bindings = {
 			commands: [],
 			entries: {
-				main: './',
+				main: './native/',
 				bin: { lint: './dist/main.mjs' },
 				exports: {
 					'.': { types: './index.d.ts', import: './index.js', default: null },
@@ -1385,11 +1386,14 @@ test(
 					'./rules/*': ['./rules/*.js'],
 					'./data/*': './*.json',
 					'./double/*': './*.*',
+					'./literal': './*.json',
+					'./digits/*': './*/*2.js',
 				},
 				dependencies: { micro509: 'catalog:', fflate: '0.8.3' },
 				optionalDependencies: { '@octo/cli': 'workspace:*' },
 				peerDependencies: { '@octo/sdk': 'workspace:^' },
 			},
+			added: ['native/index.node', 'nested/nested2.js'],
 		};
 		const { result } = await publishing(identity, execution.id, {
 			run: bindings(state, '1.1.0'),
@@ -1400,7 +1404,7 @@ test(
 			'pkg:npm/%40octo/lint@1.1.0',
 			'failed-retryable',
 			[
-				'The @octo/lint 1.1.0 package lacks dist/main.mjs, index.d.ts, dist/worker.mjs, rules/*.js, *.*,',
+				'The @octo/lint 1.1.0 package lacks dist/main.mjs, index.d.ts, dist/worker.mjs, rules/*.js, *.*, *.json,',
 				'a published version for micro509 (catalog:), a published version for @octo/cli (workspace:*),',
 				'a published version for @octo/sdk (workspace:^)',
 			].join(' '),
@@ -1413,13 +1417,7 @@ test(
 	60_000,
 );
 
-test.each([
-	['bun.lock', 'bun pm pack --destination'],
-	['pnpm-lock.yaml', 'pnpm pack --pack-destination'],
-])('a repository with %s packs its npm package with %s and publishes that tarball', async (lockfile, packer) => {
-	world.npm.publish(npm, '1.0.0');
-	const { begun } = await released({ main: [npmId] }, bindingsLayout);
-	const { execution, identity } = started(begun, 'main');
+function workspacePacker(files: readonly string[], main: string) {
 	const commands: string[] = [];
 	let tarball = '';
 	const run: Runner['run'] = (argv, options) =>
@@ -1432,29 +1430,56 @@ test.each([
 			}
 			commands.push(`${argv.slice(0, 3).join(' ')} in ${options.cwd}`);
 			if (argv[1] === '-tzf') {
-				const listing = ['package.json', 'README.md', 'LICENSE', 'index.js'].map(file => `package/${file}\n`).join('');
+				const listing = files.map(file => `package/${file}\n`).join('');
 				return { code: 0, stdout: listing, output: listing };
 			}
 			if (argv[0] === 'tar') {
-				const manifest = JSON.stringify({ name: npm, version: '1.1.0', ...npmMetadata, main: 'index.js' });
+				const manifest = JSON.stringify({ name: npm, version: '1.1.0', ...npmMetadata, main });
 				return { code: 0, stdout: manifest, output: manifest };
 			}
 			const digest = `sha512-${createHash('sha512').update(readFileSync(tarball)).digest('base64')}`;
 			world.npm.publish(npm, '1.1.0', undefined, digest);
 			return { code: 0, stdout: `+ ${npm}@1.1.0`, output: '' };
 		});
+	return { run, commands, tarball: () => tarball };
+}
+
+test.each([
+	['bun.lock', 'bun pm pack --destination'],
+	['pnpm-lock.yaml', 'pnpm pack --pack-destination'],
+])('a repository with %s packs its npm package with %s and publishes that tarball', async (lockfile, packer) => {
+	world.npm.publish(npm, '1.0.0');
+	const { begun } = await released({ main: [npmId] }, bindingsLayout);
+	const { execution, identity } = started(begun, 'main');
+	const packing = workspacePacker(['package.json', 'README.md', 'LICENSE', 'index.js'], 'index.js');
 	const { result } = await publishing(identity, execution.id, {
-		run,
+		run: packing.run,
 		credentials: bindingCredentials,
 		exists: path => path === lockfile,
 	});
 	if (result._tag === 'Failure') throw new Error(result.failure.message);
 	expect(states(result.success)).toEqual([['pkg:npm/%40octo/lint@1.1.0', 'published']]);
-	expect(commands).toEqual([
+	const tarball = packing.tarball();
+	expect(packing.commands).toEqual([
 		`${packer} in bindings/js`,
-		'tar -tzf ' + tarball + ' in .',
-		'tar -xzOf ' + tarball + ' in .',
-		'npm publish ' + tarball + ' in bindings/js',
+		`tar -tzf ${tarball} in .`,
+		`tar -xzOf ${tarball} in .`,
+		`npm publish ${tarball} in bindings/js`,
+	]);
+}, 60_000);
+
+test('a tarball directory entry never stands in for the index file of a directory main', async () => {
+	world.npm.publish(npm, '1.0.0');
+	const { begun } = await released({ main: [npmId] }, bindingsLayout);
+	const { execution, identity } = started(begun, 'main');
+	const packing = workspacePacker(['package.json', 'README.md', 'LICENSE', 'lib/', 'lib/helper.js'], './lib/');
+	const { result } = await publishing(identity, execution.id, {
+		run: packing.run,
+		exists: path => path === 'bun.lock',
+	});
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual([
+		['pkg:npm/%40octo/lint@1.1.0', 'failed-retryable', 'The @octo/lint 1.1.0 package lacks lib/'],
 	]);
 }, 60_000);
 
