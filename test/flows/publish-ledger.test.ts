@@ -1377,13 +1377,14 @@ test(
 		const state: Bindings = {
 			commands: [],
 			entries: {
-				main: 'index',
+				main: './',
 				bin: { lint: './dist/main.mjs' },
 				exports: {
 					'.': { types: './index.d.ts', import: './index.js', default: null },
 					'./worker': './dist/worker.mjs',
 					'./rules/*': ['./rules/*.js'],
 					'./data/*': './*.json',
+					'./double/*': './*.*',
 				},
 				dependencies: { micro509: 'catalog:', fflate: '0.8.3' },
 				optionalDependencies: { '@octo/cli': 'workspace:*' },
@@ -1399,7 +1400,7 @@ test(
 			'pkg:npm/%40octo/lint@1.1.0',
 			'failed-retryable',
 			[
-				'The @octo/lint 1.1.0 package lacks dist/main.mjs, index.d.ts, dist/worker.mjs, rules/*.js,',
+				'The @octo/lint 1.1.0 package lacks dist/main.mjs, index.d.ts, dist/worker.mjs, rules/*.js, *.*,',
 				'a published version for micro509 (catalog:), a published version for @octo/cli (workspace:*),',
 				'a published version for @octo/sdk (workspace:^)',
 			].join(' '),

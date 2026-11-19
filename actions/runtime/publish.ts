@@ -138,9 +138,9 @@ function targets(value: unknown): string[] {
 }
 
 function shipped(files: ReadonlySet<string>, target: string, probes: readonly string[]): boolean {
-	if (!target.includes('*')) return probes.some(probe => files.has(`${target}${probe}`));
-	const parts = target.split('*').map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'));
-	const pattern = new RegExp(`^${parts.join('.+')}$`);
+	if (!target.includes('*')) return probes.some(probe => files.has(posix.normalize(`${target}${probe}`)));
+	const [head = '', ...rest] = target.split('*').map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'));
+	const pattern = new RegExp(`^${head}(.+)${rest.join('\\1')}$`);
 	return [...files].some(file => pattern.test(file));
 }
 
