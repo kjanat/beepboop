@@ -14,7 +14,7 @@ import type { AutomationService } from '@/automation/service';
 import type { Execution, Inventory, ReleasePlan, ReleaseStarted, Snapshot, Stream } from '@/automation/types';
 import { nextVersion, parseVersionRequest } from '@/automation/version';
 import type { StartChannel } from '@/contract/release-start';
-import { startsFrom } from '@/contract/release-start';
+import { startLabels, startsFrom } from '@/contract/release-start';
 import { routes } from '@/contract/routes';
 import { semver } from '@/contract/semver';
 import type { VersionPrMerge } from '@/contract/setup-terms';
@@ -294,7 +294,14 @@ export const releaseEndpoints = {
 				return yield* conflict('stale-plan', 'Release plan changed; preview it again');
 			}
 			const via = channel(request);
-			const started = startsFrom(selection.stream.start, via) ? { via, actor } : undefined;
+			const started: ReleaseStarted | undefined = startsFrom(selection.stream.start, via)
+				? { via, actor, ...(input.force ? { force: true } : {}) }
+				: undefined;
+			if (input.force && !started) {
+				return yield* precondition(
+					`${input.stream} does not start releases from ${startLabels[via]}, so it cannot force one`,
+				);
+			}
 			return yield* beginRelease(
 				service,
 				selection,

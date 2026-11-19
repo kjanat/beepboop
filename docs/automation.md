@@ -549,8 +549,16 @@ Starting a release also publishes it. Beepboop runs the version bump, the
 publication, the binaries, the tags and the GitHub release, and nothing asks
 again. A commit added to the version PR before the merge ends that: the
 release then follows `promote.publishWhen`. Failing checks or package metadata problems stop the release with a
-reason on the runs page. Each stream lists where a release starts in
-`startFrom`:
+reason on the runs page. Starting the same version again restarts a stopped
+release whose workflow has not run yet, and Retry on the runs page does the same.
+
+`beepboop release <version> --force` publishes without waiting on commit
+checks, the commit signature or package metadata, and asks nothing. It also
+restarts a release of that version that stopped, and runs its workflow again
+when the workflow already failed. The `context` output of `actions/begin`
+carries `"force": true` for a forced release, so a publication workflow can
+skip its own tests, and `actions/publish` publishes a package that lacks
+metadata. Each stream lists where a release starts in `startFrom`:
 
 ```json
 {

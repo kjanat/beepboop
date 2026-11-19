@@ -147,6 +147,7 @@ export interface PreparedRelease extends PreparationResult {
 export interface ReleaseStarted {
 	via: StartChannel;
 	actor: string;
+	force?: true;
 }
 export interface Execution {
 	prepared?: { edits: Edit[]; head?: string; result?: PreparationResult };

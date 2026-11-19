@@ -29,6 +29,7 @@ export const ledgerPackage = mutableStruct({
 	required: Schema.Boolean,
 	generated: Schema.optional(Schema.Boolean),
 	channel: Schema.optional(text),
+	force: Schema.optional(Schema.Boolean),
 });
 export type LedgerPackage = Decoded<typeof ledgerPackage>;
 
