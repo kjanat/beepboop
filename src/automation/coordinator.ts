@@ -215,6 +215,20 @@ function missingReceipt(execution: Execution, record: LedgerRecord): boolean {
 			&& (!record.digest || publication.digest === record.digest)
 		);
 }
+function freshRun(execution: Execution, workflow: Execution['workflow']): Execution {
+	return {
+		...execution,
+		state: 'ready',
+		supersededRuns: [...(execution.supersededRuns ?? []), ...(execution.runId ? [execution.runId] : [])],
+		runId: undefined,
+		runAttempt: undefined,
+		github: undefined,
+		workflowSha: undefined,
+		artifacts: execution.artifacts.filter(artifact => artifact.runId !== execution.runId),
+		...(workflow ? { workflow } : {}),
+		publications: reopened(execution.publications),
+	};
+}
 function forcedView(execution: Execution, record: LedgerRecord): LedgerPackage {
 	return execution.started?.force ? { ...view(record), force: true } : view(record);
 }
@@ -1154,6 +1168,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 				if (prior?.operation === 'promote' && execution.approvedBy === 'start') {
 					return yield* this.restartRelease(prior, execution);
+				}
+				if (prior?.operation === 'prepare' && execution.started?.force && !prior.started?.force) {
+					const forced: Execution = { ...prior, started: execution.started };
+					yield* this.put(forced);
+					return forced;
 				}
 				if (prior) return prior;
 				if (execution.configuration.streams[execution.stream]?.concurrency === 'supersede-pending') {
@@ -3140,8 +3159,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			};
 			if (prior.state !== 'awaiting-approval' && (prior.attempts > 0 || prior.approvedAt !== undefined)) {
 				if (!force) return prior;
-				yield* this.dispatchCurrentWorkflow(started);
-				return yield* this.get(prior.id);
+				if (!prior.workflow) {
+					yield* this.redispatch(started, reopened(prior.publications), 'Forced restart');
+					return yield* this.get(prior.id);
+				}
+				const rerun: Execution = {
+					...freshRun(started, prior.workflow),
+					reason: `Dispatching ${prior.workflow.file} again for ${prior.sourceSha.slice(0, 12)}`,
+				};
+				yield* this.put(rerun);
+				yield* this.wakeUp();
+				return rerun;
 			}
 			const waiting: Execution = { ...started, state: 'awaiting-approval', publications: reopened(prior.publications) };
 			delete waiting.reason;
@@ -3173,20 +3201,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				);
 			}
 			yield* this.put({
-				...execution,
-				state: 'ready',
+				...freshRun(execution, workflow),
 				currentWorkflow: true,
-				supersededRuns: [...(execution.supersededRuns ?? []), ...(execution.runId ? [execution.runId] : [])],
-				runId: undefined,
-				runAttempt: undefined,
-				github: undefined,
-				workflowSha: undefined,
-				artifacts: execution.artifacts.filter(artifact => artifact.runId !== execution.runId),
-				...(workflow ? { workflow } : {}),
 				reason: `Dispatching the current ${execution.workflow?.file ?? 'workflow'} for ${
 					execution.sourceSha.slice(0, 12)
 				}`,
-				publications: reopened(execution.publications),
 			});
 			yield* this.requestReconcile(clock.currentTimeMillisUnsafe());
 		});

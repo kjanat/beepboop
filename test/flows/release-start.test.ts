@@ -369,6 +369,43 @@ test('a stopped release starts again under force and dispatches over its failed 
 	expect(repository.runs.map(run => run.inputs.beepboop_execution_id)).toEqual([stopped?.id]);
 });
 
+test('forcing a release whose workflow failed dispatches the workflow again', async () => {
+	const { repository, api } = await configured([{ via: 'cli' }], 'commit');
+	await release(api, repository.id);
+	const head = await landed(repository);
+	const [promotion] = await promotions(api);
+	const [first] = repository.runs;
+	if (!first || !promotion) throw new Error('The started release dispatched no run');
+	first.status = 'completed';
+	first.conclusion = 'failure';
+	await world.workflowRun(repository, first, 'failure', 'workflow_dispatch');
+	await world.wait(16_000);
+	expect((await promotions(api))[0]?.state).toBe('failed');
+	repository.checks.set(head.sha, [{ name: 'test', status: 'completed', conclusion: 'failure', runId: 1 }]);
+	await release(api, repository.id, { version: '1.0.1', force: true });
+	await world.wait(16_000);
+	expect(repository.runs.map(run => [run.inputs.beepboop_execution_id, run.id === first.id])).toEqual([
+		[promotion.id, true],
+		[promotion.id, false],
+	]);
+});
+
+test('forcing a release whose version PR is open carries the force to its promotion', async () => {
+	const { repository, api } = await configured([{ via: 'cli' }], 'pr');
+	await release(api, repository.id);
+	await world.wait(16_000);
+	await release(api, repository.id, { force: true });
+	const [pull] = repository.pulls;
+	if (!pull) throw new Error('No version PR');
+	const merged = world.github.merge(repository, pull.number);
+	repository.checks.set(merged.sha, [{ name: 'test', status: 'completed', conclusion: 'cancelled', runId: 1 }]);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	const [promotion] = await promotions(api);
+	expect(promotion).toMatchObject({ approvedBy: 'start', started: { force: true } });
+	expect(repository.runs.map(run => run.inputs.beepboop_execution_id)).toEqual([promotion?.id]);
+});
+
 test('force is refused for a stream that does not start releases from the CLI', async () => {
 	const { repository, api } = await configured([{ via: 'dashboard' }], 'commit');
 	const refused = await prepared(api, repository.id, { force: true });

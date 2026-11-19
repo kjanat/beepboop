@@ -1204,6 +1204,18 @@ test('release --force publishes over a failed check without asking', async () =>
 	]);
 });
 
+test('release --force --json starts the release without asking', async () => {
+	const repository = await cliStarts();
+	const head = world.github.push(repository, { 'package.json': npmManifest('widget', '1.0.1') }, 'Release 1.0.1');
+	passChecks(repository, head.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	const forced = await run(['release', '1.0.1', '--repository', repository.name, '--force', '--json']);
+	expect(forced.exitCode).toBe(0);
+	expect(JSON.parse(forced.stdout.join(''))).toHaveProperty('preparation.operation', 'promote');
+	expect(prepareCalls().map(call => call.body)).toEqual([expect.objectContaining({ force: true })]);
+});
+
 test('activity output stays out of piped output while the release is followed', async () => {
 	const repository = await cliStarts();
 	releaseRun(repository);

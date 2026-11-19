@@ -317,7 +317,7 @@ export function releaseRepository(
 			plan,
 			...(merging ? { versionPrMerge: merging } : {}),
 		};
-		if (out.jsonMode && (options.dryRun || !options.yes)) return yield* emit(out, preview);
+		if (out.jsonMode && (options.dryRun || (!options.yes && !options.force))) return yield* emit(out, preview);
 		const policy = stream.promote.approval;
 		const after = committing
 			? `After Beepboop commits it to ${repository.defaultBranch}`
