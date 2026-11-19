@@ -139,10 +139,17 @@ interface EntryPoint {
 const mainProbes = ['', '.js', '.json', '.node', '/index.js', '/index.json', '/index.node'];
 const declarationProbes = ['', '.d.ts', '.ts', '.tsx', '/index.d.ts', '/index.ts', '/index.tsx'];
 
+function reachable(fallbacks: readonly unknown[]): unknown[] {
+	const first = fallbacks.findIndex(target => typeof target === 'string' && target.startsWith('./'));
+	return (first < 0 ? fallbacks : fallbacks.slice(0, first + 1))
+		.filter(target => typeof target !== 'string' || target.startsWith('./'));
+}
+
 function entryPoints(value: unknown, pattern = false): EntryPoint[] {
 	if (typeof value === 'string') return [{ path: posix.normalize(value), pattern: pattern && value.includes('*') }];
 	if (value === null || typeof value !== 'object') return [];
-	return Object.values(value).flatMap(branch => entryPoints(branch, pattern));
+	const branches = Array.isArray(value) ? reachable(value) : Object.values(value);
+	return branches.flatMap(branch => entryPoints(branch, pattern));
 }
 
 function exportEntryPoints(field: unknown): EntryPoint[] {
@@ -154,7 +161,8 @@ function exportEntryPoints(field: unknown): EntryPoint[] {
 }
 
 function shipped(files: ReadonlySet<string>, entry: EntryPoint, probes: readonly string[]): boolean {
-	if (!entry.pattern) return probes.some(probe => files.has(posix.normalize(`${entry.path}${probe}`)));
+	const candidates = entry.path.endsWith('/') ? probes.filter(probe => probe.startsWith('/')) : probes;
+	if (!entry.pattern) return candidates.some(probe => files.has(posix.normalize(`${entry.path}${probe}`)));
 	const [head = '', ...rest] = entry.path.split('*').map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'));
 	const pattern = new RegExp(`^${head}(?<wildcard>.+)${rest.join('\\k<wildcard>')}$`);
 	return [...files].some(file => pattern.test(file));

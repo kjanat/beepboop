@@ -1391,6 +1391,8 @@ test(
 					'./literal': './*.json',
 					'./digits/*': './*/*2.js',
 					'./alias/*': './index.js',
+					'./fallback': ['./index.js', './missing-fallback.js'],
+					'./invalid-first': ['../outside.js', './index.js'],
 				},
 				dependencies: { micro509: 'catalog:', fflate: '0.8.3' },
 				optionalDependencies: { '@octo/cli': 'workspace:*' },
@@ -1471,11 +1473,14 @@ test.each([
 	]);
 }, 60_000);
 
-test('a tarball directory entry never stands in for the index file of a directory main', async () => {
+test('a directory entry or an extension file inside the directory never stands in for its index file', async () => {
 	world.npm.publish(npm, '1.0.0');
 	const { begun } = await released({ main: [npmId] }, bindingsLayout);
 	const { execution, identity } = started(begun, 'main');
-	const packing = workspacePacker(['package.json', 'README.md', 'LICENSE', 'lib/', 'lib/helper.js'], './lib/');
+	const packing = workspacePacker(
+		['package.json', 'README.md', 'LICENSE', 'lib/', 'lib/.js', 'lib/helper.js'],
+		'./lib/',
+	);
 	const { result } = await publishing(identity, execution.id, {
 		run: packing.run,
 		exists: path => path === 'bun.lock',
