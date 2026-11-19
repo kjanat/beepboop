@@ -1,4 +1,4 @@
-import { walkRelative } from '@/relative-path';
+import { walkRelative } from '@/kernel/path/relative-path.ts';
 
 export function within(directory: string, change: string): string {
 	if (change.startsWith('/') || change.includes('$')) return directory;

@@ -14,8 +14,7 @@ import { slimRun } from '@/cli/runs';
 import type { executionFilter } from '@/contract/routes';
 import { routes } from '@/contract/routes';
 import type { ExecutionView } from '@/contract/views';
-import { ProjectionBackfill } from '@/persistence/d1/backfill';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -28,7 +27,8 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
+import { ProjectionBackfill } from '@/persistence/d1/backfill';
 
 let world: World, directory: string, client: Client, token: string;
 eachWorld(created => {

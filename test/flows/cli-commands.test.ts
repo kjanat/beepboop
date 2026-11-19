@@ -8,10 +8,10 @@ import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
 import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
-import type { ApiError } from '@/contract/errors';
-import { messageOf, statusOf } from '@/contract/errors';
 import { routes } from '@/contract/routes';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import type { ApiError } from '@/kernel/errors/domain-error.ts';
+import { messageOf, statusOf } from '@/kernel/errors/domain-error.ts';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -23,7 +23,7 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
 
 let world: World, directory: string, client: Client, token: string;
 eachWorld(created => {

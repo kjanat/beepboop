@@ -4,7 +4,7 @@ import { Effect } from 'effect';
 import { discover } from '@/automation/managers';
 import type { Snapshot } from '@/automation/types';
 import { configurationSchema } from '@/domain/configuration';
-import { decodeSync } from '@/schema';
+import { decodeSync } from '@/kernel/schema/structs.ts';
 import { delegatedPlan } from '@/server/handlers/releases';
 
 const files: Record<string, string> = {

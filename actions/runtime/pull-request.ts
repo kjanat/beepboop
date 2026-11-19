@@ -8,11 +8,11 @@ import { Effect } from 'effect';
 import type { Fetcher } from '@/automation/managers/registry.ts';
 import { repositoryNamePattern } from '@/automation/repository-name.ts';
 import { githubApiVersion } from '@/contract/http.ts';
-import { shaPattern } from '@/contract/ids.ts';
-import { array, record, text } from '@/model.ts';
-import { responseJson, responseText } from '@/runtime/http.ts';
-import type { OutputFailure } from '@/tooling/github-output.ts';
-import { writeOutput } from '@/tooling/github-output.ts';
+import type { OutputFailure } from '@/host/github-output.ts';
+import { writeOutput } from '@/host/github-output.ts';
+import { responseJson, responseText } from '@/kernel/http/body.ts';
+import { shaPattern } from '@/kernel/schema/ids.ts';
+import { array, record, text } from '@/kernel/schema/result.ts';
 
 export type PullRequestOperation = 'created' | 'updated' | 'none';
 export interface PullRequestResult {

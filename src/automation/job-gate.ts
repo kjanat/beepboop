@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 import { parseDocument } from 'yaml';
-import { looseStruct, mutableArray, mutableRecord, safeDecode } from '@/schema';
+import { looseStruct, mutableArray, mutableRecord, safeDecode } from '@/kernel/schema/structs.ts';
 
 const jobSchema = looseStruct({
 	name: Schema.optional(Schema.Unknown),

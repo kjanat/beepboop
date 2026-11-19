@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { Schema } from 'effect';
 import { parse } from 'smol-toml';
-import { decodeSync, mutableArray, mutableStruct, safeDecode } from '@/schema';
+import { decodeSync, mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
 
 const root = resolve(import.meta.dir, '../../..');
 const configuration = mutableStruct({

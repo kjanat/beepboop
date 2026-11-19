@@ -4,11 +4,11 @@ import { createdSchema, gitCommitSchema, gitRefSchema, repositorySchema } from '
 import type { DistributionEvidence, TagSigner } from '@/automation/refs';
 import { repositoryNamePattern } from '@/automation/repository-name';
 import type { Edit } from '@/automation/types';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
-import { shaPattern } from '@/contract/ids';
 import { semVer } from '@/contract/version';
-import { fromPromise, fromSync } from '@/failure';
+import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { shaPattern } from '@/kernel/schema/ids.ts';
 
 export type { DistributionEvidence } from '@/automation/refs';
 

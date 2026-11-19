@@ -5,7 +5,7 @@ import { lookOf, registryOf, table } from '@/cli/look';
 import { emit } from '@/cli/output';
 import type { CredentialsView, ExecutionView, NotificationsView, RepositoryView } from '@/contract/views';
 import { planReview } from '@/contract/views';
-import { looseStruct, mutableArray, mutableRecord, safeDecode } from '@/schema';
+import { looseStruct, mutableArray, mutableRecord, safeDecode } from '@/kernel/schema/structs.ts';
 
 const executionStates: Record<string, State> = {
 	succeeded: 'published',

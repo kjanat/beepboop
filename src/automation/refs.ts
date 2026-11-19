@@ -1,11 +1,11 @@
 import { Effect, Schema } from 'effect';
 import { matchesPackage, packageId } from '@/automation/package-identity';
 import type { Package } from '@/automation/types';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
 import type { SemVer } from '@/contract/version';
 import { compare, isPrerelease, parseTag, semVer, tagFor } from '@/contract/version';
-import { fromPromise, fromSync } from '@/failure';
+import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
 
 export interface RefPolicy {
 	phase: 'version' | 'aliases';

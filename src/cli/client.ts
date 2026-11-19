@@ -8,13 +8,13 @@ import { securityKeyAssertion } from '@/cli/fido2/index';
 import { failure, signIn } from '@/cli/output';
 import type { ApiFailure, Transport, Unreachable } from '@/contract/client';
 import { call, elevatedCall, failureOf, send } from '@/contract/client';
-import type { ErrorCode } from '@/contract/errors';
 import { bearerHeaders } from '@/contract/http';
-import { cliTokenPattern, confirmationCode, loginSecret, sha256Hex } from '@/contract/ids';
 import type { Route } from '@/contract/routes';
 import { routes } from '@/contract/routes';
-import { responseJson } from '@/runtime/http';
-import type { Contract, Decoded, Encoded } from '@/schema';
+import type { ErrorCode } from '@/kernel/errors/domain-error.ts';
+import { responseJson } from '@/kernel/http/body.ts';
+import { cliTokenPattern, confirmationCode, loginSecret, sha256Hex } from '@/kernel/schema/ids.ts';
+import type { Contract, Decoded, Encoded } from '@/kernel/schema/structs.ts';
 
 const codes = {
 	unauthenticated: 'SESSION_REVOKED',

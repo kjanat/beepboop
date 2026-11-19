@@ -16,7 +16,7 @@ import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SnapshotSource } from '@/automation/snapshot';
 import { buildSnapshot } from '@/automation/snapshot';
 import type { Snapshot } from '@/automation/types';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -29,7 +29,7 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
 
 const snapshotSchema = mutableStruct({
 	repository: mutableStruct({ id: Schema.Finite, name: Schema.String, defaultBranch: Schema.String }),

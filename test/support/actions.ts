@@ -6,7 +6,7 @@ import { botId } from '@root/test/support/github.ts';
 import { withConsoleLog } from '@root/test/support/process.ts';
 import type { RunIdentity, World } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
-import { git } from '@/git';
+import { git } from '@/host/git.ts';
 import { bundleRuntime } from '@/tooling/actions/runtime-bundle';
 
 export const tokenHost = 'pipelines.actions.githubusercontent.com';

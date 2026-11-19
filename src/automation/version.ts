@@ -1,9 +1,10 @@
 import { Effect, Result } from 'effect';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
+import { compareVersions } from '@/contract/semver';
 import { semVer } from '@/contract/version';
-import { compareVersions, invalid, record, text } from '@/model';
-import { safeDecode } from '@/schema';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { invalid, record, text } from '@/kernel/schema/result.ts';
+import { safeDecode } from '@/kernel/schema/structs.ts';
 
 export type VersionRequest =
 	| { version: string }

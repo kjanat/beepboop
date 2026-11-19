@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { requestBody } from '@root/actions/runtime/protocol.ts';
 import { materialize } from '@root/test/support/actions.ts';
 import { Result } from 'effect';
-import { array, record } from '@/model';
+import { array, record } from '@/kernel/schema/result.ts';
 
 test('distribution protocol preserves binary build artifacts without UTF-8 conversion', () => {
 	const checkout = materialize({ '.gitignore': 'dist/\n', 'action.yml': 'name: Fixture\n' });

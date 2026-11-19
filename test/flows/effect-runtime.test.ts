@@ -18,15 +18,15 @@ import {
 import { Store } from '@/automation/store';
 import { Vault } from '@/automation/vault';
 import { call, send } from '@/contract/client';
-import { precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import { https } from '@/distribution/assets';
-import { classify, fromSync, recover } from '@/failure';
+import { classify, fromSync, recover } from '@/kernel/errors/classify.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { retryTransient } from '@/kernel/http/retry.ts';
 import { CredentialStore } from '@/persistence/d1/credentials';
 import type { Sql } from '@/persistence/d1/database';
 import { Database } from '@/persistence/d1/database';
 import { SessionStore } from '@/persistence/d1/sessions';
-import { retryTransient } from '@/runtime/policy';
 import { capture } from '@/tooling/runtime';
 import { readBody } from '@/webhook';
 

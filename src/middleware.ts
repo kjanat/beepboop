@@ -2,8 +2,8 @@ import { defineMiddleware } from 'astro:middleware';
 import { Effect } from 'effect';
 import { administrator } from '@/automation/auth.ts';
 import { Automation, applicationLayer } from '@/automation/service';
-import { failure } from '@/failure';
-import { jsonLogging } from '@/runtime/logging';
+import { failure } from '@/kernel/errors/classify.ts';
+import { jsonLogging } from '@/kernel/logging/json-logging.ts';
 import { bindings } from '@/server/bindings.ts';
 import { dashboardPaths } from '@/server/sections.ts';
 

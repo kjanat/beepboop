@@ -14,9 +14,9 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { ActionFailure, Invalid } from '@root/actions/runtime/protocol.ts';
 import { attempt, refuse, required } from '@root/actions/runtime/protocol.ts';
 import { Effect, Result } from 'effect';
-import { checkoutAt } from '@/git.ts';
-import { array, record, string, strings, text } from '@/model.ts';
-import { hasPathSegment } from '@/relative-path.ts';
+import { checkoutAt } from '@/host/git.ts';
+import { hasPathSegment } from '@/kernel/path/relative-path.ts';
+import { array, record, string, strings, text } from '@/kernel/schema/result.ts';
 
 interface PlannedEdit {
 	path: string;

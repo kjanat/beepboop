@@ -16,7 +16,7 @@ import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema } from 'effect';
 import type { Execution } from '@/automation/types';
 import { routes } from '@/contract/routes';
-import { decodeSync, looseStruct, mutableArray, mutableStruct } from '@/schema';
+import { decodeSync, looseStruct, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 
 type Api = (path: string, body?: unknown) => Promise<Reply>;
 const refPlan = mutableStruct({ changes: mutableArray(mutableStruct({ name: Schema.String, commit: Schema.String })) });

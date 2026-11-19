@@ -2,11 +2,11 @@ import { Clock, Effect } from 'effect';
 import { createExecution } from '@/automation/execution';
 import type { ReleaseSetPlan } from '@/automation/planning';
 import type { Execution, ReleasePlan, ReleaseStarted } from '@/automation/types';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
 import { startLabels } from '@/contract/release-start';
 import { publishWhenNames, publishWhenSentences } from '@/contract/setup-terms';
 import type { ReadyRepository } from '@/domain/repository';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
 import { executionId, planIdentity } from '@/persistence/identity-keys';
 
 export function preparationBody(execution: Pick<Execution, 'configuration' | 'stream' | 'started'>): string {

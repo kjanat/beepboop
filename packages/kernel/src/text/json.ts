@@ -1,6 +1,6 @@
 import { Result } from 'effect';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
 
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json | undefined };
 

@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 import { onboardingBranch, updateBranch } from '@/automation/setup-changes';
-import type { Decoded } from '@/schema';
-import { matchesPattern, mutableStruct } from '@/schema';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { matchesPattern, mutableStruct } from '@/kernel/schema/structs.ts';
 
 export const setupPullEdit = mutableStruct({
 	action: Schema.Literal('edited'),

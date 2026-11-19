@@ -23,16 +23,16 @@ import type {
 	SubscriptionDelivery,
 } from '@/automation/types';
 import { managerDestinationIds, managerNames } from '@/contract/catalog';
-import { diagnostic, isDiagnosticCode } from '@/contract/diagnostics';
 import { githubRunState } from '@/contract/github';
 import { startChannel } from '@/contract/release-start';
 import { setupChoicesSchema } from '@/contract/setup';
 import { autoMergeMethods, versionPrMerge } from '@/contract/setup-terms';
 import { executionStates } from '@/contract/views';
-import { stringsSchema as strings } from '@/model';
+import { diagnostic, isDiagnosticCode } from '@/kernel/errors/diagnostics.ts';
+import { stringsSchema as strings } from '@/kernel/schema/result.ts';
+import { decodeSync, mapped, mutableArray, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { PackageIdentity } from '@/package-url';
 import { storedBinding, storedConfiguration } from '@/persistence/codecs/configuration';
-import { decodeSync, mapped, mutableArray, mutableRecord, mutableStruct } from '@/schema';
 
 const managerName = Schema.Literals(managerNames);
 const shas = mutableRecord(Schema.String, Schema.String);

@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 import { workflowFilePattern } from '@/contract/catalog';
-import type { Decoded } from '@/schema';
-import { matchesPattern, mutableArray, refined, strictStruct } from '@/schema';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { matchesPattern, mutableArray, refined, strictStruct } from '@/kernel/schema/structs.ts';
 
 export const startChannels = ['action', 'dashboard', 'cli'] as const;
 export type StartChannel = typeof startChannels[number];

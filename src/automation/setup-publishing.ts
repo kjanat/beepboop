@@ -10,11 +10,11 @@ import { cargoJobPackages } from '@/automation/release-graph/graph';
 import { publishingJobs } from '@/automation/setup-publishing-jobs';
 import type { PublishingCheck, SetupChoices } from '@/automation/setup-types';
 import type { Inventory, Snapshot } from '@/automation/types';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
-import { yaml } from '@/parse/yaml';
-import { responseJson } from '@/runtime/http';
-import { ioConcurrency } from '@/runtime/policy';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { responseJson } from '@/kernel/http/body.ts';
+import { ioConcurrency } from '@/kernel/http/retry.ts';
+import { yaml } from '@/kernel/parse/yaml.ts';
 
 export interface PublishingAccess {
 	request: Fetcher;

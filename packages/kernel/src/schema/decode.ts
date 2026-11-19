@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect';
-import type { Contract, Decoded } from '@/schema';
+import type { Contract, Decoded } from '@/kernel/schema/structs.ts';
 
 export function decodeWith<S extends Contract, E>(
 	schema: S,

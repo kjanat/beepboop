@@ -3,7 +3,6 @@ import { cargoBinaryNames } from '@/automation/binary-candidates';
 import { object } from '@/automation/managers/helpers';
 import { isPyproject, privateProject } from '@/automation/managers/pyproject';
 import { tagPrefix } from '@/automation/managers/tags';
-import { slug, unusedName } from '@/automation/naming';
 import { packageId } from '@/automation/package-identity';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
 import {
@@ -18,8 +17,9 @@ import { packDirectories } from '@/automation/release-graph/shell';
 import type { Destination, Job, StepEffect, Workflow } from '@/automation/release-graph/workflows';
 import { declaredWorkspaces, inWorkspaces, literalPrefix, workflowModels } from '@/automation/release-graph/workflows';
 import type { Inventory, Package, Snapshot } from '@/automation/types';
-import { parentDirectory } from '@/relative-path';
-import { escapeRegExp, globMatches, within } from '@/text/patterns';
+import { parentDirectory } from '@/kernel/path/relative-path.ts';
+import { slug, unusedName } from '@/kernel/text/naming.ts';
+import { escapeRegExp, globMatches, within } from '@/kernel/text/patterns.ts';
 
 export type EvidenceStatus = 'declared' | 'inferred' | 'conflicting' | 'unresolved';
 export interface Evidence {

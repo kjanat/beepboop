@@ -1,10 +1,10 @@
 import { Effect } from 'effect';
 import { configuredGrant } from '@/automation/access';
 import { parseGrant, validCredential } from '@/automation/vault';
-import type { DomainError } from '@/contract/errors';
-import { conflict, notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
-import { fromPromise } from '@/failure';
+import { fromPromise } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { conflict, notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import type { CredentialStore } from '@/persistence/d1/credentials';
 import { admin, elevated, readyRepository } from '@/server/handlers/kit';
 

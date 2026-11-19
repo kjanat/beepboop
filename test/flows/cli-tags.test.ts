@@ -16,7 +16,7 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { routes } from '@/contract/routes';
 import { packageTagView } from '@/contract/views';
-import { decodeSync, mutableArray } from '@/schema';
+import { decodeSync, mutableArray } from '@/kernel/schema/structs.ts';
 
 let world: World, directory: string, token: string, key: SigningKey;
 eachWorld(created => {

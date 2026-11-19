@@ -7,13 +7,13 @@ import { publishable } from '@/automation/package-publication';
 import type { Edit, Inventory, Snapshot } from '@/automation/types';
 import { parseVersionRequest } from '@/automation/version';
 import { isLockfile } from '@/contract/catalog';
-import type { DomainError } from '@/contract/errors';
-import { decodeRequest, precondition } from '@/contract/errors';
 import type { VersionFile } from '@/contract/version-files';
-import { dependencyOrder } from '@/dependency-order';
-import { invalid } from '@/model';
-import type { Decoded } from '@/schema';
-import { mutableArray, strictStruct } from '@/schema';
+import { dependencyOrder } from '@/kernel/collections/dependency-order.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { decodeRequest, precondition } from '@/kernel/errors/domain-error.ts';
+import { invalid } from '@/kernel/schema/result.ts';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { mutableArray, strictStruct } from '@/kernel/schema/structs.ts';
 
 const operation = strictStruct({
 	id: nameSchema,

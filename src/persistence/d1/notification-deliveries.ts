@@ -1,9 +1,9 @@
 import { Effect, Schema } from 'effect';
-import type { DomainError } from '@/contract/errors';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { Sql } from '@/persistence/d1/database';
 import { optionalColumn, parse } from '@/persistence/d1/database';
-import type { Decoded } from '@/schema';
-import { mutableArray, mutableStruct } from '@/schema';
 
 export const deliveryStates = ['pending', 'sending', 'delivered', 'failed'] as const;
 export type DeliveryState = (typeof deliveryStates)[number];

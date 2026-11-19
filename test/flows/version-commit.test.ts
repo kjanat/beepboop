@@ -16,7 +16,7 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Schema } from 'effect';
 import type { Execution } from '@/automation/types';
-import { decodeSync, mutableArray, mutableStruct } from '@/schema';
+import { decodeSync, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 
 type Approval = 'required' | 'merge' | 'push';
 

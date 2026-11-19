@@ -5,9 +5,9 @@ import { macosTransport } from '@/cli/fido2/macos';
 import type { Authenticator } from '@/cli/fido2/types';
 import { SecurityKeyError } from '@/cli/fido2/types';
 import { windowsAuthenticator } from '@/cli/fido2/windows';
-import type { Parsed } from '@/model';
-import { array, record, text } from '@/model';
-import { sha256 } from '@/sha256';
+import { sha256 } from '@/kernel/crypto/sha256.ts';
+import type { Parsed } from '@/kernel/schema/result.ts';
+import { array, record, text } from '@/kernel/schema/result.ts';
 
 interface RequestOptions {
 	challenge: string;

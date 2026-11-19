@@ -4,10 +4,11 @@ import { Effect, Schema } from 'effect';
 import { parse } from 'yaml';
 import type { RefChange } from '@/automation/refs';
 import { repositoryNamePattern } from '@/automation/repository-name';
-import { shaPattern } from '@/contract/ids';
-import { git as runGit } from '@/git';
-import { compareVersions, looseSchema } from '@/model';
-import { mutableRecord, mutableStruct } from '@/schema';
+import { compareVersions } from '@/contract/semver';
+import { git as runGit } from '@/host/git.ts';
+import { shaPattern } from '@/kernel/schema/ids.ts';
+import { looseSchema } from '@/kernel/schema/result.ts';
+import { mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
 import { attempt, parse as decode, main, refuse, ToolFailure } from '@/tooling/runtime';
 
 const actionSchema = mutableStruct({

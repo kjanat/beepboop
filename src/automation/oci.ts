@@ -1,10 +1,10 @@
 import { Effect } from 'effect';
 import type { Fetcher } from '@/automation/managers/registry';
 import type { Outcome, Publication } from '@/automation/types';
-import { sha256DigestPattern, sha256Hex } from '@/contract/ids';
-import { fromPromise } from '@/failure';
-import { record } from '@/model';
-import { responseBytes, responseJson } from '@/runtime/http';
+import { fromPromise } from '@/kernel/errors/classify.ts';
+import { responseBytes, responseJson } from '@/kernel/http/body.ts';
+import { sha256DigestPattern, sha256Hex } from '@/kernel/schema/ids.ts';
+import { record } from '@/kernel/schema/result.ts';
 
 /** Public distribution verification. Never forwards GitHub or vault credentials to registries. */
 export function verifyImage(publication: Publication, request: Fetcher = fetch): Effect.Effect<Publication> {

@@ -11,7 +11,7 @@ import type { SetupChoices } from '@/automation/setup-types';
 import { binaries, defaultBinaryTargets, workflowSetup } from '@/contract/setup';
 import type { VersionPrMerge } from '@/contract/setup-terms';
 import { versionPrMergeSentences } from '@/contract/setup-terms';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -24,7 +24,7 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
 
 let world: World;
 eachWorld(created => {

@@ -6,11 +6,11 @@ import { latestTag, tagPrefix } from '@/automation/managers/tags';
 import { publishable, registry } from '@/automation/package-publication';
 import type { Inventory, Package, Snapshot } from '@/automation/types';
 import { npmTargets } from '@/contract/catalog';
-import { fileProblem } from '@/contract/diagnostics';
 import { npmTargetDescriptor, platformMap, targetFields, targetsSchema } from '@/contract/targets';
 import { safeVersionPath } from '@/contract/version-files';
-import { parentDirectory } from '@/relative-path';
-import { safeDecode } from '@/schema';
+import { fileProblem } from '@/kernel/errors/diagnostics.ts';
+import { parentDirectory } from '@/kernel/path/relative-path.ts';
+import { safeDecode } from '@/kernel/schema/structs.ts';
 
 interface Manifest {
 	path: string;

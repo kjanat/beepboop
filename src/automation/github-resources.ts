@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
-import { countSchema, looseSchema, shaSchema, textSchema } from '@/model';
-import type { Decoded } from '@/schema';
-import { mutableArray, mutableStruct } from '@/schema';
+import { countSchema, looseSchema, shaSchema, textSchema } from '@/kernel/schema/result.ts';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 
 const identified = mutableStruct({ id: Schema.Finite });
 const verification = mutableStruct({ verified: looseSchema });

@@ -9,8 +9,7 @@ import { Store } from '@/automation/store';
 import type { Client } from '@/cli/client';
 import type { executionFilter } from '@/contract/routes';
 import { routes } from '@/contract/routes';
-import { ProjectionBackfill } from '@/persistence/d1/backfill';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -23,7 +22,8 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
+import { ProjectionBackfill } from '@/persistence/d1/backfill';
 import { loaders } from '@/server/loaders';
 
 let world: World, directory: string, client: Client, token: string;

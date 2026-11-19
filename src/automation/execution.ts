@@ -17,10 +17,10 @@ import type {
 	WorkflowBinding,
 } from '@/automation/types';
 import { managerSpec } from '@/contract/catalog';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
 import type { ReadyRepository } from '@/domain/repository';
-import { toDomainError } from '@/failure';
+import { toDomainError } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
 import { executionId } from '@/persistence/identity-keys';
 
 export interface ExecutionRequest {

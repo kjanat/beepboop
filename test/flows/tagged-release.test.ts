@@ -25,8 +25,7 @@ import { parse } from 'yaml';
 import { setupOptions } from '@/automation/setup';
 import { ledgerCommand } from '@/automation/setup-defaults';
 import { streamSummary } from '@/automation/setup-summary';
-import { decodeExecutionV1 } from '@/persistence/codecs/v1';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -39,7 +38,8 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
+import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 
 let world: World;
 eachWorld(created => {

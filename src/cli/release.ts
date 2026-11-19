@@ -16,12 +16,12 @@ import {
 	versionPrMerge,
 	versionPrMergeSentences,
 } from '@/contract/setup-terms';
-import { decodeWith } from '@/decode';
 import { packageLabel } from '@/domain/package-label';
-import { git } from '@/git';
-import { shaSchema } from '@/model';
-import type { Contract, Decoded } from '@/schema';
-import { looseStruct, mutableArray, mutableStruct, schemaIssues } from '@/schema';
+import { git } from '@/host/git.ts';
+import { decodeWith } from '@/kernel/schema/decode.ts';
+import { shaSchema } from '@/kernel/schema/result.ts';
+import type { Contract, Decoded } from '@/kernel/schema/structs.ts';
+import { looseStruct, mutableArray, mutableStruct, schemaIssues } from '@/kernel/schema/structs.ts';
 
 const bumps = ['patch', 'minor', 'major'] as const;
 export function releaseVersion(value: string): Effect.Effect<string | { bump: typeof bumps[number] }, CLIError> {

@@ -11,18 +11,18 @@ import { TestClock } from 'effect/testing';
 import { decodeJwt } from 'jose';
 import { administrator, workflowIdentity } from '@/automation/auth';
 import { AutomationCoordinator } from '@/automation/coordinator';
-import { logFailure } from '@/automation/failure-log';
 import { RepositoryGateway } from '@/automation/github';
 import type { Fetcher } from '@/automation/managers/registry';
 import { Automation, applicationLayer } from '@/automation/service';
-import { precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import { semVer } from '@/contract/version';
 import { configurationSchema } from '@/domain/configuration';
-import { readEach } from '@/errors/decoding';
-import { failure } from '@/failure';
+import { failure } from '@/kernel/errors/classify.ts';
+import { readEach } from '@/kernel/errors/decoding.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { logFailure } from '@/kernel/logging/failure-log.ts';
+import { decodeSync, encodeSync, mapped } from '@/kernel/schema/structs.ts';
 import { encodeConfigurationV1, storedConfiguration } from '@/persistence/codecs/configuration';
-import { decodeSync, encodeSync, mapped } from '@/schema';
 
 let world: World;
 eachWorld(created => {

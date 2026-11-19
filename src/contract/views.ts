@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 import { githubJobKinds } from '@/contract/github';
-import type { Decoded } from '@/schema';
-import { looseStruct, mutableArray, mutableRecord, mutableStruct } from '@/schema';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { looseStruct, mutableArray, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
 
 export const tones = ['ok', 'active', 'waiting', 'warn', 'error', 'neutral'] as const;
 export type Tone = (typeof tones)[number];

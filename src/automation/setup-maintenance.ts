@@ -13,16 +13,16 @@ import type { PublishingAccess } from '@/automation/setup-publishing';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Store } from '@/automation/store';
 import type { Edit, Inventory, Snapshot } from '@/automation/types';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
-import { sha256Hex } from '@/contract/ids';
 import { setupChoicesSchema } from '@/contract/setup';
 import { packageMarkdown } from '@/domain/package-label';
-import { decodeError } from '@/errors/decoding';
-import { fromJson, fromPromise, fromSync, toDomainError } from '@/failure';
-import { record } from '@/model';
+import { fromJson, fromPromise, fromSync, toDomainError } from '@/kernel/errors/classify.ts';
+import { decodeError } from '@/kernel/errors/decoding.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { sha256Hex } from '@/kernel/schema/ids.ts';
+import { record } from '@/kernel/schema/result.ts';
+import { decodeSync, mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
 import { parse, replaceDocument, sql } from '@/persistence/d1/database';
-import { decodeSync, mutableArray, mutableStruct, safeDecode } from '@/schema';
 
 const editsSchema = mutableArray(mutableStruct({ path: Schema.String, before: Schema.String, after: Schema.String }));
 export function sameEdits(left: Edit[], right: Edit[]): boolean {

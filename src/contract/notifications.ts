@@ -1,9 +1,9 @@
 import { Schema } from 'effect';
 import type { WatchedRegistry } from '@/contract/catalog';
 import { jsrPackageNamePattern, notificationKinds, watchedRegistries } from '@/contract/catalog';
-import { credentialAliasPattern } from '@/contract/ids';
-import type { Decoded } from '@/schema';
-import { mapped, matchesPattern, mutableStruct, refined } from '@/schema';
+import { credentialAliasPattern } from '@/kernel/schema/ids.ts';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { mapped, matchesPattern, mutableStruct, refined } from '@/kernel/schema/structs.ts';
 
 const packageNames: Record<WatchedRegistry, RegExp> = {
 	npm: /^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/,

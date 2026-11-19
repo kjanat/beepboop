@@ -1,7 +1,7 @@
 import { Result } from 'effect';
 import { goreleaserConfig, npmTargets } from '@/contract/catalog';
-import { compareVersions, semver } from '@/model';
-import { parentDirectory } from '@/relative-path';
+import { compareVersions, semver } from '@/contract/semver';
+import { parentDirectory } from '@/kernel/path/relative-path.ts';
 
 export const majorSuffix = /^v(?:[2-9]|[1-9][0-9]+)$/;
 

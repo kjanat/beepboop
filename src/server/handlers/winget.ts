@@ -1,8 +1,8 @@
 import { Effect } from 'effect';
 import type { AutomationService } from '@/automation/service';
 import type { RepositoryRecord } from '@/automation/types';
-import type { DomainError } from '@/contract/errors';
 import { routes } from '@/contract/routes';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { admin, storedRepository } from '@/server/handlers/kit';
 
 function enrolled(service: AutomationService, id: number): Effect.Effect<RepositoryRecord, DomainError> {

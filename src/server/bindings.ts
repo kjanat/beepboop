@@ -1,7 +1,15 @@
 import { env } from 'cloudflare:workers';
 import { Data, Effect, Result, Schema } from 'effect';
 import type { AutomationBindings } from '@/automation/service.ts';
-import { decodeSync, mapped, matchesPattern, mutableRecord, mutableStruct, safeDecode, schemaIssues } from '@/schema';
+import {
+	decodeSync,
+	mapped,
+	matchesPattern,
+	mutableRecord,
+	mutableStruct,
+	safeDecode,
+	schemaIssues,
+} from '@/kernel/schema/structs.ts';
 
 export class ConfigurationError extends Data.TaggedError('ConfigurationError')<{ readonly message: string }> {}
 

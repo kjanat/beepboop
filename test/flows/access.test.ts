@@ -13,9 +13,9 @@ import { experimental_AstroContainer } from 'astro/container';
 import { Effect, Schema, Struct } from 'effect';
 import { Automation, withAutomation } from '@/automation/service';
 import { Store } from '@/automation/store';
-import { errorEnvelope } from '@/contract/errors';
 import { readiness } from '@/domain/repository';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import { errorEnvelope } from '@/kernel/errors/domain-error.ts';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -28,7 +28,7 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
 import { loaders } from '@/server/loaders';
 
 type Component = Parameters<experimental_AstroContainer['renderToString']>[0];

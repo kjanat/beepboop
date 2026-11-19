@@ -1,8 +1,8 @@
 import { resolve } from 'node:path';
 import { Effect, Schema } from 'effect';
 import { compile } from 'json-schema-to-typescript';
+import { mutableRecord } from '@/kernel/schema/structs.ts';
 import { parseTypeDefinition } from '@/package-url/definition';
-import { mutableRecord } from '@/schema';
 import { definitionFiles } from '@/tooling/purl/definition-files';
 import {
 	attemptPromise,

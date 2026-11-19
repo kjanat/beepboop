@@ -1,12 +1,12 @@
 import { Effect } from 'effect';
 import type { AuthBindings, AuthenticationDependencies } from '@/automation/auth';
-import type { DomainError } from '@/contract/errors';
-import { unauthenticated } from '@/contract/errors';
-import { cliToken, cliTokenPattern, confirmationCode, loginSecretPattern, sha256Hex } from '@/contract/ids';
-import { fromJson, fromPromise, toDomainError } from '@/failure';
-import { record, string } from '@/model';
+import { fromJson, fromPromise, toDomainError } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { unauthenticated } from '@/kernel/errors/domain-error.ts';
+import { responseText } from '@/kernel/http/body.ts';
+import { cliToken, cliTokenPattern, confirmationCode, loginSecretPattern, sha256Hex } from '@/kernel/schema/ids.ts';
+import { record, string } from '@/kernel/schema/result.ts';
 import type { CLISessionStore } from '@/persistence/d1/cli-sessions';
-import { responseText } from '@/runtime/http';
 
 type CLIEnvironment = Pick<AuthBindings, 'ADMIN_SUBJECT'> & Partial<Pick<AuthBindings, 'DB'>>;
 export function cliSubject(

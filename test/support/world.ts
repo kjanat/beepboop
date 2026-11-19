@@ -17,8 +17,8 @@ import { PublishBudget } from '@/automation/publish-budget';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
 import type { Automation, AutomationBindings } from '@/automation/service';
 import { applicationLayer } from '@/automation/service';
-import { cliToken, sha256Hex } from '@/contract/ids';
-import { TransientBackoff } from '@/runtime/policy';
+import { TransientBackoff } from '@/kernel/http/retry.ts';
+import { cliToken, sha256Hex } from '@/kernel/schema/ids.ts';
 import { serve } from '@/server/endpoint';
 
 export const origin = 'https://beepboop.kjanat.dev';

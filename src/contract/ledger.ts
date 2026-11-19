@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
-import { textSchema as text } from '@/model';
-import type { Decoded } from '@/schema';
-import { mutableArray, mutableStruct } from '@/schema';
+import { textSchema as text } from '@/kernel/schema/result.ts';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 
 export const ledgerManagers = ['cargo', 'pypi', 'npm'] as const;
 export const publishWaitMinutes = 30;

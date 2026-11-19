@@ -31,7 +31,7 @@ import { streamSummary } from '@/automation/setup-summary';
 import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
 import { publishMinutes } from '@/automation/setup-workflows';
 import { setupChoicesSchema } from '@/contract/setup';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -44,7 +44,7 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
 
 const checkout = pinned('checkout');
 let world: World;

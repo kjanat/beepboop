@@ -7,15 +7,15 @@ import { ActionFailure, attempt, attemptAsync, fail, required } from '@root/acti
 import { call, mask, serviceOrigin } from '@root/actions/runtime/session.ts';
 import type { Scope } from 'effect';
 import { Clock, Effect, Result, Schema } from 'effect';
-import { githubSecretNamePattern } from '@/contract/ids.ts';
 import type { LedgerEntry, LedgerPackage } from '@/contract/ledger.ts';
 import { claimStep, nextStep, publishWaitMinutes, settledStep } from '@/contract/ledger.ts';
 import { filled, lacking, licenseFile, readmeFile } from '@/contract/package-metadata.ts';
-import { textSchema } from '@/model.ts';
-import { terminate } from '@/runtime/process.ts';
-import type { Contract, Decoded } from '@/schema';
-import { decodeSync, matchesPattern, mutableArray, mutableRecord, mutableStruct } from '@/schema';
-import { sha256Hex } from '@/sha256.ts';
+import { terminate } from '@/host/process.ts';
+import { sha256Hex } from '@/kernel/crypto/sha256.ts';
+import { githubSecretNamePattern } from '@/kernel/schema/ids.ts';
+import { textSchema } from '@/kernel/schema/result.ts';
+import type { Contract, Decoded } from '@/kernel/schema/structs.ts';
+import { decodeSync, matchesPattern, mutableArray, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
 
 export interface Command {
 	code: number;

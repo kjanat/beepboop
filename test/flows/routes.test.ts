@@ -8,9 +8,9 @@ import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect, Fiber, Result, Schema, Struct } from 'effect';
 import { TestClock } from 'effect/testing';
 import { ApiFailure } from '@/contract/client';
-import { errorEnvelope } from '@/contract/errors';
 import { routeIds, routes } from '@/contract/routes';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import { errorEnvelope } from '@/kernel/errors/domain-error.ts';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -22,7 +22,7 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
 import { serve } from '@/server/endpoint';
 import { rawRoutes, resolve } from '@/server/router';
 

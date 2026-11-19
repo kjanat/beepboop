@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 import type { SetupOption } from '@/automation/setup-types';
-import { decodeSync, mutableArray, mutableStruct } from '@/schema';
+import { decodeSync, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 
 export const documentRow = mutableStruct({ document: Schema.String });
 export function rowDocument(row: unknown): unknown {

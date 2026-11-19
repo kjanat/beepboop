@@ -8,7 +8,6 @@ import {
 	validTagPrefix,
 	workflowFilePattern,
 } from '@/contract/catalog';
-import { credentialAliasPattern, githubSecretNamePattern, identifierPattern } from '@/contract/ids';
 import { approvalPolicies, startChannel, versionBump } from '@/contract/release-start';
 import {
 	existingTriggers,
@@ -17,7 +16,8 @@ import {
 	versionPrMerge,
 } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
-import type { Decoded, Encoded } from '@/schema';
+import { credentialAliasPattern, githubSecretNamePattern, identifierPattern } from '@/kernel/schema/ids.ts';
+import type { Decoded, Encoded } from '@/kernel/schema/structs.ts';
 import {
 	mapped,
 	matchesPattern,
@@ -27,7 +27,7 @@ import {
 	refined,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
 
 export const defaultBinaryTargets = [
 	'linux-amd64',

@@ -7,7 +7,7 @@ import { planReleaseSet } from '@/automation/planning';
 import { compileReleaseSet } from '@/automation/release-set';
 import type { Execution, Package, Snapshot } from '@/automation/types';
 import { configurationSchema } from '@/domain/configuration';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -19,7 +19,7 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
 
 function npm(
 	name: string,

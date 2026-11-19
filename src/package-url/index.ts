@@ -1,11 +1,11 @@
 import { Result } from 'effect';
 import { PackageURL } from 'packageurl-js';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { attemptWith, rejectWith } from '@/kernel/errors/refusal.ts';
 import type { ComponentDefinition, TypeDefinition } from '@/package-url/definition';
 import { parseTypeDefinition } from '@/package-url/definition';
 import definitions from '@/package-url/definitions';
-import { attemptWith, rejectWith } from '@/refusal';
 
 export type { ComponentDefinition, TypeDefinition } from '@/package-url/definition';
 export type {

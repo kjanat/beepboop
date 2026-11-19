@@ -19,7 +19,7 @@ import {
 	versionScopeSentences,
 } from '@/contract/setup-terms';
 import { configurationSchema } from '@/domain/configuration';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -31,7 +31,7 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
 
 const root = new URL('../../src/', import.meta.url);
 

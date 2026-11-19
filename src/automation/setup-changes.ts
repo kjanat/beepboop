@@ -10,7 +10,7 @@ import {
 	versionPrMergeSentences,
 	versionPrMerges,
 } from '@/contract/setup-terms';
-import { listed } from '@/text/listing';
+import { listed } from '@/kernel/text/listing.ts';
 
 export const onboardingBranch = 'automation/onboarding';
 export const updateBranch = 'automation/setup-update';

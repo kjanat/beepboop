@@ -17,9 +17,6 @@ import {
 	winGetTagPrefixPattern,
 	workflowFilePattern,
 } from '@/contract/catalog';
-import type { Diagnostic, DiagnosticCode } from '@/contract/diagnostics';
-import { isDiagnosticCode } from '@/contract/diagnostics';
-import { identifierPattern } from '@/contract/ids';
 import { releaseStarts, versionBump } from '@/contract/release-start';
 import { actionsRevisionPattern, workflowSetup } from '@/contract/setup';
 import {
@@ -39,7 +36,6 @@ import {
 	versionScopeDescription,
 } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
-import { dependencyOrder } from '@/dependency-order';
 import {
 	bindingValue,
 	configurationValue,
@@ -49,9 +45,12 @@ import {
 	subscriptionValue,
 	wingetValue,
 } from '@/domain/configuration-value';
-import { textSchema as nonempty } from '@/model';
-import { purl } from '@/package-url';
-import type { Decoded, Encoded, ValidationContext } from '@/schema';
+import { dependencyOrder } from '@/kernel/collections/dependency-order.ts';
+import type { Diagnostic, DiagnosticCode } from '@/kernel/errors/diagnostics.ts';
+import { isDiagnosticCode } from '@/kernel/errors/diagnostics.ts';
+import { identifierPattern } from '@/kernel/schema/ids.ts';
+import { textSchema as nonempty } from '@/kernel/schema/result.ts';
+import type { Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	mapped,
 	matchesPattern,
@@ -62,7 +61,8 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
+import { purl } from '@/package-url';
 
 export const reservedOperations = ['prepare', 'promote'] as const;
 export type ReservedOperation = (typeof reservedOperations)[number];

@@ -1,12 +1,12 @@
 import { Buffer } from 'node:buffer';
 import { Effect, Schema } from 'effect';
-import { filesFromZip, maxDirectoryEntries, maxDistributionFiles } from '@/archive/zip';
 import type { WorkflowIdentity } from '@/automation/auth';
 import type { DistributionFile } from '@/automation/distribution';
 import { readDistributionFile } from '@/automation/distribution';
 import type { RepositoryGateway } from '@/automation/github';
-import { precondition } from '@/contract/errors';
-import { fromPromise, fromSync } from '@/failure';
+import { filesFromZip, maxDirectoryEntries, maxDistributionFiles } from '@/kernel/archive/zip.ts';
+import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
 
 export interface DistributionArtifact {
 	id: number;

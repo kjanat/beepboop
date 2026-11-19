@@ -1,8 +1,8 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { Effect } from 'effect';
-import type { DomainError } from '@/contract/errors';
-import { outputEntry, writeOutput } from '@/tooling/github-output';
+import { outputEntry, writeOutput } from '@/host/github-output.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { attemptPromise, ToolFailure } from '@/tooling/runtime';
 
 export interface Rendered {

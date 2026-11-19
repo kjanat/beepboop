@@ -1,8 +1,8 @@
 import { Result } from 'effect';
 import { object } from '@/automation/managers/helpers';
 import type { Snapshot } from '@/automation/types';
-import type { Diagnostic } from '@/contract/diagnostics';
-import { fileProblem } from '@/contract/diagnostics';
+import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
+import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 
 export function* packageManifests(
 	snapshot: Snapshot,

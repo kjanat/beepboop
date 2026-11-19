@@ -1,7 +1,7 @@
 import { Effect } from 'effect';
-import { notFound } from '@/contract/errors';
 import { routes } from '@/contract/routes';
-import { fromPromise } from '@/failure';
+import { fromPromise } from '@/kernel/errors/classify.ts';
+import { notFound } from '@/kernel/errors/domain-error.ts';
 import { admin, elevated } from '@/server/handlers/kit';
 
 export const changeEndpoints = {

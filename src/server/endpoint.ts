@@ -1,11 +1,11 @@
 import type { APIRoute } from 'astro';
 import type { Layer } from 'effect';
 import { Cause, Effect } from 'effect';
-import { logRecovered } from '@/automation/failure-log.ts';
 import { Automation, applicationLayer } from '@/automation/service.ts';
-import type { DomainError } from '@/contract/errors';
-import { failure } from '@/failure.ts';
-import { jsonLogging } from '@/runtime/logging';
+import { failure } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { logRecovered } from '@/kernel/logging/failure-log.ts';
+import { jsonLogging } from '@/kernel/logging/json-logging.ts';
 import { bindings } from '@/server/bindings.ts';
 import { knownOutage, outageLine, refreshOutage } from '@/server/github-status.ts';
 import { dispatch } from '@/server/router.ts';

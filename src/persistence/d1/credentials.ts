@@ -1,11 +1,11 @@
 import { Effect, Schema } from 'effect';
 import { documentRow } from '@/automation/schemas';
-import type { DomainError } from '@/contract/errors';
-import { fromSync } from '@/failure';
+import { fromSync } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { optionalColumn, parse, sql, upsertDocument } from '@/persistence/d1/database';
-import type { Decoded } from '@/schema';
-import { mutableArray, mutableStruct } from '@/schema';
 
 const versionRow = mutableStruct({ version: Schema.NullOr(Schema.Finite) });
 const sealedRow = mutableStruct({

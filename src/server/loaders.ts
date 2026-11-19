@@ -6,12 +6,12 @@ import type { UnreadableExecution, UnreadableRepository } from '@/automation/sto
 import { readableValues } from '@/automation/store.ts';
 import type { Execution, RepositoryRecord } from '@/automation/types.ts';
 import { parseGrant } from '@/automation/vault.ts';
-import type { DomainError } from '@/contract/errors';
-import type { Readable } from '@/errors/decoding';
-import { recover } from '@/failure';
+import { recover } from '@/kernel/errors/classify.ts';
+import type { Readable } from '@/kernel/errors/decoding.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { ioConcurrency } from '@/kernel/http/retry.ts';
 import type { CLISessionRow } from '@/persistence/d1/cli-sessions.ts';
 import type { ActiveCredential, DeliveryRow } from '@/persistence/d1/credentials.ts';
-import { ioConcurrency } from '@/runtime/policy';
 import type { Section } from '@/server/sections.ts';
 
 export interface LoaderContext {

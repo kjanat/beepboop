@@ -1,7 +1,7 @@
 import { packageId } from '@/automation/package-identity';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Inventory, Package, Snapshot } from '@/automation/types';
-import { escapeRegExp } from '@/text/patterns';
+import { escapeRegExp } from '@/kernel/text/patterns.ts';
 
 type Stream = SetupChoices['streams'][number];
 

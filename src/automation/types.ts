@@ -4,13 +4,13 @@ import type { PackagePublication } from '@/automation/package-publication';
 import type { FrozenPackageTag } from '@/automation/package-tags';
 import type { ModuleTag, RefPlan, RefState } from '@/automation/refs';
 import type { ManagerName } from '@/contract/catalog';
-import type { Diagnostic } from '@/contract/diagnostics';
 import type { GitHubRunState } from '@/contract/github';
 import type { StartChannel } from '@/contract/release-start';
 import type { AutoMergeMethod, VersionPrMerge } from '@/contract/setup-terms';
 import type { ExecutionStateView } from '@/contract/views';
 import type { Configuration, WorkflowBinding } from '@/domain/configuration';
 import type { Access } from '@/domain/repository';
+import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import type { PackageIdentity } from '@/package-url';
 
 export type { Configuration, Stream, Subscription, WorkflowBinding } from '@/domain/configuration';

@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
 import { documentRow } from '@/automation/schemas';
-import type { DomainError } from '@/contract/errors';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { optionalColumn, sql } from '@/persistence/d1/database';
 

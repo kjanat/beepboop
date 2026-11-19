@@ -7,7 +7,7 @@ import { emit, failure, prompted, unprompted } from '@/cli/output';
 import { checkoutRepository } from '@/cli/release';
 import { routes } from '@/contract/routes';
 import type { PackageTagView } from '@/contract/views';
-import { looseStruct, mutableArray, safeDecode } from '@/schema';
+import { looseStruct, mutableArray, safeDecode } from '@/kernel/schema/structs.ts';
 
 export interface PackageTagOptions {
 	repository?: string | undefined;

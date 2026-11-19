@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { inflateRawSync } from 'node:zlib';
-import { precondition } from '@/contract/errors';
+import { precondition } from '@/kernel/errors/domain-error.ts';
 
 export const maxDistributionFiles = 64;
 export const maxDirectoryEntries = 128;

@@ -3,14 +3,14 @@ import type { WorkflowIdentity } from '@/automation/auth';
 import { administrator, workflowIdentity } from '@/automation/auth';
 import type { AutomationBindings, AutomationService } from '@/automation/service';
 import type { RepositoryRecord } from '@/automation/types';
-import type { DomainError } from '@/contract/errors';
-import { decodeRequest, forbidden, notFound, securityKeyRequired } from '@/contract/errors';
 import type { AnyRoute, Known, Route } from '@/contract/routes';
 import type { ReadyRepository } from '@/domain/repository';
 import { readiness, requireReady } from '@/domain/repository';
-import { fromSync } from '@/failure';
-import type { Contract, Decoded, Encoded } from '@/schema';
-import { decodeSync } from '@/schema';
+import { fromSync } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { decodeRequest, forbidden, notFound, securityKeyRequired } from '@/kernel/errors/domain-error.ts';
+import type { Contract, Decoded, Encoded } from '@/kernel/schema/structs.ts';
+import { decodeSync } from '@/kernel/schema/structs.ts';
 
 export interface Context {
 	request: Request;

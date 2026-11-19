@@ -25,8 +25,8 @@ import {
 } from '@/automation/release-graph/package-managers';
 import { executed, isolatedLines, posixShell, walkDirectories } from '@/automation/release-graph/shell';
 import type { Snapshot } from '@/automation/types';
-import { yaml } from '@/parse/yaml';
-import { escapeRegExp, globMatches, within } from '@/text/patterns';
+import { yaml } from '@/kernel/parse/yaml.ts';
+import { escapeRegExp, globMatches, within } from '@/kernel/text/patterns.ts';
 
 export const destinations = [
 	'npm',

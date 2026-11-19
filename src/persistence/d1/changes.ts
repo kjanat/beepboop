@@ -1,10 +1,10 @@
 import { Effect, Schema } from 'effect';
 import type { ChangesResponse } from '@/contract/changes';
 import { change } from '@/contract/changes';
-import type { DomainError } from '@/contract/errors';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { mapped, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
-import { mapped, mutableArray, mutableStruct } from '@/schema';
 
 const page = 500;
 const changeRow = mapped(

@@ -5,8 +5,8 @@ import { releaseStart, versionBump } from '@/contract/release-start';
 import { workflowSetupValue } from '@/contract/setup';
 import { versionPrMerges } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
-import { stringsSchema as strings } from '@/model';
-import { mutableArray, mutableRecord, mutableStruct, refined, strictStruct } from '@/schema';
+import { stringsSchema as strings } from '@/kernel/schema/result.ts';
+import { mutableArray, mutableRecord, mutableStruct, refined, strictStruct } from '@/kernel/schema/structs.ts';
 
 const managerName = Schema.Literals(managerNames);
 

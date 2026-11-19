@@ -6,8 +6,8 @@ import { lookOf, registryOf, table } from '@/cli/look';
 import { failure } from '@/cli/output';
 import { routes } from '@/contract/routes';
 import type { BinaryProgress } from '@/contract/views';
-import type { Decoded } from '@/schema';
-import { decodeSync, looseStruct, mutableArray, mutableRecord } from '@/schema';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { decodeSync, looseStruct, mutableArray, mutableRecord } from '@/kernel/schema/structs.ts';
 
 const result = looseStruct({
 	url: Schema.String,

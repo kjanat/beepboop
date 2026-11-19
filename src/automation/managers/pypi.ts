@@ -6,10 +6,10 @@ import type { Adapter } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, publicationResult, registryRequest, unconfirmed } from '@/automation/managers/verification';
 import { excluded, registry } from '@/automation/package-publication';
-import { fileProblem } from '@/contract/diagnostics';
-import { precondition } from '@/contract/errors';
+import { fileProblem } from '@/kernel/errors/diagnostics.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { responseJson } from '@/kernel/http/body.ts';
 import { packageIdentity } from '@/package-url';
-import { responseJson } from '@/runtime/http';
 
 const projectName = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
 const projectVersion = /^[0-9A-Za-z.+!-]+$/;

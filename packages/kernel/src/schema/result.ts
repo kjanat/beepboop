@@ -1,11 +1,10 @@
 import { Result, Schema } from 'effect';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
-import { shaPattern } from '@/contract/ids';
-import { compare, semverPattern } from '@/contract/semver';
-import { rejectWith } from '@/refusal';
-import type { Contract, Decoded } from '@/schema';
-import { matchesPattern, mutableArray, safeDecode } from '@/schema';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { rejectWith } from '@/kernel/errors/refusal.ts';
+import { shaPattern } from '@/kernel/schema/ids.ts';
+import type { Contract, Decoded } from '@/kernel/schema/structs.ts';
+import { matchesPattern, mutableArray, safeDecode } from '@/kernel/schema/structs.ts';
 
 export type Parsed<A> = Result.Result<A, DomainError>;
 
@@ -53,15 +52,6 @@ export function matches(value: unknown, pattern: RegExp): Parsed<string> {
 }
 export function sha(value: unknown): Parsed<string> {
 	return matches(value, shaPattern);
-}
-export function semver(value: unknown): Parsed<string> {
-	return matches(value, semverPattern);
-}
-/** Versions that are not semver order before every valid version. */
-export function compareVersions(left: string, right: string): number {
-	const a = semverPattern.test(left), b = semverPattern.test(right);
-	if (!a || !b) return a === b ? 0 : a ? 1 : -1;
-	return compare(left.replace(/^v/, ''), right.replace(/^v/, ''));
 }
 export function oneOf<const T extends string>(value: unknown, allowed: readonly T[], message: string): Parsed<T> {
 	const match = allowed.find(item => item === value);

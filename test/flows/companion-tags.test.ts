@@ -14,8 +14,7 @@ import { binaries } from '@/contract/setup';
 import { configurationDrift, configurationSchema } from '@/domain/configuration';
 import { requireReady } from '@/domain/repository';
 import { validateAgainst } from '@/domain/validate';
-import { storedConfiguration } from '@/persistence/codecs/configuration';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -27,7 +26,8 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
+import { storedConfiguration } from '@/persistence/codecs/configuration';
 
 const commit = 'a'.repeat(40);
 const policy: RefPolicy = { phase: 'version', prefix: 'rshellcheck-v', aliases: [], signed: false };

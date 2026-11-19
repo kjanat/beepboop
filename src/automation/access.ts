@@ -1,10 +1,10 @@
 import { Effect } from 'effect';
 import type { Grant } from '@/automation/vault.ts';
 import { requestGrant } from '@/automation/vault.ts';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
 import type { ReadyRepository } from '@/domain/repository';
-import { record, text } from '@/model';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { record, text } from '@/kernel/schema/result.ts';
 
 /** Resolve permissions against stored configuration, never browser-supplied scope. */
 export function configuredGrant(repository: ReadyRepository, input: unknown): Effect.Effect<Grant, DomainError> {

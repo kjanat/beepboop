@@ -1,11 +1,11 @@
 import { Clock, Effect, Schema, Semaphore } from 'effect';
 import type { ProjectedEntity } from '@/contract/changes';
 import { projectedEntities } from '@/contract/changes';
-import type { DomainError } from '@/contract/errors';
-import { fromPromise, fromSync } from '@/failure';
+import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { decodeSync, looseStruct, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
 import type { Projection } from '@/persistence/d1/projection';
-import type { Decoded } from '@/schema';
-import { decodeSync, looseStruct, mutableStruct, safeDecode } from '@/schema';
 
 export interface EntityRef {
 	entity: ProjectedEntity;

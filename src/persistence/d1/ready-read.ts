@@ -1,8 +1,8 @@
 import { Effect, Schema } from 'effect';
-import { precondition } from '@/contract/errors';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { Sql } from '@/persistence/d1/database';
 import { parse } from '@/persistence/d1/database';
-import { mutableArray, mutableStruct } from '@/schema';
 
 interface Query {
 	query: string;

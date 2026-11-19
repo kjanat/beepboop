@@ -16,7 +16,6 @@ import { lookOf } from '@/cli/look';
 import { failure, prompted } from '@/cli/output';
 import { supportedTargets } from '@/contract/binary-platforms';
 import { workflowFilePattern } from '@/contract/catalog';
-import { identifierPattern } from '@/contract/ids';
 import { approvalPolicies, startChannels, versionBumps } from '@/contract/release-start';
 import type { BinaryBuild, BinaryRelease } from '@/contract/setup';
 import {
@@ -50,7 +49,8 @@ import {
 	versionScopeSentences,
 } from '@/contract/setup-terms';
 import { packageLabel } from '@/domain/package-label';
-import { safeDecode, schemaIssues } from '@/schema';
+import { identifierPattern } from '@/kernel/schema/ids.ts';
+import { safeDecode, schemaIssues } from '@/kernel/schema/structs.ts';
 
 export const choicesEditors = { streams: 'control', actionsRevision: 'control' } as const satisfies Editors<
 	ChoicesField

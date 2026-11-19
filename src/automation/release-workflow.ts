@@ -2,8 +2,8 @@ import type { WorkflowEvent, WorkflowStep } from 'cloudflare:workers';
 import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { Effect } from 'effect';
 import type { AutomationCoordinator } from '@/automation/coordinator';
-import type { DomainError } from '@/contract/errors';
-import { fromPromise } from '@/failure';
+import { fromPromise } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
 
 export interface ReleaseWorkflowParams {
 	repositoryId: number;

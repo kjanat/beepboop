@@ -4,9 +4,9 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import type { Scope } from 'effect';
 import { Data, Effect } from 'effect';
-import { parseWith } from '@/decode';
-import { failWith } from '@/refusal';
-import { terminate } from '@/runtime/process';
+import { terminate } from '@/host/process.ts';
+import { failWith } from '@/kernel/errors/refusal.ts';
+import { parseWith } from '@/kernel/schema/decode.ts';
 
 export class ToolFailure
 	extends Data.TaggedError('ToolFailure')<{ readonly message: string; readonly cause?: unknown }>

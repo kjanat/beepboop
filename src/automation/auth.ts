@@ -10,23 +10,23 @@ import { Clock, Context, Effect, Result, Schema, SchemaGetter } from 'effect';
 import type { JwsKeyResolver, VerifiedJwt, VerifyJwtOptions } from 'micro509/jose';
 import { verifyJwt } from 'micro509/jose';
 import { cliAuthRoute, cliSubject } from '@/automation/cli-auth';
-import { logRecovered } from '@/automation/failure-log';
 import { remoteKeys } from '@/automation/jwks';
 import type { Fetcher } from '@/automation/managers/registry';
 import { documentRow } from '@/automation/schemas';
-import type { DomainError } from '@/contract/errors';
-import { decodeRequest, forbidden, precondition, unauthenticated, upstream } from '@/contract/errors';
-import { loginSecretPattern } from '@/contract/ids';
-import { base64, bytes } from '@/crypto/base64';
-import { decodeError } from '@/errors/decoding';
-import { errorPage, fromJson, fromPromise, fromSync, recover, toDomainError } from '@/failure';
-import { integer, record, sha, text } from '@/model';
+import { base64, bytes } from '@/kernel/crypto/base64.ts';
+import { errorPage, fromJson, fromPromise, fromSync, recover, toDomainError } from '@/kernel/errors/classify.ts';
+import { decodeError } from '@/kernel/errors/decoding.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { decodeRequest, forbidden, precondition, unauthenticated, upstream } from '@/kernel/errors/domain-error.ts';
+import { logRecovered } from '@/kernel/logging/failure-log.ts';
+import { loginSecretPattern } from '@/kernel/schema/ids.ts';
+import { integer, record, sha, text } from '@/kernel/schema/result.ts';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { decodeSync, mapped, mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
 import { CLISessionStore } from '@/persistence/d1/cli-sessions';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { replaceDocument } from '@/persistence/d1/database';
 import { SessionStore } from '@/persistence/d1/sessions';
-import type { Decoded } from '@/schema';
-import { decodeSync, mapped, mutableArray, mutableStruct, safeDecode } from '@/schema';
 
 const clientExtensionResults = Schema.Unknown.pipe(
 	Schema.decodeTo(mutableStruct({}), {

@@ -5,7 +5,7 @@ import type { DistributionFile } from '@/automation/distribution';
 import { createDistribution, readDistributionFile, readDistributionMode } from '@/automation/distribution';
 import { RepositoryGateway } from '@/automation/github';
 import type { Edit } from '@/automation/types';
-import { decodeSync, mutableArray, mutableStruct } from '@/schema';
+import { decodeSync, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 
 const repository = 'octo/widget';
 const sourceSha = 'a'.repeat(40), sourceTree = 'b'.repeat(40), distributionTree = 'c'.repeat(40);

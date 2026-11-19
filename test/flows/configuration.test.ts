@@ -23,12 +23,8 @@ import { workflowSetup } from '@/contract/setup';
 import { configurationDrift, configurationSchema, issueMessage } from '@/domain/configuration';
 import { refPolicyValue } from '@/domain/configuration-value';
 import { validateAgainst } from '@/domain/validate';
-import { record } from '@/model';
-import { packageIdentity, parsePackageIdentity, purlDefinitions } from '@/package-url';
-import { storedConfiguration } from '@/persistence/codecs/configuration';
-import { decodeRepositoryV1 } from '@/persistence/codecs/v1';
-import { executionId, planIdentity, releaseEventId } from '@/persistence/identity-keys';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import { record } from '@/kernel/schema/result.ts';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -40,7 +36,11 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
+import { packageIdentity, parsePackageIdentity, purlDefinitions } from '@/package-url';
+import { storedConfiguration } from '@/persistence/codecs/configuration';
+import { decodeRepositoryV1 } from '@/persistence/codecs/v1';
+import { executionId, planIdentity, releaseEventId } from '@/persistence/identity-keys';
 import { assertCurrent, schemaPath } from '@/tooling/schema/render';
 
 let world: World;

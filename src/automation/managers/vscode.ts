@@ -13,9 +13,9 @@ import {
 import { identityOf, parseExtension } from '@/automation/package-identity';
 import { excluded, registry } from '@/automation/package-publication';
 import type { Publication } from '@/automation/types';
-import { fileProblem } from '@/contract/diagnostics';
-import { responseJson } from '@/runtime/http';
-import { mutableArray, mutableStruct, safeDecode } from '@/schema';
+import { fileProblem } from '@/kernel/errors/diagnostics.ts';
+import { responseJson } from '@/kernel/http/body.ts';
+import { mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
 
 const identifier = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
 const marketplaceQuery = mutableStruct({
