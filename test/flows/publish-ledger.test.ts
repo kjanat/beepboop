@@ -1,9 +1,10 @@
 import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Command, Runner } from '@root/actions/runtime/publish.ts';
 import {
+	command,
 	distributionLicensed,
 	main,
 	publicRepository,
@@ -1473,6 +1474,55 @@ test.each([
 	]);
 }, 60_000);
 
+test('bun pm pack in a real workspace publishes concrete catalog and workspace versions', async () => {
+	world.npm.publish(npm, '1.0.0');
+	const { begun } = await released({ main: [npmId] }, bindingsLayout);
+	const { execution, identity } = started(begun, 'main');
+	const workspace = join(target, 'workspace');
+	const files: Record<string, string> = {
+		'package.json': JSON.stringify({
+			name: 'ws',
+			private: true,
+			workspaces: { packages: ['bindings/*'], catalog: { 'left-pad': '1.3.0' } },
+		}),
+		'bindings/core/package.json': JSON.stringify({ name: '@octo/core', version: '2.3.4' }),
+		'bindings/js/package.json': JSON.stringify({
+			name: npm,
+			version: '1.1.0',
+			...npmMetadata,
+			main: 'index.js',
+			dependencies: { 'left-pad': 'catalog:', '@octo/core': 'workspace:*' },
+		}),
+		'bindings/js/index.js': 'module.exports = 1;\n',
+		'bindings/js/README.md': '# lint\n',
+		'bindings/js/LICENSE': licenseText,
+		'bun.lock': '{}\n',
+	};
+	for (const [path, text] of Object.entries(files)) {
+		mkdirSync(join(workspace, path, '..'), { recursive: true });
+		writeFileSync(join(workspace, path), text);
+	}
+	let packed = '';
+	const { result } = await publishing(identity, execution.id, {
+		run: (argv, options) => {
+			if (argv[0] !== 'npm') return command(argv, { ...options, cwd: join(workspace, options.cwd) });
+			const published = argv[2] ?? '';
+			packed = Bun.spawnSync(['tar', '-xzOf', published, 'package/package.json']).stdout.toString();
+			world.npm.publish(
+				npm,
+				'1.1.0',
+				undefined,
+				`sha512-${createHash('sha512').update(readFileSync(published)).digest('base64')}`,
+			);
+			return Effect.succeed({ code: 0, stdout: `+ ${npm}@1.1.0`, output: '' });
+		},
+		exists: path => existsSync(join(workspace, path)),
+	});
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual([['pkg:npm/%40octo/lint@1.1.0', 'published']]);
+	expect(JSON.parse(packed).dependencies).toEqual({ 'left-pad': '1.3.0', '@octo/core': '2.3.4' });
+}, 60_000);
+
 test('a directory entry or an extension file inside the directory never stands in for its index file', async () => {
 	world.npm.publish(npm, '1.0.0');
 	const { begun } = await released({ main: [npmId] }, bindingsLayout);
@@ -1491,19 +1541,25 @@ test('a directory entry or an extension file inside the directory never stands i
 	]);
 }, 60_000);
 
-test('a workspace packer that writes no tarball fails the package before its claim', async () => {
+test.each([0, 2])('a workspace packer that writes %d tarballs fails the package before its claim', async count => {
 	world.npm.publish(npm, '1.0.0');
 	const { begun } = await released({ main: [npmId] }, bindingsLayout);
 	const { execution, identity } = started(begun, 'main');
 	const { result } = await publishing(identity, execution.id, {
-		run: () => Effect.succeed({ code: 0, stdout: '', output: '' }),
+		run: argv =>
+			Effect.sync((): Command => {
+				for (let index = 0; index < count; index++) {
+					writeFileSync(join(argv.at(-1) ?? '', `octo-lint-${index}.tgz`), 'tarball\n');
+				}
+				return { code: 0, stdout: '', output: '' };
+			}),
 		exists: path => path === 'bun.lock',
 	});
 	if (result._tag === 'Failure') throw new Error(result.failure.message);
 	expect(states(result.success)).toEqual([[
 		'pkg:npm/%40octo/lint@1.1.0',
 		'failed-retryable',
-		'bun pm pack --destination wrote 0 tarballs for @octo/lint',
+		`bun pm pack --destination wrote ${count} tarballs for @octo/lint`,
 	]]);
 }, 60_000);
 
