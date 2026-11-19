@@ -1,9 +1,10 @@
 import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Command, Runner } from '@root/actions/runtime/publish.ts';
 import {
+	command,
 	distributionLicensed,
 	main,
 	publicRepository,
@@ -1391,6 +1392,8 @@ test(
 					'./literal': './*.json',
 					'./digits/*': './*/*2.js',
 					'./alias/*': './index.js',
+					'./fallback': ['./index.js', './missing-fallback.js'],
+					'./invalid-first': ['../outside.js', './index.js'],
 				},
 				dependencies: { micro509: 'catalog:', fflate: '0.8.3' },
 				optionalDependencies: { '@octo/cli': 'workspace:*' },
@@ -1419,6 +1422,78 @@ test(
 	},
 	60_000,
 );
+
+const exportFallbacks: [string, unknown, string | undefined][] = [
+	['checks the fallback after an invalid path', ['./dist/../index.js', './missing.js'], 'missing.js'],
+	['skips encoded parent segments', ['./dist/%2E%2e/index.js', './index.js'], undefined],
+	['skips encoded node_modules segments', ['./%4eode_modules/index.js', './index.js'], undefined],
+	['rejects an invalid-only array', ['../outside.js'], 'a valid exports target (found "../outside.js")'],
+	['allows a final null to exclude the export', ['../outside.js', null], undefined],
+	['allows a nested empty array to exclude the export', ['../outside.js', [[]]], undefined],
+	[
+		'rejects an invalid target after an exclusion',
+		[null, '../outside.js'],
+		'a valid exports target (found "../outside.js")',
+	],
+	['uses a nested valid first target', [['./index.js'], './missing.js'], undefined],
+	['checks a missing valid first target', ['./missing.js', './index.js'], 'missing.js'],
+	['checks the fallback when a condition may be inactive', [{ import: './index.js' }, './missing.js'], 'missing.js'],
+	[
+		'skips a later branch that only an earlier match could reach',
+		[{ import: './index.js' }, { import: './dist/../index.js', default: './index.js' }],
+		undefined,
+	],
+	[
+		'rejects an invalid target an active condition reaches',
+		[{ import: '../bad.js' }],
+		'a valid exports target (found "../bad.js")',
+	],
+	['skips a condition after default', [{ default: './index.js', import: '../bad.js' }], undefined],
+	[
+		'resolves thirty-two conditions',
+		Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`c${index}`, './index.js'])),
+		undefined,
+	],
+	[
+		'rejects an invalid target behind thirty-two conditions',
+		{ ...Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`c${index}`, './index.js'])), c32: '../bad.js' },
+		'a valid exports target (found "../bad.js")',
+	],
+	[
+		'checks a target behind thirty-two unmatched conditions',
+		[
+			Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`c${index}`, {}])),
+			{
+				...Object.fromEntries(Array.from({ length: 31 }, (_, index) => [`c${index}`, './index.js'])),
+				c31: './missing.js',
+			},
+		],
+		'missing.js',
+	],
+	[
+		'resolves a long fallback array of conditions',
+		[...Array.from({ length: 24 }, (_, index) => ({ [`c${index}`]: { [`d${index}`]: './index.js' } })), './index.js'],
+		undefined,
+	],
+];
+
+test.each(exportFallbacks)('npm exports %s', async (_scenario, exports, missing) => {
+	world.npm.publish(npm, '1.0.0');
+	const { begun } = await released({ main: [npmId] }, bindingsLayout);
+	const { execution, identity } = started(begun, 'main');
+	const state: Bindings = { commands: [], entries: { exports } };
+	const { result } = await publishing(identity, execution.id, {
+		run: bindings(state, '1.1.0'),
+		credentials: bindingCredentials,
+	});
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual(
+		missing
+			? [['pkg:npm/%40octo/lint@1.1.0', 'failed-retryable', `The @octo/lint 1.1.0 package lacks ${missing}`]]
+			: [['pkg:npm/%40octo/lint@1.1.0', 'published']],
+	);
+	expect(state.commands.some(entry => entry.command.startsWith('npm publish'))).toBe(missing === undefined);
+}, 60_000);
 
 function workspacePacker(files: readonly string[], main: string) {
 	const commands: string[] = [];
@@ -1471,11 +1546,63 @@ test.each([
 	]);
 }, 60_000);
 
-test('a tarball directory entry never stands in for the index file of a directory main', async () => {
+test('bun pm pack in a real workspace publishes concrete catalog and workspace versions', async () => {
 	world.npm.publish(npm, '1.0.0');
 	const { begun } = await released({ main: [npmId] }, bindingsLayout);
 	const { execution, identity } = started(begun, 'main');
-	const packing = workspacePacker(['package.json', 'README.md', 'LICENSE', 'lib/', 'lib/helper.js'], './lib/');
+	const workspace = join(target, 'workspace');
+	const files: Record<string, string> = {
+		'package.json': JSON.stringify({
+			name: 'ws',
+			private: true,
+			workspaces: { packages: ['bindings/*'], catalog: { 'left-pad': '1.3.0' } },
+		}),
+		'bindings/core/package.json': JSON.stringify({ name: '@octo/core', version: '2.3.4' }),
+		'bindings/js/package.json': JSON.stringify({
+			name: npm,
+			version: '1.1.0',
+			...npmMetadata,
+			main: 'index.js',
+			dependencies: { 'left-pad': 'catalog:', '@octo/core': 'workspace:*' },
+		}),
+		'bindings/js/index.js': 'module.exports = 1;\n',
+		'bindings/js/README.md': '# lint\n',
+		'bindings/js/LICENSE': licenseText,
+		'bun.lock': '{}\n',
+	};
+	for (const [path, text] of Object.entries(files)) {
+		mkdirSync(join(workspace, path, '..'), { recursive: true });
+		writeFileSync(join(workspace, path), text);
+	}
+	let packed = '';
+	const { result } = await publishing(identity, execution.id, {
+		run: (argv, options) => {
+			if (argv[0] !== 'npm') return command(argv, { ...options, cwd: join(workspace, options.cwd) });
+			const published = argv[2] ?? '';
+			packed = Bun.spawnSync(['tar', '-xzOf', published, 'package/package.json']).stdout.toString();
+			world.npm.publish(
+				npm,
+				'1.1.0',
+				undefined,
+				`sha512-${createHash('sha512').update(readFileSync(published)).digest('base64')}`,
+			);
+			return Effect.succeed({ code: 0, stdout: `+ ${npm}@1.1.0`, output: '' });
+		},
+		exists: path => existsSync(join(workspace, path)),
+	});
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual([['pkg:npm/%40octo/lint@1.1.0', 'published']]);
+	expect(JSON.parse(packed).dependencies).toEqual({ 'left-pad': '1.3.0', '@octo/core': '2.3.4' });
+}, 60_000);
+
+test('a directory entry or an extension file inside the directory never stands in for its index file', async () => {
+	world.npm.publish(npm, '1.0.0');
+	const { begun } = await released({ main: [npmId] }, bindingsLayout);
+	const { execution, identity } = started(begun, 'main');
+	const packing = workspacePacker(
+		['package.json', 'README.md', 'LICENSE', 'lib/', 'lib/.js', 'lib/helper.js'],
+		'./lib/',
+	);
 	const { result } = await publishing(identity, execution.id, {
 		run: packing.run,
 		exists: path => path === 'bun.lock',
@@ -1486,19 +1613,25 @@ test('a tarball directory entry never stands in for the index file of a director
 	]);
 }, 60_000);
 
-test('a workspace packer that writes no tarball fails the package before its claim', async () => {
+test.each([0, 2])('a workspace packer that writes %d tarballs fails the package before its claim', async count => {
 	world.npm.publish(npm, '1.0.0');
 	const { begun } = await released({ main: [npmId] }, bindingsLayout);
 	const { execution, identity } = started(begun, 'main');
 	const { result } = await publishing(identity, execution.id, {
-		run: () => Effect.succeed({ code: 0, stdout: '', output: '' }),
+		run: argv =>
+			Effect.sync((): Command => {
+				for (let index = 0; index < count; index++) {
+					writeFileSync(join(argv.at(-1) ?? '', `octo-lint-${index}.tgz`), 'tarball\n');
+				}
+				return { code: 0, stdout: '', output: '' };
+			}),
 		exists: path => path === 'bun.lock',
 	});
 	if (result._tag === 'Failure') throw new Error(result.failure.message);
 	expect(states(result.success)).toEqual([[
 		'pkg:npm/%40octo/lint@1.1.0',
 		'failed-retryable',
-		'bun pm pack --destination wrote 0 tarballs for @octo/lint',
+		`bun pm pack --destination wrote ${count} tarballs for @octo/lint`,
 	]]);
 }, 60_000);
 

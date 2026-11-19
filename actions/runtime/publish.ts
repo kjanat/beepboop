@@ -139,22 +139,209 @@ interface EntryPoint {
 const mainProbes = ['', '.js', '.json', '.node', '/index.js', '/index.json', '/index.node'];
 const declarationProbes = ['', '.d.ts', '.ts', '.tsx', '/index.d.ts', '/index.ts', '/index.tsx'];
 
-function entryPoints(value: unknown, pattern = false): EntryPoint[] {
-	if (typeof value === 'string') return [{ path: posix.normalize(value), pattern: pattern && value.includes('*') }];
-	if (value === null || typeof value !== 'object') return [];
-	return Object.values(value).flatMap(branch => entryPoints(branch, pattern));
+function entryPoint(value: string, pattern: boolean): EntryPoint {
+	return { path: posix.normalize(value), pattern: pattern && value.includes('*') };
 }
 
-function exportEntryPoints(field: unknown): EntryPoint[] {
-	if (field === null || typeof field !== 'object' || Array.isArray(field)) return entryPoints(field);
+function entryPoints(value: unknown): EntryPoint[] {
+	if (typeof value === 'string') return [entryPoint(value, false)];
+	return value !== null && typeof value === 'object' ? Object.values(value).flatMap(entryPoints) : [];
+}
+
+type Resolution =
+	| { readonly kind: 'target'; readonly entry: EntryPoint }
+	| { readonly kind: 'invalid'; readonly value: unknown }
+	| { readonly kind: 'excluded' }
+	| { readonly kind: 'unmatched' };
+
+function validTarget(value: string): boolean {
+	const forbidden = value.slice(2).split(/[/\\]/).some(segment =>
+		/^(?:\.{1,2}|node_modules)$/i.test(
+			segment.replace(/%([0-9a-f]{2})/gi, (_, byte: string) => String.fromCharCode(parseInt(byte, 16))),
+		)
+	);
+	return value.startsWith('./') && !forbidden;
+}
+
+interface World {
+	readonly active: readonly string[];
+	readonly inactive: readonly string[];
+}
+
+interface Pending {
+	readonly world: World;
+	readonly resolution: Exclude<Resolution, { readonly kind: 'target' }>;
+}
+
+interface Resolved {
+	readonly targets: readonly EntryPoint[];
+	readonly pending: readonly Pending[];
+}
+
+function conditionNames(value: unknown, into: Set<string>): Set<string> {
+	if (Array.isArray(value)) {
+		for (const fallback of value) conditionNames(fallback, into);
+	} else if (value !== null && typeof value === 'object') {
+		for (const [condition, branch] of Object.entries(value)) {
+			if (condition !== 'default') into.add(condition);
+			conditionNames(branch, into);
+		}
+	}
+	return into;
+}
+
+function namedLater(outer: ReadonlySet<string>, later: unknown): ReadonlySet<string> {
+	return conditionNames(later, new Set(outer));
+}
+
+function project(world: World, keep: ReadonlySet<string>): World {
+	return {
+		active: world.active.filter(name => keep.has(name)),
+		inactive: world.inactive.filter(name => keep.has(name)),
+	};
+}
+
+function assume(world: World, condition: string, active: boolean): World {
+	return active
+		? { active: [...world.active, condition].sort(), inactive: world.inactive }
+		: { active: world.active, inactive: [...world.inactive, condition].sort() };
+}
+
+function distinct<T>(items: readonly T[], key: (item: T) => string): T[] {
+	return [...new Map(items.map(item => [key(item), item])).values()];
+}
+
+const worldKey = (world: World) => JSON.stringify([world.active, world.inactive]);
+
+function without(world: World, condition: string): World {
+	return {
+		active: world.active.filter(name => name !== condition),
+		inactive: world.inactive.filter(name => name !== condition),
+	};
+}
+
+function narrower(specific: World, general: World): boolean {
+	return specific !== general
+		&& general.active.every(name => specific.active.includes(name))
+		&& general.inactive.every(name => specific.inactive.includes(name));
+}
+
+function simplify(worlds: readonly World[]): World[] {
+	const unique = distinct(worlds, worldKey);
+	const keys = new Set(unique.map(worldKey));
+	const merged = distinct(
+		unique.map(world => {
+			const condition = [...world.active, ...world.inactive].find(name =>
+				keys.has(worldKey(assume(without(world, name), name, !world.active.includes(name))))
+			);
+			return condition === undefined ? world : without(world, condition);
+		}),
+		worldKey,
+	);
+	const kept = merged.filter(world => !merged.some(other => narrower(world, other)));
+	return kept.length < unique.length ? simplify(kept) : kept;
+}
+
+function simplifyPending(items: readonly Pending[]): Pending[] {
+	const groups = new Map<string, { readonly resolution: Pending['resolution']; readonly worlds: World[] }>();
+	for (const item of items) {
+		const key = JSON.stringify(item.resolution);
+		const group = groups.get(key) ?? { resolution: item.resolution, worlds: [] };
+		group.worlds.push(item.world);
+		groups.set(key, group);
+	}
+	return [...groups.values()].flatMap(group =>
+		simplify(group.worlds).map((world): Pending => ({ world, resolution: group.resolution }))
+	);
+}
+
+function resolveTargets(value: unknown, world: World, pattern: boolean, outer: ReadonlySet<string>): Resolved {
+	if (typeof value === 'string') {
+		return validTarget(value)
+			? { targets: [entryPoint(value, pattern)], pending: [] }
+			: { targets: [], pending: [{ world: project(world, outer), resolution: { kind: 'invalid', value } }] };
+	}
+	if (value === null || (Array.isArray(value) && value.length === 0)) {
+		return { targets: [], pending: [{ world: project(world, outer), resolution: { kind: 'excluded' } }] };
+	}
+	if (Array.isArray(value)) {
+		const targets: EntryPoint[] = [];
+		let pending: Pending[] = [{ world: project(world, namedLater(outer, value)), resolution: { kind: 'unmatched' } }];
+		for (const [index, fallback] of value.entries()) {
+			const keep = namedLater(outer, value.slice(index + 1));
+			const next: Pending[] = [];
+			for (const previous of pending) {
+				const resolved = resolveTargets(fallback, previous.world, pattern, keep);
+				targets.push(...resolved.targets);
+				for (const outcome of resolved.pending) {
+					const resolution = outcome.resolution.kind === 'unmatched' ? previous.resolution : outcome.resolution;
+					next.push({ world: project(outcome.world, keep), resolution });
+				}
+			}
+			pending = simplifyPending(next);
+		}
+		return { targets, pending };
+	}
+	if (typeof value !== 'object') {
+		return { targets: [], pending: [{ world: project(world, outer), resolution: { kind: 'invalid', value } }] };
+	}
+	const entries = Object.entries(value);
+	const targets: EntryPoint[] = [];
+	const settled: Pending[] = [];
+	let unmatched: World[] = [project(world, namedLater(outer, value))];
+	for (const [index, [condition, branch]] of entries.entries()) {
+		const keep = namedLater(outer, Object.fromEntries(entries.slice(index + 1)));
+		const next: World[] = [];
+		for (const current of unmatched) {
+			const always = condition === 'default' || current.active.includes(condition);
+			if (!always && current.inactive.includes(condition)) {
+				next.push(project(current, keep));
+				continue;
+			}
+			if (!always) next.push(project(assume(current, condition, false), keep));
+			const resolved = resolveTargets(branch, always ? current : assume(current, condition, true), pattern, keep);
+			targets.push(...resolved.targets);
+			for (const outcome of resolved.pending) {
+				if (outcome.resolution.kind === 'unmatched') next.push(project(outcome.world, keep));
+				else settled.push({ world: project(outcome.world, outer), resolution: outcome.resolution });
+			}
+		}
+		unmatched = simplify(next);
+	}
+	return {
+		targets,
+		pending: simplifyPending(
+			[
+				...settled,
+				...unmatched.map((current): Pending => ({
+					world: project(current, outer),
+					resolution: { kind: 'unmatched' },
+				})),
+			],
+		),
+	};
+}
+
+function exportResolutions(value: unknown, pattern: boolean): Resolution[] {
+	const resolved = resolveTargets(value, { active: [], inactive: [] }, pattern, new Set());
+	return [
+		...resolved.targets.map((entry): Resolution => ({ kind: 'target', entry })),
+		...resolved.pending.map(outcome => outcome.resolution),
+	];
+}
+
+function packageExports(field: unknown): Resolution[] {
+	if (field === undefined) return [];
+	if (field === null || typeof field !== 'object' || Array.isArray(field)) return exportResolutions(field, false);
 	const subpaths = Object.entries(field);
 	return subpaths.length && subpaths.every(([key]) => key.startsWith('.'))
-		? subpaths.flatMap(([key, value]) => entryPoints(value, key.includes('*')))
-		: entryPoints(field);
+		? subpaths.flatMap(([key, value]) => exportResolutions(value, key.includes('*')))
+		: exportResolutions(field, false);
 }
 
 function shipped(files: ReadonlySet<string>, entry: EntryPoint, probes: readonly string[]): boolean {
-	if (!entry.pattern) return probes.some(probe => files.has(posix.normalize(`${entry.path}${probe}`)));
+	const candidates = entry.path.endsWith('/') ? probes.filter(probe => probe.startsWith('/')) : probes;
+	if (!entry.pattern) return candidates.some(probe => files.has(posix.normalize(`${entry.path}${probe}`)));
 	const [head = '', ...rest] = entry.path.split('*').map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'));
 	const pattern = new RegExp(`^${head}(?<wildcard>.+)${rest.join('\\k<wildcard>')}$`);
 	return [...files].some(file => pattern.test(file));
@@ -175,9 +362,10 @@ function npmMissing(files: readonly string[], manifest: Decoded<typeof npmManife
 	const main = entryPoints(manifest.main).filter(entry => !shipped(packed, entry, mainProbes));
 	const declarations = [manifest.types, manifest.typings].flatMap(field => entryPoints(field))
 		.filter(entry => !shipped(packed, entry, declarationProbes));
+	const exports = packageExports(manifest.exports);
 	const declared = [
 		...[manifest.module, manifest.bin].flatMap(field => entryPoints(field)),
-		...exportEntryPoints(manifest.exports),
+		...exports.flatMap(resolution => resolution.kind === 'target' ? [resolution.entry] : []),
 	].filter(entry => !shipped(packed, entry, ['']));
 	return [
 		...lacking({
@@ -188,6 +376,11 @@ function npmMissing(files: readonly string[], manifest: Decoded<typeof npmManife
 			repository: typeof repository === 'string' ? filled(repository) : filled(repository?.url),
 		}),
 		...new Set([...main, ...declarations, ...declared].map(entry => entry.path)),
+		...new Set(
+			exports.flatMap(resolution =>
+				resolution.kind === 'invalid' ? [`a valid exports target (found ${JSON.stringify(resolution.value)})`] : []
+			),
+		),
 		...[manifest.dependencies, manifest.optionalDependencies, manifest.peerDependencies].flatMap(unresolved),
 	];
 }

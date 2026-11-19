@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- npm publication checks skip invalid `exports` targets when selecting an array fallback and reject an array that ends with an invalid target and has no usable fallback. A valid target still needs its file in the tarball.
 - `beepboop release VERSION` for a version that the default branch already carries creates the publication run of the commit that set the version, the same commit a push releases, also after later commits landed. The command fixes that commit when you run it. It failed with `ALREADY_PREPARED` unless `startFrom` listed `cli`.
 - A stream with a package that its registry cannot answer for starts no release and shows a `release-unchecked` warning that names the package. The next push or discovery asks the registry again. The warnings of a discovery also stay when a later stream of that discovery fails, and they never replace a newer discovery. The stream started no release and said nothing.
 - A version PR that you added commits to before merging publishes on merge with `publishWhen: version-pr-merged`. Beepboop accepts the merged PR while its head still contains the version commit Beepboop opened it with. A started release whose version PR gained commits follows `publishWhen` instead of publishing on merge. The release waited for you to publish it.
