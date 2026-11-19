@@ -1,6 +1,7 @@
 import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
 import { registryLabel } from '@/contract/catalog';
 import { publicationStages } from '@/domain/publication-stages';
+import { listed } from '@/text/listing';
 
 type Stream = SetupChoices['streams'][number];
 
@@ -14,11 +15,6 @@ const registries: Record<string, string> = {
 	oci: 'the container registry',
 	'github-release': 'GitHub releases',
 };
-
-export function listed(items: readonly string[]): string {
-	const head = items.slice(0, -1), last = items.at(-1) ?? '';
-	return head.length ? `${head.join(', ')} and ${last}` : last;
-}
 
 function sentence(value: string): string {
 	return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;

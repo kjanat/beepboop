@@ -1,7 +1,8 @@
 import { Result } from 'effect';
-import { object, yaml } from '@/automation/managers/helpers';
+import { object } from '@/automation/managers/helpers';
 import type { SetupPlan } from '@/automation/setup-types';
 import type { Snapshot } from '@/automation/types';
+import { yaml } from '@/parse/yaml';
 
 /** Entry points are a starting list; owners add chunks, licenses and runtime assets. */
 export function actionReleaseOffer(snapshot: Snapshot): SetupPlan['actionRelease'] {

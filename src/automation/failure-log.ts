@@ -1,6 +1,6 @@
 import { Cause, Effect } from 'effect';
-import { decodeError } from '@/automation/store';
 import type { DomainError } from '@/contract/errors';
+import { decodeError } from '@/errors/decoding';
 import { recover } from '@/failure';
 
 export function logFailure(

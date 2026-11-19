@@ -5,12 +5,12 @@ import { publishable } from '@/automation/package-publication';
 import { staticGuard } from '@/automation/release-graph/bindings';
 import type { ReleaseGraph, StreamProposal, StreamWorkflow, Target } from '@/automation/release-graph/graph';
 import { code } from '@/automation/release-graph/graph';
-import { escapeRegExp } from '@/automation/release-graph/shell';
 import type { Destination } from '@/automation/release-graph/workflows';
 import { literalPrefix } from '@/automation/release-graph/workflows';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Inventory, Snapshot } from '@/automation/types';
 import { identifierPattern } from '@/contract/ids';
+import { escapeRegExp } from '@/text/patterns';
 
 const labels: Record<Destination, string> = {
 	npm: 'npm',

@@ -3,10 +3,9 @@ import { Result } from 'effect';
 import type { Alias, Document, Node } from 'yaml';
 import { isAlias, isMap, isNode, isSeq, parseDocument, visit } from 'yaml';
 import { jobNeeds } from '@/automation/job-gate';
-import { object, yaml, yamlData } from '@/automation/managers/helpers';
+import { object } from '@/automation/managers/helpers';
 import { packageId } from '@/automation/package-identity';
 import { workflowEvents } from '@/automation/release-graph/calls';
-import { escapeRegExp } from '@/automation/release-graph/shell';
 import { annotatePins, matchEnding, pinned, renderWorkflow } from '@/automation/setup-actions';
 import {
 	assetConflicts,
@@ -29,6 +28,8 @@ import { identifierPattern } from '@/contract/ids';
 import { ledgerManagers, publishWaitMinutes } from '@/contract/ledger';
 import { hostedRunners } from '@/contract/runners';
 import { toDomainError } from '@/failure';
+import { yaml, yamlData } from '@/parse/yaml';
+import { escapeRegExp } from '@/text/patterns';
 
 const prepareMinutes = 120;
 export function publishMinutes(packages: number): number {

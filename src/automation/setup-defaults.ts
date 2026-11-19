@@ -1,6 +1,7 @@
 import { slug, unusedName } from '@/automation/naming';
 import type { SetupPlan } from '@/automation/setup-types';
 import { parentDirectory } from '@/relative-path';
+import { shellQuote } from '@/text/shell-quote';
 
 export interface Selection {
 	name: string;
@@ -43,9 +44,6 @@ export function suggestedWorkflowFile(
 		index => `${base}-${index}.yml`,
 		proposed => plan.workflows.some(w => w.file === proposed) || reserved.includes(proposed),
 	);
-}
-export function shellQuote(value: string): string {
-	return `'${value.replaceAll("'", "'\\''")}'`;
 }
 const publishCrate = String.raw`crate_status() {
   curl --silent --show-error --output /dev/null --write-out '%{http_code}' --retry 4 --retry-delay 5 \

@@ -1,10 +1,11 @@
 import { Result } from 'effect';
-import { object, yaml } from '@/automation/managers/helpers';
+import { object } from '@/automation/managers/helpers';
 import type { Adapter } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { workflowEvents } from '@/automation/release-graph/calls';
 import { actionRole, workflowEvidence } from '@/automation/setup-workflows';
 import { fileProblem } from '@/contract/diagnostics';
+import { yaml } from '@/parse/yaml';
 export const workflowManager: Adapter<'workflow'> = {
 	name: 'workflow',
 	discover(snapshot) {

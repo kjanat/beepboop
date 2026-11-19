@@ -1,6 +1,7 @@
 import { Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
-import { inWorkspace, object, yaml } from '@/automation/managers/helpers';
+import { inWorkspace, object } from '@/automation/managers/helpers';
+import { yaml } from '@/parse/yaml';
 import { parentDirectory, walkRelative } from '@/relative-path';
 
 type Read = (path: string) => string | undefined;

@@ -2,7 +2,7 @@ import type { Ask, CLIError, Out } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 import { repositoryReference } from '@/automation/repository-name';
 import { parseSetupPlan } from '@/automation/setup-plan';
-import { listed, streamSummary } from '@/automation/setup-summary';
+import { streamSummary } from '@/automation/setup-summary';
 import type { SetupPlan } from '@/automation/setup-types';
 import type { Client } from '@/cli/client';
 import { readJson } from '@/cli/json-file';
@@ -15,6 +15,7 @@ import { applySetupFlags, readSetupFlags } from '@/cli/setup-flags';
 import { routes } from '@/contract/routes';
 import { setupChoicesSchema } from '@/contract/setup';
 import { safeDecode, schemaIssues } from '@/schema';
+import { listed } from '@/text/listing';
 
 function parsePlan(value: unknown): Effect.Effect<SetupPlan, CLIError> {
 	return parseSetupPlan(value).pipe(Effect.mapError(error => failure(error.message, 'INVALID_PLAN')));

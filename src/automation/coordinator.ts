@@ -119,7 +119,6 @@ import { Automation, applicationLayer, withAutomation } from '@/automation/servi
 import { binaryLegs } from '@/automation/setup-binaries';
 import { maintainSetup } from '@/automation/setup-maintenance';
 import type { SetupEdit } from '@/automation/setup-types';
-import { decodeError, isDecodingFailure } from '@/automation/store';
 import type {
 	Artifact,
 	AutomationEvent,
@@ -144,6 +143,7 @@ import type { BinaryProgress, PackageTagPage } from '@/contract/views';
 import { parseRetryAfter } from '@/domain/http-date';
 import type { ReadyRepository } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
+import { decodeError, isDecodingFailure } from '@/errors/decoding';
 import { fromPromise, fromSync, recover, retryable, toDomainError } from '@/failure';
 import { matches, sha } from '@/model';
 import { purl } from '@/package-url';

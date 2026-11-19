@@ -36,7 +36,7 @@ import {
 import { bodyChoices, releaseAfterMerge } from '@/automation/setup';
 import { currentOptions, maintainSetup, rebuildingStatus, setupEdits } from '@/automation/setup-maintenance';
 import type { PublishingAccess } from '@/automation/setup-publishing';
-import { decodeError, Store } from '@/automation/store';
+import { Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
 import type {
 	AutomationEvent,
@@ -60,6 +60,7 @@ import { configurationDiagnostics, configurationProblem } from '@/domain/configu
 import type { Access, ReadyRepository, RepositoryDiscovery } from '@/domain/repository';
 import { readiness, requireReady } from '@/domain/repository';
 import { validateAgainst } from '@/domain/validate';
+import { decodeError } from '@/errors/decoding';
 import { fromJson, fromPromise, fromSync, recover } from '@/failure';
 import type { Parsed } from '@/model';
 import { compareVersions, countSchema, decode, integer, looseSchema, record } from '@/model';

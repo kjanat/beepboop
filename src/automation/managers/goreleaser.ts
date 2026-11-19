@@ -1,7 +1,7 @@
 import { Effect, Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
 import type { Channel } from '@/automation/destinations';
-import { object, yaml } from '@/automation/managers/helpers';
+import { object } from '@/automation/managers/helpers';
 import type { Adapter, RegistryVersion, VerificationContext } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestTag, tagSource } from '@/automation/managers/tags';
@@ -12,6 +12,7 @@ import { goreleaserConfig } from '@/contract/catalog';
 import type { Diagnostic } from '@/contract/diagnostics';
 import { fileProblem } from '@/contract/diagnostics';
 import { packageIdentity } from '@/package-url';
+import { yaml } from '@/parse/yaml';
 
 function cargoName(snapshot: Snapshot): unknown {
 	return Result.try(() => parseToml(snapshot.files['Cargo.toml'] ?? '')).pipe(

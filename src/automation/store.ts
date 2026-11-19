@@ -9,12 +9,14 @@ import type {
 	RepositoryRecord,
 	SubscriptionDelivery,
 } from '@/automation/types';
-import { DomainError, precondition } from '@/contract/errors';
+import type { DomainError } from '@/contract/errors';
+import { precondition } from '@/contract/errors';
 import type { ExecutionFilter } from '@/contract/routes';
 import type { Access, RepositoryDiscovery } from '@/domain/repository';
+import type { Readable } from '@/errors/decoding';
+import { decodeError, isDecodingFailure, readEach } from '@/errors/decoding';
 import { fromJson, fromSync, recover } from '@/failure';
 import { record } from '@/model';
-import { InvalidPackageUrl } from '@/package-url';
 import type { Enrollment, RepositoryRow } from '@/persistence/codecs/repository';
 import {
 	decodeEnrollment,
@@ -37,7 +39,6 @@ import { readyRead } from '@/persistence/d1/ready-read';
 import type { Decoded } from '@/schema';
 import { decodeSync, mutableArray, mutableStruct } from '@/schema';
 
-export type Readable<T> = { kind: 'readable'; value: T };
 export interface UnreadableRepository {
 	kind: 'unreadable';
 	id: number;
@@ -68,30 +69,6 @@ const executionPage = 200;
 export function readableValues<T>(entries: (Readable<T> | { kind: 'unreadable' })[]): T[] {
 	return entries.flatMap(entry => entry.kind === 'readable' ? [entry.value] : []);
 }
-export function readEach<R, T, U>(
-	rows: R[],
-	decode: (row: R) => T,
-	unreadable: (row: R, error: string) => U,
-): (Readable<T> | U)[] {
-	return rows.map((row): Readable<T> | U => {
-		try {
-			return { kind: 'readable', value: decode(row) };
-		} catch (error) {
-			if (!isDecodingFailure(error)) throw error;
-			return unreadable(row, decodeError(error));
-		}
-	});
-}
-export function isDecodingFailure(error: unknown): boolean {
-	return error instanceof Schema.SchemaError || error instanceof SyntaxError || error instanceof InvalidPackageUrl
-		|| (error instanceof DomainError && (error.problem.code === 'invalid' || error.problem.code === 'precondition'));
-}
-export function decodeError(error: unknown): string {
-	if (error instanceof DomainError) return error.detail ?? error.message;
-	if (error instanceof Schema.SchemaError) return error.message;
-	return error instanceof Error ? error.message : 'Unreadable document';
-}
-
 const onboardingRow = mutableStruct({ repository_id: Schema.Finite, document: Schema.String });
 
 export function onboardingPulls(

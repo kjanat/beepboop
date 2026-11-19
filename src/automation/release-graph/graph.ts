@@ -14,11 +14,12 @@ import {
 	workspaceScope,
 	workspaceSelectors,
 } from '@/automation/release-graph/package-managers';
-import { escapeRegExp, globMatches, packDirectories, within } from '@/automation/release-graph/shell';
+import { packDirectories } from '@/automation/release-graph/shell';
 import type { Destination, Job, StepEffect, Workflow } from '@/automation/release-graph/workflows';
 import { declaredWorkspaces, inWorkspaces, literalPrefix, workflowModels } from '@/automation/release-graph/workflows';
 import type { Inventory, Package, Snapshot } from '@/automation/types';
 import { parentDirectory } from '@/relative-path';
+import { escapeRegExp, globMatches, within } from '@/text/patterns';
 
 export type EvidenceStatus = 'declared' | 'inferred' | 'conflicting' | 'unresolved';
 export interface Evidence {

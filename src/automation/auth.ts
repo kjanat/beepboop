@@ -14,10 +14,11 @@ import { logRecovered } from '@/automation/failure-log';
 import { remoteKeys } from '@/automation/jwks';
 import type { Fetcher } from '@/automation/managers/registry';
 import { documentRow } from '@/automation/schemas';
-import { decodeError } from '@/automation/store';
 import type { DomainError } from '@/contract/errors';
 import { decodeRequest, forbidden, precondition, unauthenticated, upstream } from '@/contract/errors';
 import { loginSecretPattern } from '@/contract/ids';
+import { base64, bytes } from '@/crypto/base64';
+import { decodeError } from '@/errors/decoding';
 import { errorPage, fromJson, fromPromise, fromSync, recover, toDomainError } from '@/failure';
 import { integer, record, sha, text } from '@/model';
 import { CLISessionStore } from '@/persistence/d1/cli-sessions';
@@ -119,12 +120,6 @@ export const authentication = Effect.fnUntraced(function*(
 		workflowKeys: yield* remoteKeys(new URL('https://token.actions.githubusercontent.com/.well-known/jwks'), transport),
 	};
 });
-export function base64(bytes: Uint8Array): string {
-	return btoa(String.fromCharCode(...bytes));
-}
-export function bytes(value: string): Uint8Array<ArrayBuffer> {
-	return Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
-}
 function verified(token: string, options: Omit<VerifyJwtOptions, 'signal'>): Effect.Effect<VerifiedJwt, DomainError> {
 	return fromPromise(signal => verifyJwt(token, { ...options, signal })).pipe(Effect.flatMap(result => {
 		if (result.ok) return Effect.succeed(result.value);

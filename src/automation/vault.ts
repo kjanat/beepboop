@@ -1,7 +1,6 @@
 import { Context, Effect, Layer, Schema } from 'effect';
 import { seal } from 'tweetnacl-sealedbox-js';
 import type { WorkflowIdentity } from '@/automation/auth';
-import { base64, bytes } from '@/automation/auth';
 import type { RepositoryGateway } from '@/automation/github';
 import { matchesRef } from '@/automation/policy';
 import { repositoryNamePattern } from '@/automation/repository-name';
@@ -10,6 +9,7 @@ import { workflowFilePattern } from '@/contract/catalog';
 import type { DomainError } from '@/contract/errors';
 import { decodeRequest, forbidden, invalid, notFound, precondition } from '@/contract/errors';
 import { credentialAliasPattern, githubSecretNamePattern } from '@/contract/ids';
+import { base64, bytes } from '@/crypto/base64';
 import { fromPromise, fromSync } from '@/failure';
 import { textSchema } from '@/model';
 import type { CredentialStore } from '@/persistence/d1/credentials';

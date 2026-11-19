@@ -1,6 +1,6 @@
 import { Effect, Result } from 'effect';
 import { pkgbuildFile } from '@/automation/managers/channels';
-import { object, yaml } from '@/automation/managers/helpers';
+import { object } from '@/automation/managers/helpers';
 import { tagQueries } from '@/automation/managers/tags';
 import { workspaceMembers } from '@/automation/managers/workspaces';
 import { bindInputs, matrixCombinations, substitute } from '@/automation/release-graph/bindings';
@@ -13,15 +13,16 @@ import {
 	workflowEvents,
 } from '@/automation/release-graph/calls';
 import { directoryFlagPattern, selectorFlagPattern } from '@/automation/release-graph/package-managers';
-import { escapeRegExp, within } from '@/automation/release-graph/shell';
 import { literalPrefix } from '@/automation/release-graph/workflows';
 import type { Snapshot } from '@/automation/types';
 import { isLockfile, managerNames, managerSpec } from '@/contract/catalog';
 import type { DomainError } from '@/contract/errors';
 import { precondition } from '@/contract/errors';
 import { safeVersionPath } from '@/contract/version-files';
+import { yaml } from '@/parse/yaml';
 import { parentDirectory } from '@/relative-path';
 import { ioConcurrency } from '@/runtime/policy';
+import { escapeRegExp, within } from '@/text/patterns';
 
 export interface TreeEntry {
 	path: string;

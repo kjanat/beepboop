@@ -1,7 +1,7 @@
 import { Effect } from 'effect';
-import { isDecodingFailure } from '@/automation/store';
 import type { ProjectedEntity } from '@/contract/changes';
 import type { DomainError } from '@/contract/errors';
+import { isDecodingFailure } from '@/errors/decoding';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { completionMetadata } from '@/persistence/d1/completions';
 import type { Sql, SqlDatabase, SqlStatement } from '@/persistence/d1/database';
