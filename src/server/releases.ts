@@ -4,7 +4,7 @@ import { matchesPackage, matchesPublication, selectorKey } from '@/automation/pa
 import type { Execution, Publication, RepositoryRecord } from '@/automation/types.ts';
 import { compare, semVer } from '@/contract/version';
 import { operations } from '@/domain/configuration';
-import { safeDecode } from '@/schema';
+import { safeDecode } from '@/kernel/schema/structs.ts';
 
 export const activeStates: readonly string[] = ['running', 'ready', 'dispatching', 'verifying'];
 

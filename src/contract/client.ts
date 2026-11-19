@@ -1,12 +1,12 @@
 import { Data, Effect } from 'effect';
-import type { ApiError } from '@/contract/errors';
-import { errorEnvelope, securityKeyRequired } from '@/contract/errors';
 import { isJson } from '@/contract/http';
 import type { Route } from '@/contract/routes';
-import { awaitWith } from '@/refusal';
-import { responseJson } from '@/runtime/http';
-import type { Contract, Decoded, Encoded } from '@/schema';
-import { safeDecode } from '@/schema';
+import type { ApiError } from '@/kernel/errors/domain-error.ts';
+import { errorEnvelope, securityKeyRequired } from '@/kernel/errors/domain-error.ts';
+import { awaitWith } from '@/kernel/errors/refusal.ts';
+import { responseJson } from '@/kernel/http/body.ts';
+import type { Contract, Decoded, Encoded } from '@/kernel/schema/structs.ts';
+import { safeDecode } from '@/kernel/schema/structs.ts';
 
 export interface Outgoing {
 	method: 'GET' | 'POST';

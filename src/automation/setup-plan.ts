@@ -1,14 +1,21 @@
 import { Effect, Schema } from 'effect';
 import { publicationSchema } from '@/automation/package-publication';
 import type { SetupOperation, SetupPlan, SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
 import { startChannel, versionBump } from '@/contract/release-start';
 import { actionRelease, binaries, binaryBuild, binaryTargets } from '@/contract/setup';
 import { versionPrMerge } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
-import { stringsSchema as strings } from '@/model';
-import { mapped, mutableArray, mutableStruct, safeDecode, schemaIssues, strictStruct } from '@/schema';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { stringsSchema as strings } from '@/kernel/schema/result.ts';
+import {
+	mapped,
+	mutableArray,
+	mutableStruct,
+	safeDecode,
+	schemaIssues,
+	strictStruct,
+} from '@/kernel/schema/structs.ts';
 
 const workflowShape = mutableStruct({
 	file: Schema.String,

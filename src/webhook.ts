@@ -1,7 +1,7 @@
 import { Effect } from 'effect';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
-import { fromPromise } from '@/failure';
+import { fromPromise } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
 
 const MAX_BODY = 1_048_576;
 export function readBody(request: Request): Effect.Effect<Uint8Array, DomainError> {

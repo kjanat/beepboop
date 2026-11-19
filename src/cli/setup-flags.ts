@@ -15,7 +15,7 @@ import {
 	versioningOfVersionScope,
 } from '@/contract/setup-terms';
 import { packageLabel } from '@/domain/package-label';
-import { mutableArray, safeDecode, schemaIssues } from '@/schema';
+import { mutableArray, safeDecode, schemaIssues } from '@/kernel/schema/structs.ts';
 
 type Stream = SetupChoices['streams'][number];
 type FlagKind = 'stream' | 'text' | 'list' | 'packages' | 'json' | 'workflow' | 'binaries';

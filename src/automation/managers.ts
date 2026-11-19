@@ -11,9 +11,9 @@ import type { Inventory, Package, Publication, ReleasePlan, Snapshot } from '@/a
 import { parseVersionRequest } from '@/automation/version';
 import type { ManagerName } from '@/contract/catalog';
 import { isLockfile } from '@/contract/catalog';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
 import type { VersionFile } from '@/contract/version-files';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
 
 export { publicationOrder } from '@/automation/managers/order';
 

@@ -14,8 +14,8 @@ import type { SetupFlagValues } from '@/cli/setup-flags';
 import { applySetupFlags, readSetupFlags } from '@/cli/setup-flags';
 import { routes } from '@/contract/routes';
 import { setupChoicesSchema } from '@/contract/setup';
-import { safeDecode, schemaIssues } from '@/schema';
-import { listed } from '@/text/listing';
+import { safeDecode, schemaIssues } from '@/kernel/schema/structs.ts';
+import { listed } from '@/kernel/text/listing.ts';
 
 function parsePlan(value: unknown): Effect.Effect<SetupPlan, CLIError> {
 	return parseSetupPlan(value).pipe(Effect.mapError(error => failure(error.message, 'INVALID_PLAN')));

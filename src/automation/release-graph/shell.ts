@@ -1,4 +1,4 @@
-import { within } from '@/text/patterns';
+import { within } from '@/kernel/text/patterns.ts';
 
 const dryRun =
 	/--dry-run(?![\w-]|=(?:false|0)\b)|\bnpm_config_dry_run=["']?(?:true|1)\b|\bcargo\s+(?:\+\S+\s+)?publish\b[^\n;&|]*\s-[a-z]*n[a-z]*\b/i;

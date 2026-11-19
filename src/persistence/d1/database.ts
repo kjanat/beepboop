@@ -1,8 +1,8 @@
 import { Context, Effect, Layer } from 'effect';
-import type { DomainError } from '@/contract/errors';
-import { parseWith } from '@/decode';
-import { fromPromise, toDomainError } from '@/failure';
-import type { Contract, Decoded } from '@/schema';
+import { fromPromise, toDomainError } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { parseWith } from '@/kernel/schema/decode.ts';
+import type { Contract, Decoded } from '@/kernel/schema/structs.ts';
 
 export interface SqlResult {
 	results: unknown[];

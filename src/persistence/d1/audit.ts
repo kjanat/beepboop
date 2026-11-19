@@ -1,9 +1,9 @@
 import { Effect, Schema } from 'effect';
-import type { DomainError } from '@/contract/errors';
 import { auditActor } from '@/domain/audit';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
-import { mutableArray, mutableStruct } from '@/schema';
 
 const activityRow = mutableStruct({
 	id: Schema.String,

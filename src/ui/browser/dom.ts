@@ -1,5 +1,5 @@
 import { Cause, Data, Effect } from 'effect';
-import { failWith } from '@/refusal';
+import { failWith } from '@/kernel/errors/refusal.ts';
 
 export class MissingElement extends Data.TaggedError('MissingElement')<{ readonly message: string }> {}
 

@@ -1,9 +1,9 @@
 import { Effect, Schema } from 'effect';
-import type { DomainError } from '@/contract/errors';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { optionalColumn, parse, sql } from '@/persistence/d1/database';
-import type { Decoded } from '@/schema';
-import { mutableArray, mutableStruct } from '@/schema';
 
 const subjectRow = mutableStruct({ subject: Schema.String });
 const sessionRow = mutableStruct({ id: Schema.String, created_at: Schema.Finite });

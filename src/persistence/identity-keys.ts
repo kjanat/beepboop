@@ -1,9 +1,9 @@
 import type { Effect } from 'effect';
 import type { ReleaseSetPlan } from '@/automation/planning';
 import type { Execution, ReleasePlan, RepositoryRecord } from '@/automation/types';
-import type { DomainError } from '@/contract/errors';
-import { sha256Hex } from '@/contract/ids';
-import { fromPromise } from '@/failure';
+import { fromPromise } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { sha256Hex } from '@/kernel/schema/ids.ts';
 import { encodeConfigurationV1 } from '@/persistence/codecs/configuration';
 
 export function executionId(

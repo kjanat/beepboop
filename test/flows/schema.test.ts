@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { Schema } from 'effect';
-import { decodeSync, encodeSync, mapped, mutableStruct } from '@/schema';
+import { decodeSync, encodeSync, mapped, mutableStruct } from '@/kernel/schema/structs.ts';
 
 test('mapped requires present-value schemas on both sides', () => {
 	const identity = (value: string | undefined) => value;

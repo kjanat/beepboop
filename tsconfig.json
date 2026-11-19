@@ -5,7 +5,8 @@
 		"paths": {
 			"@/*": ["./src/*"],
 			"@root/*": ["./*"],
-			"@/kernel/*": ["./packages/kernel/src/*"]
+			"@/kernel/*": ["./packages/kernel/src/*"],
+			"@/host/*": ["./packages/host/src/*"]
 		},
 		"target": "ES2022",
 		"module": "ESNext",

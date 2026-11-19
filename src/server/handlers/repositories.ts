@@ -8,12 +8,12 @@ import { branchConflictBlocker, previewSetup, setupBody, setupOptions, withRegis
 import { setupBranch, setupTitle } from '@/automation/setup-changes';
 import { followsProposal, observationsKept, sameEdits, savedSetup, setupEdits } from '@/automation/setup-maintenance';
 import type { RepositoryRecord } from '@/automation/types';
-import type { DomainError } from '@/contract/errors';
-import { conflict, domainError, invalid, notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
 import { configurationDiagnostics } from '@/domain/configuration';
-import { fromJson, fromPromise } from '@/failure';
-import { record } from '@/model';
+import { fromJson, fromPromise } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { conflict, domainError, invalid, notFound, precondition } from '@/kernel/errors/domain-error.ts';
+import { record } from '@/kernel/schema/result.ts';
 import type { Context } from '@/server/handlers/kit';
 import { admin } from '@/server/handlers/kit';
 

@@ -11,8 +11,7 @@ import { runFailedNote } from '@/automation/execution';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Execution } from '@/automation/types';
-import { decodeExecutionV1 } from '@/persistence/codecs/v1';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -26,7 +25,8 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
+import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 
 let world: World;
 eachWorld(created => {

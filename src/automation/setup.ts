@@ -3,7 +3,6 @@ import { binaryCandidates } from '@/automation/binary-candidates';
 import { companionProposals } from '@/automation/companion-detection';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
 import { legacyConfiguration, readableConfiguration } from '@/automation/configuration-names';
-import { formatJson, json } from '@/automation/json';
 import { discover, versionsInFiles } from '@/automation/managers';
 import { object } from '@/automation/managers/helpers';
 import { tagPrefix } from '@/automation/managers/tags';
@@ -32,10 +31,6 @@ import { approvals, triggerHandovers, versionings } from '@/automation/setup-typ
 import { integrateReleaseWorkflow, integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Package, Snapshot } from '@/automation/types';
 import { isLockfile } from '@/contract/catalog';
-import { blocking } from '@/contract/diagnostics';
-import type { DomainError } from '@/contract/errors';
-import { decodeRequest, precondition } from '@/contract/errors';
-import { sha256Hex } from '@/contract/ids';
 import { releaseStarts, startChannels, startWorkflowFile, versionBump, versionBumps } from '@/contract/release-start';
 import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget, WorkflowSetupInput } from '@/contract/setup';
 import {
@@ -72,9 +67,14 @@ import { configurationDrift } from '@/domain/configuration';
 import { packageMarkdown } from '@/domain/package-label';
 import { publicationStages } from '@/domain/publication-stages';
 import { validateAgainst } from '@/domain/validate';
-import { fromPromise, fromSync, toDomainError } from '@/failure';
-import { mutableArray, safeDecode } from '@/schema';
-import { listed } from '@/text/listing';
+import { fromPromise, fromSync, toDomainError } from '@/kernel/errors/classify.ts';
+import { blocking } from '@/kernel/errors/diagnostics.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { decodeRequest, precondition } from '@/kernel/errors/domain-error.ts';
+import { sha256Hex } from '@/kernel/schema/ids.ts';
+import { mutableArray, safeDecode } from '@/kernel/schema/structs.ts';
+import { formatJson, json } from '@/kernel/text/json.ts';
+import { listed } from '@/kernel/text/listing.ts';
 
 function requirablePackage(pkg: Package | undefined): boolean {
 	return !!pkg && publishable(pkg) && !(tagPrefix(pkg.versionSource) !== undefined && pkg.version === undefined);

@@ -6,14 +6,14 @@ import { matchesRef } from '@/automation/policy';
 import { repositoryNamePattern } from '@/automation/repository-name';
 import type { Store } from '@/automation/store';
 import { workflowFilePattern } from '@/contract/catalog';
-import type { DomainError } from '@/contract/errors';
-import { decodeRequest, forbidden, invalid, notFound, precondition } from '@/contract/errors';
-import { credentialAliasPattern, githubSecretNamePattern } from '@/contract/ids';
-import { base64, bytes } from '@/crypto/base64';
-import { fromPromise, fromSync } from '@/failure';
-import { textSchema } from '@/model';
+import { base64, bytes } from '@/kernel/crypto/base64.ts';
+import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { decodeRequest, forbidden, invalid, notFound, precondition } from '@/kernel/errors/domain-error.ts';
+import { credentialAliasPattern, githubSecretNamePattern } from '@/kernel/schema/ids.ts';
+import { textSchema } from '@/kernel/schema/result.ts';
+import { decodeSync, matchesPattern, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { CredentialStore } from '@/persistence/d1/credentials';
-import { decodeSync, matchesPattern, mutableStruct } from '@/schema';
 
 interface GrantFields {
 	id: string;

@@ -3,7 +3,7 @@ import type { RepositoryGateway } from '@/automation/github';
 import { gitCommitSchema, gitRefSchema, repositorySchema, workflowRunSchema } from '@/automation/github-resources';
 import type { RefPlan, RefState } from '@/automation/refs';
 import type { Execution } from '@/automation/types';
-import { shaSchema } from '@/model';
+import { shaSchema } from '@/kernel/schema/result.ts';
 
 const tree = Schema.Struct({
 	truncated: Schema.Boolean,

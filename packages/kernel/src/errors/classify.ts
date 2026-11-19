@@ -1,7 +1,7 @@
 import { Cause, Effect, Result, Schema } from 'effect';
-import type { ApiError } from '@/contract/errors';
-import { apiError, DomainError, envelope, messageOf, statusOf } from '@/contract/errors';
-import { safeDecode } from '@/schema';
+import type { ApiError } from '@/kernel/errors/domain-error.ts';
+import { apiError, DomainError, envelope, messageOf, statusOf } from '@/kernel/errors/domain-error.ts';
+import { safeDecode } from '@/kernel/schema/structs.ts';
 
 interface Classified {
 	problem: ApiError;

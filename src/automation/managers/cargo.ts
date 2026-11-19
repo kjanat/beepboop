@@ -16,13 +16,12 @@ import {
 import { cargoMembers } from '@/automation/managers/workspaces';
 import { excluded, registry } from '@/automation/package-publication';
 import type { Publication } from '@/automation/types';
-import { fileProblem } from '@/contract/diagnostics';
-import { precondition } from '@/contract/errors';
-import { isPrerelease } from '@/contract/semver';
-import { compareVersions } from '@/model';
+import { compareVersions, isPrerelease } from '@/contract/semver';
+import { fileProblem } from '@/kernel/errors/diagnostics.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { responseText } from '@/kernel/http/body.ts';
+import { parentDirectory } from '@/kernel/path/relative-path.ts';
 import { packageIdentity } from '@/package-url';
-import { parentDirectory } from '@/relative-path';
-import { responseText } from '@/runtime/http';
 export function crateIndexUrl(name: string): string {
 	const lower = name.toLowerCase();
 	const path = lower.length <= 2

@@ -2,13 +2,13 @@ import { spawnSync } from 'node:child_process';
 import { lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Data, Effect, Result } from 'effect';
-import type { DomainError } from '@/contract/errors.ts';
 import { isJson } from '@/contract/http.ts';
-import { parseRetryAfter } from '@/domain/http-date.ts';
-import { array, record, text } from '@/model.ts';
-import { attemptWith, awaitWith, errorMessage, failWith, rejectWith } from '@/refusal.ts';
-import { responseJson } from '@/runtime/http.ts';
-import { retryTransient } from '@/runtime/policy.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { attemptWith, awaitWith, errorMessage, failWith, rejectWith } from '@/kernel/errors/refusal.ts';
+import { responseJson } from '@/kernel/http/body.ts';
+import { parseRetryAfter } from '@/kernel/http/http-date.ts';
+import { retryTransient } from '@/kernel/http/retry.ts';
+import { array, record, text } from '@/kernel/schema/result.ts';
 
 export const modes = [
 	'start',

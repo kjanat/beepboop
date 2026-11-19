@@ -7,7 +7,7 @@ import type { Transport } from '@/contract/client';
 import { call as request, send } from '@/contract/client';
 import type { Route } from '@/contract/routes';
 import { routes } from '@/contract/routes';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -19,7 +19,7 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
 
 export function cliTransport(world: World, token: string): Transport {
 	return outgoing => send(() => bearerRequest(world, token, outgoing));

@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
-import type { Decoded } from '@/schema';
-import { decodeSync, mutableRecord, mutableStruct } from '@/schema';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { decodeSync, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
 
 const key = 'beepboop:folds';
 const maximumChoices = 1024;

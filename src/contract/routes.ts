@@ -1,6 +1,5 @@
 import { Schema } from 'effect';
 import { changesResponse } from '@/contract/changes';
-import { approvalShaPattern } from '@/contract/ids';
 import {
 	claimStep,
 	nextStep,
@@ -25,9 +24,17 @@ import {
 	securityChallenge,
 	securityProof,
 } from '@/contract/views';
-import { shaSchema as sha, textSchema as text } from '@/model';
-import type { Contract, Decoded, Encoded } from '@/schema';
-import { looseStruct, mutableArray, mutableRecord, mutableStruct, numberFromInput, refined } from '@/schema';
+import { approvalShaPattern } from '@/kernel/schema/ids.ts';
+import { shaSchema as sha, textSchema as text } from '@/kernel/schema/result.ts';
+import type { Contract, Decoded, Encoded } from '@/kernel/schema/structs.ts';
+import {
+	looseStruct,
+	mutableArray,
+	mutableRecord,
+	mutableStruct,
+	numberFromInput,
+	refined,
+} from '@/kernel/schema/structs.ts';
 
 export type Method = 'GET' | 'POST';
 export type Auth = 'admin' | 'elevated' | 'workflow' | 'workflow-token';

@@ -1,10 +1,10 @@
 import { Effect, Schema } from 'effect';
 import type { Artifact, Execution } from '@/automation/types';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
-import { sha256DigestPattern } from '@/contract/ids';
-import type { Decoded } from '@/schema';
-import { matchesPattern, strictStruct } from '@/schema';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { sha256DigestPattern } from '@/kernel/schema/ids.ts';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { matchesPattern, strictStruct } from '@/kernel/schema/structs.ts';
 
 export const nameSchema = Schema.String.check(matchesPattern(/^[A-Za-z0-9][A-Za-z0-9._-]*$/));
 export const outputSchema = strictStruct({

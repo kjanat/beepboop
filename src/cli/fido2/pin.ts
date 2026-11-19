@@ -4,7 +4,7 @@ import type { CborMap } from '@/cli/fido2/cbor';
 import { bytes } from '@/cli/fido2/cbor';
 import type { SecurityKeyError } from '@/cli/fido2/types';
 import { attemptSecurityKey } from '@/cli/fido2/types';
-import { sha256 } from '@/sha256';
+import { sha256 } from '@/kernel/crypto/sha256.ts';
 
 export interface PinProtocol {
 	readonly version: 1 | 2;

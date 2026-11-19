@@ -24,7 +24,7 @@ import {
 	versionScopeQuestion,
 	versionScopeSentences,
 } from '@/contract/setup-terms';
-import { safeDecode } from '@/schema';
+import { safeDecode } from '@/kernel/schema/structs.ts';
 import { api } from '@/ui/browser/api';
 import { feedbackFor, find, Refused, refuse, show } from '@/ui/browser/dom';
 import { element, hint, issueText, jsonEditor, label, select, text, workflow } from '@/ui/browser/setup-fields';

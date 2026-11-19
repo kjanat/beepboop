@@ -3,8 +3,8 @@ import type { PackagePublication } from '@/automation/package-publication';
 import { excluded, publishable, registry } from '@/automation/package-publication';
 import type { Execution, Inventory, Package, Publication, RepositoryRecord } from '@/automation/types';
 import { identifiedManagers, legacyJsrIdentity } from '@/contract/catalog';
-import type { Diagnostic } from '@/contract/diagnostics';
-import { blocking, legacyDiagnostic, messages } from '@/contract/diagnostics';
+import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
+import { blocking, legacyDiagnostic, messages } from '@/kernel/errors/diagnostics.ts';
 import type { InvalidPackageUrl, PackageIdentity } from '@/package-url';
 import { invalidPackageUrl, packageIdentity, parsePackageIdentity, purl } from '@/package-url';
 

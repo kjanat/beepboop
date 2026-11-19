@@ -8,14 +8,14 @@ import { publishable } from '@/automation/package-publication';
 import type { Inventory, Package, Publication, Snapshot } from '@/automation/types';
 import type { ManagerDestinationId, ManagerName } from '@/contract/catalog';
 import { destinationsOf, managerSpec } from '@/contract/catalog';
-import type { Diagnostic } from '@/contract/diagnostics';
-import { fileProblem } from '@/contract/diagnostics';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
-import { fromPromise } from '@/failure';
+import { fromPromise } from '@/kernel/errors/classify.ts';
+import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
+import { fileProblem } from '@/kernel/errors/diagnostics.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { ioConcurrency } from '@/kernel/http/retry.ts';
 import type { PackageIdentity } from '@/package-url';
 import { invalidPackageUrl, parsePackageIdentity } from '@/package-url';
-import { ioConcurrency } from '@/runtime/policy';
 
 export interface Manager {
 	readonly name: ManagerName;

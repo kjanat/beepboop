@@ -1,5 +1,5 @@
 import { Schema } from 'effect';
-import { DomainError } from '@/contract/errors';
+import { DomainError } from '@/kernel/errors/domain-error.ts';
 
 export type Readable<T> = { kind: 'readable'; value: T };
 

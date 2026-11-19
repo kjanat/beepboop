@@ -10,11 +10,11 @@ import type { WatchedPackage } from '@/automation/watchlist';
 import { watchlist } from '@/automation/watchlist';
 import type { WatchedRegistry } from '@/contract/catalog';
 import { watchedRegistries } from '@/contract/catalog';
-import type { DomainError } from '@/contract/errors';
-import { decodeError } from '@/errors/decoding';
-import { recover } from '@/failure';
+import { recover } from '@/kernel/errors/classify.ts';
+import { decodeError } from '@/kernel/errors/decoding.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import { parse, sql } from '@/persistence/d1/database';
-import { mutableArray, mutableStruct } from '@/schema';
 
 const watchedRow = mutableStruct({
 	registry: Schema.Literals(watchedRegistries),

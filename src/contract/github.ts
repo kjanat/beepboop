@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
-import type { Decoded } from '@/schema';
-import { mutableStruct } from '@/schema';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { mutableStruct } from '@/kernel/schema/structs.ts';
 
 export const githubJobKinds = [
 	'waiting',

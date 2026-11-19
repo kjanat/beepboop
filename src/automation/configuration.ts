@@ -15,10 +15,6 @@ import {
 	winGetTagPrefixPattern,
 	workflowFilePattern,
 } from '@/contract/catalog';
-import type { Diagnostic } from '@/contract/diagnostics';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
-import { identifierPattern, shaPattern } from '@/contract/ids';
 import { releaseStarts, versionBumps } from '@/contract/release-start';
 import { actionsRevisionPattern, workflowSetup } from '@/contract/setup';
 import {
@@ -31,7 +27,6 @@ import {
 	versionScopes,
 } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
-import { dependencyOrder } from '@/dependency-order';
 import {
 	configurationDrift,
 	configurationSchema,
@@ -40,10 +35,15 @@ import {
 	utcCronMessage,
 } from '@/domain/configuration';
 import { subscriptionIssue } from '@/domain/configuration-value';
-import { toDomainError } from '@/failure';
-import { array, invalid, oneOf, record, strings, text } from '@/model';
+import { dependencyOrder } from '@/kernel/collections/dependency-order.ts';
+import { toDomainError } from '@/kernel/errors/classify.ts';
+import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { identifierPattern, shaPattern } from '@/kernel/schema/ids.ts';
+import { array, invalid, oneOf, record, strings, text } from '@/kernel/schema/result.ts';
+import { decodeSync, safeDecode } from '@/kernel/schema/structs.ts';
 import { purl } from '@/package-url';
-import { decodeSync, safeDecode } from '@/schema';
 
 type Invalid = DomainError | Schema.SchemaError;
 type Parsed<A> = Result.Result<A, Invalid>;

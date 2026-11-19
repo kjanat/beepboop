@@ -1,3 +1,6 @@
+import type { Parsed } from '@/kernel/schema/result.ts';
+import { matches } from '@/kernel/schema/result.ts';
+
 const numeric = '0|[1-9][0-9]*';
 const identifier = `${numeric}|[0-9]*[A-Za-z-][0-9A-Za-z-]*`;
 const grammar =
@@ -48,4 +51,13 @@ export function precedenceKey(version: string): string | undefined {
 		? `0${parsed.pre.map(value => /^\d+$/.test(value) ? `0${number(value)}` : `1${value}`).join('!')}!`
 		: '1';
 	return `${core}!${pre}`;
+}
+export function semver(value: unknown): Parsed<string> {
+	return matches(value, semverPattern);
+}
+/** Versions that are not semver order before every valid version. */
+export function compareVersions(left: string, right: string): number {
+	const a = semverPattern.test(left), b = semverPattern.test(right);
+	if (!a || !b) return a === b ? 0 : a ? 1 : -1;
+	return compare(left.replace(/^v/, ''), right.replace(/^v/, ''));
 }

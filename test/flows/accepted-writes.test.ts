@@ -13,7 +13,7 @@ import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
 import { RepositoryGateway } from '@/automation/github';
 import { pullSchema } from '@/automation/github-resources';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -25,7 +25,7 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
 
 let world: World;
 eachWorld(created => {

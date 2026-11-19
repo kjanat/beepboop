@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { Effect } from 'effect';
 import type { RepositoryGateway } from '@/automation/github';
 import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
-import { decode } from '@/model';
+import { decode } from '@/kernel/schema/result.ts';
 
 function repository(response: unknown) {
 	const requests: { path: string; token: string; method: string }[] = [];

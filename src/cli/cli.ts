@@ -24,11 +24,16 @@ import {
 	repositoryView,
 } from '@/cli/views';
 import { notificationKinds, watchedPackagePattern, watchedRegistries } from '@/contract/catalog';
-import { approvalShaPattern, credentialAliasPattern, githubSecretNamePattern, shaPattern } from '@/contract/ids';
 import { routes } from '@/contract/routes';
 import { autoMergeMethods } from '@/contract/setup-terms';
 import { executionStates, executionView as executionViewSchema } from '@/contract/views';
-import { looseStruct, safeDecode } from '@/schema';
+import {
+	approvalShaPattern,
+	credentialAliasPattern,
+	githubSecretNamePattern,
+	shaPattern,
+} from '@/kernel/schema/ids.ts';
+import { looseStruct, safeDecode } from '@/kernel/schema/structs.ts';
 
 const recoveryVerb = { reconcile: 'Reconciling', retry: 'Retrying', redispatch: 'Dispatching' } as const;
 const base = (name: string, description: string, promptServer = false) =>

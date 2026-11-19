@@ -1,8 +1,8 @@
 import { Effect, Result, Schema } from 'effect';
 import { RE2JS, RE2JSSyntaxException } from 're2js';
-import { unsafeRelativePath } from '@/relative-path';
-import type { Decoded } from '@/schema';
-import { matchesPattern, mutableArray, refined, strictStruct } from '@/schema';
+import { unsafeRelativePath } from '@/kernel/path/relative-path.ts';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { matchesPattern, mutableArray, refined, strictStruct } from '@/kernel/schema/structs.ts';
 
 export function safeVersionPath(path: string): boolean {
 	return !path.includes('\\') && !unsafeRelativePath(path, ['', '.', '..', '.git']);

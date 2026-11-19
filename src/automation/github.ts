@@ -1,7 +1,6 @@
 import { Clock, Context, Data, Effect, Exit, Layer, Schema } from 'effect';
 import { signJwt } from 'micro509/jose';
 import { importPkcs8Pem } from 'micro509/keys';
-import { logRecovered } from '@/automation/failure-log';
 import type { GitObject } from '@/automation/github-resources';
 import {
 	accessTokenSchema,
@@ -35,17 +34,18 @@ import { setupBranches } from '@/automation/setup-changes';
 import { buildSnapshot } from '@/automation/snapshot';
 import type { BotIdentity } from '@/automation/token';
 import type { AutoMerge, Edit, PreparationResult, Snapshot } from '@/automation/types';
-import { legacyDiagnostic } from '@/contract/diagnostics';
-import { DomainError, domainError, invalid, precondition, upstream } from '@/contract/errors';
 import { githubApiVersion } from '@/contract/http';
 import type { AutoMergeMethod } from '@/contract/setup-terms';
-import { parseRetryAfter } from '@/domain/http-date';
-import { fromPromise, fromSync, toDomainError } from '@/failure';
-import { decode, sha, textSchema } from '@/model';
-import { responseBytes, responseJson, responseText, scopedResponse } from '@/runtime/http';
-import { ioConcurrency, retryTransient } from '@/runtime/policy';
-import type { Contract, Decoded } from '@/schema';
-import { looseStruct, mutableArray, mutableStruct } from '@/schema';
+import { fromPromise, fromSync, toDomainError } from '@/kernel/errors/classify.ts';
+import { legacyDiagnostic } from '@/kernel/errors/diagnostics.ts';
+import { DomainError, domainError, invalid, precondition, upstream } from '@/kernel/errors/domain-error.ts';
+import { responseBytes, responseJson, responseText, scopedResponse } from '@/kernel/http/body.ts';
+import { parseRetryAfter } from '@/kernel/http/http-date.ts';
+import { ioConcurrency, retryTransient } from '@/kernel/http/retry.ts';
+import { logRecovered } from '@/kernel/logging/failure-log.ts';
+import { decode, sha, textSchema } from '@/kernel/schema/result.ts';
+import type { Contract, Decoded } from '@/kernel/schema/structs.ts';
+import { looseStruct, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 
 type Permission = Record<string, 'read' | 'write'>;
 const missingInstallationPermissions = 'GitHub App installation lacks required permissions';

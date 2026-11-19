@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { Cause, Effect, Exit } from 'effect';
-import { readEach } from '@/errors/decoding';
-import { classify, fromSync } from '@/failure';
+import { classify, fromSync } from '@/kernel/errors/classify.ts';
+import { readEach } from '@/kernel/errors/decoding.ts';
 import { packageIdentity } from '@/package-url';
 
 const message = 'Invalid purl: "name" is a required component';

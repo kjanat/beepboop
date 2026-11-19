@@ -1,5 +1,4 @@
 import { latestTag } from '@/automation/managers/tags';
-import { slug, unusedName } from '@/automation/naming';
 import { packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import { staticGuard } from '@/automation/release-graph/bindings';
@@ -9,8 +8,9 @@ import type { Destination } from '@/automation/release-graph/workflows';
 import { literalPrefix } from '@/automation/release-graph/workflows';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Inventory, Snapshot } from '@/automation/types';
-import { identifierPattern } from '@/contract/ids';
-import { escapeRegExp } from '@/text/patterns';
+import { identifierPattern } from '@/kernel/schema/ids.ts';
+import { slug, unusedName } from '@/kernel/text/naming.ts';
+import { escapeRegExp } from '@/kernel/text/patterns.ts';
 
 const labels: Record<Destination, string> = {
 	npm: 'npm',

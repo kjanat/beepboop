@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 import { bareSemverPattern } from '@/contract/semver';
-import type { Decoded } from '@/schema';
-import { mapped, matchesPattern, refined, safeDecode, strictStruct } from '@/schema';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { mapped, matchesPattern, refined, safeDecode, strictStruct } from '@/kernel/schema/structs.ts';
 
 export { compare, isPrerelease, semverPattern } from '@/contract/semver';
 

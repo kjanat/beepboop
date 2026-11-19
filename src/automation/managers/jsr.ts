@@ -8,13 +8,13 @@ import { latestVersion, publicationResult, unconfirmed, unpublished } from '@/au
 import { identityOf } from '@/automation/package-identity';
 import { registry } from '@/automation/package-publication';
 import { jsrManifest, jsrPackageNamePattern } from '@/contract/catalog';
-import { fileProblem } from '@/contract/diagnostics';
-import type { DomainError } from '@/contract/errors';
-import { domainError, upstream } from '@/contract/errors';
-import { sha256Hex } from '@/contract/ids';
-import { fromJson, fromPromise, fromSync, toDomainError } from '@/failure';
-import { parentDirectory } from '@/relative-path';
-import { responseBytes, responseJson, responseText, scopedResponse } from '@/runtime/http';
+import { fromJson, fromPromise, fromSync, toDomainError } from '@/kernel/errors/classify.ts';
+import { fileProblem } from '@/kernel/errors/diagnostics.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { domainError, upstream } from '@/kernel/errors/domain-error.ts';
+import { responseBytes, responseJson, responseText, scopedResponse } from '@/kernel/http/body.ts';
+import { parentDirectory } from '@/kernel/path/relative-path.ts';
+import { sha256Hex } from '@/kernel/schema/ids.ts';
 
 const precedence = ['jsr.json', 'jsr.jsonc', 'deno.json', 'deno.jsonc'];
 function rank(path: string): number {

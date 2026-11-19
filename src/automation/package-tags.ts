@@ -4,10 +4,10 @@ import { matchesPackage, packageId, publicationIdentity } from '@/automation/pac
 import { publishable } from '@/automation/package-publication';
 import type { RefState } from '@/automation/refs';
 import type { Package, Publication } from '@/automation/types';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
 import { parseTag } from '@/contract/version';
 import type { PackageTagPage, PackageTagView } from '@/contract/views';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
 
 export interface PackageTagGroup {
 	prefix: string;

@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { cli, command, flag } from '@kjanat/dreamcli';
 import { Effect, Result } from 'effect';
 import { generateManifests, renderManifests, wingetConfiguration } from '@/distribution/winget/generate';
-import { outputEntry } from '@/tooling/github-output';
+import { outputEntry } from '@/host/github-output.ts';
 import { attemptPromise, parse, readJson, ToolFailure } from '@/tooling/runtime';
 
 export const generate = command('generate')

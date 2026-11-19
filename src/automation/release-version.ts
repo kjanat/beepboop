@@ -4,12 +4,12 @@ import { matchesPackage } from '@/automation/package-identity';
 import type { Inventory, Package, Stream } from '@/automation/types';
 import type { VersionRequest } from '@/automation/version';
 import { nextVersion } from '@/automation/version';
-import { blocking } from '@/contract/diagnostics';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
+import { compareVersions } from '@/contract/semver';
 import { operations } from '@/domain/configuration';
 import { distinct } from '@/kernel/collections/distinct.ts';
-import { compareVersions } from '@/model';
+import { blocking } from '@/kernel/errors/diagnostics.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
 
 export function releasedVersion(pkg: Package): string | undefined {
 	if (pkg.publicationStatus === 'published') return pkg.published;

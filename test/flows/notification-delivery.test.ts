@@ -11,9 +11,9 @@ import type { Fetcher } from '@/automation/managers/registry';
 import { Notifications, versionChanged } from '@/automation/notifications';
 import { Store } from '@/automation/store';
 import { routes } from '@/contract/routes';
+import { decodeSync, mutableStruct } from '@/kernel/schema/structs.ts';
 import { sql } from '@/persistence/d1/database';
 import { deliveryLeaseDuration, NotificationDeliveries } from '@/persistence/d1/notification-deliveries';
-import { decodeSync, mutableStruct } from '@/schema';
 import { loaders } from '@/server/loaders';
 
 let world: World;

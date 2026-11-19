@@ -4,9 +4,9 @@ import { tracksBranch } from '@/automation/destinations';
 import type { Fetcher, RegistryVersion } from '@/automation/managers/registry';
 import { LookupFailure, latestText, latestVersion, unpublished } from '@/automation/managers/verification';
 import type { Snapshot } from '@/automation/types';
-import type { Diagnostic } from '@/contract/diagnostics';
-import { fileProblem } from '@/contract/diagnostics';
-import { mutableArray, mutableStruct, safeDecode } from '@/schema';
+import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
+import { fileProblem } from '@/kernel/errors/diagnostics.ts';
+import { mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
 
 const aurInfo = mutableStruct({
 	type: Schema.String,

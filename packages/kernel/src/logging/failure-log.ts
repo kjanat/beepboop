@@ -1,7 +1,7 @@
 import { Cause, Effect } from 'effect';
-import type { DomainError } from '@/contract/errors';
-import { decodeError } from '@/errors/decoding';
-import { recover } from '@/failure';
+import { recover } from '@/kernel/errors/classify.ts';
+import { decodeError } from '@/kernel/errors/decoding.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
 
 export function logFailure(
 	event: string,

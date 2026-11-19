@@ -4,9 +4,9 @@ import { glob, object } from '@/automation/managers/helpers';
 import { packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import type { Inventory, Package, Snapshot } from '@/automation/types';
-import type { Diagnostic } from '@/contract/diagnostics';
 import { filled, lacking, licenseFile, readmeFile } from '@/contract/package-metadata';
-import { parentDirectory, walkRelative } from '@/relative-path';
+import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
+import { parentDirectory, walkRelative } from '@/kernel/path/relative-path.ts';
 
 const cargoReadmes = ['README.md', 'README.txt', 'README'];
 

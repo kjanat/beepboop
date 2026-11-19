@@ -7,9 +7,9 @@ import { ActionFailure, attempt, refuse } from '@root/actions/runtime/protocol.t
 import { Effect, Result } from 'effect';
 import type { DistributionEvidence, RefChange, RefPlan } from '@/automation/refs.ts';
 import { repositoryNamePattern } from '@/automation/repository-name.ts';
-import { shaPattern } from '@/contract/ids.ts';
-import { git } from '@/git.ts';
-import { array, boolean, record, text } from '@/model.ts';
+import { git } from '@/host/git.ts';
+import { shaPattern } from '@/kernel/schema/ids.ts';
+import { array, boolean, record, text } from '@/kernel/schema/result.ts';
 
 interface Git {
 	read(...args: string[]): Effect.Effect<string, ActionFailure>;

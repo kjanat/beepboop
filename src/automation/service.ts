@@ -7,7 +7,6 @@ import { resolveConfiguration } from '@/automation/configuration';
 import type { AutomationCoordinator } from '@/automation/coordinator';
 import { planVersionFiles } from '@/automation/editors';
 import { createExecution, deriveExecution } from '@/automation/execution';
-import { logFailure, logRecovered } from '@/automation/failure-log';
 import type { Credentials } from '@/automation/github';
 import { GitHub, gitHubLayer, RepositoryGateway } from '@/automation/github';
 import { workflowRunsSchema } from '@/automation/github-resources';
@@ -51,19 +50,29 @@ import type {
 import { parseGrant, Secrets, secretsLayer, Vault } from '@/automation/vault';
 import type { WinGetBindings } from '@/automation/winget';
 import { WinGetService } from '@/automation/winget';
-import type { Diagnostic } from '@/contract/diagnostics';
-import type { DomainError } from '@/contract/errors';
-import { notFound, precondition } from '@/contract/errors';
+import { compareVersions } from '@/contract/semver';
 import { setupChoicesSchema } from '@/contract/setup';
 import { semVer } from '@/contract/version';
 import { configurationDiagnostics, configurationProblem } from '@/domain/configuration';
 import type { Access, ReadyRepository, RepositoryDiscovery } from '@/domain/repository';
 import { readiness, requireReady } from '@/domain/repository';
 import { validateAgainst } from '@/domain/validate';
-import { decodeError } from '@/errors/decoding';
-import { fromJson, fromPromise, fromSync, recover } from '@/failure';
-import type { Parsed } from '@/model';
-import { compareVersions, countSchema, decode, integer, looseSchema, record } from '@/model';
+import { fromJson, fromPromise, fromSync, recover } from '@/kernel/errors/classify.ts';
+import { decodeError } from '@/kernel/errors/decoding.ts';
+import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { notFound, precondition } from '@/kernel/errors/domain-error.ts';
+import { logFailure, logRecovered } from '@/kernel/logging/failure-log.ts';
+import type { Parsed } from '@/kernel/schema/result.ts';
+import { countSchema, decode, integer, looseSchema, record } from '@/kernel/schema/result.ts';
+import {
+	decodeSync,
+	looseStruct,
+	mutableArray,
+	mutableRecord,
+	mutableStruct,
+	safeDecode,
+} from '@/kernel/schema/structs.ts';
 import { ChangeLog } from '@/persistence/d1/changes';
 import type { CLISessionStore } from '@/persistence/d1/cli-sessions';
 import { CredentialStore } from '@/persistence/d1/credentials';
@@ -72,7 +81,6 @@ import { OnboardingStore } from '@/persistence/d1/onboarding';
 import { ScheduleStore } from '@/persistence/d1/schedules';
 import type { SessionStore } from '@/persistence/d1/sessions';
 import { executionId } from '@/persistence/identity-keys';
-import { decodeSync, looseStruct, mutableArray, mutableRecord, mutableStruct, safeDecode } from '@/schema';
 import { readBody, verifySignature } from '@/webhook';
 
 const webhookInstallation = mutableStruct({ account: mutableStruct({ id: looseSchema }) });

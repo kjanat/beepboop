@@ -8,7 +8,7 @@ import { assetName, binaryJobs } from '@/automation/setup-binaries';
 import type { Snapshot } from '@/automation/types';
 import { binaries, defaultBinaryTargets } from '@/contract/setup';
 import { targetsSchema } from '@/contract/targets';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -20,7 +20,7 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
 import { assertTargetsCurrent } from '@/tooling/schema/render';
 
 const fixture = (name: string) => Bun.file(new URL(`../fixtures/targets/${name}.json`, import.meta.url));

@@ -3,10 +3,10 @@ import type { Scalar } from 'yaml';
 import { isMap, isScalar, isSeq } from 'yaml';
 import type { Edit, ReleaseReference, Snapshot } from '@/automation/types';
 import { hookConfig } from '@/contract/catalog';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
-import { shaPattern } from '@/contract/ids';
-import { validYaml } from '@/parse/yaml';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { validYaml } from '@/kernel/parse/yaml.ts';
+import { shaPattern } from '@/kernel/schema/ids.ts';
 
 export interface HookReference {
 	repository: string;

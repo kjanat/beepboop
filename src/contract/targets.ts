@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
-import type { Decoded } from '@/schema';
-import { looseStruct, matchesPattern, mutableArray, mutableStruct } from '@/schema';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { looseStruct, matchesPattern, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 
 const token = Schema.String.check(matchesPattern(/^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$/));
 const packageName = Schema.String.check(matchesPattern(/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/));

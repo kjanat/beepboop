@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
 
 export const stableVersion = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 

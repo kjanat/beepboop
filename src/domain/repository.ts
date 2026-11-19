@@ -1,9 +1,9 @@
 import { Effect } from 'effect';
 import type { Configuration, RepositoryRecord } from '@/automation/types';
-import type { Diagnostic } from '@/contract/diagnostics';
-import { blocking } from '@/contract/diagnostics';
-import type { DomainError } from '@/contract/errors';
-import { domainError, precondition } from '@/contract/errors';
+import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
+import { blocking } from '@/kernel/errors/diagnostics.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { domainError, precondition } from '@/kernel/errors/domain-error.ts';
 
 export type Access = { kind: 'active' } | { kind: 'suspended'; since: number };
 export type RepositoryDiscovery = Omit<RepositoryRecord, 'access'>;

@@ -1,8 +1,8 @@
 import { Effect, Schema } from 'effect';
-import type { DomainError } from '@/contract/errors';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { mutableStruct } from '@/kernel/schema/structs.ts';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { optionalColumn, sql } from '@/persistence/d1/database';
-import { mutableStruct } from '@/schema';
 
 const cursorRow = mutableStruct({ last_tick: Schema.Finite });
 

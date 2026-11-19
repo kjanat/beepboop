@@ -1,5 +1,5 @@
 import { Schema } from 'effect';
-import { mutableStruct } from '@/schema';
+import { mutableStruct } from '@/kernel/schema/structs.ts';
 
 export const exclusionReasons = [
 	'private',

@@ -9,10 +9,10 @@ import { publicationResult } from '@/automation/managers/verification';
 import { excluded, registry } from '@/automation/package-publication';
 import type { Publication, Snapshot } from '@/automation/types';
 import { goreleaserConfig } from '@/contract/catalog';
-import type { Diagnostic } from '@/contract/diagnostics';
-import { fileProblem } from '@/contract/diagnostics';
+import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
+import { fileProblem } from '@/kernel/errors/diagnostics.ts';
+import { yaml } from '@/kernel/parse/yaml.ts';
 import { packageIdentity } from '@/package-url';
-import { yaml } from '@/parse/yaml';
 
 function cargoName(snapshot: Snapshot): unknown {
 	return Result.try(() => parseToml(snapshot.files['Cargo.toml'] ?? '')).pipe(

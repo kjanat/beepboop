@@ -3,13 +3,13 @@ import { parse as parseToml, TomlError } from 'smol-toml';
 import { isScalar } from 'yaml';
 import type { Edit, ReleasePlan, Snapshot } from '@/automation/types';
 import { isLockfile } from '@/contract/catalog';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
+import { semver } from '@/contract/semver';
 import type { VersionFile } from '@/contract/version-files';
 import { textVersionPattern } from '@/contract/version-files';
-import { fromSync } from '@/failure';
-import { semver } from '@/model';
-import { validYaml, yamlData, yamlDocument } from '@/parse/yaml';
+import { fromSync } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { validYaml, yamlData, yamlDocument } from '@/kernel/parse/yaml.ts';
 
 function toml(source: string) {
 	return Effect.suspend(() => Result.match(Result.try(() => parseToml(source)), {

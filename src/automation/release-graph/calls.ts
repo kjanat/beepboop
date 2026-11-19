@@ -9,8 +9,8 @@ import {
 	matrixLimit,
 	staticGuard,
 } from '@/automation/release-graph/bindings';
-import { yaml } from '@/parse/yaml';
-import { escapeRegExp } from '@/text/patterns';
+import { yaml } from '@/kernel/parse/yaml.ts';
+import { escapeRegExp } from '@/kernel/text/patterns.ts';
 
 export interface WorkflowDocument {
 	file: string;

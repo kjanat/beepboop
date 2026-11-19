@@ -5,7 +5,7 @@ import { packageId } from '@/automation/package-identity';
 import type { Inventory, Package, Snapshot } from '@/automation/types';
 import { supportedTargets } from '@/contract/binary-platforms';
 import type { BinaryCandidate } from '@/contract/setup';
-import { parentDirectory, walkRelative } from '@/relative-path';
+import { parentDirectory, walkRelative } from '@/kernel/path/relative-path.ts';
 
 const unixCrates = new Set(['nix', 'uzers', 'users', 'termios', 'daemonize', 'fork', 'pty-process']);
 const windowsRustix = new Set(['std', 'alloc', 'core', 'net', 'event', 'use-libc', 'rustc-dep-of-std']);

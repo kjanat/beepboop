@@ -4,11 +4,11 @@ import { discover } from '@/automation/managers';
 import { tagPrefix } from '@/automation/managers/tags';
 import { packageId, selectorKey, soleMatch } from '@/automation/package-identity';
 import type { Execution, Inventory, Snapshot } from '@/automation/types';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
-import { dependencyOrder } from '@/dependency-order';
-import { fromSync } from '@/failure';
-import { invalid } from '@/model';
+import { dependencyOrder } from '@/kernel/collections/dependency-order.ts';
+import { fromSync } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { invalid } from '@/kernel/schema/result.ts';
 import { executionId } from '@/persistence/identity-keys';
 
 function expandPackages(

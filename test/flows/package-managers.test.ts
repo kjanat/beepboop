@@ -13,7 +13,7 @@ import { writeRendered } from '@/distribution/output';
 import type { ScoopConfiguration } from '@/distribution/scoop/generate';
 import { generateManifest, scoopConfiguration } from '@/distribution/scoop/generate';
 import { generateManifests, wingetConfiguration } from '@/distribution/winget/generate';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -25,7 +25,7 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
 import { ToolFailure } from '@/tooling/runtime';
 
 const digest = (character: string) => character.repeat(64);

@@ -1,14 +1,11 @@
 import { Effect, Schema, Struct } from 'effect';
 import { installerArchitecture, installerType } from '@/distribution/winget/schema';
-import type { Encoded } from '@/schema';
-import { decodeSync, mutableArray, strictStruct } from '@/schema';
+import type { Encoded } from '@/kernel/schema/structs.ts';
+import { decodeSync, mutableArray, strictStruct } from '@/kernel/schema/structs.ts';
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Kaj Kowalski; Copyright (c) 2021 rhysd
 
 import { stringify } from 'yaml';
-
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
 import { assetName, checksumOf, expand, https, parseChecksums, releaseTag } from '@/distribution/assets';
 import { plainText } from '@/distribution/winget/notes';
 import type {
@@ -24,8 +21,10 @@ import {
 	schemaVersion,
 	versionManifest,
 } from '@/distribution/winget/schema';
-import { fromSync } from '@/failure';
-import { unsafeRelativePath } from '@/relative-path';
+import { fromSync } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { unsafeRelativePath } from '@/kernel/path/relative-path.ts';
 
 const metadata = strictStruct(
 	Struct.omit(defaultLocaleManifest.fields, [

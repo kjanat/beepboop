@@ -3,7 +3,7 @@ import { Cause, Effect, Exit, Result } from 'effect';
 import { RE2JS } from 're2js';
 import { applyVersionFiles } from '@/automation/editors';
 import { versionFileSchema } from '@/contract/version-files';
-import { decodeSync, safeDecode } from '@/schema';
+import { decodeSync, safeDecode } from '@/kernel/schema/structs.ts';
 
 const literal = { path: 'README.md', format: 'text', prefix: 'version="', suffix: '"' };
 const pattern = { path: 'README.md', format: 'text', pattern: 'version="(?<version>[^"\\n]+)"' };

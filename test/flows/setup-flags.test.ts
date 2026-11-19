@@ -22,7 +22,7 @@ import {
 	versionPrMerges,
 	versionScopes,
 } from '@/contract/setup-terms';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -34,7 +34,7 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
 
 let world: World;
 let directory: string;

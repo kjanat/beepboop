@@ -2,7 +2,7 @@ import { Data, Effect } from 'effect';
 import type { Transport, Unreachable } from '@/contract/client';
 import { ApiFailure, call, elevatedCall, send } from '@/contract/client';
 import type { Route } from '@/contract/routes';
-import type { Contract, Decoded, Encoded } from '@/schema';
+import type { Contract, Decoded, Encoded } from '@/kernel/schema/structs.ts';
 
 export class SessionExpired extends Data.TaggedError('SessionExpired')<{ readonly message: string }> {}
 

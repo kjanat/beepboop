@@ -21,7 +21,7 @@ import type { SigningKey } from '@root/test/support/signing.ts';
 import type { World } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
 import type { TagSigner } from '@/automation/refs';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -33,7 +33,7 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
 
 export const prepareWorkflow = `name: Prepare
 on:

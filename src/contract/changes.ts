@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
-import type { Decoded } from '@/schema';
-import { mutableArray, mutableStruct } from '@/schema';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 
 export const projectedEntities = ['execution', 'release-set', 'release'] as const;
 export type ProjectedEntity = (typeof projectedEntities)[number];

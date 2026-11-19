@@ -1,9 +1,9 @@
 import type { Effect } from 'effect';
 import { Data, Schema } from 'effect';
-import { diagnostic } from '@/contract/diagnostics';
-import { decodeWith } from '@/decode';
-import type { Contract, Decoded } from '@/schema';
-import { mutableArray, mutableStruct, schemaIssues } from '@/schema';
+import { diagnostic } from '@/kernel/errors/diagnostics.ts';
+import { decodeWith } from '@/kernel/schema/decode.ts';
+import type { Contract, Decoded } from '@/kernel/schema/structs.ts';
+import { mutableArray, mutableStruct, schemaIssues } from '@/kernel/schema/structs.ts';
 
 export const resources = [
 	'repository',

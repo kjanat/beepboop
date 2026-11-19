@@ -1,11 +1,11 @@
 import { Effect, Option, Schema, Semaphore } from 'effect';
 import { Automation } from '@/automation/service';
-import type { DomainError } from '@/contract/errors';
-import { fromPromise, toDomainError } from '@/failure';
-import { decode } from '@/model';
-import { responseJson } from '@/runtime/http';
-import { looseStruct, mutableArray, safeDecode } from '@/schema';
-import { listed } from '@/text/listing';
+import { fromPromise, toDomainError } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { responseJson } from '@/kernel/http/body.ts';
+import { decode } from '@/kernel/schema/result.ts';
+import { looseStruct, mutableArray, safeDecode } from '@/kernel/schema/structs.ts';
+import { listed } from '@/kernel/text/listing.ts';
 
 export interface GitHubOutage {
 	description: string;

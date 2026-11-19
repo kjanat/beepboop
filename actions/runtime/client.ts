@@ -12,8 +12,8 @@ import {
 } from '@root/actions/runtime/protocol.ts';
 import { identityToken, mask, postJson, readServiceOrigin } from '@root/actions/runtime/session.ts';
 import { Clock, Effect } from 'effect';
-import { record, text } from '@/model.ts';
-import { writeOutputTo } from '@/tooling/github-output.ts';
+import { writeOutputTo } from '@/host/github-output.ts';
+import { record, text } from '@/kernel/schema/result.ts';
 
 function writeResult(mode: Mode, data: Record<string, unknown>, environment: Environment) {
 	const writeOutput = (name: string, value: string) => writeOutputTo(environment.GITHUB_OUTPUT, name, value);

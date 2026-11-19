@@ -1,6 +1,6 @@
 import { Result } from 'effect';
-import { record } from '@/model';
-import { escapeRegExp } from '@/text/patterns';
+import { record } from '@/kernel/schema/result.ts';
+import { escapeRegExp } from '@/kernel/text/patterns.ts';
 export function object(value: unknown): Record<string, unknown> {
 	return Result.getOrElse(record(value), () => ({}));
 }

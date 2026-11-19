@@ -2,9 +2,9 @@ import { Effect } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
 import { expectedRunTitle } from '@/automation/execution';
 import type { Execution } from '@/automation/types';
-import type { DomainError } from '@/contract/errors';
-import { forbidden, invalid } from '@/contract/errors';
-import { record } from '@/model';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { forbidden, invalid } from '@/kernel/errors/domain-error.ts';
+import { record } from '@/kernel/schema/result.ts';
 
 export type TokenPermissions = Record<string, 'read' | 'write'>;
 

@@ -1,8 +1,8 @@
 import { Result } from 'effect';
 import type { Document } from 'yaml';
 import { parseDocument } from 'yaml';
-import { DomainError, precondition } from '@/contract/errors';
-import { record } from '@/model';
+import { DomainError, precondition } from '@/kernel/errors/domain-error.ts';
+import { record } from '@/kernel/schema/result.ts';
 
 export function yamlDocument(source: string): Document.Parsed {
 	return parseDocument(source, { uniqueKeys: true });

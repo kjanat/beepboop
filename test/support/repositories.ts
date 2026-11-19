@@ -1,6 +1,6 @@
 import type { FakeGitHub, Repository } from '@root/test/support/github.ts';
 import { Effect, Schema, Struct } from 'effect';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -12,7 +12,7 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
 
 export function dispatchedPublishWorkflow(name: string, stream: string, step: string, steps: string): string {
 	return `name: ${name}

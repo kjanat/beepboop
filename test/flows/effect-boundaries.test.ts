@@ -19,11 +19,11 @@ import { vscodeManager } from '@/automation/managers/vscode';
 import { verifyImage } from '@/automation/oci';
 import type { Publication } from '@/automation/types';
 import { Client } from '@/cli/client';
-import { fromSync, recover } from '@/failure';
+import { fromSync, recover } from '@/kernel/errors/classify.ts';
+import { responseBytes } from '@/kernel/http/body.ts';
+import { yamlData, yamlDocument } from '@/kernel/parse/yaml.ts';
+import { decodeSync, mutableStruct } from '@/kernel/schema/structs.ts';
 import { onRequest } from '@/middleware';
-import { yamlData, yamlDocument } from '@/parse/yaml';
-import { responseBytes } from '@/runtime/http';
-import { decodeSync, mutableStruct } from '@/schema';
 import { loaders } from '@/server/loaders';
 import { temporaryDirectory } from '@/tooling/runtime';
 

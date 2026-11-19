@@ -19,7 +19,6 @@ import {
 	settleRun,
 	validatePublicationIdentity,
 } from '@/automation/execution';
-import { logFailure, logRecovered } from '@/automation/failure-log';
 import { GitHubRejection } from '@/automation/github';
 import type { GitHubRelease, WorkflowRun } from '@/automation/github-resources';
 import {
@@ -133,19 +132,24 @@ import type {
 } from '@/automation/types';
 import { parseGrant, runtimeGrant } from '@/automation/vault';
 import { identifiedManagers, isManagerName, managerSpec } from '@/contract/catalog';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
-import { approvalShaPattern, sha256DigestPattern } from '@/contract/ids';
 import type { ClaimStep, LedgerManager, NextStep, PublishReport, ReportStep } from '@/contract/ledger';
 import { ledgerManagers } from '@/contract/ledger';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
 import type { BinaryProgress, PackageTagPage } from '@/contract/views';
-import { parseRetryAfter } from '@/domain/http-date';
 import type { ReadyRepository } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
-import { decodeError, isDecodingFailure } from '@/errors/decoding';
-import { fromPromise, fromSync, recover, retryable, toDomainError } from '@/failure';
-import { matches, sha } from '@/model';
+import { fromPromise, fromSync, recover, retryable, toDomainError } from '@/kernel/errors/classify.ts';
+import { decodeError, isDecodingFailure } from '@/kernel/errors/decoding.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { parseRetryAfter } from '@/kernel/http/http-date.ts';
+import { retryTransient } from '@/kernel/http/retry.ts';
+import { logFailure, logRecovered } from '@/kernel/logging/failure-log.ts';
+import { jsonLogging } from '@/kernel/logging/json-logging.ts';
+import { approvalShaPattern, sha256DigestPattern } from '@/kernel/schema/ids.ts';
+import { matches, sha } from '@/kernel/schema/result.ts';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { decodeSync, mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
 import { purl } from '@/package-url';
 import { decodeEventV1, decodeExecutionV1, decodeSetupEditV1 } from '@/persistence/codecs/v1';
 import type { SqlDatabase } from '@/persistence/d1/database';
@@ -153,10 +157,6 @@ import { ProjectionStore } from '@/persistence/d1/projection';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
 import type { Committed } from '@/persistence/journal';
 import { earliest, Journal } from '@/persistence/journal';
-import { jsonLogging } from '@/runtime/logging';
-import { retryTransient } from '@/runtime/policy';
-import type { Decoded } from '@/schema';
-import { decodeSync, mutableArray, mutableStruct, safeDecode } from '@/schema';
 
 export interface CoordinatorBindings extends AutomationBindings {
 	DB: SqlDatabase;

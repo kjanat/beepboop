@@ -17,10 +17,7 @@ import { createExecution, runFailedNote } from '@/automation/execution';
 import { Store } from '@/automation/store';
 import type { Execution } from '@/automation/types';
 import { requireReady } from '@/domain/repository';
-import { decodeExecutionV1 } from '@/persistence/codecs/v1';
-import { ProjectionBackfill } from '@/persistence/d1/backfill';
-import { executionId, releaseEventId } from '@/persistence/identity-keys';
-import type { Contract, Decoded, Encoded, ValidationContext } from '@/schema';
+import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
 	looseStruct,
@@ -33,7 +30,10 @@ import {
 	schemaIssues,
 	strictStruct,
 	withValidation,
-} from '@/schema';
+} from '@/kernel/schema/structs.ts';
+import { decodeExecutionV1 } from '@/persistence/codecs/v1';
+import { ProjectionBackfill } from '@/persistence/d1/backfill';
+import { executionId, releaseEventId } from '@/persistence/identity-keys';
 import { loaders } from '@/server/loaders';
 import { needingUser, releaseSetSummaries, releaseSummaries, runStateLabel } from '@/server/releases';
 import { overview } from '@/server/views/overview';

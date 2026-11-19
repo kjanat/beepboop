@@ -6,10 +6,10 @@ import { discover, resolvePublished } from '@/automation/managers';
 import { adoptionChoices, adoptionMarkdown } from '@/automation/release-graph/adoption';
 import { inferReleaseGraph } from '@/automation/release-graph/graph';
 import { buildSnapshot } from '@/automation/snapshot';
-import type { DomainError } from '@/contract/errors';
-import { toDomainError } from '@/failure';
-import type { Contract } from '@/schema';
-import { mutableArray, mutableStruct } from '@/schema';
+import { toDomainError } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import type { Contract } from '@/kernel/schema/structs.ts';
+import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { ToolFailure } from '@/tooling/runtime';
 import { attempt, main, parse, refuse } from '@/tooling/runtime';
 

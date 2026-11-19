@@ -1,8 +1,8 @@
 import { Effect, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/github';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
-import { mutableStruct } from '@/schema';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { mutableStruct } from '@/kernel/schema/structs.ts';
 
 export const immutableReleaseSettingsSchema = Schema.NullOr(mutableStruct({ enabled: Schema.Boolean }));
 

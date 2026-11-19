@@ -8,9 +8,9 @@ import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
 import { excluded, publishable, registry } from '@/automation/package-publication';
 import type { Package } from '@/automation/types';
-import { fileProblem } from '@/contract/diagnostics';
-import { precondition } from '@/contract/errors';
-import { fromSync } from '@/failure';
+import { fromSync } from '@/kernel/errors/classify.ts';
+import { fileProblem } from '@/kernel/errors/diagnostics.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
 import { packageIdentity } from '@/package-url';
 
 const defaultRegistry = /^https?:\/\/registry\.(?:npmjs\.org|yarnpkg\.com)(?:[/:?#]|$)/;

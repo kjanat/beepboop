@@ -22,14 +22,14 @@ import {
 import { crateOutcome, ledgerCommand, plainCrateNames } from '@/automation/setup-defaults';
 import type { SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
 import type { Package, Snapshot } from '@/automation/types';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
-import { identifierPattern } from '@/contract/ids';
 import { ledgerManagers, publishWaitMinutes } from '@/contract/ledger';
 import { hostedRunners } from '@/contract/runners';
-import { toDomainError } from '@/failure';
-import { yaml, yamlData } from '@/parse/yaml';
-import { escapeRegExp } from '@/text/patterns';
+import { toDomainError } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { yaml, yamlData } from '@/kernel/parse/yaml.ts';
+import { identifierPattern } from '@/kernel/schema/ids.ts';
+import { escapeRegExp } from '@/kernel/text/patterns.ts';
 
 const prepareMinutes = 120;
 export function publishMinutes(packages: number): number {

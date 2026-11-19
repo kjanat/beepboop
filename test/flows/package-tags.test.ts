@@ -37,8 +37,8 @@ import type { PackageTagView } from '@/contract/views';
 import { packageTagPage as pageSchema } from '@/contract/views';
 import { configurationDrift, configurationSchema } from '@/domain/configuration';
 import { validateAgainst } from '@/domain/validate';
+import { decodeSync } from '@/kernel/schema/structs.ts';
 import { storedConfiguration } from '@/persistence/codecs/configuration';
-import { decodeSync } from '@/schema';
 
 let world: World;
 eachWorld(created => {

@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { Schema } from 'effect';
 import { parse } from 'smol-toml';
 import { getPlatformProxy } from 'wrangler';
-import { decodeSync, mutableArray, mutableStruct } from '@/schema';
+import { decodeSync, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 
 const root = resolve(import.meta.dir, '../..');
 const configuration = mutableStruct({

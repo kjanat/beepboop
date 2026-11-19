@@ -2,13 +2,13 @@ import { writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { Effect, Schema } from 'effect';
 import { packageId } from '@/automation/package-identity';
-import { checkoutAt } from '@/git';
-import { looseSchema } from '@/model';
-import { responseJson } from '@/runtime/http';
-import { mutableArray, mutableRecord, mutableStruct } from '@/schema';
-import { sha256Hex } from '@/sha256';
+import { checkoutAt } from '@/host/git.ts';
+import { writeOutput } from '@/host/github-output.ts';
+import { sha256Hex } from '@/kernel/crypto/sha256.ts';
+import { responseJson } from '@/kernel/http/body.ts';
+import { looseSchema } from '@/kernel/schema/result.ts';
+import { mutableArray, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
 import { packageManifest } from '@/tooling/cli/manifest';
-import { writeOutput } from '@/tooling/github-output';
 import {
 	attempt,
 	attemptPromise,

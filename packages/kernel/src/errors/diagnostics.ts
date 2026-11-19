@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 import { distinct } from '@/kernel/collections/distinct.ts';
-import type { Decoded } from '@/schema';
-import { mutableStruct } from '@/schema';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { mutableStruct } from '@/kernel/schema/structs.ts';
 
 export const diagnosticCodes = [
 	'invalid-manifest',

@@ -1,14 +1,14 @@
 import { Effect, Schema } from 'effect';
 import type { Execution } from '@/automation/types';
 import { precedenceKey } from '@/contract/semver';
-import { isDecodingFailure } from '@/errors/decoding';
+import { isDecodingFailure } from '@/kernel/errors/decoding.ts';
+import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import { decodeEventV1 } from '@/persistence/codecs/v1';
 import { backfillPage, drainBackfill } from '@/persistence/d1/backfill-page';
 import type { Sql } from '@/persistence/d1/database';
 import { parse } from '@/persistence/d1/database';
 import { jsonBatches } from '@/persistence/d1/json-batches';
 import { readyRead } from '@/persistence/d1/ready-read';
-import { mutableArray, mutableStruct } from '@/schema';
 
 export function completionMetadata(document: string, repositoryId: number) {
 	try {

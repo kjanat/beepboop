@@ -2,9 +2,9 @@ import { DurableObject } from 'cloudflare:workers';
 import { Clock, Effect, Schema } from 'effect';
 import { deferSlot, reserveSlot } from '@/automation/publish-pace';
 import type { PublishKind } from '@/automation/types';
-import type { DomainError } from '@/contract/errors';
-import { fromPromise, fromSync } from '@/failure';
-import { decodeSync } from '@/schema';
+import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { decodeSync } from '@/kernel/schema/structs.ts';
 
 const arrival = Schema.optional(Schema.Finite);
 

@@ -2,9 +2,9 @@ import type { Environment, Invalid } from '@root/actions/runtime/protocol.ts';
 import { ActionFailure, attempt, fail, required, retried } from '@root/actions/runtime/protocol.ts';
 import { Effect } from 'effect';
 import { bearerHeaders } from '@/contract/http.ts';
-import { record } from '@/model.ts';
-import { errorMessage } from '@/refusal.ts';
-import { responseJson } from '@/runtime/http.ts';
+import { errorMessage } from '@/kernel/errors/refusal.ts';
+import { responseJson } from '@/kernel/http/body.ts';
+import { record } from '@/kernel/schema/result.ts';
 
 export function mask(value: string): Effect.Effect<void> {
 	return Effect.sync(() =>

@@ -1,5 +1,4 @@
 import { Clock, Effect, Schema } from 'effect';
-import { logRecovered } from '@/automation/failure-log';
 import type { RepositoryGateway } from '@/automation/github';
 import {
 	checkRunsSchema,
@@ -12,18 +11,19 @@ import { repositoryNamePattern } from '@/automation/repository-name';
 import { documentRow } from '@/automation/schemas';
 import type { Store } from '@/automation/store';
 import type { RepositoryRecord } from '@/automation/types';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
-import { sha256Hex } from '@/contract/ids';
 import { generateManifests, renderManifests, wingetConfiguration } from '@/distribution/winget/generate';
 import { readiness } from '@/domain/repository';
-import { decodeError } from '@/errors/decoding';
-import { fromPromise, fromSync } from '@/failure';
-import { countSchema, decode, looseSchema, record, shaSchema, text, textSchema } from '@/model';
+import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
+import { decodeError } from '@/kernel/errors/decoding.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { logRecovered } from '@/kernel/logging/failure-log.ts';
+import { sha256Hex } from '@/kernel/schema/ids.ts';
+import { countSchema, decode, looseSchema, record, shaSchema, text, textSchema } from '@/kernel/schema/result.ts';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { decodeSync, mutableArray, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { Sql } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
-import type { Decoded } from '@/schema';
-import { decodeSync, mutableArray, mutableRecord, mutableStruct } from '@/schema';
 
 const releaseListing = mutableArray(mutableStruct({
 	id: looseSchema,

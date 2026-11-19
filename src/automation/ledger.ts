@@ -1,12 +1,12 @@
 import { Result, Schema } from 'effect';
 import type { Publication, PublishKind } from '@/automation/types';
 import { registryLabel } from '@/contract/catalog';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
 import type { LedgerEntry, LedgerManager, LedgerPackage } from '@/contract/ledger';
 import { ledgerManagers } from '@/contract/ledger';
-import type { Decoded } from '@/schema';
-import { mutableArray, mutableStruct } from '@/schema';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 
 export const registries: Record<LedgerManager, string> = {
 	cargo: registryLabel('cargo'),

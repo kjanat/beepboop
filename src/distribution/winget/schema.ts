@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
-import type { Decoded } from '@/schema';
-import { matchesPattern, mutableArray, refined, strictStruct } from '@/schema';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { matchesPattern, mutableArray, refined, strictStruct } from '@/kernel/schema/structs.ts';
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Kaj Kowalski; Copyright (c) 2021 rhysd
 

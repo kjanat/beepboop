@@ -1,9 +1,16 @@
 import { Effect, Schema } from 'effect';
-import type { DomainError } from '@/contract/errors';
 import { assetName, checksumOf, expand, https, parseChecksums, releaseTag } from '@/distribution/assets';
-import { fromSync } from '@/failure';
-import type { Encoded } from '@/schema';
-import { decodeSync, matchesPattern, mutableArray, mutableStruct, refined, strictStruct } from '@/schema';
+import { fromSync } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import type { Encoded } from '@/kernel/schema/structs.ts';
+import {
+	decodeSync,
+	matchesPattern,
+	mutableArray,
+	mutableStruct,
+	refined,
+	strictStruct,
+} from '@/kernel/schema/structs.ts';
 
 const text = Schema.String.check(Schema.isMinLength(1));
 const executable = refined(

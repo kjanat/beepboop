@@ -9,14 +9,16 @@ import type {
 	RepositoryRecord,
 	SubscriptionDelivery,
 } from '@/automation/types';
-import type { DomainError } from '@/contract/errors';
-import { precondition } from '@/contract/errors';
 import type { ExecutionFilter } from '@/contract/routes';
 import type { Access, RepositoryDiscovery } from '@/domain/repository';
-import type { Readable } from '@/errors/decoding';
-import { decodeError, isDecodingFailure, readEach } from '@/errors/decoding';
-import { fromJson, fromSync, recover } from '@/failure';
-import { record } from '@/model';
+import { fromJson, fromSync, recover } from '@/kernel/errors/classify.ts';
+import type { Readable } from '@/kernel/errors/decoding.ts';
+import { decodeError, isDecodingFailure, readEach } from '@/kernel/errors/decoding.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { record } from '@/kernel/schema/result.ts';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { decodeSync, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { Enrollment, RepositoryRow } from '@/persistence/codecs/repository';
 import {
 	decodeEnrollment,
@@ -36,8 +38,6 @@ import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
 import { jsonBatches } from '@/persistence/d1/json-batches';
 import { readyRead } from '@/persistence/d1/ready-read';
-import type { Decoded } from '@/schema';
-import { decodeSync, mutableArray, mutableStruct } from '@/schema';
 
 export interface UnreadableRepository {
 	kind: 'unreadable';

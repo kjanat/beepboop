@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
-import { notFound, precondition } from '@/contract/errors';
 import { routes } from '@/contract/routes';
+import { notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import { admin, elevated } from '@/server/handlers/kit';
 
 export const securityEndpoints = {

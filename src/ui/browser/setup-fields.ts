@@ -12,7 +12,7 @@ import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '
 import { binaryTargets, defaultBinaryTargets, leftOut, setupWorkflow } from '@/contract/setup';
 import type { Editors, WorkflowField } from '@/contract/setup-fields';
 import { existingTriggersNames, existingTriggersQuestion, existingTriggersSentences } from '@/contract/setup-terms';
-import { safeDecode, schemaIssues } from '@/schema';
+import { safeDecode, schemaIssues } from '@/kernel/schema/structs.ts';
 import { node, Refused } from '@/ui/browser/dom';
 
 export const workflowEditors = {

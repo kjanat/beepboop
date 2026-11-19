@@ -1,5 +1,5 @@
 import { Data, Effect } from 'effect';
-import { attemptWith, errorMessage, failWith, rejectWith } from '@/refusal';
+import { attemptWith, errorMessage, failWith, rejectWith } from '@/kernel/errors/refusal.ts';
 
 export class SecurityKeyError extends Data.TaggedError('SecurityKeyError')<{
 	readonly message: string;

@@ -6,11 +6,11 @@ import { latestTag, majorSuffix, tagSource } from '@/automation/managers/tags';
 import { latestVersion, publicationResult, registryRequest, unconfirmed } from '@/automation/managers/verification';
 import { excluded, registry } from '@/automation/package-publication';
 import type { Package, Publication } from '@/automation/types';
-import { fileProblem } from '@/contract/diagnostics';
+import { fileProblem } from '@/kernel/errors/diagnostics.ts';
+import { responseJson } from '@/kernel/http/body.ts';
+import { ioConcurrency } from '@/kernel/http/retry.ts';
+import { parentDirectory } from '@/kernel/path/relative-path.ts';
 import { packageIdentity } from '@/package-url';
-import { parentDirectory } from '@/relative-path';
-import { responseJson } from '@/runtime/http';
-import { ioConcurrency } from '@/runtime/policy';
 
 const pseudoVersion =
 	/^v[0-9]+\.(?:0\.0-|\d+\.\d+-(?:[^+]*\.)?0\.)\d{14}-[A-Za-z0-9]+(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;

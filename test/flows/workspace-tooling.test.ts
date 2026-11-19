@@ -208,17 +208,17 @@ describe('move', () => {
 		repository({
 			'tsconfig.json': tsconfig.replace('"@root/*": ["./*"]', kernelAlias),
 			'packages/kernel/src/a.ts': 'export const a = 1;\n',
-			'src/text/json.ts': "import { a } from '@/kernel/a.ts';\nexport { a };\n",
-			'src/text/listing.ts': "export { a } from './json.ts';\n",
-			'src/uses.ts': "import { a } from '@/text/listing';\n",
+			'src/words/json.ts': "import { a } from '@/kernel/a.ts';\nexport { a };\n",
+			'src/words/listing.ts': "export { a } from './json.ts';\n",
+			'src/uses.ts': "import { a } from '@/words/listing';\n",
 		});
-		const report = await Effect.runPromise(move(root, [['src/text/', 'packages/kernel/src/text']]));
+		const report = await Effect.runPromise(move(root, [['src/words/', 'packages/kernel/src/words']]));
 
 		expect(report).toEqual({ moved: 2, rewritten: 1, files: 1, addedAliases: [], mentions: [], review: [] });
 		expect(read('tsconfig.json')).toBe(tsconfig.replace('"@root/*": ["./*"]', kernelAlias));
-		expect(read('packages/kernel/src/text/json.ts')).toBe("import { a } from '@/kernel/a.ts';\nexport { a };\n");
-		expect(read('packages/kernel/src/text/listing.ts')).toBe("export { a } from './json.ts';\n");
-		expect(read('src/uses.ts')).toBe("import { a } from '@/kernel/text/listing.ts';\n");
+		expect(read('packages/kernel/src/words/json.ts')).toBe("import { a } from '@/kernel/a.ts';\nexport { a };\n");
+		expect(read('packages/kernel/src/words/listing.ts')).toBe("export { a } from './json.ts';\n");
+		expect(read('src/uses.ts')).toBe("import { a } from '@/kernel/words/listing.ts';\n");
 	});
 
 	test('a new package alias that would shadow an unmoved legacy folder falls back to a specifier that still works', async () => {

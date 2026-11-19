@@ -2,9 +2,9 @@ import { Cause, Effect, Schema } from 'effect';
 import type { NotificationKind, WatchedRegistry } from '@/contract/catalog';
 import { notificationKinds, watchedRegistries } from '@/contract/catalog';
 import { routes } from '@/contract/routes';
-import { awaitWith } from '@/refusal';
-import type { Contract, Decoded } from '@/schema';
-import { looseStruct, mutableArray, mutableRecord, mutableStruct, safeDecode } from '@/schema';
+import { awaitWith } from '@/kernel/errors/refusal.ts';
+import type { Contract, Decoded } from '@/kernel/schema/structs.ts';
+import { looseStruct, mutableArray, mutableRecord, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
 import { api, elevatedApi } from '@/ui/browser/api';
 import {
 	element,

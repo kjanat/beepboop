@@ -2,8 +2,8 @@ import { handle } from '@astrojs/cloudflare/handler';
 import { Cause, Effect } from 'effect';
 import type { AutomationBindings } from '@/automation/service.ts';
 import { applicationLayer, withAutomation } from '@/automation/service.ts';
-import { failure } from '@/failure.ts';
-import { jsonLogging } from '@/runtime/logging';
+import { failure } from '@/kernel/errors/classify.ts';
+import { jsonLogging } from '@/kernel/logging/json-logging.ts';
 import { parseBindings } from '@/server/bindings.ts';
 
 export { AutomationCoordinator } from '@/automation/coordinator.ts';
