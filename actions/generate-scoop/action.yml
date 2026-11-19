@@ -25,10 +25,6 @@ runs:
     - name: Setup Bun
       id: bun
       uses: $/actions/deps/bun
-    - name: Install deps
-      shell: bash
-      working-directory: ${{ github.action_path }}/../..
-      run: bun install --frozen-lockfile --production --ignore-scripts
     - name: Generate manifest
       id: generate
       shell: bash
@@ -38,4 +34,4 @@ runs:
         SCOOP_MANIFEST_OUT: ${{ inputs.out }}
         SCOOP_MANIFEST_TAG: ${{ inputs.tag }}
         SCOOP_MANIFEST_VERSION: ${{ inputs.version }}
-      run: bun "${GITHUB_ACTION_PATH}/../../src/distribution/scoop/cli.ts"
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/generate-scoop.ts"

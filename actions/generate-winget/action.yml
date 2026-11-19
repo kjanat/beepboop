@@ -34,10 +34,6 @@ runs:
     - name: Setup Bun
       id: bun
       uses: $/actions/deps/bun
-    - name: Install deps
-      shell: bash
-      working-directory: ${{ github.action_path }}/../..
-      run: bun install --frozen-lockfile --production --ignore-scripts
     - name: Generate manifests
       id: generate
       shell: bash
@@ -49,4 +45,4 @@ runs:
         WINGET_RELEASE_NOTES: ${{ inputs.release-notes }}
         WINGET_TAG: ${{ inputs.tag }}
         WINGET_VERSION: ${{ inputs.version }}
-      run: bun "${GITHUB_ACTION_PATH}/../../src/distribution/winget/cli.ts"
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/generate-winget.ts"

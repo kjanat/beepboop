@@ -1,7 +1,5 @@
-#!/usr/bin/env bun
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { cli, command, flag } from '@kjanat/dreamcli';
 import { Effect, Result } from 'effect';
 import { generateManifests, renderManifests, wingetConfiguration } from '@/distribution/winget/generate';
@@ -74,5 +72,3 @@ export const app = cli('beepboop-winget')
 	.help({ flagSpelling: 'kebab' })
 	.description('Generate WinGet manifests from package metadata and release assets')
 	.default(generate, { route: true });
-
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) await app.run();
