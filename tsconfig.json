@@ -6,7 +6,10 @@
 			"@/*": ["./src/*"],
 			"@root/*": ["./*"],
 			"@/kernel/*": ["./packages/kernel/src/*"],
-			"@/host/*": ["./packages/host/src/*"]
+			"@/host/*": ["./packages/host/src/*"],
+			"@/package-url": ["./packages/domain/src/purl/index.ts"],
+			"@/package-url/*": ["./packages/domain/src/purl/*"],
+			"@/persistence/*": ["./packages/persistence/src/*"]
 		},
 		"target": "ES2022",
 		"module": "ESNext",

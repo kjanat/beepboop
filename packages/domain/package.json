@@ -1,0 +1,14 @@
+{
+	"name": "@beepboop/domain",
+	"private": true,
+	"type": "module",
+	"exports": {
+		"./*": "./src/*"
+	},
+	"dependencies": {
+		"@beepboop/kernel": "workspace:*",
+		"@cfworker/json-schema": "^4.1.6",
+		"effect": "^4.1.2",
+		"packageurl-js": "^2.0.1"
+	}
+}

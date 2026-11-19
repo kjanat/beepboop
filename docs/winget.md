@@ -133,7 +133,7 @@ it again to reset its start time.
 
 Service setup:
 
-1. Apply `migrations/0003_winget.sql` through the normal D1 migration path.
+1. Apply `packages/persistence/migrations/0003_winget.sql` through the normal D1 migration path.
 2. Create a fork of `microsoft/winget-pkgs` owned by the submission identity.
 3. Set `WINGET_FORK` to `owner/winget-pkgs` and store `WINGET_GITHUB_TOKEN` as a
    Worker secret. This must be a token for the intended bot/service account that

@@ -16,7 +16,7 @@ import {
 	ToolFailure,
 } from '@/tooling/runtime';
 
-const root = resolve(import.meta.dir, '../../package-url');
+const root = resolve(import.meta.dir, '../../../packages/domain/src/purl');
 const banner =
 	'/* Generated from pinned upstream PURL data and local extensions by bun run purl:generate. Do not edit. */';
 

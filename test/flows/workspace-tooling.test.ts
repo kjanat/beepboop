@@ -768,7 +768,7 @@ describe('boundaries', () => {
 		});
 		const report = await Effect.runPromise(checkBoundaries(root));
 
-		expect(report).toEqual({ files: 4, packages: 2, violations: [] });
+		expect(report).toEqual({ files: 4, packages: 2, baselined: 0, violations: [] });
 		expect(await Effect.runPromise(boundariesCommand(root))).toBe('Checked 4 files in 2 packages');
 	});
 
@@ -807,6 +807,38 @@ describe('boundaries', () => {
 			'A second copy of effect is installed at packages/domain/node_modules/effect/package.json',
 		]);
 		expect(await refusal(boundariesCommand(root))).toContain('10 package boundary violations');
+	});
+
+	test('the baseline tolerates the imports it lists and reports listed imports that stopped happening', async () => {
+		const baseline = [
+			{ file: 'packages/kernel/src/a.ts', specifier: '@/legacy.ts' },
+			{ file: 'packages/kernel/src/a.ts', specifier: '@/gone.ts' },
+			{ file: 'packages/kernel/src/b.ts', specifier: 'jsonc-parser' },
+		];
+		repository({
+			'tsconfig.json': aliases,
+			'packages/kernel/package.json': '{ "name": "@beepboop/kernel", "exports": { "./*": "./src/*" } }',
+			'packages/kernel/src/a.ts': "import { legacy } from '@/legacy.ts';\nimport { other } from '@/other.ts';\n",
+			'packages/kernel/src/b.ts': "import 'jsonc-parser';\n",
+			'packages/tooling/boundaries-baseline.json': JSON.stringify(baseline),
+			'src/legacy.ts': 'export const legacy = 1;\n',
+			'src/other.ts': 'export const other = 1;\n',
+		});
+		const report = await Effect.runPromise(checkBoundaries(root));
+
+		expect(report.baselined).toBe(1);
+		expect(report.violations.map(describeViolation)).toEqual([
+			'packages/kernel/src/a.ts imports @/other.ts, which resolves outside any package (src/other.ts)',
+			'packages/kernel/src/b.ts imports jsonc-parser without declaring jsonc-parser',
+			'packages/tooling/boundaries-baseline.json lists packages/kernel/src/a.ts importing @/gone.ts, which no longer happens',
+			'packages/tooling/boundaries-baseline.json lists packages/kernel/src/b.ts importing jsonc-parser, which no longer happens',
+		]);
+		write('packages/tooling/boundaries-baseline.json', JSON.stringify(baseline.slice(0, 1)));
+		write('packages/kernel/src/a.ts', "import { legacy } from '@/legacy.ts';\n");
+		write('packages/kernel/src/b.ts', 'export const b = 1;\n');
+		expect(await Effect.runPromise(boundariesCommand(root))).toBe(
+			'Checked 2 files in 1 packages; 1 imports in packages/tooling/boundaries-baseline.json still leave their package',
+		);
 	});
 
 	test('exports resolve exact keys first, then the most specific pattern, through conditions and every wildcard', async () => {
