@@ -15,6 +15,7 @@ import type { ActionFailure, Invalid } from '@root/actions/runtime/protocol.ts';
 import { attempt, refuse, required } from '@root/actions/runtime/protocol.ts';
 import { Effect, Result } from 'effect';
 import { checkoutAt } from '@/host/git.ts';
+import { runMain } from '@/host/main.ts';
 import { hasPathSegment } from '@/kernel/path/relative-path.ts';
 import { array, record, string, strings, text } from '@/kernel/schema/result.ts';
 
@@ -125,4 +126,4 @@ function prepare(environment: NodeJS.ProcessEnv): Result.Result<void, Invalid> {
 	});
 }
 
-await Effect.runPromise(Effect.fromResult(prepare(process.env)));
+await runMain(Effect.fromResult(prepare(process.env)));

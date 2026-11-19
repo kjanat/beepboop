@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import type { Scope } from 'effect';
 import { Data, Effect } from 'effect';
+import { runMain } from '@/host/main.ts';
 import { terminate } from '@/host/process.ts';
 import { failWith } from '@/kernel/errors/refusal.ts';
 import { parseWith } from '@/kernel/schema/decode.ts';
@@ -122,6 +123,4 @@ export function temporaryDirectory(prefix: string): Effect.Effect<string, ToolFa
 	);
 }
 
-export function main<E>(program: Effect.Effect<void, E>): Promise<void> {
-	return Effect.runPromise(program);
-}
+export { runMain as main };

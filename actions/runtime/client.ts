@@ -13,6 +13,7 @@ import {
 import { identityToken, mask, postJson, readServiceOrigin } from '@root/actions/runtime/session.ts';
 import { Clock, Effect } from 'effect';
 import { writeOutputTo } from '@/host/github-output.ts';
+import { runMain } from '@/host/main.ts';
 import { record, text } from '@/kernel/schema/result.ts';
 
 function writeResult(mode: Mode, data: Record<string, unknown>, environment: Environment) {
@@ -79,8 +80,8 @@ function writeResult(mode: Mode, data: Record<string, unknown>, environment: Env
 	});
 }
 
-export function run(input: string | undefined, environment: Environment): Promise<void> {
-	return Effect.runPromise(Effect.gen(function*() {
+function action(input: string | undefined, environment: Environment) {
+	return Effect.gen(function*() {
 		const mode = yield* Effect.fromResult(parseMode(input));
 		const origin = yield* readServiceOrigin(environment);
 		const token = yield* identityToken(origin, environment);
@@ -89,7 +90,11 @@ export function run(input: string | undefined, environment: Environment): Promis
 		);
 		const result = yield* exchange(mode, Effect.suspend(() => postJson(origin, endpoints[mode].path, token, body)));
 		yield* writeResult(mode, result, environment);
-	}));
+	});
 }
 
-if (import.meta.main) await run(process.argv[2], process.env);
+export function run(input: string | undefined, environment: Environment): Promise<void> {
+	return Effect.runPromise(action(input, environment));
+}
+
+if (import.meta.main) await runMain(action(process.argv[2], process.env));

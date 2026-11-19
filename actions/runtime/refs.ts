@@ -8,6 +8,7 @@ import { Effect, Result } from 'effect';
 import type { DistributionEvidence, RefChange, RefPlan } from '@/automation/refs.ts';
 import { repositoryNamePattern } from '@/automation/repository-name.ts';
 import { git } from '@/host/git.ts';
+import { runMain } from '@/host/main.ts';
 import { shaPattern } from '@/kernel/schema/ids.ts';
 import { array, boolean, record, text } from '@/kernel/schema/result.ts';
 
@@ -252,7 +253,7 @@ function parsePlan(value: unknown): Result.Result<RefPlan, Invalid> {
 }
 
 if (import.meta.main) {
-	await Effect.runPromise(Effect.gen(function*() {
+	await runMain(Effect.gen(function*() {
 		const { REF_PLAN, REF_TOKEN, GITHUB_WORKSPACE } = process.env;
 		if (!REF_PLAN) return yield* Effect.fromResult(refuse('Ref plan required'));
 		if (!REF_TOKEN) return yield* Effect.fromResult(refuse('Destination token required'));
