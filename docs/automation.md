@@ -561,10 +561,12 @@ skip its own tests, and `actions/publish` publishes a package that lacks
 metadata.
 
 `beepboop release` and the dashboard start a release on every stream that can
-publish one shared version. Three kinds of stream only prepare the version,
-from both places: a stream that versions each package on its own, a tag-based
-stream without a promotion that publishes the version tag, and a stream that
-writes its version only to version files. The Start release workflow starts a
+publish one shared version. Some streams only prepare the version, from both
+places: a stream that versions each package on its own, a tag-based stream
+without a promotion that publishes the version tag, and, when the release
+writes a new version, a stream that keeps its version outside package
+manifests or prepares it in its own workflow with `prepare.strategy:
+"workflow"`. The Start release workflow starts a
 release only when the stream lists it in `startFrom`:
 
 ```json

@@ -353,13 +353,13 @@ for (const [bump, version] of [['patch', '1.2.4'], ['minor', '1.3.0'], ['major',
 		expect(plan.version).toBe(version);
 		expect(plan.edits).toEqual([]);
 		expect(plan.requiresPreparation).toBe(true);
+		expect(plan.starts).toBe(false);
 		expect(prepareCalls()).toHaveLength(0);
 		const prepared = await run(['release', bump, '--repository', repository.name, '--json', '--yes']);
 		expect(prepared.exitCode).toBe(0);
-		expect(JSON.parse(prepared.stdout.join(''))).toMatchObject({
-			plan: { version },
-			preparation: { operation: 'prepare', version, started: { via: 'cli' } },
-		});
+		const output = JSON.parse(prepared.stdout.join(''));
+		expect(output).toMatchObject({ plan: { version }, preparation: { operation: 'prepare', version } });
+		expect(output.preparation).not.toHaveProperty('started');
 		expect(prepareCalls()[0]?.body).toEqual({
 			repositoryId: repository.id,
 			stream: 'main',
@@ -1062,7 +1062,7 @@ test('release help explains the flow, and the command list keeps the one-line de
 	const text = help.stdout.join('').replace(/\s+/g, ' ');
 	expect(text).toContain('The release bumps the version and publishes it, and nothing asks again.');
 	expect(text).toContain(
-		'a tag-based one without a tag-publishing workflow, or one that writes its version only to version files, only prepares the version',
+		'a tag-based one without a tag-publishing workflow, and, when the release writes a new version, one that keeps its version outside package manifests or prepares it with `prepare.strategy: workflow`, only prepare the version',
 	);
 	expect(text).toContain('`versionLands: via-version-pr` opens the version PR');
 	const root = (await app.execute(['--help'], { isTTY: false, env: {} })).stdout.join('').replace(/\s+/g, ' ');

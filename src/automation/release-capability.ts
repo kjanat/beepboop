@@ -1,4 +1,5 @@
 import { versionsInFiles } from '@/automation/managers';
+import { publishablePackages } from '@/automation/package-identity';
 import { hasTagPromotion } from '@/automation/release-version';
 import type { Inventory, ReleasePlan, RepositoryRecord, Stream, WorkflowBinding } from '@/automation/types';
 import type { StreamRelease } from '@/contract/views';
@@ -61,24 +62,31 @@ function streamStartRefusal(name: string, stream: Stream): string | undefined {
 	return undefined;
 }
 
+export interface PreparedStart {
+	prepare: { strategy?: Stream['prepare']['strategy']; workflow?: { file: string } };
+	versionSource?: Stream['versionSource'];
+	packages?: readonly string[];
+}
+
+export function preparationRefusal(name: string, stream: PreparedStart, inventory: Inventory): string | undefined {
+	const delegated = stream.prepare.strategy === 'workflow' ? stream.prepare.workflow : undefined;
+	if (delegated) {
+		return `${name} prepares its version in ${delegated.file}, and Beepboop cannot follow that preparation to its merge`;
+	}
+	if (stream.versionSource?.kind === 'tags') return undefined;
+	return versionsInFiles({ ...inventory, packages: publishablePackages(inventory.packages, stream.packages) })
+		? undefined
+		: `${name} keeps its version outside package manifests, and merging a version bump there does not start publication`;
+}
+
 export function startRefusal(
 	name: string,
 	stream: Stream,
 	plan: ReleasePlan,
 	inventory: Inventory,
 ): string | undefined {
-	const refusal = streamStartRefusal(name, stream);
-	if (refusal) return refusal;
-	if (stream.versionSource?.kind === 'tags') {
-		return plan.requiresPreparation && stream.prepare.strategy === 'workflow'
-			? `${name} needs managed preparation to start a tag-based release`
-			: undefined;
-	}
-	if (!plan.edits.length && !plan.requiresPreparation) return undefined;
-	const capability = releaseCapability(stream, inventory);
-	return capability.kind === 'prepares' && capability.through.kind === 'files'
-		? `${name} writes its version only to version files, and merging them does not start publication`
-		: undefined;
+	return streamStartRefusal(name, stream)
+		?? (plan.edits.length || plan.requiresPreparation ? preparationRefusal(name, stream, inventory) : undefined);
 }
 
 export function releasable(

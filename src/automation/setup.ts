@@ -8,6 +8,7 @@ import { object } from '@/automation/managers/helpers';
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage, packageId, selectorKey } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
+import { preparationRefusal } from '@/automation/release-capability';
 import { adoptionChoices, startCommand } from '@/automation/release-graph/adoption';
 import type { ReleaseGraph } from '@/automation/release-graph/graph';
 import { inferReleaseGraph } from '@/automation/release-graph/graph';
@@ -423,12 +424,13 @@ function draftSetup(
 			],
 			...(candidates.length ? { binaryCandidates: candidates } : {}),
 		};
-		return inferred ? { ...plan, adoption: proposalMarkdown(graph, snapshot, plan, resolved) } : plan;
+		return inferred ? { ...plan, adoption: proposalMarkdown(graph, snapshot, inventory, plan, resolved) } : plan;
 	});
 }
 function proposalMarkdown(
 	graph: ReleaseGraph,
 	snapshot: Snapshot,
+	inventory: Inventory,
 	plan: Omit<SetupPlan, 'planId'>,
 	resolved?: Configuration,
 ): string[] {
@@ -446,8 +448,17 @@ function proposalMarkdown(
 			const after = bump === 'commit' ? 'Then' : 'After you merge it,';
 			const until = stream.approval ? '' : ' until you tick another';
 			const policyName = `\`publishWhen: ${publishWhenNames[policy]}\``;
+			const delegated = plan.preparation?.workflowStreams.includes(stream.name) === true;
+			const publishesOnStart = startable(stream) && preparationRefusal(stream.name, {
+				prepare: {
+					...(delegated ? { strategy: 'workflow' } : {}),
+					...(stream.prepare ? { workflow: stream.prepare } : {}),
+				},
+				...(stream.versionSource ? { versionSource: stream.versionSource } : {}),
+				packages: stream.packages,
+			}, inventory) === undefined;
 			lines.push(
-				...(startable(stream)
+				...(publishesOnStart
 					? [
 						`- Start a release with \`beepboop release\` in a checkout or from the dashboard. ${landing} ${
 							bump === 'commit' ? 'The release then publishes' : 'Merging it publishes the release'

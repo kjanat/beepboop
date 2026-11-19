@@ -373,7 +373,7 @@ const release = base('release', 'Release this Git checkout: preview a version on
 		[
 			'The server plans the version from the repository default branch and prints a preview with the packages, their registries and the version file diffs. You confirm, and the stream setup decides what follows.',
 			'The release bumps the version and publishes it, and nothing asks again. A version that is already on the default branch publishes as it is.',
-			'A release group that versions each package on its own, a tag-based one without a tag-publishing workflow, or one that writes its version only to version files, only prepares the version: `versionLands: via-direct-commit` commits it to the default branch, and `versionLands: via-version-pr` opens the version PR. `publishWhen` decides how the prepared version publishes.',
+			'A release group that versions each package on its own, a tag-based one without a tag-publishing workflow, and, when the release writes a new version, one that keeps its version outside package manifests or prepares it with `prepare.strategy: workflow`, only prepare the version: `versionLands: via-direct-commit` commits it to the default branch, and `versionLands: via-version-pr` opens the version PR. `publishWhen` decides how the prepared version publishes.',
 		].join('\n\n'),
 	)
 	.example('beepboop release', 'Ask for the stream (when several) and version, preview, confirm (default no)')

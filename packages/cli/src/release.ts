@@ -421,8 +421,6 @@ export function releaseRepository(
 					? 'Beepboop publishes once the commit is verified and its checks pass.'
 					: committing
 					? `Beepboop commits the version bump to ${repository.defaultBranch}, then publishes once that commit is verified and its checks pass.`
-					: stream.prepare.workflow && stream.prepare.strategy === 'workflow'
-					? `${stream.prepare.workflow.file} prepares the version. Merging its version PR publishes the release, and nothing asks again.`
 					: 'Beepboop opens the version PR. Merging it publishes the release, and nothing asks again.',
 			);
 			return yield* followRelease(client, out, {

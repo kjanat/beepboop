@@ -1835,6 +1835,15 @@ test('the adoption text describes a direct-commit release without a version PR',
 	expect(text).not.toContain('version PR');
 });
 
+test('the adoption text promises no start publication for a stream that prepares in its own workflow', async () => {
+	const text = await releaseText({
+		stream: widgetStream({ strategy: 'workflow', workflow: { file: 'publish.yml' } }, 'version-pr-merged'),
+	});
+	expect(text).toContain('After you merge it, `publishWhen: version-pr-merged` applies');
+	expect(text).not.toContain('nothing asks again');
+	expect(text).not.toContain('without a start follows');
+});
+
 describe('a saved plain crate publish script', () => {
 	const crates = ['pkg:cargo/lint-core', 'pkg:cargo/lint'];
 	const promoteCommands = async (commands: string) => {

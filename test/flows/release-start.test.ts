@@ -594,29 +594,74 @@ test('a tag-based dashboard start promotes the reviewed version after its versio
 	]);
 });
 
-test('a tag-based stream with delegated preparation cannot start and refuses force before dispatching', async () => {
-	const { repository, api } = await configured([{ via: 'cli' }]);
-	const configuration = editableConfiguration();
-	const stream = configuration.streams.main;
-	stream.start = [{ via: 'cli' }];
-	stream.versionSource = { kind: 'tags', prefix: 'v' };
-	stream.prepare = { strategy: 'workflow', workflow: { file: 'publish.yml' } };
-	stream.promote.workflow.refs = { phase: 'version', prefix: 'v' };
-	const head = world.github.push(
-		repository,
-		{ '.github/beepboop.json': JSON.stringify(configuration) },
-		'Delegate preparation',
-	);
-	passChecks(repository, head.sha);
+test.each(['tag-based', 'manifest'])(
+	'a %s stream with delegated preparation cannot start and refuses force before dispatching',
+	async kind => {
+		const { repository, api } = await configured([{ via: 'cli' }]);
+		const configuration = editableConfiguration();
+		const stream = configuration.streams.main;
+		stream.start = [{ via: 'cli' }];
+		if (kind === 'tag-based') {
+			stream.versionSource = { kind: 'tags', prefix: 'v' };
+			stream.promote.workflow.refs = { phase: 'version', prefix: 'v' };
+		}
+		stream.prepare = { strategy: 'workflow', workflow: { file: 'publish.yml' } };
+		const head = world.github.push(
+			repository,
+			{ '.github/beepboop.json': JSON.stringify(configuration) },
+			'Delegate preparation',
+		);
+		passChecks(repository, head.sha);
+		expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+		const request = { repositoryId: repository.id, stream: 'main', version: '1.0.1' };
+		const planned = await api('/api/releases/plan', request);
+		expect(planned.status).toBe(200);
+		const { sourceSha, planId, starts } = decodeSync(plan, planned.body);
+		expect(starts).toBe(false);
+		const refused = await api('/api/releases/prepare', { ...request, sourceSha, planId, force: true });
+		expect(refused.status).toBe(422);
+		expect(JSON.stringify(refused.body)).toContain(
+			'main prepares its version in publish.yml, and Beepboop cannot follow that preparation to its merge',
+		);
+		expect(await executions(api)).toEqual([]);
+	},
+);
+
+test('a stream whose own packages keep no manifest version only prepares and refuses force', async () => {
+	const repository = widget(world.github, { configured: false });
+	world.npm.publish('widget', '1.0.0');
+	world.network.serve('proxy.golang.org', () => Response.json({ Version: 'v1.0.0' }));
+	world.github.recordTag(repository, 'go/v1.0.0', 'd'.repeat(40), world.github.head(repository), true);
+	const module = 'pkg:golang/github.com/octo/widget/go';
+	world.github.push(repository, {
+		'go/go.mod': 'module github.com/octo/widget/go\n\ngo 1.26\n',
+		'version.json': '{"version":"1.0.0"}\n',
+		'.github/beepboop.json': JSON.stringify({
+			managers: ['npm', 'go', 'workflow'],
+			streams: {
+				main: {
+					packages: [module],
+					mustPublish: [module],
+					versionFiles: [{ path: 'version.json', format: 'json', key: ['version'] }],
+					prepare: { strategy: 'managed' },
+					promote: { workflow: { file: 'publish.yml', publications: [module] } },
+				},
+			},
+		}),
+	}, 'Release the Go module alone');
+	passChecks(repository, world.github.head(repository));
+	const api = bearer(world, await world.cliSession());
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
-	const request = { repositoryId: repository.id, stream: 'main', version: '1.0.1' };
+	const request = { repositoryId: repository.id, stream: 'main', version: '1.1.0' };
 	const planned = await api('/api/releases/plan', request);
 	expect(planned.status).toBe(200);
 	const { sourceSha, planId, starts } = decodeSync(plan, planned.body);
 	expect(starts).toBe(false);
 	const refused = await api('/api/releases/prepare', { ...request, sourceSha, planId, force: true });
 	expect(refused.status).toBe(422);
-	expect(JSON.stringify(refused.body)).toContain('main needs managed preparation to start a tag-based release');
+	expect(JSON.stringify(refused.body)).toContain(
+		'main keeps its version outside package manifests, and merging a version bump there does not start publication',
+	);
 	expect(await executions(api)).toEqual([]);
 });
 
