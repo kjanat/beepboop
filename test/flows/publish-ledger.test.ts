@@ -1423,7 +1423,7 @@ test(
 	60_000,
 );
 
-const exportFallbacks: [string, unknown[], string | undefined][] = [
+const exportFallbacks: [string, unknown, string | undefined][] = [
 	['checks the fallback after an invalid path', ['./dist/../index.js', './missing.js'], 'missing.js'],
 	['skips encoded parent segments', ['./dist/%2E%2e/index.js', './index.js'], undefined],
 	['skips encoded node_modules segments', ['./%4eode_modules/index.js', './index.js'], undefined],
@@ -1449,6 +1449,32 @@ const exportFallbacks: [string, unknown[], string | undefined][] = [
 		'a valid exports target (found "../bad.js")',
 	],
 	['skips a condition after default', [{ default: './index.js', import: '../bad.js' }], undefined],
+	[
+		'resolves thirty-two conditions',
+		Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`c${index}`, './index.js'])),
+		undefined,
+	],
+	[
+		'rejects an invalid target behind thirty-two conditions',
+		{ ...Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`c${index}`, './index.js'])), c32: '../bad.js' },
+		'a valid exports target (found "../bad.js")',
+	],
+	[
+		'checks a target behind thirty-two unmatched conditions',
+		[
+			Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`c${index}`, {}])),
+			{
+				...Object.fromEntries(Array.from({ length: 31 }, (_, index) => [`c${index}`, './index.js'])),
+				c31: './missing.js',
+			},
+		],
+		'missing.js',
+	],
+	[
+		'resolves a long fallback array of conditions',
+		[...Array.from({ length: 24 }, (_, index) => ({ [`c${index}`]: { [`d${index}`]: './index.js' } })), './index.js'],
+		undefined,
+	],
 ];
 
 test.each(exportFallbacks)('npm exports %s', async (_scenario, exports, missing) => {

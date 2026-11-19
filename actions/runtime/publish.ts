@@ -163,29 +163,19 @@ function validTarget(value: string): boolean {
 	return value.startsWith('./') && !forbidden;
 }
 
-function resolveTarget(value: unknown, active: ReadonlySet<string>, pattern: boolean): Resolution {
-	if (typeof value === 'string') {
-		return validTarget(value) ? { kind: 'target', entry: entryPoint(value, pattern) } : { kind: 'invalid', value };
-	}
-	if (value === null) return { kind: 'excluded' };
-	if (Array.isArray(value)) {
-		if (value.length === 0) return { kind: 'excluded' };
-		let last: Resolution = { kind: 'unmatched' };
-		for (const fallback of value) {
-			const resolved = resolveTarget(fallback, active, pattern);
-			if (resolved.kind === 'target') return resolved;
-			if (resolved.kind !== 'unmatched') last = resolved;
-		}
-		return last;
-	}
-	if (typeof value !== 'object') return { kind: 'invalid', value };
-	for (const [condition, branch] of Object.entries(value)) {
-		const resolved: Resolution = condition === 'default' || active.has(condition)
-			? resolveTarget(branch, active, pattern)
-			: { kind: 'unmatched' };
-		if (resolved.kind !== 'unmatched') return resolved;
-	}
-	return { kind: 'unmatched' };
+interface World {
+	readonly active: readonly string[];
+	readonly inactive: readonly string[];
+}
+
+interface Pending {
+	readonly world: World;
+	readonly resolution: Exclude<Resolution, { readonly kind: 'target' }>;
+}
+
+interface Resolved {
+	readonly targets: readonly EntryPoint[];
+	readonly pending: readonly Pending[];
 }
 
 function conditionNames(value: unknown, into: Set<string>): Set<string> {
@@ -200,12 +190,144 @@ function conditionNames(value: unknown, into: Set<string>): Set<string> {
 	return into;
 }
 
-function exportResolutions(value: unknown, pattern: boolean): Resolution[] {
-	const names = [...conditionNames(value, new Set())];
-	return Array.from(
-		{ length: 2 ** names.length },
-		(_, mask) => resolveTarget(value, new Set(names.filter((_, bit) => (mask >> bit) % 2 === 1)), pattern),
+function namedLater(outer: ReadonlySet<string>, later: unknown): ReadonlySet<string> {
+	return conditionNames(later, new Set(outer));
+}
+
+function project(world: World, keep: ReadonlySet<string>): World {
+	return {
+		active: world.active.filter(name => keep.has(name)),
+		inactive: world.inactive.filter(name => keep.has(name)),
+	};
+}
+
+function assume(world: World, condition: string, active: boolean): World {
+	return active
+		? { active: [...world.active, condition].sort(), inactive: world.inactive }
+		: { active: world.active, inactive: [...world.inactive, condition].sort() };
+}
+
+function distinct<T>(items: readonly T[], key: (item: T) => string): T[] {
+	return [...new Map(items.map(item => [key(item), item])).values()];
+}
+
+const worldKey = (world: World) => JSON.stringify([world.active, world.inactive]);
+
+function without(world: World, condition: string): World {
+	return {
+		active: world.active.filter(name => name !== condition),
+		inactive: world.inactive.filter(name => name !== condition),
+	};
+}
+
+function narrower(specific: World, general: World): boolean {
+	return specific !== general
+		&& general.active.every(name => specific.active.includes(name))
+		&& general.inactive.every(name => specific.inactive.includes(name));
+}
+
+function simplify(worlds: readonly World[]): World[] {
+	const unique = distinct(worlds, worldKey);
+	const keys = new Set(unique.map(worldKey));
+	const merged = distinct(
+		unique.map(world => {
+			const condition = [...world.active, ...world.inactive].find(name =>
+				keys.has(worldKey(assume(without(world, name), name, !world.active.includes(name))))
+			);
+			return condition === undefined ? world : without(world, condition);
+		}),
+		worldKey,
 	);
+	const kept = merged.filter(world => !merged.some(other => narrower(world, other)));
+	return kept.length < unique.length ? simplify(kept) : kept;
+}
+
+function simplifyPending(items: readonly Pending[]): Pending[] {
+	const groups = new Map<string, { readonly resolution: Pending['resolution']; readonly worlds: World[] }>();
+	for (const item of items) {
+		const key = JSON.stringify(item.resolution);
+		const group = groups.get(key) ?? { resolution: item.resolution, worlds: [] };
+		group.worlds.push(item.world);
+		groups.set(key, group);
+	}
+	return [...groups.values()].flatMap(group =>
+		simplify(group.worlds).map((world): Pending => ({ world, resolution: group.resolution }))
+	);
+}
+
+function resolveTargets(value: unknown, world: World, pattern: boolean, outer: ReadonlySet<string>): Resolved {
+	if (typeof value === 'string') {
+		return validTarget(value)
+			? { targets: [entryPoint(value, pattern)], pending: [] }
+			: { targets: [], pending: [{ world: project(world, outer), resolution: { kind: 'invalid', value } }] };
+	}
+	if (value === null || (Array.isArray(value) && value.length === 0)) {
+		return { targets: [], pending: [{ world: project(world, outer), resolution: { kind: 'excluded' } }] };
+	}
+	if (Array.isArray(value)) {
+		const targets: EntryPoint[] = [];
+		let pending: Pending[] = [{ world: project(world, namedLater(outer, value)), resolution: { kind: 'unmatched' } }];
+		for (const [index, fallback] of value.entries()) {
+			const keep = namedLater(outer, value.slice(index + 1));
+			const next: Pending[] = [];
+			for (const previous of pending) {
+				const resolved = resolveTargets(fallback, previous.world, pattern, keep);
+				targets.push(...resolved.targets);
+				for (const outcome of resolved.pending) {
+					const resolution = outcome.resolution.kind === 'unmatched' ? previous.resolution : outcome.resolution;
+					next.push({ world: project(outcome.world, keep), resolution });
+				}
+			}
+			pending = simplifyPending(next);
+		}
+		return { targets, pending };
+	}
+	if (typeof value !== 'object') {
+		return { targets: [], pending: [{ world: project(world, outer), resolution: { kind: 'invalid', value } }] };
+	}
+	const entries = Object.entries(value);
+	const targets: EntryPoint[] = [];
+	const settled: Pending[] = [];
+	let unmatched: World[] = [project(world, namedLater(outer, value))];
+	for (const [index, [condition, branch]] of entries.entries()) {
+		const keep = namedLater(outer, Object.fromEntries(entries.slice(index + 1)));
+		const next: World[] = [];
+		for (const current of unmatched) {
+			const always = condition === 'default' || current.active.includes(condition);
+			if (!always && current.inactive.includes(condition)) {
+				next.push(project(current, keep));
+				continue;
+			}
+			if (!always) next.push(project(assume(current, condition, false), keep));
+			const resolved = resolveTargets(branch, always ? current : assume(current, condition, true), pattern, keep);
+			targets.push(...resolved.targets);
+			for (const outcome of resolved.pending) {
+				if (outcome.resolution.kind === 'unmatched') next.push(project(outcome.world, keep));
+				else settled.push({ world: project(outcome.world, outer), resolution: outcome.resolution });
+			}
+		}
+		unmatched = simplify(next);
+	}
+	return {
+		targets,
+		pending: simplifyPending(
+			[
+				...settled,
+				...unmatched.map((current): Pending => ({
+					world: project(current, outer),
+					resolution: { kind: 'unmatched' },
+				})),
+			],
+		),
+	};
+}
+
+function exportResolutions(value: unknown, pattern: boolean): Resolution[] {
+	const resolved = resolveTargets(value, { active: [], inactive: [] }, pattern, new Set());
+	return [
+		...resolved.targets.map((entry): Resolution => ({ kind: 'target', entry })),
+		...resolved.pending.map(outcome => outcome.resolution),
+	];
 }
 
 function packageExports(field: unknown): Resolution[] {
