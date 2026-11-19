@@ -71,17 +71,35 @@ export function publicationIdentity(pkg: PackageRecord, version: string): Packag
 			: version,
 	});
 }
+const canonical = new Map<string, string>();
+const canonicalLimit = 4096;
+function remembered(key: string, compute: () => string): string {
+	const known = canonical.get(key);
+	if (known !== undefined) return known;
+	const value = compute();
+	if (canonical.size >= canonicalLimit) canonical.clear();
+	canonical.set(key, value);
+	return value;
+}
+function recordKey(pkg: PackageRecord): string {
+	return JSON.stringify([pkg.identity ?? null, pkg.manager, pkg.name, pkg.version ?? null]);
+}
 export function packageId(pkg: PackageRecord): string {
-	return packageKey(identityOf(pkg));
+	return remembered(`id ${recordKey(pkg)}`, () => packageKey(identityOf(pkg)));
 }
 export function packagePurl(pkg: PackageRecord): string {
-	return purl(identityOf(pkg));
+	return remembered(`purl ${recordKey(pkg)}`, () => purl(identityOf(pkg)));
 }
 /** Old repository configs and frozen releases can still select their original manager:name references. */
 export function matchesPackage(reference: string, pkg: PackageRecord): boolean {
 	if (!reference.startsWith('pkg:')) return reference === `${pkg.manager}:${pkg.name}`;
-	const identity = releaseIdentity(reference);
-	return identity.version ? purl(identity) === packagePurl(pkg) : packageKey(identity) === packageId(pkg);
+	const selected = remembered(`reference ${reference}`, () => {
+		const identity = releaseIdentity(reference);
+		return identity.version ? `purl ${purl(identity)}` : `id ${packageKey(identity)}`;
+	});
+	return selected.startsWith('purl ')
+		? selected.slice('purl '.length) === packagePurl(pkg)
+		: selected.slice('id '.length) === packageId(pkg);
 }
 export function soleMatch<P extends PackageRecord>(reference: string, packages: readonly P[]): P | undefined {
 	const matches = packages.filter(pkg => matchesPackage(reference, pkg));
@@ -182,8 +200,11 @@ export function selectorKey(reference: string, packages: Package[] = []): string
 
 /** Versionless selection key; registry, platform and subpath distinctions remain significant. */
 export function packageKey(input: PackageIdentity | string): string {
-	const { version: _version, ...identity } = releaseIdentity(input);
-	return purl(identity);
+	const compute = () => {
+		const { version: _version, ...identity } = releaseIdentity(input);
+		return purl(identity);
+	};
+	return typeof input === 'string' ? remembered(`key ${input}`, compute) : compute();
 }
 
 /** Upgrade only Beepboop's historical JSR encoding; generic PURL parsing stays lossless. */
