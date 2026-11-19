@@ -1,5 +1,5 @@
 import { Schema } from 'effect';
-import type { ApprovalPolicy, StartChannel, VersionBump } from '@/contract/release-start';
+import type { ApprovalPolicy, ConfigurableStart, VersionBump } from '@/contract/release-start';
 import { startWorkflowFile } from '@/contract/release-start';
 
 type Versioning = 'workspace' | 'independent' | 'none';
@@ -58,13 +58,12 @@ export const versionPrMergeSentences: Record<VersionPrMerge, string> = {
 };
 export const versionPrMergeQuestion = 'Who merges the version PR';
 
-export const startFromSentences: Record<StartChannel, string> = {
+export const startFromSentences: Record<ConfigurableStart, string> = {
 	action: `The Start release workflow in GitHub Actions (${startWorkflowFile}) starts the release.`,
-	dashboard: 'The Release button in the Beepboop dashboard starts the release.',
-	cli: '`beepboop release` starts the release.',
 };
 export const startFromEffect = 'Starting a release also publishes it, and nothing asks again.';
-export const startFromQuestion = `Where a release starts. ${startFromEffect.slice(0, -1)}`;
+export const alwaysStarted = '`beepboop release` and the dashboard always start releases.';
+export const startFromQuestion = 'Whether a GitHub Actions workflow may start releases';
 
 export const versionScopes = ['one-for-stream', 'per-package', 'none'] as const;
 export type VersionScope = typeof versionScopes[number];

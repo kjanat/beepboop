@@ -163,15 +163,11 @@ async function finishedPromotion(outcome: 'pending' | 'skipped') {
 	const session = await world.cliSession();
 	const repository = await discoveredWidget(world, session);
 	const api = bearer(world, session);
-	await prepareRelease(api, { repositoryId: repository.id, stream: 'main', version: '1.1.0' });
-	await world.wait(20_000);
-	const [pull] = repository.pulls;
-	if (!pull) throw new Error('No preparation pull request');
-	const merged = world.github.merge(repository, pull.number);
-	passChecks(repository, merged.sha);
+	const raised = world.github.push(repository, { 'package.json': npmManifest('widget', '1.1.0') }, 'Release 1.1.0');
+	passChecks(repository, raised.sha);
 	await world.push(repository);
 	await world.wait(1_000);
-	const { promotion } = await approvePromotion(api, merged.sha);
+	const { promotion } = await approvePromotion(api, raised.sha);
 	expect(promotion.state).toBe('awaiting-approval');
 	await world.wait(16_000);
 	const run = repository.runs.at(-1);
@@ -198,7 +194,7 @@ async function finishedPromotion(outcome: 'pending' | 'skipped') {
 		entry.key === `execution:${promotion.id}`
 	);
 	const stored = decodeSync(mutableRecord(Schema.String, Schema.Unknown), entry?.value);
-	return { api, repository, merged, promotion, stored, token, finished: await only(api, 'promote') };
+	return { api, repository, raised, promotion, stored, token, finished: await only(api, 'promote') };
 }
 
 test('the token action outputs the bot identity as an insertable Git environment', async () => {
@@ -215,7 +211,7 @@ test('the token action outputs the bot identity as an insertable Git environment
 });
 
 test('a finished run whose registry publication appears late is verified without a second approval', async () => {
-	const { api, repository, merged, promotion, stored, finished } = await finishedPromotion('pending');
+	const { api, repository, raised, promotion, stored, finished } = await finishedPromotion('pending');
 	expect(finished.state).toBe('verifying');
 	expect(finished.publications.map(publication => publication.outcome)).toEqual(['pending']);
 	expect(stored['state']).toBe('verifying');
@@ -234,7 +230,7 @@ test('a finished run whose registry publication appears late is verified without
 	expect(releaseSummaries([{ ...finished, state: 'awaiting-approval' }]).map(release => release.attention)).toEqual([
 		true,
 	]);
-	expect((await api('/api/executions/approve', { id: promotion.id, sourceSha: merged.sha })).status).not.toBe(200);
+	expect((await api('/api/executions/approve', { id: promotion.id, sourceSha: raised.sha })).status).not.toBe(200);
 
 	world.npm.publish('widget', '1.1.0');
 	await world.wait(61_000);
@@ -1122,8 +1118,20 @@ test('a promotion whose workflow branch was deleted fails with the missing ref n
 });
 
 test('a merge-approved release whose merge cannot be confirmed waits for approval and logs why', async () => {
-	const repository = widget(world.github, { approval: 'merge' });
+	const repository = widget(world.github);
 	world.npm.publish('widget', '1.0.0');
+	const configuration = editableConfiguration();
+	configuration.streams.main = {
+		...configuration.streams.main,
+		versioning: 'independent',
+		promote: { ...configuration.streams.main.promote, approval: 'merge' },
+	};
+	const head = world.github.push(
+		repository,
+		{ '.github/beepboop.json': JSON.stringify(configuration) },
+		'Version each package on its own',
+	);
+	passChecks(repository, head.sha);
 	const api = bearer(world, await world.cliSession());
 	await api('/api/repositories/discover', { repository: 'octo/widget' });
 	await prepareRelease(api, { repositoryId: repository.id, stream: 'main', version: '1.1.0' });

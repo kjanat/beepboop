@@ -22,6 +22,7 @@ import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fi
 import {
 	publishWhenQuestion,
 	startFromQuestion,
+	startFromSentences,
 	versionLandsQuestion,
 	versionPrMergeQuestion,
 	versionPrMergeSentences,
@@ -187,7 +188,7 @@ test('adopt enrolls a repository, reviews generated files and only opens a PR af
 	const original = world.github.head(repository);
 	const declined = await run(
 		['adopt', repository.name],
-		[false, 'new', '', 'managed', [], 'pr', 'required', false, false],
+		[false, 'new', '', 'managed', false, 'pr', 'required', false, false],
 	);
 	expect(declined.exitCode).toBe(0);
 	expect(declined.stdout.join('')).toContain('release-widget.yml');
@@ -197,7 +198,7 @@ test('adopt enrolls a repository, reviews generated files and only opens a PR af
 	);
 	const accepted = await run(
 		['adopt', `https://github.com/${repository.name}`],
-		[false, 'new', '', 'managed', [], 'pr', 'required', false, true],
+		[false, 'new', '', 'managed', false, 'pr', 'required', false, true],
 	);
 	expect(accepted.exitCode).toBe(0);
 	expect(repository.pulls).toHaveLength(1);
@@ -228,13 +229,13 @@ test('Cargo adoption generates one workflow and advanced renaming keeps the shar
 			'',
 			'same',
 			'',
-			[],
+			false,
 			'pr',
 			'required',
 			true,
 			false,
 			'workspace',
-			[],
+			false,
 			'pr',
 			'manual',
 			'push',
@@ -294,7 +295,7 @@ jobs:
 	});
 	const result = await run(
 		['adopt', repository.name],
-		[true, 'ship.yml', 'ship', 'publish_a', '', '', 'managed', [], 'pr', 'required', false, true],
+		[true, 'ship.yml', 'ship', 'publish_a', '', '', 'managed', false, 'pr', 'required', false, true],
 	);
 	expect(result.exitCode).toBe(0);
 	const workflow = decodeSync(
@@ -335,7 +336,10 @@ for (const mixed of ['pypi', 'npm'] as const) {
 				? { 'bench/pyproject.toml': '[project]\nname = "mixed-bench"\nversion = "1.0.0"\n' }
 				: { 'js/package.json': '{"name":"mixed-js","version":"1.0.0"}' }),
 		});
-		const result = await run(['adopt', repository.name], [true, 'new', 'managed', [], 'pr', 'required', false, true]);
+		const result = await run(
+			['adopt', repository.name],
+			[true, 'new', 'managed', false, 'pr', 'required', false, true],
+		);
 		expect(result.stdout.join('')).not.toContain('Bash commands');
 		expect(result.exitCode).toBe(0);
 		const workflow = decodeSync(
@@ -390,7 +394,7 @@ test('generated npm targets require explicit commands instead of an npm publish 
 	});
 	const result = await run(
 		['adopt', repository.name],
-		[true, 'new', './scripts/generate-and-publish.sh', '', 'managed', [], 'pr', 'required', false, true],
+		[true, 'new', './scripts/generate-and-publish.sh', '', 'managed', false, 'pr', 'required', false, true],
 	);
 	expect(result.exitCode).toBe(0);
 	const workflow = world.github.file(repository, '.github/workflows/release-generated.yml', 'automation/onboarding')
@@ -790,7 +794,7 @@ for (const scripted of [true, false]) {
 		world.github.push(repository, { 'README.md': '# Updated default branch\n' }, 'Change source after opening setup');
 		const result = scripted
 			? await run(['adopt', repository.name, '--choices', file, '--json'])
-			: await run(['adopt', repository.name], [false, 'new', '', 'managed', [], 'pr', 'required', false, false]);
+			: await run(['adopt', repository.name], [false, 'new', '', 'managed', false, 'pr', 'required', false, false]);
 		expect(result.exitCode).toBe(0);
 		expect(world.github.resolve(repository, 'automation/onboarding').sha).toBe(head);
 		expect(repository.pulls).toEqual(before);
@@ -814,13 +818,13 @@ test('saved Cargo commands are kept for the same packages and regenerated after 
 	});
 	const unchanged = await run(
 		['adopt', repository.name],
-		[false, true, 'new', '', 'managed', [], 'pr', 'required', false, false],
+		[false, true, 'new', '', 'managed', false, 'pr', 'required', false, false],
 	);
 	expect(unchanged.exitCode).toBe(0);
 	expect(unchanged.stdout.join('')).toContain("cargo publish --package 'crate-a' --locked");
 	const changed = await run(
 		['adopt', repository.name],
-		[false, false, ['pkg:cargo/crate-b'], 'new', '', 'managed', [], 'pr', 'required', false, true],
+		[false, false, ['pkg:cargo/crate-b'], 'new', '', 'managed', false, 'pr', 'required', false, true],
 	);
 	expect(changed.exitCode).toBe(0);
 	const source = world.github.file(repository, '.github/workflows/release.yml', 'automation/onboarding') ?? '';
@@ -865,7 +869,7 @@ test('changing publishing-step mappings regenerates commands for the newly unmap
 	});
 	const changed = await run(
 		['adopt', repository.name],
-		[false, true, 'ship.yml', '', 'publish_existing', '', 'managed', [], 'pr', 'required', false, true],
+		[false, true, 'ship.yml', '', 'publish_existing', '', 'managed', false, 'pr', 'required', false, true],
 	);
 	expect(changed.exitCode).toBe(0);
 	const source = world.github.file(repository, '.github/workflows/ship.yml', 'automation/onboarding') ?? '';
@@ -896,7 +900,7 @@ test('automatic triggers default to review and retain an explicit saved handover
 	expect(
 		(await run(
 			['adopt', repository.name],
-			[false, false, 'ship.yml', 'dispatchOnly', 'publish_existing', 'managed', [], 'pr', 'required', false, true],
+			[false, false, 'ship.yml', 'dispatchOnly', 'publish_existing', 'managed', false, 'pr', 'required', false, true],
 		))
 			.exitCode,
 	).toBe(0);
@@ -917,7 +921,9 @@ test('shared preparation does not ask for a second trigger handover', async () =
 		'Cargo.toml': '[package]\nname = "my-crate"\nversion = "1.0.0"\n',
 		'Cargo.lock': '# Lockfile\n',
 	});
-	expect((await run(['adopt', repository.name], ['new', '', 'same', '', [], 'pr', 'required', false, true])).exitCode)
+	expect(
+		(await run(['adopt', repository.name], ['new', '', 'same', '', false, 'pr', 'required', false, true])).exitCode,
+	)
 		.toBe(0);
 	world.github.merge(repository, 1);
 	const source = world.github.file(repository, '.github/workflows/release-my-crate.yml') ?? '';
@@ -996,6 +1002,7 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 	});
 	const customize =
 		'Customize filenames, versionScope, publishWhen, release groups, advanced fields or Actions revision?';
+	const startPrompt = `main: ${startFromQuestion}? ${startFromSentences.action.replaceAll('`', '')}`;
 	const session = defaults(
 		{
 			'main: publishing workflow filename': 'release-tool.yml',
@@ -1006,6 +1013,7 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 		{
 			[proposalPrompt]: false,
 			[customize]: true,
+			[startPrompt]: true,
 			'Add another release group?': false,
 			'Open or refresh the setup PR with these exact changes?': true,
 		},
@@ -1031,7 +1039,11 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 			defaultBinaryTargets.some(value => value === target) && !target.startsWith('windows-'),
 		);
 	}
-	expect(messages).toContain(`main: startFrom. ${startFromQuestion}`);
+	expect(
+		session.prompts.filter(prompt => prompt.message === startPrompt).map(prompt =>
+			prompt.kind === 'confirm' && prompt.default
+		),
+	).toEqual([false, true]);
 	expect(messages).toContain(`main: versionLands. ${versionLandsQuestion}`);
 	expect(messages).toContain(`main: publishWhen. ${publishWhenQuestion}`);
 	const merging = session.prompts.find(prompt => prompt.message === `main: versionPrMerge. ${versionPrMergeQuestion}`);
@@ -1065,6 +1077,7 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 	expect(configuration).toMatchObject({
 		streams: {
 			main: {
+				startFrom: [{ via: 'action', workflow: 'start-release.yml' }],
 				prepare: { versionPrMerge: 'merge' },
 				promote: {
 					workflow: {

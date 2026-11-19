@@ -71,11 +71,7 @@ export function capabilitySentence(name: string, capability: ReleaseCapability):
 		case 'unpublishable':
 			return `${name} has no publishing workflow. Add one in release setup.`;
 		case 'promotes':
-			return `${name} has no version to write. The release goes straight to ${capability.workflow} and ${
-				capability.automatic
-					? 'publishes once the commit is verified and its checks pass'
-					: 'waits for you to publish it'
-			}.`;
+			return `${name} has no version to write. The release goes straight to ${capability.workflow} and publishes once the commit is verified and its checks pass.`;
 		case 'prepares': {
 			const { through } = capability;
 			if (through.kind === 'workflow') return `${through.file} prepares the new version of ${name}.`;

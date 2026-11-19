@@ -9,12 +9,12 @@ import { planReleaseSet } from '@/automation/planning';
 import { planHookUpdates } from '@/automation/precommit';
 import { conflictMessage } from '@/automation/refs';
 import { capabilitySentence, releasable, releaseCapability } from '@/automation/release-capability';
-import { hasTagPromotion, resolvePackageVersion } from '@/automation/release-version';
+import { startRefusal } from '@/automation/release-start';
+import { resolvePackageVersion } from '@/automation/release-version';
 import type { AutomationService } from '@/automation/service';
 import type { Execution, Inventory, ReleasePlan, ReleaseStarted, Snapshot, Stream } from '@/automation/types';
 import { nextVersion, parseVersionRequest } from '@/automation/version';
 import type { StartChannel } from '@/contract/release-start';
-import { startLabels, startsFrom } from '@/contract/release-start';
 import { routes } from '@/contract/routes';
 import { semver } from '@/contract/semver';
 import type { VersionPrMerge } from '@/contract/setup-terms';
@@ -221,19 +221,8 @@ export function beginRelease(
 ): Effect.Effect<Execution, DomainError> {
 	return Effect.gen(function*() {
 		const { repository, stream } = selection;
-		if (started && stream.versioning === 'independent') {
-			return yield* precondition(`${name} cannot start releases: it needs one shared version`);
-		}
-		if (started && stream.versionSource?.kind === 'tags') {
-			if (!hasTagPromotion(stream, stream.versionSource.prefix)) {
-				return yield* precondition(
-					`${name} needs a dispatchable promotion that publishes a version tag with prefix "${stream.versionSource.prefix}"`,
-				);
-			}
-			if (plan.requiresPreparation && stream.prepare.strategy === 'workflow') {
-				return yield* precondition(`${name} needs managed preparation to start a tag-based release`);
-			}
-		}
+		const refusal = started && startRefusal(name, stream, plan, repository.inventory);
+		if (refusal) return yield* precondition(refusal);
 		if (versionPrMerge && !opensVersionPr(stream, plan)) {
 			return yield* precondition(`${plan.version} of ${name} opens no version PR to merge`);
 		}
@@ -284,7 +273,13 @@ function channel(request: Request): StartChannel {
 export const releaseEndpoints = {
 	releasesPlan: admin(
 		routes.releasesPlan,
-		(input, context) => releasePlan(input, context).pipe(Effect.map(reviewed)),
+		(input, context) =>
+			releasePlan(input, context).pipe(
+				Effect.map(({ selection, plan, planId }) => ({
+					...reviewed({ plan, planId }),
+					starts: startRefusal(input.stream, selection.stream, plan, selection.repository.inventory) === undefined,
+				})),
+			),
 	),
 	releasesPrepare: admin(routes.releasesPrepare, (input, context) =>
 		Effect.gen(function*() {
@@ -293,15 +288,11 @@ export const releaseEndpoints = {
 			if (input.sourceSha !== plan.sourceSha || input.planId !== planId) {
 				return yield* conflict('stale-plan', 'Release plan changed; preview it again');
 			}
-			const via = channel(request);
-			const started: ReleaseStarted | undefined = startsFrom(selection.stream.start, via)
-				? { via, actor, ...(input.force ? { force: true } : {}) }
-				: undefined;
-			if (input.force && !started) {
-				return yield* precondition(
-					`${input.stream} does not start releases from ${startLabels[via]}, so it cannot force one`,
-				);
-			}
+			const refusal = startRefusal(input.stream, selection.stream, plan, selection.repository.inventory);
+			if (input.force && refusal) return yield* precondition(refusal);
+			const started: ReleaseStarted | undefined = refusal
+				? undefined
+				: { via: channel(request), actor, ...(input.force ? { force: true } : {}) };
 			return yield* beginRelease(
 				service,
 				selection,

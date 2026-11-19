@@ -5,7 +5,7 @@ import type { Client } from '@/cli/client';
 import { followRelease } from '@/cli/follow';
 import { lookOf, registryOf, step, table } from '@/cli/look';
 import { emit, failure, prompted, unprompted } from '@/cli/output';
-import { releaseStart, startsFrom, versionBump } from '@/contract/release-start';
+import { versionBump } from '@/contract/release-start';
 import { routes } from '@/contract/routes';
 import { semverPattern } from '@/contract/semver';
 import type { AutoMergeMethod, VersionPrMerge } from '@/contract/setup-terms';
@@ -115,7 +115,6 @@ const streamSchema = looseStruct({
 		approval: Schema.Literals(['required', 'merge', 'push']),
 		workflow: Schema.optional(mutableStruct({ file: Schema.String })),
 	}),
-	start: Schema.optional(mutableArray(releaseStart)),
 });
 const summarySchema = looseStruct({
 	version: Schema.String.check(Schema.isMinLength(1)),
@@ -297,7 +296,7 @@ export function releaseRepository(
 		);
 		const summary = yield* decode(summarySchema, plan);
 		if (summary.blockers?.length) return yield* Effect.fail(failure(summary.blockers.join('\n'), 'BLOCKED_PLAN'));
-		const started = startsFrom(stream.start, 'cli') !== undefined;
+		const started = plan.starts === true;
 		const committing = stream.prepare.bump === 'commit';
 		const pending = plan.edits.length > 0 || plan.requiresPreparation === true;
 		const publishes = direct || !pending;
@@ -422,6 +421,8 @@ export function releaseRepository(
 					? 'Beepboop publishes once the commit is verified and its checks pass.'
 					: committing
 					? `Beepboop commits the version bump to ${repository.defaultBranch}, then publishes once that commit is verified and its checks pass.`
+					: stream.prepare.workflow && stream.prepare.strategy === 'workflow'
+					? `${stream.prepare.workflow.file} prepares the version. Merging its version PR publishes the release, and nothing asks again.`
 					: 'Beepboop opens the version PR. Merging it publishes the release, and nothing asks again.',
 			);
 			return yield* followRelease(client, out, {

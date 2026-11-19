@@ -3,7 +3,7 @@ import { flag } from '@kjanat/dreamcli';
 import { binaryCandidates, packageCandidates } from '@/cli/setup-complete';
 import type { SetupFlagPath } from '@/cli/setup-flags';
 import { setupFlagPaths } from '@/cli/setup-flags';
-import { approvalPolicies, startChannels, versionBumps } from '@/contract/release-start';
+import { approvalPolicies, configurableStarts, versionBumps } from '@/contract/release-start';
 import { binaryTargets, streamVersionings, workflowTriggers } from '@/contract/setup';
 import {
 	companionModulesSentence,
@@ -30,13 +30,13 @@ export const describedSetupFlags = {
 		`${mustPublishSentence.slice(0, -1)}; repeat it; defaults to --package`,
 	),
 	'version-scope': flag.enum(versionScopes).describe(versionScopeQuestion),
-	'start-from': flag.array(flag.enum(startChannels)).describe(`${startFromQuestion}; repeat it`),
+	'start-from': flag.array(flag.enum(configurableStarts)).describe(startFromQuestion),
 	'version-lands': flag.enum(versionLandings).describe(versionLandsQuestion),
 	'publish-when': flag.enum(publishWhens).describe(publishWhenQuestion),
 	'version-pr-merge': flag.enum(versionPrMerges).describe(versionPrMergeQuestion),
 	required: flag.array(flag.string()).deprecated('Use --must-publish'),
 	versioning: flag.enum(streamVersionings).deprecated('Use --version-scope'),
-	start: flag.array(flag.enum(startChannels)).deprecated('Use --start-from'),
+	start: flag.array(flag.enum(configurableStarts)).deprecated('Use --start-from'),
 	bump: flag.enum(versionBumps).deprecated('Use --version-lands'),
 	approval: flag.enum(approvalPolicies).deprecated('Use --publish-when'),
 	'version-source': flag.string().describe('Advanced: versionSource as JSON'),

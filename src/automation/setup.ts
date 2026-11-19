@@ -31,7 +31,13 @@ import { approvals, triggerHandovers, versionings } from '@/automation/setup-typ
 import { integrateReleaseWorkflow, integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Package, Snapshot } from '@/automation/types';
 import { isLockfile } from '@/contract/catalog';
-import { releaseStarts, startChannels, startWorkflowFile, versionBump, versionBumps } from '@/contract/release-start';
+import {
+	configurableStarts,
+	releaseStarts,
+	startWorkflowFile,
+	versionBump,
+	versionBumps,
+} from '@/contract/release-start';
 import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget, WorkflowSetupInput } from '@/contract/setup';
 import {
 	binaryTargets,
@@ -44,12 +50,14 @@ import {
 	workflowSetup,
 } from '@/contract/setup';
 import {
+	alwaysStarted,
 	existingTriggersNames,
 	existingTriggersQuestion,
 	existingTriggersSentences,
 	publishWhenNames,
 	publishWhenQuestion,
 	publishWhenSentences,
+	startFromEffect,
 	startFromQuestion,
 	startFromSentences,
 	versionLandsNames,
@@ -776,7 +784,7 @@ function drafted(
 				updated.prepare = { ...object(updated.prepare), versionPrMerge: selection.versionPrMerge };
 			}
 			if (selection.start) {
-				updated.start = selection.start.map(via => via === 'action' ? { via, workflow: startWorkflowFile } : { via });
+				updated.start = selection.start.flatMap(via => via === 'action' ? [{ via, workflow: startWorkflowFile }] : []);
 			}
 			for (const entry of selection.operations ?? []) {
 				const { name: operation, needs: _needs, needsJobs: _jobs, publications, ...workflow } = entry;
@@ -1006,7 +1014,8 @@ function completeChoices(
 			const approval = stream.approval
 				?? (configured === 'required' || configured === 'merge' || configured === 'push' ? configured : undefined);
 			const starts = safeDecode(releaseStarts, stored.start);
-			const start = stream.start ?? (starts.success ? starts.data.map(entry => entry.via) : undefined);
+			const start = stream.start
+				?? (starts.success ? starts.data.flatMap(entry => entry.via === 'action' ? [entry.via] : []) : undefined);
 			const bumped = safeDecode(versionBump, object(stored.prepare).bump);
 			const bump = stream.bump ?? (bumped.success ? bumped.data : undefined);
 			const merged = safeDecode(versionPrMerge, object(stored.prepare).versionPrMerge);
@@ -1107,7 +1116,7 @@ export function setupOptions(plan: SetupPlan): SetupOption[] {
 			? approvals.map((value): SetupOption => ({ kind: 'approval', stream: stream.name, value }))
 			: []),
 		...(startable(stream)
-			? startChannels.map((value): SetupOption => ({ kind: 'start', stream: stream.name, value }))
+			? configurableStarts.map((value): SetupOption => ({ kind: 'start', stream: stream.name, value }))
 			: []),
 		...(bumpable(stream)
 			? versionBumps.map((value): SetupOption => ({ kind: 'bump', stream: stream.name, value }))
@@ -1365,7 +1374,9 @@ export function setupBody(plan: SetupPlan, context: SetupBodyContext): string {
 				: []
 		);
 		return [
-			...(starts.length ? [`  - \`startFrom\`: ${startFromQuestion}. Tick any of these.`, ...starts] : []),
+			...(starts.length
+				? [`  - \`startFrom\`: ${startFromQuestion}. ${startFromEffect} ${alwaysStarted}`, ...starts]
+				: []),
 			...(bumps.length
 				? [`  - \`versionLands\`: ${versionLandsQuestion}, here \`${defaultBranch}\`. Tick one.`, ...bumps]
 				: []),

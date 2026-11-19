@@ -564,7 +564,7 @@ export class AutomationService {
 		prefix: string,
 	): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			if (!stream.start?.length || !hasTagPromotion(stream, prefix)) return;
+			if (!hasTagPromotion(stream, prefix)) return;
 			const coordinator = this.coordinator(repository.id);
 			const versions = yield* fromPromise(() => coordinator.startedPreparationVersions(name));
 			if (!versions.length) return;

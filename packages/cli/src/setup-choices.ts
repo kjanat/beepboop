@@ -16,7 +16,7 @@ import { lookOf } from '@/cli/look';
 import { failure, prompted } from '@/cli/output';
 import { supportedTargets } from '@/contract/binary-platforms';
 import { workflowFilePattern } from '@/contract/catalog';
-import { approvalPolicies, startChannels, versionBumps } from '@/contract/release-start';
+import { approvalPolicies, versionBumps } from '@/contract/release-start';
 import type { BinaryBuild, BinaryRelease } from '@/contract/setup';
 import {
 	actionsRevisionPattern,
@@ -465,22 +465,14 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 		const releaseMode = (stream: SetupChoices['streams'][number], all: boolean) =>
 			Effect.gen(function*() {
 				if (startable(stream) && (all || !stream.start)) {
-					const [first, ...rest] = startChannels.map(value => ({
-						value,
-						label: `${value}: ${startFromSentences[value].replaceAll('`', '')}`,
-					}));
-					if (first) {
-						const chosen: string[] = yield* prompted(() =>
-							ask({
-								kind: 'multiselect',
-								message: `${stream.name}: startFrom. ${startFromQuestion}${
-									stream.start ? `; now ${stream.start.join(', ') || 'none'}` : ''
-								}`,
-								choices: [first, ...rest],
-							})
-						);
-						stream.start = startChannels.filter(value => chosen.includes(value));
-					}
+					const allowed = yield* prompted(() =>
+						ask({
+							kind: 'confirm',
+							message: `${stream.name}: ${startFromQuestion}? ${startFromSentences.action.replaceAll('`', '')}`,
+							default: stream.start?.includes('action') ?? false,
+						})
+					);
+					stream.start = allowed ? ['action'] : [];
 				}
 				if (bumpable(stream) && (all || !stream.bump)) {
 					const bump = yield* select(

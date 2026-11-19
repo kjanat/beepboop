@@ -12,7 +12,7 @@ import { app } from '@/cli/cli';
 import { Client } from '@/cli/client';
 import { describedSetupFlags, setupFlagRecord } from '@/cli/setup-flag-builders';
 import { choicesFlagKinds, setupFlagPaths, streamFlagKinds, workflowFlagKinds } from '@/cli/setup-flags';
-import { startChannels } from '@/contract/release-start';
+import { configurableStarts } from '@/contract/release-start';
 import { binaryTargets, setupChoicesSchema } from '@/contract/setup';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
 import {
@@ -127,9 +127,9 @@ const cases: {
 	},
 	{
 		flags: ['start-from'],
-		args: ['--start-from', 'cli', '--start-from', 'dashboard'],
+		args: ['--start-from', 'action'],
 		read: c => main(c).start,
-		value: ['cli', 'dashboard'],
+		value: ['action'],
 	},
 	{
 		flags: ['version-lands'],
@@ -258,7 +258,7 @@ test('every setup flag sets its field in the previewed plan', async () => {
 const legacyCases: typeof cases = [
 	{ flags: ['required'], args: ['--required', id], read: c => main(c).required, value: [id] },
 	{ flags: ['versioning'], args: ['--versioning', 'independent'], read: c => main(c).versioning, value: 'independent' },
-	{ flags: ['start'], args: ['--start', 'cli'], read: c => main(c).start, value: ['cli'] },
+	{ flags: ['start'], args: ['--start', 'action'], read: c => main(c).start, value: ['action'] },
 	{ flags: ['bump'], args: ['--bump', 'commit'], read: c => main(c).bump, value: 'commit' },
 	{ flags: ['approval'], args: ['--approval', 'merge'], read: c => main(c).approval, value: 'merge' },
 	{
@@ -355,12 +355,12 @@ test('setup flags reject values outside their enums and invalid JSON', async () 
 test('flags given with --choices override only their fields', async () => {
 	tool();
 	const proposal = await preview([]);
-	const stream = { ...main(proposal.choices), approval: 'required', bump: 'pr', start: ['dashboard'] };
+	const stream = { ...main(proposal.choices), approval: 'required', bump: 'pr', start: [] };
 	const file = join(directory, 'choices.json');
 	await Bun.write(file, JSON.stringify({ ...proposal.choices, streams: [stream] }));
-	const plan = await preview(['--choices', file, '--version-lands', 'via-direct-commit', '--start-from', 'cli']);
+	const plan = await preview(['--choices', file, '--version-lands', 'via-direct-commit', '--start-from', 'action']);
 	expect(main(plan.choices)).toEqual(main(decodeSync(setupChoicesSchema, {
-		streams: [{ ...stream, bump: 'commit', start: ['cli'] }],
+		streams: [{ ...stream, bump: 'commit', start: ['action'] }],
 	})));
 	const refused = await app.execute([
 		'adopt',
@@ -386,7 +386,7 @@ test('a fully flagged adopt in a terminal asks no question and opens the setup P
 			'octo/tool',
 			...promote,
 			'--start-from',
-			'cli',
+			'action',
 			'--version-lands',
 			'via-direct-commit',
 			'--publish-when',
@@ -405,7 +405,7 @@ test('a fully flagged adopt in a terminal asks no question and opens the setup P
 		mutableStruct({
 			streams: mutableStruct({
 				main: mutableStruct({
-					startFrom: mutableArray(looseStruct({ via: Schema.String })),
+					startFrom: mutableArray(looseStruct({ via: Schema.String, workflow: Schema.String })),
 					prepare: looseStruct({ versionLands: Schema.String }),
 					promote: looseStruct({ publishWhen: Schema.String }),
 				}),
@@ -413,7 +413,7 @@ test('a fully flagged adopt in a terminal asks no question and opens the setup P
 		}),
 		JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'),
 	);
-	expect(configuration.streams.main.startFrom.map(start => start.via)).toEqual(['cli']);
+	expect(configuration.streams.main.startFrom).toEqual([{ via: 'action', workflow: 'start-release.yml' }]);
 	expect(configuration.streams.main.prepare.versionLands).toBe('via-direct-commit');
 	expect(configuration.streams.main.promote.publishWhen).toBe('version-pr-merged');
 	world.github.merge(repository, 1);
@@ -423,7 +423,7 @@ test('a fully flagged adopt in a terminal asks no question and opens the setup P
 			'octo/tool',
 			...promote,
 			'--start-from',
-			'cli',
+			'action',
 			'--version-lands',
 			'via-direct-commit',
 			'--publish-when',
@@ -645,7 +645,7 @@ test('a flag that only another command offers is not found in the runs list sect
 
 test('completion scripts list the values of repeatable enum flags', () => {
 	for (const shell of shells) {
-		for (const [flag, values] of [['start-from', startChannels], ['target', binaryTargets]] as const) {
+		for (const [flag, values] of [['start-from', configurableStarts], ['target', binaryTargets]] as const) {
 			expect([shell, flag, offered(shell, flag)]).toEqual([shell, flag, [...values]]);
 		}
 	}

@@ -2362,7 +2362,7 @@ test('a setup update body leads with old and new values, then held packages, cho
 			},
 		},
 		prepare: { versionLands: 'via-version-pr' },
-		startFrom: [{ via: 'action', workflow: 'start-release.yml' }, { via: 'cli' }],
+		startFrom: [{ via: 'action', workflow: 'start-release.yml' }],
 	}, ['github-release', 'npm']);
 	const promoteOnly = 'jobs:\n  promote:\n    steps: []\n';
 	const binaries = {
@@ -2383,7 +2383,7 @@ test('a setup update body leads with old and new values, then held packages, cho
 		'  - `promote.publishWhen`: `approved-in-beepboop` → `version-pr-merged`. Merging the version PR publishes it once the checks pass. Nobody publishes it in Beepboop.',
 		'  - `promote.workflow.publications`: adds `github-release:octo/shellcheck`. This workflow now publishes the GitHub release.',
 		'  - `prepare.versionLands`: none → `via-version-pr`. Beepboop opens a version PR, and merging it puts the new version on the default branch.',
-		'  - `startFrom`: none → `action` (`start-release.yml`), `cli`. Starting a release also publishes it, and nothing asks again.',
+		'  - `startFrom`: none → `action` (`start-release.yml`). Starting a release also publishes it, and nothing asks again.',
 		'- Repository',
 		'  - `managers`: adds `github-release`.',
 		'  - Renames the settings to their current names: `publishWhen`, `versionLands`, `startFrom`, `mustPublish`, `versionScope` and `existingTriggers`.',
@@ -2433,7 +2433,7 @@ test('a setup update body leads with old and new values, then held packages, cho
 					versioning: 'workspace',
 					approval: 'merge',
 					bump: 'pr',
-					start: ['action', 'cli'],
+					start: ['action'],
 					promote: { file: 'release-rshellcheck.yml', job: 'promote' },
 				},
 				{
@@ -2519,7 +2519,7 @@ test('a setup update body leads with old and new values, then held packages, cho
 	expect(bodyChoices(body, setupOptions(plan), plan.choices).streams[0]).toMatchObject({
 		approval: 'merge',
 		bump: 'pr',
-		start: ['action', 'cli'],
+		start: ['action'],
 	});
 	expect(releaseAfterMerge(body)).toBe(false);
 	expect(releaseAfterMerge(setupBody(plan, { branch: updateBranch, defaultBranch: 'master', release: true }))).toBe(
