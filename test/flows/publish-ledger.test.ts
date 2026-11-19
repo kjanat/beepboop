@@ -1587,6 +1587,57 @@ function nodeConditioned(value: unknown): boolean {
 		return (key.startsWith('.') || nodeConditions.has(key) || numeric) && nodeConditioned(branch);
 	});
 }
+const nodeFailures: Record<string, NodeOutcome> = {
+	'checks the fallback after an invalid path': { require: 'MODULE_NOT_FOUND', import: 'ERR_MODULE_NOT_FOUND' },
+	'rejects an invalid-only array': { require: 'ERR_INVALID_PACKAGE_TARGET', import: 'ERR_INVALID_PACKAGE_TARGET' },
+	'rejects an invalid target after an exclusion': {
+		require: 'ERR_INVALID_PACKAGE_TARGET',
+		import: 'ERR_INVALID_PACKAGE_TARGET',
+	},
+	'checks a missing valid first target': { require: 'MODULE_NOT_FOUND', import: 'ERR_MODULE_NOT_FOUND' },
+	'checks the fallback when a condition may be inactive': { require: 'MODULE_NOT_FOUND', import: 'loaded' },
+	'rejects an invalid target an active condition reaches': {
+		require: 'ERR_PACKAGE_PATH_NOT_EXPORTED',
+		import: 'ERR_INVALID_PACKAGE_TARGET',
+	},
+	'checks the decoded file of an escaped target': { require: 'MODULE_NOT_FOUND', import: 'ERR_MODULE_NOT_FOUND' },
+	'rejects an encoded slash before its fallback': {
+		require: 'ERR_INVALID_MODULE_SPECIFIER',
+		import: 'ERR_INVALID_MODULE_SPECIFIER',
+	},
+	'rejects an encoded backslash': { require: 'ERR_INVALID_MODULE_SPECIFIER', import: 'ERR_INVALID_MODULE_SPECIFIER' },
+	'rejects an encoded slash in a query': { require: 'ERR_INVALID_MODULE_SPECIFIER', import: 'loaded' },
+	'skips a pattern match inside node_modules': {
+		require: 'ERR_INVALID_MODULE_SPECIFIER',
+		import: 'ERR_INVALID_MODULE_SPECIFIER',
+	},
+	'skips a dot wildcard capture': { require: 'ERR_INVALID_MODULE_SPECIFIER', import: 'ERR_INVALID_MODULE_SPECIFIER' },
+	'rejects a target that leaves the package after URL parsing': {
+		require: 'ERR_INVALID_PACKAGE_TARGET',
+		import: 'ERR_INVALID_PACKAGE_TARGET',
+	},
+	'rejects a malformed escape': { require: 'URIError', import: 'URIError' },
+	'requires the same raw wildcard twice': { require: 'MODULE_NOT_FOUND', import: 'ERR_MODULE_NOT_FOUND' },
+	'rejects a separator completed by a wildcard': {
+		require: 'ERR_INVALID_MODULE_SPECIFIER',
+		import: 'ERR_INVALID_MODULE_SPECIFIER',
+	},
+	'rejects a numeric condition key': { require: 'ERR_INVALID_PACKAGE_CONFIG', import: 'ERR_INVALID_PACKAGE_CONFIG' },
+	'rejects a numeric key before an array fallback': {
+		require: 'ERR_INVALID_PACKAGE_CONFIG',
+		import: 'ERR_INVALID_PACKAGE_CONFIG',
+	},
+	'rejects a numeric key a condition reaches': { require: 'loaded', import: 'ERR_INVALID_PACKAGE_CONFIG' },
+	'rejects mixed subpath and condition keys': {
+		require: 'ERR_INVALID_PACKAGE_CONFIG',
+		import: 'ERR_INVALID_PACKAGE_CONFIG',
+	},
+};
+interface NodeOutcome {
+	require: string;
+	import: string;
+}
+const usable = new Set(['loaded', 'ERR_PACKAGE_PATH_NOT_EXPORTED']);
 const nodeLoader = `
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -1604,10 +1655,11 @@ for (const [index, { exports, files, specifier }] of cases.entries()) {
 		writeFileSync(join(pkg, file), 'module.exports = 1;');
 	}
 	writeFileSync(join(home, 'entry.mjs'), 'export * from ' + JSON.stringify(specifier) + ';');
-	const failures = [];
-	try { createRequire(join(home, 'entry.cjs'))(specifier); } catch (error) { failures.push(error.code); }
-	try { await import(pathToFileURL(join(home, 'entry.mjs')).href); } catch (error) { failures.push(error.code); }
-	verdicts.push(failures.every(code => code === 'ERR_PACKAGE_PATH_NOT_EXPORTED'));
+	const outcome = error => error.code ?? error.name;
+	let required = 'loaded', imported = 'loaded';
+	try { createRequire(join(home, 'entry.cjs'))(specifier); } catch (error) { required = outcome(error); }
+	try { await import(pathToFileURL(join(home, 'entry.mjs')).href); } catch (error) { imported = outcome(error); }
+	verdicts.push({ require: required, import: imported });
 }
 process.stdout.write(JSON.stringify(verdicts));
 `;
@@ -1626,11 +1678,30 @@ test('node loads or excludes exactly the npm exports the publisher accepts', () 
 				})),
 			}),
 			encoding: 'utf8',
+			timeout: 30_000,
 		});
-		expect(loaded.stderr).toBe('');
-		expect(Object.fromEntries(cases.map(([scenario], index) => [scenario, JSON.parse(loaded.stdout)[index]]))).toEqual(
-			Object.fromEntries(cases.map(([scenario, , missing]) => [scenario, missing === undefined])),
+		expect({ error: loaded.error, signal: loaded.signal, status: loaded.status, stderr: loaded.stderr }).toEqual({
+			error: undefined,
+			signal: null,
+			status: 0,
+			stderr: '',
+		});
+		const outcomes = decodeSync(
+			mutableArray(mutableStruct({ require: Schema.String, import: Schema.String })),
+			JSON.parse(loaded.stdout),
 		);
+		const observed = (missing: string | undefined, outcome: NodeOutcome | undefined) =>
+			missing === undefined && outcome && usable.has(outcome.require) && usable.has(outcome.import)
+				? 'usable'
+				: outcome;
+		expect(
+			Object.fromEntries(cases.map(([scenario, , missing], index) => [scenario, observed(missing, outcomes[index])])),
+		)
+			.toEqual(
+				Object.fromEntries(
+					cases.map(([scenario, , missing]) => [scenario, missing === undefined ? 'usable' : nodeFailures[scenario]]),
+				),
+			);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
